@@ -70,7 +70,7 @@ three equal PASS lines.
 `.github/workflows/nightly-dst.yml` runs every night (and by
 `workflow_dispatch`) on the fleet's Linux, macOS and Windows runners, for each
 ref in `ROCKETNET_NIGHTLY_REFS`, with `fail-fast: false`. Each leg builds
-Release `dst` and `test`, runs the fifteen `test_dst_` unit cases by `--run`,
+Release `dst` and `test`, runs the nineteen `test_dst_` unit cases by `--run`,
 runs `--seeds 1-50` and fails unless its PASS line carries the reference trace,
 then runs one named short step per fault schedule (`clock-back`, `seq-gap`,
 `seq-wrap-31`, `seq-wrap-32`, `burst` and `dup-storm`, each over seeds 1-50)
@@ -140,10 +140,12 @@ schedule; a failure prints its seed and the replay command, which carries
   `CONNECTION_REQUEST_COOKIE_EXPIRED` only on a run where a rewound clock
   was actually observed; on any other run it stays unexplained.
 - `seq-gap`: draws a side (the client's sends or the server's), a client, a
-  step and a gap of 1025 to 8192. At the first step from there on where the
-  client holds a session on both ends, that side's next session send sequence
-  jumps by the gap, past the 1024-packet replay history, so the receiver sees
-  its highest opened sequence rise by more than 1024 at once.
+  step and a gap of `ROCKETNET_HISTORY_PACKETS + 1` to
+  `2 * ROCKETNET_HISTORY_PACKETS` (4097 to 8192 by default). At the first step
+  from there on where the client holds a session on both ends, that side's
+  next session send sequence jumps by the gap, past the whole replay history,
+  so the receiver sees its highest opened sequence rise by more than
+  `ROCKETNET_HISTORY_PACKETS` at once.
 - `seq-wrap-31` and `seq-wrap-32`: draw nothing. Every session starts 256
   below 2^31 or 2^32 through `ROCKETNET_DEV_SESSION_SEQUENCE_START`
   (`sdk/rocketnet_test_seams.h`), which the library reads once per process

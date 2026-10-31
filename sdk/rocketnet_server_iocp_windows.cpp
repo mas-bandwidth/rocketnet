@@ -1134,7 +1134,7 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
     // does not carry max_clients, so it sizes for ROCKETNET_MAX_CLIENTS (a
     // request; the stack charges only what it holds)
 
-    const int receive_buffer_bytes = rocketnet_server_receive_buffer_request( ROCKETNET_MAX_CLIENTS );
+    const int receive_buffer_bytes = rocketnet_server_transport_receive_buffer_request( "iocp", ROCKETNET_MAX_CLIENTS );
     int buffer_bytes = receive_buffer_bytes;
     int granted_receive_bytes = 0;
     int granted_length = sizeof( granted_receive_bytes );
@@ -1348,6 +1348,41 @@ failed:
     return NULL;
 }
 
+// proofs/tla/ServerStopSpread.tla Room: the producer bank's free slots,
+// at most the free send operations (a frame flushed earlier holds its
+// operation until its completion). The free count is the queue's positions,
+// enqueue read first; a free whose push is claimed but not yet published can
+// make one start refuse, and the stop step retries it on its next step.
+
+int rocketnet_server_iocp_send_room( rocketnet_server_iocp_t * iocp )
+{
+    if ( iocp->stopping.load( std::memory_order_acquire ) )
+        return 0;
+    const uint64_t staged = iocp->num_staged.load( std::memory_order_relaxed );
+    if ( staged >= ROCKETNET_IOCP_SEND_QUEUE_SIZE )
+        return 0;
+    const uint64_t enqueue = iocp->free_sends.enqueue.load( std::memory_order_acquire );
+    const uint64_t dequeue = iocp->free_sends.dequeue.load( std::memory_order_acquire );
+    const uint64_t free_sends = enqueue > dequeue ? enqueue - dequeue : 0;
+    const uint64_t slots = ROCKETNET_IOCP_SEND_QUEUE_SIZE - staged;
+    return (int) ( free_sends < slots ? free_sends : slots );
+}
+
+// proofs/tla/ServerStopSpread.tla RequestIoStop: every send operation free.
+// An operation holds its slot from its start through the bank, the post and
+// its completion, so all of them free means no send is in flight. dequeue is
+// read first: a free whose push is claimed and not yet published already
+// finished its send.
+
+bool rocketnet_server_iocp_send_idle( rocketnet_server_iocp_t * iocp )
+{
+    if ( iocp->num_staged.load( std::memory_order_relaxed ) != 0 )
+        return false;
+    const uint64_t dequeue = iocp->free_sends.dequeue.load( std::memory_order_acquire );
+    const uint64_t enqueue = iocp->free_sends.enqueue.load( std::memory_order_acquire );
+    return enqueue - dequeue >= ROCKETNET_IOCP_SEND_QUEUE_SIZE;
+}
+
 uint8_t * rocketnet_server_iocp_start_packet( rocketnet_server_iocp_t * iocp, const rocketnet_address_t * to, uint64_t * packet_id )
 {
     if ( iocp->stopping.load( std::memory_order_acquire ) )
@@ -1359,6 +1394,8 @@ uint8_t * rocketnet_server_iocp_start_packet( rocketnet_server_iocp_t * iocp, co
     op->address_bytes = rocketnet_platform_sockaddr_for( iocp->ipv6, to, &op->address );
     if ( !op->address_bytes )
     {
+        // an address this socket cannot carry: counted SEND_FAILED, not a full staging
+        iocp->counters[ROCKETNET_IOCP_SEND_FAILED].fetch_add( 1, std::memory_order_relaxed );
         rocketnet_iocp_release_send( iocp, ref, ROCKETNET_IOCP_OPERATION_STAGED );
         return NULL;
     }

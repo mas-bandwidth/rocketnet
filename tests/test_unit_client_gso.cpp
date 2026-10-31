@@ -545,23 +545,59 @@ static void test_client_gso_receive_splits_gro_by_stride()
 
     rocketnet_unit_check( test_gso.gro_batches == 1 );
     rocketnet_unit_check( test_gso.packets_received == 7 );
-    rocketnet_unit_check( test_gso.gro_packets_dropped == 0 );
     rocketnet_unit_check( test_gso.gro_cmsg_faults == 0 );
 
     // a receive buffer with room for four takes the first four of ten 300-byte
-    // datagrams and drops the other six, counted
+    // datagrams and keeps the other six (proofs/tla/RNClientGroCarry.tla
+    // Conservation): the next calls deliver them first, in order, and the
+    // socket is not read again until the last of them is out, so the plain
+    // datagram behind the message comes after all ten
 
     memset( &test_socket, 0, sizeof( test_socket ) );
     fake_gso_queue_receive( 3000, 300, 50, FAKE_GSO_CONTROL_GRO );
+    fake_gso_queue_receive( 200, 0, 60, FAKE_GSO_CONTROL_NONE );
     rocketnet_unit_check( rocketnet_client_gso_receive_batch( &test_gso, test_receive_from, test_receive_data, FAKE_GSO_RECEIVE_STRIDE, test_receive_bytes, 4 ) == 4 );
     for ( int i = 0; i < 4; i++ )
     {
         check_gso_receive_slot( i, 300, 50 + i );
     }
-    rocketnet_unit_check( test_gso.gro_packets_dropped == 6 );
+    rocketnet_unit_check( test_socket.recvmmsg_calls == 1 );
     rocketnet_unit_check( test_gso.packets_received == 11 );
     rocketnet_unit_check( test_gso.gro_batches == 2 );
+
+    rocketnet_unit_check( rocketnet_client_gso_receive_batch( &test_gso, test_receive_from, test_receive_data, FAKE_GSO_RECEIVE_STRIDE, test_receive_bytes, 4 ) == 4 );
+    for ( int i = 0; i < 4; i++ )
+    {
+        check_gso_receive_slot( i, 300, 54 + i );
+    }
+    rocketnet_unit_check( test_socket.recvmmsg_calls == 1 );
+
+    // room for 64: the last two of the ten, and no read past them while a
+    // message with up to 64 segments could not fit in the 62 left
+
+    rocketnet_unit_check( rocketnet_client_gso_receive_batch( &test_gso, test_receive_from, test_receive_data, FAKE_GSO_RECEIVE_STRIDE, test_receive_bytes, 64 ) == 2 );
+    check_gso_receive_slot( 0, 300, 58 );
+    check_gso_receive_slot( 1, 300, 59 );
+    rocketnet_unit_check( test_socket.recvmmsg_calls == 1 );
+    rocketnet_unit_check( test_gso.packets_received == 17 );
+
+    rocketnet_unit_check( rocketnet_client_gso_receive_batch( &test_gso, test_receive_from, test_receive_data, FAKE_GSO_RECEIVE_STRIDE, test_receive_bytes, 4 ) == 1 );
+    check_gso_receive_slot( 0, 200, 60 );
     rocketnet_unit_check( rocketnet_client_gso_receive_batch( &test_gso, test_receive_from, test_receive_data, FAKE_GSO_RECEIVE_STRIDE, test_receive_bytes, 4 ) == 0 );
+    rocketnet_unit_check( test_gso.packets_received == 18 );
+
+    // room for one: a message of three is delivered one datagram per call
+
+    memset( &test_socket, 0, sizeof( test_socket ) );
+    fake_gso_queue_receive( 300, 100, 20, FAKE_GSO_CONTROL_GRO );
+    for ( int i = 0; i < 3; i++ )
+    {
+        rocketnet_unit_check( rocketnet_client_gso_receive_batch( &test_gso, test_receive_from, test_receive_data, FAKE_GSO_RECEIVE_STRIDE, test_receive_bytes, 1 ) == 1 );
+        check_gso_receive_slot( 0, 100, 20 + i );
+    }
+    rocketnet_unit_check( test_socket.recvmmsg_calls == 1 );
+    rocketnet_unit_check( rocketnet_client_gso_receive_batch( &test_gso, test_receive_from, test_receive_data, FAKE_GSO_RECEIVE_STRIDE, test_receive_bytes, 1 ) == 0 );
+    rocketnet_unit_check( test_gso.packets_received == 21 );
 
     // a refused UDP_GRO probe is the plain tier
 
@@ -636,7 +672,6 @@ static void test_client_gso_receive_gro_fault_is_counted()
     check_gso_receive_slot( 1, 200, 91 );
     rocketnet_unit_check( test_gso.gro_cmsg_faults == 2 );
     rocketnet_unit_check( test_gso.gro_batches == 1 );
-    rocketnet_unit_check( test_gso.gro_packets_dropped == 0 );
     rocketnet_unit_check( test_gso.packets_received == 4 );
 }
 REGISTER_UNIT_TEST( test_client_gso_receive_gro_fault_is_counted );

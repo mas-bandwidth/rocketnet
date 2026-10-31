@@ -240,9 +240,7 @@ static void test_server_admits_sequential_fresh_tokens_past_twice_max_clients()
 
         const int state = tc_drive( &t, &c, TC_NOW );
         if ( state != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
-            printf( "cycle %d of 5 not admitted: client state %d, CONNECTION_RESPONSE_ADMITTED_SET_FULL %llu\n",
-                    cycle + 1, state,
-                    (unsigned long long) t.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_ADMITTED_SET_FULL] );
+            printf( "cycle %d of 5 not admitted: client state %d\n", cycle + 1, state );
         check( state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
         check( rocketnet_client_slots_num_connected( t.server.client_slots ) == 1 );
 
@@ -254,7 +252,6 @@ static void test_server_admits_sequential_fresh_tokens_past_twice_max_clients()
     }
 
     check( t.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_CONNECTED] == 5 );
-    check( t.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_ADMITTED_SET_FULL] == 0 );
     check( t.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_NO_SLOTS] == 0 );
     check( t.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_SLOTS] == 0 );
 
@@ -329,8 +326,6 @@ static void test_server_refuses_a_token_connected_now()
 
         tc_client_destroy( &d );
     }
-
-    check( t.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_CONNECTED] == 0 );      // retired with the set
 
     tc_client_destroy( &c );
     tc_client_destroy( &a );

@@ -17,9 +17,9 @@ thread_local unsigned long long g_sequenced_hold_visit_count = 0;
 #endif // #if ROCKETNET_DEV
 
 // Codes 1 and 4 follow RNChannelTypes!Dispatch and !Drain. A code-4 hold
-// uses its receive descriptor and ring span; the high bit distinguishes that
-// descriptor index from a code-1 Ru hold without changing channel state.
-static const uint32_t RN_SEQUENCED_RELIABLE_HOLD = 0x80000000u;
+// uses its receive descriptor and ring span; the high bit
+// (RN_SEQUENCED_RELIABLE_HOLD) distinguishes that descriptor index from a
+// code-1 Ru hold without changing channel state.
 
 // proofs/tla/RNChannelTypes.tla OpenPacket
 
@@ -333,7 +333,7 @@ static int rn_sequenced_in_turn( rn_channels_t * channels, const rocketnet_messa
         const uint32_t held_gap = ( sequencing - held->sequencing ) & ROCKETNET_MESSAGE_U24_MASK;
         if ( !( block && held_gap == 0 ) )
         {
-            if ( held_gap == 0 || held_gap >= ( 1u << 23 ) )
+            if ( held_gap == 0 || held_gap >= ROCKETNET_MESSAGE_HALF_RANGE )
             {
                 if ( reliable )
                     rn_sequenced_release_number( channels, region->receive_descriptors[number_slot].number );
@@ -350,7 +350,7 @@ static int rn_sequenced_in_turn( rn_channels_t * channels, const rocketnet_messa
     }
 
     const uint32_t sequence_gap = ( sequencing - rx->sequenced_watermark ) & ROCKETNET_MESSAGE_U24_MASK;
-    if ( sequence_gap >= ( 1u << 23 ) )
+    if ( sequence_gap >= ROCKETNET_MESSAGE_HALF_RANGE )
     {
         if ( reliable )
             rn_sequenced_release_number( channels, region->receive_descriptors[number_slot].number );
@@ -410,7 +410,7 @@ int rn_channels_dispatch_sequenced( struct rn_channels_t * channels, const struc
     const uint32_t sequencing = record->sequencing & ROCKETNET_MESSAGE_U24_MASK;
     const uint32_t delta = ( ordering - rx->ordered_read ) & ROCKETNET_MESSAGE_U24_MASK;
 
-    if ( delta >= ( 1u << 23 ) )
+    if ( delta >= ROCKETNET_MESSAGE_HALF_RANGE )
     {
         // RNChannelTypes!Dispatch: the transport already accepted and ACKs a stale code-4 packet. Only its application view is discarded (I12).
         if ( reliable )
@@ -457,7 +457,7 @@ int rn_channels_dispatch_sequenced( struct rn_channels_t * channels, const struc
         const uint32_t sequence_gap = ( sequencing - held_sequencing ) & ROCKETNET_MESSAGE_U24_MASK;
         const bool continuation = reliable && record->block && held_reliable && gap == 0 && sequence_gap == 0 &&
                                   region->receive_descriptors[held_slot].block_count > 0;
-        if ( gap >= ( 1u << 23 ) || ( gap == 0 && ( sequence_gap >= ( 1u << 23 ) || ( sequence_gap == 0 && !continuation ) ) ) )
+        if ( gap >= ROCKETNET_MESSAGE_HALF_RANGE || ( gap == 0 && ( sequence_gap >= ROCKETNET_MESSAGE_HALF_RANGE || ( sequence_gap == 0 && !continuation ) ) ) )
         {
             if ( reliable )
                 rn_sequenced_release_number( channels, region->receive_descriptors[number_slot].number );
@@ -568,7 +568,7 @@ bool rn_channels_drain_sequenced( struct rn_channels_t * channels, uint32_t chan
     const uint32_t gap = ( ordering - rx->ordered_read ) & ROCKETNET_MESSAGE_U24_MASK;
     if ( gap != 0 )
     {
-        if ( gap >= ( 1u << 23 ) )
+        if ( gap >= ROCKETNET_MESSAGE_HALF_RANGE )
         {
             if ( !rn_sequenced_release_hold( channels, rx ) )
                 return false;

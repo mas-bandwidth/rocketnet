@@ -12,12 +12,12 @@
 # until it has gated green on the fleet for a while (after v1.0.0-preview-2).
 name: msan
 
+# NIGHTLY TIER (2026-10-31): 172-187s on the fleet, over the per-commit
+# tier's two minutes, so it runs each night and on demand, unchanged.
 on:
-  push:
-    # main only: a feature branch runs msan once, for its PR, not twice
-    # (push and pull_request refs are different concurrency groups).
-    branches: [ main ]
-  pull_request:
+  schedule:
+    - cron: "50 4 * * *"
+  workflow_dispatch:
 
 concurrency:
   # each main commit queues in its own group: pending runs on main are
@@ -34,6 +34,7 @@ jobs:
   msan:
     name: MemorySanitizer
     runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 30
     continue-on-error: true
     steps:
 

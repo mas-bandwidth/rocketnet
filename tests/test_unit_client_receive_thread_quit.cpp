@@ -80,8 +80,6 @@ static void test_client_step_driven_destroy_returns_and_closes_once_without_work
         rn_test_client_transport_stop_and_destroy( client );
         check( fake.destroy_calls == i + 1 );
     }
-
-    printf( "test_client_step_driven_destroy_returns_and_closes_once_without_worker\n" );
 }
 
 REGISTER_UNIT_TEST( test_client_step_driven_destroy_returns_and_closes_once_without_worker );

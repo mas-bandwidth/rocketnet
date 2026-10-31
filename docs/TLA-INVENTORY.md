@@ -26,7 +26,7 @@ revision under review.
 | receipts | `RNReceipts` | at most one terminal receipt for a receipt-bearing send |
 | sent map and receipt rings | `RNSentMap`, `RNSentHistory`, `RNSentRingLayout` | no live sent-packet entry or reference overwritten, exact reference accounting, every reported receipt the event written at its index, serials never 0 |
 | unreliable queue | `RNIndexRing`, `RNChannelQueues`, `RNUnreliableRingLayout` | the live entries from the head are the queue in push order across ticket wraps, the head always live, a walk returns each queued record at most once and in order |
-| resend FIFO | `RNChannelQueues`, `RNResendTiming`, `RNResendFifoLayout` | the array's links, heads, tails, flag bits and count are exactly one sequence per class |
+| resend FIFO | `RNResendGenerations`, `RNResendTiming`, `RNResendFifoLayout` | the array's links, heads, tails, flag bits and count are exactly one sequence per class |
 | server send loop | `RNServerSendFair`, `RNOutgoingBuild`, `RNSendRotation` | capacity spent only on written frames except one abort a flush for a refused budget, a flush ends spent or with nothing writable, every connection with work served within N flushes |
 | endpoint reset | `RNSlots`, `ClientSession` | no state or payload crosses a connection generation |
 | client I/O | `RNBufferHandoff`, `RNClientIo`, `RNClientIoDecrypt` | exclusive buffer ownership, index-only exchanges under a mutex the game thread never waits on, replay before admission and one retirement |
@@ -38,7 +38,7 @@ revision under review.
 | replay window layout | `ReplayWindow`, `RNReplayLayout` | the ring bits equal the received sequences of the retained range after every advance, its word-level clear split at the ring end |
 | ack block builder layout | `RNAckBuildLayout` | the descending word pass builds the bit-by-bit walk's block, never more ranges than the capacity |
 | acknowledged-run walk layout | `RNAckWalkLayout` | the masked popcount and descending walk over the sent ring's words visit exactly the named unacknowledged sequences, newest first; the lowest-acked word skip finds the lowest |
-| receive statistics blocks layout | `RNServerStats`, `RNReceivedBlocksLayout` | each block summary exact after retention clears split at the ring end, the older-half query equal to a record-by-record read |
+| receive statistics blocks layout | `RNServerStats`, `RNReceivedBlocksLayout` | each generation-tagged summary exact, the cached left, middle and right pieces exact, the older-half publication equal to a record-by-record read |
 | rtt minimum tree layout | `RNRttTreeLayout` | every tree node the minimum of its children, the root the minimum positive sample |
 | protocol tables' free stacks | `RNOpenAddress`, `RNFreeStackLayout` | each stack holds exactly the slots not live, each once; a map generation never reissued and never 0 |
 | wire sequence reconstruction | `AckBlockWrap`, `RNReconstructLayout` | the three-candidate arithmetic chooses the nearest candidate, the larger on a tie |

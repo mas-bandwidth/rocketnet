@@ -12,20 +12,22 @@ The version lives in `sdk/rocketnet.h`, in two branches selected by
 The shipping branch carries `ROCKETNET_VERSION_FULL` and the integer macros
 `ROCKETNET_VERSION_MAJOR`, `ROCKETNET_VERSION_MINOR` and
 `ROCKETNET_VERSION_PATCH`. At this revision, the full label is
-`"v1.0.0-preview-5"` and the integers are `1.0.0`. The development branch uses
+`"v1.0.0-preview-6"` and the integers are `1.0.0`. The development branch uses
 `"dev"` and the integer sentinel `255.255.255`.
 
 The header label does not identify the current checkout as a release. The
-`v1.0.0-preview-5` tag identifies commit
-`77cd38b0a4f879f3ae04ee6681ac7d94bfd63151`; later commits can still carry that
-label. Check the exact tag and the repository's published release when choosing
-an artifact. Advancing a label alone neither tags nor publishes a release.
+newest tag, `v1.0.0-preview-5`, identifies commit
+`77cd38b0a4f879f3ae04ee6681ac7d94bfd63151`; the header names
+`v1.0.0-preview-6` because wire-affecting changes landed after that tag, and
+no `v1.0.0-preview-6` tag exists yet. Check the exact tag and the repository's
+published release when choosing an artifact. Advancing a label alone neither
+tags nor publishes a release.
 
 The numeric `ROCKETNET_VERSION`, CMake project `VERSION` and installed
 `RocketNetConfigVersion.cmake` remain numeric. CMake reads the full label
 from the header and checks that its numeric portion matches the project
-version. It exports `RocketNet_VERSION_STRING` as `v1.0.0-preview-5` and
-derives `RocketNet_VERSION_PRERELEASE` as `preview-5`. A final release has
+version. It exports `RocketNet_VERSION_STRING` as `v1.0.0-preview-6` and
+derives `RocketNet_VERSION_PRERELEASE` as `preview-6`. A final release has
 an empty prerelease string. There is no separate public prerelease macro.
 
 The `version-consistency` job in
@@ -42,8 +44,9 @@ label. Keep the installed libraries, export list and consumers consistent.
 
 The `unreleased-wire-changes` job in the same workflow enforces that `main` does
 not drift past the newest release with unannounced wire changes. It runs on a
-push to `main`, not on a pull request or a tag push, and compares `main` with the newest
-`v*` tag. The job classifies a commit as wire-affecting when it touches one of these paths:
+pull request, where it judges the merge result, and on a push to `main`; it does
+not run on a tag push. It compares the checked-out commit with the newest `v*`
+tag. The job classifies a commit as wire-affecting when it touches one of these paths:
 
 - `standard/TRANSPORT.md`
 - `standard/MESSAGES.md`
@@ -58,15 +61,16 @@ match, even when no wire behavior changes. The job does not inspect semantics.
 
 When there are wire-affecting commits past the newest tag and the shipping
 version still equals the tag version, the job fails: nothing announces that a
-release is owed. The release must either bump the shipping version and tag it,
-or revert the wire change. When the shipping version has already been bumped,
-the job warns and the change waits for the tag. Until the first `v*` tag exists
-the job reports itself dormant and exits green.
+release is owed. Bump the shipping version to the next label (for a preview,
+`v1.0.0-preview-N` becomes `v1.0.0-preview-N+1`, integers unchanged), or revert
+the wire change. When the shipping version has already been bumped, the job
+warns and the change waits for the tag. When the checkout shows no `v*` tag at
+all, the job fails, because it has nothing to compare against.
 
-A pull request that touches a wire-affecting path therefore has to arrange the
-version bump that will make `main` truthful after merge. The tag may follow in
-the release, but the version in `sdk/rocketnet.h` must no longer name the newest
-release once a wire change is on `main`.
+A pull request that touches a wire-affecting path, while the shipping version
+still names the newest tag, is red until it carries the bump. The tag may follow
+in the release, but the version in `sdk/rocketnet.h` must no longer name the
+newest release once a wire change is on `main`.
 
 ## Default CI requirements
 
@@ -76,39 +80,55 @@ the tagged commit, found from the commit itself, and the release notes do not
 mention it. There is no separate per-release qualification record. The
 required runs are:
 
-- **CI** ([.github/workflows/ci.yml](../.github/workflows/ci.yml)), every job:
-  - `build-and-test`, named `<os> / <build_type> / <leg>`: Ubuntu 24.04 and
-    macOS 15, Debug and Release, four legs per row (`unit`, `functional`,
-    `checks`, `builds`);
-  - `windows / Release (<leg>)` (legs a, b and c);
-  - `XDP / libxdp 1.4 / Debug`, `happy path / <os>` and
-    `backend example / <backend>`;
-  - `asan + ubsan (<leg>)` (`unit suite`, `unit suite portable`,
-    `functional suite`) and `tsan (loopback soak)`;
-  - `fuzz smoke (libFuzzer, corpus replay)` and
-    `fuzz smoke NDEBUG (every fuzzer, corpus replay)`;
-  - `big endian s390x / <build_type>`, `standard conformance`,
-    `pinned libsodium (built from source)` and
-    `platform selftests / <os>`;
-  - `instruction count gate`, `validation tool selftests`,
-    `format check (clang-format 18)` and `runs-on-lint`.
+- **CI** ([.github/workflows/ci.yml](../.github/workflows/ci.yml)), the
+  per-commit tier, every job. A per-commit run finishes within two minutes of
+  the push: every per-commit job in every workflow carries a two-minute
+  `timeout-minutes`, and `tools/check_ci_budget.py` (in the lint job) refuses
+  one without it. The per-commit jobs:
+  - `build-and-test`, named `<os> / <build_type> / <leg>`: Ubuntu 24.04
+    Debug `unit` and `functional`, Release `unit`, `functional`, `checks` and
+    `builds`; macOS 27 on arm64 (rows named `macos-15`) Debug `unit` and
+    Release `functional`;
+  - `XDP / libxdp 1.4 / Debug` and `happy path / <os>` (ubuntu-24.04,
+    windows; the Windows row is the per-commit MSVC whole-tree build);
+  - `asan + ubsan (<leg>)` (`unit suite`, `functional suite`) and
+    `tsan (loopback soak)`;
+  - `fuzz smoke (libFuzzer, corpus replay)`, `big endian s390x / Debug`,
+    `instruction count gate` (restores the pinned toolchain the nightly tier
+    caches; red on a cold cache) and
+    `lint (workflows, format, standard, tool selftests)`.
+- **Nightly CI** ([.github/workflows/nightly-ci.yml](../.github/workflows/nightly-ci.yml)):
+  ci.yml with `full: true`, every job and step with no time bound, including
+  everything the per-commit tier leaves out (listed in nightly-ci.yml's
+  header). Run it on the release commit with
+  `gh workflow run nightly-ci.yml --ref main` once that commit is `main`'s
+  head, and require it green.
+- **msan** ([.github/workflows/msan.yml](../.github/workflows/msan.yml)) and
+  **CBMC** ([.github/workflows/cbmc.yml](../.github/workflows/cbmc.yml)),
+  nightly: `MemorySanitizer` and `cbmc (arithmetic leaf proofs)`, dispatched
+  on the release commit the same way.
 - **nightly** ([.github/workflows/nightly.yml](../.github/workflows/nightly.yml)):
-  `tsan (threaded transport)` on the release commit. Run it with
-  workflow_dispatch on `main` before the tag.
+  `tsan (threaded transport) (main)` on the release commit. Run it with
+  workflow_dispatch on `main` (`gh workflow run nightly.yml --ref main`) once
+  the release commit is `main`'s head; the leg checks out the run's head
+  commit, so its verdict is about that commit. A scheduled nightly whose head
+  is the release commit also counts. Release Check enforces this on the tag
+  push.
 - **static analysis**
   ([.github/workflows/static.yml](../.github/workflows/static.yml)):
   `static analysis (gcc -fanalyzer)` and
   `static analysis (clang-tidy, cppcheck)`.
 - **TLC records** ([.github/workflows/tlc.yml](../.github/workflows/tlc.yml)):
   `Model records are current`.
-- **CBMC** ([.github/workflows/cbmc.yml](../.github/workflows/cbmc.yml)):
-  `cbmc (arithmetic leaf proofs)`, when the change touches `sdk/**` or
-  `proofs/cbmc/**`.
 - **docs** ([.github/workflows/docs.yml](../.github/workflows/docs.yml)):
   `docs (MrDocs HTML reference build)`.
 - **Release Check** ([.github/workflows/release-check.yml](../.github/workflows/release-check.yml)):
   `version consistency` on the pull request that carries the release version
-  and on the tag push itself, and `unreleased wire changes`.
+  and on the tag push itself, and `unreleased wire changes`. On the tag push,
+  `threaded tsan run on the release commit` asks the Actions API for a
+  nightly.yml run whose head is the tagged commit with
+  `tsan (threaded transport) (<that run's ref>)` concluded `success`, and
+  fails when there is none (`tools/check_release_tsan.py`).
 
 The [GCC analyzer evidence limit](TESTING.md#static-analysis-evidence-limit)
 also applies to release qualification: the current wrapper can return green
@@ -137,15 +157,19 @@ A pushed tag is never moved or reused.
 4. Build and test with `make && ./bin/test`, then `./bin/functional` where the
    platform permits it.
 5. Open the release pull request against `main` with the version change.
-   Merge it, then wait for every required run on that merged commit to be green,
-   including the dispatched threaded TSan run. Resolve the evidence limitation
+   Merge it, dispatch nightly.yml on `main`, then wait for every required run
+   on that merged commit to be green, including the dispatched threaded TSan
+   run. Resolve the evidence limitation
    above before treating the GCC result as a clean analyzer pass.
 6. On the merged `main` commit, create an annotated tag `vMAJOR.MINOR.PATCH`,
    or `vMAJOR.MINOR.PATCH-PRERELEASE` for a prerelease, for example
    `v1.0.0-preview-N`, whose complete label equals the shipping
    `ROCKETNET_VERSION_FULL`. Do not tag a different commit, and do not move or
    reuse a tag after pushing it. Verify its consistency with the header before
-   pushing it. Release Check also performs this check on the tag push.
+   pushing it. Release Check also performs this check on the tag push, and
+   fails the tag push when the threaded TSan run on that commit is not green.
+   Do not publish the release while that job is red; re-run it once the
+   threaded TSan run is green.
 7. Publish the GitHub release for that tag.
 
 ## Release notes

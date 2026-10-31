@@ -96,7 +96,15 @@ Reversed controls restore one defect each: `BaseBrokenSingleTake` leaves a
 second fitting READY buffer behind (`MaximalDrain`); `BaseBrokenBudget` takes
 three buffers containing five items, exceeding 1024 (`BudgetBound`);
 `BaseBrokenDeferred` forgets a consumer-owned buffer when its return try-lock
-fails (`OneOwner`). Each must produce the named invariant counterexample.
+fails (`OneOwner`); `BaseBrokenMainBlocks` turns update's try-lock into a
+blocking acquire, so update sits in its take phase while the I/O thread holds
+the mutex (`MainNeverWaits`, 11 distinct states); `BaseBrokenWorkUnderLock`
+keeps the mutex through `Expose` and reads and clears the buffers in `Process`
+under it (`NoWorkUnderLock`, 13 distinct states). Each must produce the named
+invariant counterexample. The code's expose and return
+(`rocketnet_client_update_expose_legacy_receive`,
+`rocketnet_client_update_return_legacy_receive`) only try-acquire and release
+the mutex before the buffers are read or cleared.
 
 Measured on Linux with the CI-pinned runner `0c97d5958bf2b3cb1ad24e6e1b58f5b04e70347a`:
 control 3,211 generated / 1,825 distinct states; all ten invariants pass.

@@ -47,6 +47,10 @@
 // rocketnet_allocator.cpp, so the formula and the code cannot drift.
 
 #define RN_DESCRIPTOR_NONE      0xFFFFFFFFu
+
+// rn_channel_receive_t held_sequenced: the high bit marks a code-4 hold (its
+// receive descriptor index below it), clear for a code-1 hold
+#define RN_SEQUENCED_RELIABLE_HOLD 0x80000000u
 #define RN_CHUNK_NONE           0xFFFFFFFFu
 #define RN_HANDLE_INDEX         0x3FFFFFFFu     // a chunk handle's index bits; its class is the top two
 #define RN_RESEND_NONE          0xFFFFFFFFu
@@ -79,7 +83,6 @@ struct rn_send_number_t                 // 32 bytes: the sender's per-number tab
     double last_send;                   // RN_SEND_NUMBER_NEVER_SENT: never sent; else the last send time (>= 0.0), or a negative failed-send sentinel
     uint32_t descriptor;                // the send descriptor, or RN_DESCRIPTOR_NONE
     uint16_t fragment;                  // index within its block
-    uint8_t ring_units;                 // ring span in 16-byte units: ring_end = ring_start + 16 * ring_units
     uint8_t acked;
 };
 
@@ -160,7 +163,6 @@ struct rn_sent_packet_t                 // 32 bytes: the sent-packet ring, P ent
     uint16_t ref_count;
     uint16_t unreliable_receipts;
     uint32_t receipt_first;
-    uint32_t flags;
 };
 
 struct rn_sent_index_t                  // 16 bytes: packet_id -> sent ring entry, 2P open-addressed entries (6.1)
@@ -228,8 +230,9 @@ struct rn_resend_link_t                 // 12 bytes: resend sequence entry, inde
 // whose descriptor took another ticket is a tombstone; the per-channel reliable
 // FIFO is linked by queue_next and nothing leaves it from the middle.
 // Resend capacity stays W: one slot is in at most one resend sequence, linked
-// to its neighbours by slot index in rn_resend_link_t, and an acked hole stays
-// sequenced until a named removal so a resend walk still counts it.
+// to its neighbours by slot index in rn_resend_link_t, and an ack unlinks its
+// number before marking it acked, so a resend walk visits only unacked numbers
+// (proofs/tla/RNResendGenerations.tla).
 
 // ----------------------------------------------------------------
 //                        the region's layout
@@ -238,7 +241,7 @@ struct rn_resend_link_t                 // 12 bytes: resend sequence entry, inde
 enum
 {
     RN_PART_CHANNEL_SEND = 0,           // 40 C
-    RN_PART_CHANNEL_RECEIVE,            // 24 C (the printed part tag stays 16C; the byte total uses sizeof)
+    RN_PART_CHANNEL_RECEIVE,            // 24 C
     RN_PART_SEND_NUMBERS,               // 32 W
     RN_PART_SEND_FIRST_SENDS,           // 8 W
     RN_PART_RECEIVE_DESCRIPTORS,        // 32 W
@@ -276,6 +279,22 @@ struct rn_region_layout_t
     uint64_t region_bytes;              // the exact region: the formula plus each part's alignment padding
     uint32_t store_chunks[RN_STORE_NUM_CLASSES];
 };
+
+// the parts the maximum resend-delay payload reserve sizes: the send
+// descriptors Q, the send store S and its chunks per class, and the send
+// spans SR. A reserve whose descriptor or chunk indices, or whose span bytes,
+// do not fit in 32 bits is refused, false with a log line naming the rule.
+// rocketnet_message_validate_config runs it, so a validate and a create
+// refuse the same configs. The config's fields are already in range.
+struct rn_region_reserve_sizes_t
+{
+    uint64_t Q;
+    uint64_t SR;
+    uint64_t S;
+    uint32_t chunks[RN_STORE_NUM_CLASSES];
+};
+
+bool rn_region_reserve_sizes( const rocketnet_message_config_t * config, rn_region_reserve_sizes_t * sizes );
 
 // false, with a log line naming the rule, for a refused config. NULL is the defaults.
 bool rn_region_layout( const rocketnet_message_config_t * config, rn_region_layout_t * layout );

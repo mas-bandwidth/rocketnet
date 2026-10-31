@@ -53,12 +53,21 @@ struct rocketnet_server_uring_t;
 
 #define ROCKETNET_URING_SEND_QUEUE_SIZE                                   2048
 
+// the submission queue holds the whole send staging beside one re-arm and
+// one cancel per queue, so one send_packets prepares an SQE for every staged
+// slot: a submit that takes nothing leaves those SQEs in the queue, where
+// the next send_packets or stopped submits them, and no staged slot is ever
+// left without its SQE
+
+ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_ENTRIES >= ROCKETNET_URING_SEND_QUEUE_SIZE + 2 * ROCKETNET_URING_MAX_QUEUES,
+                         "the io_uring submission queue holds a whole send staging beside a re-arm and a cancel per queue" );
+
 // receive: per queue a provided buffer ring of this many buffers of this many
 // bytes. one buffer holds the multishot recvmsg header, the reserved name
 // area, the UDP_GRO control area and the payload, which with UDP_GRO is one
 // coalesced receive of up to 64 KiB (the 16-bit UDP payload), so a buffer is
-// 66 KiB: 4096 * 66 KiB = 264 MiB per queue, all allocated at create (2 KiB
-// buffers, 8 MiB per queue, before UDP_GRO). memory is spent so that one
+// 66 KiB: 4096 * 66 KiB = 264 MiB per queue, all allocated at create
+// whether or not the UDP_GRO probe is granted. memory is spent so that one
 // completion carries a whole coalesced run of datagrams.
 
 #define ROCKETNET_URING_RECV_BUFFERS                                      4096
@@ -83,12 +92,14 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_RECV_BUFFERS >= 2 * ROCKETNET_URING_SEN
 ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_RECEIVE_BUDGET >= 2 * ROCKETNET_URING_SEND_QUEUE_SIZE,
                          "receive budget twice send: io_uring receive budget holds at least twice the send queue" );
 
-// the send staging is per queue and does not derive from ROCKETNET_MAX_CLIENTS:
-// clients spread over the queues, and the most queues stage two packets for
-// every client (BUILDING.md, "Maximum clients")
+// the send staging is one server-wide array whatever the queue count, and
+// does not derive from ROCKETNET_MAX_CLIENTS: it stages two packets for every
+// client of the default configuration. A server whose sends need more in one
+// update spreads them across updates, as the transport's send room reports
+// (rocketnet_server_uring_send_room; proofs/tla/ServerStopSpread.tla Room).
 
-ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_MAX_QUEUES * ROCKETNET_URING_SEND_QUEUE_SIZE >= 2 * ROCKETNET_MAX_CLIENTS,
-                         "the io_uring queues together can stage two packets for every client" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_SEND_QUEUE_SIZE >= 2 * ROCKETNET_DEFAULT_MAX_CLIENTS,
+                         "the io_uring send array stages two packets for every client of the default configuration" );
 ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_RECEIVE_BUDGET >= ROCKETNET_URING_SEND_BUDGET,
                          "receive budget twice send: one send reap fits the receive bank" );
 
@@ -261,6 +272,15 @@ void rocketnet_server_uring_finish_packet( struct rocketnet_server_uring_t * uri
 void rocketnet_server_uring_abort_packet( struct rocketnet_server_uring_t * uring, uint64_t packet_id, uint8_t * packet_data );
 
 void rocketnet_server_uring_send_packets( struct rocketnet_server_uring_t * uring );
+
+// the slots start_packet may still take before the reservation index goes
+// back to 0: one server-wide array, whatever the queue count, and a slot the
+// kernel holds until its completion is not room. Main thread.
+int rocketnet_server_uring_send_room( struct rocketnet_server_uring_t * uring );
+
+// true once every staged slot is submitted and every send has its
+// completion reaped: the reservation index is back at 0. Main thread.
+bool rocketnet_server_uring_send_idle( struct rocketnet_server_uring_t * uring );
 
 // receive packets: receive_packets reaps at most
 // ROCKETNET_URING_RECEIVE_BUDGET completions without blocking into the fill

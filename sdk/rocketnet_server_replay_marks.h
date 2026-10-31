@@ -48,6 +48,9 @@ struct rocketnet_server_replay_marks_t;
 
 struct rocketnet_server_replay_marks_t * rocketnet_server_replay_marks_create( void * context, int max_clients );
 
+// the allocator bytes create requests for max_clients, overhead included
+uint64_t rocketnet_server_replay_marks_allocation_bytes( int max_clients );
+
 void rocketnet_server_replay_marks_destroy( struct rocketnet_server_replay_marks_t * marks );
 
 #if ROCKETNET_DEV

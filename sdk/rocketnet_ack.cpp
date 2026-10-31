@@ -361,18 +361,31 @@ bool rocketnet_ack_endpoint_state_equal( const struct rocketnet_ack_endpoint_t *
 #define ROCKETNET_ACK_RECEIVED_STATS_BLOCK_SLOTS 32
 #define ROCKETNET_ACK_RECEIVED_STATS_BLOCKS \
     ( ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE / ROCKETNET_ACK_RECEIVED_STATS_BLOCK_SLOTS )
-#define ROCKETNET_ACK_RECEIVED_STATS_WORDS_PER_BLOCK 8
-#define ROCKETNET_ACK_RECEIVED_STATS_STORAGE_RECORDS \
+#define ROCKETNET_ACK_RECEIVED_STATS_WORDS_PER_AGGREGATE 8
+#define ROCKETNET_ACK_RECEIVED_STATS_TAG_WORD ROCKETNET_ACK_RECEIVED_STATS_WORDS_PER_AGGREGATE
+#define ROCKETNET_ACK_RECEIVED_STATS_WORDS_PER_BLOCK ( ROCKETNET_ACK_RECEIVED_STATS_WORDS_PER_AGGREGATE + 2 )
+#define ROCKETNET_ACK_RECEIVED_STATS_SUFFIX_WORD \
     ( ROCKETNET_ACK_RECEIVED_STATS_BLOCKS * ROCKETNET_ACK_RECEIVED_STATS_WORDS_PER_BLOCK )
+#define ROCKETNET_ACK_RECEIVED_STATS_PIECES_WORD \
+    ( ROCKETNET_ACK_RECEIVED_STATS_SUFFIX_WORD + ROCKETNET_ACK_RECEIVED_STATS_BLOCK_SLOTS * ROCKETNET_ACK_RECEIVED_STATS_WORDS_PER_AGGREGATE )
+#define ROCKETNET_ACK_RECEIVED_STATS_CACHE_BASE_WORD ROCKETNET_ACK_RECEIVED_STATS_PIECES_WORD
+#define ROCKETNET_ACK_RECEIVED_STATS_CACHE_TOP_WORD ( ROCKETNET_ACK_RECEIVED_STATS_PIECES_WORD + 2 )
+#define ROCKETNET_ACK_RECEIVED_STATS_MIDDLE_WORD ( ROCKETNET_ACK_RECEIVED_STATS_PIECES_WORD + 4 )
+#define ROCKETNET_ACK_RECEIVED_STATS_RIGHT_WORD \
+    ( ROCKETNET_ACK_RECEIVED_STATS_MIDDLE_WORD + ROCKETNET_ACK_RECEIVED_STATS_WORDS_PER_AGGREGATE )
+#define ROCKETNET_ACK_RECEIVED_STATS_STORAGE_WORDS \
+    ( ROCKETNET_ACK_RECEIVED_STATS_RIGHT_WORD + ROCKETNET_ACK_RECEIVED_STATS_WORDS_PER_AGGREGATE )
 
-static_assert( ROCKETNET_ACK_RECEIVED_STATS_STORAGE_RECORDS <= ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE,
-               "received block summaries fit in reclaimed record words" );
+static_assert( ROCKETNET_ACK_RECEIVED_STATS_STORAGE_WORDS <= ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE,
+               "received summaries and suffixes fit in reclaimed record words" );
 
 // proofs/tla/RNWrittenRing.tla Reset. Every field but the three record rings, which
 // a written bit guards (Write sets it, every Read checks it first): the
-// rings' payloads are never zeroed. Reset also clears the compact summaries
-// in the first 512 records' reclaimed stats words (2 KB across 12 KB of ring),
-// without touching sequence/time/bytes.
+// rings' payloads are never zeroed. Reset also clears the 64 generation
+// tags and the cached pieces' base in the received records' reclaimed stats
+// words (520 bytes), without
+// touching sequence/time/bytes: an untagged block summarizes nothing, and a
+// suffix is always built before it is read.
 
 void rocketnet_ack_endpoint_reset( struct rocketnet_ack_endpoint_t * endpoint )
 {
@@ -388,8 +401,14 @@ void rocketnet_ack_endpoint_reset( struct rocketnet_ack_endpoint_t * endpoint )
         endpoint->rtt_history[i] = -1.0f;
     for ( int i = 0; i < ROCKETNET_RTT_HISTORY_SIZE; i++ )
         endpoint->stats_rtt_min_tree[i] = 1e9f;                 // ROCKETNET_ACK_RTT_NONE: no positive sample
-    for ( int i = 0; i < ROCKETNET_ACK_RECEIVED_STATS_STORAGE_RECORDS; ++i )
-        endpoint->received[i].stats_word = 0;
+    for ( int block = 0; block < ROCKETNET_ACK_RECEIVED_STATS_BLOCKS; ++block )
+    {
+        const int word = block * ROCKETNET_ACK_RECEIVED_STATS_WORDS_PER_BLOCK + ROCKETNET_ACK_RECEIVED_STATS_TAG_WORD;
+        endpoint->received[word].stats_word = 0;
+        endpoint->received[word + 1].stats_word = 0;
+    }
+    endpoint->received[ROCKETNET_ACK_RECEIVED_STATS_CACHE_BASE_WORD].stats_word = 0;
+    endpoint->received[ROCKETNET_ACK_RECEIVED_STATS_CACHE_BASE_WORD + 1].stats_word = 0;
 }
 
 // -----------------------------------------
@@ -404,14 +423,15 @@ void rocketnet_ack_endpoint_reset( struct rocketnet_ack_endpoint_t * endpoint )
 // ( sum - count * min ) / count from a double sum, while the recompute sums
 // sample - min in float.
 // Every window is a function of its high-water mark. Sent counters move their
-// edges incrementally. Received records use fixed 32-slot physical blocks:
-// advancing retention clears whole summaries and rescans at most two edge
-// blocks, a receive rebuilds its one block, and the older-half query reads
-// summaries plus at most two edges. The fixed worst case is at most 256
-// record/block visits and cannot grow into the old quadratic insertion walk.
+// edges incrementally. Received records are summarized per 32-sequence
+// generation and the older half is kept as three cached pieces: in steady
+// traffic a receive merges its record into one summary, reads one suffix
+// aggregate and appends one record. The fixed worst case is at most 256
+// record/summary visits (a duplicate's block rebuild plus a full rebuild of
+// the pieces is under 130) and cannot grow into the old quadratic insertion
+// walk.
 
 #define ROCKETNET_ACK_STATS_SENT_HALF ( (uint64_t) ROCKETNET_SENT_PACKET_BUFFER_SIZE / 2 )
-#define ROCKETNET_ACK_STATS_RECEIVED_HALF ( (uint64_t) ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE / 2 )
 #define ROCKETNET_ACK_RTT_NONE 1e9f
 
 static inline uint64_t rocketnet_ack_stats_window_base( uint64_t highest, uint64_t ring )
@@ -688,18 +708,7 @@ static inline void rocketnet_ack_stats_received_visit( struct rocketnet_ack_endp
 #endif // #if ROCKETNET_DEV
 }
 
-struct rocketnet_ack_stats_received_block_t
-{
-    uint64_t bytes;
-    double low_time;
-    double high_time;
-    uint32_t count;
-    uint8_t first_is_nan;
-    uint8_t pad[3];
-};
-
-static_assert( sizeof( rocketnet_ack_stats_received_block_t ) == 32,
-               "received block aggregate size" );
+typedef struct rocketnet_ack_received_aggregate_t rocketnet_ack_stats_received_block_t;
 
 static inline rocketnet_ack_stats_received_block_t rocketnet_ack_stats_received_empty()
 {
@@ -727,9 +736,9 @@ static inline double rocketnet_ack_stats_received_max( double a, double b )
     return b > a ? b : a;
 }
 
-// Merge in physical-slot order, which is sequence order inside each
-// non-wrapping query piece. first_is_nan keeps the scan oracle's first
-// present value; low/high ignore later NaNs exactly as its comparisons do.
+// Merge in sequence order: left holds the lower sequences. first_is_nan
+// keeps the scan oracle's first present value; low/high ignore later NaNs
+// exactly as its comparisons do.
 
 static rocketnet_ack_stats_received_block_t rocketnet_ack_stats_received_merge(
     const rocketnet_ack_stats_received_block_t & left,
@@ -746,81 +755,14 @@ static rocketnet_ack_stats_received_block_t rocketnet_ack_stats_received_merge(
     result.high_time = rocketnet_ack_stats_received_max( left.high_time, right.high_time );
     result.count = left.count + right.count;
     result.first_is_nan = left.first_is_nan;
+    result.first_offset = left.first_offset;
     memset( result.pad, 0, sizeof( result.pad ) );
 
     return result;
-}
-
-static inline uint32_t rocketnet_ack_stats_received_word( const struct rocketnet_ack_endpoint_t * endpoint,
-                                                          int block, int word )
-{
-    return endpoint->received[block * ROCKETNET_ACK_RECEIVED_STATS_WORDS_PER_BLOCK + word].stats_word;
-}
-
-static inline void rocketnet_ack_stats_received_set_word( struct rocketnet_ack_endpoint_t * endpoint,
-                                                          int block, int word, uint32_t value )
-{
-    endpoint->received[block * ROCKETNET_ACK_RECEIVED_STATS_WORDS_PER_BLOCK + word].stats_word = value;
-}
-
-static uint64_t rocketnet_ack_stats_received_u64( const struct rocketnet_ack_endpoint_t * endpoint,
-                                                  int block, int word )
-{
-    return (uint64_t) rocketnet_ack_stats_received_word( endpoint, block, word ) |
-           ( (uint64_t) rocketnet_ack_stats_received_word( endpoint, block, word + 1 ) << 32 );
-}
-
-static void rocketnet_ack_stats_received_set_u64( struct rocketnet_ack_endpoint_t * endpoint,
-                                                  int block, int word, uint64_t value )
-{
-    rocketnet_ack_stats_received_set_word( endpoint, block, word, (uint32_t) value );
-    rocketnet_ack_stats_received_set_word( endpoint, block, word + 1, (uint32_t) ( value >> 32 ) );
-}
-
-static double rocketnet_ack_stats_received_double( const struct rocketnet_ack_endpoint_t * endpoint,
-                                                   int block, int word )
-{
-    const uint64_t bits = rocketnet_ack_stats_received_u64( endpoint, block, word );
-    double value;
-    memcpy( &value, &bits, sizeof( value ) );
-    return value;
-}
-
-static void rocketnet_ack_stats_received_set_double( struct rocketnet_ack_endpoint_t * endpoint,
-                                                     int block, int word, double value )
-{
-    uint64_t bits;
-    memcpy( &bits, &value, sizeof( bits ) );
-
-    rocketnet_ack_stats_received_set_u64( endpoint, block, word, bits );
-}
-
-static rocketnet_ack_stats_received_block_t rocketnet_ack_stats_received_read_block(
-    const struct rocketnet_ack_endpoint_t * endpoint, int block )
-{
-    rocketnet_ack_stats_received_block_t result;
-    result.bytes = rocketnet_ack_stats_received_u64( endpoint, block, 0 );
-    result.low_time = rocketnet_ack_stats_received_double( endpoint, block, 2 );
-    result.high_time = rocketnet_ack_stats_received_double( endpoint, block, 4 );
-    result.count = rocketnet_ack_stats_received_word( endpoint, block, 6 );
-    result.first_is_nan = (uint8_t) rocketnet_ack_stats_received_word( endpoint, block, 7 );
-    memset( result.pad, 0, sizeof( result.pad ) );
-
-    return result;
-}
-
-static void rocketnet_ack_stats_received_write_block( struct rocketnet_ack_endpoint_t * endpoint, int block,
-                                                      const rocketnet_ack_stats_received_block_t & value )
-{
-    rocketnet_ack_stats_received_set_u64( endpoint, block, 0, value.bytes );
-    rocketnet_ack_stats_received_set_double( endpoint, block, 2, value.low_time );
-    rocketnet_ack_stats_received_set_double( endpoint, block, 4, value.high_time );
-    rocketnet_ack_stats_received_set_word( endpoint, block, 6, value.count );
-    rocketnet_ack_stats_received_set_word( endpoint, block, 7, value.first_is_nan );
 }
 
 static inline rocketnet_ack_stats_received_block_t rocketnet_ack_stats_received_record(
-    const struct rocketnet_received_packet_record_t * record )
+    const struct rocketnet_received_packet_record_t * record, int offset )
 {
     rocketnet_ack_stats_received_block_t result;
     result.bytes = record->wire_bytes;
@@ -828,149 +770,300 @@ static inline rocketnet_ack_stats_received_block_t rocketnet_ack_stats_received_
     result.high_time = record->receive_time;
     result.count = 1;
     result.first_is_nan = isnan( record->receive_time ) ? 1 : 0;
+    result.first_offset = (uint8_t) offset;
     memset( result.pad, 0, sizeof( result.pad ) );
 
     return result;
 }
 
-static void rocketnet_ack_stats_received_rebuild_block( struct rocketnet_ack_endpoint_t * endpoint,
-                                                        int block, uint64_t highest )
+// the record of exactly this sequence, or empty when its slot holds another
+// sequence or was not written since the reset
+
+static inline rocketnet_ack_stats_received_block_t rocketnet_ack_stats_received_present(
+    struct rocketnet_ack_endpoint_t * endpoint, uint64_t sequence )
 {
-    rocketnet_ack_stats_received_block_t aggregate = rocketnet_ack_stats_received_empty();
-    const uint64_t base = rocketnet_ack_stats_window_base( highest, ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE );
-    const int first = block * ROCKETNET_ACK_RECEIVED_STATS_BLOCK_SLOTS;
-    for ( int slot = first; slot < first + ROCKETNET_ACK_RECEIVED_STATS_BLOCK_SLOTS; ++slot )
-    {
-        rocketnet_ack_stats_received_visit( endpoint );
+    rocketnet_ack_stats_received_visit( endpoint );
 
-        const struct rocketnet_received_packet_record_t * record = &endpoint->received[slot];
-        if ( rocketnet_ack_bit( endpoint->received_written, (uint64_t) slot ) &&
-             record->sequence >= base && record->sequence <= highest )
-            aggregate = rocketnet_ack_stats_received_merge( aggregate, rocketnet_ack_stats_received_record( record ) );
-    }
+    const uint64_t slot = sequence % ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE;
+    const struct rocketnet_received_packet_record_t * record = &endpoint->received[slot];
+    if ( rocketnet_ack_bit( endpoint->received_written, slot ) && record->sequence == sequence )
+        return rocketnet_ack_stats_received_record( record, (int) ( sequence % ROCKETNET_ACK_RECEIVED_STATS_BLOCK_SLOTS ) );
 
-    rocketnet_ack_stats_received_write_block( endpoint, block, aggregate );
+    return rocketnet_ack_stats_received_empty();
 }
 
-static void rocketnet_ack_stats_received_clear_blocks( struct rocketnet_ack_endpoint_t * endpoint )
+// The stats words: one 32-bit word reclaimed from each received record. An
+// aggregate takes eight words: bytes (0-1), low time (2-3), high time (4-5),
+// count (6), first_is_nan | first_offset << 8 (7). Block b's summary is the
+// aggregate at word b * 10 and its generation tag the 64-bit word pair after
+// it; the suffix aggregates of the older half's first block follow the
+// blocks, one per offset; then the cached pieces: the base and top they were
+// built for (0 base = none), the middle and the right piece.
+
+static inline uint32_t rocketnet_ack_stats_received_word( const struct rocketnet_ack_endpoint_t * endpoint, int word )
 {
-    const rocketnet_ack_stats_received_block_t empty = rocketnet_ack_stats_received_empty();
-
-    for ( int block = 0; block < ROCKETNET_ACK_RECEIVED_STATS_BLOCKS; ++block )
-    {
-        rocketnet_ack_stats_received_visit( endpoint );
-
-        rocketnet_ack_stats_received_write_block( endpoint, block, empty );
-    }
+    return endpoint->received[word].stats_word;
 }
 
-static void rocketnet_ack_stats_received_clear_physical_range( struct rocketnet_ack_endpoint_t * endpoint,
-                                                               int from, int to, uint64_t highest )
+static inline void rocketnet_ack_stats_received_set_word( struct rocketnet_ack_endpoint_t * endpoint, int word, uint32_t value )
 {
-    if ( from >= to )
-        return;
-
-    const rocketnet_ack_stats_received_block_t empty = rocketnet_ack_stats_received_empty();
-    const int first_block = from / ROCKETNET_ACK_RECEIVED_STATS_BLOCK_SLOTS;
-    const int last_block = ( to - 1 ) / ROCKETNET_ACK_RECEIVED_STATS_BLOCK_SLOTS;
-    for ( int block = first_block; block <= last_block; ++block )
-    {
-        rocketnet_ack_stats_received_visit( endpoint );
-
-        const int block_from = block * ROCKETNET_ACK_RECEIVED_STATS_BLOCK_SLOTS;
-        const int block_to = block_from + ROCKETNET_ACK_RECEIVED_STATS_BLOCK_SLOTS;
-        if ( from <= block_from && block_to <= to )
-            rocketnet_ack_stats_received_write_block( endpoint, block, empty );
-        else
-            rocketnet_ack_stats_received_rebuild_block( endpoint, block, highest );
-    }
+    endpoint->received[word].stats_word = value;
 }
 
-// Clears the physical slots leaving the full retained window. Whole blocks
-// cost one visit and at most two edge blocks are rescanned.
-// proofs/tla/RNServerStats.tla Slide: fixed-block retention update.
-
-static void rocketnet_ack_stats_received_advance( struct rocketnet_ack_endpoint_t * endpoint, uint64_t highest )
+static inline uint64_t rocketnet_ack_stats_received_u64( const struct rocketnet_ack_endpoint_t * endpoint, int word )
 {
-    const uint64_t old_highest = endpoint->highest_received_sequence;
-    if ( highest <= old_highest || old_highest == 0 )
+    return (uint64_t) rocketnet_ack_stats_received_word( endpoint, word ) |
+           ( (uint64_t) rocketnet_ack_stats_received_word( endpoint, word + 1 ) << 32 );
+}
+
+static inline void rocketnet_ack_stats_received_set_u64( struct rocketnet_ack_endpoint_t * endpoint, int word, uint64_t value )
+{
+    rocketnet_ack_stats_received_set_word( endpoint, word, (uint32_t) value );
+    rocketnet_ack_stats_received_set_word( endpoint, word + 1, (uint32_t) ( value >> 32 ) );
+}
+
+static inline double rocketnet_ack_stats_received_double( const struct rocketnet_ack_endpoint_t * endpoint, int word )
+{
+    const uint64_t bits = rocketnet_ack_stats_received_u64( endpoint, word );
+    double value;
+    memcpy( &value, &bits, sizeof( value ) );
+    return value;
+}
+
+static inline void rocketnet_ack_stats_received_set_double( struct rocketnet_ack_endpoint_t * endpoint, int word, double value )
+{
+    uint64_t bits;
+    memcpy( &bits, &value, sizeof( bits ) );
+    rocketnet_ack_stats_received_set_u64( endpoint, word, bits );
+}
+
+static rocketnet_ack_stats_received_block_t rocketnet_ack_stats_received_load(
+    const struct rocketnet_ack_endpoint_t * endpoint, int word )
+{
+    rocketnet_ack_stats_received_block_t result;
+    result.bytes = rocketnet_ack_stats_received_u64( endpoint, word );
+    result.low_time = rocketnet_ack_stats_received_double( endpoint, word + 2 );
+    result.high_time = rocketnet_ack_stats_received_double( endpoint, word + 4 );
+    result.count = rocketnet_ack_stats_received_word( endpoint, word + 6 );
+    const uint32_t flags = rocketnet_ack_stats_received_word( endpoint, word + 7 );
+    result.first_is_nan = (uint8_t) ( flags & 0xFF );
+    result.first_offset = (uint8_t) ( flags >> 8 );
+    memset( result.pad, 0, sizeof( result.pad ) );
+
+    return result;
+}
+
+static void rocketnet_ack_stats_received_store( struct rocketnet_ack_endpoint_t * endpoint, int word,
+                                                const rocketnet_ack_stats_received_block_t & value )
+{
+    rocketnet_ack_stats_received_set_u64( endpoint, word, value.bytes );
+    rocketnet_ack_stats_received_set_double( endpoint, word + 2, value.low_time );
+    rocketnet_ack_stats_received_set_double( endpoint, word + 4, value.high_time );
+    rocketnet_ack_stats_received_set_word( endpoint, word + 6, value.count );
+    rocketnet_ack_stats_received_set_word( endpoint, word + 7, (uint32_t) value.first_is_nan | ( (uint32_t) value.first_offset << 8 ) );
+}
+
+static inline int rocketnet_ack_stats_received_block_word( int block )
+{
+    return block * ROCKETNET_ACK_RECEIVED_STATS_WORDS_PER_BLOCK;
+}
+
+static inline uint64_t rocketnet_ack_stats_received_tag( const struct rocketnet_ack_endpoint_t * endpoint, int block )
+{
+    return rocketnet_ack_stats_received_u64( endpoint, rocketnet_ack_stats_received_block_word( block ) + ROCKETNET_ACK_RECEIVED_STATS_TAG_WORD );
+}
+
+static inline int rocketnet_ack_stats_received_suffix_word( int offset )
+{
+    return ROCKETNET_ACK_RECEIVED_STATS_SUFFIX_WORD + offset * ROCKETNET_ACK_RECEIVED_STATS_WORDS_PER_AGGREGATE;
+}
+
+// A block summary holds one generation: the sequences [g * 32, g * 32 + 31],
+// all of which live in the same physical block. Its tag is g + 1 (0 after a
+// reset: nothing summarized). A summary counts every record of its
+// generation written since the tag was set, so no retention clear is needed:
+// a newer generation's first write retags the block, and an older one's is
+// left out (that generation is never read whole again, since a later one has
+// moved the base past its start).
+// proofs/tla/RNReceivedBlocksLayout.tla Receive: the summary step: retag, point merge, or the duplicate's rebuild
+
+static void rocketnet_ack_stats_received_summarize( struct rocketnet_ack_endpoint_t * endpoint,
+                                                    uint64_t sequence, bool duplicate )
+{
+    const int slot = (int) ( sequence % ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE );
+    const int block = slot / ROCKETNET_ACK_RECEIVED_STATS_BLOCK_SLOTS;
+    const int offset = slot % ROCKETNET_ACK_RECEIVED_STATS_BLOCK_SLOTS;
+    const int word = rocketnet_ack_stats_received_block_word( block );
+    const uint64_t tag = sequence / ROCKETNET_ACK_RECEIVED_STATS_BLOCK_SLOTS + 1;
+    const uint64_t held = rocketnet_ack_stats_received_tag( endpoint, block );
+
+    rocketnet_ack_stats_received_visit( endpoint );
+
+    if ( held > tag )
         return;
 
-    const uint64_t old_base = rocketnet_ack_stats_window_base( old_highest, ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE );
-    const uint64_t base = rocketnet_ack_stats_window_base( highest, ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE );
-    const uint64_t count = base - old_base;
-    if ( !count )
-        return;
+    const rocketnet_ack_stats_received_block_t record = rocketnet_ack_stats_received_record( &endpoint->received[slot], offset );
 
-    if ( count >= ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE )
+    if ( held < tag )
     {
-        rocketnet_ack_stats_received_clear_blocks( endpoint );
+        rocketnet_ack_stats_received_store( endpoint, word, record );
+        rocketnet_ack_stats_received_set_u64( endpoint, word + ROCKETNET_ACK_RECEIVED_STATS_TAG_WORD, tag );
         return;
     }
 
-    const int start = (int) ( old_base % ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE );
-    const int end = start + (int) count;
-    rocketnet_ack_stats_received_clear_physical_range(
-        endpoint, start, end < ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE ? end : ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE, highest );
-
-    if ( end > ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE )
-        rocketnet_ack_stats_received_clear_physical_range(
-            endpoint, 0, end - ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE, highest );
-}
-
-static rocketnet_ack_stats_received_block_t rocketnet_ack_stats_received_query(
-    struct rocketnet_ack_endpoint_t * endpoint, uint64_t first, uint64_t last )
-{
-    rocketnet_ack_stats_received_block_t aggregate = rocketnet_ack_stats_received_empty();
-    uint64_t sequence = first;
-    uint64_t remaining = last - first + 1;
-    while ( remaining )
+    if ( duplicate )
     {
-        const int slot = (int) ( sequence % ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE );
-        const int offset = slot % ROCKETNET_ACK_RECEIVED_STATS_BLOCK_SLOTS;
-        uint64_t take = (uint64_t) ( ROCKETNET_ACK_RECEIVED_STATS_BLOCK_SLOTS - offset );
-        if ( take > remaining )
-            take = remaining;
+        // the replaced record's bytes and times leave: rebuild the block from
+        // its records of this generation, in offset order
 
-        if ( offset == 0 && take == ROCKETNET_ACK_RECEIVED_STATS_BLOCK_SLOTS )
+        rocketnet_ack_stats_received_block_t aggregate = rocketnet_ack_stats_received_empty();
+        const uint64_t first = ( tag - 1 ) * ROCKETNET_ACK_RECEIVED_STATS_BLOCK_SLOTS;
+        for ( int i = 0; i < ROCKETNET_ACK_RECEIVED_STATS_BLOCK_SLOTS; ++i )
+            aggregate = rocketnet_ack_stats_received_merge( aggregate, rocketnet_ack_stats_received_present( endpoint, first + (uint64_t) i ) );
+        rocketnet_ack_stats_received_store( endpoint, word, aggregate );
+        return;
+    }
+
+    // a new sequence of this generation joins at its offset: count, bytes and
+    // extrema take it in any order; it becomes the first only below the
+    // current first offset
+
+    rocketnet_ack_stats_received_block_t summary = rocketnet_ack_stats_received_load( endpoint, word );
+    if ( !summary.count )
+    {
+        summary = record;
+    }
+    else
+    {
+        summary.bytes += record.bytes;
+        summary.count += 1;
+        summary.low_time = rocketnet_ack_stats_received_min( summary.low_time, record.low_time );
+        summary.high_time = rocketnet_ack_stats_received_max( summary.high_time, record.high_time );
+        if ( offset < summary.first_offset )
         {
-            rocketnet_ack_stats_received_visit( endpoint );
-
-            aggregate = rocketnet_ack_stats_received_merge(
-                aggregate, rocketnet_ack_stats_received_read_block(
-                               endpoint, slot / ROCKETNET_ACK_RECEIVED_STATS_BLOCK_SLOTS ) );
+            summary.first_is_nan = record.first_is_nan;
+            summary.first_offset = record.first_offset;
         }
-        else
-        {
-            for ( uint64_t i = 0; i < take; ++i )
-            {
-                rocketnet_ack_stats_received_visit( endpoint );
-
-                const int record_slot = slot + (int) i;
-                const struct rocketnet_received_packet_record_t * record = &endpoint->received[record_slot];
-                if ( rocketnet_ack_bit( endpoint->received_written, (uint64_t) record_slot ) &&
-                     record->sequence == sequence + i )
-                    aggregate = rocketnet_ack_stats_received_merge(
-                        aggregate, rocketnet_ack_stats_received_record( record ) );
-            }
-        }
-
-        remaining -= take;
-        if ( remaining )
-            sequence += take;
     }
-
-    return aggregate;
+    rocketnet_ack_stats_received_store( endpoint, word, summary );
 }
 
-static void rocketnet_ack_stats_received_refresh( struct rocketnet_ack_endpoint_t * endpoint )
+// generation g's summary when the block holds it, else empty (no record of g was written)
+
+static rocketnet_ack_stats_received_block_t rocketnet_ack_stats_received_generation(
+    struct rocketnet_ack_endpoint_t * endpoint, uint64_t generation )
+{
+    rocketnet_ack_stats_received_visit( endpoint );
+
+    const int block = (int) ( generation % ROCKETNET_ACK_RECEIVED_STATS_BLOCKS );
+    const uint64_t held = rocketnet_ack_stats_received_tag( endpoint, block );
+    rocketnet_assert( held <= generation + 1 );
+    if ( held != generation + 1 )
+        return rocketnet_ack_stats_received_empty();
+
+    return rocketnet_ack_stats_received_load( endpoint, rocketnet_ack_stats_received_block_word( block ) );
+}
+
+// The published cohort is the older half [base, top]. When it spans more than
+// one generation it is three pieces, each in sequence order: the left piece
+// [base, end of base's generation], read from suffix aggregates built over
+// that generation; the middle, the whole generations strictly between; the
+// right piece [start of top's generation, top], appended record by record as
+// top moves. In steady traffic base and top move one sequence a receive: a
+// receive reads one suffix aggregate and appends one record, top leaving its
+// generation moves the finished right piece into the middle, and base
+// leaving its generation rebuilds the suffixes and the middle (32 records and
+// 31 summaries, once every 32 receives). A write inside the cached
+// [base, top] rebuilds every piece.
+// proofs/tla/RNReceivedBlocksLayout.tla Receive: the pieces: reuse with the right piece appended, or rebuild
+
+static void rocketnet_ack_stats_received_refresh( struct rocketnet_ack_endpoint_t * endpoint, uint64_t sequence )
 {
     const uint64_t base = rocketnet_ack_stats_window_base(
         endpoint->highest_received_sequence, ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE );
     const uint64_t top = rocketnet_ack_stats_window_top(
         endpoint->highest_received_sequence, ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE );
-    const rocketnet_ack_stats_received_block_t aggregate =
-        rocketnet_ack_stats_received_query( endpoint, base, top );
+    const uint64_t base_generation = base / ROCKETNET_ACK_RECEIVED_STATS_BLOCK_SLOTS;
+    const uint64_t top_generation = top / ROCKETNET_ACK_RECEIVED_STATS_BLOCK_SLOTS;
+
+    rocketnet_ack_stats_received_block_t aggregate = rocketnet_ack_stats_received_empty();
+
+    if ( base_generation == top_generation )
+    {
+        // one generation: read it record by record, nothing cached
+
+        for ( uint64_t s = base; s <= top; ++s )
+            aggregate = rocketnet_ack_stats_received_merge( aggregate, rocketnet_ack_stats_received_present( endpoint, s ) );
+        rocketnet_ack_stats_received_set_u64( endpoint, ROCKETNET_ACK_RECEIVED_STATS_CACHE_BASE_WORD, 0 );
+    }
+    else
+    {
+        // a write inside the cached [base, top] changed a piece: rebuild them all
+
+        const uint64_t B = ROCKETNET_ACK_RECEIVED_STATS_BLOCK_SLOTS;
+        const uint64_t cache_base = rocketnet_ack_stats_received_u64( endpoint, ROCKETNET_ACK_RECEIVED_STATS_CACHE_BASE_WORD );
+        const uint64_t cache_top = rocketnet_ack_stats_received_u64( endpoint, ROCKETNET_ACK_RECEIVED_STATS_CACHE_TOP_WORD );
+        const bool valid = cache_base != 0 && sequence > cache_top;
+        const uint64_t cached_base_generation = cache_base / B;
+        const uint64_t cached_top_generation = cache_top / B;
+        const bool same_base = valid && cached_base_generation == base_generation;
+        const bool same_top = valid && cached_top_generation == top_generation;
+
+        // the right piece: appended while top stays in its generation; when
+        // top leaves it and base has not moved generation, the finished
+        // generation and any whole ones top passed join the middle
+
+        rocketnet_ack_stats_received_block_t middle = rocketnet_ack_stats_received_load( endpoint, ROCKETNET_ACK_RECEIVED_STATS_MIDDLE_WORD );
+        rocketnet_ack_stats_received_block_t right = rocketnet_ack_stats_received_load( endpoint, ROCKETNET_ACK_RECEIVED_STATS_RIGHT_WORD );
+        uint64_t next = cache_top + 1;
+        if ( !same_top )
+        {
+            if ( same_base )
+            {
+                for ( ; next < ( cached_top_generation + 1 ) * B; ++next )
+                    right = rocketnet_ack_stats_received_merge( right, rocketnet_ack_stats_received_present( endpoint, next ) );
+                middle = rocketnet_ack_stats_received_merge( middle, right );
+                for ( uint64_t generation = cached_top_generation + 1; generation < top_generation; ++generation )
+                    middle = rocketnet_ack_stats_received_merge( middle, rocketnet_ack_stats_received_generation( endpoint, generation ) );
+            }
+            right = rocketnet_ack_stats_received_empty();
+            next = top_generation * B;
+        }
+        for ( ; next <= top; ++next )
+            right = rocketnet_ack_stats_received_merge( right, rocketnet_ack_stats_received_present( endpoint, next ) );
+
+        // the left piece's suffixes and the middle: rebuilt when base changes
+        // generation (the middle's first generation becomes the left piece)
+
+        if ( !same_base )
+        {
+            const uint64_t left_first = base_generation * B;
+            const int base_offset = (int) ( base % B );
+            rocketnet_ack_stats_received_block_t suffix = rocketnet_ack_stats_received_empty();
+            for ( int offset = (int) B - 1; offset >= base_offset; --offset )
+            {
+                suffix = rocketnet_ack_stats_received_merge(
+                    rocketnet_ack_stats_received_present( endpoint, left_first + (uint64_t) offset ), suffix );
+                rocketnet_ack_stats_received_store( endpoint, rocketnet_ack_stats_received_suffix_word( offset ), suffix );
+            }
+
+            middle = rocketnet_ack_stats_received_empty();
+            for ( uint64_t generation = base_generation + 1; generation < top_generation; ++generation )
+                middle = rocketnet_ack_stats_received_merge( middle, rocketnet_ack_stats_received_generation( endpoint, generation ) );
+        }
+
+        rocketnet_ack_stats_received_store( endpoint, ROCKETNET_ACK_RECEIVED_STATS_MIDDLE_WORD, middle );
+        rocketnet_ack_stats_received_store( endpoint, ROCKETNET_ACK_RECEIVED_STATS_RIGHT_WORD, right );
+        rocketnet_ack_stats_received_set_u64( endpoint, ROCKETNET_ACK_RECEIVED_STATS_CACHE_BASE_WORD, base );
+        rocketnet_ack_stats_received_set_u64( endpoint, ROCKETNET_ACK_RECEIVED_STATS_CACHE_TOP_WORD, top );
+
+        rocketnet_ack_stats_received_visit( endpoint );
+        const rocketnet_ack_stats_received_block_t left = rocketnet_ack_stats_received_load(
+            endpoint, rocketnet_ack_stats_received_suffix_word( (int) ( base % ROCKETNET_ACK_RECEIVED_STATS_BLOCK_SLOTS ) ) );
+        aggregate = rocketnet_ack_stats_received_merge(
+            rocketnet_ack_stats_received_merge( left, middle ), right );
+    }
+
     endpoint->stats_received_count = aggregate.count;
     endpoint->stats_received_bytes = aggregate.bytes;
 
@@ -1225,9 +1318,10 @@ uint64_t rocketnet_ack_endpoint_open_aggregate( struct rocketnet_ack_endpoint_t 
 }
 
 // proofs/tla/RNServerStats.tla Send: takes any received sequence the remote end chose
-// proofs/tla/RNServerStats.tla Write: writes the exact-tagged ring slot and rebuilds its block
+// proofs/tla/RNServerStats.tla Write: writes the exact-tagged ring slot and merges it into its generation's summary
+// proofs/tla/RNServerStats.tla Slide: the older half moves with the high-water mark; the cached pieces follow it
+// proofs/tla/RNReceivedBlocksLayout.tla Receive: the refusal, the write, the summary step and the older-half pieces
 
-// proofs/tla/RNReceivedBlocksLayout.tla Receive: the refusal, the retention clear split at the ring end, the block rebuild and the older-half query
 void rocketnet_ack_endpoint_record_received( struct rocketnet_ack_endpoint_t * endpoint,
                                              uint64_t sequence, int wire_bytes, double time )
 {
@@ -1248,26 +1342,22 @@ void rocketnet_ack_endpoint_record_received( struct rocketnet_ack_endpoint_t * e
          sequence <= endpoint->highest_received_sequence - ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE )
         return;
 
-    // Retention moves first, lazily clearing physical slots that have fallen
-    // out. The point write then replaces this exact slot generation and one
-    // range query publishes the older-half cohort.
+    const uint64_t slot = sequence % ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE;
+    struct rocketnet_received_packet_record_t * record = &endpoint->received[slot];
+    const bool duplicate = rocketnet_ack_bit( endpoint->received_written, slot ) && record->sequence == sequence;
 
-    const uint64_t highest = sequence > endpoint->highest_received_sequence ? sequence : endpoint->highest_received_sequence;
-    rocketnet_ack_stats_received_advance( endpoint, highest );
-
-    struct rocketnet_received_packet_record_t * record = &endpoint->received[sequence % ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE];
-
-    rocketnet_ack_set_bit( endpoint->received_written, sequence % ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE );
+    rocketnet_ack_set_bit( endpoint->received_written, slot );
 
     record->sequence = sequence;
     record->receive_time = time;
     record->wire_bytes = (uint32_t) wire_bytes;
 
-    endpoint->highest_received_sequence = highest;
-    rocketnet_ack_stats_received_rebuild_block(
-        endpoint, (int) ( sequence % ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE ) / ROCKETNET_ACK_RECEIVED_STATS_BLOCK_SLOTS, highest );
+    if ( sequence > endpoint->highest_received_sequence )
+        endpoint->highest_received_sequence = sequence;
 
-    rocketnet_ack_stats_received_refresh( endpoint );
+    rocketnet_ack_stats_received_summarize( endpoint, sequence, duplicate );
+
+    rocketnet_ack_stats_received_refresh( endpoint, sequence );
 
     rocketnet_ack_stats_publish_received( endpoint );
 }

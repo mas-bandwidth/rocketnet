@@ -331,10 +331,7 @@ static void soak_accumulate_counters( uint64_t * totals, const struct rocketnet_
 // soak creates its transports with an explicit config, and the transport
 // create reads none of these names, so soak reads them itself (digits only,
 // latency and jitter 0 .. 60000, loss and duplicate 0 .. 100, the library's
-// ranges) and writes them into the configs it creates from, through the
-// sized creates (rocketnet_*_transport_create_sized with the struct's size):
-// the unsized creates read only the config revision before the simulator
-// fields, so a setting passed through them is dropped. Each end's
+// ranges) and writes them into the configs it creates from. Each end's
 // simulator acts on what that end sends: the server's setting impairs the
 // server to client direction, the client's the client to server one.
 

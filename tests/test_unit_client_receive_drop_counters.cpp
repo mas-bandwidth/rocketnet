@@ -462,10 +462,7 @@ static void drop_counters_run( bool batch )
 // a step-driven client with a link pattern configured: no I/O core, so update
 // receives from the driver on the caller's thread
 // (sdk/rocketnet_client_transport.cpp:1570-1571). The create reads the whole
-// current config (rocketnet_client_transport_create_step_driven_current), as
-// rocketnet_client_transport_create_step_driven reads only the fields before
-// the link simulator's and would leave simulated_drop_every_nth unread and the
-// I/O core on.
+// config, simulated_drop_every_nth included, so the I/O core is off.
 
 static void test_client_receive_counts_prefilter_drops_without_io_core()
 {

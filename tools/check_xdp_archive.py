@@ -9,7 +9,11 @@ On Linux with xxd and a clang that has the BPF target this checks that
     umasks give the same object bytes (the object is reproducible);
   - the generated header's array holds exactly the object it was made from;
   - a build tree's embedded object equals a fresh compile of the current
-    sources, so a stale object fails (pass the build tree, default ./build);
+    sources with the tree's own BPF clang, multiarch triple,
+    ROCKETNET_HISTORY_PACKETS and ROCKETNET_MAX_CLIENTS
+    (generated/xdp-build-settings.txt), so a stale
+    object fails and a current one at non-default settings passes (pass the
+    build tree, default ./build);
   - a changed source gives a different object, so the stale check can fail;
   - an embed given no MAX_CLIENTS or HISTORY_PACKETS compiles the program at
     the SDK's defaults, the same object as one given the defaults, and its
@@ -73,9 +77,6 @@ def embedded_bytes(header):
         raise RuntimeError(f"missing server_xdp.o byte array or length: {header}")
     data = bytes(int(value, 16) for value in re.findall(r"0x([0-9a-fA-F]{2})", body[1]))
     count = int(length[1])
-    # A build without a BPF compiler embeds a one-byte placeholder of length 0.
-    if count == 0:
-        return b""
     if len(data) != count:
         raise RuntimeError(f"server_xdp.o array length mismatch: {header}")
     return data
@@ -91,26 +92,35 @@ def multiarch():
 DEFAULT_MAX_CLIENTS = 1000
 
 
-def build_max_clients(build):
-    """The ROCKETNET_MAX_CLIENTS a build tree embedded its object with: the
-    fourth line of generated/xdp-build-settings.txt (CMakeLists.txt), or the
-    default when there is no build tree."""
+def build_settings(build, clang):
+    """The BPF clang, multiarch triple, ROCKETNET_HISTORY_PACKETS and
+    ROCKETNET_MAX_CLIENTS a build tree embedded its object with: the four
+    lines of generated/xdp-build-settings.txt (CMakeLists.txt). With no build
+    tree it is the given clang, this compiler's triple, no history (the SDK
+    default) and the default client count."""
     if build is None:
-        return DEFAULT_MAX_CLIENTS
+        return clang, multiarch(), None, DEFAULT_MAX_CLIENTS
     settings = build / "generated/xdp-build-settings.txt"
     if not settings.exists():
-        return DEFAULT_MAX_CLIENTS
-    lines = settings.read_text(encoding="utf-8").splitlines()
-    if len(lines) < 4 or not lines[3].strip().isdigit():
-        raise RuntimeError(f"{settings} names no ROCKETNET_MAX_CLIENTS")
-    return int(lines[3].strip())
+        return clang, multiarch(), None, DEFAULT_MAX_CLIENTS
+    lines = [line.strip() for line in settings.read_text(encoding="utf-8").splitlines()]
+    if len(lines) < 4 or not lines[2].isdigit() or not lines[3].isdigit():
+        raise RuntimeError(f"{settings} names no ROCKETNET_HISTORY_PACKETS and ROCKETNET_MAX_CLIENTS")
+    if not Path(lines[0]).is_file():
+        raise RuntimeError(f"{settings} names a BPF clang that is not there: {lines[0]}")
+    if not lines[1]:
+        raise RuntimeError(f"{settings} names no multiarch triple")
+    return lines[0], lines[1], int(lines[2]), int(lines[3])
 
 
-def embed(root, output, xxd, clang, max_clients):
-    """Runs cmake/EmbedXdp.cmake; max_clients None passes no MAX_CLIENTS."""
+def embed(root, output, xxd, clang, max_clients, history=None, arch=None):
+    """Runs cmake/EmbedXdp.cmake; max_clients or history None passes no
+    MAX_CLIENTS or HISTORY_PACKETS, so the program takes the SDK default;
+    arch None is this compiler's multiarch triple."""
     limits = [] if max_clients is None else [f"-DMAX_CLIENTS={max_clients}"]
+    limits += [] if history is None else [f"-DHISTORY_PACKETS={history}"]
     subprocess.run(["cmake", f"-DSOURCE_DIR={str(root)}", f"-DOUTPUT_DIR={str(output)}",
-                    f"-DXXD={str(xxd)}", f"-DCLANG={str(clang)}", f"-DMULTIARCH={multiarch()}",
+                    f"-DXXD={str(xxd)}", f"-DCLANG={str(clang)}", f"-DMULTIARCH={arch or multiarch()}",
                     *limits,
                     "-P", str(root / "cmake/EmbedXdp.cmake")],
                    check=True, encoding="utf-8", env=utf8_env())
@@ -173,6 +183,31 @@ def check_embed_limits(source, directory, inputs, xxd, clang):
     print("test_xdp_embed_custom_max_clients")
 
 
+def check_build_settings(source, directory, inputs, xxd, clang):
+    """A build tree configured with -DROCKETNET_HISTORY_PACKETS=8192 is
+    current when its object was embedded at 8192, and stale when its settings
+    say 8192 but its object was embedded at the default."""
+    root = directory / "settings"
+    copy_tree(source, root, inputs, 1_000_000_000)
+    for name, embedded_history, current in (("history 8192", 8192, True), ("history default", None, False)):
+        probe = directory / f"probe {name}"
+        (probe / "generated").mkdir(parents=True)
+        (probe / "generated/xdp-build-settings.txt").write_text(
+            f"{clang}\n{multiarch()}\n8192\n{DEFAULT_MAX_CLIENTS}\n", encoding="utf-8")
+        embed(root, probe / "generated", xxd, clang, DEFAULT_MAX_CLIENTS, embedded_history)
+        tree_clang, arch, history, max_clients = build_settings(probe, None)
+        fresh = embed(root, directory / f"fresh {name}", xxd, tree_clang, max_clients, history, arch)
+        try:
+            check_fresh(probe, fresh)
+        except RuntimeError:
+            if current:
+                raise
+        else:
+            if not current:
+                raise RuntimeError("an object embedded at the default history passed against settings that name 8192")
+    print("test_xdp_object_current_at_build_settings")
+
+
 def copy_tree(source, root, inputs, mtime):
     for path in inputs:
         target = root / path.relative_to(source)
@@ -210,10 +245,10 @@ def main():
         if args.committed_only or not sys.platform.startswith("linux"):
             return
         xxd, clang = shutil.which("xxd"), shutil.which("clang")
+        build = args.build or (work if (work / "generated/rocketnet_server_xdp.h").exists() else None)
+        clang, arch, history, max_clients = build_settings(build.resolve() if build is not None else None, clang)
         if not xxd or not clang:
             raise SystemExit("xxd and clang with the BPF target are required for the object checks")
-        build = args.build or (work if (work / "generated/rocketnet_server_xdp.h").exists() else None)
-        max_clients = build_max_clients(build.resolve() if build is not None else None)
 
         objects = []
         for index, (mtime, umask) in enumerate([(1_000_000_000, 0o022), (1_700_000_000, 0o077)]):
@@ -225,7 +260,7 @@ def main():
                 time.sleep(1.1)
             previous_umask = os.umask(umask)
             try:
-                objects.append(embed(root, directory / f"generated {index}", xxd, clang, max_clients))
+                objects.append(embed(root, directory / f"generated {index}", xxd, clang, max_clients, history, arch))
             finally:
                 os.umask(previous_umask)
         if objects[0] != objects[1]:
@@ -241,7 +276,7 @@ def main():
         filter_source.write_text(filter_source.read_text(encoding="utf-8")
                                  + "\nchar rocketnet_xdp_stale_probe[] SEC(\".rodata\") = \"stale\";\n",
                                  encoding="utf-8")
-        stale = embed(changed, directory / "generated changed", xxd, clang, max_clients)
+        stale = embed(changed, directory / "generated changed", xxd, clang, max_clients, history, arch)
         probe = directory / "probe build"
         (probe / "generated").mkdir(parents=True)
         shutil.copyfile(directory / "generated changed/rocketnet_server_xdp.h", probe / "generated/rocketnet_server_xdp.h")
@@ -256,6 +291,7 @@ def main():
         print("test_xdp_object_stale_is_red")
 
         check_embed_limits(source, directory, inputs, xxd, clang)
+        check_build_settings(source, directory, inputs, xxd, clang)
 
         if build is not None:
             check_fresh(build.resolve(), objects[0])

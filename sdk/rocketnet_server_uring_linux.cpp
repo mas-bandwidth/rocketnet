@@ -436,8 +436,9 @@ static int rocketnet_server_uring_open_socket( const rocketnet_address_t * bind_
 
     // one update's inbound packets at the full client count: the uring
     // create does not carry max_clients, so it sizes for ROCKETNET_MAX_CLIENTS
-    // (a request; the kernel charges only what it holds)
-    int receive_buffer_size = rocketnet_server_receive_buffer_request( ROCKETNET_MAX_CLIENTS );
+    // (rocketnet_server_transport_receive_buffer_request; a request, and the
+    // kernel charges only what it holds)
+    int receive_buffer_size = rocketnet_server_transport_receive_buffer_request( "io_uring", ROCKETNET_MAX_CLIENTS );
 
     if ( setsockopt( fd, SOL_SOCKET, SO_SNDBUF, &send_buffer_size, sizeof( int ) ) != 0 )
     {
@@ -1653,6 +1654,26 @@ uint8_t * rocketnet_server_uring_start_packet( struct rocketnet_server_uring_t *
     return uring->send.data[slot];
 }
 
+// proofs/tla/ServerStopSpread.tla Room: the slots start_packet may still take
+
+int rocketnet_server_uring_send_room( struct rocketnet_server_uring_t * uring )
+{
+    rocketnet_assert( uring );
+
+    const int64_t used = (int64_t) uring->send.num_packets.load( std::memory_order_relaxed );
+    return used < 0 || used >= ROCKETNET_URING_SEND_QUEUE_SIZE ? 0 : (int) ( ROCKETNET_URING_SEND_QUEUE_SIZE - used );
+}
+
+// proofs/tla/ServerStopSpread.tla RequestIoStop: nothing staged and no send
+// without its completion
+
+bool rocketnet_server_uring_send_idle( struct rocketnet_server_uring_t * uring )
+{
+    rocketnet_assert( uring );
+
+    return uring->sends_pending == 0 && (int64_t) uring->send.num_packets.load( std::memory_order_relaxed ) == 0;
+}
+
 // the slot from pointer arithmetic against the staging: a pointer that is not
 // a live slot root lands out of range and fails closed as a lost packet
 
@@ -1733,17 +1754,13 @@ void rocketnet_server_uring_send_packets( struct rocketnet_server_uring_t * urin
 
     while ( slot < num_slots )
     {
-        // bound the sends in flight by the ring size, so the completion
-        // queue (twice the ring) keeps room for receive completions
+        // each send in flight holds at least one staged slot and the staging
+        // resets only once none is pending, so the sends in flight stay below
+        // the ring size and the completion queue (twice the ring) keeps room
+        // for receive completions
 
-        if ( uring->sends_pending >= ROCKETNET_URING_ENTRIES )
-        {
-            const int reaped = rocketnet_server_uring_reap_available( uring, budget );
-            budget -= reaped;
-            if ( reaped == 0 || budget == 0 )
-                break;
-            continue;
-        }
+        static_assert( ROCKETNET_URING_SEND_QUEUE_SIZE <= ROCKETNET_URING_ENTRIES, "sends in flight fit the ring" );
+        rocketnet_assert( uring->sends_pending <= ROCKETNET_URING_SEND_QUEUE_SIZE );
 
         unsigned space = rocketnet_server_uring_ring_sq_space( uring );
         if ( space == 0 )

@@ -1,0 +1,42 @@
+# THE NIGHTLY TIER OF ci.yml (Glenn 2026-10-31: "Move everything that does
+# not fit into 2 minute into nightly tests (no time limit)").
+#
+# This runs ci.yml with full: true: every job and every step in that file,
+# the per-commit ones included, with no two-minute bound. ci.yml's header
+# lists what runs only here. In short:
+#
+#   macOS: Debug functional, checks, builds; Release unit, checks, builds;
+#       happy path / macos-15; platform selftests / macos-15
+#   Linux: Debug checks and builds; the development functional suite on the
+#       Release row; the history-budget and no-XDP builds; platform
+#       selftests / ubuntu-24.04
+#   Windows: windows / Release legs (a), (b) and (c) (the unit suite, the
+#       functional suites, the consumer checks); per commit only happy
+#       path / windows runs there
+#   asan + ubsan (unit suite portable), fuzz smoke NDEBUG, big endian s390x /
+#       Release, pinned libsodium, backend example / go and csharp
+#   the instruction count gate's pinned toolchain build, saved to the cache
+#       from main so every per-commit run restores it
+#
+# Two whole workflows left the per-commit tier the same day and run on their
+# own schedules, unchanged: msan.yml (MemorySanitizer, 172-187s) and
+# cbmc.yml (CBMC arithmetic leaf proofs, 614-705s).
+#
+# After a toolchain pin change lands, warm the cache at once with
+# `gh workflow run nightly-ci.yml --ref main`.
+
+name: Nightly CI
+
+on:
+  schedule:
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  full:
+    uses: ./.github/workflows/ci.yml
+    with:
+      full: true

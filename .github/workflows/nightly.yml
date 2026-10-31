@@ -15,8 +15,11 @@
 #
 # A RED NIGHT HERE IS A GATE THAT WOULD HAVE GONE RED ON A COMMIT. That makes
 # it different from a red soak, which is a finding to investigate. This one
-# has a commit range and a bisect, and whoever is on the estate that morning
-# owns walking it back.
+# has a commit range and a bisect: nightly-watch.yml prints, for every red job,
+# the newest earlier night it was green and a `git bisect start <bad> <good>`
+# line, and fails on any red job tools/nightly_dispositions.txt does not give
+# to an open pull request. Whoever is on the estate that morning owns walking
+# it back, starting from that line.
 #
 # What is here, and why it is not on the per-commit gate:
 #
@@ -268,11 +271,22 @@ jobs:
   # The live message matrix case runs alone in the functional suite (its own
   # suite group, tests/functional/main.cpp): its 50s tsan wall-clock bound measures
   # the case, about 35s alone on a Linux x64 gcc bench, and not the rest of the suite.
+  #
+  # Both steps run with ROCKETNET_TEST_CASE_TIME_SCALE=4, as the macOS TSan
+  # leg in nightly-macos-sanitizers.yml scales its own. Under TSan the heaviest
+  # unit cases are CPU-bound for minutes (test_channels_message_record_round_trip_and_never_overreads
+  # about 190s and test_window_ring_operation_sequences about 90s alone on an
+  # M-series bench), and the fleet label lands this leg on shared hosts beside
+  # the other nightly legs. The unscaled 600s unit bound is not enough for the
+  # window ring case on a loaded host, and the functional row
+  # test_unit_case_memory runs the whole unit suite inside one functional case
+  # bound (120s unscaled). Scaled, the unit case limit is 2400s and the
+  # functional case limit 480s.
 
   tsan-threaded:
     name: tsan (threaded transport)
     runs-on: [self-hosted, Linux, X64, fleet]
-    timeout-minutes: 45
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -282,9 +296,11 @@ jobs:
       cancel-in-progress: true
     steps:
 
+      # the leg for the run's own ref checks out the run's head commit, so a
+      # green leg is evidence about that exact commit (tools/check_release_tsan.py)
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
-          ref: ${{ matrix.ref }}
+          ref: ${{ matrix.ref == github.ref_name && github.sha || matrix.ref }}
 
       - name: Check the fleet's build dependencies are present
         shell: bash
@@ -305,12 +321,16 @@ jobs:
           done
           exit "$missing"
 
+      # -O1, as ci.yml's tsan leg: at -O0 a struct assignment lowers to a
+      # memcpy, and tsan does not report a memcpy write that follows an
+      # unordered plain read (tools/check_tsan_flags.py holds every tsan
+      # build to this).
       - name: Configure
         run: >
           cmake -B build
           -DCMAKE_BUILD_TYPE=Debug
-          -DCMAKE_C_FLAGS="-fsanitize=thread -fno-omit-frame-pointer"
-          -DCMAKE_CXX_FLAGS="-fsanitize=thread -fno-omit-frame-pointer"
+          -DCMAKE_C_FLAGS="-fsanitize=thread -fno-omit-frame-pointer -O1"
+          -DCMAKE_CXX_FLAGS="-fsanitize=thread -fno-omit-frame-pointer -O1"
           -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread"
 
       - name: Build the suite
@@ -319,11 +339,13 @@ jobs:
       - name: Run the unit suite under tsan
         env:
           TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
+          ROCKETNET_TEST_CASE_TIME_SCALE: "4"
         run: setarch "$(uname -m)" -R ./bin/test
 
       - name: Run the functional suite under tsan
         env:
           TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
+          ROCKETNET_TEST_CASE_TIME_SCALE: "4"
         run: setarch "$(uname -m)" -R ./bin/functional
 
   # THE LINUX TRANSPORT CELLS, FIFTY TIMES IN A ROW, AND UNDER ASAN.
@@ -596,8 +618,8 @@ jobs:
   # this leg catches the next morning instead of on the commit; everything
   # else about the check still gates.
   #
-  # A red here has a commit range and a bisect. Whoever is on the estate that
-  # morning owns walking it back.
+  # A red here has a commit range and a bisect (nightly-watch.yml prints both).
+  # Whoever is on the estate that morning owns walking it back.
 
   windows-transport-extension:
     name: external transport backend / windows-2025

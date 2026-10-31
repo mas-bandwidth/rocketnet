@@ -215,7 +215,6 @@ static void test_transport_results_client_batch_over_count_is_a_fault()
     rocketnet_unit_check( received->packet_data[0][0] == 0x11 );
 
     transport_results_close_io( &transport, buffers );
-    printf( "test_transport_results_client_batch_over_count_is_a_fault\n" );
 }
 REGISTER_UNIT_TEST( test_transport_results_client_batch_over_count_is_a_fault );
 
@@ -236,7 +235,6 @@ static void test_transport_results_client_negative_byte_count_is_a_fault()
     rocketnet_unit_check( rocketnet_client_io_expose( &io ) == NULL );
 
     transport_results_close_io( &transport, buffers );
-    printf( "test_transport_results_client_negative_byte_count_is_a_fault\n" );
 }
 REGISTER_UNIT_TEST( test_transport_results_client_negative_byte_count_is_a_fault );
 
@@ -258,7 +256,6 @@ static void test_transport_results_client_oversized_byte_count_is_a_fault()
     rocketnet_unit_check( lie.max_seen == ROCKETNET_RECEIVE_PACKET_BYTES );
 
     transport_results_close_io( &transport, buffers );
-    printf( "test_transport_results_client_oversized_byte_count_is_a_fault\n" );
 }
 REGISTER_UNIT_TEST( test_transport_results_client_oversized_byte_count_is_a_fault );
 
@@ -287,7 +284,6 @@ static void test_transport_results_client_batch_refuses_a_bad_byte_count()
     rocketnet_unit_check( received->packet_data[0][0] == 0x22 );
 
     transport_results_close_io( &transport, buffers );
-    printf( "test_transport_results_client_batch_refuses_a_bad_byte_count\n" );
 }
 REGISTER_UNIT_TEST( test_transport_results_client_batch_refuses_a_bad_byte_count );
 
@@ -371,7 +367,6 @@ static void test_transport_results_client_without_wait_skips_the_call()
 
     rocketnet_client_transport_io_close( &transport );
     rocketnet_client_io_rig_destroy( rig );
-    printf( "test_transport_results_client_without_wait_skips_the_call\n" );
 }
 REGISTER_UNIT_TEST( test_transport_results_client_without_wait_skips_the_call );
 
@@ -518,7 +513,6 @@ static void test_transport_results_server_receive_checks_counts()
     rocketnet_unit_check( server->counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED] == received_before + 1 );
 
     rn_test_server_transport_stop_and_destroy( server );
-    printf( "test_transport_results_server_receive_checks_counts\n" );
 }
 REGISTER_UNIT_TEST( test_transport_results_server_receive_checks_counts );
 
@@ -589,7 +583,6 @@ static void test_server_stopping_reads_no_packet()
     rocketnet_unit_check( server->counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED] == received_before );
     rocketnet_unit_check( rocketnet_server_transport_state( server ) == ROCKETNET_SERVER_TRANSPORT_STOPPING );
     transport_results_stopping_release( server, &lie );
-    printf( "test_server_stopping_reads_no_packet\n" );
 }
 REGISTER_UNIT_TEST( test_server_stopping_reads_no_packet );
 
@@ -610,7 +603,6 @@ static void test_server_stopped_reads_no_packet()
     rocketnet_unit_check( lie.calls == 0 );
     rocketnet_unit_check( server->counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED] == received_before );
     rn_test_server_transport_stop_and_destroy( server );
-    printf( "test_server_stopped_reads_no_packet\n" );
 }
 REGISTER_UNIT_TEST( test_server_stopped_reads_no_packet );
 
@@ -627,7 +619,6 @@ static void test_server_stopping_admits_no_client()
     rocketnet_unit_check( lie.send_calls == 0 );
     rocketnet_unit_check( lie.calls == 0 );
     transport_results_stopping_release( server, &lie );
-    printf( "test_server_stopping_admits_no_client\n" );
 }
 REGISTER_UNIT_TEST( test_server_stopping_admits_no_client );
 
@@ -715,7 +706,6 @@ static void test_loopback_transport_io_results_matches_destination_or_wildcard()
 
     rn_test_server_io_stop_and_close( &server );
     rocketnet_client_transport_io_close( &client );
-    printf( "test_loopback_transport_io_results_matches_destination_or_wildcard\n" );
 }
 REGISTER_UNIT_TEST( test_loopback_transport_io_results_matches_destination_or_wildcard );
 
@@ -772,8 +762,6 @@ static void test_gso_transport_io_results_gro_cmsg_is_checked()
     faults = 0;
     rocketnet_unit_check( rocketnet_server_gso_gro_segment_bytes( &header, message_bytes, &faults ) == message_bytes );
     rocketnet_unit_check( faults == 0 );
-
-    printf( "test_gso_transport_io_results_gro_cmsg_is_checked\n" );
 }
 REGISTER_UNIT_TEST( test_gso_transport_io_results_gro_cmsg_is_checked );
 

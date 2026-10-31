@@ -126,8 +126,9 @@ struct rocketnet_client_t * start_client( const char * token, const struct rocke
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, config, &status );
     if ( !client )
         printf( "create refused: %s\n", rocketnet_status_name( status ) );
-    if ( client && rocketnet_client_connect( client, token ) != ROCKETNET_STATUS_OK )
+    if ( client && ( status = rocketnet_client_connect( client, token ) ) != ROCKETNET_STATUS_OK )
     {
+        printf( "connect refused: %s\n", rocketnet_status_name( status ) );
         rocketnet_client_destroy( client );
         return NULL;
     }
@@ -140,8 +141,9 @@ struct rocketnet_server_t * start_server( const struct rocketnet_server_config_t
     struct rocketnet_server_t * server = rocketnet_server_create( NULL, "0.0.0.0:40000", NULL, config, &status );
     if ( !server )
         printf( "create refused: %s\n", rocketnet_status_name( status ) );
-    if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
+    if ( server && ( status = rocketnet_server_start( server ) ) != ROCKETNET_STATUS_OK )
     {
+        printf( "start refused: %s\n", rocketnet_status_name( status ) );
         rocketnet_server_destroy( server );
         return NULL;
     }
@@ -183,7 +185,8 @@ banks and publishes a bank after every read. While main holds the other
 banks the worker has no free bank, stops reading the socket and waits
 (`PORTABLE_RX_WAIT_FULL`), so the traffic that arrives in that time waits in
 the kernel's receive buffer, and a buffer too small for it drops datagrams
-before the server sees them. Portable and msgx server sockets therefore ask for:
+before the server sees them. The GSO receive worker stops reading the same
+way once its buffer is full. Every UDP server socket therefore asks for:
 
 ```
 receive buffer bytes = ceil( max_clients x 1000 kbps x 125 x 2 / 10 Hz )
@@ -196,10 +199,13 @@ the slowest supported update interval (0.1 s at 10 Hz), times 2 for the
 kernel's per-packet accounting, which charges more than the packet bytes. At
 1000 clients that is 25,000,000 bytes; at 64 clients, 1,600,000. Servers
 updating faster than 10 Hz need proportionally less; the request stays sized
-for 10 Hz. The io_uring and iocp transports use the same formula with the build's
-`ROCKETNET_MAX_CLIENTS`. GSO instead requests `ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE`
-(1,000,000 bytes) on each socket; it does not use this client-count formula.
-The request is an upper bound: the kernel charges only for what it holds.
+for 10 Hz. Portable and msgx use the server's `max_clients`; GSO, io_uring,
+iocp and rio use the build's `ROCKETNET_MAX_CLIENTS`, because their creates do
+not carry `max_clients`. Each GSO and io_uring queue socket asks for the full
+client count, not a share of it: `SO_REUSEPORT` hashes flows to sockets, so
+any one queue's socket may receive any number of the clients. Four queues at
+the default ceiling ask for 4 x 25,000,000 bytes. The request is an upper
+bound: the kernel charges only for what it holds.
 
 The kernel may grant less. Linux clamps the request to `net.core.rmem_max`
 (about 208 KB by default) without an error; macOS and the BSDs refuse a
@@ -280,13 +286,20 @@ GSO and io_uring differ: GSO has three shared send banks of 4096 slots, with
 one bank available to producers at a time; io_uring has one shared 2048-slot
 send array, including slots still held by pending completions. These are
 server-wide capacities. Adding receive queues does not multiply either
-producer's capacity. A fill can therefore refuse before it has offered one
-packet to every client in a large server. The current staged-capacity query
-also prevents the message layer's full-buffer rotation from providing a
-fairness guarantee on these backends. Reliable messages remain queued, but
-later clients can be deferred indefinitely under sustained earlier-client
-backlog. See [Current staging and drain limitations](TRANSPORT-INTERNALS.md#current-staging-and-drain-limitations).
+producer's capacity. Each staged transport reports its remaining room
+(`rocketnet_server_transport_send_capacity_available`), so the message
+layer's send pass stops where the next unserved client waits and resumes
+there on the next update, and the disconnect bursts of a kick or a stop leave
+across as many updates as the room needs. See
+[Current staging and drain limitations](TRANSPORT-INTERNALS.md#current-staging-and-drain-limitations).
 The replay-history depth remains a separate setting (below).
+
+Memory is the caller's choice, made through the config. The library sizes
+what the config asks for and sets no budget on the total: every field is held
+to its own range (and to what its layout can represent), and a config whose
+fields are all in range is accepted however much memory they add up to. The
+only limits on the total are ones the caller sets or can raise: the CMake
+component budgets and the operator memory budgets below.
 
 Memory grows with the clients a server asks for, at the per-client depth the
 config sets: `rocketnet_server_required_memory` gives the lifecycle allocator
@@ -365,7 +378,8 @@ rules, with no allocation, socket or thread. Each field is a
 request, never what the kernel grants: `allocator_bytes` (the plan without
 UMEM), `umem_bytes` (XDP frame memory, the plan's UMEM), `socket_send_buffer_bytes`
 and `socket_receive_buffer_bytes` (the `SO_SNDBUF` and `SO_RCVBUF` sizes asked of
-every socket the transport opens), `xdp_ring_bytes` (the AF_XDP RX and TX
+every socket the transport opens, the receive size from
+[Receive buffer sizing](#receive-buffer-sizing)), `xdp_ring_bytes` (the AF_XDP RX and TX
 descriptor rings of every queue) and `thread_stack_bytes` (`worker_threads` x
 `thread_stack_bytes_per_thread`; transports create threads with the platform
 default stack, so on POSIX this is the default thread attribute's stack size,
@@ -439,9 +453,9 @@ the requirement that destruction frees every SDK allocation. Large legal numeric
 reassembly geometries can be planned without allocating them, while component
 budgets can still refuse creation.
 
-`test_transport_control` exercises one complete 20-slot stats modulo cycle plus
-a publication update over 1000 mixed ACK/keepalive clients: 51 updates and 50
-manual worker steps at that client count. The buffered transport accepts only
-256 controls per send batch, and the test retains per-update control assertions.
-Its elapsed time is a diagnostic for that synthetic workload, not a packet rate
+`test_transport_control`'s control-pressure case runs 300 and then 1000
+clients through four updates each, with `ROCKETNET_SERVER_MAX_RECEIVE_PACKETS`
+receives offered per update. Half the clients owe a standalone ACK and half a
+keep-alive on every update; the response and ACK/keep-alive checks run on each
+update, and every slot's RTT is checked after them. Its elapsed time is a diagnostic for that synthetic workload, not a packet rate
 or a frame/send/ACK cadence requirement.

@@ -5,5 +5,5 @@ filter epoch field width	( ROCKETNET_PREFILTER_BYTES - ROCKETNET_FILTER_VALUE_BY
 filter value field width	ROCKETNET_FILTER_VALUE_BYTES	4
 prefilter header width	ROCKETNET_PREFILTER_BYTES	6
 first keyed filter epoch	( ROCKETNET_FILTER_EPOCH_UNKEYED + 1 )	1
-last keyed filter epoch	UINT8_MAX	255
+last keyed filter epoch	ROCKETNET_FILTER_EPOCH_KEYED_LAST	255
 keyed filter input width	( 1 + 2 + ROCKETNET_FILTER_VALUE_BYTES )	7

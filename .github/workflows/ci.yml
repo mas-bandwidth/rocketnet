@@ -114,6 +114,20 @@ on:
   # way to run it on any other branch, which is the capability the filter would
   # otherwise silently remove. (serialize's ci.yml, same reasoning.)
   workflow_dispatch:
+    inputs:
+      full:
+        description: "Run the nightly tier (every job and step) instead of the per-commit tier"
+        type: boolean
+        default: false
+  # nightly-ci.yml calls this file with full: true each night. inputs.full is
+  # the one switch between the tiers: unset on push and pull_request, so those
+  # events run the per-commit tier.
+  workflow_call:
+    inputs:
+      full:
+        description: "Run the nightly tier (every job and step) instead of the per-commit tier"
+        type: boolean
+        default: false
 
 # a superseded commit's run is not a gate on anything -- the gate is the head
 # of the branch -- so it yields its runners to the run that replaced it
@@ -125,10 +139,40 @@ concurrency:
   # Branches and PRs still cancel a superseded run.
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
-# Every job sets timeout-minutes: 3, the per-commit law above (one to two
-# minutes) with a minute of headroom, except xdp-libxdp-1-4, whose own
-# comment names its bound, and the jobs on captain, which add the 2 minutes
-# its job-started hook may wait for a build slot; a job that runs longer fails.
+# TWO TIERS, ONE FILE (Glenn 2026-10-31: "Move everything that does not fit
+# into 2 minute into nightly tests (no time limit)"). A per-commit run takes
+# one minute ideally and two at most, wall clock from the push, queueing
+# included. inputs.full selects the tier:
+#
+#   per-commit (push, pull_request, workflow_dispatch with full unset): the
+#       jobs and steps below that fit. Every job carries
+#       timeout-minutes: ${{ inputs.full && N || 2 }}, so a per-commit job that
+#       runs past two minutes fails; tools/check_ci_budget.py, run in the lint
+#       job, refuses a per-commit job in any workflow without that bound.
+#       The job count is sized to the pools that run it at once: two macOS
+#       runners (rocketnet-macos), three Windows runners (rocketnet-windows),
+#       and the shared Linux fleet.
+#   nightly (nightly-ci.yml, full: true, no time limit): every job and every
+#       step in this file, the per-commit ones included. What runs only here:
+#
+#   macOS: Debug functional, checks and builds; Release unit, checks and
+#       builds; happy path / macos-15; platform selftests / macos-15.
+#       (Per commit: Debug unit, and Release functional, which runs the
+#       development functional suite as well as functional_production.)
+#   Linux: Debug checks and builds; Release functional's development suite
+#       (Debug functional runs it per commit); Release builds' history budget
+#       and no-XDP builds; platform selftests / ubuntu-24.04.
+#   Windows: windows / Release legs (a), (b) and (c) whole (per commit,
+#       happy path / windows builds the whole tree under MSVC and runs the
+#       happy path).
+#   asan + ubsan (unit suite portable), fuzz smoke NDEBUG, big endian s390x /
+#       Release, pinned libsodium, backend example / go and csharp.
+#   The instruction count gate's toolchain build: per commit the gate only
+#       restores the pinned toolchain from the cache the nightly saves on
+#       main, and fails naming the cold cache if it is missing.
+#
+# The step-level timeout-minutes values below bound single steps in the
+# nightly tier; the job bound is what holds a per-commit run to two minutes.
 permissions:
   contents: read
 
@@ -160,39 +204,32 @@ jobs:
     name: ${{ matrix.os }} / ${{ matrix.build_type }} / ${{ matrix.leg }}
     # Linux rows run on the fleet's organization runners (labels self-hosted,Linux,X64,fleet: Linux x64 gcc
     # hosts), provisioned by the fleet's provisioning repository (group_vars ci_apt_packages), which is why the
-    # self-hosted apt step is skipped. They ran on [self-hosted,Linux,X64,rocketnet] until 2026-10-13, a label only
-    # one Linux x64 host carried: that host went down and every Linux job sat QUEUED for hours.
-    # macOS rows run on HOSTED macos-15 AS A STOPGAP (2026-10-13): no [self-hosted,macOS,ARM64,rocketnet] runner was
-    # ever registered, so those rows never started. The self-hosted target is the fleet's macOS arm64 clang host once its org runner is registered, and
-    # these rows go back to a runner label then. matrix.os stays the display name and the image the row was written
-    # against; runner, when set, is the label set runs-on uses instead.
+    # self-hosted apt step is skipped. macOS rows run on the self-hosted macOS 27 arm64 host (label
+    # rocketnet-macos). matrix.os is the display name the check names carry (macos-15 on the macOS rows);
+    # runner is the label set runs-on uses.
     runs-on: ${{ fromJSON(matrix.runner) }}
-    timeout-minutes: 3
+    timeout-minutes: ${{ inputs.full && 10 || 2 }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-24.04, macos-15]
+        build_type: [Debug, Release]
+        leg: [unit, functional, checks, builds]
+        # The per-commit tier runs eight of the sixteen rows: six Linux rows
+        # and two macOS rows, one per macOS runner. The nightly tier runs all.
+        exclude: ${{ fromJSON(inputs.full && '[]' || '[{"os":"ubuntu-24.04","build_type":"Debug","leg":"checks"},{"os":"ubuntu-24.04","build_type":"Debug","leg":"builds"},{"os":"macos-15","build_type":"Debug","leg":"functional"},{"os":"macos-15","build_type":"Debug","leg":"checks"},{"os":"macos-15","build_type":"Debug","leg":"builds"},{"os":"macos-15","build_type":"Release","leg":"unit"},{"os":"macos-15","build_type":"Release","leg":"checks"},{"os":"macos-15","build_type":"Release","leg":"builds"}]') }}
+        # dev: the ROCKETNET_DEV setting. Debug rows build the default
+        # development library (ON); Release rows build the production library
+        # (OFF), so every OS runs the suite both ways and the production
+        # boundary checks read a production library. runner is the label set
+        # runs-on uses; the Linux functional rows select libxdp-1-4, the label
+        # of the VM-tier runner the xdp matrix cell needs.
         include:
-          # linux x64
-          # dev: the ROCKETNET_DEV setting. Debug rows build the default
-          # development library (ON); Release rows build the production library
-          # (OFF), so every OS runs the suite both ways and the production
-          # boundary checks read a production library.
-          - { os: ubuntu-24.04, build_type: Debug, leg: unit, dev: 'ON', runner: '["self-hosted","Linux","X64","fleet"]' }
-          - { os: ubuntu-24.04, build_type: Debug, leg: functional, dev: 'ON', runner: '["self-hosted","Linux","X64","fleet","libxdp-1-4"]' }
-          - { os: ubuntu-24.04, build_type: Debug, leg: checks, dev: 'ON', runner: '["self-hosted","Linux","X64","fleet"]' }
-          - { os: ubuntu-24.04, build_type: Debug, leg: builds, dev: 'ON', runner: '["self-hosted","Linux","X64","fleet"]' }
-          - { os: ubuntu-24.04, build_type: Release, leg: unit, dev: 'OFF', runner: '["self-hosted","Linux","X64","fleet"]' }
-          - { os: ubuntu-24.04, build_type: Release, leg: functional, dev: 'OFF', runner: '["self-hosted","Linux","X64","fleet","libxdp-1-4"]' }
-          - { os: ubuntu-24.04, build_type: Release, leg: checks, dev: 'OFF', runner: '["self-hosted","Linux","X64","fleet"]' }
-          - { os: ubuntu-24.04, build_type: Release, leg: builds, dev: 'OFF', runner: '["self-hosted","Linux","X64","fleet"]' }
-          - { os: macos-15, build_type: Debug, leg: unit, dev: 'ON', runner: '["self-hosted","macOS","ARM64","rocketnet-macos"]' }
-          - { os: macos-15, build_type: Debug, leg: functional, dev: 'ON', runner: '["self-hosted","macOS","ARM64","rocketnet-macos"]' }
-          - { os: macos-15, build_type: Debug, leg: checks, dev: 'ON', runner: '["self-hosted","macOS","ARM64","rocketnet-macos"]' }
-          - { os: macos-15, build_type: Debug, leg: builds, dev: 'ON', runner: '["self-hosted","macOS","ARM64","rocketnet-macos"]' }
-          - { os: macos-15, build_type: Release, leg: unit, dev: 'OFF', runner: '["self-hosted","macOS","ARM64","rocketnet-macos"]' }
-          - { os: macos-15, build_type: Release, leg: functional, dev: 'OFF', runner: '["self-hosted","macOS","ARM64","rocketnet-macos"]' }
-          - { os: macos-15, build_type: Release, leg: checks, dev: 'OFF', runner: '["self-hosted","macOS","ARM64","rocketnet-macos"]' }
-          - { os: macos-15, build_type: Release, leg: builds, dev: 'OFF', runner: '["self-hosted","macOS","ARM64","rocketnet-macos"]' }
+          - { build_type: Debug, dev: 'ON' }
+          - { build_type: Release, dev: 'OFF' }
+          - { os: ubuntu-24.04, runner: '["self-hosted","Linux","X64","fleet"]' }
+          - { os: ubuntu-24.04, leg: functional, runner: '["self-hosted","Linux","X64","fleet","libxdp-1-4"]' }
+          - { os: macos-15, runner: '["self-hosted","macOS","ARM64","rocketnet-macos"]' }
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
@@ -282,33 +319,36 @@ jobs:
           bash tools/check_fp_contract.sh
           cmake -DROCKETNET_OSS_FUZZ_BUILD_SCRIPT=tests/oss-fuzz/build.sh -P tools/check_oss_fuzz_fp_contract.cmake
 
+      # clang-cl takes its own floor (/fp:precise and -Xclang -ffp-contract=off),
+      # and the Windows rows that build with clang-cl are nightly. This
+      # configures the tree for x64 Windows with the runner's clang under the
+      # clang-cl name (the driver picks its mode from that name), so
+      # rocketnet_check_fp_floor holds every target to the clang-cl floor on
+      # each push. Configure only: nothing is compiled or linked.
+      - name: Check the clang-cl floating-point floor (cross configure)
+        if: matrix.leg == 'checks' && ( runner.os == 'Linux' )
+        run: |
+          set -euo pipefail
+          clang="$(command -v clang || true)"
+          if [ -z "$clang" ]; then
+            echo "TOOL-MISSING clang (any) (PATH) on $RUNNER_NAME"
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/clang-cl-floor/bin"
+          ln -sf "$clang" "$RUNNER_TEMP/clang-cl-floor/bin/clang-cl"
+          cmake -S . -B "$RUNNER_TEMP/clang-cl-floor/build" \
+            -DCMAKE_SYSTEM_NAME=Windows -DCMAKE_SYSTEM_PROCESSOR=AMD64 \
+            "-DCMAKE_C_COMPILER=$RUNNER_TEMP/clang-cl-floor/bin/clang-cl" \
+            "-DCMAKE_CXX_COMPILER=$RUNNER_TEMP/clang-cl-floor/bin/clang-cl" \
+            -DCMAKE_C_COMPILER_TARGET=x86_64-pc-windows-msvc \
+            -DCMAKE_CXX_COMPILER_TARGET=x86_64-pc-windows-msvc \
+            -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY \
+            | tee "$RUNNER_TEMP/clang-cl-floor/configure.log"
+          grep -q 'Floating-point floor (clang-cl)' "$RUNNER_TEMP/clang-cl-floor/configure.log"
+
       - name: Check every child make has a bounded -j
         if: matrix.leg == 'checks' && ( runner.os == 'Linux' )
         run: bash tools/check_make_jobs.sh
-
-      # tools/check_client_server_words.py exits 1 when a tracked file's path
-      # or text names a client-to-client party outside its listed exceptions
-      # (FILES_ALLOWED, SPANS_ALLOWED): rocketnet is client/server. Its tests
-      # hold the red controls. It reads files only, so one leg per Linux row
-      # runs it.
-      - name: Check client/server words
-        if: runner.os == 'Linux' && matrix.leg == 'checks'
-        run: |
-          python3 tools/test_check_client_server_words.py
-          python3 tools/check_client_server_words.py
-
-      # tools/check_no_owned_linked_lists.py exits 1 when RocketNet owns a
-      # pointer-linked or index-linked list: it lexes every tracked C/C++
-      # source outside sodium/ and refuses a self-pointer member, a cursor
-      # replaced by a field read through itself, or a field store followed by
-      # the cursor move that makes it a chain. OS enumeration walks pass only
-      # as rows of the "External ABI traversal sites" table of
-      # docs/SEQUENCE-BUFFERS.md. --self-test holds the red and green controls.
-      - name: Check no owned linked lists
-        if: runner.os == 'Linux' && matrix.leg == 'checks'
-        run: |
-          python3 tools/check_no_owned_linked_lists.py --self-test
-          python3 tools/check_no_owned_linked_lists.py
 
       # tools/check_no_thread_local.py exits 1 when a production build
       # (ROCKETNET_DEV=0) of sdk/ defines or touches thread-local storage. On
@@ -385,6 +425,42 @@ jobs:
           done
           exit $failed
 
+      # Every seed generator runs through its replay driver, which ignores
+      # LLVMFuzzerInitialize's return value as libFuzzer does: each must exit
+      # 0 (every seed reaches its type or oracle). The two generators that
+      # can withhold a seed must then exit 1 and print INCOMPLETE, so a
+      # generator that only returned its failure would be seen to go on.
+      # An empty input file stands in for a corpus, so a generator that does
+      # not exit replays it and exits 0, which this step refuses.
+      - name: Run the fuzz seed generators
+        if: matrix.leg == 'checks' && ( runner.os == 'macOS' )
+        shell: bash
+        run: |
+          harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session"
+          empty="$RUNNER_TEMP/fuzz-empty-input"
+          : > "$empty"
+          failed=0
+          for harness in $harnesses; do
+            out="$RUNNER_TEMP/fuzz-seeds-$harness"
+            rm -rf "$out" && mkdir -p "$out"
+            if ROCKETNET_FUZZ_SEED_DIR="$out" ROCKETNET_FUZZ_SEED_FROM=tests/fuzz/corpus "./bin/fuzz_replay_$harness" "$empty" > "fuzz-seeds-$harness.log" 2>&1; then
+              if [ -z "$(ls -A "$out")" ]; then echo "seed generator wrote nothing: $harness"; failed=1; fi
+            else
+              echo "seed generator failed: $harness"; cat "fuzz-seeds-$harness.log"; failed=1
+            fi
+          done
+          for entry in rocketnet_fuzz_connect_token:seed_type_client_expired rocketnet_fuzz_receive_structured:seed_type_server_payload; do
+            harness="${entry%%:*}"
+            out="$RUNNER_TEMP/fuzz-seeds-withheld-$harness"
+            rm -rf "$out" && mkdir -p "$out"
+            status=0
+            ROCKETNET_FUZZ_SEED_DIR="$out" ROCKETNET_FUZZ_WITHHOLD="${entry#*:}" "./bin/fuzz_replay_$harness" "$empty" > "fuzz-withheld-$harness.log" 2>&1 || status=$?
+            if [ "$status" -ne 1 ] || ! grep -q INCOMPLETE "fuzz-withheld-$harness.log"; then
+              echo "seed generator with ${entry#*:} withheld exited $status, not 1 with INCOMPLETE: $harness"; cat "fuzz-withheld-$harness.log"; failed=1
+            fi
+          done
+          exit $failed
+
       # On Linux the strace run below is this run: one suite run, not two.
       - name: Run unit tests (RSS telemetry, deterministic verdict)
         if: runner.os != 'Linux' && matrix.leg == 'unit'
@@ -400,12 +476,16 @@ jobs:
           bash tools/test_check_unit_no_sockets.sh
           bash tools/check_unit_no_sockets.sh ./bin/test
 
-      # The unit suite reads no real time, sleep, thread or resolver: the
-      # check fails, naming file and line, on any such call in the unit
-      # sources (tools/check_unit_purity.py).
+      # The unit suite reads no real time, sleep, thread, timed wait or
+      # resolver: the check fails, naming file and line, on any such call in
+      # the unit sources, the tests/*.h helpers they include and the sdk DEV
+      # fixtures they call (tools/check_unit_purity.py); its self-test plants
+      # each in a fixture tree.
       - name: Unit suite uses no real time, sleep, thread or resolver
         if: matrix.leg == 'unit'
-        run: python3 tools/check_unit_purity.py .
+        run: |
+          python3 tools/check_unit_purity.py --self-test
+          python3 tools/check_unit_purity.py .
 
       - name: Ambient config isolation and passing output
         if: matrix.leg == 'unit'
@@ -423,8 +503,11 @@ jobs:
       # cases' measured RSS against their existing registry and fallback bound.
       # io_uring is a documented host requirement on Linux (docs/LINUX.md):
       # a full-suite run that skips an io_uring row fails here, naming it.
+      # Per commit the Linux Release row runs functional_production only; the
+      # development suite runs per commit on the Linux Debug row and on the
+      # macOS Release row (the one macOS functional row per commit).
       - name: Run functional suite (auto ladder — the fall, on Linux; RSS enforced)
-        if: matrix.leg == 'functional'
+        if: matrix.leg == 'functional' && (inputs.full || matrix.build_type == 'Debug' || runner.os == 'macOS')
         shell: bash
         run: |
           set -euo pipefail
@@ -622,6 +705,20 @@ jobs:
             python3 tools/check_hardening.py bin/librocketnet.so
           fi
 
+      # The other optimized configurations are hardened like Release: each
+      # builds the shared library alone in its own directory and the same
+      # checker reads it.
+      - name: Check RelWithDebInfo and MinSizeRel hardening
+        if: matrix.leg == 'checks' && matrix.build_type == 'Release' && ( runner.os == 'Linux' )
+        run: |
+          for config in RelWithDebInfo MinSizeRel; do
+            dir="build-harden-$config"
+            cmake -S . -B "$dir" -DCMAKE_BUILD_TYPE=$config -DROCKETNET_DEV=OFF \
+              -DCMAKE_LIBRARY_OUTPUT_DIRECTORY="$PWD/$dir/bin" -DCMAKE_RUNTIME_OUTPUT_DIRECTORY="$PWD/$dir/bin"
+            cmake --build "$dir" --target rocketnet_shared --parallel 4
+            python3 tools/check_hardening.py "$dir/bin/librocketnet.so"
+          done
+
       - name: Check every driver row has transport matrix cells
         if: matrix.leg == 'checks' && ( runner.os == 'Linux' )
         run: python3 tools/check_transport_matrix.py
@@ -634,6 +731,15 @@ jobs:
       - name: Check the platform policy and tests/functional/ wildcard binds
         if: runner.os == 'Linux' && matrix.leg == 'checks'
         run: python3 tools/check_platform_policy.py
+
+      # tools/check_tsan_flags.py exits 1 when a workflow compiles with
+      # -fsanitize=thread below -O1, where tsan misses a struct copy's
+      # memcpy write after an unordered read. It reads files only.
+      - name: Check every tsan build compiles at -O1 or above
+        if: runner.os == 'Linux' && matrix.leg == 'checks'
+        run: |
+          python3 tools/check_tsan_flags.py --self-test
+          python3 tools/check_tsan_flags.py
 
       # The static source-audit binary reads the repository's own source,
       # header and doc files (no socket, no thread, no network), so one Linux
@@ -653,6 +759,10 @@ jobs:
       - name: Test the MSan gate's verdicts
         if: matrix.leg == 'checks' && ( runner.os == 'Linux' )
         run: python3 tools/test_run_msan.py
+
+      - name: Test the static gate's verdicts
+        if: matrix.leg == 'checks' && ( runner.os == 'Linux' )
+        run: python3 tools/test_run_static.py
 
       - name: Test the Application Verifier runner's image name
         if: matrix.leg == 'checks' && ( runner.os == 'Linux' )
@@ -678,7 +788,7 @@ jobs:
         run: python3 tools/check_examples.py
 
       - name: Check larger history budget and reject undersized history
-        if: runner.os == 'Linux' && matrix.build_type == 'Release' && matrix.leg == 'builds'
+        if: inputs.full && runner.os == 'Linux' && matrix.build_type == 'Release' && matrix.leg == 'builds'
         run: |
           cmake -S . -B build-history -DCMAKE_BUILD_TYPE=Release -DROCKETNET_HISTORY_PACKETS=32768 -DCMAKE_RUNTIME_OUTPUT_DIRECTORY="$PWD/build-history/bin"
           cmake --build build-history --target test_lifecycle --parallel
@@ -693,18 +803,19 @@ jobs:
       # transport out. The library then carries no XDP code and no libbpf or
       # libxdp link, and a transport list naming xdp refuses it with
       # TRANSPORT_NOT_BUILT; the default build keeps all of it.
-      - name: Build without XDP; XDP is compiled out and a pin of it refuses
-        if: runner.os == 'Linux' && matrix.build_type == 'Release' && matrix.leg == 'builds'
+      - name: Build without XDP; XDP is compiled out, a pin of it refuses, and functional links
+        if: inputs.full && runner.os == 'Linux' && matrix.build_type == 'Release' && matrix.leg == 'builds'
         run: |
           python3 tools/test_check_xdp_compiled_out.py
           python3 tools/check_xdp_compiled_out.py --present bin/librocketnet.so build/librocketnet.a
           cmake -S . -B build-no-xdp -DCMAKE_BUILD_TYPE=Release -DROCKETNET_XDP=OFF -DROCKETNET_BUILD_EXAMPLES=OFF -DROCKETNET_BUILD_TOOLS=OFF \
             -DCMAKE_RUNTIME_OUTPUT_DIRECTORY="$PWD/build-no-xdp/bin" -DCMAKE_LIBRARY_OUTPUT_DIRECTORY="$PWD/build-no-xdp/bin"
-          cmake --build build-no-xdp --target rocketnet rocketnet_shared test --parallel
+          cmake --build build-no-xdp --target rocketnet rocketnet_shared test functional --parallel
           python3 tools/check_xdp_compiled_out.py --absent build-no-xdp/bin/librocketnet.so build-no-xdp/librocketnet.a
           for case in test_xdp_compiled_out_pin_refuses_not_built test_xdp_compiled_out_list_takes_the_next_candidate test_xdp_compiled_out_has_no_memory_plan; do
             ./build-no-xdp/bin/test --run "$case"
           done
+          ROCKETNET_SERVER_TRANSPORT=portable ./build-no-xdp/bin/functional --run test_transport_env_pin_is_honoured
 
       # The client build: liburing, libbpf and libxdp are server-only, so a
       # Linux build with ROCKETNET_XDP=OFF and ROCKETNET_IO_URING=OFF needs
@@ -827,10 +938,9 @@ jobs:
   xdp-libxdp-1-4:
     name: XDP / libxdp 1.4 / Debug
     runs-on: [self-hosted, Linux, X64, fleet, libxdp-1-4]
-    # The guest run alone takes 120s (timeout 120 vng below) after a Debug
-    # build of the functional cell; the bound stays 10 until a fleet
-    # measurement names a smaller one.
-    timeout-minutes: 10
+    # 47-69s on the fleet (build 40s, guest 6s); timeout 120 on vng bounds a
+    # hung guest, and the job bound holds the per-commit run to two minutes.
+    timeout-minutes: ${{ inputs.full && 10 || 2 }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
       - name: Build the XDP functional cell (Debug)
@@ -977,6 +1087,13 @@ jobs:
     # shared build slots on a check-in run (Glenn 2026-10-24: --slots 3), inside
     # "Set up runner" (73 s on run 40890503823): the limit is that wait plus
     # the 3-minute law. The test window inside stays timed against 120 s.
+    #
+    # NIGHTLY TIER (2026-10-31). Leg (a) alone, narrowed to the unit suite's
+    # targets, measured 143s on run 41240496784 (checkout 11s, configure 19s,
+    # build 55s, unit suite 38s) and hit the two-minute bound; MSVC's floor
+    # leaves no room for a suite. Per commit, happy path / windows builds the
+    # whole tree under MSVC and runs the happy path (106s on the same run).
+    if: inputs.full
     timeout-minutes: 5
     strategy:
       fail-fast: false
@@ -1232,16 +1349,17 @@ jobs:
   happy-path:
     name: happy path / ${{ matrix.os }}
     # every OS on the fleet: Linux on the fleet pool, macOS on rocketnet-macos, Windows on rocketnet-windows
-    runs-on: ${{ fromJSON(matrix.runner) }}
+    runs-on: ${{ fromJSON(matrix.os == 'windows' && '["self-hosted","Windows","X64","rocketnet-windows"]' || startsWith(matrix.os, 'macos') && '["self-hosted","macOS","ARM64","rocketnet-macos"]' || '["self-hosted","Linux","X64","fleet"]') }}
     # the Windows row waits for a captain build slot first (build-and-test-windows)
-    timeout-minutes: ${{ matrix.os == 'windows' && 5 || 3 }}
+    timeout-minutes: ${{ inputs.full && 5 || 2 }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { os: ubuntu-24.04, runner: '["self-hosted","Linux","X64","fleet"]' }
-          - { os: macos-15, runner: '["self-hosted","macOS","ARM64","rocketnet-macos"]' }
-          - { os: windows, runner: '["self-hosted","Windows","X64","rocketnet-windows"]' }
+        # macOS runs in the nightly tier: per commit the two macOS runners
+        # hold the two build-and-test rows. The runner comes from os in
+        # runs-on, not from include rows: an include row that matches no
+        # combination would add the macOS row back.
+        os: ${{ fromJSON(inputs.full && '["ubuntu-24.04","macos-15","windows"]' || '["ubuntu-24.04","windows"]') }}
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
@@ -1348,8 +1466,11 @@ jobs:
 
   backend-examples:
     name: backend example / ${{ matrix.backend }}
+    # nightly tier: the token bytes are held per commit by standard
+    # conformance against standard/vectors; the backends follow nightly
+    if: inputs.full
     runs-on: [self-hosted, Linux, X64, fleet]
-    timeout-minutes: 3
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
@@ -1445,11 +1566,12 @@ jobs:
   sanitizers:
     name: asan + ubsan (${{ matrix.leg }})
     runs-on: [self-hosted, Linux, X64, fleet]   # was ubuntu-24.04, then one host's rocketnet label; the fleet's org runners (see build-and-test's note)
-    timeout-minutes: 3
+    timeout-minutes: ${{ inputs.full && 10 || 2 }}
     strategy:
       fail-fast: false
       matrix:
-        leg: [unit suite, unit suite portable, functional suite]
+        # unit suite portable (59-132s) runs in the nightly tier
+        leg: ${{ fromJSON(inputs.full && '["unit suite","unit suite portable","functional suite"]' || '["unit suite","functional suite"]') }}
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
@@ -1580,7 +1702,7 @@ jobs:
   fuzz-smoke:
     name: fuzz smoke (libFuzzer, corpus replay)
     runs-on: [self-hosted, Linux, X64, fleet]   # was ubuntu-24.04, then one host's rocketnet label; the fleet's org runners (see build-and-test's note)
-    timeout-minutes: 3
+    timeout-minutes: ${{ inputs.full && 10 || 2 }}
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
@@ -1714,8 +1836,10 @@ jobs:
 
   fuzz-smoke-ndebug:
     name: fuzz smoke NDEBUG (every fuzzer, corpus replay)
+    # nightly tier; fuzz smoke replays the corpora per commit
+    if: inputs.full
     runs-on: [self-hosted, Linux, X64, fleet]
-    timeout-minutes: 3
+    timeout-minutes: 10
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
@@ -1879,11 +2003,12 @@ jobs:
   big-endian:
     name: big endian s390x / ${{ matrix.build_type }}
     runs-on: [self-hosted, Linux, X64, fleet]
-    timeout-minutes: 3
+    timeout-minutes: ${{ inputs.full && 10 || 2 }}
     strategy:
       fail-fast: false
       matrix:
-        build_type: [Debug, Release]
+        # per commit Debug; Release (29-66s) in the nightly tier
+        build_type: ${{ fromJSON(inputs.full && '["Debug","Release"]' || '["Debug"]') }}
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
@@ -2001,32 +2126,6 @@ jobs:
   # spec is worse than none, because independent implementations are built on
   # it.
 
-  conformance:
-    name: standard conformance
-    runs-on: [self-hosted, Linux, X64, fleet]   # was ubuntu-24.04, then one host's rocketnet label; the fleet's org runners (see build-and-test's note)
-    timeout-minutes: 3
-    steps:
-
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
-
-      # The standard in standard/ (RN-1, RN-2, RN-R): its outline against
-      # standard/STYLE.md, every pinned constant against the compiler, every
-      # vector against its RN_STANDARD_VECTOR twin, the Appendix A indexes,
-      # the cross-references and the normative language. Pending sections are
-      # listed, not failed. One compile; well under ten seconds.
-      - name: Verify the RocketNet standard against the implementation
-        run: |
-          python3 tools/conformance/test_check_rn_standard.py
-          python3 tools/conformance/check_rn_standard.py
-
-      # The witness ledger: every behavioural rule of the standard names
-      # the section, code function and test that witness it, or is marked
-      # tier none. Its own unit tests run first, then the ledger itself.
-      - name: Verify the witness ledger against the standard and the tests
-        run: |
-          python3 tools/conformance/test_check_witnesses.py
-          python3 tools/conformance/check_witnesses.py
-
   # THE THREAD SANITIZER LEG. Everything else in this file is a single-threaded
   # story or leaves the threads to luck; this is the only leg that watches the
   # transport's concurrency directly. rocketnet spawns real threads -- the
@@ -2085,7 +2184,7 @@ jobs:
   tsan:
     name: tsan (${{ matrix.leg }})
     runs-on: [self-hosted, Linux, X64, fleet]   # was ubuntu-24.04, then one host's rocketnet label; the fleet's org runners (see build-and-test's note)
-    timeout-minutes: 3
+    timeout-minutes: ${{ inputs.full && 10 || 2 }}
     strategy:
       fail-fast: false
       matrix:
@@ -2118,13 +2217,19 @@ jobs:
       # kernel's default vm.mmap_rnd_bits=32 and dies "FATAL: ThreadSanitizer: unexpected memory mapping" before
       # main (measured on two Linux x64 gcc 13 hosts, 2026-10-13; the same binary passes under setarch -R). Hosted
       # images lower the sysctl instead; this works on both and changes nothing tsan observes.
+      #
+      # -O1, as the ThreadSanitizer documentation recommends. At -O0 a struct assignment
+      # lowers to a memcpy, and tsan does not report a memcpy write that follows an
+      # unordered plain read. With the packet lease's fields plain, its race in retired()
+      # (test_lifecycle check_packet_lease_retired_race) is reported in every run at -O1
+      # and in none at -O0 (measured 2026-10-31).
 
       - name: Configure
         run: >
           cmake -B build
           -DCMAKE_BUILD_TYPE=Debug
-          -DCMAKE_C_FLAGS="-fsanitize=thread -fno-omit-frame-pointer"
-          -DCMAKE_CXX_FLAGS="-fsanitize=thread -fno-omit-frame-pointer"
+          -DCMAKE_C_FLAGS="-fsanitize=thread -fno-omit-frame-pointer -O1"
+          -DCMAKE_CXX_FLAGS="-fsanitize=thread -fno-omit-frame-pointer -O1"
           -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread"
 
       - name: Build the soak and the lifecycle harness
@@ -2162,8 +2267,10 @@ jobs:
   # this older backend checks interoperability across supported deployments.
   sodium-pinned:
     name: pinned libsodium (built from source)
+    # nightly tier
+    if: inputs.full
     runs-on: [self-hosted, Linux, X64, fleet]   # was ubuntu-24.04, then one host's rocketnet label; the fleet's org runners (see build-and-test's note)
-    timeout-minutes: 3
+    timeout-minutes: 10
     env:
       SODIUM_VERSION: "1.0.20"
       SODIUM_SHA256: "ebb65ef6ca439333c2bb41a0c1990587288da07f6c7fd07cb3a18cc18d30ce19"
@@ -2297,8 +2404,11 @@ jobs:
 
   platform-selftests:
     name: platform selftests / ${{ matrix.os }}
+    # nightly tier: the soak and bench harness selftests are tool checks, not
+    # the commit's code under test
+    if: inputs.full
     runs-on: ${{ fromJSON(matrix.runner) }}
-    timeout-minutes: 3
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
@@ -2397,13 +2507,24 @@ jobs:
       - name: Benchmark campaign result gate
         run: python3 benchmarks/test_campaign.py
 
-  # benchmarks/instruction_baseline.json is pinned to GNU-15.2.0 / valgrind-3.26.0;
-  # the fleet label also matches gcc-13 hosts, so route this job to the quiet
-  # runner label that carries the pinned toolchain.
+  # THE INSTRUCTION COUNT GATE.
+  # benchmarks/instruction_baseline.json names the gcc and valgrind it was
+  # measured with, and counts are only comparable under exactly those. The job
+  # never takes either from the host: tools/build_pinned_toolchain.sh builds
+  # both from checksum-verified release source into ./pinned-toolchain, the
+  # prefix is cached keyed by the two pins, the host OS and C library, and the
+  # script itself, and the measurement runs with explicit paths into it. The
+  # prefix's toolchain-id must equal the baseline's, so a host or distro gcc
+  # reporting the same version is never compared. A
+  # cold cache builds gcc (C and C++ only, one stage) and valgrind; a warm
+  # cache restores the prefix and builds nothing.
   instruction-gate:
     name: instruction count gate
     runs-on: [self-hosted, Linux, X64, rocketnet-quiet]
-    timeout-minutes: 3
+    # Per commit the gate restores the pinned toolchain and never builds it
+    # (396s cold); the nightly tier builds it on a miss and saves it from
+    # main, where every branch and pull request can restore it.
+    timeout-minutes: ${{ inputs.full && 75 || 2 }}
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
@@ -2413,7 +2534,7 @@ jobs:
         run: |
           set -euo pipefail
           missing=0
-          for tool in cmake gcc g++ xxd pkg-config valgrind python3; do
+          for tool in cmake cc c++ make m4 curl tar xz bzip2 sha256sum sha512sum xxd pkg-config python3; do
             if ! command -v "$tool" >/dev/null 2>&1; then
               echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
               missing=1
@@ -2427,39 +2548,210 @@ jobs:
           done
           exit "$missing"
 
+      - name: Read the pinned toolchain from the baseline
+        id: pins
+        shell: bash
+        run: |
+          set -euo pipefail
+          read -r gcc_version valgrind_version < <(python3 -c '
+          import json
+          b = json.load(open("benchmarks/instruction_baseline.json"))
+          c, v = b["compiler_id"], b["valgrind_version"]
+          assert c.startswith("GNU-") and v.startswith("valgrind-"), (c, v)
+          print(c[len("GNU-"):], v[len("valgrind-"):])
+          ')
+          . /etc/os-release
+          libc="$(getconf GNU_LIBC_VERSION | tr ' ' '-')"
+          host="${ID}-${VERSION_ID}-$(uname -m)-${libc}"
+          echo "gcc=$gcc_version" >> "$GITHUB_OUTPUT"
+          echo "valgrind=$valgrind_version" >> "$GITHUB_OUTPUT"
+          echo "host=$host" >> "$GITHUB_OUTPUT"
+          echo "pinned gcc $gcc_version, valgrind $valgrind_version, host $host on $RUNNER_NAME"
+
+      - name: Restore the pinned toolchain
+        id: toolchain-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830  # v4.3.0
+        with:
+          path: pinned-toolchain
+          key: instruction-toolchain-gcc-${{ steps.pins.outputs.gcc }}-valgrind-${{ steps.pins.outputs.valgrind }}-${{ steps.pins.outputs.host }}-${{ hashFiles('tools/build_pinned_toolchain.sh') }}
+
+      - name: Refuse a cold toolchain cache in the per-commit tier
+        if: ${{ !inputs.full && steps.toolchain-cache.outputs.cache-hit != 'true' }}
+        shell: bash
+        run: |
+          echo "INSTRUCTION-TOOLCHAIN-COLD key=${{ steps.toolchain-cache.outputs.cache-primary-key }}"
+          echo "The per-commit tier never builds the pinned toolchain. The nightly tier"
+          echo "(nightly-ci.yml) builds and saves it on main; after a pin change lands,"
+          echo "warm it now with: gh workflow run nightly-ci.yml --ref main"
+          exit 1
+
+      - name: Build the pinned toolchain from source (content-verified)
+        if: inputs.full && steps.toolchain-cache.outputs.cache-hit != 'true'
+        timeout-minutes: 60
+        run: bash tools/build_pinned_toolchain.sh "$GITHUB_WORKSPACE/pinned-toolchain" "${{ steps.pins.outputs.gcc }}" "${{ steps.pins.outputs.valgrind }}"
+
+      # saved as soon as it is built, so a red gate below never costs the next
+      # run a rebuild
+      - name: Save the pinned toolchain
+        if: inputs.full && steps.toolchain-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830  # v4.3.0
+        with:
+          path: pinned-toolchain
+          key: ${{ steps.toolchain-cache.outputs.cache-primary-key }}
+
+      # PROVE THE PREMISE: the prefix holds exactly the pins, or every number
+      # below is measured with the wrong tools.
+      - name: Prove the prefix holds the pins
+        shell: bash
+        env:
+          VALGRIND_LIB: ${{ github.workspace }}/pinned-toolchain/libexec/valgrind
+        run: |
+          set -euo pipefail
+          tc="$GITHUB_WORKSPACE/pinned-toolchain"
+          gcc_resolved="$("$tc/bin/g++" -dumpfullversion)"
+          valgrind_resolved="$("$tc/bin/valgrind" --version)"
+          echo "prefix holds gcc ${gcc_resolved} and ${valgrind_resolved}, toolchain-id $(cat "$tc/toolchain-id") (pins are ${{ steps.pins.outputs.gcc }} and valgrind-${{ steps.pins.outputs.valgrind }})"
+          [ "$gcc_resolved" = "${{ steps.pins.outputs.gcc }}" ]
+          [ "$valgrind_resolved" = "valgrind-${{ steps.pins.outputs.valgrind }}" ]
+
       - name: Test the instruction-count checker
+        timeout-minutes: 3
         run: python3 tools/test_check_instructions.py
 
-      - name: Build instruction_count (Release)
+      # the pinned gcc's own libstdc++ by rpath, and the pinned valgrind's
+      # cachegrind.h ahead of any the host carries
+      - name: Build instruction_count (Release) with the pinned gcc
+        timeout-minutes: 5
+        shell: bash
         run: |
-          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          set -euo pipefail
+          tc="$GITHUB_WORKSPACE/pinned-toolchain"
+          cmake -B build -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER="$tc/bin/gcc" \
+            -DCMAKE_CXX_COMPILER="$tc/bin/g++" \
+            -DCMAKE_C_FLAGS="-I$tc/include" \
+            -DCMAKE_CXX_FLAGS="-I$tc/include" \
+            -DCMAKE_EXE_LINKER_FLAGS="-Wl,-rpath,$tc/lib64"
           cmake --build build --target instruction_count --parallel
 
-      - name: Run the cachegrind instruction gate
-        run: python3 tools/check_instructions.py --bin ./build/instruction_count
+      - name: Run the cachegrind instruction gate with the pinned valgrind
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          set -euo pipefail
+          status=0
+          output="$(python3 tools/check_instructions.py --bin ./build/instruction_count --toolchain "$GITHUB_WORKSPACE/pinned-toolchain")" || status=$?
+          printf '%s\n' "$output"
+          [ "$status" -eq 0 ] || exit "$status"
+          # the regions were isolated by cachegrind's client requests, as the
+          # baseline was; the setup-subtraction fallback measures differently
+          grep -qx 'isolation mode=client_requests' <<<"$output"
 
-  # The six validation-tool self-test suites the repository ships
-  # (tools/test_check_frame_budget.py, test_check_server_calls.py,
-  # test_check_split_load.py, test_check_test_environment.py,
-  # test_profile_1000_load.py, test_release_version.py). Each is
-  # self-contained -- fixtures only, no build, no network, no third-party
-  # Python packages -- so every commit runs all six, which covers their
-  # tools, their dependencies and this file's own callers changing without
-  # per-job path filters (this workflow does not filter jobs by path; its
-  # header explains why). Each suite runs in its own step so no shell
-  # pipeline can mask a refusal: the suite's own nonzero exit fails the
-  # step, its full output is printed either way, and a suite that passes
-  # having discovered no tests fails here too -- the runner's "Ran N tests"
-  # line (the release-version suite's own count line) must name a positive
-  # count. Seconds of wall time; the per-commit tier keeps it.
-  validation-tool-selftests:
-    name: validation tool selftests
+  # THE LINT JOB: every per-commit check that reads files and builds nothing
+  # (or one small compile), in one job on one runner, so the per-commit tier
+  # stays within the runners that can pick it up at once. Each check keeps its
+  # own step and its own verdict.
+  #
+  #   workflows    every runs-on selects the fleet, every main commit gets its
+  #                own concurrency group, and every per-commit job is bounded
+  #                to two minutes (tools/check_ci_budget.py)
+  #   formatting   clang-format 18 over every tracked C and C++ source
+  #   standard     standard conformance and the witness ledger
+  #   source       client/server words, no owned linked lists
+  #   tools        the validation tools' own self-test suites
+  lint:
+    name: lint (workflows, format, standard, tool selftests)
     runs-on: [self-hosted, Linux, X64, fleet]
-    timeout-minutes: 3
+    timeout-minutes: ${{ inputs.full && 10 || 2 }}
     steps:
-
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          persist-credentials: false
 
+      # Owner, 2026-10-18: "all CI should run on our fleet, not github." Refuses a GitHub-hosted runs-on label.
+      - name: Every runs-on selects the fleet
+        run: sh .github/scripts/check-runs-on.sh --self-test && sh .github/scripts/check-runs-on.sh
+      - name: Every main commit gets its own concurrency group
+        run: sh .github/scripts/check-main-concurrency.sh --self-test && sh .github/scripts/check-main-concurrency.sh
+
+      # Every job a push or pull request runs is bounded to two minutes
+      # (timeout-minutes: 2, or ${{ inputs.full && N || 2 }} in this file), so
+      # a per-commit job that overruns fails instead of slowing the gate.
+      # --self-test plants unbounded, over-budget and nightly-only jobs.
+      - name: Every per-commit job is bounded to two minutes
+        run: |
+          python3 tools/check_ci_budget.py --self-test
+          python3 tools/check_ci_budget.py
+
+      # every tracked C and C++ source outside the vendored trees and generated
+      # files must match .clang-format under clang-format 18 (tools/format/
+      # check_format.sh); one unformatted file fails the job, `make format-check`
+      # runs the same check locally
+      - name: Check clang-format 18 is present
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v clang-format-18 >/dev/null 2>&1; then echo "TOOL-MISSING clang-format-18 (missing) on $RUNNER_NAME"; exit 1; fi
+          clang-format-18 --version
+      - name: Test the format checker
+        run: sh tools/format/test_check_format.sh
+      - name: Every source is formatted
+        run: sh tools/format/check_format.sh
+
+      # The standard in standard/ (RN-1, RN-2, RN-R): its outline against
+      # standard/STYLE.md, every pinned constant against the compiler, every
+      # vector against its RN_STANDARD_VECTOR twin, the Appendix A indexes,
+      # the cross-references and the normative language. Pending sections are
+      # listed, not failed. One compile; well under ten seconds.
+      - name: Verify the RocketNet standard against the implementation
+        run: |
+          python3 tools/conformance/test_check_rn_standard.py
+          python3 tools/conformance/check_rn_standard.py
+
+      # The witness ledger: every behavioural rule of the standard names
+      # the section, code function and test that witness it, or is marked
+      # tier none. Its own unit tests run first, then the ledger itself.
+      - name: Verify the witness ledger against the standard and the tests
+        run: |
+          python3 tools/conformance/test_check_witnesses.py
+          python3 tools/conformance/check_witnesses.py
+
+      # tools/check_client_server_words.py exits 1 when a tracked file's path
+      # or text names a client-to-client party outside its listed exceptions
+      # (FILES_ALLOWED, SPANS_ALLOWED): rocketnet is client/server. Its tests
+      # hold the red controls. It reads files only, so the lint job runs it.
+      - name: Check client/server words
+        run: |
+          python3 tools/test_check_client_server_words.py
+          python3 tools/check_client_server_words.py
+
+      # tools/check_no_owned_linked_lists.py exits 1 when RocketNet owns a
+      # pointer-linked or index-linked list: it lexes every tracked C/C++
+      # source outside sodium/ and refuses a self-pointer member, a cursor
+      # replaced by a field read through itself, or a field store followed by
+      # the cursor move that makes it a chain. OS enumeration walks pass only
+      # as rows of the "External ABI traversal sites" table of
+      # docs/SEQUENCE-BUFFERS.md. --self-test holds the red and green controls.
+      - name: Check no owned linked lists
+        run: |
+          python3 tools/check_no_owned_linked_lists.py --self-test
+          python3 tools/check_no_owned_linked_lists.py
+
+      # The validation-tool self-test suites the repository ships
+      # (tools/test_check_frame_budget.py, test_check_server_calls.py,
+      # test_check_split_load.py, test_check_test_environment.py,
+      # test_profile_1000_load.py, test_release_version.py,
+      # test_check_release_tsan.py, check_header_guards.py --self-test). Each is
+      # self-contained -- fixtures only, no build, no network, no third-party
+      # Python packages -- so every commit runs all of them, which covers their
+      # tools, their dependencies and this file's own callers changing without
+      # per-job path filters (this workflow does not filter jobs by path; its
+      # header explains why). Each suite runs in its own step so no shell
+      # pipeline can mask a refusal: the suite's own nonzero exit fails the
+      # step, its full output is printed either way, and a suite that passes
+      # having discovered no tests fails here too -- the runner's "Ran N tests"
+      # line (the release-version suite's own count line) must name a positive
+      # count. Seconds of wall time; the per-commit tier keeps it.
       - name: Test the frame-budget checker's verdicts
         shell: bash
         run: |
@@ -2508,6 +2800,14 @@ jobs:
           printf '%s\n' "$output"
           grep -Eq '^[1-9][0-9]* release version fixtures passed$' <<<"$output"
 
+      - name: Test the release threaded-TSan run check
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(python3 tools/test_check_release_tsan.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
+          printf '%s\n' "$output"
+          grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
+
       - name: Test the header-guard checker's verdicts
         shell: bash
         run: |
@@ -2515,40 +2815,3 @@ jobs:
           output="$(python3 tools/check_header_guards.py --self-test -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
           printf '%s\n' "$output"
           grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
-
-  # every tracked C and C++ source outside the vendored trees and generated
-  # files must match .clang-format under clang-format 18 (tools/format/
-  # check_format.sh); one unformatted file fails the job, `make format-check`
-  # runs the same check locally
-  format-check:
-    name: format check (clang-format 18)
-    runs-on: [self-hosted, Linux, X64, fleet]
-    timeout-minutes: 3
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
-        with:
-          persist-credentials: false
-      - name: Check clang-format 18 is present
-        shell: bash
-        run: |
-          set -euo pipefail
-          if ! command -v clang-format-18 >/dev/null 2>&1; then echo "TOOL-MISSING clang-format-18 (missing) on $RUNNER_NAME"; exit 1; fi
-          clang-format-18 --version
-      - name: Test the format checker
-        run: sh tools/format/test_check_format.sh
-      - name: Every source is formatted
-        run: sh tools/format/check_format.sh
-
-  runs-on-lint:
-    # Owner, 2026-10-18: "all CI should run on our fleet, not github." Refuses a GitHub-hosted runs-on label.
-    name: runs-on-lint
-    runs-on: [self-hosted, Linux, X64, fleet]
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
-        with:
-          persist-credentials: false
-      - name: Every runs-on selects the fleet
-        run: sh .github/scripts/check-runs-on.sh --self-test && sh .github/scripts/check-runs-on.sh
-      - name: Every main commit gets its own concurrency group
-        run: sh .github/scripts/check-main-concurrency.sh --self-test && sh .github/scripts/check-main-concurrency.sh

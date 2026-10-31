@@ -27,6 +27,33 @@
 #include <fcntl.h>
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
+// the datagrams every receive path reads and skips, process-wide: a
+// zero-length datagram, and one whose source the socket refuses
+// (rocketnet_platform_mmsg_read_sockaddr, rocketnet_platform_sockaddr_to_address)
+
+static std::atomic<uint64_t> rocketnet_platform_receive_empty_count{ 0 };
+static std::atomic<uint64_t> rocketnet_platform_receive_refused_source_count{ 0 };
+
+static void rocketnet_platform_count_receive_empty()
+{
+    rocketnet_platform_receive_empty_count.fetch_add( 1, std::memory_order_relaxed );
+}
+
+static void rocketnet_platform_count_receive_refused_source()
+{
+    rocketnet_platform_receive_refused_source_count.fetch_add( 1, std::memory_order_relaxed );
+}
+
+uint64_t rocketnet_platform_receive_empties()
+{
+    return rocketnet_platform_receive_empty_count.load( std::memory_order_relaxed );
+}
+
+uint64_t rocketnet_platform_receive_refused_sources()
+{
+    return rocketnet_platform_receive_refused_source_count.load( std::memory_order_relaxed );
+}
+
 // the direct allocation count (rocketnet_memory.h). relaxed: it is a total,
 // read by a memory check, and orders against nothing
 static std::atomic<uint64_t> rocketnet_direct_allocation_total{ 0 };
@@ -54,13 +81,34 @@ extern "C" uint64_t rocketnet_direct_allocation_bytes( void )
 // then on and advances only as the caller's clock does: a paused clock pauses
 // token expiry. The only wall-clock read on the token path.
 
+#if ROCKETNET_DEV
+// test seam for the wall clock (rocketnet_internal.h): NULL reads the real
+// clock; the unit suite's fake replaces it
+static std::atomic<uint64_t ( * )( void )> rocketnet_platform_wall_clock_override{ NULL };
+
+void rocketnet_platform_set_wall_clock_for_testing( uint64_t ( *wall_clock )( void ) )
+{
+    rocketnet_platform_wall_clock_override.store( wall_clock, std::memory_order_release );
+}
+#endif // #if ROCKETNET_DEV
+
+static uint64_t rocketnet_platform_wall_clock()
+{
+#if ROCKETNET_DEV
+    uint64_t ( *wall_clock )( void ) = rocketnet_platform_wall_clock_override.load( std::memory_order_acquire );
+    if ( wall_clock )
+        return wall_clock();
+#endif // #if ROCKETNET_DEV
+    const time_t now = ::time( NULL );
+    return now > 0 ? (uint64_t) now : 0;
+}
+
 uint64_t rocketnet_platform_token_epoch( uint64_t configured, double time )
 {
     if ( configured != 0 )
         return configured;
 
-    const time_t now = ::time( NULL );
-    const uint64_t wall = now > 0 ? (uint64_t) now : 0;
+    const uint64_t wall = rocketnet_platform_wall_clock();
     const uint64_t elapsed = time > 0.0 ? (uint64_t) time : 0;
 
     return wall > elapsed ? wall - elapsed : 1;
@@ -812,6 +860,18 @@ int rocketnet_server_receive_buffer_request( int max_clients )
     return rocketnet_server_receive_buffer_bytes( max_clients, ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, ROCKETNET_SERVER_RECEIVE_MIN_UPDATE_HZ );
 }
 
+int rocketnet_server_transport_receive_buffer_request( const char * transport, int max_clients )
+{
+    if ( !transport )
+        return 0;
+    if ( strcmp( transport, "portable" ) == 0 || strcmp( transport, "msgx" ) == 0 )
+        return rocketnet_server_receive_buffer_request( max_clients );
+    if ( strcmp( transport, "gso" ) == 0 || strcmp( transport, "io_uring" ) == 0 ||
+         strcmp( transport, "iocp" ) == 0 || strcmp( transport, "rio" ) == 0 )
+        return rocketnet_server_receive_buffer_request( ROCKETNET_MAX_CLIENTS );
+    return 0;
+}
+
 #if ROCKETNET_DEV
 static thread_local int rocketnet_server_receive_buffer_warning_grant_override = 0;
 
@@ -961,6 +1021,11 @@ static uint64_t time_start;
 static double time_start;
 #endif // #if defined( __APPLE__ )
 
+// set once init has set up the clock; until then rocketnet_platform_time is
+// 0 (on macOS the timebase denominator is still zero). The clock stays set
+// up across term, so this is never cleared.
+static std::atomic<bool> clock_ready( false );
+
 bool rocketnet_platform_init()
 {
 #if ROCKETNET_DEV
@@ -976,6 +1041,7 @@ bool rocketnet_platform_init()
     clock_gettime( CLOCK_MONOTONIC_RAW, &ts );
     time_start = (double) ts.tv_sec + ( (double) ( ts.tv_nsec ) ) / 1000000000.0;
 #endif // #if defined( __APPLE__ )
+    clock_ready.store( true, std::memory_order_release );
 
 #if defined( __APPLE__ ) && TARGET_OS_OSX
     // absence is not an error: a socket without them runs the portable pump
@@ -1035,6 +1101,8 @@ bool rocketnet_platform_client_dual_stack()
 
 double rocketnet_platform_time()
 {
+    if ( !clock_ready.load( std::memory_order_acquire ) )
+        return 0.0;
 #if defined( __APPLE__ )
     uint64_t current = mach_absolute_time();
     return ( (double) ( current - time_start ) ) * ( (double) timebase_info.numer ) / ( (double) timebase_info.denom ) / 1000000000.0;
@@ -1051,10 +1119,18 @@ void rocketnet_platform_sleep( double time )
     if ( !( time > 0.0 ) )
         return;
     const rocketnet_platform_sleep_split_t split = rocketnet_platform_sleep_split( time );
-    if ( split.seconds > 0 )
-        sleep( split.seconds );
-    if ( split.microseconds > 0 )
-        usleep( split.microseconds );
+    if ( split.seconds == 0 && split.microseconds == 0 )
+        return;
+
+    // a signal handler cuts nanosleep short and leaves the rest in remaining;
+    // sleep that rest until the whole interval has passed
+
+    struct timespec request;
+    request.tv_sec = (time_t) split.seconds;
+    request.tv_nsec = (long) split.microseconds * 1000L;
+    struct timespec remaining;
+    while ( nanosleep( &request, &remaining ) != 0 && errno == EINTR )
+        request = remaining;
 }
 
 // ---------------------------------------------------
@@ -1692,17 +1768,21 @@ static int rocketnet_platform_socket_receive_packet_into( rocketnet_platform_soc
             return 0;
 
         // a zero-length datagram is legal UDP carrying nothing the protocol
-        // admits, and a dropped source is spoofed chaff: skip both and read
-        // on, so neither reads as "socket drained". Each spent its read.
+        // admits, and a dropped source is spoofed chaff: skip both, counted,
+        // and read on, so neither reads as "socket drained". Each spent its read.
 
         if ( result == 0 )
+        {
+            rocketnet_platform_count_receive_empty();
             continue;
+        }
 
         if ( !rocketnet_platform_mmsg_read_sockaddr( socket, &sockaddr_from, from ) )
         {
             rocketnet_assert( sockaddr_from.ss_family == AF_INET6 );
             if ( sockaddr_from.ss_family != AF_INET6 )
                 return 0;
+            rocketnet_platform_count_receive_refused_source();
             continue;
         }
 
@@ -1817,26 +1897,40 @@ void rocketnet_platform_socket_send_packets_mmsg( rocketnet_platform_socket_t * 
         {
             errno = 0;
 
-            int result = sendmmsg( socket->handle, msg + sent, (unsigned int) ( count - sent ), 0 );
+            int result = -1;
+            int injected_error = 0;
+#if ROCKETNET_DEV
+            if ( rocketnet_platform_send_failure_should_inject( socket, &injected_error ) )
+                errno = injected_error;
+            else
+#endif // #if ROCKETNET_DEV
+                result = sendmmsg( socket->handle, msg + sent, (unsigned int) ( count - sent ), 0 );
+            (void) injected_error;
+
             if ( result > 0 )
             {
                 sent += result;
                 continue;
             }
 
-            if ( errno == EINTR )
+            // saved before anything below runs: the address formatting and the
+            // log sink may each set errno
+
+            const int error = errno;
+
+            if ( error == EINTR )
                 continue;
 
             // a full socket: drop the unsent tail, as the per-packet path would
 
-            if ( errno == EAGAIN || errno == EWOULDBLOCK || errno == ENOBUFS )
+            if ( error == EAGAIN || error == EWOULDBLOCK || error == ENOBUFS )
             {
                 for ( int i = sent; i < count; i++ )
                 {
                     char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
                     rocketnet_address_to_string( sends[map[i]].to, address_string );
-                    rocketnet_debug( "sendmmsg (%s) failed: %s", address_string, strerror( errno ) );
-                    rocketnet_platform_send_failed( socket, &socket->send_failures, ROCKETNET_PLATFORM_SEND_CALL_SENDTO, errno );
+                    rocketnet_debug( "sendmmsg (%s) failed: %s", address_string, strerror( error ) );
+                    rocketnet_platform_send_failed( socket, &socket->send_failures, ROCKETNET_PLATFORM_SEND_CALL_SENDTO, error );
                 }
 
                 break;
@@ -1845,7 +1939,6 @@ void rocketnet_platform_socket_send_packets_mmsg( rocketnet_platform_socket_t * 
             // nothing went in this call, so the first unsent entry is the one
             // the kernel refused: drop it and retry the rest in order
 
-            const int error = errno;
             char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
             rocketnet_address_to_string( sends[map[sent]].to, address_string );
             rocketnet_debug( "sendmmsg (%s) failed: %s", address_string, strerror( error ) );
@@ -1931,17 +2024,23 @@ int rocketnet_platform_socket_receive_packets_mmsg( rocketnet_platform_socket_t 
         reads_remaining -= result;
 
         // compact the chunk in place: a zero-length datagram or a refused
-        // source makes no entry, and the next kept one moves down
+        // source makes no entry, counted, and the next kept one moves down
 
         int kept = 0;
         for ( int i = 0; i < result; i++ )
         {
             rocketnet_address_t parsed;
             if ( !rocketnet_platform_mmsg_read_sockaddr( socket, &addresses[i], &parsed ) )
+            {
+                rocketnet_platform_count_receive_refused_source();
                 continue;
+            }
             const int bytes = (int) msg[i].msg_len;
             if ( bytes <= 0 )
+            {
+                rocketnet_platform_count_receive_empty();
                 continue;
+            }
             const int copy_bytes = bytes < packet_stride ? bytes : packet_stride;
             const uint8_t * source = packet_data + (size_t) ( chunk_base + i ) * (size_t) packet_stride;
             uint8_t * target = packet_data + (size_t) ( chunk_base + kept ) * (size_t) packet_stride;
@@ -2285,8 +2384,16 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
         {
             const int bytes = (int) msg[i].msg_datalen;
             rocketnet_address_t parsed;
-            if ( bytes <= 0 || !rocketnet_platform_mmsg_read_sockaddr( socket, &addresses[i], &parsed ) )
+            if ( bytes <= 0 )
+            {
+                rocketnet_platform_count_receive_empty();
                 continue;
+            }
+            if ( !rocketnet_platform_mmsg_read_sockaddr( socket, &addresses[i], &parsed ) )
+            {
+                rocketnet_platform_count_receive_refused_source();
+                continue;
+            }
             uint8_t * written = packet_data + (size_t) ( chunk_base + (int) i ) * (size_t) packet_stride;
             uint8_t * target = packet_data + (size_t) total * (size_t) packet_stride;
             const int copy_bytes = bytes < packet_stride ? bytes : packet_stride;
@@ -3066,6 +3173,11 @@ extern void rocketnet_free( void * context, void * p );
 static LARGE_INTEGER timer_frequency;
 static LARGE_INTEGER timer_start;
 
+// set once init has set up the clock; until then rocketnet_platform_time is
+// 0 (the frequency is still zero). The clock stays set up across term, so
+// this is never cleared.
+static std::atomic<bool> clock_ready( false );
+
 // Windows: SetThreadPriority( thread, THREAD_PRIORITY_TIME_CRITICAL ) on the
 // network threads (flow_platform.cpp:1839-1851), and the process timer at 1 ms
 // from platform init to platform term, matching the host application's lifecycle
@@ -3200,6 +3312,7 @@ bool rocketnet_platform_init()
     ROCKETNET_PLATFORM_PRIORITY_CALL( timer_frequency )
     ( &timer_frequency );
     QueryPerformanceCounter( &timer_start );
+    clock_ready.store( true, std::memory_order_release );
 
     if ( ROCKETNET_PLATFORM_PRIORITY_CALL( platform_start )() != 0 )
     {
@@ -3534,6 +3647,8 @@ void rocketnet_platform_thread_wait( rocketnet_platform_thread_t * thread, doubl
 
 double rocketnet_platform_time()
 {
+    if ( !clock_ready.load( std::memory_order_acquire ) )
+        return 0.0;
     LARGE_INTEGER now;
     QueryPerformanceCounter( &now );
     return ( (double) ( now.QuadPart - timer_start.QuadPart ) ) / ( (double) ( timer_frequency.QuadPart ) );
@@ -3563,7 +3678,6 @@ void rocketnet_platform_socket_destroy( rocketnet_platform_socket_t * );
 
 static volatile LONG rocketnet_platform_udp_reset_refusal_logged = 0;
 static volatile LONG64 rocketnet_platform_receive_reset_count = 0;
-static volatile LONG64 rocketnet_platform_receive_empty_count = 0;
 
 // windows-udp-connreset audit: every socket rocketnet creates on Windows
 // (portable server and client, iocp, rio) turns both ICMP reset reports off
@@ -3617,11 +3731,6 @@ void rocketnet_platform_count_receive_reset()
 uint64_t rocketnet_platform_receive_resets()
 {
     return (uint64_t) InterlockedCompareExchange64( &rocketnet_platform_receive_reset_count, 0, 0 );
-}
-
-uint64_t rocketnet_platform_receive_empties()
-{
-    return (uint64_t) InterlockedCompareExchange64( &rocketnet_platform_receive_empty_count, 0, 0 );
 }
 
 int rocketnet_platform_socket_receive_buffer_bytes( rocketnet_platform_socket_t * socket )
@@ -4037,10 +4146,10 @@ receive_again:
             // protocol admits -- and returning 0 here would read as
             // "socket drained", letting byte-less chaff cap an entire
             // drain at one packet. skip it, keep reading:
-            // both pumps share this semantic. The skip is counted
-            // process-wide (rocketnet_platform_receive_empties), so no
-            // dropped datagram goes uncounted.
-            InterlockedIncrement64( &rocketnet_platform_receive_empty_count );
+            // every platform's per-packet receive shares this semantic,
+            // and counts the skip process-wide
+            // (rocketnet_platform_receive_empties).
+            rocketnet_platform_count_receive_empty();
             continue;
         }
 
@@ -4054,7 +4163,10 @@ receive_again:
     }
 
     if ( !rocketnet_platform_sockaddr_to_address( &sockaddr_from, dual_stack, from ) )
+    {
+        rocketnet_platform_count_receive_refused_source();
         goto receive_again;
+    }
 
     rocketnet_assert( result >= 0 );
 

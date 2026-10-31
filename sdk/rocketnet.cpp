@@ -19,6 +19,7 @@
 #include <inttypes.h>
 #include <atomic>
 #include <mutex>
+#include <condition_variable>
 
 // -------------------------------------------------
 
@@ -144,9 +145,16 @@ static const char * rocketnet_log_level_word( enum rocketnet_log_level_t level )
         case ROCKETNET_LOG_LEVEL_INFO:  return "info";
         case ROCKETNET_LOG_LEVEL_DEBUG: return "debug";
         case ROCKETNET_LOG_LEVEL_SPAM:  return "spam";
-        default:                        return "none";
+        default:                        return "???";
     }
 }
+
+#if ROCKETNET_DEV
+const char * rocketnet_log_level_word_for_test( int level )
+{
+    return rocketnet_log_level_word( (enum rocketnet_log_level_t) level );
+}
+#endif // #if ROCKETNET_DEV
 
 const char * rocketnet_status_name( enum rocketnet_status_t status )
 {
@@ -458,6 +466,26 @@ void rocketnet_allocator_set_install_hook_for_test( void ( *hook )( void ) )
 {
     rocketnet_allocator_install_hook = hook;
 }
+
+// called by rocketnet_malloc on the calling thread at its steps: once
+// counted, before the pair read (ROCKETNET_ALLOCATOR_STEP_COUNTED), and
+// after it met the installing sentinel and uncounted itself
+// (ROCKETNET_ALLOCATOR_STEP_WAITED). The seam that drives one call's
+// interleaving with install step by step (tests/test_unit_allocator_install_steps.cpp,
+// tests/test_lifecycle.cpp)
+static std::atomic<void ( * )( int step )> rocketnet_allocator_call_hook{ nullptr };
+
+void rocketnet_allocator_set_call_hook_for_test( void ( *hook )( int step ) )
+{
+    rocketnet_allocator_call_hook.store( hook, std::memory_order_relaxed );
+}
+
+static void rn_allocator_call_step( int step )
+{
+    void ( *hook )( int step ) = rocketnet_allocator_call_hook.load( std::memory_order_relaxed );
+    if ( hook )
+        hook( step );
+}
 #endif // #if ROCKETNET_DEV
 
 // call with the lifecycle lock held. NULL for both is the system allocator
@@ -564,6 +592,9 @@ void * rocketnet_malloc( void * context, size_t bytes )
     for ( ;; )
     {
         rocketnet_allocations.fetch_add( 1, std::memory_order_seq_cst );
+#if ROCKETNET_DEV
+        rn_allocator_call_step( ROCKETNET_ALLOCATOR_STEP_COUNTED );
+#endif // #if ROCKETNET_DEV
 
         const rocketnet_allocator_pair_t * pair = rocketnet_allocator_pair.load( std::memory_order_seq_cst );
         if ( pair != &rocketnet_allocator_installing )
@@ -573,6 +604,9 @@ void * rocketnet_malloc( void * context, size_t bytes )
         }
 
         rocketnet_allocations.fetch_sub( 1, std::memory_order_seq_cst );
+#if ROCKETNET_DEV
+        rn_allocator_call_step( ROCKETNET_ALLOCATOR_STEP_WAITED );
+#endif // #if ROCKETNET_DEV
     }
 
     void * base = installed.allocate( context, bytes + overhead );
@@ -680,6 +714,82 @@ void rocketnet_random_bytes( uint8_t * data, size_t bytes )
     randombytes_buf( data, bytes );
 }
 
+// The bundled sodium opens its random source on a draw, without a lock,
+// whenever its flag is clear: before sodium_init, and on macOS after
+// rocketnet_term closed the source (proofs/tla/RNCryptoSource.tla DrawCheck,
+// DrawOpen). The key and token generators run before rocketnet_init and
+// beside rocketnet_term on any thread, so each holds the source across its
+// draws (rocketnet_crypto_acquire, rocketnet_crypto_release). The first
+// holder opens it under the mutex, and term closes it under the mutex once
+// no holder is left. open, holders and closing change only under the mutex,
+// and open is clear only while holders is zero.
+
+static std::mutex rocketnet_crypto_mutex;
+static std::condition_variable rocketnet_crypto_changed;
+static bool rocketnet_crypto_open = false;
+static bool rocketnet_crypto_closing = false;
+static int rocketnet_crypto_holders = 0;
+
+// proofs/tla/RNCryptoSource.tla StirCheck, StirOpen: sodium_init opens the
+// source only the first time it runs, so the stir reopens it after a term
+// closed it. Called with the mutex held.
+static bool rocketnet_crypto_open_locked()
+{
+    if ( rocketnet_crypto_open )
+        return true;
+    if ( sodium_init() < 0 )
+        return false;
+    randombytes_stir();
+    rocketnet_crypto_open = true;
+    return true;
+}
+
+static bool rocketnet_crypto_open_source()
+{
+    std::lock_guard<std::mutex> lock( rocketnet_crypto_mutex );
+    return rocketnet_crypto_open_locked();
+}
+
+// proofs/tla/RNCryptoSource.tla Acquire, Recheck and Publish: the source a
+// holder holds stays open until the matching release
+bool rocketnet_crypto_acquire()
+{
+    std::unique_lock<std::mutex> lock( rocketnet_crypto_mutex );
+    rocketnet_crypto_changed.wait( lock, []()
+                                   { return !rocketnet_crypto_closing; } );
+    if ( !rocketnet_crypto_open_locked() )
+        return false;
+    rocketnet_crypto_holders++;
+    return true;
+}
+
+// proofs/tla/RNCryptoSource.tla Release
+void rocketnet_crypto_release()
+{
+    std::lock_guard<std::mutex> lock( rocketnet_crypto_mutex );
+    rocketnet_crypto_holders--;
+    if ( rocketnet_crypto_holders == 0 )
+        rocketnet_crypto_changed.notify_all();
+}
+
+// proofs/tla/RNCryptoSource.tla Term: the bundled sodium keeps /dev/urandom
+// open on macOS, so term closes it once no draw is in flight; holders that
+// arrive meanwhile wait for the close. A system libsodium may be shared with
+// the application, so only the bundled one is closed.
+static void rocketnet_crypto_close()
+{
+#if defined( ROCKETNET_BUNDLED_SODIUM ) && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+    std::unique_lock<std::mutex> lock( rocketnet_crypto_mutex );
+    rocketnet_crypto_closing = true;
+    rocketnet_crypto_changed.wait( lock, []()
+                                   { return rocketnet_crypto_holders == 0; } );
+    (void) randombytes_close();
+    rocketnet_crypto_open = false;
+    rocketnet_crypto_closing = false;
+    rocketnet_crypto_changed.notify_all();
+#endif // #if defined( ROCKETNET_BUNDLED_SODIUM ) && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+}
+
 // -------------------------------------------------------------
 
 size_t rocketnet_copy_string( char * dest, const char * source, size_t dest_size )
@@ -722,6 +832,25 @@ const char * rocketnet_platform_name( int platform_id )
 
     return "unknown";
 }
+
+// sodium aborts the process on a misuse it cannot return from, an
+// unavailable OS random source above all (randombytes_stir, randombytes_buf).
+// The handler runs before that abort: the process ends with one error line
+// that names the cause. Installed only on the bundled sodium, whose handler
+// slot is this library's own; a system libsodium's belongs to the application.
+
+static void rocketnet_sodium_misuse()
+{
+    rocketnet_error( "sodium refused an operation it cannot complete (the OS random source is unavailable, or a sodium misuse). the process aborts" );
+    fflush( stdout );
+}
+
+#if ROCKETNET_DEV
+void rocketnet_sodium_misuse_for_test()
+{
+    sodium_misuse();
+}
+#endif // #if ROCKETNET_DEV
 
 enum rocketnet_status_t rocketnet_init( void * context, void * ( *malloc_function )( void * context, size_t bytes ), void ( *free_function )( void * context, void * p ) )
 {
@@ -779,7 +908,16 @@ bool rocketnet_init_ex( void * context, void * ( *malloc_function )( void * cont
     (void) context;
 
     const bool platform_ready = rocketnet_platform_init();
-    const bool sodium_ready = platform_ready && sodium_init() >= 0;
+
+    // before rocketnet_crypto_open_source, whose sodium_init and stir are the
+    // first read of the OS random source; it stays installed after term, for
+    // the key generators that need no init
+#if defined( ROCKETNET_BUNDLED_SODIUM )
+    if ( platform_ready )
+        (void) sodium_set_misuse_handler( rocketnet_sodium_misuse );
+#endif // #if defined( ROCKETNET_BUNDLED_SODIUM )
+
+    const bool sodium_ready = platform_ready && rocketnet_crypto_open_source();
     if ( !sodium_ready )
     {
         if ( platform_ready )
@@ -855,12 +993,7 @@ int rocketnet_term_ex()
         return ROCKETNET_STATUS_LIVE_ALLOCATIONS;
     }
 
-    // the bundled sodium keeps /dev/urandom open on macOS. a system libsodium
-    // may be shared with the application, so only the bundled one is closed.
-    // after the first term there is nothing open, and the close returns -1
-#if defined( ROCKETNET_BUNDLED_SODIUM ) && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
-    (void) randombytes_close();
-#endif // #if defined( ROCKETNET_BUNDLED_SODIUM ) && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+    rocketnet_crypto_close();
     rocketnet_platform_term();
 
     rn_lifecycle_lock_t lock;

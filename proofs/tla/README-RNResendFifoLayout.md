@@ -2,7 +2,7 @@
 
 The resend FIFO of `sdk/rocketnet_window_ack.cpp` at its layout, with the
 code's own fields. [RNResendTiming](README-RNResendTiming.md) and
-`RNChannelQueues.tla` check one resend sequence per class as a sequence; this
+[RNResendGenerations](README-RNResendGenerations.md) check one resend sequence per class as a sequence and the names an ack follows; this
 model checks how the two sequences are laid into one array, which they cannot
 see.
 
@@ -28,7 +28,7 @@ linked, so `SetClass` flips `isChunk[s]` at any time. The class bit stored in
 
 Generations are not modelled. `rn_resend_fifo_unlink_named` either
 unlinks or changes nothing, so `Unlink` of any slot at any time covers it; the
-generation rule is RNChannelQueues.tla's.
+generation rule is [RNResendGenerations](README-RNResendGenerations.md)'s.
 
 ## Actions and the code they mirror
 

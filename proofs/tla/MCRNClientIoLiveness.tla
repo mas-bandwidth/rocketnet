@@ -14,7 +14,7 @@ ASSUME Rings = {"A", "B"}
 ASSUME Slots = {1, 2}
 
 CommittedSlot(r, s) ==
-    owner[r][s] = "main" ~> (owner[r][s] = "io" \/ s \in dropped)
+    owner[r][s] = "main" ~> owner[r][s] = "io"
 
 \* conjunct r = "A", s = 1 of CommittedEventuallyHandedOff
 CommittedA1 == CommittedSlot("A", 1)
@@ -28,7 +28,7 @@ CommittedB2 == CommittedSlot("B", 2)
 \* HandedOffEventuallySent == \A r \in Rings : P(r); split by ring
 \* (Rings = {"A", "B"}, assumed above).
 HandedOffRing(r) ==
-    ring[r] = "HandedOff" ~> (ring[r] = "Sent" \/ r \in stalled)
+    ring[r] = "HandedOff" ~> ring[r] = "Sent"
 
 \* conjunct r = "A" of HandedOffEventuallySent
 HandedOffA == HandedOffRing("A")
