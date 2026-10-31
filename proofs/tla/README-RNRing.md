@@ -3,10 +3,14 @@
 `proofs/tla/RNRing.tla` is the sender's placement rule for the receive ring and the
 receiver's live spans: docs/CHANNELS.md section 6.2 (the byte bound), 6.3 step 3
 (why the receiver never runs out of room), section 8 (a block's span) and section
-15's `RNRing` row. It was written before any of the rule's code exists: the only
-ring code on main is the receiver's local check, `rn_region_ring_span_valid` in
-`sdk/rocketnet_allocator.cpp` (a placement is 16-aligned and inside `B`), which is
-what the module's `SpanInsideRing` and `Aligned` say a correct sender never trips.
+15's `RNRing` row. The sender's rule is `sdk/rocketnet_window_send.cpp`:
+`rn_window_send_round16` (`Len16`), `rn_window_send_position` (`Pos`),
+`rn_window_send_admit` (`Admits`, with the floor at `ring_start(U')`),
+`rn_window_send_first_write` (`PlaceSingle`) and
+`rn_window_send_first_write_block` (`PlaceBlock`). The receiver's local check is
+`rn_region_ring_span_valid` in `sdk/rocketnet_allocator.cpp` (a placement is
+16-aligned and inside `B`), which is what the module's `SpanInsideRing` and
+`Aligned` say a correct sender never trips.
 
 `proofs/tla/MCRNRing.tla` and `proofs/tla/MCRNRing.cfg` are section 15's small instance. The four
 `proofs/tla/MCRNRingBroken*.cfg` files are the reversed witnesses. Every TLC run is a row
@@ -96,11 +100,11 @@ module; no safety property depends on it):
   time between `Open` and `Release`, which the model already allows.
 - **The send store, the sent-packet map, the resend delay.**
 
-One thing the design leaves open, found while writing `Floor`: a code 2 record
-that is not a block "takes a number but no ring bytes" (6.2), so if `U'` lands on
-one, `ring_start(U')` must still be defined. The natural choice, and the one the
-code should make explicit, is the empty span `[ring_next, ring_next)` at the
-moment it was numbered. This module does not number such records.
+A code 2 record that is not a block "takes a number but no ring bytes" (6.2), so
+if `U'` lands on one, `ring_start(U')` must still be defined. The code gives it the
+empty span `[p, p)` at the position it was numbered (`rn_window_send_first_write`
+records `ring_start = p` with a zero span). This module does not number such
+records.
 
 ## How to run it
 
@@ -150,10 +154,11 @@ draft of the module (before the `Done` self-loop, below) with the same result.
 ## The counterexamples, replayed by hand
 
 Each trace was replayed through the module's actions and through the rule as
-section 6.2 states it. None is a defect in rocketnet code: no placement code exists
-yet, and the receiver's check on main (`rn_region_ring_span_valid`) would refuse
-the spans the second witness produces, as 6.3 says ("a violation, never memory
-corruption").
+section 6.2 states it. None is a defect in rocketnet code: each witness turns off
+a rule `sdk/rocketnet_window_send.cpp` keeps (the floor at `U'`, the boundary
+padding, the idle floor at `p`, the rounding to 16), and the receiver's check
+(`rn_region_ring_span_valid`) would refuse the spans the second witness produces,
+as 6.3 says ("a violation, never memory corruption").
 
 1. **`MCRNRingBrokenFloorAtU.cfg`: `Invariant LiveSpansDisjoint is violated`, at
    depth 10** (3,544 states generated, 1,544 distinct).
