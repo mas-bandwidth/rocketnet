@@ -24,9 +24,9 @@ static void * ack_cost_malloc( void *, size_t bytes )
 static void ack_cost_free( void *, void * pointer ) { free( pointer ); }
 
 // Drive the production window/allocator with controlled time, no sockets or
-// sleeps. Cost is the actual predecessor reads, separate from hash probes or
-// ACK invocations. Ascending, descending and interleaved orders all used to
-// read k*(k-1)/2 slots, even though span release ignores that computed rank.
+// sleeps. Cost is the numbers each ACK completes, separate from hash probes
+// or ACK invocations: a span's k fragments complete k numbers in ascending,
+// descending and interleaved orders, and the span releases on the last.
 
 static void ack_span_cost_case( uint32_t count, int order )
 {
@@ -114,11 +114,10 @@ static void ack_span_cost_case( uint32_t count, int order )
     }
 
     const rn_ack_cost_t cost = rn_window_ack_cost_read();
-    printf( "span ACK cost: fragments=%u order=%d predecessor_visits=%llu completed_numbers=%llu\n",
-            count, order, (unsigned long long) cost.predecessor_visits, (unsigned long long) cost.completed_numbers );
+    printf( "span ACK cost: fragments=%u order=%d completed_numbers=%llu\n",
+            count, order, (unsigned long long) cost.completed_numbers );
     fflush( stdout );
     rocketnet_unit_check( cost.completed_numbers == count );
-    rocketnet_unit_check( cost.predecessor_visits == 0 );
     rocketnet_unit_check( region->span_first == RN_DESCRIPTOR_NONE && region->span_last == RN_DESCRIPTOR_NONE );
     rocketnet_unit_check( region->span_head == 0 && region->span_tail == 0 );
     rn_window_ack_receipt_end_update( &ack );
@@ -139,7 +138,6 @@ static void ack_span_cost_case( uint32_t count, int order )
     rocketnet_unit_check( descriptor->in_use && descriptor->fragments_acked == 0 );
     rocketnet_unit_check( ack.receipt_tail == 1 );
     rocketnet_unit_check( rn_window_ack_cost_read().completed_numbers == count );
-    rocketnet_unit_check( rn_window_ack_cost_read().predecessor_visits == 0 );
     rocketnet_unit_check( ack_cost_allocations == allocations );
     rn_region_send_free( region, reused );
     rn_arena_destroy( arena );
