@@ -2813,6 +2813,13 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
             continue;
         }
 
+        // a full staging ends this update's pass at this client, which is
+        // served first next update: no start is made that would be refused
+        // (proofs/tla/ServerStopSpread.tla Room)
+
+        if ( rocketnet_server_transport_io_send_room( server_transport ) <= 0 )
+            break;
+
         const rocketnet_address_t * client_address = rocketnet_encryption_map_address( server_transport->protocol.encryption_map, mapping_index );
         struct rocketnet_server_frame_t frame;
         uint8_t * frame_data = rocketnet_server_reserve_send_frame( server_transport, client_address, &frame );
