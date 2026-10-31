@@ -686,4 +686,61 @@ rn_region_t * rn_arena_region( rn_arena_t * arena, int index );
 uint64_t rn_arena_bytes( const rn_arena_t * arena );     // the block's size: rn_arena_required_bytes for its config
 #endif // #if ROCKETNET_DEV
 
+// ----------------------------------------------------------------
+//                          the instance heap
+// ----------------------------------------------------------------
+
+// Each client owns one heap: tlsf (Matthew Conte's two-level segregated fit
+// allocator, vendored in rocketnet_allocator.cpp) over memory carved from the
+// one block create takes from the installed allocator. Every allocation the
+// client makes after create (its transport, sockets, threads, rings and
+// buffers at connect) comes from its heap, so the installed allocator is
+// called at create and destroy only, and connect allocates nothing from it.
+//
+// A heap has one owner: the caller's thread that owns its object. Nothing
+// locks, and nothing else may touch it; RocketNet's worker threads never
+// allocate or free from it (proofs/tla/RNClientRace.tla FreedOnlyByCaller).
+// Running out is a counted refusal (NULL), never growth.
+//
+// rocketnet_malloc takes from the heap the calling thread has in scope
+// (rocketnet_heap_scope_t, rocketnet_internal.h); rocketnet_free returns an
+// allocation to the heap or allocator it came from, whatever is in scope.
+
+struct rocketnet_heap_t;
+
+// The block bytes a heap needs to hold an allocation plan of planned_bytes,
+// each allocation costed by rocketnet_allocation_overhead (rocketnet_memory.h)
+// as every plan in the SDK is: the plan, tlsf's control structure and pool
+// sentinels, and tlsf's size-class rounding of the largest request. 0 when
+// planned_bytes is 0 or past one pool's limit.
+uint64_t rocketnet_heap_required_bytes( uint64_t planned_bytes );
+
+// A heap over memory, ROCKETNET_ALLOCATION_ALIGNMENT-aligned and at least
+// rocketnet_heap_required_bytes of the plan; the heap's own record is the
+// start of it. NULL when memory is NULL, misaligned or too short.
+rocketnet_heap_t * rocketnet_heap_create( void * memory, uint64_t bytes );
+
+// bytes from the heap, 8-aligned, or NULL and a counted refusal when no free
+// block holds them
+void * rocketnet_heap_malloc( rocketnet_heap_t * heap, size_t bytes );
+
+// p back to the heap; NULL is a no-op
+void rocketnet_heap_free( rocketnet_heap_t * heap, void * p );
+
+// the allocations live in the heap now, and the refusals it has counted ever
+uint64_t rocketnet_heap_live_allocations( const rocketnet_heap_t * heap );
+uint64_t rocketnet_heap_refusals( const rocketnet_heap_t * heap );
+
+// the most bytes the heap's allocations have held at once
+uint64_t rocketnet_heap_peak_bytes( const rocketnet_heap_t * heap );
+
+// tlsf's integrity walk over the pool: true when the heap is consistent
+bool rocketnet_heap_check( const rocketnet_heap_t * heap );
+
+#if ROCKETNET_DEV
+// refuses the nth allocation from now (1 is the next), once, as a full heap
+// would: the unit seam for the out-of-memory paths of connect
+void rocketnet_heap_refuse_allocation_for_test( rocketnet_heap_t * heap, uint64_t nth );
+#endif // #if ROCKETNET_DEV
+
 #endif // ROCKETNET_SDK_ROCKETNET_ALLOCATOR_H

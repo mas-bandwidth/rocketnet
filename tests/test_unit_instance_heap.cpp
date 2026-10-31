@@ -5,9 +5,14 @@
 
 // The instance heap (sdk/rocketnet_allocator.h): tlsf over one block a
 // client takes at create, so the installed allocator is called at create and
-// destroy only. Under a counting allocator, connect, the handshake,
-// disconnect and three reconnects call the installed allocator not once
-// after create, and destroy frees the one block create took.
+// destroy only.
+//
+//   * the heap itself: a plan of allocations fits rocketnet_heap_required_bytes
+//     of it, freeing everything coalesces the pool back, a full heap refuses
+//     and counts, and tlsf's integrity walk passes throughout;
+//   * the client: under a counting allocator, connect, the handshake,
+//     disconnect and three reconnects call the installed allocator not once
+//     after create, and destroy frees the one block create took.
 //
 // No socket, no real time and no thread: the client is step-driven on the
 // loopback transport, on a test clock starting at 1000.0.
@@ -20,6 +25,8 @@
 #include "../sdk/rocketnet_base64.h"
 #include "../sdk/rocketnet_connect_token.h"
 #include "../sdk/rocketnet_internal.h"
+#include "../sdk/rocketnet_allocator.h"
+#include "../sdk/rocketnet_memory.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -29,6 +36,114 @@
 #define check rocketnet_unit_check
 
 #if ROCKETNET_DEV
+
+// a plan of allocations in a heap of exactly the plan's required bytes: all of
+// them fit, every free coalesces, and the same plan fits again and again
+
+static void test_instance_heap_holds_its_plan()
+{
+    const uint64_t sizes[] = { 8650752, 1, 64, 4096, 65536, 24, 1500 * 256, 999, 3, 1 << 20 };
+    const int num_sizes = (int) ( sizeof( sizes ) / sizeof( sizes[0] ) );
+    uint64_t plan = 0;
+    for ( int i = 0; i < num_sizes; i++ )
+        check( rocketnet_memory_add( plan, 1, sizes[i] + rocketnet_allocation_overhead() ) );
+
+    const uint64_t bytes = rocketnet_heap_required_bytes( plan );
+    check( bytes > plan );
+
+    void * block = malloc( (size_t) bytes + ROCKETNET_ALLOCATION_ALIGNMENT );
+    check( block != NULL );
+    uint8_t * aligned = (uint8_t *) ( ( (uintptr_t) block + ROCKETNET_ALLOCATION_ALIGNMENT - 1 ) & ~(uintptr_t) ( ROCKETNET_ALLOCATION_ALIGNMENT - 1 ) );
+
+    rocketnet_heap_t * heap = rocketnet_heap_create( aligned, bytes );
+    check( heap != NULL );
+    check( rocketnet_heap_check( heap ) );
+
+    void * pointers[sizeof( sizes ) / sizeof( sizes[0] )];
+    for ( int cycle = 0; cycle < 4; cycle++ )
+    {
+        rocketnet_heap_scope_t scope( heap );
+
+        for ( int i = 0; i < num_sizes; i++ )
+        {
+            pointers[i] = rocketnet_malloc( NULL, (size_t) sizes[i] );
+            check( pointers[i] != NULL );
+            check( ( (uintptr_t) pointers[i] % ROCKETNET_ALLOCATION_ALIGNMENT ) == 0 );
+            memset( pointers[i], 0xA5, (size_t) sizes[i] );
+        }
+
+        check( rocketnet_heap_live_allocations( heap ) == (uint64_t) num_sizes );
+        check( rocketnet_heap_refusals( heap ) == 0 );
+        check( rocketnet_heap_check( heap ) );
+
+        // freed in a different order every cycle, so coalescing is exercised from both sides
+
+        for ( int i = 0; i < num_sizes; i++ )
+        {
+            const int index = ( cycle % 2 ) ? i : num_sizes - 1 - i;
+            rocketnet_free( NULL, pointers[index] );
+        }
+
+        check( rocketnet_heap_live_allocations( heap ) == 0 );
+        check( rocketnet_heap_check( heap ) );
+    }
+
+    check( rocketnet_heap_peak_bytes( heap ) >= plan - (uint64_t) num_sizes * rocketnet_allocation_overhead() );
+
+    free( block );
+}
+
+REGISTER_UNIT_TEST( test_instance_heap_holds_its_plan );
+
+// a full heap refuses, counts the refusal, and still takes what fits
+
+static void test_instance_heap_refuses_when_full()
+{
+    const uint64_t plan = 4096 + rocketnet_allocation_overhead();
+    const uint64_t bytes = rocketnet_heap_required_bytes( plan );
+
+    void * block = malloc( (size_t) bytes + ROCKETNET_ALLOCATION_ALIGNMENT );
+    check( block != NULL );
+    uint8_t * aligned = (uint8_t *) ( ( (uintptr_t) block + ROCKETNET_ALLOCATION_ALIGNMENT - 1 ) & ~(uintptr_t) ( ROCKETNET_ALLOCATION_ALIGNMENT - 1 ) );
+
+    check( rocketnet_heap_create( NULL, bytes ) == NULL );
+    check( rocketnet_heap_create( aligned + 8, bytes ) == NULL );
+    check( rocketnet_heap_create( aligned, 64 ) == NULL );
+
+    rocketnet_heap_t * heap = rocketnet_heap_create( aligned, bytes );
+    check( heap != NULL );
+
+    {
+        rocketnet_heap_scope_t scope( heap );
+
+        void * whole = rocketnet_malloc( NULL, 4096 );
+        check( whole != NULL );
+        check( rocketnet_malloc( NULL, (size_t) bytes ) == NULL );
+        check( rocketnet_heap_refusals( heap ) == 1 );
+
+        rocketnet_free( NULL, whole );
+        check( rocketnet_heap_live_allocations( heap ) == 0 );
+
+        rocketnet_heap_refuse_allocation_for_test( heap, 2 );
+        void * first = rocketnet_malloc( NULL, 16 );
+        check( first != NULL );
+        check( rocketnet_malloc( NULL, 16 ) == NULL );
+        check( rocketnet_heap_refusals( heap ) == 2 );
+        void * third = rocketnet_malloc( NULL, 16 );
+        check( third != NULL );
+
+        rocketnet_free( NULL, first );
+        rocketnet_free( NULL, third );
+    }
+
+    check( rocketnet_heap_live_allocations( heap ) == 0 );
+    check( rocketnet_heap_check( heap ) );
+    check( rocketnet_heap_required_bytes( 0 ) == 0 );
+
+    free( block );
+}
+
+REGISTER_UNIT_TEST( test_instance_heap_refuses_when_full );
 
 #define HEAP_PROTOCOL 0x4EA9C11E47A110CAULL
 
@@ -198,6 +313,9 @@ static void test_instance_heap_client_connect_allocates_nothing_after_create()
         check( client_counts.mallocs == 1 );
         check( client_counts.frees == 0 );
     }
+
+    check( rocketnet_heap_refusals( rocketnet_client_heap( client ) ) == 0 );
+    check( rocketnet_heap_check( rocketnet_client_heap( client ) ) );
 
     rocketnet_client_destroy( client );
     check( client_counts.mallocs == 1 );

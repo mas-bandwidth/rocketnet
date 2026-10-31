@@ -71,9 +71,12 @@
 // Re-measured 2026-10-28 on mini-m5 at fd3cc227 (unreliable ring 16Q, resend
 // link 12W): client was 22746605, now 22754581. At 0e32e225 (descriptor
 // 72 bytes, span links) server was 1603277086, now 1607276904; client unchanged.
+// Re-measured 2026-10-30 on studio.local, the client's heap in its
+// create-time block (tlsf's size-class rounding of the transport plan and
+// 16 bytes per block): client was 22754581, now 23373359.
 #if ROCKETNET_DEV
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1607281000 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22754581 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 23373359 )
 #else
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1584814168 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 21960801 )
@@ -90,11 +93,13 @@
 // Re-measured 2026-10-29 by the ubuntu-24.04 Debug CI leg: the
 // client config's loopback_hub pointer adds 8 bytes to the client, which was
 // 22904141 and is now 22904149; the server figure is unchanged.
+// Re-measured 2026-10-30 on amd-3, gcc, the client's heap in its
+// create-time block: client was 22904149, now 23527663.
 // The non-dev figures below were not re-measured: this file is not linked
 // when ROCKETNET_DEV=OFF.
 #if ROCKETNET_DEV
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3247582222ULL )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22904149 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 23527663 )
 #else
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3225115398ULL )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22110441 )

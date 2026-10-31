@@ -18,6 +18,7 @@
 #include "../sdk/rocketnet_constants.h"
 #include "../sdk/rocketnet_server_protocol.h"
 #include "rocketnet_internal.h"
+#include "rocketnet_allocator.h"
 #include "rocketnet_message_object.h"
 #include "rocketnet_packet_builder.h"
 #include "token_string.h"
@@ -3732,25 +3733,12 @@ REGISTER_UNIT_TEST( test_client_reconnect_same_and_other_server_isolates_generat
 
 struct lifecycle_pressure_allocator_t
 {
-    int fail_countdown;
-    int refused_count;
     int active_allocations;
 };
 
 static void * lifecycle_pressure_malloc( void * context, size_t size )
 {
     lifecycle_pressure_allocator_t * state = (lifecycle_pressure_allocator_t *) context;
-    if ( state->fail_countdown > 0 )
-    {
-        state->fail_countdown--;
-
-        if ( state->fail_countdown == 0 )
-        {
-            state->refused_count++;
-            return NULL;
-        }
-    }
-
     void * ptr = malloc( size > 0 ? size : 1 );
     if ( ptr )
     {
@@ -4063,14 +4051,14 @@ static void test_integrated_slot_reuse_memory_pressure_disconnect_budget_and_del
     check( rocketnet_server_receive_messages( server ) == NULL );
     check( rocketnet_server_receipts( server, 0, NULL, 0 ) == 0 );
 
-    // --- Allocator-backed memory pressure and terminal-state recovery during transition ---
+    // --- Heap-backed memory pressure and terminal-state recovery during transition ---
     // From the terminal MESSAGE_MEMORY_EXHAUSTED state, the first connect requests
     // transport retirement (returning ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED while
     // retaining MESSAGE_MEMORY_EXHAUSTED); after bounded update completion,
-    // rocketnet_client_disconnected( client ) becomes true. Then force the custom
-    // allocator to refuse the reconnect allocation in rocketnet_client_connect,
+    // rocketnet_client_disconnected( client ) becomes true. Then force the
+    // client's heap to refuse the reconnect allocation in rocketnet_client_connect,
     // proving it returns ROCKETNET_STATUS_OUT_OF_MEMORY, leaves the client cleanly
-    // disconnected with zero partial state, and recovers when allocator pressure lifts.
+    // disconnected with zero partial state, and recovers when the heap pressure lifts.
 
     char token_gen2[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
     lifecycle_token( server, rocketnet_server_port( server ), &identity, 0x5102, 300, token_gen2 );
@@ -4082,17 +4070,19 @@ static void test_integrated_slot_reuse_memory_pressure_disconnect_budget_and_del
     rocketnet_client_update( client, now );
     check( rocketnet_client_disconnected( client ) );
 
-    alloc_state.fail_countdown = 1;
+    struct rocketnet_heap_t * heap = rocketnet_client_heap( client );
+    check( heap != NULL );
+    rocketnet_heap_refuse_allocation_for_test( heap, 1 );
 
-    const int refused_before = alloc_state.refused_count;
+    const uint64_t refused_before = rocketnet_heap_refusals( heap );
     check( rocketnet_client_connect( client, token_gen2 ) == ROCKETNET_STATUS_OUT_OF_MEMORY );
-    check( alloc_state.refused_count == refused_before + 1 );
+    check( rocketnet_heap_refusals( heap ) == refused_before + 1 );
     check( rocketnet_client_disconnected( client ) );
     check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
     check( rocketnet_client_receive_messages( client ) == NULL );
     check( rocketnet_client_receipts( client, NULL, 0 ) == 0 );
 
-    // lift allocator pressure and reconnect into slot 0 while the server's
+    // lift the heap pressure and reconnect into slot 0 while the server's
     // disconnect notification burst from Generation 1 is still draining across
     // bounded fake-clock updates (at most 2 disconnect packets per update)
 

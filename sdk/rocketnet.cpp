@@ -456,11 +456,44 @@ struct rocketnet_allocation_header_t
     void * base;
     void * context;
     void ( *free_function )( void *, void * );
+    bool from_heap;                                     // an instance heap's, uncounted: context is the heap
 };
+
+// The bytes rocketnet_malloc asks an instance heap for beyond the request:
+// the header and the alignment's slack. The heap spends at most 16 more on
+// the block (tlsf rounds a request up to 8 bytes and heads its block with 8).
+
+static const size_t rocketnet_heap_allocation_pad = sizeof( rocketnet_allocation_header_t ) + ROCKETNET_ALLOCATION_ALIGNMENT - 1;
+
+#define ROCKETNET_HEAP_BLOCK_OVERHEAD 16
+
+// every plan's cost of one allocation beyond its bytes, and what
+// rocketnet_malloc asks the installed allocator for beyond them: the pad and
+// the heap's block, so a plan holds in a heap as in the installed allocator
 
 uint64_t rocketnet_allocation_overhead()
 {
-    return sizeof( rocketnet_allocation_header_t ) + ROCKETNET_ALLOCATION_ALIGNMENT - 1;
+    return rocketnet_heap_allocation_pad + ROCKETNET_HEAP_BLOCK_OVERHEAD;
+}
+
+// The heap rocketnet_malloc takes from on this thread: the scope of the
+// client whose call is running (rocketnet_heap_scope_t), or NULL for the
+// installed allocator.
+
+static thread_local const rocketnet_heap_scope_t * rocketnet_heap_in_scope = NULL;
+
+const rocketnet_heap_scope_t * rocketnet_heap_scope_enter( const rocketnet_heap_scope_t * scope )
+{
+    const rocketnet_heap_scope_t * previous = rocketnet_heap_in_scope;
+    if ( scope->heap )
+        rocketnet_heap_in_scope = scope;
+
+    return previous;
+}
+
+void rocketnet_heap_scope_leave( const rocketnet_heap_scope_t * previous )
+{
+    rocketnet_heap_in_scope = previous;
 }
 
 // call with the lifecycle lock held. NULL for both is the system allocator
@@ -544,6 +577,30 @@ void * rocketnet_malloc( void * context, size_t bytes )
         return NULL;
     }
 
+    // an instance heap in scope: its own memory, no count, the installed
+    // allocator untouched (rocketnet_allocator.h, the instance heap)
+
+    const rocketnet_heap_scope_t * scope = rocketnet_heap_in_scope;
+    if ( scope )
+    {
+        const size_t pad = rocketnet_heap_allocation_pad;
+        void * base = scope->allocate( scope->heap, bytes + pad );
+        if ( !base )
+        {
+            ++rocketnet_allocation_refusals_on_this_thread;
+            return NULL;
+        }
+
+        const uintptr_t aligned = ( (uintptr_t) base + pad ) & ~(uintptr_t) ( alignment - 1 );
+        rocketnet_allocation_header_t * header = (rocketnet_allocation_header_t *) ( aligned - sizeof( rocketnet_allocation_header_t ) );
+        header->base = base;
+        header->context = scope->heap;
+        header->free_function = scope->release;
+        header->from_heap = true;
+
+        return (void *) aligned;
+    }
+
     // counted first, so install and term see the call in flight, then the
     // pair read and copied whole, with no lock; an install in progress is
     // waited out uncounted (proofs/tla/RNAllocatorInstall.tla CallCount,
@@ -578,6 +635,7 @@ void * rocketnet_malloc( void * context, size_t bytes )
     header->base = base;
     header->context = context;
     header->free_function = installed.release;
+    header->from_heap = false;
 
     return (void *) aligned;
 }
@@ -590,6 +648,14 @@ void rocketnet_free( void * context, void * p )
         return;
 
     const rocketnet_allocation_header_t allocation = *(rocketnet_allocation_header_t *) ( (uint8_t *) p - sizeof( rocketnet_allocation_header_t ) );
+
+    // a heap allocation goes back to its heap, uncounted
+
+    if ( allocation.from_heap )
+    {
+        allocation.free_function( allocation.context, allocation.base );
+        return;
+    }
 
     // proofs/tla/RNAllocatorInstall.tla CallFree: through the header's
     // release, then uncounted

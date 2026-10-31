@@ -12,8 +12,8 @@
 //     fails rocketnet_frame_sync_create_ex;
 //   * ROCKETNET_STATUS_MUTEX_CREATE_FAILED: a refused mutex create fails
 //     rocketnet_client_connect;
-//   * ROCKETNET_STATUS_THREAD_CREATE_FAILED: a threaded client connect under a
-//     fault-injecting allocator fails when allocating the worker thread's
+//   * ROCKETNET_STATUS_THREAD_CREATE_FAILED: a threaded client connect whose
+//     heap refuses an allocation fails when allocating the worker thread's
 //     record, before the OS thread create; the sweep stops at that first
 //     refusal, so no attempt reaches the OS create and no thread starts;
 //   * ROCKETNET_CLIENT_STATE_CONNECTION_REQUEST_TIMED_OUT and
@@ -29,6 +29,7 @@
 
 #include "../sdk/rocketnet.h"
 #include "rocketnet_internal.h"
+#include "rocketnet_allocator.h"
 #include "rocketnet_frame_sync.h"
 #include "rocketnet_platform.h"
 
@@ -215,20 +216,17 @@ static void test_client_mutex_create_failed_reached()
 REGISTER_UNIT_TEST( test_client_mutex_create_failed_reached );
 #endif // #if ROCKETNET_DEV
 
-// the fault-injecting allocator: fails exactly the fail_at-th call
+// the counting allocator: its calls and the allocations it holds
 struct reached_allocator_t
 {
     int live;
     int calls;
-    int fail_at;
 };
 
 static void * reached_allocate( void * context, size_t bytes )
 {
     reached_allocator_t * state = (reached_allocator_t *) context;
-    const int call = ++state->calls;
-    if ( state->fail_at == call )
-        return NULL;
+    ++state->calls;
 
     void * p = malloc( bytes );
     if ( p )
@@ -250,7 +248,7 @@ static void reached_release( void * context, void * pointer )
 
 static void test_client_connect_thread_create_failed_reached()
 {
-    reached_allocator_t state = { 0, 0, 0 };
+    reached_allocator_t state = { 0, 0 };
 
     check( rocketnet_test_loopback_hub_release() );
     check( rocketnet_term() == ROCKETNET_STATUS_OK );
@@ -276,12 +274,19 @@ static void test_client_connect_thread_create_failed_reached()
     check( client != NULL );
     check( create_status == ROCKETNET_STATUS_OK );
 
+    // connect takes every allocation from the client's heap, none from the
+    // installed allocator: the heap refuses the kth, until the kth is the
+    // network thread's record
+
+    struct rocketnet_heap_t * heap = rocketnet_client_heap( client );
+    check( heap != NULL );
+    const int calls_after_create = state.calls;
     int out_of_memory = 0;
     int thread_create_failed = 0;
     enum rocketnet_status_t thread_create_status = ROCKETNET_STATUS_OK;
     for ( int k = 1; k <= 256 && !thread_create_failed; k++ )
     {
-        state.fail_at = state.calls + k;
+        rocketnet_heap_refuse_allocation_for_test( heap, (uint64_t) k );
 
         const enum rocketnet_status_t status = rocketnet_client_connect( client, token );
         check( status != ROCKETNET_STATUS_OK );
@@ -300,8 +305,9 @@ static void test_client_connect_thread_create_failed_reached()
         check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
     }
 
-    state.fail_at = 0;
-
+    rocketnet_heap_refuse_allocation_for_test( heap, 0 );
+    check( state.calls == calls_after_create );
+    check( rocketnet_heap_live_allocations( heap ) == 0 );
     check( out_of_memory > 0 );
     check( thread_create_failed == 1 );
     check( thread_create_status == ROCKETNET_STATUS_THREAD_CREATE_FAILED );

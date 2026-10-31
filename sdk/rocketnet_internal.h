@@ -84,6 +84,10 @@ int rocketnet_allocator_ex( void * ( *malloc_function )( void * context, size_t 
 struct rocketnet_message_client_t * rocketnet_client_message_client( struct rocketnet_client_t * client );
 struct rocketnet_message_server_t * rocketnet_server_message_server( struct rocketnet_server_t * server );
 
+// the heap a public client takes every allocation after create from
+// (rocketnet_allocator.h, the instance heap), for tests that read or press it
+struct rocketnet_heap_t * rocketnet_client_heap( struct rocketnet_client_t * client );
+
 #if ROCKETNET_DEV
 // the address a created server serves for one family, after the
 // environment overrides. Writes it and returns true, or returns false when
@@ -303,6 +307,50 @@ double rocketnet_clamp_update_time( double last_good, double time, bool * clampe
 double rocketnet_update_clock_advance( double last_good, double * raw_time, double * time_offset, double time, bool * clamped );
 
 #ifdef __cplusplus
+
+struct rocketnet_heap_t;
+
+/** @brief An instance heap's allocation for rocketnet_malloc (rocketnet_allocator.cpp): bytes from heap, or NULL. */
+void * rocketnet_heap_allocate( void * heap, size_t bytes );
+/** @brief An instance heap's release for rocketnet_free (rocketnet_allocator.cpp): p back to heap. */
+void rocketnet_heap_release( void * heap, void * p );
+
+struct rocketnet_heap_scope_t;
+
+/** @brief Makes scope the calling thread's heap scope when it names a heap, and returns the scope it replaces (rocketnet.cpp). */
+const rocketnet_heap_scope_t * rocketnet_heap_scope_enter( const rocketnet_heap_scope_t * scope );
+/** @brief Restores the scope enter replaced (rocketnet.cpp). */
+void rocketnet_heap_scope_leave( const rocketnet_heap_scope_t * previous );
+
+/**
+ * @brief Puts an instance heap in scope on this thread for the scope's life.
+ *
+ * Every rocketnet_malloc on this thread then takes from the heap
+ * (rocketnet_allocator.h, the instance heap) instead of the installed
+ * allocator; scopes nest, and a NULL heap keeps the one already in scope.
+ * The public calls that allocate (a client's connect) open one with the
+ * object's heap; a free needs none, since rocketnet_free returns every
+ * allocation where it came from. The scope carries the heap's two
+ * operations, so the lifecycle source that routes through them links
+ * without the allocator's.
+ */
+struct rocketnet_heap_scope_t
+{
+    explicit rocketnet_heap_scope_t( rocketnet_heap_t * heap_in )
+        : heap( heap_in ), allocate( rocketnet_heap_allocate ), release( rocketnet_heap_release ), previous( rocketnet_heap_scope_enter( this ) )
+    {
+    }
+
+    ~rocketnet_heap_scope_t() { rocketnet_heap_scope_leave( previous ); }
+
+    rocketnet_heap_scope_t( const rocketnet_heap_scope_t & ) = delete;
+    rocketnet_heap_scope_t & operator=( const rocketnet_heap_scope_t & ) = delete;
+
+    rocketnet_heap_t * heap;
+    void * ( *allocate )( void * heap, size_t bytes );
+    void ( *release )( void * heap, void * p );
+    const rocketnet_heap_scope_t * previous;
+};
 
 /** @brief Converts a 16-bit integer between host and little-endian representation in place. @param value Writable non-NULL value; conversion is symmetric and a no-op on little-endian hosts. */
 inline void rocketnet_endian_fix( uint16_t * value )

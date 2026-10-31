@@ -497,3 +497,8 @@ MCRNPacketLeaseBrokenUsedOffByOne.cfg	MCRNPacketLease.tla	invariant	ProbeBound	c
 MCRNAllocatorInstall.cfg	MCRNAllocatorInstall.tla	pass	-	check	allocatorinstall	required	-
 MCRNAllocatorInstallBrokenNoSentinel.cfg	MCRNAllocatorInstall.tla	invariant	InstallOnlyWhenIdle	check	allocatorinstall	required	-
 MCRNAllocatorInstallBrokenNoSentinelRelease.cfg	MCRNAllocatorInstall.tla	invariant	ReleasedThroughItsPair	check	allocatorinstall	required	-
+MCRNInstanceHeap.cfg	MCRNInstanceHeap.tla	pass	-	check	instanceheap	required	-
+MCRNInstanceHeapBrokenAllocBeforeFree.cfg	MCRNInstanceHeap.tla	invariant	NoRefusal	check	instanceheap	required	-
+MCRNInstanceHeapBrokenConnectUsesUser.cfg	MCRNInstanceHeap.tla	invariant	InstalledOnlyAtCreateDestroy	check	instanceheap	required	-
+MCRNInstanceHeapBrokenDestroyLeaks.cfg	MCRNInstanceHeap.tla	invariant	NothingLiveAtFree	check	instanceheap	required	-
+MCRNInstanceHeapBrokenFreeWhileRunning.cfg	MCRNInstanceHeap.tla	invariant	FreedOnlyStopped	check	instanceheap	required	-
