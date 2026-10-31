@@ -510,6 +510,12 @@ static void test_create_reports_status_out_of_memory()
     struct rocketnet_server_config_t server_config;
     create_status_dev_server_config( &server_config );
     server_config.max_clients = 4;
+    // the refusals are create's own, whatever the transport; create's one
+    // block holds the heap for the largest transport the list can grant, and
+    // this allocator writes every byte it hands out, so the portable
+    // transport alone keeps the block the case touches small
+    client_config.transport = "portable";
+    server_config.transport = "portable";
 
     // walk every allocation client create makes: each failure is
     // OUT_OF_MEMORY with nothing left allocated, then success
@@ -657,10 +663,16 @@ static void test_create_out_of_memory_logs_one_error()
     struct rocketnet_server_config_t server_config;
     create_status_dev_server_config( &server_config );
     server_config.max_clients = 4;
+    // the refusals are create's own, whatever the transport; create's one
+    // block holds the heap for the largest transport the list can grant, and
+    // this allocator writes every byte it hands out, so the portable
+    // transport alone keeps the block the case touches small
+    client_config.transport = "portable";
+    server_config.transport = "portable";
 
-    // required_memory is the lifecycle peak (create plus the transport connect
-    // or start takes), so create's one block is read off a clean create: the
-    // largest single allocation it makes, never above that peak
+    // required_memory is the lifecycle peak, create's one block, so the
+    // block is read off a clean create: the largest single allocation it
+    // makes, never above that peak
 
     state.max_bytes = 0;
 
