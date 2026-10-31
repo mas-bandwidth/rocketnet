@@ -231,6 +231,63 @@ static void test_loopback_transport_io_dual_stack_serves_ipv4_and_ipv6()
     rocketnet_client_transport_io_close( &client6 );
 }
 
+// a server bound to the IPv6 wildcard is dual stack, so it shares its port
+// with no IPv4 endpoint, in either order of binding, as a dual-stack socket's
+// bind fails with EADDRINUSE. An IPv6 endpoint bound to one address is not
+// dual stack and shares its port with an IPv4 endpoint. Mutation that must
+// bite: refuse only a second endpoint of the same family; the refusals below
+// go red.
+
+static void test_loopback_transport_io_dual_stack_port_is_exclusive()
+{
+    const rocketnet_transport_backend_t * backend = &rocketnet_loopback_transport;
+    rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_dev_config( &server_config );
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
+
+    rocketnet_client_transport_config_t client_config;
+    rocketnet_client_transport_default_config_current( &client_config );
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
+
+    const rocketnet_server_transport_io_config_t server_setup = { "loopback", &server_config, NULL, NULL };
+    const rocketnet_client_transport_io_config_t client_setup = { "loopback", &client_config, NULL };
+
+    rocketnet_address_t client_wildcard, client_loopback, server_dual, server_one;
+    rocketnet_unit_check( rocketnet_address_parse( &client_wildcard, "0.0.0.0:47001" ) );
+    rocketnet_unit_check( rocketnet_address_parse( &client_loopback, "127.0.0.1:47001" ) );
+    rocketnet_unit_check( rocketnet_address_parse( &server_dual, "[::]:47001" ) );
+    rocketnet_unit_check( rocketnet_address_parse( &server_one, "[::1]:47001" ) );
+
+    // an IPv4 client holds the port: a dual-stack server on it is refused
+
+    rocketnet_client_transport_io_t client = {};
+    rocketnet_server_transport_io_t server = {};
+    rocketnet_unit_check( rocketnet_client_transport_io_open( backend->client, NULL, &client_setup, &client_wildcard, &client ) );
+    rocketnet_unit_check( !rocketnet_server_transport_io_open( backend->server, NULL, &server_setup, &server_dual, &server ) );
+    rocketnet_client_transport_io_close( &client );
+
+    // the mirror order: a dual-stack server holds the port, and an IPv4 client
+    // on it, wildcard or not, is refused
+
+    client = {};
+    server = {};
+    rocketnet_unit_check( rocketnet_server_transport_io_open( backend->server, NULL, &server_setup, &server_dual, &server ) );
+    rocketnet_unit_check( !rocketnet_client_transport_io_open( backend->client, NULL, &client_setup, &client_wildcard, &client ) );
+    rocketnet_unit_check( !rocketnet_client_transport_io_open( backend->client, NULL, &client_setup, &client_loopback, &client ) );
+    rn_test_server_io_stop_and_close( &server );
+
+    // an IPv6 server bound to ::1 is not dual stack: an IPv4 client shares its port
+
+    client = {};
+    server = {};
+    rocketnet_unit_check( rocketnet_server_transport_io_open( backend->server, NULL, &server_setup, &server_one, &server ) );
+    rocketnet_unit_check( rocketnet_client_transport_io_open( backend->client, NULL, &client_setup, &client_loopback, &client ) );
+    rn_test_server_io_stop_and_close( &server );
+    rocketnet_client_transport_io_close( &client );
+
+    printf( "test_loopback_transport_io_dual_stack_port_is_exclusive\n" );
+}
+
 static void test_loopback_transport_io_full_queue_drops_and_counts()
 {
     const rocketnet_transport_backend_t * backend = &rocketnet_loopback_transport;
@@ -1623,6 +1680,7 @@ REGISTER_UNIT_TEST( test_loopback_queue_restarts_at_slot_zero_when_empty );
 REGISTER_UNIT_TEST( test_loopback_transport_io_binds_and_discovers_a_port );
 REGISTER_UNIT_TEST( test_loopback_transport_io_exchanges_both_ways );
 REGISTER_UNIT_TEST( test_loopback_transport_io_dual_stack_serves_ipv4_and_ipv6 );
+REGISTER_UNIT_TEST( test_loopback_transport_io_dual_stack_port_is_exclusive );
 REGISTER_UNIT_TEST( test_loopback_transport_io_full_queue_drops_and_counts );
 REGISTER_UNIT_TEST( test_loopback_transport_io_runtime_does_not_allocate );
 REGISTER_UNIT_TEST( test_loopback_transport_io_destroy_frees_the_port );
