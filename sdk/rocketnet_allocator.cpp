@@ -1041,7 +1041,8 @@ uint32_t rn_region_send_alloc_span( rn_region_t * region, int bytes )
     return d;
 }
 
-// proofs/tla/RNRing.tla PlaceSingle
+// The bytes of fragment i of descriptor d: a span's fragment i at span_start + i * F
+// (the send spans of proofs/tla/RNSendSpans.tla), or a single record's store chunk.
 
 const uint8_t * rn_region_send_data( const rn_region_t * region, uint32_t d, uint32_t fragment, uint32_t * out_bytes )
 {
