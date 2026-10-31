@@ -238,6 +238,190 @@ static inline void rocketnet_dst_check_fail( struct rocketnet_dst_check_state_t 
     snprintf( st->detail, sizeof( st->detail ), "%s", what );
 }
 
+static inline int rocketnet_dst_check_stream_index( int session, int channel, int type )
+{
+    if ( session < 0 || session >= ROCKETNET_DST_CHECK_MAX_SESSIONS )
+        return 0;
+    if ( channel < 0 || channel >= 9 )
+        return 0;
+    if ( type < 0 || type >= 8 )
+        return 0;
+
+    return ( session * 9 + channel ) * 8 + type;
+}
+
+// One sequence table holds ROCKETNET_DST_CHECK_SEQ_BITS bits. base is the
+// oldest index the table still answers for: every bit below it is resolved.
+// An index at or past base + the width would read a newer sequence's bit, so
+// the checks fail naming the table, index, base and lap instead of aliasing.
+// The tables that never resolve an entry (unreliable_delivered,
+// receipt_seen) pass base 0.
+
+static inline int rocketnet_dst_check_lap( struct rocketnet_dst_check_state_t * st,
+                                           const char * table, uint32_t base, uint32_t i )
+{
+    if ( i < base || i - base < ROCKETNET_DST_CHECK_SEQ_BITS )
+        return 0;
+
+    char what[192];
+    snprintf( what, sizeof( what ), "table=%s seq=%u base=%u lap=%u",
+              table, i, base, ( i - base ) / ROCKETNET_DST_CHECK_SEQ_BITS );
+    rocketnet_dst_check_fail( st, "dst_lap", what );
+
+    return 1;
+}
+
+static inline int rocketnet_dst_check_bit( struct rocketnet_dst_check_state_t * st,
+                                           const uint8_t * bits, uint32_t base, uint32_t i,
+                                           const char * table )
+{
+    if ( i < base )
+        return 1;                       // resolved below the oldest unresolved index
+    if ( rocketnet_dst_check_lap( st, table, base, i ) )
+        return 0;
+
+    return ( bits[( i % ROCKETNET_DST_CHECK_SEQ_BITS ) / 8] >> ( i % 8 ) ) & 1;
+}
+
+static inline void rocketnet_dst_check_set_bit( struct rocketnet_dst_check_state_t * st,
+                                                uint8_t * bits, uint32_t base, uint32_t i,
+                                                const char * table )
+{
+    if ( i < base )
+        return;                         // resolved below the oldest unresolved index
+    if ( rocketnet_dst_check_lap( st, table, base, i ) )
+        return;
+    bits[( i % ROCKETNET_DST_CHECK_SEQ_BITS ) / 8] |= (uint8_t) ( 1u << ( i % 8 ) );
+}
+
+// Moves the reliable base past the contiguous delivered sequences and clears
+// the slot each one vacates, so the index 4096 later starts clean instead of
+// inheriting the resolved sequence's bit.
+
+static inline void rocketnet_dst_check_reliable_resolve( struct rocketnet_dst_check_stream_t * s )
+{
+    while ( s->has_last_sent && s->reliable_base <= s->last_sent_seq )
+    {
+        const uint32_t at = s->reliable_base % ROCKETNET_DST_CHECK_SEQ_BITS;
+        if ( !( s->reliable_delivered[at / 8] & (uint8_t) ( 1u << ( at % 8 ) ) ) )
+            break;
+        s->reliable_sent[at / 8] &= ( uint8_t ) ~( 1u << ( at % 8 ) );
+        s->reliable_delivered[at / 8] &= ( uint8_t ) ~( 1u << ( at % 8 ) );
+        s->sent_size_set[at] = 0;
+        s->sent_size[at] = 0;
+        s->reliable_base++;
+    }
+}
+
+static inline struct rocketnet_dst_check_stream_t * rocketnet_dst_check_stream(
+    struct rocketnet_dst_check_state_t * st, int session, int channel, int type,
+    uint32_t generation, uint64_t identity )
+{
+    struct rocketnet_dst_check_stream_t * s = &st->stream[rocketnet_dst_check_stream_index( session, channel, type )];
+    if ( s->seen && s->identity != identity )
+        memset( s, 0, sizeof( *s ) );
+    if ( !s->seen )
+    {
+        s->seen = 1;
+        s->generation = generation;
+        s->identity = identity;
+    }
+    return s;
+}
+
+// The cross-type sequenced view of (session, channel), reset when the session
+// changes identity like the stream tables are. NULL outside the tables.
+static inline struct rocketnet_dst_check_sequenced_channel_t * rocketnet_dst_check_sequenced_channel(
+    struct rocketnet_dst_check_state_t * st, int session, int channel, uint64_t identity )
+{
+    if ( session < 0 || session >= ROCKETNET_DST_CHECK_MAX_SESSIONS || channel < 0 || channel >= 9 )
+        return NULL;
+    struct rocketnet_dst_check_sequenced_channel_t * c = &st->sequenced[session * 9 + channel];
+    if ( c->seen && c->identity != identity )
+        memset( c, 0, sizeof( *c ) );
+    if ( !c->seen )
+    {
+        c->seen = 1;
+        c->identity = identity;
+    }
+    return c;
+}
+
+// Records the size the sender drew for a sequence. Called where the harness
+// builds a payload, before the message object sees it.
+
+static inline void rocketnet_dst_check_sent( struct rocketnet_dst_check_state_t * st,
+                                             double time, int session, int channel, int type,
+                                             uint32_t sequence, uint32_t generation, uint64_t identity,
+                                             uint32_t epoch, int bytes )
+{
+    (void) time;
+
+    struct rocketnet_dst_check_stream_t * s =
+        rocketnet_dst_check_stream( st, session, channel, type, generation, identity );
+    const int reliable = ( type == 2 || type == 3 || type == 4 || type == 6 || type == 7 );
+    const int lap = rocketnet_dst_check_lap( st, "sent_size", s->reliable_base, sequence );
+    if ( reliable && !lap )
+    {
+        if ( !rocketnet_dst_check_bit( st, s->reliable_sent, s->reliable_base, sequence, "reliable_sent" ) )
+        {
+            rocketnet_dst_check_set_bit( st, s->reliable_sent, s->reliable_base, sequence, "reliable_sent" );
+            s->reliable_sent_count++;
+        }
+    }
+
+    if ( !lap )
+    {
+        // exact at every legal size: a non-negative int fits uint32_t, no clamp
+        s->sent_size[sequence % ROCKETNET_DST_CHECK_SEQ_BITS] = bytes > 0 ? (uint32_t) bytes : 0;
+        s->sent_size_set[sequence % ROCKETNET_DST_CHECK_SEQ_BITS] = 1;
+    }
+
+    s->last_sent_seq = sequence;
+    s->last_sent_step = st->step;
+    s->has_last_sent = 1;
+    rocketnet_dst_check_reliable_resolve( s );
+    if ( reliable && !lap )
+    {
+        s->outstanding_bytes += (uint32_t) bytes;
+    }
+
+    if ( channel == 8 && ( type == 1 || type == 4 ) )
+    {
+        s->sequenced_epoch = epoch;
+        s->sequenced_has_epoch = 1;
+    }
+
+    if ( type == 1 || type == 4 )
+    {
+        struct rocketnet_dst_check_sequenced_channel_t * c =
+            rocketnet_dst_check_sequenced_channel( st, session, channel, identity );
+        if ( c )
+        {
+            c->send_count++;
+            c->index_of[type == 4][sequence % ROCKETNET_DST_CHECK_SEQ_BITS] = c->send_count;
+            if ( type == 4 && c->send_count > c->settle_count )
+            {
+                // The newest type 4 of the quiet window is the one the
+                // channel owes, so every later type 4 raises the index a
+                // delivery has to reach. The send index grows with the send
+                // order, so a delivery seen before this send has a lower
+                // index and cannot serve it: a delivery of another epoch
+                // does not serve this send either, so the served index
+                // starts empty.
+                if ( c->quiet_required_set && c->quiet_required_epoch != epoch )
+                {
+                    c->quiet_served_set = 0;
+                }
+                c->quiet_required_set = 1;
+                c->quiet_required_index = c->send_count;
+                c->quiet_required_epoch = epoch;
+                c->quiet_required_step = st->step;
+            }
+        }
+    }
+}
+
 // Mirrors RNChannelTypes::ReliableExactlyOnce, RNEndpoint::ReliableExactlyOnce
 // and FragmentsAndAcks::DeliveredOnce. No sequence of a reliable stream is
 // delivered twice, and no sequence that was never sent is delivered.
