@@ -967,6 +967,16 @@ failed:
     return NULL;
 }
 
+// proofs/tla/ServerStopSpread.tla Room: the open fill phase's free slots
+int rocketnet_server_rio_send_room( rocketnet_server_rio_t * rio )
+{
+    if ( rio->stopping.load( std::memory_order_acquire ) )
+        return 0;
+    const int phase = rio->fill.load( std::memory_order_relaxed );
+    const int used = rio->next[phase].load( std::memory_order_relaxed );
+    return used < 0 || used >= ROCKETNET_RIO_SEND_QUEUE_SIZE ? 0 : ROCKETNET_RIO_SEND_QUEUE_SIZE - used;
+}
+
 // proofs/tla/RNRioDriver.tla Reserve: one fetch_add reserves the next slot of the fill
 // phase; past the last slot it returns NULL and counts SEND_FULL.
 // proofs/tla/RNRioWorker.tla Stage, first half: a fill thread takes a slot of the

@@ -83,12 +83,14 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_RECV_BUFFERS >= 2 * ROCKETNET_URING_SEN
 ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_RECEIVE_BUDGET >= 2 * ROCKETNET_URING_SEND_QUEUE_SIZE,
                          "receive budget twice send: io_uring receive budget holds at least twice the send queue" );
 
-// the send staging is per queue and does not derive from ROCKETNET_MAX_CLIENTS:
-// clients spread over the queues, and the most queues stage two packets for
-// every client (BUILDING.md, "Maximum clients")
+// the send staging is one server-wide array whatever the queue count, and
+// does not derive from ROCKETNET_MAX_CLIENTS: it stages two packets for every
+// client of the default configuration. A server whose sends need more in one
+// update spreads them across updates, as the transport's send room reports
+// (rocketnet_server_uring_send_room; proofs/tla/ServerStopSpread.tla Room).
 
-ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_MAX_QUEUES * ROCKETNET_URING_SEND_QUEUE_SIZE >= 2 * ROCKETNET_MAX_CLIENTS,
-                         "the io_uring queues together can stage two packets for every client" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_SEND_QUEUE_SIZE >= 2 * ROCKETNET_DEFAULT_MAX_CLIENTS,
+                         "the io_uring send array stages two packets for every client of the default configuration" );
 ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_RECEIVE_BUDGET >= ROCKETNET_URING_SEND_BUDGET,
                          "receive budget twice send: one send reap fits the receive bank" );
 
@@ -261,6 +263,11 @@ void rocketnet_server_uring_finish_packet( struct rocketnet_server_uring_t * uri
 void rocketnet_server_uring_abort_packet( struct rocketnet_server_uring_t * uring, uint64_t packet_id, uint8_t * packet_data );
 
 void rocketnet_server_uring_send_packets( struct rocketnet_server_uring_t * uring );
+
+// the slots start_packet may still take before the reservation index goes
+// back to 0: one server-wide array, whatever the queue count, and a slot the
+// kernel holds until its completion is not room. Main thread.
+int rocketnet_server_uring_send_room( struct rocketnet_server_uring_t * uring );
 
 // receive packets: receive_packets reaps at most
 // ROCKETNET_URING_RECEIVE_BUDGET completions without blocking into the fill

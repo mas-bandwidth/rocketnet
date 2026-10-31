@@ -2271,6 +2271,28 @@ uint8_t * rocketnet_server_socket_start_packet_internal( struct rocketnet_server
     return send_buffer->packet_data[packet_index];
 }
 
+// proofs/tla/ServerStopSpread.tla Room: the fewest free slots of any queue
+
+int rocketnet_server_socket_send_room( struct rocketnet_server_socket_t * server_socket )
+{
+    rocketnet_assert( server_socket );
+
+    int room = ROCKETNET_XDP_SEND_QUEUE_SIZE;
+    for ( int queue = 0; queue < server_socket->num_queues; queue++ )
+    {
+        rocketnet_server_xdp_socket_t * socket = &server_socket->socket[queue];
+        const int flow_index = socket->send_flow_index.load( std::memory_order_acquire );
+        if ( flow_index < 0 )
+            return 0;
+        const int used = socket->send_buffer[flow_index].num_packets.load( std::memory_order_relaxed );
+        const int slots = used < 0 || used >= ROCKETNET_XDP_SEND_QUEUE_SIZE ? 0 : ROCKETNET_XDP_SEND_QUEUE_SIZE - used;
+        if ( slots < room )
+            room = slots;
+    }
+
+    return room;
+}
+
 uint8_t * rocketnet_server_socket_start_packet( struct rocketnet_server_socket_t * server_socket, const rocketnet_address_t * to, uint64_t * packet_id )
 {
     rocketnet_assert( server_socket );

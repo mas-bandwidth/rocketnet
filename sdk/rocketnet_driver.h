@@ -139,6 +139,15 @@ struct rocketnet_server_transport_io_operations_t
     uint64_t ( *send_failures )( void * transport );
 
     void ( *send_batch_shutdown )( void *, const rocketnet_platform_send_t *, int );
+
+    // optional; main thread only. The frames the transport accepts before
+    // its next flush without a refusal for room: start_packet on the staged
+    // path, or the frames send_batch takes without dropping one on the
+    // buffered path. A frame the transport still holds from an earlier flush
+    // is not room. Producers on other threads only lower it, so with none
+    // running it is exact; a transport without it is treated as unbounded
+    // (proofs/tla/ServerStopSpread.tla Room).
+    int ( *send_room )( void * transport );
 };
 
 // the start_packet id of a refusal for want of a link-layer destination

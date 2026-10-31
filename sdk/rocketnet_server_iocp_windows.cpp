@@ -1348,6 +1348,26 @@ failed:
     return NULL;
 }
 
+// proofs/tla/ServerStopSpread.tla Room: the producer bank's free slots,
+// at most the free send operations (a frame flushed earlier holds its
+// operation until its completion). The free count is the queue's positions,
+// enqueue read first; a free whose push is claimed but not yet published can
+// make one start refuse, and the stop step retries it on its next step.
+
+int rocketnet_server_iocp_send_room( rocketnet_server_iocp_t * iocp )
+{
+    if ( iocp->stopping.load( std::memory_order_acquire ) )
+        return 0;
+    const uint64_t staged = iocp->num_staged.load( std::memory_order_relaxed );
+    if ( staged >= ROCKETNET_IOCP_SEND_QUEUE_SIZE )
+        return 0;
+    const uint64_t enqueue = iocp->free_sends.enqueue.load( std::memory_order_acquire );
+    const uint64_t dequeue = iocp->free_sends.dequeue.load( std::memory_order_acquire );
+    const uint64_t free_sends = enqueue > dequeue ? enqueue - dequeue : 0;
+    const uint64_t slots = ROCKETNET_IOCP_SEND_QUEUE_SIZE - staged;
+    return (int) ( free_sends < slots ? free_sends : slots );
+}
+
 uint8_t * rocketnet_server_iocp_start_packet( rocketnet_server_iocp_t * iocp, const rocketnet_address_t * to, uint64_t * packet_id )
 {
     if ( iocp->stopping.load( std::memory_order_acquire ) )

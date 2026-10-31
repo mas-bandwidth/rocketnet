@@ -178,9 +178,10 @@ failed records unless they are explicit `bench` debt with actual exit 124.
 | `rnrtttreelayout` | 3 | The rtt minimum tree, a history of 8 (README-RNRttTreeLayout.md): the control and two reversed witnesses, no leaf offset (`TreeExact`) and a walk that stops unless the minimum falls (`RootIsMinimum`) |
 | `rnfreestacklayout` | 4 | The protocol tables' free stacks, capacity 3 (README-RNFreeStackLayout.md): the control and three reversed witnesses, a release without the liveness guard and a pop before the generation refusal (both `StackIsFree`) and a generation that wraps to 1 (`GenerationNeverReissued`) |
 | `rnreconstructlayout` | 4 | The wire sequence reconstruction, modulus 8 in a space of 32 (README-RNReconstructLayout.md): the control and three reversed witnesses, a tie to the smaller, the below gate `>` and no candidate above (all `CodeIsNearest`) |
+| `serverstopspread` | 7 | The disconnect ring's layout and the stop spread across steps within the send room (README-ServerStopSpread.md): a safety control, a liveness control (`StopFinishes`) and five reversed witnesses, the single-shot stop (`FullBurstBeforeStopped`), a ring of `SteadyCap` entries and a steady cap off by one (both `RingHolds`), a complete entry sealed again (`SealedWithinBurst`) and an unreachable start that ends the drain (`StopFinishes`) |
 
-The case plan in `CASES.tsv` covers every root configuration: 572 cases
-in 89 groups, 556 required and 16 bench cases whose `debt` column names
+The case plan in `CASES.tsv` covers every root configuration: 579 cases
+in 90 groups, 563 required and 16 bench cases whose `debt` column names
 an explicit over-budget reason. Other experiments described in the model
 READMEs remain historical; this plan does not claim fresh measurements
 for uncommitted variants or change their model semantics.

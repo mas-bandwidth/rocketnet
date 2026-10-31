@@ -1653,6 +1653,16 @@ uint8_t * rocketnet_server_uring_start_packet( struct rocketnet_server_uring_t *
     return uring->send.data[slot];
 }
 
+// proofs/tla/ServerStopSpread.tla Room: the slots start_packet may still take
+
+int rocketnet_server_uring_send_room( struct rocketnet_server_uring_t * uring )
+{
+    rocketnet_assert( uring );
+
+    const int used = uring->send.num_packets.load( std::memory_order_relaxed );
+    return used < 0 || used >= ROCKETNET_URING_SEND_QUEUE_SIZE ? 0 : ROCKETNET_URING_SEND_QUEUE_SIZE - used;
+}
+
 // the slot from pointer arithmetic against the staging: a pointer that is not
 // a live slot root lands out of range and fails closed as a lost packet
 

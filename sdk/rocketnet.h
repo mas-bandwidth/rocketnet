@@ -1621,11 +1621,12 @@ struct rocketnet_server_config_t
     /// allowance for sealing redundant disconnect-notification datagrams in
     /// one update. Range is 1 .. 1024. Default is 64. A disconnect still
     /// closes its local slot immediately; a value below the 10-copy burst
-    /// spreads that burst across updates. If every deferred-burst slot is
-    /// occupied, the server keeps the older work and drops the new redundant
-    /// notification copies rather than exceeding this allowance. Stop is not
-    /// an update: rocketnet_server_stop seals every client's burst at once,
-    /// whatever this allowance.
+    /// spreads that burst across updates, as does a transport whose send
+    /// staging has no room for the whole burst. If every deferred-burst slot
+    /// is occupied, the server keeps the older work and drops the new
+    /// redundant notification copies rather than exceeding this allowance.
+    /// Stop does not use this allowance: each stop step seals as many of
+    /// every client's burst as the transport has room for.
 
     int disconnect_packets_per_update;
 
@@ -2701,14 +2702,17 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_start( struct rocketne
 /// destroy. Repeated requests do nothing.
 ///
 /// Stop is the whole shutdown flush; there is no separate disconnect or send
-/// step to call first. In this one call every connected client's slot is
-/// ended, its redundant disconnect packets (a fixed number per client) are
-/// sealed and handed to the transport, and only then is the transport told
-/// to stop, so they go out before the workers exit. Messages queued
-/// and not yet sent are dropped. A client that receives one of them
-/// moves to ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED; one that loses every
-/// copy times out under its token's timeout. The work is bounded by
-/// max_clients and never waits on the network.
+/// step to call first. In this call every connected client's slot is ended
+/// and its redundant disconnect packets (a fixed number per client) wait to
+/// be sealed. This call and each rocketnet_server_stopped poll after it is a
+/// stop step: it seals and hands the transport as many of those packets as
+/// the transport's send staging has room for, one per client in turn before
+/// any client's next copy, and once every client's packets are handed over
+/// the transport is told to stop, so they go out before the workers exit.
+/// Messages queued and not yet sent are dropped. A client that receives one
+/// of them moves to ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED; one that loses
+/// every copy times out under its token's timeout. Each step's work is
+/// bounded by the transport's staging and never waits on the network.
 ///
 /// Needs a running server; stopped or stopping it does nothing. Running is
 /// false as soon as it returns. Thread: not thread-safe; the caller owns the
@@ -2719,6 +2723,8 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_start( struct rocketne
 ROCKETNET_EXPORT void rocketnet_server_stop( struct rocketnet_server_t * server );
 
 /// Returns true once the stop request has completed. Never waits or joins.
+/// While a stop still has disconnect packets to hand the transport, each
+/// call is the next stop step (rocketnet_server_stop), so keep polling.
 ///
 /// Callable running or stopped. Thread: not thread-safe; the caller owns the
 /// server one thread at a time.

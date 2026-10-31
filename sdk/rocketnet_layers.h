@@ -950,8 +950,18 @@ void rocketnet_server_transport_destroy( struct rocketnet_server_transport_t * s
 /** @brief Request an orderly server stop.
  * @param server_transport [in,out] Created server transport; NULL is a counted no-op.
  * @return Nothing. Poll stopped until true, then destroy.
+ * @details The transport is STOPPING on return. The disconnect bursts still
+ * waiting leave first, as many each step as the transport has room for: this
+ * call is the first step, and each later stopped, state or update call while
+ * any is waiting is the next. The transport's I/O is told to stop once the
+ * last of them is flushed (proofs/tla/ServerStopSpread.tla).
  */
 void rocketnet_server_transport_stop( struct rocketnet_server_transport_t * server_transport );
+/** @brief True once a stop has completed: every waiting disconnect burst
+ * handed to the transport and its workers exited.
+ * @details While disconnect bursts wait, each call is one bounded stop step
+ * (the transport's room in seals and one flush); it never waits.
+ */
 bool rocketnet_server_transport_stopped( const struct rocketnet_server_transport_t * server_transport );
 
 // a NULL server_transport is a counted no-op that returns 0
@@ -1456,7 +1466,11 @@ void rocketnet_server_transport_set_create_send_capacity_for_test( int packets )
 /** @brief Returns the transport's payload send capacity. */
 int rocketnet_server_transport_send_capacity( const struct rocketnet_server_transport_t * server_transport );
 #endif // #if ROCKETNET_DEV
-/** @brief Returns the payload frames that may still start this update. */
+/** @brief Returns the frames that may still start this update without a
+ * refusal for room: the payload ring's free slots on a buffered transport, the
+ * transport's reported send room on a staged one (unbounded when the
+ * transport does not report it). The send staging is server-wide.
+ */
 int rocketnet_server_transport_send_capacity_available( const struct rocketnet_server_transport_t * server_transport );
 
 // -----------------------------------------

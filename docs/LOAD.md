@@ -493,9 +493,10 @@ requirements to each configuration group:
   - GSO and io_uring also use `num_xdp_queues`, with a maximum of 32, but
     their send staging is shared: 4096 slots in the active GSO producer bank
     and 2048 slots in io_uring's send array. Extra receive queues do not
-    multiply these capacities. Account for the current
-    [staged-send fairness limitation](TRANSPORT-INTERNALS.md#current-staging-and-drain-limitations)
-    when qualifying large populations or bursts.
+    multiply these capacities; sends past them, disconnect bursts included,
+    spread across updates as the
+    [send room](TRANSPORT-INTERNALS.md#current-staging-and-drain-limitations)
+    reports.
 - **Runtime memory budgets (`ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES`, `ROCKETNET_SERVER_MEMORY_BUDGET_BYTES`)**:
   - Set `ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES` or
     `ROCKETNET_SERVER_MEMORY_BUDGET_BYTES` to limit transport candidates. This

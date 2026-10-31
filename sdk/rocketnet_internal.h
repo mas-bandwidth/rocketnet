@@ -642,10 +642,11 @@ void rocketnet_server_receive_buffer_warning_grant_override_for_testing( int gra
 struct rocketnet_platform_socket_t;
 int rocketnet_platform_socket_receive_buffer_bytes( struct rocketnet_platform_socket_t * socket );
 
-// internal final-burst operations for public server_stop. They preserve the
-// normal transport API while selecting a nonwaiting backend send on shutdown
+// internal final-burst operation for public server_stop: the slot ends now
+// and its burst always waits in the disconnect ring, which holds one for
+// every client beside the bursts a running server keeps, for the stop steps
+// to send (proofs/tla/ServerStopSpread.tla Stop)
 void rocketnet_server_transport_disconnect_client_shutdown( struct rocketnet_server_transport_t * transport, int client_index );
-void rocketnet_server_transport_send_packets_shutdown( struct rocketnet_server_transport_t * transport );
 
 // A create's reason for failing, written through its caller's status (NULL:
 // not asked). OUT_OF_MEMORY, once written, is never replaced: a create that
