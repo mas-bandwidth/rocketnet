@@ -43,6 +43,8 @@ static void rocketnet_server_transport_abort_create( struct rocketnet_server_tra
 
 bool rocketnet_server_transport_io_receive_drops( const struct rocketnet_server_transport_io_operations_t * operations,
                                                   void * transport, uint64_t * too_short, uint64_t * too_large );
+bool rocketnet_server_transport_io_receive_frames_dropped( const struct rocketnet_server_transport_io_operations_t * operations,
+                                                           void * transport, uint64_t * dropped );
 
 // One payload slot of the receive batch's storage holds a whole opened
 // packet: the protocol opens each packet into the next free slot and an
@@ -4058,6 +4060,13 @@ const struct rocketnet_counters_t * rocketnet_server_transport_counters( struct 
         server_transport->transport_receive_too_short = too_short;
         server_transport->transport_receive_too_large = too_large;
     }
+
+    // XDP_RECEIVE_FRAME_DROPPED is the transport's own cumulative count,
+    // assigned on read
+
+    uint64_t frames_dropped = 0;
+    if ( rocketnet_server_transport_io_receive_frames_dropped( server_transport->io.operations, server_transport->io.instance, &frames_dropped ) )
+        server_transport->counters.values[ROCKETNET_COUNTER_XDP_RECEIVE_FRAME_DROPPED] = frames_dropped;
 
     return &server_transport->counters;
 }

@@ -1820,6 +1820,7 @@ void rocketnet_server_gso_receive_drops( struct rocketnet_server_gso_t * gso, ui
 
 #if ROCKETNET_XDP
 uint64_t rocketnet_server_socket_send_failures( struct rocketnet_server_socket_t * server_socket );
+uint64_t rocketnet_server_socket_receive_dropped( struct rocketnet_server_socket_t * server_socket );
 #endif // #if ROCKETNET_XDP
 
 static void * gso_create( void * context, const rocketnet_server_transport_io_config_t * config, rocketnet_address_t * bind )
@@ -2271,4 +2272,25 @@ bool rocketnet_server_transport_io_receive_drops( const rocketnet_server_transpo
 
     return false;
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+}
+
+bool rocketnet_server_transport_io_receive_frames_dropped( const rocketnet_server_transport_io_operations_t * operations, void * transport,
+                                                           uint64_t * dropped )
+{
+    // builtin-only, matched on the operations table as receive_drops is: the
+    // xdp transport's frames its userspace receive dropped before reading a
+    // UDP datagram from them (XDP_RECEIVE_FRAME_DROPPED)
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
+    if ( operations == &xdp_operations )
+    {
+        *dropped = rocketnet_server_socket_receive_dropped( (rocketnet_server_socket_t *) transport );
+        return true;
+    }
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
+    (void) operations;
+    (void) transport;
+    (void) dropped;
+
+    return false;
 }

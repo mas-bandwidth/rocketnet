@@ -268,8 +268,8 @@ static void loopback_check_trace( const struct loopback_trace_t * got, const str
 // simulator latency adds two connected steps (24 without it, 26 with it).
 // The counter hashes cover every counter in index order, zeros included, so they
 // move when a counter is added or removed.
-static const struct loopback_trace_t loopback_base_trace_simulator_off = { 67, 66, 5954, 4320, 67, 66, 4389, 5889, UINT64_C( 0x1d740e4da2de6827 ), UINT64_C( 0x14009cd127ad2fc5 ), 24 };
-static const struct loopback_trace_t loopback_base_trace_simulator_on = { 68, 66, 5775, 4328, 67, 66, 4389, 5653, UINT64_C( 0x9bc1419feffd9867 ), UINT64_C( 0x14009cd127ad2fc5 ), 26 };
+static const struct loopback_trace_t loopback_base_trace_simulator_off = { 67, 66, 5954, 4320, 67, 66, 4389, 5889, UINT64_C( 0x9fce012a0b2fb307 ), UINT64_C( 0x15d44be8780d1a65 ), 24 };
+static const struct loopback_trace_t loopback_base_trace_simulator_on = { 68, 66, 5775, 4328, 67, 66, 4389, 5653, UINT64_C( 0xec8b13518be76b47 ), UINT64_C( 0x15d44be8780d1a65 ), 26 };
 
 static void test_loopback_transport_patterns_off_same_trace()
 {
