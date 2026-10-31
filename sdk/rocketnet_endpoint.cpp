@@ -197,7 +197,7 @@ static bool rn_endpoint_unreliable_over_record_capacity( int reliability, int ch
 {
     // every unreliable mode uses the same record-size rule, including its wire header and form byte
 
-    const int header = reliability == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED ? 3 + 3 + 3 + ( channel >= 256 ? 2 : 1 ) : ROCKETNET_MESSAGE_RECORD_FIXED_BYTES;
+    const int header = reliability == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED ? 3 + 3 + 3 + ( channel >= ROCKETNET_MESSAGE_WIDE_CHANNEL ? 2 : 1 ) : ROCKETNET_MESSAGE_RECORD_FIXED_BYTES;
     const int one_packet_capacity = reliability == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED ? capacity : ( capacity < ROCKETNET_MESSAGE_SINGLE_BYTES ? capacity : ROCKETNET_MESSAGE_SINGLE_BYTES );
 
     return (uint64_t) (uint32_t) bytes + (uint64_t) header + 1u > (uint64_t) one_packet_capacity;
@@ -641,7 +641,7 @@ static bool rn_endpoint_ordered_due( const rn_endpoint_t * endpoint, double now 
 
 static int rn_endpoint_sequenced_header_bytes( int channel )
 {
-    return 3 + 3 + 3 + ( channel >= 256 ? 2 : 1 );              // flags and length, sequencing, ordering, channel
+    return 3 + 3 + 3 + ( channel >= ROCKETNET_MESSAGE_WIDE_CHANNEL ? 2 : 1 );              // flags and length, sequencing, ordering, channel
 }
 
 int rn_endpoint_in_place_header( const struct rn_endpoint_t * endpoint, int channel, int reliability, int bytes, int transport_max_payload_bytes, double now )
@@ -1061,7 +1061,7 @@ static void rn_endpoint_unreliable_drop_all( rn_endpoint_t * endpoint, int count
 
 static int rn_endpoint_sequenced_payload_bytes( const rn_send_descriptor_t * descriptor )
 {
-    const int header = 3 + 3 + 3 + ( descriptor->channel >= 256 ? 2 : 1 );
+    const int header = 3 + 3 + 3 + ( descriptor->channel >= ROCKETNET_MESSAGE_WIDE_CHANNEL ? 2 : 1 );
     return (int) descriptor->bytes + header + 1; // one RECORDS record and form byte
 }
 

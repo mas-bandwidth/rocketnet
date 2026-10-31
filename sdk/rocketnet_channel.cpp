@@ -431,7 +431,7 @@ bool rn_channels_deliver_sequenced( struct rn_channels_t * channels, uint32_t ch
     const rn_channel_receive_t * receive = channels->region->channel_receive + channel;
     const uint32_t sequence_gap = ( sequencing - receive->sequenced_watermark ) & ROCKETNET_MESSAGE_U24_MASK;
     if ( ( ordering & ROCKETNET_MESSAGE_U24_MASK ) != ( receive->ordered_read & ROCKETNET_MESSAGE_U24_MASK ) ||
-         sequence_gap >= ( 1u << 23 ) )
+         sequence_gap >= ROCKETNET_MESSAGE_HALF_RANGE )
         return false;
 
     rn_channel_receive_t * slot = channels->region->channel_receive + channel;
@@ -680,7 +680,7 @@ int rn_channels_dispatch_ordered( struct rn_channels_t * channels, const struct 
     const uint32_t ordering = rn_u24( record->ordering );
     const uint32_t delta = rn_u24( ordering - rx->ordered_read );
 
-    if ( delta >= ( 1u << 23 ) )
+    if ( delta >= ROCKETNET_MESSAGE_HALF_RANGE )
     {
         // 7.2: a reliable ordered record behind the read index can only be a
         // duplicate, and layer 3 already caught those.
@@ -1478,11 +1478,11 @@ bool rn_ordered_init( struct rn_ordered_t * ordered, struct rn_region_t * region
         return false;
     }
 
-    rn_window_send_init( &ordered->send, region, 0 );
+    rn_window_send_init( &ordered->send, region, ROCKETNET_MESSAGE_FIRST_NUMBER );
 
     rn_window_ack_init( &ordered->ack, &ordered->send, region, config );
 
-    rn_window_receive_init( &ordered->receive, region, 0 );
+    rn_window_receive_init( &ordered->receive, region, ROCKETNET_MESSAGE_FIRST_NUMBER );
 
     if ( !rn_packet_builder_init( &ordered->builder, region, &ordered->ack, budget, packets_per_update, payload_capacity ) )
     {

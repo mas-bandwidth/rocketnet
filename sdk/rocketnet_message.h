@@ -55,9 +55,24 @@
 
 #define ROCKETNET_MESSAGE_MAX_RECORD_BYTES                  65535
 
-// the 24-bit wire counters: number, sequencing and ordering (STANDARD.md _Messages_)
+// the 24-bit wire counters: number, sequencing and ordering (STANDARD.md _Messages_).
+// A difference of two counters at or above the half range is negative. Each
+// direction's reliable numbers start at the first number.
 
-#define ROCKETNET_MESSAGE_U24_MASK                          0xFFFFFF
+#define ROCKETNET_MESSAGE_NUMBER_BITS                       24
+#define ROCKETNET_MESSAGE_NUMBER_BYTES                      3
+#define ROCKETNET_MESSAGE_NUMBER_RANGE                      ( 1u << ROCKETNET_MESSAGE_NUMBER_BITS )             // 16777216
+#define ROCKETNET_MESSAGE_HALF_RANGE                        ( 1u << ( ROCKETNET_MESSAGE_NUMBER_BITS - 1 ) )     // 8388608
+#define ROCKETNET_MESSAGE_U24_MASK                          ( ROCKETNET_MESSAGE_NUMBER_RANGE - 1 )              // 0xFFFFFF
+#define ROCKETNET_MESSAGE_FIRST_NUMBER                      0
+
+// the unit of a record's ring offset and of a ring span's length
+
+#define ROCKETNET_MESSAGE_RING_UNIT                         16
+
+// the lowest channel a record carries in the two-byte WIDE form
+
+#define ROCKETNET_MESSAGE_WIDE_CHANNEL                      256
 
 // the CONFIG control record (STANDARD.md _Messages_, standard/MESSAGES.md m11)
 

@@ -110,5 +110,45 @@ class PacketLayoutTests(unittest.TestCase):
         self.assertTrue(self.faults(self.payload('after all preceding data')))
 
 
+class PinExpressionTests(unittest.TestCase):
+    def faults(self, rows):
+        with tempfile.TemporaryDirectory() as directory:
+            Path(directory, "m5.tsv").write_text(
+                "#include \"rocketnet_message.h\"\n" + "".join("%s\t%s\t%s\n" % row for row in rows),
+                encoding="utf-8")
+            saved = standard.PINS_DIR
+            standard.PINS_DIR = directory
+            try:
+                faults = []
+                standard.read_pins(faults)
+                return [text for _, text in faults]
+            finally:
+                standard.PINS_DIR = saved
+
+    def test_bare_integer_is_refused(self):
+        faults = self.faults([("ring unit", "16", "16")])
+        self.assertEqual(len(faults), 1)
+        self.assertIn("names no sdk identifier", faults[0])
+
+    def test_literal_arithmetic_is_refused(self):
+        self.assertEqual(len(self.faults([("window messages limit", "1 << 20", "1048576")])), 1)
+
+    def test_standard_library_macro_is_refused(self):
+        self.assertEqual(len(self.faults([("channel wide boundary", "UINT8_MAX + 1", "256")])), 1)
+
+    def test_sdk_expressions_pass(self):
+        self.assertEqual(self.faults([
+            ("ring unit", "ROCKETNET_MESSAGE_RING_UNIT", "16"),
+            ("window messages limit", "rn_pin_message_max_reliable_messages_in_flight", "1048576"),
+            ("key bytes", "crypto_aead_chacha20poly1305_IETF_KEYBYTES", "32"),
+            ("minimum numbered record", "ROCKETNET_MESSAGE_RECORD_FIXED_BYTES + ROCKETNET_MESSAGE_NUMBER_BYTES + 1", "7"),
+        ]), [])
+
+    def test_repository_pins_all_name_the_sdk(self):
+        faults = []
+        standard.read_pins(faults)
+        self.assertEqual([text for _, text in faults if "names no sdk identifier" in text], [])
+
+
 if __name__ == "__main__":
     unittest.main()

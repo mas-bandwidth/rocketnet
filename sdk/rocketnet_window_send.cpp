@@ -81,7 +81,6 @@ static void rn_window_send_set_number( rn_window_send_t * send, uint64_t number,
                                        uint32_t descriptor, uint16_t fragment,
                                        uint64_t ring_start )
 {
-
     rn_send_number_t * entry = &send->region->send_numbers[number % send->region->window];
     entry->number = number;
     entry->ring_start = ring_start;

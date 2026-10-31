@@ -59,7 +59,7 @@ static int rocketnet_message_flags_header_bytes( uint8_t flags )
 
     int bytes = ROCKETNET_MESSAGE_RECORD_FIXED_BYTES;
     if ( rocketnet_message_code_has_number( code ) )
-        bytes += 3;
+        bytes += ROCKETNET_MESSAGE_NUMBER_BYTES;
     if ( rocketnet_message_code_is_holdable( code ) || block )
         bytes += 2;
     if ( rocketnet_message_code_has_sequencing( code ) )
@@ -100,8 +100,8 @@ static uint8_t rocketnet_message_record_flags( const struct rocketnet_message_re
     uint8_t flags = (uint8_t) ( record->code & ROCKETNET_MESSAGE_FLAG_CODE_MASK );
     if ( record->block )
         flags |= ROCKETNET_MESSAGE_FLAG_BLOCK;
-    if ( rocketnet_message_code_has_channel( record->code ) && record->channel >= 256 )
-        flags |= ROCKETNET_MESSAGE_FLAG_WIDE;                       // exactly when channel >= 256
+    if ( rocketnet_message_code_has_channel( record->code ) && record->channel >= ROCKETNET_MESSAGE_WIDE_CHANNEL )
+        flags |= ROCKETNET_MESSAGE_FLAG_WIDE;                       // exactly when channel >= ROCKETNET_MESSAGE_WIDE_CHANNEL
     if ( record->control )
         flags |= ROCKETNET_MESSAGE_FLAG_CONTROL;
 
@@ -324,7 +324,7 @@ uint32_t rocketnet_message_enabled_codes( uint32_t enabled_reliabilities )
 
 static inline int rocketnet_message_round16( int bytes )
 {
-    return ( bytes + 15 ) & ~15;
+    return ( bytes + ROCKETNET_MESSAGE_RING_UNIT - 1 ) & ~( ROCKETNET_MESSAGE_RING_UNIT - 1 );
 }
 
 static int rocketnet_message_decode_record( const uint8_t * record_start, int remaining, int payload_bytes,
@@ -393,7 +393,7 @@ static int rocketnet_message_decode_record( const uint8_t * record_start, int re
     {
         if ( (int) record->channel >= limits->num_channels )
             return ROCKETNET_MESSAGE_VIOLATION_BAD_CHANNEL;
-        if ( wide && record->channel < 256 )
+        if ( wide && record->channel < ROCKETNET_MESSAGE_WIDE_CHANNEL )
             return ROCKETNET_MESSAGE_VIOLATION_BAD_CHANNEL;
     }
 
@@ -430,15 +430,15 @@ static int rocketnet_message_decode_record( const uint8_t * record_start, int re
 
     if ( block )
     {
-        const int base_units = (int) record->ring - (int) record->fragment * ( F / 16 );
+        const int base_units = (int) record->ring - (int) record->fragment * ( F / ROCKETNET_MESSAGE_RING_UNIT );
         const bool last = record->fragment == record->fragments;
-        const int span = (int) record->fragments * F + ( last ? rocketnet_message_round16( length ) : 16 );
-        if ( base_units < 0 || base_units * 16 + span > limits->receive_message_buffer_bytes )
+        const int span = (int) record->fragments * F + ( last ? rocketnet_message_round16( length ) : ROCKETNET_MESSAGE_RING_UNIT );
+        if ( base_units < 0 || base_units * ROCKETNET_MESSAGE_RING_UNIT + span > limits->receive_message_buffer_bytes )
             return ROCKETNET_MESSAGE_VIOLATION_BAD_RING;
     }
     else if ( rocketnet_message_code_is_holdable( code ) )
     {
-        if ( (int) record->ring * 16 + rocketnet_message_round16( length ) > limits->receive_message_buffer_bytes )
+        if ( (int) record->ring * ROCKETNET_MESSAGE_RING_UNIT + rocketnet_message_round16( length ) > limits->receive_message_buffer_bytes )
             return ROCKETNET_MESSAGE_VIOLATION_BAD_RING;
     }
 
