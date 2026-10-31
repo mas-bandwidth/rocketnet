@@ -427,6 +427,7 @@ MCAckBlockWrap.cfg	MCAckBlockWrap.tla	pass	-	check	ackblockwrap	required	-
 MCAckBlockWrapBrokenHalfRange.cfg	MCAckBlockWrap.tla	invariant	EmptyRecognised	check	ackblockwrap	required	-
 MCRNClientIocp.cfg	MCRNClientIocp.tla	pass	-	check	rnclientiocp	required	-
 MCRNClientIocpBrokenFreeBeforeDrain.cfg	MCRNClientIocp.tla	invariant	FreedOnlyWhenDrained	check	rnclientiocp	required	-
+MCRNClientIocpBrokenCopyPosted.cfg	MCRNClientIocp.tla	invariant	NeverCopiedWhilePosted	check	rnclientiocp	required	-
 MCRNSentMap.cfg	MCRNSentMap.tla	pass	-	check	rnsentmap	required	-
 MCRNSentMapBrokenSmallMap.cfg	MCRNSentMap.tla	invariant	NoLiveEviction	check	rnsentmap	required	-
 MCRNSentMapBrokenEarlyResend.cfg	MCRNSentMap.tla	invariant	NoLiveEviction	check	rnsentmap	required	-
