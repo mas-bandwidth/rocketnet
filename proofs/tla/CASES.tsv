@@ -557,6 +557,7 @@ MCRNAckWalkLayoutBrokenWrapSeq.cfg	MCRNAckWalkLayout.tla	invariant	VisitsExact	c
 MCRNAckWalkLayoutBrokenHiMask.cfg	MCRNAckWalkLayout.tla	invariant	VisitsExact	check	rnackwalklayout	required	-
 MCRNAckWalkLayoutBrokenSkipWord.cfg	MCRNAckWalkLayout.tla	invariant	LowestExact	check	rnackwalklayout	required	-
 MCRNReceivedBlocksLayout.cfg	MCRNReceivedBlocksLayout.tla	pass	-	check	rnreceivedblockslayout	required	-
+MCRNReceivedBlocksLayoutPayloads.cfg	MCRNReceivedBlocksLayout.tla	pass	-	check	rnreceivedblockslayout	required	-
 MCRNReceivedBlocksLayoutBrokenInside.cfg	MCRNReceivedBlocksLayout.tla	invariant	QueryIsReference	check	rnreceivedblockslayout	required	-
 MCRNReceivedBlocksLayoutBrokenLater.cfg	MCRNReceivedBlocksLayout.tla	invariant	QueryIsReference	check	rnreceivedblockslayout	required	-
 MCRNReceivedBlocksLayoutBrokenDuplicate.cfg	MCRNReceivedBlocksLayout.tla	invariant	QueryIsReference	check	rnreceivedblockslayout	required	-

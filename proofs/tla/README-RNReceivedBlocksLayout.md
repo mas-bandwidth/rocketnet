@@ -34,7 +34,10 @@ with the reduction taken whole.
 ## The instance
 
 `MCRNReceivedBlocksLayout.tla`: four blocks of two slots (a ring of 8, an
-older half of 4), sequences to 20 in any order, payloads 1 and 2.
+older half of 4), sequences in any order. `MCRNReceivedBlocksLayout.cfg`
+checks sequences to 22 with one payload; `MCRNReceivedBlocksLayoutPayloads.cfg`
+checks sequences to 11 with payloads 1 and 2, so a duplicate replaces a record
+with different bytes. The witnesses use sequences to 20 and both payloads.
 
 ## Invariants
 
@@ -55,6 +58,5 @@ older half of 4), sequences to 20 in any order, payloads 1 and 2.
 | `MCRNReceivedBlocksLayoutBrokenBaseMove.cfg` | the left piece and middle are reused after base leaves its generation | `QueryIsReference` |
 
 Each witness is also a code mutant: the same rule turned off in
-`sdk/rocketnet_ack.cpp` fails `test_ack_received_stats_random_receives_match_scan`
-(and, for the reuse inside the cache, three of the older received statistics
-cases).
+`sdk/rocketnet_ack.cpp` fails `test_ack_received_stats_random_receives_match_scan`,
+and the inside and base-move mutants fail older received statistics cases too.
