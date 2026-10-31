@@ -23,7 +23,7 @@ rn_ack_cost_t rn_window_ack_cost_read() { return rn_ack_cost; }
 // m9; TLA+ actions Init, WritePacket, WriteOldest, ReceiveAck and
 // invariants TablesBounded and EveryReliableAckedAndDelivered in
 // proofs/tla/RNWindow.tla). A resend link names its message number's slot and
-// the descriptor generation it was stamped with (proofs/tla/RNChannelQueues.tla).
+// the descriptor generation it was stamped with (proofs/tla/RNResendGenerations.tla).
 // Acked holes are not compacted on the walk: capacity stays W and walk_visits
 // still counts them.
 
@@ -165,8 +165,8 @@ static bool rn_resend_fifo_unlink( rn_window_ack_t * ack, uint32_t slot )
     return true;
 }
 
-// proofs/tla/RNChannelQueues.tla Resend, Ack and StaleAck. Names the link with the live descriptor's generation.
-// Generation 0 is never a live name.
+// proofs/tla/RNResendGenerations.tla Write and Send: names the link with the live descriptor's
+// generation on every link, park and requeue alike. Generation 0 is never a live name.
 static void rn_resend_fifo_stamp( rn_window_ack_t * ack, uint32_t slot )
 {
     rn_region_t * region = ack->region;
@@ -184,7 +184,10 @@ static void rn_resend_fifo_stamp( rn_window_ack_t * ack, uint32_t slot )
 
 // Unlinks only the named generation of this number. A stale generation leaves
 // the FIFO as it is; reset clears every link, so no earlier connection's entry
-// is ever linked.
+// is ever linked. proofs/tla/RNResendGenerations.tla Ack: a linked entry's stamp is
+// always its live descriptor's generation (StampNamesOwner), so the refusal
+// never fires on a reachable state (MCRNResendGenerationsNoCompare.cfg); a
+// stale packet's number is refused by the caller's number comparison.
 static bool rn_resend_fifo_unlink_named( rn_window_ack_t * ack, uint32_t slot, uint64_t number, uint32_t generation )
 {
     if ( generation == 0 || !rn_resend_fifo_is_linked( ack, slot ) )
@@ -245,6 +248,7 @@ static void rn_resend_fifo_insert_after( rn_window_ack_t * ack, uint32_t after, 
 }
 
 // proofs/tla/RNResendFifoLayout.tla PushTail: a slot that is already the tail links after its prev.
+// proofs/tla/RNResendGenerations.tla Send: the relink stamps the live generation again.
 static void rn_resend_fifo_push_tail( rn_window_ack_t * ack, uint32_t slot )
 {
     const bool chunk = rn_window_ack_slot_is_chunk( ack, slot );
@@ -260,7 +264,7 @@ static void rn_resend_fifo_push_head( rn_window_ack_t * ack, uint32_t slot )
     rn_resend_fifo_insert_after( ack, RN_RESEND_NONE, slot );
 }
 
-// proofs/tla/RNResendFifoLayout.tla Park
+// proofs/tla/RNResendFifoLayout.tla Park and proofs/tla/RNResendGenerations.tla Write
 void rn_window_ack_park( rn_window_ack_t * ack, uint32_t after, uint32_t slot_index )
 {
     rocketnet_assert( ack );
@@ -765,6 +769,10 @@ int rn_window_ack_on_ack( rn_window_ack_t * ack, uint64_t packet_id, double now 
         const uint32_t slot_index = ref_u32 & ( W - 1 );
         rn_send_number_t * slot = &region->send_numbers[slot_index];
 
+        // proofs/tla/RNResendGenerations.tla Ack: a packet can reference a number
+        // whose slot now holds a later one, possibly of the same descriptor at a
+        // later generation; the number comparison skips it (NamedGenerationOnly).
+
         if ( slot->acked || slot->number < send->U || slot->number >= send->next || (uint32_t) slot->number != ref_u32 )
             continue;
 
@@ -773,7 +781,7 @@ int rn_window_ack_on_ack( rn_window_ack_t * ack, uint64_t packet_id, double now 
             const rn_resend_link_t * link = &region->resend_fifo[slot_index];
 
             // A named generation unlinks only that generation. Generation 0 means
-            // the link was stamped with no in-use descriptor (proofs/tla/RNChannelQueues.tla
+            // the link was stamped with no in-use descriptor (proofs/tla/RNResendGenerations.tla
             // Ack). That link still leaves on this ack while no descriptor has been
             // attached since the stamp.
 
