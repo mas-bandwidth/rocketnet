@@ -51,9 +51,10 @@
 // stayed within its figure.
 // Read 2026-10-31 from the windows Release (a) and (c) CI legs, the
 // client's heap in its create-time block: client was 22971935, now
-// 23602543.
+// 23602543. The server's heap in its create-time block, from the same
+// legs: server was 1607280656, now 1627114607.
 #if ROCKETNET_DEV
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1607280656 )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1627114607 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 23602543 )
 #else
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1596899594 )
