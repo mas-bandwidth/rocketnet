@@ -516,3 +516,5 @@ MCRNChannelQueuesLayout.cfg	MCRNChannelQueuesLayout.tla	pass	-	check	rnchannelqu
 MCRNChannelQueuesLayoutBrokenPopKeepsTail.cfg	MCRNChannelQueuesLayout.tla	invariant	NoForeignLink	check	rnchannelqueueslayout	required	-
 MCRNChannelQueuesLayoutBrokenPushFrontNoTail.cfg	MCRNChannelQueuesLayout.tla	invariant	QueueIsList	check	rnchannelqueueslayout	required	-
 MCRNChannelQueuesLayoutBrokenRemoveKeepsEnds.cfg	MCRNChannelQueuesLayout.tla	invariant	ReadyIsList	check	rnchannelqueueslayout	required	-
+MCRNOrderingWrap.cfg	MCRNOrderingWrap.tla	pass	-	check	rnorderingwrap	required	-
+MCRNOrderingWrapBrokenUnmasked.cfg	MCRNOrderingWrap.tla	invariant	NoExhaust	check	rnorderingwrap	required	-
