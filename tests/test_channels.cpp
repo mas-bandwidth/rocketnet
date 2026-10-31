@@ -1012,6 +1012,19 @@ extern "C" int posix_memalign( void ** out, size_t alignment, size_t bytes )
 
 #endif // #if RN_TEST_TRAP_LIBC
 
+// clang-cl's dynamic AddressSanitizer runtime exports the global operator new
+// and delete, and its runtime thunk imports them, so replacing them here is a
+// duplicate symbol at link (nightly-windows-sanitizers.yml, clangcl-asan). That
+// one build traps the allocator hooks only; every other build, MSVC
+// AddressSanitizer included, traps operator new and delete too.
+#if defined( _MSC_VER ) && defined( __clang__ ) && defined( RN_TEST_SANITIZED )
+#define RN_TEST_TRAP_OPERATOR_NEW 0
+#else
+#define RN_TEST_TRAP_OPERATOR_NEW 1
+#endif // #if defined( _MSC_VER ) && defined( __clang__ ) && defined( RN_TEST_SANITIZED )
+
+#if RN_TEST_TRAP_OPERATOR_NEW
+
 void * operator new( size_t bytes )
 {
     if ( rn_trap_armed )
@@ -1097,6 +1110,8 @@ void operator delete[]( void * p, size_t ) noexcept
     }
     free( p );
 }
+
+#endif // #if RN_TEST_TRAP_OPERATOR_NEW
 
 // ----------------------------------------------------------------
 //                           test plumbing
