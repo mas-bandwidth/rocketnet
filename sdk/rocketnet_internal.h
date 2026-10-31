@@ -86,8 +86,9 @@ struct rocketnet_message_server_t * rocketnet_server_message_server( struct rock
 
 #if ROCKETNET_DEV
 // the address a created server serves for one family, after the
-// environment overrides. Writes it and returns true, or returns false when
-// the server does not serve that family. Reads no socket
+// environment overrides. Writes it and returns true, or leaves address empty
+// and returns false when the server does not serve that family or the address
+// does not fit in address_bytes (logged). Reads no socket
 bool rocketnet_server_served_address( const struct rocketnet_server_t * server, int family, char * address, size_t address_bytes );
 #endif // #if ROCKETNET_DEV
 
