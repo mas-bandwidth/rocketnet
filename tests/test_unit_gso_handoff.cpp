@@ -42,4 +42,13 @@ static void test_server_gso_drain_budget()
 
 REGISTER_UNIT_TEST( test_server_gso_drain_budget );
 
+// a drain asks recvmmsg only for messages whose every segment fits the
+// buffer, so nothing it reads is dropped as overflow
+static void test_server_gso_drain_room()
+{
+    check( rocketnet_server_gso_test_drain_room() );
+}
+
+REGISTER_UNIT_TEST( test_server_gso_drain_room );
+
 #endif
