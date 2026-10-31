@@ -1112,14 +1112,14 @@ void rocketnet_client_transport_set_memory_plan_seam_for_test( bool enable )
 // The client network thread's create and release. The memory plan seam stands in
 // a bare allocation of the thread record for the thread, so it opens no thread.
 
-static rocketnet_platform_thread_t * rocketnet_client_thread_create( void * context, rocketnet_platform_thread_func_t function, void * argument )
+static rocketnet_platform_thread_t * rocketnet_client_thread_create( void * context, rocketnet_platform_thread_func_t function, void * argument, int * status )
 {
 #if ROCKETNET_DEV
     if ( rocketnet_client_memory_plan_seam_enabled )
         return (rocketnet_platform_thread_t *) rocketnet_malloc( context, sizeof( rocketnet_thread_record_layout_t ) );
 #endif // #if ROCKETNET_DEV
 
-    return rocketnet_platform_thread_create( context, function, argument );
+    return rocketnet_platform_thread_create( context, function, argument, status );
 }
 
 static void rocketnet_client_thread_release( void * context, rocketnet_platform_thread_t * thread )
@@ -2358,7 +2358,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
             return client_transport;
 #endif // #if ROCKETNET_DEV
 
-        client_transport->thread = rocketnet_client_thread_create( context, rocketnet_client_io_thread_function, &client_transport->client_io );
+        client_transport->thread = rocketnet_client_thread_create( context, rocketnet_client_io_thread_function, &client_transport->client_io, status );
     }
 #if ROCKETNET_DEV
     else if ( client_transport->step_driven )
@@ -2366,7 +2366,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
 #endif // #if ROCKETNET_DEV
     else
     {
-        client_transport->thread = rocketnet_client_thread_create( context, rocketnet_client_thread_function, client_transport );
+        client_transport->thread = rocketnet_client_thread_create( context, rocketnet_client_thread_function, client_transport, status );
     }
 
     if ( !client_transport->thread )
@@ -2375,8 +2375,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
 
         rocketnet_client_transport_abort_create( client_transport );
 
-        if ( status )
-            *status = ROCKETNET_STATUS_THREAD_CREATE_FAILED;
+        rocketnet_create_status( status, ROCKETNET_STATUS_THREAD_CREATE_FAILED );
 
         return NULL;
     }

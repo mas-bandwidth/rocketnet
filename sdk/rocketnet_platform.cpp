@@ -391,6 +391,8 @@ static void * rocketnet_platform_real_create_waitable_timer( unsigned flags )
     return flags == 0x00000002u ? (void *) 1 : NULL;
 }
 
+static int rocketnet_platform_real_thread_start( rocketnet_platform_thread_t * thread, void * record );
+
 static const rocketnet_platform_priority_calls_t rocketnet_platform_priority_calls_real_table = {
     rocketnet_platform_real_set_sched,
     rocketnet_platform_real_set_thread_priority,
@@ -400,6 +402,7 @@ static const rocketnet_platform_priority_calls_t rocketnet_platform_priority_cal
     rocketnet_platform_real_mutex_init,
     rocketnet_platform_real_platform_start,
     rocketnet_platform_real_create_waitable_timer,
+    rocketnet_platform_real_thread_start,
 };
 
 const rocketnet_platform_priority_calls_t * rocketnet_platform_priority_calls_real()
@@ -2542,6 +2545,11 @@ static void * thread_function_shim( void * data )
     return NULL;
 }
 
+static int rocketnet_platform_real_thread_start( rocketnet_platform_thread_t * thread, void * record )
+{
+    return pthread_create( &thread->handle, NULL, thread_function_shim, record );
+}
+
 // thread_wait and thread_wake: a mach semaphore on darwin, which has no
 // monotonic condition-variable clock; elsewhere a condition variable on
 // CLOCK_MONOTONIC, so the wait is immune to wall-clock steps. woken is set
@@ -2611,7 +2619,7 @@ rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, 
         return NULL;
     }
 
-    if ( pthread_create( &thread->handle, NULL, thread_function_shim, record ) != 0 )
+    if ( ROCKETNET_PLATFORM_PRIORITY_CALL( thread_start )( thread, record ) != 0 )
     {
         rocketnet_platform_thread_wake_term( thread );
         rocketnet_free( context, thread );
@@ -3038,6 +3046,8 @@ static void * rocketnet_platform_real_create_waitable_timer( unsigned flags )
     return CreateWaitableTimerExW( NULL, NULL, flags, TIMER_ALL_ACCESS );
 }
 
+static int rocketnet_platform_real_thread_start( rocketnet_platform_thread_t * thread, void * record );
+
 static const rocketnet_platform_priority_calls_t rocketnet_platform_priority_calls_real_table = {
     rocketnet_platform_real_set_sched,
     rocketnet_platform_real_set_thread_priority,
@@ -3047,6 +3057,7 @@ static const rocketnet_platform_priority_calls_t rocketnet_platform_priority_cal
     rocketnet_platform_real_mutex_init,
     rocketnet_platform_real_platform_start,
     rocketnet_platform_real_create_waitable_timer,
+    rocketnet_platform_real_thread_start,
 };
 
 const rocketnet_platform_priority_calls_t * rocketnet_platform_priority_calls_real()
@@ -3186,6 +3197,12 @@ static DWORD WINAPI thread_function_shim( void * data )
     return 0;
 }
 
+static int rocketnet_platform_real_thread_start( rocketnet_platform_thread_t * thread, void * record )
+{
+    thread->handle = CreateThread( NULL, 0, thread_function_shim, record, 0, NULL );
+    return thread->handle != NULL ? 0 : 1;
+}
+
 static HANDLE rocketnet_platform_sleep_timer_create();
 
 static void rocketnet_platform_thread_sleep_timer_close( rocketnet_platform_thread_t * thread )
@@ -3230,9 +3247,7 @@ rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, 
         thread->sleep_timer_generation = rocketnet_lifecycle_track_open( ROCKETNET_LIFECYCLE_TIMER, (uintptr_t) thread->sleep_timer, "platform thread sleep timer" );
 #endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 
-    thread->handle = CreateThread( NULL, 0, thread_function_shim, record, 0, NULL );
-
-    if ( thread->handle == NULL )
+    if ( ROCKETNET_PLATFORM_PRIORITY_CALL( thread_start )( thread, record ) != 0 )
     {
         rocketnet_platform_thread_sleep_timer_close( thread );
         rocketnet_free( context, thread );
@@ -3268,7 +3283,7 @@ void rocketnet_platform_thread_destroy( rocketnet_platform_thread_t * thread )
     rocketnet_free( thread->context, thread );
 }
 
-// Windows keeps the receive thread's sleep: no per-thread event or timer, so
+// Windows waits by sleeping on the thread's own timer, which no wake ends, so
 // the wake is a no-op and the thread observes quit within one sleep period
 void rocketnet_platform_thread_wake( rocketnet_platform_thread_t * thread )
 {

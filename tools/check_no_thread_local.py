@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Refuse thread-local storage in a production (ROCKETNET_DEV=0) build of sdk/.
+"""Refuse thread-local storage in a production (ROCKETNET_DEV=0) build of the library.
 
 Policy: a production build allocates nothing from the operating system at
 runtime. On macOS a thread's first touch of any thread-local variable makes
@@ -10,21 +10,28 @@ block per thread for every module that defines one. Development counters and
 test seams may be thread-local only inside a region a production build
 compiles out.
 
-Three checks, each refusing what the others cannot see:
+The library is every C and C++ file under sdk/ and the vendored
+sodium/sodium.c and sodium/sodium.h. Three checks, each refusing what the
+others cannot see:
 
-  source       (default) every C and C++ file under sdk/, comments and
-               literals removed and line continuations joined, read through
+  source       (default) every file of the library, comments and literals
+               removed (a number's digit separators are not literals) and
+               line continuations joined, read through
                its preprocessor conditionals. A thread_local, _Thread_local,
                __thread or __declspec( thread ) token passes only where an
                enclosing branch is false when ROCKETNET_DEV is 0, such as
                #if ROCKETNET_DEV, #if ROCKETNET_DEV && ..., or the #else of
                #if !ROCKETNET_DEV. Every platform's half is read, Windows
-               included, whatever the host.
+               included, whatever the host. It does not expand macros: a
+               storage keyword pasted from pieces (CAT( thread, _local )) is
+               left to the two checks below, which read what the compiler
+               produces.
 
   --preprocess compile_commands.json
-               every sdk translation unit of that build run through its own
-               compiler with -E and ROCKETNET_DEV forced to 0; a storage token
-               whose line marker names a file under sdk/ fails. This is the
+               every translation unit of the library in that build run through
+               its own compiler with -E and ROCKETNET_DEV forced to 0; a
+               storage token whose line marker names a file of the library
+               fails. This is the
                compiler's own reading of this host's conditionals and macros.
 
   --objects FILE...
@@ -52,13 +59,30 @@ from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-SDK = ROOT / "sdk"
 SUFFIXES = (".c", ".h", ".cpp", ".cc", ".hpp", ".inc")
+VENDORED = ("sodium/sodium.c", "sodium/sodium.h")
+
+
+def library_files(root):
+    """The library's own sources: everything under sdk/, and the vendored sodium pair."""
+    files = [path for path in sorted((root / "sdk").rglob("*")) if path.suffix in SUFFIXES and path.is_file()]
+    files += [root / name for name in VENDORED if (root / name).is_file()]
+    return files
+
+
+def in_library(path, root):
+    """Whether a resolved path is one of the library's files."""
+    try:
+        path.relative_to(root / "sdk")
+        return True
+    except ValueError:
+        return any(path == (root / name).resolve() for name in VENDORED)
 
 STORAGE = re.compile(r"\b(?:thread_local|_Thread_local|__thread)\b|__declspec\s*\(\s*thread\s*\)")
 
 LITERALS = re.compile(
-    r'R"(?P<delimiter>[^ ()\\\t\r\n]{0,16})\(.*?\)(?P=delimiter)"'
+    r"(?P<number>(?<![\w.])\.?\d(?:'?[\w.]|[eEpP][+-])*)"
+    r'|R"(?P<delimiter>[^ ()\\\t\r\n]{0,16})\(.*?\)(?P=delimiter)"'
     r'|"(?:\\.|[^"\\\n])*"'
     r"|'(?:\\.|[^'\\\n])*'"
     r"|/\*.*?\*/|//[^\n]*",
@@ -67,8 +91,9 @@ LITERALS = re.compile(
 
 
 def blank(text):
-    """Remove comments and literals, keeping every newline in place."""
-    return LITERALS.sub(lambda m: "".join("\n" if c == "\n" else " " for c in m.group()), text)
+    """Remove comments and literals, keeping every newline in place. A number,
+    digit separators and all, is kept: its apostrophes open no character literal."""
+    return LITERALS.sub(lambda m: m.group() if m.group("number") else "".join("\n" if c == "\n" else " " for c in m.group()), text)
 
 
 def logical_lines(text):
@@ -244,9 +269,7 @@ def scan_text(text):
 
 def source_check():
     failures = []
-    for path in sorted(SDK.rglob("*")):
-        if path.suffix not in SUFFIXES or not path.is_file():
-            continue
+    for path in library_files(ROOT):
         text = path.read_text(encoding="utf-8", errors="replace")
         for line, token in scan_text(text):
             failures.append("%s:%d: %s outside a ROCKETNET_DEV region" % (path.relative_to(ROOT), line, token))
@@ -257,9 +280,9 @@ LINE_MARKER = re.compile(r'^#\s*(?:line\s+)?\d+\s+"([^"]*)"')
 
 
 def preprocess_unit(job):
-    """Preprocess one sdk translation unit at ROCKETNET_DEV=0; return its failures."""
-    entry, sdk = job
-    sdk = Path(sdk)
+    """Preprocess one library translation unit at ROCKETNET_DEV=0; return its failures."""
+    entry, root = job
+    root = Path(root)
     source = Path(entry["directory"], entry["file"]).resolve()
     argv = entry.get("arguments") or shlex.split(entry["command"])
     command = []
@@ -277,7 +300,7 @@ def preprocess_unit(job):
     command[1:1] = ["-E", "-DROCKETNET_DEV=0"]
     result = subprocess.run(command, cwd=entry["directory"], capture_output=True, text=True)
     if result.returncode != 0:
-        return ["%s: the preprocessor failed: %s" % (source.relative_to(sdk.parent), result.stderr.strip()[:400])]
+        return ["%s: the preprocessor failed: %s" % (source.relative_to(root), result.stderr.strip()[:400])]
     failures = []
     current = None
     current_line = 0
@@ -290,31 +313,26 @@ def preprocess_unit(job):
         current_line += 1
         if current is None:
             continue
-        try:
-            relative = current.relative_to(sdk)
-        except ValueError:
+        if not in_library(current, root):
             continue
         for match in STORAGE.finditer(blank(raw)):
-            failures.append("sdk/%s:%d: %s in the ROCKETNET_DEV=0 preprocessed %s" %
-                            (relative, current_line, match.group(0), source.relative_to(sdk.parent)))
+            failures.append("%s:%d: %s in the ROCKETNET_DEV=0 preprocessed %s" %
+                            (current.relative_to(root), current_line, match.group(0), source.relative_to(root)))
     return failures
 
 
 def preprocess_check(database):
-    """Every sdk translation unit, one compiler per core."""
+    """Every library translation unit, one compiler per core."""
     entries = json.loads(Path(database).read_text())
     units = {}
     for entry in entries:
         source = Path(entry["directory"], entry["file"]).resolve()
-        try:
-            source.relative_to(SDK)
-        except ValueError:
-            continue
-        units.setdefault(source, entry)
+        if in_library(source, ROOT):
+            units.setdefault(source, entry)
     if not units:
-        return ["%s names no sdk translation unit" % database]
+        return ["%s names no library translation unit" % database]
     failures = []
-    jobs = [(entry, str(SDK)) for entry in units.values()]
+    jobs = [(entry, str(ROOT)) for entry in units.values()]
     with ProcessPoolExecutor(max_workers=os.cpu_count() or 4) as pool:
         for unit_failures in pool.map(preprocess_unit, jobs):
             failures.extend(unit_failures)
@@ -397,6 +415,10 @@ CONTROLS = [
     ("in a block comment", "/* thread_local\n int x; */\n", 0),
     ("in a string", "const char * s = \"thread_local\";\n", 0),
     ("a longer identifier", "int thread_locals; int my_thread_local;\n", 0),
+    ("between digit separators", "int a = 1'000; static thread_local int x; int b = 2'000;\n", 1),
+    ("digit separators alone", "long a = 0x1'0000'0000; double b = 1'0.5e+1'0;\n", 0),
+    ("a character literal after a number", "int a = 1; char c = 'x'; static thread_local int x;\n", 1),
+    ("a prefixed character literal", "auto c = u8'a'; static thread_local int x;\n", 1),
 ]
 
 
@@ -412,26 +434,33 @@ def self_test():
     # the preprocessor check reads its own controls through the host compiler
     compiler = os.environ.get("CXX", "c++")
     with tempfile.TemporaryDirectory() as scratch:
-        sdk = Path(scratch)
+        root = Path(scratch).resolve()
+        sdk = root / "sdk"
+        sdk.mkdir()
+        (root / "sodium").mkdir()
         cases = [
-            ("dev_only.cpp", "#if ROCKETNET_DEV\nthread_local int x;\n#endif\n", 0),
-            ("production.cpp", "static thread_local int x;\nint f() { return x; }\n", 1),
-            ("macro.cpp", "#define TLS thread_local\nstatic TLS int x;\nint f() { return x; }\n", 1),
-            ("commented.cpp", "// thread_local\nint y;\n", 0),
+            ("sdk/dev_only.cpp", "#if ROCKETNET_DEV\nthread_local int x;\n#endif\n", 0),
+            ("sdk/production.cpp", "static thread_local int x;\nint f() { return x; }\n", 1),
+            ("sdk/macro.cpp", "#define TLS thread_local\nstatic TLS int x;\nint f() { return x; }\n", 1),
+            ("sdk/commented.cpp", "// thread_local\nint y;\n", 0),
+            ("sodium/sodium.c", "static _Thread_local int x;\nint f( void ) { return x; }\n", 1),
+            ("outside.cpp", "static thread_local int x;\nint f() { return x; }\n", 0),
         ]
-        global SDK
-        saved = SDK
-        SDK = sdk.resolve()
+        global ROOT
+        saved = ROOT
+        ROOT = root
         try:
             for file_name, text, expected in cases:
-                (sdk / file_name).write_text(text)
-                database = sdk / (file_name + ".json")
+                (root / file_name).write_text(text)
+                database = root / (file_name.replace("/", "_") + ".json")
+                language = ["-x", "c", "-std=c11"] if file_name.endswith(".c") else ["-std=c++17"]
                 database.write_text(json.dumps([{
-                    "directory": str(sdk),
+                    "directory": str(root),
                     "file": file_name,
-                    "arguments": [compiler, "-std=c++17", "-DROCKETNET_DEV=1", "-c", file_name, "-o", file_name + ".o"],
+                    "arguments": [compiler] + language + ["-DROCKETNET_DEV=1", "-c", file_name, "-o", file_name + ".o"],
                 }]))
-                got = len(preprocess_check(str(database)))
+                findings = preprocess_check(str(database))
+                got = len([f for f in findings if "names no library translation unit" not in f])
                 verdict = "ok" if got == expected else "FAIL"
                 if got != expected:
                     failed += 1
@@ -457,7 +486,7 @@ def self_test():
                 print("self-test objects %-41s expected %s, got %s: %s" %
                       (file_name, "red" if expected else "green", "red" if got else "green", verdict))
         finally:
-            SDK = saved
+            ROOT = saved
 
     if failed:
         print("SELF-TEST FAILED %d" % failed)

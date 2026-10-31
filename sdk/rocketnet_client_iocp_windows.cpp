@@ -404,8 +404,6 @@ static const rocketnet_client_iocp_port_t rocketnet_client_iocp_win32_port = {
 
 static void * rocketnet_client_iocp_create( void * context, const rocketnet_client_transport_io_config_t * config, rocketnet_address_t * bind )
 {
-    (void) config;
-
     void * memory = rocketnet_malloc( context, sizeof( rocketnet_client_iocp_io_t ) );
     if ( !memory )
     {

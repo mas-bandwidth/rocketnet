@@ -23,7 +23,8 @@ The line numbers below are those of the code the model was written against
   enters the body. The body drains the socket (2096,
   `rocketnet_client_receive_packets`, which never blocks: it breaks when the
   buffer is full, 2047, or the socket is empty, 2052) and then calls
-  `rocketnet_platform_thread_wait( 0.001 )` (2098): `WaitBegin`.
+  `rocketnet_platform_thread_wait( thread, 0.001 )` with the thread's own
+  record, the function's first argument (2098): `WaitBegin`.
 - **The wait and the wake, per platform** (`sdk/rocketnet_platform.cpp`).
   - linux: the wait locks `wake_mutex` (1124) and, while `woken` is false,
     waits on `wake_cond` until a CLOCK_MONOTONIC deadline (1125-1128); the
@@ -128,8 +129,7 @@ not fire and no wake to end it. The code has the wake on linux
 ## Not modelled
 
 The I/O thread branch of destroy (992-1034, `RNClientIo`); create's failure
-path (974-981, no thread to join); `rocketnet_platform_thread_self` being NULL
-on a thread `thread_create` did not start (1100-1105, 2776-2781), which never
-holds for this thread because the shim sets it before the thread function
-runs (1014, 2707); and the contents of the drain, which `RNClientIo` and the
-receive tests cover.
+path (974-981, no thread to join); a wait without the thread's record, which
+never happens: the record exists before the thread starts and the shim passes
+it to the thread function; and the contents of the drain, which `RNClientIo`
+and the receive tests cover.
