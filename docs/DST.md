@@ -11,7 +11,8 @@ The harness checks properties that also appear in the TLA+ models:
 - reliable messages arrive exactly once and ordered streams arrive in order;
 - unreliable messages arrive at most once;
 - stale packets from an earlier connection cannot enter a reused slot;
-- acknowledgements name authenticated opened packets;
+- an acknowledgement names a packet the acknowledged endpoint itself issued,
+  and names it once;
 - buffers, queues, reassembly slots and receipt rings remain within their
   configured bounds;
 - an endpoint (the server or a client) that can make fair progress does not remain wedged.
@@ -70,7 +71,7 @@ three equal PASS lines.
 `.github/workflows/nightly-dst.yml` runs every night (and by
 `workflow_dispatch`) on the fleet's Linux, macOS and Windows runners, for each
 ref in `ROCKETNET_NIGHTLY_REFS`, with `fail-fast: false`. Each leg builds
-Release `dst` and `test`, runs the fifteen `test_dst_` unit cases by `--run`,
+Release `dst` and `test`, runs the `test_dst_` unit cases by `--run`,
 runs `--seeds 1-50` and fails unless its PASS line carries the reference trace,
 then runs one named short step per fault schedule (`clock-back`, `seq-gap`,
 `seq-wrap-31`, `seq-wrap-32`, `burst` and `dup-storm`, each over seeds 1-50)

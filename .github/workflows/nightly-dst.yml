@@ -3,7 +3,7 @@
 # One seed fixes a whole dst run: the wire's loss, duplication, delay, jitter and
 # reordering, the keys, and the mocked clock. The same seeds and options must
 # print the same trace on every OS, or a failing seed found on one OS cannot be
-# replayed on another. Each leg builds Release dst and test, runs the fifteen
+# replayed on another. Each leg builds Release dst and test, runs the
 # test_dst_ unit cases by --run, runs `dst --seeds 1-50` and fails unless its
 # PASS line carries DST_REFERENCE_TRACE below, then runs one named short step
 # per fault schedule (seeds 1-50; a schedule that fires zero times fails its
@@ -66,7 +66,7 @@ jobs:
       - name: Build (Release)
         run: make
 
-      - name: The fifteen test_dst_ unit cases
+      - name: The test_dst_ unit cases
         shell: bash
         run: |
           set -euo pipefail
@@ -75,8 +75,11 @@ jobs:
             test_dst_duplicate_server_ack_explained test_dst_check_ordered_out_of_order_fails \
             test_dst_check_reliable_duplicate_fails test_dst_check_reliable_missing_fails \
             test_dst_check_sequenced_backwards_fails test_dst_check_unreliable_duplicate_fails \
-            test_dst_check_ack_undelivered_fails test_dst_check_stale_session_payload_fails \
-            test_dst_check_clean_sequence_passes; do
+            test_dst_check_ack_never_issued_fails test_dst_check_ack_of_another_endpoints_id_fails \
+            test_dst_check_ack_twice_fails test_dst_check_ack_of_a_skipped_id_fails \
+            test_dst_check_ack_after_endpoint_reset test_dst_check_ack_ledger_wraps \
+            test_dst_check_stale_session_payload_fails test_dst_check_clean_sequence_passes \
+            test_dst_witness_ordered_swap_fails test_dst_witness_foreign_ack_fails; do
             "$DST_BIN/test$DST_EXE" --run "$c"
           done
 
@@ -195,7 +198,7 @@ jobs:
       - name: Build (Release)
         run: make
 
-      - name: The fifteen test_dst_ unit cases
+      - name: The test_dst_ unit cases
         shell: bash
         run: |
           set -euo pipefail
@@ -204,8 +207,11 @@ jobs:
             test_dst_duplicate_server_ack_explained test_dst_check_ordered_out_of_order_fails \
             test_dst_check_reliable_duplicate_fails test_dst_check_reliable_missing_fails \
             test_dst_check_sequenced_backwards_fails test_dst_check_unreliable_duplicate_fails \
-            test_dst_check_ack_undelivered_fails test_dst_check_stale_session_payload_fails \
-            test_dst_check_clean_sequence_passes; do
+            test_dst_check_ack_never_issued_fails test_dst_check_ack_of_another_endpoints_id_fails \
+            test_dst_check_ack_twice_fails test_dst_check_ack_of_a_skipped_id_fails \
+            test_dst_check_ack_after_endpoint_reset test_dst_check_ack_ledger_wraps \
+            test_dst_check_stale_session_payload_fails test_dst_check_clean_sequence_passes \
+            test_dst_witness_ordered_swap_fails test_dst_witness_foreign_ack_fails; do
             "$DST_BIN/test$DST_EXE" --run "$c"
           done
 
@@ -327,7 +333,7 @@ jobs:
       - name: Build (Release)
         run: cmake --build build --config Release --target dst test --parallel
 
-      - name: The fifteen test_dst_ unit cases
+      - name: The test_dst_ unit cases
         shell: bash
         run: |
           set -euo pipefail
@@ -336,8 +342,11 @@ jobs:
             test_dst_duplicate_server_ack_explained test_dst_check_ordered_out_of_order_fails \
             test_dst_check_reliable_duplicate_fails test_dst_check_reliable_missing_fails \
             test_dst_check_sequenced_backwards_fails test_dst_check_unreliable_duplicate_fails \
-            test_dst_check_ack_undelivered_fails test_dst_check_stale_session_payload_fails \
-            test_dst_check_clean_sequence_passes; do
+            test_dst_check_ack_never_issued_fails test_dst_check_ack_of_another_endpoints_id_fails \
+            test_dst_check_ack_twice_fails test_dst_check_ack_of_a_skipped_id_fails \
+            test_dst_check_ack_after_endpoint_reset test_dst_check_ack_ledger_wraps \
+            test_dst_check_stale_session_payload_fails test_dst_check_clean_sequence_passes \
+            test_dst_witness_ordered_swap_fails test_dst_witness_foreign_ack_fails; do
             "$DST_BIN/test$DST_EXE" --run "$c"
           done
 

@@ -207,6 +207,12 @@ jobs:
         if: matrix.leg == 'checks'
         run: python3 tools/check_header_guards.py
 
+      - name: Every DST check is reached by the DST run
+        if: matrix.leg == 'checks'
+        run: |
+          python3 tools/check_dst_checks_wired.py --self-test
+          python3 tools/check_dst_checks_wired.py
+
       - name: Check the fleet's build dependencies are present
         shell: bash
         run: |

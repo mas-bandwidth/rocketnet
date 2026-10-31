@@ -309,3 +309,42 @@ static void test_dst_steps_refused_past_int_range()
     rocketnet_unit_check( rocketnet_dst_run_seed_with_options( 1, &options, &result ) == 0 );
 }
 REGISTER_UNIT_TEST( test_dst_steps_refused_past_int_range );
+
+// Reversed witnesses: each plants one defect in what the checks observe, and
+// the same seed that passes clean must fail naming the check that guards it.
+// ORDERED_SWAP hands the checks two ordered deliveries of one stream swapped;
+// FOREIGN_ACK has a client's ack name a packet id the server issued and the
+// client did not, which one id set shared by every endpoint would accept.
+
+static void test_dst_witness_ordered_swap_fails()
+{
+    struct rocketnet_dst_options_t options = dst_test_options( 600 );
+
+    struct rocketnet_dst_result_t clean;
+    rocketnet_unit_check( rocketnet_dst_run_seed_with_options( 1, &options, &clean ) );
+    rocketnet_unit_check( clean.passed );
+
+    options.witness = ROCKETNET_DST_WITNESS_ORDERED_SWAP;
+    struct rocketnet_dst_result_t planted;
+    rocketnet_unit_check( rocketnet_dst_run_seed_with_options( 1, &options, &planted ) );
+    rocketnet_unit_check( !planted.passed );
+    rocketnet_unit_check( strcmp( planted.check, "ordered_in_order" ) == 0 );
+}
+
+static void test_dst_witness_foreign_ack_fails()
+{
+    struct rocketnet_dst_options_t options = dst_test_options( 600 );
+
+    struct rocketnet_dst_result_t clean;
+    rocketnet_unit_check( rocketnet_dst_run_seed_with_options( 1, &options, &clean ) );
+    rocketnet_unit_check( clean.passed );
+
+    options.witness = ROCKETNET_DST_WITNESS_FOREIGN_ACK;
+    struct rocketnet_dst_result_t planted;
+    rocketnet_unit_check( rocketnet_dst_run_seed_with_options( 1, &options, &planted ) );
+    rocketnet_unit_check( !planted.passed );
+    rocketnet_unit_check( strcmp( planted.check, "acked_means_opened" ) == 0 );
+}
+
+REGISTER_UNIT_TEST( test_dst_witness_ordered_swap_fails );
+REGISTER_UNIT_TEST( test_dst_witness_foreign_ack_fails );
