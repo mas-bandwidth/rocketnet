@@ -30,13 +30,17 @@ ALLOWED_HEADERS = {
     "stdint.h",
     "stdbool.h",
     "inttypes.h",
+    "errno.h",
 }
 
-# examples/soak.c is a load harness, not a one-feature example: its allocator
-# telemetry takes a native lock across callback threads and, on Linux, maps its
-# arena, so it may also include these platform headers (and only it may)
+# examples that may also include platform headers, and only these. soak.c is
+# a load harness, not a one-feature example: its allocator telemetry takes a
+# native lock across callback threads and, on Linux, maps its arena
 HARNESS_HEADERS = {
     "soak.c": {"windows.h", "pthread.h", "sys/mman.h"},
+    # config_env.c runs itself again with one variable set, spawned from its
+    # argument vector with an explicit environment, never through a shell
+    "config_env.c": {"process.h", "spawn.h", "sys/wait.h"},
 }
 
 INCLUDE = re.compile(r'^\s*#\s*include\s*([<"])([^>"]+)[>"]', re.M)

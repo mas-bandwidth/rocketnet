@@ -7,7 +7,8 @@
     development network simulator loses 30% of its packets. It keeps the
     serial each finish returns and reads rocketnet_client_receipts every frame,
     so it learns which updates the server got (ACKED) and which it did not
-    (LOSS). Run: ./bin/example_ack_receipts
+    (LOSS). It sends NUM_UPDATES updates; when they have all resolved without
+    both outcomes it sends one more at a time, up to MAX_UPDATES. Run: ./bin/example_ack_receipts
 */
 
 #include "rocketnet.h"
@@ -18,6 +19,7 @@
 #include <time.h>
 
 #define NUM_UPDATES 20
+#define MAX_UPDATES 200
 
 int main( void )
 {
@@ -174,11 +176,11 @@ int main( void )
         return 1;
     }
 
-    uint32_t serials[NUM_UPDATES];
+    uint32_t serials[MAX_UPDATES];
     int sent = 0, acked = 0, lost = 0;
     double now = 1000.0;
 
-    for ( int frame = 0; frame < 12000 && acked + lost < NUM_UPDATES; frame++, now += 0.005 )
+    for ( int frame = 0; frame < 12000 && !( sent >= NUM_UPDATES && acked > 0 && lost > 0 && acked + lost == sent ); frame++, now += 0.005 )
     {
         rocketnet_server_update( server, now );
         rocketnet_client_update( client, now );
@@ -213,7 +215,7 @@ int main( void )
 
         if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
         {
-            if ( sent < NUM_UPDATES )
+            if ( sent < NUM_UPDATES || ( sent < MAX_UPDATES && acked + lost == sent && !( acked > 0 && lost > 0 ) ) )
             {
                 // replaceable state: skip this frame when there is no room
 
@@ -257,9 +259,9 @@ int main( void )
         rocketnet_sleep( 0.005 );
     }
 
-    printf( "receipts resolved: %d/%d (acked %d, loss %d)\n", acked + lost, NUM_UPDATES, acked, lost );
+    printf( "receipts resolved: %d/%d (acked %d, loss %d)\n", acked + lost, sent, acked, lost );
 
-    const int result = acked + lost == NUM_UPDATES && acked > 0 && lost > 0 ? 0 : 1;
+    const int result = acked + lost == sent && acked > 0 && lost > 0 ? 0 : 1;
 
     rn_cli_client_stop_and_destroy( client, now );
     rn_cli_server_stop_and_destroy( server );
@@ -272,6 +274,6 @@ int main( void )
         return 1;
     }
 
-    printf( result == 0 ? "PASS\n" : "FAIL: every update resolves, with at least one ACKED and one LOSS\n" );
+    printf( result == 0 ? "PASS\n" : "FAIL: every sent update resolves, with at least one ACKED and one LOSS\n" );
     return result;
 }

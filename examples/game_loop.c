@@ -76,6 +76,16 @@ static void read_message( struct latency_t * l, uint32_t frame, const uint8_t * 
     l->count++;
 }
 
+// a whole decimal argument, or -1 for anything else (a sign, no digits,
+// trailing characters, more than a million), which the range check refuses
+
+static int parse_whole( const char * text )
+{
+    char * end = NULL;
+    const long parsed = strtol( text, &end, 10 );
+    return text[0] >= '0' && text[0] <= '9' && *end == '\0' && parsed <= 1000000 ? (int) parsed : -1;
+}
+
 int main( int argc, char ** argv )
 {
     int num_clients = 32, seconds = 5, wrong_order = 0;
@@ -88,11 +98,11 @@ int main( int argc, char ** argv )
         }
         else if ( strcmp( argv[i], "--clients" ) == 0 && i + 1 < argc )
         {
-            num_clients = atoi( argv[++i] );
+            num_clients = parse_whole( argv[++i] );
         }
         else if ( strcmp( argv[i], "--seconds" ) == 0 && i + 1 < argc )
         {
-            seconds = atoi( argv[++i] );
+            seconds = parse_whole( argv[++i] );
         }
         else
         {
@@ -218,6 +228,20 @@ int main( int argc, char ** argv )
     client_config.loopback_hub = hub;
 
     struct rocketnet_client_t ** clients = calloc( (size_t) num_clients, sizeof( clients[0] ) );
+    if ( !clients )
+    {
+        printf( "FAIL: client array: out of memory\n" );
+        rn_cli_server_stop_and_destroy( server );
+
+        rn_cli_loopback_hub_destroy( hub );
+        const enum rocketnet_status_t term_status = rocketnet_term();
+        if ( term_status != ROCKETNET_STATUS_OK )
+        {
+            printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
+        }
+
+        return 1;
+    }
 
     for ( int i = 0; i < num_clients; i++ )
     {
