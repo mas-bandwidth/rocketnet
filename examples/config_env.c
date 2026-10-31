@@ -8,8 +8,11 @@
     with the library's override log line, and a bad value refused.
 
     The C standard library cannot set an environment variable in-process, so
-    the example runs itself again with system() and ROCKETNET_SERVER_MAX_CLIENTS
-    set, once to 5 and once to 99999. Run: ./bin/example_config_env
+    the example runs itself again as a child process whose environment is this
+    one with ROCKETNET_SERVER_MAX_CLIENTS set, once to 5 and once to 99999. The
+    child is spawned from its argument vector (posix_spawnp, or _spawnve on
+    Windows), never through a shell, so a path with spaces or shell
+    characters runs as it is. Run: ./bin/example_config_env
 */
 
 #define _CRT_SECURE_NO_WARNINGS     // MSVC deprecates getenv
@@ -22,10 +25,82 @@
 #include <string.h>
 
 #if defined( _WIN32 )
-#define RERUN "set ROCKETNET_SERVER_MAX_CLIENTS=%s&& \"%s\""
+#include <process.h>
+#define child_environ _environ
 #else
-#define RERUN "ROCKETNET_SERVER_MAX_CLIENTS=%s %s"
+#include <spawn.h>
+#include <sys/wait.h>
+extern char ** environ;
+#define child_environ environ
 #endif // #if defined( _WIN32 )
+
+// runs this program again with this environment plus ROCKETNET_SERVER_MAX_CLIENTS
+// set to value, and waits for it: 0 when the child exits 0, else 1
+
+static int rerun_with_max_clients( char * program, const char * value )
+{
+    static const char name[] = "ROCKETNET_SERVER_MAX_CLIENTS=";
+
+    int count = 0;
+    while ( child_environ[count] )
+        count++;
+
+    char ** environment = (char **) calloc( (size_t) count + 2, sizeof( char * ) );
+    char * variable = (char *) malloc( sizeof( name ) + strlen( value ) );
+    if ( !environment || !variable )
+    {
+        free( environment );
+        free( variable );
+        printf( "FAIL: child environment: out of memory\n" );
+        return 1;
+    }
+
+    // every variable but an inherited ROCKETNET_SERVER_MAX_CLIENTS, then ours
+
+    int used = 0;
+    for ( int i = 0; i < count; i++ )
+        if ( strncmp( child_environ[i], name, sizeof( name ) - 1 ) != 0 )
+            environment[used++] = child_environ[i];
+
+    memcpy( variable, name, sizeof( name ) - 1 );
+    memcpy( variable + sizeof( name ) - 1, value, strlen( value ) + 1 );
+    environment[used++] = variable;
+    environment[used] = NULL;
+
+    char * child_argv[2] = { program, NULL };
+    int result = 1;
+
+#if defined( _WIN32 )
+    // the C runtime joins the arguments into one command line that the child
+    // splits again, so the path is quoted (a Windows path holds no quote)
+    char * quoted = (char *) malloc( strlen( program ) + 3 );
+    if ( quoted )
+    {
+        quoted[0] = '"';
+        memcpy( quoted + 1, program, strlen( program ) );
+        memcpy( quoted + 1 + strlen( program ), "\"", 2 );
+        child_argv[0] = quoted;
+        const intptr_t exit_code = _spawnve( _P_WAIT, program, (const char * const *) child_argv, (const char * const *) environment );
+        result = exit_code == 0 ? 0 : 1;
+        free( quoted );
+    }
+#else
+    pid_t pid;
+    if ( posix_spawnp( &pid, program, NULL, NULL, child_argv, environment ) == 0 )
+    {
+        int wait_status = 0;
+        if ( waitpid( pid, &wait_status, 0 ) == pid && WIFEXITED( wait_status ) && WEXITSTATUS( wait_status ) == 0 )
+            result = 0;
+    }
+#endif // #if defined( _WIN32 )
+
+    if ( result != 0 )
+        printf( "FAIL: the run with ROCKETNET_SERVER_MAX_CLIENTS=%s did not exit 0\n", value );
+
+    free( variable );
+    free( environment );
+    return result;
+}
 
 int main( int argc, char ** argv )
 {
@@ -111,9 +186,8 @@ int main( int argc, char ** argv )
 
         for ( int i = 0; i < 2; i++ )
         {
-            char command[512];
-            snprintf( command, sizeof( command ), RERUN, values[i], argv[0] );
-            children += system( command );
+            fflush( stdout );
+            children += rerun_with_max_clients( argv[0], values[i] );
         }
 
         result = children == 0 ? 0 : 1;

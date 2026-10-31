@@ -29,12 +29,15 @@ run here: its client takes a token from a backend in examples/backend/, so
 tools/run_backend_examples.py runs it with each backend between the two.
 Each process gets a 120-second timeout and must exit 0 with PASS as its last
 line. Prints one PASS example_<name> line per example; exits 1 on a failure.
-Some examples then run again in a second mode (EXTRA_RUNS):
-example_client_server_client --wrong-protocol must reach its expected refusal
-(the server, which no client reaches, is stopped once the client exits), and
-example_config_env as its ROCKETNET_SERVER_MAX_CLIENTS=5 child, with a server
-create refused for another reason, must exit 1 rather than pass as the
-bad-value child.
+Some examples then run again in another mode (EXTRA_RUNS), each with an
+exit status and a line its output must hold: example_client_server_client
+--wrong-protocol must reach its expected refusal (the server, which no client
+reaches, is stopped once the client exits); example_config_env runs from a
+path holding a space and a $, which its child must run as it is; as its
+ROCKETNET_SERVER_MAX_CLIENTS=5 child with a server create refused for another
+reason it must exit 1 rather than pass as the bad-value child; and
+example_soak, example_game_loop and example_client_server_server refuse
+arguments out of range or not whole numbers before they create anything.
 """
 
 import argparse
@@ -54,12 +57,20 @@ TIMEOUT_SECONDS = 120
 PORT_TRIES = 3
 READY_SECONDS = 30
 SINGLE_ARGS = {"soak": ["--clients", "64"]}
-# second runs: (example, client arguments for a pair or arguments for a single
-# example, extra environment, exit status, a line the output must hold)
+# further runs. "run" is a pair (its client gets "args") or one program;
+# "env" is added to the environment; "odd_path" runs the program through a
+# link in a directory whose name holds a space and a $; "code" is the exit
+# status and "line" the start of a line the output must hold
 EXTRA_RUNS = [
-    ("client_server", ["--wrong-protocol"], {}, 0, "expected refusal: "),
-    ("config_env", [], {"ROCKETNET_SERVER_MAX_CLIENTS": "5", "ROCKETNET_SERVER_NUM_CHANNELS": "0"}, 1,
-     "FAIL: ROCKETNET_SERVER_MAX_CLIENTS=\"5\": server create "),
+    {"run": "client_server", "args": ["--wrong-protocol"], "code": 0, "line": "expected refusal: "},
+    {"run": "config_env", "odd_path": True, "code": 0, "line": "PASS"},
+    {"run": "config_env", "env": {"ROCKETNET_SERVER_MAX_CLIENTS": "5", "ROCKETNET_SERVER_NUM_CHANNELS": "0"},
+     "code": 1, "line": "FAIL: ROCKETNET_SERVER_MAX_CLIENTS=\"5\": server create "},
+    {"run": "soak", "args": ["--seconds", "35791395"], "code": 1, "line": "FAIL: --seconds takes 1 .. "},
+    {"run": "soak", "args": ["--seconds", "-1"], "code": 1, "line": "FAIL: --seconds takes 1 .. "},
+    {"run": "soak", "args": ["--seed", "12x"], "code": 1, "line": "FAIL: --seed takes a whole number"},
+    {"run": "game_loop", "args": ["--clients", "1x"], "code": 1, "line": "usage: example_game_loop"},
+    {"run": "client_server_server", "args": ["--port", "70000"], "code": 1, "line": "FAIL: the port takes 1 .. 65535"},
 ]
 # pairs that need more than a server and a client, run by their own script
 RUN_ELSEWHERE = {"backend"}  # tools/run_backend_examples.py
@@ -112,9 +123,15 @@ def check_result(label, result):
     return True
 
 
-def run_single(name, binary, args=None, environment=None):
+def run_single(name, binary, args=None, environment=None, odd_path=False):
     workdir = tempfile.mkdtemp(prefix=f"rocketnet_example_{name}_")
     try:
+        if odd_path:
+            directory = Path(workdir) / "a dir $HOME"
+            directory.mkdir()
+            link = directory / binary.name
+            link.symlink_to(binary)
+            binary = link
         result = subprocess.run(
             [str(binary)] + (SINGLE_ARGS.get(name, []) if args is None else args),
             stdout=subprocess.PIPE,
@@ -342,22 +359,23 @@ def main():
             return 1
         print(f"PASS example_{base}")
 
-    pairs = dict(groups)
-    for base, args, environment, code, line in EXTRA_RUNS:
-        label = f"{base} {' '.join(args)} {' '.join(f'{k}={v}' for k, v in environment.items())}".strip()
-        members = pairs[base]
-        if len(members) == 2:
-            assert not environment, "a pair's second run takes client arguments only"
-            outcome = run_pair(base, binaries[members[0]], binaries[members[1]], args)
+    pairs = {base: members for base, members in groups if len(members) == 2}
+    for extra in EXTRA_RUNS:
+        name, args, environment = extra["run"], extra.get("args", []), extra.get("env", {})
+        label = " ".join([name, *args, *(f"{k}={v}" for k, v in environment.items()),
+                          *(["(from a path with a space and a $)"] if extra.get("odd_path") else [])])
+        if name in pairs:
+            assert not environment and not extra.get("odd_path"), "a pair's further run takes client arguments only"
+            outcome = run_pair(name, binaries[pairs[name][0]], binaries[pairs[name][1]], args)
             if outcome is False:
                 return 1
             returncode, output = outcome
         else:
-            result = run_single(base, binaries[members[0]], args, environment)
+            result = run_single(name, binaries[name], args, environment, extra.get("odd_path", False))
             if result is None:
                 return 1
             returncode, output = result.returncode, result.stdout + result.stderr
-        if not check_extra(label, output, returncode, code, line):
+        if not check_extra(label, output, returncode, extra["code"], extra["line"]):
             return 1
         print(f"PASS example_{label}")
 

@@ -18,6 +18,7 @@
 // the published development backend key, from rocketnet.h (development builds)
 static const uint8_t dev_backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES] = ROCKETNET_DEV_BACKEND_PUBLIC_KEY;
 
+#include <errno.h>
 #include <inttypes.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -568,6 +569,33 @@ static int cmp_double( const void * a, const void * b )
     return ( da > db ) - ( da < db );
 }
 
+// a whole decimal argument from min to max: anything else (no digits, trailing
+// characters, out of range, too large for long) is refused
+
+static bool soak_parse_int( const char * text, int min, int max, int * value )
+{
+    char * end = NULL;
+    const long parsed = strtol( text, &end, 10 );
+    if ( end == text || *end != '\0' || parsed < (long) min || parsed > (long) max )
+        return false;
+    *value = (int) parsed;
+    return true;
+}
+
+// a whole unsigned decimal argument: a sign, no digits, trailing characters
+// or a value too large for 64 bits is refused
+
+static bool soak_parse_u64( const char * text, uint64_t * value )
+{
+    char * end = NULL;
+    errno = 0;
+    const unsigned long long parsed = strtoull( text, &end, 10 );
+    if ( text[0] < '0' || text[0] > '9' || *end != '\0' || errno == ERANGE )
+        return false;
+    *value = (uint64_t) parsed;
+    return true;
+}
+
 // the build column of the results: the configuration this program was compiled in
 
 #if defined( NDEBUG )
@@ -591,19 +619,35 @@ int main( int argc, char ** argv )
     {
         if ( strcmp( argv[i], "--clients" ) == 0 && i + 1 < argc )
         {
-            num_clients = atoi( argv[++i] );
+            if ( !soak_parse_int( argv[++i], 1, MAX_SOAK_CLIENTS, &num_clients ) )
+            {
+                printf( "FAIL: --clients takes 1 .. %d\n", MAX_SOAK_CLIENTS );
+                return 1;
+            }
         }
         else if ( strcmp( argv[i], "--seconds" ) == 0 && i + 1 < argc )
         {
-            seconds = atoi( argv[++i] );
+            if ( !soak_parse_int( argv[++i], 1, MAX_TICKS / 60, &seconds ) )
+            {
+                printf( "FAIL: --seconds takes 1 .. %d\n", MAX_TICKS / 60 );
+                return 1;
+            }
         }
         else if ( strcmp( argv[i], "--arena-mib" ) == 0 && i + 1 < argc )
         {
-            arena_mib = (uint64_t) strtoull( argv[++i], NULL, 10 );
+            if ( !soak_parse_u64( argv[++i], &arena_mib ) )
+            {
+                printf( "FAIL: --arena-mib takes a whole number of MiB\n" );
+                return 1;
+            }
         }
         else if ( strcmp( argv[i], "--seed" ) == 0 && i + 1 < argc )
         {
-            seed = (uint64_t) strtoull( argv[++i], NULL, 10 );
+            if ( !soak_parse_u64( argv[++i], &seed ) )
+            {
+                printf( "FAIL: --seed takes a whole number\n" );
+                return 1;
+            }
         }
         else if ( strcmp( argv[i], "--transport" ) == 0 && i + 1 < argc )
         {
@@ -637,8 +681,6 @@ int main( int argc, char ** argv )
     if ( allocator_self_test )
         return soak_arena_self_test();
 #endif // #if defined( ROCKETNET_DEV ) && ROCKETNET_DEV
-    if ( num_clients < 1 || num_clients > MAX_SOAK_CLIENTS || seconds < 1 || seconds * 60 > MAX_TICKS )
-        return 1;
 
     if ( pause_start )
     {
