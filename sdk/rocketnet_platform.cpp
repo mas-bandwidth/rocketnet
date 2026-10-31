@@ -3919,12 +3919,6 @@ receive_again:
         {
             int error = WSAGetLastError();
 
-            if ( error == WSAEMSGSIZE )
-            {
-                result = max_packet_size + 1;
-                break;
-            }
-
             // an ICMP report of an earlier send is not the end of the
             // queue: skip it and keep reading, or one dead remote endpoint ends every
             // drain early (windows-udp-connreset audit, portable receive)
