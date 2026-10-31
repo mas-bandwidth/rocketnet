@@ -23,6 +23,8 @@
 (*                 next deadline and writes the first half of a changed    *)
 (*                 MAC                                                     *)
 (*   WriteLow      the refresh writes the second half                      *)
+(*   ReceiveWithoutRefresh  the receive call when the refresh runs in the  *)
+(*                 fill phase instead (RefreshInFill only)                 *)
 (*   ReadHigh      a fill copies the first half of the table's MAC         *)
 (*   ReadLow       the fill copies the second half and stages the packet   *)
 (*   ChangeGateway the router is replaced (environment)                    *)
@@ -132,6 +134,13 @@ WriteLow ==
     /\ phase' = "fill"
     /\ UNCHANGED << now, scheduled, nextTime, resolver, changedAt, changes, readHigh, staged >>
 
+\* the receive call with the refresh moved out of it (RefreshInFill only)
+ReceiveWithoutRefresh ==
+    /\ RefreshInFill
+    /\ phase = "receive"
+    /\ phase' = "fill"
+    /\ UNCHANGED << now, scheduled, nextTime, table, pendingLow, resolver, changedAt, changes, readHigh, staged >>
+
 ReadHigh ==
     /\ phase = "fill"
     /\ readHigh = Nil
@@ -156,6 +165,7 @@ ChangeGateway ==
 Next ==
     \/ Join
     \/ Refresh
+    \/ ReceiveWithoutRefresh
     \/ WriteLow
     \/ ReadHigh
     \/ ReadLow
