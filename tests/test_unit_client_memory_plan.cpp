@@ -190,7 +190,7 @@ static void test_client_legacy_stop_wakes_the_receive_thread()
     config.simulated_latency_ms = 50;
 
     int status = -1;
-    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create_ex(
+    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create_current_ex(
         NULL, token, &config, 1000.0, &status );
     check( client != NULL );
     check( status == ROCKETNET_STATUS_OK );
