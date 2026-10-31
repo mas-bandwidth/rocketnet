@@ -654,6 +654,10 @@ jobs:
         if: matrix.leg == 'checks' && ( runner.os == 'Linux' )
         run: python3 tools/test_run_msan.py
 
+      - name: Test the static gate's verdicts
+        if: matrix.leg == 'checks' && ( runner.os == 'Linux' )
+        run: python3 tools/test_run_static.py
+
       - name: Test the Application Verifier runner's image name
         if: matrix.leg == 'checks' && ( runner.os == 'Linux' )
         run: python3 tools/test_appverif_run.py
