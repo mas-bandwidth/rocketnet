@@ -8,6 +8,7 @@
 (*   MCRNPortableRxBrokenWakeFirst.cfg    (QuitBeforeWake) StopCompletes  *)
 (*   MCRNPortableRxBrokenNoWake.cfg       (WakeOnReturn)                  *)
 (*                                         EveryDatagramDelivered          *)
+(*   MCRNPortableRxBrokenUnboundedRead.cfg (BoundedRead) ReadBudget       *)
 (* README-RNPortableRx.md gives each trace and its check against the code. *)
 (***************************************************************************)
 EXTENDS RNPortableRx
