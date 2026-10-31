@@ -44,15 +44,15 @@ the SDK into a game's own build.
 | Transport | Endpoint | `auto` rank | What it is |
 | --- | --- | --- | --- |
 | `portable` | server and client | server: development 30, production 50; client 30 | one UDP socket with a receive worker and a transmit worker |
-| `iocp` | server | 40 | overlapped UDP on one I/O completion port, one completion worker and one transmit worker |
+| `iocp` | server and client | server 40; client 10 | server: overlapped UDP on one I/O completion port, one completion worker and one transmit worker; client: overlapped receives on a completion port of its own, synchronous sends |
 | `rio` | server | 45 | Winsock Registered I/O: one registered memory region and one I/O worker polling its completion queues |
 | `loopback` | server and client | pin only | in-process, no socket; for tests and tools |
 
 A production server's `auto` is **iocp, then rio, then portable**; a
-development server's is **portable, iocp, rio**. The client has one transport
-in `auto`, `portable`, on the client I/O thread of
-[CLIENT-IO.md](CLIENT-IO.md). The ranks are the rows of
-`sdk/rocketnet_drivers.inc`.
+development server's is **portable, iocp, rio**. A client's `auto` is
+**iocp, then portable**, the fallback when the iocp client's create refuses;
+both run on the client I/O thread of [CLIENT-IO.md](CLIENT-IO.md). The ranks
+are the rows of `sdk/rocketnet_drivers.inc`.
 
 `iocp` probes UDP send offload (`UDP_SEND_MSG_SIZE`) and receive offload
 (`UDP_RECV_MAX_COALESCED_SIZE`) on its bound socket. A stack without either is
