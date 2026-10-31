@@ -129,6 +129,28 @@ static void test_rio_transport_layout_refuses_bad_geometry()
     rocketnet_unit_check( memcmp( &p, &before, sizeof( p ) ) == 0 );
 }
 
+static void test_rio_transport_layout_refuses_a_page_that_wraps_the_total()
+{
+    // the largest counts and sizes end the region past 2^63, and a page of
+    // 2^63 rounds that end past 2^64: the total wraps to 0, which is not a
+    // total within UINT32_MAX, and the plan refuses with out untouched
+
+    struct rocketnet_rio_layout_t p;
+    struct rocketnet_rio_layout_t before;
+
+    memset( &before, 0x5A, sizeof( before ) );
+    p = before;
+    rocketnet_unit_check( !rocketnet_rio_layout_plan( INT32_MAX, INT32_MAX, INT32_MAX, INT32_MAX, INT32_MAX, UINT64_C( 1 ) << 63, &p ) );
+    rocketnet_unit_check( memcmp( &p, &before, sizeof( p ) ) == 0 );
+
+    // a small region on the same page is past UINT32_MAX without any wrap
+
+    memset( &before, 0x5A, sizeof( before ) );
+    p = before;
+    rocketnet_unit_check( !rocketnet_rio_layout_plan( 1, 1, 1, 1, 1, UINT64_C( 1 ) << 63, &p ) );
+    rocketnet_unit_check( memcmp( &p, &before, sizeof( p ) ) == 0 );
+}
+
 static void test_rio_transport_layout_index_bounds()
 {
     struct rocketnet_rio_layout_t p;
@@ -194,6 +216,7 @@ static void test_rio_transport_context_phase_never_reaches_kind()
 
 REGISTER_UNIT_TEST( test_rio_transport_layout_slices_tile_the_region );
 REGISTER_UNIT_TEST( test_rio_transport_layout_refuses_bad_geometry );
+REGISTER_UNIT_TEST( test_rio_transport_layout_refuses_a_page_that_wraps_the_total );
 REGISTER_UNIT_TEST( test_rio_transport_layout_index_bounds );
 REGISTER_UNIT_TEST( test_rio_transport_context_round_trips );
 REGISTER_UNIT_TEST( test_rio_transport_context_phase_never_reaches_kind );
