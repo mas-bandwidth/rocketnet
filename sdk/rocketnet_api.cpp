@@ -55,6 +55,9 @@ static_assert( sizeof( struct rocketnet_receipt_t ) == sizeof( struct rocketnet_
                "the public receipt is the message receipt" );
 
 static_assert( ROCKETNET_SEND_BUDGET_MAX_KBPS == ROCKETNET_SEND_KBPS_UNLIMITED - 1, "every budget below the unlimited sentinel is a budget" );
+#if ROCKETNET_XDP
+static_assert( (uint64_t) ROCKETNET_XDP_UMEM_FRAMES * ROCKETNET_XDP_FRAME_SIZE == 192ULL * 1024 * 1024 && ROCKETNET_XDP_UMEM_FRAMES == 49152, "rocketnet.h states the xdp UMEM as 49152 frames, 192 MiB, per queue" );
+#endif // #if ROCKETNET_XDP
 static_assert( ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS <= ROCKETNET_SEND_BUDGET_MAX_KBPS && ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS <= ROCKETNET_SEND_BUDGET_MAX_KBPS, "the default budgets are valid budgets" );
 
 uint32_t rocketnet_version( void )
