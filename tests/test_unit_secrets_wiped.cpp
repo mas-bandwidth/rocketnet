@@ -1041,9 +1041,11 @@ static void secrets_wiped_transport_staging_hook( const uint8_t * secret_key, in
     secrets_wiped_transport_staging_seen[stage]++;
 }
 
-// one create_ex with a planted secret key through each of its three stack
-// copies; every copy the hook sees on its exit is all zero
-static struct rocketnet_server_transport_t * secrets_wiped_transport_create( const char * address, int * status )
+// a create with a planted secret key; every stack copy the hook sees on its
+// exit is all zero. A create_current_ex passes the caller's struct straight to
+// the create, so only the resolve's and the create's copies exist; create_ex
+// makes a current-layout copy first, so all three do.
+static struct rocketnet_server_transport_t * secrets_wiped_transport_create( const char * address, bool through_create_ex, int * status )
 {
     struct rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config( &config );
@@ -1056,13 +1058,19 @@ static struct rocketnet_server_transport_t * secrets_wiped_transport_create( con
     memset( secrets_wiped_transport_staging_seen, 0, sizeof( secrets_wiped_transport_staging_seen ) );
     rocketnet_server_transport_config_staging_hook = secrets_wiped_transport_staging_hook;
 
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, address, &config, 1000.0, status );
+    struct rocketnet_server_transport_t * server = through_create_ex ?
+        rocketnet_server_transport_create_ex( NULL, address, &config, 1000.0, status ) :
+        rocketnet_server_transport_create_current_ex( NULL, address, &config, 1000.0, status );
     rocketnet_server_transport_config_staging_hook = NULL;
 
     for ( int stage = 0; stage < ROCKETNET_SERVER_TRANSPORT_CONFIG_STAGING_COUNT; stage++ )
     {
-        check( secrets_wiped_transport_staging_seen[stage] == 1 );
-        check( secrets_wiped_all_zero( secrets_wiped_transport_staging[stage], 32 ) );
+        const int expected = ( stage == ROCKETNET_SERVER_TRANSPORT_CONFIG_STAGING_CREATE_EX && !through_create_ex ) ? 0 : 1;
+        check( secrets_wiped_transport_staging_seen[stage] == expected );
+        if ( expected )
+        {
+            check( secrets_wiped_all_zero( secrets_wiped_transport_staging[stage], 32 ) );
+        }
     }
 
     sodium_memzero( &config, sizeof( config ) );
@@ -1072,7 +1080,7 @@ static struct rocketnet_server_transport_t * secrets_wiped_transport_create( con
 static void test_secrets_wiped_server_transport_config_on_create()
 {
     int status = -1;
-    struct rocketnet_server_transport_t * server = secrets_wiped_transport_create( "127.0.0.1:12345", &status );
+    struct rocketnet_server_transport_t * server = secrets_wiped_transport_create( "127.0.0.1:12345", false, &status );
     check( server != NULL );
     check( status == ROCKETNET_STATUS_OK );
     rn_test_server_transport_stop_and_destroy( server );
@@ -1082,7 +1090,9 @@ static void test_secrets_wiped_server_transport_config_on_refused_create()
 {
     rocketnet_quiet( 1 );
     int status = -1;
-    check( secrets_wiped_transport_create( "not-an-address", &status ) == NULL );
+    check( secrets_wiped_transport_create( "not-an-address", true, &status ) == NULL );
+    check( status != ROCKETNET_STATUS_OK );
+    check( secrets_wiped_transport_create( "not-an-address", false, &status ) == NULL );
     check( status != ROCKETNET_STATUS_OK );
 }
 
