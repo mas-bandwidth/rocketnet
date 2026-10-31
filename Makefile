@@ -38,3 +38,9 @@ format-check:
 clean:
 	rm -rf build
 	rm -rf bin/*
+
+# ROADMAP.md is generated from docs/roadmap.sexp by nova-sprint's roadmap tool
+# (a go tool dependency there); NOVA_SPRINT names a nova-sprint checkout.
+NOVA_SPRINT ?= ../nova-sprint
+roadmap:
+	cd $(NOVA_SPRINT) && go tool roadmap --file $(CURDIR)/docs/roadmap.sexp --out $(CURDIR)/ROADMAP.md
