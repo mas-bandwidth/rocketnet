@@ -164,6 +164,14 @@ def parse_workflow(lines):
     run_collect = None
     run_indent = None
 
+    def flush():
+        # the job's last step and last include row end where the job does
+        if job is not None:
+            if cur_step is not None and cur_step[2].strip():
+                job.steps.append(cur_step)
+            if cur_row is not None:
+                job.include_rows.append(cur_row)
+
     for lineno, raw in enumerate(lines, 1):
         line = raw.rstrip("\n")
         stripped = line.strip()
@@ -181,12 +189,16 @@ def parse_workflow(lines):
             if m:
                 top = m.group(1)
             if top != "jobs":
+                flush()
                 job = None
+                cur_step = None
+                cur_row = None
             continue
 
         if top == "jobs" and indent == 2:
             m = re.match(r"^([A-Za-z_][\w-]*):\s*(.*)$", stripped)
             if m and not stripped.startswith("-"):
+                flush()
                 job = JobInfo(m.group(1))
                 jobs.append(job)
                 in_strategy = in_matrix = in_include = False
@@ -330,11 +342,7 @@ def parse_workflow(lines):
                 continue
             continue
 
-    if cur_step is not None and cur_step[2].strip():
-        if job is not None:
-            job.steps.append(cur_step)
-    if job is not None and cur_row is not None:
-        job.include_rows.append(cur_row)
+    flush()
 
     return jobs
 
@@ -356,6 +364,12 @@ def load_exceptions():
     return exc
 
 
+def disabled(job):
+    """A DISABLED row exempts only a job that is really off: `if: false` with
+    its `# DISABLED:` comment."""
+    return bool(job.if_false and job.disabled_comment)
+
+
 def install_violations(run_text, guard):
     if guard and GUARDED_OK.search(guard):
         return []
@@ -369,6 +383,7 @@ def install_violations(run_text, guard):
 def main():
     exit_code = 0
     exc = load_exceptions()
+    seen_jobs = set()
 
     if not os.path.isdir(WF_DIR):
         print("no workflow directory: %s" % WF_DIR, file=sys.stderr)
@@ -381,9 +396,16 @@ def main():
         with open(path) as fh:
             lines = fh.readlines()
         jobs = parse_workflow(lines)
+        seen_jobs.update((name, job.name) for job in jobs)
         for job in jobs:
             wf_job = (name, job.name)
             exc_type = exc.get(name, {}).get(job.name) or exc.get(name, {}).get("*")
+
+            if exc_type == "DISABLED" and not disabled(job):
+                sys.stdout.write("%s:%d: %s / %s has a DISABLED exception but is live (no `if: false` + `# DISABLED:` "
+                                 "comment); delete the row or disable the job\n"
+                                 % (name, job.runs_on_line or 1, name, job.name))
+                exit_code = 1
 
             hosted_found = []
             for row in matrix_rows(job):
@@ -394,7 +416,7 @@ def main():
                 if exc_type in ("TEMPORARY", "GUEST"):
                     pass
                 elif exc_type == "DISABLED":
-                    if not (job.if_false and job.disabled_comment):
+                    if not disabled(job):
                         sys.stdout.write("%s:%d: %s / %s runs on hosted %s but its DISABLED row lacks `if: false` + `# DISABLED:` comment\n"
                                          % (name, job.runs_on_line or 1, name, job.name, ", ".join(sorted(set(hosted_found)))))
                         exit_code = 1
@@ -407,11 +429,18 @@ def main():
                 for vio in install_violations(run_text, guard):
                     if exc_type in ("TEMPORARY", "GUEST"):
                         continue
-                    if exc_type == "DISABLED":
+                    if exc_type == "DISABLED" and disabled(job):
                         continue
                     sys.stdout.write("%s:%d: %s / %s %s on the runner; replace with a presence check or exempt the job\n"
                                      % (name, run_line, name, job.name, vio))
                     exit_code = 1
+
+    for wf, rows in sorted(exc.items()):
+        for job_name in sorted(rows):
+            if job_name != "*" and (wf, job_name) not in seen_jobs:
+                sys.stdout.write("%s: exception row %s %s %s names no job in %s\n"
+                                 % (os.path.basename(EXC_FILE), wf, job_name, rows[job_name], WF_DIR))
+                exit_code = 1
 
     return exit_code
 
