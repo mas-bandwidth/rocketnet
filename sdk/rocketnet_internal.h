@@ -243,6 +243,10 @@ do                                                                              
 
 bool rocketnet_library_initialized( void );
 
+// whether malloc_function and free_function are the installed allocator;
+// allocates nothing and takes no lock (sdk/rocketnet.cpp)
+bool rocketnet_allocator_installed( void * ( *malloc_function )( void * context, size_t bytes ), void ( *free_function )( void * context, void * p ) );
+
 #if ROCKETNET_DEV
 // the lifecycle lock takes on the calling thread, ever (sdk/rocketnet.cpp):
 // init, term and allocator installation take it; no allocation does
