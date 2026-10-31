@@ -114,3 +114,26 @@ VERIFICATION FAILED
 | `connect_token` / `harness_verify_signed_connect_data` | `VERIFICATION SUCCESSFUL` | 12 / 12 | 2 s | `PROOF_R_OK(m, mlen + 1)` | `VERIFICATION FAILED` (`1 of 12 failed`) |
 | `connect_token` / `harness_private_consistent` | `VERIFICATION SUCCESSFUL` | 36 / 36 | 2 s | `private_data[ROCKETNET_PRIVATE_BLOCK_BYTES - 1]` | `VERIFICATION FAILED` |
 | `connect_token` / `harness_connect_token_identifier` | `VERIFICATION SUCCESSFUL` | 10 / 10 | 2 s | `PROOF_W_OK(out, outlen + 1)` | `VERIFICATION FAILED` |
+
+## Nightly target
+
+`make -C proofs/cbmc proofs-esbmc_r_ok` (esbmc_r_ok/proof.mk, on the nightly
+list) runs both controls in C and in C++17 mode. The reproducer must verify;
+the planted overrun must fail exactly one property, the planted one. On
+vision, ESBMC 8.5.0, at a26abaf8:
+
+```
+repro_r_ok_symbolic (c) VERIFICATION SUCCESSFUL; ** 0 of 9 properties failed, 9 passed
+planted_oob (c) EXPECTED FAILURE; ** 1 of 5 properties failed, 1 passed, 3 not checked
+repro_r_ok_symbolic (cpp) VERIFICATION SUCCESSFUL; ** 0 of 9 properties failed, 9 passed
+planted_oob (cpp) EXPECTED FAILURE; ** 1 of 5 properties failed, 1 passed, 3 not checked
+```
+
+With the shim's extent check widened by one byte
+(`n <= sz - uoff + 1`), the planted overrun passes and the target fails:
+
+```
+planted_oob (c) HOLD: the planted overrun did not fail alone (exit=0); ** 0 of 5 properties failed, 5 passed
+planted_oob (cpp) HOLD: the planted overrun did not fail alone (exit=0); ** 0 of 5 properties failed, 5 passed
+make: *** [esbmc_r_ok/proof.mk:15: proofs-esbmc_r_ok] Error 1
+```
