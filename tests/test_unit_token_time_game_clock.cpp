@@ -6,7 +6,8 @@
 // Connect-token create and expire checks can read the game clock: with a
 // configured token_epoch_unix_seconds the token timestamp is epoch plus the caller's
 // time, floored to whole seconds, and no wall clock is read. With the field
-// zero the check reads the wall clock, which is the functional tier's case
+// zero the check reads the wall clock: here the suite's fixed clock
+// (ROCKETNET_UNIT_WALL_CLOCK); the real clock is the functional tier's case
 // test_token_time_game_clock_off_reads_the_wall_clock. Time is an argument
 // starting at 1000.0; client refusals and the in-memory server protocol need
 // no socket.
@@ -207,6 +208,21 @@ static void test_token_time_game_clock_refuses_after_expire()
 
     token_time_game_server_teardown( &t );
 }
+
+#if ROCKETNET_DEV
+// with the field zero the token epoch is the suite's fixed wall clock less the
+// caller's time: a token stamped from that clock is admitted, and one stamped
+// in 1970 is refused as expired
+static void test_token_time_game_clock_off_reads_the_suite_clock()
+{
+    check( rocketnet_platform_token_epoch( 0, GAME_CLOCK_NOW ) == ROCKETNET_UNIT_WALL_CLOCK - (uint64_t) GAME_CLOCK_NOW );
+
+    check( token_time_game_client_create( ROCKETNET_UNIT_WALL_CLOCK, ROCKETNET_UNIT_WALL_CLOCK + TOKEN_LIFETIME, 0, GAME_CLOCK_NOW ) == ROCKETNET_STATUS_OK );
+    check( token_time_game_client_create( 1000, 1010, 0, GAME_CLOCK_NOW ) == ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED );
+}
+
+REGISTER_UNIT_TEST( test_token_time_game_clock_off_reads_the_suite_clock );
+#endif // #if ROCKETNET_DEV
 
 REGISTER_UNIT_TEST( test_token_time_game_clock_admits_a_fixed_token );
 REGISTER_UNIT_TEST( test_token_time_game_clock_refuses_after_expire );

@@ -73,6 +73,15 @@ static const rocketnet_platform_network_lookups_t rocketnet_unit_fake_network_lo
     rocketnet_unit_fake_ipv6_available,
 };
 
+// the DEV unit suite reads no real clock: a connect token check with
+// token_epoch_unix_seconds zero reads this fixed Unix time
+// (rocketnet_platform_set_wall_clock_for_testing, rocketnet_internal.h)
+
+static uint64_t rocketnet_unit_fake_wall_clock()
+{
+    return ROCKETNET_UNIT_WALL_CLOCK;
+}
+
 // The unit tier starts no OS network stack: the platform start (WSAStartup on
 // Windows) is answered by this fake, and every other platform call in the
 // table stays real. Cases that inject their own refusal copy the current table
@@ -214,6 +223,7 @@ static int rocketnet_unit_worker( const char * name )
 
 #if ROCKETNET_DEV
     rocketnet_platform_set_network_lookups_for_testing( &rocketnet_unit_fake_network_lookups );
+    rocketnet_platform_set_wall_clock_for_testing( rocketnet_unit_fake_wall_clock );
     rocketnet_unit_platform_calls = *rocketnet_platform_priority_calls_real();
     rocketnet_unit_platform_calls.platform_start = rocketnet_unit_fake_platform_start;
     rocketnet_platform_set_priority_calls_for_testing( &rocketnet_unit_platform_calls );
