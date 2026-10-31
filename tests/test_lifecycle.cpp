@@ -796,7 +796,7 @@ static void check_client_memory_budget( allocator_state & state )
     unsetenv( "ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES" );
 }
 
-// rocketnet_malloc and rocketnet_free from several threads while another
+// rocketnet_malloc and rocketnet_free from two threads while another
 // thread installs one allocator pair after the other, the library
 // uninitialized as install requires (proofs/tla/RNAllocatorInstall.tla).
 // Each pair tags what it hands out and counts what it holds. Install
@@ -884,7 +884,7 @@ static void install_race_worker( install_race_worker_args * args )
         p[0] = (uint8_t) i;
         p[bytes - 1] = (uint8_t) args->worker;
         rocketnet_free( NULL, p );
-        if ( i % 64 == 0 )
+        if ( i % 16 == 0 )
             std::this_thread::yield();
     }
 
@@ -893,8 +893,8 @@ static void install_race_worker( install_race_worker_args * args )
 
 static void check_allocator_install_race()
 {
-    const int workers = 4;
-    const int iterations = 50000;
+    const int workers = 2;
+    const int iterations = 100000;
 
     install_pairs[0].tag = 0xA110CA7EA11CEAAAULL;
     install_pairs[1].tag = 0xA110CA7EB0B0BBBBULL;
@@ -940,6 +940,13 @@ static void check_allocator_install_race()
             check( status == ROCKETNET_STATUS_LIVE_ALLOCATIONS );
             ++refusals;
         }
+
+        // between attempts the sentinel is down and the workers run: an
+        // installer that retried at once would keep it up nearly always,
+        // and the workers would spend the run spinning on it
+
+        for ( int i = 0; i < 4; ++i )
+            std::this_thread::yield();
     }
 
     for ( std::thread & thread : threads )
