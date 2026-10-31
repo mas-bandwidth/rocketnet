@@ -368,7 +368,7 @@ static int world_take_descriptor( world_t * w, uint32_t bytes, uint32_t * descri
         return 1;
     }
 
-    *descriptor = rn_region_send_alloc( w->region, (int) bytes );
+    *descriptor = rn_region_send_take( w->region, (int) bytes );
     return *descriptor != RN_DESCRIPTOR_NONE;
 }
 

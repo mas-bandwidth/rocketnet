@@ -586,9 +586,9 @@ static void check_component_create_sweeps( allocator_state & state )
                        uint32_t d = rn_region_send_alloc( r, 256 );
                        check( d != RN_DESCRIPTOR_NONE );
                        rn_region_send_free( r, d );
-                       uint32_t c = rn_send_store_alloc( &r->store, 512 );
-                       check( c != RN_CHUNK_NONE );
-                       check( rn_send_store_free_checked( &r->store, c ) );
+                       d = rn_region_send_take( r, 4000 );
+                       check( d != RN_DESCRIPTOR_NONE );
+                       rn_region_send_free( r, d );
                    }
                    state.fail_at = 0;
                    check( state.calls == before );

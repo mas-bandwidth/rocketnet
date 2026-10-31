@@ -22,11 +22,11 @@ rn_ack_cost_t rn_window_ack_cost_read() { return rn_ack_cost; }
 // RTT estimation, resend delay, failed-send recovery, and reliable timeout (standard/MESSAGES.md
 // m9; TLA+ actions Init, WritePacket, WriteOldest, ReceiveAck and
 // invariants TablesBounded and EveryReliableAckedAndDelivered in
-// proofs/tla/RNWindow.tla). Resend links name {message number, descriptor generation,
-// schedule epoch} (proofs/tla/RNChannelQueues.tla). A compact of acked holes is not
-// done on the walk: capacity stays W and walk_visits still counts them.
+// proofs/tla/RNWindow.tla). A resend link names its message number's slot and
+// the descriptor generation it was stamped with (proofs/tla/RNChannelQueues.tla).
+// Acked holes are not compacted on the walk: capacity stays W and walk_visits
+// still counts them.
 
-// proofs/tla/RNWindow.tla WritePacket
 static void rn_window_ack_count( const rn_region_t * region, int counter )
 {
     if ( region && region->counters )
@@ -461,46 +461,22 @@ void rn_window_ack_init( rn_window_ack_t * ack, rn_window_send_t * send, rn_regi
     ack->send = send;
     ack->region = region;
 
-    // The resend sequences start empty: no link of an earlier
-    // binding of this region may resurrect an entry under the new ack state.
-
-    for ( uint32_t slot = 0; slot < region->window; slot++ )
-    {
-        region->resend_fifo[slot].prev = 0;
-        region->resend_fifo[slot].next = 0;
-        region->resend_fifo[slot].generation = 0;
-    }
+    // The resend sequences start empty: the region is freshly carved, and
+    // rn_region_carve cleared every resend link.
 
     ack->resend_delay_initial = (double) config->message_resend_delay_initial_ms / 1000.0;
     ack->resend_delay_min = (double) config->message_resend_delay_min_ms / 1000.0;
     ack->resend_delay_max = (double) config->message_resend_delay_max_ms / 1000.0;
     ack->reliable_timeout = (double) config->reliable_message_timeout_ms / 1000.0;
 
-    ack->srtt = 0.0;
-    ack->rttvar = 0.0;
     ack->resend_delay = ack->resend_delay_initial;                // proofs/tla/RNResendTiming.tla Init: resend_delay = ResendDelayInitial
-    ack->has_rtt = 0;
-    ack->has_oldest = 0;
-    ack->error = ROCKETNET_DISCONNECT_REASON_NONE;
 
     ack->resend_head = RN_RESEND_NONE;
     ack->resend_tail = RN_RESEND_NONE;
-    ack->resend_count = 0;
     ack->chunk_head = RN_RESEND_NONE;
     ack->chunk_tail = RN_RESEND_NONE;
-    ack->walk_visits = 0;
 
-    ack->pkt_head = 0;
-    ack->pkt_tail = 0;
-    ack->ref_head = 0;
-    ack->ref_tail = 0;
-    ack->receipt_sweep = 0;
-    ack->receipt_head = 0;
-    ack->receipt_tail = 0;
-    ack->receipt_visible_head = 0;
-    ack->receipt_visible_tail = 0;
     ack->oldest_number = send->U;
-    ack->oldest_first_send = 0.0;
 
 #if ROCKETNET_DEV
     for ( int c = 0; c < 2; c++ )
@@ -557,10 +533,6 @@ static void rn_window_ack_gaps_measure( rn_window_ack_t * ack, uint32_t slot_ind
 
 #endif // #if ROCKETNET_DEV
 
-// Commits a sent packet and its referenced reliable message numbers into the
-// P-entry sent-packet ring, 16P reference ring, 2P open-addressed sent_index,
-// and W-entry resend FIFO (standard/MESSAGES.md m9.1;
-// proofs/tla/RNWindow.tla WritePacket, WriteOldest, TablesBounded).
 // RNReceipts EmitAck/SweepLoss: an outcome is an accounting event, not a
 // message-level ACK. A full ring discards its oldest event, never its history.
 // proofs/tla/RNReceipts.tla EmitAck
@@ -605,6 +577,10 @@ static void rn_window_ack_receipt_resolve( rn_window_ack_t * ack, rn_sent_packet
     }
 }
 
+// Commits a sent packet and its referenced reliable message numbers into the
+// P-entry sent-packet ring, 16P reference ring, 2P open-addressed sent_index,
+// and W-entry resend FIFO (standard/MESSAGES.md m9.1;
+// proofs/tla/RNWindow.tla WritePacket, WriteOldest, TablesBounded).
 // proofs/tla/RNReceipts.tla WritePacket, EvictMap: evicts the oldest live sent-map entry when a ring needs room, resolving its unreliable receipts as LOSS
 // proofs/tla/RNSentMap.tla WriteAny: records the packet in the ring in send order, reclaiming the head past holes; the oldest entry is evicted only when the ring spans packets_in_flight
 static void rn_window_ack_commit( rn_window_ack_t * ack, uint64_t packet_id, const uint64_t * numbers, uint32_t count,
@@ -764,9 +740,8 @@ int rn_window_ack_on_ack( rn_window_ack_t * ack, uint64_t packet_id, double now 
 
     ack->resend_delay = rn_window_ack_compute_resend_delay( ack->srtt, ack->rttvar, ack->resend_delay_min, ack->resend_delay_max );
 
-    // 2. For each referenced message number n that is still unacked (n >= U):
-    //    unlink from resend FIFO, free its chunk in S (and its descriptor in Q
-    //    when its last fragment is acked), and mark n acked to advance U and U'.
+    // 2. Each referenced number still unacked leaves its resend sequence,
+    //    returns its fragment's room and is marked acked
 
     const uint32_t W = region->window;
     const uint32_t max_refs = region->sent_ref_entries;
@@ -812,25 +787,6 @@ int rn_window_ack_on_ack( rn_window_ack_t * ack, uint64_t packet_id, double now 
         {
             const uint32_t d = slot->descriptor;
             const rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
-            uint32_t chain_index = 0;
-
-            // Spans release on the final distinct ACK and never use a chain
-            // index. Only legacy chunk-backed blocks need the live rank.
-
-            if ( descriptor->in_use && descriptor->fragments > 1 && !( descriptor->flags & RN_SEND_FLAG_SPAN ) )
-            {
-                for ( uint16_t j = 0; j < slot->fragment; j++ )
-                {
-#if ROCKETNET_DEV
-                    rn_ack_cost.predecessor_visits++;
-#endif // #if ROCKETNET_DEV
-
-                    const uint64_t prev_num = slot->number - (uint64_t) ( slot->fragment - j );
-                    const rn_send_number_t * prev_slot = &region->send_numbers[prev_num & ( W - 1 )];
-                    if ( prev_slot->descriptor == d && prev_slot->number == prev_num && !prev_slot->acked )
-                        chain_index++;
-                }
-            }
 
             // RNReceipts EmitAck/BlockAckedOnlyWhenAllFragmentsAcked: only the
             // final distinct transport ACK completes a public 6/7 message or
@@ -841,7 +797,7 @@ int rn_window_ack_on_ack( rn_window_ack_t * ack, uint64_t packet_id, double now 
                  descriptor->fragments_acked + 1 == descriptor->fragments )
                 rn_window_ack_receipt_emit( ack, descriptor->serial, ROCKETNET_RECEIPT_STATUS_ACKED );
 
-            rn_region_send_free_fragment( region, d, chain_index );
+            rn_region_send_free_fragment( region, d );
         }
 
         rn_window_send_mark_acked( send, slot->number );
