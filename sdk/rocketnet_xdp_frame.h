@@ -7,8 +7,8 @@
 // fixed byte offsets. It is plain portable C++ with no Linux headers, no
 // libbpf and no allocation, so the unit suite builds it on every platform.
 //
-// IPv4 is byte-identical to the server's historical builder (ihl 5, the DF
-// bit, ttl 64, header checksum, UDP checksum 0). IPv6 carries the mandatory
+// IPv4 is ihl 5, the DF bit, ttl 64, the header checksum and UDP checksum 0.
+// IPv6 carries the mandatory
 // UDP checksum computed in software over the RFC 8200 section 8.1
 // pseudo-header (RFC 768, RFC 1071); a computed 0x0000 is sent as 0xFFFF.
 
@@ -273,12 +273,12 @@ static inline int rocketnet_xdp_frame_build(
 // extension headers included; an IPv6 header with any traffic class and flow
 // label is read. Fills the source address and a pointer/length
 // into the payload bytes (inside frame).
-// Length guards: the up-front check proves the frame holds at least the IPv4
-// minimum (ethernet + IPv4 + UDP), enough to name the ethertype at bytes
-// 12-13 and the version at byte 14; each family branch then proves the frame
-// holds that family's own ethernet + IP + UDP header before it reads any byte
-// past the ethernet header, so a truncated IPv6 frame is refused before its
-// source address or UDP port is read.
+// Length guards: the up-front check proves the frame holds the whole IPv4
+// header set (ethernet + IPv4 + UDP), enough to name the ethertype at bytes
+// 12-13 and the version at byte 14; the IPv6 branch then proves the frame
+// holds its larger header set before it reads any byte past the ethernet
+// header, so a truncated IPv6 frame is refused before its source address or
+// UDP port is read.
 
 static inline bool rocketnet_xdp_frame_parse(
     const void * frame, size_t frame_bytes,
@@ -308,9 +308,6 @@ static inline bool rocketnet_xdp_frame_parse(
             return false;
 
         header_bytes = ROCKETNET_ETHERNET_HEADER_BYTES + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES;
-        if ( frame_bytes < (size_t) header_bytes )
-            return false;
-
         udp_len = (uint16_t) ( ( f[header_bytes - 4] << 8 ) | f[header_bytes - 3] );
         if ( udp_len < ROCKETNET_UDP_HEADER_BYTES )
             return false;
@@ -350,8 +347,6 @@ static inline bool rocketnet_xdp_frame_parse(
         return false;
     }
 
-    // header_bytes and udp_len are carried from the family branch, which
-    // already proved the frame holds the full header and read the UDP length.
     // Bytes past the UDP length (link-layer padding) are not payload; a UDP
     // length past the frame end is refused, as server_xdp_udp drops it
 
@@ -933,23 +928,17 @@ static inline void rocketnet_xdp_reply_macs_answer( struct rocketnet_xdp_reply_m
 }
 
 // proofs/tla/RNXdpReplay.tla Commit (ForgetLeavesAnswered): the released client's
-// learned MAC is forgotten: no reply is addressed by
-// it as a learned client's again. It stays as the address's answered entry,
-// for a reply still held for the released client.
+// learned MAC is forgotten: no reply is addressed by it as a learned client's
+// again. It stays as the address's answered entry, for a reply still held for
+// the released client. The learned entry becomes the answered one in place:
+// an address never holds both, since a learn takes over the address's
+// answered entry and an answer is not kept for a learned address.
 
 static inline void rocketnet_xdp_reply_macs_forget( struct rocketnet_xdp_reply_macs_t * table, const rocketnet_address_t * address )
 {
     struct rocketnet_xdp_reply_mac_entry_t * entry = rocketnet_xdp_reply_macs_find( table, address );
-    if ( !entry )
-        return;
-
-    if ( rocketnet_xdp_reply_macs_find_state( table, address, ROCKETNET_XDP_REPLY_MAC_ANSWERED ) )
-    {
-        entry->state = ROCKETNET_XDP_REPLY_MAC_TOMBSTONE;
-        return;
-    }
-
-    entry->state = ROCKETNET_XDP_REPLY_MAC_ANSWERED;
+    if ( entry )
+        entry->state = ROCKETNET_XDP_REPLY_MAC_ANSWERED;
 }
 
 // proofs/tla/RNXdpReplay.tla Answer (answered_mac given) and Drain (none given):
@@ -966,9 +955,9 @@ static inline const uint8_t * rocketnet_xdp_reply_mac( struct rocketnet_xdp_repl
     if ( entry )
         return entry->mac;
 
-    if ( destination && destination->type == ROCKETNET_ADDRESS_IPV4 && table->gateway_ipv4_known )
+    if ( destination->type == ROCKETNET_ADDRESS_IPV4 && table->gateway_ipv4_known )
         return table->gateway_ipv4;
-    if ( destination && destination->type == ROCKETNET_ADDRESS_IPV6 && table->gateway_ipv6_known )
+    if ( destination->type == ROCKETNET_ADDRESS_IPV6 && table->gateway_ipv6_known )
         return table->gateway_ipv6;
     if ( table->gateway_known )
         return table->gateway_mac;
@@ -977,12 +966,11 @@ static inline const uint8_t * rocketnet_xdp_reply_mac( struct rocketnet_xdp_repl
     {
         if ( rocketnet_xdp_reply_mac_usable( answered_mac ) )
         {
-            if ( destination )
-                rocketnet_xdp_reply_macs_answer( table, destination, answered_mac );
+            rocketnet_xdp_reply_macs_answer( table, destination, answered_mac );
             return answered_mac;
         }
     }
-    else if ( destination )
+    else
     {
         entry = rocketnet_xdp_reply_macs_find_state( table, destination, ROCKETNET_XDP_REPLY_MAC_ANSWERED );
         if ( entry )

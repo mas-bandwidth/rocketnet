@@ -198,10 +198,10 @@ bool rocketnet_server_replay_marks_inventory_matches_for_test( char * failure, s
     static const rocketnet_reset_member_t members[] = { ROCKETNET_SERVER_REPLAY_SLOT_MARK_LAYOUT_FIELDS( MARK_MEMBER ) };
 #undef MARK_MEMBER
 #define MARK_DECISION( decision, field ) ROCKETNET_RESET_MEMBER( rocketnet_server_replay_slot_mark_t, field, #decision[0] == 'R' ),
-    // The shared inventory in rocketnet_connection_reset.h lists the three
-    // fields it knew; the walk's seen record and owed flag add three members, and their
-    // RESET decisions are listed here so that every member of the struct has
-    // one and the inventory covers the whole struct.
+    // The shared inventory in rocketnet_connection_reset.h lists the mark
+    // record's fields; the walk's seen record and owed flag are three more
+    // members, and their RESET decisions are listed here so that every member
+    // of the struct has one and the inventory covers the whole struct.
     static const rocketnet_reset_member_t decisions[] = { ROCKETNET_SERVER_REPLAY_MARK_FIELDS( MARK_DECISION )
                                                               MARK_DECISION( RESET, seen )
                                                                   MARK_DECISION( RESET, seen_address )

@@ -176,7 +176,7 @@ template <size_t Capacity> struct rocketnet_packet_leases_t
         // read as torn and accepted for a changed copy (MCRNPacketLeaseBrokenRetiredRace.cfg and
         // MCRNPacketLeaseBrokenRetiredTorn.cfg); with it MCRNPacketLeaseRetired.cfg holds every
         // invariant. This path is reached only after take refused, which is caller misuse,
-        // so the old effect was a misclassified misuse, not a wrong take.
+        // so a torn read could only misclassify a misuse, never make a take wrong.
 
         if ( !epoch || !supplied.frame || !supplied.packet_id )
             return false;
