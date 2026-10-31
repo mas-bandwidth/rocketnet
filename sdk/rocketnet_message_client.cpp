@@ -117,9 +117,11 @@ void rn_message_client_link( struct rn_message_link_t * link, struct rocketnet_c
 //                     the client's C API
 // ---------------------------------------------------------------
 
-uint64_t rocketnet_message_client_required_memory( const struct rocketnet_message_config_t * message_config )
+uint64_t rocketnet_message_client_required_memory( const struct rocketnet_message_config_t * message_config, uint32_t send_kbps )
 {
-    return rn_message_object_required_bytes( message_config, 1, 0 );
+    if ( send_kbps > ROCKETNET_SEND_BUDGET_MAX_KBPS )
+        return 0;
+    return rn_message_object_required_bytes( message_config, 1, 0, (int32_t) send_kbps );
 }
 
 struct rocketnet_message_client_t * rocketnet_message_client_create( void * context, const uint8_t * connect_token,
@@ -194,12 +196,22 @@ static struct rocketnet_message_client_t * rn_message_client_create( void * cont
         kbps = resolved->client_send_kbps;
     }
 
-    // refuse before the transport opens a socket
+    // refuse before the transport opens a socket: the config, the budget, and
+    // a caller block too short for the layout create sizes at this budget
 
-    if ( rn_message_object_required_bytes( message_config, 1, 0 ) == 0 || !( kbps <= 0 || rocketnet_send_budget_kbps_valid( (uint32_t) kbps ) ) )
+    const uint64_t required_bytes = rn_message_object_required_bytes( message_config, 1, 0, kbps, reserve_unlimited != 0 );
+    if ( required_bytes == 0 || !( kbps <= 0 || rocketnet_send_budget_kbps_valid( (uint32_t) kbps ) ) )
     {
         rocketnet_error( "message client create refused: message config or send budget" );
         *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
+        return NULL;
+    }
+
+    if ( memory && ( memory_bytes < required_bytes || ( (uintptr_t) memory % ROCKETNET_ALLOCATION_ALIGNMENT ) != 0 ) )
+    {
+        rocketnet_error( "message client create refused: the memory block is %" PRIu64 " bytes or not %d-aligned; this config and send budget need %" PRIu64,
+                         memory_bytes, ROCKETNET_ALLOCATION_ALIGNMENT, required_bytes );
+        *status = ROCKETNET_STATUS_OUT_OF_MEMORY;
         return NULL;
     }
 

@@ -1803,10 +1803,19 @@ static uint32_t rn_receive_delivery_reservation( const rn_channels_t * channels,
     if ( rn_u24( record->ordering ) != rn_u24( rx->ordered_read ) )
         return needed;
 
-    // at most one sequenced hold can be released by this channel's drain
+    // at most one sequenced hold can be released by this channel's drain,
+    // and it needs a slot only when its release can take one: a code-4 hold
+    // always can, a code-1 hold only while the update's unreliable deliveries
+    // are below the allowance Du (rn_sequenced_room refuses it otherwise).
+    // Counting a code-1 hold past Du would defer a packet whose deliveries fit
+    // (proofs/tla/RNOrderingWrap.tla Receive, NeverDeferWithRoom).
 
     if ( rx->held_sequenced != RN_DESCRIPTOR_NONE )
-        needed++;
+    {
+        const bool reliable_hold = ( rx->held_sequenced & RN_SEQUENCED_RELIABLE_HOLD ) != 0;
+        if ( reliable_hold || channels->unreliable_delivered < region->delivery_entries - region->window )
+            needed++;
+    }
 
     uint32_t ordering = rn_u24( record->ordering + 1 );
     for ( uint32_t i = 0; i < region->window; ++i, ordering = rn_u24( ordering + 1 ) )
