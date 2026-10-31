@@ -79,9 +79,8 @@ static int rn_window_send_admit( rn_window_send_t * send, uint32_t count,
 // proofs/tla/RNWindow.tla NumberRecord
 static void rn_window_send_set_number( rn_window_send_t * send, uint64_t number,
                                        uint32_t descriptor, uint16_t fragment,
-                                       uint64_t ring_start, uint64_t bytes16 )
+                                       uint64_t ring_start )
 {
-    rocketnet_assert( bytes16 % 16 == 0 && bytes16 / 16 <= UINT8_MAX );
 
     rn_send_number_t * entry = &send->region->send_numbers[number % send->region->window];
     entry->number = number;
@@ -93,7 +92,6 @@ static void rn_window_send_set_number( rn_window_send_t * send, uint64_t number,
     entry->last_send = RN_SEND_NUMBER_NEVER_SENT;
     entry->descriptor = descriptor;
     entry->fragment = fragment;
-    entry->ring_units = (uint8_t) ( bytes16 / 16 );
     entry->acked = 0;
 }
 
@@ -137,7 +135,7 @@ int rn_window_send_first_write( rn_window_send_t * send, int code, uint32_t byte
         return RN_WINDOW_SEND_STALL;
 
     const uint64_t n = send->next;
-    rn_window_send_set_number( send, n, descriptor, 0, p, span );
+    rn_window_send_set_number( send, n, descriptor, 0, p );
     send->next++;
 
     if ( holdable )
@@ -179,8 +177,7 @@ uint32_t rn_window_send_first_write_block( rn_window_send_t * send, int code, ui
 
     const uint64_t first = send->next;
     for ( uint32_t i = 0; i < count; i++ )
-        rn_window_send_set_number( send, first + i, descriptor, (uint16_t) i,
-                                   p + (uint64_t) i * F, i + 1 == count ? last16 : F );
+        rn_window_send_set_number( send, first + i, descriptor, (uint16_t) i, p + (uint64_t) i * F );
 
     send->next += count;
     send->ring_next = p + span;

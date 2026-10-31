@@ -79,7 +79,6 @@ struct rn_send_number_t                 // 32 bytes: the sender's per-number tab
     double last_send;                   // RN_SEND_NUMBER_NEVER_SENT: never sent; else the last send time (>= 0.0), or a negative failed-send sentinel
     uint32_t descriptor;                // the send descriptor, or RN_DESCRIPTOR_NONE
     uint16_t fragment;                  // index within its block
-    uint8_t ring_units;                 // ring span in 16-byte units: ring_end = ring_start + 16 * ring_units
     uint8_t acked;
 };
 

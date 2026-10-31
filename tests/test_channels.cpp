@@ -2113,7 +2113,6 @@ static void rn_soak_write_and_receive( rn_soak_side_t * side, uint64_t tick )
                 slot->descriptor = d;
                 slot->fragment = (uint16_t) f;
                 slot->ring_start = ring + (uint64_t) f * RN_STORE_LARGE_BYTES;
-                slot->ring_units = RN_STORE_LARGE_BYTES / 16;
                 slot->last_send = (double) tick;
                 slot->acked = 0;
 
@@ -2691,7 +2690,6 @@ static void test_channels_window_send_block_takes_consecutive_numbers_and_one_sp
     check( n == 0 && p == 0 && rig.send.next == 2 );
     check( rig.numbers[0].fragment == 0 && rig.numbers[1].fragment == 1 );
     check( rig.numbers[0].ring_start == 0 && rig.numbers[1].ring_start == F );
-    check( rig.numbers[0].ring_units == F / 16 && rig.numbers[1].ring_units == 2 );
     check( rig.send.ring_next == F + 32 );
     check( rn_window_send_mark_acked( &rig.send, 1 ) == 1 );
     check( rig.send.U == 0 );
@@ -3202,7 +3200,7 @@ static void test_channels_window_send_and_receive_over_the_lossy_simulator_leg( 
             const rn_send_number_t * entry = &source->send_numbers[n % W];
             check( entry->number == n );
 
-            const uint32_t span = (uint32_t) entry->ring_units * 16;
+            const uint32_t span = ( records[n].bytes + 15 ) / 16 * 16;
             const uint32_t start = (uint32_t) ( entry->ring_start % B );
             check( rn_region_ring_span_valid( source, start, span ) );
 
