@@ -58,6 +58,10 @@ static bool rn_unreliable_member( const rn_send_descriptor_t * descriptor )
 // stale ticket dropped with the rest kept in order: the head skipping them in
 // rn_unreliable_sync, the full-ring pass in rn_unreliable_push, and every walk
 // passing them by.
+//
+// proofs/tla/RNUnreliableRingLayout.tla carries the ring at its layout with
+// tickets that wrap: Push (rn_unreliable_push, with rn_unreliable_renumber and
+// the eager rn_unreliable_sync), Unlink, WalkBegin, WalkNext and WalkStop.
 
 static bool rn_unreliable_entry_live( const rn_region_t * region, const rn_unreliable_entry_t * entry )
 {
@@ -82,6 +86,7 @@ struct rn_unreliable_walk_t
     uint32_t step;
 };
 
+// proofs/tla/RNUnreliableRingLayout.tla WalkBegin
 static void rn_unreliable_walk_begin( const rn_endpoint_t * endpoint, rn_unreliable_walk_t * walk )
 {
     walk->base = endpoint->unreliable_ring_head;
@@ -90,6 +95,7 @@ static void rn_unreliable_walk_begin( const rn_endpoint_t * endpoint, rn_unrelia
 }
 
 // the next live descriptor of the walk, RN_DESCRIPTOR_NONE at its end
+// proofs/tla/RNUnreliableRingLayout.tla WalkNext: entries read in place; unlinks between steps, no push.
 static uint32_t rn_unreliable_walk_next( const rn_endpoint_t * endpoint, rn_unreliable_walk_t * walk )
 {
     const rn_region_t * region = endpoint->region;
@@ -123,6 +129,7 @@ static void rn_unreliable_sync( rn_endpoint_t * endpoint )
 // entry naming it is stale, then renumbers the survivors and d in queue
 // order. Every ticket in the ring is then from the current lap.
 
+// proofs/tla/RNUnreliableRingLayout.tla Push: the renumber at the first push after a wrap.
 static void rn_unreliable_renumber( rn_endpoint_t * endpoint, uint32_t d )
 {
     rn_region_t * region = endpoint->region;
@@ -145,6 +152,7 @@ static void rn_unreliable_renumber( rn_endpoint_t * endpoint, uint32_t d )
     region->send_descriptors[d].enqueue_ticket = rn_region_schedule_ticket( region );
 }
 
+// proofs/tla/RNUnreliableRingLayout.tla Push
 static void rn_unreliable_push( rn_endpoint_t * endpoint, uint32_t d )
 {
     rn_region_t * region = endpoint->region;
@@ -1024,6 +1032,7 @@ static bool rn_endpoint_ordered_due( const rn_endpoint_t * endpoint, double now 
            rn_endpoint_fifo_due( region, ack, true, rn_window_ack_chunk_resend_delay( ack ), now );
 }
 
+// proofs/tla/RNUnreliableRingLayout.tla Unlink
 static void rn_endpoint_unreliable_unlink( rn_endpoint_t * endpoint, uint32_t d )
 {
     rn_region_t * region = endpoint->region;
@@ -1245,6 +1254,7 @@ void rn_endpoint_begin_flush( struct rn_endpoint_t * endpoint )
         endpoint->write_phase = RN_ENDPOINT_WRITE_IDLE;
 }
 
+// proofs/tla/RNUnreliableRingLayout.tla WalkStop: a walk ends at the record limit or a large record.
 static int rn_endpoint_unreliable_items( rn_endpoint_t * endpoint, rn_packet_item_t * items, uint32_t * descriptors, uint32_t * generations )
 {
     // the unreliable records, packed several to a packet: the items from the
