@@ -436,8 +436,9 @@ static int rocketnet_server_uring_open_socket( const rocketnet_address_t * bind_
 
     // one update's inbound packets at the full client count: the uring
     // create does not carry max_clients, so it sizes for ROCKETNET_MAX_CLIENTS
-    // (a request; the kernel charges only what it holds)
-    int receive_buffer_size = rocketnet_server_receive_buffer_request( ROCKETNET_MAX_CLIENTS );
+    // (rocketnet_server_transport_receive_buffer_request; a request, and the
+    // kernel charges only what it holds)
+    int receive_buffer_size = rocketnet_server_transport_receive_buffer_request( "io_uring", ROCKETNET_MAX_CLIENTS );
 
     if ( setsockopt( fd, SOL_SOCKET, SO_SNDBUF, &send_buffer_size, sizeof( int ) ) != 0 )
     {

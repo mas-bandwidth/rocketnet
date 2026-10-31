@@ -860,6 +860,18 @@ int rocketnet_server_receive_buffer_request( int max_clients )
     return rocketnet_server_receive_buffer_bytes( max_clients, ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, ROCKETNET_SERVER_RECEIVE_MIN_UPDATE_HZ );
 }
 
+int rocketnet_server_transport_receive_buffer_request( const char * transport, int max_clients )
+{
+    if ( !transport )
+        return 0;
+    if ( strcmp( transport, "portable" ) == 0 || strcmp( transport, "msgx" ) == 0 )
+        return rocketnet_server_receive_buffer_request( max_clients );
+    if ( strcmp( transport, "gso" ) == 0 || strcmp( transport, "io_uring" ) == 0 ||
+         strcmp( transport, "iocp" ) == 0 || strcmp( transport, "rio" ) == 0 )
+        return rocketnet_server_receive_buffer_request( ROCKETNET_MAX_CLIENTS );
+    return 0;
+}
+
 #if ROCKETNET_DEV
 static thread_local int rocketnet_server_receive_buffer_warning_grant_override = 0;
 

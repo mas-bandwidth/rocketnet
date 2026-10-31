@@ -795,7 +795,15 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
 
     SOCKADDR_INET address;
     int address_bytes = 0;
-    int buffer_bytes = ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE;
+    // one update's inbound packets at the full client count: the rio create
+    // does not carry max_clients, so it sizes for ROCKETNET_MAX_CLIENTS
+    // (rocketnet_server_transport_receive_buffer_request; a request, and the
+    // stack charges only what it holds)
+
+    const int receive_buffer_bytes = rocketnet_server_transport_receive_buffer_request( "rio", ROCKETNET_MAX_CLIENTS );
+    int buffer_bytes = receive_buffer_bytes;
+    int granted_receive_bytes = 0;
+    int granted_length = sizeof( granted_receive_bytes );
     BOOL enabled = TRUE;
     DWORD v6_only = FALSE;
     RIO_NOTIFICATION_COMPLETION notification;
@@ -861,6 +869,9 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
         goto failed;
     if ( setsockopt( rio->socket, SOL_SOCKET, SO_RCVBUF, (const char *) &buffer_bytes, sizeof( buffer_bytes ) ) == SOCKET_ERROR )
         goto failed;
+    if ( getsockopt( rio->socket, SOL_SOCKET, SO_RCVBUF, (char *) &granted_receive_bytes, &granted_length ) == SOCKET_ERROR )
+        granted_receive_bytes = 0;
+    rocketnet_server_receive_buffer_granted( "rio", receive_buffer_bytes, granted_receive_bytes );
     buffer_bytes = ROCKETNET_SOCKET_SEND_BUFFER_SIZE;
     if ( setsockopt( rio->socket, SOL_SOCKET, SO_SNDBUF, (const char *) &buffer_bytes, sizeof( buffer_bytes ) ) == SOCKET_ERROR )
         goto failed;

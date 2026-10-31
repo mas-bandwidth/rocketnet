@@ -715,10 +715,9 @@ directions:
      the submission/completion mappings; these are not four independent
      server io_urings (`rocketnet_server_uring_mapped_bytes`).
    - **Kernel socket buffers (`SO_SNDBUF` / `SO_RCVBUF`)**: UDP send requests
-     are `1,000,000` bytes per socket. GSO receives request `1,000,000` bytes
-     per socket; portable receives scale with runtime `max_clients`, and
-     io_uring receives with `ROCKETNET_MAX_CLIENTS` (25,000,000 per socket at
-     the default ceiling). The kernel may grant less. XDP uses UMEM and its
+     are `1,000,000` bytes per socket. Portable receives scale with runtime
+     `max_clients`, and every GSO and io_uring queue socket with
+     `ROCKETNET_MAX_CLIENTS` (25,000,000 per socket at the default ceiling). The kernel may grant less. XDP uses UMEM and its
      rings instead of these UDP socket queues. See [Receive buffer sizing](MEMORY.md#receive-buffer-sizing).
 2. **Demand-paged physical RSS vs. reserved virtual arenas (why measured RSS at startup or low load can be much lower than `required_memory`)**:
    - `rocketnet_server_create` and `rocketnet_client_create` allocate the full
@@ -743,16 +742,16 @@ The recorded values below came from `./bin/transport_memory 1000 1416 0 <transpo
 and `./bin/transport_memory 1000 1415 1 <transport>` (`light` reassembly: `1`
 slot, `reassembly_bytes = 56,976,952`). The second positional value is ignored
 by this inventory tool; both rows plan the fixed
-`ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES` payload ceiling. These historical
-allocator totals and socket requests must not be reused as a current resource
-plan; in particular, portable and io_uring receive requests now use the
-client-count formula above. Run `--plan-only` and `--session-plan-only` with the
-intended configuration for current figures.
+`ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES` payload ceiling. The allocator totals
+are a recorded run and must not be reused as a current resource plan; the
+socket column gives the current requests, with every UDP receive request from
+the client-count formula above. Run `--plan-only` and `--session-plan-only` with
+the intended configuration for current figures.
 
 | Server transport | Transport `allocator_bytes` (`8` frag slots) | Transport `allocator_bytes` (`1` frag slot) | `umem_bytes` (page-aligned) | `os_bytes` (UMEM + stacks + mapped rings) | Worker threads (`stack_bytes`) | Sockets (`SO_SNDBUF` + `SO_RCVBUF` req) |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| `portable` | `874,407,209` (833.90 MiB) | `634,695,709` (605.29 MiB) | `0` | `16,777,216` (16.00 MiB) | `2` (`16,777,216`) | `1` (`1,000,000` + `1,000,000`) |
-| `gso` | `915,251,001` (872.85 MiB) | `675,539,501` (644.24 MiB) | `0` | `41,943,040` (40.00 MiB) | `5` (`41,943,040`) | `4` (`4,000,000` + `4,000,000`) |
-| `io_uring` | `1,890,829,407` (1.80 GiB) | `1,651,117,907` (1.54 GiB) | `0` | `262,144` (256.00 KiB) | `0` (`0`) | `4` (`4,000,000` + `4,000,000`) |
+| `portable` | `874,407,209` (833.90 MiB) | `634,695,709` (605.29 MiB) | `0` | `16,777,216` (16.00 MiB) | `2` (`16,777,216`) | `1` (`1,000,000` + `25,000,000`) |
+| `gso` | `915,251,001` (872.85 MiB) | `675,539,501` (644.24 MiB) | `0` | `41,943,040` (40.00 MiB) | `5` (`41,943,040`) | `4` (`4,000,000` + `100,000,000`) |
+| `io_uring` | `1,890,829,407` (1.80 GiB) | `1,651,117,907` (1.54 GiB) | `0` | `262,144` (256.00 KiB) | `0` (`0`) | `4` (`4,000,000` + `100,000,000`) |
 | `xdp` (7 queues) | `2,514,708,679` (2.34 GiB) | `2,274,997,179` (2.12 GiB) | `1,409,286,144` (1.31 GiB) | `1,468,006,400` (1.37 GiB) | `7` (`58,720,256`) | `7` (`2,293,760` XDP rings) |
 | `loopback` | `734,580,552` (700.55 MiB) | `494,869,052` (471.94 MiB) | `0` | `0` | `0` (`0`) | `0` |

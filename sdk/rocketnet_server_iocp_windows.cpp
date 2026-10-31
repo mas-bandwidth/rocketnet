@@ -1134,7 +1134,7 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
     // does not carry max_clients, so it sizes for ROCKETNET_MAX_CLIENTS (a
     // request; the stack charges only what it holds)
 
-    const int receive_buffer_bytes = rocketnet_server_receive_buffer_request( ROCKETNET_MAX_CLIENTS );
+    const int receive_buffer_bytes = rocketnet_server_transport_receive_buffer_request( "iocp", ROCKETNET_MAX_CLIENTS );
     int buffer_bytes = receive_buffer_bytes;
     int granted_receive_bytes = 0;
     int granted_length = sizeof( granted_receive_bytes );

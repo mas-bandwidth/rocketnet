@@ -10938,6 +10938,7 @@ extern void rocketnet_test_server_async_delivery_with_max_clients();
 // drop count and update cost remain measurements.
 extern void rocketnet_test_server_receive_buffer_sized_from_max_clients();
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+extern void rocketnet_test_server_gso_receive_buffer_request();
 extern void rocketnet_test_server_receive_1000_clients_256kbps_10hz();
 extern bool rocketnet_test_server_receive_low_tick_measurement_requested();
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
@@ -12850,6 +12851,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_server_async_delivery_with_max_clients", rocketnet_test_server_async_delivery_with_max_clients, NULL },
     { "test_server_receive_buffer_sized_from_max_clients", rocketnet_test_server_receive_buffer_sized_from_max_clients, NULL },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    { "test_server_gso_receive_buffer_request", rocketnet_test_server_gso_receive_buffer_request, NULL },
     { "test_server_receive_1000_clients_256kbps_10hz", rocketnet_test_server_receive_1000_clients_256kbps_10hz, rocketnet_test_server_receive_low_tick_measurement_requested },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS

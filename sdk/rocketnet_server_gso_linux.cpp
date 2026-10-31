@@ -545,14 +545,18 @@ static int rocketnet_server_gso_open_socket( const rocketnet_address_t * bind_ad
         }
     }
 
-    // request the configured buffer sizes, then read back what was granted.
-    // linux returns the doubled bookkeeping value from getsockopt, so halve
-    // it before comparing against the request. a small grant is not an
-    // error -- it is a fact about the host's sysctls, reported so nobody
-    // assumes.
+    // request the buffer sizes, then read back what was granted. linux
+    // returns the doubled bookkeeping value from getsockopt, so halve it
+    // before comparing against the request. a small grant is not an error --
+    // it is a fact about the host's sysctls, reported so nobody assumes.
+    //
+    // the receive request is one update's inbound packets at the full client
+    // count (rocketnet_server_transport_receive_buffer_request): the worker
+    // stops reading while its buffers wait for main, and SO_REUSEPORT may hash
+    // any share of the clients to this one socket
 
     int send_buffer_size = ROCKETNET_SOCKET_SEND_BUFFER_SIZE;
-    int receive_buffer_size = ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE;
+    int receive_buffer_size = rocketnet_server_transport_receive_buffer_request( "gso", ROCKETNET_MAX_CLIENTS );
 
     if ( setsockopt( fd, SOL_SOCKET, SO_SNDBUF, &send_buffer_size, sizeof( int ) ) != 0 )
     {
@@ -579,15 +583,13 @@ static int rocketnet_server_gso_open_socket( const rocketnet_address_t * bind_ad
 
     if ( queue_index == 0 )
     {
-        if ( granted_send < send_buffer_size || granted_receive < receive_buffer_size )
-        {
-            rocketnet_warn( "gso transport: socket buffers granted below request: send %d/%d receive %d/%d (raise net.core.wmem_max/rmem_max)",
-                            granted_send, send_buffer_size, granted_receive, receive_buffer_size );
-        }
-        else
-        {
+        if ( granted_send < send_buffer_size )
+            rocketnet_warn( "gso transport: socket send buffer granted %d of %d requested bytes (raise net.core.wmem_max)",
+                            granted_send, send_buffer_size );
+
+        rocketnet_server_receive_buffer_granted( "gso", receive_buffer_size, granted_receive );
+        if ( granted_send >= send_buffer_size && granted_receive >= receive_buffer_size )
             rocketnet_info( "gso transport: socket buffers granted: send %d receive %d", granted_send, granted_receive );
-        }
     }
 
     // bind. every queue binds the same address and port; the first queue may
