@@ -9,7 +9,6 @@
 RocketNet is a client/server UDP transport and message library with a C API.
 It connects clients using backend-issued tokens, authenticates and encrypts
 traffic, and delivers opaque messages with a choice of reliability modes.
-Your application owns serialization, simulation, and the frame loop.
 
 ## Quick start
 
