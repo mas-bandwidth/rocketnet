@@ -515,10 +515,10 @@ enum rocketnet_receipt_status_t
 
     ROCKETNET_RECEIPT_STATUS_NONE = 0,
 
-    /// The transport packet carrying the message was acknowledged. The
-    /// receiver's message layer may still have dropped the message (counted
-    /// MESSAGE_UNRELIABLE_DELIVERY_FULL or by the sequenced drop counters),
-    /// and its application may not have read it.
+    /// The connection layer acknowledged the send that carried the message.
+    /// The receiver's message layer may still have dropped the message
+    /// (counted MESSAGE_UNRELIABLE_DELIVERY_FULL or by the sequenced drop
+    /// counters), and its application may not have read it.
 
     ROCKETNET_RECEIPT_STATUS_ACKED = 1
 };
