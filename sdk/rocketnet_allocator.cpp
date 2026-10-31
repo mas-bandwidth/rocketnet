@@ -164,7 +164,11 @@ bool rn_region_layout( const rocketnet_message_config_t * config, rn_region_layo
         // config past that is refused whole
 
         if ( count > RN_HANDLE_INDEX )
+        {
+            rocketnet_error( "message config refused: the resend reserve of %" PRIu64 " bytes (send rate %d kbps for message_resend_delay_max_ms %d) needs %" PRIu64 " send store chunks of %u bytes, more than the %u a class holds",
+                             reserve, kbps, config->message_resend_delay_max_ms, count, chunk_bytes[c], RN_HANDLE_INDEX );
             return false;
+        }
 
         chunks[c] = (uint32_t) count;
         S += rn_align64( count * ( chunk_bytes[c] + sizeof( uint32_t ) ) );
@@ -175,7 +179,11 @@ bool rn_region_layout( const rocketnet_message_config_t * config, rn_region_layo
     if ( S < (uint64_t) config->send_message_buffer_bytes )
         S = (uint64_t) config->send_message_buffer_bytes;
     if ( Q >= UINT32_MAX || SR > UINT32_MAX )
+    {
+        rocketnet_error( "message config refused: the resend reserve of %" PRIu64 " bytes (send rate %d kbps for message_resend_delay_max_ms %d) needs %" PRIu64 " send descriptors (below %u) and %" PRIu64 " receive reserve bytes (at most %u)",
+                         reserve, kbps, config->message_resend_delay_max_ms, Q, UINT32_MAX, SR, UINT32_MAX );
         return false;
+    }
 
     const uint64_t P = (uint64_t) config->packets_in_flight;
     const uint64_t Du = (uint64_t) config->unreliable_messages_per_update;
