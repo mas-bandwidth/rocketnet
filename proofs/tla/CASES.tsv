@@ -497,3 +497,4 @@ MCRNPacketLeaseBrokenUsedOffByOne.cfg	MCRNPacketLease.tla	invariant	ProbeBound	c
 MCRNAllocatorInstall.cfg	MCRNAllocatorInstall.tla	pass	-	check	allocatorinstall	required	-
 MCRNAllocatorInstallBrokenNoSentinel.cfg	MCRNAllocatorInstall.tla	invariant	InstallOnlyWhenIdle	check	allocatorinstall	required	-
 MCRNAllocatorInstallBrokenNoSentinelRelease.cfg	MCRNAllocatorInstall.tla	invariant	ReleasedThroughItsPair	check	allocatorinstall	required	-
+MCRNAllocatorInstallBrokenRereadRelease.cfg	MCRNAllocatorInstall.tla	invariant	ReleasedThroughItsPair	check	allocatorinstall	required	-

@@ -9,19 +9,34 @@
    releases through the header and uncounts it. Install (under the
    lifecycle mutex, so one at a time) stores the sentinel, reads the count,
    and either puts the old pair back and refuses (LIVE_ALLOCATIONS) or
-   publishes the new pair. Every step is one sequentially consistent
-   operation, as the code's are.
+   publishes the new pair.
+
+   Orderings in the code: the call's count add, every pair load and every
+   pair store are seq_cst; the uncounts (a refused allocation and
+   rocketnet_free) are release; term reads the count with acquire. That is
+   enough: install's safety rests on the seq_cst add and pair load against
+   install's seq_cst sentinel store and count load, so either install sees
+   the call counted or the call sees the sentinel. A release uncount only
+   lowers the count once the call is over, and install's seq_cst load and
+   term's acquire load of that count see the allocator's release finished.
+   The model interleaves whole steps, which is the seq_cst half; it treats
+   the copy of the pair (two pointers) as one atomic step with its read, as
+   the code may because no pair it can read is written while it is counted;
+   and it does not model term.
 
    Pairs are named 1 and 2; Installing is 0. Install alternates the pair.
 
    Defect selects the reversed witness:
      "nosentinel"  install reads the count and then publishes, with no
                    sentinel:
-                   ReleasedThroughItsPair and InstallOnlyWhenIdle *)
+                   ReleasedThroughItsPair and InstallOnlyWhenIdle
+     "rereadrelease"  the header takes the release of the pair published
+                   when the allocator returns, not of the pair the call
+                   copied: ReleasedThroughItsPair *)
 EXTENDS Integers, FiniteSets
 CONSTANTS Calls, MaxInstalls, Defect
 ASSUME Calls \in Nat \ {0} /\ MaxInstalls \in Nat
-ASSUME Defect \subseteq {"nosentinel"}
+ASSUME Defect \subseteq {"nosentinel", "rereadrelease"}
 
 Installing == 0
 Callers == 1..Calls
@@ -67,7 +82,7 @@ CallRead(c) ==
 CallAllocate(c) ==
     /\ pc[c] = "read"
     /\ \/ /\ allocatedBy' = [allocatedBy EXCEPT ![c] = read[c]]
-          /\ releaseOf' = [releaseOf EXCEPT ![c] = read[c]]
+          /\ releaseOf' = [releaseOf EXCEPT ![c] = IF "rereadrelease" \in Defect THEN pair ELSE read[c]]
           /\ pc' = [pc EXCEPT ![c] = "live"] /\ UNCHANGED count
        \/ /\ count' = count - 1 /\ pc' = [pc EXCEPT ![c] = "idle"]
           /\ UNCHANGED <<allocatedBy, releaseOf>>
