@@ -59,35 +59,6 @@ refuse development credentials and the test packet filter. Follow the
 [production integration guide](docs/PRODUCTION.md); changing a build flag
 alone does not provide a production backend.
 
-## Preview status
-
-RocketNet is a preview. Read the [preview-5 release notes](docs/RELEASE-NOTES-v1.0.0-preview-5.md)
-for migration requirements and [qualification index](docs/TESTING.md) for the
-scope and gaps in the recorded evidence.
-
-- Main frame calls target less than 100 microseconds in Release builds.
-  Measured server calls exceed that budget at larger client counts;
-  1000-client performance is not qualified. Create may take longer.
-- Capacity and memory must be planned for the selected configuration.
-  Large configurations can spike in memory during shutdown; the 1000-client
-  example soak can run out of memory on Linux.
-- Disconnect and stop request shutdown asynchronously. Keep the object and
-  callback/allocator contexts alive, poll `rocketnet_client_disconnected` or
-  `rocketnet_server_stopped`, then destroy. See [lifecycle](docs/USAGE.md#connection-lifecycle).
-
-Recorded 1000-client runs are workload-specific evidence. They do not promise
-that any 1000-player game meets its latency or memory budget. The
-[capacity guide](docs/MEMORY.md#qualification-and-scale) explains their limits.
-
-## What the tests establish
-
-Unit tests, live transport tests, performance runs, and model checks answer
-different questions. In particular, a portable XDP host-shim test exercises
-filter or frame-codec logic without loading a kernel program, binding AF_XDP,
-using a NIC, or measuring throughput. Live XDP qualification must identify
-copy or zero-copy mode and the host/NIC configuration. Use the
-[testing guide](docs/TESTING.md) to find the evidence for the property you need.
-
 ## Repository layout
 
 | Directory | Contents |
