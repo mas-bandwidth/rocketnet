@@ -26,8 +26,14 @@ The rule it checks is the bounded N-buffer handoff
   - the `free` FIFO;
   - the `ready` FIFO.
 - **Socket.** `sock` is the receive buffer, oldest first. `Arrive` appends
-  the next ordinal. A read takes 1..`Cap` datagrams from the front, which is
-  `rocketnet_platform_socket_receive_packets` assigning `bank->count`.
+  the next ordinal. `ArriveChaff` appends chaff (ordinal 0): a datagram the
+  receive helper takes and discards, a zero-length datagram or a refused
+  source. A read is `rocketnet_platform_socket_receive_packets` assigning
+  `bank->count`: `WRead` starts it (an empty socket returns 0 at once),
+  `WReadOne` takes one datagram from the front, keeping it unless it is
+  chaff, and `WReadEnd` returns when the socket is empty, the bank holds `Cap`
+  or the read has taken `Cap` datagrams, its read budget (`BoundedRead`). A
+  read that kept nothing is an empty read.
 - **Worker.** `wpc` steps through `WTop` (quit test), `WPublishEmpty` or
   `WLock`/`WSwap` (the publish under the mutex), `WReset` (the new
   producer's count cleared after the release), and `WRead`. The two waits
@@ -65,6 +71,9 @@ from the timeout.
   - the ready banks in FIFO order, then the producer, then the socket.
 
   So nothing is lost, duplicated or reordered.
+- `ReadBudget`: a read takes at most `Cap` datagrams, kept or discarded, so
+  the worker is back at its quit test after a bounded read however much
+  chaff the socket holds.
 - `CursorInBank`, `MainLockIsBrief`, `TypeOK`.
 - `EveryDatagramDelivered` (liveness): every datagram that reaches the
   socket is delivered unless stop begins.
@@ -81,12 +90,13 @@ The fairness assumptions are:
 
 | Config | Expected | What it shows |
 |---|---|---|
-| `MCRNPortableRx.cfg` | pass | Three banks, reads of two, a budget of one (the consumer tail is retained across calls), four datagrams. All invariants and both liveness properties. |
+| `MCRNPortableRx.cfg` | pass | Three banks, reads of two, a budget of one (the consumer tail is retained across calls), four datagrams and two chaff, so a read can end on its budget with nothing kept. All invariants and both liveness properties. |
 | `MCRNPortableRxTwoBanks.cfg` | pass | The same with two banks, so every publish needs main to return its consumer first. |
 | `MCRNPortableRxBrokenOverwrite.cfg` | `ExactDelivery` | `HoldOnFull = FALSE` |
 | `MCRNPortableRxBrokenReturnEarly.cfg` | `ExactDelivery` | `ReturnWhenRead = FALSE` |
 | `MCRNPortableRxBrokenWakeFirst.cfg` | `StopCompletes` | `QuitBeforeWake = FALSE` |
 | `MCRNPortableRxBrokenNoWake.cfg` | `EveryDatagramDelivered` | `WakeOnReturn = FALSE` |
+| `MCRNPortableRxBrokenUnboundedRead.cfg` | `ReadBudget` | `BoundedRead = FALSE`, one datagram and three chaff |
 
 Each reversed witness was read against the code by hand (2026-10-22):
 
@@ -123,6 +133,22 @@ Each reversed witness was read against the code by hand (2026-10-22):
     bank only when the free FIFO was empty, which is the one case that needs
     the signal.
 
+- **UnboundedRead.**
+  - In the trace, datagram 1 and two chaff arrive. The worker's read keeps
+    datagram 1, then takes both chaff: chaff is not kept, so the bank still
+    has room and a read that counts only kept datagrams goes on to a third
+    datagram, past `Cap`, with quit untested. More chaff would hold it
+    there for as long as it kept arriving.
+  - In the code, every receive helper spends one unit of the call's read
+    budget (`max_packets`, here `rx_capacity`) on each read, kept or
+    skipped, before it reads (`reads_remaining` in
+    `rocketnet_platform_socket_receive_packet_into`, the recvmmsg and
+    recvmsg_x batches and the Windows per-packet loop), and returns when it
+    is spent.
+
 The unit cases `test_portable_rx_handoff` and `test_portable_rx_worker_steps`
 (`test_unit_portable_rx.cpp`) drive these exact transitions on one thread,
-with no socket read, no worker thread and no clock.
+with no socket read, no worker thread and no clock. `test_portable_rx_chaff_drain`
+steps one worker pass against a socket that answers only zero-length
+datagrams through the platform receive seam: the pass returns idle after
+`rx_capacity` reads, and the next pass sees quit.

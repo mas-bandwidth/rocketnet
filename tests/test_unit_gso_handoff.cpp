@@ -32,4 +32,14 @@ static void test_server_gso_send_refusals()
 
 REGISTER_UNIT_TEST( test_server_gso_send_refusals );
 
+// The receive drain's read budget: full batches of zero-length, refused-source
+// and undersized datagrams, far more than the budget, through the receive
+// seam; each drain returns after ROCKETNET_GSO_RECV_QUEUE_SIZE messages.
+static void test_server_gso_drain_budget()
+{
+    check( rocketnet_server_gso_test_drain_budget() );
+}
+
+REGISTER_UNIT_TEST( test_server_gso_drain_budget );
+
 #endif
