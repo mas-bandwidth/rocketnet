@@ -681,6 +681,49 @@ static void test_contract_receipts_null_out_is_misuse_in_every_state()
 
 REGISTER_UNIT_TEST( test_contract_receipts_null_out_is_misuse_in_every_state );
 
+// U6: a client index outside 0 .. max_clients - 1 is misuse in
+// rocketnet_server_set_send_kbps whatever the kbps, a negative one included,
+// running or stopped; a negative kbps for a valid index is a refused value,
+// not misuse
+
+static void test_contract_set_send_kbps_index_counted_first()
+{
+    rocketnet_quiet( 1 );
+
+    contract_identity_t identity;
+    contract_identity( &identity );
+
+    rocketnet_server_t * server = contract_server_create( &identity );
+
+    contract_capture_t capture;
+    contract_capture_begin( &capture );
+
+    for ( int stopped = 0; stopped < 2; stopped++ )
+    {
+        if ( stopped )
+            rocketnet_server_stop( server );
+
+        uint64_t before = rocketnet_api_misuse_count();
+        check( rocketnet_server_set_send_kbps( server, 99, 100 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+        check( rocketnet_api_misuse_count() == before + 1 );
+        check( rocketnet_server_set_send_kbps( server, 99, -1 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+        check( rocketnet_api_misuse_count() == before + 2 );
+        check( rocketnet_server_set_send_kbps( server, -1, -1 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+        check( rocketnet_api_misuse_count() == before + 3 );
+
+        before = rocketnet_api_misuse_count();
+        check( rocketnet_server_set_send_kbps( server, 0, -1 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+        check( rocketnet_server_set_send_kbps( server, 0, 100 ) == ROCKETNET_STATUS_OK );
+        check( rocketnet_api_misuse_count() == before );
+    }
+
+    contract_capture_end( &capture );
+
+    rn_test_server_stop_and_destroy( server );
+}
+
+REGISTER_UNIT_TEST( test_contract_set_send_kbps_index_counted_first );
+
 // U4: the AEAD integrity limit ends the attempt in a negative state. The
 // literal 2^36 forgeries are out of a unit case's reach, so the end is staged
 // as rocketnet_client_integrity_failure leaves it -- INTEGRITY_LIMIT_REACHED

@@ -3118,17 +3118,22 @@ enum rocketnet_status_t rocketnet_server_set_send_kbps( struct rocketnet_server_
     if ( !rocketnet_api_null_guard( server ) )
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
 
+    // an index outside 0 .. max_clients - 1 is misuse, counted before the rate is read
+
+    int slot;
+    const bool live = rn_server_slot( server, client_index, &slot );
+    if ( !live && ( client_index < 0 || client_index >= server->max_clients ) )
+        return ROCKETNET_STATUS_INVALID_ARGUMENT;
+
     int32_t resolved = 0;
     const enum rocketnet_status_t range = rn_send_kbps_runtime( "server", kbps, ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS, &resolved );
     if ( range != ROCKETNET_STATUS_OK )
         return range;
 
-    int slot;
-    if ( !rn_server_slot( server, client_index, &slot ) )
-    {
-        // an index outside 0 .. max_clients - 1 is misuse; a stopped server has nothing to set, a plain no-op
-        return ( client_index < 0 || client_index >= server->max_clients ) ? ROCKETNET_STATUS_INVALID_ARGUMENT : ROCKETNET_STATUS_OK;
-    }
+    // a stopped server has nothing to set, a plain no-op
+
+    if ( !live )
+        return ROCKETNET_STATUS_OK;
 
     // a slot with no CONNECTED client has no budget to set, a plain no-op:
     // the slot's reset starts each connection at the config's rate
