@@ -154,6 +154,7 @@ failed records unless they are explicit `bench` debt with actual exit 124.
 | `ackblockwrap` | 2 | The ack block reader across the wire sequence wrap (README-AckBlockWrap.md): the control, the empty block recognised on its wire fields at any highest sent (every invariant), and the reversed witness that makes the empty test on the reconstructed largest (`EmptyRecognised`) |
 | `loopbackhub` | 3 | The loopback hub's registration lifecycle (LoopbackHub.tla): the control and two reversed witnesses, destroy without the registered check (`NoEndpointOutlivesHub`) and no header check at use (`NoForeignUse`) |
 | `loopbackhublayout` | 3 | The loopback hub's queue layout and ring arithmetic at capacity 3 (LoopbackHubLayout.tla): the control and two reversed witnesses, the full test off by one and a counter wrap that is not a multiple of the capacity (both `RingIsQueue`) |
+| `rnresendfifolayout` | 4 | The resend FIFO at the code's layout, two intrusive sequences threaded through one array of W = 4 slots with packed flag bits (README-RNResendFifoLayout.md): the control and three reversed witnesses, push_tail without the self-tail step, insert_after without the tail update at the end and a class bit never cleared (all `ListsMatch`) |
 | `rniocprefqueue` | 5 | The IOCP server's MPMC reference queue as laid out (RNIocpRefQueue.tla): controls at two and four cells, and three reversed witnesses, a capacity one below a power of two (`NoOverwrite`), initialize off by one (`NoPhantom`) and counters wrapping at 2 * Cap, the ABA (`NoOverwrite`) |
 | `rniocpsendlease` | 2 | The IOCP send operations' generation tags (RNIocpSendLease.tla): the control and the reversed witness, a generation that wraps without the GenMax refusal (`StaleNeverNamesLease`) |
 | `rniocprunring` | 4 | The IOCP USO run-ticket ring (RNIocpRunRing.tla): controls at three and four slots, and two reversed witnesses, the free-slot check off by one at capacity (`NoOverwrite`) and tickets that wrap (`TakeOnlyLive`) |
@@ -170,6 +171,8 @@ failed records unless they are explicit `bench` debt with actual exit 124.
 
 The case plan in `CASES.tsv` covers every root configuration: 519 cases
 in 77 groups, 503 required and 16 bench cases whose `debt` column names
+The case plan in `CASES.tsv` covers every root configuration: 506 cases
+in 73 groups, 490 required and 16 bench cases whose `debt` column names
 an explicit over-budget reason. Other experiments described in the model
 READMEs remain historical; this plan does not claim fresh measurements
 for uncommitted variants or change their model semantics.

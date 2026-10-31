@@ -128,6 +128,7 @@ static bool rn_resend_fifo_index_ok( rn_window_ack_t * ack, uint32_t index )
 }
 
 // Returns false when a link was out of range and nothing was changed.
+// proofs/tla/RNResendFifoLayout.tla Unlink: the fields, heads, tails, flag bits and count at W = 4.
 static bool rn_resend_fifo_unlink( rn_window_ack_t * ack, uint32_t slot )
 {
     rn_resend_link_t * fifo = ack->region->resend_fifo;
@@ -243,6 +244,7 @@ static void rn_resend_fifo_insert_after( rn_window_ack_t * ack, uint32_t after, 
     rn_resend_fifo_stamp( ack, slot );
 }
 
+// proofs/tla/RNResendFifoLayout.tla PushTail: a slot that is already the tail links after its prev.
 static void rn_resend_fifo_push_tail( rn_window_ack_t * ack, uint32_t slot )
 {
     const bool chunk = rn_window_ack_slot_is_chunk( ack, slot );
@@ -252,11 +254,13 @@ static void rn_resend_fifo_push_tail( rn_window_ack_t * ack, uint32_t slot )
     rn_resend_fifo_insert_after( ack, tail, slot );
 }
 
+// proofs/tla/RNResendFifoLayout.tla PushHead
 static void rn_resend_fifo_push_head( rn_window_ack_t * ack, uint32_t slot )
 {
     rn_resend_fifo_insert_after( ack, RN_RESEND_NONE, slot );
 }
 
+// proofs/tla/RNResendFifoLayout.tla Park
 void rn_window_ack_park( rn_window_ack_t * ack, uint32_t after, uint32_t slot_index )
 {
     rocketnet_assert( ack );
