@@ -126,7 +126,8 @@ failed records unless they are explicit `bench` debt with actual exit 124.
 | `link` | 11 | All historical Link configurations |
 | `clientconnection` | 21 | All historical connection configurations, including nine debt cases |
 | `replaywindow` | 4 | Control, mid-scale bench control, the long-skip `WindowIsTruth` witness and the open-before-gate `NoOpenBeforeConnect` witness |
-| `rnsendstore` | 1 | Existing committed control |
+| `rnsendstore` | 2 | One store class, abstractly (README-RNSendStore.md): the control and the reversed witness, the double-free guard off (`NoLeak`) |
+| `rnsendstorelayout` | 6 | The send store and the descriptor free stack at the code's layout, three chunks and four descriptors (README-RNSendStoreLayout.md): the control and five reversed witnesses, the free test without the fresh guard (`NeverTouchPastFresh`), a free that does not lower the cursor (`RefuseOnlyWhenNoneFree`), a chunk generation and a descriptor generation that wrap to 0 (both `HeldGenerationPositive`) and a take that clears a live free-stack slot (`NoTakeWhileLive`) |
 | `rnupdateclock` | 2 | The update clock of the client transport, the server transport and the message object (README-RNUpdateClock.md): the passing control and the reversed stall witness |
 | `rnring` | 5 | Existing committed control and four invariant witnesses |
 | `rnsendspans` | 3 | Send-span ring control and two invariant witnesses |
@@ -162,10 +163,8 @@ failed records unless they are explicit `bench` debt with actual exit 124.
 | `rnpacketlease` | 13 | The packet lease table (README-RNPacketLease.md): four passing cases (the code's rule without `retired`, with `retired` validated, `insert` wait-free, and `resolve` completing with one thread scheduled) and nine failing: six reversed witnesses (no compare-and-swap on insert or on take, a read of an entry being written, no epoch bump, an unlimited epoch, a used limit one too high), the wait for a paused writer that `resolve` had before it skipped writing entries (`ResolveCompletes`), and two findings against `retired` (`NoRacyRead`, `NoWrongSuccess`) |
 | `rnpacketlease` | 13 | The packet lease table (README-RNPacketLease.md): four passing cases (the code's rule without `retired`, with `retired` validated, `insert` wait-free, and `resolve` completing with one thread scheduled) and nine failing: six reversed witnesses (no compare-and-swap on insert or on take, a read of an entry being written, no epoch bump, an unlimited epoch, a used limit one too high), the wait for a paused writer that `resolve` had before it skipped writing entries (`ResolveCompletes`), and `retired` without the reread of the state (`NoRacyRead`, `NoWrongSuccess`) |
 
-The case plan in `CASES.tsv` covers every root configuration: 459 cases
-in 66 groups, 443 required and 16 bench cases whose `debt` column names
-The case plan in `CASES.tsv` covers every root configuration: 474 cases
-in 70 groups, 458 required and 16 bench cases whose `debt` column names
+The case plan in `CASES.tsv` covers every root configuration: 502 cases
+in 72 groups, 486 required and 16 bench cases whose `debt` column names
 an explicit over-budget reason. Other experiments described in the model
 READMEs remain historical; this plan does not claim fresh measurements
 for uncommitted variants or change their model semantics.
