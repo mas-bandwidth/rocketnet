@@ -171,8 +171,8 @@ static inline int rocketnet_uring_recvmsg_parse(
     if ( out.flags & MSG_TRUNC )
         return ROCKETNET_URING_RECV_PAYLOAD_TRUNCATED;
 
-    int payload_left = buffer_bytes - (int) sizeof( out ) - msg_namelen - msg_controllen;
-    if ( (int) out.payloadlen > payload_left )
+    const int payload_left = buffer_bytes - (int) sizeof( out ) - msg_namelen - msg_controllen;
+    if ( out.payloadlen > (uint32_t) payload_left )
         return ROCKETNET_URING_RECV_PAYLOAD_TRUNCATED;
 
     *name = buffer + sizeof( out );
