@@ -27,7 +27,9 @@
 // with at most twice capacity probes. Free slots are a dense array stack; the
 // claim table also keeps a generation-tagged chronological array, so its
 // common free-or-expired capacity query reads only the stack or oldest claim.
-// Removing an interior claim may shift at most capacity tagged entries. The
+// Releasing a claim is O(1): its ticket clears and its chronological entry
+// becomes a tombstone. A record into a full chronological array compacts it,
+// copying at most capacity live entries. The
 // one-live-connection rule needs no table of its own: the
 // claim and the history refuse a token from a second address before the
 // signature verify, a connected address is refused at the top of the request

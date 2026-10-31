@@ -425,7 +425,7 @@ void rocketnet_test_read_write()
 
     rocketnet_check( r - buffer == w - buffer );
 
-    // exact bytes on the wire, anchored to STANDARD.md Appendix A: the
+    // exact bytes on the wire, anchored to standard/TRANSPORT.md ta: the
     // associated data vectors begin with the version then the protocol id,
     // little-endian. these must match the published hex exactly.
 
@@ -1007,7 +1007,7 @@ void rocketnet_test_random_bytes()
 
 // Crypto expectations: call every libsodium primitive the standard uses and
 // pin its behavior, before any protocol code exists to depend on it. The
-// vector data mirrors STANDARD.md Appendix A byte for byte.
+// vector data mirrors standard/TRANSPORT.md ta byte for byte.
 
 static void rocketnet_test_sodium_ready()
 {
@@ -3378,8 +3378,7 @@ void rocketnet_test_request_path_state_refusals()
     struct rocketnet_counters_t before;
 
     // the first valid request claims the token for its address and is
-    // answered with a challenge (STANDARD.md, Processing Connection
-    // Requests; proofs/tla/ReceiveOrder.tla, Claim). the claim lives until the
+    // answered with a challenge (standard/TRANSPORT.md t12; proofs/tla/ReceiveOrder.tla, Claim). the claim lives until the
     // handshake deadline, so the same token from another address is refused
     // before any signature, seal or keypair work.
 
@@ -4431,7 +4430,7 @@ void rocketnet_test_client_slots()
 
 void rocketnet_test_client_slots_free_list()
 {
-    // STANDARD.md's free-list rule (1598-1615): every lookup a server
+    // standard/RATIONALE.md's free-list rule: every lookup a server
     // performs per connection is constant time in the number of client
     // slots, and "a free slot is found from a free list, not a search --
     // a stack of unused indices, popped on connect and pushed on
@@ -6025,7 +6024,7 @@ void rocketnet_test_client_terminal_states_wipe_secrets()
     // Every automatic terminal transition -- connect token expired, a timed
     // out waiting state, connection denied, and the server's disconnect --
     // must release the attempt's secrets: the derived session keys, the
-    // token's keys and the ephemeral secret. STANDARD.md requires both sides
+    // token's keys and the ephemeral secret. standard/TRANSPORT.md t2.2 requires both sides
     // to zero their own ephemeral secret once it is no longer needed for a
     // handshake in progress (1095-1098) and, on a denied, to "release all
     // connection state" (2425-2426); proofs/tla/ClientConnection.tla holds the
@@ -6373,7 +6372,7 @@ void rocketnet_test_integrity_limit()
 
         // a response of any size but the wire size is WRONG_SIZE before the
         // mapping lookup, so it never reaches the open and never counts
-        // against the mapping's integrity (STANDARD.md: a connection response
+        // against the mapping's integrity (standard/TRANSPORT.md t8: a connection response
         // is 50 bytes, and "a packet below its type's floor is WRONG_SIZE,
         // never a later refusal": an exact-size check runs before the
         // lookup). two such: one too short to carry a tag, one that would
@@ -12422,7 +12421,7 @@ static void rocketnet_test_pass_cookie_gate_from( struct rocketnet_test_server_t
 }
 
 // The first address to present a valid request owns its token until the
-// handshake deadline (STANDARD.md, Processing Connection Requests;
+// handshake deadline (standard/TRANSPORT.md t12;
 // proofs/tla/ReceiveOrder.tla, Claim). An on-path attacker copies the real client's
 // cookie-bearing request off the in-memory wire, earns a cookie at its own
 // address, and replays the request from there ahead of the real one. The

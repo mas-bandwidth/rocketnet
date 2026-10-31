@@ -765,7 +765,7 @@ uint32_t rn_endpoint_in_place_finish( struct rn_endpoint_t * endpoint, uint8_t *
             record.ordering = ordering & ROCKETNET_MESSAGE_U24_MASK;
         }
         else
-            record.code = ROCKETNET_MESSAGE_CODE_UNRELIABLE;   // 5 travels as code 0 (STANDARD.md _Record_)
+            record.code = ROCKETNET_MESSAGE_CODE_UNRELIABLE;   // 5 travels as code 0 (standard/MESSAGES.md m3)
 
         record.data = payload + header;
         record.bytes = bytes;

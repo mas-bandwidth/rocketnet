@@ -1316,13 +1316,12 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
 
     if ( packet_type == ROCKETNET_CONNECTION_RESPONSE_PACKET )
     {
-        if ( opened_bytes != ROCKETNET_RESPONSE_PADDING_BYTES )
-        {
-            rocketnet_spam( "server ignored connection response. wrong size" );
-            counters[type_counters->did_not_open]++;
-            rocketnet_server_integrity_failure( server, mapping_index, mapping );
-            return ROCKETNET_SERVER_PROCESS_IGNORED;
-        }
+        // the wire size check above pins the response at
+        // ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES, so an opened response
+        // always holds exactly the padding
+        static_assert( ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES == ROCKETNET_PREFILTER_BYTES + ROCKETNET_SEQUENCE_BYTES + ROCKETNET_PACKET_TAG_BYTES + ROCKETNET_RESPONSE_PADDING_BYTES,
+                       "a response's plaintext is its padding" );
+        rocketnet_assert( opened_bytes == ROCKETNET_RESPONSE_PADDING_BYTES );
 
         for ( int i = 0; i < ROCKETNET_RESPONSE_PADDING_BYTES; i++ )
         {
@@ -1772,15 +1771,13 @@ void rocketnet_server_protocol_update( struct rocketnet_server_protocol_t * serv
 
         if ( control->timeout_seconds > 0 && current_time >= control->last_receive_time + control->timeout_seconds )
         {
-            int client_index = control->client_index;
+            // an established mapping always holds its slot: established is
+            // set only beside client_index, and a reset removes the mapping
+            const int client_index = control->client_index;
+            rocketnet_assert( client_index != -1 );
             rocketnet_debug( "client %d timed out", client_index );
 
-            if ( client_index != -1 )
-            {
-                rocketnet_server_connection_reset( server, client_index, ROCKETNET_DISCONNECT_REASON_TIMED_OUT );
-            }
-            else
-                rocketnet_encryption_map_remove_current( server->encryption_map, iterator );
+            rocketnet_server_connection_reset( server, client_index, ROCKETNET_DISCONNECT_REASON_TIMED_OUT );
             counters[ROCKETNET_COUNTER_MAPPING_IDLE_TIMEOUT]++;
             counters[ROCKETNET_COUNTER_CLIENT_TIMED_OUT]++;
         }

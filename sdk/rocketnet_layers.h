@@ -22,9 +22,10 @@ extern "C"
 #endif // #ifdef __cplusplus
 
 /// Config revision sizes (docs/ABI-EVOLUTION.md): the end of a revision's last
-/// field rounded up to that revision's alignment. The public configs have one
-/// revision each, the whole struct; a config_bytes the library does not know
-/// is refused.
+/// field rounded up to that revision's alignment. A public config_bytes below
+/// the current size is accepted when it ends where one of the struct's fields
+/// ends: that prefix is read and the fields past it take their defaults. A
+/// size inside a field, or below the config_bytes field, is refused.
 #define ROCKETNET_CONFIG_REVISION_BYTES( end, align ) ( ( ( end ) + ( align ) - 1 ) / ( align ) * ( align ) )
 #define ROCKETNET_CLIENT_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_client_config_t, reliable_message_timeout_ms ) + sizeof( int ), sizeof( void * ) )
 #define ROCKETNET_SERVER_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_config_t, reliable_message_timeout_ms ) + sizeof( int ), sizeof( void * ) )
@@ -261,13 +262,12 @@ void rocketnet_free( void * context, void * p );
 // The transport field: an ORDERED CANDIDATE LIST, comma separated, tried left
 // to right at create -- first grant wins, and a list exhausted by REFUSAL
 // fails loudly. "auto" (the default, also the empty string) expands to
-// this platform's recommended order for the endpoint: linux server
-// xdp,gso,portable; macOS msgx,portable; everywhere else portable
-// (clients: portable everywhere, plus msgx on macOS). A one-element list
-// is a pin: that transport or loud failure, never a silent fall. A name in
-// the known transport set (xdp, gso, msgx, portable) but absent on this
-// platform -- or not applicable to this endpoint, like xdp for a client --
-// is IGNORED with one soft log line, so one fleet-wide config line deploys
+// this platform's recommended order for the endpoint, ranked by
+// sdk/rocketnet_drivers.inc (the table in sdk/rocketnet_config.h). A
+// one-element list is a pin: that transport or loud failure, never a silent
+// fall. A name in the known transport set (rocketnet_drivers.inc) but absent
+// on this platform -- or not applicable to this endpoint, like xdp for a
+// client -- is IGNORED with one soft log line, so one fleet-wide config line deploys
 // unmodified to heterogeneous boxes; a list whose EVERY name is ignored
 // names no transport for this endpoint at all and falls to the endpoint's own
 // auto order, loudly, rather than bricking an endpoint the line was not
