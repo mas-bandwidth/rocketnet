@@ -597,7 +597,7 @@ struct rocketnet_client_race_t
     rocketnet_address_t server_address[2];                  // the server of each family, from the token
     std::atomic<int> committed;                             // -1 while both are in flight, else the family kept
     bool closed;                                            // the losing family's socket is closed (the reading thread)
-    std::atomic<uint64_t> closed_send_failures;             // the losing socket's send failures, kept at its close
+    std::atomic<uint64_t> closed_send_failures;             // the losing socket's send failures, kept at the commit and again at its close
     void * context;
 };
 
@@ -617,7 +617,9 @@ static uint64_t rocketnet_client_race_family_send_failures( const rocketnet_clie
 }
 
 // the reading thread closes the losing family's handles once it sees the
-// commit (proofs/tla/RNClientRace.tla ReaderStep); its memory stays until destroy
+// commit (proofs/tla/RNClientRace.tla ReaderStep); its memory stays until destroy.
+// The losing family's send failures are stored again at the close, at least
+// the count the commit kept, since a family's count never goes down.
 
 static int rocketnet_client_race_kept( rocketnet_client_race_t * race )
 {
@@ -785,6 +787,10 @@ static void rocketnet_client_race_wake( void * instance )
             race->family[i].operations->wake( race->family[i].instance );
 }
 
+// proofs/tla/RNClientRace.tla CallerRead: SEND_FAILED read on the caller's
+// thread, both families while they are in flight, then the kept family and
+// the losing family's count kept at the commit and the close
+
 static uint64_t rocketnet_client_race_send_failures( void * instance )
 {
     rocketnet_client_race_t * race = (rocketnet_client_race_t *) instance;
@@ -799,11 +805,20 @@ static uint64_t rocketnet_client_race_send_failures( void * instance )
 
 // the commit, on the caller's thread (proofs/tla/RNClientRace.tla CallerCommit): the
 // attempt keeps the family that answered first, and its server is the
-// protocol's server from now on
+// protocol's server from now on. A Filling ring a deferred hand-off bound to
+// the losing server leaves for the kept one (PostCommitSlotsKept). The losing
+// family's send failures so far are kept before the commit is published,
+// while that family is still open, so SEND_FAILED never dips between the
+// commit and the reading thread's close, which stores them again with any
+// that arrived since (SendFailedMonotonic).
 
 static void rocketnet_client_race_commit( rocketnet_client_transport_t * transport, rocketnet_client_race_t * race, int family )
 {
     transport->protocol.server_address = race->server_address[family];
+
+    rocketnet_client_io_rebind_held( &transport->client_io, &race->server_address[1 - family], &race->server_address[family] );
+
+    race->closed_send_failures.store( rocketnet_client_race_family_send_failures( &race->family[1 - family] ), std::memory_order_relaxed );
 
     race->committed.store( family, std::memory_order_release );
 
@@ -2771,6 +2786,9 @@ static void rocketnet_client_process_packet( rocketnet_client_transport_t * clie
 // hand-off it empties the reopened ring send_fill now names.
 // proofs/tla/RNClientIo.tla WaitDone: the reversed witness's blocked main resumes once
 // the other ring is Sent; the fixed main never waits for the I/O thread.
+// proofs/tla/RNClientRace.tla CallerHandOff and CallerHandOffLate: during the family
+// race the ring leaves for the destination its first attempt bound, through
+// the race's send_batch, or stays bound to it after a LATE.
 
 static void rocketnet_client_transport_io_hand_off( rocketnet_client_transport_t * client_transport, const rocketnet_address_t * destination = NULL )
 {

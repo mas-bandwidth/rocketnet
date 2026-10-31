@@ -22,8 +22,9 @@
 // whole of it, so one buffer holds one message), with its own control area for
 // the UDP_GRO cmsg, and rocketnet_coalesce_split cuts it at the stride the
 // kernel reports into the I/O thread's receive slots, in arrival order. A
-// receive buffer with no room for every segment drops the rest, counted in
-// gro_packets_dropped. A truncated control area or a UDP_GRO cmsg too short
+// receive buffer with no room for every segment loses none: the rest stay in
+// the coalesce buffer and the next call delivers them first, before it reads
+// the socket again (proofs/tla/RNClientGroCarry.tla). A truncated control area or a UDP_GRO cmsg too short
 // to hold its int is one fault (gro_cmsg_faults) and the message is one
 // datagram, as the gso server reads it (sdk/rocketnet_server_gso_linux.cpp).
 //
@@ -132,7 +133,9 @@ struct rocketnet_client_gso_t
     uint64_t packets_received;
     uint64_t gro_batches;                               // received messages that held more than one datagram
     uint64_t gro_cmsg_faults;                           // truncated control areas and short UDP_GRO cmsgs
-    uint64_t gro_packets_dropped;                       // segments past the room the receive buffer had
+    int carry_segment;                                  // the next segment of the message in the coalesce buffer to deliver
+    int carry_segments;                                 // that message's segment count: carry_segment == carry_segments when none is held
+    struct rocketnet_address_t carry_source;            // that message's source
     struct mmsghdr receive_message;
     struct iovec receive_iovec;
     struct sockaddr_storage receive_name;
@@ -167,10 +170,12 @@ int rocketnet_client_gso_gro_segment_bytes( const struct msghdr * header, int me
 // Receives into at most max_packets slots of packet_stride bytes from
 // packet_data, with each source in from[i] and each true size in
 // packet_bytes[i] (a datagram past packet_stride keeps its prefix): one
-// recvmmsg message per call into the coalesce buffer, split at its stride, in
-// arrival order. A message is read only while its segments can fit, but the
-// first, which always is: its segments past max_packets are dropped and
-// counted in gro_packets_dropped. Returns the slots filled.
+// recvmmsg message at a time into the coalesce buffer, split at its stride, in
+// arrival order. The segments of the last message that did not fit are
+// delivered first, and the socket is read only once none is held; past the
+// first slot, a message is read only while all of its segments can fit. A
+// message with more segments than max_packets fills the slots and keeps the
+// rest for the next call. Returns the slots filled.
 int rocketnet_client_gso_receive_batch( struct rocketnet_client_gso_t * gso, struct rocketnet_address_t * from, uint8_t * packet_data, int packet_stride, int * packet_bytes, int max_packets );
 
 // The gso client transport operations, the client column of the gso row.
