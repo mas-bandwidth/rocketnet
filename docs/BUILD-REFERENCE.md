@@ -18,9 +18,9 @@ compatibility, separately from the wire version; see [ABI compatibility](BUILDIN
 
 Deploying a server on Linux: [docs/LINUX.md](LINUX.md) covers the build, the production `xdp -> gso -> io_uring -> portable` transport ladder and pinning, what `gso`, `io_uring` and `xdp` need from the host, socket errors and ICMP, the fd and memlock limits for 1000 clients, containers, and how to verify a host. Both builds offer portable as the final Linux fallback.
 
-rocketnet builds on Linux and macOS with CMake 3.20 or later, and on Windows with
-CMake 4.2 or later (the Windows block below says why). On Linux the build is
-tested with gcc 13.3.0 and 15.2.0 and with clang 18.1.3 and 21.1.8, in Debug and
+RocketNet requires CMake 3.20 or later. The Windows instructions below use
+Visual Studio 18, whose generator requires CMake 4.2 or later. Recorded Linux
+checks used gcc 13.3.0 and 15.2.0 and clang 18.1.3 and 21.1.8, in Debug and
 Release: with each compiler the static and shared libraries, `./bin/test` and
 `./bin/functional` build, and the unit suite passes. Functional results are
 recorded per compiler and configuration: the matrix also exposes outstanding
@@ -310,11 +310,10 @@ for one command without changing `xcode-select`:
 `CMakeLists.txt` sets the output directories to `bin/` with no
 configuration in the path, and a multi-config generator such as Xcode appends
 the configuration to them, so its executables and libraries land in
-`bin/Release/`. The unit suite opens the development library by its absolute
-build path (`CMakeLists.txt`), and the release library by
-`bin/librocketnet.dylib`, then by the bare name
-(`sdk/rocketnet_tests.cpp`), which the executable's run path
-resolves in `bin/Release/` (`CMakeLists.txt`).
+`bin/Release/`. The functional shared-library token cases
+(`tests/functional/shared_library_tokens.cpp`) open the development and
+production libraries through their generated absolute build paths. These
+OS-loader checks are functional tests, not unit tests.
 
 Windows has no Makefile path; CMake is driven directly, and the binaries land
 under `bin\<config>\`. It needs, installed once:
@@ -407,6 +406,32 @@ out: the library carries no XDP code and links neither library, and a
 server pinned to `xdp` refuses start with `ROCKETNET_STATUS_TRANSPORT_NOT_BUILT`. The generated header lives in each build tree, so concurrent
 configurations do not rewrite the checkout. macOS and Windows do not build the
 object.
+
+## Building the API reference
+
+`make docs` generates the public API reference at
+`build/docs/html/index.html`. It needs CMake, a C/C++ toolchain, Python 3 with
+PyYAML, and the MrDocs version pinned in `tools/docs/mrdocs.sh`. On Linux and
+macOS that script can download the pinned MrDocs archive with `curl`, verify
+its SHA-256 digest, and unpack it with `tar`. Set `MRDOCS` to a matching local
+binary to use an existing installation.
+
+Install Python dependencies in a local virtual environment when PyYAML is not
+already available to `python3`:
+
+```sh
+python3 -m venv build/docs-venv
+. build/docs-venv/bin/activate
+python3 -m pip install PyYAML
+make docs
+make docs-undocumented
+```
+
+The script uses `python3` from `PATH`, so keep the virtual environment active
+for both commands. `ModuleNotFoundError: No module named 'yaml'` means that
+interpreter lacks PyYAML. The HTML build and the undocumented-symbol check
+are separate from the compiled documentation examples and link checks in
+[the documentation workflow](../.github/workflows/docs.yml).
 
 ## Floating point: rocketnet builds with -ffp-contract=off
 

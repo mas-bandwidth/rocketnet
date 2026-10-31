@@ -17,10 +17,12 @@ what a budget does when it is exceeded.
    `rocketnet_client_stats` and prints
    `rocketnet_client_stats_t.messages_dropped_over_budget`.
 4. Queue a burst of reliable messages of the same size. Reliable messages wait
-   for budget and are never dropped, and the example prints how many arrived.
+   for budget while the connection remains alive, and the example prints how many arrived.
 
 The budget governs the wire, never the queue: reliable messages wait for
-budget and arrive, unreliable ones over budget are dropped and counted.
+budget; unreliable ones over budget are dropped and counted. The example
+verifies delivery before shutdown. Reliability does not survive a disconnect,
+and a reliable queue that outgrows its message storage can end the connection.
 
 An environment variable can override a budget at create:
 `ROCKETNET_CLIENT_SEND_KBPS` for the client,
@@ -48,21 +50,8 @@ change prints status `0`, the numeric value of `ROCKETNET_STATUS_OK`. The drop
 count is run-dependent but must be nonzero, while the reliable arrival line
 must report every queued reliable message.
 
-## Public calls it uses
+<a id="public-calls-it-uses"></a>
 
-- `rocketnet_init`, `rocketnet_term`
-- `rocketnet_server_default_config`, `rocketnet_server_create`,
-  `rocketnet_server_start`, `rocketnet_server_destroy`,
-  `rocketnet_server_update`, `rocketnet_server_send_packets`,
-  `rocketnet_server_ipv4_address`,
-  `rocketnet_server_public_key`, `rocketnet_server_receive_messages`
-- `rocketnet_client_default_config`, `rocketnet_client_create`,
-  `rocketnet_client_connect`, `rocketnet_client_destroy`,
-  `rocketnet_client_update`, `rocketnet_client_send_packets`,
-  `rocketnet_client_state`, `rocketnet_client_index`,
-  `rocketnet_client_can_send_message`, `rocketnet_client_start_message`, `rocketnet_client_finish_message`,
-  `rocketnet_client_receive_messages`, `rocketnet_client_set_send_kbps`,
-  `rocketnet_client_stats`
-- `rocketnet_create_dev_connect_token` and
-  `ROCKETNET_DEV_BACKEND_PUBLIC_KEY` (development library only)
-- `rocketnet_status_name`, `rocketnet_time`, `rocketnet_sleep`
+Source: [`examples/budgets.c`](../../examples/budgets.c). See the
+[integration guide](../USAGE.md) for shared lifecycle, threading, and message
+ownership rules.

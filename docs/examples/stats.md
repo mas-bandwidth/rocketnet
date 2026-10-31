@@ -4,14 +4,15 @@ How a game's debug overlay reads connection quality: a server and a client in
 one process over the in-memory `loopback` transport. The client connects,
 exchanges a little traffic, then prints the client's and the server's state and
 counters. Each stats call fills a caller-owned struct. Client quality stats are
-computed synchronously; the server per-client call copies its latest published
-ACK-derived quality values without waiting for their background calculation.
+computed synchronously; the server per-client call copies ACK-derived quality
+values maintained as packets and acknowledgements are processed. There is no
+background statistics worker.
 
 ## What it shows
 
 1. Initialize the library and create a server on the `loopback` transport,
    with `ROCKETNET_DEV_BACKEND_PUBLIC_KEY` copied into the config. Create
-   generates the server's ephemeral sealing keypair.
+   generates a sealing keypair for the server object's lifetime.
 2. After start, read the server public key and bound address, create an opaque
    base64 development token with `rocketnet_create_dev_connect_token`, and
    connect a client with that string.
@@ -34,7 +35,8 @@ ACK-derived quality values without waiting for their background calculation.
 
 Each frame runs the calls in the order a game does: update, drain the one
 receive queue, simulate, queue, then send last. Sending last is what makes this
-frame's messages leave this frame instead of waiting a frame.
+frame's queued work available to the transport without an avoidable frame of
+delay; it does not promise same-frame network delivery.
 
 ## Run it
 
@@ -82,31 +84,8 @@ statistics pass and runs no statistics thread. A reset clears the slot's values
 with the rest of its connection state (sdk/rocketnet_ack.cpp,
 proofs/tla/RNServerStats.tla).
 
-The final API changes the client's previous receive-direction, one-second loss
-estimate and smoothed arrival-gap jitter to these shared definitions. Existing
-dashboard directions and alert thresholds must be reviewed; historical values
-are not directly comparable. Field names, units, struct layouts and the wire
-format are unchanged.
+<a id="public-calls-it-uses"></a>
 
-## Public calls it uses
-
-- `rocketnet_init`, `rocketnet_term`
-- `rocketnet_server_default_config`, `rocketnet_server_create`,
-  `rocketnet_server_start`, `rocketnet_server_destroy`,
-  `rocketnet_server_update`, `rocketnet_server_send_packets`,
-  `rocketnet_server_ipv4_address`,
-  `rocketnet_server_public_key`, `rocketnet_server_client_connected`,
-  `rocketnet_server_disconnect_reason`, `rocketnet_server_can_send_message`, `rocketnet_server_start_message`,
-  `rocketnet_server_finish_message`, `rocketnet_server_receive_messages`,
-  `rocketnet_server_stats`, `rocketnet_server_client_stats`
-- `rocketnet_client_default_config`, `rocketnet_client_create`,
-  `rocketnet_client_connect`, `rocketnet_client_destroy`,
-  `rocketnet_client_update`, `rocketnet_client_send_packets`,
-  `rocketnet_client_disconnect`, `rocketnet_client_state`,
-  `rocketnet_client_state_name`, `rocketnet_client_index`,
-  `rocketnet_client_can_send_message`, `rocketnet_client_start_message`, `rocketnet_client_finish_message`,
-  `rocketnet_client_receive_messages`, `rocketnet_client_stats`
-- `rocketnet_create_dev_connect_token` and
-  `ROCKETNET_DEV_BACKEND_PUBLIC_KEY` (development library only)
-- `rocketnet_status_name`, `rocketnet_time`, `rocketnet_sleep`,
-  `rocketnet_disconnect_reason_name`
+Source: [`examples/stats.c`](../../examples/stats.c). See the
+[integration guide](../USAGE.md) for shared lifecycle, threading, and message
+ownership rules.

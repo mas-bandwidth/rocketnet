@@ -2442,7 +2442,9 @@ ROCKETNET_EXPORT void rocketnet_client_abort_message( struct rocketnet_client_t 
 /// room, so a true answer holds until the next of either. Room returns as the
 /// server acknowledges messages.
 ///
-/// Changes no state, counts nothing and allocates nothing. Constant time.
+/// For valid arguments, changes no state, counts nothing and allocates nothing.
+/// The room check may scan the configured message-store chunks. It does not
+/// reserve wire bandwidth or guarantee immediate transmission.
 /// A false answer may be pessimistic for a small unreliable message: start
 /// can write it straight into a transport frame without message memory.
 ///

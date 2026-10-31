@@ -2167,9 +2167,10 @@ a row marked server or client applies only at that end.
 16. For session types, a receiver MUST check the opened size less the ack
     block against the type. A mismatch is `WRONG_OPENED_SIZE`.
 17. Before applying the ack block, a client MUST validate the index and
-    slot count in a keep-alive. The slot count MUST be from 1 through the
-    maximum client slot count, and the index MUST be less than the slot count.
-    An invalid value is `CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE`.
+    slot count in a keep-alive. The slot count MUST be at least 1 and the
+    index MUST be less than the slot count; the client has no opinion about
+    the server's slot count. An invalid value is
+    `CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE`.
 18. After the session checks pass, a receiver MUST apply the ack block's
     delivery information and refresh the connection's receive time, then
     perform the type-specific processing. A type-specific refusal increments
@@ -2214,7 +2215,6 @@ types, and the response padding are:
 | connection ack minimum wire size | `33` | bytes | size | [t8 Packet formats](#t8) |
 | connection payload fragment minimum wire size | `40` | bytes | size | [t8 Packet formats](#t8) |
 | connection response padding | `24` | bytes | size | [t8 Packet formats](#t8) |
-| maximum client slot count | `1000` | slots | limit | [t3 Constants and registries](#t3) |
 
 A session packet's total wire size is its minimum or larger, up to the
 receive ceiling, which equals the maximum packet size. After the ack block, a
@@ -2999,7 +2999,7 @@ The type data of a keep-alive is:
 | Name | Offset | Size | Type | Meaning | Valid values |
 |---|---|---|---|---|---|
 | client index | 0 | 4 | u32 | the slot the server assigned this connection | 0 to one less than the client slot count |
-| client slot count | 4 | 4 | u32 | the server's configured number of client slots | 1 to the `maximum client slot count` row of [t3 Constants and registries](#t3) |
+| client slot count | 4 | 4 | u32 | the server's configured number of client slots | at least 1 |
 
 A keep-alive's type data is eight bytes and follows the ack block
 ([t15 Acknowledgement](#t15)). A keep-alive carries no application bytes.
@@ -4130,7 +4130,7 @@ f8 12 00 00 00 a4 58 a7 b3 00 00 00 98 21 4f fa
 
 An implementation MUST provide the defences the table below names, each by the
 mechanism its row names. A change to any mechanism MUST be re-checked against
-the property the row it carries.
+the property its row names.
 
 | Property | Mechanism |
 |---|---|
@@ -4195,8 +4195,9 @@ input: each row's packet type (u8) and wire size (u16), in the rows' order
 ### t19.2. Development keys
 
 The published development key is a fixed backend signing key. Its public half
-is `ROCKETNET_DEV_BACKEND_PUBLIC_KEY`. It is public: anyone who holds it can
-forge a token a server accepts. It exists so a first wiring works without a
+is `ROCKETNET_DEV_BACKEND_PUBLIC_KEY`. Its signing secret is also published for
+development use, so anyone can mint a token a server using that key accepts.
+It exists so a first wiring works without a
 backend, and it MUST NOT be load-bearing in production. A server still
 generates its own keypair, and a development token still needs a nonzero
 protocol id.

@@ -2,7 +2,10 @@
 
 A game sends state updates unreliably because a lost update is superseded by the next frame's update, never retransmitted.
 Delta compression still needs to know the newest update the client actually received so the next frame can encode against that baseline.
-Sending with `ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT` gives each update one receipt (`ROCKETNET_RECEIPT_STATUS_ACKED` or `ROCKETNET_RECEIPT_STATUS_LOSS`) without retransmitting lost ones.
+Use `ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT` to receive ACKED or LOSS
+outcomes for messages that fit one packet. Larger sends promote to reliable
+delivery. The receipt ring is bounded, and sends still in flight when a
+connection ends get no terminal outcome; see [receipts](../CHANNELS.md#receipts-and-stats).
 
 ## What it shows
 
@@ -34,25 +37,13 @@ receipts resolved: 20/20 (acked 14, loss 6)
 PASS
 ```
 
-Each `update <n> (serial <s>): ACKED|LOSS` line reports the single outcome for that send. Acked updates advance a delta-compression baseline; lost updates are skipped without retransmission. `PASS` means every send received one receipt with both `ACKED` and `LOSS` outcomes observed.
+Each `update <n> (serial <s>): ACKED|LOSS` line reports the single outcome for that send. A game can use its newest acknowledged update as a delta baseline, provided
+the receiver retains that state. ACKED is a transport acknowledgement, not
+an application commit, and LOSS can also mean a missing return acknowledgement.
+Lost updates in this example are skipped without retransmission. `PASS` means every send received one receipt with both `ACKED` and `LOSS` outcomes observed.
 
-## Public calls it uses
+<a id="public-calls-it-uses"></a>
 
-- `rocketnet_init`, `rocketnet_term`
-- `rocketnet_server_default_config`, `rocketnet_server_create`,
-  `rocketnet_server_start`, `rocketnet_server_destroy`,
-  `rocketnet_server_update`, `rocketnet_server_send_packets`,
-  `rocketnet_server_ipv4_address`,
-  `rocketnet_server_public_key`, `rocketnet_server_client_connected`,
-  `rocketnet_server_can_send_message`, `rocketnet_server_start_message`, `rocketnet_server_finish_message`,
-  `rocketnet_server_receive_messages`
-- `rocketnet_client_default_config`, `rocketnet_client_create`,
-  `rocketnet_client_connect`, `rocketnet_client_destroy`,
-  `rocketnet_client_update`, `rocketnet_client_send_packets`,
-  `rocketnet_client_state`, `rocketnet_client_index`,
-  `rocketnet_client_start_message`, `rocketnet_client_finish_message`,
-  `rocketnet_client_receive_messages`, `rocketnet_client_receipts`,
-  `rocketnet_client_network_simulator`
-- `rocketnet_create_dev_connect_token` and
-  `ROCKETNET_DEV_BACKEND_PUBLIC_KEY` (development library only)
-- `rocketnet_status_name`, `rocketnet_time`, `rocketnet_sleep`
+Source: [`examples/ack_receipts.c`](../../examples/ack_receipts.c). See the
+[integration guide](../USAGE.md) for shared lifecycle, threading, and message
+ownership rules.

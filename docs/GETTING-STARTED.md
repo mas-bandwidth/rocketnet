@@ -4,13 +4,20 @@ The first goal is a received message. Then you will run two processes over UDP
 and learn the contracts your game loop must keep. All commands run from the
 repository root. The examples use development credentials on your own machine.
 
+If you do not have the source yet:
+
+```sh
+git clone https://github.com/mas-bandwidth/rocketnet.git
+cd rocketnet
+```
+
 ## 1. Build and link
 
 Install the [platform prerequisites](BUILDING.md#prerequisites). On Linux
 or macOS:
 
 ```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DROCKETNET_DEV=ON
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DROCKETNET_DEV=ON -DROCKETNET_BUILD_EXAMPLES=ON
 cmake --build build --target example_hello example_client_server_server example_client_server_client --parallel 4
 ./bin/example_hello
 ```
@@ -18,7 +25,7 @@ cmake --build build --target example_hello example_client_server_server example_
 On Windows, in PowerShell or cmd.exe with the MSVC toolchain installed:
 
 ```powershell
-cmake -S . -B build -A x64 -DROCKETNET_DEV=ON
+cmake -S . -B build -A x64 -DROCKETNET_DEV=ON -DROCKETNET_BUILD_EXAMPLES=ON
 cmake --build build --config Release --target example_hello example_client_server_server example_client_server_client --parallel 4
 .\bin\Release\example_hello.exe
 ```
@@ -48,7 +55,8 @@ In one terminal, run:
 ./bin/example_client_server_server
 ```
 
-Keep it running and start the client in the next step promptly. The server
+Start the client in the next step within 30 seconds; this example has a bounded
+run and exits if no client arrives. The server
 binds UDP port 40000 and writes `client_server.keys` in its working directory.
 This file contains its public address and public key, not its secret key.
 The client must run from the same directory. On Windows use
@@ -196,7 +204,7 @@ deployment. Read [qualification](TESTING.md) before choosing a deployment size.
 | --- | --- |
 | Binary missing | Build the named target; Windows and other multi-config generators add `Release` to the output path. |
 | Server cannot bind | Stop a previous instance or run the server with `--port 41234`; the client reads the new port from the key file. |
-| Client cannot read keys or handshake times out | Run it from the server's directory while that server is alive. Recreate the key file by starting a fresh server. |
+| Client cannot read keys or handshake times out | Run it from the server's directory within its 30-second run. Restart the server to recreate the key file, then start the client again. |
 | Configuration unexpectedly changes or refuses | Inspect inherited `ROCKETNET_*` variables; documented environment values override config fields. See [Environment](ENVIRONMENT.md). |
 | A call fails | Keep the status from that call and inspect its log. Do not report the earlier create status for a failed connect. See [Troubleshooting](ERRORS-AND-LOGGING.md). |
 

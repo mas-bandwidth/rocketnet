@@ -14,4 +14,3 @@ connection disconnect minimum wire size	ROCKETNET_CONNECTION_DISCONNECT_MIN_WIRE
 connection ack minimum wire size	ROCKETNET_CONNECTION_ACK_MIN_WIRE_BYTES	33
 connection payload fragment minimum wire size	ROCKETNET_CONNECTION_FRAGMENT_MIN_WIRE_BYTES	40
 connection response padding	ROCKETNET_RESPONSE_PADDING_BYTES	24
-maximum client slot count	ROCKETNET_MAX_CLIENTS	1000

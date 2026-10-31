@@ -1052,11 +1052,13 @@ static int rocketnet_client_open_session( struct rocketnet_client_protocol_t * c
 }
 
 // The keep-alive's eight type bytes name the client index and the slot
-// count. Checked here, as the open's type-data validator, so a keep-alive
-// whose index or count is invalid is refused before the open commits:
-// per the reading order it then keeps only its replay-window mark and does
-// not refresh the idle timeout or feed the trackers. The refusal keeps its
-// existing counter.
+// count: the client is in slot x of y. The slot count is at least 1 and the
+// index is below it; the client has no opinion about the server's slot
+// count, which the server alone decides. Checked here, as the open's
+// type-data validator, so a keep-alive whose index is invalid is refused
+// before the open commits: per the reading order it then keeps only its
+// replay-window mark and does not refresh the idle timeout or feed the
+// trackers. The refusal keeps its existing counter.
 
 static int rocketnet_client_validate_keep_alive( struct rocketnet_client_protocol_t * client,
                                                  const uint8_t * type_data,
@@ -1068,7 +1070,7 @@ static int rocketnet_client_validate_keep_alive( struct rocketnet_client_protoco
     int client_index = (int) rocketnet_read_uint32( &p );
     int max_clients = (int) rocketnet_read_uint32( &p );
 
-    if ( client_index < 0 || client_index >= max_clients || max_clients > ROCKETNET_MAX_CLIENTS )
+    if ( client_index < 0 || client_index >= max_clients )
     {
         rocketnet_spam( "client rejected keep-alive. invalid index" );
 

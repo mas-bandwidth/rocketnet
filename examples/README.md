@@ -1,12 +1,14 @@
 # RocketNet examples
 
 A feature-focused series: one plain C99 file per example, each showing one
-feature with the least code that shows it, using only `rocketnet.h` and the
-static development library. Each page lives in `docs/examples/`.
+feature through `rocketnet.h`, with shared example helpers for development
+keys and shutdown. Most link the static development library; the backend pair
+links the selected library mode and can exercise production tokens. Each
+feature page lives in `docs/examples/`.
 
 | Example | Shows | Page |
 | --- | --- | --- |
-| [hello](hello.c) | init, a server and a client over `loopback`, one reliable-ordered message, disconnect, reconnect with a second token | [hello.md](../docs/examples/hello.md) |
+| [hello](hello.c) | init, a server and a client over `loopback`, one reliable-ordered message, disconnect, connect a second client with a fresh token | [hello.md](../docs/examples/hello.md) |
 | [ack_receipts](ack_receipts.c) | message delivery receipts and notifications for unreliable and reliable message sends | [ack_receipts.md](../docs/examples/ack_receipts.md) |
 | [big_messages](big_messages.c) | sending payloads larger than a single packet via multi-fragment message reassembly | [big_messages.md](../docs/examples/big_messages.md) |
 | [backend_server](backend_server.c) / [backend_client](backend_client.c) | a game backend sending a client to a server with a connect token: backends in [Go and C#](backend/) mint it over HTTP, the client connects with it | [backend/README.md](backend/README.md) |
@@ -27,8 +29,10 @@ its port from `--port <n>`, else the environment variable
 `ROCKETNET_EXAMPLE_PORT`, else the default `40000`. The client reads the
 server's address from the key file the server writes. The backend pair runs with a backend between the
 two, which mints the client's token; see [backend/README.md](backend/README.md).
-Every other example is one program, binds `127.0.0.1:0` so
-the operating system picks a free port, and runs alone.
+The other examples run as one program. Most use the in-memory `loopback`
+transport, whose hub assigns a virtual port for `:0`; UDP examples ask the
+operating system for an ephemeral port. `config_env` only creates stopped
+servers. `transports` tests real UDP, and `soak` can select a transport.
 
 Build everything as usual; `examples/CMakeLists.txt` builds each
 `examples/*.c` as `example_<name>` into `bin/` (`bin\Release\` on Windows).
@@ -40,14 +44,15 @@ python3 tools/run_examples.py --build build
 ```
 
 `tools/check_examples.py` refuses an include that is not `rocketnet.h`,
-`dev_keys.h` or an allowed C standard header, and a `rocketnet_` name that `sdk/rocketnet.h` does not
+`dev_keys.h`, `shutdown.h`, or an allowed C standard header, and a `rocketnet_` name that `sdk/rocketnet.h` does not
 declare. `tools/run_examples.py` runs every example under a 120-second
 timeout and requires `PASS` as the last output line. It runs each pair in its
 own temporary working directory on a free UDP port it picks and passes through
 `ROCKETNET_EXAMPLE_PORT`, retrying on a new port at most three times when the
 server cannot bind, so two runs at once on one machine do not collide. Examples are the
-functional tier: they use the real transport and the wall clock, so they are
-not part of `./bin/test`. The backend pair runs under its own script, once per
+functional tier: they use wall-clock scheduling with loopback or real UDP, so
+they are not part of `./bin/test`. The runner limits its default soak to 64
+clients; a larger soak is a separate workload qualification exercise. The backend pair runs under its own script, once per
 backend:
 
 ```sh

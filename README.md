@@ -1,9 +1,14 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/rocketnet-logo-dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="assets/rocketnet-logo-light.png">
+  <img alt="RocketNet" src="assets/rocketnet-logo-light.png" width="640">
+</picture>
+
 # RocketNet
 
 RocketNet is a client/server UDP transport and message library with a C API.
 It connects clients using backend-issued tokens, authenticates and encrypts
 traffic, and delivers opaque messages with a choice of reliability modes.
-Your application owns serialization, simulation, and the frame loop.
 
 ## Quick start
 
@@ -15,14 +20,15 @@ With the [platform prerequisites](docs/BUILDING.md#prerequisites) installed, fro
 the repository root on Linux or macOS:
 
 ```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DROCKETNET_DEV=ON
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DROCKETNET_DEV=ON -DROCKETNET_BUILD_EXAMPLES=ON
 cmake --build build --target example_hello --parallel 4
 ./bin/example_hello
 ```
 
 On Windows, use the [Windows build commands](docs/BUILDING.md#windows).
 The example prints `server received: hello from the client`, then `PASS`
-after reconnect and cleanup checks. It needs no socket or backend service.
+after a second client connection and cleanup checks. It needs no socket or
+backend service.
 
 <a id="documentation"></a>
 
@@ -94,3 +100,9 @@ copy or zero-copy mode and the host/NIC configuration. Use the
 | `standard/` | Normative protocol documents, rationale, and checked constant pins |
 | `docs/` | Integration guides, engineering notes, decisions, and recorded evidence |
 | `tools/` | Developer utilities and repository checks |
+
+## License and credits
+
+RocketNet is licensed under the [GNU Affero General Public License v3.0](LICENSE).
+See [Credits](docs/CREDITS.md) for its creator and sponsor, and
+[Security](docs/SECURITY.md) for reporting a vulnerability.

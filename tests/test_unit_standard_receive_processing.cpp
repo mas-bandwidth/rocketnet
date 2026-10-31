@@ -377,6 +377,24 @@ static int standard_receive_processing_generate( const char * id, uint8_t * out,
                               (int) ( p - plaintext ), standard_server_to_client_key, out );
     }
 
+    if ( strcmp( id, "t10.keep-alive-count-above-build-maximum" ) == 0 )
+    {
+        uint8_t * p = plaintext + standard_fresh_block( plaintext );
+        rocketnet_write_uint32( &p, 0 );
+        rocketnet_write_uint32( &p, ROCKETNET_MAX_CLIENTS + 1 );
+        return standard_seal( ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, 1000, plaintext,
+                              (int) ( p - plaintext ), standard_server_to_client_key, out );
+    }
+
+    if ( strcmp( id, "t10.keep-alive-count-largest-build" ) == 0 )
+    {
+        uint8_t * p = plaintext + standard_fresh_block( plaintext );
+        rocketnet_write_uint32( &p, 32767 );
+        rocketnet_write_uint32( &p, 32768 );
+        return standard_seal( ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, 1000, plaintext,
+                              (int) ( p - plaintext ), standard_server_to_client_key, out );
+    }
+
     if ( strcmp( id, "t10.wrong-opened-size" ) == 0 )
     {
         const int plaintext_bytes = standard_wrong_opened_size_plaintext( plaintext );
@@ -664,6 +682,38 @@ static void standard_receive_processing_counters()
         standard_client_process( &client, packet, bytes );
         rocketnet_unit_check( client.counters.values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE] == 1 );
         rocketnet_unit_check( client.client.integrity_failures == 0 );
+
+        standard_client_teardown( &client );
+    }
+
+    // the client has no opinion about the server's slot count: a keep-alive
+    // naming a count above this build's ROCKETNET_MAX_CLIENTS, or the largest
+    // buildable count, is accepted and connects the client to slot x of y
+    {
+        static struct standard_client_t client;
+        standard_client_setup( &client, ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE );
+
+        int bytes = standard_receive_processing_generate( "t10.keep-alive-count-above-build-maximum", packet, (int) sizeof( packet ) );
+        standard_client_process( &client, packet, bytes );
+        rocketnet_unit_check( client.counters.values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE] == 0 );
+        rocketnet_unit_check( client.counters.values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_ACCEPTED] == 1 );
+        rocketnet_unit_check( client.client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+        rocketnet_unit_check( client.client.client_index == 0 );
+        rocketnet_unit_check( client.client.max_clients == ROCKETNET_MAX_CLIENTS + 1 );
+
+        standard_client_teardown( &client );
+    }
+    {
+        static struct standard_client_t client;
+        standard_client_setup( &client, ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE );
+
+        int bytes = standard_receive_processing_generate( "t10.keep-alive-count-largest-build", packet, (int) sizeof( packet ) );
+        standard_client_process( &client, packet, bytes );
+        rocketnet_unit_check( client.counters.values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE] == 0 );
+        rocketnet_unit_check( client.counters.values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_ACCEPTED] == 1 );
+        rocketnet_unit_check( client.client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+        rocketnet_unit_check( client.client.client_index == 32767 );
+        rocketnet_unit_check( client.client.max_clients == 32768 );
 
         standard_client_teardown( &client );
     }

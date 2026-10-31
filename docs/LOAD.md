@@ -26,7 +26,8 @@ with the fixed-rate option below. For the stock 1,000-client acceptance, run
 the `default` profile so the result covers SDK-default sizing. The `light`
 profile is a separate, additional bounded-memory workload; it cannot substitute
 for the default-profile acceptance. The current `bin/load` harness is capped
-at `ROCKETNET_MAX_CLIENTS` (1,000) and records no ladder results (below). The
+at the build's `ROCKETNET_MAX_CLIENTS` (1,000 by default) and records no
+fixed-rate ladder results (below). The
 recorded 1,000-client results are the LAN proof cells in
 [`runs/lan-1000-proof.md`](runs/lan-1000-proof.md)
 ([Linux gso and io_uring](runs/lan-1000-proof-linux.md),
@@ -38,7 +39,9 @@ and the 60-second non-timing correctness rungs in
 they apply only under their exact workload and deployment assumptions.
 Above 1,000 players, callers research, stabilize, and qualify their own
 configuration, memory budget, and host/NIC deployment; no arbitrary client
-count or validated-above-1000 guarantee is available.
+count or general qualification above 1000 is available. The older
+[10000-client build record](QUALIFICATION-max-clients-10000.md) covers its own
+bounded light-profile loopback workload only.
 
 For every rung, require each client's maximum wire rate to stay strictly below
 100 kbps in both directions, and compare aggregate traffic in each direction
@@ -281,6 +284,11 @@ call timings are not a performance or throughput claim.
 
 ## Choosing configuration for concrete game workloads
 
+Exact byte counts below are recorded planning examples from earlier builds.
+They illustrate configuration costs, but are not asserted as current outputs.
+Recompute with the exact deployed library; source changes can alter headers,
+worker banks and lifecycle peaks without changing the public configuration.
+
 Neither `rocketnet_*_default_config` nor `rocketnet_*_light_config` is a
 universal preset suitable for every game:
 
@@ -331,8 +339,10 @@ requirements to each configuration group:
   (1.39 GiB) with `transport = "gso"`.
 - **Compile-time `ROCKETNET_MAX_CLIENTS`**: Fixed-size arrays inside endpoint
   and transport headers are dimensioned by `ROCKETNET_MAX_CLIENTS` (default
-  `1000`). If a build never hosts more than `N` clients, compiling with
-  `-DROCKETNET_MAX_CLIENTS=N` shrinks those static header tables as well.
+  `1000`, supported build range `512 .. 32768`). A build can lower the ceiling
+  to 512 to shrink those fixed tables; it cannot set the build ceiling to 16
+  or 64. Use runtime `max_clients` for smaller matches and rebuild every
+  consumer with the same compile-time ceiling.
 - **Scale qualification boundary**: The recorded 1,000-client results in
   [`runs/lan-1000-proof.md`](runs/lan-1000-proof.md) and
   [`QUALIFICATION-v1.0.0-preview-2.md`](QUALIFICATION-v1.0.0-preview-2.md)
@@ -475,10 +485,17 @@ requirements to each configuration group:
     `ROCKETNET_XDP_UMEM_FRAMES = 49152`. The UMEM is 192 MiB raw /
     `201,326,592` bytes per queue. These constants are not runtime tuning
     controls; change only the supported queue/CPU configuration below.
-  - `num_xdp_queues` (`0` selects the transport default, `1 .. 1024`) and
-    `num_os_cpus` (`0` selects the transport default, `1 .. 256`) control the planned AF_XDP queue
-    count and per-CPU BPF map sizing. Total planned AF_XDP memory is checked
-    against compile-time `-DROCKETNET_XDP_MEMORY_MIB` (default `4096` MiB).
+  - `num_xdp_queues` (`0` selects the transport default, public range
+    `1 .. 1024`) selects the planned AF_XDP queue count. `num_os_cpus`
+    (`0` selects the transport default, `1 .. 256`) selects the first worker
+    CPU: worker `q` runs on `num_os_cpus + q`. Total planned AF_XDP memory is
+    checked against compile-time `-DROCKETNET_XDP_MEMORY_MIB` (default `4096` MiB).
+  - GSO and io_uring also use `num_xdp_queues`, with a maximum of 32, but
+    their send staging is shared: 4096 slots in the active GSO producer bank
+    and 2048 slots in io_uring's send array. Extra receive queues do not
+    multiply these capacities. Account for the current
+    [staged-send fairness limitation](TRANSPORT-INTERNALS.md#current-staging-and-drain-limitations)
+    when qualifying large populations or bursts.
 - **Runtime memory budgets (`ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES`, `ROCKETNET_SERVER_MEMORY_BUDGET_BYTES`)**:
   - Set `ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES` or
     `ROCKETNET_SERVER_MEMORY_BUDGET_BYTES` to limit transport candidates. This
@@ -497,7 +514,8 @@ requirements to each configuration group:
 
 ### Platform, build, and allocator assumptions
 
-All deterministic byte figures below were generated on **Linux x86-64**
+The byte figures below are retained as historical planner output, not freshly
+regenerated results for the current head. They were generated on **Linux x86-64**
 (64-bit LP64, `sizeof(void*) = 8`, 4,096-byte page size) with the default
 compile-time constants:
 
@@ -588,8 +606,8 @@ match:
 | Client profile | `transport` setting | Per-connection message region (`conn_bytes`) | `ROCKETNET_DEV=1` required bytes | `ROCKETNET_DEV=0` required bytes | Notes |
 | --- | --- | ---: | ---: | ---: | --- |
 | `default` | `NULL` / `"auto"` or `"gso"` | `7,852,032` (7.49 MiB) | `29,992,800` (28.60 MiB) | `29,206,996` (27.85 MiB) | Client `send_kbps = 1000`; auto ladder `gso -> portable`, sized for `gso` (`20,022,665` dev transport bytes) |
-| `default` | `"portable"` | `7,852,032` (7.49 MiB) | `29,842,576` (28.46 MiB) | `29,056,772` (27.71 MiB) | Single UDP socket, 2 worker threads |
-| `default` | `"loopback"` | `7,852,032` (7.49 MiB) | `32,864,566` (31.34 MiB) | `32,078,762` (30.59 MiB) | In-process queue rings (`4096` packets each way) |
+| `default` | `"portable"` | `7,852,032` (7.49 MiB) | `29,842,576` (28.46 MiB) | `29,056,772` (27.71 MiB) | Single UDP socket, one client I/O worker |
+| `default` | `"loopback"` | `7,852,032` (7.49 MiB) | `32,864,566` (31.34 MiB) | `32,078,762` (30.59 MiB) | In-process hub; current client queues hold 2048 packets and the server queue scales with hub capacity |
 | `light` | `NULL` / `"auto"` or `"gso"` | `947,776` (0.90 MiB) | `22,895,109` (21.83 MiB) | `22,110,441` (21.09 MiB) | `max_message_bytes = 1415`, `max_fragmented_messages = 1`, `send_kbps = 256` |
 | `light` | `"portable"` | `947,776` (0.90 MiB) | `22,746,021` (21.69 MiB) | `21,960,217` (20.94 MiB) | Pinned portable UDP |
 | `light` | `"loopback"` | `947,776` (0.90 MiB) | `25,768,011` (24.57 MiB) | `24,982,207` (23.82 MiB) | In-process loopback |
@@ -692,12 +710,18 @@ directions:
      queues). UMEM is counted against `ROCKETNET_SERVER_MEMORY_BUDGET_BYTES`
      and `-DROCKETNET_XDP_MEMORY_MIB`, but is not allocated from
      `rocketnet_allocator_t`.
-   - **`io_uring` kernel-mapped submission/completion/buffer rings**: `262,144`
-     bytes across the 4 server rings (`mapped_ring_bytes`).
-   - **Kernel socket buffers (`SO_SNDBUF` / `SO_RCVBUF`)**: Each UDP socket
-     requests `1,000,000` bytes send and `1,000,000` bytes receive buffer in
-     the kernel (`1` socket on `portable`, `4` sockets on `gso` and `io_uring`,
-     `7` sockets on default `xdp`).
+   - **`io_uring` mapped rings**: One server-wide submission/completion ring
+     plus one provided-buffer ring per receive queue. The planner's
+     `mapped_ring_bytes` counts only the provided-buffer rings, rounded to
+     host pages (262,144 bytes for four queues with 4 KiB pages). It excludes
+     the submission/completion mappings; these are not four independent
+     server io_urings (`rocketnet_server_uring_mapped_bytes`).
+   - **Kernel socket buffers (`SO_SNDBUF` / `SO_RCVBUF`)**: UDP send requests
+     are `1,000,000` bytes per socket. GSO receives request `1,000,000` bytes
+     per socket; portable receives scale with runtime `max_clients`, and
+     io_uring receives with `ROCKETNET_MAX_CLIENTS` (25,000,000 per socket at
+     the default ceiling). The kernel may grant less. XDP uses UMEM and its
+     rings instead of these UDP socket queues. See [Receive buffer sizing](MEMORY.md#receive-buffer-sizing).
 2. **Demand-paged physical RSS vs. reserved virtual arenas (why measured RSS at startup or low load can be much lower than `required_memory`)**:
    - `rocketnet_server_create` and `rocketnet_client_create` allocate the full
      connection and transport arenas upfront so no runtime `malloc` occurs on
@@ -716,12 +740,16 @@ directions:
 
 #### Table 4: Server transport-layer allocator and OS breakdown at `max_clients = 1000` (`./bin/transport_memory`, Linux x86-64, `ROCKETNET_DEV=1`)
 
-Values below come directly from `./bin/transport_memory 1000 1416 0 <transport>`
+The recorded values below came from `./bin/transport_memory 1000 1416 0 <transport>`
 (which uses the default `8` fragment reassembly slots, `reassembly_bytes = 296,688,452`)
 and `./bin/transport_memory 1000 1415 1 <transport>` (`light` reassembly: `1`
 slot, `reassembly_bytes = 56,976,952`). The second positional value is ignored
 by this inventory tool; both rows plan the fixed
-`ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES` payload ceiling:
+`ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES` payload ceiling. These historical
+allocator totals and socket requests must not be reused as a current resource
+plan; in particular, portable and io_uring receive requests now use the
+client-count formula above. Run `--plan-only` and `--session-plan-only` with the
+intended configuration for current figures.
 
 | Server transport | Transport `allocator_bytes` (`8` frag slots) | Transport `allocator_bytes` (`1` frag slot) | `umem_bytes` (page-aligned) | `os_bytes` (UMEM + stacks + mapped rings) | Worker threads (`stack_bytes`) | Sockets (`SO_SNDBUF` + `SO_RCVBUF` req) |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
