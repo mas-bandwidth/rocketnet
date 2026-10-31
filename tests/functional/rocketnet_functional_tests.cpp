@@ -12035,7 +12035,16 @@ void rocketnet_test_sodium_misuse_logs_before_abort()
         dup2( pipe_fds[1], 1 );
         dup2( pipe_fds[1], 2 );
         signal( SIGABRT, SIG_DFL );
+
+        // the default sink at ERROR, and the library initialized: this
+        // process's own init, or the child's now
+
+        rocketnet_quiet( false );
+        rocketnet_log_function( NULL, NULL );
         rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+        const enum rocketnet_status_t init = rocketnet_init( NULL, NULL, NULL );
+        if ( init != ROCKETNET_STATUS_OK && init != ROCKETNET_STATUS_ALREADY_INITIALIZED )
+            _exit( 2 );
         rocketnet_sodium_misuse_for_test();
         _exit( 0 );     // sodium_misuse returned: the abort never came
     }
