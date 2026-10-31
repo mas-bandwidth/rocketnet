@@ -1711,13 +1711,15 @@ uint64_t rocketnet_message_print_connection_sizing( const struct rocketnet_messa
 
 // ---- client ----
 
-// the bytes a caller block for a client object needs; 0 for a refused config
+// the bytes a caller block for a client object needs at the send budget create
+// is given; 0 for a refused config or budget
 /** @brief Measure caller-provided memory for one message client.
  * @param[in] message_config Message settings, or NULL for defaults.
- * @return Required bytes for one client object, or 0 for a refused config or arithmetic overflow.
- * @details This query is allocation-free. The create call requires at least this many bytes in caller-provided memory aligned to 64 bytes; the caller retains ownership of that region.
+ * @param[in] send_kbps The send budget the create is given: 0 takes client_send_kbps from the message config, a positive value overrides it, as rocketnet_message_client_create reads it.
+ * @return Required bytes for one client object, or 0 for a refused config, a budget above ROCKETNET_SEND_BUDGET_MAX_KBPS or arithmetic overflow.
+ * @details This query is allocation-free. A create with the same message config and send_kbps requires at least this many bytes in caller-provided memory aligned to 64 bytes, and refuses a shorter block before its transport opens; the caller retains ownership of that region.
  */
-uint64_t rocketnet_message_client_required_memory( const struct rocketnet_message_config_t * message_config );
+uint64_t rocketnet_message_client_required_memory( const struct rocketnet_message_config_t * message_config, uint32_t send_kbps );
 
 // a NULL connect_token is a counted no-op that returns NULL. NULL configs are the defaults.
 // create reads no clock: the connect attempt starts at the first update, at whatever time the game passes it, and every time comes in through update
@@ -1760,7 +1762,9 @@ struct rocketnet_message_client_t * rocketnet_message_client_create_sized( void 
                                                                            const struct rocketnet_message_config_t * message_config, size_t message_config_bytes,
                                                                            void * memory, uint64_t memory_bytes, uint32_t send_kbps );
 
-// a NULL client is a counted no-op
+// a NULL client is a counted no-op. Stop the client's transport and poll it
+// stopped first; a destroy before then logs an error, counts a misuse, and
+// stops the transport itself, waiting for it, before it frees everything
 void rocketnet_message_client_destroy( struct rocketnet_message_client_t * client );
 
 // the client's transport, for its stats and state; never its batches. a NULL client is a counted no-op that returns NULL
@@ -1830,14 +1834,18 @@ const struct rocketnet_counters_t * rocketnet_message_client_counters( struct ro
 
 // ---- server ----
 
-// the bytes a caller block for a server object needs, at the transport config's max_clients; 0 for a refused config
+// the bytes a caller block for a server object needs, at the transport config's
+// max_clients and the per-client send budget create is given; 0 for a refused
+// config or budget
 /** @brief Measure caller-provided memory for a message server and its client slots.
  * @param[in] transport_config Server transport settings, or NULL for defaults.
  * @param[in] message_config Message settings, or NULL for defaults.
- * @return Required bytes for the server object and configured client slots, or 0 for refused settings or arithmetic overflow.
- * @details This query is allocation-free. Create requires at least this many bytes in caller-provided memory aligned to 64 bytes; the caller retains ownership of that region.
+ * @param[in] per_client_send_kbps The per-client send budget the create is given: 0 takes server_send_kbps from the message config, a positive value overrides it, as rocketnet_message_server_create reads it.
+ * @return Required bytes for the server object and configured client slots, or 0 for refused settings, a budget above ROCKETNET_SEND_BUDGET_MAX_KBPS or arithmetic overflow.
+ * @details This query is allocation-free. A create with the same configs and per_client_send_kbps requires at least this many bytes in caller-provided memory aligned to 64 bytes, and refuses a shorter block before its transport opens; the caller retains ownership of that region.
  */
-uint64_t rocketnet_message_server_required_memory( const struct rocketnet_server_transport_config_t * transport_config, const struct rocketnet_message_config_t * message_config );
+uint64_t rocketnet_message_server_required_memory( const struct rocketnet_server_transport_config_t * transport_config, const struct rocketnet_message_config_t * message_config,
+                                                   uint32_t per_client_send_kbps );
 
 // a NULL address is a counted no-op that returns NULL. NULL configs are the defaults
 struct rocketnet_message_server_t * rocketnet_message_server_create( void * context, const char * address,
@@ -1879,7 +1887,9 @@ struct rocketnet_message_server_t * rocketnet_message_server_create_sized( void 
                                                                            const struct rocketnet_message_config_t * message_config, size_t message_config_bytes,
                                                                            void * memory, uint64_t memory_bytes, uint32_t per_client_send_kbps );
 
-// a NULL server is a counted no-op
+// a NULL server is a counted no-op. Stop the server's transport and poll it
+// stopped first; a destroy before then logs an error, counts a misuse, and
+// stops the transport itself, waiting for it, before it frees everything
 void rocketnet_message_server_destroy( struct rocketnet_message_server_t * server );
 
 // the server's transport, for its port, stats and stop; never its batches. a NULL server is a counted no-op that returns NULL

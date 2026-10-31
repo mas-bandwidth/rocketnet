@@ -1067,7 +1067,7 @@ static size_t rn_client_required_memory_current( const struct rocketnet_client_c
     if ( rn_client_config_valid( &transport, &message ) != ROCKETNET_STATUS_OK )
         return 0;
 
-    const uint64_t connection_bytes = rocketnet_message_client_required_memory( &message );
+    const uint64_t connection_bytes = rocketnet_message_client_required_memory( &message, 0 );
     if ( connection_bytes == 0 )
         return 0;
 
@@ -1140,7 +1140,7 @@ static struct rocketnet_client_t * rn_client_create_current( void * context, con
         return NULL;
     }
 
-    const uint64_t connection_bytes = rocketnet_message_client_required_memory( &message );
+    const uint64_t connection_bytes = rocketnet_message_client_required_memory( &message, 0 );
     if ( connection_bytes == 0 )
     {
         if ( status )
@@ -2252,7 +2252,7 @@ static size_t rn_server_required_memory_current( const struct rocketnet_server_c
         return 0;
     }
 
-    const uint64_t running_bytes = rocketnet_message_server_required_memory( &transport, &message );
+    const uint64_t running_bytes = rocketnet_message_server_required_memory( &transport, &message, 0 );
 
     // the peak over the lifecycle: create's one block as the allocator sees
     // it, plus the transport start creates for the candidate it grants; stop
@@ -2421,7 +2421,7 @@ static struct rocketnet_server_t * rn_server_create_current( void * context, con
         return NULL;
     }
 
-    const uint64_t running_bytes = rocketnet_message_server_required_memory( &transport, &message );
+    const uint64_t running_bytes = rocketnet_message_server_required_memory( &transport, &message, 0 );
     if ( running_bytes == 0 )
     {
         sodium_memzero( &transport, sizeof( transport ) );
