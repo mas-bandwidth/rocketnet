@@ -112,9 +112,9 @@ uint64_t rocketnet_send_arena_allocation_bytes( int slots, int bytes );
 uint64_t rocketnet_platform_socket_allocation_bytes();
 uint64_t rocketnet_platform_thread_allocation_bytes();
 uint64_t rocketnet_server_gso_allocation_bytes( int queues, int max_clients );
-uint64_t rocketnet_server_iocp_allocation_bytes( int workers );
+uint64_t rocketnet_server_iocp_allocation_bytes( int workers, int max_clients );
 uint64_t rocketnet_server_xdp_allocation_bytes( int queues, int max_clients );
-uint64_t rocketnet_server_rio_registered_region_bytes();
+uint64_t rocketnet_server_rio_registered_region_bytes( int max_clients );
 
 // UMEM bytes for a queue count. Plan and the XDP preflight share this; do not restate the product.
 uint64_t rocketnet_xdp_umem_bytes( int queues );
