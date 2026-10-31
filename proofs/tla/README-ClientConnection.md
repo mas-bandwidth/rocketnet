@@ -24,7 +24,9 @@ timed out, -3 request timed out, -2 cookie request timed out, -1 denied, 0 disco
 |---|---|---|
 | `cstate` | `state` | the state above |
 | `cAttempt` | `connection_salt`, ephemeral keypair | the attempt number; fresh per `connect` |
-| `cHasCookie` | `has_cookie` | a cookie is held and carried in every request |
+| `cKept` | `has_cookie`, `return_cookie` | the attempt's first cookie, kept |
+| `cLatest` | `has_latest_cookie`, `latest_cookie` | a later cookie (`ClientRecvCookie`) |
+| `cAltLatest` | `send_latest_cookie` | the next request carries the latest cookie |
 | `cKeys` | `keys`, `session_nonce` | the committed keys, `[att, nonce]`, or none |
 | `cEph` | `client_ephemeral_secret_key` | the ephemeral secret is live (not zeroed) |
 | `cIndex` | `client_index` | the index is known (from the first keep-alive) |
@@ -50,7 +52,7 @@ models in the module:
 | `ClientRecvCookie` | a packet arrives | `rocketnet_client_process_cookie`: 1 or 2, salt matches, store, 1 → 2 |
 | `ClientRecvChallenge` | a packet arrives | `rocketnet_client_process_challenge`: 2 only, commit keys, erase ephemeral, 2 → 3 |
 | `ClientRecvDenied` | a packet arrives | `rocketnet_client_process_denied`: 2 or 3, → -1, keys and ephemeral zeroed |
-| `ClientRecvSession` | a packet arrives | `rocketnet_client_open_session` then keep-alive (3 → 4, index set), payload (accepted from 3 on), disconnect (→ 0) |
+| `ClientRecvSession` | a packet arrives | `rocketnet_client_open_session` then keep-alive (3 → 4, index set), payload (accepted in 4 only, `rocketnet_client_session_state_accepts`), disconnect (→ 0, keys zeroed) |
 | `ServerRecvRequest` | a packet arrives | `rocketnet_server_protocol_process_connection_request`: connected address ignored; half-open mapping answers its stored challenge; no cookie → cookie; no slot → denied, no mapping; else a mapping and its challenge |
 | `ServerRecvResponse` | a packet arrives | `rocketnet_server_process_connection_response`: already connected → ignored (the mapping is refreshed); no slot → denied, mapping kept; else slot assigned and the first keep-alive |
 | `ServerRecvSession` | a packet arrives | the sealed ladder for a connected mapping: a keep-alive refreshes and its block sets the latch; a disconnect releases slot and mapping |
@@ -96,8 +98,7 @@ Liveness, under the fairness described below:
 | `CrashedServerTimesOut` | a connected client whose server has gone silent reaches -5 (or its own application disconnects) |
 | `AttemptResolves` | every attempt leaves the handshake range |
 
-`TerminalAbsorbing` and `EphemeralErasedOutsideHandshake` hold. `KeysErasedWhenDown`
-is still an observation and its run is expected to fail (see below).
+`TerminalAbsorbing`, `EphemeralErasedOutsideHandshake` and `KeysErasedWhenDown` hold.
 
 ### The hang the request named
 
@@ -261,7 +262,8 @@ only the measured changes the table names; the TSV has one row per run.
 | `Reach-delay` | the S-delay constants, Timeout 3 | SpecReach | NotReached | 16493 | fail as expected (NotReached violated) |
 | `F4-ephemeral` | Timeout 2, ServerMute TRUE, KindLoss "none" | Spec | EphemeralErasedOutsideHandshake | 20 | pass |
 | `F8-terminal` | Timeout 2, MaxAttempts 2, Disconnects TRUE, ServerMute TRUE, KindLoss "none" | Spec | TerminalAbsorbing | 149 | pass |
-| `OBS-keys` | Timeout 2, Deadline 4, ServerDeadline 3, MaxAttempts 2, MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", C2SPattern "arbitrary", S2CPattern "arbitrary", MaxDelay 1, Duplication TRUE, Reordering TRUE | Spec | KeysErasedWhenDown | 13059 | fail as expected (observation) |
+| `keys-erased` | Timeout 2, Deadline 4, ServerDeadline 3, MaxAttempts 2, MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", FIFO links | Spec | SafetyInvariants, KeysErasedWhenDown | KEYS_DISTINCT | pass |
+| `W-down-keeps-keys` | the keys-erased constants | SpecDownKeepsKeys | KeysErasedWhenDown | WIT_DISTINCT | fail as expected |
 | `W-denied-keeps-keys` | Timeout 0, Deadline 0, OthersMayJoin TRUE, Disconnects FALSE, ServerPayloads FALSE, KindLoss "none" | SpecDeniedKeepsKeys | KeysErasedWhenDown | 250 | fail as expected |
 
 The small instance: `SendInterval = 1`, `MaxIds = 2`, `MaxSlots = 1`,
@@ -460,7 +462,6 @@ original parameters and is not a completed proof.
 | 29 | `MCClientConnectionSDelay.cfg` | pass (handshake up to the timeout) |
 | 30 | `MCClientConnectionF4Ephemeral.cfg` | pass |
 | 31 | `MCClientConnectionF8Terminal.cfg` | pass |
-| 32 | `MCClientConnectionObsKeys.cfg` | invariant / KeysErasedWhenDown |
 | 33 | `MCClientConnectionBrokenDeniedKeepsKeys.cfg` | invariant / KeysErasedWhenDown |
 
 Seven reversed reachability witnesses have no historical row: `MCClientConnectionReachSNone.cfg`, `MCClientConnectionReachSFirst.cfg`, `MCClientConnectionReachSAlternate.cfg`, `MCClientConnectionReachSBurst.cfg`, `MCClientConnectionReachSArbitrary.cfg`, `MCClientConnectionReachSFirstkind.cfg` and `MCClientConnectionReachSDelay.cfg` (invariant / NotReached).
