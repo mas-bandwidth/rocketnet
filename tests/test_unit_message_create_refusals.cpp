@@ -128,8 +128,8 @@ static void test_message_server_create_refuses_budget_and_config()
 // exactly the bytes required_memory reported for that budget, and refuses a
 // block of the config field's size before its transport opens (allocating
 // nothing). The transports are loopback: no socket opens. Mutation that must
-// bite: size required_memory with the config's field alone; the creates in
-// blocks of exactly its answer return NULL.
+// bite: size with the config's field alone, whatever the create's budget; the
+// checks on required_memory's answer go red.
 // ---------------------------------------------------------------------------
 
 static void * mcr_aligned( std::vector<uint8_t> & storage, uint64_t bytes )
