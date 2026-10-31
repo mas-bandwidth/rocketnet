@@ -625,6 +625,8 @@ MCRNDisconnectBurstRingBrokenCursorWrapLate.cfg	MCRNDisconnectBurstRing.tla	inva
 MCRNDisconnectBurstRingBrokenCursorKept.cfg	MCRNDisconnectBurstRing.tla	invariant	SealedFallFromHead	ignore-terminal	rndisconnectburstring	required	-
 MCRNServerReplaySlots.cfg	MCRNServerReplaySlots.tla	pass	-	check	rnserverreplayslots	required	-
 MCRNServerReplaySlotsNoForgetRefusal.cfg	MCRNServerReplaySlots.tla	pass	-	check	rnserverreplayslots	required	-
-MCRNServerReplaySlotsFindingStaleForget.cfg	MCRNServerReplaySlots.tla	invariant	KernelHoldsMark	check	rnserverreplayslots	required	-
+MCRNServerReplaySlotsBrokenStaleForget.cfg	MCRNServerReplaySlots.tla	invariant	KernelHoldsMark	check	rnserverreplayslots	required	-
+MCRNServerReplaySlotsBrokenNoMarkSupersede.cfg	MCRNServerReplaySlots.tla	invariant	KernelHoldsMark	check	rnserverreplayslots	required	-
+MCRNServerReplaySlotsBrokenNoForgetSupersede.cfg	MCRNServerReplaySlots.tla	invariant	KernelHoldsMark	check	rnserverreplayslots	required	-
 MCRNServerReplaySlotsBrokenNoSkip.cfg	MCRNServerReplaySlots.tla	invariant	ForgetNeverLost	check	rnserverreplayslots	required	-
 MCRNServerReplaySlotsBrokenClearOnRefusal.cfg	MCRNServerReplaySlots.tla	invariant	ForgetNeverLost	check	rnserverreplayslots	required	-

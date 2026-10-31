@@ -14,13 +14,17 @@
 (*   the forget pass  every seen slot that is no longer connected, or is   *)
 (*                    connected at another address, asks the sink to       *)
 (*                    forget seen_address; only an accepted forget clears  *)
-(*                    the record (the memset)                              *)
+(*                    the record (the memset), and it clears every other   *)
+(*                    slot's record of that address too                    *)
 (*   the mark pass    every connected slot: a slot whose record still      *)
 (*                    names another address is skipped (its forget is      *)
 (*                    owed first); otherwise the record is seen at the     *)
 (*                    address, and a slot first seen, owing a mark or      *)
 (*                    whose highest_opened differs from its last mark asks *)
-(*                    the sink to mark it; a refused mark is owed          *)
+(*                    the sink to mark it; a refused mark is owed, and an  *)
+(*                    accepted one clears every other slot's record of the *)
+(*                    address (the code looks only when a forget of this   *)
+(*                    walk was refused, the one way such a record is left) *)
 (*                                                                         *)
 (* The sink's answers are chosen freely: a forget or a mark may be refused *)
 (* (rocketnet_xdp_replay_marks_forget and _mark refuse when their array    *)
@@ -33,7 +37,8 @@
 (*                                                                         *)
 (* The ghost owed holds each <<slot, address>> the walk saw the slot       *)
 (* connected at, until a forget of that address from that slot is          *)
-(* accepted.                                                               *)
+(* accepted, or another slot's queued forget or mark of the address        *)
+(* supersedes it.                                                          *)
 (*                                                                         *)
 (* Reversed witnesses (each flag FALSE is a real bug class):               *)
 (*   SkipWhileOwed  the mark pass does not skip a slot whose record names  *)
@@ -41,6 +46,12 @@
 (*                  forget is owed                                         *)
 (*   ClearOnAccept  the forget pass clears the record although the sink    *)
 (*                  refused the forget                                     *)
+(*   MarkSupersedes a queued mark leaves another slot's record of its      *)
+(*                  address: that slot's owed forget, retried, deletes the *)
+(*                  marking slot's entry, or that slot, back at the        *)
+(*                  address, keeps a mark the kernel no longer holds       *)
+(*   ForgetSupersedes  a queued forget leaves another slot's record of its *)
+(*                  address, whose mark the commit deletes                 *)
 (***************************************************************************)
 EXTENDS Integers, FiniteSets
 
@@ -51,10 +62,12 @@ CONSTANTS
     SkipWhileOwed,  \* the mark pass skips a slot seen at another address
     ClearOnAccept,  \* the forget pass clears a record only on an accepted forget
     ForgetRefusable,\* the sink may refuse a forget (its array full)
+    MarkSupersedes, \* a queued mark clears every other slot's record of its address
+    ForgetSupersedes,\* a queued forget clears every other slot's record of its address
     NONE            \* no kernel entry, no address (a model value)
 
 ASSUME MaxHigh \in Nat
-ASSUME \A f \in {SkipWhileOwed, ClearOnAccept, ForgetRefusable} : f \in BOOLEAN
+ASSUME \A f \in {SkipWhileOwed, ClearOnAccept, ForgetRefusable, MarkSupersedes, ForgetSupersedes} : f \in BOOLEAN
 
 Highs == 0..MaxHigh
 Clear == [ seen |-> FALSE, at |-> NONE, has |-> FALSE, marked |-> 0, owes |-> FALSE ]
@@ -98,16 +111,24 @@ Release(i) ==
 Walk ==
     LET F == { i \in Slots : rec[i].seen /\ (~conn[i].on \/ conn[i].at # rec[i].at) }
     IN \E fAcc \in IF ForgetRefusable THEN SUBSET F ELSE {F} :
-       LET r1 == [ i \in Slots |->
-                     IF i \in fAcc \/ (i \in F /\ ~ClearOnAccept) THEN Clear ELSE rec[i] ]
+       LET \* the other slots whose record names an address forgotten now
+           FSup == { k \in Slots : ForgetSupersedes /\ rec[k].seen /\
+                                    \E i \in fAcc : i # k /\ rec[i].at = rec[k].at }
+           r1 == [ i \in Slots |->
+                     IF i \in fAcc \/ i \in FSup \/ (i \in F /\ ~ClearOnAccept) THEN Clear ELSE rec[i] ]
            forgets == { rec[i].at : i \in fAcc }
            \* the mark pass's candidates: connected, not skipped
            Cand == { i \in Slots : conn[i].on /\ ~(SkipWhileOwed /\ r1[i].seen /\ r1[i].at # conn[i].at) }
            last(i) == IF r1[i].has THEN r1[i].marked ELSE 0
            Wants == { i \in Cand : ~r1[i].seen \/ r1[i].owes \/ conn[i].high # last(i) }
        IN \E mAcc \in SUBSET Wants :
-          LET r2 == [ i \in Slots |->
-                        IF i \notin Cand THEN r1[i]
+          LET \* the other slots whose record names an address marked now:
+              \* each owes a forget of it, which the queued mark supersedes
+              Sup == { k \in Slots : MarkSupersedes /\ k \notin Cand /\ r1[k].seen /\
+                                     \E i \in mAcc : i # k /\ r1[k].at = conn[i].at }
+              r2 == [ i \in Slots |->
+                        IF i \in Sup THEN Clear
+                        ELSE IF i \notin Cand THEN r1[i]
                         ELSE IF i \notin Wants THEN [ r1[i] EXCEPT !.seen = TRUE, !.at = conn[i].at ]
                         ELSE IF i \in mAcc
                              THEN [ seen |-> TRUE, at |-> conn[i].at, has |-> TRUE,
@@ -119,7 +140,7 @@ Walk ==
                               IF \E m \in marks : m[1] = a THEN (CHOOSE m \in marks : m[1] = a)[2]
                               ELSE IF a \in forgets THEN NONE
                               ELSE kernel[a] ]
-             /\ owed' = (owed \ { <<i, rec[i].at>> : i \in fAcc })
+             /\ owed' = ((owed \ { <<i, rec[i].at>> : i \in fAcc \cup FSup }) \ { <<k, r1[k].at>> : k \in Sup })
                           \cup { <<i, conn[i].at>> : i \in Cand }
     /\ UNCHANGED conn
 
@@ -147,11 +168,11 @@ OneIdentityPerSlot ==
     \A p, q \in owed : p[1] = q[1] => p[2] = q[2]
 
 \* a connected slot whose record holds its current mark, owing nothing, has
-\* that mark in the kernel map.  It fails when the sink refuses a forget:
-\* the slot keeps the old address's forget owed, the address connects in
-\* another slot and is marked, and the retried forget, applied in a later
-\* commit, deletes the newer slot's entry (README-RNServerReplaySlots.md,
-\* the finding)
+\* that mark in the kernel map.  Without MarkSupersedes it fails when the
+\* sink refuses a forget: the slot keeps the old address's forget owed, the
+\* address connects in another slot and is marked, and the retried forget,
+\* applied in a later commit, deletes the newer slot's entry
+\* (README-RNServerReplaySlots.md)
 KernelHoldsMark ==
     \A i \in Slots :
         (conn[i].on /\ rec[i].seen /\ rec[i].at = conn[i].at /\ rec[i].has /\ ~rec[i].owes)

@@ -69,6 +69,26 @@ void rocketnet_server_replay_marks_destroy( struct rocketnet_server_replay_marks
     rocketnet_free( marks->context, marks );
 }
 
+// proofs/tla/RNServerReplaySlots.tla Walk (MarkSupersedes, ForgetSupersedes): a
+// queued forget or mark of an address clears every other slot's record of that
+// address. Such a record is a refused forget left by a slot that is no longer
+// there, or a mark the queued forget is about to delete. Kept, the record's
+// later forget would delete the entry of the slot now at the address, or its
+// slot, back at the address, would believe a mark another slot replaced is
+// still in the kernel map (KernelHoldsMark). A slot cleared while connected is
+// first seen again and marked in the same walk.
+static void rocketnet_server_replay_marks_supersede( struct rocketnet_server_replay_marks_t * marks,
+                                                     int keep,
+                                                     const struct rocketnet_address_t * address )
+{
+    for ( int i = 0; i < marks->max_clients; i++ )
+    {
+        struct rocketnet_server_replay_slot_mark_t * slot = &marks->slots[i];
+        if ( i != keep && slot->seen && rocketnet_address_equal( &slot->seen_address, address ) )
+            memset( slot, 0, sizeof( *slot ) );
+    }
+}
+
 // proofs/tla/RNServerReplaySlots.tla Walk: the forget pass clears a record only
 // when the sink queued its forget, and the mark pass skips a slot whose record
 // names another address (ForgetNeverLost)
@@ -88,6 +108,8 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
     // connected and is no longer connected, or whose mapping changed address,
     // whether or not it held a mark: the transport's forget drops the reply
     // MAC of that address too, and a delete of a missing key is harmless.
+
+    int refused_forgets = 0;
 
     for ( int i = 0; i < marks->max_clients; i++ )
     {
@@ -120,8 +142,16 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
         {
             // Queue acceptance transfers responsibility to the transport's
             // pending buffer. Until then this slot keeps the old identity.
-            if ( sink->forget( sink->context, &slot->seen_address ) )
+            const struct rocketnet_address_t forgotten = slot->seen_address;
+            if ( sink->forget( sink->context, &forgotten ) )
+            {
                 memset( slot, 0, sizeof( *slot ) );
+                rocketnet_server_replay_marks_supersede( marks, i, &forgotten );
+            }
+            else
+            {
+                refused_forgets++;
+            }
         }
     }
 
@@ -183,6 +213,13 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
         slot->mark_owed = 0;
         slot->has_mark = 1;
         slot->marked_value = high_water;
+
+        // only a forget refused in this walk leaves another slot's record
+        // naming a connected slot's address: every other record was cleared
+        // by its own queued forget or names the address its slot is at
+
+        if ( refused_forgets > 0 )
+            rocketnet_server_replay_marks_supersede( marks, i, address );
     }
 }
 

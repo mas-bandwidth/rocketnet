@@ -18,7 +18,8 @@ reuse.
 | `kernel[a]` | the kernel replay map's entry for `a` |
 
 The ghost `owed` holds each `<<slot, address>>` the walk saw the slot
-connected at, until the sink accepts a forget of that address from that slot.
+connected at, until the sink accepts a forget of that address from that slot,
+or another slot's queued forget or mark of the address supersedes it.
 
 ## Actions and the code they mirror
 
@@ -29,12 +30,17 @@ connected at, until the sink accepts a forget of that address from that slot.
 - **`Walk`**: `rocketnet_server_replay_marks_walk`, then the transport's
   commit. The forget pass asks the sink to forget `seen_address` for every seen
   slot that is no longer connected or is connected at another address; only an
-  accepted forget clears the record (the `memset`). The mark pass, for every
-  connected slot, skips a slot whose record still names another address;
-  otherwise it sets `seen` and `seen_address`, and asks the sink to mark a slot
-  first seen, owing a mark, or whose `highest_opened` differs from its last
-  mark; a refused mark sets `mark_owed`. The commit applies every queued
-  forget, then every queued mark.
+  accepted forget clears the record (the `memset`), and it clears every other
+  slot's record of the same address (`rocketnet_server_replay_marks_supersede`,
+  `ForgetSupersedes`). The mark pass, for every connected slot, skips a slot
+  whose record still names another address; otherwise it sets `seen` and
+  `seen_address`, and asks the sink to mark a slot first seen, owing a mark,
+  or whose `highest_opened` differs from its last mark; a refused mark sets
+  `mark_owed`, and an accepted one clears every other slot's record of the
+  address (`MarkSupersedes`). The code looks for such records only when a
+  forget of the same walk was refused: after the forget pass, a record names an
+  address its slot is not at only when that slot's forget was refused. The
+  commit applies every queued forget, then every queued mark.
 
 The sink's answers are chosen freely: with `ForgetRefusable` a forget may be
 refused, and a mark may always be refused
@@ -55,14 +61,15 @@ here the commit applies everything.
 
 Two client slots, two addresses, `highest_opened` 0..1.
 `MCRNServerReplaySlots.cfg` is the control with forgets and marks refusable,
-every invariant but `KernelHoldsMark`. `MCRNServerReplaySlotsNoForgetRefusal.cfg`
-is the control with every forget queued, every invariant including
-`KernelHoldsMark`.
+every invariant. `MCRNServerReplaySlotsNoForgetRefusal.cfg` is the control with
+every forget queued, every invariant.
 
-## The finding
+## The stale forget
 
-`MCRNServerReplaySlotsFindingStaleForget.cfg` is the code's rules with a forget
-the sink refuses, and fails `KernelHoldsMark`. Checked against the C by hand:
+Before the supersede rules the walk let a forget the sink refused delete the
+kernel entry of a session in another slot.
+`MCRNServerReplaySlotsBrokenStaleForget.cfg` keeps that walk and fails
+`KernelHoldsMark`. Checked against the C by hand:
 
 1. Slot 0 connects at `a1` and the walk sees it there.
 2. Slot 0 is released; slot 1 connects at `a1`.
@@ -73,21 +80,18 @@ the sink refuses, and fails `KernelHoldsMark`. Checked against the C by hand:
    deletes `a1`'s entry. Slot 1's record says its mark of 0 is in place and
    `highest_opened` is unchanged, so no mark is taken.
 
-Slot 1's session at `a1` then has no kernel entry until its `highest_opened`
-changes. The forget also calls `rocketnet_xdp_reply_macs_forget` for `a1`
-(`rocketnet_server_socket_replay_forget`), at the refusal and at the retry,
-turning slot 1's learned reply MAC into an answered one. The superseded test in
-`rocketnet_xdp_replay_marks_reset_keeping` covers a forget and a newer mark
-of its key in the same commit, not a forget retried by the walk after the mark
-landed. RNXdpReplay cannot show this: keyed by address, it owes no forget for
-an address that is connected again.
+Each retry of the forget also called `rocketnet_xdp_reply_macs_forget` for
+`a1` (`rocketnet_server_socket_replay_forget`), turning slot 1's learned reply
+MAC into an answered one. With `MarkSupersedes`, slot 1's queued mark in step 3
+clears slot 0's record, so the forget is never asked for again.
+`test_server_replay_marks_queued_mark_supersedes_an_owed_forget`
+(`tests/test_unit_server_replay_marks.cpp`) drives this sequence through the
+sink and a simulated commit.
 
 The forget array is refused only at `ROCKETNET_XDP_REPLAY_MAX_ENTRIES` (1024 at
 1000 clients), and one walk adds at most one forget per slot, so the refusal
 needs forgets the kernel refused earlier still pending: an error path. The
-userspace replay window still refuses replays while the kernel entry is
-missing. With every forget queued (`MCRNServerReplaySlotsNoForgetRefusal.cfg`)
-`KernelHoldsMark` holds.
+userspace replay window refuses replays whatever the kernel entry holds.
 
 ## Reversed witnesses
 
@@ -105,6 +109,24 @@ counterexample below was checked against the C by hand.
    `sink->forget` returned. Violates `ForgetNeverLost`: a slot is seen at
    `a1` and released; the forget is refused and the record cleared, so no
    walk asks for it again.
+3. **`MCRNServerReplaySlotsBrokenStaleForget.cfg`** (`MarkSupersedes = FALSE`,
+   `ForgetSupersedes = FALSE`): the walk before the supersede rules. Violates
+   `KernelHoldsMark` by the sequence above.
+4. **`MCRNServerReplaySlotsBrokenNoMarkSupersede.cfg`**
+   (`MarkSupersedes = FALSE`): the mark pass without the supersede after an
+   accepted mark. Violates `KernelHoldsMark`: slot 0 marks `a1` at 1 and is
+   released; its forget is refused while slot 1 connects at `a1` and marks it
+   at 0. Slot 1 is released and slot 0 connects at `a1` again; its record still
+   holds its mark of 1, which the kernel no longer has.
+5. **`MCRNServerReplaySlotsBrokenNoForgetSupersede.cfg`**
+   (`ForgetSupersedes = FALSE`): the forget pass without the supersede after
+   an accepted forget. Violates `KernelHoldsMark`: slot 0 marks `a1` at 0 and
+   is released; its forget is refused while slot 1 connects at `a1`, and slot
+   1's mark is refused. Slot 1 is released and slot 0 connects at `a1` again
+   with its record holding its mark of 0; the walk queues slot 1's forget of
+   `a1`, the commit deletes the entry, and slot 0 is not marked.
+   `test_server_replay_marks_queued_forget_supersedes_a_held_mark` drives
+   this sequence through the sink.
 
 ## Runs
 
