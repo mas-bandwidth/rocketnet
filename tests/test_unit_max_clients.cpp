@@ -30,6 +30,7 @@
 #include "rocketnet_slots.h"
 #include "rocketnet_client_slots.h"
 
+#include <limits.h>
 #include <stdint.h>
 #include <string.h>
 #include "loopback_hub.h"
@@ -322,3 +323,115 @@ static void test_client_slots_full_capacity_reuse_and_full_width_ids()
 }
 
 REGISTER_UNIT_TEST( test_client_slots_full_capacity_reuse_and_full_width_ids );
+
+// a counting allocator for the client slots: live bytes and calls, and one
+// call it refuses (refuse_call, -1 for none). A header in front of each block
+// keeps its size.
+
+enum
+{
+    SLOTS_COUNT_HEADER = 16
+};
+
+struct slots_allocator_t
+{
+    uint64_t live_bytes;
+    int calls;
+    int refuse_call;
+};
+
+static slots_allocator_t slots_allocator;
+
+static void * slots_count_malloc( void * context, size_t bytes )
+{
+    const int call = slots_allocator.calls++;
+    if ( call == slots_allocator.refuse_call )
+        return NULL;
+
+    uint8_t * block = (uint8_t *) rocketnet_default_malloc_function( context, bytes + SLOTS_COUNT_HEADER );
+    if ( !block )
+        return NULL;
+
+    memcpy( block, &bytes, sizeof( bytes ) );
+    slots_allocator.live_bytes += bytes;
+
+    return block + SLOTS_COUNT_HEADER;
+}
+
+static void slots_count_free( void * context, void * memory )
+{
+    if ( !memory )
+        return;
+
+    uint8_t * block = (uint8_t *) memory - SLOTS_COUNT_HEADER;
+    size_t bytes;
+    memcpy( &bytes, block, sizeof( bytes ) );
+    slots_allocator.live_bytes -= bytes;
+    rocketnet_default_free_function( context, block );
+}
+
+static void slots_allocator_install()
+{
+    memset( &slots_allocator, 0, sizeof( slots_allocator ) );
+    slots_allocator.refuse_call = -1;
+
+    check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL, slots_count_malloc, slots_count_free ) == ROCKETNET_STATUS_OK );
+}
+
+static void slots_allocator_remove()
+{
+    check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
+}
+
+static void slots_quiet_assert( const char *, const char *, const char *, int ) {}
+
+// create takes exactly rocketnet_client_slots_allocation_bytes, refuses a
+// count outside 1 .. INT_MAX / 2 before any allocation, and frees what it
+// took when any one allocation is refused
+
+static void test_client_slots_create_allocates_its_plan()
+{
+    slots_allocator_install();
+
+    const int counts[] = { 1, 2, 7, ROCKETNET_MAX_CLIENTS };
+    for ( int i = 0; i < (int) ( sizeof( counts ) / sizeof( counts[0] ) ); i++ )
+    {
+        struct rocketnet_client_slots_t * slots = rocketnet_client_slots_create( NULL, counts[i] );
+        check( slots != NULL );
+        check( slots_allocator.live_bytes == rocketnet_client_slots_allocation_bytes( counts[i] ) );
+
+        rocketnet_client_slots_destroy( slots );
+        check( slots_allocator.live_bytes == 0 );
+    }
+
+    const int allocations = slots_allocator.calls / (int) ( sizeof( counts ) / sizeof( counts[0] ) );
+    check( allocations > 1 );
+
+    for ( int refuse = 0; refuse < allocations; refuse++ )
+    {
+        slots_allocator.calls = 0;
+        slots_allocator.refuse_call = refuse;
+        check( rocketnet_client_slots_create( NULL, 7 ) == NULL );
+        check( slots_allocator.live_bytes == 0 );
+    }
+
+    slots_allocator.calls = 0;
+    slots_allocator.refuse_call = -1;
+    rocketnet_assert_function( slots_quiet_assert );
+
+    const int refused[] = { 0, -1, INT_MAX / 2 + 1, INT_MAX };
+    for ( int i = 0; i < (int) ( sizeof( refused ) / sizeof( refused[0] ) ); i++ )
+    {
+        check( rocketnet_client_slots_create( NULL, refused[i] ) == NULL );
+        check( slots_allocator.calls == 0 );
+    }
+
+    rocketnet_assert_function( NULL );
+    check( rocketnet_client_slots_allocation_bytes( 0 ) == 0 );
+
+    slots_allocator_remove();
+}
+
+REGISTER_UNIT_TEST( test_client_slots_create_allocates_its_plan );

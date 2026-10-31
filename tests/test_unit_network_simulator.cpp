@@ -4,8 +4,10 @@
 */
 
 // The network simulator's memory and refusals (sdk/rocketnet_network_simulator.cpp):
-// a reverse window the allocator refuses leaves the patterns off. No socket,
-// no thread, no clock: time is an argument.
+// create allocates exactly rocketnet_network_simulator_memory_bytes, refuses
+// what that plan refuses before any allocation, and frees everything when an
+// allocation fails; a reverse window the allocator refuses leaves the patterns
+// off. No socket, no thread, no clock: time is an argument.
 
 #include "test_unit_registry.h"
 
@@ -15,6 +17,7 @@
 #include "rocketnet_wire.h"
 #include "rocketnet_network_simulator.h"
 
+#include <limits.h>
 #include <string.h>
 
 #define check rocketnet_unit_check
@@ -81,6 +84,90 @@ static void simulator_allocator_remove()
     check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
 
+static void simulator_quiet_assert( const char *, const char *, const char *, int ) {}
+
+// create takes exactly its plan, and a reverse window adds exactly the plan's
+// window term; destroy returns every byte
+
+static void test_network_simulator_create_allocates_its_plan()
+{
+    simulator_allocator_install();
+
+    const int capacities[] = { 1, 63, 64, 65, 130, 4096, 4097 };
+    for ( int i = 0; i < (int) ( sizeof( capacities ) / sizeof( capacities[0] ) ); i++ )
+    {
+        const int capacity = capacities[i];
+
+        struct rocketnet_network_simulator_t * simulator = rocketnet_network_simulator_create( NULL, capacity, 1 );
+        check( simulator != NULL );
+        check( simulator_allocator.live_bytes == rocketnet_network_simulator_memory_bytes( capacity, 0 ) );
+
+        check( rocketnet_network_simulator_patterns( simulator, 0, 64 ) );
+        check( simulator_allocator.live_bytes == rocketnet_network_simulator_memory_bytes( capacity, 64 ) );
+
+        check( rocketnet_network_simulator_patterns( simulator, 0, 2 ) );
+        check( simulator_allocator.live_bytes == rocketnet_network_simulator_memory_bytes( capacity, 2 ) );
+
+        check( rocketnet_network_simulator_patterns( simulator, 0, 0 ) );
+        check( simulator_allocator.live_bytes == rocketnet_network_simulator_memory_bytes( capacity, 0 ) );
+
+        rocketnet_network_simulator_destroy( simulator );
+        check( simulator_allocator.live_bytes == 0 );
+    }
+
+    // a window under 2 is no pattern and holds no memory
+
+    check( rocketnet_network_simulator_memory_bytes( 64, 1 ) == rocketnet_network_simulator_memory_bytes( 64, 0 ) );
+
+    simulator_allocator_remove();
+}
+
+// a capacity the plan refuses is refused by create before any allocation
+
+static void test_network_simulator_create_refuses_what_its_plan_refuses()
+{
+    simulator_allocator_install();
+    rocketnet_assert_function( simulator_quiet_assert );
+
+    const int refused[] = { 0, -1, INT_MIN, ( 1 << 30 ) + 1, INT_MAX };
+    for ( int i = 0; i < (int) ( sizeof( refused ) / sizeof( refused[0] ) ); i++ )
+    {
+        check( rocketnet_network_simulator_memory_bytes( refused[i], 0 ) == 0 );
+        check( rocketnet_network_simulator_create( NULL, refused[i], 1 ) == NULL );
+        check( simulator_allocator.calls == 0 );
+    }
+
+    rocketnet_assert_function( NULL );
+
+    check( rocketnet_network_simulator_memory_bytes( 1 << 30, 0 ) > 0 );
+
+    simulator_allocator_remove();
+}
+
+// each of create's allocations refused in turn: create returns NULL and frees
+// what it took
+
+static void test_network_simulator_create_frees_on_a_refused_allocation()
+{
+    simulator_allocator_install();
+
+    struct rocketnet_network_simulator_t * simulator = rocketnet_network_simulator_create( NULL, 130, 1 );
+    check( simulator != NULL );
+    const int allocations = simulator_allocator.calls;
+    rocketnet_network_simulator_destroy( simulator );
+    check( allocations > 1 );
+
+    for ( int refuse = 0; refuse < allocations; refuse++ )
+    {
+        simulator_allocator.calls = 0;
+        simulator_allocator.refuse_call = refuse;
+        check( rocketnet_network_simulator_create( NULL, 130, 1 ) == NULL );
+        check( simulator_allocator.live_bytes == 0 );
+    }
+
+    simulator_allocator_remove();
+}
+
 static void simulator_addresses( struct rocketnet_address_t * from, struct rocketnet_address_t * to )
 {
     check( rocketnet_address_parse( from, "198.51.100.10:10000" ) );
@@ -125,6 +212,9 @@ static void test_network_simulator_refused_window_leaves_patterns_off()
     simulator_allocator_remove();
 }
 
+REGISTER_UNIT_TEST( test_network_simulator_create_allocates_its_plan );
+REGISTER_UNIT_TEST( test_network_simulator_create_refuses_what_its_plan_refuses );
+REGISTER_UNIT_TEST( test_network_simulator_create_frees_on_a_refused_allocation );
 REGISTER_UNIT_TEST( test_network_simulator_refused_window_leaves_patterns_off );
 
 #endif // #if ROCKETNET_DEV
