@@ -614,10 +614,12 @@ bool rocketnet_platform_mutex_create( struct rocketnet_platform_mutex_t * mutex 
 // no thread may hold or wait on the mutex
 void rocketnet_platform_mutex_destroy( struct rocketnet_platform_mutex_t * mutex );
 
-// not recursive: a second acquire on one thread deadlocks
+// not recursive on any platform (PTHREAD_MUTEX_NORMAL on POSIX, an SRWLOCK
+// on Windows): a second acquire on one thread deadlocks
 void rocketnet_platform_mutex_acquire( struct rocketnet_platform_mutex_t * mutex );
 
-// Acquires only when immediately available; never waits for the owner.
+// Acquires only when immediately available; never waits, and fails for the
+// thread that already holds the mutex.
 bool rocketnet_platform_mutex_try_acquire( struct rocketnet_platform_mutex_t * mutex );
 
 void rocketnet_platform_mutex_release( struct rocketnet_platform_mutex_t * mutex );
@@ -755,7 +757,7 @@ struct rocketnet_platform_thread_t
 struct rocketnet_platform_mutex_t
 {
     bool ok;
-    CRITICAL_SECTION handle;
+    SRWLOCK handle;
 };
 
 #if ROCKETNET_UNREAL_ENGINE

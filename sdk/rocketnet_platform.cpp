@@ -3029,8 +3029,7 @@ static int rocketnet_platform_real_mutex_init( rocketnet_platform_mutex_t * mute
 {
     rocketnet_assert( mutex );
     memset( mutex, 0, sizeof( rocketnet_platform_mutex_t ) );
-    if ( !InitializeCriticalSectionAndSpinCount( (LPCRITICAL_SECTION) &mutex->handle, 0xFF ) )
-        return 1;
+    InitializeSRWLock( &mutex->handle );
     mutex->ok = true;
 
     return 0;
@@ -3317,20 +3316,20 @@ void rocketnet_platform_mutex_acquire( rocketnet_platform_mutex_t * mutex )
 {
     rocketnet_assert( mutex );
     rocketnet_assert( mutex->ok );
-    EnterCriticalSection( (LPCRITICAL_SECTION) &mutex->handle );
+    AcquireSRWLockExclusive( &mutex->handle );
 }
 
 bool rocketnet_platform_mutex_try_acquire( rocketnet_platform_mutex_t * mutex )
 {
     rocketnet_assert( mutex && mutex->ok );
-    return TryEnterCriticalSection( &mutex->handle ) != 0;
+    return TryAcquireSRWLockExclusive( &mutex->handle ) != 0;
 }
 
 void rocketnet_platform_mutex_release( rocketnet_platform_mutex_t * mutex )
 {
     rocketnet_assert( mutex );
     rocketnet_assert( mutex->ok );
-    LeaveCriticalSection( (LPCRITICAL_SECTION) &mutex->handle );
+    ReleaseSRWLockExclusive( &mutex->handle );
 }
 
 void rocketnet_platform_mutex_destroy( rocketnet_platform_mutex_t * mutex )
@@ -3338,10 +3337,7 @@ void rocketnet_platform_mutex_destroy( rocketnet_platform_mutex_t * mutex )
     rocketnet_assert( mutex );
 
     if ( mutex->ok )
-    {
-        DeleteCriticalSection( (LPCRITICAL_SECTION) &mutex->handle );
         memset( mutex, 0, sizeof( rocketnet_platform_mutex_t ) );
-    }
 }
 
 // time
