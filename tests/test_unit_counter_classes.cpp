@@ -51,9 +51,10 @@ static const counters_row_t counters_rows[ROCKETNET_NUM_COUNTERS] = {
 #undef ROCKETNET_COUNTER_TEST_ROW
 };
 
-// The counter list at BASE, in index order: the indices are a contract and
-// never move. A counter appended since BASE is listed after, in the order it
-// was appended.
+// The counter list at BASE, in index order. Before the 1.0 release a retired
+// counter is removed and the rest renumbered; from the 1.0 release on the
+// indices never move. A counter appended since BASE is listed after, in the
+// order it was appended.
 
 #if ROCKETNET_DEV
 static const char * const counters_base_names[] = {
@@ -83,7 +84,6 @@ static const char * const counters_base_names[] = {
     "CONNECTION_REQUEST_COULD_NOT_OPEN_SEALED_BLOCK",
     "CONNECTION_REQUEST_SEALED_MISMATCH",
     "CONNECTION_REQUEST_CLIENT_ID_ALREADY_CONNECTED",
-    "CONNECTION_REQUEST_TOKEN_ALREADY_CONNECTED",
     "CONNECTION_REQUEST_SMALL_ORDER_KEY",
     "CONNECTION_REQUEST_NO_SLOTS",
     "CONNECTION_REQUEST_COULD_NOT_ADD_MAPPING",
@@ -96,7 +96,6 @@ static const char * const counters_base_names[] = {
     "CONNECTION_RESPONSE_DID_NOT_OPEN",
     "CONNECTION_RESPONSE_ALREADY_CONNECTED",
     "CONNECTION_RESPONSE_CLIENT_ID_ALREADY_CONNECTED",
-    "CONNECTION_RESPONSE_ADMITTED_SET_FULL",
     "CONNECTION_RESPONSE_NO_SLOTS",
     "CONNECTION_RESPONSE_CONNECTED",
     "KEEP_ALIVE_RECEIVED",
@@ -297,7 +296,6 @@ static const char * const counters_appended_names[] = {
     "CLIENT_CHALLENGE_WRONG_SIZE",
     "CLIENT_DENIED_WRONG_SIZE",
     "CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE",
-    "CONNECTION_REQUEST_TOKEN_LIFETIME_TOO_LONG",
     "SEND_NO_LINK_ADDRESS",
     "MESSAGE_PROMOTED_UNRELIABLE",
     "MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED",
@@ -344,7 +342,7 @@ static bool counters_is_received( int counter )
 #if ROCKETNET_DEV
 static void test_counters_every_counter_has_a_class()
 {
-    check( COUNTERS_NUM_BASE == 215 );
+    check( COUNTERS_NUM_BASE == 213 );
     check( ROCKETNET_NUM_COUNTERS == COUNTERS_NUM_BASE + COUNTERS_NUM_APPENDED );
     check( rocketnet_num_counters() == ROCKETNET_NUM_COUNTERS );
 
@@ -358,7 +356,7 @@ static void test_counters_every_counter_has_a_class()
         check( name != NULL );
         if ( strcmp( name, expected ) != 0 )
         {
-            printf( "counter %d is %s, expected %s: the indices never move\n", i, name, expected );
+            printf( "counter %d is %s, expected %s\n", i, name, expected );
         }
         check( strcmp( name, expected ) == 0 );
 
