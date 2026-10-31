@@ -6157,7 +6157,7 @@ void rocketnet_test_server_transport_io_pin_xdp()
     // the natural answer, read once; every later branch is either this
     // outcome or an explicitly forced one
 
-    const bool naturally_provisioned = rocketnet_server_socket_preflight( real_port_address, 7 );
+    const bool naturally_provisioned = rocketnet_server_socket_preflight( real_port_address, 7, ROCKETNET_DEFAULT_MAX_CLIENTS );
 
 #if ROCKETNET_DEV
     // FORCED UNAVAILABLE: the direct pre-flight says no, and the production
@@ -6166,7 +6166,7 @@ void rocketnet_test_server_transport_io_pin_xdp()
     // no data plane can be attached.
 
     rocketnet_server_socket_set_preflight_test_result( 0 );
-    rocketnet_check( !rocketnet_server_socket_preflight( real_port_address, 7 ) );
+    rocketnet_check( !rocketnet_server_socket_preflight( real_port_address, 7, ROCKETNET_DEFAULT_MAX_CLIENTS ) );
 
 #if ROCKETNET_DEV
     rocketnet_server_socket_allow_commit();
@@ -6188,7 +6188,7 @@ void rocketnet_test_server_transport_io_pin_xdp()
     // its own name, not merely tolerated.
 
     rocketnet_server_socket_set_preflight_test_result( 1 );
-    rocketnet_check( rocketnet_server_socket_preflight( real_port_address, 7 ) );
+    rocketnet_check( rocketnet_server_socket_preflight( real_port_address, 7, ROCKETNET_DEFAULT_MAX_CLIENTS ) );
 
     saved_level = rocketnet_test_xdp_capture_begin();
     server = rocketnet_test_server_transport_create_on_free_port( &config );
@@ -6252,7 +6252,7 @@ void rocketnet_test_server_transport_io_pin_xdp()
 #if ROCKETNET_DEV
     rocketnet_server_socket_clear_preflight_test_result();
 #endif // #if ROCKETNET_DEV
-    rocketnet_check( rocketnet_server_socket_preflight( real_port_address, 7 ) == naturally_provisioned );
+    rocketnet_check( rocketnet_server_socket_preflight( real_port_address, 7, ROCKETNET_DEFAULT_MAX_CLIENTS ) == naturally_provisioned );
 #else
     enum rocketnet_log_level_t saved_level = rocketnet_test_xdp_capture_begin();
     struct rocketnet_server_transport_t * server = rocketnet_test_server_transport_create_on_free_port( &config );
@@ -6293,7 +6293,7 @@ void rocketnet_test_server_transport_io_ladder_fall()
     rocketnet_server_socket_clear_preflight_test_result();
 #endif // #if ROCKETNET_DEV
 
-    const bool naturally_provisioned = rocketnet_server_socket_preflight( real_port_address, 7 );
+    const bool naturally_provisioned = rocketnet_server_socket_preflight( real_port_address, 7, ROCKETNET_DEFAULT_MAX_CLIENTS );
 
 #if ROCKETNET_DEV
     // FORCED UNAVAILABLE: xdp refuses at its own pre-flight, the ladder
@@ -6301,7 +6301,7 @@ void rocketnet_test_server_transport_io_ladder_fall()
     // named.
 
     rocketnet_server_socket_set_preflight_test_result( 0 );
-    rocketnet_check( !rocketnet_server_socket_preflight( real_port_address, 7 ) );
+    rocketnet_check( !rocketnet_server_socket_preflight( real_port_address, 7, ROCKETNET_DEFAULT_MAX_CLIENTS ) );
 
 #if ROCKETNET_DEV
     rocketnet_server_socket_allow_commit();
@@ -6324,7 +6324,7 @@ void rocketnet_test_server_transport_io_ladder_fall()
     // gso rather than portable.
 
     rocketnet_server_socket_set_preflight_test_result( 1 );
-    rocketnet_check( rocketnet_server_socket_preflight( real_port_address, 7 ) );
+    rocketnet_check( rocketnet_server_socket_preflight( real_port_address, 7, ROCKETNET_DEFAULT_MAX_CLIENTS ) );
 
     saved_level = rocketnet_test_xdp_capture_begin();
     server = rocketnet_test_server_transport_create_on_free_port( &config );
@@ -6390,7 +6390,7 @@ void rocketnet_test_server_transport_io_ladder_fall()
 #if ROCKETNET_DEV
     rocketnet_server_socket_clear_preflight_test_result();
 #endif // #if ROCKETNET_DEV
-    rocketnet_check( rocketnet_server_socket_preflight( real_port_address, 7 ) == naturally_provisioned );
+    rocketnet_check( rocketnet_server_socket_preflight( real_port_address, 7, ROCKETNET_DEFAULT_MAX_CLIENTS ) == naturally_provisioned );
 #else
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config );
     rocketnet_check( server );
@@ -6741,7 +6741,7 @@ void rocketnet_test_server_gso_probe()
     rocketnet_check( rocketnet_address_parse( &bind_address, "127.0.0.1" ) );
     rocketnet_check( bind_address.port == 0 );
 
-    struct rocketnet_server_gso_t * gso = rocketnet_server_gso_create( NULL, &bind_address, 2, 0 );
+    struct rocketnet_server_gso_t * gso = rocketnet_server_gso_create( NULL, &bind_address, 2, ROCKETNET_DEFAULT_MAX_CLIENTS, 0 );
     rocketnet_check( gso );
     rocketnet_check( bind_address.port != 0 );
 #if ROCKETNET_DEV
@@ -6761,7 +6761,7 @@ void rocketnet_test_server_gso_probe()
 
     rocketnet_address_t plain_address;
     rocketnet_check( rocketnet_address_parse( &plain_address, "127.0.0.1" ) );
-    struct rocketnet_server_gso_t * plain = rocketnet_server_gso_create( NULL, &plain_address, 1,
+    struct rocketnet_server_gso_t * plain = rocketnet_server_gso_create( NULL, &plain_address, 1, ROCKETNET_DEFAULT_MAX_CLIENTS,
                                                                          ROCKETNET_SERVER_GSO_DISABLE_SEGMENT | ROCKETNET_SERVER_GSO_DISABLE_GRO );
     rocketnet_check( plain );
     rocketnet_check( ( rocketnet_server_gso_features( plain ) & ROCKETNET_SERVER_GSO_FEATURE_SEGMENT ) == 0 );
@@ -6816,7 +6816,7 @@ static void rocketnet_test_server_gso_wire_exchange( const char * /* test_name *
     rocketnet_address_t bind_address;
     rocketnet_check( rocketnet_address_parse( &bind_address, bind_string ) );
 
-    struct rocketnet_server_gso_t * gso = rocketnet_server_gso_create( NULL, &bind_address, 2, flags );
+    struct rocketnet_server_gso_t * gso = rocketnet_server_gso_create( NULL, &bind_address, 2, ROCKETNET_DEFAULT_MAX_CLIENTS, flags );
     rocketnet_check( gso );
 
     rocketnet_address_t client_address;
@@ -7379,7 +7379,7 @@ void rocketnet_test_server_gso_send_overflow()
     rocketnet_address_t bind_address;
     rocketnet_check( rocketnet_address_parse( &bind_address, "127.0.0.1" ) );
 
-    struct rocketnet_server_gso_t * gso = rocketnet_server_gso_create( NULL, &bind_address, 1, 0 );
+    struct rocketnet_server_gso_t * gso = rocketnet_server_gso_create( NULL, &bind_address, 1, ROCKETNET_DEFAULT_MAX_CLIENTS, 0 );
     rocketnet_check( gso );
 
     rocketnet_address_t client_address;
@@ -7456,7 +7456,7 @@ void rocketnet_test_server_gso_shutdown_send_interruptions()
     rocketnet_check( rocketnet_address_parse( &bind, "127.0.0.1" ) );
     rocketnet_check( rocketnet_address_parse( &to, "127.0.0.1:40000" ) );
 
-    rocketnet_server_gso_t * gso = rocketnet_server_gso_create( NULL, &bind, 1, ROCKETNET_SERVER_GSO_DISABLE_SEGMENT );
+    rocketnet_server_gso_t * gso = rocketnet_server_gso_create( NULL, &bind, 1, ROCKETNET_DEFAULT_MAX_CLIENTS, ROCKETNET_SERVER_GSO_DISABLE_SEGMENT );
     rocketnet_check( gso );
 
     uint64_t id = 0;
@@ -7493,7 +7493,7 @@ void rocketnet_test_server_gso_held_receive_view()
     rocketnet_address_t bind, client_address;
     rocketnet_check( rocketnet_address_parse( &bind, "127.0.0.1" ) );
     rocketnet_check( rocketnet_address_parse( &client_address, "127.0.0.1" ) );
-    rocketnet_server_gso_t * gso = rocketnet_server_gso_create( NULL, &bind, 1,
+    rocketnet_server_gso_t * gso = rocketnet_server_gso_create( NULL, &bind, 1, ROCKETNET_DEFAULT_MAX_CLIENTS,
                                                                 ROCKETNET_SERVER_GSO_DISABLE_SEGMENT | ROCKETNET_SERVER_GSO_DISABLE_GRO );
     rocketnet_check( gso );
     struct rocketnet_platform_socket_t * client_socket = rocketnet_platform_socket_create( NULL, &client_address,
@@ -7574,7 +7574,7 @@ __attribute__( ( noinline ) )
 static struct rocketnet_server_uring_t *
 rocketnet_test_server_uring_create_stalled( rocketnet_address_t * address )
 {
-    return rocketnet_server_uring_create( NULL, address, 2 );
+    return rocketnet_server_uring_create( NULL, address, 2, ROCKETNET_DEFAULT_MAX_CLIENTS );
 }
 #endif // production excludes the stall helper that feeds SEND_ERROR hooks
 
@@ -7587,7 +7587,7 @@ void rocketnet_test_server_uring_probe()
     rocketnet_check( rocketnet_address_parse( &bind_address, "127.0.0.1" ) );
     rocketnet_check( bind_address.port == 0 );
 
-    struct rocketnet_server_uring_t * uring = rocketnet_server_uring_create( NULL, &bind_address, 2 );
+    struct rocketnet_server_uring_t * uring = rocketnet_server_uring_create( NULL, &bind_address, 2, ROCKETNET_DEFAULT_MAX_CLIENTS );
     rocketnet_check( uring );
     rocketnet_check( bind_address.port != 0 );
     rocketnet_check( rocketnet_server_uring_num_queues( uring ) == 2 );
@@ -7612,7 +7612,7 @@ void rocketnet_test_server_uring_probe()
     rocketnet_check( rocketnet_address_parse( &again_address, "127.0.0.1" ) );
     again_address.port = port;
 
-    struct rocketnet_server_uring_t * again = rocketnet_server_uring_create( NULL, &again_address, 0 );
+    struct rocketnet_server_uring_t * again = rocketnet_server_uring_create( NULL, &again_address, 0, ROCKETNET_DEFAULT_MAX_CLIENTS );
     rocketnet_check( again );
     rocketnet_check( again_address.port == port );
     rocketnet_check( rocketnet_server_uring_num_queues( again ) == ROCKETNET_URING_DEFAULT_QUEUES );
@@ -7622,7 +7622,7 @@ void rocketnet_test_server_uring_probe()
 
     rocketnet_address_t over_address;
     rocketnet_check( rocketnet_address_parse( &over_address, "127.0.0.1" ) );
-    rocketnet_check( rocketnet_server_uring_create( NULL, &over_address, ROCKETNET_URING_MAX_QUEUES + 1 ) == NULL );
+    rocketnet_check( rocketnet_server_uring_create( NULL, &over_address, ROCKETNET_URING_MAX_QUEUES + 1, ROCKETNET_DEFAULT_MAX_CLIENTS ) == NULL );
 
 #if ROCKETNET_DEV
     // A stalled completion leaves the caller-owned transport pending. It
@@ -7662,7 +7662,7 @@ void rocketnet_test_server_uring_probe()
     rocketnet_check( rocketnet_address_parse( &rebind_address, "127.0.0.1" ) );
     rebind_address.port = stall_port;
 
-    struct rocketnet_server_uring_t * rebound = rocketnet_server_uring_create( NULL, &rebind_address, 2 );
+    struct rocketnet_server_uring_t * rebound = rocketnet_server_uring_create( NULL, &rebind_address, 2, ROCKETNET_DEFAULT_MAX_CLIENTS );
     rocketnet_check( rebound );
     rocketnet_server_uring_stop( rebound );
 
@@ -7694,7 +7694,7 @@ static void rocketnet_test_server_uring_wire_exchange_flags( const char * bind_s
     rocketnet_address_t bind_address;
     rocketnet_check( rocketnet_address_parse( &bind_address, bind_string ) );
 
-    struct rocketnet_server_uring_t * uring = rocketnet_server_uring_create_flags( NULL, &bind_address, 2, create_flags );
+    struct rocketnet_server_uring_t * uring = rocketnet_server_uring_create_flags( NULL, &bind_address, 2, ROCKETNET_DEFAULT_MAX_CLIENTS, create_flags );
     rocketnet_check( uring );
 
     if ( expect_segment == 1 )
@@ -7957,7 +7957,7 @@ static void rocketnet_test_server_uring_wire_gro( const char * address_string, b
     rocketnet_address_t bind_address;
     rocketnet_check( rocketnet_address_parse( &bind_address, address_string ) );
 
-    struct rocketnet_server_uring_t * uring = rocketnet_server_uring_create_flags( NULL, &bind_address, 2, 0 );
+    struct rocketnet_server_uring_t * uring = rocketnet_server_uring_create_flags( NULL, &bind_address, 2, ROCKETNET_DEFAULT_MAX_CLIENTS, 0 );
     rocketnet_check( uring );
     rocketnet_check( ( rocketnet_server_uring_features( uring ) & ROCKETNET_SERVER_URING_FEATURE_GRO ) != 0 );
 
@@ -8094,7 +8094,7 @@ static void rocketnet_test_server_uring_wire_gro( const char * address_string, b
     rocketnet_address_t plain_address;
     rocketnet_check( rocketnet_address_parse( &plain_address, address_string ) );
 
-    struct rocketnet_server_uring_t * plain = rocketnet_server_uring_create_flags( NULL, &plain_address, 1, ROCKETNET_SERVER_URING_DISABLE_GRO );
+    struct rocketnet_server_uring_t * plain = rocketnet_server_uring_create_flags( NULL, &plain_address, 1, ROCKETNET_DEFAULT_MAX_CLIENTS, ROCKETNET_SERVER_URING_DISABLE_GRO );
     rocketnet_check( plain );
     rocketnet_check( ( rocketnet_server_uring_features( plain ) & ROCKETNET_SERVER_URING_FEATURE_GRO ) == 0 );
     rn_native_backend_stop_and_destroy( plain, rocketnet_server_uring_stop, rocketnet_server_uring_stopped, rocketnet_server_uring_destroy );
@@ -8134,7 +8134,7 @@ void rocketnet_test_server_uring_send_overflow()
     rocketnet_address_t bind_address;
     rocketnet_check( rocketnet_address_parse( &bind_address, "127.0.0.1" ) );
 
-    struct rocketnet_server_uring_t * uring = rocketnet_server_uring_create( NULL, &bind_address, 1 );
+    struct rocketnet_server_uring_t * uring = rocketnet_server_uring_create( NULL, &bind_address, 1, ROCKETNET_DEFAULT_MAX_CLIENTS );
     rocketnet_check( uring );
 
     rocketnet_address_t client_address;
@@ -8211,7 +8211,7 @@ void rocketnet_test_server_uring_receive_rearms_after_no_buffers()
     rocketnet_address_t bind_address;
     rocketnet_check( rocketnet_address_parse( &bind_address, "127.0.0.1" ) );
 
-    struct rocketnet_server_uring_t * uring = rocketnet_server_uring_create( NULL, &bind_address, 1 );
+    struct rocketnet_server_uring_t * uring = rocketnet_server_uring_create( NULL, &bind_address, 1, ROCKETNET_DEFAULT_MAX_CLIENTS );
     rocketnet_check( uring );
 
     rocketnet_address_t client_address;

@@ -181,8 +181,8 @@ struct rocketnet_reassembly_set_t * rocketnet_reassembly_set_create( void * cont
 struct rocketnet_reassembly_set_t * rocketnet_reassembly_set_create_delivered( void * context, int num_connections, int num_slots, int max_payload_bytes, int delivered_capacity, uint64_t delivered_bytes );
 
 // the server's delivered capacity from its configuration: the completion
-// bound above at the server's drain, ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE
-// packets per update -- one global array, not a per-client share, and the
+// bound above at the server's drain, rocketnet_server_receive_packets_per_update
+// packets per update for its max_clients -- one global array, not a per-client share, and the
 // larger of the server's two receive paths. Zero for invalid geometry.
 
 int rocketnet_server_reassembly_delivered_capacity( int max_clients, int num_slots );
