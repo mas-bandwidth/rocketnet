@@ -514,7 +514,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p bin
-          "$ROCKETNET_FUZZ_CLANG_CL" -nologo -Zi -O1 -MT -std:c++17 -EHsc -utf-8 -fp:precise \
+          "$ROCKETNET_FUZZ_CLANG_CL" -nologo -Zi -O1 -MT -std:c++17 -EHsc -utf-8 -fp:precise -Xclang -ffp-contract=off \
             -W4 -WX -Wshadow -Wconversion -Wsign-conversion -Wcast-qual -Wformat=2 -Wundef -Wdouble-promotion \
             -DWIN32 -D_WINDOWS -D_DISABLE_STRING_ANNOTATION -D_DISABLE_VECTOR_ANNOTATION -DROCKETNET_DEV=1 \
             -fsanitize=fuzzer,address \

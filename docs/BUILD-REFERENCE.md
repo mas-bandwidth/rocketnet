@@ -442,7 +442,11 @@ build rocketnet itself:
   - GCC/Clang: `-ffp-contract=off`. Not merely the absence of `-ffast-math` — GCC's default
     is `-ffp-contract=fast`, which contracts across statement boundaries, and clang's default
     `=on` still fuses within a single expression.
-  - MSVC: `/fp:precise`.
+  - MSVC: `/fp:precise`, which does not contract.
+  - clang-cl: `/fp:precise -Xclang -ffp-contract=off`. clang-cl maps `/fp:precise` to
+    `-ffp-contract=on`, which fuses `a*b+c` wherever the target has FMA (ARM64, or x64 with
+    `/arch:AVX2`). `/clang:-ffp-contract=off` sets the same mode, but the driver warns that it
+    overrides `/fp:precise`, and `/WX` makes that warning an error.
 
 rocketnet's float wire encoding is a bit copy (no arithmetic), so no flag is required of consumers
 for correct wire bytes today. The strict build is the family floor: contraction is
@@ -454,8 +458,10 @@ package nor `add_subdirectory` passes it to your targets, whose floating-point
 flags stay your own.
 The canary `test_fp_contract_off` in `test.cpp` asserts the floor holds on every platform
 (one rounding of `a*b+c` would change `0x00000000` to `0x33800000` / `0x3C90000000000000`),
-and `tools/check_fp_contract.sh` (run in CI) fails any compiler invocation outside CMake that
-omits `-ffp-contract=off` or `/fp:precise`.
+configuring the tree fails when any target it compiles lacks its compiler family's flag above
+or carries a contracting one (`rocketnet_check_fp_floor` in `CMakeLists.txt`), and
+`tools/check_fp_contract.sh` (run in CI) fails any compiler invocation outside CMake that
+omits the flag for its compiler.
 
 ### XDP transmit staging pressure
 

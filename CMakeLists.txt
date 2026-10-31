@@ -185,11 +185,22 @@ endforeach()
 # nor a parent project that adds this directory receives them: the strict
 # floating-point floor (docs/BUILDING.md, "Floating point") and the memory budgets
 # the internal headers read (sdk/rocketnet_history.h:13, sdk/rocketnet_memory.h:7-11).
-if(MSVC)
-    add_compile_options(/fp:precise)
+# clang-cl (Clang with the MSVC command line) maps /fp:precise to
+# -ffp-contract=on, which fuses a*b+c within an expression wherever the target
+# has FMA (the aarch64 baseline, or x64 with /arch:AVX2), so it also takes
+# -ffp-contract=off through -Xclang. /clang:-ffp-contract=off is not used: the
+# driver warns that it overrides the precise model /fp:precise selects (and the
+# Visual Studio toolset passes /fp:precise by default), and /WX fails on that
+# warning. rocketnet_check_fp_floor at the end of this file fails the configure
+# when any target lacks its family's floor.
+if(MSVC AND CMAKE_C_COMPILER_ID STREQUAL "Clang")
+    set(ROCKETNET_FP_FLOOR /fp:precise "SHELL:-Xclang -ffp-contract=off")
+elseif(MSVC)
+    set(ROCKETNET_FP_FLOOR /fp:precise)
 else()
-    add_compile_options(-ffp-contract=off)
+    set(ROCKETNET_FP_FLOOR -ffp-contract=off)
 endif()
+add_compile_options(${ROCKETNET_FP_FLOOR})
 # The warning floor, at the same directory scope so every target this tree
 # builds carries it, the vendored sodium source included (sodium/NOTES.md):
 # a customer compiles these sources inside their game with their own warning
@@ -478,10 +489,8 @@ foreach(target IN LISTS rocketnet_static_targets rocketnet_shared_targets)
         # Static compiler symbols must not race the shared library linker PDB
         # when both targets use the rocketnet output name in an embedded build.
         set_target_properties(${target} PROPERTIES COMPILE_PDB_NAME "${target}_compile")
-        target_compile_options(${target} PRIVATE /fp:precise)
-    else()
-        target_compile_options(${target} PRIVATE -ffp-contract=off)
     endif()
+    target_compile_options(${target} PRIVATE ${ROCKETNET_FP_FLOOR})
     if(ROCKETNET_HARDEN)
         target_compile_definitions(${target} PRIVATE "$<$<CONFIG:Release>:_FORTIFY_SOURCE=2>")
         foreach(language C CXX)
@@ -1363,3 +1372,69 @@ install(EXPORT RocketNetTargets NAMESPACE RocketNet:: DESTINATION ${ROCKETNET_PA
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/RocketNetConfig.cmake"
     "${CMAKE_CURRENT_BINARY_DIR}/RocketNetConfigVersion.cmake"
     cmake/RocketNetDependencies.cmake DESTINATION ${ROCKETNET_PACKAGE_DIR})
+
+# The floating-point floor gate. Every target this tree compiles (the
+# libraries, tests, examples and tools, in this directory and below) must carry
+# its compiler family's floor: -ffp-contract=off for GCC, Clang and AppleClang;
+# /fp:precise for MSVC; /fp:precise and -Xclang -ffp-contract=off for clang-cl.
+# The family is read from the compiler ID and its command-line variant, and the
+# floor is spelled here apart from ROCKETNET_FP_FLOOR, so a floor that drops a
+# family's flag, or a target that replaces its options, fails the configure.
+# A contracting flag (-ffp-contract=on or fast, -ffast-math, /fp:fast,
+# /fp:contract) on any target fails it too.
+function(rocketnet_collect_targets dir out)
+    get_property(targets DIRECTORY "${dir}" PROPERTY BUILDSYSTEM_TARGETS)
+    get_property(subdirs DIRECTORY "${dir}" PROPERTY SUBDIRECTORIES)
+    foreach(subdir IN LISTS subdirs)
+        rocketnet_collect_targets("${subdir}" subdir_targets)
+        list(APPEND targets ${subdir_targets})
+    endforeach()
+    set(${out} ${targets} PARENT_SCOPE)
+endfunction()
+
+function(rocketnet_check_fp_floor)
+    if(CMAKE_C_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC" AND CMAKE_C_COMPILER_ID STREQUAL "Clang")
+        set(family "clang-cl")
+        set(required "/fp:precise" "SHELL:-Xclang -ffp-contract=off")
+    elseif(CMAKE_C_COMPILER_ID STREQUAL "MSVC")
+        set(family "MSVC")
+        set(required "/fp:precise")
+    elseif(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+        set(family "${CMAKE_C_COMPILER_ID}")
+        set(required "-ffp-contract=off")
+    else()
+        message(FATAL_ERROR "No floating-point floor is defined for C compiler ${CMAKE_C_COMPILER_ID}; add its family to rocketnet_check_fp_floor")
+    endif()
+    rocketnet_collect_targets("${CMAKE_CURRENT_SOURCE_DIR}" targets)
+    set(checked 0)
+    set(failures "")
+    foreach(target IN LISTS targets)
+        get_target_property(type ${target} TYPE)
+        if(NOT type MATCHES "^(STATIC_LIBRARY|SHARED_LIBRARY|MODULE_LIBRARY|OBJECT_LIBRARY|EXECUTABLE)$")
+            continue()
+        endif()
+        get_target_property(options ${target} COMPILE_OPTIONS)
+        if(NOT options)
+            set(options "")
+        endif()
+        foreach(flag IN LISTS required)
+            if(NOT flag IN_LIST options)
+                list(APPEND failures "${target} lacks ${flag}")
+            endif()
+        endforeach()
+        foreach(option IN LISTS options)
+            if(option MATCHES "-ffp-contract=(on|fast)|-ffast-math|^[/-]fp:(fast|contract)$")
+                list(APPEND failures "${target} carries the contracting flag ${option}")
+            endif()
+        endforeach()
+        math(EXPR checked "${checked} + 1")
+    endforeach()
+    if(failures)
+        foreach(failure IN LISTS failures)
+            message(SEND_ERROR "floating-point floor (${family}): ${failure}")
+        endforeach()
+        message(FATAL_ERROR "The ${family} floating-point floor does not hold on the targets above (docs/BUILD-REFERENCE.md, \"Floating point\")")
+    endif()
+    message(STATUS "Floating-point floor (${family}) on all ${checked} compiled targets")
+endfunction()
+rocketnet_check_fp_floor()
