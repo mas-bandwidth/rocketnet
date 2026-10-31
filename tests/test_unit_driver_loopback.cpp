@@ -1636,3 +1636,4 @@ REGISTER_UNIT_TEST( test_server_shape_check_first_on_the_portable_loop );
 REGISTER_UNIT_TEST( test_loopback_transport_server_batch_drops_packet_larger_than_stride );
 
 #include "test_unit_driver_results_checked.cpp"
+#include "test_unit_server_stop_spread.cpp"

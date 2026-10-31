@@ -286,12 +286,12 @@ GSO and io_uring differ: GSO has three shared send banks of 4096 slots, with
 one bank available to producers at a time; io_uring has one shared 2048-slot
 send array, including slots still held by pending completions. These are
 server-wide capacities. Adding receive queues does not multiply either
-producer's capacity. A fill can therefore refuse before it has offered one
-packet to every client in a large server. The current staged-capacity query
-also prevents the message layer's full-buffer rotation from providing a
-fairness guarantee on these backends. Reliable messages remain queued, but
-later clients can be deferred indefinitely under sustained earlier-client
-backlog. See [Current staging and drain limitations](TRANSPORT-INTERNALS.md#current-staging-and-drain-limitations).
+producer's capacity. Each staged transport reports its remaining room
+(`rocketnet_server_transport_send_capacity_available`), so the message
+layer's send pass stops where the next unserved client waits and resumes
+there on the next update, and the disconnect bursts of a kick or a stop leave
+across as many updates as the room needs. See
+[Current staging and drain limitations](TRANSPORT-INTERNALS.md#current-staging-and-drain-limitations).
 The replay-history depth remains a separate setting (below).
 
 Memory is the caller's choice, made through the config. The library sizes

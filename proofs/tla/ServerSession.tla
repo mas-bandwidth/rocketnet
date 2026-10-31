@@ -55,8 +55,11 @@
 \* allowance still holds whole is this deferral followed by its seals in
 \* the same update. A waiting burst belongs to its ended session, never to
 \* the slot, which a new client may take at once. Stop and destroy seal or
-\* drop every waiting packet (the shutdown path). The ghost overspent is
-\* TRUE once one update sealed more than its allowance.
+\* drop every waiting packet (the shutdown path); here the stop's seals are
+\* coarsened into the Stop step, and ServerStopSpread.tla models them across
+\* the stop steps within the transport's send room, before StopCompletes,
+\* with the ring's own layout. The ghost overspent is TRUE once one update
+\* sealed more than its allowance.
 EXTENDS Naturals, FiniteSets
 
 CONSTANTS SlotCount, MaxSessions, MaxTokens, MaxStarts, MaxCreates, Defect, UnresetField,

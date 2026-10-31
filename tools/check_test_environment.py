@@ -189,13 +189,14 @@ def _guards_exclusive(a, b):
 
 # Unit sources a production (ROCKETNET_DEV=OFF) test binary does not compile
 # (CMakeLists.txt): the two registry tables, the loopback transport unit and
-# the results file it includes, the Windows RIO overflow seam, and every file
+# the results and stop-spread files it includes, the Windows RIO overflow seam, and every file
 # in CMakeLists.txt's ROCKETNET_DEV_ONLY_*_TEST_SOURCES lists, read from there.
 PRODUCTION_ABSENT_FIXED = {
     "rocketnet_tests.cpp",
     "test_channels.cpp",
     "test_unit_driver_loopback.cpp",
     "test_unit_driver_results_checked.cpp",
+    "test_unit_server_stop_spread.cpp",
     "test_unit_rio_overflow_seam.cpp",
 }
 DEV_ONLY_LIST_RE = re.compile(r"set\(\s*ROCKETNET_DEV_ONLY_\w+_TEST_SOURCES\s+([^)]*)\)")

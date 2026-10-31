@@ -208,14 +208,20 @@ rotation; it does not multiply the 4096-slot GSO or 2048-slot io_uring send
 capacity (`sdk/rocketnet_server_gso_linux.cpp`,
 `sdk/rocketnet_server_uring_linux.cpp`).
 
-The message layer rotates its starting connection when the transport reports
-full capacity. Currently `rocketnet_server_transport_send_capacity_available`
-returns `INT_MAX` for staged backends. A refused staged start therefore does
-not stop the connection walk at that gate; a complete walk can return the
-cursor to its original start. Under sustained earlier-client backlog, later
-clients can be deferred indefinitely. Reliable work remains queued, but that
-is not a fairness or eventual-delivery guarantee. Increasing the client ceiling
-or receive queue count does not repair this limitation.
+Every built-in server transport reports the frames it takes before its next
+flush through the optional `send_room` operation (`sdk/rocketnet_driver.h`):
+the free slots of the gso producer bank, the io_uring array, the IOCP
+producer bank (at most its free send operations), the open RIO fill phase,
+the fullest XDP queue, and the portable producer bank. A frame the transport
+still holds from an earlier flush is not room.
+`rocketnet_server_transport_send_capacity_available` returns it for the
+staged transports, so the message layer's rotation stops at a full staging
+and its cursor keeps the next unserved connection. The disconnect drain seals
+no more than the room each update, a kicked client's burst is sealed at once
+only while the room holds all of it, and stop's bursts leave across stop steps
+the same way (`proofs/tla/ServerStopSpread.tla`). A custom transport without
+`send_room` is treated as unbounded; a start it refuses ends that update's
+drain, and the bursts wait for the next.
 
 The POSIX portable receive helpers, Darwin msgx receive pump, and Linux GSO
 server receive worker count retained records rather than every discarded
@@ -848,9 +854,10 @@ served connection and offers one frame per connection per round. Full capacity l
 for the next update. In-place unreliable writes use only surplus capacity above
 a complete round of connected clients; otherwise they join the queue so application call order cannot
 starve another connection or that connection's reliable work. Control packets
-use the transport's separate send path. Staged backends have the
-[capacity-reporting limitation](#current-staging-and-drain-limitations)
-described above; this fairness argument does not currently cover them.
+use the transport's separate send path. A staged transport reports its own
+send room as the capacity ([above](#current-staging-and-drain-limitations)),
+so the same rotation applies to it; a custom staged transport without
+`send_room` reports none and is not covered.
 
 ## Receive lengths and truncated datagrams
 

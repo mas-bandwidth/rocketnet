@@ -61,12 +61,15 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_GSO_RECV_QUEUE_SIZE >= 2 * ROCKETNET_GSO_SEND
 ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE >= 2 * ROCKETNET_GSO_SEND_QUEUE_SIZE,
                          "receive budget twice send: server process batch holds at least twice the GSO send queue" );
 
-// the send staging is per queue and does not derive from ROCKETNET_MAX_CLIENTS:
-// the reuseport hash spreads clients over the queues, and the most queues
-// stage two packets for every client (BUILDING.md, "Maximum clients")
+// the send staging is one server-wide producer bank whatever the queue
+// count, and does not derive from ROCKETNET_MAX_CLIENTS: it stages two
+// packets for every client of the default configuration. A server whose
+// sends need more in one update spreads them across updates, as the
+// transport's send room reports (rocketnet_server_gso_send_room;
+// proofs/tla/ServerStopSpread.tla Room).
 
-ROCKETNET_STATIC_ASSERT( ROCKETNET_GSO_MAX_QUEUES * ROCKETNET_GSO_SEND_QUEUE_SIZE >= 2 * ROCKETNET_MAX_CLIENTS,
-                         "the GSO queues together can stage two packets for every client" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_GSO_SEND_QUEUE_SIZE >= 2 * ROCKETNET_DEFAULT_MAX_CLIENTS,
+                         "the GSO producer bank stages two packets for every client of the default configuration" );
 
 // recvmmsg geometry: how many kernel messages one call drains, and how big
 // one message's buffer is. with GRO on, one message is a coalesced run of
@@ -173,6 +176,10 @@ void rocketnet_server_gso_finish_packet( struct rocketnet_server_gso_t * gso, ui
 void rocketnet_server_gso_abort_packet( struct rocketnet_server_gso_t * gso, uint64_t packet_id, uint8_t * packet_data );
 
 void rocketnet_server_gso_send_packets( struct rocketnet_server_gso_t * gso );
+
+// the slots start_packet may still take in the producer bank: the one bank
+// producers fill, whatever the queue count. Main thread.
+int rocketnet_server_gso_send_room( struct rocketnet_server_gso_t * gso );
 
 // Receive workers stage into per-queue producer/ready/main banks off main.
 // receive_packets try-swaps ownership and gathers within the caller budget;
