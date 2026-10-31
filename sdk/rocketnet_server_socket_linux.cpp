@@ -275,6 +275,16 @@ struct rocketnet_server_socket_t
     struct rocketnet_xdp_reply_macs_t reply_macs;
     uint8_t process_eth[ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE][ETH_ALEN];
 
+    // the gateway refresh (rocketnet_xdp_frame.h GATEWAY REFRESH): main
+    // thread only, in the receive call. resolve is rtnetlink unless a test
+    // replaces it; failing holds, per family, whether the last resolve failed,
+    // so a failing resolve warns once rather than every period
+    struct rocketnet_xdp_gateway_refresh_t gateway_refresh;
+    rocketnet_xdp_gateway_resolve_t gateway_resolve;
+    void * gateway_resolve_context;
+    bool gateway_resolve_failing[2];
+    char interface_name[IF_NAMESIZE];
+
     int interface_index;
     struct bpf_object * program_object;  // opened from the embedded server_xdp.o; libxdp does not own it, so destroy closes it after the program
     rocketnet_xdp_program_t * program;
@@ -369,9 +379,10 @@ static bool get_interface_mac_address( const char * interface_name, uint8_t * ma
 // on the interface, then that next hop's neighbour entry. No default route
 // on the interface returns true with *found_route false, the one case the
 // server starts without a gateway; a gateway with no usable neighbour entry
-// carrying a link-layer address refuses, and nothing resolves it.
+// carrying a link-layer address refuses, and nothing resolves it. loud logs
+// each failure; the periodic refresh passes false and warns once itself.
 
-static bool get_gateway_mac_address_netlink( const char * interface_name, int interface_index, int address_type, uint8_t * mac_address, bool * found_route )
+static bool get_gateway_mac_address_netlink( const char * interface_name, int interface_index, int address_type, uint8_t * mac_address, bool * found_route, bool loud )
 {
     *found_route = false;
 
@@ -388,8 +399,9 @@ static bool get_gateway_mac_address_netlink( const char * interface_name, int in
         return true;
     if ( route != ROCKETNET_GATEWAY_NETLINK_FOUND )
     {
-        rocketnet_error( "%s gateway discovery: route query on %s failed: %s (%s)", family_name, interface_name,
-                         rocketnet_gateway_netlink_result_name( route ), strerror( error ) );
+        if ( loud )
+            rocketnet_error( "%s gateway discovery: route query on %s failed: %s (%s)", family_name, interface_name,
+                             rocketnet_gateway_netlink_result_name( route ), strerror( error ) );
         return false;
     }
 
@@ -402,6 +414,8 @@ static bool get_gateway_mac_address_netlink( const char * interface_name, int in
     const int neighbor = rocketnet_gateway_netlink_neighbor( family, interface_index, gateway, mac_address, &error );
     if ( neighbor == ROCKETNET_GATEWAY_NETLINK_FOUND )
         return true;
+    if ( !loud )
+        return false;
     if ( neighbor == ROCKETNET_GATEWAY_NETLINK_DONE )
     {
         rocketnet_error( "%s gateway discovery: no neighbor entry with a link-layer address for %s on %s", family_name, gateway_ip_string, interface_name );
@@ -450,7 +464,7 @@ static bool get_gateway_mac_address( const char * interface_name, int interface_
     else
     {
         bool found_route = false;
-        if ( !get_gateway_mac_address_netlink( interface_name, interface_index, address_type, mac_address, &found_route ) )
+        if ( !get_gateway_mac_address_netlink( interface_name, interface_index, address_type, mac_address, &found_route, true ) )
             return false;
         if ( !found_route )
             return true;
@@ -470,6 +484,49 @@ static bool get_gateway_mac_address( const char * interface_name, int interface_
 }
 
 #define INVALID_FRAME UINT64_MAX
+
+// the refresh's resolve: rtnetlink, quiet. A failure warns once per failing
+// streak, and the table keeps the gateway it has.
+
+static bool rocketnet_server_socket_resolve_gateway( void * context, int address_type, uint8_t * mac, bool * found )
+{
+    rocketnet_server_socket_t * server_socket = (rocketnet_server_socket_t *) context;
+    const int family_index = ( address_type == ROCKETNET_ADDRESS_IPV6 ) ? 1 : 0;
+
+    const bool resolved = get_gateway_mac_address_netlink( server_socket->interface_name, server_socket->interface_index, address_type, mac, found, false );
+    if ( !resolved && !server_socket->gateway_resolve_failing[family_index] )
+        rocketnet_warn( "%s gateway refresh on %s failed: replies keep the gateway mac address they have",
+                        family_index ? "ipv6" : "ipv4", server_socket->interface_name );
+    server_socket->gateway_resolve_failing[family_index] = !resolved;
+    return resolved;
+}
+
+// proofs/tla/RNXdpGatewayRefresh.tla Refresh: main thread, from the receive
+// call (fills joined); now is the caller's clock, an argument so a unit
+// case drives it. One line logged for each gateway MAC that changed.
+
+static void rocketnet_server_socket_refresh_gateway( struct rocketnet_server_socket_t * server_socket, double now )
+{
+    struct rocketnet_xdp_gateway_change_t changes[2];
+    const int num_changes = rocketnet_xdp_gateway_refresh( &server_socket->gateway_refresh, &server_socket->reply_macs, now,
+                                                           server_socket->gateway_resolve, server_socket->gateway_resolve_context, changes );
+    for ( int i = 0; i < num_changes; ++i )
+    {
+        const struct rocketnet_xdp_gateway_change_t * change = &changes[i];
+        const char * family_name = change->address_type == ROCKETNET_ADDRESS_IPV6 ? "ipv6" : "ipv4";
+        if ( change->was_known )
+            rocketnet_info( "%s gateway ethernet address changed from %02x.%02x.%02x.%02x.%02x.%02x to %02x.%02x.%02x.%02x.%02x.%02x on %s",
+                            family_name,
+                            change->was[0], change->was[1], change->was[2], change->was[3], change->was[4], change->was[5],
+                            change->mac[0], change->mac[1], change->mac[2], change->mac[3], change->mac[4], change->mac[5],
+                            server_socket->interface_name );
+        else
+            rocketnet_info( "%s gateway ethernet address is now %02x.%02x.%02x.%02x.%02x.%02x on %s",
+                            family_name,
+                            change->mac[0], change->mac[1], change->mac[2], change->mac[3], change->mac[4], change->mac[5],
+                            server_socket->interface_name );
+    }
+}
 
 static uint64_t alloc_send_frame( rocketnet_server_xdp_socket_t * socket )
 {
@@ -1569,6 +1626,20 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
     if ( !serves_both )
         rocketnet_xdp_reply_macs_reset( &server_socket->reply_macs, server_socket->gateway_known ? server_socket->gateway_ethernet_address : NULL );
 
+    // the gateway refresh resolves the served families again on its period;
+    // ROCKETNET_GATEWAY_ETHERNET_ADDRESS names the gateway for the server's life
+
+    char gateway_override[64];
+    const int gateway_override_found = rocketnet_platform_getenv( "ROCKETNET_GATEWAY_ETHERNET_ADDRESS", gateway_override, sizeof( gateway_override ) );
+    server_socket->gateway_refresh.enabled = !( gateway_override_found < 0 || ( gateway_override_found > 0 && gateway_override[0] != '\0' ) );
+    server_socket->gateway_refresh.serves_both = serves_both != 0;
+    server_socket->gateway_refresh.address_type = public_address.type;
+    server_socket->gateway_resolve = rocketnet_server_socket_resolve_gateway;
+    server_socket->gateway_resolve_context = server_socket;
+    const size_t interface_name_bytes = strnlen( interface_name, sizeof( server_socket->interface_name ) - 1 );
+    memcpy( server_socket->interface_name, interface_name, interface_name_bytes );
+    server_socket->interface_name[interface_name_bytes] = '\0';
+
     // STATE IDENTITY (re-derived twice at review): the identity
     // input contains NOTHING process-derived -- a random 64-bit token
     // names the root, because pid+sequence fails deterministically in
@@ -2260,6 +2331,10 @@ uint8_t * rocketnet_server_socket_start_packet_internal( struct rocketnet_server
     if ( packet_index < 0 )
         return NULL;
 
+    // proofs/tla/RNXdpGatewayRefresh.tla ReadHigh and ReadLow: a fill copies
+    // the reply MAC, the gateway's for an unlearned address, into the staged
+    // packet; the xdp thread sends this copy and never reads the table
+
     send_buffer->packet_info[packet_index].to = *to;
     send_buffer->packet_info[packet_index].packet_bytes = 0;
     memcpy( send_buffer->packet_info[packet_index].destination_mac, destination_mac, ETH_ALEN );
@@ -2847,6 +2922,141 @@ bool rocketnet_server_socket_test_reply_mac_refreshed_at_finish()
     return valid;
 }
 
+// the gateway refresh through the staging entry points, with a fake resolve
+// and the clock as an argument: no netlink, no socket. A gateway MAC that
+// changes reaches the packets fills stage for unlearned addresses once the
+// period has passed; a learned client keeps its MAC; a failed resolve, no
+// route and an unusable MAC keep the gateway; the env override's disabled
+// refresh resolves nothing.
+
+struct rocketnet_server_socket_test_gateway_t
+{
+    bool resolved;
+    bool found;
+    uint8_t mac[ETH_ALEN];
+    int calls;
+};
+
+static bool rocketnet_server_socket_test_resolve_gateway( void * context, int, uint8_t * mac, bool * found )
+{
+    rocketnet_server_socket_test_gateway_t * gateway = (rocketnet_server_socket_test_gateway_t *) context;
+    gateway->calls++;
+    memcpy( mac, gateway->mac, ETH_ALEN );
+    *found = gateway->found;
+    return gateway->resolved;
+}
+
+// stages and finishes a packet to the address as a fill does; the MAC the xdp thread will send it to
+static bool rocketnet_server_socket_test_staged_mac( rocketnet_server_socket_t * server, rocketnet_server_xdp_socket_t * socket, const rocketnet_address_t * to, uint8_t * mac )
+{
+    uint64_t packet_id = 0;
+    uint8_t * packet = rocketnet_server_socket_start_packet( server, to, &packet_id );
+    if ( !packet )
+        return false;
+    rocketnet_server_socket_finish_packet( server, packet_id, packet, 40 );
+    rocketnet_server_socket_send_buffer_t * send_buffer = &socket->send_buffer[socket->send_flow_index.load()];
+    const int packet_index = rocketnet_server_socket_send_slot( packet - send_buffer->packet_data[0] );
+    memcpy( mac, send_buffer->packet_info[packet_index].destination_mac, ETH_ALEN );
+    return true;
+}
+
+bool rocketnet_server_socket_test_gateway_refresh()
+{
+    void * server_storage = rocketnet_malloc( NULL, sizeof( rocketnet_server_socket_t ) );
+    void * socket_storage = rocketnet_malloc( NULL, sizeof( rocketnet_server_xdp_socket_t ) );
+    if ( !server_storage || !socket_storage )
+    {
+        rocketnet_free( NULL, socket_storage );
+        rocketnet_free( NULL, server_storage );
+        return false;
+    }
+
+    auto * server = new ( server_storage ) rocketnet_server_socket_t();
+    auto * socket = new ( socket_storage ) rocketnet_server_xdp_socket_t();
+    server->num_queues = 1;
+    server->socket = socket;
+    socket->send_flow_index.store( socket->send_handoff.producer );
+
+    static const uint8_t old_gateway[ETH_ALEN] = { 0x02, 0, 0, 0, 0, 0x01 };
+    static const uint8_t new_gateway[ETH_ALEN] = { 0x02, 0, 0, 0, 0, 0x02 };
+    static const uint8_t client_mac[ETH_ALEN] = { 0x02, 0, 0, 0, 0, 0x4e };
+    static const uint8_t multicast_mac[ETH_ALEN] = { 0x01, 0, 0x5e, 0, 0, 0x01 };
+    rocketnet_xdp_reply_macs_reset( &server->reply_macs, old_gateway );
+
+    rocketnet_server_socket_test_gateway_t gateway = {};
+    gateway.resolved = true;
+    gateway.found = true;
+    memcpy( gateway.mac, old_gateway, ETH_ALEN );
+
+    server->gateway_refresh.enabled = true;
+    server->gateway_refresh.address_type = ROCKETNET_ADDRESS_IPV4;
+    server->gateway_resolve = rocketnet_server_socket_test_resolve_gateway;
+    server->gateway_resolve_context = &gateway;
+    snprintf( server->interface_name, sizeof( server->interface_name ), "test0" );
+
+    rocketnet_address_t client = {};
+    client.type = ROCKETNET_ADDRESS_IPV4;
+    client.data.ipv4[0] = 192;
+    client.data.ipv4[1] = 168;
+    client.data.ipv4[2] = 1;
+    client.data.ipv4[3] = 78;
+    client.port = 36800;
+    rocketnet_xdp_reply_macs_learn( &server->reply_macs, &client, client_mac );
+
+    rocketnet_address_t stranger = client;
+    stranger.port = 36801;
+
+    bool valid = true;
+    uint8_t mac[ETH_ALEN];
+
+    // the first refresh schedules: create has just resolved
+
+    rocketnet_server_socket_refresh_gateway( server, 100.0 );
+    valid &= gateway.calls == 0;
+
+    // the router is replaced; before the period ends replies still take the old MAC
+
+    memcpy( gateway.mac, new_gateway, ETH_ALEN );
+    rocketnet_server_socket_refresh_gateway( server, 104.9 );
+    valid &= gateway.calls == 0;
+    valid &= rocketnet_server_socket_test_staged_mac( server, socket, &stranger, mac ) && memcmp( mac, old_gateway, ETH_ALEN ) == 0;
+
+    // at the period the refresh resolves, and the fills that follow use the new MAC
+
+    rocketnet_server_socket_refresh_gateway( server, 105.0 );
+    valid &= gateway.calls == 1;
+    valid &= rocketnet_server_socket_test_staged_mac( server, socket, &stranger, mac ) && memcmp( mac, new_gateway, ETH_ALEN ) == 0;
+    valid &= rocketnet_server_socket_test_staged_mac( server, socket, &client, mac ) && memcmp( mac, client_mac, ETH_ALEN ) == 0;
+
+    // a failed resolve, no default route and a multicast MAC keep the gateway
+
+    gateway.resolved = false;
+    rocketnet_server_socket_refresh_gateway( server, 110.0 );
+    gateway.resolved = true;
+    gateway.found = false;
+    rocketnet_server_socket_refresh_gateway( server, 115.0 );
+    gateway.found = true;
+    memcpy( gateway.mac, multicast_mac, ETH_ALEN );
+    rocketnet_server_socket_refresh_gateway( server, 120.0 );
+    valid &= gateway.calls == 4;
+    valid &= rocketnet_server_socket_test_staged_mac( server, socket, &stranger, mac ) && memcmp( mac, new_gateway, ETH_ALEN ) == 0;
+
+    // with the override the refresh is disabled and resolves nothing
+
+    server->gateway_refresh.enabled = false;
+    memcpy( gateway.mac, old_gateway, ETH_ALEN );
+    rocketnet_server_socket_refresh_gateway( server, 200.0 );
+    valid &= gateway.calls == 4;
+    valid &= rocketnet_server_socket_test_staged_mac( server, socket, &stranger, mac ) && memcmp( mac, new_gateway, ETH_ALEN ) == 0;
+
+    socket->~rocketnet_server_xdp_socket_t();
+    server->~rocketnet_server_socket_t();
+    rocketnet_free( NULL, socket_storage );
+    rocketnet_free( NULL, server_storage );
+
+    return valid;
+}
+
 // Exercise the replay writer's pending buffer and its commit failure path
 // without a map or a kernel resource: replay_map_fd -1 refuses every syscall.
 bool rocketnet_server_socket_test_replay_marks()
@@ -3167,6 +3377,12 @@ void rocketnet_server_socket_receive_packets( rocketnet_server_socket_t * server
     rocketnet_assert( server_socket );
 
     server_socket->process_packets.num_packets = 0;
+
+    // proofs/tla/RNXdpGatewayRefresh.tla Join and Refresh: the fills are
+    // joined before receive (rocketnet_driver.h), so the refresh's stores
+    // land before the next fill copies a gateway MAC
+
+    rocketnet_server_socket_refresh_gateway( server_socket, rocketnet_platform_time() );
 
     const int num_queues = server_socket->num_queues;
     int filled_queue = -1;
