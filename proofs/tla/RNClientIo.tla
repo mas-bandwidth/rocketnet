@@ -400,7 +400,7 @@ Stop ==
     /\ wake' = TRUE
     /\ UNCHANGED <<ring, sent, fill, ioRing, deferred, mainWait, addr, held, commitTo>>
     /\ UNCHANGED <<waiting, waitReadable, ioAlive>>
-    /\ UNCHANGED <<pending, arrived, buf, count, snap, owed, delivered, final>>
+    /\ UNCHANGED <<pending, arrived, buf, count, snap, owed, delivered>>
 
 Join ==
     /\ phase = "Stopping"
