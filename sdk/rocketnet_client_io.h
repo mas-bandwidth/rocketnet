@@ -723,6 +723,8 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
                 count = max_packets;
             }
 
+            // proofs/tla/RNClientIoCompactLayout.tla Receive, Step and EndBatch: a faulty datagram is skipped and each
+            // other one moved down to slot fill_slots + accepted, the slot its record names.
             int accepted = 0;
 
             for ( int i = 0; i < count; i++ )
@@ -777,6 +779,7 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
     }
 
     // proofs/tla/RNClientIo.tla IoPublish: publishes the filled buffer and takes a free one when one is waiting.
+    // proofs/tla/RNClientIoCompactLayout.tla Publish: the next buffer fills from slot 0 again.
     // proofs/tla/RNClientIo.tla IoOwe: records the publish as owed when no free buffer is waiting.
     // proofs/tla/RNClientIoDecrypt.tla IoPublish: publishes the fill buffer after each datagram was opened.
     // proofs/tla/RNClientIoDecrypt.tla IoOwe: keeps that buffer when the publish cannot take a free one.

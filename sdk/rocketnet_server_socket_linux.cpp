@@ -129,6 +129,8 @@ struct rocketnet_server_socket_receive_buffer_t
 // handoff mutex held; they exchange indices only, never packet bytes. The
 // producer is exclusive, ready buffers wait in FIFO order, and a claimed
 // buffer remains owned by its consumer until recycle().
+// proofs/tla/RNBankFifoLayout.tla Init (the constructor's loop), Publish (publish), Take (claim) and
+// Release (recycle); MCRNBankFifoLayoutLoopFour.cfg checks them at N = 4.
 template <int N> struct rocketnet_xdp_buffer_exchange_t
 {
     static_assert( N >= 3, "producer, consumer and spare XDP buffers" );

@@ -83,6 +83,8 @@ int rocketnet_client_iocp_init( rocketnet_client_iocp_t * iocp, const rocketnet_
 // up to timeout_seconds for the first. A receive completion makes its buffer
 // ready, in completion order, or idle when it carried no datagram; the wake
 // completion sets woken.
+// proofs/tla/RNBankFifoLayout.tla Complete: a completed receive joins the ready tail
+// ( ready_head + ready_count ) % num_receives, MCRNBankFifoLayoutPosted.cfg.
 
 static void rocketnet_client_iocp_dequeue( rocketnet_client_iocp_t * iocp, double timeout_seconds )
 {
@@ -147,6 +149,8 @@ static void rocketnet_client_iocp_retry_idle( rocketnet_client_iocp_t * iocp )
 
 // proofs/tla/RNClientIocp.tla Drain: the copy reads only a ready buffer, then Post
 // gives it back to the kernel
+// proofs/tla/RNBankFifoLayout.tla Take and Release: the ready head advances % num_receives and the
+// buffer is posted again.
 
 int rocketnet_client_iocp_receive_batch( rocketnet_client_iocp_t * iocp, rocketnet_address_t * from, uint8_t * packet_data,
                                          int packet_stride, int * packet_bytes, int max_packets )

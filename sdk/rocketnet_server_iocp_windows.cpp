@@ -327,6 +327,7 @@ struct rocketnet_server_iocp_t
     rocketnet_platform_thread_t * send_thread = NULL;
     std::atomic<bool> send_exited{ true }; // also true before a worker is created
     int send_producer = 0; // caller-owned until stop publishes stopping
+    // proofs/tla/RNBankFifoLayout.tla Init: as a stack this literal holds banks 1 and 2, right for three banks only.
     int send_free[ROCKETNET_IOCP_SEND_BANKS] = { 1, 2, 0 };
     int send_free_count = ROCKETNET_IOCP_SEND_BANKS - 1;
     int send_ready[ROCKETNET_IOCP_SEND_BANKS] = {};
@@ -769,6 +770,8 @@ static void rocketnet_iocp_publish_uro( rocketnet_server_iocp_t * iocp, rocketne
 // A worker never gives its fill bank away until a different free bank is
 // available. READY banks are FIFO; EXPOSED belongs to the main thread until
 // its next receive call. This mutex protects only the index exchange.
+// proofs/tla/RNBankFifoLayout.tla Publish: the ready tail % ROCKETNET_IOCP_RECEIVE_BANKS and the free
+// stack's top, MCRNBankFifoLayoutLifoExposed.cfg.
 static void rocketnet_iocp_publish_receive_bank( rocketnet_iocp_worker_t * worker )
 {
     if ( worker->buffers[worker->fill_index].num_packets == 0 )
@@ -1154,6 +1157,7 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
     for ( int i = 0; i < num_workers; ++i )
     {
         rocketnet_iocp_worker_t * worker = new ( &iocp->workers[i] ) rocketnet_iocp_worker_t();
+        // proofs/tla/RNBankFifoLayout.tla Init: the loop.
         for ( int bank = 1; bank < ROCKETNET_IOCP_RECEIVE_BANKS; ++bank )
             worker->free_banks[bank - 1] = bank;
     }
@@ -1630,6 +1634,8 @@ static void rocketnet_iocp_send_bank( rocketnet_server_iocp_t * iocp, rocketnet_
 
 // Publish an already finished producer with a constant-time ownership swap.
 // A failed try leaves every frame in the caller-owned bank for the next call.
+// proofs/tla/RNBankFifoLayout.tla Publish: the free stack's top and the ready tail % ROCKETNET_IOCP_SEND_BANKS,
+// MCRNBankFifoLayoutLifoSend.cfg.
 void rocketnet_server_iocp_send_packets( rocketnet_server_iocp_t * iocp )
 {
     if ( iocp->stopping.load( std::memory_order_acquire ) )
@@ -1681,6 +1687,7 @@ static void rocketnet_iocp_send_worker( rocketnet_platform_thread_t * thread, vo
             iocp->test_active_tx_batches.fetch_sub( 1, std::memory_order_release );
         }
 #endif // #if ROCKETNET_DEV
+        // proofs/tla/RNBankFifoLayout.tla Take: the ready head; Release: the bank back on the free stack after its sends.
         rocketnet_platform_mutex_acquire( &iocp->send_mutex );
 
         int index = -1;
@@ -1726,6 +1733,8 @@ static void rocketnet_iocp_send_worker( rocketnet_platform_thread_t * thread, vo
         PostQueuedCompletionStatus( iocp->port, 0, 0, NULL );
 }
 
+// proofs/tla/RNBankFifoLayout.tla Release and Take: the exposed banks back on the free stack, then the
+// ready banks that fit from the ready head, MCRNBankFifoLayoutLifoExposed.cfg.
 void rocketnet_server_iocp_receive_packets( rocketnet_server_iocp_t * iocp )
 {
     iocp->process.num_packets = 0;

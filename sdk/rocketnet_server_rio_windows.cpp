@@ -420,6 +420,7 @@ static void rocketnet_rio_retire_send( rocketnet_server_rio_t * rio, const RIORE
 
 // proofs/tla/RNRioDriver.tla DequeueSend: dequeues the send
 // completion queue without blocking. Returns the completions retired.
+// proofs/tla/RNRioSendSlotLayout.tla Complete: each completion frees its slot.
 static int rocketnet_rio_dequeue_send( rocketnet_server_rio_t * rio )
 {
     int total = 0;
@@ -791,6 +792,7 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
         goto failed;
     }
     // RNRioWorker Init: bank 0 fills, every other bank is free
+    // proofs/tla/RNBankFifoLayout.tla Init: the loop pushes banks 1 .. N - 1 on the free stack.
 
     for ( int i = 0; i < ROCKETNET_RIO_RECEIVE_BANKS; ++i )
     {
@@ -972,6 +974,8 @@ failed:
 // phase; past the last slot it returns NULL and counts SEND_FULL.
 // proofs/tla/RNRioWorker.tla Stage, first half: a fill thread takes a slot of the
 // open fill phase.
+// proofs/tla/RNRioSendSlotLayout.tla Reserve: one fetch_add per call, refused or not; a counter that wraps
+// within reach hands out a staged slot again (MCRNRioSendSlotLayoutBrokenIntWrap.cfg).
 uint8_t * rocketnet_server_rio_start_packet( rocketnet_server_rio_t * rio, const rocketnet_address_t * to, uint64_t * packet_id )
 {
     if ( rio->stopping.load( std::memory_order_acquire ) )
@@ -999,6 +1003,7 @@ uint8_t * rocketnet_server_rio_start_packet( rocketnet_server_rio_t * rio, const
 
 // proofs/tla/RNRioDriver.tla Finish: the slot records its bytes.
 // proofs/tla/RNRioWorker.tla Stage, second half: the staged packet is postable.
+// proofs/tla/RNRioSendSlotLayout.tla Finish: the reserved slot finished.
 void rocketnet_server_rio_finish_packet( rocketnet_server_rio_t * rio, uint64_t packet_id, uint8_t * frame, int packet_bytes )
 {
     rocketnet_assert( packet_bytes > 0 && packet_bytes <= ROCKETNET_RECEIVE_CEILING );
@@ -1011,6 +1016,7 @@ void rocketnet_server_rio_finish_packet( rocketnet_server_rio_t * rio, uint64_t 
 }
 
 // proofs/tla/RNRioDriver.tla Abort: the slot's bytes are zeroed and it is never posted
+// proofs/tla/RNRioSendSlotLayout.tla Finish: the reserved slot aborted, free again.
 void rocketnet_server_rio_abort_packet( rocketnet_server_rio_t * rio, uint64_t packet_id, uint8_t * frame )
 {
     (void) packet_id;
@@ -1029,6 +1035,8 @@ void rocketnet_server_rio_abort_packet( rocketnet_server_rio_t * rio, uint64_t p
 // never waits and makes no RIO call.
 // proofs/tla/RNRioDriver.tla SwitchPhase: the fill phase switches only to a phase
 // whose sends have all completed, and counts SEND_WAITS otherwise.
+// proofs/tla/RNRioSendSlotLayout.tla SendPackets: count = next[fill] clamped to the queue, the send_ready
+// tail % ROCKETNET_RIO_SEND_PHASES, next[next] = 0 and fill = next.
 void rocketnet_server_rio_send_packets( rocketnet_server_rio_t * rio )
 {
     if ( rio->stopping.load( std::memory_order_acquire ) )
@@ -1073,6 +1081,7 @@ void rocketnet_server_rio_send_packets( rocketnet_server_rio_t * rio )
 // and completion the kernel owns the slot's frame and its address slot.
 // proofs/tla/RNRioDriver.tla Post: posts every finished slot of the phase and adds
 // the posted count to the phase's outstanding count.
+// proofs/tla/RNRioSendSlotLayout.tla TakeAndPost: finished slots below the count posted, the rest zeroed.
 static void rocketnet_rio_post_phase( rocketnet_server_rio_t * rio, int phase, int count )
 {
     int posted = 0;
@@ -1247,6 +1256,9 @@ static int rocketnet_rio_dequeue_receive( rocketnet_server_rio_t * rio )
 
 // proofs/tla/RNRioWorker.tla WTake, WRetire and WPublish: one worker pass, with
 // WPost, WCommit and WDequeue in the calls it makes. True when it did work.
+// proofs/tla/RNBankFifoLayout.tla Publish: the receive ready tail % ROCKETNET_RIO_RECEIVE_BANKS and the free
+// stack's top. proofs/tla/RNRioSendSlotLayout.tla TakeAndPost and Retire: the send_ready head % ROCKETNET_RIO_SEND_PHASES
+// and a drained posted phase idle again.
 static bool rocketnet_rio_worker_pass( rocketnet_server_rio_t * rio )
 {
     bool progress = false;
@@ -1365,6 +1377,8 @@ static void rocketnet_rio_worker( rocketnet_platform_thread_t *, void * argument
 // fill bank may be waiting for one).
 // proofs/tla/RNRioDriver.tla Swap: the banks the worker filled become the exposed
 // banks whose views process_packets returns until the next call.
+// proofs/tla/RNBankFifoLayout.tla Release and Take: the exposed banks back on the free stack, then the
+// ready banks that fit from the ready head, MCRNBankFifoLayoutLifoExposed.cfg.
 void rocketnet_server_rio_receive_packets( rocketnet_server_rio_t * rio )
 {
     rio->process.num_packets = 0;

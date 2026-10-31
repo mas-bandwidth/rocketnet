@@ -189,6 +189,7 @@ struct rocketnet_server_gso_t
     std::atomic<bool> send_quit{ false };
     std::atomic<bool> send_stopped{ false };
     int send_producer = 0; // game fill threads joined before main publishes
+    // proofs/tla/RNBankFifoLayout.tla Init: this literal is right for three banks only.
     int send_free[ROCKETNET_GSO_TX_BANKS] = { 1, 2, 0 };
     int send_free_head = 0;
     int send_free_count = ROCKETNET_GSO_TX_BANKS - 1;
@@ -305,6 +306,7 @@ bool rocketnet_server_gso_test_receive_ready( struct rocketnet_server_gso_t * gs
 // is the only acquire on main's path, so a held mutex defers the publish
 // to the next frame instead of blocking.
 // The releases that end each exchange are RNGsoHandoff.tla Unlock.
+// proofs/tla/RNBankFifoLayout.tla Publish: the free head and the ready tail, each % ROCKETNET_GSO_TX_BANKS.
 static bool rocketnet_server_gso_publish_send( rocketnet_server_gso_t * gso )
 {
     if ( gso->stopping || gso->send_producer < 0 )
@@ -340,6 +342,7 @@ static bool rocketnet_server_gso_publish_send( rocketnet_server_gso_t * gso )
 // observed with ready emptiness under the handoff lock, so an earlier empty
 // observation cannot strand a later publication. Stop's release transfers the
 // last producer only after main has stopped filling or publishing it.
+// proofs/tla/RNBankFifoLayout.tla Take: the ready head advances % ROCKETNET_GSO_TX_BANKS.
 static int rocketnet_server_gso_take_send( rocketnet_server_gso_t * gso, bool * final )
 {
     *final = false;
@@ -367,6 +370,7 @@ static int rocketnet_server_gso_take_send( rocketnet_server_gso_t * gso, bool * 
 
 // proofs/tla/RNGsoHandoff.tla TxReturn: a bank rejoins the free FIFO only after
 // its synchronous sends finished (the worker cleared it first).
+// proofs/tla/RNBankFifoLayout.tla Release: the free tail ( free_head + free_count ) % ROCKETNET_GSO_TX_BANKS.
 static void rocketnet_server_gso_return_send( rocketnet_server_gso_t * gso, int index )
 {
     gso->send_banks[index].num_packets.store( 0, std::memory_order_relaxed );

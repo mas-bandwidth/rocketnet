@@ -126,6 +126,8 @@ struct portable_server_t
 #endif // #if ROCKETNET_DEV
 
     int producer = 0; // main thread only
+    // proofs/tla/RNBankFifoLayout.tla Init: this literal holds banks 1 and 2, right for three banks only;
+    // MCRNBankFifoLayoutBrokenLiteralFour.cfg is the same literal at four.
     int free_index[PORTABLE_TX_BANKS] = { 1, 2, 0 };
     int free_head = 0;
     int free_count = PORTABLE_TX_BANKS - 1;
@@ -139,6 +141,7 @@ struct portable_server_t
     int rx_producer = 0; // RX worker only
     int rx_consumer = -1; // main only, retained until completely consumed
     int rx_cursor = 0; // main only
+    // proofs/tla/RNBankFifoLayout.tla Init: the same three-bank literal as the TX free queue.
     int rx_free_index[PORTABLE_RX_BANKS] = { 1, 2, 0 };
     int rx_free_head = 0;
     int rx_free_count = PORTABLE_RX_BANKS - 1;
@@ -284,6 +287,7 @@ static bool portable_tx_publish( portable_server_t * server )
     // refuses; otherwise the producer joins the ready queue at
     // ( ready_head + ready_count ) % PORTABLE_TX_BANKS and the oldest free bank
     // becomes the producer (HeadMod and TailMod in the model are these moduli).
+    // proofs/tla/RNBankFifoLayout.tla Publish: the same exchange with every bank in exactly one place.
 
     if ( server->free_count == 0 )
     {
@@ -323,6 +327,7 @@ static void portable_tx_worker( rocketnet_platform_thread_t *, void * arg )
         // proofs/tla/RNPortableTx.tla WTake: under the mutex the oldest ready bank is
         // taken, or empty is observed together with quit. A quit read after the
         // release is the race MCRNPortableTxBrokenQuitAfterUnlock.cfg reproduces.
+        // proofs/tla/RNBankFifoLayout.tla Take: the ready head advances % PORTABLE_TX_BANKS.
 
         int index = -1;
         bool exit_empty = false;
@@ -375,6 +380,7 @@ static void portable_tx_worker( rocketnet_platform_thread_t *, void * arg )
         // proofs/tla/RNPortableTx.tla WSendDone, WRetLock and WRetSwap: the count is
         // zeroed before the bank rejoins the free queue at
         // ( free_head + free_count ) % PORTABLE_TX_BANKS under the mutex.
+        // proofs/tla/RNBankFifoLayout.tla Release: the free tail at that position.
 
         bank->count = 0;
         rocketnet_platform_mutex_acquire( &server->mutex );
@@ -401,6 +407,7 @@ static bool portable_rx_publish( portable_server_t * server )
     // the producer is empty or was queued for a free bank. Without a free bank
     // the worker keeps its full producer (HoldOnFull) and stops reading the
     // socket.
+    // proofs/tla/RNBankFifoLayout.tla Publish: the free head and the ready tail, each % PORTABLE_RX_BANKS.
 
     if ( server->rx_bank[server->rx_producer].count == 0 )
         return true;
@@ -432,6 +439,8 @@ static bool portable_rx_acquire( portable_server_t * server )
     // is returned and the oldest ready bank taken under one try; a failed try
     // keeps the consumer and its cursor and ends the call. Main wakes the worker only when it returns a bank to an empty
     // free FIFO: only then can the worker be waiting for one (WakeOnReturn).
+    // proofs/tla/RNBankFifoLayout.tla Release and Take: the consumer back at the free tail, then the oldest
+    // ready bank from the ready head.
 
     if ( server->rx_consumer >= 0 && server->rx_cursor < server->rx_bank[server->rx_consumer].count )
         return true;
