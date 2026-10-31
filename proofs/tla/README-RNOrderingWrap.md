@@ -20,13 +20,13 @@ delivery table of two.
 
 ## Actions and the code they mirror
 
-Line numbers in `sdk/rocketnet_channel.cpp` at this commit.
+Functions in `sdk/rocketnet_channel.cpp`.
 
 | Action | Code |
 |---|---|
-| `Receive(o)` | one record of `rn_ordered_receive` (1828-): `rn_receive_delivery_reservation` (1795-1826: one delivery, plus each complete held successor when the record is in turn, compared at line 1807), the deferral when the table lacks that room (1856-1858), then `rn_channels_dispatch_ordered` (662-): `delta = rn_u24(ordering - ordered_read)` (681-682), in turn delivered through `rn_channels_reliable_delivery` (which exhausts the region on a full table, 77-92) and `rn_channels_deliver_ordered` (410-420), then `rn_channels_drain` (601-658: key `rn_held_key(channel, ordered_read)`, a full table exhausts the region); ahead, held (741-) |
-| `EndUpdate` | `rn_channels_end_update` (1042-1061): `deliveries = 0` |
-| `Ended` | environment: an exhausted region takes nothing more (1837-1838); a terminal stutter |
+| `Receive(o)` | one record of `rn_ordered_receive`: `rn_receive_delivery_reservation` (one delivery, plus each complete held successor when the record is in turn by its in-turn compare), the deferral when the table lacks that room, then `rn_channels_dispatch_ordered`: `delta = rn_u24(ordering - ordered_read)`, in turn delivered through `rn_channels_reliable_delivery` (which exhausts the region on a full table) and `rn_channels_deliver_ordered`, then `rn_channels_drain` (key `rn_held_key(channel, ordered_read)`, a full table exhausts the region); ahead, held |
+| `EndUpdate` | `rn_channels_end_update`: `deliveries = 0` |
+| `Ended` | environment: an exhausted region takes nothing more (`rn_ordered_receive`); a terminal stutter |
 
 Records are honest: layer 3 drops duplicates, and a sender has fewer than `W`
 records numbered at once, so a record reaching the dispatch is fresh and in
@@ -36,9 +36,9 @@ sequenced hold's extra reserved delivery are left to `RNChannel` and
 
 The other comparisons of the ordering with the read index were read against
 this rule and all mask both sides: `rn_channels_deliver_sequenced`
-(`sdk/rocketnet_channel.cpp:433`), the drain's descriptor check (630),
-`rn_channels_dispatch_sequenced` (`sdk/rocketnet_channel_sequenced.cpp:411`),
-and `rn_channels_drain_sequenced` (550 and 568).
+(`sdk/rocketnet_channel.cpp`), the descriptor check of `rn_channels_drain`,
+`rn_channels_dispatch_sequenced` (`sdk/rocketnet_channel_sequenced.cpp`),
+and both compares of `rn_channels_drain_sequenced`.
 
 ## Invariants
 
@@ -53,7 +53,7 @@ and `rn_channels_drain_sequenced` (550 and 568).
 
 | Case | Rule off | Declared invariant |
 |---|---|---|
-| `MCRNOrderingWrapBrokenUnmasked.cfg` | `Masked = FALSE`: `rn_u24(record->ordering) != rx->ordered_read`, the reservation before the masked compare | `NoExhaust` |
+| `MCRNOrderingWrapBrokenUnmasked.cfg` | `Masked = FALSE`: `rn_u24(record->ordering) != rx->ordered_read`, an in-turn compare of the 24-bit ordering against the unmasked 32-bit read index | `NoExhaust` |
 
 ### Hand check against the code
 

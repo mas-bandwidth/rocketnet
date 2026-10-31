@@ -92,7 +92,7 @@ Init ==
 \* the code's steps as maps on a record of the connection's fields
 State == [views |-> views, cursor |-> cursor, held |-> held]
 
-\* rn_message_object_release_batch, lines 1496-1513
+\* rn_message_object_release_batch
 ReleaseBatch(s) ==
     LET RECURSIVE Go(_, _)
         Go(t, n) ==
@@ -103,7 +103,7 @@ ReleaseBatch(s) ==
                    ELSE Go(t, n + 1)
     IN  Go(s, 1)
 
-\* rn_message_object_next, lines 1378-1412, for one connection: returns
+\* rn_message_object_next, for one connection: returns
 \* <<state, entry or -1>>
 FirstWaiting(s) == {k \in s.cursor..(deliveries - 1) : s.views[k] = WAITING}
 Next1(s) ==
@@ -115,7 +115,7 @@ Next1(s) ==
 \* an entry of this update passed over unread: below the new cursor, never handed out
 Skipped(s, s2) == \E k \in s.cursor..(s2.cursor - 1) : k < deliveries /\ s.views[k] # WAITING /\ k \notin app
 
-\* rn_message_connection_release_view, lines 1442-1467: the entries the
+\* rn_message_connection_release_view: the entries the
 \* backward search visits, in order.  The code starts at k = cursor - 1 (or
 \* deliveries - 1 when the cursor is 0) and steps k = k == 0 ? deliveries - 1
 \* : k - 1, deliveries times.  SearchFromCursor = FALSE starts at k = cursor,
@@ -151,7 +151,7 @@ Receive ==
     /\ lostView' = (lostView \/ Skipped(State, r[1]))
     /\ UNCHANGED <<deliveries, batch, missed, strayRead>>
 
-\* rn_message_object_receive_messages, lines 1516-1544
+\* rn_message_object_receive_messages
 RECURSIVE Fill(_, _, _)
 Fill(s, got, n) ==
     IF n = 0 THEN <<s, got>>
@@ -171,7 +171,7 @@ ReceiveBatch ==
     /\ lostView' = (lostView \/ Skipped(s1, f[1]))
     /\ UNCHANGED <<deliveries, missed, strayRead>>
 
-\* rn_message_object_update, lines 604-691, then the transport update
+\* rn_message_object_update, then the transport update
 \* appends n deliveries
 Update(n) ==
     LET s1 == ReleaseBatch(State)

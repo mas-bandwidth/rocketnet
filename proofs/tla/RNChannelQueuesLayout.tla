@@ -116,7 +116,7 @@ Take(s, d) ==
     [s EXCEPT !.gen[d] = IF @ = 0 \/ @ = GenMax THEN 1 ELSE @ + 1,
               !.qnext[d] = NONE]
 
-\* rn_channel_queue_append, lines 1084-1093
+\* rn_channel_queue_append
 QAppend(s, c, d) ==
     LET s1 == [s EXCEPT !.qnext[d] = NONE]
         s2 == IF s1.qtail[c] # NONE
@@ -124,14 +124,14 @@ QAppend(s, c, d) ==
                 ELSE [s1 EXCEPT !.qhead[c] = d]
     IN  [s2 EXCEPT !.qtail[c] = d]
 
-\* rn_channel_queue_push_front, lines 1095-1102
+\* rn_channel_queue_push_front
 PushFront(s, c, d) ==
     LET s1 == [s EXCEPT !.qnext[d] = s.qhead[c], !.qhead[c] = d]
     IN  IF PushFrontSetsTail /\ s1.qtail[c] = NONE
           THEN [s1 EXCEPT !.qtail[c] = d]
           ELSE s1
 
-\* rn_channel_queue_pop, lines 1104-1112
+\* rn_channel_queue_pop
 Pop(s, c) ==
     LET d  == s.qhead[c]
         s1 == [s EXCEPT !.qhead[c] = s.qnext[d]]
@@ -140,10 +140,10 @@ Pop(s, c) ==
           THEN [s2 EXCEPT !.qtail[c] = NONE]
           ELSE s2
 
-\* rn_channel_head_generation, lines 1114-1119
+\* rn_channel_head_generation
 HeadGen(s, c) == IF s.qhead[c] = NONE THEN 0 ELSE s.gen[s.qhead[c]]
 
-\* rn_ready_link, lines 1126-1159
+\* rn_ready_link
 Link(s, c, front) ==
     IF s.rticket[c] # 0 THEN s ELSE
     LET t   == s.tnext
@@ -163,7 +163,7 @@ Link(s, c, front) ==
                            ELSE [s2 EXCEPT !.rhead = c]
                IN  [s3 EXCEPT !.rtail = c]
 
-\* rn_ready_remove_named, lines 1168-1191: the test, then the unlink
+\* rn_ready_remove_named: the test, then the unlink
 Named(s, c, ticket, g) == ticket # 0 /\ s.rticket[c] = ticket /\ s.rgen[c] = g
 
 Unlink(s, c) ==
@@ -191,7 +191,7 @@ WritesForeign(s, c) ==
 (* The actions.                                                            *)
 (***************************************************************************)
 
-\* rn_channels_finish, lines 1247-1314
+\* rn_channels_finish
 Enqueue(c, d) ==
     /\ dstate[d] = "free"
     /\ LET s1 == Take(L, d)
@@ -205,7 +205,7 @@ Enqueue(c, d) ==
     /\ q' = [q EXCEPT ![c] = Append(@, d)]
     /\ UNCHANGED configDone
 
-\* rn_ordered_announce_config, lines 1338-1403: channel 0
+\* rn_ordered_announce_config: channel 0
 Config(d) ==
     /\ ~configDone
     /\ dstate[d] = "free"
@@ -220,7 +220,7 @@ Config(d) ==
     /\ ready' = <<0>> \o RemoveSeq(ready, 0)
     /\ UNCHANGED foreign
 
-\* rn_ordered_write, lines 1678-1687: a ready channel with nothing queued leaves
+\* rn_ordered_write: a ready channel with nothing queued leaves
 WalkEmpty ==
     /\ L.rhead # NONE
     /\ L.qhead[L.rhead] = NONE
@@ -229,7 +229,7 @@ WalkEmpty ==
        /\ ready' = RemoveSeq(ready, c)
     /\ UNCHANGED <<dstate, configDone, q, foreign>>
 
-\* rn_ordered_write, lines 1689-1729: the head channel's FIFO head is numbered
+\* rn_ordered_write: the head channel's FIFO head is numbered
 Number ==
     /\ L.rhead # NONE
     /\ L.qhead[L.rhead] # NONE

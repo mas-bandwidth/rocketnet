@@ -21,20 +21,20 @@ wraps.
 
 ## Actions and the code they mirror
 
-Line numbers in `sdk/rocketnet_message_server.cpp` at this commit.
+Functions in `sdk/rocketnet_message_server.cpp`.
 
 | Action | Code |
 |---|---|
-| `Update(n)` | `rn_message_object_update` (604-691): the last batch released (`rn_message_object_release_batch`, 1496-1513), views still held counted as `NOT_RELEASED` (616-625), the count of the last update's deliveries read from `rn_endpoint_begin_update` (which empties the table), that many views cleared, the cursor and `held` reset (684-687); then the transport update appends `n` deliveries |
-| `Receive` | `rn_message_object_receive` (1415-1440) through `rn_message_object_next` (1378-1412): the first `WAITING` entry at or after the cursor becomes `HELD`, `held++`, the cursor moves past it; at the end the cursor is the delivery count |
-| `ReceiveBatch` | `rn_message_object_receive_messages` (1516-1544): the last batch released, then up to `ROCKETNET_RECEIVE_BATCH_MESSAGES` entries taken as `Receive` takes them |
-| `Release(e)` | `rn_message_object_release` (1470-1494) with a pointer the application holds, through `rn_message_connection_release_view` (1442-1467): a backward search from `cursor - 1`, wrapping at the delivery count, for the entry with that data pointer that is `HELD` |
+| `Update(n)` | `rn_message_object_update`: the last batch released (`rn_message_object_release_batch`), views still held counted as `NOT_RELEASED`, the count of the last update's deliveries read from `rn_endpoint_begin_update` (which empties the table), that many views cleared, the cursor and `held` reset; then the transport update appends `n` deliveries |
+| `Receive` | `rn_message_object_receive` through `rn_message_object_next`: the first `WAITING` entry at or after the cursor becomes `HELD`, `held++`, the cursor moves past it; at the end the cursor is the delivery count |
+| `ReceiveBatch` | `rn_message_object_receive_messages`: the last batch released, then up to `ROCKETNET_RECEIVE_BATCH_MESSAGES` entries taken as `Receive` takes them |
+| `Release(e)` | `rn_message_object_release` with a pointer the application holds, through `rn_message_connection_release_view`: a backward search from `cursor - 1`, wrapping at the delivery count, for the entry with that data pointer that is `HELD` |
 
 Each entry's data pointer is distinct, so a pointer names its entry. One
 connection: the object's queue across connections (`receive_connection`, and
 the release trying the queue's connection first) is not modelled. A
 delivery still `WAITING` at the next update kicks the connection
-(`MESSAGE_NOT_RECEIVED`, 636-653); the model leaves that to `RNSlots`.
+(`MESSAGE_NOT_RECEIVED`, in `rn_message_object_update`); the model leaves that to `RNSlots`.
 
 ## Invariants
 
@@ -53,19 +53,19 @@ delivery still `WAITING` at the next update kicks the connection
 
 | Case | Rule off | Declared invariant |
 |---|---|---|
-| `MCRNMessageViewsBrokenSearchFromCursor.cfg` | `SearchFromCursor = FALSE`: the search starts at `k = cursor`, not `cursor - 1` (line 1453) | `ReleaseFindsHeld` |
-| `MCRNMessageViewsBrokenBatchNoCheck.cfg` | `BatchChecksHeld = FALSE`: the batch release without the `== HELD` test (line 1505) | `HeldCountExact` |
+| `MCRNMessageViewsBrokenSearchFromCursor.cfg` | `SearchFromCursor = FALSE`: the search starts at `k = cursor`, not `cursor - 1` (`rn_message_connection_release_view`) | `ReleaseFindsHeld` |
+| `MCRNMessageViewsBrokenBatchNoCheck.cfg` | `BatchChecksHeld = FALSE`: the batch release without the `== HELD` test (`rn_message_object_release_batch`) | `HeldCountExact` |
 | `MCRNMessageViewsBrokenClearAfterExpire.cfg` | `CountBeforeExpire = FALSE`: the views cleared by a count read after `rn_ordered_end_update` emptied the table, which is 0 | `NoLostView` |
 
 ### Hand checks against the code
 
 **SearchFromCursor.** TLC's trace: one delivery, received (entry 0 `HELD`,
 cursor 1). The application releases its pointer. Starting at `k = cursor = 1`
-the loop reads `table[1]`, an entry past this update's deliveries, and its
-one iteration (`deliveries` = 1) ends there: entry 0 is never reached, the
-release is counted as misuse, and the next update reports the view as not
-released. The code starts at `cursor - 1` (line 1453), the last entry handed
-out, and the wrap at line 1463 visits every entry below it.
+the loop reads `table[1]`, an entry past this update's deliveries, and its one
+iteration (`deliveries` = 1) ends there: entry 0 is never reached, the release
+is counted as misuse, and the next update reports the view as not released.
+`rn_message_connection_release_view` starts at `cursor - 1`, the last entry
+handed out, and its wrap visits every entry below it.
 
 **BatchNoCheck.** TLC's trace: one delivery is handed out in a batch (entry
 0 `HELD`, `held` 1). The application releases it with
@@ -78,14 +78,15 @@ released.
 
 **ClearAfterExpire.** TLC's trace: an update with one delivery; the
 application receives it (entry 0 `HELD`) and does not release it before the
-next update. That update clears nothing, so entry 0 stays `HELD` while the
-new update's first delivery is written to table entry 0. `rn_message_object_next`
+next update. That update clears nothing, so entry 0 stays `HELD` while the new
+update's first delivery is written to table entry 0. `rn_message_object_next`
 skips every entry that is not `WAITING` and the cursor runs past entry 0: the
-delivery is never handed out, and the not-received check at line 644 counts
-only `WAITING` entries, so the loss is silent though the transport acked it.
-The code reads the count before `rn_endpoint_begin_update` ends the update
-(`rn_endpoint_begin_update` returns `deliveries` before calling
-`rn_ordered_end_update`, `sdk/rocketnet_endpoint.cpp:941-945`).
+delivery is never handed out, and the not-received check in
+`rn_message_object_update` counts only `WAITING` entries, so the loss is
+silent though the transport acked it. The code reads the count before
+`rn_endpoint_begin_update` ends the update (`rn_endpoint_begin_update` returns
+`deliveries` before calling `rn_ordered_end_update`, in
+`sdk/rocketnet_endpoint.cpp`).
 
 ## An observation, not a finding
 

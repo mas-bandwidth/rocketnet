@@ -26,7 +26,8 @@
 (* RNChannelTypes; this model is the width of each comparison.             *)
 (*                                                                         *)
 (* Reversed witness: Masked = FALSE compares the masked record ordering    *)
-(* with the unmasked counter in the reservation, the reservation bug the masked compare fixes.   *)
+(* with the unmasked counter in the reservation: past the wire wrap an     *)
+(* in-turn record reads as not in turn and reserves too few deliveries.    *)
 (***************************************************************************)
 EXTENDS Integers, FiniteSets
 
@@ -64,15 +65,15 @@ Init ==
     /\ exhausted = FALSE
     /\ disagree = FALSE
 
-\* the held run after o: complete entries at o+1, o+2, ... (lines 1815-1822)
+\* the held run after o: complete entries at o+1, o+2, ... (rn_receive_delivery_reservation)
 RECURSIVE Run(_, _)
 Run(o, fuel) == IF fuel = 0 \/ U24(o + 1) \notin held THEN 0 ELSE 1 + Run(o + 1, fuel - 1)
 
-\* rn_receive_delivery_reservation, lines 1795-1825
+\* rn_receive_delivery_reservation
 InTurnCompare(o) == IF Masked THEN U24(o) = U24(read) ELSE U24(o) = read
 Needed(o) == IF InTurnCompare(o) THEN 1 + Run(o, W) ELSE 1
 
-\* rn_channels_drain, lines 601-658: from read r with d deliveries taken,
+\* rn_channels_drain: from read r with d deliveries taken,
 \* deliver each held successor found at key U24(r) while the table has room.
 \* Returns <<read, held, deliveries, exhausted>>.
 RECURSIVE Drain(_, _, _, _)
@@ -88,18 +89,18 @@ Receive(o) ==
     /\ ~exhausted
     /\ disagree' = (disagree \/ (InTurnCompare(o) # (U24(o) = U24(read))))
     /\ IF Needed(o) > Cap - deliveries
-         THEN UNCHANGED <<read, held, deliveries, exhausted>>      \* DEFERRED, lines 1856-1858
-         ELSE LET delta == U24(o - read) IN                         \* lines 681-682
+         THEN UNCHANGED <<read, held, deliveries, exhausted>>      \* DEFERRED, rn_ordered_receive
+         ELSE LET delta == U24(o - read) IN                         \* rn_channels_dispatch_ordered
               IF delta = 0
                 THEN IF deliveries >= Cap
-                       THEN /\ exhausted' = TRUE                     \* lines 77-84
+                       THEN /\ exhausted' = TRUE                     \* rn_channels_delivery_room
                             /\ UNCHANGED <<read, held, deliveries>>
                        ELSE LET dr == Drain((read + 1) % CounterMod, held, deliveries + 1, W)
                             IN  /\ read' = dr[1]
                                 /\ held' = dr[2]
                                 /\ deliveries' = dr[3]
                                 /\ exhausted' = dr[4]
-                ELSE /\ held' = held \cup {U24(o)}                   \* ahead: held (line 741)
+                ELSE /\ held' = held \cup {U24(o)}                   \* ahead: held (rn_channels_dispatch_ordered)
                      /\ UNCHANGED <<read, deliveries, exhausted>>
 
 \* the honest records: fresh, ahead by less than W, not already held

@@ -28,7 +28,7 @@
 (* one action; its loops read the array as they rewrite it, in place.     *)
 (*                                                                         *)
 (* Reversed witnesses (each flag FALSE is a bug class):                    *)
-(*   Renumber      no renumber after a wrap (the code before the renumber)    *)
+(*   Renumber      no renumber after a wrap                                *)
 (*   FreshTickets  the renumber drops tombstones but keeps the survivors' *)
 (*                 tickets from the last lap                               *)
 (*   DropPushed    the renumber keeps entries naming the pushed           *)

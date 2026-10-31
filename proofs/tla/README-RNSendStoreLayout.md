@@ -37,28 +37,27 @@ a descriptor's), and the instance uses 3, so a wrap is two retakes away.
 
 ## Actions and the code they mirror
 
-Line numbers are `sdk/rocketnet_allocator.cpp` at this change.
+Functions in `sdk/rocketnet_allocator.cpp`.
 
-- **`Alloc`**: `rn_region_send_alloc` (794) with room. Its guard is
-  `rn_region_send_fit_store` (732): not exhausted, a free descriptor, and
-  `rn_send_store_find` (289), which refuses at `free_count == 0` (297) and
-  otherwise scans from `free_head` up (300) with `rn_store_chunk_is_free`
-  (280-282), `i >= fresh` first. The take is `rn_send_store_take` (316): the
-  next generation, read only below `fresh` and skipping 0 (331), `fresh` moved
-  past a first take (336) and the cursor to `index + 1` (341). Then
-  `rn_region_descriptor_take` (674): the pop of `free_slot` at depth
-  `top - 1` or the fresh descriptor, the generation (703), `keep_free_slot`
-  (704-705, 709).
-- **`AllocSpan`**: the descriptor take of `rn_region_send_alloc_span` (1007).
+- **`Alloc`**: `rn_region_send_alloc` with room. Its guard is
+  `rn_region_send_fit_store`: not exhausted, a free descriptor, and
+  `rn_send_store_find`, which refuses at `free_count == 0` and otherwise
+  scans from `free_head` up with `rn_store_chunk_is_free`, `i >= fresh`
+  first. The take is `rn_send_store_take`: the next generation, read only
+  below `fresh` and skipping 0, `fresh` moved past a first take and the
+  cursor to `index + 1`. Then `rn_region_descriptor_take`: the pop of
+  `free_slot` at depth `top - 1` or the fresh descriptor, the generation,
+  `keep_free_slot`.
+- **`AllocSpan`**: the descriptor take of `rn_region_send_alloc_span`.
 - **`Refuse`**: `rn_region_send_fit_store` failing (no descriptor, or the
-  store's find) and `rn_region_send_refuse` (772) exhausting the region.
-- **`Free(d)`**: `rn_region_send_free` (1100): `rn_send_store_free_checked`
-  (352) clears the live bit and lowers the cursor (374), then
-  `rn_region_descriptor_release` (720) pushes `d` into
-  `send_descriptors[top].free_slot` (727). `rn_region_send_free_fragment`
-  (1127) ends in the same free on a send's last fragment.
-- **`Carve`**: `rn_region_carve` (502), whose store part is
-  `rn_send_store_init_counts` (259): both pools empty and both watermarks at
+  store's find) and `rn_region_send_refuse` exhausting the region.
+- **`Free(d)`**: `rn_region_send_free`: `rn_send_store_free_checked`
+  clears the live bit and lowers the cursor, then
+  `rn_region_descriptor_release` pushes `d` into
+  `send_descriptors[top].free_slot`. `rn_region_send_free_fragment`
+  ends in the same free on a send's last fragment.
+- **`Carve`**: `rn_region_carve`, whose store part is
+  `rn_send_store_init_counts`: both pools empty and both watermarks at
   zero, nothing else written.
 
 ## Invariants
@@ -107,33 +106,33 @@ Each turns one rule off and must fail with the invariant it names. Every
 counterexample below was checked against the C by hand.
 
 1. **`MCRNSendStoreLayoutBrokenNoFreshGuard.cfg`** (`FreshGuard = FALSE`):
-   `rn_store_chunk_is_free` without `i >= cls->fresh ||` (282). Violates
+   `rn_store_chunk_is_free` without `i >= cls->fresh ||`. Violates
    `NeverTouchPastFresh` at the first `Alloc`: with `fresh = 0`, the scan
    from `free_head = 0` reads `meta[0]`, which nothing has written since the
    carve (an arena's fresh memory, or the previous connection's meta). With a
    stale live bit set, the class would also refuse while empty.
 2. **`MCRNSendStoreLayoutBrokenNoLowerCursor.cfg`** (`LowerCursor = FALSE`):
    `rn_send_store_free_checked` without `if ( i < cls->free_head )
-   cls->free_head = i;` (373-374). Violates `RefuseOnlyWhenNoneFree`: three
+   cls->free_head = i;`. Violates `RefuseOnlyWhenNoneFree`: three
    allocs take chunks 0, 1, 2 and leave `free_head = 3`; freeing chunk 0
    leaves it at 3; the next alloc has `free_count = 1` but the scan from 3
-   (300) meets nothing, so `rn_region_send_fit_store` returns
+   meets nothing, so `rn_region_send_fit_store` returns
    `RN_SEND_FIT_STORE_FULL` and the region is exhausted with chunk 0 free.
    This is the bug class a cursor scan without a wrap has; the code needs no
    wrap because the free lowers the cursor.
 3. **`MCRNSendStoreLayoutBrokenChunkGenZero.cfg`** (`ChunkSkipZero = FALSE`):
-   `rn_send_store_take` without `if ( generation == 0 ) generation = 1;`
-   (331-332). Violates `HeldGenerationPositive`: chunk 0 is taken (1), freed,
+   `rn_send_store_take` without `if ( generation == 0 ) generation = 1;`.
+   Violates `HeldGenerationPositive`: chunk 0 is taken (1), freed,
    taken (2), freed and taken again, and `( meta + 1 ) & RN_META_GENERATION`
    is 0 at the wrap.
 4. **`MCRNSendStoreLayoutBrokenDescGenZero.cfg`** (`DescSkipZero = FALSE`):
    the descriptor generation as `descriptor->generation + 1` without the
-   `== UINT32_MAX ? 1` test (703), the descriptor generation's skip-zero. Violates
+   `== UINT32_MAX ? 1` test, the descriptor generation's skip-zero. Violates
    `HeldGenerationPositive`: descriptor 0 is taken three times off the stack
    and its generation goes 1, 2, 0. A resend link stamped 0 is never unlinked
    by the ack while its descriptor is in use.
 5. **`MCRNSendStoreLayoutBrokenNoKeepFreeSlot.cfg`** (`KeepFreeSlot = FALSE`):
-   `rn_region_descriptor_take` without the `keep_free_slot` restore (709-710).
+   `rn_region_descriptor_take` without the `keep_free_slot` restore.
    Violates `NoTakeWhileLive`: descriptors 0 and 1 are taken; freeing 1 writes
    `send_descriptors[0].free_slot = 1` (depth 0), freeing 0 writes
    `send_descriptors[1].free_slot = 0` (depth 1). A take pops depth 1 and gets

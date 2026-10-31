@@ -95,7 +95,7 @@ Init ==
 
 OnStack(p, s) == \E i \in 0..(p.fc - 1) : i < Holds /\ p.arr[i] = s
 
-\* rn_sequenced_hold_return, lines 46-50.  A push at fc >= 2 * Holds would
+\* rn_sequenced_hold_return.  A push at fc >= 2 * Holds would
 \* leave the region; the model keeps the array and records the fault.
 Return(p, s) ==
     [p EXCEPT !.used[s] = 0,
@@ -107,7 +107,7 @@ BadReturn(p, h, s) ==
     \/ OnStack(p, s)
     \/ \E c \in Chans : h[c] = s
 
-\* rn_channels_end_update_sequenced, lines 634-652: return delivered[i] for
+\* rn_channels_end_update_sequenced: return delivered[i] for
 \* i in 0 .. dc-1, each read from the array as the loop reaches it
 RECURSIVE EndLoop(_, _, _, _)
 EndLoop(p, i, bad, past) ==
@@ -115,7 +115,7 @@ EndLoop(p, i, bad, past) ==
     ELSE LET s == p.arr[Holds + i]
          IN  EndLoop(Return(p, s), i + 1, bad \/ BadReturn(p, held, s) \/ p.used[s] # 2, past \/ p.fc >= Holds)
 
-\* rn_channels_dispatch_sequenced, lines 442-521: a newer future record
+\* rn_channels_dispatch_sequenced: a newer future record
 Hold(c) ==
     LET old == held[c]
         p1  == IF old # NONE THEN Return(P, old) ELSE P
@@ -133,7 +133,7 @@ Hold(c) ==
               /\ overwrote' = (overwrote \/ s \in views)       \* the memcpy into the payload
     /\ UNCHANGED views
 
-\* rn_channels_drain_sequenced, lines 528-631: the hold delivered
+\* rn_channels_drain_sequenced: the hold delivered
 DrainDeliver(c) ==
     /\ held[c] # NONE
     /\ LET s == held[c] IN
@@ -167,7 +167,7 @@ EndUpdate ==
     /\ views' = {}
     /\ UNCHANGED <<held, overwrote>>
 
-\* rn_region_carve, lines 583-599, and rn_channels_bind's empty channels
+\* rn_region_carve, and rn_channels_bind's empty channels
 Carve ==
     /\ P' = Carved
     /\ held' = [c \in Chans |-> NONE]

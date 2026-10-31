@@ -24,12 +24,12 @@ model carries.
 
 ## Actions and the code they mirror
 
-Line numbers are at this commit.
+Functions in `sdk/rocketnet_window_receive.cpp` unless stated.
 
 | Action | Code |
 |---|---|
-| `Accept(w, n)` | `rn_window_receive_accept`, `sdk/rocketnet_window_receive.cpp:37-112`: the sticky violation (41-42), the reconstruction (47-50), behind is a duplicate (55-56), at or past `W` is `NUMBER_OUTSIDE_WINDOW` (58-62), index, word and bit (64-67), a set bit is a duplicate (68-69), a live descriptor of another number is `SLOT_COLLISION` (71-76), the claim (82-93), the advance clearing each floor bit (99-109) |
-| `Release(s)` | `descriptor->live = 0`: `rn_window_receive_release` (`sdk/rocketnet_window_receive.cpp:118-127`), and the library's releases `rn_channels_release` (`sdk/rocketnet_channel.cpp`), `rn_sequenced_release_slot` and `rn_sequenced_release_number` (`sdk/rocketnet_channel_sequenced.cpp`) |
+| `Accept(w, n)` | `rn_window_receive_accept`: the sticky violation, the reconstruction, behind is a duplicate, at or past `W` is `NUMBER_OUTSIDE_WINDOW`, index, word and bit, a set bit is a duplicate, a live descriptor of another number is `SLOT_COLLISION`, the claim, the advance clearing each floor bit |
+| `Release(s)` | `descriptor->live = 0`: `rn_window_receive_release`, and the library's releases `rn_channels_release` (`sdk/rocketnet_channel.cpp`), `rn_sequenced_release_slot` and `rn_sequenced_release_number` (`sdk/rocketnet_channel_sequenced.cpp`) |
 
 `Accept` takes two kinds of arrival. An honest one carries the number `n` the
 sender meant: `n` lies in `R - 8 .. R + W - 1` (a duplicate as old as the half
@@ -38,10 +38,10 @@ live with another number. That last condition is `RNWindow`'s
 `NoSlotCollision`, the protocol's guarantee, taken here as an assumption. A
 forged arrival is any wire value at all.
 
-The `UINT64_MAX` guard on line 58 is unreachable for a 64-bit `R` and is not
-modelled. The advance is a bounded recursion (`W + 1` steps); with the floor
-bits cleared at most `W` bits are ever set, so the bound never cuts the
-code's loop short.
+The `UINT64_MAX` guard in the window test of `rn_window_receive_accept` is
+unreachable for a 64-bit `R` and is not modelled. The advance is a bounded
+recursion (`W + 1` steps); with the floor bits cleared at most `W` bits are
+ever set, so the bound never cuts the code's loop short.
 
 ## Invariants
 
@@ -65,34 +65,36 @@ invariant (exit 12).
 |---|---|---|---|
 | `MCRNWindowLayoutBrokenNoClearFloor.cfg` | `ClearFloor = FALSE`: the advance does not clear the floor bit | a stale received bit after `R` passes: silent loss | `NoSilentLoss` |
 | `MCRNWindowLayoutBrokenNoHalfRange.cfg` | `HalfRange = FALSE`: the unsigned difference, no sign | a duplicate behind `R` read as far ahead | `HonestReadExactly` |
-| `MCRNWindowLayoutBrokenNoCollisionTest.cfg` | `CollisionTest = FALSE`: lines 71-76 removed | a live descriptor overwritten | `NoLiveOverwrite` |
+| `MCRNWindowLayoutBrokenNoCollisionTest.cfg` | `CollisionTest = FALSE`: the `SLOT_COLLISION` test removed | a live descriptor overwritten | `NoLiveOverwrite` |
 
 ### Hand checks against the code
 
-**NoClearFloor.** TLC's trace: number 0 arrives, sets bit 0 and `R`
-advances to 1, but bit 0 stays set. Number 0's delivery ends and its
-descriptor is released. The sender's number 4 (`R + W - 1`, slot 0) arrives:
-`delta = 3`, index 0, and line 68 finds bit 0 still set, so line 69 refuses
-it as a duplicate. Number 4 was never received and is never handed up, while
-the transport acks the packet that carried it. With line 107 in place the
-advance cleared bit 0 when `R` passed 0. In the C with line 107 removed the
-stale bits also make the loop at lines 99-109 run `R` past numbers never
-received, and once every bit is set it never ends; the model's advance is
-bounded at `W + 1` steps and reports that as the same loss.
+**NoClearFloor.** TLC's trace: number 0 arrives, sets bit 0 and `R` advances
+to 1, but bit 0 stays set. Number 0's delivery ends and its descriptor is
+released. The sender's number 4 (`R + W - 1`, slot 0) arrives: `delta = 3`,
+index 0, and the received-bit test finds bit 0 still set, so
+`rn_window_receive_accept` refuses it as a duplicate. Number 4 was never
+received and is never handed up, while the transport acks the packet that
+carried it. With the floor bit's clear (`*floor_word &= ~floor_bit`) the
+advance clears bit 0 when `R` passes 0. In the C without that clear the stale
+bits also make the advance loop run `R` past numbers never received, and once
+every bit is set it never ends; the model's advance is bounded at `W + 1`
+steps and reports that as the same loss.
 
 **NoHalfRange.** TLC's trace: number 0 arrives (`R` = 1), then the sender's
-resend of 0 arrives. With the signed difference, line 50 gives `delta = -1`
-and line 55 drops it as a duplicate. Without the sign `delta = 15`, which is
-at least `W`, so lines 58-62 set `NUMBER_OUTSIDE_WINDOW` and the connection
-ends on an ordinary resend.
+resend of 0 arrives. With the signed difference, the reconstruction gives
+`delta = -1` and the `delta < 0` test drops it as a duplicate. Without the
+sign `delta = 15`, which is at least `W`, so the window test sets
+`NUMBER_OUTSIDE_WINDOW` and the connection ends on an ordinary resend.
 
 **NoCollisionTest.** TLC's trace: number 0 is accepted and its descriptor is
 live (`R` = 1, slot 0 live with number 0, its delivery not yet released). A
 forged record with wire number 4 arrives: `delta = 3 < W`, so the number is 4
-at index 0; the bit for index 0 was cleared when `R` passed 0, so line 68 lets
-it through, and without lines 71-76 the claim at lines 82-91 overwrites
-number 0's descriptor while number 0's delivery still points at it. With the
-test the forged record ends the connection as `SLOT_COLLISION`.
+at index 0; the bit for index 0 was cleared when `R` passed 0, so the
+received-bit test lets it through, and without the `SLOT_COLLISION` test the
+claim overwrites number 0's descriptor while number 0's delivery still points
+at it. With the test the forged record ends the connection as
+`SLOT_COLLISION`.
 
 ## Records
 

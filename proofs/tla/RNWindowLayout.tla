@@ -77,13 +77,14 @@ ClearBit(ws, i) == [ws EXCEPT ![WordOf(i)] = @ \ {BitOf(i)}]
 \* number & (W - 1): W is a power of two (asserted in rn_window_receive_init)
 Index(n) == n % W
 
-\* lines 47-50: the wire value against R, signed by half range
+\* rn_window_receive_accept's reconstruction: the wire value against R, signed by half range
 Delta(w) ==
     LET ud == (w - (R % WireMod)) % WireMod
     IN  IF HalfRange /\ ud >= Half THEN ud - WireMod ELSE ud
 
-\* lines 99-109: R advances past each set floor bit, clearing it.  The
-\* fuel bounds the loop; with ClearFloor the set bits are at most W.
+\* rn_window_receive_accept's advance loop: R advances past each set floor
+\* bit, clearing it.  The fuel bounds the loop; with ClearFloor the set bits
+\* are at most W.
 RECURSIVE Advance(_, _, _)
 Advance(r, ws, fuel) ==
     IF fuel = 0 \/ ~BitSet(ws, Index(r))
@@ -113,14 +114,14 @@ Init ==
 \* sender meant, or NONE for a forged record.
 Accept(w, n) ==
     IF violation
-      THEN UNCHANGED vars                                   \* lines 41-42
+      THEN UNCHANGED vars                                   \* the sticky violation
       ELSE LET d == Delta(w) IN
            IF d < 0
-             THEN \* lines 55-56: behind R, a duplicate
+             THEN \* behind R, a duplicate
                   /\ lost' = (lost \/ (n # NONE /\ n \notin Received))
                   /\ UNCHANGED <<R, words, desc, violation, above, twice, misread, overwrote, pastWindow>>
            ELSE IF d >= W
-             THEN \* lines 58-62: outside the window
+             THEN \* outside the window
                   /\ violation' = TRUE
                   /\ misread' = (misread \/ n # NONE)
                   /\ UNCHANGED <<R, words, desc, above, twice, lost, overwrote, pastWindow>>
@@ -129,17 +130,17 @@ Accept(w, n) ==
                  i   == Index(num)
              IN
              IF BitSet(words, i)
-               THEN \* lines 65-69: the received bit is set, a duplicate
+               THEN \* the received bit is set, a duplicate
                     /\ lost' = (lost \/ (n # NONE /\ n \notin Received))
                     /\ misread' = (misread \/ (n # NONE /\ n # num))
                     /\ UNCHANGED <<R, words, desc, violation, above, twice, overwrote, pastWindow>>
              ELSE IF CollisionTest /\ desc[i].live /\ desc[i].number # num
-               THEN \* lines 71-76: SLOT_COLLISION
+               THEN \* SLOT_COLLISION
                     /\ violation' = TRUE
                     /\ misread' = (misread \/ n # NONE)
                     /\ UNCHANGED <<R, words, desc, above, twice, lost, overwrote, pastWindow>>
              ELSE
-               \* lines 82-93: claim, set the bit; lines 99-109: advance
+               \* claim, set the bit, then advance
                LET ws1  == SetBit(words, i)
                    adv  == Advance(R, ws1, W + 1)
                    R1   == adv[1]

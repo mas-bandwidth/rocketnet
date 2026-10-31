@@ -9,9 +9,9 @@ delivered list (`sequenced_holds_delivered`, `sequenced_holds_delivered_count`)
 and each channel's `held_sequenced`.
 
 The two index arrays are one allocation: `rn_region_layout` gives each hold
-`2 * sizeof(uint32_t)` of indices and `rn_region_carve` sets
+`2 * sizeof(uint32_t)` of indices and `rn_region_point` sets
 `sequenced_holds_delivered = sequenced_hold_free_stack + holds`
-(`sdk/rocketnet_allocator.cpp:484-485`). The model keeps one array of
+(`sdk/rocketnet_allocator.cpp`). The model keeps one array of
 `2 * Holds` cells, so a push past the stack's `Holds` entries lands on the
 delivered list as it would in memory.
 
@@ -27,17 +27,17 @@ stack reaches the delivered list.
 
 ## Actions and the code they mirror
 
-Line numbers at this commit.
+Functions in `sdk/rocketnet_channel_sequenced.cpp` unless stated.
 
 | Action | Code |
 |---|---|
-| `Hold(c)` | `rn_channels_dispatch_sequenced` (`sdk/rocketnet_channel_sequenced.cpp:442-521`), a code-1 record ahead of its epoch and newer than the channel's hold: the old hold returned through `rn_sequenced_release_hold` and `rn_sequenced_release_slot` (97-138), then `HOLD_FULL` when the stack is empty or the top taken (502-508), `used = 1` and the payload copied (517-519) |
-| `DrainDeliver(c)` | `rn_channels_drain_sequenced` (528-631), the hold in turn and delivered: `held_sequenced = NONE` (595), `used = 2` and the slot appended to the delivered list (626-627); the delivery's view points at the slot's payload |
-| `DrainRelease(c)` | `rn_channels_drain_sequenced`: a stale hold (571), no delivery room (597) or a refused delivery (604), each returned to the free stack |
-| `EndUpdate` | `rn_channels_end_update_sequenced` (634-652): each delivered slot returned in list order, the list emptied; the update's views expire |
-| `Carve` | `rn_region_carve` (`sdk/rocketnet_allocator.cpp:583-599`): the stack full, lowest index on top, nothing used; `rn_channels_bind` leaves every `held_sequenced` NONE |
+| `Hold(c)` | `rn_channels_dispatch_sequenced`, a code-1 record ahead of its epoch and newer than the channel's hold: the old hold returned through `rn_sequenced_release_hold` and `rn_sequenced_release_slot`, then `HOLD_FULL` when the stack is empty or the top taken, `used = 1` and the payload copied |
+| `DrainDeliver(c)` | `rn_channels_drain_sequenced`, the hold in turn and delivered: `held_sequenced = NONE`, `used = 2` and the slot appended to the delivered list; the delivery's view points at the slot's payload |
+| `DrainRelease(c)` | `rn_channels_drain_sequenced`: a stale hold, no delivery room or a refused delivery, each returned to the free stack |
+| `EndUpdate` | `rn_channels_end_update_sequenced`: each delivered slot returned in list order, the list emptied; the update's views expire |
+| `Carve` | `rn_region_carve` (`sdk/rocketnet_allocator.cpp`): the stack full, lowest index on top, nothing used; `rn_channels_bind` leaves every `held_sequenced` NONE |
 
-A return is `rn_sequenced_hold_return` (46-50): `used = 0` and
+A return is `rn_sequenced_hold_return`: `used = 0` and
 `stack[free_count++] = slot`. Orderings and sequencing are left to
 `RNChannelTypes`: whether a newer, a stale or an in-turn record arrives is a
 free choice here, and only the newer one ahead touches the pool. An in-turn
@@ -57,7 +57,7 @@ code-1 record is delivered from the batch and never holds.
 
 | Case | Rule off | Declared invariant |
 |---|---|---|
-| `MCRNSequencedHoldPoolBrokenDoubleReturn.cfg` | `DeliverClearsHold = FALSE`: line 595 removed, the delivery leaves `held_sequenced` naming the delivered slot | `StackInBounds` |
+| `MCRNSequencedHoldPoolBrokenDoubleReturn.cfg` | `DeliverClearsHold = FALSE`: `rx->held_sequenced = RN_DESCRIPTOR_NONE` removed from `rn_channels_drain_sequenced`, the delivery leaves `held_sequenced` naming the delivered slot | `StackInBounds` |
 | `MCRNSequencedHoldPoolBrokenEarlyReturn.cfg` | `DeferReturn = FALSE`: the delivered slot returned at once instead of at the end of the update | `NoPayloadOverwrite` |
 
 ### Hand checks against the code
@@ -67,22 +67,22 @@ code-1 record is delivered from the batch and never holds.
 `held_sequenced` still names slot 0. A second drain pass finds the same hold
 and appends it again (delivered `[0, 0]`); in the C that second pass is
 refused by the watermark (`rn_channels_deliver_sequenced`, the sequence gap)
-and takes the refusal path at lines 604-612, which returns slot 0 to the
-stack: the same double return by another road, and the model's `DrainRelease`
-covers it. At the end of the update the loop at lines 643-648 returns slot 0
-for each list entry: the stack count goes 1, 2, 3, and the third push writes
+and takes the refusal path of `rn_channels_drain_sequenced`, which returns
+slot 0 to the stack: the same double return by another road, and the model's
+`DrainRelease` covers it. At the end of the update the loop in
+`rn_channels_end_update_sequenced` returns slot 0 for each list entry: the
+stack count goes 1, 2, 3, and the third push writes
 `sequenced_hold_free_stack[2]`, which is `sequenced_holds_delivered[0]`, the
 entry the same loop is reading. Slot 0 is then free on the stack twice and
 still channel 0's hold: two later holds take one payload.
 
 **EarlyReturn.** TLC's trace: channel 0 takes slot 0, the drain delivers it
 and returns it at once. The next newer record on channel 0 takes the top of
-the stack, slot 0, and copies its payload into
-`sequenced_message_payloads[0]` (line 519) while the application's view of
-the delivered message still points there: the delivered message changes
-under the reader. The code's `used = 2` and the delivered list keep the slot
-out of the stack until `rn_channels_end_update_sequenced`, after the views
-expire.
+the stack, slot 0, and copies its payload into `sequenced_message_payloads[0]`
+(`rn_channels_dispatch_sequenced`) while the application's view of the
+delivered message still points there: the delivered message changes under the
+reader. The code's `used = 2` and the delivered list keep the slot out of the
+stack until `rn_channels_end_update_sequenced`, after the views expire.
 
 ## Records
 
