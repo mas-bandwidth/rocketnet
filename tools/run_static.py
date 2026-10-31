@@ -54,6 +54,11 @@ OPTION = re.compile(r"\s*\[(-W[A-Za-z0-9_.=+-]+)\]\s*$")
 ERROR_LINE = re.compile(r"\berror:")
 
 
+# finding line -> the "<file>:<line>:<col>: <message>" sites gcc printed for it,
+# so a failing run names where each finding is; the baseline keeps only the line
+SITES = {}
+
+
 class IncompleteRun(Exception):
     """The analyzer did not cover every selected translation unit."""
 
@@ -145,11 +150,14 @@ def parse_output(text, analyzer):
             if ERROR_LINE.search(raw):
                 other_errors.append(raw)
             continue
-        path, _line, _col, level, _rest = match.groups()
+        path, line, col, level, _rest = match.groups()
         message, check = finding
         if level == "error":
             error_findings = True
-        findings.append(finding_line(analyzer, relpath(path), check, message))
+        found = finding_line(analyzer, relpath(path), check, message)
+        SITES.setdefault(found, []).append(
+            "%s:%s:%s: %s [%s]" % (relpath(path), line, col, message, check))
+        findings.append(found)
     return findings, error_findings, other_errors
 
 
@@ -266,6 +274,8 @@ def main():
         print("NEW findings not in the baseline:")
         for line in new:
             print("  + " + line.replace("\t", " "))
+            for site in sorted(set(SITES.get(line, []))):
+                print("      " + site)
     if gone:
         print("BASELINED findings that disappeared; delete them from "
               "tools/static_baseline.txt:")

@@ -94,7 +94,7 @@ class RunStaticGateTest(unittest.TestCase):
     def test_warning_finding_fails(self):
         code, out = self.gate(diagnostic("warning", "-Wanalyzer-malloc-leak"), 0)
         self.assertEqual(code, 1, out)
-        self.assertIn("-Wanalyzer-malloc-leak", out)
+        self.assertIn("%s:12:5: %s [-Wanalyzer-malloc-leak]" % (TU, LEAK), out)
 
     def test_werror_finding_fails_as_the_same_finding(self):
         code, out = self.gate(diagnostic("warning", "-Wanalyzer-malloc-leak"), 0,
