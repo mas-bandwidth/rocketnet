@@ -167,6 +167,7 @@ bool rocketnet_server_socket_test_inactive_flow();
 bool rocketnet_server_socket_test_replay_marks();
 bool rocketnet_server_socket_test_send_failures_without_mutex();
 bool rocketnet_server_socket_test_reply_mac_refreshed_at_finish();
+bool rocketnet_server_socket_test_gateway_refresh();
 #endif // #if ROCKETNET_DEV
 
 struct rocketnet_server_socket_process_packets_t * rocketnet_server_socket_process_packets( struct rocketnet_server_socket_t * server_socket );
