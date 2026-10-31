@@ -348,13 +348,13 @@ void rocketnet_test_bundled_rng_closes_and_reopens_on_mac()
     const long baseline = rng_lifecycle_fd_count();
     rocketnet_check( baseline >= 0 );
 
-    // sodium_init is one-time. Subsequent empty cycles must neither reopen
-    // the RNG descriptor nor retain any other descriptor at termination.
+    // Each init opens the RNG descriptor once (rocketnet_crypto_ready), and
+    // each term closes it and retains no other descriptor.
 
     for ( int cycle = 0; cycle < 3; ++cycle )
     {
         rocketnet_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
-        rocketnet_check( rng_lifecycle_fd_count() == baseline );
+        rocketnet_check( rng_lifecycle_fd_count() == baseline + 1 );
         rocketnet_check( rocketnet_term() == ROCKETNET_STATUS_OK );
         rocketnet_check( rng_lifecycle_fd_count() == baseline );
     }
