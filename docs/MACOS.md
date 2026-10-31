@@ -250,8 +250,9 @@ minimum gives there. The macOS minimum, 15, demoted the client I/O thread:
 under CPU contention its sends and receives stalled for hundreds of
 milliseconds while the game thread ran (`test_posix_send_to_closed_port` on a
 loaded runner). The maximum, 47 (the user-interactive band), outranked the
-game's own threads: on a four-core Air the P=32 client frame p99 rose from
-about 34 to about 100 us.
+game's own threads: on a MacBook Air the P=32 client frame p99
+(`benchmarks/client_main_thread_cost.cpp`, portable) went from 35 to 97 us
+when the maximum landed.
 That is the only thing the library sets on the macOS client network thread: no QoS
 class (`thread_function_shim` in `sdk/rocketnet_platform.cpp` calls the thread
 function and nothing else), no `THREAD_TIME_CONSTRAINT_POLICY`, no pinning, and
