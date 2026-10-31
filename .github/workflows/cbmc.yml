@@ -2,7 +2,7 @@
 # (main advances by land merges and never receives pull requests, so a
 # pull_request-only trigger never fires there) and on pull requests that
 # touch the sdk. This workflow runs the default target only. It does not
-# run slow-unproved; replay-near-4096 runs nightly (nightly-proofs.yml).
+# run slow-unproved; replay-near-4096 runs nightly, one job per partition (nightly-proofs.yml).
 #
 # Budget: `make -C proofs/cbmc all` measured 685.59s (11:25.59) on the
 # fleet Linux runner (vision, self-hosted Linux X64 fleet) at d5dd954f in

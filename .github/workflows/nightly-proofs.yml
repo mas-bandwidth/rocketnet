@@ -3,8 +3,13 @@
 # red result must show as a failed run, never as a passing "not a gate"
 # note. The per-commit proofs remain in cbmc.yml.
 #
-# The reader directories under proofs/cbmc each contribute a proof.mk to
-# NIGHTLY; the nightly target runs every entry, plus replay-near-4096.
+# One job per target, run side by side: each reader directory's proof.mk
+# (make print-nightly-readers) and each of replay-near-4096's thirteen path
+# partitions plus its completeness check (make print-replay-near-partitions).
+# A red job is that target's own verdict, so a regression in one reader shows
+# while a standing HOLD elsewhere stays red. Every job's timeout is above the
+# timeouts its Makefile target can spend, so a slow proof ends on the
+# Makefile's HOLD line and never on a GitHub cancellation.
 # The schedule is before fuzz-nightly.yml, so a red night is on the estate
 # when the morning starts.
 
@@ -19,10 +24,41 @@ permissions:
   contents: read
 
 jobs:
-  nightly-proofs:
-    name: nightly CBMC proofs
+  plan:
+    name: nightly proof targets
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 5
+    outputs:
+      readers: ${{ steps.list.outputs.readers }}
+      partitions: ${{ steps.list.outputs.partitions }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      - name: List the targets
+        id: list
+        shell: bash
+        run: |
+          set -euo pipefail
+          json() { python3 -c 'import json, sys; print(json.dumps(sys.stdin.read().split()))'; }
+          readers="$(make -s -C proofs/cbmc print-nightly-readers | json)"
+          partitions="$(make -s -C proofs/cbmc print-replay-near-partitions | json)"
+          echo "readers=$readers" >> "$GITHUB_OUTPUT"
+          echo "partitions=$partitions" >> "$GITHUB_OUTPUT"
+          echo "readers: $readers"
+          echo "partitions: $partitions"
+
+  # The largest reader budget is proofs-connect_token: seven harnesses at
+  # CONNECT_TOKEN_TIMEOUT 1800 s, 210 minutes (fragment_reassembly and
+  # message_read_max are three harnesses at 1800 s each).
+  reader:
+    name: nightly ${{ matrix.target }}
+    needs: plan
     runs-on: [self-hosted, Linux, X64, fleet, long]
-    timeout-minutes: 180
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.plan.outputs.readers) }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
@@ -44,15 +80,62 @@ jobs:
           check cadical "$(pin CADICAL)"
           check esbmc "$(pin ESBMC)"
 
-      - name: Run the nightly proofs
+      - name: Run ${{ matrix.target }}
         run: |
           set -o pipefail
-          make -C proofs/cbmc nightly 2>&1 | tee proofs/cbmc/nightly-output.txt
+          make -C proofs/cbmc ${{ matrix.target }} 2>&1 | tee proofs/cbmc/nightly-output.txt
 
       - name: Upload the proof output
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
-          name: nightly-proofs
+          name: nightly-proofs-${{ matrix.target }}
+          path: proofs/cbmc/nightly-output.txt
+          if-no-files-found: ignore
+
+  # A partition is two runs (the proof and its reachability control) at
+  # CBMC_REPLAY_TIMEOUT 1800 s each: 60 minutes at most. Each run may take
+  # CBMC_REPLAY_MEMORY_KB (16 GB), so at most four run at once on the long
+  # runners, which share hosts.
+  replay-near:
+    name: nightly ${{ matrix.target }}
+    needs: plan
+    runs-on: [self-hosted, Linux, X64, fleet, long]
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        target: ${{ fromJSON(needs.plan.outputs.partitions) }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      - name: Check the pinned tools are present
+        shell: bash
+        run: |
+          set -euo pipefail
+          pin() { awk -v k="$1" '$1==k {print $2}' proofs/cbmc/TOOL-VERSIONS; }
+          check() {
+            local tool="$1" want="$2" got
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool $want (missing) on $RUNNER_NAME"; exit 1
+            fi
+            got="$("$tool" --version 2>&1 | head -1)"
+            echo "$tool: $got (pinned $want)"
+            case "$got" in *"$want"*) ;; *) echo "TOOL-MISSING $tool $want (got: $got) on $RUNNER_NAME"; exit 1;; esac
+          }
+          check cbmc "$(pin CBMC)"
+          check cadical "$(pin CADICAL)"
+
+      - name: Run ${{ matrix.target }}
+        run: |
+          set -o pipefail
+          make -C proofs/cbmc ${{ matrix.target }} 2>&1 | tee proofs/cbmc/nightly-output.txt
+
+      - name: Upload the proof output
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: nightly-proofs-${{ matrix.target }}
           path: proofs/cbmc/nightly-output.txt
           if-no-files-found: ignore
