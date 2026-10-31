@@ -2118,13 +2118,19 @@ jobs:
       # kernel's default vm.mmap_rnd_bits=32 and dies "FATAL: ThreadSanitizer: unexpected memory mapping" before
       # main (measured on two Linux x64 gcc 13 hosts, 2026-10-13; the same binary passes under setarch -R). Hosted
       # images lower the sysctl instead; this works on both and changes nothing tsan observes.
+      #
+      # -O1, as the ThreadSanitizer documentation recommends. At -O0 a struct assignment
+      # lowers to a memcpy, and tsan does not report a memcpy write that follows an
+      # unordered plain read. With the packet lease's fields plain, its race in retired()
+      # (test_lifecycle check_packet_lease_retired_race) is reported in every run at -O1
+      # and in none at -O0 (measured 2026-10-31).
 
       - name: Configure
         run: >
           cmake -B build
           -DCMAKE_BUILD_TYPE=Debug
-          -DCMAKE_C_FLAGS="-fsanitize=thread -fno-omit-frame-pointer"
-          -DCMAKE_CXX_FLAGS="-fsanitize=thread -fno-omit-frame-pointer"
+          -DCMAKE_C_FLAGS="-fsanitize=thread -fno-omit-frame-pointer -O1"
+          -DCMAKE_CXX_FLAGS="-fsanitize=thread -fno-omit-frame-pointer -O1"
           -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread"
 
       - name: Build the soak and the lifecycle harness
