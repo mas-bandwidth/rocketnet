@@ -120,6 +120,42 @@ static void test_loopback_hub_create_and_destroy()
     check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
 
+// an allocator that refuses the hub's block: create returns NULL with
+// OUT_OF_MEMORY and holds nothing
+
+static void * loopback_hub_refusing_malloc( void * context, size_t bytes )
+{
+    if ( bytes > 4096 )
+    {
+        loopback_hub_allocator.allocations++;
+        return NULL;
+    }
+
+    return loopback_hub_malloc( context, bytes );
+}
+
+static void test_loopback_hub_refused_block()
+{
+    rocketnet_quiet( 1 );
+
+    check( rocketnet_term() == ROCKETNET_STATUS_OK );
+    memset( &loopback_hub_allocator, 0, sizeof( loopback_hub_allocator ) );
+    check( rocketnet_init( &loopback_hub_allocator, loopback_hub_refusing_malloc, loopback_hub_free ) == ROCKETNET_STATUS_OK );
+
+    const int live = loopback_hub_allocator.live;
+    const int allocations = loopback_hub_allocator.allocations;
+
+    enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
+    check( rocketnet_loopback_hub_create( &loopback_hub_allocator, 1, &status ) == NULL );
+    check( status == ROCKETNET_STATUS_OUT_OF_MEMORY );
+    check( loopback_hub_allocator.allocations == allocations + 1 );
+    check( loopback_hub_allocator.live == live );
+
+    check( rocketnet_term() == ROCKETNET_STATUS_OK );
+    check( loopback_hub_allocator.live == 0 );
+    check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
+}
+
 // N is 1 .. ROCKETNET_MAX_CLIENTS; anything else is refused with
 // INVALID_ARGUMENT and allocates nothing, and a hub before init is refused
 
@@ -329,6 +365,7 @@ static void test_loopback_hub_mismatch_refused()
 
 REGISTER_UNIT_TEST( test_loopback_hub_create_and_destroy );
 REGISTER_UNIT_TEST( test_loopback_hub_refuses_out_of_range );
+REGISTER_UNIT_TEST( test_loopback_hub_refused_block );
 REGISTER_UNIT_TEST( test_loopback_hub_null_refused );
 REGISTER_UNIT_TEST( test_loopback_hub_destroy_refused_while_registered );
 REGISTER_UNIT_TEST( test_loopback_hub_mismatch_refused );

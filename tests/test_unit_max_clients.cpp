@@ -435,3 +435,62 @@ static void test_client_slots_create_allocates_its_plan()
 }
 
 REGISTER_UNIT_TEST( test_client_slots_create_allocates_its_plan );
+
+// assign refuses, with nothing changed, a zero owner generation, a client id
+// already connected, and the generation the free list's next slot last held;
+// the index checks refuse an index outside the table, and release refuses
+// one, with asserts quiet
+
+static void test_client_slots_refusals()
+{
+    struct rocketnet_client_slots_t * slots = rocketnet_client_slots_create( NULL, 2 );
+    check( slots != NULL );
+
+    uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
+    memset( user_data, 0x6B, sizeof( user_data ) );
+
+    // slot 1 is released holding generation 5, so the free list's next slot
+    // last held a nonzero generation
+
+    check( rocketnet_client_slots_assign( slots, 100, 0, 7, user_data ) == 0 );
+    check( rocketnet_client_slots_assign( slots, 150, 1, 5, user_data ) == 1 );
+    rocketnet_client_slots_release( slots, 1 );
+
+    rocketnet_assert_function( slots_quiet_assert );
+
+    check( rocketnet_client_slots_assign( slots, 200, 1, 0, user_data ) == -1 );
+    check( rocketnet_client_slots_assign( slots, 100, 1, 8, user_data ) == -1 );
+    check( rocketnet_client_slots_assign( slots, 300, 1, 5, user_data ) == -1 );
+    check( rocketnet_client_slots_num_connected( slots ) == 1 );
+    check( rocketnet_client_slots_num_free( slots ) == 1 );
+    check( rocketnet_client_slots_find( slots, 200 ) == -1 );
+    check( rocketnet_client_slots_find( slots, 300 ) == -1 );
+    check( rocketnet_client_slots_find( slots, 100 ) == 0 );
+
+    check( rocketnet_client_slots_assign( slots, 300, 1, 9, user_data ) == 1 );
+
+    // indices outside the table, and a slot no longer connected
+
+    const int outside[] = { -1, 2, INT_MAX, INT_MIN };
+    for ( int i = 0; i < 4; i++ )
+    {
+        check( rocketnet_client_slots_connected( slots, outside[i] ) == 0 );
+        check( rocketnet_client_slots_client_id( slots, outside[i] ) == 0 );
+        rocketnet_client_slots_release( slots, outside[i] );
+    }
+
+    rocketnet_client_slots_release( slots, 0 );
+    check( rocketnet_client_slots_connected( slots, 0 ) == 0 );
+    check( rocketnet_client_slots_client_id( slots, 0 ) == 0 );
+    rocketnet_client_slots_release( slots, 0 );
+
+    check( rocketnet_client_slots_num_connected( slots ) == 1 );
+    check( rocketnet_client_slots_num_free( slots ) == 1 );
+    check( rocketnet_client_slots_find( slots, 300 ) == 1 );
+
+    rocketnet_assert_function( NULL );
+
+    rocketnet_client_slots_destroy( slots );
+}
+
+REGISTER_UNIT_TEST( test_client_slots_refusals );

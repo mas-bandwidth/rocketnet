@@ -7,7 +7,9 @@
 // create allocates exactly rocketnet_network_simulator_memory_bytes, refuses
 // what that plan refuses before any allocation, and frees everything when an
 // allocation fails; a reverse window the allocator refuses leaves the patterns
-// off. No socket, no thread, no clock: time is an argument.
+// off; deliver_packets and send refuse a size outside 1 .. the receive
+// ceiling, a NULL packet and a full wire. No socket, no thread, no clock: time
+// is an argument.
 
 #include "test_unit_registry.h"
 
@@ -212,9 +214,68 @@ static void test_network_simulator_refused_window_leaves_patterns_off()
     simulator_allocator_remove();
 }
 
+// deliver_packets skips a NULL packet and a size outside 1 .. the receive
+// ceiling, takes the rest in list order, and drops what a full wire cannot
+// hold; send at a full wire drops too
+
+static void test_network_simulator_refuses_bad_sizes_and_a_full_wire()
+{
+    const int capacity = 4;
+    struct rocketnet_network_simulator_t * simulator = rocketnet_network_simulator_create( NULL, capacity, 1 );
+    check( simulator != NULL );
+
+    struct rocketnet_address_t from, to;
+    simulator_addresses( &from, &to );
+
+    static uint8_t largest[ROCKETNET_RECEIVE_CEILING + 1];
+    memset( largest, 0x5A, sizeof( largest ) );
+    largest[0] = 1;
+
+    const uint8_t two = 2;
+    const uint8_t * packets[] = { NULL, &two, largest, largest, &two };
+    const int bytes[] = { 1, 0, ROCKETNET_RECEIVE_CEILING + 1, ROCKETNET_RECEIVE_CEILING, 1 };
+    check( rocketnet_network_simulator_deliver_packets( simulator, &from, &to, packets, bytes, 5, 10.0 ) == 2 );
+
+    uint8_t received[ROCKETNET_RECEIVE_CEILING];
+    struct rocketnet_address_t received_from;
+    check( rocketnet_network_simulator_receive( simulator, &to, 10.0, &received_from, received ) == ROCKETNET_RECEIVE_CEILING );
+    check( received[0] == 1 && received[ROCKETNET_RECEIVE_CEILING - 1] == 0x5A );
+    check( rocketnet_network_simulator_receive( simulator, &to, 10.0, &received_from, received ) == 1 );
+    check( received[0] == 2 );
+    check( !rocketnet_network_simulator_holds_any( simulator ) );
+
+    // a full wire takes the first capacity packets of a list and drops the rest
+
+    const uint8_t values[] = { 10, 11, 12, 13, 14, 15 };
+    const uint8_t * list[6];
+    int list_bytes[6];
+    for ( int i = 0; i < 6; i++ )
+    {
+        list[i] = &values[i];
+        list_bytes[i] = 1;
+    }
+
+    check( rocketnet_network_simulator_deliver_packets( simulator, &from, &to, list, list_bytes, 6, 10.0 ) == capacity );
+
+    const uint8_t late = 99;
+    rocketnet_network_simulator_send( simulator, &from, &to, &late, 1, 0.0 );
+
+    for ( int i = 0; i < capacity; i++ )
+    {
+        check( rocketnet_network_simulator_receive( simulator, &to, 10.0, &received_from, received ) == 1 );
+        check( received[0] == values[i] );
+    }
+
+    check( rocketnet_network_simulator_receive( simulator, &to, 10.0, &received_from, received ) == 0 );
+    check( !rocketnet_network_simulator_holds_any( simulator ) );
+
+    rocketnet_network_simulator_destroy( simulator );
+}
+
 REGISTER_UNIT_TEST( test_network_simulator_create_allocates_its_plan );
 REGISTER_UNIT_TEST( test_network_simulator_create_refuses_what_its_plan_refuses );
 REGISTER_UNIT_TEST( test_network_simulator_create_frees_on_a_refused_allocation );
 REGISTER_UNIT_TEST( test_network_simulator_refused_window_leaves_patterns_off );
+REGISTER_UNIT_TEST( test_network_simulator_refuses_bad_sizes_and_a_full_wire );
 
 #endif // #if ROCKETNET_DEV
