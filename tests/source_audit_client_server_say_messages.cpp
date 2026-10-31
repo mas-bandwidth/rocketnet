@@ -128,7 +128,6 @@ static const allowlist_row_t allowlist[] = {
     { F_O, "one open outgoing packet per connection", "FRAGMENT PACKING" },
     { F_S, "rn_message_packet_build_t", "FRAGMENT PACKING" },
     { F_S, "whole-packet send cannot overtake", "FRAGMENT PACKING" },
-    { F_O, "one record in one packet", "FRAGMENT PACKING" },
     { F_M, "the record ends this packet", "FRAGMENT PACKING" },
     { "sdk/rocketnet_message.h", "message-to-packet", "FRAGMENT PACKING" },
     { F_S, "in the packet", "FRAGMENT PACKING" },
