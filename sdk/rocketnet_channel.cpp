@@ -1037,7 +1037,7 @@ static void rn_channels_release( rn_channels_t * channels, uint32_t slot )
     }
 }
 
-// proofs/tla/RNChannel.tla EndUpdate
+// proofs/tla/RNChannel.tla EndUpdate; proofs/tla/RNOrderingWrap.tla EndUpdate: the delivery table empties
 
 void rn_channels_end_update( struct rn_channels_t * channels )
 {
@@ -1791,6 +1791,7 @@ uint32_t rn_ordered_acks( struct rn_ordered_t * ordered, const uint64_t * packet
 // A partial packet may already have delivered an earlier record; its retry
 // deduplicates that prefix while the refused record remains unmarked.
 
+// proofs/tla/RNOrderingWrap.tla Receive: the reservation, the dispatch and the drain compare orderings modulo 2^24 with the 32-bit read index
 static uint32_t rn_receive_delivery_reservation( const rn_channels_t * channels, const rocketnet_message_record_t * record )
 {
     if ( record->control )
