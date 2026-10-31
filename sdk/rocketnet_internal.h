@@ -84,9 +84,10 @@ int rocketnet_allocator_ex( void * ( *malloc_function )( void * context, size_t 
 struct rocketnet_message_client_t * rocketnet_client_message_client( struct rocketnet_client_t * client );
 struct rocketnet_message_server_t * rocketnet_server_message_server( struct rocketnet_server_t * server );
 
-// the heap a public client takes every allocation after create from
+// the heap a public client or server takes every allocation after create from
 // (rocketnet_allocator.h, the instance heap), for tests that read or press it
 struct rocketnet_heap_t * rocketnet_client_heap( struct rocketnet_client_t * client );
+struct rocketnet_heap_t * rocketnet_server_heap( struct rocketnet_server_t * server );
 
 #if ROCKETNET_DEV
 // the address a created server serves for one family, after the
@@ -329,11 +330,11 @@ void rocketnet_heap_scope_leave();
  * (rocketnet_allocator.h, the instance heap) instead of the installed
  * allocator. Scopes do not nest: a NULL heap leaves the installed
  * allocator in place, and a heap is never put in scope over another.
- * The public calls that allocate (a client's connect) open one with the
- * object's heap; a free needs none, since rocketnet_free returns every
- * allocation where it came from. The scope carries the heap's two
- * operations, so the lifecycle source that routes through them links
- * without the allocator's.
+ * The public calls that allocate (a client's connect, a server's start)
+ * open one with the object's heap; a free needs none, since
+ * rocketnet_free returns every allocation where it came from. The scope
+ * carries the heap's two operations, so the lifecycle source that routes
+ * through them links without the allocator's.
  */
 struct rocketnet_heap_scope_t
 {

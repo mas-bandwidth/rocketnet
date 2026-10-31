@@ -690,12 +690,13 @@ uint64_t rn_arena_bytes( const rn_arena_t * arena );     // the block's size: rn
 //                          the instance heap
 // ----------------------------------------------------------------
 
-// Each client owns one heap: tlsf (Matthew Conte's two-level segregated fit
-// allocator, vendored in rocketnet_allocator.cpp) over memory carved from the
-// one block create takes from the installed allocator. Every allocation the
-// client makes after create (its transport, sockets, threads, rings and
-// buffers at connect) comes from its heap, so the installed allocator is
-// called at create and destroy only, and connect allocates nothing from it.
+// Each client and server owns one heap: tlsf (Matthew Conte's two-level
+// segregated fit allocator, vendored in rocketnet_allocator.cpp) over memory
+// carved from the one block create takes from the installed allocator. Every
+// allocation the object makes after create (its transport, sockets, threads,
+// rings and buffers at connect and start, and a server's per-client protocol
+// tables) comes from its heap, so the installed allocator is called at create
+// and destroy only, and connect and start allocate nothing from it.
 //
 // A heap has one owner: the caller's thread that owns its object. Nothing
 // locks, and nothing else may touch it; RocketNet's worker threads never
@@ -739,7 +740,7 @@ bool rocketnet_heap_check( const rocketnet_heap_t * heap );
 
 #if ROCKETNET_DEV
 // refuses the nth allocation from now (1 is the next), once, as a full heap
-// would: the unit seam for the out-of-memory paths of connect
+// would: the unit seam for the out-of-memory paths of connect and start
 void rocketnet_heap_refuse_allocation_for_test( rocketnet_heap_t * heap, uint64_t nth );
 #endif // #if ROCKETNET_DEV
 

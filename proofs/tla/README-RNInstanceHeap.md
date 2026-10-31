@@ -48,8 +48,11 @@ units, and the heap holds one generation's plan.
 Each reversed witness against the code: `rocketnet_client_connect` returns
 `CLIENT_NOT_DISCONNECTED` while the retired worker runs, and calls
 `rn_client_end_connection` (which destroys the retired transport) before
-`rocketnet_message_client_create_resolved`; `rocketnet_client_destroy` frees
-the retired transport, then checks the heap holds nothing, then frees the
-block. The connect-uses-user witness is a connect that allocates from the
-installed allocator, which `test_instance_heap_client_connect_allocates_nothing_after_create`
-measures under a counting allocator.
+`rocketnet_message_client_create_resolved`; `rocketnet_server_start` calls
+`rn_server_finish_stop` before it creates the next transport; both destroys
+free the retired transport, then check the heap holds nothing, then free the
+block. The connect-uses-user witness is a connect or start that allocates
+from the installed allocator, which
+`test_instance_heap_client_connect_allocates_nothing_after_create` and
+`test_instance_heap_server_start_allocates_nothing_after_create` measure
+under a counting allocator.

@@ -477,7 +477,7 @@ uint64_t rocketnet_allocation_overhead()
 }
 
 // The heap rocketnet_malloc takes from on this thread: the scope of the
-// client whose call is running (rocketnet_heap_scope_t), or NULL for the
+// client or server whose call is running (rocketnet_heap_scope_t), or NULL for the
 // installed allocator.
 
 static thread_local const rocketnet_heap_scope_t * rocketnet_heap_in_scope = NULL;

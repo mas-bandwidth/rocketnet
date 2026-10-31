@@ -2056,6 +2056,7 @@ struct rocketnet_server_t
     int owns_block;
     uint8_t * block;
     uint64_t block_bytes;
+    struct rocketnet_heap_t * heap;                         // every allocation after create: the transport each start makes (in the create-time block); NULL when no candidate has a plan
     struct rocketnet_message_server_t * retiring;           // retained until stop completion
     struct rocketnet_message_server_t * running;            // NULL while stopped
     uint64_t lifetime[RN_SERVER_COUNT];                     // the counts of every earlier run
@@ -2064,6 +2065,37 @@ struct rocketnet_server_t
 };
 
 static const uint64_t rn_server_header_bytes = rn_round_up_alignment( sizeof( struct rocketnet_server_t ) );
+
+// The bytes of create's one block: the header, the running server's memory,
+// and the heap every later allocation comes from, sized from the transport
+// plan of the largest candidate the config's ladder can grant. A ladder with
+// no planned candidate (a custom transport alone) has no heap, and its
+// transport allocates from the installed allocator. 0 for a plan that cannot
+// be made.
+
+static uint64_t rn_server_block_bytes( const struct rocketnet_server_transport_config_t * transport, uint64_t running_bytes, uint64_t * heap_offset, uint64_t * heap_bytes )
+{
+    const uint64_t offset = rn_server_header_bytes + rn_round_up_alignment( running_bytes );
+    if ( offset < running_bytes )
+        return 0;
+
+    const uint64_t plan = rocketnet_server_transport_ladder_allocator_bytes( transport );
+    const uint64_t heap = plan != 0 ? rocketnet_heap_required_bytes( plan ) : 0;
+    if ( plan != 0 && ( heap == 0 || heap > UINT64_MAX - offset ) )
+        return 0;
+
+    if ( heap_offset )
+        *heap_offset = offset;
+    if ( heap_bytes )
+        *heap_bytes = heap;
+
+    return offset + heap;
+}
+
+struct rocketnet_heap_t * rocketnet_server_heap( struct rocketnet_server_t * server )
+{
+    return server ? server->heap : NULL;
+}
 
 static inline struct rocketnet_message_server_t * rn_server( const struct rocketnet_server_t * server )
 {
@@ -2342,20 +2374,15 @@ static size_t rn_server_required_memory_current( const struct rocketnet_server_c
 
     const uint64_t running_bytes = rocketnet_message_server_required_memory( &transport, &message );
 
-    // the peak over the lifecycle: create's one block as the allocator sees
-    // it, plus the transport start creates for the candidate it grants; stop
-    // retires it and the next start frees it before it creates the next, so
-    // a restart takes the same bytes again
+    // create's one block as the allocator sees it, the whole lifecycle: the
+    // transport each start creates comes from the heap in the block, so
+    // start, stop and restart take nothing more
 
-    const uint64_t transport_bytes = rocketnet_server_transport_ladder_allocator_bytes( &transport );
+    uint64_t total = running_bytes ? rn_server_block_bytes( &transport, running_bytes, NULL, NULL ) : 0;
 
     sodium_memzero( &transport, sizeof( transport ) );
 
-    if ( running_bytes == 0 )
-        return 0;
-
-    uint64_t total = rn_server_header_bytes + running_bytes;
-    if ( !rocketnet_memory_add( total, 1, rocketnet_allocation_overhead() ) || !rocketnet_memory_add( total, 1, transport_bytes ) )
+    if ( total == 0 || !rocketnet_memory_add( total, 1, rocketnet_allocation_overhead() ) )
         return 0;
 
     return total > (uint64_t) SIZE_MAX ? 0 : (size_t) total;
@@ -2520,7 +2547,21 @@ static struct rocketnet_server_t * rn_server_create_current( void * context, con
         return NULL;
     }
 
-    const uint64_t total = rn_server_header_bytes + running_bytes;
+    uint64_t heap_offset = 0;
+    uint64_t heap_bytes = 0;
+    const uint64_t total = rn_server_block_bytes( &transport, running_bytes, &heap_offset, &heap_bytes );
+    if ( total == 0 || total > (uint64_t) SIZE_MAX )
+    {
+        sodium_memzero( &transport, sizeof( transport ) );
+
+        rocketnet_error( "server create refused: the transport plan's heap cannot be sized" );
+
+        if ( status )
+            *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
+
+        return NULL;
+    }
+
     uint8_t * base = (uint8_t *) memory;
     if ( base )
     {
@@ -2596,6 +2637,29 @@ static struct rocketnet_server_t * rn_server_create_current( void * context, con
 
     sodium_memzero( &transport, sizeof( transport ) );
 
+    // proofs/tla/RNInstanceHeap.tla Create: the one block from the installed
+    // allocator holds the heap every later allocation comes from. A heap tlsf
+    // cannot hold in one pool is refused here, so a start never falls back
+    // to the installed allocator
+
+    if ( heap_bytes != 0 )
+    {
+        server->heap = rocketnet_heap_create( base + heap_offset, heap_bytes );
+        if ( !server->heap )
+        {
+            rocketnet_error( "server create refused: a %llu byte heap is past the allocator's pool limit", (unsigned long long) heap_bytes );
+
+            sodium_memzero( server->transport.server_secret_key, sizeof( server->transport.server_secret_key ) );
+            if ( !memory )
+                rocketnet_free( context, base );
+
+            if ( status )
+                *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
+
+            return NULL;
+        }
+    }
+
     return server;
 }
 
@@ -2634,6 +2698,12 @@ enum rocketnet_status_t rocketnet_server_start( struct rocketnet_server_t * serv
 {
     if ( !rocketnet_api_null_guard( server ) )
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
+
+    // the transport this start creates comes from the server's heap, after
+    // the retired one went back to it (proofs/tla/RNInstanceHeap.tla Connect,
+    // then Allocate for each of its allocations and Built)
+
+    const rocketnet_heap_scope_t heap_scope( server->heap );
 
     if ( server->retiring )
     {
@@ -2826,6 +2896,20 @@ void rocketnet_server_destroy( struct rocketnet_server_t * server )
     }
 
     rn_server_finish_stop( server );
+
+    // every allocation went back to the heap with its transport
+    // (proofs/tla/RNInstanceHeap.tla Destroy, NothingLiveAtFree). One still
+    // live is one a transport kept on purpose, a buffer the kernel may yet
+    // write, so the block it lives in is kept, not freed, with its secret
+    // wiped, and rocketnet_term reports it as LIVE_ALLOCATIONS
+
+    if ( rocketnet_heap_live_allocations( server->heap ) != 0 )
+    {
+        rocketnet_error( "rocketnet_server_destroy: %llu allocations are still live in the server's heap; the server is kept, not freed", (unsigned long long) rocketnet_heap_live_allocations( server->heap ) );
+
+        sodium_memzero( server->transport.server_secret_key, sizeof( server->transport.server_secret_key ) );
+        return;
+    }
 
     // the server's secret key is the header's one secret: it is wiped, and
     // the rest of the header and the block, config and message bytes, are

@@ -76,9 +76,10 @@
 // 72 bytes, span links) server was 1603277086, now 1607276904; client unchanged.
 // Re-measured 2026-10-30 on studio.local, the client's heap in its
 // create-time block (tlsf's size-class rounding of the transport plan and
-// 16 bytes per block): client was 22754581, now 23373359.
+// 16 bytes per block): client was 22754581, now 23373359. The server's heap
+// in its create-time block: server was 1607281000, now 1627114927.
 #if ROCKETNET_DEV
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1607281000 )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1627114927 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 23373359 )
 #else
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1584814168 )
@@ -98,10 +99,12 @@
 // 22904141 and is now 22904149; the server figure is unchanged.
 // Re-measured 2026-10-30 on amd-3, gcc, the client's heap in its
 // create-time block: client was 22904149, now 23527663.
+// The server's heap in its create-time block: server was 3247582222, now
+// 3318675631.
 // The non-dev figures below were not re-measured: this file is not linked
 // when ROCKETNET_DEV=OFF.
 #if ROCKETNET_DEV
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3247582222ULL )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3318675631ULL )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 23527663 )
 #else
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3225115398ULL )

@@ -330,15 +330,18 @@ static void secrets_wiped_free( void * context, void * p )
                 std::map<void *, std::vector<uint8_t>>::iterator copy = secrets_wiped_copies->find( p );
                 if ( copy != secrets_wiped_copies->end() )
                 {
-                    secrets_wiped_watch_t * watch = NULL;
-                    for ( int w = 0; w < secrets_wiped_num_watches; w++ )
-                        if ( secrets_wiped_watches[w].block == p )
-                            watch = &secrets_wiped_watches[w];
+                    // one block can hold several watched objects: a server's
+                    // transport lives in the heap of its create-time block,
+                    // beside the header
 
                     size_t written = 0;
                     for ( size_t i = 0; i < it->second; i++ )
                     {
-                        if ( secrets_wiped_in_span( watch, i ) )
+                        bool secret = false;
+                        for ( int w = 0; w < secrets_wiped_num_watches; w++ )
+                            secret = secret || ( secrets_wiped_watches[w].block == p && secrets_wiped_in_span( &secrets_wiped_watches[w], i ) );
+
+                        if ( secret )
                             secrets_wiped_secret_left += begin[i] != 0;
                         else
                             written += begin[i] != copy->second[i];
@@ -349,9 +352,10 @@ static void secrets_wiped_free( void * context, void * p )
                         secrets_wiped_written_most = written;
                     }
 
-                    if ( watch )
+                    for ( int w = 0; w < secrets_wiped_num_watches; w++ )
                     {
-                        watch->freed++;
+                        if ( secrets_wiped_watches[w].block == p )
+                            secrets_wiped_watches[w].freed++;
                     }
 
                     secrets_wiped_copies->erase( copy );
@@ -559,7 +563,9 @@ static int secrets_wiped_secret_bytes( const secrets_wiped_watch_t * watch )
 // Owned memory, stopped and disconnected: the destroys wipe the server's
 // secret key in its header, the server transport's secret and cookie keys and
 // the client transport's keys, and write nothing else of note: no block,
-// arena included, has more than a handful of bytes (handles, mutex state)
+// arena included, has more than a handful of bytes (handles, mutex state,
+// and the free-list links and sizes the block's heap writes as each
+// transport allocation returns to it, a few words per allocation)
 // written by a destroy. The planted message is still in the blocks: message
 // bytes are not secrets.
 #if ROCKETNET_DEV
@@ -631,7 +637,9 @@ static void test_secrets_wiped_destroy_writes_only_keys()
     check( transport_secret_before > 0 );
     check( watches_freed == 3 );
     check( secret_left == 0 );
-    check( written_most <= 256 );
+    if ( written_most > 512 )
+        printf( "secrets wiped: written_most=%zu\n", written_most );
+    check( written_most <= 512 );
     check( watched_frees == 2 );
     check( watched_pattern > 0 );
 }

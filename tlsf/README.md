@@ -1,10 +1,11 @@
 # RocketNet's tlsf
 
-Each RocketNet client owns one heap: tlsf, Matthew Conte's two-level
-segregated fit allocator, over memory carved from the one block the client's
-create takes from the installed allocator (`sdk/rocketnet_allocator.h`, "the
-instance heap"). Every allocation the client makes after create comes from
-it, so connect calls the installed allocator not at all.
+Each RocketNet client and server owns one heap: tlsf, Matthew Conte's
+two-level segregated fit allocator, over memory carved from the one block the
+object's create takes from the installed allocator
+(`sdk/rocketnet_allocator.h`, "the instance heap"). Every allocation the
+object makes after create comes from it, so connect and start call the
+installed allocator not at all.
 
 The code is not in this directory: it is a generated section of
 `sdk/rocketnet_allocator.cpp`, between the lines
