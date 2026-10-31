@@ -38,6 +38,12 @@
    :date "2026-10-31"
    :origin "Glenn, live, 2026-10-31: \"Each CI is 1m ideally, and 2m max\"")
 
+  (item "stop-send-failure-assert" :group "audit-remaining" :area "rocketnet"
+   :title "Server-stop functional case asserts the send-failure counter did not move"
+   :text "The Windows cut-off of a flushed bank at stop (docs/audits/2026-10-24-area-transports-windows.md) was never reproduced on captain: the iocp and rio stop cases pass with the send_idle gate removed. Asserting in test_server_stop_disconnects_every_client_<transport> that the server's send-failure counter did not move during the stop gives that check a way to fail. A stopped server's transport stats are reachable only through the retiring transport, so it needs a small test accessor."
+   :date "2026-10-31"
+   :origin "Stop-spread follow-on, rowan/stop-burst-across-updates at febf9c64")
+
   (item "resend-generation-stamp" :group "audit-remaining" :area "rocketnet"
    :title "Remove the resend FIFO's generation stamp and its check"
    :text "RNResendGenerations (PR #783) shows the stamp never decides: the number comparison in rn_window_ack_on_ack is what refuses a stale ack. Removing it shrinks each resend entry from 12 to 8 bytes and drops two branches per acked number. Started and held, uncommitted, in the worktree rocketnet-remove-stamp on branch rowan/remove-resend-generation-stamp."

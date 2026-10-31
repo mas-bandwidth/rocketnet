@@ -8,7 +8,7 @@ Planned work for RocketNet that is not yet on main. Work lands on main before ne
 
 - [Being landed now](#being-landed-now) (1)
 - [CI](#ci) (1)
-- [Audit items not yet fixed](#audit-items-not-yet-fixed) (2)
+- [Audit items not yet fixed](#audit-items-not-yet-fixed) (3)
 - [Investigations that need a quiet host](#investigations-that-need-a-quiet-host) (2)
 - [Older open pull requests](#older-open-pull-requests) (1)
 - [Decisions for Glenn](#decisions-for-glenn) (2)
@@ -36,6 +36,12 @@ From: Glenn, live, 2026-10-31: "Each CI is 1m ideally, and 2m max"
 ## Audit items not yet fixed
 
 Suspects from FABLE-AUDIT.md that no landed or in-flight change fixes yet. Each is verified at the cited line before it is fixed, and a confirmed defect gets a lock-in test and a negative control.
+
+### Server-stop functional case asserts the send-failure counter did not move
+
+The Windows cut-off of a flushed bank at stop (docs/audits/2026-10-24-area-transports-windows.md) was never reproduced on captain: the iocp and rio stop cases pass with the send_idle gate removed. Asserting in test_server_stop_disconnects_every_client_<transport> that the server's send-failure counter did not move during the stop gives that check a way to fail. A stopped server's transport stats are reachable only through the retiring transport, so it needs a small test accessor.
+
+From: Stop-spread follow-on, rowan/stop-burst-across-updates at febf9c64
 
 ### Remove the resend FIFO's generation stamp and its check
 
