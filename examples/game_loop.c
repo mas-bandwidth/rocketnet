@@ -218,6 +218,20 @@ int main( int argc, char ** argv )
     client_config.loopback_hub = hub;
 
     struct rocketnet_client_t ** clients = calloc( (size_t) num_clients, sizeof( clients[0] ) );
+    if ( !clients )
+    {
+        printf( "FAIL: client array: out of memory\n" );
+        rn_cli_server_stop_and_destroy( server );
+
+        rn_cli_loopback_hub_destroy( hub );
+        const enum rocketnet_status_t term_status = rocketnet_term();
+        if ( term_status != ROCKETNET_STATUS_OK )
+        {
+            printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
+        }
+
+        return 1;
+    }
 
     for ( int i = 0; i < num_clients; i++ )
     {
