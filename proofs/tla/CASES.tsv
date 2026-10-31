@@ -591,9 +591,11 @@ MCRNAckWalkLayoutBrokenWrapSeq.cfg	MCRNAckWalkLayout.tla	invariant	VisitsExact	c
 MCRNAckWalkLayoutBrokenHiMask.cfg	MCRNAckWalkLayout.tla	invariant	VisitsExact	check	rnackwalklayout	required	-
 MCRNAckWalkLayoutBrokenSkipWord.cfg	MCRNAckWalkLayout.tla	invariant	LowestExact	check	rnackwalklayout	required	-
 MCRNReceivedBlocksLayout.cfg	MCRNReceivedBlocksLayout.tla	pass	-	check	rnreceivedblockslayout	required	-
-MCRNReceivedBlocksLayoutBrokenNoWrap.cfg	MCRNReceivedBlocksLayout.tla	invariant	QueryIsReference	check	rnreceivedblockslayout	required	-
-MCRNReceivedBlocksLayoutBrokenFirstBlock.cfg	MCRNReceivedBlocksLayout.tla	invariant	QueryIsReference	check	rnreceivedblockslayout	required	-
-MCRNReceivedBlocksLayoutBrokenEdgeBlock.cfg	MCRNReceivedBlocksLayout.tla	invariant	QueryIsReference	check	rnreceivedblockslayout	required	-
+MCRNReceivedBlocksLayoutPayloads.cfg	MCRNReceivedBlocksLayout.tla	pass	-	check	rnreceivedblockslayout	required	-
+MCRNReceivedBlocksLayoutBrokenInside.cfg	MCRNReceivedBlocksLayout.tla	invariant	QueryIsReference	check	rnreceivedblockslayout	required	-
+MCRNReceivedBlocksLayoutBrokenLater.cfg	MCRNReceivedBlocksLayout.tla	invariant	QueryIsReference	check	rnreceivedblockslayout	required	-
+MCRNReceivedBlocksLayoutBrokenDuplicate.cfg	MCRNReceivedBlocksLayout.tla	invariant	QueryIsReference	check	rnreceivedblockslayout	required	-
+MCRNReceivedBlocksLayoutBrokenBaseMove.cfg	MCRNReceivedBlocksLayout.tla	invariant	QueryIsReference	check	rnreceivedblockslayout	required	-
 MCRNRttTreeLayout.cfg	MCRNRttTreeLayout.tla	pass	-	check	rnrtttreelayout	required	-
 MCRNRttTreeLayoutBrokenNoOffset.cfg	MCRNRttTreeLayout.tla	invariant	TreeExact	check	rnrtttreelayout	required	-
 MCRNRttTreeLayoutBrokenDecreaseOnly.cfg	MCRNRttTreeLayout.tla	invariant	RootIsMinimum	check	rnrtttreelayout	required	-
