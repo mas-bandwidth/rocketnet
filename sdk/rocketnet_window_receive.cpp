@@ -33,6 +33,7 @@ void rn_window_receive_init( rn_window_receive_t * receive, rn_region_t * region
 // standard/MESSAGES.md m5.2 and m4; RNWindow Recon and Accept. The
 // caller applies records in wire order and stops a payload on VIOLATION (R6).
 // proofs/tla/RNWindow.tla OpenPacket
+// proofs/tla/RNWindowLayout.tla Accept: the reconstruction, the bit word and index, the collision test, the claim and the advance at the code's layout
 int rn_window_receive_accept( rn_window_receive_t * receive, const rocketnet_message_record_t * record, uint32_t * slot )
 {
     rocketnet_assert( receive && receive->region && record && slot );
@@ -114,6 +115,7 @@ int rn_window_receive_accept( rn_window_receive_t * receive, const rocketnet_mes
 // standard/MESSAGES.md m5, m5.4, RNWindow EndUpdate and held release: only the exact live
 // number may free its slot; R and received history never move backwards.
 // proofs/tla/RNWindow.tla EndUpdate
+// proofs/tla/RNWindowLayout.tla Release: live = 0, as every release of a receive descriptor does
 void rn_window_receive_release( rn_window_receive_t * receive, uint64_t number )
 {
     rocketnet_assert( receive && receive->region );
