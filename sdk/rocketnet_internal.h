@@ -89,6 +89,11 @@ struct rocketnet_message_server_t * rocketnet_server_message_server( struct rock
 // outside ERROR .. SPAM
 const char * rocketnet_log_level_word_for_test( int level );
 
+// calls sodium's misuse path, as an unavailable OS random source does: the
+// handler rocketnet_init installed runs, then sodium aborts the process. For
+// the functional case that runs it in a child process
+void rocketnet_sodium_misuse_for_test( void );
+
 // the address a created server serves for one family, after the
 // environment overrides. Writes it and returns true, or leaves address empty
 // and returns false when the server does not serve that family or the address

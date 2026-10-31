@@ -2485,20 +2485,21 @@ static struct rocketnet_server_t * rn_server_create_current( void * context, con
     // pair for this object. The game reads the public key
     // (rocketnet_server_public_key) and registers it with its backend; start
     // refuses the published development key in a production build; destroy
-    // wipes the secret
+    // wipes the secret. Neither can fail: sodium's keypair and base
+    // multiplication return 0, and an unavailable OS random source aborts
+    // the process inside sodium after rocketnet_init's misuse handler logs it
 
-    if ( sodium_is_zero( transport.server_secret_key, sizeof( transport.server_secret_key ) )
-             ? rocketnet_generate_server_keypair( transport.server_public_key, transport.server_secret_key ) != ROCKETNET_STATUS_OK
-             : crypto_scalarmult_base( transport.server_public_key, transport.server_secret_key ) != 0 )
+    if ( sodium_is_zero( transport.server_secret_key, sizeof( transport.server_secret_key ) ) )
     {
-        sodium_memzero( &transport, sizeof( transport ) );
-
-        if ( !memory )
-            rocketnet_free( context, base );
-        if ( status )
-            *status = ROCKETNET_STATUS_CRYPTO_INIT_FAILED;
-
-        return NULL;
+        const enum rocketnet_status_t generated = rocketnet_generate_server_keypair( transport.server_public_key, transport.server_secret_key );
+        rocketnet_assert( generated == ROCKETNET_STATUS_OK );
+        (void) generated;
+    }
+    else
+    {
+        const int derived = crypto_scalarmult_base( transport.server_public_key, transport.server_secret_key );
+        rocketnet_assert( derived == 0 );
+        (void) derived;
     }
 
     struct rocketnet_server_t * server = (struct rocketnet_server_t *) base;

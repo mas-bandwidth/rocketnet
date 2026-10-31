@@ -12197,6 +12197,78 @@ static void rocketnet_test_public_dev_connect_token_round_trip()
 
 #endif // #if ROCKETNET_DEV
 
+#if !defined( _WIN32 ) && ROCKETNET_DEV && !defined( ROCKETNET_USE_SYSTEM_SODIUM )
+
+#include <signal.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+// An unavailable OS random source makes sodium abort the process
+// (sodium_misuse). The misuse handler rocketnet_init installs logs one error
+// line first. A child process takes sodium's misuse path; it must die by
+// SIGABRT with exactly that one line on its output.
+
+void rocketnet_test_sodium_misuse_logs_before_abort()
+{
+    int pipe_fds[2];
+    rocketnet_check( pipe( pipe_fds ) == 0 );
+
+    fflush( stdout );
+    fflush( stderr );
+
+    const pid_t pid = fork();
+    rocketnet_check( pid >= 0 );
+    if ( pid == 0 )
+    {
+        close( pipe_fds[0] );
+        dup2( pipe_fds[1], 1 );
+        dup2( pipe_fds[1], 2 );
+        signal( SIGABRT, SIG_DFL );
+
+        // the default sink at ERROR, and the library initialized: this
+        // process's own init, or the child's now
+
+        rocketnet_quiet( false );
+        rocketnet_log_function( NULL, NULL );
+        rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+        const enum rocketnet_status_t init = rocketnet_init( NULL, NULL, NULL );
+        if ( init != ROCKETNET_STATUS_OK && init != ROCKETNET_STATUS_ALREADY_INITIALIZED )
+            _exit( 2 );
+        rocketnet_sodium_misuse_for_test();
+        _exit( 0 );     // sodium_misuse returned: the abort never came
+    }
+
+    close( pipe_fds[1] );
+
+    char output[4096];
+    size_t length = 0;
+    for ( ;; )
+    {
+        const ssize_t got = read( pipe_fds[0], output + length, sizeof( output ) - 1 - length );
+        if ( got <= 0 )
+            break;
+        length += (size_t) got;
+        if ( length == sizeof( output ) - 1 )
+            break;
+    }
+    output[length] = '\0';
+    close( pipe_fds[0] );
+
+    int child_status = 0;
+    rocketnet_check( waitpid( pid, &child_status, 0 ) == pid );
+
+    const char * line = "sodium refused an operation it cannot complete";
+    const char * first = strstr( output, line );
+    const bool one_line = first != NULL && strstr( first + 1, line ) == NULL;
+    if ( !WIFSIGNALED( child_status ) || WTERMSIG( child_status ) != SIGABRT || !one_line )
+        printf( "sodium misuse child: status 0x%x, output [%s]\n", child_status, output );
+
+    rocketnet_check( WIFSIGNALED( child_status ) && WTERMSIG( child_status ) == SIGABRT );
+    rocketnet_check( one_line );
+}
+
+#endif // #if !defined( _WIN32 ) && ROCKETNET_DEV && !defined( ROCKETNET_USE_SYSTEM_SODIUM )
+
 #if !defined( _WIN32 ) && ROCKETNET_DEV
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
 void rocketnet_test_darwin_send_epipe_no_signal();
@@ -13069,6 +13141,9 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
     { "test_darwin_send_epipe_no_signal", rocketnet_test_darwin_send_epipe_no_signal, NULL },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
+#if !defined( ROCKETNET_USE_SYSTEM_SODIUM )
+    { "test_sodium_misuse_logs_before_abort", rocketnet_test_sodium_misuse_logs_before_abort, NULL },
+#endif // #if !defined( ROCKETNET_USE_SYSTEM_SODIUM )
     { "test_posix_server_receive_weather", rocketnet_test_posix_server_receive_weather, NULL },
     { "test_posix_client_receive_weather", rocketnet_test_posix_client_receive_weather, NULL },
     { "test_posix_client_drops_foreign_sources", rocketnet_test_posix_client_drops_foreign_sources, NULL },
