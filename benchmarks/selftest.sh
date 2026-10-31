@@ -301,6 +301,62 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# The stop at the receiver's last window (PROTOCOL.md, pair_common.sh). Three
+# legs, and they prove different things:
+#
+#   test_send_health.c   the classification alone, deterministically: an
+#                        ECONNREFUSED before the stop fails the sample, any
+#                        number of them after it do not.
+#   in-window plant      end to end through smoke_pair.sh: one ECONNREFUSED
+#                        inside the measured window must still fail the pair.
+#   connected pairs      end to end on the harnesses whose connected sockets
+#                        see the receiver's closed port as ECONNREFUSED
+#                        (bench_uring, bench_nw). A healthy pair must be green;
+#                        before the stop, every one of them failed here.
+
+if ! "${CC:-cc}" -O2 -Wall -Wextra -Werror -ffp-contract=off ./test_send_health.c -o "$WORK/test_send_health" > "$WORK/test_send_health_build.txt" 2>&1; then
+    fail "test_send_health compile failed"
+    cat "$WORK/test_send_health_build.txt" >&2
+elif ! "$WORK/test_send_health" > "$WORK/test_send_health.txt" 2>&1; then
+    fail "test_send_health failed"
+    cat "$WORK/test_send_health.txt" >&2
+else
+    echo "leg   send health around the stop: green"
+fi
+
+leg bench_portable recv-pair send-connrefused-window "send health: refused=1 " "one ECONNREFUSED inside the measured window"
+
+connected_pair()
+{
+    local harness="$1"
+    if [ ! -x "./$harness" ]; then
+        echo "SKIP  $harness healthy connected pair -- not built on this host"
+        skipped=$(( skipped + 1 ))
+        return
+    fi
+    if [ "$harness" = bench_uring ] && [ -n "$uring_recv_refused" ]; then
+        echo "SKIP  $harness healthy connected pair -- this host cannot run the receiver; the unfaulted probe said: $uring_recv_refused"
+        skipped=$(( skipped + 1 ))
+        return
+    fi
+    next_port
+    env -u BENCH_FAULT ./smoke_pair.sh "$harness" "$PORT" > "$WORK/${harness}_connected.txt" 2>&1
+    local status=$?
+    if [ "$status" -ne 0 ]; then
+        fail "a healthy $harness pair exited $status -- the sender was not stopped before the receiver closed, or a send was refused in the window"
+        tail -5 "$WORK/${harness}_connected.txt" >&2
+    elif ! grep -q '^WINDOW 0 ' "$WORK/${harness}_connected.txt"; then
+        fail "a healthy $harness pair produced no WINDOW line"
+    else
+        echo "leg   $harness healthy connected pair: green"
+        grep -E '^(WINDOW 0|SENDER)' "$WORK/${harness}_connected.txt" | sed 's/^/        /'
+    fi
+}
+
+connected_pair bench_uring
+connected_pair bench_nw
+
+# ---------------------------------------------------------------------------
 # driver_dispatch.cpp + driver_dispatch_fixture.cpp (transport_fill.md):
 # compile and run the pair in $WORK (never the checkout root) and fail if
 # either step fails.

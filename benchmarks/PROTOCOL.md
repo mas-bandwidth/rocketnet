@@ -100,11 +100,19 @@ Two known discrepancies to expect rather than chase:
   entering the kernel, so many `io_uring_wait_cqe` calls make no syscall at
   all; the harness counts every one as an enter. The ZC row's syscall column is
   an ordering, not a count (#98 item 4).
-- **Sender counts are by construction.** The runner kills the sender when the
-  receiver's last window closes, so the `SENDER` summary line is usually lost.
-  The send-side counts are one per packet for the portable control and one per
-  batch for GSO and io_uring, by construction, and were confirmed in short
-  runs.
+- **Sender counts are by construction.** The sender is stopped when the
+  receiver's last window closes: the receiver signals it (SIGUSR1, through the
+  pid the pair runner writes to `BENCH_SENDER_PIDFILE`) and holds its socket
+  open for one more second, and the runner signals it again once the receiver
+  has exited. The sender then validates the sends it made up to the stop,
+  prints its `SENDER` line and exits, and the pair fails if it exits nonzero.
+  A send refused anywhere in the measured windows therefore still fails the
+  sample. A send refused after the stop is outside the sample: on a connected
+  socket (io_uring, Network.framework) the receiver's closed port comes back as
+  ECONNREFUSED, and those are reported as `SENDER late_refused=` and not
+  counted. The send-side counts are one per packet for the portable control
+  and one per batch for GSO and io_uring, by construction, and were confirmed
+  in short runs.
 
 ## Reading the columns
 
