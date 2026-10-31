@@ -494,13 +494,16 @@ and is named red by the case limit. Every other case is checked for leaks.
 
 The fuzz corpora replay on macOS without libFuzzer, as CI does on its macOS
 rows (`.github/workflows/ci.yml`, "Replay the fuzz corpora without
-libFuzzer"); `make` builds the four replay binaries:
+libFuzzer"); `make` builds a replay binary for each of the ten harnesses in
+[tests/fuzz/README.md](../tests/fuzz/README.md). Replay every corpus:
 
 ```sh
-./bin/fuzz_replay_rocketnet_fuzz tests/fuzz/corpus/*
-./bin/fuzz_replay_rocketnet_fuzz_message tests/fuzz/corpus_message/*
-./bin/fuzz_replay_rocketnet_fuzz_connect_token tests/fuzz/corpus_connect_token/*
-./bin/fuzz_replay_rocketnet_fuzz_receive_structured tests/fuzz/corpus_receive_structured/*
+for harness in rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token \
+    rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip \
+    rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport \
+    rocketnet_fuzz_session; do
+  ./bin/fuzz_replay_$harness tests/fuzz/corpus${harness#rocketnet_fuzz}/* || echo "FAIL $harness"
+done
 ```
 
 Each prints `replayed <n> inputs` and exits 0.

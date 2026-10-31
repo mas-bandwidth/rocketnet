@@ -56,6 +56,7 @@ jobs:
           python3 tools/docs/check_links.py
           sh tools/docs/check_agents_md.sh all
           python3 tools/docs/check_getting_started.py
+          python3 tools/docs/check_fuzz_harnesses.py
 
       # every public symbol carries its reference: a new function, field or
       # parameter without documentation fails the job
