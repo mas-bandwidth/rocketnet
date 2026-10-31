@@ -6695,6 +6695,45 @@ void rocketnet_test_network_simulator()
     rocketnet_network_simulator_destroy( simulator );
 }
 
+void rocketnet_test_network_simulator_counts_store_refusals()
+{
+    // a packet the slot store cannot hold is counted, apart from simulated
+    // loss: four slots held by latency, a fifth send refused and counted, and
+    // a slot freed by delivery takes the next send again. Mutation that must
+    // bite: drop the count in the store-full path; the first check of 1 fails.
+
+    struct rocketnet_address_t address_a, address_b;
+    rocketnet_check( rocketnet_address_parse( &address_a, "10.0.0.1:30000" ) );
+    rocketnet_check( rocketnet_address_parse( &address_b, "10.0.0.2:30000" ) );
+
+    const uint8_t packet[16] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16 };
+    uint8_t received[ROCKETNET_RECEIVE_CEILING];
+    struct rocketnet_address_t from;
+
+    struct rocketnet_network_simulator_t * simulator = rocketnet_network_simulator_create( NULL, 4, 12345 );
+    rocketnet_check( simulator );
+    rocketnet_network_simulator_config( simulator, 1.0, 0.0, 0.0f, 0.0f );
+    rocketnet_check( rocketnet_network_simulator_store_refused( simulator ) == 0 );
+
+    for ( int i = 0; i < 4; i++ )
+        rocketnet_network_simulator_send( simulator, &address_a, &address_b, packet, sizeof( packet ), 100.0 );
+    rocketnet_check( rocketnet_network_simulator_store_refused( simulator ) == 0 );
+
+    rocketnet_network_simulator_send( simulator, &address_a, &address_b, packet, sizeof( packet ), 100.0 );
+    rocketnet_check( rocketnet_network_simulator_store_refused( simulator ) == 1 );
+
+    const uint8_t * batch[2] = { packet, packet };
+    const int bytes[2] = { (int) sizeof( packet ), (int) sizeof( packet ) };
+    rocketnet_check( rocketnet_network_simulator_deliver_packets( simulator, &address_a, &address_b, batch, bytes, 2, 101.0 ) == 0 );
+    rocketnet_check( rocketnet_network_simulator_store_refused( simulator ) == 3 );
+
+    rocketnet_check( rocketnet_network_simulator_receive( simulator, &address_b, 101.0, &from, received ) == (int) sizeof( packet ) );
+    rocketnet_network_simulator_send( simulator, &address_a, &address_b, packet, sizeof( packet ), 101.0 );
+    rocketnet_check( rocketnet_network_simulator_store_refused( simulator ) == 3 );
+
+    rocketnet_network_simulator_destroy( simulator );
+}
+
 void rocketnet_test_network_simulator_refuses_overflowing_capacity()
 {
     // The shard count rounds up to a power of two held in an int. A capacity
@@ -15928,6 +15967,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] = {
     { "test_client_protocol_refuses_a_small_capacity", rocketnet_test_client_protocol_refuses_a_small_capacity },
     { "test_integrity_limit", rocketnet_test_integrity_limit },
     { "test_network_simulator", rocketnet_test_network_simulator },
+    { "test_network_simulator_counts_store_refusals", rocketnet_test_network_simulator_counts_store_refusals },
     { "test_network_simulator_refuses_overflowing_capacity", rocketnet_test_network_simulator_refuses_overflowing_capacity },
     { "test_client_server_harsh_wire", rocketnet_test_client_server_harsh_wire },
     { "test_client_server_lossy_wire", rocketnet_test_client_server_lossy_wire },
