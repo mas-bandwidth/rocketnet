@@ -107,7 +107,6 @@ double rocketnet_update_clock_advance( double last_good, double * raw_time, doub
 
         rocketnet_error( "update refused its time %f: it is not finite; the last good time %f is kept", time, last_good );
 
-        rocketnet_assert( isfinite( time ) );
         return last_good;
     }
 
@@ -127,7 +126,6 @@ double rocketnet_update_clock_advance( double last_good, double * raw_time, doub
 
         rocketnet_error( "update refused its time %f: it goes back from %f; the last good time %f is kept", time, raw, last_good );
 
-        rocketnet_assert( time >= raw );
         return last_good;
     }
 
