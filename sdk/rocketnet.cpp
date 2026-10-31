@@ -205,6 +205,11 @@ const char * rocketnet_status_name( enum rocketnet_status_t status )
 
 static std::atomic<bool> rocketnet_log_clock_ready( false );
 
+double rocketnet_log_stamp()
+{
+    return rocketnet_log_clock_ready.load( std::memory_order_acquire ) ? rocketnet_platform_time() : 0.0;
+}
+
 static void default_log_callback( void * context, enum rocketnet_log_level_t level, const char * message, size_t length )
 {
 #if !ROCKETNET_UNREAL_ENGINE     // IMPORTANT: Unreal doesn't like printf
@@ -213,8 +218,7 @@ static void default_log_callback( void * context, enum rocketnet_log_level_t lev
     if ( level != ROCKETNET_LOG_LEVEL_NONE )
     {
         const char * level_string = rocketnet_log_level_word( level );
-        const double time = rocketnet_log_clock_ready.load( std::memory_order_acquire ) ? rocketnet_platform_time() : 0.0;
-        printf( "%.6f: %s: %.*s\n", time, level_string, (int) length, message );
+        printf( "%.6f: %s: %.*s\n", rocketnet_log_stamp(), level_string, (int) length, message );
     }
     else
     {

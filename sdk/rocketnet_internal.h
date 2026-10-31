@@ -657,4 +657,8 @@ static inline void rocketnet_create_status( int * status, int value )
         *status = value;
 }
 
+// the time the default log sink stamps a line with: 0 until rocketnet_init
+// has set up the platform clock, then rocketnet_platform_time (sdk/rocketnet.cpp)
+double rocketnet_log_stamp( void );
+
 #endif // ROCKETNET_SDK_ROCKETNET_INTERNAL_H

@@ -992,6 +992,12 @@ static void check_allocator_install_race()
 
 int main()
 {
+    // before init the platform clock has no timebase, so the default sink
+    // stamps a line with 0, never a reading of the unset clock (nan on macOS,
+    // a division by zero on Windows, a raw clock elsewhere)
+
+    check( rocketnet_log_stamp() == 0.0 );
+
     allocator_state state;
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
     rocketnet_allocator_ex( allocate, release );
@@ -1057,6 +1063,10 @@ int main()
     rocketnet_free( &state, p );
     check( state.live == 0 );
     check( rocketnet_init( &state, allocate, release ) == ROCKETNET_STATUS_OK );
+    {
+        const double stamp = rocketnet_log_stamp();
+        check( stamp == stamp && stamp >= 0.0 && stamp < 1.0e9 );
+    }
     check( rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK );
     rocketnet_forbid_xdp_commit();
     rocketnet_allocator_ex( refuse_allocation, refuse_free ); // initialized library prevents replacement
