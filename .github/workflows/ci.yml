@@ -2397,13 +2397,21 @@ jobs:
       - name: Benchmark campaign result gate
         run: python3 benchmarks/test_campaign.py
 
-  # benchmarks/instruction_baseline.json is pinned to GNU-15.2.0 / valgrind-3.26.0;
-  # the fleet label also matches gcc-13 hosts, so route this job to the quiet
-  # runner label that carries the pinned toolchain.
+  # THE INSTRUCTION COUNT GATE.
+  # benchmarks/instruction_baseline.json names the gcc and valgrind it was
+  # measured with, and counts are only comparable under exactly those. The job
+  # never takes either from the host: tools/build_pinned_toolchain.sh builds
+  # both from checksum-verified release source into ./pinned-toolchain, the
+  # prefix is cached keyed by the two pins, the host OS and C library, and the
+  # script itself, and the measurement runs with explicit paths into it. The
+  # prefix's toolchain-id must equal the baseline's, so a host or distro gcc
+  # reporting the same version is never compared. A
+  # cold cache builds gcc (C and C++ only, one stage) and valgrind; a warm
+  # cache restores the prefix and builds nothing.
   instruction-gate:
     name: instruction count gate
     runs-on: [self-hosted, Linux, X64, rocketnet-quiet]
-    timeout-minutes: 3
+    timeout-minutes: 75
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
@@ -2413,7 +2421,7 @@ jobs:
         run: |
           set -euo pipefail
           missing=0
-          for tool in cmake gcc g++ xxd pkg-config valgrind python3; do
+          for tool in cmake cc c++ make m4 curl tar xz bzip2 sha256sum sha512sum xxd pkg-config python3; do
             if ! command -v "$tool" >/dev/null 2>&1; then
               echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
               missing=1
@@ -2427,16 +2435,94 @@ jobs:
           done
           exit "$missing"
 
+      - name: Read the pinned toolchain from the baseline
+        id: pins
+        shell: bash
+        run: |
+          set -euo pipefail
+          read -r gcc_version valgrind_version < <(python3 -c '
+          import json
+          b = json.load(open("benchmarks/instruction_baseline.json"))
+          c, v = b["compiler_id"], b["valgrind_version"]
+          assert c.startswith("GNU-") and v.startswith("valgrind-"), (c, v)
+          print(c[len("GNU-"):], v[len("valgrind-"):])
+          ')
+          . /etc/os-release
+          libc="$(getconf GNU_LIBC_VERSION | tr ' ' '-')"
+          host="${ID}-${VERSION_ID}-$(uname -m)-${libc}"
+          echo "gcc=$gcc_version" >> "$GITHUB_OUTPUT"
+          echo "valgrind=$valgrind_version" >> "$GITHUB_OUTPUT"
+          echo "host=$host" >> "$GITHUB_OUTPUT"
+          echo "pinned gcc $gcc_version, valgrind $valgrind_version, host $host on $RUNNER_NAME"
+
+      - name: Restore the pinned toolchain
+        id: toolchain-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830  # v4.3.0
+        with:
+          path: pinned-toolchain
+          key: instruction-toolchain-gcc-${{ steps.pins.outputs.gcc }}-valgrind-${{ steps.pins.outputs.valgrind }}-${{ steps.pins.outputs.host }}-${{ hashFiles('tools/build_pinned_toolchain.sh') }}
+
+      - name: Build the pinned toolchain from source (content-verified)
+        if: steps.toolchain-cache.outputs.cache-hit != 'true'
+        timeout-minutes: 60
+        run: bash tools/build_pinned_toolchain.sh "$GITHUB_WORKSPACE/pinned-toolchain" "${{ steps.pins.outputs.gcc }}" "${{ steps.pins.outputs.valgrind }}"
+
+      # saved as soon as it is built, so a red gate below never costs the next
+      # run a rebuild
+      - name: Save the pinned toolchain
+        if: steps.toolchain-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830  # v4.3.0
+        with:
+          path: pinned-toolchain
+          key: ${{ steps.toolchain-cache.outputs.cache-primary-key }}
+
+      # PROVE THE PREMISE: the prefix holds exactly the pins, or every number
+      # below is measured with the wrong tools.
+      - name: Prove the prefix holds the pins
+        shell: bash
+        env:
+          VALGRIND_LIB: ${{ github.workspace }}/pinned-toolchain/libexec/valgrind
+        run: |
+          set -euo pipefail
+          tc="$GITHUB_WORKSPACE/pinned-toolchain"
+          gcc_resolved="$("$tc/bin/g++" -dumpfullversion)"
+          valgrind_resolved="$("$tc/bin/valgrind" --version)"
+          echo "prefix holds gcc ${gcc_resolved} and ${valgrind_resolved}, toolchain-id $(cat "$tc/toolchain-id") (pins are ${{ steps.pins.outputs.gcc }} and valgrind-${{ steps.pins.outputs.valgrind }})"
+          [ "$gcc_resolved" = "${{ steps.pins.outputs.gcc }}" ]
+          [ "$valgrind_resolved" = "valgrind-${{ steps.pins.outputs.valgrind }}" ]
+
       - name: Test the instruction-count checker
+        timeout-minutes: 3
         run: python3 tools/test_check_instructions.py
 
-      - name: Build instruction_count (Release)
+      # the pinned gcc's own libstdc++ by rpath, and the pinned valgrind's
+      # cachegrind.h ahead of any the host carries
+      - name: Build instruction_count (Release) with the pinned gcc
+        timeout-minutes: 5
+        shell: bash
         run: |
-          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          set -euo pipefail
+          tc="$GITHUB_WORKSPACE/pinned-toolchain"
+          cmake -B build -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER="$tc/bin/gcc" \
+            -DCMAKE_CXX_COMPILER="$tc/bin/g++" \
+            -DCMAKE_C_FLAGS="-I$tc/include" \
+            -DCMAKE_CXX_FLAGS="-I$tc/include" \
+            -DCMAKE_EXE_LINKER_FLAGS="-Wl,-rpath,$tc/lib64"
           cmake --build build --target instruction_count --parallel
 
-      - name: Run the cachegrind instruction gate
-        run: python3 tools/check_instructions.py --bin ./build/instruction_count
+      - name: Run the cachegrind instruction gate with the pinned valgrind
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          set -euo pipefail
+          status=0
+          output="$(python3 tools/check_instructions.py --bin ./build/instruction_count --toolchain "$GITHUB_WORKSPACE/pinned-toolchain")" || status=$?
+          printf '%s\n' "$output"
+          [ "$status" -eq 0 ] || exit "$status"
+          # the regions were isolated by cachegrind's client requests, as the
+          # baseline was; the setup-subtraction fallback measures differently
+          grep -qx 'isolation mode=client_requests' <<<"$output"
 
   # The six validation-tool self-test suites the repository ships
   # (tools/test_check_frame_budget.py, test_check_server_calls.py,
