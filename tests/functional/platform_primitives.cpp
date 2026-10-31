@@ -379,7 +379,6 @@ void rocketnet_test_bundled_rng_closes_and_reopens_on_mac()
         {
             rocketnet_client_config_t config;
             rocketnet_check( rocketnet_client_default_config( &config ) == ROCKETNET_STATUS_OK );
-            config.max_fragmented_messages = 1;
 
             rocketnet_status_t status = ROCKETNET_STATUS_OK;
             rocketnet_client_t * client = rocketnet_client_create( NULL, &config, &status );
@@ -815,7 +814,7 @@ static void rocketnet_test_ack_endpoint_thread( int rounds, struct rocketnet_ack
 
         for ( int i = 0; i < 16; i++, sequence++ )
         {
-            rocketnet_ack_endpoint_record_sent( endpoint, sequence, 100, sequence, 1, 0, time );
+            rocketnet_ack_endpoint_record_sent( endpoint, sequence, 100, sequence, 1, time );
         }
 
         struct rocketnet_ack_block_t block;

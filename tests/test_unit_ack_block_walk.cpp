@@ -22,7 +22,7 @@ extern thread_local unsigned long long g_ack_visit_count;
 static void rec_sent( struct rocketnet_ack_endpoint_t * ep, uint64_t sequence )
 {
     enum rocketnet_ack_sent_result_t r = rocketnet_ack_endpoint_record_sent_classified(
-        ep, sequence, 100, 1000000 + sequence, 1, 0, 1000.0 + (double) sequence * 0.001 );
+        ep, sequence, 100, 1000000 + sequence, 1, 1000.0 + (double) sequence * 0.001 );
     rocketnet_unit_check( r != ROCKETNET_ACK_SENT_REFUSED_STALE );
 }
 
@@ -306,7 +306,7 @@ static void test_ack_block_walk_bits_match_ring()
     // a stale write below the window is refused and sets nothing
 
     enum rocketnet_ack_sent_result_t refused;
-    refused = rocketnet_ack_endpoint_record_sent_classified( ep, 5, 100, 5000005, 1, 0, 2000.0 );
+    refused = rocketnet_ack_endpoint_record_sent_classified( ep, 5, 100, 5000005, 1, 2000.0 );
     rocketnet_unit_check( refused == ROCKETNET_ACK_SENT_REFUSED_STALE );
 
     acked_count = 0;

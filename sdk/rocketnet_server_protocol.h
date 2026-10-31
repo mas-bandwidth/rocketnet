@@ -22,15 +22,13 @@
 // the cheap ones. The library does not own sockets yet, so processing returns
 // what to send and the caller sends it.
 
-// Pointer-only dependencies, deliberately incomplete here: the reassembly
-// set (rocketnet_fragment.h), the encryption map
-// (rocketnet_encryption_map.h), the client slots
+// Pointer-only dependencies, deliberately incomplete here: the encryption
+// map (rocketnet_encryption_map.h), the client slots
 // (rocketnet_client_slots.h) and the counters (rocketnet_counters.h). The
 // implementation file includes the full definitions it consumes. The ACK and
 // used-token-history types are pointer-only here too, but their headers stay
 // full includes: sdk/rocketnet_server_transport.cpp, the fuzz harness and
 // the soak harness consume those full definitions through this header.
-struct rocketnet_reassembly_set_t;
 struct rocketnet_encryption_map_t;
 struct rocketnet_encryption_mapping_t;
 struct rocketnet_client_slots_t;
@@ -78,7 +76,6 @@ struct rocketnet_server_protocol_t
     struct rocketnet_used_token_history_t * used_token_history;
     struct rocketnet_client_slots_t * client_slots;
     struct rocketnet_server_acks_t * acks;
-    struct rocketnet_reassembly_set_t * reassembly;         // per-client fragment reassembly, one connection per slot
     struct rocketnet_counters_t * counters;
     struct rocketnet_signature_verify_budget_t signature_verify_budget;   // per-source failed-verify budget, before the verify
 
@@ -330,39 +327,6 @@ int rocketnet_server_protocol_write_payload( struct rocketnet_server_protocol_t 
 int rocketnet_server_protocol_client_address( struct rocketnet_server_protocol_t * server,
                                               int client_index,
                                               struct rocketnet_address_t * out_address );
-
-// The fragmented send path, per _Fragmentation_ -- the client protocol's
-// mirror, per connected client: payload ids per direction from one, a
-// sequence block reserved with one atomic add, each fragment an ordinary
-// sealed type 9 session packet whose sent record names the payload's
-// aggregate.
-
-uint32_t rocketnet_server_protocol_next_fragment_payload_id( struct rocketnet_server_protocol_t * server, int client_index );
-
-int rocketnet_server_protocol_start_fragments( struct rocketnet_server_protocol_t * server, int client_index, int fragment_count, uint64_t * base_sequence );
-
-int rocketnet_server_protocol_seal_fragment( struct rocketnet_server_protocol_t * server,
-                                             int client_index,
-                                             uint64_t sequence,
-                                             uint32_t payload_id,
-                                             int fragment_index,
-                                             int fragment_count,
-                                             const uint8_t * fragment_data,
-                                             int fragment_bytes,
-                                             uint64_t aggregate_id,
-                                             double current_time,
-                                             uint8_t * out_packet );
-
-#if ROCKETNET_DEV
-int rocketnet_server_protocol_write_fragments( struct rocketnet_server_protocol_t * server,
-                                               int client_index,
-                                               const uint8_t * payload_data,
-                                               int payload_bytes,
-                                               double current_time,
-                                               uint8_t * out_packets,
-                                               int * out_packet_bytes,
-                                               int max_packets );
-#endif // #if ROCKETNET_DEV
 
 // Commit only after the message layer accepted the entire payload.
 void rocketnet_server_protocol_accept_payload( struct rocketnet_server_protocol_t * server, int client_index, uint64_t connection_id, uint64_t sequence );

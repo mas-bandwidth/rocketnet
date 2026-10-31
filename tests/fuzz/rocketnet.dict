@@ -20,10 +20,9 @@ prefilter_payload="\x05\x00\xb7\x59\x01\x00"
 prefilter_disconnect="\x06\x00\xb7\x59\x01\x00"
 prefilter_cookie="\x07\x00\xb7\x59\x01\x00"
 prefilter_ack="\x08\x00\xb7\x59\x01\x00"
-prefilter_fragment="\x09\x00\xb7\x59\x01\x00"
 
 # the first reserved type, and a keyed epoch the unkeyed 1.0 must refuse
-type_reserved="\x0a"
+type_reserved="\x09"
 epoch_keyed="\x01"
 
 # --- the connect token (sdk/rocketnet_connect_token.h) ---
@@ -45,13 +44,6 @@ test_create_ts="\x00\xf9\xac\x68\x00\x00\x00\x00"
 # the dev server address the vectors and soaks use: 203.0.113.10:40000,
 # octets then port little-endian, the signed data's ipv4 field layout
 dev_server_ipv4="\xcb\x00\x71\x0a\x40\x9c"
-
-# --- the fragment header (sdk/rocketnet_fragment.h) ---
-
-# payload id (u32 LE, zero invalid), fragment index, fragment count - 1
-fragment_first_of_two="\x01\x00\x00\x00\x00\x01"
-fragment_last_of_two="\x01\x00\x00\x00\x01\x01"
-fragment_max_count="\x01\x00\x00\x00\xff\xff"
 
 # --- sequence numbers (STANDARD.md _Sequence numbers_) ---
 

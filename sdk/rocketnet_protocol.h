@@ -165,7 +165,7 @@ uint64_t rocketnet_reconstruct_near( uint32_t wire_value, uint64_t expected );
 // packet size table and t15.3): the wire floor of each type (0 for any other
 // type), the opened type data each carries behind its ack block, whether its
 // sequence is ack-eligible as soon as it opens (a payload becomes eligible
-// when it is accepted, a fragment when reassembly accepts it), and whether it
+// when it is accepted), and whether it
 // adds to the ack debt (a standalone ack never does: that is what makes the
 // ack conversation terminate).
 

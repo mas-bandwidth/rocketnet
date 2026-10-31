@@ -1,4 +1,0 @@
-# The rows of RN-1 t16 (TRANSPORT.md) this section states: document name, sdk expression, value.
-# Format and rules: standard/STYLE.md section 10.
-reassembly reach	ROCKETNET_REASSEMBLY_REACH	1073741824
-reassembly behind	ROCKETNET_REASSEMBLY_BEHIND	256

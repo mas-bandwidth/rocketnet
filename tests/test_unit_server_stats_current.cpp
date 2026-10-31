@@ -45,8 +45,8 @@ static void test_server_stats_current_after_one_update()
     // after the first was sent: rtt samples of 1000 ms and 500 ms
 
     const double t0 = 1000.0;
-    rocketnet_ack_endpoint_record_sent( endpoint, 1, 100, 7, 1, 0, t0 );
-    rocketnet_ack_endpoint_record_sent( endpoint, 2, 100, 8, 1, 0, t0 + 0.5 );
+    rocketnet_ack_endpoint_record_sent( endpoint, 1, 100, 7, 1, t0 );
+    rocketnet_ack_endpoint_record_sent( endpoint, 2, 100, 8, 1, t0 + 0.5 );
     rocketnet_ack_endpoint_record_received( endpoint, 1, 200, t0 + 0.25 );
     rocketnet_ack_endpoint_record_received( endpoint, 2, 200, t0 + 0.75 );
     stats_ack_run( endpoint, 1, 2, t0 + 1.0 );
@@ -73,7 +73,7 @@ static void test_server_stats_current_after_one_update()
     // a reset slot reads as zeros again
 
     rocketnet_server_acks_reset_slot( acks, 997 );
-    rocketnet_ack_endpoint_record_sent( endpoint, 1, 100, 9, 1, 0, t0 + 2.0 );
+    rocketnet_ack_endpoint_record_sent( endpoint, 1, 100, 9, 1, t0 + 2.0 );
     check( endpoint->rtt == 0.0f && endpoint->jitter == 0.0f && endpoint->packet_loss == 0.0f );
     check( endpoint->bandwidth_sent_kbps == 0.0f && endpoint->bandwidth_received_kbps == 0.0f );
 
@@ -148,15 +148,15 @@ static void test_server_stats_current_after_window_slides()
 
         if ( step % 23 == 0 )
         {
-            rocketnet_ack_endpoint_record_sent( endpoint, sequence + 1, bytes, sequence + 1, 1, 0, time );
+            rocketnet_ack_endpoint_record_sent( endpoint, sequence + 1, bytes, sequence + 1, 1, time );
             stats_check_reference( endpoint );
-            rocketnet_ack_endpoint_record_sent( endpoint, sequence, bytes, sequence, 1, 0, time );
+            rocketnet_ack_endpoint_record_sent( endpoint, sequence, bytes, sequence, 1, time );
             stats_check_reference( endpoint );
             sequence++;
         }
         else
         {
-            rocketnet_ack_endpoint_record_sent( endpoint, sequence, bytes, sequence, 1, 0, time );
+            rocketnet_ack_endpoint_record_sent( endpoint, sequence, bytes, sequence, 1, time );
             stats_check_reference( endpoint );
         }
 
@@ -231,9 +231,9 @@ static void test_server_stats_current_after_window_slides()
         time += 0.01;
 
         const uint64_t s = endpoint->highest_sequence + jumps[j];
-        rocketnet_ack_endpoint_record_sent( endpoint, s, 120, s, 1, 0, time );
+        rocketnet_ack_endpoint_record_sent( endpoint, s, 120, s, 1, time );
         stats_check_reference( endpoint );
-        rocketnet_ack_endpoint_record_sent( endpoint, s + 1, 120, s + 1, 1, 0, time + 0.001 );
+        rocketnet_ack_endpoint_record_sent( endpoint, s + 1, 120, s + 1, 1, time + 0.001 );
         stats_check_reference( endpoint );
         stats_ack_run( endpoint, s, s + 1, time + 0.002 );
         stats_check_reference( endpoint );
@@ -270,7 +270,7 @@ static void test_server_stats_current_rtt_minimum_moves()
     {
         s++;
         const double time = t0 + (double) s * tick;
-        rocketnet_ack_endpoint_record_sent( endpoint, s, 100, s, 1, 0, time );
+        rocketnet_ack_endpoint_record_sent( endpoint, s, 100, s, 1, time );
 
         // one, two or three ticks of rtt, the shortest absent for long
         // stretches so the history loses every copy of its minimum
@@ -286,7 +286,7 @@ static void test_server_stats_current_rtt_minimum_moves()
     {
         s++;
         const double time = t0 + (double) s * tick;
-        rocketnet_ack_endpoint_record_sent( endpoint, s, 100, s, 1, 0, time );
+        rocketnet_ack_endpoint_record_sent( endpoint, s, 100, s, 1, time );
         stats_ack_run( endpoint, s, s, time + 0.5 + (double) step * 0.0001 );
         stats_check_reference( endpoint );
     }

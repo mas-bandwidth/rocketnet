@@ -16,8 +16,8 @@
     its sequence.
 
     The schedule depends on the limits of the run's config, carried in
-    rocketnet_live_config_t: the message config's max_message_bytes and the
-    transport's max_payload_bytes.
+    rocketnet_live_config_t: the message config's max_message_bytes, and the
+    schedule's own code-1 payload bound.
 */
 
 #pragma once
@@ -34,15 +34,15 @@
 #define ROCKETNET_LIVE_NUM_CHANNELS             32
 #define ROCKETNET_LIVE_MAX_BOUNDARIES           64
 #define ROCKETNET_LIVE_BLOCK_STRIDE             1152u      // F, ROCKETNET_MESSAGE_FRAGMENT_BYTES
-#define ROCKETNET_LIVE_FRAGMENT_STRIDE          1413u      // the transport fragment stride
+#define ROCKETNET_LIVE_FRAGMENT_STRIDE          1413u      // the step of the code-1 fill edges
 #define ROCKETNET_LIVE_CODE1_OVERHEAD           11u        // code 1's 10-byte header and the form byte
 #define ROCKETNET_LIVE_MAX_RECORD_BYTES         65535u     // code 1's u16 record length
 #define ROCKETNET_LIVE_UNRELIABLE_LIMIT         1411u      // 1415 - 1 - 3, codes 0 and 5 single record
 #define ROCKETNET_LIVE_SLOTS                    32u
 
-// The transport's default payload capacity (the SDK's
-// ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES, internal to the library): the live
-// schedule's payload bound, now that the field is gone.
+// The live schedule's code-1 payload bound: a code-1 message above one
+// packet's record is promoted to its reliable twin, and the schedule probes
+// promoted sizes up to this bound.
 
 // The limits the schedule is computed against (section 4, "The modes'
 // maxima"), and the run seed of the bucket rule.

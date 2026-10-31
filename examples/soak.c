@@ -700,7 +700,7 @@ int main( int argc, char ** argv )
     s_cfg.loopback_hub = c_cfg.loopback_hub = hub;
     s_cfg.per_client_send_kbps = c_cfg.send_kbps = 100000;
     s_cfg.max_message_bytes = c_cfg.max_message_bytes = 2048;
-    s_cfg.num_channels = c_cfg.num_channels = s_cfg.max_fragmented_messages = c_cfg.max_fragmented_messages = 2;
+    s_cfg.num_channels = c_cfg.num_channels = 2;
     s_cfg.reliable_messages_in_flight = c_cfg.reliable_messages_in_flight = s_cfg.send_queue_messages = c_cfg.send_queue_messages = 64;
     s_cfg.packets_in_flight = c_cfg.packets_in_flight = s_cfg.unreliable_messages_per_update = c_cfg.unreliable_messages_per_update = s_cfg.max_message_receipts = c_cfg.max_message_receipts = SOAK_MAX_RECEIPTS;
     s_cfg.receive_message_buffer_bytes = c_cfg.receive_message_buffer_bytes = s_cfg.send_message_buffer_bytes = c_cfg.send_message_buffer_bytes = 32768;

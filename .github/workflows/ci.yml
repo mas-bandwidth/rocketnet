@@ -739,8 +739,8 @@ jobs:
       - name: Memory plans echo the allocator observation on macOS
         if: runner.os == 'macOS' && matrix.leg == 'checks'
         run: |
-          ./bin/transport_memory 1 1416 1 portable 1 || true
-          ./bin/transport_memory 1 1416 1 msgx 1 || true
+          ./bin/transport_memory 1 1416 portable 1 || true
+          ./bin/transport_memory 1 1416 msgx 1 || true
 
       - name: Memory plans against allocator observations
         if: matrix.leg == 'checks'

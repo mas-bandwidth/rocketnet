@@ -9,7 +9,7 @@
 // garbage, corrupted-envelope datagrams, and time advances. This is the
 // analog of yojimbo's fuzz_connection_structured -- where raw bytes almost
 // never form a valid packet, this target reaches the deep receive state (ack
-// reconstruction, fragment reassembly, replay window, the session sequence
+// reconstruction, replay window, the session sequence
 // paths) by producing structurally valid packets from the real write paths
 // and then letting the fuzzer decide what to damage and when.
 //
@@ -21,8 +21,8 @@
 //
 // FOUR THINGS THE STREAM CAN DO each step, chosen from one action byte:
 //   - advance time and pump both directions (the ordinary path);
-//   - have the connected client send a payload or a fragmented payload
-//     (drives ack blocks and reassembly with valid bytes);
+//   - have the connected client send a payload (drives ack blocks with
+//     valid bytes);
 //   - inject a fully-fuzzed datagram at the server (pre-decrypt garbage: the
 //     prefilter, size and type ladder, and the mapping lookup);
 //   - capture the last real client->server datagram, corrupt its sealed body
@@ -34,7 +34,7 @@
 // table hash keys. libFuzzer needs a crashing input to REPLAY, and it does:
 // no branch that decides crash-or-not turns on the VALUE of a random key. An
 // AEAD open either succeeds into fixed-shape plaintext or fails on the MAC,
-// and reassembly/ack/replay indices are driven by sequence numbers and the
+// and ack/replay indices are driven by sequence numbers and the
 // decision stream, not by key bytes. So a given input walks the same control
 // flow every run. The simulator's own delivery order is fully determined by
 // its seed, which is taken from the input.
@@ -46,7 +46,6 @@
 #include "rocketnet_connect_token.h"
 #include "rocketnet_network_simulator.h"
 #include "rocketnet_encryption_map.h"
-#include "rocketnet_fragment.h"
 #include "rocketnet_ack.h"
 #include "rocketnet_counters.h"
 #include "rocketnet_wire.h"
@@ -74,15 +73,13 @@ enum
     ROCKETNET_FUZZ_RECEIVE_SERVER_PAYLOAD = 1ULL << 3,
     ROCKETNET_FUZZ_RECEIVE_SERVER_DISCONNECT = 1ULL << 4,
     ROCKETNET_FUZZ_RECEIVE_SERVER_ACK = 1ULL << 5,
-    ROCKETNET_FUZZ_RECEIVE_SERVER_FRAGMENT = 1ULL << 6,
-    ROCKETNET_FUZZ_RECEIVE_CLIENT_COOKIE = 1ULL << 7,
-    ROCKETNET_FUZZ_RECEIVE_CLIENT_CHALLENGE = 1ULL << 8,
-    ROCKETNET_FUZZ_RECEIVE_CLIENT_DENIED = 1ULL << 9,
-    ROCKETNET_FUZZ_RECEIVE_CLIENT_KEEP_ALIVE = 1ULL << 10,
-    ROCKETNET_FUZZ_RECEIVE_CLIENT_PAYLOAD = 1ULL << 11,
-    ROCKETNET_FUZZ_RECEIVE_CLIENT_DISCONNECT = 1ULL << 12,
-    ROCKETNET_FUZZ_RECEIVE_CLIENT_ACK = 1ULL << 13,
-    ROCKETNET_FUZZ_RECEIVE_CLIENT_FRAGMENT = 1ULL << 14
+    ROCKETNET_FUZZ_RECEIVE_CLIENT_COOKIE = 1ULL << 6,
+    ROCKETNET_FUZZ_RECEIVE_CLIENT_CHALLENGE = 1ULL << 7,
+    ROCKETNET_FUZZ_RECEIVE_CLIENT_DENIED = 1ULL << 8,
+    ROCKETNET_FUZZ_RECEIVE_CLIENT_KEEP_ALIVE = 1ULL << 9,
+    ROCKETNET_FUZZ_RECEIVE_CLIENT_PAYLOAD = 1ULL << 10,
+    ROCKETNET_FUZZ_RECEIVE_CLIENT_DISCONNECT = 1ULL << 11,
+    ROCKETNET_FUZZ_RECEIVE_CLIENT_ACK = 1ULL << 12
 };
 
 static uint64_t rocketnet_fuzz_receive_coverage = 0;
@@ -192,7 +189,6 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
     server.used_token_history = rocketnet_used_token_history_create( NULL, 64 );
     server.client_slots = rocketnet_client_slots_create( NULL, 4 );
     server.acks = rocketnet_server_acks_create( NULL, 4 );
-    server.reassembly = rocketnet_reassembly_set_create( NULL, 4, 8, 16384, 4 * 8 );
     server.counters = &server_counters;
 
     // -------- one client, and the wire between them --------
@@ -293,25 +289,6 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
             payload_size = payload_size < ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ? payload_size + 1 : 1;
         }
 
-        // occasionally a fragmented payload, so reassembly soaks under the
-        // same hostile wire and the fragment sequence paths are reached
-
-        if ( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED && ( action & 3 ) == 2 )
-        {
-            static uint8_t fragmented_payload[16384];
-            const int fragmented_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 1 + ( fuzz_u16( &r ) % 4096 );
-            generate_payload( fragmented_payload, fragmented_bytes );
-
-            static uint8_t fragment_packets[16 * ROCKETNET_SEND_BUDGET];
-            int fragment_packet_bytes[16];
-
-            const int fragment_count = rocketnet_client_protocol_write_fragments( &client, fragmented_payload, fragmented_bytes,
-                                                                                  time, fragment_packets, fragment_packet_bytes, 16 );
-            for ( int i = 0; i < fragment_count; i++ )
-                rocketnet_network_simulator_send( simulator, &client_address, &server_address,
-                                                  fragment_packets + i * ROCKETNET_SEND_BUDGET, fragment_packet_bytes[i], time );
-        }
-
         // inject pure garbage at the server: a fuzz-sized, fuzz-filled datagram
         // straight into the receive entry (the pre-decrypt path). the size is a
         // legal wire size, [1, ROCKETNET_RECEIVE_CEILING] -- the simulator is
@@ -362,7 +339,6 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
 
         // server drains the wire, answers, and its answers ride back
         {
-            rocketnet_reassembly_set_begin_update( server.reassembly );
             server.acks->num_acked = 0;
 
             struct rocketnet_address_t from;
@@ -480,11 +456,6 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
         rocketnet_fuzz_receive_coverage |= ROCKETNET_FUZZ_RECEIVE_SERVER_ACK;
     }
 
-    if ( server_counters.values[ROCKETNET_COUNTER_FRAGMENT_RECEIVED] > 0 )
-    {
-        rocketnet_fuzz_receive_coverage |= ROCKETNET_FUZZ_RECEIVE_SERVER_FRAGMENT;
-    }
-
     if ( client_counters.values[ROCKETNET_COUNTER_CLIENT_COOKIE_RECEIVED] > 0 )
     {
         rocketnet_fuzz_receive_coverage |= ROCKETNET_FUZZ_RECEIVE_CLIENT_COOKIE;
@@ -520,16 +491,10 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
         rocketnet_fuzz_receive_coverage |= ROCKETNET_FUZZ_RECEIVE_CLIENT_ACK;
     }
 
-    if ( client_counters.values[ROCKETNET_COUNTER_CLIENT_FRAGMENT_RECEIVED] > 0 )
-    {
-        rocketnet_fuzz_receive_coverage |= ROCKETNET_FUZZ_RECEIVE_CLIENT_FRAGMENT;
-    }
-
     rocketnet_encryption_map_destroy( server.encryption_map );
     rocketnet_used_token_history_destroy( server.used_token_history );
     rocketnet_client_slots_destroy( server.client_slots );
     rocketnet_server_acks_destroy( server.acks );
-    rocketnet_reassembly_set_destroy( server.reassembly );
     rocketnet_network_simulator_destroy( simulator );
 
     return 0;
@@ -548,14 +513,12 @@ enum
 {
     ROCKETNET_FUZZ_RECEIVE_SEED_HANDSHAKE = 0,
     ROCKETNET_FUZZ_RECEIVE_SEED_PAYLOAD,
-    ROCKETNET_FUZZ_RECEIVE_SEED_FRAGMENT,
     ROCKETNET_FUZZ_RECEIVE_SEED_SERVER_DISCONNECT,
     ROCKETNET_FUZZ_RECEIVE_SEED_SERVER_ACK,
     ROCKETNET_FUZZ_RECEIVE_SEED_CLIENT_DENIED,
     ROCKETNET_FUZZ_RECEIVE_SEED_CLIENT_PAYLOAD,
     ROCKETNET_FUZZ_RECEIVE_SEED_CLIENT_DISCONNECT,
-    ROCKETNET_FUZZ_RECEIVE_SEED_CLIENT_ACK,
-    ROCKETNET_FUZZ_RECEIVE_SEED_CLIENT_FRAGMENT
+    ROCKETNET_FUZZ_RECEIVE_SEED_CLIENT_ACK
 };
 
 struct rocketnet_fuzz_receive_seed_spec_t
@@ -572,15 +535,13 @@ static const struct rocketnet_fuzz_receive_seed_spec_t rocketnet_fuzz_receive_se
     { "seed_type_server_payload", ROCKETNET_FUZZ_RECEIVE_SERVER_PAYLOAD, ROCKETNET_FUZZ_RECEIVE_SEED_PAYLOAD },
     { "seed_type_server_disconnect", ROCKETNET_FUZZ_RECEIVE_SERVER_DISCONNECT, ROCKETNET_FUZZ_RECEIVE_SEED_SERVER_DISCONNECT },
     { "seed_type_server_ack", ROCKETNET_FUZZ_RECEIVE_SERVER_ACK, ROCKETNET_FUZZ_RECEIVE_SEED_SERVER_ACK },
-    { "seed_type_server_fragment", ROCKETNET_FUZZ_RECEIVE_SERVER_FRAGMENT, ROCKETNET_FUZZ_RECEIVE_SEED_FRAGMENT },
     { "seed_type_client_cookie", ROCKETNET_FUZZ_RECEIVE_CLIENT_COOKIE, ROCKETNET_FUZZ_RECEIVE_SEED_HANDSHAKE },
     { "seed_type_client_challenge", ROCKETNET_FUZZ_RECEIVE_CLIENT_CHALLENGE, ROCKETNET_FUZZ_RECEIVE_SEED_HANDSHAKE },
     { "seed_type_client_denied", ROCKETNET_FUZZ_RECEIVE_CLIENT_DENIED, ROCKETNET_FUZZ_RECEIVE_SEED_CLIENT_DENIED },
     { "seed_type_client_keep_alive", ROCKETNET_FUZZ_RECEIVE_CLIENT_KEEP_ALIVE, ROCKETNET_FUZZ_RECEIVE_SEED_HANDSHAKE },
     { "seed_type_client_payload", ROCKETNET_FUZZ_RECEIVE_CLIENT_PAYLOAD, ROCKETNET_FUZZ_RECEIVE_SEED_CLIENT_PAYLOAD },
     { "seed_type_client_disconnect", ROCKETNET_FUZZ_RECEIVE_CLIENT_DISCONNECT, ROCKETNET_FUZZ_RECEIVE_SEED_CLIENT_DISCONNECT },
-    { "seed_type_client_ack", ROCKETNET_FUZZ_RECEIVE_CLIENT_ACK, ROCKETNET_FUZZ_RECEIVE_SEED_CLIENT_ACK },
-    { "seed_type_client_fragment", ROCKETNET_FUZZ_RECEIVE_CLIENT_FRAGMENT, ROCKETNET_FUZZ_RECEIVE_SEED_CLIENT_FRAGMENT }
+    { "seed_type_client_ack", ROCKETNET_FUZZ_RECEIVE_CLIENT_ACK, ROCKETNET_FUZZ_RECEIVE_SEED_CLIENT_ACK }
 };
 
 static void rocketnet_fuzz_receive_append_u8( uint8_t * output, size_t * size, uint8_t value )
@@ -642,12 +603,6 @@ static size_t rocketnet_fuzz_receive_build_seed( int kind, uint8_t * output, siz
         rocketnet_fuzz_receive_append_u8( output, &size, 1 );
         rocketnet_fuzz_receive_append_u8( output, &size, 31 );
     }
-    else if ( kind == ROCKETNET_FUZZ_RECEIVE_SEED_FRAGMENT )
-    {
-        rocketnet_fuzz_receive_append_u8( output, &size, 2 );
-        rocketnet_fuzz_receive_append_u16( output, &size, 0 );
-        rocketnet_fuzz_receive_append_u8( output, &size, 31 );
-    }
     else if ( kind == ROCKETNET_FUZZ_RECEIVE_SEED_SERVER_DISCONNECT )
     {
         rocketnet_fuzz_receive_append_injection( output, &size, 0x10, ROCKETNET_CONNECTION_DISCONNECT_PACKET, ROCKETNET_CONNECTION_DISCONNECT_MIN_WIRE_BYTES );
@@ -671,10 +626,6 @@ static size_t rocketnet_fuzz_receive_build_seed( int kind, uint8_t * output, siz
     else if ( kind == ROCKETNET_FUZZ_RECEIVE_SEED_CLIENT_ACK )
     {
         rocketnet_fuzz_receive_append_injection( output, &size, 0x40, ROCKETNET_CONNECTION_ACK_PACKET, ROCKETNET_CONNECTION_ACK_MIN_WIRE_BYTES );
-    }
-    else if ( kind == ROCKETNET_FUZZ_RECEIVE_SEED_CLIENT_FRAGMENT )
-    {
-        rocketnet_fuzz_receive_append_injection( output, &size, 0x40, ROCKETNET_CONNECTION_FRAGMENT_PACKET, ROCKETNET_CONNECTION_FRAGMENT_MIN_WIRE_BYTES );
     }
 
     if ( kind != ROCKETNET_FUZZ_RECEIVE_SEED_HANDSHAKE )

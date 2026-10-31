@@ -343,7 +343,6 @@ def main():
     env.update({
         "ROCKETNET_LOG_LEVEL": "4",
         "ROCKETNET_MAX_CLIENTS": "77",
-        "ROCKETNET_NUM_REASSEMBLY_SLOTS": "3",
         "ROCKETNET_SERVER_NUM_OS_CPUS": "invalid",
         "ROCKETNET_SERVER_SECRET_KEY": "x" * 4096,
         "ROCKETNET_SERVER_IPV4_ADDRESS": "invalid",

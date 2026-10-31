@@ -365,7 +365,6 @@ only are absent from a production library. The unit inventory checks this list
 in both directions against the SDK reads and the public header.
 
 * Environment: ROCKETNET_CLIENT_PACKET_FILTER
-* Environment: ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES
 * Environment: ROCKETNET_CLIENT_STEP_DRIVEN (development only)
 * Environment: ROCKETNET_CLIENT_TRANSPORT
 * Environment: ROCKETNET_CLIENT_SEND_KBPS
@@ -394,7 +393,6 @@ in both directions against the SDK reads and the public header.
 * Environment: ROCKETNET_SERVER_BACKEND_PUBLIC_KEY
 * Environment: ROCKETNET_SERVER_NUM_XDP_QUEUES
 * Environment: ROCKETNET_SERVER_NUM_OS_CPUS
-* Environment: ROCKETNET_SERVER_MAX_FRAGMENTED_MESSAGES
 * Environment: ROCKETNET_SERVER_MAX_TIMEOUT_SECONDS
 * Environment: ROCKETNET_SERVER_HANDSHAKE_DEADLINE_SECONDS
 * Environment: ROCKETNET_SERVER_DISCONNECT_PACKETS_PER_UPDATE

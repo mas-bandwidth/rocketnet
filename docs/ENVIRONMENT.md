@@ -120,11 +120,6 @@ development key must not be used for production.
   - `-DROCKETNET_MAX_CLIENTS` (default `1000`) and `-DROCKETNET_MAX_CHANNELS`
     (default `32`) set the compile-time upper bounds for `max_clients` and
     `num_channels`.
-  - `-DROCKETNET_REASSEMBLY_MEMORY_MIB` (default `512` MiB) bounds total
-    fragment reassembly memory at `create` (`ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED`
-    when the transport's fixed payload reassembly plan for `max_clients` and
-    `max_fragmented_messages` exceeds the cap). The default build scales this
-    cap as 512 MiB per 1,000 compile-time clients.
   - `-DROCKETNET_XDP_MEMORY_MIB` (default `4096` MiB) bounds planned AF_XDP
     transport + UMEM memory across `num_xdp_queues`.
 

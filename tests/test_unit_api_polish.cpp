@@ -326,10 +326,13 @@ static void test_api_polish_zero_receipt_and_dense_reasons()
     check( strcmp( rocketnet_disconnect_reason_name( ROCKETNET_DISCONNECT_REASON_TIMED_OUT ), "TIMED_OUT" ) == 0 );
     check( strcmp( rocketnet_disconnect_reason_name( ROCKETNET_DISCONNECT_REASON_CLIENT_DISCONNECTED ), "CLIENT_DISCONNECTED" ) == 0 );
 
+    // every status code from OK down to the last names itself; -9 is unassigned
+
     for ( int status = (int) ROCKETNET_STATUS_OK; status >= (int) ROCKETNET_STATUS_LOOPBACK_HUB_IN_USE; status-- )
     {
         const char * name = rocketnet_status_name( (enum rocketnet_status_t) status );
-        check( name != NULL && strcmp( name, "UNKNOWN" ) != 0 );
+        check( name != NULL );
+        check( ( strcmp( name, "UNKNOWN" ) == 0 ) == ( status == -9 ) );
     }
 
     for ( int level = (int) ROCKETNET_LOG_LEVEL_NONE; level <= (int) ROCKETNET_LOG_LEVEL_SPAM; level++ )

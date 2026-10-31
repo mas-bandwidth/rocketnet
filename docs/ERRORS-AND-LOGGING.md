@@ -46,7 +46,6 @@ status code and the accompanying `ERROR` log line:
 | `CONFIG_NOT_INITIALIZED` | `create`, `required_memory` | `config->config_bytes` is `0` or smaller than `sizeof(size_t)` (see [sized configs](ABI-EVOLUTION.md)). | Initialize with `rocketnet_client_default_config(&cfg)` / `rocketnet_server_default_config(&cfg)` (or the light function) before modifying fields. |
 | `CONFIG_ENV_INVALID` | `create` (`required_memory` returns `0`) | A `ROCKETNET_*` environment variable failed strict syntax parsing (whitespace, `+` prefix, non-decimal characters, integer overflow, or wrong base64 key/filter length). | Read the `ERROR` line naming the variable, fix or unset it (`docs/ENVIRONMENT.md`), and recreate the endpoint. Empty variables are ignored and logged. |
 | `CONFIG_OUT_OF_RANGE` | `create` (`required_memory` returns `0`) | A field is outside its public-header range or violates a cross-field invariant (`max_message_bytes > receive_message_buffer_bytes`, `packets_in_flight < reliable_messages_in_flight`, or simulator settings in `ROCKETNET_DEV=0`). | Read the field and rule from the `ERROR` line and adjust the configuration using [`docs/LOAD.md`](LOAD.md). Values are never silently clamped. |
-| `MEMORY_BUDGET_EXCEEDED` | `client` / `server` create (`required_memory` returns `0`) | Transport fragment reassembly exceeds the build's `ROCKETNET_REASSEMBLY_MEMORY_MIB` cap. The operator `ROCKETNET_*_MEMORY_BUDGET_BYTES` values do not cap create-time endpoint/message memory. | Lower server `max_clients` or either endpoint's `max_fragmented_messages`, or rebuild with a deliberately qualified reassembly cap. Use `rocketnet_*_required_memory` to provision the caller allocator. |
 | `INVALID_ADDRESS` | `rocketnet_server_create` | `ipv4_address` or `ipv6_address` (or its environment override) could not be parsed as its address family (`a.b.c.d:port` or `[v6]:port`). | Pass a valid address string with port for at least one family. |
 | `TRANSPORT_PORT_ZERO_UNSUPPORTED` | `rocketnet_server_start` | The address specifies port `0` on a server transport that cannot discover the kernel-assigned port (such as `xdp`). | Bind an explicit UDP port (`1 .. 65535`) or include a transport that discovers its assigned port. |
 | `CONNECT_TOKEN_PORT_ZERO` | `rocketnet_client_connect` | The token advertises a server address with port `0`. | Fix the token issuer so each advertised address carries the server's bound non-zero port. |
@@ -388,7 +387,7 @@ application error.
 | `rocketnet_term( void )` | the status code: `NOT_INITIALIZED` or `LIVE_ALLOCATIONS`; nothing changes |
 | `rocketnet_client_default_config( config )` | `INVALID_ARGUMENT` for a NULL config, counted; `CONFIG_NOT_INITIALIZED` is never returned, because the inline call sets `config_bytes` first |
 | `rocketnet_client_required_memory( config )` | `0` for a refused config, a `config_bytes` too small included |
-| `rocketnet_client_create( context, config, status )` | `NULL` with one error line; `status` holds the refusal's code (`NOT_INITIALIZED`, `CONFIG_NOT_INITIALIZED`, `INVALID_ARGUMENT`, `CONFIG_ENV_INVALID`, `CONFIG_OUT_OF_RANGE`, `INVALID_TRANSPORT_LIST`, `MEMORY_BUDGET_EXCEEDED`, `OUT_OF_MEMORY`), or `OK` with the handle |
+| `rocketnet_client_create( context, config, status )` | `NULL` with one error line; `status` holds the refusal's code (`NOT_INITIALIZED`, `CONFIG_NOT_INITIALIZED`, `INVALID_ARGUMENT`, `CONFIG_ENV_INVALID`, `CONFIG_OUT_OF_RANGE`, `INVALID_TRANSPORT_LIST`, `OUT_OF_MEMORY`), or `OK` with the handle |
 | `rocketnet_client_connect( client, token )` | the status code: `CLIENT_NOT_DISCONNECTED`, `INVALID_CONNECT_TOKEN`, `CONNECT_TOKEN_EXPIRED`, or a transport's code |
 | `rocketnet_server_default_config( config )` | `INVALID_ARGUMENT` for a NULL config, counted |
 | `rocketnet_server_required_memory( config )` | `0` for a refused config, a `config_bytes` too small included |
@@ -445,7 +444,7 @@ documented handle, boolean, count, or output result:
 calls return a handle or `NULL`, write the code through the status
 out-parameter, and log one `ERROR` line with the reason: `NOT_INITIALIZED`,
 `CONFIG_NOT_INITIALIZED`, `INVALID_ARGUMENT`, `CONFIG_ENV_INVALID`,
-`CONFIG_OUT_OF_RANGE`, `MEMORY_BUDGET_EXCEEDED`, `INVALID_TRANSPORT_LIST`,
+`CONFIG_OUT_OF_RANGE`, `INVALID_TRANSPORT_LIST`,
 `LOOPBACK_HUB_MISSING`, `LOOPBACK_HUB_MISMATCH`, `INVALID_ADDRESS` (server) or
 `OUT_OF_MEMORY`. Client connect and server start
 return the token and transport codes: `CLIENT_NOT_DISCONNECTED`,

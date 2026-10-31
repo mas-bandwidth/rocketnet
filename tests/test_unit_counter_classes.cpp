@@ -204,48 +204,6 @@ static const char * const counters_base_names[] = {
     "CLIENT_PAYLOAD_WRONG_OPENED_SIZE",
     "CLIENT_DISCONNECT_WRONG_OPENED_SIZE",
     "CLIENT_ACK_WRONG_OPENED_SIZE",
-    "FRAGMENT_RECEIVED",
-    "FRAGMENT_WRONG_SIZE",
-    "FRAGMENT_NO_MAPPING",
-    "FRAGMENT_ZERO_SEQUENCE",
-    "FRAGMENT_ALREADY_RECEIVED",
-    "FRAGMENT_DID_NOT_OPEN",
-    "FRAGMENT_NOT_CONNECTED",
-    "FRAGMENT_BAD_ACK_BLOCK",
-    "FRAGMENT_WRONG_OPENED_SIZE",
-    "FRAGMENT_ZERO_PAYLOAD_ID",
-    "FRAGMENT_STALE",
-    "FRAGMENT_COUNT_INVALID",
-    "FRAGMENT_INDEX_OUT_OF_RANGE",
-    "FRAGMENT_COUNT_MISMATCH",
-    "FRAGMENT_SIZE_MISMATCH",
-    "FRAGMENT_PAYLOAD_TOO_LARGE",
-    "FRAGMENT_DUPLICATE_INDEX",
-    "FRAGMENT_ACCEPTED",
-    "FRAGMENT_PAYLOAD_REASSEMBLED",
-    "FRAGMENT_PAYLOAD_ABANDONED",
-    "FRAGMENT_PAYLOAD_BATCH_FULL",
-    "CLIENT_FRAGMENT_RECEIVED",
-    "CLIENT_FRAGMENT_WRONG_STATE",
-    "CLIENT_FRAGMENT_WRONG_SIZE",
-    "CLIENT_FRAGMENT_ZERO_SEQUENCE",
-    "CLIENT_FRAGMENT_ALREADY_RECEIVED",
-    "CLIENT_FRAGMENT_DID_NOT_OPEN",
-    "CLIENT_FRAGMENT_BAD_ACK_BLOCK",
-    "CLIENT_FRAGMENT_WRONG_OPENED_SIZE",
-    "CLIENT_FRAGMENT_ZERO_PAYLOAD_ID",
-    "CLIENT_FRAGMENT_STALE",
-    "CLIENT_FRAGMENT_COUNT_INVALID",
-    "CLIENT_FRAGMENT_INDEX_OUT_OF_RANGE",
-    "CLIENT_FRAGMENT_COUNT_MISMATCH",
-    "CLIENT_FRAGMENT_SIZE_MISMATCH",
-    "CLIENT_FRAGMENT_PAYLOAD_TOO_LARGE",
-    "CLIENT_FRAGMENT_DUPLICATE_INDEX",
-    "CLIENT_FRAGMENT_ACCEPTED",
-    "CLIENT_FRAGMENT_PAYLOAD_REASSEMBLED",
-    "CLIENT_FRAGMENT_PAYLOAD_ABANDONED",
-    "CLIENT_FRAGMENT_PAYLOAD_BATCH_FULL",
-    "SEND_ARENA_FULL",
     "RECEIVE_CURSOR_TOO_SMALL",
     "SEND_HISTORY_OVERFLOW",
     "SEND_LEASE_FULL",
@@ -344,7 +302,7 @@ static bool counters_is_received( int counter )
 #if ROCKETNET_DEV
 static void test_counters_every_counter_has_a_class()
 {
-    check( COUNTERS_NUM_BASE == 215 );
+    check( COUNTERS_NUM_BASE == 173 );
     check( ROCKETNET_NUM_COUNTERS == COUNTERS_NUM_BASE + COUNTERS_NUM_APPENDED );
     check( rocketnet_num_counters() == ROCKETNET_NUM_COUNTERS );
 
@@ -437,7 +395,6 @@ static void test_counters_every_counter_has_a_class()
     check( rocketnet_counter_class( ROCKETNET_COUNTER_MESSAGE_STALE_CONNECTION_ENTRY ) == ROCKETNET_COUNTER_CLASS_EXPECTED );
     check( rocketnet_counter_class( ROCKETNET_COUNTER_MESSAGE_NOT_RELEASED ) == ROCKETNET_COUNTER_CLASS_REFUSAL );
     check( rocketnet_counter_class( ROCKETNET_COUNTER_MESSAGE_NOT_RECEIVED ) == ROCKETNET_COUNTER_CLASS_REFUSAL );
-    check( rocketnet_counter_class( ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_ABANDONED ) == ROCKETNET_COUNTER_CLASS_PATH_LOSS );
     check( rocketnet_counter_class( ROCKETNET_COUNTER_KEEP_ALIVE_RECEIVED ) == ROCKETNET_COUNTER_CLASS_ARRIVAL );
     check( rocketnet_counter_class( ROCKETNET_COUNTER_CLIENT_SEND_DEFERRED ) == ROCKETNET_COUNTER_CLASS_EXPECTED );
     check( rocketnet_counter_class( ROCKETNET_COUNTER_MESSAGE_SEND_NOT_CONNECTED ) == ROCKETNET_COUNTER_CLASS_EXPECTED );
@@ -516,7 +473,6 @@ static void test_counters_conservation_reports_the_first_unbalanced_family()
 
     memset( &counters, 0, sizeof( counters ) );
     counters.values[ROCKETNET_COUNTER_ACK_UNKNOWN_SEQUENCE] += 5;
-    counters.values[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_REASSEMBLED] += 3;
     counters.values[ROCKETNET_COUNTER_MESSAGE_RESENT] += 7;
     check( rocketnet_counters_conserved( &counters, report, sizeof( report ) ) == 1 );
 
@@ -554,7 +510,7 @@ static void test_counters_conservation_reports_the_first_unbalanced_family()
         check( strcmp( report, expected ) == 0 );
     }
 
-    check( families == 15 );               // seven at the server, eight at the client
+    check( families == 13 );               // six at the server, seven at the client
 
     // two families unbalanced: the one whose RECEIVED counter comes first
 

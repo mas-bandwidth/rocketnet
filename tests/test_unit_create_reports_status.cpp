@@ -9,7 +9,7 @@
 // header's inline default_config. Each refusal path names its code here, for
 // the client and the server: before init, a config never filled (config_bytes
 // below its own field), a NULL or over-long address, a bad config value, a
-// bad transport list, an over-budget config, and a failed block allocation
+// bad transport list, and a failed block allocation
 // (the failing allocator of test_unit_driver_create_out_of_memory.cpp,
 // walking every allocation create makes). A NULL status is accepted on a
 // refusal and on a success. No socket, no thread, no real time. The
@@ -431,33 +431,6 @@ static void test_create_reports_status_config_refusals()
     status = ROCKETNET_STATUS_OK;
     check( rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &status ) == NULL );
     check( status == ROCKETNET_STATUS_INVALID_TRANSPORT_LIST );
-
-    // a config whose reassembly geometry is over the memory budget: the
-    // server trigger (max clients x max slots) the transport case proves
-
-    create_status_dev_server_config( &server_config );
-    server_config.max_clients = ROCKETNET_MAX_CLIENTS;
-    server_config.max_fragmented_messages = 256;
-    status = ROCKETNET_STATUS_OK;
-    check( rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &status ) == NULL );
-    check( status == ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED );
-
-    // MEMORY_BUDGET_EXCEEDED on the client is not reachable from a valid
-    // config: at the largest geometry (1 connection, 256 slots, 305408
-    // payload bytes) the reassembly set needs about 117 MiB, under the
-    // 512 MiB budget (sdk/rocketnet_memory.h:8, sdk/rocketnet_api.cpp:405),
-    // and every larger field value is refused as CONFIG_OUT_OF_RANGE first.
-    // The server case above proves the code; here the largest client
-    // geometry creates.
-
-    check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
-    client_config.max_fragmented_messages = 256;
-    status = ROCKETNET_TEST_STATUS_UNSET;
-
-    struct rocketnet_client_t * budget_client = rocketnet_client_create( NULL, &client_config, &status );
-    check( budget_client != NULL );
-    check( status == ROCKETNET_STATUS_OK );
-    rn_test_client_stop_and_destroy( budget_client );
 
 #if ROCKETNET_DEV
     // a malformed environment override: CONFIG_ENV_INVALID, client and server

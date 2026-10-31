@@ -341,11 +341,11 @@ static const uint8_t rocketnet_test_response_sealed[40] =
     0x1b, 0x2f, 0x8f, 0x7e
 };
 
-// The five session vectors: the sealed plaintext of every session type
+// The four session vectors: the sealed plaintext of every session type
 // begins with the ack block, and the sealed outputs are the appendix's
 // frozen bytes for this wire revision -- keep-alive at session s2c
-// sequence 1, then payload, disconnect, ack and payload fragment at
-// session c2s sequences 3 through 6.
+// sequence 1, then payload, disconnect and ack at session c2s sequences 3
+// through 5.
 
 static const uint8_t rocketnet_test_keepalive_ad[21] =
 {
@@ -419,25 +419,6 @@ static const uint8_t rocketnet_test_ack_sealed[27] =
     0xf7, 0x9a, 0xe2
 };
 
-static const uint8_t rocketnet_test_fragment_ad[21] =
-{
-    0x93, 0x1a, 0x7c, 0x4e, 0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11,
-    0x09, 0x53, 0x41, 0x4c, 0x54, 0x30, 0x30, 0x30, 0x31
-};
-
-static const uint8_t rocketnet_test_fragment_plaintext[18] =
-{
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00,
-    0x01, 0x68, 0x65, 0x6c, 0x6c, 0x6f
-};
-
-static const uint8_t rocketnet_test_fragment_sealed[34] =
-{
-    0x4d, 0x11, 0x93, 0x54, 0x55, 0xcd, 0x7b, 0xdf, 0xe3, 0x97, 0x35, 0x05,
-    0xee, 0x20, 0x42, 0x14, 0x33, 0x37, 0xa0, 0xb1, 0xeb, 0xa2, 0xce, 0xd3,
-    0x53, 0xf8, 0xdd, 0xb3, 0x78, 0xa4, 0xe5, 0xed, 0xff, 0x7f
-};
-
 // The ack block encodings, frozen in the appendix with no key involved.
 
 static const uint8_t rocketnet_test_ack_block_fresh[7] =
@@ -459,14 +440,6 @@ static const uint8_t rocketnet_test_ack_block_two_losses[15] =
 {
     0x70, 0x11, 0x01, 0x00, 0x02, 0x64, 0x00, 0x03, 0x00, 0xf4, 0x01, 0xe8,
     0x03, 0xd0, 0x07
-};
-
-// the fragment header encoding, alone: payload id 7, fragment index 2,
-// fragment count 3
-
-static const uint8_t rocketnet_test_fragment_header[6] =
-{
-    0x07, 0x00, 0x00, 0x00, 0x02, 0x02
 };
 
 // Connect token vector inputs, outside Appendix A: the fixed ephemeral X25519

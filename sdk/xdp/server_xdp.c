@@ -383,8 +383,7 @@ static __always_inline int server_xdp_udp( struct xdp_md * ctx, struct udphdr * 
     if ( packet_type == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET ||
          packet_type == ROCKETNET_CONNECTION_PAYLOAD_PACKET ||
          packet_type == ROCKETNET_CONNECTION_DISCONNECT_PACKET ||
-         packet_type == ROCKETNET_CONNECTION_ACK_PACKET ||
-         packet_type == ROCKETNET_CONNECTION_FRAGMENT_PACKET )
+         packet_type == ROCKETNET_CONNECTION_ACK_PACKET )
     {
         struct rocketnet_server_xdp_replay_key_t key;
         __builtin_memset( &key, 0, sizeof( key ) );

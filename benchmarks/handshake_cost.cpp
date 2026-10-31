@@ -31,7 +31,6 @@
 #include "rocketnet_test_vectors.h"
 #include "rocketnet_server.h"
 #include "rocketnet_ack.h"
-#include "rocketnet_fragment.h"
 #include "rocketnet.h"
 
 
@@ -69,10 +68,8 @@ static void cost_server_setup( cost_server_t * test, int requests )
     server->used_token_history = rocketnet_used_token_history_create( NULL, requests * 4 );
     server->client_slots = rocketnet_client_slots_create( NULL, requests );
     server->acks = rocketnet_server_acks_create( NULL, 4 );
-    server->reassembly = rocketnet_reassembly_set_create( NULL, 4, 4, 16384, 4 * 4 );
     server->counters = &test->counters;
-    CHECK( server->encryption_map && server->used_token_history && server->client_slots && server->acks && server->reassembly );
-    rocketnet_reassembly_set_begin_update( server->reassembly );
+    CHECK( server->encryption_map && server->used_token_history && server->client_slots && server->acks );
     rocketnet_server_protocol_update( server, 1000.0 );
 }
 
@@ -82,7 +79,6 @@ static void cost_server_teardown( cost_server_t * test )
     rocketnet_used_token_history_destroy( test->server.used_token_history );
     rocketnet_client_slots_destroy( test->server.client_slots );
     rocketnet_server_acks_destroy( test->server.acks );
-    rocketnet_reassembly_set_destroy( test->server.reassembly );
 }
 
 static void cost_address( struct rocketnet_address_t * address, int i )

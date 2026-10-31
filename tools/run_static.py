@@ -33,7 +33,6 @@ BASELINE = os.path.join(ROOT, "tools", "static_baseline.txt")
 
 NAMED_PARSER_FILES = [
     "sdk/rocketnet_base64.cpp",
-    "sdk/rocketnet_fragment.cpp",
     "sdk/rocketnet_message.cpp",
     "sdk/rocketnet_ack.cpp",
     "sdk/rocketnet_replay.cpp",

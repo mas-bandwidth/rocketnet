@@ -51,7 +51,6 @@ static void no_worker_message_config( rocketnet_server_config_t * server, rocket
     if ( server )
     {
         server->num_channels = 1;
-        server->max_fragmented_messages = 1;
         server->reliable_messages_in_flight = 64;
         server->packets_in_flight = 64;                    // the sent map holds the window, no more
         server->receive_message_buffer_bytes = 4096;
@@ -63,7 +62,6 @@ static void no_worker_message_config( rocketnet_server_config_t * server, rocket
     if ( client )
     {
         client->num_channels = 1;
-        client->max_fragmented_messages = 1;
         client->reliable_messages_in_flight = 64;
         client->packets_in_flight = 64;                    // the sent map holds the window, no more
         client->receive_message_buffer_bytes = 4096;

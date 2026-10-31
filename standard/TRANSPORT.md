@@ -7,8 +7,8 @@ Companion documents: RN-2 (`MESSAGES.md`), the message layer; RN-R
 
 Abstract. RN-1 specifies a secure client/server connection protocol over UDP:
 a connect token minted by a backend, an address-validated handshake, sealed
-packets with per-connection keys, replay protection, acknowledgement and
-fragmentation. Its byte layouts and state rules define the shared contract
+packets with per-connection keys, replay protection and acknowledgement.
+Its byte layouts and state rules define the shared contract
 for independently implemented clients, servers and backends.
 
 <a id="t1"></a>
@@ -57,8 +57,8 @@ RN-1 does not specify:
 | attempt | one run of the client handshake, with a fresh connection salt. |
 | key phase | the handshake phase or the session phase of a connection; each has its own keys and sequences. |
 | sequence | the per-packet counter of one direction of one key phase ([t4 Wire encoding primitives](#t4)). |
-| session packet | a packet of type 4, 5, 6, 8 or 9. |
-| payload | the application bytes of a type 5 packet, or of a whole fragmented payload of type 9 packets. |
+| session packet | a packet of type 4, 5, 6 or 8. |
+| payload | the application bytes of a type 5 packet. |
 | sealed | encrypted and authenticated with the AEAD of [t9 Packet protection](#t9). |
 | sealed to the server | encrypted with `crypto_box_seal` under the server's X25519 public key. |
 | drop | discard a packet with no reply and no change of state, and count it ([t18 Error handling and counters](#t18)). |
@@ -218,16 +218,12 @@ field's default.
 | server packet_filter | `none` | bytes[4] | `ROCKETNET_SERVER_PACKET_FILTER` | 4 bytes; unset, the unkeyed filter value of [t5 Prefilter header](#t5) |
 | server backend_public_key | `none` | bytes[32] | `ROCKETNET_SERVER_BACKEND_PUBLIC_KEY` | an Ed25519 public key |
 | server server_secret_key | `none` | bytes[32] | none: exempt secret configuration | all zero selects a generated keypair; otherwise an application-supplied X25519 secret key |
-| server max_fragmented_messages | `8` | integer | `ROCKETNET_SERVER_MAX_FRAGMENTED_MESSAGES` | 0 (the default), or 1 to the fragments per payload maximum row of [t3 Constants and registries](#t3) |
 | server transport | `"auto"` | string | `ROCKETNET_SERVER_TRANSPORT` | [t2.4 Transport selection](#t2.4) |
 | server ipv4_address and ipv6_address, create arguments | none | string | `ROCKETNET_SERVER_IPV4_ADDRESS` and `ROCKETNET_SERVER_IPV6_ADDRESS` | an address and port of that family, or NULL; not both NULL |
 | server max_timeout_seconds | `60` | integer | `ROCKETNET_SERVER_MAX_TIMEOUT_SECONDS` | 1 to 3600 |
 | server handshake_deadline_seconds | `5` | integer | `ROCKETNET_SERVER_HANDSHAKE_DEADLINE_SECONDS` | 1 to 60 |
 | client packet_filter | `none` | bytes[4] | `ROCKETNET_CLIENT_PACKET_FILTER` | 4 bytes; unset, the unkeyed filter value of [t5 Prefilter header](#t5) |
-| client max_fragmented_messages | `8` | integer | `ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES` | as the server field |
 | client transport | `"auto"` | string | `ROCKETNET_CLIENT_TRANSPORT` | [t2.4 Transport selection](#t2.4) |
-| fragmented payload maximum | `361728` | bytes | none: a limit of this revision | |
-| reassembled payload maximum | `16384` | bytes | none: a limit of this revision; no config field sets it | |
 
 The server's X25519 keypair is fixed at create. When `server_secret_key` is
 all zero, the server MUST generate a fresh keypair. Otherwise it MUST copy
@@ -306,8 +302,7 @@ Registry rules:
 | connection disconnect packet | `6` | | packet type | [t8 Packet formats](#t8) |
 | connection cookie packet | `7` | | packet type | [t8 Packet formats](#t8) |
 | connection ack packet | `8` | | packet type | [t8 Packet formats](#t8) |
-| connection payload fragment packet | `9` | | packet type | [t8 Packet formats](#t8) |
-| first reserved packet type | `10` | | packet type | [t10 Receive processing](#t10) |
+| first reserved packet type | `9` | | packet type | [t10 Receive processing](#t10) |
 | unkeyed filter epoch | `0` | | registry | [t5 Prefilter header](#t5) |
 | handshake client to server label | `"RKTNHNDC"` | | key derivation label | [t7 Key schedule](#t7) |
 | handshake server to client label | `"RKTNHNDS"` | | key derivation label | [t7 Key schedule](#t7) |
@@ -340,15 +335,11 @@ Registry rules:
 | token key | `32` | bytes | size | [t6 Connect token](#t6) |
 | token identifier | `16` | bytes | size | [t6 Connect token](#t6) |
 | ack block minimum | `7` | bytes | size | [t15 Acknowledgement](#t15) |
-| fragment header | `6` | bytes | size | [t16 Fragmentation and reassembly](#t16) |
-| fragments per payload maximum | `256` | fragments | size | [t16 Fragmentation and reassembly](#t16) |
 | link MTU | `1500` | bytes | size | [t8 Packet formats](#t8) |
 | receive ceiling | `1452` | bytes | size | [t10 Receive processing](#t10) |
 | maximum packet size limit | `1452` | bytes | size | [t8 Packet formats](#t8) |
 | payload capacity | `1416` | bytes | size | [t8 Packet formats](#t8) |
 | received payload maximum | `1416` | bytes | size | [t10 Receive processing](#t10) |
-| fragment stride | `1413` | bytes | size | [t16 Fragmentation and reassembly](#t16) |
-| received fragment stride maximum | `1413` | bytes | size | [t16 Fragmentation and reassembly](#t16) |
 | maximum packet size | `1452` | bytes | protocol value | [t8 Packet formats](#t8) |
 | replay window depth minimum | `4096` | sequences | size | [t14 Replay protection](#t14) |
 | replay window depth maximum | `32768` | sequences | size | [t14 Replay protection](#t14) |
@@ -523,7 +514,7 @@ Fields:
 
 | Name | Offset | Size | Type | Meaning | Valid values |
 |---|---|---|---|---|---|
-| packet type | 0 | 1 | u8 | the type of the packet that follows | 0 to 9; the per-type checks are later |
+| packet type | 0 | 1 | u8 | the type of the packet that follows | 0 to 8; the per-type checks are later |
 | filter epoch | 1 | 1 | u8 | the rule that produced the filter value | 0, or 1 to 255 under [t5.1 Keyed epochs (optional extension)](#t5.1) |
 | filter value | 2 | 4 | bytes[4] | the unkeyed tag or a keyed MAC | any 4 bytes |
 
@@ -1287,7 +1278,7 @@ Every packet begins with the 6-byte prefilter header of [t5 Prefilter header](#t
 
 A sender MUST emit a packet of the size its type and fields give, and MUST NOT emit a packet larger than the maximum packet size. A receiver MUST drop a packet whose size is below its type's minimum or above the receive ceiling before it examines any field inside the packet ([t10 Receive processing](#t10)).
 
-Types 0 (connection request) and 7 (connection cookie) are not sealed. Types 1 to 6, 8 and 9 are sealed: after the prefilter header and the 4-byte sequence, their bytes are the sealed data of [t9 Packet protection](#t9). Types 1 and 2 place the 8-byte session nonce in the clear between the sequence and the sealed data. The session types 4, 5, 6, 8 and 9 open their sealed plaintext with the ack block of [t15 Acknowledgement](#t15), and the type data follows it.
+Types 0 (connection request) and 7 (connection cookie) are not sealed. Types 1 to 6 and 8 are sealed: after the prefilter header and the 4-byte sequence, their bytes are the sealed data of [t9 Packet protection](#t9). Types 1 and 2 place the 8-byte session nonce in the clear between the sequence and the sealed data. The session types 4, 5, 6 and 8 open their sealed plaintext with the ack block of [t15 Acknowledgement](#t15), and the type data follows it.
 
 Every integer is little-endian, every structure is packed with no padding, and every size is in bytes ([t1.4 Conventions](#t1.4)). The offsets below count from the first byte of the packet, the packet type.
 
@@ -1580,47 +1571,6 @@ The standalone ack packet is a session packet whose ack block is its whole type 
 | ack block | 10 | 7 to 1027 | bytes[n] | the ack block of [t15 Acknowledgement](#t15), sealed | a well-formed block |
 | AEAD tag | 10 plus the ack block size | 16 | bytes[16] | the tag over the ack block | any |
 
-<a id="t8.10"></a>
-### t8.10. Connection payload fragment packet (type 9)
-
-The fragment packet is a session packet. Its sealed plaintext is the ack block, the fragment header, and the fragment data ([t16 Fragmentation and reassembly](#t16)).
-
-```
- 0                   1                   2                   3
- 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|  packet type  | filter epoch  |        filter value           |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|                       sequence (u32)                          |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|               ack block (bytes[7] to bytes[1027])            |
-|                              ...                              |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|                      payload id (u32)                         |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-| fragment index|fragment count |      fragment data ...        |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|                    fragment data (bytes[n])                   |
-|                              ...                              |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|                     AEAD tag (bytes[16])                      |
-|                              ...                              |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-```
-
-| Name | Offset | Size | Type | Meaning | Valid values |
-|---|---|---|---|---|---|
-| packet type | 0 | 1 | u8 | selects this layout | `9` |
-| filter epoch | 1 | 1 | u8 | the epoch of the filter value | `0` |
-| filter value | 2 | 4 | bytes[4] | the value of [t5 Prefilter header](#t5) | any |
-| sequence | 6 | 4 | u32 | the sender's session sequence | nonzero |
-| ack block | 10 | 7 to 1027 | bytes[n] | the ack block of [t15 Acknowledgement](#t15), sealed | a well-formed block |
-| payload id | 10 plus the ack block size | 4 | u32 | the fragmented payload's identifier | nonzero |
-| fragment index | 14 plus the ack block size | 1 | u8 | this fragment's index | below the fragment count |
-| fragment count minus one | 15 plus the ack block size | 1 | u8 | the fragment count less one | 1 to 255 |
-| fragment data | 16 plus the ack block size | 1 to the maximum packet size less 32 and the ack block size | bytes[n] | this fragment's bytes | at least 1 byte |
-| AEAD tag | 16 plus the ack block size and the fragment size | 16 | bytes[16] | the tag over the ack block, the header and the fragment data | any |
-
 <a id="t8.11"></a>
 ### t8.11. Packet sizes
 
@@ -1637,9 +1587,8 @@ The wire size of each type is the sum of its fields. The handshake types have a 
 | connection disconnect packet minimum wire size | `33` | bytes | 6 + 4 + 7 + 16 |
 | connection cookie packet wire size | `38` | bytes | 6 + 8 + 8 + 16 |
 | connection ack packet minimum wire size | `33` | bytes | 6 + 4 + 7 + 16 |
-| connection fragment packet minimum wire size | `40` | bytes | 6 + 4 + 7 + 6 + 1 + 16 |
 
-A session packet MUST NOT exceed the receive ceiling, and a sender MUST NOT emit one larger than the maximum packet size. The unfragmented payload capacity, the receive payload maximum and the fragment stride are rows of [t3 Constants and registries](#t3).
+A session packet MUST NOT exceed the receive ceiling, and a sender MUST NOT emit one larger than the maximum packet size. The payload capacity and the receive payload maximum are rows of [t3 Constants and registries](#t3).
 
 <a id="t8.12"></a>
 ### t8.12. Vectors
@@ -1805,20 +1754,6 @@ input: session client-to-server key bytes a0 to bf
 b5
 ```
 
-```vector t8.fragment
-input: packet type 9, filter value b7 59 01 00
-input: protocol id 0x1122334455667788
-input: connection salt bytes 30 to 37
-input: sequence 6
-input: ack block 00 00 00 00 00 00 00
-input: payload id 1, fragment index 0, fragment count 2
-input: fragment data bytes 68 65 6c 6c 6f
-input: session client-to-server key bytes a0 to bf
-09 00 b7 59 01 00 06 00 00 00 c2 9e 52 06 da d5
-b3 e8 ab a8 f1 4c cb 35 88 29 3a 74 2f 39 e4 00
-ad c5 bd df c7 8f aa 2a 94 fb 2b 78
-```
-
 <a id="t9"></a>
 ## t9. Packet protection
 
@@ -1829,8 +1764,8 @@ packet type and the connection salt, and, for the two handshake types that
 carry the ephemeral exchange, the client's ephemeral public key. It never
 travels on the wire; both ends construct it. The sealed types are the
 connection denied, connection challenge, connection response, connection
-keep-alive, connection payload, connection disconnect, connection ack and
-connection payload fragment packets of [t8 Packet formats](#t8); the
+keep-alive, connection payload, connection disconnect and connection ack
+packets of [t8 Packet formats](#t8); the
 connection request and connection cookie are not sealed.
 
 1. A sender MUST seal the per-packet data of every sealed type with
@@ -1847,7 +1782,7 @@ connection request and connection cookie are not sealed.
    four zero bytes followed by the 64-bit sequence as a little-endian integer.
 5. The associated data MUST be exactly the fields and length of the table
    below. Its length MUST be the associated data row of
-   [t3 Constants and registries](#t3) for types 1, 4, 5, 6, 8 and 9, and the
+   [t3 Constants and registries](#t3) for types 1, 4, 5, 6 and 8, and the
    associated data with ephemeral key row for types 2 and 3.
 6. A sender MUST set the version field to the version row of
    [t3 Constants and registries](#t3), the protocol id to the connection's
@@ -1878,7 +1813,6 @@ The key that seals a sealed type:
 | 5 | connection payload | session | either; the sender's direction | session key of that direction |
 | 6 | connection disconnect | session | either; the sender's direction | session key of that direction |
 | 8 | connection ack | session | either; the sender's direction | session key of that direction |
-| 9 | connection payload fragment | session | either; the sender's direction | session key of that direction |
 
 The four keys are derived as [t7 Key schedule](#t7) specifies.
 
@@ -1907,7 +1841,7 @@ The four keys are derived as [t7 Key schedule](#t7) specifies.
 |---|---|---|---|---|---|
 | version | 0 | 4 | u32 | the protocol version | the version row of [t3 Constants and registries](#t3) |
 | protocol id | 4 | 8 | u64 | the application protocol id | any; equal at both ends |
-| packet type | 12 | 1 | u8 | the type of the sealed data | 1 to 6, 8 and 9 |
+| packet type | 12 | 1 | u8 | the type of the sealed data | 1 to 6 and 8 |
 | connection salt | 13 | 8 | bytes[8] | the connection's salt | the connection's salt |
 | client ephemeral public key | 21 | 32 | bytes[32] | the client's ephemeral public key | present for types 2 and 3; absent otherwise |
 
@@ -2032,19 +1966,6 @@ input: the fixed inputs and packet type 8, with no client ephemeral public key
 input: the ack associated data, the session client-to-server key, sequence 5, plaintext the ack block
 cb ac a3 98 67 d9 e7 2a 0e 3f b6 04 85 51 28 e1
 5b d4 b1 18 bd d5 96 38 f7 9a e2
-```
-
-```vector t9.fragment-ad
-input: the fixed inputs and packet type 9, with no client ephemeral public key
-93 1a 7c 4e 88 77 66 55 44 33 22 11 09 53 41 4c
-54 30 30 30 31
-```
-
-```vector t9.fragment-sealed
-input: the fragment associated data, the session client-to-server key, sequence 6, plaintext the ack block and fragment header and data
-4d 11 93 54 55 cd 7b df e3 97 35 05 ee 20 42 14
-33 37 a0 b1 eb a2 ce d3 53 f8 dd b3 78 a4 e5 ed
-ff 7f
 ```
 
 The tamper vectors below are the challenge associated data with one field
@@ -2174,9 +2095,8 @@ a row marked server or client applies only at that end.
 18. After the session checks pass, a receiver MUST apply the ack block's
     delivery information and refresh the connection's receive time, then
     perform the type-specific processing. A type-specific refusal increments
-    its counter; a fragment refusal does not undo the ack information or
-    receive-time refresh, as [t16 Fragmentation and reassembly](#t16)
-    specifies. Handshake types follow their type-specific processing after
+    its counter; it does not undo the ack information or receive-time
+    refresh. Handshake types follow their type-specific processing after
     their checks pass.
 
 | Step | Check | Position | Refusal counter |
@@ -2213,7 +2133,6 @@ types, and the response padding are:
 | connection payload minimum wire size | `34` | bytes | size | [t8 Packet formats](#t8) |
 | connection disconnect minimum wire size | `33` | bytes | size | [t8 Packet formats](#t8) |
 | connection ack minimum wire size | `33` | bytes | size | [t8 Packet formats](#t8) |
-| connection payload fragment minimum wire size | `40` | bytes | size | [t8 Packet formats](#t8) |
 | connection response padding | `24` | bytes | size | [t8 Packet formats](#t8) |
 
 A session packet's total wire size is its minimum or larger, up to the
@@ -2221,9 +2140,7 @@ receive ceiling, which equals the maximum packet size. After the ack block, a
 connection payload packet MUST hold at least one byte and MUST NOT exceed
 the received payload maximum of [t3 Constants and registries](#t3). A
 receiver MUST refuse a payload outside that range as the type's
-`WRONG_OPENED_SIZE`, before timeout refresh or ack processing. The fragment
-stride has its own maximum and is not reduced by the payload capacity's
-rounding.
+`WRONG_OPENED_SIZE`, before timeout refresh or ack processing.
 
 The vectors below name one malformed packet per refusal and the counter it
 fires. Each packet begins with the prefilter header of type, epoch and the
@@ -2250,7 +2167,7 @@ counter: PREFILTER_WRONG_VALUE
 ```vector t10.reserved-type
 input: a packet whose type is the first reserved packet type
 counter: RESERVED_TYPE
-0a 00 b7 59 01 00
+09 00 b7 59 01 00
 ```
 
 ```vector t10.server-wrong-direction
@@ -2447,14 +2364,6 @@ a0 8b 69 ab 93 07 a5 3c d6 11 13 7c 3d 36 90 4e
 d3 30 e5 ec f7 45 2e 8e 62
 ```
 
-```vector t10.fragment-zero-payload-id
-input: a connection payload fragment packet naming payload id zero
-counter: FRAGMENT_ZERO_PAYLOAD_ID
-09 00 b7 59 01 00 e8 03 00 00 1e 9e 15 64 b9 d8
-a0 8f 69 ab 93 03 a4 d2 ec a3 b0 d7 eb 0e af 4b
-9b b6 e3 94 bd 3b 5d 2c
-```
-
 <a id="t11"></a>
 ## t11. Handshake: client
 
@@ -2511,7 +2420,7 @@ The response of step 4 MUST be retransmitted byte for byte; a later challenge MU
 <a id="t11.3"></a>
 ### t11.3. Session processing before connected
 
-A session packet opens under the session keys from sending connection response (3) on. Every opened session packet MUST refresh the last-received time and MUST have its ack block applied. A keep-alive received in sending connection response (3) MUST store the client index and the slot count it carries and MUST move the client to connected (4). A payload or a fragment received in sending connection response (3) MUST be ignored and counted as the type's `WRONG_STATE`, before it is opened: the application is handed payloads only once connected (4), so its reply can be sent. The keep-alive that connects the client can arrive after the server's first payloads; the server's resend carries a reliable message again after it. A disconnect received in sending connection response (3) MUST release the connection state and MUST move the client to disconnected (0). An application message the client sends before connected (4) is dropped and counted, as [RN-2 m1.5 Sending on a connection that is not connected](MESSAGES.md#m1.5) states.
+A session packet opens under the session keys from sending connection response (3) on. Every opened session packet MUST refresh the last-received time and MUST have its ack block applied. A keep-alive received in sending connection response (3) MUST store the client index and the slot count it carries and MUST move the client to connected (4). A payload received in sending connection response (3) MUST be ignored and counted as the type's `WRONG_STATE`, before it is opened: the application is handed payloads only once connected (4), so its reply can be sent. The keep-alive that connects the client can arrive after the server's first payloads; the server's resend carries a reliable message again after it. A disconnect received in sending connection response (3) MUST release the connection state and MUST move the client to disconnected (0). An application message the client sends before connected (4) is dropped and counted, as [RN-2 m1.5 Sending on a connection that is not connected](MESSAGES.md#m1.5) states.
 
 | State | Event | Guard | Action | Next state |
 |---|---|---|---|---|
@@ -2540,7 +2449,7 @@ A session packet opens under the session keys from sending connection response (
 | sending connection request (2) | total deadline | token lifetime elapsed | | connect token expired (-7) |
 | sending connection response (3) | update, send due | | send the stored response byte for byte | sending connection response (3) |
 | sending connection response (3) | keep-alive | opens | store the client index and the slot count | connected (4) |
-| sending connection response (3) | payload or fragment | | refuse as WRONG_STATE | sending connection response (3) |
+| sending connection response (3) | payload | | refuse as WRONG_STATE | sending connection response (3) |
 | sending connection response (3) | denied | size correct, opens | release the connection state | connection denied (-1) |
 | sending connection response (3) | denied | size wrong | refuse as WRONG_SIZE | sending connection response (3) |
 | sending connection response (3) | denied | sequence zero or does not open | refuse; an unopened packet counts an integrity failure | sending connection response (3) |
@@ -3117,9 +3026,9 @@ between the old high-water mark and the sequence, then sets the sequence's bit
 and raises the high-water mark to it. When that forward jump is at least one
 window depth, the receiver MUST clear the whole ring.
 
-A receiver MUST apply the replay window to the five session packet types:
-connection keep-alive, connection payload, connection disconnect, connection
-ack and connection payload fragment. Handshake packet types are outside the
+A receiver MUST apply the replay window to the four session packet types:
+connection keep-alive, connection payload, connection disconnect and
+connection ack. Handshake packet types are outside the
 window. A server MUST NOT move the window of a session packet whose source
 address has no assigned client slot: it ignores the packet before decryption,
 as [t10 Receive processing](#t10) step 12 states, and does not mark it.
@@ -3281,7 +3190,7 @@ MUST list the newest eligible run first and may include older
 runs while its range-count and packet-capacity limits permit. When capacity
 omits entries, it MUST drop the oldest entries first and MUST NOT emit a
 trailing gap without a received run. Every session packet MUST have room for
-the [t3 Constants and registries](#t3) (ack block minimum row). For payload and fragment packets, the sender
+the [t3 Constants and registries](#t3) (ack block minimum row). For payload packets, the sender
 reserves room for their type data before choosing the block's range count.
 
 After a valid block is opened, a receiver MUST process its named session
@@ -3299,8 +3208,8 @@ that assertion and MUST process an in-window sent sequence as acknowledged.
 All session packet types can contribute to the eligible history represented
 by a block after the acceptance conditions in [t15.3 Building and processing](#t15.3) hold. Acknowledgement debt is the number of accepted eliciting packets
 received since a session packet last carried a block. A receiver MUST add debt
-for each accepted connection keep-alive, connection payload, connection
-disconnect or connection payload fragment packet listed in [t3 Constants and registries](#t3).
+for each accepted connection keep-alive, connection payload or connection
+disconnect packet listed in [t3 Constants and registries](#t3).
 A connection ack packet listed there does not elicit an acknowledgement. A
 connection ack packet is opened, replay-marked and processed for its block like
 any other session packet, but MUST NOT add acknowledgement debt. This rule
@@ -3434,170 +3343,6 @@ When block capacity keeps only the newest range, the older range is omitted:
 input: replay state received 1-5, 7-8 and 10-11; block capacity = 11 bytes
 0b 00 00 00 01 02 00 01 00 02 00
 ```
-<a id="t16"></a>
-## t16. Fragmentation and reassembly
-
-A payload larger than one type 5 packet's payload capacity is split into
-fragments, each carried in its own sealed session packet, and reassembled per
-connection by payload id. A payload that fits one packet is never a fragment.
-
-<a id="t16.1"></a>
-### t16.1. Sending
-
-1. A sender MUST send a payload whose size is at most the payload capacity
-   row of [t3 Constants and registries](#t3) as a type 5 packet
-   ([t8 Packet formats](#t8)). A sender MUST split a payload larger than that
-   capacity into fragments carried in type 9 packets. The fragments per
-   payload maximum row of [t3 Constants and registries](#t3) bounds the
-   fragment count.
-2. A sender MUST assign each fragmented payload a payload id, per direction:
-   an unsigned 32-bit counter that starts at 1, increments by 1 for each
-   fragmented payload, and wraps to 1 instead of zero. A sender MUST NOT
-   assign zero.
-3. A sender MUST use the smallest fragment count of two or more that carries
-   the payload with no fragment longer than the fragment stride row of
-   [t3 Constants and registries](#t3). The stride is the payload size divided
-   by that count, rounded up; every fragment except the last MUST be exactly
-   the stride long, and the last MUST carry the remainder, which is between 1
-   and the stride.
-4. A sender MUST transmit each fragment in its own sealed type 9 packet with
-   its own sequence, and MUST NOT retain a fragment for resending. A lost
-   fragment loses the whole payload.
-
-<a id="t16.2"></a>
-### t16.2. Receiving
-
-Reassembly is per connection, keyed by payload id in a configured number of
-reassembly slots, the max_fragmented_messages field of
-[t2.3 Configuration surface](#t2.3); the slot of a payload id is that id
-modulo the slot count.
-
-A receiver MUST accept a fragment only on a connected slot; a fragment that
-arrives in any other state is dropped and counted before it reaches
-reassembly ([t10 Receive processing](#t10),
-[t13 Session: keep-alive, timeout, disconnect, slot reset](#t13)).
-
-A receiver MUST apply the following checks in order and refuse the fragment
-at the first that fails, incrementing the counter named in its row. A refused
-fragment leaves its slot unchanged, except that a refusal at check 7 for a
-staged final, or at check 8, clears the slot when the slot holds this payload
-id.
-
-| # | Check | Counter |
-|---|---|---|
-| 1 | the type data is shorter than the fragment header plus one byte, or longer than the fragment header plus the received fragment stride maximum row of [t3 Constants and registries](#t3) | size mismatch |
-| 2 | the payload id is zero | zero payload id |
-| 3 | the stale test of the table below refuses the payload id | stale |
-| 4 | the fragment count is one | count invalid |
-| 5 | the fragment index is not less than the fragment count | index out of range |
-| 6 | the fragment count differs from the count pinned by this payload id | count mismatch |
-| 7 | a non-final fragment is not the pinned stride; a final fragment is larger than the pinned stride; or a staged final is larger than the stride the first non-final fragment pins | size mismatch |
-| 8 | the reconstructed payload size, the stride times one less than the fragment count plus the known final size, where an absent final contributes one byte, exceeds the configured maximum payload | payload too large |
-| 9 | the fragment index is already received for this payload id | duplicate index |
-
-The first fragment of a payload id pins its count, and the first non-final
-fragment pins its stride. The final fragment MAY arrive before the stride is
-pinned; a receiver MUST stage it and apply check 7 to it when the first
-non-final fragment pins the stride. When every fragment of a payload id is
-present, the receiver MUST deliver the assembled payload once, at the moment
-it completes, and clear the slot. The assembled payload is the first count
-minus one fragments of stride bytes each, followed by the final fragment. A
-receiver MUST NOT keep a completed payload id beyond the newest completed
-payload id that the stale test uses, so a repeated fragment of a completed
-payload id starts a new reassembly.
-
-The stale test uses two references.
-
-| Reference | Guard | Outcome |
-|---|---|---|
-| the connection's newest completed payload id | the payload id differs from it by more than the reassembly reach row of the table below in either direction, compared as unsigned 32-bit differences | refuse, count stale |
-| the payload id of the slot's occupant | the payload id is a different id not more than the reassembly behind row of the table below behind the occupant, compared as an unsigned 32-bit difference | refuse, count stale |
-| the payload id of the slot's occupant | any other different id | accept the fragment; count the occupant abandoned if it is incomplete; the slot then holds the new payload id |
-
-Only a completed payload advances the newest completed payload id.
-
-| Name | Value | Unit |
-|---|---|---|
-| reassembly reach | `1073741824` | payload ids |
-| reassembly behind | `256` | payload ids |
-
-A reassembly slot MUST own one buffer of the configured maximum payload plus
-one staging buffer of the received fragment stride maximum row of
-[t3 Constants and registries](#t3), allocated once when the connection is
-created, and MUST NOT grow, resize or share either. A connection MUST own one
-newest completed payload id. A completed payload is copied out once at
-completion.
-
-<a id="t16.3"></a>
-### t16.3. Fragment header
-
-The fragment header lies inside the seal after the acknowledgement block of
-[t15 Acknowledgement](#t15). The packet type distinguishes a fragment from an
-unfragmented payload, and the type is part of the associated data
-([t9 Packet protection](#t9)).
-
-    0                   1                   2                   3
-    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |                       payload id (u32)                        |
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   | fragment index | fragment count - 1 |      fragment data ...
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-
-| Name | Offset | Size | Type | Meaning | Valid values |
-|---|---|---|---|---|---|
-| payload id | 0 | 4 | u32 | identifies the fragmented payload, per direction | any nonzero value |
-| fragment index | 4 | 1 | u8 | index of this fragment | less than the fragment count |
-| fragment count minus 1 | 5 | 1 | u8 | one less than the fragment count | at least 1 |
-
-The fragment header is the fragment header row of
-[t3 Constants and registries](#t3), the fragment count is between 2 and the
-fragments per payload maximum row of [t3 Constants and registries](#t3), and
-the stride MUST NOT exceed the fragment stride row of
-[t3 Constants and registries](#t3). A receiver MUST refuse a fragment longer
-than the received fragment stride maximum row of
-[t3 Constants and registries](#t3), as check 1 of the receiving table states.
-
-<a id="t16.4"></a>
-### t16.4. Slot states
-
-| State | Event | Guard | Action | Next state |
-|---|---|---|---|---|
-| empty | a fragment passes every check | — | place its bytes; pin the count and, for a non-final fragment, the stride | partial |
-| partial | a fragment of the same payload id passes every check | — | place its bytes | partial |
-| partial | the fragment that completes the payload passes every check | every fragment is present | deliver the assembled payload, clear the slot | empty |
-| partial | a fragment of a different payload id passes every check | the stale test accepts the payload id | count the occupant abandoned if it is incomplete, clear the slot, start the new payload | partial |
-| partial | any check fails | — | refuse; leave the slot as the receiving rule states | partial |
-
-<a id="t16.5"></a>
-### t16.5. Vectors
-
-The vector is a reassembly trace on one connection with three slots, a
-2000-byte maximum payload and a delivered arena of four payloads. Each
-fragment line names the payload id, the fragment count, the fragment index
-and the fragment bytes. The twelve bytes of the vector are the reassembly
-counters in counter-table order, one byte each: zero payload id, stale, count
-invalid, index out of range, count mismatch, size mismatch, payload too large,
-duplicate index, accepted, reassembled, abandoned, batch full.
-
-```vector t16.reassembly-trace
-set: 1 connection, 3 reassembly slots, 2000-byte maximum payload, 4-capacity delivered arena
-frag: payload 7 count 3, fragment 2 (final) first, five 0x41 bytes
-frag: payload 7 count 3, fragment 0, eight 0x42 bytes
-frag: payload 7 count 3, fragment 1, eight 0x43 bytes
-frag: payload 9 count 3, fragment 0, eight 0x44 bytes
-frag: payload 9 count 3, fragment 0 again, eight 0x45 bytes
-frag: payload 10 count 4, fragment 0, eight 0x46 bytes
-frag: payload 10 count 3, fragment 1, eight 0x47 bytes
-frag: payload 16 count 2, fragment 0, eight 0x48 bytes
-00 00 00 00 01 00 00 01 06 01 01 00
-```
-
-The trace stages the final fragment of payload 7 before its stride is known,
-completes payload 7, refuses a repeated fragment of payload 9, refuses a
-changed count for payload 10, and abandons incomplete payload 10 when payload
-16 claims its slot.
-
 <a id="t17"></a>
 ## t17. Timing and defaults
 
@@ -3882,48 +3627,6 @@ The registry of counters, in index order, is:
 | `CLIENT_PAYLOAD_WRONG_OPENED_SIZE` | `refusal` | `CLIENT_PAYLOAD_RECEIVED` |
 | `CLIENT_DISCONNECT_WRONG_OPENED_SIZE` | `refusal` | `CLIENT_DISCONNECT_RECEIVED` |
 | `CLIENT_ACK_WRONG_OPENED_SIZE` | `refusal` | `CLIENT_ACK_RECEIVED` |
-| `FRAGMENT_RECEIVED` | `arrival` | `none` |
-| `FRAGMENT_WRONG_SIZE` | `refusal` | `FRAGMENT_RECEIVED` |
-| `FRAGMENT_NO_MAPPING` | `expected` | `FRAGMENT_RECEIVED` |
-| `FRAGMENT_ZERO_SEQUENCE` | `refusal` | `FRAGMENT_RECEIVED` |
-| `FRAGMENT_ALREADY_RECEIVED` | `refusal` | `FRAGMENT_RECEIVED` |
-| `FRAGMENT_DID_NOT_OPEN` | `refusal` | `FRAGMENT_RECEIVED` |
-| `FRAGMENT_NOT_CONNECTED` | `refusal` | `FRAGMENT_RECEIVED` |
-| `FRAGMENT_BAD_ACK_BLOCK` | `refusal` | `FRAGMENT_RECEIVED` |
-| `FRAGMENT_WRONG_OPENED_SIZE` | `refusal` | `FRAGMENT_RECEIVED` |
-| `FRAGMENT_ZERO_PAYLOAD_ID` | `refusal` | `FRAGMENT_RECEIVED` |
-| `FRAGMENT_STALE` | `path_loss` | `FRAGMENT_RECEIVED` |
-| `FRAGMENT_COUNT_INVALID` | `refusal` | `FRAGMENT_RECEIVED` |
-| `FRAGMENT_INDEX_OUT_OF_RANGE` | `refusal` | `FRAGMENT_RECEIVED` |
-| `FRAGMENT_COUNT_MISMATCH` | `refusal` | `FRAGMENT_RECEIVED` |
-| `FRAGMENT_SIZE_MISMATCH` | `refusal` | `FRAGMENT_RECEIVED` |
-| `FRAGMENT_PAYLOAD_TOO_LARGE` | `refusal` | `FRAGMENT_RECEIVED` |
-| `FRAGMENT_DUPLICATE_INDEX` | `refusal` | `FRAGMENT_RECEIVED` |
-| `FRAGMENT_ACCEPTED` | `expected` | `FRAGMENT_RECEIVED` |
-| `FRAGMENT_PAYLOAD_REASSEMBLED` | `expected` | `none` |
-| `FRAGMENT_PAYLOAD_ABANDONED` | `path_loss` | `none` |
-| `FRAGMENT_PAYLOAD_BATCH_FULL` | `refusal` | `none` |
-| `CLIENT_FRAGMENT_RECEIVED` | `arrival` | `none` |
-| `CLIENT_FRAGMENT_WRONG_STATE` | `expected` | `CLIENT_FRAGMENT_RECEIVED` |
-| `CLIENT_FRAGMENT_WRONG_SIZE` | `refusal` | `CLIENT_FRAGMENT_RECEIVED` |
-| `CLIENT_FRAGMENT_ZERO_SEQUENCE` | `refusal` | `CLIENT_FRAGMENT_RECEIVED` |
-| `CLIENT_FRAGMENT_ALREADY_RECEIVED` | `refusal` | `CLIENT_FRAGMENT_RECEIVED` |
-| `CLIENT_FRAGMENT_DID_NOT_OPEN` | `refusal` | `CLIENT_FRAGMENT_RECEIVED` |
-| `CLIENT_FRAGMENT_BAD_ACK_BLOCK` | `refusal` | `CLIENT_FRAGMENT_RECEIVED` |
-| `CLIENT_FRAGMENT_WRONG_OPENED_SIZE` | `refusal` | `CLIENT_FRAGMENT_RECEIVED` |
-| `CLIENT_FRAGMENT_ZERO_PAYLOAD_ID` | `refusal` | `CLIENT_FRAGMENT_RECEIVED` |
-| `CLIENT_FRAGMENT_STALE` | `path_loss` | `CLIENT_FRAGMENT_RECEIVED` |
-| `CLIENT_FRAGMENT_COUNT_INVALID` | `refusal` | `CLIENT_FRAGMENT_RECEIVED` |
-| `CLIENT_FRAGMENT_INDEX_OUT_OF_RANGE` | `refusal` | `CLIENT_FRAGMENT_RECEIVED` |
-| `CLIENT_FRAGMENT_COUNT_MISMATCH` | `refusal` | `CLIENT_FRAGMENT_RECEIVED` |
-| `CLIENT_FRAGMENT_SIZE_MISMATCH` | `refusal` | `CLIENT_FRAGMENT_RECEIVED` |
-| `CLIENT_FRAGMENT_PAYLOAD_TOO_LARGE` | `refusal` | `CLIENT_FRAGMENT_RECEIVED` |
-| `CLIENT_FRAGMENT_DUPLICATE_INDEX` | `refusal` | `CLIENT_FRAGMENT_RECEIVED` |
-| `CLIENT_FRAGMENT_ACCEPTED` | `expected` | `CLIENT_FRAGMENT_RECEIVED` |
-| `CLIENT_FRAGMENT_PAYLOAD_REASSEMBLED` | `expected` | `none` |
-| `CLIENT_FRAGMENT_PAYLOAD_ABANDONED` | `path_loss` | `none` |
-| `CLIENT_FRAGMENT_PAYLOAD_BATCH_FULL` | `refusal` | `none` |
-| `SEND_ARENA_FULL` | `refusal` | `none` |
 | `RECEIVE_CURSOR_TOO_SMALL` | `refusal` | `none` |
 | `SEND_HISTORY_OVERFLOW` | `refusal` | `none` |
 | `SEND_LEASE_FULL` | `refusal` | `none` |
@@ -4070,57 +3773,39 @@ c8 27 da 01 00 00 32 bd 59 34 00 00 00 20 8d 29
 eb 00 2b 00 1f 85 bd 3d 00 32 00 95 2e 8f a2 00
 39 00 14 6d 25 e0 00 71 00 da 2f c9 1f 00 59 00
 fd 2f af ea 00 5f 00 9b d7 db 8e 00 65 00 36 4c
-15 f1 00 82 00 15 85 fa 9b 03 00 00 45 d5 c2 e0
-00 94 00 10 e1 ec 54 01 94 00 6c 08 41 6f 00 94
-00 78 e8 d1 7f 00 94 00 f6 89 25 b4 00 94 00 cb
-1b 1e 15 00 94 00 d1 30 e1 f6 00 94 00 e7 94 0e
-7e 00 94 00 27 51 97 bb 00 94 00 53 4a 56 eb 02
-94 00 4d 53 72 c5 00 94 00 21 3d 3a f3 00 94 00
-52 4f ed 8a 00 94 00 14 4b f7 f8 00 94 00 49 6d
-8a 2f 00 94 00 84 d7 ac 2f 00 94 00 d7 0f 30 4a
-01 94 00 48 b0 cf 54 01 00 00 33 4b 1d 7f 02 00
-00 c5 1b 4a 3b 00 00 00 87 7f a4 35 03 00 00 ff
-b4 7e 10 01 a9 00 13 3b 8f b1 00 a9 00 da d1 d8
-0c 00 a9 00 3a 47 73 6e 00 a9 00 04 ce 96 ae 00
-a9 00 97 78 a8 bd 00 a9 00 ed 64 90 13 00 a9 00
-b1 25 a1 12 00 a9 00 51 c3 b4 49 02 a9 00 1f 07
-08 67 00 a9 00 bf f6 bf 6e 00 a9 00 80 4b f1 6e
-00 a9 00 1a 79 66 45 00 a9 00 c7 81 a5 eb 00 a9
-00 72 61 03 19 00 a9 00 ed 19 7b ce 01 a9 00 5a
-f5 d9 f5 01 00 00 15 46 6d 2c 02 00 00 db 57 70
-09 00 00 00 35 2c d6 68 00 00 00 b8 11 00 f3 00
-00 00 3b c4 a0 c5 00 00 00 7e d1 94 cb 00 00 00
-c9 35 a9 56 00 00 00 95 84 42 e9 00 4a 00 87 ed
-87 5f 00 00 00 61 30 e8 50 00 00 00 c9 57 7e 86
-00 08 00 72 48 0e 32 00 08 00 e3 c7 97 df 00 00
-00 41 af 4d ad 00 00 00 12 05 76 0d 02 00 00 5c
-34 ae 7c 00 00 00 dd 1a c8 5c 00 00 00 ea 22 62
-4a 02 00 00 6e 2d 52 bb 00 00 00 68 59 e8 28 00
-00 00 a1 b5 72 18 00 00 00 55 a4 ca 83 00 00 00
-d2 8a a7 48 00 00 00 fe a3 8f b7 02 00 00 fd 92
-bd 5f 02 00 00 bc 11 09 05 00 00 00 2a 62 77 0c
-00 00 00 28 65 77 12 01 00 00 9f ad 65 96 02 00
-00 c2 2f db 2c 00 21 00 6b c6 a4 41 02 00 00 88
-ed b1 56 00 00 00 d6 92 db 95 00 00 00 d7 6a 4d
-f9 00 00 00 eb 03 7f 49 00 00 00 11 1a 37 e1 00
-00 00 9c 47 5e e7 00 00 00 8c 5c 05 26 01 00 00
-44 5b fe 0f 00 00 00 ff 64 f7 fa 01 00 00 75 4f
-7d 3a 00 00 00 b1 eb 07 8c 00 00 00 e9 53 9e 77
-00 00 00 b9 17 2c 07 00 00 00 34 b4 85 d8 00 00
-00 b0 cb 42 af 01 00 00 bd b0 38 5c 01 00 00 9f
-8d 1d fd 00 00 00 be a9 a8 b8 00 4e 00 22 20 3f
-b1 00 54 00 6a c0 70 be 00 08 00 17 6f 7f 78 00
-08 00 8b 6d 57 dc 00 00 00 bf 7a 1a af 01 00 00
-9b 86 1b 95 01 00 00 79 87 fe 4c 01 00 00 f9 84
-f0 6e 01 00 00 25 11 95 dc 00 00 00 df ff a1 97
-01 00 00 7e 01 4f a1 00 00 00 1d 39 f1 61 01 00
-00 ab 9f e2 5c 00 00 00 7d 98 4f 4e 00 00 00 58
-b6 0b 73 00 00 00 f9 25 ca 24 00 00 00 50 9a 50
-f5 00 00 00 0a 04 26 b7 00 00 00 dd 1a 04 77 00
-00 00 ee 4e 50 1b 00 00 00 37 af 52 db 00 00 00
-7a 31 93 22 00 00 00 79 b8 15 e7 00 00 00 39 5f
-f8 12 00 00 00 a4 58 a7 b3 00 00 00 98 21 4f fa
-00 21 00 49 b0 ba 62 00 08 00
+15 f1 00 82 00 b8 11 00 f3 00 00 00 3b c4 a0 c5
+00 00 00 7e d1 94 cb 00 00 00 c9 35 a9 56 00 00
+00 95 84 42 e9 00 4a 00 87 ed 87 5f 00 00 00 61
+30 e8 50 00 00 00 c9 57 7e 86 00 08 00 72 48 0e
+32 00 08 00 e3 c7 97 df 00 00 00 41 af 4d ad 00
+00 00 12 05 76 0d 02 00 00 5c 34 ae 7c 00 00 00
+dd 1a c8 5c 00 00 00 ea 22 62 4a 02 00 00 6e 2d
+52 bb 00 00 00 68 59 e8 28 00 00 00 a1 b5 72 18
+00 00 00 55 a4 ca 83 00 00 00 d2 8a a7 48 00 00
+00 fe a3 8f b7 02 00 00 fd 92 bd 5f 02 00 00 bc
+11 09 05 00 00 00 2a 62 77 0c 00 00 00 28 65 77
+12 01 00 00 9f ad 65 96 02 00 00 c2 2f db 2c 00
+21 00 6b c6 a4 41 02 00 00 88 ed b1 56 00 00 00
+d6 92 db 95 00 00 00 d7 6a 4d f9 00 00 00 eb 03
+7f 49 00 00 00 11 1a 37 e1 00 00 00 9c 47 5e e7
+00 00 00 8c 5c 05 26 01 00 00 44 5b fe 0f 00 00
+00 ff 64 f7 fa 01 00 00 75 4f 7d 3a 00 00 00 b1
+eb 07 8c 00 00 00 e9 53 9e 77 00 00 00 b9 17 2c
+07 00 00 00 34 b4 85 d8 00 00 00 b0 cb 42 af 01
+00 00 bd b0 38 5c 01 00 00 9f 8d 1d fd 00 00 00
+be a9 a8 b8 00 4e 00 22 20 3f b1 00 54 00 6a c0
+70 be 00 08 00 17 6f 7f 78 00 08 00 8b 6d 57 dc
+00 00 00 bf 7a 1a af 01 00 00 9b 86 1b 95 01 00
+00 79 87 fe 4c 01 00 00 f9 84 f0 6e 01 00 00 25
+11 95 dc 00 00 00 df ff a1 97 01 00 00 7e 01 4f
+a1 00 00 00 1d 39 f1 61 01 00 00 ab 9f e2 5c 00
+00 00 7d 98 4f 4e 00 00 00 58 b6 0b 73 00 00 00
+f9 25 ca 24 00 00 00 50 9a 50 f5 00 00 00 0a 04
+26 b7 00 00 00 dd 1a 04 77 00 00 00 ee 4e 50 1b
+00 00 00 37 af 52 db 00 00 00 7a 31 93 22 00 00
+00 79 b8 15 e7 00 00 00 39 5f f8 12 00 00 00 a4
+58 a7 b3 00 00 00 98 21 4f fa 00 21 00 49 b0 ba
+62 00 08 00
 ```
 <a id="t19"></a>
 ## t19. Security considerations
@@ -4243,8 +3928,8 @@ Conformance is claimed per role: client, server, or backend. A claim names the
 role and the revision of RN-1 it meets.
 
 * A client implementation MUST reproduce the client handshake, the sealed
-  packets, replay protection, acknowledgement and fragmentation, and the
-  client's receive checks.
+  packets, replay protection and acknowledgement, and the client's receive
+  checks.
 * A server implementation MUST reproduce the server handshake, cookie issue and
   validation, slot assignment, session teardown, and the server's receive
   checks.
@@ -4294,7 +3979,6 @@ requirements; each difference is specified by the section named in its row.
 | IPv6 | Added after the first release. | Dual stack from the first release, with one address normalization rule ([t2 Architecture and key inventory](#t2)). |
 | Packet prefix | No prefilter header precedes a packet. | Every packet begins with the prefilter header ([t5 Prefilter header](#t5)). |
 | Payload to an unconfirmed client | A keep-alive prefixes every payload until the client is confirmed. | Session keys exist from the challenge, so payloads are delivered from that point with no prefix ([t13 Session: keep-alive, timeout, disconnect, slot reset](#t13)). |
-| Fragmentation | No fragment packet type. | The fragment packet type carries a fragment, with reassembly slots and an abandonment rule ([t16 Fragmentation and reassembly](#t16)). |
 | A zero timeout | A timeout of zero is accepted. | A timeout outside the field's valid range is refused, and zero is outside it ([t2.3 Configuration surface](#t2.3)). |
 
 <a id="tc"></a>

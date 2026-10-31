@@ -81,7 +81,7 @@ in `sdk/rocketnet.h`; no C++ type crosses it.
 
 - Neither `rocketnet_*_default_config` nor `rocketnet_*_light_config` is a
   universally suitable preset for every game. Callers size channels, message
-  arenas, fragment reassembly slots, reliable windows, per-update packet and
+  arenas, reliable windows, per-update packet and
   unreliable budgets, compile-time caps, and runtime memory budgets to match
   their game's concrete tick rate, payload distribution, and player count using
   the tradeoffs and formulas documented in [`docs/LOAD.md`](LOAD.md) and

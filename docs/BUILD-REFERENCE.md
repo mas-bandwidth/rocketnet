@@ -129,8 +129,8 @@ The functional-only sibling binaries are `test_serialize` (a real clock and
 they are functional tests, never `./bin/test`.
 Where the same rule is already covered by a simulator or state-machine test,
 that unit test stays beside it. The connect path's unit twin is
-`test_client_server_connect` (and the simulator loss walks). Fragment and
-ACK behavior already has protocol tests in the unit suite. The keyless-config
+`test_client_server_connect` (and the simulator loss walks). ACK behavior
+already has protocol tests in the unit suite. The keyless-config
 create is functional; `test_server_keyless_config_has_no_keys` checks the
 config the gate reads, without creating a transport.
 

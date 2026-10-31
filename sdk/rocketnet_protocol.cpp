@@ -11,7 +11,6 @@
 #include "rocketnet_internal.h"
 #include "rocketnet_address.h"
 #include "rocketnet_crypto_tally.h"
-#include "rocketnet_fragment.h"
 #include "rocketnet_ack.h"
 #include "rocketnet_platform.h"
 
@@ -88,14 +87,13 @@ static int rocketnet_packet_type_has_session_nonce( uint8_t packet_type )
     return packet_type == ROCKETNET_CONNECTION_DENIED_PACKET || packet_type == ROCKETNET_CONNECTION_CHALLENGE_PACKET;
 }
 
-// the sealed types: 1 through 6, 8 and 9. type 0 (request) and type 7
+// the sealed types: 1 through 6 and 8. type 0 (request) and type 7
 // (cookie) are the two unsealed packets.
 
 static int rocketnet_packet_type_is_sealed( uint8_t packet_type )
 {
     return ( packet_type >= ROCKETNET_CONNECTION_DENIED_PACKET && packet_type <= ROCKETNET_CONNECTION_DISCONNECT_PACKET ) ||
-           packet_type == ROCKETNET_CONNECTION_ACK_PACKET ||
-           packet_type == ROCKETNET_CONNECTION_FRAGMENT_PACKET;
+           packet_type == ROCKETNET_CONNECTION_ACK_PACKET;
 }
 
 static int rocketnet_packet_type_has_ephemeral_in_ad( uint8_t packet_type )
@@ -422,7 +420,6 @@ int rocketnet_session_min_wire_bytes( uint8_t packet_type )
         case ROCKETNET_CONNECTION_PAYLOAD_PACKET:    return ROCKETNET_CONNECTION_PAYLOAD_MIN_WIRE_BYTES;
         case ROCKETNET_CONNECTION_DISCONNECT_PACKET: return ROCKETNET_CONNECTION_DISCONNECT_MIN_WIRE_BYTES;
         case ROCKETNET_CONNECTION_ACK_PACKET:        return ROCKETNET_CONNECTION_ACK_MIN_WIRE_BYTES;
-        case ROCKETNET_CONNECTION_FRAGMENT_PACKET:   return ROCKETNET_CONNECTION_FRAGMENT_MIN_WIRE_BYTES;
         default:                                     return 0;
     }
 }
@@ -435,14 +432,13 @@ bool rocketnet_session_type_data_fits( uint8_t packet_type, int type_data_bytes 
         case ROCKETNET_CONNECTION_PAYLOAD_PACKET:    return type_data_bytes >= 1 && type_data_bytes <= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
         case ROCKETNET_CONNECTION_DISCONNECT_PACKET: return type_data_bytes == 0;
         case ROCKETNET_CONNECTION_ACK_PACKET:        return type_data_bytes == 0;
-        case ROCKETNET_CONNECTION_FRAGMENT_PACKET:   return type_data_bytes >= ROCKETNET_FRAGMENT_HEADER_BYTES + 1;
         default:                                     return false;
     }
 }
 
 bool rocketnet_session_ack_eligible_on_open( uint8_t packet_type )
 {
-    return packet_type != ROCKETNET_CONNECTION_PAYLOAD_PACKET && packet_type != ROCKETNET_CONNECTION_FRAGMENT_PACKET;
+    return packet_type != ROCKETNET_CONNECTION_PAYLOAD_PACKET;
 }
 
 bool rocketnet_session_elicits_ack( uint8_t packet_type )

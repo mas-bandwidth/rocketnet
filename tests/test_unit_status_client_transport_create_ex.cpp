@@ -15,14 +15,10 @@
 //   * C3 (config validation failure) -> CONFIG_OUT_OF_RANGE
 //   * C5 (transport ladder parse failure) -> INVALID_TRANSPORT_LIST
 //   * C6 (transport block malloc refusal) -> OUT_OF_MEMORY
-//   * C7 (fragmentation storage malloc refusal) -> OUT_OF_MEMORY
 //   * C8 (invalid connect token) -> INVALID_CONNECT_TOKEN
 //   * C9 (expired connect token) -> CONNECT_TOKEN_EXPIRED
 //
 // Not reachable without a socket or real time:
-//   * C4 (reassembly memory budget), whose maximum valid geometry (256 slots x
-//     the 256-fragment payload ceiling) is far under the 512 MiB component
-//     budget;
 //   * C10 (transport ladder exhausted), which needs a socket open to refuse;
 //   * C11 (mutex/thread create failure), which needs a platform primitive to
 //     fail.
@@ -164,20 +160,22 @@ static void test_client_transport_create_ex_reports_every_status()
 #if ROCKETNET_DEV
     // C2: an invalid environment overlay refuses at the env apply
     char prior[4096];
-    const bool had_prior = rocketnet_test_env_getenv( "ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES", prior, sizeof( prior ) ) != 0;
-    rocketnet_test_env_setenv( "ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES", "not-a-number", 1 );
+    const bool had_prior = rocketnet_test_env_getenv( "ROCKETNET_CLIENT_TOKEN_EPOCH_UNIX_SECONDS", prior, sizeof( prior ) ) != 0;
+    rocketnet_test_env_setenv( "ROCKETNET_CLIENT_TOKEN_EPOCH_UNIX_SECONDS", "not-a-number", 1 );
     check_create_status( ROCKETNET_STATUS_CONFIG_ENV_INVALID, token, NULL, &state, &status );
     if ( had_prior )
-        rocketnet_test_env_setenv( "ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES", prior, 1 );
+        rocketnet_test_env_setenv( "ROCKETNET_CLIENT_TOKEN_EPOCH_UNIX_SECONDS", prior, 1 );
     else
-        rocketnet_test_env_unsetenv( "ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES" );
+        rocketnet_test_env_unsetenv( "ROCKETNET_CLIENT_TOKEN_EPOCH_UNIX_SECONDS" );
 
 #endif // #if ROCKETNET_DEV
-    // C3: a config field out of range refuses at validation
+    // C3: a config field out of range refuses at validation (step_driven is
+    // the revision-1 field with a range; the link simulator fields lie past
+    // the revision this create reads)
     {
         struct rocketnet_client_transport_config_t config;
         rocketnet_client_transport_default_config( &config );
-        config.max_fragmented_messages = 2000000000;
+        config.step_driven = 2;
         check_create_status( ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE, token, &config, &state, &status );
     }
 
@@ -190,18 +188,6 @@ static void test_client_transport_create_ex_reports_every_status()
     }
 
     // C6: the transport block malloc refuses
-
-    state.fail_at = state.calls + 1;
-    check_create_status( ROCKETNET_STATUS_OUT_OF_MEMORY, token, NULL, &state, &status );
-    state.fail_at = 0;
-
-    // C7: the send arena malloc refuses (the second allocation)
-
-    state.fail_at = state.calls + 1;
-    check_create_status( ROCKETNET_STATUS_OUT_OF_MEMORY, token, NULL, &state, &status );
-    state.fail_at = 0;
-
-    // C7: the reassembly set malloc refuses (the third allocation)
 
     state.fail_at = state.calls + 1;
     check_create_status( ROCKETNET_STATUS_OUT_OF_MEMORY, token, NULL, &state, &status );

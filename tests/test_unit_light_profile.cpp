@@ -107,7 +107,6 @@
 
 static void light_message_fields_server( const struct rocketnet_server_config_t * config )
 {
-    check( config->max_fragmented_messages == 1 );
     check( config->per_client_send_kbps == 256 );
     check( config->num_channels == 8 );
     check( config->reliable_messages_in_flight == 256 );
@@ -125,7 +124,6 @@ static void light_message_fields_server( const struct rocketnet_server_config_t 
 
 static void light_message_fields_client( const struct rocketnet_client_config_t * config )
 {
-    check( config->max_fragmented_messages == 1 );
     check( config->send_kbps == 256 );
     check( config->num_channels == 8 );
     check( config->reliable_messages_in_flight == 256 );

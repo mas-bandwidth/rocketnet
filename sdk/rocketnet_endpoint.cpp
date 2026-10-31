@@ -19,7 +19,6 @@
 #include "rocketnet_channel.h"
 #include "rocketnet_counters.h"
 #include "rocketnet_endpoint.h"
-#include "rocketnet_fragment.h"
 #include "rocketnet_message.h"
 #include "rocketnet_packet_builder.h"
 #include "rocketnet_platform.h"
@@ -1091,50 +1090,29 @@ static void rn_endpoint_end_reliable( rn_endpoint_t * endpoint )
 
 static int rn_endpoint_plan_large_sequenced( rn_endpoint_t * endpoint )
 {
-    // RNChannelTypes!WritePacket: a large code-1 state is one unreliable RECORDS
-    // payload. The transport splits it into type-9 fragments; no layer-6 block or
-    // reliable number is created. The whole fragment plan is charged before
-    // writing, so an over-budget state cannot send only a prefix of its fragments.
-    // Returns the payload bytes to request, 0 when the head was consumed with no
-    // packet (counted), or -1 when the pass stops here.
+    // RNChannelTypes!WritePacket: a full-packet code-1 state is one unreliable
+    // RECORDS payload of exactly ROCKETNET_MAX_PACKET_PAYLOAD_BYTES (a larger
+    // state was promoted at route time); no layer-6 block or reliable number
+    // is created. Its packet is charged before writing. Returns the payload
+    // bytes to request, 0 when the head was consumed with no packet (counted),
+    // or -1 when the pass stops here.
 
     rn_region_t * region = endpoint->region;
     const uint32_t d = endpoint->unreliable_head;
     const rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
     const int payload_bytes = rn_endpoint_sequenced_payload_bytes( descriptor );
-    int fragment_count, stride;
 
-    // an exact-capacity record is a whole packet, not a fragment payload
+    rocketnet_assert( payload_bytes == ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
 
-    const bool exact_packet = payload_bytes == ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
-    if ( exact_packet )
-    {
-        fragment_count = 1;
-        stride = payload_bytes;
-    }
-    else if ( !rocketnet_fragment_plan( payload_bytes, &fragment_count, &stride ) )
-    {
-        rn_endpoint_count( endpoint, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED );
-        rn_endpoint_unreliable_unlink( endpoint, d );
-        return 0;
-    }
-
-    // R6: an uncapped connection skips the bucket here entirely; its large
+    // R6: an uncapped connection skips the bucket here entirely; its
     // unreliable state is never dropped or delayed by the budget.
 
     int admitted_wire_bytes = 0;
     if ( endpoint->send_budget_enabled )
     {
-        for ( int i = 0; i < fragment_count; i++ )
-        {
-            const int fragment_bytes = i + 1 < fragment_count ? stride : payload_bytes - stride * ( fragment_count - 1 );
-            const int wire_payload_bytes = fragment_bytes + ( exact_packet ? 0 : ROCKETNET_FRAGMENT_HEADER_BYTES );
-            const int maximum = rocketnet_send_budget_max_wire_bytes( wire_payload_bytes );
-            if ( maximum == 0 )
-                return -1;
-
-            admitted_wire_bytes += maximum;
-        }
+        admitted_wire_bytes = rocketnet_send_budget_max_wire_bytes( payload_bytes );
+        if ( admitted_wire_bytes == 0 )
+            return -1;
 
         rocketnet_send_budget_t * budget = &endpoint->budget;
         if ( budget->rank_reached < rocketnet_send_budget_class_rank( ROCKETNET_SEND_CLASS_UNRELIABLE ) )
@@ -1424,8 +1402,8 @@ int rn_endpoint_write_packet( struct rn_endpoint_t * endpoint, uint8_t * payload
             }
 
             // the plan's maximum wire charge is conservative; packet_sent
-            // settles with the sum the transport returns after it stages
-            // every sealed fragment.
+            // settles with the wire bytes the transport returns after it
+            // stages the sealed packet.
             // R6: an uncapped connection holds no bucket to charge
 
             if ( endpoint->send_budget_enabled )

@@ -86,13 +86,13 @@ void state_stream_never_goes_backwards_over_lossy_link()
     rocketnet_channel_harness_destroy( &h );
 }
 
-void large_unreliable_sequenced_uses_transport_fragments()
+void large_unreliable_sequenced_promotes_to_reliable()
 {
     // Run the message objects over the channel harness: the in-memory
     // simulator and the test clock (1000.0), no socket and no sleep. An
     // UNRELIABLE_SEQUENCED send too big for one packet's record is promoted
     // to RELIABLE_SEQUENCED (the promotion rule), and is
-    // counted, never fragmented.
+    // counted.
 
     rocketnet_channel_harness_t h;
     sequenced_functional_check( rocketnet_channel_harness_create( &h ) != 0, "large harness create" );
@@ -110,7 +110,7 @@ void large_unreliable_sequenced_uses_transport_fragments()
 
     sequenced_functional_check( rocketnet_message_client_finish( client, message_bytes ) != 0, "large client finish" );
     uint8_t * promoted = rocketnet_message_client_start( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED,
-                                                         ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES );
+                                                         2 * ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
     sequenced_functional_check( promoted != NULL, "oversize unreliable start promotes" );
     if ( promoted )
     {
@@ -143,12 +143,12 @@ void large_unreliable_sequenced_uses_transport_fragments()
         }
     }
 
-    sequenced_functional_check( received == 1, "large fragment reassembly" );
+    sequenced_functional_check( received == 1, "large promoted delivery" );
     sequenced_functional_check( rocketnet_channel_harness_overflows( &h ) == 0, "large delivery ring overflow" );
 
     const rocketnet_counters_t * counters = rocketnet_message_client_counters( client );
     sequenced_functional_check( counters->values[ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED] == 1, "large unreliable promotion counted" );
-    printf( "test_large_unreliable_sequenced_uses_transport_fragments: bytes=%d delivered=%d promoted=%llu\n",
+    printf( "test_large_unreliable_sequenced_promotes_to_reliable: bytes=%d delivered=%d promoted=%llu\n",
             message_bytes, received, (unsigned long long) counters->values[ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED] );
 
     rocketnet_channel_harness_destroy( &h );

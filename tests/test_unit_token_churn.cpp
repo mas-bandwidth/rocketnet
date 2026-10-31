@@ -26,7 +26,6 @@
 #include "rocketnet_client_slots.h"
 #include "rocketnet_ack.h"
 #include "rocketnet_replay.h"
-#include "rocketnet_fragment.h"
 #include "rocketnet_keys.h"
 #include "rocketnet_read_write.h"
 #include "rocketnet_server_protocol.h"
@@ -111,12 +110,10 @@ static void tc_server_setup( struct tc_server_t * t, int max_clients, int histor
     server->used_token_history = rocketnet_used_token_history_create( NULL, history_capacity );
     server->client_slots = rocketnet_client_slots_create( NULL, max_clients );
     server->acks = rocketnet_server_acks_create( NULL, max_clients );
-    server->reassembly = rocketnet_reassembly_set_create( NULL, max_clients, 4, 16384, max_clients * 4 );
     server->counters = &t->counters;
     check( server->encryption_map && server->used_token_history &&
-           server->client_slots && server->acks && server->reassembly );
+           server->client_slots && server->acks );
 
-    rocketnet_reassembly_set_begin_update( server->reassembly );
     rocketnet_server_protocol_update( server, TC_NOW );
     t->time = 1000.0;
 }
@@ -128,7 +125,6 @@ static void tc_server_teardown( struct tc_server_t * t )
     rocketnet_used_token_history_destroy( t->server.used_token_history );
     rocketnet_client_slots_destroy( t->server.client_slots );
     rocketnet_server_acks_destroy( t->server.acks );
-    rocketnet_reassembly_set_destroy( t->server.reassembly );
 }
 
 struct tc_client_t
@@ -142,17 +138,13 @@ static void tc_client_init( struct tc_client_t * c, const char * address )
 {
     memset( c, 0, sizeof( *c ) );
     rocketnet_client_protocol_init( &c->client, &c->counters );
-    c->client.reassembly = rocketnet_reassembly_set_create( NULL, 1, 4, 16384, ROCKETNET_NUM_CLIENT_PACKETS / 2 );
-    check( c->client.reassembly );
 
-    rocketnet_reassembly_set_begin_update( c->client.reassembly );
     check( rocketnet_address_parse( &c->address, address ) );
 }
 
 static void tc_client_destroy( struct tc_client_t * c )
 {
     rocketnet_counters_assert_conserved( &c->counters );
-    rocketnet_reassembly_set_destroy( c->client.reassembly );
 }
 
 // drives the handshake on mocked time until the client connects, is denied,

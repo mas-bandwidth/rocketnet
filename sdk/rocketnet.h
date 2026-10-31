@@ -257,12 +257,6 @@ enum rocketnet_status_t
 
     ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE = -8,
 
-    /// Create refused: the reassembly memory the config asks for is past this
-    /// build's limit. Lower max_fragmented_messages, or on a server
-    /// max_clients.
-
-    ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED = -9,
-
     /// Start refused. The server config's backend_public_key is all zeros.
     /// Set it, or set ROCKETNET_SERVER_BACKEND_PUBLIC_KEY.
 
@@ -1274,12 +1268,6 @@ struct rocketnet_client_config_t
 
     uint8_t packet_filter[ROCKETNET_PACKET_FILTER_BYTES];
 
-    /// ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES sets how many fragmented
-    /// messages are reassembled at once. Range is 1 .. 256. Zero, the
-    /// default, selects 8.
-
-    int max_fragmented_messages;
-
     /// ROCKETNET_CLIENT_SEND_KBPS sets the starting send budget per
     /// connection, in kbps. Range is 1 .. ROCKETNET_SEND_KBPS_UNLIMITED - 1.
     /// The unlimited value means no send budget. Zero selects
@@ -1487,12 +1475,6 @@ struct rocketnet_server_config_t
     /// Range is 1 .. 256.
 
     int num_os_cpus;
-
-    /// ROCKETNET_SERVER_MAX_FRAGMENTED_MESSAGES sets how many fragmented
-    /// messages are reassembled at once per client. Range is 1 .. 256. Zero,
-    /// the default, selects 8.
-
-    int max_fragmented_messages;
 
     /// ROCKETNET_SERVER_MAX_TIMEOUT_SECONDS sets the maximum timeout. Units
     /// are seconds. Range is 1 .. 3600. Default is 60.
@@ -2204,8 +2186,8 @@ ROCKETNET_EXPORT void rocketnet_server_network_simulator( struct rocketnet_serve
 /// a negative send_kbps, ROCKETNET_STATUS_INVALID_TRANSPORT_LIST,
 /// ROCKETNET_STATUS_LOOPBACK_HUB_MISSING or
 /// ROCKETNET_STATUS_LOOPBACK_HUB_MISMATCH for a list naming loopback,
-/// ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION,
-/// ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED or ROCKETNET_STATUS_OUT_OF_MEMORY.
+/// ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION or
+/// ROCKETNET_STATUS_OUT_OF_MEMORY.
 
 ROCKETNET_EXPORT struct rocketnet_client_t * rocketnet_client_create( void * context, const struct rocketnet_client_config_t * config, enum rocketnet_status_t * status );
 
@@ -2668,7 +2650,7 @@ ROCKETNET_EXPORT size_t rocketnet_server_required_memory( const struct rocketnet
 /// ROCKETNET_STATUS_LOOPBACK_HUB_MISSING or
 /// ROCKETNET_STATUS_LOOPBACK_HUB_MISMATCH for a list naming loopback,
 /// ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION,
-/// ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED, ROCKETNET_STATUS_OUT_OF_MEMORY or
+/// ROCKETNET_STATUS_OUT_OF_MEMORY or
 /// ROCKETNET_STATUS_CRYPTO_INIT_FAILED when the server key cannot be made.
 
 ROCKETNET_EXPORT struct rocketnet_server_t * rocketnet_server_create( void * context, const char * ipv4_address, const char * ipv6_address, const struct rocketnet_server_config_t * config, enum rocketnet_status_t * status );
@@ -2687,7 +2669,7 @@ ROCKETNET_EXPORT struct rocketnet_server_t * rocketnet_server_create( void * con
 /// NULL server, ROCKETNET_STATUS_SERVER_NOT_STOPPED,
 /// ROCKETNET_STATUS_MISSING_KEYS without a backend key,
 /// ROCKETNET_STATUS_INVALID_PROTOCOL_ID, ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION,
-/// ROCKETNET_STATUS_INVALID_ADDRESS, ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED,
+/// ROCKETNET_STATUS_INVALID_ADDRESS,
 /// ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED,
 /// ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED,
 /// ROCKETNET_STATUS_TRANSPORT_NOT_BUILT,

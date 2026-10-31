@@ -1,7 +1,7 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. AGPL-3.0. */
 
-// Boundary tests for the five risk survivors of the 2026-10-24 mutation
-// audit (docs/audits/2026-10-24-mutation-testing.md, findings 1-5). Each
+// Boundary tests for the risk survivors of the 2026-10-24 mutation audit
+// (docs/audits/2026-10-24-mutation-testing.md, findings 1, 3, 4 and 5). Each
 // case pins the exact boundary a surviving mutant blurred. No real time,
 // sockets, network or threads: every time is passed as an argument.
 
@@ -10,7 +10,6 @@
 #include "rocketnet_ack.h"
 #include "rocketnet_allocator.h"
 #include "rocketnet_counters.h"
-#include "rocketnet_fragment.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_message.h"
 #include "rocketnet_window_ack.h"
@@ -33,13 +32,12 @@ static rocketnet_ack_endpoint_t * risk_ack_endpoint()
     rocketnet_ack_endpoint_reset( endpoint );
     memset( endpoint->sent_written, 0xFF, sizeof( endpoint->sent_written ) );
     memset( endpoint->received_written, 0xFF, sizeof( endpoint->received_written ) );
-    memset( endpoint->aggregates_written, 0xFF, sizeof( endpoint->aggregates_written ) );
     return endpoint;
 }
 
 static void risk_ack_record( rocketnet_ack_endpoint_t * endpoint, uint64_t sequence, double time )
 {
-    check( rocketnet_ack_endpoint_record_sent_classified( endpoint, sequence, 100, 0, 0, 0, time ) != ROCKETNET_ACK_SENT_REFUSED_STALE );
+    check( rocketnet_ack_endpoint_record_sent_classified( endpoint, sequence, 100, 0, 0, time ) != ROCKETNET_ACK_SENT_REFUSED_STALE );
 }
 
 static void risk_ack_largest( rocketnet_ack_endpoint_t * endpoint, uint64_t sequence, double time )
@@ -67,7 +65,7 @@ static void test_ack_loss_threshold_exact_boundary()
         risk_ack_record( endpoint, base + (uint64_t) delta, 1000.0 );
         risk_ack_largest( endpoint, base + (uint64_t) delta, 1000.1 );
         const enum rocketnet_ack_sent_result_t result = rocketnet_ack_endpoint_record_sent_classified(
-            endpoint, base + ROCKETNET_SENT_PACKET_BUFFER_SIZE, 100, 0, 0, 0, 1000.2 );
+            endpoint, base + ROCKETNET_SENT_PACKET_BUFFER_SIZE, 100, 0, 0, 1000.2 );
         if ( delta == ROCKETNET_LOSS_PACKET_THRESHOLD )
             check( result == ROCKETNET_ACK_SENT_EVICTED_LOST );
         else
@@ -77,123 +75,6 @@ static void test_ack_loss_threshold_exact_boundary()
 }
 
 REGISTER_UNIT_TEST( test_ack_loss_threshold_exact_boundary );
-
-// ----------------------------------------------------------------
-// Finding 2: reassembly serial half range (rocketnet_fragment.cpp)
-// ----------------------------------------------------------------
-
-static const struct rocketnet_reassembly_counters_t risk_counters = {
-    ROCKETNET_COUNTER_FRAGMENT_ZERO_PAYLOAD_ID,
-    ROCKETNET_COUNTER_FRAGMENT_STALE,
-    ROCKETNET_COUNTER_FRAGMENT_COUNT_INVALID,
-    ROCKETNET_COUNTER_FRAGMENT_INDEX_OUT_OF_RANGE,
-    ROCKETNET_COUNTER_FRAGMENT_COUNT_MISMATCH,
-    ROCKETNET_COUNTER_FRAGMENT_SIZE_MISMATCH,
-    ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_TOO_LARGE,
-    ROCKETNET_COUNTER_FRAGMENT_DUPLICATE_INDEX,
-    ROCKETNET_COUNTER_FRAGMENT_ACCEPTED,
-    ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_REASSEMBLED,
-    ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_ABANDONED,
-    ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_BATCH_FULL
-};
-
-struct risk_reassembly_t
-{
-    struct rocketnet_counters_t counters_storage;
-    uint64_t * counters;
-    struct rocketnet_reassembly_set_t * set;
-    uint8_t fragment[ROCKETNET_FRAGMENT_HEADER_BYTES + ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES];
-};
-
-static void risk_reassembly_begin( struct risk_reassembly_t * h )
-{
-    memset( h, 0, sizeof( *h ) );
-    h->counters = h->counters_storage.values;
-    h->set = rocketnet_reassembly_set_create( NULL, 1, 7, 8192, 4 );
-    check( h->set != NULL );
-}
-
-static int risk_offer( struct risk_reassembly_t * h, uint32_t payload_id, int fragment_index )
-{
-    const uint8_t pattern = (uint8_t) ( payload_id * 7u + 3u );
-    const int fragment_bytes = fragment_index == 0 ? 100 : 60;
-    rocketnet_write_fragment_header( h->fragment, payload_id, fragment_index, 2 );
-    for ( int i = 0; i < fragment_bytes; i++ )
-        h->fragment[ROCKETNET_FRAGMENT_HEADER_BYTES + i] = (uint8_t) ( pattern + 100 * fragment_index + i );
-    rocketnet_reassembly_set_begin_update( h->set );
-    const int result = rocketnet_reassembly_process_fragment( h->set, 0, h->fragment,
-                                                              ROCKETNET_FRAGMENT_HEADER_BYTES + fragment_bytes,
-                                                              h->counters, &risk_counters );
-    if ( h->set->completed_bytes != 0 )
-    {
-        check( h->set->completed_bytes == 160 );
-        for ( int i = 0; i < 160; i++ )
-            check( h->set->completed_payload[i] == (uint8_t) ( pattern + i ) );
-    }
-    return result;
-}
-
-static void risk_complete( struct risk_reassembly_t * h, uint32_t payload_id )
-{
-    check( risk_offer( h, payload_id, 0 ) == 1 );
-    check( risk_offer( h, payload_id, 1 ) == 1 );
-    check( h->set->completed_bytes == 160 );
-}
-
-// The stale reference moves only on the serially newer side: a
-// completion one reach ahead of a large reference moves it (the
-// largest advance a fragment can carry past the stale reach guard),
-// a completion behind it leaves it, and the audit's three far ids
-// relative to 2 -- 2 + 0x7fffffff, 2 + 0x80000000 and
-// 2 + 0x80000001 -- are refused stale and never move it. (A completion
-// judged at exactly the half range cannot arrive: the reach guard
-// refuses every fragment further than ROCKETNET_REASSEMBLY_REACH from
-// the reference in both directions, so the completing fragment is
-// always within one reach of the reference it is judged against.)
-static void test_reassembly_serial_half_range()
-{
-    {
-        struct risk_reassembly_t h;
-        risk_reassembly_begin( &h );
-        risk_complete( &h, 1 );
-        risk_complete( &h, 2 );
-        check( h.set->newest_completed[0] == 2 );
-
-        // One full reach ahead, from a large reference: the serial
-        // difference moves the reference; an added (not subtracted)
-        // difference would land past the half range and not move it.
-        const uint32_t reference = 2u + ROCKETNET_REASSEMBLY_REACH;
-        risk_complete( &h, reference );
-        check( h.set->newest_completed[0] == reference );
-        const uint32_t target = reference + ROCKETNET_REASSEMBLY_REACH;
-        risk_complete( &h, target );
-        check( h.set->newest_completed[0] == target );
-
-        // A completion behind the reference leaves it where it is.
-        risk_complete( &h, target - 1 );
-        check( h.set->newest_completed[0] == target );
-        rocketnet_reassembly_set_destroy( h.set );
-    }
-    {
-        struct risk_reassembly_t h;
-        risk_reassembly_begin( &h );
-        risk_complete( &h, 1 );
-        risk_complete( &h, 2 );
-        check( h.set->newest_completed[0] == 2 );
-
-        const uint32_t offsets[3] = { 0x7fffffffu, 0x80000000u, 0x80000001u };
-        for ( int k = 0; k < 3; k++ )
-        {
-            const uint64_t stale_before = h.counters[ROCKETNET_COUNTER_FRAGMENT_STALE];
-            check( risk_offer( &h, 2u + offsets[k], 0 ) == 0 );
-            check( h.counters[ROCKETNET_COUNTER_FRAGMENT_STALE] == stale_before + 1 );
-            check( h.set->newest_completed[0] == 2 );
-        }
-        rocketnet_reassembly_set_destroy( h.set );
-    }
-}
-
-REGISTER_UNIT_TEST( test_reassembly_serial_half_range );
 
 // ----------------------------------------------------------------
 // Shared window fixture (findings 3, 4 and 5)

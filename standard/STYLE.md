@@ -11,7 +11,7 @@ the reviewer.
 
 | Document | Tag | Status | Subject |
 |---|---|---|---|
-| `standard/TRANSPORT.md` | RN-1 | normative | the connection layer: keys, connect token, handshake, sealed packets, session, replay, acknowledgement, fragmentation |
+| `standard/TRANSPORT.md` | RN-1 | normative | the connection layer: keys, connect token, handshake, sealed packets, session, replay, acknowledgement |
 | `standard/MESSAGES.md` | RN-2 | normative | the message layer carried inside RN-1 payloads: payload forms, records, reliability, blocks, channels, CONFIG, receipts |
 | `standard/RATIONALE.md` | RN-R | informative | why each normative section says what it says, one heading per normative section id |
 
@@ -42,8 +42,9 @@ changes a byte on the wire; neither RN-1 nor RN-2 varies by transport.
 
 ## 3. Section ids, headings and the outline
 
-Every top-level section has an id: `t1` to `t20`, `ta` to `tc` in RN-1,
-`m1` to `m13` and `ma` in RN-2, and the same ids again in RN-R, plus `rh`.
+Every top-level section has an id: `t1` to `t20` except `t16`, `ta` to `tc`
+in RN-1, `m1` to `m13` and `ma` in RN-2, and the same ids again in RN-R, plus
+`rh`. A removed section's id stays unassigned and is never reused.
 The heading is written
 
     <a id="t6"></a>
@@ -78,7 +79,6 @@ explicit anchor, or a repeated subsection id.
 | t13 | Session: keep-alive, timeout, disconnect, slot reset | RN-1 |
 | t14 | Replay protection | RN-1 |
 | t15 | Acknowledgement | RN-1 |
-| t16 | Fragmentation and reassembly | RN-1 |
 | t17 | Timing and defaults | RN-1 |
 | t18 | Error handling and counters | RN-1 |
 | t19 | Security considerations | RN-1 |
@@ -177,8 +177,7 @@ only when the section has one:
    decimal bytes.
 
    RN-1 packet tables use additive offsets: a byte count, optionally followed
-   by `plus the ack block size`, `and the payload size`, or `and the fragment
-   size`. The checker verifies that each field begins at the end of the
+   by `plus the ack block size` or `and the payload size`. The checker verifies that each field begins at the end of the
    previous field, including those variable lengths. It does not establish
    that every field's semantic range is correct.
 3. **State table**, where the section has states:

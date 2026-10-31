@@ -434,7 +434,7 @@ int rn_channels_dispatch_sequenced( struct rn_channels_t * channels, const struc
 
     if ( !reliable && record->bytes > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
     {
-        // A fragmented unreliable state is legal. It cannot fit the fixed future-state slot, so drop it without treating the sender as invalid.
+        // An unreliable state larger than one packet cannot fit the fixed future-state slot, so drop it without treating the sender as invalid.
         rn_sequenced_count( channels, ROCKETNET_COUNTER_MESSAGE_SEQUENCED_HOLD_FULL );
         return ROCKETNET_CHANNEL_DISPATCH_NONE;
     }

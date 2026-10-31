@@ -1241,7 +1241,6 @@ static inline void rocketnet_dst_check_unexplained_refusal( struct rocketnet_dst
             i == ROCKETNET_COUNTER_KEEP_ALIVE_ALREADY_RECEIVED ||
             i == ROCKETNET_COUNTER_PAYLOAD_ALREADY_RECEIVED ||
             i == ROCKETNET_COUNTER_CLIENT_PAYLOAD_ALREADY_RECEIVED ||
-            i == ROCKETNET_COUNTER_FRAGMENT_ALREADY_RECEIVED ||
             i == ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_ALREADY_RECEIVED ||
             i == ROCKETNET_COUNTER_CONNECTION_RESPONSE_NO_MAPPING;
         if ( !explained )

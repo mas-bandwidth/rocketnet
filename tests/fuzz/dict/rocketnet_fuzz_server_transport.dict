@@ -14,13 +14,12 @@ mode_damage_real="\x03"
 mode_ticks="\x04"
 
 # sealed type picks, the index into rocketnet_fuzz_c2s_types: keep-alive,
-# payload, disconnect, ack, fragment, response
+# payload, disconnect, ack, response
 sealed_keep_alive="\x00\x00"
 sealed_payload="\x01\x00"
 sealed_disconnect="\x02\x00"
 sealed_ack="\x03\x00"
-sealed_fragment="\x04\x00"
-sealed_response="\x05\x00"
+sealed_response="\x04\x00"
 
 # lengths: empty (a quiet step), one byte, the 7-byte minimum ack block
 # (ROCKETNET_ACK_BLOCK_MIN_BYTES), and the receive ceiling (1472)
@@ -44,8 +43,7 @@ prefilter_payload="\x05\x00\xb7\x59\x01\x00"
 prefilter_disconnect="\x06\x00\xb7\x59\x01\x00"
 prefilter_cookie="\x07\x00\xb7\x59\x01\x00"
 prefilter_ack="\x08\x00\xb7\x59\x01\x00"
-prefilter_fragment="\x09\x00\xb7\x59\x01\x00"
 
 # the first reserved type, and a keyed epoch the unkeyed 1.0 must refuse
-type_reserved="\x0a"
+type_reserved="\x09"
 epoch_keyed="\x01"

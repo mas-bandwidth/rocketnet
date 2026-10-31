@@ -13,7 +13,6 @@
 #
 #   python3 tools/pcapng.py --selftest
 #   python3 tools/pcapng.py hostile <tests/fuzz/corpus> <out.pcapng>
-#   python3 tools/pcapng.py fragments <tests/fuzz/corpus> <out.pcapng>
 #   python3 tools/pcapng.py summary <file.pcapng> ...
 
 import os
@@ -28,7 +27,6 @@ INTERFACE_WIRE = 0
 INTERFACE_OPENED = 1
 
 KIND_ACK_BLOCK = 1
-KIND_FRAGMENT = 2
 KIND_MESSAGE_PAYLOAD = 3
 
 MAX_FILE_BYTES = 128 * 1024
@@ -232,31 +230,6 @@ def build_hostile(corpus, out_path):
     return packets
 
 
-def build_fragments(corpus, out_path):
-    """Every tests/fuzz/corpus/fragment_* seed's length-prefixed records (u16 little-endian length,
-    then fragment type data, as tests/fuzz/rocketnet_fuzz.cpp reads them), each one kind-2 record
-    on interface 1, received by the server, alternating between reassembly connections 0
-    and 1 from the first record of each seed as the fuzz harness does."""
-    packets = []
-    ts = CLOCK_START_US
-    for name, data in _corpus_files(corpus, "fragment_"):
-        body = data[1:]
-        offset = 0
-        connection = 0
-        while offset + 2 <= len(body):
-            length = struct.unpack_from("<H", body, offset)[0]
-            offset += 2
-            record = body[offset: offset + length]
-            offset += length
-            packets.append({"interface": INTERFACE_OPENED, "linktype": LINKTYPE_USER0, "timestamp_us": ts,
-                            "data": bytes([KIND_FRAGMENT]) + record,
-                            "comment": "server connection=%d %s" % (connection, name)})
-            connection ^= 1
-            ts += 1000
-    write_packets(out_path, packets)
-    return packets
-
-
 def summary(path):
     packets = read_packets(path)
     counts = {}
@@ -328,14 +301,11 @@ def main(argv):
     if len(argv) == 4 and argv[1] == "hostile":
         print("%s: %d packets" % (argv[3], len(build_hostile(argv[2], argv[3]))))
         return 0
-    if len(argv) == 4 and argv[1] == "fragments":
-        print("%s: %d records" % (argv[3], len(build_fragments(argv[2], argv[3]))))
-        return 0
     if len(argv) >= 3 and argv[1] == "summary":
         for path in argv[2:]:
             summary(path)
         return 0
-    sys.stderr.write(__doc__ if __doc__ else "usage: pcapng.py --selftest | hostile <corpus> <out> | fragments <corpus> <out> | summary <file>...\n")
+    sys.stderr.write(__doc__ if __doc__ else "usage: pcapng.py --selftest | hostile <corpus> <out> | summary <file>...\n")
     return 2
 
 

@@ -138,8 +138,7 @@ static int rocketnet_functional_test_group( const char * name )
 // test_transport_control (a sibling binary, test_transport_control.cpp) runs
 // test_buffered_control_pressure at 300 and then at ROCKETNET_MAX_CLIENTS
 // clients, one process: each builds a loopback server from the development
-// config with the default packet payload limit and one reassembly slot, and
-// seeds a real ACK observation into every slot, so the per-slot ACK
+// config with the default packet payload limit, and seeds a real ACK observation into every slot, so the per-slot ACK
 // history becomes resident by design. Its
 // footprint is those servers' memory plans, not the suite-wide bound. The
 // 300-client server is destroyed before the full-capacity one is created,
@@ -160,7 +159,6 @@ static long rocketnet_transport_control_rss_bound_mb()
         struct rocketnet_server_transport_config_t config;
         rocketnet_server_transport_dev_config( &config );
         config.max_clients = clients;
-        config.max_fragmented_messages = 1;
 
         rocketnet_server_memory_plan_t plan;
         if ( !rocketnet_server_transport_memory_plan( &config, "portable", plan ) )

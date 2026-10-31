@@ -12,7 +12,6 @@
 #include "rocketnet_stats_window.h"
 #include "rocketnet_pending_frames.h"
 #include "rocketnet_memory.h"
-#include "rocketnet_fragment.h"
 #include "rocketnet_encryption_map.h"
 #include "rocketnet_token_tables.h"
 #include "rocketnet_client_slots.h"
@@ -114,7 +113,7 @@ static void ack_thread( rocketnet_platform_thread_t *, void * data )
     {
     }
 
-    writer->accepted = rocketnet_ack_endpoint_record_sent( writer->endpoint, writer->sequence, 100, writer->sequence, 1, 0, 10.0 );
+    writer->accepted = rocketnet_ack_endpoint_record_sent( writer->endpoint, writer->sequence, 100, writer->sequence, 1, 10.0 );
 }
 
 static void check_ack_retention( allocator_state & state )
@@ -142,7 +141,7 @@ static void check_ack_retention( allocator_state & state )
             last_time += cadence == 0 ? 0.0 : cadence == 1 ? 0.000001
                                           : cadence == 2   ? 0.1
                                                            : ( sequence % 7 == 0 ? 0.3 : 0.0001 );
-            check( rocketnet_ack_endpoint_record_sent( endpoint, sequence, 100, sequence, 1, 0, last_time ) );
+            check( rocketnet_ack_endpoint_record_sent( endpoint, sequence, 100, sequence, 1, last_time ) );
             rocketnet_replay_advance( &replay, sequence );
         }
 
@@ -170,7 +169,7 @@ static void check_ack_retention( allocator_state & state )
     rocketnet_ack_endpoint_reset( endpoint );
     for ( uint64_t sequence = 1; sequence <= depth; ++sequence )
     {
-        check( rocketnet_ack_endpoint_record_sent( endpoint, sequence, 100, sequence, 1, 0, 10.0 ) );
+        check( rocketnet_ack_endpoint_record_sent( endpoint, sequence, 100, sequence, 1, 10.0 ) );
     }
 
     const uint64_t next = depth + 1;
@@ -178,9 +177,9 @@ static void check_ack_retention( allocator_state & state )
     // Overflow is advisory, not a refusal or time-based wait. The newer
     // sequence is recorded immediately even with zero elapsed time.
 
-    check( !rocketnet_ack_endpoint_record_sent( endpoint, next, 100, next, 1, 0, 10.0 ) );
+    check( !rocketnet_ack_endpoint_record_sent( endpoint, next, 100, next, 1, 10.0 ) );
     check( endpoint->sent[1].sequence == next && endpoint->sent[1].packet_id == next );
-    check( !rocketnet_ack_endpoint_record_sent( endpoint, 1, 100, 1, 1, 0, 12.0 ) );
+    check( !rocketnet_ack_endpoint_record_sent( endpoint, 1, 100, 1, 1, 12.0 ) );
     check( endpoint->sent[1].sequence == next );
 
     rocketnet_ack_endpoint_reset( endpoint );
@@ -400,19 +399,11 @@ static void check_memory_geometry( allocator_state & state )
     check( !rocketnet_memory_add( total, 2, 2 ) && total == UINT64_MAX - 3 );
     check( rocketnet_memory_add( total, 1, 3 ) && total == UINT64_MAX );
 
-    const uint64_t small_geometry_bytes = rocketnet_reassembly_memory_required( 4, 8, 16384, 32 );
-    const uint64_t large_geometry_bytes = rocketnet_reassembly_memory_required( 1000, 256, ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES, 256000 );
-    check( small_geometry_bytes > 32 * 16384 && large_geometry_bytes > UINT64_C( 100 ) * 1024 * 1024 * 1024 );
-    check( !rocketnet_reassembly_memory_required( -1, 8, 16384, 32 ) );
-
+#if !ROCKETNET_XDP
+    (void) state;
+#else // #if !ROCKETNET_XDP
     const int before = state.calls;
 
-    if ( large_geometry_bytes > (uint64_t) ROCKETNET_REASSEMBLY_MEMORY_MIB * 1024 * 1024 )
-    {
-        check( !rocketnet_reassembly_set_create( &state, 1000, 256, ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES, 256000 ) );
-        check( state.calls == before ); // refused before any allocation
-    }
-#if ROCKETNET_XDP
     check( !rocketnet_xdp_umem_bytes( 0 ) );
     check( rocketnet_xdp_umem_bytes( 7 ) == (uint64_t) 7 * ROCKETNET_XDP_UMEM_FRAMES * ROCKETNET_XDP_FRAME_SIZE );
     check( !rocketnet_server_socket_memory_required( 0 ) );
@@ -425,7 +416,7 @@ static void check_memory_geometry( allocator_state & state )
     check( rocketnet_server_socket_memory_required( 22 ) > UINT32_MAX );
     check( rocketnet_server_socket_memory_required( 1024 ) > rocketnet_server_socket_memory_required( 7 ) );
     check( state.calls == before );
-#endif // #if ROCKETNET_XDP
+#endif // #if !ROCKETNET_XDP
 }
 
 template <typename T, typename CreateFn, typename DestroyFn>
@@ -505,24 +496,6 @@ static void check_component_create_sweeps( allocator_state & state )
                { return rocketnet_client_slots_create( &state, 16 ); },
                []( rocketnet_client_slots_t * s )
                { rocketnet_client_slots_destroy( s ); } ) == 9 );
-
-    // 5. rocketnet_reassembly_set_create: 4 allocations (fail N=1..4, succeed N=5).
-
-    check( sweep_component_create<rocketnet_reassembly_set_t>(
-               state,
-               [&]()
-               { return rocketnet_reassembly_set_create( &state, 4, 8, 16384, 32 ); },
-               []( rocketnet_reassembly_set_t * r )
-               { rocketnet_reassembly_set_destroy( r ); } ) == 4 );
-
-    // 6. rocketnet_send_arena_create: 2 allocations (fail N=1..2, succeed N=3).
-
-    check( sweep_component_create<rocketnet_send_arena_t>(
-               state,
-               [&]()
-               { return rocketnet_send_arena_create( &state, 16, 1280 ); },
-               []( rocketnet_send_arena_t * a )
-               { rocketnet_send_arena_destroy( a ); } ) == 2 );
 
     // 7. rocketnet_server_acks_create: 4 allocations (fail N=1..4, succeed N=5).
     {
@@ -1013,7 +986,6 @@ int main()
     memory_config.max_clients = ROCKETNET_MAX_CLIENTS + 1;
     check( rocketnet_server_transport_required_memory( &memory_config, "portable" ) == 0 );
     memory_config.max_clients = ROCKETNET_MAX_CLIENTS;
-    memory_config.max_fragmented_messages = ROCKETNET_MAX_FRAGMENTS;
 
     // the whole-host estimate is a plan too: it allocates nothing before init
 
@@ -1023,9 +995,9 @@ int main()
     check( rocketnet_server_transport_host_memory_estimate( &memory_config, "portable", &host_estimate ) );
 
     // The client transport's plan: defaults plan a nonzero size, the same config
-    // plans the same size again, unknown/NULL/auto transports and an overflowing
-    // geometry all refuse to 0, and planning allocates nothing. The payload is
-    // fixed at ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES (no config field). A
+    // plans the same size again, unknown/NULL/auto transports all refuse to 0,
+    // and planning allocates nothing. The payload is fixed at
+    // ROCKETNET_MAX_PACKET_PAYLOAD_BYTES (no config field). A
     // create-time counting-allocator match needs a live socket, so it is left
     // to benchmarks/transport_memory.cpp.
 
@@ -1039,9 +1011,6 @@ int main()
     check( rocketnet_client_transport_required_memory( &client_memory_config, "custom" ) == 0 );
     check( rocketnet_client_transport_required_memory( &client_memory_config, NULL ) == 0 );
     check( rocketnet_client_transport_required_memory( &client_memory_config, "portable" ) == client_default_memory );
-    client_memory_config.max_fragmented_messages = ROCKETNET_MAX_FRAGMENTS + 1;
-    check( rocketnet_client_transport_required_memory( &client_memory_config, "portable" ) == 0 );
-    client_memory_config.max_fragmented_messages = 0;
     check( state.calls == 0 );
 
     for ( size_t size = 0; size < 256; ++size )

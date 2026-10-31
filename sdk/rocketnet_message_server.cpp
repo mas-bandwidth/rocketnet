@@ -44,7 +44,6 @@
 #include "rocketnet_config.h"
 #include "rocketnet_counters.h"
 #include "rocketnet_endpoint.h"
-#include "rocketnet_fragment.h"
 #include "rocketnet_message.h"
 #include "rocketnet_message_object.h"
 #include "rocketnet_connection_reset.h"

@@ -84,7 +84,8 @@ static void live_verify_boundary_list()
         rocketnet_unit_check( list[i] == expect3[i] );
     }
 
-    // code 1: its transport payload edges and fragment fills, clipped to 16,373
+    // code 1: the schedule's edges at multiples of 1,413 bytes, clipped to
+    // 16,373; every size above one packet is sent as a promoted message
 
     const int n1 = rocketnet_live_boundaries( &config, 1, list );
     const uint32_t expect1[] = { 1404, 1405, 1406, 2814, 2815, 2816, 4227, 4228, 4229, 16372, 16373, 1403, 16373 - 1153, 16373 - 1152 };

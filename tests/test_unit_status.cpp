@@ -37,7 +37,6 @@ static const struct
     { ROCKETNET_STATUS_INVALID_ARGUMENT, "INVALID_ARGUMENT" },
     { ROCKETNET_STATUS_CONFIG_ENV_INVALID, "CONFIG_ENV_INVALID" },
     { ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE, "CONFIG_OUT_OF_RANGE" },
-    { ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED, "MEMORY_BUDGET_EXCEEDED" },
     { ROCKETNET_STATUS_MISSING_KEYS, "MISSING_KEYS" },
     { ROCKETNET_STATUS_INVALID_PROTOCOL_ID, "INVALID_PROTOCOL_ID" },
     { ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION, "DEV_KEYS_IN_PRODUCTION" },
@@ -70,11 +69,13 @@ static void test_status_names_cover_every_code()
     const int num_codes = (int) ( sizeof( status_expected ) / sizeof( status_expected[0] ) );
     check( ROCKETNET_STATUS_OK == 0 );
     check( ROCKETNET_STATUS_LOOPBACK_HUB_IN_USE == -34 );
-    check( num_codes == 35 );
+    check( num_codes == 34 );
+
+    // the codes run 0 down to -34 with -9 unassigned
 
     for ( int i = 0; i < num_codes; i++ )
     {
-        check( status_expected[i].code == -i );
+        check( status_expected[i].code == ( i < 9 ? -i : -i - 1 ) );
 
         const char * name = rocketnet_status_name( (enum rocketnet_status_t) status_expected[i].code );
         check( name != NULL );
@@ -95,6 +96,7 @@ static void test_status_name_out_of_range_is_unknown()
 {
     check( strcmp( rocketnet_status_name( (enum rocketnet_status_t) 1 ), "UNKNOWN" ) == 0 );
     check( strcmp( rocketnet_status_name( ( enum rocketnet_status_t ) - 35 ), "UNKNOWN" ) == 0 );
+    check( strcmp( rocketnet_status_name( ( enum rocketnet_status_t ) - 9 ), "UNKNOWN" ) == 0 );    // the unassigned code
     check( strcmp( rocketnet_status_name( (enum rocketnet_status_t) INT_MIN ), "UNKNOWN" ) == 0 );
     check( strcmp( rocketnet_status_name( (enum rocketnet_status_t) INT_MAX ), "UNKNOWN" ) == 0 );
 }
