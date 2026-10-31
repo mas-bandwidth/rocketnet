@@ -539,3 +539,7 @@ MCRNSendRotationFair.cfg	MCRNSendRotation.tla	pass	-	check	rnsendrotation	requir
 MCRNSendRotationBrokenReopen.cfg	MCRNSendRotation.tla	invariant	AbortsBounded	check	rnsendrotation	required	-
 MCRNSendRotationBrokenStallDue.cfg	MCRNSendRotation.tla	invariant	NoAbortWhilePaying	check	rnsendrotation	required	-
 MCRNSendRotationBrokenCursorAtServed.cfg	MCRNSendRotation.tla	invariant	BoundedWait	check	rnsendrotation	required	-
+MCRNUnreliableRingLayout.cfg	MCRNUnreliableRingLayout.tla	pass	-	check	rnunreliableringlayout	required	-
+MCRNUnreliableRingLayoutBrokenNoRenumber.cfg	MCRNUnreliableRingLayout.tla	invariant	LiveIsOrder	check	rnunreliableringlayout	required	-
+MCRNUnreliableRingLayoutBrokenStaleSurvivors.cfg	MCRNUnreliableRingLayout.tla	invariant	LiveIsOrder	check	rnunreliableringlayout	required	-
+MCRNUnreliableRingLayoutBrokenKeepPushed.cfg	MCRNUnreliableRingLayout.tla	invariant	LiveIsOrder	check	rnunreliableringlayout	required	-

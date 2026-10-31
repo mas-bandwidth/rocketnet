@@ -428,6 +428,7 @@ struct rn_region_t
 };
 
 // The next enqueue ticket on this connection. 0 is never issued.
+// proofs/tla/RNUnreliableRingLayout.tla DrawOther: one counter for every enqueue, the wrap noted.
 
 static inline uint32_t rn_region_schedule_ticket( rn_region_t * region )
 {
