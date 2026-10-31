@@ -495,6 +495,7 @@ bool rocketnet_network_simulator_patterns( struct rocketnet_network_simulator_t 
         simulator->window = (struct rocketnet_simulator_window_entry_t *) rocketnet_malloc( simulator->context, sizeof( struct rocketnet_simulator_window_entry_t ) * (size_t) reverse_window );
         if ( !simulator->window )
         {
+            simulator->drop_every_nth = 0;
             simulator->reverse_window = 0;
             return false;
         }
