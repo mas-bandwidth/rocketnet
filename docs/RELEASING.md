@@ -82,8 +82,8 @@ required runs are:
 
 - **CI** ([.github/workflows/ci.yml](../.github/workflows/ci.yml)), every job:
   - `build-and-test`, named `<os> / <build_type> / <leg>`: Ubuntu 24.04 and
-    macOS 15, Debug and Release, four legs per row (`unit`, `functional`,
-    `checks`, `builds`);
+    macOS 27 on arm64 (its rows are named `macos-15`), Debug and Release, four
+    legs per row (`unit`, `functional`, `checks`, `builds`);
   - `windows / Release (<leg>)` (legs a, b and c);
   - `XDP / libxdp 1.4 / Debug`, `happy path / <os>` and
     `backend example / <backend>`;

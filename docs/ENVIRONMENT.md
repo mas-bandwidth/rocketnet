@@ -117,9 +117,12 @@ development key must not be used for production.
     lifecycle peak and does not return `0` merely because this transport budget
     is smaller than the create-time endpoint/message block.
 - **Compile-time CMake caps (`BUILDING.md` and [`docs/LOAD.md`](LOAD.md))**:
-  - `-DROCKETNET_MAX_CLIENTS` (default `1000`) and `-DROCKETNET_MAX_CHANNELS`
-    (default `32`) set the compile-time upper bounds for `max_clients` and
-    `num_channels`.
+  - `-DROCKETNET_MAX_CLIENTS` (default `1000`) sets the compile-time upper
+    bound for `max_clients`.
+  - `ROCKETNET_MAX_CHANNELS` (default `32`, 1 to 65536) bounds `num_channels`.
+    It is a preprocessor definition, not a CMake option: an embedding build
+    defines it for the library and for every file that includes
+    `rocketnet.h`, with the same value.
   - `-DROCKETNET_REASSEMBLY_MEMORY_MIB` (default `512` MiB) bounds total
     fragment reassembly memory at `create` (`ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED`
     when the transport's fixed payload reassembly plan for `max_clients` and

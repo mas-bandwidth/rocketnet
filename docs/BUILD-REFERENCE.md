@@ -74,8 +74,10 @@ file: the known-answer fixtures it checks (`standard/vectors/connect_token_v1.js
 and `tests/wycheproof/*_test.json`) are compiled into it at build time by
 `cmake/EmbedTestFixtures.cmake`, so editing one rebuilds it. The vectors file is
 regenerated only by the tool `./bin/connect_token_vectors <path>`
-(tools/connect_token_vectors/main.cpp), which writes the path it is given. Tests run in parallel
-(at most eight, or `ROCKETNET_TEST_JOBS` when that is smaller). In a Release
+(tools/connect_token_vectors/main.cpp), which writes the path it is given. Tests run in parallel:
+one job per core, as many as the 1.6 GiB-per-job memory budget allows
+(`SUITE_JOB_MEMORY_BYTES` in `tests/suite_runner.h`; at most 64 on Windows).
+`ROCKETNET_TEST_JOBS` sets the count outright. In a Release
 build a test over 120 seconds is killed and the suite fails. Debug and
 sanitizer builds scale the limit by 5. A passing run prints each test's
 name and then `*** ALL TESTS PASSED ***`; `ROCKETNET_TEST_REPORT=1` adds the

@@ -95,11 +95,10 @@ of at most `ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES`, which it passes to
 `rocketnet_client_connect`. The token carries the two token keys for that one
 connection, which the backend draws fresh for each token; they are not
 long-lived and they identify nothing outside that connection. Fetch a token
-just before connecting: a token expires (30 seconds is the recommended
-lifetime; the development token's lifetime is
-`ROCKETNET_DEV_CONNECT_TOKEN_EXPIRE_SECONDS`, defined in
-[sdk/rocketnet_connect_token.h](../sdk/rocketnet_connect_token.h), an internal
-header, not in the public [sdk/rocketnet.h](../sdk/rocketnet.h)).
+just before connecting: a token expires. 30 seconds is the recommended
+lifetime and the `expire_seconds` that `rocketnet_connect_token_default_config`
+fills in; a development token lives for the `expire_seconds` passed to
+`rocketnet_create_dev_connect_token`.
 
 ## Development keys and production keys
 
