@@ -653,7 +653,7 @@ static void * portable_create( void * context, const rocketnet_server_transport_
     // the kernel holds whatever arrives until the next update
 
     const int max_clients = config->transport && config->transport->max_clients > 0 ? config->transport->max_clients : ROCKETNET_DEFAULT_MAX_CLIENTS;
-    const int receive_buffer_bytes = rocketnet_server_receive_buffer_request( max_clients );
+    const int receive_buffer_bytes = rocketnet_server_transport_receive_buffer_request( "portable", max_clients );
     server->socket = (rocketnet_platform_socket_t *) portable_socket_create( context, config->name, bind, receive_buffer_bytes, config->status );
     if ( !server->socket )
     {

@@ -618,12 +618,23 @@ void rocketnet_sleep_set_platform_dispatch_for_test( void ( *dispatch )( double 
 // ceil( max_clients x receive_kbps_per_client x 125 x
 // ROCKETNET_SERVER_RECEIVE_BUFFER_MARGIN / update_hz ) bytes, at least
 // ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE and at most INT_MAX; arguments below 1
-// count as 1. rocketnet_server_receive_buffer_request is the request every
-// server socket makes: max_clients at the default client send budget
+// count as 1. rocketnet_server_receive_buffer_request is that size at
+// max_clients, the default client send budget
 // (ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS) and the slowest supported update
-// rate (ROCKETNET_SERVER_RECEIVE_MIN_UPDATE_HZ)
+// rate (ROCKETNET_SERVER_RECEIVE_MIN_UPDATE_HZ).
+//
+// rocketnet_server_transport_receive_buffer_request is the SO_RCVBUF every
+// server socket of a built-in transport asks for, and the size the host memory
+// estimate charges per socket. Each socket is sized for the full client count:
+// the portable and msgx socket at the config's max_clients, and every gso and
+// io_uring queue socket and the iocp and rio socket at ROCKETNET_MAX_CLIENTS,
+// because those creates do not carry max_clients. A queue socket is not sized
+// for a share of the clients: SO_REUSEPORT hashes flows to sockets, so any
+// one socket may carry any number of them. xdp opens no UDP socket and returns
+// 0, as does a name that is not a built-in transport.
 int rocketnet_server_receive_buffer_bytes( int max_clients, int receive_kbps_per_client, int update_hz );
 int rocketnet_server_receive_buffer_request( int max_clients );
+int rocketnet_server_transport_receive_buffer_request( const char * transport, int max_clients );
 
 // logs one line per server socket with what the kernel granted and what was
 // requested. A grant below the request is a warning naming the limit to

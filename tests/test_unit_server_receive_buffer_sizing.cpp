@@ -13,6 +13,7 @@
 #include "rocketnet.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_constants.h"
+#include "rocketnet_layers.h"
 
 #include <limits.h>
 
@@ -73,3 +74,97 @@ static void test_server_receive_buffer_bytes_formula()
 }
 
 REGISTER_UNIT_TEST( test_server_receive_buffer_bytes_formula );
+
+static void test_server_transport_receive_buffer_request()
+{
+    // portable and msgx size for the config's max_clients
+
+    check( rocketnet_server_transport_receive_buffer_request( "portable", 64 ) == rocketnet_server_receive_buffer_request( 64 ) );
+    check( rocketnet_server_transport_receive_buffer_request( "msgx", 64 ) == rocketnet_server_receive_buffer_request( 64 ) );
+    check( rocketnet_server_transport_receive_buffer_request( "portable", ROCKETNET_MAX_CLIENTS ) ==
+           rocketnet_server_receive_buffer_request( ROCKETNET_MAX_CLIENTS ) );
+
+    // gso, io_uring, iocp and rio size every socket for ROCKETNET_MAX_CLIENTS,
+    // whatever max_clients the config carries: their creates do not carry it,
+    // and an SO_REUSEPORT queue socket may receive any share of the clients
+
+    const char * native[] = { "gso", "io_uring", "iocp", "rio" };
+    for ( const char * transport : native )
+    {
+        check( rocketnet_server_transport_receive_buffer_request( transport, 1 ) == rocketnet_server_receive_buffer_request( ROCKETNET_MAX_CLIENTS ) );
+        check( rocketnet_server_transport_receive_buffer_request( transport, 64 ) == rocketnet_server_receive_buffer_request( ROCKETNET_MAX_CLIENTS ) );
+    }
+
+#if ROCKETNET_MAX_CLIENTS == 1000
+    // at the default ceiling: 25,000,000 bytes per socket, not the 1,000,000
+    // floor (ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE)
+
+    for ( const char * transport : native )
+        check( rocketnet_server_transport_receive_buffer_request( transport, 1000 ) == 25000000 );
+    check( rocketnet_server_transport_receive_buffer_request( "portable", 1000 ) == 25000000 );
+    check( rocketnet_server_transport_receive_buffer_request( "gso", 1000 ) != ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
+#endif // #if ROCKETNET_MAX_CLIENTS == 1000
+
+    // no UDP socket, no request
+
+    check( rocketnet_server_transport_receive_buffer_request( "xdp", 1000 ) == 0 );
+    check( rocketnet_server_transport_receive_buffer_request( "custom", 1000 ) == 0 );
+    check( rocketnet_server_transport_receive_buffer_request( "auto", 1000 ) == 0 );
+    check( rocketnet_server_transport_receive_buffer_request( NULL, 1000 ) == 0 );
+}
+
+REGISTER_UNIT_TEST( test_server_transport_receive_buffer_request );
+
+// The host memory estimate charges each socket exactly the request the
+// transport's create passes, at every queue count and max_clients: no socket
+// is opened, the estimate is arithmetic over the config.
+static void test_server_host_estimate_charges_the_receive_request()
+{
+    const char * transports[] = { "portable", "msgx", "gso", "io_uring", "iocp", "rio" };
+    const int client_counts[] = { 1, 64, ROCKETNET_MAX_CLIENTS };
+    int estimated = 0;
+
+    for ( const char * transport : transports )
+    {
+        for ( int max_clients : client_counts )
+        {
+            for ( int queues = 1; queues <= 4; queues++ )
+            {
+                struct rocketnet_server_transport_config_t config;
+                rocketnet_server_transport_default_config( &config );
+                config.max_clients = max_clients;
+                config.num_xdp_queues = queues;
+
+                struct rocketnet_host_memory_estimate_t estimate;
+                if ( !rocketnet_server_transport_host_memory_estimate( &config, transport, &estimate ) )
+                    continue;
+
+                estimated++;
+
+                const uint64_t request = (uint64_t) rocketnet_server_transport_receive_buffer_request( transport, max_clients );
+                check( request > 0 );
+                check( estimate.sockets >= 1 );
+                check( estimate.socket_receive_buffer_bytes == (uint64_t) estimate.sockets * request );
+                check( estimate.socket_send_buffer_bytes == (uint64_t) estimate.sockets * ROCKETNET_SOCKET_SEND_BUFFER_SIZE );
+            }
+        }
+    }
+
+    check( estimated > 0 );
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_MAX_CLIENTS == 1000
+    // gso at 4 queues and 1000 clients: four sockets of 25,000,000 bytes each
+
+    struct rocketnet_server_transport_config_t config;
+    rocketnet_server_transport_default_config( &config );
+    config.max_clients = 1000;
+    config.num_xdp_queues = 4;
+
+    struct rocketnet_host_memory_estimate_t estimate;
+    check( rocketnet_server_transport_host_memory_estimate( &config, "gso", &estimate ) );
+    check( estimate.sockets == 4 );
+    check( estimate.socket_receive_buffer_bytes == 100000000ull );
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_MAX_CLIENTS == 1000
+}
+
+REGISTER_UNIT_TEST( test_server_host_estimate_charges_the_receive_request );

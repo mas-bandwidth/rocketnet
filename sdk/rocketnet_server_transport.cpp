@@ -1152,12 +1152,12 @@ uint64_t rocketnet_server_transport_required_memory( const rocketnet_server_tran
 
 // Whole-host estimate (TRANSPORT_READINESS.md): the plan plus what each
 // built-in transport asks of the kernel. Requests only, never grants. The sizes
-// are the ones the transports pass: the portable and msgx socket and every gso
-// queue socket set SO_SNDBUF/SO_RCVBUF to ROCKETNET_SOCKET_SEND_BUFFER_SIZE and
-// ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE (rocketnet_driver_builtin.cpp,
-// rocketnet_server_gso_linux.cpp), as do every io_uring queue socket
-// (rocketnet_server_uring_linux.cpp) and the iocp socket
-// (rocketnet_server_iocp_windows.cpp); each xdp queue's AF_XDP socket asks for
+// are the ones the transports pass: every UDP server socket sets SO_SNDBUF to
+// ROCKETNET_SOCKET_SEND_BUFFER_SIZE and SO_RCVBUF to
+// rocketnet_server_transport_receive_buffer_request, the function each create
+// calls (rocketnet_driver_builtin.cpp, rocketnet_server_gso_linux.cpp,
+// rocketnet_server_uring_linux.cpp, rocketnet_server_iocp_windows.cpp,
+// rocketnet_server_rio_windows.cpp); each xdp queue's AF_XDP socket asks for
 // ROCKETNET_XDP_RECV_QUEUE_SIZE RX and ROCKETNET_XDP_SEND_QUEUE_SIZE TX
 // descriptors and sets no socket buffer (rocketnet_server_socket_linux.cpp).
 bool rocketnet_server_transport_host_memory_estimate( const struct rocketnet_server_transport_config_t * config,
@@ -1193,8 +1193,10 @@ bool rocketnet_server_transport_host_memory_estimate( const struct rocketnet_ser
     }
     else
     {
+        const int max_clients = config && config->max_clients > 0 ? config->max_clients : ROCKETNET_DEFAULT_MAX_CLIENTS;
         if ( !rocketnet_memory_add( e.socket_send_buffer_bytes, (uint64_t) plan.sockets, ROCKETNET_SOCKET_SEND_BUFFER_SIZE ) ||
-             !rocketnet_memory_add( e.socket_receive_buffer_bytes, (uint64_t) plan.sockets, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE ) )
+             !rocketnet_memory_add( e.socket_receive_buffer_bytes, (uint64_t) plan.sockets,
+                                    (uint64_t) rocketnet_server_transport_receive_buffer_request( transport, max_clients ) ) )
             return false;
     }
 

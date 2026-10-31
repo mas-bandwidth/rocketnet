@@ -258,6 +258,47 @@ void rocketnet_test_server_receive_buffer_sized_from_max_clients()
 
 #if defined( __linux__ )
 
+// A gso server's queue sockets ask for the documented request
+// (rocketnet_server_transport_receive_buffer_request): the full client count
+// on every SO_REUSEPORT socket, and the grant line compares against it.
+void rocketnet_test_server_gso_receive_buffer_request()
+{
+    server_receive_low_tick_clear_log();
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
+    rocketnet_log_function( server_receive_low_tick_capture, NULL );
+
+    const int request = rocketnet_server_transport_receive_buffer_request( "gso", ROCKETNET_MAX_CLIENTS );
+    server_receive_low_tick_require( request == rocketnet_server_receive_buffer_request( ROCKETNET_MAX_CLIENTS ) );
+
+    struct rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_dev_config( &server_config );
+    server_config.max_clients = server_receive_low_tick_server_clients;
+    server_config.num_xdp_queues = 2;
+    server_config.token_epoch_unix_seconds = 1700000000ULL;
+    snprintf( server_config.transport, sizeof( server_config.transport ), "%s", "gso" );
+
+    int status = -1;
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &server_config, 1000.0, &status );
+    server_receive_low_tick_require( server != NULL );
+    server_receive_low_tick_require( status == ROCKETNET_STATUS_OK );
+
+    char expected[96];
+    snprintf( expected, sizeof( expected ), "server gso: socket receive buffer granted " );
+    server_receive_low_tick_require( strstr( server_receive_low_tick_log, expected ) != NULL );
+    snprintf( expected, sizeof( expected ), "of %d requested bytes", request );
+    server_receive_low_tick_require( strstr( server_receive_low_tick_log, expected ) != NULL );
+
+    rocketnet_server_transport_stop( server );
+    rocketnet_server_transport_update( server, 1000.0 );
+    rn_native_server_transport_stop_and_destroy( server );
+
+    printf( "server_gso_receive_buffer_request request_bytes=%d\n", request );
+    fflush( stdout );
+
+    rocketnet_log_function( NULL, NULL );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+}
+
 #include <sys/resource.h>
 
 static const int server_receive_low_tick_payload_bytes_per_second = 32000; // 256 kbps of payload per client

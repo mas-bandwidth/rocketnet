@@ -183,7 +183,8 @@ banks and publishes a bank after every read. While main holds the other
 banks the worker has no free bank, stops reading the socket and waits
 (`PORTABLE_RX_WAIT_FULL`), so the traffic that arrives in that time waits in
 the kernel's receive buffer, and a buffer too small for it drops datagrams
-before the server sees them. Portable and msgx server sockets therefore ask for:
+before the server sees them. The GSO receive worker stops reading the same
+way once its buffer is full. Every UDP server socket therefore asks for:
 
 ```
 receive buffer bytes = ceil( max_clients x 1000 kbps x 125 x 2 / 10 Hz )
@@ -196,10 +197,13 @@ the slowest supported update interval (0.1 s at 10 Hz), times 2 for the
 kernel's per-packet accounting, which charges more than the packet bytes. At
 1000 clients that is 25,000,000 bytes; at 64 clients, 1,600,000. Servers
 updating faster than 10 Hz need proportionally less; the request stays sized
-for 10 Hz. The io_uring and iocp transports use the same formula with the build's
-`ROCKETNET_MAX_CLIENTS`. GSO instead requests `ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE`
-(1,000,000 bytes) on each socket; it does not use this client-count formula.
-The request is an upper bound: the kernel charges only for what it holds.
+for 10 Hz. Portable and msgx use the server's `max_clients`; GSO, io_uring,
+iocp and rio use the build's `ROCKETNET_MAX_CLIENTS`, because their creates do
+not carry `max_clients`. Each GSO and io_uring queue socket asks for the full
+client count, not a share of it: `SO_REUSEPORT` hashes flows to sockets, so
+any one queue's socket may receive any number of the clients. Four queues at
+the default ceiling ask for 4 x 25,000,000 bytes. The request is an upper
+bound: the kernel charges only for what it holds.
 
 The kernel may grant less. Linux clamps the request to `net.core.rmem_max`
 (about 208 KB by default) without an error; macOS and the BSDs refuse a
@@ -365,7 +369,8 @@ rules, with no allocation, socket or thread. Each field is a
 request, never what the kernel grants: `allocator_bytes` (the plan without
 UMEM), `umem_bytes` (XDP frame memory, the plan's UMEM), `socket_send_buffer_bytes`
 and `socket_receive_buffer_bytes` (the `SO_SNDBUF` and `SO_RCVBUF` sizes asked of
-every socket the transport opens), `xdp_ring_bytes` (the AF_XDP RX and TX
+every socket the transport opens, the receive size from
+[Receive buffer sizing](#receive-buffer-sizing)), `xdp_ring_bytes` (the AF_XDP RX and TX
 descriptor rings of every queue) and `thread_stack_bytes` (`worker_threads` x
 `thread_stack_bytes_per_thread`; transports create threads with the platform
 default stack, so on POSIX this is the default thread attribute's stack size,
