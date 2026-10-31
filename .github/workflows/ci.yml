@@ -2511,19 +2511,6 @@ jobs:
             -DCMAKE_EXE_LINKER_FLAGS="-Wl,-rpath,$tc/lib64"
           cmake --build build --target instruction_count --parallel
 
-      - name: TEMPORARY re-pin the baseline on the pinned toolchain
-        timeout-minutes: 5
-        run: >-
-          python3 tools/check_instructions.py --bin ./build/instruction_count
-          --toolchain "$GITHUB_WORKSPACE/pinned-toolchain" --repin
-          --reason "Rebaselined on the gate's own pinned toolchain build (tools/build_pinned_toolchain.sh: gcc 15.2.0 and valgrind 3.26.0 built from source), replacing the Ubuntu-packaged gcc 15.2 measurement (commit 78b0d06a: client_frame 787980 Ir, server_tick 114119350 Ir). Glenn approved 2026-10-31."
-
-      - name: TEMPORARY upload the re-pinned baseline
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
-        with:
-          name: instruction-baseline-repin
-          path: benchmarks/instruction_baseline.json
-
       - name: Run the cachegrind instruction gate with the pinned valgrind
         timeout-minutes: 5
         shell: bash
