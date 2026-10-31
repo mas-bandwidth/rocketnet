@@ -955,6 +955,11 @@ static uint64_t time_start;
 static double time_start;
 #endif // #if defined( __APPLE__ )
 
+// set once init has set up the clock; until then rocketnet_platform_time is
+// 0 (on macOS the timebase denominator is still zero). The clock stays set
+// up across term, so this is never cleared.
+static std::atomic<bool> clock_ready( false );
+
 bool rocketnet_platform_init()
 {
 #if ROCKETNET_DEV
@@ -970,6 +975,7 @@ bool rocketnet_platform_init()
     clock_gettime( CLOCK_MONOTONIC_RAW, &ts );
     time_start = (double) ts.tv_sec + ( (double) ( ts.tv_nsec ) ) / 1000000000.0;
 #endif // #if defined( __APPLE__ )
+    clock_ready.store( true, std::memory_order_release );
 
 #if defined( __APPLE__ ) && TARGET_OS_OSX
     // absence is not an error: a socket without them runs the portable pump
@@ -1029,6 +1035,8 @@ bool rocketnet_platform_client_dual_stack()
 
 double rocketnet_platform_time()
 {
+    if ( !clock_ready.load( std::memory_order_acquire ) )
+        return 0.0;
 #if defined( __APPLE__ )
     uint64_t current = mach_absolute_time();
     return ( (double) ( current - time_start ) ) * ( (double) timebase_info.numer ) / ( (double) timebase_info.denom ) / 1000000000.0;
@@ -2989,6 +2997,11 @@ extern void rocketnet_free( void * context, void * p );
 static LARGE_INTEGER timer_frequency;
 static LARGE_INTEGER timer_start;
 
+// set once init has set up the clock; until then rocketnet_platform_time is
+// 0 (the frequency is still zero). The clock stays set up across term, so
+// this is never cleared.
+static std::atomic<bool> clock_ready( false );
+
 // Windows: SetThreadPriority( thread, THREAD_PRIORITY_TIME_CRITICAL ) on the
 // network threads (flow_platform.cpp:1839-1851), and the process timer at 1 ms
 // from platform init to platform term, matching the host application's lifecycle
@@ -3123,6 +3136,7 @@ bool rocketnet_platform_init()
     ROCKETNET_PLATFORM_PRIORITY_CALL( timer_frequency )
     ( &timer_frequency );
     QueryPerformanceCounter( &timer_start );
+    clock_ready.store( true, std::memory_order_release );
 
     if ( ROCKETNET_PLATFORM_PRIORITY_CALL( platform_start )() != 0 )
     {
@@ -3457,6 +3471,8 @@ void rocketnet_platform_thread_wait( rocketnet_platform_thread_t * thread, doubl
 
 double rocketnet_platform_time()
 {
+    if ( !clock_ready.load( std::memory_order_acquire ) )
+        return 0.0;
     LARGE_INTEGER now;
     QueryPerformanceCounter( &now );
     return ( (double) ( now.QuadPart - timer_start.QuadPart ) ) / ( (double) ( timer_frequency.QuadPart ) );

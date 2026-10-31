@@ -1133,7 +1133,8 @@ ROCKETNET_EXPORT void rocketnet_log_function( rocketnet_log_function_t function,
 /// - A setter for a disconnected client or empty server slot returns OK and
 ///   does nothing. An invalid value returns INVALID_ARGUMENT.
 
-/// Returns monotonic elapsed seconds from an unspecified origin.
+/// Returns monotonic elapsed seconds from an unspecified origin, or 0 before
+/// the first rocketnet_init has set up the clock.
 
 ROCKETNET_EXPORT double rocketnet_time( void );
 

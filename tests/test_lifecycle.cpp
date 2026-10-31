@@ -992,6 +992,12 @@ static void check_allocator_install_race()
 
 int main()
 {
+    // nothing has initialized the library yet: the clock reads 0, not the
+    // nan of a zero timebase (macOS), the infinity of a zero frequency
+    // (Windows) or an uptime from another origin (Linux)
+
+    check( rocketnet_time() == 0.0 );
+
     allocator_state state;
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
     rocketnet_allocator_ex( allocate, release );
@@ -1057,6 +1063,8 @@ int main()
     rocketnet_free( &state, p );
     check( state.live == 0 );
     check( rocketnet_init( &state, allocate, release ) == ROCKETNET_STATUS_OK );
+    const double clock_after_init = rocketnet_time();
+    check( clock_after_init >= 0.0 && clock_after_init < 3600.0 );
     check( rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK );
     rocketnet_forbid_xdp_commit();
     rocketnet_allocator_ex( refuse_allocation, refuse_free ); // initialized library prevents replacement

@@ -197,14 +197,6 @@ const char * rocketnet_status_name( enum rocketnet_status_t status )
     return "UNKNOWN";
 }
 
-// whether rocketnet_platform_init has set up the clock: until it has,
-// rocketnet_platform_time has no timebase (on macOS it divides by a zero
-// denominator), so the default sink stamps lines logged before it, such as
-// a refused allocator or a failed platform init, with 0. The clock stays set
-// up across term, so the flag is never cleared.
-
-static std::atomic<bool> rocketnet_log_clock_ready( false );
-
 static void default_log_callback( void * context, enum rocketnet_log_level_t level, const char * message, size_t length )
 {
 #if !ROCKETNET_UNREAL_ENGINE     // IMPORTANT: Unreal doesn't like printf
@@ -213,8 +205,7 @@ static void default_log_callback( void * context, enum rocketnet_log_level_t lev
     if ( level != ROCKETNET_LOG_LEVEL_NONE )
     {
         const char * level_string = rocketnet_log_level_word( level );
-        const double time = rocketnet_log_clock_ready.load( std::memory_order_acquire ) ? rocketnet_platform_time() : 0.0;
-        printf( "%.6f: %s: %.*s\n", time, level_string, (int) length, message );
+        printf( "%.6f: %s: %.*s\n", rocketnet_platform_time(), level_string, (int) length, message );
     }
     else
     {
@@ -788,8 +779,6 @@ bool rocketnet_init_ex( void * context, void * ( *malloc_function )( void * cont
     (void) context;
 
     const bool platform_ready = rocketnet_platform_init();
-    if ( platform_ready )
-        rocketnet_log_clock_ready.store( true, std::memory_order_release );
     const bool sodium_ready = platform_ready && sodium_init() >= 0;
     if ( !sodium_ready )
     {

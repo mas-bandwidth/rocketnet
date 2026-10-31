@@ -113,7 +113,7 @@ void rocketnet_platform_term( void );
 
 int rocketnet_platform_id( void );
 
-// seconds since rocketnet_platform_init
+// seconds since rocketnet_platform_init; 0 before the first init has set up the clock
 double rocketnet_platform_time( void );
 
 // the connect token clock's epoch in Unix seconds: configured when nonzero,
