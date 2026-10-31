@@ -1313,17 +1313,19 @@ static void test_channels_allocator_validation()
     config.max_message_bytes = 64 * ROCKETNET_MESSAGE_FRAGMENT_BYTES;
     check( rocketnet_message_validate_config( &config ) == 1 );
 
-    // the edge of the store rule: the large class holds exactly one maximal block
+    // the edge of the sizing floor: the large class holds exactly
+    // ceil( max_message_bytes / 1152 ) chunks
 
     rocketnet_message_default_config( &config );
     config.max_message_bytes = 4 * ROCKETNET_MESSAGE_FRAGMENT_BYTES;
-    config.send_message_buffer_bytes = 12288;               // a third of 12288 holds three 1152 chunks with their links
+    config.send_message_buffer_bytes = 12288;               // a third of 12288 holds three 1152 chunks with their meta words
     check( rocketnet_message_validate_config( &config ) == 0 );
     config.max_message_bytes = 3 * ROCKETNET_MESSAGE_FRAGMENT_BYTES;
     check( rocketnet_message_validate_config( &config ) == 1 );
 
     // docs/LOAD.md Table 3's lean profile is refused at the default max_message_bytes: its
-    // large class holds 18 chunks, a 32768-byte block needs 29 (section 4)
+    // large class holds 18 chunks, below the floor of 29 that a 32768-byte
+    // max_message_bytes sets (section 4)
 
     rocketnet_message_default_config( &config );
     config.reliable_messages_in_flight = 256;
@@ -1386,18 +1388,30 @@ static void test_channels_allocator_send_store()
     rn_region_layout_t layout;
     check( rn_region_layout( &config, &layout ) );
 
-    uint8_t * memory = (uint8_t *) rocketnet_malloc( NULL, (size_t) layout.bytes[RN_PART_SEND_STORE] );
-    check( memory );
+    // a descriptor for every chunk of the largest class and one more, so each
+    // class fills to the store's own refusal
 
-    rn_send_store_t store;
-    rn_send_store_init( &store, memory, layout.bytes[RN_PART_SEND_STORE] );
+    uint32_t most = 0;
+    for ( int c = 0; c < RN_STORE_NUM_CLASSES; c++ )
+        most = layout.store_chunks[c] > most ? layout.store_chunks[c] : most;
+    config.send_queue_messages = (int) most + 1;
+    check( rocketnet_message_validate_config( &config ) );
 
-    const int class_bytes[RN_STORE_NUM_CLASSES] = { RN_STORE_SMALL_BYTES, RN_STORE_MEDIUM_BYTES, RN_STORE_LARGE_BYTES };
+    rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof( counters ) );
+
+    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+    check( arena );
+
+    rn_region_t * region = rn_arena_region( arena, 0 );
+    rn_send_store_t * store = &region->store;
+    const uint8_t * store_begin = region->store_memory;
+    const uint8_t * store_end = region->store_memory + region->store_bytes;
 
     for ( int c = 0; c < RN_STORE_NUM_CLASSES; c++ )
     {
-        check( rn_send_store_total_chunks( &store, c ) == layout.store_chunks[c] );
-        check( rn_send_store_free_chunks( &store, c ) == layout.store_chunks[c] );
+        check( rn_send_store_total_chunks( store, c ) == layout.store_chunks[c] );
+        check( rn_send_store_free_chunks( store, c ) == layout.store_chunks[c] );
     }
 
     // the smallest class that fits, by size
@@ -1408,207 +1422,159 @@ static void test_channels_allocator_send_store()
     check( rn_send_store_class_for( 512 ) == RN_STORE_MEDIUM );
     check( rn_send_store_class_for( 513 ) == RN_STORE_LARGE );
     check( rn_send_store_class_for( 1152 ) == RN_STORE_LARGE );
-    check( rn_send_store_class_for( 1153 ) == RN_STORE_LARGE );
-    check( rn_send_store_chunks_needed( 1 ) == 1 );
-    check( rn_send_store_chunks_needed( 1152 ) == 1 );
-    check( rn_send_store_chunks_needed( 1153 ) == 2 );
-    check( rn_send_store_chunks_needed( 32768 ) == 29 );
 
-    // fill every class to refusal, with nothing else taken; the chunks are
-    // distinct, inside the store and 16-aligned
+    // a message above one chunk is the caller's refusal here (it takes a
+    // span): nothing taken, nothing counted, the region not exhausted
 
-    std::vector<uint32_t> handles[RN_STORE_NUM_CLASSES];
+    check( rn_region_send_alloc( region, RN_STORE_LARGE_BYTES + 1 ) == RN_DESCRIPTOR_NONE );
+    check( rn_region_send_fit_store( region, RN_STORE_LARGE_BYTES + 1, NULL ) == RN_SEND_FIT_REFUSED );
+    check( !rn_region_exhausted( region ) );
+    check( rn_counter( &counters, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL ) == 0 );
+    check( region->descriptors_free == region->queue );
+
+    const int class_bytes[RN_STORE_NUM_CLASSES] = { RN_STORE_SMALL_BYTES, RN_STORE_MEDIUM_BYTES, RN_STORE_LARGE_BYTES };
 
     for ( int c = 0; c < RN_STORE_NUM_CLASSES; c++ )
     {
-        const uint32_t total = rn_send_store_total_chunks( &store, c );
-        handles[c].resize( total );
+        rn_region_carve( region );
+
+        // fill the class, with nothing else taken; the chunks are distinct,
+        // inside the store and 16-aligned
+
+        const uint32_t total = rn_send_store_total_chunks( store, c );
+        std::vector<uint32_t> taken( total );
 
         for ( uint32_t i = 0; i < total; i++ )
         {
-            handles[c][i] = rn_send_store_alloc( &store, class_bytes[c] );
-            check( handles[c][i] != RN_CHUNK_NONE );
+            taken[i] = rn_region_send_alloc( region, class_bytes[c] );
+            check( taken[i] != RN_DESCRIPTOR_NONE );
+            check( rn_send_store_chunk_class( region->send_descriptors[taken[i]].chunk ) == c );
 
-            uint8_t * data = rn_send_store_chunk_data( &store, handles[c][i] );
-            check( data >= memory && data + class_bytes[c] <= memory + layout.bytes[RN_PART_SEND_STORE] );
+            uint8_t * data = rn_region_send_write_pointer( region, taken[i] );
+            check( data >= store_begin && data + class_bytes[c] <= store_end );
             check( ( (uintptr_t) data & 15 ) == 0 );
             memset( data, (int) ( (uint32_t) c * 64 + ( i & 63 ) ), (size_t) class_bytes[c] );
         }
 
-        check( rn_send_store_free_chunks( &store, c ) == 0 );
-        check( rn_send_store_alloc( &store, class_bytes[c] ) == RN_CHUNK_NONE );
+        check( rn_send_store_free_chunks( store, c ) == 0 );
 
         // no fallback into a larger class, and no other class moved
 
         for ( int other = 0; other < RN_STORE_NUM_CLASSES; other++ )
-            if ( other > c )
-                check( rn_send_store_free_chunks( &store, other ) == rn_send_store_total_chunks( &store, other ) );
-    }
+            if ( other != c )
+                check( rn_send_store_free_chunks( store, other ) == rn_send_store_total_chunks( store, other ) );
 
-    // the bytes written are still there: no two handles share a chunk
+        // the bytes written are still there: no two sends share a chunk
 
-    for ( int c = 0; c < RN_STORE_NUM_CLASSES; c++ )
-        for ( uint32_t i = 0; i < rn_send_store_total_chunks( &store, c ); i++ )
+        for ( uint32_t i = 0; i < total; i++ )
         {
-            const uint8_t * data = rn_send_store_chunk_data( &store, handles[c][i] );
+            const uint8_t * data = rn_region_send_write_pointer( region, taken[i] );
             for ( int b = 0; b < class_bytes[c]; b++ )
                 check( data[b] == (uint8_t) ( (uint32_t) c * 64 + ( i & 63 ) ) );
         }
 
-    // free in random order, refill, and the counts hold at every step
+        // free in random order, refill, and the counts hold at every step
 
-    for ( int c = 0; c < RN_STORE_NUM_CLASSES; c++ )
-    {
-        const uint32_t total = rn_send_store_total_chunks( &store, c );
         for ( uint32_t i = total; i > 1; i-- )
         {
             const uint32_t j = rn_random() % i;
-            const uint32_t t = handles[c][i - 1];
-            handles[c][i - 1] = handles[c][j];
-            handles[c][j] = t;
+            const uint32_t t = taken[i - 1];
+            taken[i - 1] = taken[j];
+            taken[j] = t;
         }
 
         for ( uint32_t i = 0; i < total; i++ )
         {
-            rn_send_store_free( &store, handles[c][i] );
-            check( rn_send_store_free_chunks( &store, c ) == i + 1 );
+            rn_region_send_free( region, taken[i] );
+            check( rn_send_store_free_chunks( store, c ) == i + 1 );
         }
 
         for ( uint32_t i = 0; i < total; i++ )
-        {
-            check( rn_send_store_alloc( &store, class_bytes[c] ) != RN_CHUNK_NONE );
-        }
-        check( rn_send_store_alloc( &store, class_bytes[c] ) == RN_CHUNK_NONE );
+            check( rn_region_send_alloc( region, class_bytes[c] ) != RN_DESCRIPTOR_NONE );
+
+        // the class full: the store's refusal, counted as itself, takes no descriptor
+
+        const uint64_t store_full = rn_counter( &counters, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL );
+        const uint32_t descriptors_free = region->descriptors_free;
+        check( descriptors_free > 0 );
+        check( rn_region_send_alloc( region, class_bytes[c] ) == RN_DESCRIPTOR_NONE );
+        check( rn_counter( &counters, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL ) == store_full + 1 );
+        check( region->descriptors_free == descriptors_free );
+        check( rn_region_exhausted( region ) );
     }
-
-    // blocks: chained large chunks, all or none
-
-    rn_send_store_init( &store, memory, layout.bytes[RN_PART_SEND_STORE] );
-
-    const uint32_t large = rn_send_store_total_chunks( &store, RN_STORE_LARGE );
-    const uint32_t block = rn_send_store_alloc( &store, 32768 );
-    check( block != RN_CHUNK_NONE );
-    check( rn_send_store_free_chunks( &store, RN_STORE_LARGE ) == large - 29 );
-
-    int links = 0;
-
-    for ( uint32_t chunk = block; chunk != RN_CHUNK_NONE; chunk = rn_send_store_chunk_next( &store, chunk ) )
-    {
-        memset( rn_send_store_chunk_data( &store, chunk ), links, RN_STORE_LARGE_BYTES );
-        links++;
-    }
-
-    check( links == 29 );
-
-    // a block bigger than what is left takes nothing
-
-    const uint32_t left = rn_send_store_free_chunks( &store, RN_STORE_LARGE );
-    check( rn_send_store_alloc( &store, (int) ( left + 1 ) * RN_STORE_LARGE_BYTES ) == RN_CHUNK_NONE );
-    check( rn_send_store_free_chunks( &store, RN_STORE_LARGE ) == left );
-
-    const uint32_t rest = rn_send_store_alloc( &store, (int) left * RN_STORE_LARGE_BYTES );
-    check( rest != RN_CHUNK_NONE );
-    check( rn_send_store_free_chunks( &store, RN_STORE_LARGE ) == 0 );
-    check( rn_send_store_alloc( &store, 513 ) == RN_CHUNK_NONE );
-
-    // freeing a block frees its whole chain; the first block's bytes survived the second
-
-    links = 0;
-
-    for ( uint32_t chunk = block; chunk != RN_CHUNK_NONE; chunk = rn_send_store_chunk_next( &store, chunk ) )
-    {
-        const uint8_t * data = rn_send_store_chunk_data( &store, chunk );
-        check( data[0] == (uint8_t) links && data[RN_STORE_LARGE_BYTES - 1] == (uint8_t) links );
-        links++;
-    }
-
-    rn_send_store_free( &store, block );
-    check( rn_send_store_free_chunks( &store, RN_STORE_LARGE ) == 29 );
-    rn_send_store_free( &store, rest );
-    check( rn_send_store_free_chunks( &store, RN_STORE_LARGE ) == large );
 
     // a refused double free changes nothing
 
-    const uint32_t once = rn_send_store_alloc( &store, 100 );
-    check( once != RN_CHUNK_NONE );
-    rn_send_store_free( &store, once );
+    rn_region_carve( region );
 
-    const uint32_t small_free = rn_send_store_free_chunks( &store, RN_STORE_SMALL );
-    check( !rn_send_store_free_checked( &store, once ) );
-    check( rn_send_store_free_chunks( &store, RN_STORE_SMALL ) == small_free );
-    check( !rn_send_store_free_checked( &store, RN_CHUNK_NONE ) );
+    const uint32_t once = rn_region_send_alloc( region, 100 );
+    check( once != RN_DESCRIPTOR_NONE );
+    const uint32_t handle = region->send_descriptors[once].chunk;
+    rn_region_send_free( region, once );
 
-    rocketnet_free( NULL, memory );
+    const uint32_t small_free = rn_send_store_free_chunks( store, RN_STORE_SMALL );
+    check( !rn_send_store_free_checked( store, handle ) );
+    check( rn_send_store_free_chunks( store, RN_STORE_SMALL ) == small_free );
+    check( !rn_send_store_free_checked( store, RN_CHUNK_NONE ) );
+
+    rn_arena_destroy( arena );
 }
 
-// The store's accessors answer the checked free's rule
+// The store's accessors and its checked free answer one rule
 // (rocketnet_allocator.cpp, rn_send_store_free_checked): a handle the store did
 // not issue -- a class at or past RN_STORE_NUM_CLASSES, or an index the store
-// has not issued -- reads nothing. A handle the store did issue still
-// answers its data and its next exactly as before.
+// has not issued -- reads nothing and frees nothing. A handle the store did
+// issue still answers its data.
 
 static void test_channels_send_store_refuses_bad_handle()
 {
-    rocketnet_message_config_t config;
-    rocketnet_message_default_config( &config );
+    rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof( counters ) );
 
-    rn_region_layout_t layout;
-    check( rn_region_layout( &config, &layout ) );
+    rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &counters );
+    check( arena );
 
-    uint8_t * memory = (uint8_t *) rocketnet_malloc( NULL, (size_t) layout.bytes[RN_PART_SEND_STORE] );
-    check( memory );
+    rn_region_t * region = rn_arena_region( arena, 0 );
+    rn_send_store_t * store = &region->store;
 
-    rn_send_store_t store;
-    rn_send_store_init( &store, memory, layout.bytes[RN_PART_SEND_STORE] );
+    // a valid held handle returns its data
 
-    // a valid allocated handle still returns its data and its next as before
+    const uint32_t d = rn_region_send_alloc( region, 100 );
+    check( d != RN_DESCRIPTOR_NONE );
 
-    const uint32_t valid = rn_send_store_alloc( &store, 100 );
-    check( valid != RN_CHUNK_NONE );
-
-    uint8_t * valid_data = rn_send_store_chunk_data( &store, valid );
+    const uint32_t valid = region->send_descriptors[d].chunk;
+    uint8_t * valid_data = rn_send_store_chunk_data( store, valid );
     check( valid_data != NULL );
-    check( valid_data >= memory && valid_data + 100 <= memory + layout.bytes[RN_PART_SEND_STORE] );
+    check( valid_data >= region->store_memory && valid_data + 100 <= region->store_memory + region->store_bytes );
     memset( valid_data, 0xA5, 100 );
     check( valid_data[0] == 0xA5 && valid_data[99] == 0xA5 );
-    check( rn_send_store_chunk_next( &store, valid ) == RN_CHUNK_NONE );
 
-    // an in-range chunk the lazy store has not issued reads nothing
+    // an in-range chunk the lazy store has not issued reads nothing and frees nothing
 
-    const uint32_t never_issued = ( (uint32_t) RN_STORE_SMALL << 30 ) | ( rn_send_store_total_chunks( &store, RN_STORE_SMALL ) - 1 );
-    check( rn_send_store_chunk_data( &store, never_issued ) == NULL );
-    check( rn_send_store_chunk_next( &store, never_issued ) == RN_CHUNK_NONE );
+    const uint32_t small_free = rn_send_store_free_chunks( store, RN_STORE_SMALL );
+    const uint32_t never_issued = ( (uint32_t) RN_STORE_SMALL << 30 ) | ( rn_send_store_total_chunks( store, RN_STORE_SMALL ) - 1 );
+    check( rn_send_store_chunk_data( store, never_issued ) == NULL );
+    check( !rn_send_store_free_checked( store, never_issued ) );
+    check( rn_send_store_free_chunks( store, RN_STORE_SMALL ) == small_free );
 
-    // a real chain still walks whole
-
-    const uint32_t block = rn_send_store_alloc( &store, 32768 );
-    check( block != RN_CHUNK_NONE );
-
-    int links = 0;
-    for ( uint32_t chunk = block; chunk != RN_CHUNK_NONE; chunk = rn_send_store_chunk_next( &store, chunk ) )
-    {
-        links++;
-    }
-    check( links == (int) rn_send_store_chunks_needed( 32768 ) );
-
-    // a valid class with an index one past its chunk count reads nothing
+    // a valid class with an index one past its chunk count, and a class past the last
 
     const uint32_t bad[] = {
-        ( (uint32_t) RN_STORE_SMALL << 30 ) | rn_send_store_total_chunks( &store, RN_STORE_SMALL ),
-        ( (uint32_t) RN_STORE_MEDIUM << 30 ) | rn_send_store_total_chunks( &store, RN_STORE_MEDIUM ),
-        ( (uint32_t) RN_STORE_LARGE << 30 ) | rn_send_store_total_chunks( &store, RN_STORE_LARGE ),
+        ( (uint32_t) RN_STORE_SMALL << 30 ) | rn_send_store_total_chunks( store, RN_STORE_SMALL ),
+        ( (uint32_t) RN_STORE_MEDIUM << 30 ) | rn_send_store_total_chunks( store, RN_STORE_MEDIUM ),
+        ( (uint32_t) RN_STORE_LARGE << 30 ) | rn_send_store_total_chunks( store, RN_STORE_LARGE ),
         RN_CHUNK_NONE,
         0xC0000000u,
     };
     for ( int k = 0; k < (int) ( sizeof( bad ) / sizeof( bad[0] ) ); k++ )
     {
-        check( rn_send_store_chunk_data( &store, bad[k] ) == NULL );
-        check( rn_send_store_chunk_next( &store, bad[k] ) == RN_CHUNK_NONE );
+        check( rn_send_store_chunk_data( store, bad[k] ) == NULL );
+        check( !rn_send_store_free_checked( store, bad[k] ) );
     }
+    check( rn_send_store_free_chunks( store, RN_STORE_SMALL ) == small_free );
 
-    rn_send_store_free( &store, block );
-    rn_send_store_free( &store, valid );
-    rocketnet_free( NULL, memory );
+    rn_region_send_free( region, d );
+    rn_arena_destroy( arena );
 }
 
 static void test_channels_allocator_descriptor_pool()
@@ -1680,18 +1646,20 @@ static void test_channels_allocator_descriptor_pool()
     check( rn_counter( &counters, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL ) == 0 );
     check( rn_region_send_alloc( region, 0 ) == RN_DESCRIPTOR_NONE );
 
+    // the large class drained through the store's own find and take, every
+    // descriptor still free
+
     const uint32_t large = rn_send_store_free_chunks( &region->store, RN_STORE_LARGE );
-    const int block_bytes = 131072; // exhaust the store before the 16 descriptors
-    const uint32_t chunks = ( (uint32_t) block_bytes + ROCKETNET_MESSAGE_FRAGMENT_BYTES - 1 ) / ROCKETNET_MESSAGE_FRAGMENT_BYTES;
-    const uint32_t blocks = large / chunks;
-    check( blocks < 16 );
-    for ( uint32_t i = 0; i < blocks; i++ )
+    for ( uint32_t i = 0; i < large; i++ )
     {
-        check( rn_region_send_alloc( region, block_bytes ) != RN_DESCRIPTOR_NONE );
+        uint32_t index = 0;
+        check( rn_send_store_find( &region->store, RN_STORE_LARGE_BYTES, &index ) );
+        check( index == i );
+        rn_send_store_take( &region->store, RN_STORE_LARGE_BYTES, index );
     }
-    check( rn_region_send_alloc( region, block_bytes ) == RN_DESCRIPTOR_NONE );
+    check( rn_region_send_alloc( region, RN_STORE_LARGE_BYTES ) == RN_DESCRIPTOR_NONE );
     check( rn_counter( &counters, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL ) == 1 );
-    check( region->descriptors_free == 16 - blocks );
+    check( region->descriptors_free == 16 );
 
     // a carve gives everything back
 
@@ -1937,10 +1905,8 @@ static void rn_soak_check_accounting( const rn_region_t * region )
         if ( !descriptor->in_use )
             continue;
         descriptors_used++;
-        for ( uint32_t chunk = descriptor->chunk; chunk != RN_CHUNK_NONE; chunk = rn_send_store_chunk_next( &region->store, chunk ) )
-        {
-            used[rn_send_store_chunk_class( chunk )]++;
-        }
+        if ( descriptor->chunk != RN_CHUNK_NONE )
+            used[rn_send_store_chunk_class( descriptor->chunk )]++;
     }
 
     check( descriptors_used + region->descriptors_free == region->queue );
@@ -2012,7 +1978,7 @@ static void rn_soak_send( rn_soak_side_t * side )
     rn_region_t * region = side->sender;
     const rocketnet_message_config_t * config = side->config;
 
-    // send until refused: mostly small, some medium, some fragment-sized, some blocks up to the maximum
+    // send until refused: mostly small, some medium, some fragment-sized, some spans up to the maximum
 
     for ( ;; )
     {
@@ -2029,7 +1995,7 @@ static void rn_soak_send( rn_soak_side_t * side )
 
         const uint64_t store_full = rn_counter( side->sender_counters, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL );
         const uint64_t queue_full = rn_counter( side->sender_counters, ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL );
-        const uint32_t d = rn_region_send_alloc( region, bytes );
+        const uint32_t d = rn_region_send_take( region, bytes );
         if ( d == RN_DESCRIPTOR_NONE )
         {
             const uint64_t store_now = rn_counter( side->sender_counters, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL );
@@ -2060,24 +2026,14 @@ static void rn_soak_send( rn_soak_side_t * side )
         descriptor->priority = (uint8_t) ( rn_random() % 4 );
         descriptor->channel = (uint16_t) ( rn_random() % region->num_channels );
 
-        // copy the message into its chunks, as send_message will
+        // copy the message into its chunk or span, as send_message will
 
-        uint32_t offset = 0;
-
-        for ( uint32_t chunk = descriptor->chunk; chunk != RN_CHUNK_NONE; chunk = rn_send_store_chunk_next( &region->store, chunk ) )
+        uint8_t * data = rn_region_send_write_pointer( region, d );
+        check( rn_region_contains( region, data, (uint64_t) bytes ) );
+        for ( uint32_t b = 0; b < (uint32_t) bytes; b++ )
         {
-            uint8_t * data = rn_send_store_chunk_data( &region->store, chunk );
-            check( rn_region_contains( region, data, 1 ) );
-
-            const uint32_t take = (uint32_t) bytes - offset < (uint32_t) RN_STORE_LARGE_BYTES ? (uint32_t) bytes - offset : (uint32_t) RN_STORE_LARGE_BYTES;
-            for ( uint32_t b = 0; b < take; b++ )
-            {
-                data[b] = rn_pattern( descriptor->serial, offset + b );
-            }
-            offset += take;
+            data[b] = rn_pattern( descriptor->serial, b );
         }
-
-        check( offset == (uint32_t) bytes );
 
         // queue it on its channel's reliable FIFO (layer 6's links)
 
@@ -2146,8 +2102,6 @@ static void rn_soak_write_and_receive( rn_soak_side_t * side, uint64_t tick )
             region->sent_index[index_slot].entry = entry_index;
             region->sent_index[index_slot].used = 1;
 
-            uint32_t chunk = descriptor->chunk;
-
             for ( uint32_t f = 0; f < fragments; f++ )
             {
                 const uint64_t number = side->next_number++;
@@ -2163,13 +2117,14 @@ static void rn_soak_write_and_receive( rn_soak_side_t * side, uint64_t tick )
                 slot->last_send = (double) tick;
                 slot->acked = 0;
 
-                // the write: from the chunk straight into the frame
+                // the write: from the chunk or span straight into the frame
 
                 const uint32_t offset = f * RN_STORE_LARGE_BYTES;
-                const uint32_t bytes = descriptor->bytes - offset < (uint32_t) RN_STORE_LARGE_BYTES ? descriptor->bytes - offset : (uint32_t) RN_STORE_LARGE_BYTES;
-                check( chunk != RN_CHUNK_NONE );
-                memcpy( frame, rn_send_store_chunk_data( &region->store, chunk ), bytes );
-                chunk = rn_send_store_chunk_next( &region->store, chunk );
+                uint32_t bytes = 0;
+                const uint8_t * source = rn_region_send_data( region, d, f, &bytes );
+                check( source != NULL );
+                check( bytes == ( descriptor->bytes - offset < (uint32_t) RN_STORE_LARGE_BYTES ? descriptor->bytes - offset : (uint32_t) RN_STORE_LARGE_BYTES ) );
+                memcpy( frame, source, bytes );
 
                 // the receive: the window check, the bitset, the descriptor, the ring copy
 
@@ -3476,16 +3431,17 @@ static void test_channels_window_ack_frees_the_chunk_and_advances_u()
 
     const uint32_t d0 = rn_region_send_alloc( region, 64 );
 
-    // d1: 2500-byte 3-fragment block (n = 1, 2, 3)
+    // d1: 2500-byte 3-fragment span (n = 1, 2, 3)
 
-    const uint32_t d1 = rn_region_send_alloc( region, 2500 );
+    const uint32_t d1 = rn_region_send_take( region, 2500 );
 
     // d2: 64-byte single message (n = 4)
 
     const uint32_t d2 = rn_region_send_alloc( region, 64 );
     check( d0 != RN_DESCRIPTOR_NONE && d1 != RN_DESCRIPTOR_NONE && d2 != RN_DESCRIPTOR_NONE );
     check( rn_send_store_free_chunks( &region->store, RN_STORE_SMALL ) == small_total - 2 );
-    check( rn_send_store_free_chunks( &region->store, RN_STORE_LARGE ) == large_total - 3 );
+    check( rn_send_store_free_chunks( &region->store, RN_STORE_LARGE ) == large_total );
+    check( region->span_first == d1 );
     check( region->descriptors_free == desc_total - 3 );
 
     uint64_t n0 = 0, p0 = 0;
@@ -3506,11 +3462,12 @@ static void test_channels_window_ack_frees_the_chunk_and_advances_u()
     rn_window_ack_commit_packet( &ack, 5, &n4, 1, 1.0 );
     check( ack.resend_count == 5 );
 
-    // ack packet 3 (n = 2, middle fragment of block d1) out of order:
-    // frees its one large chunk immediately, unlinks n = 2 from resend FIFO, keeps d1 in use, U stays 0
+    // ack packet 3 (n = 2, middle fragment of span d1) out of order:
+    // counts one fragment, unlinks n = 2 from resend FIFO, keeps d1 and its span, U stays 0
 
     check( rn_window_ack_on_ack( &ack, 3, 1.05 ) == 1 );
-    check( rn_send_store_free_chunks( &region->store, RN_STORE_LARGE ) == large_total - 2 );
+    check( region->send_descriptors[d1].fragments_acked == 1 );
+    check( region->span_first == d1 );
     check( region->send_descriptors[d1].in_use == 1 );
     check( region->descriptors_free == desc_total - 3 );
     check( ack.resend_count == 4 );
@@ -3526,19 +3483,21 @@ static void test_channels_window_ack_frees_the_chunk_and_advances_u()
     check( ack.resend_count == 3 );
     check( send.U == 1 && send.U_prime == 1 );
 
-    // ack packet 2 (n = 1, first fragment of block d1):
-    // frees its large chunk, advances U past 1 and 2 to 3, but U' stops at 1 because n = 3 is still unacked!
+    // ack packet 2 (n = 1, first fragment of span d1):
+    // counts a second fragment, advances U past 1 and 2 to 3, but U' stops at 1 because n = 3 is still unacked!
 
     check( rn_window_ack_on_ack( &ack, 2, 1.07 ) == 1 );
-    check( rn_send_store_free_chunks( &region->store, RN_STORE_LARGE ) == large_total - 1 );
+    check( region->send_descriptors[d1].fragments_acked == 2 );
+    check( region->span_first == d1 );
     check( region->send_descriptors[d1].in_use == 1 );
     check( ack.resend_count == 2 );
     check( send.U == 3 && send.U_prime == 1 );
 
-    // ack packet 4 (n = 3, last fragment of block d1):
-    // frees its last large chunk and descriptor d1, advances U and U' to 4
+    // ack packet 4 (n = 3, last fragment of span d1):
+    // frees the span and descriptor d1, advances U and U' to 4
 
     check( rn_window_ack_on_ack( &ack, 4, 1.08 ) == 1 );
+    check( region->span_first == RN_DESCRIPTOR_NONE );
     check( rn_send_store_free_chunks( &region->store, RN_STORE_LARGE ) == large_total );
     check( region->send_descriptors[d1].in_use == 0 );
     check( region->descriptors_free == desc_total - 1 );
@@ -4276,8 +4235,8 @@ static void test_channels_window_lossy_soak_leg( float loss_percent )
             descriptor->fragments = (uint16_t) count;
             descriptor->fragments_acked = 0;
 
-            uint32_t chunk = descriptor->chunk;
-            uint8_t * span_data = rn_region_send_write_pointer( source, d );
+            uint8_t * data = rn_region_send_write_pointer( source, d );
+            check( data != NULL );
             uint64_t nums[4];
 
             for ( uint32_t i = 0; i < count; i++ )
@@ -4298,17 +4257,7 @@ static void test_channels_window_lossy_soak_leg( float loss_percent )
                     item->data[b] = (uint8_t) ( n * 37u + b * 13u + 1u );
                 }
 
-                if ( is_block )
-                {
-                    check( span_data != NULL );
-                    memcpy( span_data + (uint64_t) i * F, item->data, frag_bytes );
-                }
-                else
-                {
-                    check( chunk != RN_CHUNK_NONE );
-                    memcpy( rn_send_store_chunk_data( &source->store, chunk ), item->data, frag_bytes );
-                    chunk = rn_send_store_chunk_next( &source->store, chunk );
-                }
+                memcpy( data + (uint64_t) i * F, item->data, frag_bytes );
             }
 
             if ( next_message % 23 == 11 )

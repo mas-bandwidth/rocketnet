@@ -91,8 +91,8 @@ static bool rn_sequenced_hold_valid( const rn_region_t * region, uint32_t hold, 
 // the block does not own means the sender gave one number to two records: it
 // is not released, the hold is dropped and the connection ends
 // (MESSAGE_BAD_BLOCK). Returns false then; the caller returns
-// ROCKETNET_CHANNEL_DISPATCH_NONE. The number-only release this replaces is
-// MCRNHeldOwnershipBrokenNumberOnlyRelease.cfg.
+// ROCKETNET_CHANNEL_DISPATCH_NONE. A release by number alone is the reversed
+// witness MCRNHeldOwnershipBrokenNumberOnlyRelease.cfg.
 
 static bool rn_sequenced_release_slot( rn_channels_t * channels, uint32_t * slot, uint32_t first_number )
 {
@@ -212,7 +212,7 @@ static int rn_sequenced_block( rn_channels_t * channels, const rocketnet_message
         return ROCKETNET_CHANNEL_DISPATCH_NONE;
     }
 
-    // the fragment's own ring span lies inside the ring (code 2's check, unified)
+    // the fragment's own ring span lies inside the ring (code 2's check)
 
     if ( !rn_region_ring_span_valid( region, (uint64_t) record->ring * 16,
                                      ( ( (uint64_t) record->bytes + 15 ) & ~(uint64_t) 15 ) ) )
@@ -308,8 +308,8 @@ static int rn_sequenced_block( rn_channels_t * channels, const rocketnet_message
 // for a record and a block: the message is checked against the in-turn block
 // and the watermark only, never against the held future state, and delivered
 // as soon as it is complete. A newer in-turn message releases an in-turn block
-// still collecting; one no newer is superseded by it. The earlier code held an
-// in-turn block in the future-state slot: MCRNChannelBrokenBlockInTurnHeld.cfg.
+// still collecting; one no newer is superseded by it. An in-turn block held in
+// the future-state slot is the reversed witness MCRNChannelBrokenBlockInTurnHeld.cfg.
 
 static int rn_sequenced_in_turn( rn_channels_t * channels, const rocketnet_message_record_t * record,
                                  rn_channel_receive_t * rx, uint32_t number_slot, rn_delivery_t * out )
@@ -379,6 +379,7 @@ static int rn_sequenced_in_turn( rn_channels_t * channels, const rocketnet_messa
 // proofs/tla/RNChannelTypes.tla Dispatch
 // RNChannelTypes!Dispatch: code 1 does not consult the reliable receive window.
 
+// proofs/tla/RNSequencedHoldPool.tla Hold: a newer future code-1 record returns the old hold and takes the free stack's top
 int rn_channels_dispatch_sequenced( struct rn_channels_t * channels, const struct rocketnet_message_record_t * record, struct rn_delivery_t * out )
 {
     if ( !channels || !record || !out )
@@ -523,6 +524,7 @@ int rn_channels_dispatch_sequenced( struct rn_channels_t * channels, const struc
 // proofs/tla/RNChannelTypes.tla Drain
 // RNChannelTypes!Drain: the ordered transition has already opened the epoch.
 
+// proofs/tla/RNSequencedHoldPool.tla DrainDeliver and DrainRelease: a delivered hold joins the delivered list, any other returns to the free stack
 bool rn_channels_drain_sequenced( struct rn_channels_t * channels, uint32_t channel )
 {
     if ( !channels || channel >= channels->num_channels )
@@ -628,6 +630,7 @@ bool rn_channels_drain_sequenced( struct rn_channels_t * channels, uint32_t chan
     return true;
 }
 
+// proofs/tla/RNSequencedHoldPool.tla EndUpdate: the delivered list returns to the free stack
 void rn_channels_end_update_sequenced( struct rn_channels_t * channels )
 {
     if ( !channels )

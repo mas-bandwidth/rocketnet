@@ -526,8 +526,7 @@ int rn_channels_dispatch( struct rn_channels_t * channels, const struct rocketne
     const int code = record->code;
 
     // 7.5: an application record whose wire code the mask does not admit is
-    // refused here, once for every code (rocketnet_message_enabled_codes,
-    // sdk/rocketnet_message.cpp:289, maps
+    // refused here, once for every code (rocketnet_message_enabled_codes maps
     // a receipt type to the base code it travels as). A control record is
     // the layer's own and is never refused by the mask, as in the reader.
 
@@ -894,7 +893,7 @@ static int rn_channels_dispatch_chunk( rn_channels_t * channels, const struct ro
         return ROCKETNET_CHANNEL_DISPATCH_NONE;
     }
 
-    // the fragment's own ring span lies inside the ring (code 2's check, unified)
+    // the fragment's own ring span lies inside the ring (code 2's check)
 
     if ( !rn_region_ring_span_valid( region, (uint64_t) record->ring * 16,
                                      rn_round16( (uint64_t) record->bytes ) ) )
@@ -1026,7 +1025,7 @@ static void rn_channels_release( rn_channels_t * channels, uint32_t slot )
     {
         rn_receive_descriptor_t * descriptor = &region->receive_descriptors[( number + i ) & ( region->window - 1 )];
 
-        // descriptors hold the 24-bit wire number, so compare every fragment across the 2^24 wrap the same way
+        // a descriptor holds the window's 64-bit number, or the 24-bit wire number when dispatch filled it from the record, so compare every fragment modulo 2^24
 
         if ( descriptor->live && rn_u24( (uint32_t) descriptor->number ) == rn_u24( (uint32_t) ( number + i ) ) )
         {
@@ -1037,7 +1036,7 @@ static void rn_channels_release( rn_channels_t * channels, uint32_t slot )
     }
 }
 
-// proofs/tla/RNChannel.tla EndUpdate
+// proofs/tla/RNChannel.tla EndUpdate; proofs/tla/RNOrderingWrap.tla EndUpdate: the delivery table empties
 
 void rn_channels_end_update( struct rn_channels_t * channels )
 {
@@ -1243,6 +1242,7 @@ uint8_t * rn_channels_start( struct rn_channels_t * channels, uint32_t channel, 
 
 // proofs/tla/RNChannel.tla Enqueue
 
+// proofs/tla/RNChannelQueuesLayout.tla Enqueue: the append and the ready push at the code's links
 bool rn_channels_finish( struct rn_channels_t * channels, uint32_t bytes )
 {
     if ( !channels || channels->pending == RN_DESCRIPTOR_NONE )
@@ -1274,8 +1274,8 @@ bool rn_channels_finish( struct rn_channels_t * channels, uint32_t bytes )
     descriptor->bytes = bytes;
 
     // A code-4 record's header is 15 bytes, 16 with the WIDE channel field
-    // on a channel of 256 or more (rocketnet_message_flags_header_bytes,
-    // sdk/rocketnet_message.cpp:52); the form byte follows it.
+    // on a channel of 256 or more (rocketnet_message_flags_header_bytes in
+    // sdk/rocketnet_message.cpp); the form byte follows it.
 
     struct rocketnet_message_record_t sequenced_shape;
     memset( &sequenced_shape, 0, sizeof( sequenced_shape ) );
@@ -1333,6 +1333,7 @@ bool rn_channels_cancel( struct rn_channels_t * channels )
 // until acked), and WriteOk: the first packet carries it, from the head of
 // IMMEDIATE.
 
+// proofs/tla/RNChannelQueuesLayout.tla Config: push_front on channel 0 and channel 0 at the ready head
 bool rn_ordered_announce_config( struct rn_ordered_t * ordered, const struct rocketnet_message_config_t * config )
 {
     if ( !ordered || !ordered->channels.region || ordered->config_announced )
@@ -1618,6 +1619,7 @@ static bool rn_ordered_walk( rn_ordered_t * ordered, bool chunk, double now, rn_
 // proofs/tla/RNChannel.tla NumberRecord: numbers the channel's head message late, only while n < U' + W
 // proofs/tla/RNBlocks.tla NumberMessage: gives a block k consecutive numbers and one contiguous span through rn_window_send_first_write_block
 
+// proofs/tla/RNChannelQueuesLayout.tla WalkEmpty and Number: the ready head leaves, or is numbered, popped and rejoined
 int rn_ordered_write( struct rn_ordered_t * ordered, double now, uint8_t ** payloads, int num_payloads )
 {
     if ( !ordered || !payloads || num_payloads < 1 )
@@ -1788,6 +1790,7 @@ uint32_t rn_ordered_acks( struct rn_ordered_t * ordered, const uint64_t * packet
 // A partial packet may already have delivered an earlier record; its retry
 // deduplicates that prefix while the refused record remains unmarked.
 
+// proofs/tla/RNOrderingWrap.tla Receive: the reservation, the dispatch and the drain compare orderings modulo 2^24 with the 32-bit read index
 static uint32_t rn_receive_delivery_reservation( const rn_channels_t * channels, const rocketnet_message_record_t * record )
 {
     if ( record->control )
@@ -1800,7 +1803,7 @@ static uint32_t rn_receive_delivery_reservation( const rn_channels_t * channels,
 
     const rn_region_t * region = channels->region;
     const rn_channel_receive_t * rx = &region->channel_receive[record->channel];
-    if ( rn_u24( record->ordering ) != rx->ordered_read )
+    if ( rn_u24( record->ordering ) != rn_u24( rx->ordered_read ) )
         return needed;
 
     // at most one sequenced hold can be released by this channel's drain

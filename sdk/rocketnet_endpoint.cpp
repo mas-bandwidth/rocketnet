@@ -5,9 +5,8 @@
 
 // The endpoint (proofs/tla/RNEndpoint.tla): one connection's layers 3 to 6 as a
 // pure machine. The spec is proofs/tla/RNEndpoint.tla; each function names the action
-// it implements. The per-connection orchestration here is what the message
-// objects did for each connection (sdk/rocketnet_message_server.cpp), moved
-// whole: the same calls into the layers, the same counters, in the same order.
+// it implements. The message objects (sdk/rocketnet_message_server.cpp) call
+// it for everything per connection.
 //
 // Purity (16.3): time comes in as `now`; the transport is reached by nobody
 // here (the caller starts, finishes and aborts frames); the only memory is the
@@ -58,6 +57,10 @@ static bool rn_unreliable_member( const rn_send_descriptor_t * descriptor )
 // stale ticket dropped with the rest kept in order: the head skipping them in
 // rn_unreliable_sync, the full-ring pass in rn_unreliable_push, and every walk
 // passing them by.
+//
+// proofs/tla/RNUnreliableRingLayout.tla carries the ring at its layout with
+// tickets that wrap: Push (rn_unreliable_push, with rn_unreliable_renumber and
+// the eager rn_unreliable_sync), Unlink, WalkBegin, WalkNext and WalkStop.
 
 static bool rn_unreliable_entry_live( const rn_region_t * region, const rn_unreliable_entry_t * entry )
 {
@@ -82,6 +85,7 @@ struct rn_unreliable_walk_t
     uint32_t step;
 };
 
+// proofs/tla/RNUnreliableRingLayout.tla WalkBegin
 static void rn_unreliable_walk_begin( const rn_endpoint_t * endpoint, rn_unreliable_walk_t * walk )
 {
     walk->base = endpoint->unreliable_ring_head;
@@ -90,6 +94,7 @@ static void rn_unreliable_walk_begin( const rn_endpoint_t * endpoint, rn_unrelia
 }
 
 // the next live descriptor of the walk, RN_DESCRIPTOR_NONE at its end
+// proofs/tla/RNUnreliableRingLayout.tla WalkNext: entries read in place; unlinks between steps, no push.
 static uint32_t rn_unreliable_walk_next( const rn_endpoint_t * endpoint, rn_unreliable_walk_t * walk )
 {
     const rn_region_t * region = endpoint->region;
@@ -116,6 +121,37 @@ static void rn_unreliable_sync( rn_endpoint_t * endpoint )
     endpoint->unreliable_head = endpoint->unreliable_ring_used > 0 ? rn_unreliable_entry( endpoint, 0 )->descriptor : RN_DESCRIPTOR_NONE;
 }
 
+// Tickets wrap (rn_region_schedule_ticket), so a tombstone's ticket could be
+// issued again to its descriptor and the tombstone read as live: the entry
+// walked twice and out of order. The first push after a wrap drops every
+// tombstone, and every entry naming d, which was free until this send so any
+// entry naming it is stale, then renumbers the survivors and d in queue
+// order. Every ticket in the ring is then from the current lap.
+
+// proofs/tla/RNUnreliableRingLayout.tla Push: the renumber at the first push after a wrap.
+static void rn_unreliable_renumber( rn_endpoint_t * endpoint, uint32_t d )
+{
+    rn_region_t * region = endpoint->region;
+    const uint32_t entries = region->unreliable_ring_entries;
+    region->schedule_ticket_wrapped = 0;
+
+    uint32_t kept = 0;
+    for ( uint32_t i = 0; i < endpoint->unreliable_ring_used; i++ )
+    {
+        rn_unreliable_entry_t entry = *rn_unreliable_entry( endpoint, i );
+        if ( entry.descriptor == d || !rn_unreliable_entry_live( region, &entry ) )
+            continue;
+
+        entry.ticket = rn_region_schedule_ticket( region );
+        region->send_descriptors[entry.descriptor].enqueue_ticket = entry.ticket;
+        region->unreliable_ring[( endpoint->unreliable_ring_head + kept++ ) % entries] = entry;
+    }
+
+    endpoint->unreliable_ring_used = kept;
+    region->send_descriptors[d].enqueue_ticket = rn_region_schedule_ticket( region );
+}
+
+// proofs/tla/RNUnreliableRingLayout.tla Push
 static void rn_unreliable_push( rn_endpoint_t * endpoint, uint32_t d )
 {
     rn_region_t * region = endpoint->region;
@@ -126,6 +162,9 @@ static void rn_unreliable_push( rn_endpoint_t * endpoint, uint32_t d )
 
     rocketnet_assume( entries >= 2 );
     rocketnet_assume( d < entries / 2 );
+
+    if ( region->schedule_ticket_wrapped )
+        rn_unreliable_renumber( endpoint, d );
 
     if ( endpoint->unreliable_ring_used == entries )
     {
@@ -176,7 +215,6 @@ void rn_endpoint_init( struct rn_endpoint_t * endpoint, rn_region_t * region, co
     endpoint->config = config->config;
     endpoint->default_kbps = config->send_kbps;
     endpoint->send_budget_enabled = config->send_kbps > 0 ? 1 : 0;
-    endpoint->unreliable_limit = ROCKETNET_MESSAGE_SINGLE_BYTES - 1 - ROCKETNET_MESSAGE_RECORD_FIXED_BYTES;
     endpoint->max_payload_bytes = config->max_payload_bytes > 0 ? config->max_payload_bytes : ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
     endpoint->send_error = ROCKETNET_DISCONNECT_REASON_NONE;
     endpoint->config_wait_start = -1.0;
@@ -265,9 +303,8 @@ void rn_endpoint_announce_config( struct rn_endpoint_t * endpoint, double now )
 //                          send
 // ---------------------------------------------------------------
 
-static bool rn_endpoint_reliable_path( const rn_endpoint_t * endpoint, int type )
+static bool rn_endpoint_reliable_path( int type )
 {
-    (void) endpoint;
     return type == ROCKETNET_RELIABILITY_RELIABLE || type == ROCKETNET_RELIABILITY_RELIABLE_ORDERED ||
            type == ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED ||
            rn_channels_reliable_receipt_base( type ) >= 0;
@@ -300,7 +337,7 @@ static int rn_endpoint_send_route( const rn_endpoint_t * endpoint, int channel, 
     if ( endpoint->pending_type != -1 || channel < 0 || channel >= endpoint->config->num_channels || bytes < 1 )
         return RN_ENDPOINT_ROUTE_REFUSED;
 
-    if ( rn_endpoint_reliable_path( endpoint, reliability ) )
+    if ( rn_endpoint_reliable_path( reliability ) )
         return RN_ENDPOINT_ROUTE_CHANNELS;
 
     if ( !rn_endpoint_unreliable_type( reliability ) ||
@@ -460,6 +497,7 @@ bool rn_endpoint_send_room( const struct rn_endpoint_t * endpoint, int channel, 
     return rn_region_send_fit( endpoint->region, bytes ) == RN_SEND_FIT_OK;
 }
 
+// proofs/tla/RNSentRingLayout.tla IssueSerial: the serial steps to 1, never 0.
 uint32_t rn_endpoint_finish( struct rn_endpoint_t * endpoint, int bytes, uint32_t serial )
 {
     // proofs/tla/RNEndpoint.tla Send, its second half: the
@@ -500,7 +538,7 @@ uint32_t rn_endpoint_finish( struct rn_endpoint_t * endpoint, int bytes, uint32_
                                    endpoint->pending_type == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED ||
                                    endpoint->pending_type == ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT;
     const bool promoted = reserved_reliable && unreliable_source && actual_over_record;
-    if ( rn_endpoint_reliable_path( endpoint, endpoint->pending_type ) || promoted )
+    if ( rn_endpoint_reliable_path( endpoint->pending_type ) || promoted )
     {
         const uint32_t d = endpoint->ordered.channels.pending;
         if ( !rn_channels_finish( &endpoint->ordered.channels, (uint32_t) bytes ) )
@@ -572,7 +610,7 @@ void rn_endpoint_abort( struct rn_endpoint_t * endpoint )
     // Enqueue's first half returned): a start that will not be finished, its
     // room returned to the region
 
-    if ( rn_endpoint_reliable_path( endpoint, endpoint->pending_type ) ||
+    if ( rn_endpoint_reliable_path( endpoint->pending_type ) ||
          endpoint->ordered.channels.pending != RN_DESCRIPTOR_NONE )
         rn_channels_cancel( &endpoint->ordered.channels );
     else if ( ( endpoint->pending_type == ROCKETNET_RELIABILITY_UNRELIABLE || endpoint->pending_type == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED ||
@@ -630,7 +668,7 @@ int rn_endpoint_in_place_header( const struct rn_endpoint_t * endpoint, int chan
     {
         header = reliability == ROCKETNET_RELIABILITY_UNRELIABLE ? 0 : ROCKETNET_MESSAGE_RECORD_FIXED_BYTES;
 
-        if ( (uint32_t) bytes > endpoint->unreliable_limit )
+        if ( bytes > ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES )
             return RN_ENDPOINT_IN_PLACE_NO;                     // refused, or the receipt twin's promotion
     }
 
@@ -925,6 +963,7 @@ void rn_endpoint_config_tick( struct rn_endpoint_t * endpoint, int transport_con
         endpoint->config_error = ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT;
 }
 
+// proofs/tla/RNSendRotation.tla BeginUpdate
 uint32_t rn_endpoint_begin_update( struct rn_endpoint_t * endpoint )
 {
     // RNChannel EndUpdate: the last update's deliveries expire and their
@@ -975,8 +1014,12 @@ static int rn_endpoint_fifo_due( const rn_region_t * region, const rn_window_ack
 
 static bool rn_endpoint_ordered_due( const rn_endpoint_t * endpoint, double now )
 {
+    // New messages are due while the window can number them: a stalled
+    // window numbers nothing until an ack moves U' and clears the stall
+    // (rn_window_send_mark_acked), so a frame is never started for them.
+
     const rn_ordered_t * ordered = &endpoint->ordered;
-    if ( ordered->channels.ready_head != RN_DESCRIPTOR_NONE )
+    if ( ordered->channels.ready_head != RN_DESCRIPTOR_NONE && !ordered->send.stalled )
         return true;
 
     const rn_window_ack_t * ack = &ordered->ack;
@@ -986,6 +1029,7 @@ static bool rn_endpoint_ordered_due( const rn_endpoint_t * endpoint, double now 
            rn_endpoint_fifo_due( region, ack, true, rn_window_ack_chunk_resend_delay( ack ), now );
 }
 
+// proofs/tla/RNUnreliableRingLayout.tla Unlink
 static void rn_endpoint_unreliable_unlink( rn_endpoint_t * endpoint, uint32_t d )
 {
     rn_region_t * region = endpoint->region;
@@ -1021,10 +1065,8 @@ static int rn_endpoint_sequenced_payload_bytes( const rn_send_descriptor_t * des
     return (int) descriptor->bytes + header + 1; // one RECORDS record and form byte
 }
 
-static bool rn_endpoint_large_sequenced( const rn_endpoint_t * endpoint, const rn_send_descriptor_t * descriptor )
+static bool rn_endpoint_large_sequenced( const rn_send_descriptor_t * descriptor )
 {
-    (void) endpoint;
-
     // the packed writer reserves the form byte, so the full-payload boundary takes this path
 
     return descriptor->reliability == ROCKETNET_CHANNEL_TYPE_UNRELIABLE_SEQUENCED &&
@@ -1162,7 +1204,7 @@ int rn_endpoint_next_packet_bytes( struct rn_endpoint_t * endpoint, double now )
         }
 
         const rn_send_descriptor_t * first = &endpoint->region->send_descriptors[endpoint->unreliable_head];
-        if ( rn_endpoint_large_sequenced( endpoint, first ) )
+        if ( rn_endpoint_large_sequenced( first ) )
         {
             const int request = rn_endpoint_plan_large_sequenced( endpoint );
             if ( request > 0 )
@@ -1188,14 +1230,26 @@ int rn_endpoint_next_packet_bytes( struct rn_endpoint_t * endpoint, double now )
         return ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
     }
 
-    // the pass is over; the next call opens a new one
+    // the pass is over until the next flush (rn_endpoint_begin_flush) or update:
+    // reopening it within this flush would plan work it just found unwritable
 
-    endpoint->write_phase = RN_ENDPOINT_WRITE_IDLE;
+    endpoint->write_phase = RN_ENDPOINT_WRITE_DONE;
     endpoint->packet_kind = RN_ENDPOINT_PACKET_NONE;
 
     return 0;
 }
 
+// proofs/tla/RNSendRotation.tla BeginFlush: an ended pass stays ended until here or the next update.
+void rn_endpoint_begin_flush( struct rn_endpoint_t * endpoint )
+{
+    // a pass the last flush ended opens again; a pass the transport's
+    // capacity cut short continues where it was
+
+    if ( endpoint->write_phase == RN_ENDPOINT_WRITE_DONE )
+        endpoint->write_phase = RN_ENDPOINT_WRITE_IDLE;
+}
+
+// proofs/tla/RNUnreliableRingLayout.tla WalkStop: a walk ends at the record limit or a large record.
 static int rn_endpoint_unreliable_items( rn_endpoint_t * endpoint, rn_packet_item_t * items, uint32_t * descriptors, uint32_t * generations )
 {
     // the unreliable records, packed several to a packet: the items from the
@@ -1211,7 +1265,7 @@ static int rn_endpoint_unreliable_items( rn_endpoint_t * endpoint, rn_packet_ite
         const rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
 
 
-        if ( rn_endpoint_large_sequenced( endpoint, descriptor ) )
+        if ( rn_endpoint_large_sequenced( descriptor ) )
             break; // send the preceding small records first
 
         rn_packet_item_t * item = &items[count];

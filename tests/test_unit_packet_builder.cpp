@@ -898,11 +898,10 @@ static void test_packet_builder_operations_bounded()
 }
 #endif // #if ROCKETNET_DEV
 
-// The flat plan is tagged by the call's full-width epoch and exact caller
-// item index. Channel/class groups are contiguous across sparse channels all
-// the way through 65535, their suffix levels are exact, an earlier larger
-// call cannot leave a live entry in a later smaller one, and neither capacity
-// nor epoch exhaustion is silently truncated or wrapped.
+// The flat plan names each entry by its exact caller item index. Channel and
+// class groups are contiguous across sparse channels all the way through
+// 65535, their suffix levels are exact, a later smaller call exposes only its
+// own groups, and a call over the item capacity is refused, not truncated.
 
 static void test_packet_builder_flat_plan_tags_ranges_and_bounds()
 {
@@ -929,7 +928,6 @@ static void test_packet_builder_flat_plan_tags_ranges_and_bounds()
 
     uint8_t * frames[1] = { plan_builder_frames[0] };
     rocketnet_unit_check( rn_packet_builder_write( &builder, items, 8, frames, 1 ) == 1 );
-    rocketnet_unit_check( builder.call_epoch == 1 );
 #if ROCKETNET_DEV
     const struct rn_packet_builder_plan_t * plan = rn_packet_builder_test_last_plan();
     rocketnet_unit_check( plan->group_count == 8 );
@@ -945,7 +943,6 @@ static void test_packet_builder_flat_plan_tags_ranges_and_bounds()
         for ( uint32_t p = group->end; p > group->begin; p-- )
         {
             const struct rn_packet_builder_sequence_t * entry = &plan->sequence[p - 1];
-            rocketnet_unit_check( entry->call_epoch == builder.call_epoch );
             rocketnet_unit_check( entry->item_index < 8 );
             rocketnet_unit_check( entry->group_index == g );
 
@@ -958,18 +955,14 @@ static void test_packet_builder_flat_plan_tags_ranges_and_bounds()
     }
 #endif // #if ROCKETNET_DEV
 
-    // a one-item next call advances the epoch and exposes only its one group;
-    // every slot outside that range remains invalid for the current epoch
+    // a one-item next call exposes only its one group
 
     builder_item( &items[0], 65535, ROCKETNET_MESSAGE_CODE_UNRELIABLE, ROCKETNET_SEND_CLASS_NEW_RELIABLE, plan_data[0], 2 );
     rocketnet_unit_check( rn_packet_builder_write( &builder, items, 1, frames, 1 ) == 1 );
-    rocketnet_unit_check( builder.call_epoch == 2 );
 #if ROCKETNET_DEV
     plan = rn_packet_builder_test_last_plan();
     rocketnet_unit_check( plan->group_count == 1 );
-    rocketnet_unit_check( plan->sequence[0].call_epoch == 2 );
     rocketnet_unit_check( plan->sequence[0].item_index == 0 );
-    rocketnet_unit_check( plan->sequence[1].call_epoch != builder.call_epoch );
 #endif // #if ROCKETNET_DEV
 
     struct rn_packet_item_t over[ROCKETNET_PACKET_BUILDER_MAX_ITEMS + 1];
@@ -978,19 +971,11 @@ static void test_packet_builder_flat_plan_tags_ranges_and_bounds()
         builder_item( &over[i], (uint16_t) i, ROCKETNET_MESSAGE_CODE_UNRELIABLE, ROCKETNET_SEND_CLASS_UNRELIABLE, plan_data[i % PLAN_MAX_ITEMS], 2 );
     }
 
-    const uint64_t before_over = builder.call_epoch;
     rocketnet_unit_check( rn_packet_builder_write( &builder, over, ROCKETNET_PACKET_BUILDER_MAX_ITEMS + 1, frames, 1 ) == 0 );
-    rocketnet_unit_check( builder.call_epoch == before_over );
     for ( int i = 0; i <= ROCKETNET_PACKET_BUILDER_MAX_ITEMS; i++ )
     {
         rocketnet_unit_check( !over[i].taken );
     }
-
-    builder.call_epoch = UINT64_MAX;
-    items[0].taken = 0;
-    rocketnet_unit_check( rn_packet_builder_write( &builder, items, 1, frames, 1 ) == 0 );
-    rocketnet_unit_check( builder.call_epoch == UINT64_MAX );
-    rocketnet_unit_check( !items[0].taken );
 
     rn_arena_destroy( arena );
 }

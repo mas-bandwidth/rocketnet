@@ -2,11 +2,11 @@
 (***************************************************************************)
 (* rocketnet: the resend timing of reliable records (docs/CHANNELS.md 6.4  *)
 (* "RTO", "Resend" and "Giving up"; the code is                            *)
-(* rn_window_ack_resend_delay, rn_window_ack_chunk_resend_delay,           *)
-(* rn_window_ack_resend and rn_window_ack_check_timeout in                 *)
-(* sdk/rocketnet_window_ack.h and .cpp, rn_ordered_write in                *)
-(* sdk/rocketnet_channel.cpp and rn_message_ordered_due in                 *)
-(* sdk/rocketnet_message_server.cpp).                                      *)
+(* rn_window_ack_resend_delay, rn_window_ack_chunk_resend_delay and       *)
+(* rn_window_ack_check_timeout in sdk/rocketnet_window_ack.h and .cpp,     *)
+(* rn_ordered_write and its walk rn_ordered_walk in                        *)
+(* sdk/rocketnet_channel.cpp, and rn_endpoint_ordered_due in               *)
+(* sdk/rocketnet_endpoint.cpp).                                            *)
 (*                                                                         *)
 (* RNWindow keeps the RTO abstract; this module is the timing alone.  Time *)
 (* is in ticks of one unit each (the committed instances use 100 ms); every *)
@@ -177,8 +177,8 @@ NextHead ==
     ELSE IF SendFirst /\ ~SendSecond /\ ~acked[Other(head)] THEN Other(head)
     ELSE head
 
-\* rn_window_ack_resend / rn_ordered_write: every due record the walk
-\* reaches is resent.
+\* rn_ordered_walk in rn_ordered_write: every due record the walk reaches
+\* is resent.
 Walk ==
     /\ phase = "walk"
     /\ Live

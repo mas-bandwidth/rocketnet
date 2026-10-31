@@ -212,7 +212,7 @@ static void rn_builder_radix_pass( struct rn_packet_builder_plan_t * plan, const
     }
 }
 
-static bool rn_builder_plan( struct rn_packet_builder_t * builder, struct rn_packet_builder_plan_t * plan, struct rn_packet_item_t * items, int num_items )
+static bool rn_builder_plan( struct rn_packet_builder_plan_t * plan, struct rn_packet_item_t * items, int num_items )
 {
     // RNScheduler's IsHead and Boost, made once per call. Writable item indices
     // are stably radix-grouped into contiguous class/channel ranges. A reverse
@@ -273,7 +273,6 @@ static bool rn_builder_plan( struct rn_packet_builder_t * builder, struct rn_pac
         do
         {
             struct rn_packet_builder_sequence_t * entry = &plan->sequence[position];
-            entry->call_epoch = builder->call_epoch;
             entry->item_index = alternate[position];
             entry->group_index = (uint16_t) group_index;
             position++;
@@ -357,7 +356,7 @@ static int rn_builder_next_in_class( struct rn_packet_builder_t * builder, struc
             continue;
 
         const struct rn_packet_builder_sequence_t * entry = &plan->sequence[group->cursor];
-        if ( entry->call_epoch != builder->call_epoch || entry->item_index >= (uint32_t) num_items || entry->group_index != g )
+        if ( entry->item_index >= (uint32_t) num_items || entry->group_index != g )
             continue;                                           // a stale or damaged plan slot is never an item
 
         const int i = (int) entry->item_index;
@@ -420,13 +419,10 @@ int rn_packet_builder_write( struct rn_packet_builder_t * builder, struct rn_pac
 
     // the production producer's plan is capped at the same 96 items. Refuse
     // a larger direct/internal call without touching its items, rather than
-    // truncate it into a different scheduler trace. A full-width epoch never
-    // wraps back into the validity domain of an earlier plan.
+    // truncate it into a different scheduler trace.
 
-    if ( num_items > ROCKETNET_PACKET_BUILDER_MAX_ITEMS || builder->call_epoch == UINT64_MAX )
+    if ( num_items > ROCKETNET_PACKET_BUILDER_MAX_ITEMS )
         return 0;
-
-    builder->call_epoch++;
 
     // each class's channel groups are built once for the whole call. An item
     // advances its group's cursor only when taken; a refused packet restores
@@ -435,7 +431,7 @@ int rn_packet_builder_write( struct rn_packet_builder_t * builder, struct rn_pac
 
     struct rn_packet_builder_plan_t plan;
     memset( &plan, 0, sizeof( plan ) );
-    const bool stray = rn_builder_plan( builder, &plan, items, num_items );
+    const bool stray = rn_builder_plan( &plan, items, num_items );
     bool refused = false;
 
     const int limit = builder->packets_per_update < num_payloads ? builder->packets_per_update : num_payloads;

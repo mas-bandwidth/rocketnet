@@ -28,7 +28,7 @@
 //   - region->sent_index   : 2P entries of 16 bytes (open-addressed packet_id -> entry)
 //   - region->sent_refs    : 16P u32 entries (ring of referenced message numbers)
 //   - region->send_numbers : W entries of 32 bytes (sender per-number table)
-//   - region->resend_fifo  : W entries of 16 bytes (prev/next slot links plus generation and owner epoch),
+//   - region->resend_fifo  : W entries of 12 bytes (prev/next slot links plus the descriptor generation),
 //                            shared by the two resend sequences: a number is in at most one.
 //                            Capacity is W. An acked hole stays sequenced until a
 //                            named removal, so a walk still counts it (proofs/tla/RNChannelQueues.tla).
@@ -44,7 +44,6 @@
 // Present only in the unit-test library; counts actual work, not ACK calls.
 struct rn_ack_cost_t
 {
-    uint64_t predecessor_visits;
     uint64_t completed_numbers;
 };
 void rn_window_ack_cost_reset();

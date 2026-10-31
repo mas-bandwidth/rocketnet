@@ -287,7 +287,6 @@ struct rn_message_object_t * rn_message_object_create( void * context, const str
     object->num_connections = num_connections;
     object->config = *config;
     object->default_kbps = default_kbps;
-    object->unreliable_limit = ROCKETNET_MESSAGE_SINGLE_BYTES - 1 - ROCKETNET_MESSAGE_RECORD_FIXED_BYTES;
     object->time = time;
     object->raw_time = time;                    // the seed is the clock's origin, not a step
     object->time_offset = 0.0;
@@ -527,8 +526,7 @@ static void rn_message_connection_release( rn_message_object_t * object, int ind
     // region holds message bytes only: the session keys are wiped by the
     // transport when the slot ends (rocketnet_server_connection_reset in
     // sdk/rocketnet_connection_reset.cpp, the encryption map's remove), never here.
-    // Carving at the end as well cost 1000 slots x ~86 KB of memsets in the
-    // update after rocketnet_server_disconnect_all_clients (11.5 ms).
+    // The region is carved once, at the next connect, not here as well.
 
     rocketnet_assert( object->is_server );
     rn_message_connection_t * connection = &object->connections[index];
@@ -600,6 +598,7 @@ static rn_message_connection_t * rn_message_admit( rn_message_object_t * object,
 
 static void rn_message_object_release_batch( struct rn_message_object_t * object );
 
+// proofs/tla/RNMessageViews.tla Update: the batch released, the last update's views cleared by its delivery count, cursor and held reset
 int rn_message_object_update( struct rn_message_object_t * object, double time )
 {
     int result = ROCKETNET_UPDATE_OK;
@@ -757,13 +756,10 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
 
             rocketnet_server_connection_reset( object, i );
 
-            if ( action == RN_SLOTS_RESET )
-            {
-                connection->hot->state = RN_MESSAGE_CONNECTION_CONNECTED;
-                connection->hot->connection_id = id;
-                connection->disconnect_reason = ROCKETNET_DISCONNECT_REASON_NONE;
-                rn_endpoint_announce_config( connection, time );   // RNEndpoint Reset: the server's connect (10.3)
-            }
+            connection->hot->state = RN_MESSAGE_CONNECTION_CONNECTED;
+            connection->hot->connection_id = id;
+            connection->disconnect_reason = ROCKETNET_DISCONNECT_REASON_NONE;
+            rn_endpoint_announce_config( connection, time );       // RNEndpoint Reset: the server's connect (10.3)
         }
     }
 
@@ -1308,6 +1304,7 @@ static bool rn_message_connection_write( rn_message_object_t * object, int index
     }
 }
 
+// proofs/tla/RNSendRotation.tla BeginFlush and Visit: rounds while any connection progresses, the capacity test, the cursor at i + 1.
 void rn_message_object_send_packets( struct rn_message_object_t * object )
 {
     // RNOutgoingBuild BeginFlush: a pending in-place start aborted, then every
@@ -1315,7 +1312,10 @@ void rn_message_object_send_packets( struct rn_message_object_t * object )
 
     rn_message_object_close_in_place( object );
     for ( int i = 0; i < object->num_connections; ++i )
+    {
         rn_message_flush_unreliable( object, i, false );
+        rn_endpoint_begin_flush( &object->connections[i] );
+    }
 
     // RNSlots Send, fair rotation: start at the first connection not yet
     // offered a frame, and stop when the transport's send capacity for this
@@ -1407,6 +1407,7 @@ static const rn_delivery_t * rn_message_object_next( struct rn_message_object_t 
     return NULL;
 }
 
+// proofs/tla/RNMessageViews.tla Receive: the first WAITING entry at or past the cursor is held
 int rn_message_object_receive( struct rn_message_object_t * object, int * index, int * channel, const uint8_t ** data, int * bytes )
 {
     // one delivery from the queue, valid until the next update and held until the caller lets it go
@@ -1461,6 +1462,7 @@ static bool rn_message_connection_release_view( rn_message_connection_t * connec
     return false;
 }
 
+// proofs/tla/RNMessageViews.tla Release: the backward search from cursor - 1 for the held view of that pointer
 void rn_message_object_release( struct rn_message_object_t * object, const uint8_t * data )
 {
     // proofs/tla/RNSlots.tla Release: a held view returns, and the region's charge for that message returns with it.
@@ -1506,6 +1508,7 @@ static void rn_message_object_release_batch( struct rn_message_object_t * object
     object->batch_count = 0;
 }
 
+// proofs/tla/RNMessageViews.tla ReceiveBatch: the last batch released, then up to the batch size received
 int rn_message_object_receive_messages( struct rn_message_object_t * object, struct rocketnet_message_batch_t * out )
 {
     // the pumped receive of the one queue (flow's batch handoff to the game):

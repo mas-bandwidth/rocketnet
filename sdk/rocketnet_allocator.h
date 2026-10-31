@@ -48,6 +48,7 @@
 
 #define RN_DESCRIPTOR_NONE      0xFFFFFFFFu
 #define RN_CHUNK_NONE           0xFFFFFFFFu
+#define RN_HANDLE_INDEX         0x3FFFFFFFu     // a chunk handle's index bits; its class is the top two
 #define RN_RESEND_NONE          0xFFFFFFFFu
 
 struct rn_channel_send_t                // 40 bytes (7.1): ready membership is a ticket plus the head generation, linked by channel index
@@ -63,7 +64,7 @@ struct rn_channel_send_t                // 40 bytes (7.1): ready membership is a
 
 struct rn_channel_receive_t             // 24 bytes (7.1)
 {
-    uint32_t ordered_read;              // next ordering index to deliver
+    uint32_t ordered_read;              // next ordering index to deliver: 32 bits here, compared modulo 2^24 with the wire's
     uint32_t sequenced_watermark;       // lowest sequencing index still deliverable in this epoch
     uint32_t held_sequenced;            // descriptor of the newest held future sequenced message, or RN_DESCRIPTOR_NONE
     uint32_t held_sequenced_first;      // the first number of that hold when it is code 4
@@ -118,7 +119,7 @@ struct rn_held_entry_t                  // 16 bytes: the held-ordered index, 2W 
 
 struct rn_send_descriptor_t             // 72 bytes: one queued or in-flight send (Q of them)
 {
-    uint32_t chunk;                     // the first store chunk of a block's contiguous run
+    uint32_t chunk;                     // the store chunk's handle, RN_CHUNK_NONE for a span
     uint32_t bytes;
     uint32_t serial;                    // the receipt serial (7.4)
     uint32_t generation;                // the slot's generation tag: bumped on every take, never reset by a free
@@ -244,7 +245,7 @@ enum
     RN_PART_RECEIVED_BITS,              // W / 8
     RN_PART_HELD_INDEX,                 // 16 * 2W
     RN_PART_RECEIVE_RING,               // B
-    RN_PART_SEND_DESCRIPTORS,           // 80 Q
+    RN_PART_SEND_DESCRIPTORS,           // 72 Q
     RN_PART_SEND_STORE,                 // S
     RN_PART_SENT_PACKETS,               // 32 P
     RN_PART_SENT_INDEX,                 // 16 * 2P
@@ -252,7 +253,7 @@ enum
     RN_PART_DELIVERIES,                 // 24 (W + Du)
     RN_PART_SEQUENCED_HOLDS,            // 1440 Ru (16 hot + 1416 payload + 4 free-stack + 4 delivered list per hold)
     RN_PART_RECEIPTS,                   // 16 Rq
-    RN_PART_RESEND_FIFO,                // 16 W
+    RN_PART_RESEND_FIFO,                // 12 W
     RN_PART_UNRELIABLE_RING,            // 8 * 2Q
     RN_PART_SEND_SPANS,                 // B
     RN_NUM_PARTS
@@ -291,42 +292,36 @@ const struct rocketnet_config_field_t * rocketnet_message_config_fields( int * n
 //                            the send store
 // ----------------------------------------------------------------
 
-// S bytes in three classes of fixed chunks, each class a 64-aligned third of
-// S by bytes (4). A class's third holds its chunks, then one u32 of
-// generation-tagged metadata per chunk (the class's meta array): a live bit,
-// a block-head bit, the slot's generation tag and a count field -- the
-// physical run length at a block's head chunk, the chunk's distance back to
-// its head at an interior chunk. A block takes one contiguous run of chunks,
-// so its chunks are addressed by arithmetic on the head, never by a stored
-// reference to another chunk, and no byte outside S is spent on them. The
-// live and head bits make a double free a refusal, never a corrupted pool
-// (proofs/tla/RNSendStore.tla). Freeing a block is O(its run length): it scans only
-// the block's own run, never a numeric gap. Free chunks are found by a scan
-// of the meta array's live bits from the class's scan cursor, so no free
-// chain is stored either.
-//
-// A message up to 1152 bytes takes one chunk of the smallest class that
-// fits, and only that class; a larger one is a block and takes
-// ceil(bytes / 1152) large chunks from one contiguous run, all or none.
+// S bytes in three classes of fixed chunks (4). A message of 1 to 1152 bytes
+// takes one chunk of the smallest class that fits, and only that class; a
+// larger message takes a span of the send spans, never the store. A class's
+// part of S holds its chunks, then one u32 of metadata per chunk (the class's
+// meta array): a live bit and the slot's generation tag, bumped on every take
+// of the chunk and never 0 on a live chunk. No chunk stores a reference to
+// another, and no byte outside S is spent on them. The live bit makes a
+// double free a refusal, never a corrupted pool.
 //
 // A handle is the class in its top two bits and the chunk index below.
-
-// The pool is lazy (proofs/tla/RNLazyPool.tla): chunks [0, fresh) have been
-// taken at least once since the init and are free or held; chunks
+//
+// The pool is lazy (proofs/tla/RNSendStoreLayout.tla): chunks [0, fresh)
+// have been taken at least once since the init and are free or held; chunks
 // [fresh, num_chunks) were never taken, and neither their meta nor their
-// bytes are written or read until they are. A take scans the meta array's
-// live bits from free_head for a contiguous free run, without touching the
-// pages of chunks it does not take.
+// bytes are written or read until they are. free_head is at or below every
+// free chunk and at or below fresh, so a take scans the meta array's live
+// bits from free_head up and the first free chunk it meets is the lowest.
+
+#define RN_META_LIVE            0x80000000u     // the chunk is held
+#define RN_META_GENERATION      0x7FFFFFFFu     // the chunk's generation tag: 1 on its first take, skipping 0 when it wraps
+
 struct rn_store_class_t
 {
     uint8_t * data;
-    uint32_t * meta;                    // one generation-tagged u32 per chunk, after the class's chunks
+    uint32_t * meta;                    // one u32 per chunk, after the class's chunks
     uint32_t chunk_bytes;
     uint32_t num_chunks;
-    uint32_t free_head;                 // the free-run scan cursor: the first chunk index a take examines
+    uint32_t free_head;                 // the scan cursor: no free chunk lies below it, and it is at most fresh
     uint32_t free_count;
-    uint32_t fresh;
-    uint32_t block_tag_next;            // the next generation tag a multi-chunk block's take assigns to all its chunks
+    uint32_t fresh;                     // chunks [0, fresh) have been taken since the init
 };
 
 struct rn_send_store_t
@@ -338,29 +333,19 @@ uint32_t rn_send_store_chunks_for( uint64_t store_bytes, int class_index );
 
 int rn_send_store_class_for( int bytes );
 
-uint32_t rn_send_store_chunks_needed( int bytes );
+// true when a message of `bytes` (1 to RN_STORE_LARGE_BYTES) can take a chunk
+// now, with the chunk's index in its class: the one test the allocation makes
+// (proofs/tla/RNSendStoreLayout.tla Alloc's guard); pure
+bool rn_send_store_find( const rn_send_store_t * store, int bytes, uint32_t * out_index );
 
-void rn_send_store_init( rn_send_store_t * store, uint8_t * memory, uint64_t bytes );
+// takes the chunk rn_send_store_find returned, unchanged since: its handle
+uint32_t rn_send_store_take( rn_send_store_t * store, int bytes, uint32_t index );
 
-// true when `bytes` can be taken now, with the first chunk of the run the
-// take would use: the one test the allocation makes (proofs/tla/RNSendStore.tla
-// Alloc's guard); pure
-bool rn_send_store_find( const rn_send_store_t * store, int bytes, uint32_t * out_first );
+bool rn_send_store_free_checked( rn_send_store_t * store, uint32_t handle );     // false: not a held chunk, nothing changed
 
-// takes the run rn_send_store_find returned, unchanged since: the first chunk's handle
-uint32_t rn_send_store_take( rn_send_store_t * store, int bytes, uint32_t first );
-
-uint32_t rn_send_store_alloc( rn_send_store_t * store, int bytes );     // find then take: the first chunk's handle, or RN_CHUNK_NONE
-
-bool rn_send_store_free_checked( rn_send_store_t * store, uint32_t handle );     // false: not an allocated block's head, nothing changed
-
-void rn_send_store_free( rn_send_store_t * store, uint32_t handle );    // the whole block
+void rn_send_store_free( rn_send_store_t * store, uint32_t handle );
 
 uint8_t * rn_send_store_chunk_data( const rn_send_store_t * store, uint32_t handle );
-
-#if ROCKETNET_DEV
-uint32_t rn_send_store_chunk_next( const rn_send_store_t * store, uint32_t handle );
-#endif // #if ROCKETNET_DEV
 
 inline int rn_send_store_chunk_class( uint32_t handle ) { return (int) ( handle >> 30 ); }
 
@@ -370,7 +355,7 @@ uint32_t rn_send_store_free_chunks( const rn_send_store_t * store, int class_ind
 uint32_t rn_send_store_total_chunks( const rn_send_store_t * store, int class_index );
 
 // the chunk slot's current generation tag, or 0 for a handle the store did
-// not issue (a stale handle's tag never matches a live slot's next take)
+// not issue
 uint32_t rn_send_store_chunk_generation( const rn_send_store_t * store, uint32_t handle );
 #endif // #if ROCKETNET_DEV
 
@@ -416,6 +401,7 @@ struct rn_region_t
     uint32_t span_tail;                 // the byte offset the next span is placed at
     uint32_t span_first, span_last;     // the oldest and the newest live span's descriptor, RN_DESCRIPTOR_NONE when none
     uint32_t schedule_ticket_next;      // next enqueue ticket (from 1); 0 is never issued
+    uint32_t schedule_ticket_wrapped;   // 1 once the ticket counter wraps, until the unreliable queue's next push renumbers its entries
     rn_sent_packet_t * sent_packets;
     rn_sent_index_t * sent_index;
     uint32_t * sent_refs;
@@ -443,6 +429,7 @@ struct rn_region_t
 };
 
 // The next enqueue ticket on this connection. 0 is never issued.
+// proofs/tla/RNUnreliableRingLayout.tla DrawOther: one counter for every enqueue, the wrap noted.
 
 static inline uint32_t rn_region_schedule_ticket( rn_region_t * region )
 {
@@ -452,7 +439,10 @@ static inline uint32_t rn_region_schedule_ticket( rn_region_t * region )
 
     uint32_t next = ticket + 1;
     if ( next == 0 )
+    {
         next = 1;
+        region->schedule_ticket_wrapped = 1;
+    }
 
     region->schedule_ticket_next = next;
 
@@ -495,11 +485,12 @@ void rn_region_carve( rn_region_t * region );
 // a fresh one and nothing of the previous client is reachable.
 void rn_region_reset( rn_region_t * region );
 
-// one send's descriptor and store chunks, both or neither. The descriptor
+// one send's descriptor and store chunk, both or neither. The descriptor
 // index, or RN_DESCRIPTOR_NONE: a full pool counts MESSAGE_SEND_QUEUE_FULL,
-// a full store MESSAGE_SEND_STORE_FULL, and either exhausts the region
-// (rn_region_exhaust). bytes outside 1..max_message_bytes is the caller's
-// refusal to count, takes nothing here and is not exhaustion.
+// a full store class MESSAGE_SEND_STORE_FULL, and either exhausts the region
+// (rn_region_exhaust). bytes outside 1..min(max_message_bytes,
+// RN_STORE_LARGE_BYTES) is the caller's refusal to count, takes nothing here
+// and is not exhaustion.
 uint32_t rn_region_send_alloc( rn_region_t * region, int bytes );
 
 // RNConnectionMemory Exhaust: an operation of this region's connection found
@@ -561,7 +552,7 @@ void rn_region_send_room( const rn_region_t * region, rn_send_room_t * room );
 
 // 1 when a start message of `bytes` bytes would be given room now, so it
 // would not exhaust the region; pure. The pool it would take from (the
-// store class for up to one block stride, the send spans above it): its free
+// store class for up to one fragment, the send spans above it): its free
 // bytes and its size, and the free descriptors; each out pointer may be NULL.
 int rn_region_send_fits( const rn_region_t * region, int bytes, uint64_t * free_bytes, uint64_t * pool_bytes, uint32_t * free_messages );
 
@@ -581,7 +572,7 @@ extern const int rn_send_room_warnings;
 void rn_region_send_room_note( rn_region_t * region, int is_server, int index );
 void rn_region_send_room_exhausted( const rn_region_t * region, int is_server, int index );
 
-// The largest message that takes a store chunk is one block stride, 1152 bytes.
+// The largest message that takes a store chunk is one fragment, 1152 bytes.
 // A message above it takes a contiguous span (rn_region_send_alloc_span): the
 // application writes it once, in place, and every fragment is copied from it
 // into a frame (4, 8).
@@ -607,11 +598,11 @@ uint32_t rn_region_send_alloc_span( rn_region_t * region, int bytes );
 // (rocketnet_client_can_send_message, rocketnet_server_can_send_message)
 // reads it, so the query and the send never disagree. Pure and
 // allocation-free. Checked in the allocation's order: the size, then the sticky
-// exhaustion, then a free descriptor, then the chunks or the span. The first
+// exhaustion, then a free descriptor, then the chunk or the span. The first
 // three checks are O(1), and so is the span placement of
 // rn_region_send_fit_span; rn_region_send_fit_store is not: it scans the chosen
-// class's meta array for a free run (rn_send_store_find), O(chunks in the
-// class) in the worst case.
+// class's meta array from its cursor for a free chunk (rn_send_store_find),
+// O(chunks in the class) in the worst case.
 #define RN_SEND_FIT_OK              0   // room: the allocation takes it
 #define RN_SEND_FIT_REFUSED         1   // bytes outside the pool's range: the caller's refusal, not exhaustion
 #define RN_SEND_FIT_EXHAUSTED       2   // the region is already exhausted (sticky until reset)
@@ -621,7 +612,7 @@ uint32_t rn_region_send_alloc_span( rn_region_t * region, int bytes );
 int rn_region_send_fit_store( const rn_region_t * region, int bytes, uint32_t * out_first );
 int rn_region_send_fit_span( const rn_region_t * region, int bytes, uint32_t * out_start );
 
-// A start message's room: a store chunk up to one block stride, a span above
+// A start message's room: a store chunk up to one fragment, a span above
 // it. rn_region_send_take allocates it (rn_region_send_alloc or
 // rn_region_send_alloc_span) and rn_region_send_fit decides it, by the same
 // size rule.
@@ -642,9 +633,9 @@ const uint8_t * rn_region_send_data( const rn_region_t * region, uint32_t descri
 // The writable start of a send's bytes: the span's start, or the store chunk.
 uint8_t * rn_region_send_write_pointer( rn_region_t * region, uint32_t descriptor );
 
-// frees one fragment's store chunk from an in-use send descriptor's block,
-// and returns the descriptor itself to Q when its last fragment is acked (6.4).
-void rn_region_send_free_fragment( rn_region_t * region, uint32_t descriptor, uint32_t chain_index );
+// counts one fragment of an in-use send acked, and frees the send (its chunk
+// or span, and its descriptor) when its last fragment is acked (6.4).
+void rn_region_send_free_fragment( rn_region_t * region, uint32_t descriptor );
 
 #if ROCKETNET_DEV
 bool rn_region_contains( const rn_region_t * region, const void * p, uint64_t bytes );

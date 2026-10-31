@@ -766,11 +766,10 @@ static void stats_received_step( rocketnet_ack_endpoint_t * endpoint, uint64_t s
     rocketnet_unit_check( stats_received_live_matches_history( endpoint ) );
 }
 
-// The priority replacement's exact red: after the descending writes, moving
-// the high-water mark to 3071 makes sequences 1025..2047 enter the counted
-// cohort. The former time-sorted list walked 1+...+1023 = 523776 predecessor
-// links in that one call. The fixed block aggregate visits at most 256
-// blocks/records in any receive.
+// After the descending writes, moving the high-water mark to 3071 makes
+// sequences 1025..2047 enter the counted cohort in one call. A time-sorted
+// list would walk 1+...+1023 = 523776 predecessor links in that call; the
+// fixed block aggregate visits at most 256 blocks/records in any receive.
 
 static void test_ack_received_stats_adversarial_sequence_is_bounded()
 {
@@ -786,7 +785,7 @@ static void test_ack_received_stats_adversarial_sequence_is_bounded()
     }
 
     stats_received_step( endpoint, 3071, 200, time );
-    printf( "received ACK stats cost: old_predecessor_visits=523776 block_record_visits=%u\n",
+    printf( "received ACK stats cost: block_record_visits=%u\n",
             endpoint->stats_received_operations );
     fflush( stdout );
     rocketnet_unit_check( endpoint->stats_received_operations <= 256 );

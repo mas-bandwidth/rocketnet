@@ -414,7 +414,7 @@ int rocketnet_reassembly_process_fragment( struct rocketnet_reassembly_set_t * s
     // BEHIND / num_slots payloads (32 at eight slots), the displaced occupant
     // among them when it is that close; payload B itself shares its slot
     // state. Further from the live series, B costs the one occupant it
-    // displaces. The stale test before this rule had the same worst case.
+    // displaces.
 
     const uint32_t reference = set->newest_completed[connection_index];
     if ( payload_id - reference > ROCKETNET_REASSEMBLY_REACH && reference - payload_id > ROCKETNET_REASSEMBLY_REACH )

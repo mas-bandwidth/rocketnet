@@ -306,53 +306,26 @@ static void test_window_ack_pipelined_reliable_timeout()
 REGISTER_UNIT_TEST( test_window_ack_pipelined_reliable_timeout );
 
 // ----------------------------------------------------------------
-// Finding 5: out-of-order fragment chain (rocketnet_window_ack.cpp)
+// Finding 5: out-of-order fragment acks (rocketnet_window_ack.cpp)
 // ----------------------------------------------------------------
 
-#if ROCKETNET_DEV
-// The block a descriptor still holds, in allocation order, walked through
-// the store's own chunk_next (sdk/rocketnet_allocator.cpp's contiguous run).
-static int risk_chain( rn_region_t * region, uint32_t d, uint32_t * out, int capacity )
-{
-    const rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
-    int count = 0;
-    for ( uint32_t chunk = descriptor->chunk; chunk != RN_CHUNK_NONE && count < capacity; chunk = rn_send_store_chunk_next( &region->store, chunk ) )
-        out[count++] = chunk & 0x3FFFFFFFu;
-    return count;
-}
-
-static void risk_check_chain( rn_region_t * region, uint32_t d, const uint32_t * expected, int expected_count )
-{
-    uint32_t chain[8];
-    const int count = risk_chain( region, d, chain, 8 );
-    check( count == expected_count );
-    for ( int i = 0; i < expected_count; i++ )
-        check( chain[i] == expected[i] );
-}
-
-// Out-of-order three-fragment ack with an interleaved descriptor names
-// the right chain_index: after each ack the exact chunk released is
-// checked against the chain, and the block completes only on the
-// third distinct ack. This drives the legacy chunk-backed block path
-// through rn_region_send_alloc directly; the production dispatcher
-// (rn_region_send_take) routes multi-fragment sends to spans, so this
-// path's liveness is reported with this test, not assumed.
-static void test_window_ack_out_of_order_fragment_chain()
+// Out-of-order three-fragment acks with an interleaved descriptor: each
+// distinct ack counts one fragment, the span stays live until the third,
+// and only the third returns its room and its descriptor.
+static void test_window_ack_out_of_order_fragments()
 {
     struct risk_window_t w;
     risk_window_begin( &w );
     rn_region_t * region = w.region;
-    const uint32_t large_total = rn_send_store_total_chunks( &region->store, RN_STORE_LARGE );
     const uint32_t desc_total = region->queue;
 
-    const uint32_t d_other = rn_region_send_alloc( region, 64 );
-    const uint32_t d_block = rn_region_send_alloc( region, 2500 );
-    const uint32_t d_late = rn_region_send_alloc( region, 64 );
+    const uint32_t d_other = rn_region_send_take( region, 64 );
+    const uint32_t d_block = rn_region_send_take( region, 2500 );
+    const uint32_t d_late = rn_region_send_take( region, 64 );
     check( d_other != RN_DESCRIPTOR_NONE && d_block != RN_DESCRIPTOR_NONE && d_late != RN_DESCRIPTOR_NONE );
     check( region->send_descriptors[d_block].fragments == 3 );
-
-    uint32_t chunks[3];
-    check( risk_chain( region, d_block, chunks, 3 ) == 3 );
+    check( region->send_descriptors[d_block].flags & RN_SEND_FLAG_SPAN );
+    check( region->span_first == d_block && region->span_last == d_block );
 
     uint64_t n_other = 0, n_first = 0, n_late = 0, ring = 0;
     check( rn_window_send_first_write( &w.send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 64, d_other, &n_other, &ring ) == RN_WINDOW_SEND_NUMBERED );
@@ -365,36 +338,31 @@ static void test_window_ack_out_of_order_fragment_chain()
     rn_window_ack_commit_packet( &w.ack, 4, &n_last, 1, 1000.0 );
     rn_window_ack_commit_packet( &w.ack, 5, &n_late, 1, 1000.0 );
 
-    // Middle fragment acked first: its own chunk, and only it, goes.
+    // Middle fragment acked first: one fragment counted, the span still live.
     check( rn_window_ack_on_ack( &w.ack, 3, 1000.05 ) == 1 );
-    {
-        const uint32_t expected[2] = { chunks[0], chunks[2] };
-        risk_check_chain( region, d_block, expected, 2 );
-    }
     check( region->send_descriptors[d_block].in_use == 1 );
     check( region->send_descriptors[d_block].fragments_acked == 1 );
+    check( region->span_first == d_block );
 
-    // An interleaved unrelated descriptor acks without touching the chain.
+    // An interleaved unrelated descriptor acks without touching the span.
     check( rn_window_ack_on_ack( &w.ack, 1, 1000.06 ) == 1 );
-    {
-        const uint32_t expected[2] = { chunks[0], chunks[2] };
-        risk_check_chain( region, d_block, expected, 2 );
-    }
+    check( region->send_descriptors[d_block].fragments_acked == 1 );
+    check( region->descriptors_free == desc_total - 2 );
+
+    // The same packet acked again counts nothing.
+    check( rn_window_ack_on_ack( &w.ack, 3, 1000.065 ) == 0 );
     check( region->send_descriptors[d_block].fragments_acked == 1 );
 
-    // Last fragment acked second: the tail chunk goes, the head stays.
+    // Last fragment acked second: the span still live.
     check( rn_window_ack_on_ack( &w.ack, 4, 1000.07 ) == 1 );
-    {
-        const uint32_t expected[1] = { chunks[0] };
-        risk_check_chain( region, d_block, expected, 1 );
-    }
     check( region->send_descriptors[d_block].in_use == 1 );
     check( region->send_descriptors[d_block].fragments_acked == 2 );
+    check( region->span_first == d_block );
 
-    // First fragment acked last: the block completes only now.
+    // First fragment acked last: the send completes only now.
     check( rn_window_ack_on_ack( &w.ack, 2, 1000.08 ) == 1 );
     check( region->send_descriptors[d_block].in_use == 0 );
-    check( rn_send_store_free_chunks( &region->store, RN_STORE_LARGE ) == large_total );
+    check( region->span_first == RN_DESCRIPTOR_NONE );
     check( region->descriptors_free == desc_total - 1 );   // d_late still held
 
     check( rn_window_ack_on_ack( &w.ack, 5, 1000.09 ) == 1 );
@@ -403,5 +371,4 @@ static void test_window_ack_out_of_order_fragment_chain()
     risk_window_end( &w );
 }
 
-REGISTER_UNIT_TEST( test_window_ack_out_of_order_fragment_chain );
-#endif // #if ROCKETNET_DEV
+REGISTER_UNIT_TEST( test_window_ack_out_of_order_fragments );

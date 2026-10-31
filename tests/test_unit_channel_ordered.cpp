@@ -975,6 +975,49 @@ static void ordering_wrap_leg( uint32_t start )
     node_free( b );
 }
 
+// The delivery reservation compares the record's 24-bit ordering with the
+// channel's 32-bit read index modulo 2^24, as the dispatch does: past 2^24
+// deliveries an in-turn record that releases a held one still reserves both
+// deliveries, and a full delivery table defers the packet rather than
+// exhausting the region in the drain.
+
+static void test_reservation_counts_the_held_run_past_2_to_the_24()
+{
+    rocketnet_message_config_t config;
+    node_config( &config, 1024, 262144, 262144, 800000 );
+
+    node_t * a = node_new( &config, 8 );
+    node_t * b = node_new( &config, 8 );
+    a->region->channel_send[0].ordered_write = 0x01000000;
+    b->region->channel_receive[0].ordered_read = 0x01000000;
+
+    wire_packet_t first;
+    wire_packet_t second;
+    check( send_message( a, 0, 24 ) != 0 );
+    check( write_packets( a, 1.0, &first, 1 ) == 1 );
+    check( send_message( a, 0, 25 ) != 0 );
+    check( write_packets( a, 1.0, &second, 1 ) == 1 );
+
+    check( open_packet( b, &second ) );
+    check( b->got[0].empty() );
+
+    // one delivery left: the in-turn record and the held one it releases need two
+
+    rn_channels_t * channels = &b->ordered.channels;
+    channels->deliveries = channels->delivery_capacity - 1;
+    check( rn_ordered_receive( &b->ordered, first.data, first.bytes ) == ROCKETNET_CHANNEL_RECEIVE_DEFERRED );
+    check( !rn_region_exhausted( b->region ) );
+    channels->deliveries = 0;
+
+    check( open_packet( b, &first ) );
+    check( b->got[0].size() == 2 );
+    check( b->region->channel_receive[0].ordered_read == 0x01000002 );
+    check( !rn_region_exhausted( b->region ) );
+
+    node_free( a );
+    node_free( b );
+}
+
 static void test_large_between_small_keeps_order()
 {
     boundary_sizes_leg();
@@ -2602,6 +2645,7 @@ REGISTER_UNIT_TEST( test_small_in_order_exactly_once_under_loss_and_reorder );
 REGISTER_UNIT_TEST( test_small_packed_and_resent_until_packet_acked );
 REGISTER_UNIT_TEST( test_large_chunked_one_per_packet_and_delivered_whole );
 REGISTER_UNIT_TEST( test_large_between_small_keeps_order );
+REGISTER_UNIT_TEST( test_reservation_counts_the_held_run_past_2_to_the_24 );
 REGISTER_UNIT_TEST( test_chunks_placed_by_index_not_arrival );
 REGISTER_UNIT_TEST( test_no_partial_delivery );
 REGISTER_UNIT_TEST( test_hostile_chunk_count_or_index_kicks );

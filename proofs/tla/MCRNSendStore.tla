@@ -1,9 +1,9 @@
 --------------------------- MODULE MCRNSendStore ---------------------------
 (***************************************************************************)
-(* The small instance of RNSendStore: four chunks, three senders, blocks   *)
-(* of up to three chunks.  MCRNSendStore.cfg is the committed run, with    *)
-(* both rules on.  README-RNSendStore.md gives the two reversed witnesses  *)
-(* as one-line edits to the cfg, and the traces TLC printed.               *)
+(* The small instance of RNSendStore: four chunks, three senders.          *)
+(* MCRNSendStore.cfg is the passing control, the guard on;                 *)
+(* MCRNSendStoreBrokenNoGuard.cfg turns the double-free guard off and must *)
+(* violate NoLeak (README-RNSendStore.md).                                 *)
 (***************************************************************************)
 EXTENDS RNSendStore
 =============================================================================

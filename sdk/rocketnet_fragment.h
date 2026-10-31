@@ -74,11 +74,10 @@ int rocketnet_fragment_plan( int payload_bytes, int * out_fragment_count, int * 
 
 // the stale rule's two bounds, per standard/TRANSPORT.md t16 and
 // proofs/tla/FragmentsAndAcks.tla (StaleOnlyIfOlder). BEHIND: how far behind the
-// slot's occupant an id refuses as superseded -- the window of the stale
-// test before this rule, ROCKETNET_MAX_FRAGMENTS ids. It is also the most one
-// bad fragment can cost: it refuses only the ids of its slot's series that
-// trail it by at most BEHIND, at most BEHIND / num_slots payloads (32 at the
-// default eight slots), the same limit as before. REACH: how far from the
+// slot's occupant an id refuses as superseded, ROCKETNET_MAX_FRAGMENTS ids.
+// It is also the most one bad fragment can cost: it refuses only the ids of
+// its slot's series that trail it by at most BEHIND, at most
+// BEHIND / num_slots payloads (32 at the default eight slots). REACH: how far from the
 // connection's newest completed payload id, in either direction, an id may
 // be -- a quarter of the id space, which no honest loss run or late fragment
 // reaches, and well short of the half-space point where a hostile id would

@@ -71,7 +71,8 @@ static uint64_t cm_calls()
 // helpers
 // ---------------------------------------------------------------------------
 
-// sends of one small message until the region refuses; returns the count taken
+// sends of one message size (a store chunk or a span) until the region
+// refuses; returns the count taken
 
 static int cm_fill( rn_region_t * region, int bytes, uint32_t * taken, int max_taken )
 {
@@ -79,7 +80,7 @@ static int cm_fill( rn_region_t * region, int bytes, uint32_t * taken, int max_t
 
     for ( ;; )
     {
-        const uint32_t d = rn_region_send_alloc( region, bytes );
+        const uint32_t d = rn_region_send_take( region, bytes );
         if ( d == RN_DESCRIPTOR_NONE )
             break;
         if ( taken && n < max_taken )
@@ -299,7 +300,7 @@ static void test_exhaustion_is_a_kick_with_its_reason()
     // exhaustion counter (the send above plus the explicit exhaust call both
     // see an already-exhausted region, so only the send above counts again)
 
-    check( rn_region_send_alloc( region, (int) region->max_message_bytes ) == RN_DESCRIPTOR_NONE );
+    check( rn_region_send_take( region, (int) region->max_message_bytes ) == RN_DESCRIPTOR_NONE );
     rn_region_exhaust( region );
     check( rn_region_exhausted( region ) );
     check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 2 );
@@ -353,16 +354,16 @@ static void test_reused_slot_starts_clean()
 
     check( cm_bookkeeping_equal( a, fresh ) );
 
-    // the previous client: mixed sends, a block's fragment acked, tables written
+    // the previous client: mixed sends, a span's fragment acked, tables written
 
     uint32_t taken[64];
     const int n = cm_fill( a, 300, taken, 64 );
     check( n > 0 );
 
-    const uint32_t block = rn_region_send_alloc( a, 4000 );
-    if ( block != RN_DESCRIPTOR_NONE )
+    const uint32_t span = rn_region_send_take( a, 4000 );
+    if ( span != RN_DESCRIPTOR_NONE )
     {
-        rn_region_send_free_fragment( a, block, 1 );
+        rn_region_send_free_fragment( a, span );
     }
     for ( int i = 0; i < n && i < 64; i += 2 )
     {
@@ -458,12 +459,9 @@ static void test_user_block_is_used_and_nothing_else()
             const rn_send_descriptor_t * d = &region->send_descriptors[taken[i]];
             check( cm_inside( block, required, d, sizeof( *d ) ) );
 
-            for ( uint32_t chunk = d->chunk; chunk != RN_CHUNK_NONE; chunk = rn_send_store_chunk_next( &region->store, chunk ) )
-            {
-                const uint8_t * data = rn_send_store_chunk_data( &region->store, chunk );
-                check( cm_inside( block, required, data, region->store.classes[rn_send_store_chunk_class( chunk )].chunk_bytes ) );
-                check( rn_region_contains( region, data, 1 ) );
-            }
+            const uint8_t * data = rn_region_send_write_pointer( region, taken[i] );
+            check( cm_inside( block, required, data, d->bytes ) );
+            check( rn_region_contains( region, data, d->bytes ) );
         }
 
         check( rn_connection_memory_decide( region ) == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
@@ -516,7 +514,7 @@ static void test_connection_memory_no_allocation_after_create()
             for ( int i = 0; i < n && i < 1024; i++ )
             {
                 if ( region->send_descriptors[taken[i]].fragments > 1 )
-                    rn_region_send_free_fragment( region, taken[i], 0 );
+                    rn_region_send_free_fragment( region, taken[i] );
                 else if ( i % 2 == 0 )
                     rn_region_send_free( region, taken[i] );
             }
@@ -858,8 +856,8 @@ static void test_generation_tagged_slots_and_lifo_stack()
     check( rn_region_send_alloc( region, 10 ) == b );
     check( region->send_descriptors[b].generation == 2 );
 
-    // a stale chunk handle's generation never matches the slot's live take:
-    // freeing the live chain, then freeing it again, is refused whole
+    // a chunk's generation survives its free, and a second free of its
+    // handle is refused
 
     const uint32_t live_chunk = region->send_descriptors[a].chunk;
     const uint32_t gen_before = rn_send_store_chunk_generation( &region->store, live_chunk );
@@ -869,48 +867,12 @@ static void test_generation_tagged_slots_and_lifo_stack()
 
     const uint32_t a2 = rn_region_send_alloc( region, 10 );
     check( a2 == a );
-    check( rn_send_store_chunk_generation( &region->store, region->send_descriptors[a2].chunk ) != gen_before ||
-           region->send_descriptors[a2].chunk != live_chunk );
+    check( region->send_descriptors[a2].chunk == live_chunk );     // the lowest free chunk
+    check( rn_send_store_chunk_generation( &region->store, live_chunk ) == gen_before + 1 );
 
     rn_arena_destroy( arena );
 }
 #endif // #if ROCKETNET_DEV
-
-// A free run that straddles the scan cursor is found: chunks {0,1,2,8} free
-// with the cursor at 1 holds a run of 3 starting before the cursor
-// (proofs/tla/RNSendStore.tla RefuseOnlyWhenNoRun).
-
-static void test_store_find_run_straddling_the_cursor()
-{
-    std::vector<uint8_t> memory( 64 * 1024 );
-    rn_send_store_t store;
-    rn_send_store_init( &store, memory.data(), memory.size() );
-
-    rn_store_class_t * cls = &store.classes[RN_STORE_LARGE];
-    const uint32_t n = cls->num_chunks;
-    check( n >= 9 );
-
-    std::vector<uint32_t> handles;
-    for ( uint32_t i = 0; i < n; i++ )
-    {
-        const uint32_t h = rn_send_store_alloc( &store, RN_STORE_LARGE_BYTES );
-        check( h != RN_CHUNK_NONE );
-        handles.push_back( h );
-    }
-
-    check( rn_send_store_free_checked( &store, handles[0] ) );
-    check( rn_send_store_free_checked( &store, handles[1] ) );
-    check( rn_send_store_free_checked( &store, handles[2] ) );
-    check( rn_send_store_free_checked( &store, handles[8] ) );
-
-    cls->free_head = 1;
-
-    uint32_t first = RN_CHUNK_NONE;
-    check( rn_send_store_find( &store, 3 * RN_STORE_LARGE_BYTES, &first ) );
-    check( first == 0 );
-    check( rn_send_store_alloc( &store, 3 * RN_STORE_LARGE_BYTES ) != RN_CHUNK_NONE );
-    check( !rn_send_store_find( &store, 3 * RN_STORE_LARGE_BYTES, &first ) );
-}
 
 // Live spans are linked in allocation order: the oldest live span pins the
 // reclaim floor while interior spans churn, holes are never overwritten, and
@@ -970,12 +932,32 @@ static void test_span_links_pin_oldest_live()
     rn_arena_destroy( arena );
 }
 
-// Freeing a fragment follows only the block's own references: an index past
-// the chain's end frees nothing and returns at the chain's end, never after a
-// numeric-gap-proportional walk.
+// A store class may hold up to RN_HANDLE_INDEX chunks, the reach of a
+// handle's 30 index bits: a send budget whose resend reserve needs more than 2^20 small chunks lays
+// out.
 
-#if ROCKETNET_DEV
-static void test_fragment_free_bounded_by_chain()
+static void test_store_class_holds_up_to_the_handle_index()
+{
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    config.client_send_kbps = 1000000;
+    config.server_send_kbps = 1000000;
+    config.message_resend_delay_max_ms = 2000;
+
+    check( rocketnet_message_validate_config( &config ) );
+
+    rn_region_layout_t layout;
+    check( rn_region_layout( &config, &layout ) );
+    check( layout.store_chunks[RN_STORE_SMALL] > ( 1u << 20 ) );
+    check( layout.store_chunks[RN_STORE_SMALL] <= RN_HANDLE_INDEX );
+}
+
+// A send descriptor's generation wraps to 1, never to 0: a resend link
+// stamped 0 is never unlinked by the ack while its descriptor is in use, so
+// the number would be resent until the connection timed out
+// (proofs/tla/RNLazyPool.tla HeldGenerationPositive).
+
+static void test_message_descriptor_generation_never_zero()
 {
     rocketnet_counters_t counters;
     memset( &counters, 0, sizeof( counters ) );
@@ -990,42 +972,53 @@ static void test_fragment_free_bounded_by_chain()
 
     rn_region_t * region = rn_arena_region( arena, 0 );
 
-    const uint32_t large_free = rn_send_store_free_chunks( &region->store, RN_STORE_LARGE );
-    const uint32_t d = rn_region_send_alloc( region, 3000 );
+    const uint32_t d = rn_region_send_take( region, 10 );
     check( d != RN_DESCRIPTOR_NONE );
-    check( region->send_descriptors[d].fragments == 3 );
-    check( rn_send_store_free_chunks( &region->store, RN_STORE_LARGE ) == large_free - 3 );
-
-    rn_region_send_free_fragment( region, d, 1000000 );
-    check( rn_send_store_free_chunks( &region->store, RN_STORE_LARGE ) == large_free - 3 );
-
     rn_region_send_free( region, d );
-    check( rn_send_store_free_chunks( &region->store, RN_STORE_LARGE ) == large_free );
+
+    region->send_descriptors[d].generation = UINT32_MAX;
+
+    check( rn_region_send_take( region, 10 ) == d );
+    check( region->send_descriptors[d].generation == 1 );
 
     rn_arena_destroy( arena );
 }
-#endif // #if ROCKETNET_DEV
 
-// A single chunk's generation tag wraps to 1, never to 0: 0 is never a live
-// name (proofs/tla/RNLazyPool.tla HeldGenerationPositive).
+// A chunk's generation tag wraps to 1, never to 0: 0 is never a live name
+// (proofs/tla/RNSendStoreLayout.tla HeldGenerationPositive).
 
 #if ROCKETNET_DEV
-static void test_store_single_chunk_generation_never_zero()
+static void test_store_chunk_generation_never_zero()
 {
-    std::vector<uint8_t> memory( 64 * 1024 );
-    rn_send_store_t store;
-    rn_send_store_init( &store, memory.data(), memory.size() );
+    rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof( counters ) );
 
-    rn_store_class_t * cls = &store.classes[RN_STORE_SMALL];
+    rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &counters );
+    check( arena );
 
-    for ( int take = 0; take < 3000; take++ )
-    {
-        cls->free_head = 0;
-        const uint32_t h = rn_send_store_alloc( &store, 10 );
-        check( h != RN_CHUNK_NONE );
-        check( rn_send_store_chunk_generation( &store, h ) != 0 );
-        check( rn_send_store_free_checked( &store, h ) );
-    }
+    rn_region_t * region = rn_arena_region( arena, 0 );
+
+    const uint32_t d = rn_region_send_take( region, 10 );
+    check( d != RN_DESCRIPTOR_NONE );
+    const uint32_t chunk = region->send_descriptors[d].chunk;
+    check( rn_send_store_chunk_generation( &region->store, chunk ) == 1 );
+    rn_region_send_free( region, d );
+
+    // the freed chunk at the last generation: its next take wraps past 0
+
+    rn_store_class_t * cls = &region->store.classes[rn_send_store_chunk_class( chunk )];
+    cls->meta[chunk & 0x3FFFFFFFu] = RN_META_GENERATION;
+
+    const uint32_t again = rn_region_send_take( region, 10 );
+    check( again != RN_DESCRIPTOR_NONE );
+    check( region->send_descriptors[again].chunk == chunk );
+    check( rn_send_store_chunk_generation( &region->store, chunk ) == 1 );
+
+    rn_region_send_free( region, again );
+    check( rn_region_send_take( region, 10 ) != RN_DESCRIPTOR_NONE );
+    check( rn_send_store_chunk_generation( &region->store, chunk ) == 2 );
+
+    rn_arena_destroy( arena );
 }
 #endif // #if ROCKETNET_DEV
 
@@ -1043,12 +1036,12 @@ REGISTER_UNIT_TEST( test_exhausted_region_refuses_sends_until_reset );
 REGISTER_UNIT_TEST( test_receive_without_room_exhausts_the_region );
 REGISTER_UNIT_TEST( test_exhausted_region_refuses_spans );
 REGISTER_UNIT_TEST( test_span_granted_after_reset );
-REGISTER_UNIT_TEST( test_store_find_run_straddling_the_cursor );
 #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_generation_tagged_slots_and_lifo_stack );
 #endif // #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_span_links_pin_oldest_live );
 #if ROCKETNET_DEV
-REGISTER_UNIT_TEST( test_fragment_free_bounded_by_chain );
-REGISTER_UNIT_TEST( test_store_single_chunk_generation_never_zero );
+REGISTER_UNIT_TEST( test_store_chunk_generation_never_zero );
 #endif // #if ROCKETNET_DEV
+REGISTER_UNIT_TEST( test_message_descriptor_generation_never_zero );
+REGISTER_UNIT_TEST( test_store_class_holds_up_to_the_handle_index );
