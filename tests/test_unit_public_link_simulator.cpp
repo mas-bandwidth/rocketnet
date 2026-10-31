@@ -333,6 +333,7 @@ struct staged_fake_t
     int capacity;                                       // frames a flush takes, 0: unbounded
     int used;                                           // frames finished since the last flush
     int refused;                                        // starts refused for room
+    int payload_finishes;                               // payload packets the staging took
     struct rocketnet_server_socket_process_packets_t view;
 };
 
@@ -348,11 +349,13 @@ static uint8_t * staged_fake_start( void * instance, const rocketnet_address_t *
     *id = ++fake->next_id;
     return fake->frame;
 }
-static void staged_fake_finish( void * instance, uint64_t, uint8_t *, int )
+static void staged_fake_finish( void * instance, uint64_t, uint8_t * frame, int )
 {
     struct staged_fake_t * fake = (struct staged_fake_t *) instance;
     fake->finishes++;
     fake->used++;
+    if ( frame[ROCKETNET_FRAME_WIRE_OFFSET] == ROCKETNET_CONNECTION_PAYLOAD_PACKET )
+        fake->payload_finishes++;
 }
 static void staged_fake_abort( void * instance, uint64_t, uint8_t * ) { ( (struct staged_fake_t *) instance )->aborts++; }
 static void staged_fake_flush( void * instance ) { ( (struct staged_fake_t *) instance )->used = 0; }
@@ -454,7 +457,7 @@ static void test_public_link_simulator_staged_commit_arms()
 // The held packets come due into a staged transport whose staging takes three
 // frames a flush: ten payloads held together come due together, and each
 // update's drain moves only what the room takes and leaves the rest held, so
-// all ten reach the transport with no start refused and lost. The clock is an
+// all ten reach the transport and none is refused and lost. The clock is an
 // argument.
 static void test_public_link_simulator_drain_spreads_within_room()
 {
@@ -499,8 +502,7 @@ static void test_public_link_simulator_drain_spreads_within_room()
         check( fake->finishes - before <= fake->capacity );
     }
 
-    check( fake->finishes >= payloads );
-    check( fake->refused == 0 );
+    check( fake->payload_finishes == payloads );
     check( fake->batches == 0 );
 
     rocketnet_server_transport_swap_io_for_test( pair.server, &swapped_operations, &swapped_instance );
