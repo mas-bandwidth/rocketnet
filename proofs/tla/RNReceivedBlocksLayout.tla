@@ -72,10 +72,10 @@ VARIABLES
     tag,        \* block -> generation + 1 its summary holds, 0 = none
     summary,    \* block -> the records its summary counts
     suffix,     \* offset -> the records of the left generation from that offset on
-    middle,     \* endpoint->stats_received_middle
-    right,      \* endpoint->stats_received_right
-    cacheBase,  \* endpoint->stats_received_cache_base, 0 = no pieces
-    cacheTop,   \* endpoint->stats_received_cache_top
+    middle,     \* the cached middle (stats words at ROCKETNET_ACK_RECEIVED_STATS_MIDDLE_WORD)
+    right,      \* the cached right piece (ROCKETNET_ACK_RECEIVED_STATS_RIGHT_WORD)
+    cacheBase,  \* the cached base (ROCKETNET_ACK_RECEIVED_STATS_CACHE_BASE_WORD), 0 = no pieces
+    cacheTop,   \* the cached top (ROCKETNET_ACK_RECEIVED_STATS_CACHE_TOP_WORD)
     published   \* the records the published count, bytes and extrema reduce
 
 vars == <<ring, highest, tag, summary, suffix, middle, right, cacheBase, cacheTop, published>>

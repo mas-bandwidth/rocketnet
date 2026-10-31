@@ -311,9 +311,9 @@ struct rocketnet_ack_endpoint_t
     // (reordering, late and duplicate arrivals), so the counted received
     // records are summarized per 32-sequence generation, each in its fixed
     // physical block and tagged with its generation. The summaries and the
-    // older half's left-piece suffixes occupy the stats_word padding
-    // reclaimed from these records. Exact sequence tags reject stale aliases
-    // before a record is counted. The older half is cached as three pieces
+    // older half's cached pieces occupy the stats_word padding reclaimed from
+    // these records, so the endpoint does not grow. Exact sequence tags
+    // reject stale aliases before a record is counted
     // (sdk/rocketnet_ack.cpp rocketnet_ack_stats_received_refresh).
     // All zero is the empty state.
 
@@ -340,10 +340,6 @@ struct rocketnet_ack_endpoint_t
 #else
     uint32_t stats_received_pad;
 #endif // #if ROCKETNET_DEV
-    uint64_t stats_received_cache_base;         // the older half [base, top] the pieces were built for; 0 = none
-    uint64_t stats_received_cache_top;
-    struct rocketnet_ack_received_aggregate_t stats_received_middle;    // whole generations between base's and top's
-    struct rocketnet_ack_received_aggregate_t stats_received_right;     // top's generation, from its start to top
     double stats_rtt_sum;                       // sum and count of the positive rtt samples
     uint32_t stats_rtt_count;
     uint32_t stats_pad;
