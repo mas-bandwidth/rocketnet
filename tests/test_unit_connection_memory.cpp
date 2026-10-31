@@ -1006,6 +1006,38 @@ static void test_fragment_free_bounded_by_chain()
 }
 #endif // #if ROCKETNET_DEV
 
+// A send descriptor's generation wraps to 1, never to 0: a resend link
+// stamped 0 is never unlinked by the ack while its descriptor is in use, so
+// the number would be resent until the connection timed out
+// (proofs/tla/RNLazyPool.tla HeldGenerationPositive).
+
+static void test_message_descriptor_generation_never_zero()
+{
+    rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof( counters ) );
+
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    config.client_send_kbps = config.server_send_kbps = 0;
+    config.send_queue_messages = 16;
+
+    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+    check( arena );
+
+    rn_region_t * region = rn_arena_region( arena, 0 );
+
+    const uint32_t d = rn_region_send_take( region, 10 );
+    check( d != RN_DESCRIPTOR_NONE );
+    rn_region_send_free( region, d );
+
+    region->send_descriptors[d].generation = UINT32_MAX;
+
+    check( rn_region_send_take( region, 10 ) == d );
+    check( region->send_descriptors[d].generation == 1 );
+
+    rn_arena_destroy( arena );
+}
+
 // A single chunk's generation tag wraps to 1, never to 0: 0 is never a live
 // name (proofs/tla/RNLazyPool.tla HeldGenerationPositive).
 
@@ -1052,3 +1084,4 @@ REGISTER_UNIT_TEST( test_span_links_pin_oldest_live );
 REGISTER_UNIT_TEST( test_fragment_free_bounded_by_chain );
 REGISTER_UNIT_TEST( test_store_single_chunk_generation_never_zero );
 #endif // #if ROCKETNET_DEV
+REGISTER_UNIT_TEST( test_message_descriptor_generation_never_zero );
