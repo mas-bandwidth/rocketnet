@@ -505,3 +505,7 @@ MCRNAllocatorInstall.cfg	MCRNAllocatorInstall.tla	pass	-	check	allocatorinstall	
 MCRNAllocatorInstallBrokenNoSentinel.cfg	MCRNAllocatorInstall.tla	invariant	InstallOnlyWhenIdle	check	allocatorinstall	required	-
 MCRNAllocatorInstallBrokenNoSentinelRelease.cfg	MCRNAllocatorInstall.tla	invariant	ReleasedThroughItsPair	check	allocatorinstall	required	-
 MCRNAllocatorInstallBrokenRereadRelease.cfg	MCRNAllocatorInstall.tla	invariant	ReleasedThroughItsPair	check	allocatorinstall	required	-
+MCRNWindowLayout.cfg	MCRNWindowLayout.tla	pass	-	check	rnwindowlayout	required	-
+MCRNWindowLayoutBrokenNoClearFloor.cfg	MCRNWindowLayout.tla	invariant	NoSilentLoss	check	rnwindowlayout	required	-
+MCRNWindowLayoutBrokenNoHalfRange.cfg	MCRNWindowLayout.tla	invariant	HonestReadExactly	check	rnwindowlayout	required	-
+MCRNWindowLayoutBrokenNoCollisionTest.cfg	MCRNWindowLayout.tla	invariant	NoLiveOverwrite	check	rnwindowlayout	required	-
