@@ -24,7 +24,7 @@
 (*     or a number inside the window), and never names a slot whose        *)
 (*     descriptor is live with another number: RNWindow's NoSlotCollision  *)
 (*     is the protocol's guarantee of that, taken here as an assumption;   *)
-(*   forged: any wire value at all, from a peer that breaks the protocol.  *)
+(*   forged: any wire value at all, from a sender that breaks the protocol.*)
 (*                                                                         *)
 (* R is the code's uint64; its UINT64_MAX guard is unreachable and not     *)
 (* modelled.  The ghost state: above, the accepted numbers at or past R;   *)
