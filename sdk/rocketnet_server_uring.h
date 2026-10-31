@@ -191,6 +191,9 @@ void rocketnet_server_uring_test_fail_receive( struct rocketnet_server_uring_t *
 void rocketnet_server_uring_test_fail_sends( struct rocketnet_server_uring_t * uring, int count );
 // main thread: no staged slot waiting and no send without its CQE.
 bool rocketnet_server_uring_test_send_idle( struct rocketnet_server_uring_t * uring );
+// sets the send staging's reservation count to count, as a caller that took
+// count reservations without a flush leaves it.
+void rocketnet_server_uring_test_set_reserved( struct rocketnet_server_uring_t * uring, uint64_t count );
 
 // unit suite only (the test hook library): a transport over a fake completion
 // source, with no kernel ring and no socket. the source stands in for the

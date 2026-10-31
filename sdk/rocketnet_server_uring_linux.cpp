@@ -117,7 +117,9 @@ struct rocketnet_server_uring_send_buffer_t
 {
     uint8_t padding_0[4096];
 
-    std::atomic<int> num_packets{ 0 };
+    // the reservation count, 64 bits: a caller never reserves 2^64 slots
+    // without a flush, so the count never wraps back onto a slot it handed out
+    std::atomic<uint64_t> num_packets{ 0 };
 
     uint8_t padding_1[4096];
 
@@ -1097,6 +1099,13 @@ bool rocketnet_server_uring_test_send_idle( struct rocketnet_server_uring_t * ur
            uring->send.num_packets.load( std::memory_order_relaxed ) == 0;
 }
 
+// as a caller that took count reservations without a flush leaves it
+void rocketnet_server_uring_test_set_reserved( struct rocketnet_server_uring_t * uring, uint64_t count )
+{
+    rocketnet_assert( uring );
+    uring->send.num_packets.store( (decltype( uring->send.num_packets.load() )) count, std::memory_order_relaxed );
+}
+
 
 void rocketnet_server_uring_test_stall_destroy( struct rocketnet_server_uring_t * uring )
 {
@@ -1635,13 +1644,8 @@ uint8_t * rocketnet_server_uring_start_packet( struct rocketnet_server_uring_t *
 
     *packet_id = uring->packet_id.fetch_add( 1, std::memory_order_relaxed );
 
-    const int slot = uring->send.num_packets.fetch_add( 1, std::memory_order_relaxed );
-
-    // an app that stages forever without flushing wraps the counter
-    // negative, and a negative index is an out-of-bounds write, not a
-    // dropped packet
-
-    if ( slot >= ROCKETNET_URING_SEND_QUEUE_SIZE || slot < 0 )
+    const uint64_t slot = uring->send.num_packets.fetch_add( 1, std::memory_order_relaxed );
+    if ( slot >= ROCKETNET_URING_SEND_QUEUE_SIZE )
     {
         rocketnet_spam( "io_uring transport send staging full. packet dropped" );
         return NULL;
@@ -1718,9 +1722,8 @@ void rocketnet_server_uring_send_packets( struct rocketnet_server_uring_t * urin
 {
     rocketnet_assert( uring );
 
-    int num_slots = uring->send.num_packets.load( std::memory_order_relaxed );
-    if ( num_slots > ROCKETNET_URING_SEND_QUEUE_SIZE )
-        num_slots = ROCKETNET_URING_SEND_QUEUE_SIZE;
+    const uint64_t reserved = uring->send.num_packets.load( std::memory_order_relaxed );
+    const int num_slots = reserved < ROCKETNET_URING_SEND_QUEUE_SIZE ? (int) reserved : ROCKETNET_URING_SEND_QUEUE_SIZE;
 
     int slot = uring->send_submitted;
     int budget = ROCKETNET_URING_SEND_BUDGET;
