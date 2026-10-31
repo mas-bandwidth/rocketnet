@@ -89,8 +89,8 @@ required runs are:
     Debug `unit` and `functional`, Release `unit`, `functional`, `checks` and
     `builds`; macOS 27 on arm64 (rows named `macos-15`) Debug `unit` and
     Release `functional`;
-  - `windows / Release (a)`, `XDP / libxdp 1.4 / Debug` and
-    `happy path / <os>` (ubuntu-24.04, windows);
+  - `XDP / libxdp 1.4 / Debug` and `happy path / <os>` (ubuntu-24.04,
+    windows; the Windows row is the per-commit MSVC whole-tree build);
   - `asan + ubsan (<leg>)` (`unit suite`, `functional suite`) and
     `tsan (loopback soak)`;
   - `fuzz smoke (libFuzzer, corpus replay)`, `big endian s390x / Debug`,

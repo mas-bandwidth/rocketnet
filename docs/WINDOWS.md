@@ -12,13 +12,14 @@ does not widen them.
 ## What is supported
 
 The supported row is Windows 11 on x86_64 with MSVC, transports `portable`,
-`iocp` and `rio` ([PLATFORMS.md](PLATFORMS.md), the table). CI builds and runs
-it on every commit as one Release leg, a development library
-(`ROCKETNET_DEV=ON`) running the unit suite and the lifecycle binary, beside
-the happy path's whole-tree build; each night it adds a production library
-(`ROCKETNET_DEV=OFF`) checked as a consumer sees it, with the transport
-matrix below, and the functional suite (`.github/workflows/ci.yml`,
-`build-and-test-windows`, run by `nightly-ci.yml`). clang-cl
+`iocp` and `rio` ([PLATFORMS.md](PLATFORMS.md), the table). CI builds the whole
+tree in Release and runs the happy path on every commit (`happy path /
+windows`). Each night it runs three Release legs: a development library
+(`ROCKETNET_DEV=ON`) running the unit suite and the lifecycle binary, a
+production library (`ROCKETNET_DEV=OFF`) checked as a consumer sees it, with
+the transport matrix below, and the functional suite
+(`.github/workflows/ci.yml`, `build-and-test-windows`, run by
+`nightly-ci.yml`). clang-cl
 on x86_64 is a nightly row; Windows on arm64 is build-checked only and
 unsupported.
 

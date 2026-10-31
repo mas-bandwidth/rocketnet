@@ -10,8 +10,9 @@
 #   Linux: Debug checks and builds; the development functional suite on the
 #       Release row; the history-budget and no-XDP builds; platform
 #       selftests / ubuntu-24.04
-#   Windows: Release legs (b) and (c); leg (a)'s full-tree build, public
-#       header, fuzz corpus replay and memory plans
+#   Windows: windows / Release legs (a), (b) and (c) (the unit suite, the
+#       functional suites, the consumer checks); per commit only happy
+#       path / windows runs there
 #   asan + ubsan (unit suite portable), fuzz smoke NDEBUG, big endian s390x /
 #       Release, pinned libsodium, backend example / go and csharp
 #   the instruction count gate's pinned toolchain build, saved to the cache

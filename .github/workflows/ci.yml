@@ -162,10 +162,9 @@ concurrency:
 #   Linux: Debug checks and builds; Release functional's development suite
 #       (Debug functional runs it per commit); Release builds' history budget
 #       and no-XDP builds; platform selftests / ubuntu-24.04.
-#   Windows: legs (b) and (c) whole; leg (a)'s full-tree build, public header,
-#       fuzz corpus replay and memory plans (per commit, leg (a) builds the
-#       unit suite and the lifecycle binary and runs them, and happy path /
-#       windows builds the whole tree).
+#   Windows: windows / Release legs (a), (b) and (c) whole (per commit,
+#       happy path / windows builds the whole tree under MSVC and runs the
+#       happy path).
 #   asan + ubsan (unit suite portable), fuzz smoke NDEBUG, big endian s390x /
 #       Release, pinned libsodium, backend example / go and csharp.
 #   The instruction count gate's toolchain build: per commit the gate only
@@ -1053,22 +1052,23 @@ jobs:
     # "Set up runner" (73 s on run 40890503823): the limit is that wait plus
     # the 3-minute law. The test window inside stays timed against 120 s.
     #
-    # Per commit only leg (a) runs, building the unit suite, the sodium
-    # known answers and the lifecycle binary rather than the whole tree
-    # (happy path / windows builds the whole tree per commit); legs (b) and
-    # (c) and leg (a)'s other steps run in the nightly tier. A wait for a
-    # build slot counts against the two-minute bound like any other second.
-    timeout-minutes: ${{ inputs.full && 5 || 2 }}
+    # NIGHTLY TIER (2026-10-31). Leg (a) alone, narrowed to the unit suite's
+    # targets, measured 143s on run 41240496784 (checkout 11s, configure 19s,
+    # build 55s, unit suite 38s) and hit the two-minute bound; MSVC's floor
+    # leaves no room for a suite. Per commit, happy path / windows builds the
+    # whole tree under MSVC and runs the happy path (106s on the same run).
+    if: inputs.full
+    timeout-minutes: 5
     strategy:
       fail-fast: false
       matrix:
-        leg: ${{ fromJSON(inputs.full && '["a","b","c"]' || '["a"]') }}
+        leg: [a, b, c]
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Check committed XDP fallback source on Windows
-        if: inputs.full && matrix.leg == 'a'
+        if: matrix.leg == 'a'
         # Uses the Python and CMake on the fleet Windows runner's job PATH.
         run: python tools/check_xdp_archive.py --committed-only
 
@@ -1085,7 +1085,7 @@ jobs:
         run: cmake -B build -G "Visual Studio 18 2026" -A x64 -DROCKETNET_DEV=${{ matrix.leg == 'b' && 'OFF' || 'ON' }}
 
       - name: Build
-        run: cmake --build build --config Release --parallel ${{ !inputs.full && '--target test test_sodium test_lifecycle' || '' }}
+        run: cmake --build build --config Release --parallel
 
       - name: Start combined unit and functional timing (development legs)
         if: matrix.leg != 'b'
@@ -1095,11 +1095,11 @@ jobs:
       # rocketnet.h alone under MSVC cl, and a C and a C++ client and server
       # built from only the header and the prebuilt static library (seconds)
       - name: Check the public header is clean and self-contained
-        if: inputs.full && matrix.leg == 'a'
+        if: matrix.leg == 'a'
         run: python tools/check_public_header.py --build build --config Release
 
       - name: Replay the fuzz corpora without libFuzzer
-        if: inputs.full && matrix.leg != 'c'
+        if: matrix.leg != 'c'
         shell: bash
         run: |
           # the ten harnesses build in one parallel build and replay at once;
@@ -1161,7 +1161,7 @@ jobs:
         run: ./bin/Release/test_lifecycle.exe
 
       - name: Memory plans against allocator observations
-        if: inputs.full && matrix.leg == 'a'
+        if: matrix.leg == 'a'
         run: python tools/check_memory.py ./bin/Release/transport_memory.exe
 
       # ---- leg (b): the SDK as a consumer sees it, and the driver contract ----
