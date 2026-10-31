@@ -340,6 +340,9 @@ static int rocketnet_client_gso_receive_deliver( rocketnet_client_gso_t * gso, r
     return total;
 }
 
+// proofs/tla/RNClientGroCarry.tla Begin and End: one call, max_packets slots
+// from 0, returning the slots it filled.
+
 int rocketnet_client_gso_receive_batch( rocketnet_client_gso_t * gso, rocketnet_address_t * from, uint8_t * packet_data, int packet_stride, int * packet_bytes, int max_packets )
 {
     rocketnet_assert( gso );
