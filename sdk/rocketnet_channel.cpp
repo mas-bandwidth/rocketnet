@@ -1586,11 +1586,8 @@ static bool rn_ordered_walk( rn_ordered_t * ordered, bool chunk, double now, rn_
 
         ack->walk_visits++;
 
-        if ( slot->acked )
-        {
-            cursor = next_slot;
-            continue;
-        }
+        // an ack unlinks its number before marking it acked
+        rocketnet_assert( !slot->acked );
 
         const bool unsent = rn_send_number_unsent_due( slot->last_send );
         if ( !unsent && !( now >= slot->last_send + delay ) )

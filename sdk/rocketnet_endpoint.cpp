@@ -475,7 +475,8 @@ uint8_t * rn_endpoint_start( struct rn_endpoint_t * endpoint, int channel, int r
 bool rn_endpoint_send_room( const struct rn_endpoint_t * endpoint, int channel, int reliability, int bytes, int transport_max_payload_bytes )
 {
     // the room query: rn_endpoint_start's route, then the region's decision
-    // (rn_region_send_fit) that its allocation acts on. Pure, O(1).
+    // (rn_region_send_fit) that its allocation acts on. Pure and
+    // allocation-free; the store lookup scans a class's chunks.
 
     int type = reliability;
     const int route = rn_endpoint_send_route( endpoint, channel, reliability, bytes, transport_max_payload_bytes, &type );

@@ -159,7 +159,6 @@ struct rn_sent_packet_t                 // 32 bytes: the sent-packet ring, P ent
     uint16_t ref_count;
     uint16_t unreliable_receipts;
     uint32_t receipt_first;
-    uint32_t flags;
 };
 
 struct rn_sent_index_t                  // 16 bytes: packet_id -> sent ring entry, 2P open-addressed entries (6.1)
@@ -227,8 +226,9 @@ struct rn_resend_link_t                 // 12 bytes: resend sequence entry, inde
 // whose descriptor took another ticket is a tombstone; the per-channel reliable
 // FIFO is linked by queue_next and nothing leaves it from the middle.
 // Resend capacity stays W: one slot is in at most one resend sequence, linked
-// to its neighbours by slot index in rn_resend_link_t, and leaves it on the ack
-// that marks its number acked (proofs/tla/RNResendGenerations.tla).
+// to its neighbours by slot index in rn_resend_link_t, and an ack unlinks its
+// number before marking it acked, so a resend walk visits only unacked numbers
+// (proofs/tla/RNResendGenerations.tla).
 
 // ----------------------------------------------------------------
 //                        the region's layout
