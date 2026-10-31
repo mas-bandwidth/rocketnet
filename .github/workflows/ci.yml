@@ -282,6 +282,33 @@ jobs:
           bash tools/check_fp_contract.sh
           cmake -DROCKETNET_OSS_FUZZ_BUILD_SCRIPT=tests/oss-fuzz/build.sh -P tools/check_oss_fuzz_fp_contract.cmake
 
+      # clang-cl takes its own floor (/fp:precise and -Xclang -ffp-contract=off),
+      # and the Windows rows that build with clang-cl are nightly. This
+      # configures the tree for x64 Windows with the runner's clang under the
+      # clang-cl name (the driver picks its mode from that name), so
+      # rocketnet_check_fp_floor holds every target to the clang-cl floor on
+      # each push. Configure only: nothing is compiled or linked.
+      - name: Check the clang-cl floating-point floor (cross configure)
+        if: matrix.leg == 'checks' && ( runner.os == 'Linux' )
+        run: |
+          set -euo pipefail
+          clang="$(command -v clang || true)"
+          if [ -z "$clang" ]; then
+            echo "TOOL-MISSING clang (any) (PATH) on $RUNNER_NAME"
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/clang-cl-floor/bin"
+          ln -sf "$clang" "$RUNNER_TEMP/clang-cl-floor/bin/clang-cl"
+          cmake -S . -B "$RUNNER_TEMP/clang-cl-floor/build" \
+            -DCMAKE_SYSTEM_NAME=Windows -DCMAKE_SYSTEM_PROCESSOR=AMD64 \
+            "-DCMAKE_C_COMPILER=$RUNNER_TEMP/clang-cl-floor/bin/clang-cl" \
+            "-DCMAKE_CXX_COMPILER=$RUNNER_TEMP/clang-cl-floor/bin/clang-cl" \
+            -DCMAKE_C_COMPILER_TARGET=x86_64-pc-windows-msvc \
+            -DCMAKE_CXX_COMPILER_TARGET=x86_64-pc-windows-msvc \
+            -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY \
+            | tee "$RUNNER_TEMP/clang-cl-floor/configure.log"
+          grep -q 'Floating-point floor (clang-cl)' "$RUNNER_TEMP/clang-cl-floor/configure.log"
+
       - name: Check every child make has a bounded -j
         if: matrix.leg == 'checks' && ( runner.os == 'Linux' )
         run: bash tools/check_make_jobs.sh
