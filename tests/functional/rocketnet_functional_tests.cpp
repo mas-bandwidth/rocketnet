@@ -12472,6 +12472,9 @@ extern void rocketnet_test_frame_sync_dropped_stats();
 #endif // #if ROCKETNET_DEV
 extern void rocketnet_test_frame_sync_lifecycle();
 extern void rocketnet_test_frame_sync_create_ex_success_status();
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+extern void rocketnet_test_sleep_resumes_after_signal();
+#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 #if defined( __APPLE__ ) && !defined( ROCKETNET_USE_SYSTEM_SODIUM )
 extern void rocketnet_test_bundled_rng_closes_and_reopens_on_mac();
 #endif // #if defined(__APPLE__) && !defined(ROCKETNET_USE_SYSTEM_SODIUM)
@@ -12554,6 +12557,9 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
 #endif // #if ROCKETNET_DEV
     { "test_platform_thread", rocketnet_test_platform_thread, NULL },
     { "test_frame_sync_wait", rocketnet_test_frame_sync_wait, NULL },
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+    { "test_sleep_resumes_after_signal", rocketnet_test_sleep_resumes_after_signal, NULL },
+#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 #if ROCKETNET_DEV
     { "test_frame_sync_dropped_stats", rocketnet_test_frame_sync_dropped_stats, NULL },
 #endif // #if ROCKETNET_DEV

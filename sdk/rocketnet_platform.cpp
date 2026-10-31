@@ -177,30 +177,6 @@ uint32_t rocketnet_platform_timeout_milliseconds( float seconds )
     return (uint32_t) milliseconds;
 }
 
-struct rocketnet_platform_sleep_split_t rocketnet_platform_sleep_split( double time )
-{
-    struct rocketnet_platform_sleep_split_t split;
-
-    if ( !( time > 0.0 ) )
-    {
-        split.seconds = 0;
-        split.microseconds = 0;
-        return split;
-    }
-
-    split.seconds = (uint32_t) time;
-
-    double frac = time - (double) split.seconds;
-    split.microseconds = (uint32_t) ( frac * 1000000.0 );
-    if ( split.microseconds >= 1000000 )
-    {
-        split.seconds += 1;
-        split.microseconds -= 1000000;
-    }
-
-    return split;
-}
-
 struct rocketnet_platform_sleep_plan_t
 {
     bool yield_only;
@@ -1040,15 +1016,41 @@ double rocketnet_platform_time()
 #endif // #if defined( __APPLE__ )
 }
 
+// sleeps until a CLOCK_MONOTONIC deadline; a signal that interrupts the
+// nanosleep (EINTR) resumes it for the time that remains
 void rocketnet_platform_sleep( double time )
 {
     if ( !( time > 0.0 ) )
         return;
-    const rocketnet_platform_sleep_split_t split = rocketnet_platform_sleep_split( time );
-    if ( split.seconds > 0 )
-        sleep( split.seconds );
-    if ( split.microseconds > 0 )
-        usleep( split.microseconds );
+
+    const time_t whole = (time_t) time;
+    struct timespec deadline;
+    clock_gettime( CLOCK_MONOTONIC, &deadline );
+    deadline.tv_sec += whole;
+    deadline.tv_nsec += (long) ( ( time - (double) whole ) * 1000000000.0 );
+    if ( deadline.tv_nsec >= 1000000000L )
+    {
+        deadline.tv_sec += 1;
+        deadline.tv_nsec -= 1000000000L;
+    }
+
+    for ( ;; )
+    {
+        struct timespec now;
+        clock_gettime( CLOCK_MONOTONIC, &now );
+        if ( now.tv_sec > deadline.tv_sec || ( now.tv_sec == deadline.tv_sec && now.tv_nsec >= deadline.tv_nsec ) )
+            return;
+
+        struct timespec remaining;
+        remaining.tv_sec = deadline.tv_sec - now.tv_sec;
+        remaining.tv_nsec = deadline.tv_nsec - now.tv_nsec;
+        if ( remaining.tv_nsec < 0 )
+        {
+            remaining.tv_sec -= 1;
+            remaining.tv_nsec += 1000000000L;
+        }
+        nanosleep( &remaining, NULL );
+    }
 }
 
 // ---------------------------------------------------

@@ -120,21 +120,15 @@ double rocketnet_platform_time( void );
 // otherwise the wall clock read once now, less the caller's time
 uint64_t rocketnet_platform_token_epoch( uint64_t configured, double time );
 
-// Windows treats non-positive and NaN as a yield; POSIX is usleep
+// Windows treats non-positive and NaN as a yield; POSIX returns at once for
+// them, and otherwise nanosleeps to a monotonic deadline, resuming after a
+// signal interrupts it
 void rocketnet_platform_sleep( double time );
 
 struct timeval rocketnet_platform_timeval_from_seconds( float seconds );
 
 // Whole milliseconds rounded up and clamped to 1 .. 0xFFFFFFFE.
 uint32_t rocketnet_platform_timeout_milliseconds( float seconds );
-
-struct rocketnet_platform_sleep_split_t
-{
-    uint32_t seconds;
-    uint32_t microseconds;
-};
-
-struct rocketnet_platform_sleep_split_t rocketnet_platform_sleep_split( double time );
 
 // 1 set and copied, 0 unset, -1 value too long for size; buffer is left empty unless 1
 int rocketnet_platform_getenv( const char * var, char * buffer, size_t size );

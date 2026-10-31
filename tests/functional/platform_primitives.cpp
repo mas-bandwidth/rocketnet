@@ -855,6 +855,55 @@ void rocketnet_test_ack_endpoints_independent_across_threads()
     rocketnet_check( results[1].acked == rounds * 16 );
 }
 
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+
+#include <signal.h>
+#include <sys/time.h>
+
+static volatile sig_atomic_t rocketnet_sleep_signal_alarms = 0;
+
+static void rocketnet_sleep_signal_alarm_handler( int )
+{
+    rocketnet_sleep_signal_alarms = rocketnet_sleep_signal_alarms + 1;
+}
+
+// rocketnet_sleep sleeps the whole request in a host whose SIGALRM ticker
+// (a handler installed without SA_RESTART, as a profiler's is) interrupts it
+// every 2 ms.
+void rocketnet_test_sleep_resumes_after_signal()
+{
+    struct sigaction action;
+    memset( &action, 0, sizeof( action ) );
+    action.sa_handler = rocketnet_sleep_signal_alarm_handler;
+    sigemptyset( &action.sa_mask );
+    action.sa_flags = 0;
+    struct sigaction previous;
+    rocketnet_check( sigaction( SIGALRM, &action, &previous ) == 0 );
+
+    struct itimerval ticker;
+    memset( &ticker, 0, sizeof( ticker ) );
+    ticker.it_interval.tv_usec = 2000;
+    ticker.it_value.tv_usec = 2000;
+    rocketnet_check( setitimer( ITIMER_REAL, &ticker, NULL ) == 0 );
+
+    const auto start = std::chrono::steady_clock::now();
+    rocketnet_sleep( 0.2 );
+    const double elapsed = std::chrono::duration<double>( std::chrono::steady_clock::now() - start ).count();
+
+    struct itimerval off;
+    memset( &off, 0, sizeof( off ) );
+    rocketnet_check( setitimer( ITIMER_REAL, &off, NULL ) == 0 );
+    rocketnet_check( sigaction( SIGALRM, &previous, NULL ) == 0 );
+
+    printf( "rocketnet_sleep( 0.2 ) slept %.6f s through %d SIGALRM interruptions\n", elapsed, (int) rocketnet_sleep_signal_alarms );
+    fflush( stdout );
+
+    rocketnet_check( rocketnet_sleep_signal_alarms > 0 );
+    rocketnet_check( elapsed >= 0.2 );
+}
+
+#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+
 #if defined( ROCKETNET_PLATFORM_PRIMITIVES_STANDALONE )
 
 static const char * const rocketnet_platform_environment_probe = "ROCKETNET_PLATFORM_ENVIRONMENT_PROBE";

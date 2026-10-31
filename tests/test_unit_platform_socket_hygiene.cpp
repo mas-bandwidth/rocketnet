@@ -5,9 +5,8 @@
 
 // Platform socket hygiene: pure functions verifying that mapped IPv6 sources
 // are refused on non-dual-stack receive paths, socket timeout conversions
-// split seconds and microseconds (tv_usec < 1000000), sleep conversions split
-// seconds and microseconds without signed integer overflow, and descriptor 0
-// is treated as a valid socket handle.
+// split seconds and microseconds (tv_usec < 1000000), and descriptor 0 is
+// treated as a valid socket handle.
 
 #include "test_unit_registry.h"
 
@@ -95,17 +94,6 @@ static void test_platform_socket_hygiene_timeout_milliseconds_rounds_up()
     rocketnet_unit_check( rocketnet_platform_timeout_milliseconds( 0.0005f ) == 1 );
     rocketnet_unit_check( rocketnet_platform_timeout_milliseconds( 1.5f ) == 1500 );
     rocketnet_unit_check( rocketnet_platform_timeout_milliseconds( 1e10f ) == UINT32_C( 0xFFFFFFFE ) );
-}
-
-static void test_platform_socket_hygiene_sleep_split()
-{
-    // A 3000 s sleep conversion must split seconds and microseconds:
-    // 3000 s would overflow a 32-bit signed int microsecond counter (3000 * 1000000 > 2^31 - 1).
-
-    struct rocketnet_platform_sleep_split_t split = rocketnet_platform_sleep_split( 3000.0 );
-    rocketnet_unit_check( split.seconds == 3000 );
-    rocketnet_unit_check( split.microseconds == 0 );
-    rocketnet_unit_check( (int32_t) split.microseconds >= 0 );
 }
 
 static void test_platform_socket_hygiene_descriptor_valid()
@@ -336,7 +324,6 @@ static void test_platform_msgx_receive_weather_drain_is_bounded()
 
 REGISTER_UNIT_TEST( test_platform_socket_hygiene_mapped_source_decision );
 REGISTER_UNIT_TEST( test_platform_socket_hygiene_timeout_timeval );
-REGISTER_UNIT_TEST( test_platform_socket_hygiene_sleep_split );
 REGISTER_UNIT_TEST( test_platform_socket_hygiene_descriptor_valid );
 REGISTER_UNIT_TEST( test_platform_socket_hygiene_refused_source_reads_next );
 REGISTER_UNIT_TEST( test_platform_socket_hygiene_refused_source_then_drained );
