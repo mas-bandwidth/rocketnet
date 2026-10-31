@@ -380,6 +380,7 @@ void rocketnet_write_connection_cookie_packet( uint8_t * packet_data,
     rocketnet_assert( p - packet_data == ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES );
 }
 
+// proofs/tla/RNReconstructLayout.tla CodeIsNearest: the three candidates, the below gate, the wrap above and the tie to the larger
 uint64_t rocketnet_reconstruct_near( uint32_t wire_value, uint64_t expected )
 {
     // candidates share the wire value in their low 32 bits. take the one

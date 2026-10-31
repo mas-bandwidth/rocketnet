@@ -72,6 +72,7 @@ int rocketnet_ack_block_write( uint8_t * output, const struct rocketnet_ack_bloc
 // proofs/tla/FragmentsAndAcks.tla SendAck: builds the block the session packet carries from the replay window
 // proofs/tla/RNSentHistory.tla ReceiverAck: restates the received set inside the window as one ack block
 
+// proofs/tla/RNAckBuildLayout.tla Step and Finish: the word load, the clz phases, the range cap and the run emitted at the floor
 int rocketnet_ack_block_build( uint8_t * output, int capacity, const struct rocketnet_replay_protection_t * replay )
 {
     rocketnet_assert( output );
@@ -470,6 +471,7 @@ static inline int rocketnet_ack_ctz64( uint64_t v )
 // unacknowledged or empty slots are skipped; a candidate is checked against
 // its record, since a slot's bits can still name a record below the window.
 
+// proofs/tla/RNAckWalkLayout.tla LowestExact: the empty-word skip to the next word boundary and the ctz step
 static uint64_t rocketnet_ack_stats_lowest_acked( const struct rocketnet_ack_endpoint_t * endpoint, uint64_t from, uint64_t to )
 {
     uint64_t sequence = from;
@@ -996,6 +998,7 @@ static inline float rocketnet_ack_stats_rtt_node( const struct rocketnet_ack_end
 // writes one rtt history entry and keeps the positive sum, count and the
 // min tree with it
 
+// proofs/tla/RNRttTreeLayout.tla Write: the leaf, then the walk from (index + size) >> 1 to the root, stopping where the minimum is unchanged
 static void rocketnet_ack_stats_rtt_write( struct rocketnet_ack_endpoint_t * endpoint, int index, float sample )
 {
     const float old_sample = endpoint->rtt_history[index];
@@ -1224,6 +1227,7 @@ uint64_t rocketnet_ack_endpoint_open_aggregate( struct rocketnet_ack_endpoint_t 
 // proofs/tla/RNServerStats.tla Send: takes any received sequence the remote end chose
 // proofs/tla/RNServerStats.tla Write: writes the exact-tagged ring slot and rebuilds its block
 
+// proofs/tla/RNReceivedBlocksLayout.tla Receive: the refusal, the retention clear split at the ring end, the block rebuild and the older-half query
 void rocketnet_ack_endpoint_record_received( struct rocketnet_ack_endpoint_t * endpoint,
                                              uint64_t sequence, int wire_bytes, double time )
 {
@@ -1372,6 +1376,7 @@ static void rn_bitmap_walk_bits_desc( const uint64_t * bitmap, uint32_t a, uint3
 // proofs/tla/RNSentHistory.tla ReceiveAck
 // proofs/tla/RNServerStats.tla Ack: marks each held, unacknowledged record acked and moves it to the acked aggregates
 
+// proofs/tla/RNAckWalkLayout.tla VisitsExact: the window clamp, the slot split at the ring end, the masked popcount and the descending walk
 static int rocketnet_ack_apply_run( struct rocketnet_ack_endpoint_t * endpoint,
                                     uint64_t low, uint64_t high, double time,
                                     uint64_t * acked_packet_ids, int acked_capacity, int * acked_count,

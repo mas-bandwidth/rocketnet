@@ -525,6 +525,7 @@ int rocketnet_used_token_history_claim_check( const struct rocketnet_used_token_
     return rocketnet_address_equal( &table->address[slot], address ) ? 1 : 0;
 }
 
+// proofs/tla/RNFreeStackLayout.tla TakeClaim: the top slot selected, popped only while it is still the top
 int rocketnet_used_token_history_claim_record( struct rocketnet_used_token_history_t * history,
                                                const uint8_t * token_identifier,
                                                const struct rocketnet_address_t * address,
