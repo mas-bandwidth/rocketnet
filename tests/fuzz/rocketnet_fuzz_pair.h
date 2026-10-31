@@ -1491,7 +1491,7 @@ static const char * const rocketnet_fuzz_packet_type_names[ROCKETNET_FUZZ_NUM_PA
         char restore[8];                                                                                \
         rocketnet_fuzz_check_restore = rocketnet_test_getenv( "ROCKETNET_FUZZ_CHECK_RESTORE", restore, sizeof( restore ) ) && restore[0] == '1'; \
         if ( rocketnet_fuzz_pair_initialize() != 0 )                                                    \
-            return 1;                                                                                   \
+            exit( 1 );                                                                                  \
         char seed_dir[1024];                                                                            \
         if ( rocketnet_test_getenv( "ROCKETNET_FUZZ_SEED_DIR", seed_dir, sizeof( seed_dir ) ) )          \
             exit( generate( seed_dir ) ? 0 : 1 );                                                       \

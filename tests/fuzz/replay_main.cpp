@@ -10,7 +10,10 @@
 //
 // The harnesses keep no state across inputs and read no clock or
 // randomness, so the count is all this transport reports. Each harness's
-// LLVMFuzzerInitialize is called first, as libFuzzer calls it.
+// LLVMFuzzerInitialize is called first, as libFuzzer calls it, and its return
+// value is ignored, as libFuzzer ignores it: a harness that must stop the run
+// (a seed generator's INCOMPLETE, a failed setup) exits itself, so the replay
+// driver and the libFuzzer build stop in the same way.
 //
 // THE STANDALONE MODE, yojimbo's FUZZ_STANDALONE driver: with no paths named,
 // it feeds FUZZ_ITERS pseudo-random inputs (default 200000) of up to 4096
@@ -84,11 +87,7 @@ static bool replay_file( const char * path )
 
 int main( int argc, char ** argv )
 {
-    if ( LLVMFuzzerInitialize( &argc, &argv ) != 0 )
-    {
-        fprintf( stderr, "fuzz replay: harness initialization failed\n" );
-        return 1;
-    }
+    (void) LLVMFuzzerInitialize( &argc, &argv );
 
     if ( argc < 2 )
     {
