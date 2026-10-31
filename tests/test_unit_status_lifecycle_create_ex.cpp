@@ -12,14 +12,6 @@
 // Not reachable in the unit tier:
 //   * rocketnet_init_ex PLATFORM_INIT_FAILED and CRYPTO_INIT_FAILED, which need
 //     the platform or sodium start to fail (no fault hook exists);
-//   * rocketnet_frame_sync_create_ex F3 TIMER_CREATE_FAILED, which is the
-//     Windows CreateWaitableTimerExW(CREATE_WAITABLE_TIMER_HIGH_RESOLUTION)
-//     refusal without coarse fallback (covered by the status-plumbing unit
-//     check in test_unit_status_codes_reached.cpp and the native resource
-//     functional cases in tests/functional/platform_primitives.cpp);
-//   * rocketnet_frame_sync_create_ex success, which creates the real Windows
-//     high-resolution waitable timer (functional case
-//     test_frame_sync_create_ex_success_status in tests/functional/platform_primitives.cpp);
 //   * the client and server transport create exits (C1-C11, S1-S14), which are
 //     Layer 4 work owned by the transport cards, not this card's surface.
 
@@ -216,12 +208,6 @@ static void test_lifecycle_ex_reports_every_status()
 
     check_message_validate_status();
 
-    // frame sync before init is refused as NOT_INITIALIZED
-
-    status = -1;
-    check( rocketnet_frame_sync_create_ex( &state, 60.0, &status ) == NULL );
-    check( status == ROCKETNET_STATUS_NOT_INITIALIZED );
-
     // init with the fault-injecting allocator in context
 
     status = -1;
@@ -231,39 +217,6 @@ static void test_lifecycle_ex_reports_every_status()
     // allocator after init is ALREADY_INITIALIZED
 
     check( rocketnet_allocator_ex( allocate, release ) == ROCKETNET_STATUS_ALREADY_INITIALIZED );
-
-    // frame sync F1: zero, negative, above the maximum and NaN
-
-    status = -1;
-    check( rocketnet_frame_sync_create_ex( &state, 0.0, &status ) == NULL );
-    check( status == ROCKETNET_STATUS_INVALID_ARGUMENT );
-
-    status = -1;
-    check( rocketnet_frame_sync_create_ex( &state, -60.0, &status ) == NULL );
-    check( status == ROCKETNET_STATUS_INVALID_ARGUMENT );
-
-    status = -1;
-    check( rocketnet_frame_sync_create_ex( &state, 1000000.0, &status ) == NULL );
-    check( status == ROCKETNET_STATUS_INVALID_ARGUMENT );
-
-    status = -1;
-    check( rocketnet_frame_sync_create_ex( &state, (double) NAN, &status ) == NULL );
-    check( status == ROCKETNET_STATUS_INVALID_ARGUMENT );
-
-    // frame sync F2: the single allocation fails
-
-    state.fail_at = state.calls + 1;
-    status = -1;
-    check( rocketnet_frame_sync_create_ex( &state, 60.0, &status ) == NULL );
-    check( status == ROCKETNET_STATUS_OUT_OF_MEMORY );
-
-    state.fail_at = 0;
-    check( state.live == 0 );
-
-    // frame sync success creates the real Windows high-resolution waitable
-    // timer, so it is the functional case test_frame_sync_create_ex_success_status
-    // (tests/functional/platform_primitives.cpp), with the same allocator and status
-    // checks
 
     // a clean term is OK and leaves no allocation behind
 

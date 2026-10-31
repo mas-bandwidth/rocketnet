@@ -328,8 +328,10 @@ static void test_api_polish_zero_receipt_and_dense_reasons()
 
     for ( int status = (int) ROCKETNET_STATUS_OK; status >= (int) ROCKETNET_STATUS_LOOPBACK_HUB_IN_USE; status-- )
     {
+        // -22 is reserved: no call returns it, so it names nothing
+
         const char * name = rocketnet_status_name( (enum rocketnet_status_t) status );
-        check( name != NULL && strcmp( name, "UNKNOWN" ) != 0 );
+        check( name != NULL && ( strcmp( name, "UNKNOWN" ) != 0 ) == ( status != -22 ) );
     }
 
     for ( int level = (int) ROCKETNET_LOG_LEVEL_NONE; level <= (int) ROCKETNET_LOG_LEVEL_SPAM; level++ )

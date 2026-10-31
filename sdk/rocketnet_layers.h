@@ -167,12 +167,6 @@ struct rocketnet_client_transport_t;
 struct rocketnet_server_transport_t;
 struct rocketnet_message_client_t;
 struct rocketnet_message_server_t;
-/** @brief Holds state for one frame synchronizer.
- *
- * The type is opaque. Create it with rocketnet_frame_sync_create, use it from
- * its owning loop thread, and release it with rocketnet_frame_sync_destroy.
- */
-struct rocketnet_frame_sync_t;
 struct rocketnet_counters_t;            // read through rocketnet_counter_value
 struct rocketnet_packet_context_t;      // defined below, with the send surface
 
@@ -1467,67 +1461,6 @@ int rocketnet_server_transport_send_capacity_available( const struct rocketnet_s
 // the platform sleep that honors it, thread priority so the wakeups are
 // sharp, and a capped adaptive spin guard for the last microseconds.
 // Optional -- examples may still just sleep. Create at a frame rate, then
-// call wait once per loop iteration; it returns at the frame boundary.
-// Dropped frames are detected, counted and resynchronized, never chased.
-// Priority is taken on the waiting thread at the first wait; where the
-// platform refuses it the primitive degrades to plain absolute sleep --
-// never an unprivileged spin -- and the stats say so
-
-/**
- * @brief Creates a real-time frame synchronizer.
- *
- * @param context Allocator context; NULL uses the default context.
- * @param frame_rate Finite frames per second, greater than zero and no more than 1000.
- * @return Caller-owned synchronizer, or NULL if RocketNet is not initialized, the rate is invalid, allocation fails, or the platform timer cannot be created.
- */
-struct rocketnet_frame_sync_t * rocketnet_frame_sync_create( void * context, double frame_rate );
-
-// as rocketnet_frame_sync_create, with the section-2.1 code written to *status
-// on every return path when status is not NULL (F1 INVALID_ARGUMENT,
-// F2 OUT_OF_MEMORY, F3 TIMER_CREATE_FAILED). A failure logs one error line
-/**
- * @brief Creates a frame synchronizer and reports its error status.
- *
- * @param context Allocator context; NULL uses the default context.
- * @param frame_rate Finite frames per second, greater than zero and no more than 1000.
- * @param status Receives ROCKETNET_STATUS_OK or the specific refusal code; NULL omits status reporting.
- * @return Caller-owned synchronizer, or NULL on refusal. Status receives ROCKETNET_STATUS_OK, NOT_INITIALIZED, INVALID_ARGUMENT, OUT_OF_MEMORY, or TIMER_CREATE_FAILED if the platform timer cannot be created.
- */
-struct rocketnet_frame_sync_t * rocketnet_frame_sync_create_ex( void * context, double frame_rate, int * status );
-
-// a NULL frame_sync is a counted no-op
-/**
- * @brief Releases a frame synchronizer.
- *
- * @param frame_sync Synchronizer to release; NULL is a counted no-op.
- * @return No value. Stop using the object before destruction.
- */
-void rocketnet_frame_sync_destroy( struct rocketnet_frame_sync_t * frame_sync );
-
-// a NULL frame_sync is a counted no-op
-/**
- * @brief Waits until the next frame deadline.
- *
- * @param frame_sync Synchronizer; NULL is a counted no-op.
- * @return No value. Call once per loop iteration from its owning thread.
- */
-void rocketnet_frame_sync_wait( struct rocketnet_frame_sync_t * frame_sync );
-
-struct rocketnet_frame_sync_stats_t
-{
-    uint64_t frame;                                 // frames completed
-    uint64_t dropped_frames;                        // frames lost to overruns, total
-    int priority_held;                              // platform thread priority obtained
-    int spinning;                                   // spin guard active (requires priority)
-    double guard_seconds;                           // the current adaptive guard
-    double wakeup_error_seconds;                    // the last wake's lateness past its deadline
-};
-
-#if ROCKETNET_DEV
-// a NULL frame_sync or stats is a counted no-op
-void rocketnet_frame_sync_stats( struct rocketnet_frame_sync_t * frame_sync, struct rocketnet_frame_sync_stats_t * stats );
-#endif // #if ROCKETNET_DEV
-
 // -----------------------------------------
 //                           messages
 // -----------------------------------------

@@ -177,7 +177,6 @@ const char * rocketnet_status_name( enum rocketnet_status_t status )
         case ROCKETNET_STATUS_OUT_OF_MEMORY:                    return "OUT_OF_MEMORY";
         case ROCKETNET_STATUS_MUTEX_CREATE_FAILED:              return "MUTEX_CREATE_FAILED";
         case ROCKETNET_STATUS_THREAD_CREATE_FAILED:             return "THREAD_CREATE_FAILED";
-        case ROCKETNET_STATUS_TIMER_CREATE_FAILED:              return "TIMER_CREATE_FAILED";
         case ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED:          return "CLIENT_NOT_DISCONNECTED";
         case ROCKETNET_STATUS_SERVER_NOT_STOPPED:               return "SERVER_NOT_STOPPED";
         case ROCKETNET_STATUS_FLOW_ID_RESERVED:                 return "FLOW_ID_RESERVED";

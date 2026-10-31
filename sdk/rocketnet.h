@@ -333,10 +333,8 @@ enum rocketnet_status_t
 
     ROCKETNET_STATUS_THREAD_CREATE_FAILED = -21,
 
-    /// Connect or start refused: the platform refused a timer. Retry after
-    /// freeing system resources.
-
-    ROCKETNET_STATUS_TIMER_CREATE_FAILED = -22,
+    // -22 is reserved: no call returns it, and the codes after it keep
+    // their values.
 
     /// Connect refused: an attempt is active, or an earlier attempt's worker
     /// still owns its storage. Call rocketnet_client_disconnect, then connect
