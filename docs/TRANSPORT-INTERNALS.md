@@ -650,7 +650,11 @@ header, and the from-address carries the family it read. A frame it does not
 take is dropped and counted by reason: another ethertype (`not_ip`), an IPv6
 extension header (`ipv6_extension`, never parsed at the UDP offsets), the
 family the server does not serve (`other_family`), or a frame the parse
-refuses or too short for any server packet (`malformed`). The flush builds
+refuses or too short for any server packet (`malformed`); a receive
+descriptor outside the receive region or its own frame (`descriptor`, a
+kernel or driver defect) is dropped before a byte of it is read. Each queue's
+worker publishes the sum after every receive pass, and the transport's
+counters read it, all queues summed, as `XDP_RECEIVE_FRAME_DROPPED`. The flush builds
 each reply with the server address of the destination's family as the source,
 and an IPv6 reply carries the UDP checksum computed in software. Create and
 the pre-flight find the interface carrying each address over `AF_INET` or

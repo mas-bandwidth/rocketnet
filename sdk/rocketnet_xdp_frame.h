@@ -396,6 +396,13 @@ struct rocketnet_xdp_receive_drops_t
     uint64_t descriptor;
 };
 
+// every frame the receive dropped, whatever the reason: the transport's
+// XDP_RECEIVE_FRAME_DROPPED
+static inline uint64_t rocketnet_xdp_receive_drops_total( const struct rocketnet_xdp_receive_drops_t * drops )
+{
+    return drops->not_ip + drops->ipv6_extension + drops->other_family + drops->malformed + drops->descriptor;
+}
+
 static inline bool rocketnet_xdp_frame_ipv6_is_extension( uint8_t next_header )
 {
     return next_header == 0 ||     // hop-by-hop options

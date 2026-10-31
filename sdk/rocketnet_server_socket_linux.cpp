@@ -204,8 +204,10 @@ struct rocketnet_server_xdp_socket_t
     uint8_t padding_4[4096];
 
     // frames the receive loop dropped, by reason (rocketnet_xdp_frame_receive);
-    // written only by this queue's xdp thread
+    // written only by this queue's xdp thread, which publishes their sum in
+    // receive_dropped after each receive pass for main to read
     struct rocketnet_xdp_receive_drops_t receive_drops;
+    std::atomic<uint64_t> receive_dropped{ 0 };
 
     // frames the flush did not send because the codec refused to build them
     // (a destination of the family this server does not serve); written by
@@ -470,6 +472,13 @@ static bool get_gateway_mac_address( const char * interface_name, int interface_
 }
 
 #define INVALID_FRAME UINT64_MAX
+
+// the queue's xdp thread publishes its receive drops, every reason summed,
+// after each receive pass: rocketnet_server_socket_receive_dropped reads them
+static void rocketnet_server_socket_publish_receive_dropped( rocketnet_server_xdp_socket_t * socket )
+{
+    socket->receive_dropped.store( rocketnet_xdp_receive_drops_total( &socket->receive_drops ), std::memory_order_relaxed );
+}
 
 static uint64_t alloc_send_frame( rocketnet_server_xdp_socket_t * socket )
 {
@@ -3095,7 +3104,75 @@ uint64_t rocketnet_server_socket_send_failures( struct rocketnet_server_socket_t
     return failures;
 }
 
+// The transport's XDP_RECEIVE_FRAME_DROPPED: the frames every queue's receive
+// dropped before reading a UDP datagram from them, as each worker last
+// published them. Main thread; never waits on a worker.
+
+uint64_t rocketnet_server_socket_receive_dropped( struct rocketnet_server_socket_t * server_socket )
+{
+    rocketnet_assert( server_socket );
+
+    uint64_t dropped = 0;
+    for ( int queue = 0; queue < server_socket->num_queues; queue++ )
+        dropped += server_socket->socket[queue].receive_dropped.load( std::memory_order_relaxed );
+
+    return dropped;
+}
+
 #if ROCKETNET_DEV
+// the xdp operations table (sdk/rocketnet_driver_builtin.cpp) and the builtin
+// dispatch the transport's counter read calls (sdk/rocketnet_server_transport.cpp)
+extern const rocketnet_transport_backend_t rocketnet_xdp_transport;
+bool rocketnet_server_transport_io_receive_frames_dropped( const rocketnet_server_transport_io_operations_t * operations, void * transport,
+                                                           uint64_t * dropped );
+
+bool rocketnet_server_socket_test_receive_dropped()
+{
+    // two synthetic queues, no worker: each queue's receive drops by reason
+    // reach the transport's XDP_RECEIVE_FRAME_DROPPED through the builtin
+    // dispatch only once the queue publishes them, summed over the reasons
+    // and the queues
+    void * server_storage = rocketnet_malloc( NULL, sizeof( rocketnet_server_socket_t ) );
+    void * queue_storage = rocketnet_malloc( NULL, 2 * sizeof( rocketnet_server_xdp_socket_t ) );
+    if ( !server_storage || !queue_storage )
+    {
+        rocketnet_free( NULL, queue_storage );
+        rocketnet_free( NULL, server_storage );
+        return false;
+    }
+
+    auto * server = new ( server_storage ) rocketnet_server_socket_t();
+    auto * queues = (rocketnet_server_xdp_socket_t *) queue_storage;
+    new ( &queues[0] ) rocketnet_server_xdp_socket_t();
+    new ( &queues[1] ) rocketnet_server_xdp_socket_t();
+    server->num_queues = 2;
+    server->socket = queues;
+
+    const rocketnet_server_transport_io_operations_t * xdp = rocketnet_xdp_transport.server;
+    uint64_t dropped = 99;
+    bool valid = rocketnet_server_transport_io_receive_frames_dropped( xdp, server, &dropped ) && dropped == 0;
+
+    queues[0].receive_drops.not_ip = 1;
+    queues[0].receive_drops.ipv6_extension = 2;
+    queues[0].receive_drops.other_family = 4;
+    queues[1].receive_drops.malformed = 8;
+    queues[1].receive_drops.descriptor = 16;
+
+    valid = valid && rocketnet_server_transport_io_receive_frames_dropped( xdp, server, &dropped ) && dropped == 0;
+
+    rocketnet_server_socket_publish_receive_dropped( &queues[0] );
+    rocketnet_server_socket_publish_receive_dropped( &queues[1] );
+    valid = valid && rocketnet_server_transport_io_receive_frames_dropped( xdp, server, &dropped ) && dropped == 31;
+
+    queues[1].~rocketnet_server_xdp_socket_t();
+    queues[0].~rocketnet_server_xdp_socket_t();
+    server->~rocketnet_server_socket_t();
+    rocketnet_free( NULL, queue_storage );
+    rocketnet_free( NULL, server_storage );
+
+    return valid;
+}
+
 bool rocketnet_server_socket_test_send_failures_without_mutex()
 {
     // A query must be valid even while the worker owns the send mutex. These
@@ -3416,6 +3493,8 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
             rocketnet_xdp_receive_ring_finish( num_packets, num_consumed, []( void * r, uint32_t n )
                                                { xsk_ring_cons__cancel( (struct xsk_ring_cons *) r, n ); }, []( void * r, uint32_t n )
                                                { xsk_ring_cons__release( (struct xsk_ring_cons *) r, n ); }, &socket->receive_queue );
+
+            rocketnet_server_socket_publish_receive_dropped( socket );
 
             // The peek was bounded by available pending storage, so every
             // returned frame remains owned until a full fill reservation. The

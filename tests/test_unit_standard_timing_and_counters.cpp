@@ -164,7 +164,8 @@ static const rn_standard_vector_t standard_timing_and_counters_table[] = {
                         "f50000000a0426b7000000dd1a0477000000ee4e501b00000037af52db0000007a31932200"
                         "000079b815e7000000"
                         "395ff812000000a458a7b3000000"
-                        "98214ffa00210049b0ba62000800" ), // CONNECTION_RESPONSE_PADDING_NOT_ZERO, CONNECTION_REQUEST_CLAIM_TABLE_FULL appended in sdk/rocketnet_counters.h
+                        "98214ffa00210049b0ba62000800"
+                        "da288aa6000000" ), // CONNECTION_RESPONSE_PADDING_NOT_ZERO, CONNECTION_REQUEST_CLAIM_TABLE_FULL and XDP_RECEIVE_FRAME_DROPPED appended in sdk/rocketnet_counters.h
 };
 
 static void test_standard_timing_and_counters_vectors()

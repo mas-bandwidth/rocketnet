@@ -166,6 +166,7 @@ bool rocketnet_server_socket_test_buffer_exchange();
 bool rocketnet_server_socket_test_inactive_flow();
 bool rocketnet_server_socket_test_replay_marks();
 bool rocketnet_server_socket_test_send_failures_without_mutex();
+bool rocketnet_server_socket_test_receive_dropped();
 bool rocketnet_server_socket_test_reply_mac_refreshed_at_finish();
 #endif // #if ROCKETNET_DEV
 
