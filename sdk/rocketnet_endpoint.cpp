@@ -116,6 +116,35 @@ static void rn_unreliable_sync( rn_endpoint_t * endpoint )
     endpoint->unreliable_head = endpoint->unreliable_ring_used > 0 ? rn_unreliable_entry( endpoint, 0 )->descriptor : RN_DESCRIPTOR_NONE;
 }
 
+// Tickets wrap (rn_region_schedule_ticket), so a tombstone's ticket could be
+// issued again to its descriptor and the tombstone read as live: the entry
+// walked twice and out of order. The first push after a wrap drops every
+// tombstone, and every entry naming d, which was free until this send so any
+// entry naming it is stale, then renumbers the survivors and d in queue
+// order. Every ticket in the ring is then from the current lap.
+
+static void rn_unreliable_renumber( rn_endpoint_t * endpoint, uint32_t d )
+{
+    rn_region_t * region = endpoint->region;
+    const uint32_t entries = region->unreliable_ring_entries;
+    region->schedule_ticket_wrapped = 0;
+
+    uint32_t kept = 0;
+    for ( uint32_t i = 0; i < endpoint->unreliable_ring_used; i++ )
+    {
+        rn_unreliable_entry_t entry = *rn_unreliable_entry( endpoint, i );
+        if ( entry.descriptor == d || !rn_unreliable_entry_live( region, &entry ) )
+            continue;
+
+        entry.ticket = rn_region_schedule_ticket( region );
+        region->send_descriptors[entry.descriptor].enqueue_ticket = entry.ticket;
+        region->unreliable_ring[( endpoint->unreliable_ring_head + kept++ ) % entries] = entry;
+    }
+
+    endpoint->unreliable_ring_used = kept;
+    region->send_descriptors[d].enqueue_ticket = rn_region_schedule_ticket( region );
+}
+
 static void rn_unreliable_push( rn_endpoint_t * endpoint, uint32_t d )
 {
     rn_region_t * region = endpoint->region;
@@ -126,6 +155,9 @@ static void rn_unreliable_push( rn_endpoint_t * endpoint, uint32_t d )
 
     rocketnet_assume( entries >= 2 );
     rocketnet_assume( d < entries / 2 );
+
+    if ( region->schedule_ticket_wrapped )
+        rn_unreliable_renumber( endpoint, d );
 
     if ( endpoint->unreliable_ring_used == entries )
     {

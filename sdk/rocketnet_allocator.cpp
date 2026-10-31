@@ -603,6 +603,7 @@ void rn_region_carve( rn_region_t * region )
     region->send_room_armed = 1;
 
     region->schedule_ticket_next = 1;
+    region->schedule_ticket_wrapped = 0;
 
     region->carves++;
 }

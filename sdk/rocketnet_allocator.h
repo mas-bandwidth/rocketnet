@@ -400,6 +400,7 @@ struct rn_region_t
     uint32_t span_tail;                 // the byte offset the next span is placed at
     uint32_t span_first, span_last;     // the oldest and the newest live span's descriptor, RN_DESCRIPTOR_NONE when none
     uint32_t schedule_ticket_next;      // next enqueue ticket (from 1); 0 is never issued
+    uint32_t schedule_ticket_wrapped;   // 1 once the ticket counter wraps, until the unreliable queue's next push renumbers its entries
     rn_sent_packet_t * sent_packets;
     rn_sent_index_t * sent_index;
     uint32_t * sent_refs;
@@ -436,7 +437,10 @@ static inline uint32_t rn_region_schedule_ticket( rn_region_t * region )
 
     uint32_t next = ticket + 1;
     if ( next == 0 )
+    {
         next = 1;
+        region->schedule_ticket_wrapped = 1;
+    }
 
     region->schedule_ticket_next = next;
 
