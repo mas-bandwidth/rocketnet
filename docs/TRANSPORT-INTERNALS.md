@@ -164,8 +164,7 @@ that reports it.
 ## Per-update send and receive budgets
 
 Every transport receives at least twice what it sends in one update:
-`receive_capacity >= 2 * send_budget`, checked by
-`test_unit_receive_budget_twice_send.cpp` and locked by a
+`receive_capacity >= 2 * send_budget`, locked by a
 `ROCKETNET_STATIC_ASSERT` beside each transport’s constants. The send budget
 is what one update stages or submits; the receive capacity is the bank,
 ring, staging or completion budget the send path can fill while it waits.
