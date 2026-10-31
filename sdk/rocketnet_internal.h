@@ -657,4 +657,25 @@ static inline void rocketnet_create_status( int * status, int value )
         *status = value;
 }
 
+#if ROCKETNET_DEV
+// the server config staging seam (sdk/rocketnet_server_transport.cpp): each
+// stack copy of a server config is wiped on every exit of the function that
+// holds it, then its server_secret_key is handed to the hook with the stage
+// that held it. NULL by default; set only by unit cases.
+enum
+{
+    ROCKETNET_SERVER_TRANSPORT_CONFIG_STAGING_CREATE_EX = 0,    // rocketnet_server_transport_create_ex's current-layout copy
+    ROCKETNET_SERVER_TRANSPORT_CONFIG_STAGING_RESOLVE = 1,      // the resolve's layered config
+    ROCKETNET_SERVER_TRANSPORT_CONFIG_STAGING_CREATE = 2,       // the create's resolved inputs
+    ROCKETNET_SERVER_TRANSPORT_CONFIG_STAGING_COUNT = 3
+};
+
+extern void ( *rocketnet_server_transport_config_staging_hook )( const uint8_t * secret_key, int stage );
+#endif // #if ROCKETNET_DEV
+
+// opens sodium and its random source once, under a lock, for every caller
+// that may draw before rocketnet_init (sdk/rocketnet.cpp). Returns false when
+// sodium cannot initialize. After the first success it is one load.
+bool rocketnet_crypto_ready( void );
+
 #endif // ROCKETNET_SDK_ROCKETNET_INTERNAL_H

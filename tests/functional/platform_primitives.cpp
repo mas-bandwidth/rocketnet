@@ -21,6 +21,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <thread>
+#include <atomic>
 #include <chrono>
 #include <string>
 
@@ -397,6 +398,74 @@ void rocketnet_test_bundled_rng_closes_and_reopens_on_mac()
     }
 
     // Restore the worker's initialized state for its ordinary final term
+
+    rocketnet_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
+}
+
+// Key generators need no library state, so they run after a term has closed
+// the bundled RNG's descriptor, on any number of threads at once. Their first
+// draws open the source exactly once: each cycle eight threads released
+// together generate keys, and the process then holds one more descriptor
+// than at the baseline, never two. Under a thread sanitizer an unlocked open
+// is a reported race.
+
+#define RNG_CONCURRENT_THREADS 8
+#define RNG_CONCURRENT_CYCLES 64
+
+static std::atomic<int> rng_concurrent_waiting( 0 );
+static std::atomic<bool> rng_concurrent_go( false );
+
+static void rng_concurrent_keygen( bool * ok )
+{
+    rng_concurrent_waiting++;
+    while ( !rng_concurrent_go.load( std::memory_order_acquire ) )
+    {
+    }
+
+    uint8_t public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
+    uint8_t secret_key[32];
+    *ok = rocketnet_generate_server_keypair( public_key, secret_key ) == ROCKETNET_STATUS_OK;
+}
+
+void rocketnet_test_bundled_rng_opens_once_under_concurrent_keygen_on_mac()
+{
+    rocketnet_check( rocketnet_term() == ROCKETNET_STATUS_OK );
+
+    const long baseline = rng_lifecycle_fd_count();
+    rocketnet_check( baseline >= 0 );
+
+    for ( int cycle = 0; cycle < RNG_CONCURRENT_CYCLES; ++cycle )
+    {
+        rng_concurrent_waiting = 0;
+        rng_concurrent_go = false;
+
+        bool ok[RNG_CONCURRENT_THREADS];
+        std::thread threads[RNG_CONCURRENT_THREADS];
+        for ( int i = 0; i < RNG_CONCURRENT_THREADS; i++ )
+            threads[i] = std::thread( rng_concurrent_keygen, &ok[i] );
+        while ( rng_concurrent_waiting.load() < RNG_CONCURRENT_THREADS )
+        {
+        }
+        rng_concurrent_go.store( true, std::memory_order_release );
+        for ( int i = 0; i < RNG_CONCURRENT_THREADS; i++ )
+        {
+            threads[i].join();
+            rocketnet_check( ok[i] );
+        }
+
+        const long open = rng_lifecycle_fd_count();
+        if ( open != baseline + 1 )
+        {
+            printf( "cycle %d: %ld descriptors open, baseline %ld\n", cycle, open, baseline );
+            fflush( stdout );
+        }
+        rocketnet_check( open == baseline + 1 );
+
+        // init and term close the one source, as an application's next cycle would
+        rocketnet_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
+        rocketnet_check( rocketnet_term() == ROCKETNET_STATUS_OK );
+        rocketnet_check( rng_lifecycle_fd_count() == baseline );
+    }
 
     rocketnet_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }

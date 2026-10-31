@@ -215,6 +215,9 @@ enum rocketnet_status_t rocketnet_generate_backend_keypair( uint8_t * public_key
     if ( !rocketnet_api_null_guard( public_key ) || !rocketnet_api_null_guard( secret_key ) )
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
 
+    if ( !rocketnet_crypto_ready() )
+        return ROCKETNET_STATUS_CRYPTO_INIT_FAILED;
+
     if ( crypto_sign_keypair( public_key, secret_key ) != 0 )
         return ROCKETNET_STATUS_CRYPTO_INIT_FAILED;
 
@@ -226,6 +229,9 @@ enum rocketnet_status_t rocketnet_generate_backend_keypair_from_seed( const uint
     if ( !rocketnet_api_null_guard( seed ) || !rocketnet_api_null_guard( public_key ) || !rocketnet_api_null_guard( secret_key ) )
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
 
+    if ( !rocketnet_crypto_ready() )
+        return ROCKETNET_STATUS_CRYPTO_INIT_FAILED;
+
     if ( crypto_sign_seed_keypair( public_key, secret_key, seed ) != 0 )
         return ROCKETNET_STATUS_CRYPTO_INIT_FAILED;
 
@@ -236,6 +242,9 @@ enum rocketnet_status_t rocketnet_generate_server_keypair( uint8_t * public_key,
 {
     if ( !rocketnet_api_null_guard( public_key ) || !rocketnet_api_null_guard( secret_key ) )
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
+
+    if ( !rocketnet_crypto_ready() )
+        return ROCKETNET_STATUS_CRYPTO_INIT_FAILED;
 
     if ( crypto_box_keypair( public_key, secret_key ) != 0 )
         return ROCKETNET_STATUS_CRYPTO_INIT_FAILED;
@@ -330,6 +339,9 @@ enum rocketnet_status_t rocketnet_write_production_connect_token( const uint8_t 
             return ROCKETNET_STATUS_INVALID_ADDRESS;
         }
     }
+
+    if ( !rocketnet_crypto_ready() )
+        return ROCKETNET_STATUS_CRYPTO_INIT_FAILED;
 
     struct rocketnet_connect_token_private_t private_fields;
     memset( &private_fields, 0, sizeof( private_fields ) );

@@ -576,3 +576,7 @@ MCRNClientLadderPin.cfg	MCRNClientLadder.tla	pass	-	check	rnclientladder	require
 MCRNClientLadderBrokenNoFallback.cfg	MCRNClientLadder.tla	invariant	NoExhaustWhileReachable	check	rnclientladder	required	-
 MCRNClientLadderBrokenOomFalls.cfg	MCRNClientLadder.tla	invariant	NoTryAfterOom	check	rnclientladder	required	-
 MCRNClientLadderBrokenIgnoresToken.cfg	MCRNClientLadder.tla	invariant	TriedInToken	check	rnclientladder	required	-
+MCRNCryptoSource.cfg	MCRNCryptoSource.tla	pass	-	check	cryptosource	required	-
+MCRNCryptoSourceBrokenNoLock.cfg	MCRNCryptoSource.tla	invariant	AtMostOneSource	check	cryptosource	required	-
+MCRNCryptoSourceBrokenNoClear.cfg	MCRNCryptoSource.tla	invariant	AtMostOneSource	check	cryptosource	required	-
+MCRNCryptoSourceBrokenNoStir.cfg	MCRNCryptoSource.tla	invariant	AtMostOneSource	check	cryptosource	required	-
