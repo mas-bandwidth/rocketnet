@@ -179,7 +179,8 @@ bool rocketnet_server_gso_test_receive_ready( struct rocketnet_server_gso_t * gs
 bool rocketnet_server_gso_test_send_idle( struct rocketnet_server_gso_t * gso );
 // Deterministic ownership/full/contended/stop and retained-RX-tail regression.
 bool rocketnet_server_gso_test_worker_handoff();
-// A refused sendmmsg: a full socket drops the rest of the flush, any other
+// A refused sendmmsg: a full socket drops the rest of that batch (at most
+// ROCKETNET_GSO_SEND_BATCH messages) and the next batch is tried; any other
 // errno drops the one refused message and sends the rest.
 bool rocketnet_server_gso_test_send_refusals();
 // One receive drain fed endless discards returns within its read budget.

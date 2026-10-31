@@ -67,7 +67,7 @@ template <int NumBuffers> inline void rocketnet_buffer_handoff_init( rocketnet_b
     handoff->owed = false;
 }
 
-// RNBufferHandoff Publish: the producer gives its buffer to the ready queue
+// RNBufferHandoff ProducerExchange: the producer gives its buffer to the ready queue
 // and takes a free one in the same exchange. Returns the producer's next
 // buffer, or -1 when none is free or max_ready buffers are already ready: the
 // producer then keeps its buffer, adds to it while it has room, and the
@@ -99,7 +99,7 @@ template <int NumBuffers> inline int rocketnet_buffer_handoff_publish( rocketnet
     return next;
 }
 
-// RNBufferHandoff Take: the consumer takes the oldest ready buffer, or -1
+// RNBufferHandoff ConsumerExchange, its take: the consumer takes the oldest ready buffer, or -1
 // when none is ready. Mutex held.
 
 template <int NumBuffers> inline int rocketnet_buffer_handoff_take( rocketnet_buffer_handoff_t<NumBuffers> * handoff )
@@ -115,7 +115,7 @@ template <int NumBuffers> inline int rocketnet_buffer_handoff_take( rocketnet_bu
     return index;
 }
 
-// RNBufferHandoff Release: the consumer returns a buffer it has finished with
+// RNBufferHandoff ConsumerExchange, its release: the consumer returns a buffer it has finished with
 // to the free queue. Mutex held.
 
 template <int NumBuffers> inline void rocketnet_buffer_handoff_release( rocketnet_buffer_handoff_t<NumBuffers> * handoff, int index )
@@ -126,7 +126,7 @@ template <int NumBuffers> inline void rocketnet_buffer_handoff_release( rocketne
     handoff->free_count++;
 }
 
-// RNBufferHandoff Owed: the consumer reads and clears the owed flag at the end
+// RNBufferHandoff ConsumerExchange, its owed flag: the consumer reads and clears the owed flag at the end
 // of its exchange. True when the producer held back a publish: the caller
 // wakes the producer after dropping the mutex, never under it. Mutex held.
 

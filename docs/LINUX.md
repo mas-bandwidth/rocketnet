@@ -550,7 +550,8 @@ What each path does with the errors it can see:
   the worker publishes and tests its stop request however much the socket
   holds. A `sendmmsg` refused
   with `EAGAIN`, `EWOULDBLOCK`, `ENOBUFS`, `ENOMEM` or `EINTR` drops the
-  rest of the flush, and any other errno drops the one refused message and
+  rest of that `sendmmsg` batch (at most `ROCKETNET_GSO_SEND_BATCH` messages)
+  and the flush goes on with the next batch, and any other errno drops the one refused message and
   continues with the next, as the portable batch does; dropped packets
   count in `ROCKETNET_SERVER_GSO_COUNTER_SEND_DROPPED`, never resent
   (`sdk/rocketnet_server_gso_linux.cpp`,

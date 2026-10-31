@@ -1733,17 +1733,13 @@ void rocketnet_server_uring_send_packets( struct rocketnet_server_uring_t * urin
 
     while ( slot < num_slots )
     {
-        // bound the sends in flight by the ring size, so the completion
-        // queue (twice the ring) keeps room for receive completions
+        // each send in flight holds at least one staged slot and the staging
+        // resets only once none is pending, so the sends in flight stay below
+        // the ring size and the completion queue (twice the ring) keeps room
+        // for receive completions
 
-        if ( uring->sends_pending >= ROCKETNET_URING_ENTRIES )
-        {
-            const int reaped = rocketnet_server_uring_reap_available( uring, budget );
-            budget -= reaped;
-            if ( reaped == 0 || budget == 0 )
-                break;
-            continue;
-        }
+        static_assert( ROCKETNET_URING_SEND_QUEUE_SIZE <= ROCKETNET_URING_ENTRIES, "sends in flight fit the ring" );
+        rocketnet_assert( uring->sends_pending <= ROCKETNET_URING_SEND_QUEUE_SIZE );
 
         unsigned space = rocketnet_server_uring_ring_sq_space( uring );
         if ( space == 0 )

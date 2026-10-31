@@ -1573,9 +1573,10 @@ static int rocketnet_server_gso_flush( struct rocketnet_server_gso_t * gso, rock
                 return message_first_slot[sent];
             }
 
-            // a full socket (or a signal): the socket cannot take more this
-            // flush. the transport's semantics price this as packets lost on
-            // the wire, counted, never resent.
+            // a full socket (or a signal): the rest of this batch is dropped
+            // and the flush goes on with the next batch. the transport's
+            // semantics price this as packets lost on the wire, counted,
+            // never resent.
 
             if ( errno == EAGAIN || errno == EWOULDBLOCK || errno == ENOBUFS || errno == ENOMEM || errno == EINTR )
             {
@@ -1881,7 +1882,7 @@ bool rocketnet_server_gso_test_worker_handoff()
 }
 
 // A refused sendmmsg, stepped on this thread through the send-failure seam
-// with no socket and no thread: a full socket drops the rest of the flush,
+// with no socket and no thread: a full socket drops the rest of the batch,
 // any other errno drops the one refused message and sends the rest in
 // order, as the portable batch and the client gso do.
 // The drain's read budget, on the fixture with the receive seam: a source
@@ -2032,7 +2033,7 @@ bool rocketnet_server_gso_test_send_refusals()
     valid = valid && gso->test_fail_sends.load( std::memory_order_relaxed ) == 0;
     rocketnet_server_gso_return_send( gso, taken );
 
-    // a full socket drops the rest of the flush in one attempt
+    // a full socket drops the rest of the batch in one attempt
 
     for ( int i = 0; i < 3; i++ )
         valid = valid && rocketnet_server_gso_test_stage( gso, (uint16_t) ( 40000 + i ) );

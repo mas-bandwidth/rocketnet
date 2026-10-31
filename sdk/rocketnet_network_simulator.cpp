@@ -517,6 +517,10 @@ bool rocketnet_network_simulator_patterns( struct rocketnet_network_simulator_t 
     rocketnet_assert( drop_every_nth == 0 || ( drop_every_nth >= 2 && drop_every_nth <= 1000000 ) );
     rocketnet_assert( reverse_window == 0 || ( reverse_window >= 2 && reverse_window <= ROCKETNET_SIMULATOR_MAX_REVERSE_WINDOW ) );
 
+    // the packets the old window holds leave reversed, as a full window's do,
+    // before the window goes
+    rocketnet_network_simulator_flush_window( simulator );
+
     rocketnet_free( simulator->context, simulator->window );
     simulator->window = NULL;
     simulator->window_count = 0;

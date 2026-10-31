@@ -24,7 +24,7 @@ static void test_server_gso_worker_handoff()
 REGISTER_UNIT_TEST( test_server_gso_worker_handoff );
 
 // A refused sendmmsg through the send-failure seam: a full socket drops the
-// rest of the flush, any other errno drops one message and sends the rest.
+// rest of the batch, any other errno drops one message and sends the rest.
 static void test_server_gso_send_refusals()
 {
     check( rocketnet_server_gso_test_send_refusals() );
