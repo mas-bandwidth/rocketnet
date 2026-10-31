@@ -33,6 +33,7 @@
 #include "unit_shutdown.h"
 
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 // sdk/rocketnet_client_protocol.cpp: the server address a token selects on a
@@ -420,4 +421,219 @@ static void test_client_connect_keeps_the_family_that_answers()
 }
 
 REGISTER_UNIT_TEST( test_client_connect_keeps_the_family_that_answers );
+
+// The family race at its commit, on the same token, server and broken IPv6
+// route, with one fake socket per family: race_pair_t's create hands out
+// fake[0] for the primary (IPv6) family and fake[1] for the IPv4 family, so
+// each family's sends, receives and send failures are its own.
+
+struct race_pair_t
+{
+    rocketnet_fake_client_transport_io_t fake[2];
+    int creates;
+    uint64_t send_failures[2];
+};
+
+static race_pair_t * race_pair;
+
+static void * race_pair_create( void * context, const rocketnet_client_transport_io_config_t * config, rocketnet_address_t * bind )
+{
+    (void) config;
+    (void) bind;
+    race_pair_t * pair = (race_pair_t *) context;
+    rocketnet_unit_check( pair->creates < 2 );
+    return pair->creates < 2 ? &pair->fake[pair->creates++] : NULL;
+}
+
+static uint64_t race_pair_send_failures( void * instance )
+{
+    return race_pair->send_failures[instance == &race_pair->fake[1] ? 1 : 0];
+}
+
+struct race_harness_t
+{
+    rocketnet_address_t ipv4_server, ipv6_server, client_address;
+    struct rocketnet_server_protocol_t server;
+    struct rocketnet_counters_t server_counters;
+    rocketnet_client_transport_io_operations_t operations;
+    race_pair_t pair;
+    bind_family_clock_t clock;
+    rocketnet_client_transport_t * transport;
+    rocketnet_client_io_t * io;
+    int forwarded;      // fake[1]'s sends already handed to the server
+};
+
+static void race_harness_setup( race_harness_t * h )
+{
+    rocketnet_unit_check( rocketnet_address_parse( &h->ipv4_server, "203.0.113.10:40000" ) );
+    rocketnet_unit_check( rocketnet_address_parse( &h->ipv6_server, "[2001:db8::1]:40000" ) );
+    rocketnet_unit_check( rocketnet_address_parse( &h->client_address, "198.51.100.7:56789" ) );
+
+    bind_family_server_setup( &h->server, &h->server_counters );
+
+    h->operations = rocketnet_fake_client_operations_io;
+    h->operations.create = race_pair_create;
+    h->operations.connect = rocketnet_fake_client_connect;
+    h->operations.close = rocketnet_fake_client_close;
+    h->operations.send_failures = race_pair_send_failures;
+    race_pair = &h->pair;
+
+    h->clock.now = 1000.0;
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    bind_family_mint_both( token );
+
+    struct rocketnet_client_transport_config_t config;
+    rocketnet_client_transport_default_config_current( &config );
+    config.time_callback = bind_family_time;
+    memcpy( config.packet_filter, rocketnet_test_filter_value, ROCKETNET_FILTER_VALUE_BYTES );
+
+    h->transport = rocketnet_client_transport_create_step_driven_at_timestamp(
+        &h->clock, token, &config, h->clock.now, ROCKETNET_TEST_CREATE_TS, &h->operations, &h->pair );
+    rocketnet_unit_check( h->transport != NULL );
+    rocketnet_unit_check( h->pair.creates == 2 );
+    rocketnet_unit_check( rocketnet_address_equal( &h->pair.fake[0].connected_to, &h->ipv6_server ) );
+    rocketnet_unit_check( rocketnet_address_equal( &h->pair.fake[1].connected_to, &h->ipv4_server ) );
+
+    h->io = rocketnet_client_transport_client_io( h->transport );
+    rocketnet_unit_check( h->io != NULL );
+}
+
+static void race_harness_teardown( race_harness_t * h )
+{
+    rn_test_client_transport_stop_and_destroy( h->transport );
+    race_pair = NULL;
+    bind_family_server_teardown( &h->server );
+}
+
+// the IPv4 socket's sends reach the server, whose answers arrive on the IPv4
+// socket; nothing sent on the IPv6 socket is answered
+
+static void race_harness_forward( race_harness_t * h )
+{
+    rocketnet_fake_client_transport_io_t * ipv4 = &h->pair.fake[1];
+    for ( ; h->forwarded < ipv4->num_sent; h->forwarded++ )
+    {
+        const rocketnet_fake_client_datagram_t * datagram = &ipv4->sent[h->forwarded];
+        rocketnet_unit_check( rocketnet_address_equal( &datagram->address, &h->ipv4_server ) );
+
+        uint8_t response[ROCKETNET_RECEIVE_CEILING];
+        uint8_t payload[ROCKETNET_RECEIVE_CEILING];
+        int response_bytes = 0, payload_bytes = 0, payload_client_index = -1;
+        rocketnet_server_protocol_process_packet( &h->server, &h->client_address, datagram->data, datagram->bytes,
+                                                  ROCKETNET_TEST_CREATE_TS, h->clock.now, response, &response_bytes,
+                                                  payload, &payload_bytes, &payload_client_index );
+        if ( response_bytes > 0 )
+            rocketnet_fake_client_push( ipv4, &h->ipv4_server, response, response_bytes );
+    }
+}
+
+static uint64_t race_harness_send_failed( race_harness_t * h )
+{
+    return rocketnet_client_transport_counters( h->transport )->values[ROCKETNET_COUNTER_SEND_FAILED];
+}
+
+// proofs/tla/RNClientRace.tla PostCommitSlotsKept. The update that resends the
+// cookie request meets the I/O thread holding the mutex: the hand-off is LATE
+// and the Filling ring stays bound to the IPv6 server, the protocol's server
+// before the commit. The next update takes the IPv4 cookie, commits the race
+// to IPv4, and commits the connection request into that same ring; the
+// commit rebinds the ring to the IPv4 server, so the request and the cookie
+// request before it leave for IPv4 in that update and none is dropped as the
+// losing family's.
+
+static void test_client_race_commit_rebinds_a_late_ring()
+{
+    static race_harness_t h;
+    memset( &h, 0, sizeof( h ) );
+    race_harness_setup( &h );
+
+    rocketnet_client_io_step( h.io, false );
+    rocketnet_client_transport_update( h.transport, h.clock.now );
+    rocketnet_client_io_step( h.io, false );
+    race_harness_forward( &h );
+    rocketnet_unit_check( h.pair.fake[1].inbound_count == 1 );
+
+    h.clock.now = 1000.2;
+    const uint64_t deferred_before = rocketnet_client_transport_counters( h.transport )->values[ROCKETNET_COUNTER_CLIENT_SEND_DEFERRED];
+    rocketnet_platform_mutex_acquire( h.io->mutex );
+    rocketnet_client_transport_update( h.transport, h.clock.now );
+    rocketnet_platform_mutex_release( h.io->mutex );
+    rocketnet_unit_check( rocketnet_client_transport_counters( h.transport )->values[ROCKETNET_COUNTER_CLIENT_SEND_DEFERRED] == deferred_before + 1 );
+    rocketnet_unit_check( rocketnet_client_transport_state( h.transport ) == ROCKETNET_CLIENT_TRANSPORT_STATE_REQUESTING_COOKIE );
+
+    // the reading step takes the cookie; no ring was handed off, so it sends nothing
+
+    const int ipv6_sent = h.pair.fake[0].num_sent;
+    const int ipv4_sent = h.pair.fake[1].num_sent;
+    rocketnet_client_io_step( h.io, false );
+    rocketnet_unit_check( h.pair.fake[0].num_sent == ipv6_sent && h.pair.fake[1].num_sent == ipv4_sent );
+
+    h.clock.now = 1000.4;
+    rocketnet_client_transport_update( h.transport, h.clock.now );
+    rocketnet_client_io_step( h.io, false );
+    rocketnet_unit_check( rocketnet_client_transport_state( h.transport ) == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST );
+
+    // both slots of the ring reached IPv4, the connection request carrying
+    // the cookie among them; nothing went to IPv6
+
+    int cookie_requests_to_ipv4 = 0;
+    for ( int i = ipv4_sent; i < h.pair.fake[1].num_sent; i++ )
+        if ( bind_family_request_carries_cookie( &h.pair.fake[1].sent[i] ) )
+            cookie_requests_to_ipv4++;
+
+    if ( h.pair.fake[1].num_sent - ipv4_sent != 2 || cookie_requests_to_ipv4 != 1 )
+        printf( "test_client_race_commit_rebinds_a_late_ring: %d sent to IPv4, %d carrying the cookie, %d to IPv6\n",
+                h.pair.fake[1].num_sent - ipv4_sent, cookie_requests_to_ipv4, h.pair.fake[0].num_sent - ipv6_sent );
+
+    rocketnet_unit_check( h.pair.fake[1].num_sent - ipv4_sent == 2 );
+    rocketnet_unit_check( cookie_requests_to_ipv4 == 1 );
+    rocketnet_unit_check( h.pair.fake[0].num_sent == ipv6_sent );
+
+    race_harness_teardown( &h );
+}
+
+REGISTER_UNIT_TEST( test_client_race_commit_rebinds_a_late_ring );
+
+// proofs/tla/RNClientRace.tla SendFailedMonotonic. Sends failed on both sockets
+// while the race was in flight, three on IPv6, the family that loses. The
+// update that commits to IPv4 reads the counters before the reading step
+// closes the IPv6 socket: SEND_FAILED still holds IPv6's three, kept at the
+// commit, and the close keeps the same count.
+
+static void test_client_race_send_failed_holds_across_the_commit()
+{
+    static race_harness_t h;
+    memset( &h, 0, sizeof( h ) );
+    race_harness_setup( &h );
+
+    rocketnet_client_io_step( h.io, false );
+    rocketnet_client_transport_update( h.transport, h.clock.now );
+    rocketnet_client_io_step( h.io, false );
+    race_harness_forward( &h );
+
+    h.pair.send_failures[0] = 3;
+    h.pair.send_failures[1] = 1;
+    const uint64_t before = race_harness_send_failed( &h );
+    rocketnet_unit_check( before == 4 );
+
+    rocketnet_client_io_step( h.io, false );
+    h.clock.now = 1000.05;
+    rocketnet_client_transport_update( h.transport, h.clock.now );
+    rocketnet_unit_check( rocketnet_client_transport_state( h.transport ) == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST );
+    rocketnet_unit_check( h.pair.fake[0].close_calls == 0 );
+
+    const uint64_t at_commit = race_harness_send_failed( &h );
+    if ( at_commit != before )
+        printf( "test_client_race_send_failed_holds_across_the_commit: SEND_FAILED %llu before the commit, %llu after it\n",
+                (unsigned long long) before, (unsigned long long) at_commit );
+    rocketnet_unit_check( at_commit == before );
+
+    rocketnet_client_io_step( h.io, false );
+    rocketnet_unit_check( h.pair.fake[0].close_calls == 1 );
+    rocketnet_unit_check( race_harness_send_failed( &h ) == before );
+
+    race_harness_teardown( &h );
+}
+
+REGISTER_UNIT_TEST( test_client_race_send_failed_holds_across_the_commit );
 #endif // #if ROCKETNET_DEV

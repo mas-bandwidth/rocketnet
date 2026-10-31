@@ -181,11 +181,14 @@ failed records unless they are explicit `bench` debt with actual exit 124.
 | `rnrtttreelayout` | 3 | The rtt minimum tree, a history of 8 (README-RNRttTreeLayout.md): the control and two reversed witnesses, no leaf offset (`TreeExact`) and a walk that stops unless the minimum falls (`RootIsMinimum`) |
 | `rnfreestacklayout` | 4 | The protocol tables' free stacks, capacity 3 (README-RNFreeStackLayout.md): the control and three reversed witnesses, a release without the liveness guard and a pop before the generation refusal (both `StackIsFree`) and a generation that wraps to 1 (`GenerationNeverReissued`) |
 | `rnreconstructlayout` | 4 | The wire sequence reconstruction, modulus 8 in a space of 32 (README-RNReconstructLayout.md): the control and three reversed witnesses, a tie to the smaller, the below gate `>` and no candidate above (all `CodeIsNearest`) |
+| `clientgrocarry` | 4 | The gso client's GRO receive at the code's layout, rooms 1 to 4 and messages of up to three segments (README-RNClientGroCarry.md): the control and three reversed witnesses, the tail past the room dropped and the socket read over held segments (both `Conservation`) and a delivery one slot past the room (`InRoom`) |
 
 The case plan in `CASES.tsv` covers every root configuration: 580 cases
 in 91 groups, 564 required and 16 bench cases whose `debt` column names
 The case plan in `CASES.tsv` covers every root configuration: 581 cases
 in 91 groups, 565 required and 16 bench cases whose `debt` column names
+The case plan in `CASES.tsv` covers every root configuration: 583 cases
+in 91 groups, 567 required and 16 bench cases whose `debt` column names
 an explicit over-budget reason. Other experiments described in the model
 READMEs remain historical; this plan does not claim fresh measurements
 for uncommitted variants or change their model semantics.

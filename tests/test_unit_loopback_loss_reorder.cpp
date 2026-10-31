@@ -268,8 +268,8 @@ static void loopback_check_trace( const struct loopback_trace_t * got, const str
 // simulator latency adds two connected steps (24 without it, 26 with it).
 // The counter hashes cover every counter in index order, zeros included, so they
 // move when a counter is added or removed.
-static const struct loopback_trace_t loopback_base_trace_simulator_off = { 67, 66, 5954, 4320, 67, 66, 4389, 5889, UINT64_C( 0xac93ca70960fb947 ), UINT64_C( 0x6d3f8e94ac125925 ), 24 };
-static const struct loopback_trace_t loopback_base_trace_simulator_on = { 68, 66, 5775, 4328, 67, 66, 4389, 5653, UINT64_C( 0x46d4cd9d5fd76187 ), UINT64_C( 0x6d3f8e94ac125925 ), 26 };
+static const struct loopback_trace_t loopback_base_trace_simulator_off = { 67, 66, 5954, 4320, 67, 66, 4389, 5889, UINT64_C( 0x1d740e4da2de6827 ), UINT64_C( 0x14009cd127ad2fc5 ), 24 };
+static const struct loopback_trace_t loopback_base_trace_simulator_on = { 68, 66, 5775, 4328, 67, 66, 4389, 5653, UINT64_C( 0x9bc1419feffd9867 ), UINT64_C( 0x14009cd127ad2fc5 ), 26 };
 
 static void test_loopback_transport_patterns_off_same_trace()
 {
@@ -437,6 +437,73 @@ static void test_loopback_transport_reverse_window()
 }
 
 REGISTER_UNIT_TEST( test_loopback_transport_reverse_window );
+
+// A payload that opens when the server's payload batch is full is counted
+// PAYLOAD_BATCH_FULL. The batch holds one entry per packet the update takes,
+// so the unit seam lowers its capacity to two and three payloads arrive in
+// one update: the first two are delivered in order and the third is counted.
+// The client's slot always exists (ROCKETNET_CLIENT_UPDATE_PACKET_BUDGET), so
+// the three payloads sent the other way in the same update all arrive.
+
+extern void rocketnet_server_transport_set_payload_batch_capacity_for_test( int payloads );
+
+static void test_loopback_transport_payload_batch_full_is_counted()
+{
+    struct loopback_pattern_t pattern = { 0, 0, 0 };
+    struct loopback_transport_pair_t pair;
+    check( loopback_transport_pair_setup( &pair, pattern, pattern ) );
+    check( loopback_transport_pair_connect( &pair ) );
+    loopback_transport_pair_step( &pair, 0.01 );
+
+    const uint64_t server_full_before = rocketnet_server_transport_counters( pair.server )->values[ROCKETNET_COUNTER_PAYLOAD_BATCH_FULL];
+    check( server_full_before == 0 );
+
+    rocketnet_server_transport_set_payload_batch_capacity_for_test( 2 );
+
+    for ( uint8_t i = 1; i <= 3; i++ )
+    {
+        rocketnet_client_transport_send_packet( pair.client, &i, 1 );
+        rocketnet_server_transport_send_packet( pair.server, 0, &i, 1 );
+    }
+    rocketnet_client_transport_send_packets( pair.client );
+    rocketnet_server_transport_send_packets( pair.server );
+
+    pair.time += 0.01;
+    loopback_loss_reorder_clock = pair.time;
+    rocketnet_server_transport_update( pair.server, pair.time );
+    rocketnet_client_transport_update( pair.client, pair.time );
+
+    const int * client_indices = NULL;
+    uint8_t * const * server_payloads = NULL;
+    const int * server_payload_bytes = NULL;
+    const int server_count = rocketnet_server_transport_payloads( pair.server, &client_indices, &server_payloads, &server_payload_bytes );
+
+    uint8_t * const * client_payloads = NULL;
+    const int * client_payload_bytes = NULL;
+    const int client_count = rocketnet_client_transport_payloads( pair.client, &client_payloads, &client_payload_bytes );
+
+    const uint64_t server_full = rocketnet_server_transport_counters( pair.server )->values[ROCKETNET_COUNTER_PAYLOAD_BATCH_FULL];
+
+    rocketnet_server_transport_set_payload_batch_capacity_for_test( 0 );
+
+    if ( server_count != 2 || client_count != 3 || server_full != 1 )
+        printf( "test_loopback_transport_payload_batch_full_is_counted: server %d payloads, PAYLOAD_BATCH_FULL %llu; client %d payloads\n",
+                server_count, (unsigned long long) server_full, client_count );
+
+    check( server_count == 2 && client_count == 3 );
+    check( server_full == 1 );
+
+    for ( int i = 0; i < 2 && i < server_count; i++ )
+        check( server_payload_bytes[i] == 1 && server_payloads[i][0] == (uint8_t) ( i + 1 ) );
+
+    for ( int i = 0; i < 3 && i < client_count; i++ )
+        check( client_payload_bytes[i] == 1 && client_payloads[i][0] == (uint8_t) ( i + 1 ) );
+
+    loopback_transport_pair_teardown( &pair );
+    printf( "test_loopback_transport_payload_batch_full_is_counted\n" );
+}
+
+REGISTER_UNIT_TEST( test_loopback_transport_payload_batch_full_is_counted );
 
 static void test_loopback_transport_reliable_ordered_survives_loss_and_reorder()
 {

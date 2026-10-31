@@ -162,7 +162,7 @@ static const rn_standard_vector_t standard_timing_and_counters_table[] = {
                         "251195dc000000dfffa1970100007e014fa10000001d39f161010000ab9fe25c0000007d984f4e00"
                         "000058b60b73000000f925ca24000000509a50f50000000a0426b7000000dd1a0477000000ee4e50"
                         "1b00000037af52db0000007a31932200000079b815e7000000395ff812000000a458a7b300000098"
-                        "214ffa00200049b0ba62000800" ), // CONNECTION_RESPONSE_PADDING_NOT_ZERO, CONNECTION_REQUEST_CLAIM_TABLE_FULL appended in sdk/rocketnet_counters.h
+                        "214ffa00200049b0ba620008003a68d424000000" ), // CONNECTION_RESPONSE_PADDING_NOT_ZERO, CONNECTION_REQUEST_CLAIM_TABLE_FULL and PAYLOAD_BATCH_FULL appended in sdk/rocketnet_counters.h
 };
 
 static void test_standard_timing_and_counters_vectors()
