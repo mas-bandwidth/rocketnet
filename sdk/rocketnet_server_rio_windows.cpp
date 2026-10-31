@@ -76,9 +76,11 @@ struct rocketnet_server_rio_t
     // next and outstanding lead, each starting a cache line (next's line
     // padded out explicitly), so the compiler inserts no alignment padding.
     // next is read by fill threads, which run only while the main thread is
-    // outside send_packets.
-    alignas( 64 ) std::atomic<int> next[ROCKETNET_RIO_SEND_PHASES]{};
-    uint8_t next_padding[64 - ROCKETNET_RIO_SEND_PHASES * sizeof( std::atomic<int> )];
+    // outside send_packets. It is 64 bits, as IOCP's num_staged: a fill phase
+    // never reserves 2^64 slots, so the count never wraps back onto a slot
+    // it handed out.
+    alignas( 64 ) std::atomic<uint64_t> next[ROCKETNET_RIO_SEND_PHASES]{};
+    uint8_t next_padding[64 - ROCKETNET_RIO_SEND_PHASES * sizeof( std::atomic<uint64_t> )];
     // posted sends of each phase not yet retired: the worker writes, pending reads
     alignas( 64 ) std::atomic<int> outstanding[ROCKETNET_RIO_SEND_PHASES]{};
 
@@ -344,7 +346,7 @@ static int rocketnet_rio_frame_index( rocketnet_server_rio_t * rio, const uint8_
     const int phase = rio->fill.load( std::memory_order_relaxed );
     const int slot = index - phase * ROCKETNET_RIO_SEND_QUEUE_SIZE;
     if ( slot < 0 || slot >= ROCKETNET_RIO_SEND_QUEUE_SIZE ||
-         slot >= rio->next[phase].load( std::memory_order_relaxed ) )
+         (uint64_t) slot >= rio->next[phase].load( std::memory_order_relaxed ) )
         return -1;
     return index;
 }
@@ -527,9 +529,8 @@ static bool rocketnet_rio_stop_pass( rocketnet_server_rio_t * rio )
         const int fill = rio->fill.load( std::memory_order_relaxed );
         if ( rio->phase_state[fill] == ROCKETNET_RIO_PHASE_FILL )
         {
-            int count = rio->next[fill].load( std::memory_order_relaxed );
-            if ( count > ROCKETNET_RIO_SEND_QUEUE_SIZE )
-                count = ROCKETNET_RIO_SEND_QUEUE_SIZE;
+            const uint64_t staged = rio->next[fill].load( std::memory_order_relaxed );
+            const int count = staged < ROCKETNET_RIO_SEND_QUEUE_SIZE ? (int) staged : ROCKETNET_RIO_SEND_QUEUE_SIZE;
             if ( count > 0 )
             {
                 phases[num_phases] = fill;
@@ -976,18 +977,14 @@ uint8_t * rocketnet_server_rio_start_packet( rocketnet_server_rio_t * rio, const
     if ( rio->stopping.load( std::memory_order_acquire ) )
         return NULL;
     const int phase = rio->fill.load( std::memory_order_relaxed );
-    const int slot = rio->next[phase].fetch_add( 1, std::memory_order_relaxed );
-
-    // the lower bound too: a caller that stages forever without a flush
-    // wraps the index negative, and a negative index is an out-of-bounds write
-
-    if ( slot < 0 || slot >= ROCKETNET_RIO_SEND_QUEUE_SIZE )
+    const uint64_t slot = rio->next[phase].fetch_add( 1, std::memory_order_relaxed );
+    if ( slot >= ROCKETNET_RIO_SEND_QUEUE_SIZE )
     {
         rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_SEND_FULL );
         return NULL;
     }
 
-    const int index = phase * ROCKETNET_RIO_SEND_QUEUE_SIZE + slot;
+    const int index = phase * ROCKETNET_RIO_SEND_QUEUE_SIZE + (int) slot;
     rio->slot_bytes[index] = 0;
     if ( !rocketnet_rio_address_write( to, rio->ipv6, rocketnet_rio_send_address( rio, index ) ) )
     {
@@ -1037,11 +1034,10 @@ void rocketnet_server_rio_send_packets( rocketnet_server_rio_t * rio )
     if ( rio->stopping.load( std::memory_order_acquire ) )
         return;
     const int phase = rio->fill.load( std::memory_order_relaxed );
-    int count = rio->next[phase].load( std::memory_order_relaxed );
-    if ( count <= 0 )
+    const uint64_t staged = rio->next[phase].load( std::memory_order_relaxed );
+    if ( staged == 0 )
         return;                  // nothing staged
-    if ( count > ROCKETNET_RIO_SEND_QUEUE_SIZE )
-        count = ROCKETNET_RIO_SEND_QUEUE_SIZE;
+    const int count = staged < ROCKETNET_RIO_SEND_QUEUE_SIZE ? (int) staged : ROCKETNET_RIO_SEND_QUEUE_SIZE;
 #if ROCKETNET_DEV
     if ( rio->test_try_fails )
         return;
@@ -1798,6 +1794,36 @@ bool rocketnet_server_rio_test_worker_handoff()
              rio->phase_state[0] == ROCKETNET_RIO_PHASE_FILL && rio->counters[ROCKETNET_RIO_COUNTER_SEND_FULL].load() == 0;
 
     rocketnet_rio_handoff_test_state = NULL;
+    rocketnet_rio_test_fixture_free( rio );
+
+    return valid;
+}
+
+// A fill phase that has taken 2^32 - 1 reservations without a flush refuses
+// the next two as full: the reservation count does not wrap back onto a slot
+// it handed out.
+bool rocketnet_server_rio_test_reservation_wrap()
+{
+    rocketnet_server_rio_t * rio = rocketnet_rio_test_fixture();
+    if ( !rio )
+        return false;
+
+    rocketnet_address_t to;
+    memset( &to, 0, sizeof( to ) );
+    to.type = ROCKETNET_ADDRESS_IPV4;
+    to.data.ipv4[0] = 127;
+    to.data.ipv4[3] = 1;
+    to.port = 40001;
+
+    typedef decltype( rio->next[0].load() ) rocketnet_rio_test_count_t;
+    const int phase = rio->fill.load( std::memory_order_relaxed );
+    rio->next[phase].store( (rocketnet_rio_test_count_t) 0xFFFFFFFFull, std::memory_order_relaxed );
+
+    uint64_t id = 0;
+    bool valid = rocketnet_server_rio_start_packet( rio, &to, &id ) == NULL;
+    valid &= rocketnet_server_rio_start_packet( rio, &to, &id ) == NULL;
+    valid &= rio->counters[ROCKETNET_RIO_COUNTER_SEND_FULL].load() == 2;
+
     rocketnet_rio_test_fixture_free( rio );
 
     return valid;
