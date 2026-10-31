@@ -512,3 +512,7 @@ MCRNMessageViews.cfg	MCRNMessageViews.tla	pass	-	check	rnmessageviews	required	-
 MCRNMessageViewsBrokenSearchFromCursor.cfg	MCRNMessageViews.tla	invariant	ReleaseFindsHeld	check	rnmessageviews	required	-
 MCRNMessageViewsBrokenBatchNoCheck.cfg	MCRNMessageViews.tla	invariant	HeldCountExact	check	rnmessageviews	required	-
 MCRNMessageViewsBrokenClearAfterExpire.cfg	MCRNMessageViews.tla	invariant	NoLostView	check	rnmessageviews	required	-
+MCRNChannelQueuesLayout.cfg	MCRNChannelQueuesLayout.tla	pass	-	check	rnchannelqueueslayout	required	-
+MCRNChannelQueuesLayoutBrokenPopKeepsTail.cfg	MCRNChannelQueuesLayout.tla	invariant	NoForeignLink	check	rnchannelqueueslayout	required	-
+MCRNChannelQueuesLayoutBrokenPushFrontNoTail.cfg	MCRNChannelQueuesLayout.tla	invariant	QueueIsList	check	rnchannelqueueslayout	required	-
+MCRNChannelQueuesLayoutBrokenRemoveKeepsEnds.cfg	MCRNChannelQueuesLayout.tla	invariant	ReadyIsList	check	rnchannelqueueslayout	required	-
