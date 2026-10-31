@@ -95,10 +95,10 @@ successful finish returns a nonzero serial. Read outcomes with
 `rocketnet_client_receipts` or `rocketnet_server_receipts`. Match serials within
 their endpoint and connection; a reconnect starts fresh message state.
 
-ACKED means the peer acknowledged the containing packet or all fragments; it
+ACKED means the receiver acknowledged the containing packet or all fragments; it
 does not confirm that the application committed a transaction. LOSS is only
 reported for unpromoted unreliable receipt sends. It can reflect a missing
-acknowledgement even if the peer received the data. A promoted or explicitly
+acknowledgement even if the receiver received the data. A promoted or explicitly
 reliable receipt send produces ACKED only; no in-flight send receives a
 terminal outcome when its connection ends.
 

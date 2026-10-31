@@ -423,7 +423,7 @@ Every successful finish returns a nonzero serial, but only the three
 report ACKED only. An unreliable receipt mode reports ACKED or LOSS unless
 its size promotes it to the reliable path, where it reports ACKED only. ACKED
 means transport acknowledgement, not an application-level transaction commit;
-LOSS does not prove the peer never saw the message. See
+LOSS does not prove the receiver never saw the message. See
 [receipt semantics](CHANNELS.md#receipts-and-stats).
 
 `rocketnet_client_receipts` and
@@ -473,7 +473,7 @@ client and requests transport shutdown. Stop is the whole shutdown flush: it
 seals each connected client's disconnect packets and hands them to the
 transport before telling the transport to stop, so a client that receives a disconnect reads
 `ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED`. These notifications are best
-effort: packet loss can still leave a peer to time out. There is no separate
+effort: packet loss can still leave a client to time out. There is no separate
 disconnect-all or send call to make first. `rocketnet_server_stopped` reports
 completion without waiting. Until it is true, start is refused; afterward start
 can finalize the old run and activate a new transport. Clients are identified by an `int` index,

@@ -81,6 +81,7 @@ compile/run check, then run the documentation checks:
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DROCKETNET_BUILD_DEV_LIBRARIES=ON
 cmake --build build --target rocketnet rocketnet_dev --parallel 4
+python3 tools/check_client_server_words.py
 python3 tools/docs/check_links.py
 python3 tools/docs/check_getting_started.py
 sh tools/docs/check_agents_md.sh all

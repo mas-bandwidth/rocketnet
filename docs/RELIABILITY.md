@@ -24,7 +24,7 @@ Channels scope ordered and sequenced state. Receipt serials are returned by
 `finish_message` and read through the client or server receipt call. The
 endpoint-wide receive queue reports each message's channel and reliability.
 
-An ACK receipt reports peer-library acceptance, not application processing.
+An ACK receipt reports acceptance by the remote library, not application processing.
 Only unreliable receipt sends can report LOSS; a send promoted to reliable
 reports ACKED only. A send still in flight when its connection ends gets no
 terminal receipt. Already recorded outcomes remain readable until the next
