@@ -23,18 +23,15 @@
 #            keygen); the production build (ROCKETNET_DEV=0) with
 #            udp_allocation_test.sh (no system allocation after create over
 #            real UDP) and production_smoke_test.sh.
-#   Windows  scripts/build_windows.ps1 (clang-cl, Ninja, vcpkg), test.exe,
-#            smoke_test.ps1 and crash_smoke_test.ps1, the framework's own
-#            Windows set.
 #
-# THE TOKEN. The framework is private and in another organization, so
-# GITHUB_TOKEN cannot read it. FRAMEWORK_READ_TOKEN is a repository secret
-# the owner adds: read-only contents on robotgamedevelopers/framework. The
-# first job checks it is there, and without it the night fails saying so,
-# before any runner is held. Tokens reach git only as an http.extraheader
-# through git's GIT_CONFIG_* environment, scoped to their organization's URL
-# prefix: never on a command line, in a clone's config or in a log.
-# github.token reads rocketnet main for the re-vendor script's own fetch.
+# ACCESS. The framework is private and in another organization. The fleet's
+# rocketnet runners clone it over git ssh with their host's own credential,
+# so this job holds no secret. github.token reads rocketnet main for the
+# re-vendor script's own fetch, as a scoped http.extraheader through git's
+# GIT_CONFIG_* environment, never on a command line or in a clone's config.
+#
+# Windows: not yet. The Windows runner's host credential for the framework
+# is not verified; the framework's own CI covers its Windows build.
 
 name: nightly-framework
 
@@ -57,25 +54,9 @@ concurrency:
 
 jobs:
 
-  token:
-    name: the framework read token is present
-    runs-on: [self-hosted, Linux, X64, fleet]
-    timeout-minutes: 2
-    steps:
-      - name: FRAMEWORK_READ_TOKEN
-        env:
-          FRAMEWORK_READ_TOKEN: ${{ secrets.FRAMEWORK_READ_TOKEN }}
-        run: |
-          if [ -z "$FRAMEWORK_READ_TOKEN" ]; then
-            echo "FAIL: the repository secret FRAMEWORK_READ_TOKEN is not set. It needs read-only contents on robotgamedevelopers/framework; the owner adds it."
-            exit 1
-          fi
-          echo "FRAMEWORK_READ_TOKEN is set"
-
   linux:
     name: framework on rocketnet main (Linux)
-    needs: token
-    runs-on: [self-hosted, Linux, X64, fleet]
+    runs-on: [self-hosted, Linux, X64, fleet, rocketnet]
     timeout-minutes: 45
     defaults:
       run:
@@ -105,18 +86,12 @@ jobs:
 
       - name: Vendor rocketnet main into the framework
         env:
-          FRAMEWORK_READ_TOKEN: ${{ secrets.FRAMEWORK_READ_TOKEN }}
           ROCKETNET_READ_TOKEN: ${{ github.token }}
-        run: &vendor |
+        run: |
           set -euo pipefail
           framework="$RUNNER_TEMP/framework"
           rm -rf "$framework"
-          auth=$(printf 'x-access-token:%s' "$FRAMEWORK_READ_TOKEN" | base64 | tr -d '\n')
-          GIT_CONFIG_COUNT=1 \
-          GIT_CONFIG_KEY_0=http.https://github.com/robotgamedevelopers/.extraheader \
-          GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth" \
-          GIT_TERMINAL_PROMPT=0 \
-            git clone --quiet https://github.com/robotgamedevelopers/framework.git "$framework"
+          GIT_TERMINAL_PROMPT=0 git clone --quiet git@github.com:robotgamedevelopers/framework.git "$framework"
           git -C "$framework" remote set-url --push origin no-push
           git fetch --quiet origin main
           pin=$(git rev-parse origin/main)
@@ -192,74 +167,3 @@ jobs:
         if: ${{ !cancelled() && steps.production.outcome == 'success' && steps.backend.outcome == 'success' }}
         timeout-minutes: 3
         run: cd "$FRAMEWORK" && ./scripts/production_smoke_test.sh
-
-  windows:
-    name: framework on rocketnet main (Windows)
-    needs: token
-    runs-on: [self-hosted, Windows, X64, rocketnet-windows]
-    # 50 minutes of bench wait, then the vcpkg build and the steps
-    timeout-minutes: 120
-    defaults:
-      run:
-        shell: bash
-    steps:
-
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Check go is present
-        run: |
-          if ! command -v go >/dev/null 2>&1; then echo "TOOL-MISSING go >= 1.26 (missing) on $RUNNER_NAME"; exit 1; fi
-          go version
-
-      - name: Vendor rocketnet main into the framework
-        env:
-          FRAMEWORK_READ_TOKEN: ${{ secrets.FRAMEWORK_READ_TOKEN }}
-          ROCKETNET_READ_TOKEN: ${{ github.token }}
-        run: *vendor
-
-      # the framework's own note (its ci.yml): vcpkg's registries cache is
-      # shared per machine by default and two jobs at once race on it, so this
-      # runner keeps its own beside its work directory
-      - name: vcpkg registries cache for this runner
-        shell: pwsh
-        run: |
-          $cache = [System.IO.Path]::GetFullPath( ( Join-Path $env:RUNNER_WORKSPACE '..\vcpkg-registries' ) )
-          New-Item -ItemType Directory -Force -Path $cache | Out-Null
-          "X_VCPKG_REGISTRIES_CACHE=$cache" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-
-      - name: Build the framework (Release, clang-cl)
-        shell: pwsh
-        env:
-          BUILD_JOBS: '4'
-        run: |
-          Set-Location $env:FRAMEWORK
-          ./scripts/build_windows.ps1 Release
-          if ( $LASTEXITCODE -ne 0 ) { exit $LASTEXITCODE }
-
-      - name: Framework unit tests
-        shell: pwsh
-        run: |
-          Set-Location ( Join-Path $env:FRAMEWORK 'dist' )
-          ./test.exe
-          if ( $LASTEXITCODE -ne 0 ) { exit $LASTEXITCODE }
-
-      - name: Smoke test
-        if: ${{ !cancelled() }}
-        timeout-minutes: 3
-        shell: pwsh
-        run: |
-          Set-Location $env:FRAMEWORK
-          ./scripts/smoke_test.ps1
-          if ( $LASTEXITCODE -ne 0 ) { exit $LASTEXITCODE }
-
-      - name: Crash smoke test
-        if: ${{ !cancelled() }}
-        timeout-minutes: 3
-        shell: pwsh
-        run: |
-          Set-Location $env:FRAMEWORK
-          ./scripts/crash_smoke_test.ps1
-          if ( $LASTEXITCODE -ne 0 ) { exit $LASTEXITCODE }
