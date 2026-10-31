@@ -492,9 +492,9 @@ cmake --build build --target rocketnet_dev --parallel 4
 make -C tests/fuzz ROCKETNET_FUZZ_CXX="$ROCKETNET_FUZZ_CXX"
 ```
 
-That builds `rocketnet_fuzz`, `rocketnet_fuzz_message`,
-`rocketnet_fuzz_connect_token` and `rocketnet_fuzz_receive_structured` in
-`tests/fuzz/`, each linked with `-fsanitize=fuzzer,address,undefined` and the same
+That builds the ten harnesses in `tests/fuzz/Makefile`'s `TARGETS` (the table
+in [tests/fuzz/README.md](../tests/fuzz/README.md) names each one, its seed
+corpus and its dictionary) in `tests/fuzz/`, each linked with `-fsanitize=fuzzer,address,undefined` and the same
 `-ffp-contract=off` floor as the library. On macOS the link adds
 `-framework CoreFoundation -framework SystemConfiguration`, which the platform
 layer's interface lookup uses, as `CMakeLists.txt` does. Run one for fifteen
@@ -509,10 +509,9 @@ ASAN_OPTIONS=detect_leaks=0 ./tests/fuzz/rocketnet_fuzz corpus/rocketnet_fuzz te
   -dict=tests/fuzz/rocketnet.dict -max_total_time=900 -print_final_stats=1
 ```
 
-The other three take `corpus/rocketnet_fuzz_message` with
-`tests/fuzz/corpus_message`, `corpus/rocketnet_fuzz_connect_token` with
-`tests/fuzz/corpus_connect_token`, and `corpus/rocketnet_fuzz_receive_structured`
-with `tests/fuzz/corpus_receive_structured`. A reproducer libFuzzer writes
+The others run the same way: harness `rocketnet_fuzz_<name>` takes
+`corpus/rocketnet_fuzz_<name>` with its seed corpus `tests/fuzz/corpus_<name>`.
+A reproducer libFuzzer writes
 (`crash-*`, `oom-*`, `timeout-*`, `leak-*`) names the bug; a minimized input
 belongs in the target's seed corpus as `regress_<name>` together with its
 pcapng capture, which `tools/check_fuzz_regressions.py` enforces. The nightly
@@ -520,14 +519,12 @@ workflow's `fuzz-macos` job runs this same build for each target; it fails fast
 with `TOOL-MISSING LLVM clang with libclang_rt.fuzzer_osx.a` when
 `$HOME/sdk/llvm` carries no libFuzzer runtime, before any build runs.
 `ci.yml`'s
-`Replay the fuzz corpora without libFuzzer` step stays the gate for the four
-committed corpora: build `fuzz_replay_rocketnet_fuzz`,
-`fuzz_replay_rocketnet_fuzz_message`,
-`fuzz_replay_rocketnet_fuzz_connect_token` and
-`fuzz_replay_rocketnet_fuzz_receive_structured` and run each against its
-`tests/fuzz/corpus*` inputs, which executes every committed file exactly once. The
+`Replay the fuzz corpora without libFuzzer` step stays the gate for the
+committed corpora: it builds `fuzz_replay_<harness>` for each of the ten
+harnesses and runs each against its `tests/fuzz/corpus*` inputs, which executes
+every committed file exactly once. The
 `ROCKETNET_FUZZ_CC`/`ROCKETNET_FUZZ_CXX` variable mechanism is not Apple
 silicon specific: building the instrumented library with LLVM clang and
-running `make -C tests/fuzz ROCKETNET_FUZZ_CXX=...` produces the four harnesses with
+running `make -C tests/fuzz ROCKETNET_FUZZ_CXX=...` produces the ten harnesses with
 `-fsanitize=fuzzer,address,undefined` on any host that carries a libFuzzer
 runtime.
