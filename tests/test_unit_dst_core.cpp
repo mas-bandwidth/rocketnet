@@ -12,6 +12,7 @@
 #include "test_unit_registry.h"
 #include "dst_harness.h"
 
+#include <stdio.h>
 #include <string.h>
 
 static struct rocketnet_dst_options_t dst_test_options( uint64_t steps )
@@ -284,6 +285,33 @@ static void test_dst_dup_storm_duplicates_payloads()
     rocketnet_unit_check( result.duplicate_payloads == 0 );
 }
 
+// A reliable sequenced send late in the quiet window can wait behind its
+// session's outstanding reliable bytes at the send budget, and the run must
+// not owe it before that queue drains (ROCKETNET_DST_CHECK_IN_FLIGHT_STEPS).
+// Each of these seeds, in the nightly's full shape, sends a type 4 between 30
+// and 40 steps before the last step that arrives 32 to 42 steps after it.
+
+static void dst_quiet_window_seed_passes( uint64_t seed )
+{
+    struct rocketnet_dst_options_t options = dst_test_options( 4000 );
+    options.fault_steps = 2000;
+
+    struct rocketnet_dst_result_t result;
+    rocketnet_unit_check( rocketnet_dst_run_seed_with_options( seed, &options, &result ) );
+    if ( !result.passed )
+        printf( "seed %llu: %s %s\n", (unsigned long long) seed, result.check, result.detail );
+    rocketnet_unit_check( result.passed );
+}
+
+static void test_dst_budget_queued_sequenced_seed_69363() { dst_quiet_window_seed_passes( 69363 ); }
+static void test_dst_budget_queued_sequenced_seed_71434() { dst_quiet_window_seed_passes( 71434 ); }
+static void test_dst_budget_queued_sequenced_seed_84959() { dst_quiet_window_seed_passes( 84959 ); }
+static void test_dst_budget_queued_sequenced_seed_93289() { dst_quiet_window_seed_passes( 93289 ); }
+
+REGISTER_UNIT_TEST( test_dst_budget_queued_sequenced_seed_69363 );
+REGISTER_UNIT_TEST( test_dst_budget_queued_sequenced_seed_71434 );
+REGISTER_UNIT_TEST( test_dst_budget_queued_sequenced_seed_84959 );
+REGISTER_UNIT_TEST( test_dst_budget_queued_sequenced_seed_93289 );
 REGISTER_UNIT_TEST( test_dst_same_seed_same_trace );
 REGISTER_UNIT_TEST( test_dst_schedule_same_seed_same_trace );
 REGISTER_UNIT_TEST( test_dst_clock_back_reaches_endpoints );

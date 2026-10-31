@@ -70,7 +70,7 @@ three equal PASS lines.
 `.github/workflows/nightly-dst.yml` runs every night (and by
 `workflow_dispatch`) on the fleet's Linux, macOS and Windows runners, for each
 ref in `ROCKETNET_NIGHTLY_REFS`, with `fail-fast: false`. Each leg builds
-Release `dst` and `test`, runs the fifteen `test_dst_` unit cases by `--run`,
+Release `dst` and `test`, runs the nineteen `test_dst_` unit cases by `--run`,
 runs `--seeds 1-50` and fails unless its PASS line carries the reference trace,
 then runs one named short step per fault schedule (`clock-back`, `seq-gap`,
 `seq-wrap-31`, `seq-wrap-32`, `burst` and `dup-storm`, each over seeds 1-50)

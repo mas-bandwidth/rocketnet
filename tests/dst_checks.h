@@ -40,11 +40,29 @@
 #define ROCKETNET_DST_CHECK_SEQ_BYTES ( ROCKETNET_DST_CHECK_SEQ_BITS / 8 )
 #define ROCKETNET_DST_CHECK_MAX_PACKETS 4096
 
+// The reliable bytes a session may have outstanding before the harness stops
+// drawing reliable sends for it (rocketnet_dst_send in dst_harness.h), and
+// the largest message it draws (rocketnet_dst_draw_size).
+#define ROCKETNET_DST_CHECK_OUTSTANDING_CAP 65536
+#define ROCKETNET_DST_CHECK_MAX_MESSAGE_BYTES 16384
+
 // The steps a sequenced message of the quiet window may still be in flight at
-// the last step: the simulator's longest delay is 150 ms of latency plus half
-// of it in jitter, 225 ms, and a step is 10 ms, so 30 steps of slack cover
-// it. A type 4 sent later than that is owed.
-#define ROCKETNET_DST_CHECK_IN_FLIGHT_STEPS 30
+// the last step, at 10 ms a step. Two parts:
+//
+// - the wire: the simulator's longest delay is 150 ms of latency plus half of
+//   it in jitter, 225 ms, so 30 steps;
+// - the send budget: a reliable item that does not fit the budget waits for a
+//   later update and is never dropped (proofs/tla/RNSendBudget.tla), so a new
+//   send queues behind every reliable byte its session has outstanding. That
+//   is at most the cap plus one more message, drained at the slowest budget,
+//   the client's ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS: ( 65536 + 16384 ) x 8
+//   bits at 1000 kbps is 656 ms, 66 steps.
+//
+// A type 4 sent earlier than both together is owed.
+#define ROCKETNET_DST_CHECK_WIRE_STEPS 30
+#define ROCKETNET_DST_CHECK_BUDGET_STEPS \
+    ( ( ( ROCKETNET_DST_CHECK_OUTSTANDING_CAP + ROCKETNET_DST_CHECK_MAX_MESSAGE_BYTES ) * 8 / ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS + 9 ) / 10 )
+#define ROCKETNET_DST_CHECK_IN_FLIGHT_STEPS ( ROCKETNET_DST_CHECK_WIRE_STEPS + ROCKETNET_DST_CHECK_BUDGET_STEPS )
 
 // The ghost state one stream keeps. The checks read and update these
 // counters; the SDK objects are never touched.
@@ -1157,9 +1175,9 @@ static inline void rocketnet_dst_check_end( struct rocketnet_dst_check_state_t *
                         &st->sequenced[session * 9 + channel];
                     const int served = c->quiet_served_set && c->quiet_served_index >= c->quiet_required_index;
 
-                    // a type 4 sent in the last steps of the run is still on
-                    // the wire: the simulator's longest delay is under the
-                    // slack above, so it is not owed yet
+                    // a type 4 sent in the last steps of the run may still be
+                    // queued behind the send budget or on the wire
+                    // (ROCKETNET_DST_CHECK_IN_FLIGHT_STEPS), so it is not owed yet
 
                     const int in_flight = c->quiet_required_set &&
                                           st->step - c->quiet_required_step < ROCKETNET_DST_CHECK_IN_FLIGHT_STEPS;
