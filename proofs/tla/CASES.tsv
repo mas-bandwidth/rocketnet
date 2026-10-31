@@ -577,3 +577,5 @@ MCRNClientLadderPin.cfg	MCRNClientLadder.tla	pass	-	check	rnclientladder	require
 MCRNClientLadderBrokenNoFallback.cfg	MCRNClientLadder.tla	invariant	NoExhaustWhileReachable	check	rnclientladder	required	-
 MCRNClientLadderBrokenOomFalls.cfg	MCRNClientLadder.tla	invariant	NoTryAfterOom	check	rnclientladder	required	-
 MCRNClientLadderBrokenIgnoresToken.cfg	MCRNClientLadder.tla	invariant	TriedInToken	check	rnclientladder	required	-
+MCRNServerMaintenanceSweep.cfg	MCRNServerMaintenanceSweep.tla	pass	-	check	rnservermaintenancesweep	required	-
+MCRNServerMaintenanceSweepBrokenBreak.cfg	MCRNServerMaintenanceSweep.tla	invariant	BoundedWait	check	rnservermaintenancesweep	required	-

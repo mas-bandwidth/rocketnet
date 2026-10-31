@@ -891,6 +891,7 @@ static uint8_t * rocketnet_server_reserve_send_frame( struct rocketnet_server_tr
 {
     frame->to = *to;
     frame->client_index = -1;
+    frame->packet_id = 0;
 
     if ( rocketnet_server_transport_staged( server_transport ) )
     {
@@ -2646,7 +2647,18 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
         struct rocketnet_server_frame_t frame;
         uint8_t * frame_data = rocketnet_server_reserve_send_frame( server_transport, client_address, &frame );
         if ( !frame_data )
-            break;
+        {
+            // proofs/tla/RNServerMaintenanceSweep.tla SweepStep: a full staging
+            // ends the sweep with the cursor on this slot. A refusal for want of
+            // a link-layer destination is this address's alone and does not
+            // clear by the next update: it is counted SEND_NO_LINK_ADDRESS, the
+            // slot's keep-alive stays due, and the sweep serves the rest.
+
+            if ( frame.packet_id != ROCKETNET_TRANSPORT_PACKET_UNREACHABLE )
+                break;
+            server_transport->maintenance_next_client = ( i + 1 ) % max_clients;
+            continue;
+        }
         frame.client_index = i;
 
         int send_bytes = rocketnet_server_protocol_write_keep_alive_if_due( &server_transport->protocol, i, current_time, frame_data + ROCKETNET_FRAME_WIRE_OFFSET );
