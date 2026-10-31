@@ -109,10 +109,10 @@ packet's start.
 
 The call plan is a refinement artifact, not additional scheduler state in
 `RNScheduler.tla`: the stable flat sequence represents the same `IsHead` and
-`Boost` sets the module derives from `st`. Its generation is a full-width
-implementation validity tag. Epoch exhaustion refuses a new plan instead of
-wrapping; stale sequence slots therefore cannot add a candidate to `Cands`.
-The model's order, clocks and fairness remain unchanged.
+`Boost` sets the module derives from `st`. The plan is built afresh and
+zeroed on the call's stack each call, so no entry of an earlier call can add
+a candidate to `Cands`. The model's order, clocks and fairness remain
+unchanged.
 
 ## Design choices
 

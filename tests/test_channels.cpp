@@ -1313,17 +1313,19 @@ static void test_channels_allocator_validation()
     config.max_message_bytes = 64 * ROCKETNET_MESSAGE_FRAGMENT_BYTES;
     check( rocketnet_message_validate_config( &config ) == 1 );
 
-    // the edge of the store rule: the large class holds exactly one maximal block
+    // the edge of the sizing floor: the large class holds exactly
+    // ceil( max_message_bytes / 1152 ) chunks
 
     rocketnet_message_default_config( &config );
     config.max_message_bytes = 4 * ROCKETNET_MESSAGE_FRAGMENT_BYTES;
-    config.send_message_buffer_bytes = 12288;               // a third of 12288 holds three 1152 chunks with their links
+    config.send_message_buffer_bytes = 12288;               // a third of 12288 holds three 1152 chunks with their meta words
     check( rocketnet_message_validate_config( &config ) == 0 );
     config.max_message_bytes = 3 * ROCKETNET_MESSAGE_FRAGMENT_BYTES;
     check( rocketnet_message_validate_config( &config ) == 1 );
 
     // docs/LOAD.md Table 3's lean profile is refused at the default max_message_bytes: its
-    // large class holds 18 chunks, a 32768-byte block needs 29 (section 4)
+    // large class holds 18 chunks, below the floor of 29 that a 32768-byte
+    // max_message_bytes sets (section 4)
 
     rocketnet_message_default_config( &config );
     config.reliable_messages_in_flight = 256;

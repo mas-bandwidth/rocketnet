@@ -932,8 +932,8 @@ static void test_span_links_pin_oldest_live()
     rn_arena_destroy( arena );
 }
 
-// A store class may hold as many chunks as a handle's 30 index bits name:
-// a send budget whose resend reserve needs more than 2^20 small chunks lays
+// A store class may hold up to RN_HANDLE_INDEX chunks, the reach of a
+// handle's 30 index bits: a send budget whose resend reserve needs more than 2^20 small chunks lays
 // out.
 
 static void test_store_class_holds_up_to_the_handle_index()
