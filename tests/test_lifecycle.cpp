@@ -519,15 +519,15 @@ static void check_memory_geometry( allocator_state & state )
 #if ROCKETNET_XDP
     check( !rocketnet_xdp_umem_bytes( 0 ) );
     check( rocketnet_xdp_umem_bytes( 7 ) == (uint64_t) 7 * ROCKETNET_XDP_UMEM_FRAMES * ROCKETNET_XDP_FRAME_SIZE );
-    check( !rocketnet_server_socket_memory_required( 0 ) );
-    check( rocketnet_server_socket_memory_required( 7 ) > rocketnet_xdp_umem_bytes( 7 ) );
+    check( !rocketnet_server_socket_memory_required( 0, ROCKETNET_DEFAULT_MAX_CLIENTS ) );
+    check( rocketnet_server_socket_memory_required( 7, ROCKETNET_DEFAULT_MAX_CLIENTS ) > rocketnet_xdp_umem_bytes( 7 ) );
 
     // Twenty-two queues exceed 4 GiB at the current UMEM geometry (192 MiB
     // per queue). This plans the allocation size without allocating it.
 
     check( rocketnet_xdp_umem_bytes( 22 ) > UINT32_MAX );
-    check( rocketnet_server_socket_memory_required( 22 ) > UINT32_MAX );
-    check( rocketnet_server_socket_memory_required( 1024 ) > rocketnet_server_socket_memory_required( 7 ) );
+    check( rocketnet_server_socket_memory_required( 22, ROCKETNET_DEFAULT_MAX_CLIENTS ) > UINT32_MAX );
+    check( rocketnet_server_socket_memory_required( 1024, ROCKETNET_DEFAULT_MAX_CLIENTS ) > rocketnet_server_socket_memory_required( 7, ROCKETNET_DEFAULT_MAX_CLIENTS ) );
     check( state.calls == before );
 #endif // #if ROCKETNET_XDP
 }

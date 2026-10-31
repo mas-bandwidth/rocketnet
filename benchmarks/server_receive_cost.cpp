@@ -2,7 +2,7 @@
 // The server's worst-case receive update: max_clients connected clients on the
 // loopback transport, each delivering ROCKETNET_RECEIVE_PACKETS_PER_CLIENT
 // payload packets, so one update processes the whole receive budget
-// (ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE, 16,000 at 1000 clients).
+// (rocketnet_server_receive_packets_per_update, 16,000 at 1000 clients).
 //
 // The loopback queue holds less than a full budget, so the packets the
 // clients seal are captured first, outside the timed window, by a receive
@@ -167,7 +167,7 @@ int main( int argc, char ** argv )
     const int payload_bytes = argc > 4 ? atoi( argv[4] ) : 100;
     const int arena_gib = argc > 5 ? atoi( argv[5] ) : 32;
     CHECK( num_clients >= 1 && num_clients <= ROCKETNET_MAX_CLIENTS );
-    CHECK( packets_per_client >= 1 && num_clients * packets_per_client <= ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE );
+    CHECK( packets_per_client >= 1 && num_clients * packets_per_client <= rocketnet_server_receive_packets_per_update( num_clients ) );
     CHECK( updates >= 1 );
     CHECK( payload_bytes >= 1 && payload_bytes <= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
     CHECK( arena_gib >= 1 );
@@ -181,7 +181,7 @@ int main( int argc, char ** argv )
 
     const int budget = num_clients * packets_per_client;
 
-    receive_cost_capture.capacity = 2 * ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE;
+    receive_cost_capture.capacity = 2 * rocketnet_server_receive_packets_per_update( num_clients );
     receive_cost_capture.from = (rocketnet_address_t *) receive_cost_allocate( NULL, sizeof( rocketnet_address_t ) * (size_t) receive_cost_capture.capacity );
     receive_cost_capture.packet_bytes = (int *) receive_cost_allocate( NULL, sizeof( int ) * (size_t) receive_cost_capture.capacity );
     receive_cost_capture.data = (uint8_t *) receive_cost_allocate( NULL, (size_t) ROCKETNET_RECEIVE_CEILING * (size_t) receive_cost_capture.capacity );

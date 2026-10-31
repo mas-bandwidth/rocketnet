@@ -58,7 +58,7 @@ struct rocketnet_server_gso_t;
 
 ROCKETNET_STATIC_ASSERT( ROCKETNET_GSO_RECV_QUEUE_SIZE >= 2 * ROCKETNET_GSO_SEND_QUEUE_SIZE,
                          "receive budget twice send: GSO receive queue holds at least twice the send queue" );
-ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE >= 2 * ROCKETNET_GSO_SEND_QUEUE_SIZE,
+ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MIN_RECEIVE_PACKETS_PER_UPDATE >= 2 * ROCKETNET_GSO_SEND_QUEUE_SIZE,
                          "receive budget twice send: server process batch holds at least twice the GSO send queue" );
 
 // the send staging is one server-wide producer bank whatever the queue
@@ -140,10 +140,11 @@ static inline int rocketnet_server_gso_recv_vlen( int num_packets, bool gro )
 // was zero, the same contract as rocketnet_platform_socket_create. an ipv6
 // bind is dual stack: ipv4 senders arrive as native ipv4 addresses,
 // normalized exactly once at this boundary per the standard's law.
-// num_queues <= 0 selects the default. flags is the DISABLE set above, zero
-// for production.
+// num_queues <= 0 selects the default. max_clients is the server's configured
+// client count, which sizes the receive view and each socket's receive
+// buffer request. flags is the DISABLE set above, zero for production.
 
-struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, struct rocketnet_address_t * bind_address, int num_queues, int flags, int * status = NULL );
+struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, struct rocketnet_address_t * bind_address, int num_queues, int max_clients, int flags, int * status = NULL );
 
 void rocketnet_server_gso_stop( struct rocketnet_server_gso_t * gso );
 bool rocketnet_server_gso_stopped( struct rocketnet_server_gso_t * gso );

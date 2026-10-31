@@ -105,9 +105,11 @@ struct rocketnet_server_t * rocketnet_server_adopt( void * context, struct rocke
 // what destroy must leave zero when it frees the allocation, and the only
 // bytes it may write. Each returns the span count, at most max. For the
 // destroy tests, which see the allocation only in the allocator's free
-int rocketnet_server_secret_spans_for_test( size_t * offsets, size_t * bytes, int max );
-int rocketnet_server_transport_secret_spans_for_test( size_t * offsets, size_t * bytes, int max );
-int rocketnet_client_transport_secret_spans_for_test( size_t * offsets, size_t * bytes, int max );
+// object is the live object, whose own config sizes any span that scales with
+// it (the server transport's disconnect keys).
+int rocketnet_server_secret_spans_for_test( const void * object, size_t * offsets, size_t * bytes, int max );
+int rocketnet_server_transport_secret_spans_for_test( const void * object, size_t * offsets, size_t * bytes, int max );
+int rocketnet_client_transport_secret_spans_for_test( const void * object, size_t * offsets, size_t * bytes, int max );
 #endif // #if ROCKETNET_DEV
 
 #ifdef __cplusplus

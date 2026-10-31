@@ -1474,7 +1474,7 @@ static int server_queued_budget_receive( void * context, rocketnet_address_t * f
 static void test_server_drains_completed_queue_to_budget()
 {
     auto * server = shape_junk_server_create();
-    const int budget = ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE;
+    const int budget = rocketnet_server_receive_packets_per_update( 4 );     // shape_junk_server_create's max_clients
     server_queued_budget_t queue = { budget + 17 };
     rocketnet_server_transport_io_operations_t operations = {};
     operations.destroy = wt_staged_destroy;
