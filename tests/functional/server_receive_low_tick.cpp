@@ -511,6 +511,12 @@ void rocketnet_test_server_receive_1000_clients_256kbps_10hz()
         {
             printf( "server_receive_low_tick connect deadline: clients_connected=%d server_connected=%d\n",
                     connected, rocketnet_server_transport_num_connected_clients( server ) );
+            for ( size_t i = 0; i < clients.size(); ++i )
+            {
+                const int state = (int) rocketnet_client_transport_state( clients[i] );
+                if ( state != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+                    printf( "server_receive_low_tick client %d state %d\n", (int) i, state );
+            }
             fflush( stdout );
             break;
         }
