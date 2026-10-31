@@ -11,7 +11,8 @@ Exit codes:
   0: PASS (all regions <= +2.0% over baseline; prints NOTE if < -2.0% under)
   1: FAIL (any region > +2.0% over baseline, build_type mismatch, or runner error)
   2: NOT COMPARABLE (compiler_id or valgrind_version differs from baseline;
-     outputs 'not comparable: <local> vs <pinned>')
+     outputs 'not comparable: <local> vs <pinned> verdict=FAIL' and names the
+     pinned toolchain to measure with)
 """
 
 import argparse
@@ -92,9 +93,9 @@ def parse_scenario_stdout(stdout: str) -> Dict[str, Any]:
     raise ValueError("missing instruction_count metadata line in stdout")
 
 
-def get_valgrind_version() -> str:
+def get_valgrind_version(valgrind: str = "valgrind") -> str:
     proc = subprocess.run(
-        ["valgrind", "--version"],
+        [valgrind, "--version"],
         capture_output=True,
         text=True,
         timeout=30,
@@ -272,7 +273,7 @@ def write_repin_baseline(
     return payload
 
 
-def run_cachegrind_region(binary: str, region: str) -> Dict[str, Any]:
+def run_cachegrind_region(binary: str, region: str, valgrind: str = "valgrind") -> Dict[str, Any]:
     """
     Run valgrind --tool=cachegrind on `binary <region>` and return parsed counts
     and toolchain metadata.
@@ -280,7 +281,7 @@ def run_cachegrind_region(binary: str, region: str) -> Dict[str, Any]:
     with tempfile.TemporaryDirectory() as tmpdir:
         out_file = os.path.join(tmpdir, f"cachegrind.{region}.out")
         cmd = [
-            "valgrind",
+            valgrind,
             "--tool=cachegrind",
             "--instr-at-start=no",
             "--cache-sim=no",
@@ -307,7 +308,7 @@ def run_cachegrind_region(binary: str, region: str) -> Dict[str, Any]:
                 ("setup", [region, "setup"], setup_out),
             ):
                 sub_cmd = [
-                    "valgrind",
+                    valgrind,
                     "--tool=cachegrind",
                     "--cache-sim=no",
                     "--branch-sim=no",
@@ -363,6 +364,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="Path to instruction_baseline.json (default: benchmarks/instruction_baseline.json).",
     )
     parser.add_argument(
+        "--valgrind",
+        default="valgrind",
+        help="The valgrind to measure with (default: valgrind). CI passes the pinned "
+        "build from tools/build_pinned_toolchain.sh by its path.",
+    )
+    parser.add_argument(
         "--repin",
         action="store_true",
         help="Overwrite benchmarks/instruction_baseline.json with the newly measured counts.",
@@ -384,12 +391,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 1
 
     try:
-        valgrind_version = get_valgrind_version()
+        valgrind_version = get_valgrind_version(args.valgrind)
         measured: Dict[str, Dict[str, Any]] = {}
         compiler_id = "unknown"
         build_type = "unknown"
         for region in REGIONS:
-            res = run_cachegrind_region(binary, region)
+            res = run_cachegrind_region(binary, region, args.valgrind)
             measured[region] = res
             compiler_id = res["compiler_id"]
             build_type = res["build_type"]
@@ -425,7 +432,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         valgrind_version=valgrind_version,
     )
     if not_comparable is not None:
-        print(not_comparable)
+        print(f"{not_comparable} verdict=FAIL")
+        print(
+            f"the baseline is measured with {baseline.get('compiler_id')} and "
+            f"{baseline.get('valgrind_version')}; build them with "
+            "tools/build_pinned_toolchain.sh and measure with that gcc and --valgrind"
+        )
         return 2
 
     code, report = evaluate_instructions(

@@ -79,8 +79,8 @@ against `benchmarks/instruction_baseline.json`:
 
 - **Toolchain match**: `compiler_id`, `valgrind_version`, and `build_type` must
   match the baseline exactly. Any difference fails immediately naming the
-  mismatched field, because instruction counts across different compiler or
-  valgrind versions are not comparable.
+  mismatched field and the pinned toolchain, because instruction counts across
+  different compiler or valgrind versions are not comparable.
 - **Regression threshold (`+2.0%`)**: if any region exceeds its baseline `Ir`
   by more than `2.0%`, the checker prints `verdict=FAIL` for that region and
   exits `1`.
@@ -97,18 +97,45 @@ instructions region=client_frame ir=<n> per_unit=<n> baseline=<n> delta_pct=<+x.
 instructions region=server_tick ir=<n> per_unit=<n> baseline=<n> delta_pct=<+x.xx%> verdict=PASS|FAIL
 ```
 
+## The pinned toolchain
+
+The gate never measures with a host's gcc or valgrind. CI reads the two
+versions from `benchmarks/instruction_baseline.json`, builds them with
+`tools/build_pinned_toolchain.sh` from release source tarballs checked against
+the sha256 pinned in that script, and caches the prefix keyed by the two
+versions, the host OS and C library, and the script. The build and the
+measurement then name every tool by its path in that prefix:
+
+```sh
+bash tools/build_pinned_toolchain.sh "$PWD/pinned-toolchain" 15.2.0 3.26.0
+tc="$PWD/pinned-toolchain"
+cmake -B build -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_C_COMPILER="$tc/bin/gcc" -DCMAKE_CXX_COMPILER="$tc/bin/g++" \
+  -DCMAKE_C_FLAGS="-I$tc/include" -DCMAKE_CXX_FLAGS="-I$tc/include" \
+  -DCMAKE_EXE_LINKER_FLAGS="-Wl,-rpath,$tc/lib64"
+cmake --build build --target instruction_count --parallel
+VALGRIND_LIB="$tc/libexec/valgrind" python3 tools/check_instructions.py \
+  --bin ./build/instruction_count --valgrind "$tc/bin/valgrind"
+```
+
+`-I$tc/include` puts the pinned valgrind's `cachegrind.h` ahead of any the host
+carries, and the rpath loads the pinned gcc's own `libstdc++`. A cold cache
+builds gcc (C and C++ only, one stage) and valgrind; a warm cache restores the
+prefix and builds nothing. Moving to a new gcc or valgrind is a re-pin: add
+its sha256 to the script, then re-pin the baseline with the new toolchain.
+
 ## Re-pinning the baseline
 
 When an intentional protocol change, hot-path optimization, or CI runner image
 upgrade moves the instruction count or changes the toolchain version:
 
-1. Build `instruction_count` in `Release` (`-ffp-contract=off`) on the Linux CI
-   runner image and run `--repin` with a mandatory `--reason`:
+1. Build `instruction_count` in `Release` (`-ffp-contract=off`) with the pinned
+   toolchain, as above, and run `--repin` with a mandatory `--reason`:
 
    ```sh
-   cmake -B build -DCMAKE_BUILD_TYPE=Release
-   cmake --build build --target instruction_count --parallel 4
-   python3 tools/check_instructions.py --bin ./bin/instruction_count --repin --reason "<why the baseline moved>"
+   VALGRIND_LIB="$tc/libexec/valgrind" python3 tools/check_instructions.py \
+     --bin ./build/instruction_count --valgrind "$tc/bin/valgrind" \
+     --repin --reason "<why the baseline moved>"
    ```
 
 2. Commit `benchmarks/instruction_baseline.json` alone in its own commit with the
