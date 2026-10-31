@@ -111,7 +111,7 @@ XDP_FRAME_SIZE := $(call deployed_literal,ROCKETNET_XDP_FRAME_SIZE,rocketnet_con
         ack-run-bound-8 ack-run-full-4096 ack-run-negative-control clean
 
 all: replay-delta-1-3 replay-far reconstruct \
-     read-write message-read xdp-free-list
+     read-write message-read xdp-free-list proofs-packet_open
 
 # The quick per-commit instance remains explicit about its reduced bound.
 replay-delta-1-3: proof_replay_advance.c
