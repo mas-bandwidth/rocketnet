@@ -15,6 +15,13 @@ not in the baseline fails the job. A baselined finding that is gone from the
 current run also fails the job: the baseline only shrinks, and a stale line is
 deleted in the same pull request that removes the finding.
 
+The analyzer runs with -Wno-error, and a finding the build's own -Werror=
+options still raise to an error is read the same as a warning: [-Werror=X] is
+normalized to [-WX], so one finding has one line whatever its level. The run
+is incomplete, and the gate fails without writing a report or a baseline, when
+a selected translation unit has no compile command or when the compiler exits
+nonzero for any reason other than error-level analyzer findings it printed.
+
 Run with --generate to rewrite the baseline from the current findings.
 """
 
@@ -42,8 +49,13 @@ NAMED_PARSER_FILES = [
 
 READ_WRITE_HEADER = "rocketnet_read_write.h"
 
-LOCATION = re.compile(r"^(.+?):(\d+):(\d+):\s+(warning|error):\s+(.*)$")
+LOCATION = re.compile(r"^(.+?):(\d+):(\d+):\s+(warning|error|fatal error):\s+(.*)$")
 OPTION = re.compile(r"\s*\[(-W[A-Za-z0-9_.=+-]+)\]\s*$")
+ERROR_LINE = re.compile(r"\berror:")
+
+
+class IncompleteRun(Exception):
+    """The analyzer did not cover every selected translation unit."""
 
 
 def relpath(path):
@@ -100,25 +112,45 @@ def parser_files():
     return sorted(files)
 
 
+def analyzer_check(rest):
+    """The finding's message and -Wanalyzer-* check, or None if it is not one."""
+    option = OPTION.search(rest)
+    if not option:
+        return None
+    check = option.group(1)
+    if check.startswith("-Werror="):
+        check = "-W" + check[len("-Werror="):]
+    if not check.startswith("-Wanalyzer-"):
+        return None
+    return rest[: option.start()].strip(), check
+
+
 def parse_diagnostics(text, analyzer):
     """Turn gcc -fanalyzer output into baseline finding lines."""
+    return parse_output(text, analyzer)[0]
+
+
+def parse_output(text, analyzer):
+    """The finding lines, whether any finding was error level, and every
+    error line that is not an analyzer finding."""
     findings = []
+    error_findings = False
+    other_errors = []
     for raw in text.splitlines():
         match = LOCATION.match(raw)
-        if not match:
+        finding = None
+        if match and match.group(4) != "fatal error":
+            finding = analyzer_check(match.group(5))
+        if finding is None:
+            if ERROR_LINE.search(raw):
+                other_errors.append(raw)
             continue
-        path, _line, _col, level, rest = match.groups()
-        if level != "warning":
-            continue
-        option = OPTION.search(rest)
-        if not option:
-            continue
-        check = option.group(1)
-        if not check.startswith("-Wanalyzer-"):
-            continue
-        message = rest[: option.start()].strip()
+        path, _line, _col, level, _rest = match.groups()
+        message, check = finding
+        if level == "error":
+            error_findings = True
         findings.append(finding_line(analyzer, relpath(path), check, message))
-    return findings
+    return findings, error_findings, other_errors
 
 
 def run_gcc_analyzer():
@@ -127,18 +159,22 @@ def run_gcc_analyzer():
     for rel in parser_files():
         entry = by_file.get(os.path.join(ROOT, rel))
         if entry is None:
-            print("no compile command for %s" % rel, file=sys.stderr)
-            continue
+            raise IncompleteRun("no compile command for %s in %s" % (rel, COMPILE_DB))
         command = entry["command"]
         compiler = "g++" if rel.endswith((".cc", ".cpp", ".cxx")) else "gcc"
         command = re.sub(r"^\S+", compiler, command)
         tmp_obj = os.path.join(BUILD, "static-gcc-analyzer.o")
-        command += " -fanalyzer -fdiagnostics-color=never -o " + tmp_obj
+        command += " -fanalyzer -Wno-error -fdiagnostics-color=never -o " + tmp_obj
         result = subprocess.run(
             command, shell=True, cwd=entry["directory"],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         )
-        findings.extend(parse_diagnostics(result.stderr, "gcc"))
+        found, error_findings, other_errors = parse_output(result.stderr, "gcc")
+        if result.returncode != 0 and (other_errors or not error_findings):
+            detail = "\n".join(other_errors) or result.stderr.strip() or "(no output)"
+            raise IncompleteRun("%s exited %d for %s:\n%s"
+                                % (compiler, result.returncode, rel, detail))
+        findings.extend(found)
     return findings
 
 
@@ -180,7 +216,13 @@ def main():
     args = parser.parse_args()
 
     ensure_compile_db()
-    findings = current_findings()
+    try:
+        findings = current_findings()
+    except IncompleteRun as incomplete:
+        print("static gate FAILED: the analyzer run is incomplete, so no "
+              "report or baseline is written")
+        print(str(incomplete))
+        return 1
 
     if args.report:
         with open(args.report, "w", encoding="utf-8") as handle:
