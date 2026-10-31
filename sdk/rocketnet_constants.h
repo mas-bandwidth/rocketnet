@@ -45,6 +45,10 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_FRAME_SIZE >= 16 + ROCKETNET_RECEIVE_CEILING,
 
 #define ROCKETNET_RECEIVE_PACKETS_PER_CLIENT                                16
 
+// The most message packets one connection writes in one update: the top of
+// the message config's packets_per_update range (rocketnet_internal.h).
+#define ROCKETNET_CONNECTION_MAX_PACKETS_PER_UPDATE                         1024
+
 // A portable or msgx server's send bank holds this many packets per configured
 // client (never fewer than ROCKETNET_SERVER_MAX_SEND_PACKETS), as its receive
 // banks hold ROCKETNET_RECEIVE_PACKETS_PER_CLIENT. One worker drains a bank
