@@ -45,7 +45,11 @@ static void test_msgx_transport_receive_budget_twice_send()
 
 static void test_loopback_transport_receive_budget_twice_send()
 {
-    check( ROCKETNET_LOOPBACK_QUEUE_PACKETS >= 2 * ROCKETNET_SERVER_MAX_SEND_PACKETS );
+    // a client endpoint receives one server connection's sends; the server
+    // endpoint receives every client's
+
+    check( ROCKETNET_LOOPBACK_QUEUE_PACKETS >= 2 * ROCKETNET_CONNECTION_MAX_PACKETS_PER_UPDATE );
+    check( rocketnet_loopback_server_queue_packets( ROCKETNET_MAX_CLIENTS ) >= 2 * ROCKETNET_SERVER_MAX_SEND_PACKETS );
     check( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE >= 2 * ROCKETNET_SERVER_MAX_SEND_PACKETS );
 }
 
