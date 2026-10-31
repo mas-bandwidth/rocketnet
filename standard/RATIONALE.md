@@ -759,10 +759,13 @@ carrying a passing filter value and a zero type byte, making the server a packet
 reflector for garbage and spending a hash and a system call on every piece of it.
 Everything below it is expensive — the used-token lookup hashes 576 bytes, and the three
 asymmetric operations follow — so nothing below may run for an address that has not
-answered. * **A server should bound the post-cookie handshake work it performs in one
-update: at most 16 connection requests whose cookie validated, per server, per update by
-default.** This check sits after the cookie validates and before the used-token lookup
-and the signature verify, so a request past the budget spends no asymmetric work. A
+answered. * **A server should bound the handshake work it performs in one update: at
+most 16 connection requests reaching the signature verify, per server, per update by
+default.** This check sits after the cheap rungs (the used-token lookup, the
+failed-signature budget, the claim and the two capacities) and immediately before the
+signature verify, so a request past the budget spends no asymmetric work, and a request
+the cheap rungs refuse spends no budget: a source past its failed-signature budget,
+refused at no cost to itself, cannot keep the budget full and starve honest requests. A
 refused request sees no answer, and the server increments
 `CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED`; the client sends its request again at
 its send rate, so a burst larger than the budget is spread across updates rather than

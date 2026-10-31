@@ -507,11 +507,11 @@ struct rocketnet_counters_t
     uint64_t values[ROCKETNET_NUM_COUNTERS];
 
     // per-server, per-update handshake budget state, not a published counter:
-    // how many post-cookie connection requests this server has processed in
-    // the current update. Reset by the protocol sweep once per update, so the
+    // how many connection requests this server has taken to the signature
+    // verify in the current update. Reset by the protocol sweep once per update, so the
     // cap is enforced per server rather than process-wide; the drop it causes
     // is the published counter above.
-    /** @brief Internal per-server count of cookie-validated requests processed in this update, against handshakes_per_update. */
+    /** @brief Internal per-server count of requests taken to the signature verify in this update, against handshakes_per_update. */
     uint64_t handshakes_processed_this_update;
 };
 

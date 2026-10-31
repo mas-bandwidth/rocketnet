@@ -4195,12 +4195,22 @@ void rocketnet_test_handshake_work_budget_per_update()
     const int num_requests = 16000;
     const int budget = ROCKETNET_SERVER_MAX_HANDSHAKES_PER_UPDATE;
 
+    // room for a half-open mapping and a request claim per verified request:
+    // a full table refuses before the verify, and only a request that
+    // reaches the verify spends budget
+
+    rocketnet_encryption_map_destroy( test.server.encryption_map );
+    rocketnet_used_token_history_destroy( test.server.used_token_history );
+    test.server.encryption_map = rocketnet_encryption_map_create( NULL, 2 * budget );
+    test.server.used_token_history = rocketnet_used_token_history_create( NULL, 2 * budget );
+    rocketnet_check( test.server.encryption_map && test.server.used_token_history );
+
     uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
     int response_bytes = 0;
 
-    // 16000 cookie-valid requests in one update: the budget caps how many get
-    // past the cookie gate, and every request beyond it is dropped -- the
+    // 16000 cookie-valid requests in one update: the budget caps how many
+    // reach the signature verify, and every request beyond it is dropped -- the
     // drop count is exact, not merely "at most", and it is counted, not just
     // returned as a code.
 

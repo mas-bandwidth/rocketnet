@@ -2,11 +2,19 @@
 (***************************************************************************)
 (* A receive path as ordered rungs, each cheap or crypto.  The request     *)
 (* path runs in the ruled order: version byte, signed timestamps, address  *)
-(* and key compares, cookie gate and handshake budget, used token lookup,  *)
-(* the failed-signature budget, the token-to-address claim, the mapping    *)
-(* capacity, the claim-table capacity, restart rule, signature, seal open, *)
-(* slots, keypair.  Keyed hashes (the cookie MAC, the token identifier,    *)
-(* key derivation) are the cheap tier and spend no counted cryptography.   *)
+(* and key compares, cookie gate, used token lookup, the failed-signature  *)
+(* budget, the token-to-address claim, the mapping capacity, the           *)
+(* claim-table capacity, restart rule, the handshake work budget,          *)
+(* signature, seal open, slots, keypair.  Keyed hashes (the cookie MAC,    *)
+(* the token identifier, key derivation) are the cheap tier and spend no   *)
+(* counted cryptography.                                                   *)
+(*                                                                         *)
+(* WorkBudgetOnlyForVerify: the per-update handshake work budget is        *)
+(* charged only by a request that reaches the signature, so a refusal at   *)
+(* a rung above it spends none.  The witness WorkBudgetAtCookie charges    *)
+(* it at the cookie gate, the code before 2026-10-31, where a source past  *)
+(* its failed-signature budget was refused for free and still spent the    *)
+(* budget honest requests needed.                                          *)
 (*                                                                         *)
 (* CheapRefusalsFirst: a refusal at a rung above the signature spends no   *)
 (* cryptography at all, and the slot refusal, which must wait for a        *)
@@ -36,16 +44,23 @@ CONSTANTS PosVersion, PosTimestamps, PosCompares, PosCookie, PosUsed,
 
 Rungs == {"version", "timestamps", "compares", "cookie", "used",
           "verifybudget", "claim", "capacity", "claimfull", "admitted",
-          "restart", "signature", "seal", "slots", "keypair"}
+          "restart", "workbudget", "signature", "seal", "slots", "keypair"}
 
 CryptoRungs == {"signature", "seal", "keypair"}
 
 AboveVerify == {"version", "timestamps", "compares", "cookie", "used",
                 "verifybudget", "claim", "capacity", "claimfull",
-                "admitted", "restart"}
+                "admitted", "restart", "workbudget"}
 
 Faults == {"none", "version", "expired", "full", "mapfull", "claimed",
-           "budget", "claimfull", "admitted", "signature", "seal"}
+           "budget", "claimfull", "admitted", "workspent", "signature", "seal"}
+
+\* the handshake work budget's rung: immediately before the signature, as
+\* the code charges it (sdk/rocketnet_server_protocol.cpp, the check under
+\* "the handshake work budget"; TRANSPORT.md t12 rule 8).  The witness
+\* overrides it with <- to sit just after the cookie gate, the code before
+\* 2026-10-31.
+WorkBudgetAtVerify == TRUE
 
 \* Positions are scaled by ten so the four cheap rungs below sit between
 \* the used rung and the next configured rung without a new config constant.
@@ -64,6 +79,8 @@ Pos(r) ==
       [] r = "claimfull" -> 10 * PosUsed + 6
       [] r = "admitted"  -> 10 * PosAdmitted
       [] r = "restart"   -> 10 * PosRestart
+      [] r = "workbudget" -> IF WorkBudgetAtVerify THEN 10 * PosSignature - 1
+                                                   ELSE 10 * PosCookie + 1
       [] r = "signature" -> 10 * PosSignature
       [] r = "seal"      -> 10 * PosSeal
       [] r = "slots"     -> 10 * PosSlots
@@ -80,6 +97,8 @@ RequestRungOrder ==
     /\ Pos("verifybudget") < Pos("claim")
     /\ Pos("claim") < Pos("capacity")
     /\ Pos("capacity") < Pos("claimfull")
+    /\ Pos("claimfull") < Pos("workbudget")
+    /\ Pos("workbudget") < Pos("signature")
 
 \* The token claim and the mapping table are the same small instance as the
 \* code: two addresses, two tokens, room for two half-open mappings.
@@ -117,6 +136,7 @@ Refuses(r, f) ==
     \/ (r = "claimfull" /\ f = "claimfull")
     \/ (r = "slots" /\ f = "full")
     \/ (r = "admitted" /\ f = "admitted")
+    \/ (r = "workbudget" /\ f = "workspent")
     \/ (r = "signature" /\ f = "signature")
     \/ (r = "seal" /\ f = "seal")
 
@@ -202,6 +222,12 @@ CheapRefusalsFirst ==
     outcome = "refused" =>
         /\ (refusedRung \in AboveVerify => ~spentAtRefusal)
         /\ (refusedRung = "slots" => ~spentKpAtRefusal)
+
+\* the handshake work budget bounds asymmetric work, so only a request that
+\* reaches the signature spends it: a request refused at any rung above the
+\* signature had not passed the budget's rung when it was refused.
+WorkBudgetOnlyForVerify ==
+    (outcome = "refused" /\ refusedRung \in AboveVerify) => Pos(refusedRung) <= Pos("workbudget")
 
 \* one token holds at most one live half-open mapping: the claim rung
 \* refuses a second address while the first mapping lives, and the mapping

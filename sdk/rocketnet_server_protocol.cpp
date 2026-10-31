@@ -572,23 +572,6 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
         }
     }
 
-    // the handshake budget check: after the cookie validates, count and cap
-    // post-cookie handshakes per update, per server, at the configured
-    // handshakes_per_update. requests beyond the budget are dropped before
-    // any asymmetric work runs and counted, so a flood of staged attempts
-    // cannot spend the whole update on signature verification; a dropped
-    // client's next request is processed in a later update
-    // (proofs/tla/RNSecurityTables.tla HonestRequest).
-
-    if ( server->counters->handshakes_processed_this_update >= (uint64_t) server->handshakes_per_update )
-    {
-        rocketnet_debug( "server dropped connection request. handshake budget exceeded" );
-        counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED]++;
-        return ROCKETNET_SERVER_PROCESS_BUDGET_EXCEEDED;
-    }
-
-    server->counters->handshakes_processed_this_update++;
-
     // everything below the cookie is expensive; nothing below runs for an
     // address that has not answered
 
@@ -616,8 +599,9 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
     // the token-to-address claim, the map capacity and the claim capacity are
     // the remaining cheap rungs, all above the signature and all read-only.
     // the claim rung runs before the capacity rung, as proofs/tla/ReceiveOrder.tla's
-    // Pos orders them: used, verifybudget, claim, capacity, claimfull
-    // (standard/TRANSPORT.md t12 rule 9).
+    // Pos orders them: used, verifybudget, claim, capacity, claimfull, then the
+    // handshake work budget just before the verify
+    // (standard/TRANSPORT.md t12 rules 8 and 9).
     // the first address to present a request whose signature verifies owns
     // the token until the handshake deadline or until its response binds the
     // token; a request from a second address is refused here, so one token
@@ -652,6 +636,25 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
         counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_CLAIM_TABLE_FULL]++;
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
+
+    // the handshake work budget: count and cap the signature verifies of one
+    // update, per server, at the configured handshakes_per_update. Only a
+    // request that has passed every cheap rung above reaches it, so a
+    // refusal above spends none of it; a request beyond the budget is
+    // dropped here, before any asymmetric work runs, and counted, so a flood
+    // of staged attempts cannot spend the whole update on signature
+    // verification. A dropped client's next request is processed in a later
+    // update (proofs/tla/RNSecurityTables.tla HonestRequest;
+    // proofs/tla/ReceiveOrder.tla WorkBudgetOnlyForVerify).
+
+    if ( server->counters->handshakes_processed_this_update >= (uint64_t) server->handshakes_per_update )
+    {
+        rocketnet_debug( "server dropped connection request. handshake budget exceeded" );
+        counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED]++;
+        return ROCKETNET_SERVER_PROCESS_BUDGET_EXCEEDED;
+    }
+
+    server->counters->handshakes_processed_this_update++;
 
     if ( !rocketnet_verify_signed_connect_data( signed_connect_data, signature, server->backend_public_key ) )
     {

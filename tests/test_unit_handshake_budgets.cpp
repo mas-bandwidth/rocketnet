@@ -81,7 +81,9 @@ static void budgets_server_setup( struct budgets_server_t * test )
     server->handshakes_per_update = ROCKETNET_DEFAULT_SERVER_HANDSHAKES_PER_UPDATE;
     server->handshake_deadline_seconds = 5.0;
     server->max_timeout_seconds = 0;
-    server->encryption_map = rocketnet_encryption_map_create( NULL, 8 );
+    // room for a half-open mapping per request that reaches the verify: a
+    // full table refuses before it, and only a verified request spends budget
+    server->encryption_map = rocketnet_encryption_map_create( NULL, 64 );
     server->used_token_history = rocketnet_used_token_history_create( NULL, 64 );
     server->client_slots = rocketnet_client_slots_create( NULL, 4 );
     server->acks = rocketnet_server_acks_create( NULL, 4 );
@@ -436,6 +438,69 @@ static void test_handshake_failure_budget_no_global_lockout()
 }
 
 REGISTER_UNIT_TEST( test_handshake_failure_budget_no_global_lockout );
+
+// A source past the failed-signature budget is refused before the verify,
+// and that refusal spends none of the update's handshake work budget: the
+// budget bounds asymmetric work, so only a request that reaches the
+// signature verify is charged (standard/TRANSPORT.md t12 rule 9;
+// proofs/tla/ReceiveOrder.tla WorkBudgetOnlyForVerify). One unspoofed
+// source with valid cookies spends the window's failures, then floods the
+// next update with more forged requests; an honest client in that update
+// is still challenged, not refused for budget.
+
+static void test_handshake_refused_source_spends_no_work_budget()
+{
+    struct budgets_server_t test;
+    budgets_server_setup( &test );
+
+    struct rocketnet_address_t forger;
+    check( rocketnet_address_parse( &forger, "10.4.0.1:56789" ) );
+
+    // the window's failures, all from one source, in one wide update
+
+    test.server.handshakes_per_update = ROCKETNET_SERVER_MAX_HANDSHAKES_PER_UPDATE;
+
+    int index = 0;
+    for ( int i = 0; i < ROCKETNET_SIGNATURE_VERIFY_FAILURE_BUDGET; i++ )
+        check( budgets_send_forged( &test, &forger, ++index ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_DID_NOT_VERIFY] == (uint64_t) ROCKETNET_SIGNATURE_VERIFY_FAILURE_BUDGET );
+
+    // the next update, at the default budget: the forger floods past it, and
+    // every request is refused by the failed-signature budget before the
+    // verify, none of them charged
+
+    test.server.handshakes_per_update = ROCKETNET_DEFAULT_SERVER_HANDSHAKES_PER_UPDATE;
+    rocketnet_server_protocol_update( &test.server, 1000.1 );
+
+    const int flood = 4 * ROCKETNET_DEFAULT_SERVER_HANDSHAKES_PER_UPDATE;
+    for ( int i = 0; i < flood; i++ )
+        check( budgets_send_forged( &test, &forger, ++index ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT] == (uint64_t) flood );
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_DID_NOT_VERIFY] == (uint64_t) ROCKETNET_SIGNATURE_VERIFY_FAILURE_BUDGET );
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED] == 0 );
+    check( test.server.counters->handshakes_processed_this_update == 0 );
+
+    // the honest client in the same update: verified and challenged
+
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    budgets_build_request( request, 0x40000, &test.client_address, test.server.cookie_key );
+
+    uint8_t challenge[ROCKETNET_RECEIVE_CEILING];
+    int challenge_bytes = 0;
+    const int result = rocketnet_server_protocol_process_connection_request( &test.server, &test.client_address,
+                                                                             request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,
+                                                                             ROCKETNET_TEST_CREATE_TS, 1000.1,
+                                                                             challenge, &challenge_bytes );
+    check( result == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
+    check( challenge_bytes == ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES );
+    check( test.server.counters->handshakes_processed_this_update == 1 );
+
+    budgets_server_teardown( &test );
+}
+
+REGISTER_UNIT_TEST( test_handshake_refused_source_spends_no_work_budget );
 
 // A burst over the cap: 40 honest clients, each with a valid cookie for its
 // own address, send a request every update until they are challenged, as a

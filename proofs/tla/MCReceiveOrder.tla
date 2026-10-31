@@ -7,8 +7,9 @@
 (* do in the code, and that removal releases its token's claim.  The       *)
 (* witnesses are the same module under the Broken cfgs, each moving one    *)
 (* cheap rung behind a crypto rung, removing the token claim, writing the  *)
-(* claim at its check rung before the signature, or leaving a claim behind *)
-(* on mapping removal or response binding; TLC must reject them.          *)
+(* claim at its check rung before the signature, charging the work budget  *)
+(* at the cookie gate, or leaving a claim behind on mapping removal or     *)
+(* response binding; TLC must reject them.                                 *)
 (***************************************************************************)
 EXTENDS ReceiveOrder
 
@@ -24,6 +25,9 @@ MCTokenClaimRemoved == FALSE
 \* turns the release off, so a claim outlives the mapping that held it
 IdleRemoveReleasesClaim == TRUE
 MCIdleRemoveLeavesClaim == FALSE
+
+\* the work budget charged at the cookie gate, the code before 2026-10-31
+MCWorkBudgetAtCookie == FALSE
 
 \* the claim written as the request passes its check rung, before the
 \* signature: the code before the check/write split
