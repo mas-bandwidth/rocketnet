@@ -11,7 +11,7 @@ message exchange → integrate a frame loop → connect a backend → qualify a 
 | Copy a complete C integration | [Integration example](INTEGRATION-EXAMPLE.md) |
 | Install or embed the SDK | [Building](BUILDING.md) |
 | Own the frame loop, buffers, and endpoint lifetime | [Integration guide](USAGE.md) |
-| Understand channels, delivery, and receipts | [Messages and channels](CHANNELS.md), [reliability example](examples/reliability.md) |
+| Understand channels, delivery, and receipts | [Messages and channels](CHANNELS.md), [reliability example](examples/reliability.md), [receive pressure](RECEIVE-PRESSURE.md) |
 | Understand connection identity | [Sessions](SESSION.md), [Keys](KEYS.md) |
 | Replace local development tokens | [Production integration](PRODUCTION.md), [backend service examples](../examples/backend/README.md) |
 | Work with an AI coding agent | [Agent integration guide](AGENTS.md) |

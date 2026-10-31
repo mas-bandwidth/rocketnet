@@ -439,9 +439,9 @@ the requirement that destruction frees every SDK allocation. Large legal numeric
 reassembly geometries can be planned without allocating them, while component
 budgets can still refuse creation.
 
-`test_transport_control` exercises one complete 20-slot stats modulo cycle plus
-a publication update over 1000 mixed ACK/keepalive clients: 51 updates and 50
-manual worker steps at that client count. The buffered transport accepts only
-256 controls per send batch, and the test retains per-update control assertions.
-Its elapsed time is a diagnostic for that synthetic workload, not a packet rate
+`test_transport_control`'s control-pressure case runs 300 and then 1000
+clients through four updates each, with `ROCKETNET_SERVER_MAX_RECEIVE_PACKETS`
+receives offered per update. Half the clients owe a standalone ACK and half a
+keep-alive on every update; the response and ACK/keep-alive checks run on each
+update, and every slot's RTT is checked after them. Its elapsed time is a diagnostic for that synthetic workload, not a packet rate
 or a frame/send/ACK cadence requirement.
