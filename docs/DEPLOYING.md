@@ -65,12 +65,8 @@ send buffers are recycled only after completion, and stop cancels and drains
 outstanding operations. IPv6 binds accept both address families. Windows clients independently select `iocp` or `portable`; a server pin does
 not change the client selection.
 
-The existing `num_xdp_queues` field selects IOCP workers, following the GSO
-transport's reuse of this field: zero selects one worker; 1 through 32 are valid.
-Workers dequeue completions from the one port and each publishes its own receive
-buffer, so more than one worker can reorder a client's datagrams, across workers
-and across ticks, and the reliable layer answers the reordering with resends; one
-worker is the default for that reason.
+IOCP always runs one completion worker and one send worker; `num_xdp_queues`
+does not apply to it.
 There are 128 posted receives per worker, 4096 receive staging slots per worker
 buffer, and 2048 send frames across all workers (the staging and send frames
 scale with `ROCKETNET_MAX_CLIENTS`; see [Maximum clients](MEMORY.md#maximum-clients)). These are resource bounds,
