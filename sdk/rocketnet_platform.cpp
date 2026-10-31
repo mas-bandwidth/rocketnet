@@ -27,6 +27,33 @@
 #include <fcntl.h>
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
+// the datagrams every receive path reads and skips, process-wide: a
+// zero-length datagram, and one whose source the socket refuses
+// (rocketnet_platform_mmsg_read_sockaddr, rocketnet_platform_sockaddr_to_address)
+
+static std::atomic<uint64_t> rocketnet_platform_receive_empty_count{ 0 };
+static std::atomic<uint64_t> rocketnet_platform_receive_refused_source_count{ 0 };
+
+static void rocketnet_platform_count_receive_empty()
+{
+    rocketnet_platform_receive_empty_count.fetch_add( 1, std::memory_order_relaxed );
+}
+
+static void rocketnet_platform_count_receive_refused_source()
+{
+    rocketnet_platform_receive_refused_source_count.fetch_add( 1, std::memory_order_relaxed );
+}
+
+uint64_t rocketnet_platform_receive_empties()
+{
+    return rocketnet_platform_receive_empty_count.load( std::memory_order_relaxed );
+}
+
+uint64_t rocketnet_platform_receive_refused_sources()
+{
+    return rocketnet_platform_receive_refused_source_count.load( std::memory_order_relaxed );
+}
+
 // the direct allocation count (rocketnet_memory.h). relaxed: it is a total,
 // read by a memory check, and orders against nothing
 static std::atomic<uint64_t> rocketnet_direct_allocation_total{ 0 };
@@ -1692,17 +1719,21 @@ static int rocketnet_platform_socket_receive_packet_into( rocketnet_platform_soc
             return 0;
 
         // a zero-length datagram is legal UDP carrying nothing the protocol
-        // admits, and a dropped source is spoofed chaff: skip both and read
-        // on, so neither reads as "socket drained". Each spent its read.
+        // admits, and a dropped source is spoofed chaff: skip both, counted,
+        // and read on, so neither reads as "socket drained". Each spent its read.
 
         if ( result == 0 )
+        {
+            rocketnet_platform_count_receive_empty();
             continue;
+        }
 
         if ( !rocketnet_platform_mmsg_read_sockaddr( socket, &sockaddr_from, from ) )
         {
             rocketnet_assert( sockaddr_from.ss_family == AF_INET6 );
             if ( sockaddr_from.ss_family != AF_INET6 )
                 return 0;
+            rocketnet_platform_count_receive_refused_source();
             continue;
         }
 
@@ -1931,17 +1962,23 @@ int rocketnet_platform_socket_receive_packets_mmsg( rocketnet_platform_socket_t 
         reads_remaining -= result;
 
         // compact the chunk in place: a zero-length datagram or a refused
-        // source makes no entry, and the next kept one moves down
+        // source makes no entry, counted, and the next kept one moves down
 
         int kept = 0;
         for ( int i = 0; i < result; i++ )
         {
             rocketnet_address_t parsed;
             if ( !rocketnet_platform_mmsg_read_sockaddr( socket, &addresses[i], &parsed ) )
+            {
+                rocketnet_platform_count_receive_refused_source();
                 continue;
+            }
             const int bytes = (int) msg[i].msg_len;
             if ( bytes <= 0 )
+            {
+                rocketnet_platform_count_receive_empty();
                 continue;
+            }
             const int copy_bytes = bytes < packet_stride ? bytes : packet_stride;
             const uint8_t * source = packet_data + (size_t) ( chunk_base + i ) * (size_t) packet_stride;
             uint8_t * target = packet_data + (size_t) ( chunk_base + kept ) * (size_t) packet_stride;
@@ -2285,8 +2322,16 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
         {
             const int bytes = (int) msg[i].msg_datalen;
             rocketnet_address_t parsed;
-            if ( bytes <= 0 || !rocketnet_platform_mmsg_read_sockaddr( socket, &addresses[i], &parsed ) )
+            if ( bytes <= 0 )
+            {
+                rocketnet_platform_count_receive_empty();
                 continue;
+            }
+            if ( !rocketnet_platform_mmsg_read_sockaddr( socket, &addresses[i], &parsed ) )
+            {
+                rocketnet_platform_count_receive_refused_source();
+                continue;
+            }
             uint8_t * written = packet_data + (size_t) ( chunk_base + (int) i ) * (size_t) packet_stride;
             uint8_t * target = packet_data + (size_t) total * (size_t) packet_stride;
             const int copy_bytes = bytes < packet_stride ? bytes : packet_stride;
@@ -3563,7 +3608,6 @@ void rocketnet_platform_socket_destroy( rocketnet_platform_socket_t * );
 
 static volatile LONG rocketnet_platform_udp_reset_refusal_logged = 0;
 static volatile LONG64 rocketnet_platform_receive_reset_count = 0;
-static volatile LONG64 rocketnet_platform_receive_empty_count = 0;
 
 // windows-udp-connreset audit: every socket rocketnet creates on Windows
 // (portable server and client, iocp, rio) turns both ICMP reset reports off
@@ -3617,11 +3661,6 @@ void rocketnet_platform_count_receive_reset()
 uint64_t rocketnet_platform_receive_resets()
 {
     return (uint64_t) InterlockedCompareExchange64( &rocketnet_platform_receive_reset_count, 0, 0 );
-}
-
-uint64_t rocketnet_platform_receive_empties()
-{
-    return (uint64_t) InterlockedCompareExchange64( &rocketnet_platform_receive_empty_count, 0, 0 );
 }
 
 int rocketnet_platform_socket_receive_buffer_bytes( rocketnet_platform_socket_t * socket )
@@ -4037,10 +4076,10 @@ receive_again:
             // protocol admits -- and returning 0 here would read as
             // "socket drained", letting byte-less chaff cap an entire
             // drain at one packet. skip it, keep reading:
-            // both pumps share this semantic. The skip is counted
-            // process-wide (rocketnet_platform_receive_empties), so no
-            // dropped datagram goes uncounted.
-            InterlockedIncrement64( &rocketnet_platform_receive_empty_count );
+            // every platform's per-packet receive shares this semantic,
+            // and counts the skip process-wide
+            // (rocketnet_platform_receive_empties).
+            rocketnet_platform_count_receive_empty();
             continue;
         }
 
@@ -4054,7 +4093,10 @@ receive_again:
     }
 
     if ( !rocketnet_platform_sockaddr_to_address( &sockaddr_from, dual_stack, from ) )
+    {
+        rocketnet_platform_count_receive_refused_source();
         goto receive_again;
+    }
 
     rocketnet_assert( result >= 0 );
 

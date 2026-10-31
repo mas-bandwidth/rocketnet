@@ -373,6 +373,42 @@ static void test_platform_socket_hygiene_batch_chaff_drain_is_bounded()
 REGISTER_UNIT_TEST( test_platform_socket_hygiene_single_chaff_drain_is_bounded );
 REGISTER_UNIT_TEST( test_platform_socket_hygiene_batch_chaff_drain_is_bounded );
 
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS && !defined( __OpenBSD__ )
+
+// Every read a POSIX receive skips is counted process-wide: a zero-length
+// datagram in rocketnet_platform_receive_empties, a refused source in
+// rocketnet_platform_receive_refused_sources, one count per read.
+
+static void platform_socket_hygiene_chaff_is_counted( platform_socket_hygiene_arm_t arm, int max_packets )
+{
+    const uint64_t empties = rocketnet_platform_receive_empties();
+    const uint64_t refused = rocketnet_platform_receive_refused_sources();
+
+    const int empty_reads = platform_socket_hygiene_chaff_reads( arm, platform_socket_hygiene_empty, max_packets );
+    rocketnet_unit_check( rocketnet_platform_receive_empties() - empties == (uint64_t) empty_reads );
+    rocketnet_unit_check( rocketnet_platform_receive_refused_sources() == refused );
+
+    const int refused_reads = platform_socket_hygiene_chaff_reads( arm, platform_socket_hygiene_mapped, max_packets );
+    rocketnet_unit_check( rocketnet_platform_receive_refused_sources() - refused == (uint64_t) refused_reads );
+    rocketnet_unit_check( rocketnet_platform_receive_empties() - empties == (uint64_t) empty_reads );
+}
+
+static void test_platform_socket_hygiene_skipped_reads_are_counted()
+{
+    platform_socket_hygiene_chaff_is_counted( PLATFORM_SOCKET_HYGIENE_SINGLE, 1 );
+    platform_socket_hygiene_chaff_is_counted( PLATFORM_SOCKET_HYGIENE_BATCH, 8 );
+#if defined( __APPLE__ )
+    platform_socket_hygiene_chaff_is_counted( PLATFORM_SOCKET_HYGIENE_MSGX, 8 );
+#endif // #if defined( __APPLE__ )
+#if defined( __linux__ )
+    platform_socket_hygiene_chaff_is_counted( PLATFORM_SOCKET_HYGIENE_MMSG, 8 );
+#endif // #if defined( __linux__ )
+}
+
+REGISTER_UNIT_TEST( test_platform_socket_hygiene_skipped_reads_are_counted );
+
+#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS && !defined( __OpenBSD__ )
+
 #if defined( __APPLE__ )
 static void test_platform_socket_hygiene_msgx_chaff_drain_is_bounded()
 {

@@ -1082,6 +1082,21 @@ bool rocketnet_server_transport_memory_plan( const rocketnet_server_transport_co
     plan.send_arena_bytes = rocketnet_send_arena_allocation_bytes( ROCKETNET_SEND_ARENA_SLOTS, ( payload + 15 ) & ~15 );
     if ( !rocketnet_builtin_server_memory_plan( config, transport, plan ) )
         return false;
+
+    // a transport that takes replay marks (xdp) gets the per-slot replay
+    // records at create (rocketnet_server_replay_marks_create)
+
+    for ( int i = 0; i < ROCKETNET_NUM_TRANSPORTS; i++ )
+    {
+        const rocketnet_transport_definition_t * definition = rocketnet_transport_definition( i );
+        if ( !definition || strcmp( definition->name, transport ) != 0 )
+            continue;
+        if ( definition->backend && definition->backend->server && definition->backend->server->replay_mark &&
+             !rocketnet_memory_add( plan.protocol_bytes, 1, rocketnet_server_replay_marks_allocation_bytes( clients ) ) )
+            return false;
+        break;
+    }
+
     // loopback opens no socket and plans no I/O bytes: its endpoint is in the caller's hub
     if ( !plan.transport_bytes || !plan.send_arena_bytes || ( plan.sockets != 0 && !plan.transport_io_bytes ) )
         return false;

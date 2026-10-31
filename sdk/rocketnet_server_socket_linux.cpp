@@ -2473,8 +2473,13 @@ bool rocketnet_server_socket_replay_forget( struct rocketnet_server_socket_t * s
     rocketnet_assert( address );
     rocketnet_assert( server_socket->replay_marks );
 
+    // proofs/tla/RNXdpReplay.tla Walk (pendingMacForget' = accepted): only a
+    // queued forget drops the learned reply MAC; a refused one leaves it with
+    // the slot that still owes the forget
+
     const bool queued = rocketnet_xdp_replay_marks_forget( server_socket->replay_marks, address );
-    rocketnet_xdp_reply_macs_forget( &server_socket->reply_macs, address );
+    if ( queued )
+        rocketnet_xdp_reply_macs_forget( &server_socket->reply_macs, address );
 
     return queued;
 }
@@ -2864,6 +2869,7 @@ bool rocketnet_server_socket_test_replay_marks()
     }
 
     rocketnet_xdp_replay_marks_reset( server->replay_marks );
+    rocketnet_xdp_reply_macs_reset( &server->reply_macs, NULL );
     server->replay_map_fd = -1;
 
     rocketnet_address_t a = {};
@@ -2877,11 +2883,18 @@ bool rocketnet_server_socket_test_replay_marks()
     rocketnet_address_t b = a;
     b.port = 50001;
 
+    // a queued forget drops the address's learned reply MAC
+
+    const uint8_t learned_mac[6] = { 0x02, 0, 0, 0, 0, 0x0b };
+    rocketnet_xdp_reply_macs_learn( &server->reply_macs, &a, learned_mac );
+    rocketnet_xdp_reply_macs_learn( &server->reply_macs, &b, learned_mac );
+
     rocketnet_server_socket_replay_forget( server, &a );
     rocketnet_server_socket_replay_mark( server, &a, 41 );
     rocketnet_server_socket_replay_mark( server, &b, 7 );
 
-    bool valid = server->replay_marks->forget_count == 1;
+    bool valid = rocketnet_xdp_reply_macs_find( &server->reply_macs, &a ) == NULL;
+    valid &= server->replay_marks->forget_count == 1;
     valid &= server->replay_marks->mark_count == 2;
 
     const uint64_t failures_before = rocketnet_server_socket_replay_commit_failures( server );
@@ -2905,9 +2918,12 @@ bool rocketnet_server_socket_test_replay_marks()
         rocketnet_server_socket_replay_forget( server, &c );
     }
 
+    // a refused forget leaves b's learned reply MAC with the slot that owes it
+
     rocketnet_server_socket_replay_forget( server, &b );
     valid &= server->replay_marks->forget_count == ROCKETNET_XDP_REPLAY_MAX_ENTRIES;
     valid &= server->replay_marks->refused == 1;
+    valid &= rocketnet_xdp_reply_macs_find( &server->reply_macs, &b ) != NULL;
 
     const uint64_t failures_full = rocketnet_server_socket_replay_commit_failures( server );
     rocketnet_server_socket_replay_commit( server );
