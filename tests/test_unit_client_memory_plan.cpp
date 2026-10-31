@@ -14,6 +14,7 @@
 #include "rocketnet_allocator.h"
 #include "rocketnet_memory.h"
 #include "rocketnet_layers.h"
+#include "rocketnet_config.h"
 
 #include <stdint.h>
 #include <stdio.h>
