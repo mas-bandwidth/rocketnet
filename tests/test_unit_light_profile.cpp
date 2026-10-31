@@ -94,10 +94,12 @@
 // Re-measured 2026-10-29 by the ubuntu-24.04 Debug CI leg: the
 // client config's loopback_hub pointer adds 8 bytes to the client, which was
 // 22904141 and is now 22904149; the server figure is unchanged.
+// The server figure includes the xdp plan's per-slot replay records,
+// 12133 bytes at 1000 clients (rocketnet_server_replay_marks_allocation_bytes).
 // The non-dev figures below were not re-measured: this file is not linked
 // when ROCKETNET_DEV=OFF.
 #if ROCKETNET_DEV
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3247582222ULL )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3247594355ULL )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22904149 )
 #else
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3225115398ULL )
