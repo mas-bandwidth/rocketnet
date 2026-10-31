@@ -294,6 +294,28 @@ def check_shape(lines, label, once=False):
     return lines[:-3]
 
 
+# A registered unit case's name is printed by the registry before the case runs
+# (tests/test_unit_registry.h); a case that prints its own name again shows it
+# twice in a single-case run (./bin/test <name>).
+SELF_NAME_PRINT_RE = re.compile(r'printf\(\s*"(test_[a-z0-9_]+)\\n"\s*\)')
+
+
+def unit_sources_printing_names(paths=None):
+    if paths is None:
+        paths = sorted((REPO / "tests").glob("test_unit_*.cpp")) + [REPO / "sdk" / "rocketnet_tests.cpp"]
+    found = []
+    for path in paths:
+        try:
+            text = Path(path).read_text()
+        except OSError:
+            continue
+        for number, line in enumerate(text.splitlines(), 1):
+            m = SELF_NAME_PRINT_RE.search(line)
+            if m:
+                found.append("%s:%d prints %s" % (Path(path).name, number, m.group(1)))
+    return found
+
+
 def assert_name_set(printed, registered, always, label, exec_names=None):
     missing = sorted(always - printed)
     unknown = sorted(n for n in printed - registered if not (exec_names and exec_names.fullmatch(n)))
@@ -341,6 +363,10 @@ def main():
         reg_all, reg_always = registered_functional_names()
         assert_name_set(printed, reg_all, reg_always, "functional", exec_functional_names())
         return
+
+    printing = unit_sources_printing_names()
+    if printing:
+        sys.exit("unit cases print their own name, which the registry already prints: %s" % "; ".join(printing[:10]))
 
     # Preserve any caller's explicit ROCKETNET_SERVER_TRANSPORT and
     # ROCKETNET_CLIENT_TRANSPORT pins. Other values exercise

@@ -125,5 +125,24 @@ class ShapeTests(unittest.TestCase):
                          ["test_a", "test_a"])
 
 
+
+class SelfNamePrintTests(unittest.TestCase):
+    def scan(self, text):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "test_unit_example.cpp"
+            path.write_text(text)
+            return checker.unit_sources_printing_names([path])
+
+    def test_case_printing_its_name_is_found(self):
+        self.assertEqual(self.scan('static void test_a()\n{\n    printf( "test_a\\n" );\n}\n'),
+                         ["test_unit_example.cpp:3 prints test_a"])
+
+    def test_other_printf_is_not_found(self):
+        self.assertEqual(self.scan('    printf( "  slept %.3f\\n", t );\n    printf( "test_a %d\\n", 1 );\n'), [])
+
+    def test_tree_has_none(self):
+        self.assertEqual(checker.unit_sources_printing_names(), [])
+
+
 if __name__ == "__main__":
     unittest.main()
