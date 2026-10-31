@@ -74,7 +74,7 @@ static uint64_t portable_rx_storage_bytes( int capacity )
 // the transport logs each path's count when it closes.
 static const int PORTABLE_TX_DROP_NO_FREE_BANK = 0;  // the producer bank is full and every other bank is in flight
 static const int PORTABLE_TX_DROP_HANDOFF_BUSY = 1;  // the producer bank is full and the handoff lock was held
-static const int PORTABLE_TX_DROP_STOPPING = 2;      // sent after stop, or unpublished at stop
+static const int PORTABLE_TX_DROP_STOPPING = 2;      // sent after stop
 static const int PORTABLE_TX_DROP_INVALID = 3;       // no address, no data, or a size outside the datagram ceiling
 static const int PORTABLE_TX_DROP_PATHS = 4;
 static const char * const portable_tx_drop_path_name[PORTABLE_TX_DROP_PATHS] = { "no-free-bank", "handoff-busy", "stopping", "invalid-packet" };
@@ -114,6 +114,7 @@ struct portable_server_t
     std::atomic<uint64_t> dropped{ 0 };
     std::atomic<uint64_t> dropped_by_path[PORTABLE_TX_DROP_PATHS] = {}; // the paths of dropped, by PORTABLE_TX_DROP_*
     int publish_refusal = PORTABLE_TX_DROP_HANDOFF_BUSY; // main only: why the last publish try failed
+    bool stop_publish_owed = false; // main only: stop's last producer waits for its publish
 
 #if ROCKETNET_DEV
     bool stop_publish_saw_quit = false;
@@ -812,30 +813,13 @@ static int portable_receive( void * transport, rocketnet_address_t * from, uint8
     return received;
 }
 
-static void portable_stop( void * transport )
+// proofs/tla/RNPortableRx.tla MStop1 and MStop2: quit, then the RX wake
+// (QuitBeforeWake). proofs/tla/RNPortableTx.tla MStopQuit then MStopWake: the
+// last producer is published before quit, since an empty-ready worker exits
+// on quit and would never take a bank published after it
+// (MCRNPortableTxBrokenQuitFirst.cfg for the reverse order).
+static void portable_stop_quit( portable_server_t * server )
 {
-    // proofs/tla/RNPortableRx.tla MStop, MStop1 and MStop2: stopping, then quit, then
-    // the RX wake (QuitBeforeWake).
-
-    portable_server_t * server = (portable_server_t *) transport;
-    if ( server->stopping.exchange( true, std::memory_order_acq_rel ) )
-        return;
-
-    // the worker never reads the main-owned unpublished producer. If the
-    // final try cannot publish it, account and drop it before completion.
-    // proofs/tla/RNPortableTx.tla MStop and MReturn: stopping, then the final publish or drop.
-
-    if ( !portable_tx_publish( server ) )
-    {
-        portable_tx_drop( server, PORTABLE_TX_DROP_STOPPING, (uint64_t) server->bank[server->producer].count );
-        server->bank[server->producer].count = 0;
-    }
-
-    // publish or drop the main-owned bank before allowing an empty-ready
-    // worker to exit. Releasing quit before publication would lose this batch
-    // (proofs/tla/RNPortableTx.tla MStopQuit then MStopWake, and
-    // MCRNPortableTxBrokenQuitFirst.cfg for the reverse order).
-
     server->quit.store( true, std::memory_order_release );
     rocketnet_platform_wake_set( server->wake );
 
@@ -843,12 +827,44 @@ static void portable_stop( void * transport )
         rocketnet_platform_wake_set( server->rx_wake );
 }
 
-static bool portable_stopped( void * transport )
+static void portable_stop( void * transport )
 {
-    // proofs/tla/RNPortableRx.tla MPollStopped and proofs/tla/RNPortableTx.tla MPollStopped:
-    // main polls between frames, and nothing changes until the workers have exited.
+    // proofs/tla/RNPortableRx.tla MStop: stopping first.
 
     portable_server_t * server = (portable_server_t *) transport;
+    if ( server->stopping.exchange( true, std::memory_order_acq_rel ) )
+        return;
+
+    // proofs/tla/RNPortableTx.tla MStop and MReturn: the worker never reads
+    // the main-owned unpublished producer, so stop publishes it. A refused try
+    // (the worker on the handoff lock, or no free bank while it sends) keeps
+    // the producer, and each portable_stopped poll tries again (MStopRetry)
+    // until it is published; nothing is dropped and stop never waits.
+
+    if ( !portable_tx_publish( server ) )
+    {
+        server->stop_publish_owed = true;
+        return;
+    }
+
+    portable_stop_quit( server );
+}
+
+static bool portable_stopped( void * transport )
+{
+    // proofs/tla/RNPortableRx.tla MPollStopped and proofs/tla/RNPortableTx.tla
+    // MPollStopped and MStopRetry: main polls between frames; while stop's last
+    // producer waits, each poll is one more publish try, and quit follows it.
+
+    portable_server_t * server = (portable_server_t *) transport;
+    if ( server->stop_publish_owed )
+    {
+        if ( !portable_tx_publish( server ) )
+            return false;
+        server->stop_publish_owed = false;
+        portable_stop_quit( server );
+    }
+
     return server->exited.load( std::memory_order_acquire ) && server->rx_exited.load( std::memory_order_acquire );
 }
 
@@ -1137,6 +1153,64 @@ bool rocketnet_portable_tx_test_sizing()
         queued += server->bank[i].count;
 
     valid &= queued == 1 + 3 * 1100;
+    portable_server_cleanup( server );
+
+    return valid;
+#endif // #if !defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
+}
+
+// Stop meets no free bank (one in flight, one ready, a full producer): the
+// producer is kept, not dropped, quit waits, and the poll after the worker
+// returns a bank publishes it and then sets quit. No worker: the test plays it.
+bool rocketnet_portable_tx_test_stop_publishes_across_polls()
+{
+#if !defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
+    return true;
+#else
+    portable_server_t * server = portable_tx_test_owner( 4 );
+    if ( !server )
+        return false;
+
+    rocketnet_address_t to = {};
+    to.type = ROCKETNET_ADDRESS_IPV4;
+    to.port = 1234;
+
+    uint8_t bytes[4] = { 1, 2, 3, 4 };
+    const rocketnet_platform_send_t send = { &to, bytes, 4 };
+
+    // each send ends with a publish try: the first bank is published and
+    // taken into flight, the second published and left ready, and the third,
+    // the producer, keeps two packets no free bank can take
+
+    portable_send( server, &send, 1 );
+    const int in_flight = server->ready_index[server->ready_head];
+    server->ready_head = ( server->ready_head + 1 ) % PORTABLE_TX_BANKS;
+    server->ready_count--;
+    portable_send( server, &send, 1 );
+    portable_send( server, &send, 1 );
+    portable_send( server, &send, 1 );
+
+    bool valid = server->free_count == 0 && server->ready_count == 1 && server->bank[server->producer].count == 2;
+
+    portable_stop( server );
+    valid &= server->stop_publish_owed && !server->quit.load() && server->bank[server->producer].count == 2;
+    valid &= server->dropped_by_path[PORTABLE_TX_DROP_STOPPING].load() == 0;
+
+    // a poll with still no free bank changes nothing
+
+    valid &= !portable_stopped( server );
+    valid &= server->stop_publish_owed && !server->quit.load() && server->bank[server->producer].count == 2;
+
+    // the worker finishes its bank and returns it: the next poll publishes
+    // the producer, then quit
+
+    server->bank[in_flight].count = 0;
+    server->free_index[( server->free_head + server->free_count ) % PORTABLE_TX_BANKS] = in_flight;
+    server->free_count++;
+    (void) portable_stopped( server );
+    valid &= !server->stop_publish_owed && server->quit.load() && server->ready_count == 2;
+    valid &= server->bank[server->producer].count == 0 && server->dropped.load() == 0;
+
     portable_server_cleanup( server );
 
     return valid;

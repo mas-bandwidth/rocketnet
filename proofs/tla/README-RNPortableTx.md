@@ -37,8 +37,9 @@ arithmetic, so it can see an index or a slot that the abstract queue cannot.
   in the next bank's first slot. The array has one cell past the allocation
   so the last bank's overflow is also visible. `count` is `bank->count`.
 - **Contract.** `accepted` is the packets copied into a bank, in order.
-  `sent` is what the worker passed to the socket. `stopDropped` is the
-  producer that `portable_stop` counted dropped because its final try failed.
+  `sent` is what the worker passed to the socket. `stopDropped` is a
+  producer stop counted dropped; it stays empty under the code's rule and
+  fills only in the one-try witness.
   Packets dropped by `portable_send` itself (a full producer that cannot
   publish, or a send after stop) are never accepted and take no id.
 - **Main.** `MCall` begins a `portable_send` of up to `Batch` packets. `MPut`
@@ -49,9 +50,11 @@ arithmetic, so it can see an index or a slot that the abstract queue cannot.
   mutex, the count reset and wake after the release) or `MPubBusy` (the try
   failed). `MReturn` is the return to the caller: a refused publish inside
   `MPut` drops the rest of the batch, and a refused final publish in stop
-  counts the producer dropped. `MStop`, `MStopQuit`, `MStopWake` are the two
-  steps of `portable_stop`: the final publish or drop, then `quit`, then the
-  wake. `MPollStopped` is `portable_stopped`.
+  keeps the producer for the next poll. `MStop`, `MStopQuit`, `MStopWake` are
+  the steps of `portable_stop`: the final publish, then `quit`, then the
+  wake. `MStopRetry` is a `portable_stopped` poll while the final producer
+  waits: one more publish try, and `quit` once it succeeds. `MPollStopped` is
+  `portable_stopped` after that.
 - **Worker.** `WTop` is the blocking acquire. `WTake` is the exchange under
   the mutex: take the oldest ready bank, or observe empty and, in the code,
   `quit` in the same critical section. `WEmpty` exits or waits. `WWait` is the
@@ -78,11 +81,13 @@ with `Timeout = FALSE`, so progress follows from the wake protocol alone.
 - `FreeBanksEmpty`: a bank in the free queue has count 0 when main takes it.
 - `MainLockIsBrief`: main holds the mutex only inside the exchange.
 - `QuitAfterFinalBank`: `quit` is set only after the final producer is
-  published or dropped.
+  published.
+- `StopDropsNothing`: stop drops no packet; a refused final publish is tried
+  again on each poll until it succeeds.
 - `ExitSentAll`: when the worker exits, nothing is ready, in flight or in the
   producer.
-- `EveryAcceptedSent` (liveness): every accepted packet is sent unless stop
-  drops it. This includes a batch deferred by a failed try, which the next
+- `EveryAcceptedSent` (liveness): every accepted packet is sent (stop drops
+  none under the code's rule). This includes a batch deferred by a failed try, which the next
   `portable_send` or an idle `portable_receive` retries.
 - `StopCompletes` (liveness): once stop begins, the worker exits.
 
@@ -108,6 +113,7 @@ Stop is not forced; `StopCompletes` is conditional on stop starting.
 | `MCRNPortableTxBrokenQuitFirst.cfg` | `ExitSentAll` | `PublishBeforeQuit = FALSE` |
 | `MCRNPortableTxBrokenNoRetryOnIdle.cfg` | `EveryAcceptedSent` | `RetryOnIdle = FALSE` |
 | `MCRNPortableTxBrokenNoWake.cfg` | `EveryAcceptedSent` | `WakeOnPublish = FALSE` |
+| `MCRNPortableTxBrokenStopDrops.cfg` | `StopDropsNothing` | `PublishUntilSent = FALSE` |
 
 Each reversed witness was read against the code by hand (2026-10-29):
 
@@ -148,8 +154,18 @@ Each reversed witness was read against the code by hand (2026-10-29):
   - In the trace, stop sets `quit` and the wake before it publishes. The
     worker finds empty and quit, exits, and main then publishes the producer
     into a queue nobody reads.
-  - In the code, `portable_stop` calls `portable_tx_publish`, drops the batch
-    if that fails, and only then stores `quit`.
+  - In the code, `portable_stop` stores `quit` (`portable_stop_quit`) only
+    after `portable_tx_publish` has succeeded, in the stop call or in a later
+    `portable_stopped` poll.
+- **StopDrops.**
+  - In the trace, stop's one publish try is refused (the worker holds the
+    mutex, or no bank is free while it sends) and the producer is counted
+    dropped.
+  - In the code before 2026-10-31, `portable_stop` made that one try and
+    counted the producer under `PORTABLE_TX_DROP_STOPPING`. Now a refused try
+    sets `stop_publish_owed`, and `portable_stopped` tries again on each poll;
+    `rocketnet_portable_tx_test_stop_publishes_across_polls` replays it with no
+    free bank until the faked worker returns one.
 - **NoRetryOnIdle.**
   - In the trace, main copies a packet while the worker holds the mutex. The
     call's closing try fails and the packet stays in the producer. Main then
@@ -164,5 +180,6 @@ Each reversed witness was read against the code by hand (2026-10-29):
     after releasing the mutex, which the worker's wait returns on.
 
 The unit cases `rocketnet_portable_tx_test_handoff`,
-`rocketnet_portable_tx_test_sizing` and `rocketnet_portable_tx_test_drop_paths`
+`rocketnet_portable_tx_test_sizing`, `rocketnet_portable_tx_test_drop_paths` and
+`rocketnet_portable_tx_test_stop_publishes_across_polls`
 drive these transitions on one thread with a faked worker and no socket.

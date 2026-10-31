@@ -17,6 +17,8 @@
 (*                                             EveryAcceptedSent          *)
 (*   MCRNPortableTxBrokenNoWake.cfg           (WakeOnPublish)             *)
 (*                                             EveryAcceptedSent          *)
+(*   MCRNPortableTxBrokenStopDrops.cfg        (PublishUntilSent)          *)
+(*                                             StopDropsNothing           *)
 (* README-RNPortableTx.md gives each trace and its check against the code. *)
 (***************************************************************************)
 EXTENDS RNPortableTx
