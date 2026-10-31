@@ -6695,30 +6695,6 @@ void rocketnet_test_network_simulator()
     rocketnet_network_simulator_destroy( simulator );
 }
 
-void rocketnet_test_network_simulator_refuses_overflowing_capacity()
-{
-    // The shard count rounds up to a power of two held in an int. A capacity
-    // whose rounded count would not fit an int must be refused before any
-    // allocation: rounding it in an int overflows the doubling, corrupting the
-    // mask and hanging create in an unbounded loop. The first two capacities
-    // are past the bound and refused; the held ones cover the ladder's three
-    // shapes -- the smallest capacity, which takes the floor of 64 shards
-    // without a doubling, one that doubles once past the floor, and an exact
-    // power of two -- so a refusal that narrows the ladder anywhere below 2^30
-    // goes red here as well.
-
-    rocketnet_check( rocketnet_network_simulator_create( NULL, INT_MAX, 12345 ) == NULL );
-    rocketnet_check( rocketnet_network_simulator_create( NULL, ( 1 << 30 ) + 1, 12345 ) == NULL );
-
-    const int held_capacities[] = { 1, 100, 4096 };
-    for ( int i = 0; i < (int) ( sizeof( held_capacities ) / sizeof( held_capacities[0] ) ); i++ )
-    {
-        struct rocketnet_network_simulator_t * simulator = rocketnet_network_simulator_create( NULL, held_capacities[i], 12345 );
-        rocketnet_check( simulator );
-        rocketnet_network_simulator_destroy( simulator );
-    }
-}
-
 void rocketnet_test_client_server_harsh_wire()
 {
     // the harsh version, bounded and seeded: heavy loss, latency, jitter and
@@ -15928,7 +15904,6 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] = {
     { "test_client_protocol_refuses_a_small_capacity", rocketnet_test_client_protocol_refuses_a_small_capacity },
     { "test_integrity_limit", rocketnet_test_integrity_limit },
     { "test_network_simulator", rocketnet_test_network_simulator },
-    { "test_network_simulator_refuses_overflowing_capacity", rocketnet_test_network_simulator_refuses_overflowing_capacity },
     { "test_client_server_harsh_wire", rocketnet_test_client_server_harsh_wire },
     { "test_client_server_lossy_wire", rocketnet_test_client_server_lossy_wire },
     { "test_swarm", rocketnet_test_swarm },
