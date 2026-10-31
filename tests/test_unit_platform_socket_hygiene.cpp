@@ -4,8 +4,7 @@
 */
 
 // Platform socket hygiene: pure functions verifying that mapped IPv6 sources
-// are refused on non-dual-stack receive paths, every receive call returns
-// within its read budget under a stream of chaff, socket timeout conversions
+// are refused on non-dual-stack receive paths, socket timeout conversions
 // split seconds and microseconds (tv_usec < 1000000), sleep conversions split
 // seconds and microseconds without signed integer overflow, and descriptor 0
 // is treated as a valid socket handle.
@@ -371,6 +370,9 @@ static void test_platform_socket_hygiene_batch_chaff_drain_is_bounded()
     platform_socket_hygiene_chaff_batch_is_bounded( PLATFORM_SOCKET_HYGIENE_BATCH );
 }
 
+REGISTER_UNIT_TEST( test_platform_socket_hygiene_single_chaff_drain_is_bounded );
+REGISTER_UNIT_TEST( test_platform_socket_hygiene_batch_chaff_drain_is_bounded );
+
 #if defined( __APPLE__ )
 static void test_platform_socket_hygiene_msgx_chaff_drain_is_bounded()
 {
@@ -469,8 +471,6 @@ REGISTER_UNIT_TEST( test_platform_socket_hygiene_descriptor_valid );
 REGISTER_UNIT_TEST( test_platform_socket_hygiene_refused_source_reads_next );
 REGISTER_UNIT_TEST( test_platform_socket_hygiene_refused_source_then_drained );
 REGISTER_UNIT_TEST( test_platform_socket_hygiene_dual_stack_accepts_mapped );
-REGISTER_UNIT_TEST( test_platform_socket_hygiene_single_chaff_drain_is_bounded );
-REGISTER_UNIT_TEST( test_platform_socket_hygiene_batch_chaff_drain_is_bounded );
 REGISTER_UNIT_TEST( test_platform_socket_hygiene_timeout_milliseconds_rounds_up );
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC && ROCKETNET_DEV
