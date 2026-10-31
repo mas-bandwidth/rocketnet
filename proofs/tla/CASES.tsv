@@ -421,6 +421,8 @@ MCRNBufferHandoffBase.cfg	MCRNBufferHandoffBase.tla	pass	-	check	rnbufferhandoff
 MCRNBufferHandoffBaseBrokenSingleTake.cfg	MCRNBufferHandoffBase.tla	invariant	MaximalDrain	check	rnbufferhandoffbase	required	-
 MCRNBufferHandoffBaseBrokenBudget.cfg	MCRNBufferHandoffBase.tla	invariant	BudgetBound	check	rnbufferhandoffbase	required	-
 MCRNBufferHandoffBaseBrokenDeferred.cfg	MCRNBufferHandoffBase.tla	invariant	OneOwner	check	rnbufferhandoffbase	required	-
+MCRNBufferHandoffBaseBrokenMainBlocks.cfg	MCRNBufferHandoffBase.tla	invariant	MainNeverWaits	check	rnbufferhandoffbase	required	-
+MCRNBufferHandoffBaseBrokenWorkUnderLock.cfg	MCRNBufferHandoffBase.tla	invariant	NoWorkUnderLock	check	rnbufferhandoffbase	required	-
 MCAckBlockWrap.cfg	MCAckBlockWrap.tla	pass	-	check	ackblockwrap	required	-
 MCAckBlockWrapBrokenHalfRange.cfg	MCAckBlockWrap.tla	invariant	EmptyRecognised	check	ackblockwrap	required	-
 MCRNClientIocp.cfg	MCRNClientIocp.tla	pass	-	check	rnclientiocp	required	-
