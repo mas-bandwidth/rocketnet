@@ -1092,8 +1092,9 @@ bool rocketnet_portable_tx_test_sizing()
     // sizing: one bank holds ROCKETNET_SEND_PACKETS_PER_CLIENT per configured
     // client, never fewer than ROCKETNET_SERVER_MAX_SEND_PACKETS, and the memory
     // plan counts the allocation. A burst of three updates of 1100 packets behind
-    // a busy worker drops at the former fixed 1000-packet banks and drops nothing
-    // at the banks sized for 1000 clients.
+    // a busy worker drops at banks of 1000 packets (one per client at 1000
+    // clients, whatever ROCKETNET_MAX_CLIENTS is) and drops nothing at the banks
+    // sized for 1000 clients.
 
 #if !defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
     return true;
@@ -1113,7 +1114,7 @@ bool rocketnet_portable_tx_test_sizing()
                                                        ( sizeof( rocketnet_address_t ) + sizeof( int ) + ROCKETNET_RECEIVE_CEILING + sizeof( rocketnet_platform_send_t ) );
     valid &= portable_tx_storage_bytes( 0 ) == 0;
 
-    portable_server_t * fixed = portable_tx_test_owner( ROCKETNET_SERVER_MAX_SEND_PACKETS );
+    portable_server_t * fixed = portable_tx_test_owner( 1000 );
     if ( !fixed )
         return false;
 
