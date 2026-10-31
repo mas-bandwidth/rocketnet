@@ -69,6 +69,11 @@
    :text "The low items under proofs/ in FABLE-AUDIT.md, partly worked on plain branches rowan/low-proofs-<family>; each branch states what is verified."
    :date "2026-10-31" :origin "FABLE-AUDIT.md")
 
+  (item "pr-794-795-rebase" :group "finish" :area "tests"
+   :title "Rebase #794 and #795 onto main and land them"
+   :text "Both are fleet-verified but were left out of the landing: #794 (unit tests take an injected environment source) has 21 conflicting hunks against the staged create, create_ex, the sodium misuse handler and the unit environment clearing; #795 (gate that every unit case runs in some CI build) conflicts with the CI rewrite into per-commit and nightly tiers."
+   :date "2026-10-31" :origin "Integration, 2026-10-31")
+
   (item "client-keepalive-unsigned" :group "audit-remaining" :area "rocketnet"
    :title "Keep-alive slot count compared unsigned"
    :text "rocketnet_client_validate_keep_alive casts the u32 slot count to int, so 2^31 or more is refused, against the ruling that the client accepts any count with index below it. Unit cases at 2^31 and UINT32_MAX, and a negative control."

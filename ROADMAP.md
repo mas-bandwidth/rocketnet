@@ -6,7 +6,7 @@ Planned work for RocketNet that is not on main. Work lands on main before new wo
 
 ## Contents
 
-- [Started work to finish and land](#started-work-to-finish-and-land) (11)
+- [Started work to finish and land](#started-work-to-finish-and-land) (12)
 - [Audit items not yet fixed](#audit-items-not-yet-fixed) (12)
 - [Investigations that need a quiet host](#investigations-that-need-a-quiet-host) (3)
 - [Older open pull requests](#older-open-pull-requests) (2)
@@ -81,6 +81,12 @@ From: Audit item 12 follow-on
 The low items under proofs/ in FABLE-AUDIT.md, partly worked on plain branches rowan/low-proofs-<family>; each branch states what is verified.
 
 From: FABLE-AUDIT.md
+
+### Rebase #794 and #795 onto main and land them
+
+Both are fleet-verified but were left out of the landing: #794 (unit tests take an injected environment source) has 21 conflicting hunks against the staged create, create_ex, the sodium misuse handler and the unit environment clearing; #795 (gate that every unit case runs in some CI build) conflicts with the CI rewrite into per-commit and nightly tiers.
+
+From: Integration, 2026-10-31
 
 ## Audit items not yet fixed
 
