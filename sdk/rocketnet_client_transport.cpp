@@ -2609,10 +2609,9 @@ int rocketnet_client_transport_secret_spans_for_test( size_t * offsets, size_t *
 
 // proofs/tla/RNClientIoShutdown.tla DestroyBegin, Join and Free: destroy refuses a
 // transport not yet stopped, joins the worker thread, then frees.
-// proofs/tla/RNClientIo.tla DestroyBegin, DestroyWait, DestroyWaitDone, Timeout and
-// Done: destroy makes its last hand-off, waits at the deadline for the other
-// ring to reach Sent, drops the committed slots it cannot hand off, joins,
-// frees and ends.
+// proofs/tla/RNClientIo.tla Done: destroy of a stopped transport joins and frees;
+// stop already handed the Filling ring over as the final ring, so destroy waits
+// on no ring and drops nothing.
 // proofs/tla/RNClientIoShutdown.tla BeginRestart: a restart joins the prior worker
 // generation before the next one runs, as the synchronous destroy and the
 // next connect do here.
