@@ -90,7 +90,7 @@ static const char * const rn_part_names[RN_NUM_PARTS] = {
 
 static const char * const rn_part_formulas[RN_NUM_PARTS] = {
     "40C",
-    "16C",
+    "24C",
     "32W",
     "8W",
     "32W",

@@ -238,7 +238,7 @@ struct rn_resend_link_t                 // 12 bytes: resend sequence entry, inde
 enum
 {
     RN_PART_CHANNEL_SEND = 0,           // 40 C
-    RN_PART_CHANNEL_RECEIVE,            // 24 C (the printed part tag stays 16C; the byte total uses sizeof)
+    RN_PART_CHANNEL_RECEIVE,            // 24 C
     RN_PART_SEND_NUMBERS,               // 32 W
     RN_PART_SEND_FIRST_SENDS,           // 8 W
     RN_PART_RECEIVE_DESCRIPTORS,        // 32 W
