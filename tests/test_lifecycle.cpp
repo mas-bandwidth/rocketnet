@@ -32,6 +32,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <chrono>
 #include <thread>
 #include <vector>
 
@@ -796,7 +797,7 @@ static void check_client_memory_budget( allocator_state & state )
     unsetenv( "ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES" );
 }
 
-// rocketnet_malloc and rocketnet_free from two threads while another
+// rocketnet_malloc and rocketnet_free from worker threads while another
 // thread installs one allocator pair after the other, the library
 // uninitialized as install requires (proofs/tla/RNAllocatorInstall.tla).
 // Each pair tags what it hands out and counts what it holds. Install
@@ -805,10 +806,24 @@ static void check_client_memory_budget( allocator_state & state )
 // block, or allocating, once install returned OK is the race
 // InstallOnlyWhenIdle forbids, and a block released through a pair that did
 // not allocate it is the race ReleasedThroughItsPair forbids. In a
-// development build install's hook yields between its count read and its
+// development build install's hook sleeps between its count read and its
 // publish, so a call that slips into that window is likely, not a matter of
-// luck. Run per
-// commit under tsan (ci.yml, the tsan leg runs this harness).
+// luck. Run per commit under tsan (ci.yml, the tsan leg runs this harness).
+//
+// The run is bounded by time, not by a count of operations, so a loaded
+// runner with few cores cannot stretch it: it ends once both targets are
+// met or after INSTALL_RACE_BUDGET_SECONDS, whichever is first, and then
+// requires the minimums, so a run too starved to cover the window fails
+// rather than passes quietly. Workers and the installer sleep rather than
+// yield where they wait on each other: a yield to a thread spinning on the
+// sentinel can hand the core straight back, a sleep cannot. There are at
+// most as many workers as cores beside the installer's.
+
+#define INSTALL_RACE_BUDGET_SECONDS 2.0
+#define INSTALL_RACE_TARGET_INSTALLS 1000
+#define INSTALL_RACE_TARGET_OPERATIONS 100000
+#define INSTALL_RACE_MIN_INSTALLS 20
+#define INSTALL_RACE_MIN_OPERATIONS 10000
 
 struct install_pair_state
 {
@@ -848,10 +863,9 @@ static void install_pair_release( install_pair_state & pair, void * pointer )
 }
 
 #if ROCKETNET_DEV
-static void install_window_yield()
+static void install_window_sleep()
 {
-    for ( int i = 0; i < 16; ++i )
-        std::this_thread::yield();
+    std::this_thread::sleep_for( std::chrono::microseconds( 20 ) );
 }
 #endif // #if ROCKETNET_DEV
 
@@ -860,23 +874,25 @@ static void install_release_a( void *, void * pointer ) { install_pair_release( 
 static void * install_allocate_b( void *, size_t bytes ) { return install_pair_allocate( install_pairs[1], bytes ); }
 static void install_release_b( void *, void * pointer ) { install_pair_release( install_pairs[1], pointer ); }
 
-// one worker: allocate and free through whatever pair is installed
+// one worker: allocate and free through whatever pair is installed until
+// told to stop, resting every 256 calls so the count reaches zero and an
+// install can land (a sleep is a millisecond or more on Windows, so the
+// rest is rare enough that the workers still reach their minimum there)
 
 struct install_race_worker_args
 {
     std::atomic<bool> * go;
-    std::atomic<int> * running;
+    std::atomic<bool> * stop;
+    std::atomic<int> * operations;
     int worker;
-    int iterations;
 };
 
 static void install_race_worker( install_race_worker_args * args )
 {
     while ( !args->go->load( std::memory_order_acquire ) )
-    {
-    }
+        std::this_thread::sleep_for( std::chrono::microseconds( 50 ) );
 
-    for ( int i = 0; i < args->iterations; ++i )
+    for ( int i = 0; !args->stop->load( std::memory_order_acquire ); ++i )
     {
         const size_t bytes = (size_t) ( 1 + ( i * 7 + args->worker * 131 ) % 512 );
         uint8_t * p = (uint8_t *) rocketnet_malloc( NULL, bytes );
@@ -884,17 +900,16 @@ static void install_race_worker( install_race_worker_args * args )
         p[0] = (uint8_t) i;
         p[bytes - 1] = (uint8_t) args->worker;
         rocketnet_free( NULL, p );
-        if ( i % 16 == 0 )
-            std::this_thread::yield();
+        args->operations->fetch_add( 1, std::memory_order_relaxed );
+        if ( i % 256 == 255 )
+            std::this_thread::sleep_for( std::chrono::microseconds( 1 ) );
     }
-
-    --*args->running;
 }
 
 static void check_allocator_install_race()
 {
-    const int workers = 2;
-    const int iterations = 100000;
+    const unsigned cores = std::thread::hardware_concurrency();
+    const int workers = cores >= 3 ? 2 : 1;
 
     install_pairs[0].tag = 0xA110CA7EA11CEAAAULL;
     install_pairs[1].tag = 0xA110CA7EB0B0BBBBULL;
@@ -902,27 +917,32 @@ static void check_allocator_install_race()
 
     rocketnet_quiet( true );
 #if ROCKETNET_DEV
-    rocketnet_allocator_set_install_hook_for_test( install_window_yield );
+    rocketnet_allocator_set_install_hook_for_test( install_window_sleep );
 #endif // #if ROCKETNET_DEV
 
-    std::atomic<int> running{ workers };
     std::atomic<bool> go{ false };
-    install_race_worker_args workers_args[workers];
+    std::atomic<bool> stop{ false };
+    std::atomic<int> operations{ 0 };
+    install_race_worker_args workers_args[2];
     std::vector<std::thread> threads;
     for ( int w = 0; w < workers; ++w )
     {
-        workers_args[w] = { &go, &running, w, iterations };
+        workers_args[w] = { &go, &stop, &operations, w };
         threads.emplace_back( install_race_worker, &workers_args[w] );
     }
 
     // the installer: alternate the pairs, each install refused while a call
-    // is counted, OK once none is
+    // is counted, OK once none is, resting between attempts so the
+    // sentinel is down and the workers run
 
     int installed = 0;
     int installs = 0;
     int refusals = 0;
+    const std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
+    const std::chrono::duration<double> budget( INSTALL_RACE_BUDGET_SECONDS );
     go.store( true, std::memory_order_release );
-    while ( running.load( std::memory_order_acquire ) > 0 )
+    while ( std::chrono::steady_clock::now() - start < budget &&
+            ( installs < INSTALL_RACE_TARGET_INSTALLS || operations.load( std::memory_order_relaxed ) < INSTALL_RACE_TARGET_OPERATIONS ) )
     {
         const int next = 1 - installed;
         install_pairs[next].retired.store( false, std::memory_order_release );
@@ -941,14 +961,11 @@ static void check_allocator_install_race()
             ++refusals;
         }
 
-        // between attempts the sentinel is down and the workers run: an
-        // installer that retried at once would keep it up nearly always,
-        // and the workers would spend the run spinning on it
-
-        for ( int i = 0; i < 4; ++i )
-            std::this_thread::yield();
+        std::this_thread::sleep_for( std::chrono::microseconds( 20 ) );
     }
 
+    const double seconds = std::chrono::duration<double>( std::chrono::steady_clock::now() - start ).count();
+    stop.store( true, std::memory_order_release );
     for ( std::thread & thread : threads )
         thread.join();
 
@@ -956,6 +973,8 @@ static void check_allocator_install_race()
     rocketnet_allocator_set_install_hook_for_test( NULL );
 #endif // #if ROCKETNET_DEV
     rocketnet_quiet( false );
+
+    printf( "allocator install race: %d workers, %d installs, %d refusals, %d allocations in %.3f s\n", workers, installs, refusals, operations.load(), seconds );
 
     for ( install_pair_state & pair : install_pairs )
     {
@@ -965,8 +984,10 @@ static void check_allocator_install_race()
         check( pair.foreign_releases == 0 );
     }
 
+    check( installs >= INSTALL_RACE_MIN_INSTALLS );
+    check( operations.load() >= INSTALL_RACE_MIN_OPERATIONS );
+
     check( rocketnet_allocator_ex( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
-    printf( "allocator install race: %d installs, %d refusals over %d allocations\n", installs, refusals, workers * iterations );
 }
 
 int main()
