@@ -69,14 +69,10 @@ struct rn_packet_item_t
     uint8_t control;                // nonzero: a layer control record, code 2 with CONTROL set (standard/MESSAGES.md m11)
 };
 
-// One call's flat sequence entry. The full-width call epoch and exact caller
-// item index are validated before use, so a slot left by an earlier, larger
-// plan is never mistaken for a current item. Epoch UINT64_MAX is terminal:
-// write refuses rather than wrap a stale tag back into validity.
+// One call's flat sequence entry, in a plan built afresh on each call's stack.
 
 struct rn_packet_builder_sequence_t
 {
-    uint64_t call_epoch;
     uint32_t item_index;
     uint16_t group_index;
     uint8_t suffix_level;
@@ -127,7 +123,6 @@ struct rn_packet_builder_t
     uint32_t round_robin;                       // the channel the last item was taken from
     uint32_t packets;                           // packets written by the last call
     uint32_t unreliable_dropped;                // unreliable items dropped over budget by the last call
-    uint64_t call_epoch;                        // generation of sequence[]; zero before the first valid plan, never wraps
 
     uint64_t level_clock[ROCKETNET_PACKET_BUILDER_LEVELS];     // RNScheduler's clock per priority level (the level weights)
     uint64_t clock_base;                        // the clock of the level taken last: a clock behind it is pulled forward to it

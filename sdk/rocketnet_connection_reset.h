@@ -85,7 +85,7 @@ struct rn_message_object_t;
 #define ROCKETNET_ENDPOINT_CONNECTION_FIELDS( X ) \
     X( KEEP, region ) X( RESET, ordered ) X( RESET, unreliable_builder ) X( RESET, budget ) \
     X( KEEP, config ) X( KEEP, default_kbps ) X( RESET, send_budget_enabled ) \
-    X( KEEP, unreliable_limit ) X( KEEP, max_payload_bytes ) X( RESET, send_error ) \
+    X( KEEP, max_payload_bytes ) X( RESET, send_error ) \
     X( RESET, config_wait_start ) X( RESET, config_error ) X( RESET, serial ) \
     X( RESET, pending_type ) X( RESET, pending_descriptor ) X( RESET, pending_bytes ) \
     X( RESET, pending_in_place ) X( RESET, pending_channel ) X( RESET, pending_header ) \

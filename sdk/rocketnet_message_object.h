@@ -224,7 +224,6 @@ struct rn_message_object_t
     rn_message_connection_hot_t * hot_connections;
     struct rn_slots_t slots;                    // the slots machine (proofs/tla/RNSlots.tla)
     int32_t default_kbps;                       // a new connection's send budget; 0 or lower uncapped
-    uint32_t unreliable_limit;                  // the largest UNRELIABLE message: one record in one packet
     double time;                                // the last update's time
     double raw_time;                            // the caller's clock, last seen, beside the clamped one
     double time_offset;                         // the backwards offset, exactly 0.0 until the first step

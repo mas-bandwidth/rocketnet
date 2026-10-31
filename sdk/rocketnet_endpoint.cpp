@@ -5,9 +5,8 @@
 
 // The endpoint (proofs/tla/RNEndpoint.tla): one connection's layers 3 to 6 as a
 // pure machine. The spec is proofs/tla/RNEndpoint.tla; each function names the action
-// it implements. The per-connection orchestration here is what the message
-// objects did for each connection (sdk/rocketnet_message_server.cpp), moved
-// whole: the same calls into the layers, the same counters, in the same order.
+// it implements. The message objects (sdk/rocketnet_message_server.cpp) call
+// it for everything per connection.
 //
 // Purity (16.3): time comes in as `now`; the transport is reached by nobody
 // here (the caller starts, finishes and aborts frames); the only memory is the
@@ -208,7 +207,6 @@ void rn_endpoint_init( struct rn_endpoint_t * endpoint, rn_region_t * region, co
     endpoint->config = config->config;
     endpoint->default_kbps = config->send_kbps;
     endpoint->send_budget_enabled = config->send_kbps > 0 ? 1 : 0;
-    endpoint->unreliable_limit = ROCKETNET_MESSAGE_SINGLE_BYTES - 1 - ROCKETNET_MESSAGE_RECORD_FIXED_BYTES;
     endpoint->max_payload_bytes = config->max_payload_bytes > 0 ? config->max_payload_bytes : ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
     endpoint->send_error = ROCKETNET_DISCONNECT_REASON_NONE;
     endpoint->config_wait_start = -1.0;
@@ -297,9 +295,8 @@ void rn_endpoint_announce_config( struct rn_endpoint_t * endpoint, double now )
 //                          send
 // ---------------------------------------------------------------
 
-static bool rn_endpoint_reliable_path( const rn_endpoint_t * endpoint, int type )
+static bool rn_endpoint_reliable_path( int type )
 {
-    (void) endpoint;
     return type == ROCKETNET_RELIABILITY_RELIABLE || type == ROCKETNET_RELIABILITY_RELIABLE_ORDERED ||
            type == ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED ||
            rn_channels_reliable_receipt_base( type ) >= 0;
@@ -332,7 +329,7 @@ static int rn_endpoint_send_route( const rn_endpoint_t * endpoint, int channel, 
     if ( endpoint->pending_type != -1 || channel < 0 || channel >= endpoint->config->num_channels || bytes < 1 )
         return RN_ENDPOINT_ROUTE_REFUSED;
 
-    if ( rn_endpoint_reliable_path( endpoint, reliability ) )
+    if ( rn_endpoint_reliable_path( reliability ) )
         return RN_ENDPOINT_ROUTE_CHANNELS;
 
     if ( !rn_endpoint_unreliable_type( reliability ) ||
@@ -533,7 +530,7 @@ uint32_t rn_endpoint_finish( struct rn_endpoint_t * endpoint, int bytes, uint32_
                                    endpoint->pending_type == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED ||
                                    endpoint->pending_type == ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT;
     const bool promoted = reserved_reliable && unreliable_source && actual_over_record;
-    if ( rn_endpoint_reliable_path( endpoint, endpoint->pending_type ) || promoted )
+    if ( rn_endpoint_reliable_path( endpoint->pending_type ) || promoted )
     {
         const uint32_t d = endpoint->ordered.channels.pending;
         if ( !rn_channels_finish( &endpoint->ordered.channels, (uint32_t) bytes ) )
@@ -605,7 +602,7 @@ void rn_endpoint_abort( struct rn_endpoint_t * endpoint )
     // Enqueue's first half returned): a start that will not be finished, its
     // room returned to the region
 
-    if ( rn_endpoint_reliable_path( endpoint, endpoint->pending_type ) ||
+    if ( rn_endpoint_reliable_path( endpoint->pending_type ) ||
          endpoint->ordered.channels.pending != RN_DESCRIPTOR_NONE )
         rn_channels_cancel( &endpoint->ordered.channels );
     else if ( ( endpoint->pending_type == ROCKETNET_RELIABILITY_UNRELIABLE || endpoint->pending_type == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED ||
@@ -663,7 +660,7 @@ int rn_endpoint_in_place_header( const struct rn_endpoint_t * endpoint, int chan
     {
         header = reliability == ROCKETNET_RELIABILITY_UNRELIABLE ? 0 : ROCKETNET_MESSAGE_RECORD_FIXED_BYTES;
 
-        if ( (uint32_t) bytes > endpoint->unreliable_limit )
+        if ( bytes > ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES )
             return RN_ENDPOINT_IN_PLACE_NO;                     // refused, or the receipt twin's promotion
     }
 
@@ -1059,10 +1056,8 @@ static int rn_endpoint_sequenced_payload_bytes( const rn_send_descriptor_t * des
     return (int) descriptor->bytes + header + 1; // one RECORDS record and form byte
 }
 
-static bool rn_endpoint_large_sequenced( const rn_endpoint_t * endpoint, const rn_send_descriptor_t * descriptor )
+static bool rn_endpoint_large_sequenced( const rn_send_descriptor_t * descriptor )
 {
-    (void) endpoint;
-
     // the packed writer reserves the form byte, so the full-payload boundary takes this path
 
     return descriptor->reliability == ROCKETNET_CHANNEL_TYPE_UNRELIABLE_SEQUENCED &&
@@ -1200,7 +1195,7 @@ int rn_endpoint_next_packet_bytes( struct rn_endpoint_t * endpoint, double now )
         }
 
         const rn_send_descriptor_t * first = &endpoint->region->send_descriptors[endpoint->unreliable_head];
-        if ( rn_endpoint_large_sequenced( endpoint, first ) )
+        if ( rn_endpoint_large_sequenced( first ) )
         {
             const int request = rn_endpoint_plan_large_sequenced( endpoint );
             if ( request > 0 )
@@ -1260,7 +1255,7 @@ static int rn_endpoint_unreliable_items( rn_endpoint_t * endpoint, rn_packet_ite
         const rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
 
 
-        if ( rn_endpoint_large_sequenced( endpoint, descriptor ) )
+        if ( rn_endpoint_large_sequenced( descriptor ) )
             break; // send the preceding small records first
 
         rn_packet_item_t * item = &items[count];

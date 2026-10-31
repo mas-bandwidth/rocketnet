@@ -448,7 +448,7 @@ static void test_promoted_type5_block_replays_last_index_and_reliable_loss_witne
     rocketnet_unit_check( rocketnet_message_client_update( client, 1.0 ) == ROCKETNET_UPDATE_OK );
     transport.sent_count = 0;
 
-    const int large = (int) client->object.unreliable_limit + 1;
+    const int large = ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES + 1;
     uint8_t * payload = rocketnet_message_client_start( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT, large );
     rocketnet_unit_check( payload != NULL );
 

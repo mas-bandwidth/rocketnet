@@ -2968,7 +2968,7 @@ static void test_unreliable_past_limit_promotes_counted_and_not_wedged()
 
     rocketnet_message_client_t * client = pair.clients[0];
     const rocketnet_counters_t * counters = rocketnet_message_client_counters( client );
-    const int limit = (int) client->object.unreliable_limit;
+    const int limit = ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES;
     check( limit > 1000 && limit < ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
 
     static uint8_t message[16384];

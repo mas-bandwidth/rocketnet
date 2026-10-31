@@ -526,8 +526,7 @@ int rn_channels_dispatch( struct rn_channels_t * channels, const struct rocketne
     const int code = record->code;
 
     // 7.5: an application record whose wire code the mask does not admit is
-    // refused here, once for every code (rocketnet_message_enabled_codes,
-    // sdk/rocketnet_message.cpp:289, maps
+    // refused here, once for every code (rocketnet_message_enabled_codes maps
     // a receipt type to the base code it travels as). A control record is
     // the layer's own and is never refused by the mask, as in the reader.
 
@@ -894,7 +893,7 @@ static int rn_channels_dispatch_chunk( rn_channels_t * channels, const struct ro
         return ROCKETNET_CHANNEL_DISPATCH_NONE;
     }
 
-    // the fragment's own ring span lies inside the ring (code 2's check, unified)
+    // the fragment's own ring span lies inside the ring (code 2's check)
 
     if ( !rn_region_ring_span_valid( region, (uint64_t) record->ring * 16,
                                      rn_round16( (uint64_t) record->bytes ) ) )
@@ -1026,7 +1025,7 @@ static void rn_channels_release( rn_channels_t * channels, uint32_t slot )
     {
         rn_receive_descriptor_t * descriptor = &region->receive_descriptors[( number + i ) & ( region->window - 1 )];
 
-        // descriptors hold the 24-bit wire number, so compare every fragment across the 2^24 wrap the same way
+        // a descriptor holds the window's 64-bit number, or the 24-bit wire number when dispatch filled it from the record, so compare every fragment modulo 2^24
 
         if ( descriptor->live && rn_u24( (uint32_t) descriptor->number ) == rn_u24( (uint32_t) ( number + i ) ) )
         {
@@ -1275,8 +1274,8 @@ bool rn_channels_finish( struct rn_channels_t * channels, uint32_t bytes )
     descriptor->bytes = bytes;
 
     // A code-4 record's header is 15 bytes, 16 with the WIDE channel field
-    // on a channel of 256 or more (rocketnet_message_flags_header_bytes,
-    // sdk/rocketnet_message.cpp:52); the form byte follows it.
+    // on a channel of 256 or more (rocketnet_message_flags_header_bytes in
+    // sdk/rocketnet_message.cpp); the form byte follows it.
 
     struct rocketnet_message_record_t sequenced_shape;
     memset( &sequenced_shape, 0, sizeof( sequenced_shape ) );
