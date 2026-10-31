@@ -1800,7 +1800,7 @@ static uint32_t rn_receive_delivery_reservation( const rn_channels_t * channels,
 
     const rn_region_t * region = channels->region;
     const rn_channel_receive_t * rx = &region->channel_receive[record->channel];
-    if ( rn_u24( record->ordering ) != rx->ordered_read )
+    if ( rn_u24( record->ordering ) != rn_u24( rx->ordered_read ) )
         return needed;
 
     // at most one sequenced hold can be released by this channel's drain
