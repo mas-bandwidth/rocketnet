@@ -933,13 +933,16 @@ static void test_span_links_pin_oldest_live()
 }
 
 // A store class may hold as many chunks as a handle's 30 index bits name:
-// a send buffer large enough for more than 2^20 small chunks lays out.
+// a send budget whose resend reserve needs more than 2^20 small chunks lays
+// out.
 
 static void test_store_class_holds_up_to_the_handle_index()
 {
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
-    config.send_message_buffer_bytes = 1 << 30;
+    config.client_send_kbps = 1000000;
+    config.server_send_kbps = 1000000;
+    config.message_resend_delay_max_ms = 2000;
 
     check( rocketnet_message_validate_config( &config ) );
 
