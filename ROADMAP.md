@@ -6,7 +6,7 @@ Planned work for RocketNet that is not on main. Work lands on main before new wo
 
 ## Contents
 
-- [Started work to finish and land](#started-work-to-finish-and-land) (13)
+- [Started work to finish and land](#started-work-to-finish-and-land) (14)
 - [Audit items not yet fixed](#audit-items-not-yet-fixed) (12)
 - [Investigations that need a quiet host](#investigations-that-need-a-quiet-host) (3)
 - [Older open pull requests](#older-open-pull-requests) (2)
@@ -15,6 +15,12 @@ Planned work for RocketNet that is not on main. Work lands on main before new wo
 ## Started work to finish and land
 
 Work begun on 2026-10-31 and stopped when the landing froze. Each names its branch and exactly what is owed before it lands.
+
+### Known reds at the 2026-10-31 landing
+
+Merged to main on Glenn's word with the nightly to catch the rest. Red on the fleet at ab74c810: (1) DEV=OFF unit test_message_required_memory_takes_the_create_budget, the client never reaches stopped in unit_shutdown.h:24 (from rowan/low-channel-message); (2) check_tla_coverage --actions-strict: RNGsoHandoff TxSendFull and RNOrderingWrap HoldSequenced, ReceiveUnreliable are cited nowhere in the code; (3) functional test_gso_transport_posix_server_create_destroy_1000 past its 120 s bound on loaded vision, host load not confirmed; (4) Windows Debug never finished (CreateProcessW 1455, paging file). Not run before the merge: the GitHub CI run, Linux DEV=OFF functional beyond these, Windows Debug.
+
+From: Integration fleet run, ab74c810
 
 ### Remove transport type-9 fragmentation
 
