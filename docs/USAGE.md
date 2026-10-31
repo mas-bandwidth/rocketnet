@@ -728,7 +728,7 @@ structs, except `config_bytes` and `token_epoch_unix_seconds` (listed under
 | time_callback | none | `double (*)( void * )` | `NULL` (platform clock) | development builds only: the receive stamp clock; a production build (`ROCKETNET_DEV=0`) refuses a non-NULL value at create with `CONFIG_OUT_OF_RANGE` |
 | step_driven | ROCKETNET_CLIENT_STEP_DRIVEN (development only) | bool | `false` | development builds only: no client network thread, see "Step-driven client"; a production build refuses `true` at create with `CONFIG_OUT_OF_RANGE` |
 | protocol_id | ROCKETNET_SERVER_PROTOCOL_ID | uint64_t | `0` | a non-decimal value, or one past the type: refuses the create |
-| max_clients | ROCKETNET_SERVER_MAX_CLIENTS | int | `1000` | refuses the create unless `1..1000` |
+| max_clients | ROCKETNET_SERVER_MAX_CLIENTS | int | `1000`, or `ROCKETNET_MAX_CLIENTS` when that is smaller | refuses the create unless `1..ROCKETNET_MAX_CLIENTS` (the build's limit, `1000` by default) |
 | packet_filter | ROCKETNET_SERVER_PACKET_FILTER | uint8_t[4], base64 | `b7 59 01 00` (test filter) | not exactly 4 bytes, or invalid base64: refuses the create; the test filter in a production build (`ROCKETNET_DEV=0`): refuses the create with `TEST_PACKET_FILTER_IN_PRODUCTION` |
 | backend_public_key | ROCKETNET_SERVER_BACKEND_PUBLIC_KEY | uint8_t[32], base64 | all zero (no key) | not exactly 32 bytes, or invalid base64: refuses the create |
 | num_xdp_queues | ROCKETNET_SERVER_NUM_XDP_QUEUES | int | `0` (transport default) | refuses the create unless `0` or `1..1024`; the Windows iocp transport ignores it (always runs one completion worker plus one send worker) and the rio transport ignores it (runs one I/O worker) |

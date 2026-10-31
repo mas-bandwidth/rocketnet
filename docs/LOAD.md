@@ -318,7 +318,8 @@ requirements to each configuration group:
 
 - **Runtime `max_clients`** (`rocketnet_server_config_t.max_clients`,
   environment `ROCKETNET_SERVER_MAX_CLIENTS`, range `1 .. ROCKETNET_MAX_CLIENTS`,
-  where `0` resolves to `min(ROCKETNET_MAX_CLIENTS, 1000)`): scales both the
+  default `min(ROCKETNET_MAX_CLIENTS, 1000)`; `0` is refused at create with
+  `CONFIG_OUT_OF_RANGE`): scales both the
   message-layer connection array (`max_clients * connection_bytes`) and
   per-client transport state (session slots, challenge/encryption/replay
   tables, and fragment reassembly pools).

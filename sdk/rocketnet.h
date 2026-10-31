@@ -1452,7 +1452,8 @@ struct rocketnet_server_config_t
     uint64_t protocol_id;
 
     /// ROCKETNET_SERVER_MAX_CLIENTS sets the client limit. Range is 1 ..
-    /// ROCKETNET_MAX_CLIENTS. Default is 1000.
+    /// ROCKETNET_MAX_CLIENTS. Default is 1000, or ROCKETNET_MAX_CLIENTS when
+    /// that is smaller.
     ///
     /// It also sizes the server socket's receive buffer request to hold one
     /// update's inbound traffic: ceil( max_clients x 1000 kbps x 125 x 2 /
