@@ -17,9 +17,9 @@ thread_local unsigned long long g_sequenced_hold_visit_count = 0;
 #endif // #if ROCKETNET_DEV
 
 // Codes 1 and 4 follow RNChannelTypes!Dispatch and !Drain. A code-4 hold
-// uses its receive descriptor and ring span; the high bit distinguishes that
-// descriptor index from a code-1 Ru hold without changing channel state.
-static const uint32_t RN_SEQUENCED_RELIABLE_HOLD = 0x80000000u;
+// uses its receive descriptor and ring span; the high bit
+// (RN_SEQUENCED_RELIABLE_HOLD) distinguishes that descriptor index from a
+// code-1 Ru hold without changing channel state.
 
 // proofs/tla/RNChannelTypes.tla OpenPacket
 

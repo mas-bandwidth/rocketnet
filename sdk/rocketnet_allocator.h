@@ -47,6 +47,10 @@
 // rocketnet_allocator.cpp, so the formula and the code cannot drift.
 
 #define RN_DESCRIPTOR_NONE      0xFFFFFFFFu
+
+// rn_channel_receive_t held_sequenced: the high bit marks a code-4 hold (its
+// receive descriptor index below it), clear for a code-1 hold
+#define RN_SEQUENCED_RELIABLE_HOLD 0x80000000u
 #define RN_CHUNK_NONE           0xFFFFFFFFu
 #define RN_HANDLE_INDEX         0x3FFFFFFFu     // a chunk handle's index bits; its class is the top two
 #define RN_RESEND_NONE          0xFFFFFFFFu

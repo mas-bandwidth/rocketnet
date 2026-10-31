@@ -9036,8 +9036,8 @@ void rocketnet_test_public_api_null_is_a_counted_no_op()
         // the sizing calls take NULL configs as the defaults: not a misuse
 
         before = rocketnet_api_misuse_count();
-        rocketnet_check( rocketnet_message_client_required_memory( NULL ) > 0 );
-        rocketnet_check( rocketnet_message_server_required_memory( NULL, NULL ) > 0 );
+        rocketnet_check( rocketnet_message_client_required_memory( NULL, 0 ) > 0 );
+        rocketnet_check( rocketnet_message_server_required_memory( NULL, NULL, 0 ) > 0 );
         rocketnet_check( rocketnet_api_misuse_count() == before );
     }
 
