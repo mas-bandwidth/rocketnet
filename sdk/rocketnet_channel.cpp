@@ -1037,7 +1037,7 @@ static void rn_channels_release( rn_channels_t * channels, uint32_t slot )
     }
 }
 
-// proofs/tla/RNChannel.tla EndUpdate
+// proofs/tla/RNChannel.tla EndUpdate; proofs/tla/RNOrderingWrap.tla EndUpdate: the delivery table empties
 
 void rn_channels_end_update( struct rn_channels_t * channels )
 {
@@ -1243,6 +1243,7 @@ uint8_t * rn_channels_start( struct rn_channels_t * channels, uint32_t channel, 
 
 // proofs/tla/RNChannel.tla Enqueue
 
+// proofs/tla/RNChannelQueuesLayout.tla Enqueue: the append and the ready push at the code's links
 bool rn_channels_finish( struct rn_channels_t * channels, uint32_t bytes )
 {
     if ( !channels || channels->pending == RN_DESCRIPTOR_NONE )
@@ -1333,6 +1334,7 @@ bool rn_channels_cancel( struct rn_channels_t * channels )
 // until acked), and WriteOk: the first packet carries it, from the head of
 // IMMEDIATE.
 
+// proofs/tla/RNChannelQueuesLayout.tla Config: push_front on channel 0 and channel 0 at the ready head
 bool rn_ordered_announce_config( struct rn_ordered_t * ordered, const struct rocketnet_message_config_t * config )
 {
     if ( !ordered || !ordered->channels.region || ordered->config_announced )
@@ -1618,6 +1620,7 @@ static bool rn_ordered_walk( rn_ordered_t * ordered, bool chunk, double now, rn_
 // proofs/tla/RNChannel.tla NumberRecord: numbers the channel's head message late, only while n < U' + W
 // proofs/tla/RNBlocks.tla NumberMessage: gives a block k consecutive numbers and one contiguous span through rn_window_send_first_write_block
 
+// proofs/tla/RNChannelQueuesLayout.tla WalkEmpty and Number: the ready head leaves, or is numbered, popped and rejoined
 int rn_ordered_write( struct rn_ordered_t * ordered, double now, uint8_t ** payloads, int num_payloads )
 {
     if ( !ordered || !payloads || num_payloads < 1 )
@@ -1788,6 +1791,7 @@ uint32_t rn_ordered_acks( struct rn_ordered_t * ordered, const uint64_t * packet
 // A partial packet may already have delivered an earlier record; its retry
 // deduplicates that prefix while the refused record remains unmarked.
 
+// proofs/tla/RNOrderingWrap.tla Receive: the reservation, the dispatch and the drain compare orderings modulo 2^24 with the 32-bit read index
 static uint32_t rn_receive_delivery_reservation( const rn_channels_t * channels, const rocketnet_message_record_t * record )
 {
     if ( record->control )

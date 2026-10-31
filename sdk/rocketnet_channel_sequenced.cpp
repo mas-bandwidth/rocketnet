@@ -379,6 +379,7 @@ static int rn_sequenced_in_turn( rn_channels_t * channels, const rocketnet_messa
 // proofs/tla/RNChannelTypes.tla Dispatch
 // RNChannelTypes!Dispatch: code 1 does not consult the reliable receive window.
 
+// proofs/tla/RNSequencedHoldPool.tla Hold: a newer future code-1 record returns the old hold and takes the free stack's top
 int rn_channels_dispatch_sequenced( struct rn_channels_t * channels, const struct rocketnet_message_record_t * record, struct rn_delivery_t * out )
 {
     if ( !channels || !record || !out )
@@ -523,6 +524,7 @@ int rn_channels_dispatch_sequenced( struct rn_channels_t * channels, const struc
 // proofs/tla/RNChannelTypes.tla Drain
 // RNChannelTypes!Drain: the ordered transition has already opened the epoch.
 
+// proofs/tla/RNSequencedHoldPool.tla DrainDeliver and DrainRelease: a delivered hold joins the delivered list, any other returns to the free stack
 bool rn_channels_drain_sequenced( struct rn_channels_t * channels, uint32_t channel )
 {
     if ( !channels || channel >= channels->num_channels )
@@ -628,6 +630,7 @@ bool rn_channels_drain_sequenced( struct rn_channels_t * channels, uint32_t chan
     return true;
 }
 
+// proofs/tla/RNSequencedHoldPool.tla EndUpdate: the delivered list returns to the free stack
 void rn_channels_end_update_sequenced( struct rn_channels_t * channels )
 {
     if ( !channels )
