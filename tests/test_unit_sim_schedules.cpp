@@ -54,7 +54,7 @@
 // ---------------------------------------------------------------------------
 // The schedule runner. The simulator is the wire; this is the hand that
 // scripts it. Drop, duplicate and reorder are composed into the prepared list
-// (rocketnet_network_simulator.h:63-70); advance time moves the wire clock so
+// (rocketnet_network_simulator_deliver_packets); advance time moves the wire clock so
 // the next flush's packets become due at a later delivery time.
 // ---------------------------------------------------------------------------
 

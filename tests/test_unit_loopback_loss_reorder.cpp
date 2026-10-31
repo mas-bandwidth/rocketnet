@@ -264,7 +264,7 @@ static void loopback_check_trace( const struct loopback_trace_t * got, const str
     check( got->connected_step == want->connected_step );
 }
 
-// Repinned because every eliciting packet now gets a standalone ACK on the next update;
+// Every eliciting packet gets a standalone ACK on the next update, and
 // simulator latency adds two connected steps (24 without it, 26 with it).
 // Hashes include the appended, zero-valued XDP_KERNEL_DROPPED_NO_SOCKET, CLIENT_RECEIVE_FOREIGN_SOURCE,
 // XDP_KERNEL_DROPPED_IP_OPTIONS_OR_EXTENSION, MESSAGE_NOT_RECEIVED, CONNECTION_RESPONSE_PADDING_NOT_ZERO

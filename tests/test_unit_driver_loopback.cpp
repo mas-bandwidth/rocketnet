@@ -532,8 +532,8 @@ static void test_loopback_transport_io_destroy_frees_the_port()
 // the vendored sodium/ on this one source's include path (as the transport's
 // own targets have it), so its calls reach the renamed implementations the
 // production archive carries; a ROCKETNET_USE_SYSTEM_SODIUM build links the
-// system library instead. No original-name shim is needed either way, and the
-// test no longer depends on a system sodium header being installed.
+// system library instead. No original-name shim is needed either way, and no
+// system sodium header is needed.
 
 struct wire_totals_staged_fixture_t
 {
@@ -997,9 +997,9 @@ static void test_loopback_transport_io_refuses_past_hub_capacity()
 
 // Junk from many sources takes no per-source state: the portable path reads
 // 300 one-byte datagrams, each from its own address, then a real client still
-// connects, and its slot's wire totals start at the slot's assignment. The
-// table that once held each unknown source's totals is gone (owner,
-// 2026-10-21: request bytes are not tracked), so nothing here can fill.
+// connects, and its slot's wire totals start at the slot's assignment. No
+// table holds an unknown source's totals (request bytes are not tracked), so
+// nothing here can fill.
 
 struct junk_sources_fixture_t
 {
