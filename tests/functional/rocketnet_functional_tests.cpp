@@ -10852,6 +10852,7 @@ extern void resend_timing_table_over_lossy_links();
 extern void block_resend_cost_over_long_path();
 extern void rocketnet_test_cpp_transports_connect_over_loopback();
 extern void live_message_matrix_loopback();
+extern void live_message_matrix_late_probes();
 extern void rocketnet_test_server_async_delivery_with_max_clients();
 
 // the receive buffer sizing cases (tests/functional/server_receive_low_tick.cpp):
@@ -12984,6 +12985,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_wire_totals_reset_per_connection_not_per_server", wire_totals_reset_per_connection_not_per_server, NULL },
     { "test_transport_wire_bytes_per_family", test_transport_wire_bytes_per_family, NULL },
     { "test_loopback_transport_live_message_matrix", live_message_matrix_loopback, NULL },
+    { "test_loopback_transport_live_message_matrix_late_probes", live_message_matrix_late_probes, NULL },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 #if ROCKETNET_DEV
     // These files use development-only socket seams and the resource ledger.

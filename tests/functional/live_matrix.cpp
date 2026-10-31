@@ -356,12 +356,74 @@ static void live_matrix_take_receipts( struct live_matrix_t * m, int direction )
 }
 
 // ---------------------------------------------------------------
+//                     the edge probes' copies
+// ---------------------------------------------------------------
+
+#define LIVE_MATRIX_PROBE_BASE              ( 1u << 20 )    // probe sequences, far past any matrix sequence
+#define LIVE_MATRIX_MAX_PROBES              128
+
+// One edge probe: every try sends another copy of the same message (one
+// sequence), and a copy is the probe's arrival whenever it comes, during any
+// try, a later probe or the matrix window. Nothing is judged by when a copy
+// lands; a probe none of whose copies arrived by the end of the case is the
+// finding, and more copies received than sent is a duplicate.
+struct live_matrix_probe_t
+{
+    int direction;
+    int mode;
+    int channel;
+    uint32_t sequence;
+    uint32_t length;
+    int copies_sent;
+    int copies_received;
+};
+
+static struct live_matrix_probe_t live_matrix_probes[LIVE_MATRIX_MAX_PROBES];
+static int live_matrix_num_probes;
+
+// A received message that is a copy of an edge probe is counted against that
+// probe and returns 1; any other message returns 0 for the caller to judge.
+static int live_matrix_take_probe_copy( struct live_matrix_t * m, int direction, int receive_channel, const uint8_t * data, int bytes )
+{
+    if ( bytes < LIVE_MATRIX_TINY || rocketnet_live_sequence( data, bytes ) < LIVE_MATRIX_PROBE_BASE )
+        return 0;
+
+    const uint32_t sequence = rocketnet_live_sequence( data, bytes );
+    for ( int i = 0; i < live_matrix_num_probes; i++ )
+    {
+        struct live_matrix_probe_t * probe = &live_matrix_probes[i];
+        if ( probe->direction != direction || probe->sequence != sequence || data[0] != rocketnet_live_tag( direction, probe->mode ) )
+            continue;
+
+        const int want_channel = live_matrix_carries_channel( probe->mode ) ? probe->channel : 0;
+        const int result = rocketnet_live_check( &m->live, data, bytes, direction, probe->mode, probe->channel, m->cycle, -1, NULL );
+        if ( result != ROCKETNET_LIVE_OK )
+            live_matrix_fail( m, "edge", direction, probe->mode, probe->channel, sequence, rocketnet_live_result_name( result ), bytes );
+        else if ( receive_channel != want_channel )
+            live_matrix_fail( m, "edge", direction, probe->mode, probe->channel, sequence, "receive-channel", bytes );
+        else if ( probe->copies_received >= probe->copies_sent )
+            live_matrix_fail( m, "edge", direction, probe->mode, probe->channel, sequence, "duplicate", bytes );
+        else
+            probe->copies_received++;
+
+        return 1;
+    }
+
+    return 0;
+}
+
+// ---------------------------------------------------------------
 //                     receive (sections 3 and 5)
 // ---------------------------------------------------------------
 
 static void live_matrix_arrival( struct live_matrix_t * m, int direction, int receive_channel, const uint8_t * data, int bytes )
 {
     struct live_matrix_direction_t * d = &live_matrix_directions[direction];
+
+    // a late copy of an edge probe is the probe's, never the matrix's
+
+    if ( live_matrix_take_probe_copy( m, direction, receive_channel, data, bytes ) )
+        return;
 
     if ( bytes < 1 || ( data[0] & ROCKETNET_LIVE_TAG_MASK ) != ROCKETNET_LIVE_TAG_BASE || ( ( data[0] >> 3 ) & 1 ) != direction )
     {
@@ -860,8 +922,6 @@ static void live_matrix_over_maximum( struct live_matrix_t * m, int direction )
 //                     the edge probes (sections 4 and 5)
 // ---------------------------------------------------------------
 
-#define LIVE_MATRIX_PROBE_BASE              ( 1u << 20 )    // probe sequences, far past any matrix sequence
-
 // a sequence of stream (mode, channel) whose length is length, in the
 // boundary slots past LIVE_MATRIX_PROBE_BASE; 0 when there is none
 static uint32_t live_matrix_probe_sequence( struct live_matrix_t * m, int mode, int channel, uint32_t length, uint32_t after )
@@ -875,33 +935,36 @@ static uint32_t live_matrix_probe_sequence( struct live_matrix_t * m, int mode, 
     return 0;
 }
 
-// One message, alone on the connection, must arrive verified on the channel
-// section 5 names. Returns 1 when it did.
-static int live_matrix_probe_one( struct live_matrix_t * m, int direction, int mode, int channel, uint32_t sequence, uint32_t length )
+// One more copy of a probe, alone on the connection, then up to 0.25 s for any
+// copy of it to arrive verified on the channel section 5 names. The quarter
+// second paces the tries; it judges nothing, since a copy that lands later
+// still counts (live_matrix_take_probe_copy). Returns 1 when a copy arrived.
+static int live_matrix_probe_one( struct live_matrix_t * m, struct live_matrix_probe_t * probe )
 {
-    const uint32_t serial = live_matrix_start_finish( m, direction, mode, channel, sequence, length );
+    const int direction = probe->direction;
+    const uint32_t serial = live_matrix_start_finish( m, direction, probe->mode, probe->channel, probe->sequence, probe->length );
     if ( serial == 0 )
     {
-        live_matrix_fail( m, "edge", direction, mode, channel, sequence, "refused", (int) length );
+        live_matrix_fail( m, "edge", direction, probe->mode, probe->channel, probe->sequence, "refused", (int) probe->length );
         return 0;
     }
 
-    if ( live_matrix_has_receipt( mode ) )
+    probe->copies_sent++;
+
+    if ( live_matrix_has_receipt( probe->mode ) )
     {
         struct live_matrix_direction_t * d = &live_matrix_directions[direction];
         struct live_matrix_receipt_entry_t * e = live_matrix_receipt_slot( d, serial, 1 );
         live_matrix_check( e && e->serial == 0 );
         e->serial = serial;
-        e->mode = (uint8_t) mode;
-        e->length = length;
+        e->mode = (uint8_t) probe->mode;
+        e->length = probe->length;
         e->receipted = 0;
         d->receipts_expected++;
     }
 
-    const int want_channel = live_matrix_carries_channel( mode ) ? channel : 0;
     const double start = rocketnet_platform_time();
-    int arrived = 0;
-    while ( !arrived && rocketnet_platform_time() - start < 0.25 )
+    while ( probe->copies_received == 0 && m->failures == 0 && rocketnet_platform_time() - start < 0.25 )
     {
         live_matrix_flush( m );
         live_matrix_pump( m );
@@ -912,18 +975,11 @@ static int live_matrix_probe_one( struct live_matrix_t * m, int direction, int m
             int c = 0;
             while ( direction == 0 ? rocketnet_message_server_receive( m->server, NULL, &c, &data, &bytes ) : rocketnet_message_client_receive( m->client, &c, &data, &bytes ) )
             {
-                const int result = rocketnet_live_check( &m->live, data, bytes, direction, mode, channel, m->cycle, -1, NULL );
-                if ( result != ROCKETNET_LIVE_OK || rocketnet_live_sequence( data, bytes ) != sequence )
+                if ( !live_matrix_take_probe_copy( m, direction, c, data, bytes ) )
                 {
-                    live_matrix_fail( m, "edge", direction, mode, channel, sequence, result != ROCKETNET_LIVE_OK ? rocketnet_live_result_name( result ) : "wrong-sequence", bytes );
-                }
-                else if ( c != want_channel )
-                {
-                    live_matrix_fail( m, "edge", direction, mode, channel, sequence, "receive-channel", bytes );
-                }
-                else
-                {
-                    arrived = 1;
+                    const int result = rocketnet_live_check( &m->live, data, bytes, direction, probe->mode, probe->channel, m->cycle, -1, NULL );
+                    live_matrix_fail( m, "edge", direction, probe->mode, probe->channel, probe->sequence,
+                                      result != ROCKETNET_LIVE_OK ? rocketnet_live_result_name( result ) : "wrong-sequence", bytes );
                 }
 
                 if ( direction == 0 )
@@ -940,15 +996,32 @@ static int live_matrix_probe_one( struct live_matrix_t * m, int direction, int m
         live_matrix_take_receipts( m, 1 );
     }
 
-    return arrived;
+    return probe->copies_received > 0;
+}
+
+// The finding of the edge probes, once the case has run: a probe none of
+// whose copies arrived, named by its length. The matrix still ran.
+static void live_matrix_probe_verdicts( struct live_matrix_t * m )
+{
+    for ( int i = 0; i < live_matrix_num_probes; i++ )
+    {
+        const struct live_matrix_probe_t * probe = &live_matrix_probes[i];
+        if ( probe->copies_received > 0 )
+            continue;
+
+        live_matrix_fail( m, "edge", probe->direction, probe->mode, probe->channel, probe->sequence, "never-arrived", (int) probe->length );
+        m->failures--;
+        m->edge_failures++;
+    }
 }
 
 // Section 4's single-record edges E - 1, E and E + 1 of every mode, and code
 // 1's transport payload edges 1,404 to 1,406, one message at a time in both
 // directions, each arriving on the channel section 5 names (codes 1, 3, 4
 // and 7 on the channel sent, the others on channel 0). An unreliable probe
-// gets three tries, so one loss is not a finding; a probe that never arrives
-// is named by its length.
+// gets three copies, so one loss is not a finding; a probe none of whose
+// copies has arrived by the end of the case is named by its length
+// (live_matrix_probe_verdicts).
 static void live_matrix_edge_probes( struct live_matrix_t * m )
 {
     const int channel = 1;
@@ -982,22 +1055,24 @@ static void live_matrix_edge_probes( struct live_matrix_t * m )
             for ( int i = 0; i < n && m->failures == 0; i++ )
             {
                 const int tries = live_matrix_complete( mode, lengths[i] ) ? 1 : 3;
-                uint32_t sequence = LIVE_MATRIX_PROBE_BASE;
+                live_matrix_check( live_matrix_num_probes < LIVE_MATRIX_MAX_PROBES );
+                live_matrix_check( lengths[i] >= LIVE_MATRIX_TINY );
+                struct live_matrix_probe_t * probe = &live_matrix_probes[live_matrix_num_probes++];
+                memset( probe, 0, sizeof( *probe ) );
+                probe->direction = direction;
+                probe->mode = mode;
+                probe->channel = channel;
+                probe->length = lengths[i];
+                probe->sequence = live_matrix_probe_sequence( m, mode, channel, lengths[i], LIVE_MATRIX_PROBE_BASE + 1 );
+                live_matrix_check( probe->sequence != 0 );
+
                 int arrived = 0;
                 for ( int t = 0; t < tries && !arrived && m->failures == 0; t++ )
                 {
-                    sequence = live_matrix_probe_sequence( m, mode, channel, lengths[i], sequence + 1 );
-                    live_matrix_check( sequence != 0 );
-                    arrived = live_matrix_probe_one( m, direction, mode, channel, sequence, lengths[i] );
+                    arrived = live_matrix_probe_one( m, probe );
                 }
 
-                if ( !arrived && m->failures == 0 )
-                {
-                    live_matrix_fail( m, "edge", direction, mode, channel, sequence, "never-arrived", (int) lengths[i] );
-                    m->failures--;
-                    m->edge_failures++;
-                }
-                else if ( arrived && live_matrix_verbose )
+                if ( arrived && live_matrix_verbose )
                 {
                     printf( "edge %d %d %u arrived on channel %d\n", direction, mode, lengths[i], live_matrix_carries_channel( mode ) ? channel : 0 );
                 }
@@ -1309,13 +1384,9 @@ static void live_matrix_print_table()
 //                     the case
 // ---------------------------------------------------------------
 
-void live_message_matrix_loopback()
+// the case's server, with the run's config (section 4), and its clock
+static struct live_matrix_t * live_matrix_open()
 {
-    const double case_start = rocketnet_platform_time();
-    double case_time_scale = 1.0;
-    live_matrix_check( rocketnet_test_case_env_time_scale( &case_time_scale ) );
-
-    const double wall_bound_seconds = LIVE_MATRIX_WALL_BOUND * case_time_scale;
     static struct live_matrix_t matrix;
     struct live_matrix_t * m = &matrix;
     memset( m, 0, sizeof( *m ) );
@@ -1354,16 +1425,12 @@ void live_message_matrix_loopback()
 
     m->wall_start = rocketnet_platform_time();
 
-    const double deadline = case_start + wall_bound_seconds;
+    return m;
+}
 
-    // the matrix window, ending in a clean disconnect the server sees
-
-    m->cycle = 0;
-    live_matrix_connect( m );
-    memset( live_matrix_directions, 0, sizeof( live_matrix_directions ) );
-    live_matrix_edge_probes( m );
-    live_matrix_window( m, deadline );
-    live_matrix_check( m->failures == 0 );
+// a clean disconnect the server sees, then the client and the server stopped and destroyed
+static void live_matrix_close( struct live_matrix_t * m )
+{
     rocketnet_client_transport_disconnect( rocketnet_message_client_transport( m->client ) );
     {
         // the disconnect burst is deferred when the I/O thread is still
@@ -1395,6 +1462,31 @@ void live_message_matrix_loopback()
     live_matrix_check( rocketnet_server_transport_state( server_transport ) == ROCKETNET_SERVER_TRANSPORT_STOPPED );
     rn_native_message_server_stop_and_destroy( m->server );
 
+}
+
+void live_message_matrix_loopback()
+{
+    const double case_start = rocketnet_platform_time();
+    double case_time_scale = 1.0;
+    live_matrix_check( rocketnet_test_case_env_time_scale( &case_time_scale ) );
+
+    const double wall_bound_seconds = LIVE_MATRIX_WALL_BOUND * case_time_scale;
+    struct live_matrix_t * m = live_matrix_open();
+
+    const double deadline = case_start + wall_bound_seconds;
+
+    // the matrix window, ending in a clean disconnect the server sees
+
+    m->cycle = 0;
+    live_matrix_connect( m );
+    memset( live_matrix_directions, 0, sizeof( live_matrix_directions ) );
+    live_matrix_num_probes = 0;
+    live_matrix_edge_probes( m );
+    live_matrix_window( m, deadline );
+    live_matrix_probe_verdicts( m );
+    live_matrix_check( m->failures == 0 );
+    live_matrix_close( m );
+
     live_matrix_check( m->failures == 0 );
 
     const double elapsed = rocketnet_platform_time() - case_start;
@@ -1410,4 +1502,55 @@ void live_message_matrix_loopback()
 
     live_matrix_check( m->edge_failures == 0 );
     live_matrix_check( elapsed < wall_bound_seconds );
+}
+
+// The edge probes over a server-to-client latency of 400 ms, past the quarter
+// second a try waits: every copy of a server probe lands during a later try or
+// a later probe, and each is counted as its own probe's arrival, never as a
+// wrong sequence or a duplicate of another. Every probe arrives. Mutation that
+// must bite: judge a received message by the current try's probe alone; the
+// first late copy fails the case.
+void live_message_matrix_late_probes()
+{
+    struct live_matrix_t * m = live_matrix_open();
+
+    m->cycle = 0;
+    live_matrix_connect( m );
+    memset( live_matrix_directions, 0, sizeof( live_matrix_directions ) );
+    live_matrix_check( rocketnet_server_transport_network_simulator( rocketnet_message_server_transport( m->server ), 400, 0, 0, 0 ) );
+
+    live_matrix_num_probes = 0;
+    live_matrix_edge_probes( m );
+
+    // the last copies and receipts land; 5 s bounds a hang, it judges nothing
+
+    const double start = rocketnet_platform_time();
+    for ( ;; )
+    {
+        int waiting = 0;
+        for ( int i = 0; i < live_matrix_num_probes; i++ )
+            waiting += live_matrix_probes[i].copies_received == 0;
+        for ( int direction = 0; direction < LIVE_MATRIX_DIRECTIONS; direction++ )
+            waiting += live_matrix_directions[direction].receipts_seen < live_matrix_directions[direction].receipts_expected;
+        if ( waiting == 0 || m->failures != 0 || rocketnet_platform_time() - start >= 5.0 )
+            break;
+
+        live_matrix_flush( m );
+        live_matrix_pump( m );
+        live_matrix_check( live_matrix_up( m ) );
+        live_matrix_receive( m );
+        live_matrix_take_receipts( m, 0 );
+        live_matrix_take_receipts( m, 1 );
+    }
+
+    live_matrix_probe_verdicts( m );
+    if ( m->failures != 0 || m->edge_failures != 0 )
+        printf( "test_loopback_transport_live_message_matrix_late_probes: failures=%llu edge_failures=%llu probes=%d\n",
+                (unsigned long long) m->failures, (unsigned long long) m->edge_failures, live_matrix_num_probes );
+    live_matrix_check( m->failures == 0 );
+    live_matrix_check( m->edge_failures == 0 );
+
+    live_matrix_check( rocketnet_server_transport_network_simulator( rocketnet_message_server_transport( m->server ), 0, 0, 0, 0 ) );
+    live_matrix_close( m );
+    live_matrix_check( m->failures == 0 );
 }
