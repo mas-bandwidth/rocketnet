@@ -315,6 +315,8 @@ struct rocketnet_server_socket_t
     // the per-cpu stats map read buffer (rocketnet_xdp_stats_cpus_fit), inside
     // the create-time allocation; written only by rocketnet_server_socket_xdp_counters
     struct rocketnet_server_xdp_stats_t stats_values[ROCKETNET_XDP_STATS_MAX_CPUS];
+    uint64_t stats_last[ROCKETNET_SERVER_XDP_NUM_COUNTERS];   // the last good read (rocketnet_xdp_stats_publish)
+    bool stats_failing;                                         // the last read failed; logged once per run
 
     int serves_both;
     rocketnet_address_t ipv4_address;
@@ -3342,30 +3344,29 @@ void rocketnet_server_socket_xdp_counters( struct rocketnet_server_socket_t * se
     rocketnet_assert( server_socket );
     rocketnet_assert( counters );
 
-    memset( counters, 0, ROCKETNET_SERVER_XDP_NUM_COUNTERS * sizeof( uint64_t ) );
-
-    // the stats map is per-CPU: one value struct per possible CPU, summed here
+    // the stats map is per-CPU: one value struct per possible CPU, summed by
+    // rocketnet_xdp_stats_publish; a failed read publishes the last good one
 
     const int num_cpus = libbpf_num_possible_cpus();
-    if ( !rocketnet_xdp_stats_cpus_fit( num_cpus ) )
+    const bool fit = rocketnet_xdp_stats_cpus_fit( num_cpus );
+
+    bool read = false;
+    int read_error = 0;
+    if ( fit )
     {
-        if ( num_cpus > 0 )
-            rocketnet_error( "xdp stats not read: %d possible cpus is past %d", num_cpus, ROCKETNET_XDP_STATS_MAX_CPUS );
-        return;
+        __u32 key = 0;
+        read = bpf_map_lookup_elem( server_socket->stats_map_fd, &key, server_socket->stats_values ) == 0;
+        if ( !read )
+            read_error = errno;
     }
 
-    struct rocketnet_server_xdp_stats_t * values = server_socket->stats_values;
-
-    __u32 key = 0;
-    if ( bpf_map_lookup_elem( server_socket->stats_map_fd, &key, values ) != 0 )
-        return;
-
-    for ( int cpu = 0; cpu < num_cpus; cpu++ )
+    if ( rocketnet_xdp_stats_publish( read, server_socket->stats_values, num_cpus, server_socket->stats_last,
+                                      &server_socket->stats_failing, counters ) )
     {
-        for ( int i = 0; i < ROCKETNET_SERVER_XDP_NUM_COUNTERS; i++ )
-        {
-            counters[i] += values[cpu].counters[i];
-        }
+        if ( !fit )
+            rocketnet_error( "xdp stats not read: %d possible cpus is outside 1 .. %d; the last read stands", num_cpus, ROCKETNET_XDP_STATS_MAX_CPUS );
+        else
+            rocketnet_error( "xdp stats not read: map lookup failed: %s; the last read stands", strerror( read_error ) );
     }
 }
 
