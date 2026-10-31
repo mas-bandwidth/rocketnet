@@ -112,10 +112,9 @@ struct rn_message_link_t
     // Observe). The server's link answers
     // rocketnet_server_transport_client_connection_id, which differs for every
     // connection a slot holds (P9a). The client's link answers 1 while it is
-    // CONNECTED. Required, like update, payloads, acked and the packet calls,
-    // by rn_message_object_update and rn_message_object_send_packets; only a
-    // bare object that starts and finishes messages and never updates or
-    // sends may leave it NULL.
+    // CONNECTED. Required by the object's update and send passes, as update,
+    // payloads and acked are; only a bare object that starts and finishes
+    // messages and never updates or sends may leave it NULL.
     uint64_t ( *connection )( void * transport, int client_index );
 
     void ( *disconnect )( void * transport, int client_index );
