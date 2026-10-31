@@ -1997,6 +1997,7 @@ bool rocketnet_server_served_address( const struct rocketnet_server_t * server, 
 {
     if ( !rocketnet_api_null_guard( server ) || !rocketnet_api_null_guard( address ) || address_bytes == 0 )
         return false;
+    address[0] = '\0';
 
     const char * served[2] = { server->address, server->transport.second_public_address };
 
@@ -2005,7 +2006,14 @@ bool rocketnet_server_served_address( const struct rocketnet_server_t * server, 
         struct rocketnet_address_t parsed;
         if ( served[i][0] != '\0' && rocketnet_address_parse( &parsed, served[i] ) && parsed.type == family )
         {
-            rocketnet_copy_string( address, served[i], address_bytes );
+            const size_t length = strlen( served[i] );
+            if ( length + 1 > address_bytes )
+            {
+                rocketnet_error( "served address refused: the buffer is %d bytes, the address needs %d", (int) address_bytes, (int) ( length + 1 ) );
+                return false;
+            }
+
+            memcpy( address, served[i], length + 1 );
             return true;
         }
     }
