@@ -804,9 +804,10 @@ static void check_client_memory_budget( allocator_state & state )
 // still allocate through the pair it replaced: the replaced pair holding a
 // block, or allocating, once install returned OK is the race
 // InstallOnlyWhenIdle forbids, and a block released through a pair that did
-// not allocate it is the race ReleasedThroughItsPair forbids. Install's
-// development hook yields between its count read and its publish, so a
-// call that slips into that window is likely, not a matter of luck. Run per
+// not allocate it is the race ReleasedThroughItsPair forbids. In a
+// development build install's hook yields between its count read and its
+// publish, so a call that slips into that window is likely, not a matter of
+// luck. Run per
 // commit under tsan (ci.yml, the tsan leg runs this harness).
 
 struct install_pair_state
@@ -846,11 +847,13 @@ static void install_pair_release( install_pair_state & pair, void * pointer )
     free( base );
 }
 
+#if ROCKETNET_DEV
 static void install_window_yield()
 {
     for ( int i = 0; i < 16; ++i )
         std::this_thread::yield();
 }
+#endif // #if ROCKETNET_DEV
 
 static void * install_allocate_a( void *, size_t bytes ) { return install_pair_allocate( install_pairs[0], bytes ); }
 static void install_release_a( void *, void * pointer ) { install_pair_release( install_pairs[0], pointer ); }
@@ -898,7 +901,9 @@ static void check_allocator_install_race()
     check( rocketnet_allocator_ex( install_allocate_a, install_release_a ) == ROCKETNET_STATUS_OK );
 
     rocketnet_quiet( true );
+#if ROCKETNET_DEV
     rocketnet_allocator_set_install_hook_for_test( install_window_yield );
+#endif // #if ROCKETNET_DEV
 
     std::atomic<int> running{ workers };
     std::atomic<bool> go{ false };
@@ -940,7 +945,9 @@ static void check_allocator_install_race()
     for ( std::thread & thread : threads )
         thread.join();
 
+#if ROCKETNET_DEV
     rocketnet_allocator_set_install_hook_for_test( NULL );
+#endif // #if ROCKETNET_DEV
     rocketnet_quiet( false );
 
     for ( install_pair_state & pair : install_pairs )
