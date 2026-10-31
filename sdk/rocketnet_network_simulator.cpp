@@ -569,6 +569,8 @@ static void rocketnet_simulator_record_membership_updates( struct rocketnet_netw
         simulator->index_stats.max_membership_word_updates = updates;
 }
 
+// proofs/tla/RNSimulatorStoreLayout.tla Send: the slot's bit in its shard's occupancy word, the summary bit
+// when that word was empty, the shard's bound lowered to the delivery time
 static void rocketnet_simulator_index_add( struct rocketnet_network_simulator_t * simulator, int slot )
 {
     // membership is one physical-slot bit and, only when its occupancy word
@@ -600,6 +602,8 @@ static void rocketnet_simulator_index_add( struct rocketnet_network_simulator_t 
         simulator->shard_min_delivery_time[shard] = simulator->delivery_time[slot];
 }
 
+// proofs/tla/RNSimulatorStoreLayout.tla Receive, ReceiveAny and StaleRetire: a stale handle is refused; the
+// slot's bit cleared, the summary bit only when its word is empty, the bound left low
 static bool rocketnet_simulator_index_remove( struct rocketnet_network_simulator_t * simulator,
                                               const struct rocketnet_network_simulator_slot_handle_t * handle )
 {
@@ -641,6 +645,7 @@ static bool rocketnet_simulator_index_remove( struct rocketnet_network_simulator
     return true;
 }
 
+// proofs/tla/RNSimulatorStoreLayout.tla Receive, ReceiveAny and StaleRetire: the slot freed and free_hint lowered to it
 static bool rocketnet_simulator_retire( struct rocketnet_network_simulator_t * simulator,
                                         const struct rocketnet_network_simulator_slot_handle_t * handle )
 {
@@ -655,6 +660,7 @@ static bool rocketnet_simulator_retire( struct rocketnet_network_simulator_t * s
     return true;
 }
 
+// proofs/tla/RNSimulatorStoreLayout.tla ReceiveAny: the lowest used slot due now, retired through its handle
 int rocketnet_network_simulator_receive_any( struct rocketnet_network_simulator_t * simulator,
                                              double current_time,
                                              struct rocketnet_address_t * out_from,
@@ -722,6 +728,8 @@ static int rocketnet_simulator_select_reference( const struct rocketnet_network_
     return ROCKETNET_SIMULATOR_NO_SLOT;
 }
 
+// proofs/tla/RNSimulatorStoreLayout.tla Receive: the walk over summary bits, occupancy bits and the bound,
+// which must choose the slot rocketnet_simulator_select_reference chooses (SelectMatchesReference)
 static int rocketnet_simulator_select_fast( struct rocketnet_network_simulator_t * simulator,
                                             const struct rocketnet_address_t * to,
                                             double current_time )
@@ -890,6 +898,7 @@ void rocketnet_network_simulator_inject_index_fault( struct rocketnet_network_si
 
 // --------------------------------------------------------------------------
 
+// proofs/tla/RNSimulatorStoreLayout.tla Send: the lowest free slot from free_hint, its generation bumped
 static int rocketnet_simulator_insert( struct rocketnet_network_simulator_t * simulator,
                                        const struct rocketnet_address_t * from,
                                        const struct rocketnet_address_t * to,
@@ -1044,6 +1053,7 @@ int rocketnet_network_simulator_deliver_packets( struct rocketnet_network_simula
     return accepted;
 }
 
+// proofs/tla/RNSimulatorStoreLayout.tla Receive: select_fast, then the chosen slot's handle retired
 int rocketnet_network_simulator_receive( struct rocketnet_network_simulator_t * simulator,
                                          const struct rocketnet_address_t * to,
                                          double current_time,
@@ -1100,6 +1110,7 @@ bool rocketnet_network_simulator_test_handle_for_slot( const struct rocketnet_ne
     return true;
 }
 
+// proofs/tla/RNSimulatorStoreLayout.tla StaleRetire: a caller's handle, refused once its slot's generation changed
 bool rocketnet_network_simulator_test_remove_handle( struct rocketnet_network_simulator_t * simulator,
                                                      const struct rocketnet_network_simulator_slot_handle_t * handle )
 {

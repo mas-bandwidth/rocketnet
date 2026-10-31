@@ -780,6 +780,7 @@ struct rocketnet_xdp_reply_macs_t
 
 // gateway_mac NULL: no gateway is known for this interface.
 
+// proofs/tla/RNXdpReplyMacsLayout.tla Reset: every slot EMPTY
 static inline void rocketnet_xdp_reply_macs_reset( struct rocketnet_xdp_reply_macs_t * table, const uint8_t * gateway_mac )
 {
     memset( table, 0, sizeof( *table ) );
@@ -808,6 +809,8 @@ static inline uint32_t rocketnet_xdp_reply_macs_slot( const rocketnet_address_t 
     return hash & ( ROCKETNET_XDP_REPLY_MAC_ENTRIES - 1 );
 }
 
+// proofs/tla/RNXdpReplyMacsLayout.tla TableIsMap and NoEntryPastEmpty: the probe
+// passes every used slot and ends only at an EMPTY one or after the window
 static inline struct rocketnet_xdp_reply_mac_entry_t * rocketnet_xdp_reply_macs_find_state( struct rocketnet_xdp_reply_macs_t * table, const rocketnet_address_t * address, uint8_t state )
 {
     const uint32_t slot = rocketnet_xdp_reply_macs_slot( address );
@@ -842,6 +845,9 @@ static inline bool rocketnet_xdp_reply_mac_usable( const uint8_t * mac )
 // else is ignored. The address's answered entry, if any, becomes its
 // learned entry.
 
+// proofs/tla/RNXdpReplyMacsLayout.tla Learn: the address's own entry, else the
+// first slot of the window not LIVE, else the LIVE entry learned longest ago
+// (EvictOnlyOldest)
 static inline void rocketnet_xdp_reply_macs_learn( struct rocketnet_xdp_reply_macs_t * table, const rocketnet_address_t * address, const uint8_t * mac )
 {
     if ( !table || !address || !rocketnet_xdp_reply_mac_usable( mac ) )
@@ -887,6 +893,8 @@ static inline void rocketnet_xdp_reply_macs_learn( struct rocketnet_xdp_reply_ma
 // probe window. A learned entry is never displaced; with no room the answer
 // is not kept.
 
+// proofs/tla/RNXdpReplyMacsLayout.tla Answer: the address's ANSWERED entry, else
+// the first EMPTY slot of the window, else its oldest ANSWERED entry, else none
 static inline void rocketnet_xdp_reply_macs_answer( struct rocketnet_xdp_reply_macs_t * table, const rocketnet_address_t * address, const uint8_t * mac )
 {
     if ( rocketnet_xdp_reply_macs_find( table, address ) )
@@ -934,6 +942,7 @@ static inline void rocketnet_xdp_reply_macs_answer( struct rocketnet_xdp_reply_m
 // an address never holds both, since a learn takes over the address's
 // answered entry and an answer is not kept for a learned address.
 
+// proofs/tla/RNXdpReplyMacsLayout.tla Forget: LIVE becomes ANSWERED in place
 static inline void rocketnet_xdp_reply_macs_forget( struct rocketnet_xdp_reply_macs_t * table, const rocketnet_address_t * address )
 {
     struct rocketnet_xdp_reply_mac_entry_t * entry = rocketnet_xdp_reply_macs_find( table, address );

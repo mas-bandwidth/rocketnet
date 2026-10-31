@@ -69,6 +69,9 @@ void rocketnet_server_replay_marks_destroy( struct rocketnet_server_replay_marks
     rocketnet_free( marks->context, marks );
 }
 
+// proofs/tla/RNServerReplaySlots.tla Walk: the forget pass clears a record only
+// when the sink queued its forget, and the mark pass skips a slot whose record
+// names another address (ForgetNeverLost)
 void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t * marks,
                                          const struct rocketnet_client_slots_t * slots,
                                          struct rocketnet_encryption_map_t * map,

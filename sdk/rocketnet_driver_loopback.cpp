@@ -90,6 +90,8 @@ static constexpr uint32_t ROCKETNET_LOOPBACK_HUB_LAYOUT =
     loopback_layout_hash( ROCKETNET_LOOPBACK_HUB_LAYOUT_VALUES, (int) ( sizeof( ROCKETNET_LOOPBACK_HUB_LAYOUT_VALUES ) / sizeof( ROCKETNET_LOOPBACK_HUB_LAYOUT_VALUES[0] ) ), 2166136261u );
 
 // the ephemeral range wraps from its last port to its first
+// (proofs/tla/RNLoopbackBindLayout.tla Create, EphemeralInRange: a port + 1
+// that wrapped at 65536 would hand out port 0)
 static uint16_t loopback_next_port( uint16_t port )
 {
     return port == ROCKETNET_LOOPBACK_LAST_PORT ? (uint16_t) ROCKETNET_LOOPBACK_FIRST_PORT : (uint16_t) ( port + 1 );
@@ -217,6 +219,8 @@ static rocketnet_address_t loopback_sender_address( const rocketnet_address_t & 
     return from;
 }
 
+// proofs/tla/RNLoopbackBindLayout.tla LookupIsWalk: the lookup in hub->bound
+// returns the endpoint a walk of the live records would
 static rocketnet_loopback_endpoint_t * loopback_find_destination( rocketnet_loopback_hub_t * hub, const rocketnet_address_t & to )
 {
     // the endpoint a datagram reaches: one bound to this address, or to the
@@ -461,6 +465,9 @@ enum rocketnet_status_t rocketnet_loopback_hub_destroy( rocketnet_loopback_hub_t
     return ROCKETNET_STATUS_OK;
 }
 
+// proofs/tla/RNLoopbackBindLayout.tla Create: a held family port refused, the
+// record taken, a port 0 bind given the next port neither family holds, and
+// the entry written as the record index plus one
 static void * loopback_create( rocketnet_loopback_hub_t * hub, rocketnet_address_t * bind, bool server )
 {
     // proofs/tla/LoopbackHub.tla RegisterServer and RegisterClient: the server takes
@@ -552,6 +559,8 @@ static void * loopback_client_create( void *, const rocketnet_client_transport_i
     return loopback_create( config && config->transport ? config->transport->loopback_hub : NULL, bind, false );
 }
 
+// proofs/tla/RNLoopbackBindLayout.tla Destroy: the entry cleared only when it
+// names this record (DestroyFindsOwnEntry: under create's refusal it always does)
 static void loopback_destroy( void * transport )
 {
     // proofs/tla/LoopbackHub.tla Unregister: the record and its queue stay in the

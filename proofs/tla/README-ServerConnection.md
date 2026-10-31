@@ -61,7 +61,7 @@ host vanishes with nothing sent.
 | Action | Who | Code |
 |---|---|---|
 | `ServerRecvRequest` | a request arrives | `rocketnet_server_protocol_process_connection_request` (`:150`): a connected address is silent (`:200`); a half-open mapping resends its stored challenge whatever the request's salt (`:239`); no cookie, or one issued to another address, gets a cookie (`:364`); a token bound elsewhere in the history (`:439`), a connected client id (`:511`) or an admitted token (`:518`) is silent; the history records the binding (`:523`); no free slot is a denied under fresh keys with no mapping (`:574`); a full map is silent (`:583`); else a mapping at a fresh nonce and its challenge (`:579-631`) |
-| `ServerRecvResponse` | a response opens under the mapping's handshake keys | the idle clock is refreshed before the ladder (`:952`); `rocketnet_server_process_connection_response` (`:642`): already connected (`:657`) or the client id connected (`:664`) is silent; no slot (`:680`) or the admitted set full of other tokens (`:687`) is a denied, mapping kept; else the token is admitted, the lowest free slot assigned (`:710`, `rocketnet_client_slots_assign` `sdk/rocketnet_client_slots.cpp:146-153`) and the first keep-alive sent (`:731`) |
+| `ServerRecvResponse` | a response opens under the mapping's handshake keys | the idle clock is refreshed before the ladder (`:952`); `rocketnet_server_process_connection_response` (`:642`): already connected (`:657`) or the client id connected (`:664`) is silent; no slot (`:680`) or the admitted set full of other tokens (`:687`) is a denied, mapping kept; else the token is admitted, a free slot assigned (`:710`, `rocketnet_client_slots_assign` in `sdk/rocketnet_client_slots.cpp`, the top of its LIFO free stack; the model takes the lowest free slot) and the first keep-alive sent (`:731`) |
 | `ServerRecvSession` | a keep-alive or disconnect opens under the session keys | a mapping without a slot ignores it (`:969`); a keep-alive refreshes the idle clock (`:1014`), confirms the slot (`:1017`) and its block sets the keep-alive-acknowledged latch; a disconnect releases the slot and removes the mapping at once (`:1112-1113`) |
 | `ServerKeepAlive(i)` | the server's timer | `rocketnet_server_protocol_write_keep_alive_if_due` (`:1414`): paced off the keep-alive's own clock (`:1487`, `:1372`) |
 | `ServerAppDisconnect(i)`, `ServerDiscCopy` | the server application | `rocketnet_server_protocol_disconnect_client` (`:1801`): the burst (`:1830`), then the slot released and the mapping removed (`:1852-1853`) |
@@ -450,7 +450,9 @@ The deployed server has up to `ROCKETNET_MAX_CLIENTS` slots and a mapping
 table of `max_clients * 2` entries. The safety invariants are local: each
 names a slot, a mapping or a token binding and its statement does not count
 slots, while `MappingsBounded` compares the live mappings with the configured
-capacity. The two-slot instance exercises the lowest-free-slot assignment
+capacity. The two-slot instance exercises the slot assignment (the model takes
+the lowest free slot; the code pops its LIFO free stack, whose layout
+`RNClientSlotsLayout.tla` checks)
 across two live slots, two simultaneous mappings and slot reuse; a third or
 later slot changes only which index is free, not the predicates. The
 size-dependent part it does not cover is the sweep and handshake-deadline
