@@ -216,25 +216,32 @@ static void test_dst_clock_back_reaches_endpoints()
     rocketnet_unit_check( result.clock_back_seen == 0 );
 }
 
-// seq-gap advances one end's send sequence past the 1024-packet replay
-// history in one step: the receiver's highest opened sequence rises by more
-// than 1024 at once, which no run without the schedule does.
+// seq-gap advances one end's send sequence past the replay history
+// (ROCKETNET_HISTORY_PACKETS) in one step: on every seed the applied gap is
+// larger than the whole history, and the receiver's highest opened sequence
+// rises by at least the gap at once, which no run without the schedule does.
 
 static void test_dst_seq_gap_exceeds_history()
 {
     struct rocketnet_dst_options_t options = dst_test_options( 600 );
     options.fault_steps = 400;
-    options.schedule = ROCKETNET_DST_SCHEDULE_SEQ_GAP;
 
     struct rocketnet_dst_result_t result;
-    rocketnet_unit_check( rocketnet_dst_run_seed_with_options( 7, &options, &result ) );
-    rocketnet_unit_check( result.passed );
-    rocketnet_unit_check( result.schedule_fired == 1 );
-    rocketnet_unit_check( result.max_sequence_jump > 1024 );
+    for ( uint64_t seed = 1; seed <= 8; seed++ )
+    {
+        options.schedule = ROCKETNET_DST_SCHEDULE_SEQ_GAP;
+        rocketnet_unit_check( rocketnet_dst_run_seed_with_options( seed, &options, &result ) );
+        rocketnet_unit_check( result.passed );
+        rocketnet_unit_check( result.schedule_fired == 1 );
+        rocketnet_unit_check( result.sequence_gap > ROCKETNET_HISTORY_PACKETS );
+        rocketnet_unit_check( result.max_sequence_jump >= result.sequence_gap );
+        rocketnet_unit_check( result.max_sequence_jump > ROCKETNET_HISTORY_PACKETS );
 
-    options.schedule = ROCKETNET_DST_SCHEDULE_NONE;
-    rocketnet_unit_check( rocketnet_dst_run_seed_with_options( 7, &options, &result ) );
-    rocketnet_unit_check( result.max_sequence_jump <= 1024 );
+        options.schedule = ROCKETNET_DST_SCHEDULE_NONE;
+        rocketnet_unit_check( rocketnet_dst_run_seed_with_options( seed, &options, &result ) );
+        rocketnet_unit_check( result.sequence_gap == 0 );
+        rocketnet_unit_check( result.max_sequence_jump <= ROCKETNET_HISTORY_PACKETS );
+    }
 }
 
 // The burst schedule sends and receives hundreds of packets in one step: the
