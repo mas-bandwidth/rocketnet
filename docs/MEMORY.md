@@ -288,6 +288,13 @@ later clients can be deferred indefinitely under sustained earlier-client
 backlog. See [Current staging and drain limitations](TRANSPORT-INTERNALS.md#current-staging-and-drain-limitations).
 The replay-history depth remains a separate setting (below).
 
+Memory is the caller's choice, made through the config. The library sizes
+what the config asks for and sets no budget on the total: every field is held
+to its own range (and to what its layout can represent), and a config whose
+fields are all in range is accepted however much memory they add up to. The
+only limits on the total are ones the caller sets or can raise: the CMake
+component budgets and the operator memory budgets below.
+
 Memory grows with the clients a server asks for, at the per-client depth the
 config sets: `rocketnet_server_required_memory` gives the lifecycle allocator
 peak before create, including the largest planned built-in transport in the
