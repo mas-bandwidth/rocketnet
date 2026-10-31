@@ -763,8 +763,10 @@ int main( int argc, char ** argv )
             printf( "create refused: %s\n", rocketnet_status_name( create_status_2 ) );
         }
 
-        if ( clients[c] && rocketnet_client_connect( clients[c], token ) != ROCKETNET_STATUS_OK )
+        const enum rocketnet_status_t connect_status = clients[c] ? rocketnet_client_connect( clients[c], token ) : ROCKETNET_STATUS_OK;
+        if ( connect_status != ROCKETNET_STATUS_OK )
         {
+            printf( "connect refused: %s\n", rocketnet_status_name( connect_status ) );
             rn_cli_client_stop_and_destroy( clients[c], 1000.0 );
             clients[c] = NULL;
         }

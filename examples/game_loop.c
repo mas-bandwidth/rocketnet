@@ -225,7 +225,12 @@ int main( int argc, char ** argv )
         const enum rocketnet_status_t token_status = rocketnet_create_dev_connect_token( server_address, NULL, server_public_key, 30, 10, (uint64_t) i, EXAMPLE_PROTOCOL_ID, (uint64_t) time( NULL ), NULL, connect_token );
         enum rocketnet_status_t client_status = ROCKETNET_STATUS_OK;
         clients[i] = rocketnet_client_create( NULL, &client_config, &client_status );
-        if ( token_status != ROCKETNET_STATUS_OK || !clients[i] || client_status != ROCKETNET_STATUS_OK || rocketnet_client_connect( clients[i], connect_token ) != ROCKETNET_STATUS_OK )
+        if ( token_status == ROCKETNET_STATUS_OK && clients[i] && client_status == ROCKETNET_STATUS_OK )
+        {
+            client_status = rocketnet_client_connect( clients[i], connect_token );
+        }
+
+        if ( token_status != ROCKETNET_STATUS_OK || !clients[i] || client_status != ROCKETNET_STATUS_OK )
         {
             printf( "FAIL: client %d create/connect: %s\n", i, rocketnet_status_name( token_status != ROCKETNET_STATUS_OK ? token_status : client_status ) );
             for ( int j = 0; j <= i; j++ )

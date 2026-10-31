@@ -126,8 +126,9 @@ struct rocketnet_client_t * start_client( const char * token, const struct rocke
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, config, &status );
     if ( !client )
         printf( "create refused: %s\n", rocketnet_status_name( status ) );
-    if ( client && rocketnet_client_connect( client, token ) != ROCKETNET_STATUS_OK )
+    if ( client && ( status = rocketnet_client_connect( client, token ) ) != ROCKETNET_STATUS_OK )
     {
+        printf( "connect refused: %s\n", rocketnet_status_name( status ) );
         rocketnet_client_destroy( client );
         return NULL;
     }
@@ -140,8 +141,9 @@ struct rocketnet_server_t * start_server( const struct rocketnet_server_config_t
     struct rocketnet_server_t * server = rocketnet_server_create( NULL, "0.0.0.0:40000", NULL, config, &status );
     if ( !server )
         printf( "create refused: %s\n", rocketnet_status_name( status ) );
-    if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
+    if ( server && ( status = rocketnet_server_start( server ) ) != ROCKETNET_STATUS_OK )
     {
+        printf( "start refused: %s\n", rocketnet_status_name( status ) );
         rocketnet_server_destroy( server );
         return NULL;
     }
