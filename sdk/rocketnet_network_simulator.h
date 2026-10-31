@@ -55,8 +55,9 @@ void rocketnet_network_simulator_config( struct rocketnet_network_simulator_t * 
 // drop_every_nth: 0 = disabled, 2..1000000 = drop every Nth send on this link.
 // reverse_window: 0 = disabled, 2..64 = buffer every W surviving packets and
 // emit them into the wire slots in reversed order (W-1 down to 0). The
-// counters start at the call. Returns false, patterns off, when the window
-// cannot be allocated.
+// packets a window already holds leave reversed at the call, as a full
+// window's do. The counters start at the call. Returns false, patterns off,
+// when the window cannot be allocated.
 
 bool rocketnet_network_simulator_patterns( struct rocketnet_network_simulator_t * simulator,
                                            int drop_every_nth,

@@ -1848,8 +1848,8 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
 
     // configure the kernel prefilter: the destination it accepts and the
     // per-title filter value and epoch. until this write the program passes
-    // untouched, so a server that fails before this point never black-holed
-    // the box's other traffic.
+    // every frame but undeliverable runt IP frames, so a server that fails
+    // before this point never black-holed the box's other traffic.
 
     {
         struct rocketnet_server_xdp_config_t config;

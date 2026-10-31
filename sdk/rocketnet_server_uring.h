@@ -66,8 +66,8 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_ENTRIES >= ROCKETNET_URING_SEND_QUEUE_S
 // bytes. one buffer holds the multishot recvmsg header, the reserved name
 // area, the UDP_GRO control area and the payload, which with UDP_GRO is one
 // coalesced receive of up to 64 KiB (the 16-bit UDP payload), so a buffer is
-// 66 KiB: 4096 * 66 KiB = 264 MiB per queue, all allocated at create (2 KiB
-// buffers, 8 MiB per queue, before UDP_GRO). memory is spent so that one
+// 66 KiB: 4096 * 66 KiB = 264 MiB per queue, all allocated at create
+// whether or not the UDP_GRO probe is granted. memory is spent so that one
 // completion carries a whole coalesced run of datagrams.
 
 #define ROCKETNET_URING_RECV_BUFFERS                                      4096
