@@ -18,6 +18,7 @@
 bool rocketnet_server_rio_test_receive_overflow( uint64_t * counters, int * packet_counts,
                                                  int * repost_calls, int * pending_receives, int * guard_hit );
 bool rocketnet_server_rio_test_worker_handoff();
+bool rocketnet_server_rio_test_send_accounting();
 
 static void test_rio_transport_overflow_seam()
 {
@@ -61,5 +62,15 @@ static void test_rio_transport_worker_handoff()
 }
 
 REGISTER_UNIT_TEST( test_rio_transport_worker_handoff );
+
+// Each lost send counts SEND_FAILED once, each sent one PACKETS_SENT once: a
+// finish out of range counts its loss, and a refused commit counts nothing
+// for the deferred sends that later complete.
+static void test_rio_transport_send_accounting()
+{
+    check( rocketnet_server_rio_test_send_accounting() );
+}
+
+REGISTER_UNIT_TEST( test_rio_transport_send_accounting );
 
 #endif // #if defined( _WIN32 )

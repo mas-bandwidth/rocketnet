@@ -1803,6 +1803,91 @@ bool rocketnet_server_rio_test_worker_handoff()
     return valid;
 }
 
+static int rocketnet_rio_accounting_test_asserts = 0;
+
+static void rocketnet_rio_accounting_test_assert( const char *, const char *, const char *, int )
+{
+    rocketnet_rio_accounting_test_asserts++;
+}
+
+// Send accounting on one thread with a fake kernel: each lost packet counts
+// SEND_FAILED once and each sent packet PACKETS_SENT once. A finish with a
+// length out of range loses its packet and counts it; refused commits count
+// nothing, since the deferred sends they leave complete later.
+bool rocketnet_server_rio_test_send_accounting()
+{
+    rocketnet_server_rio_t * rio = rocketnet_rio_test_fixture();
+    if ( !rio )
+        return false;
+    static rocketnet_rio_handoff_test_state_t state;
+    memset( &state, 0, sizeof( state ) );
+
+    const rocketnet_rio_test_function_table_t functions = {
+        rocketnet_rio_handoff_test_dequeue,
+        rocketnet_rio_handoff_test_receive,
+        rocketnet_rio_handoff_test_send
+    };
+    rocketnet_rio_handoff_test_state = &state;
+    rocketnet_rio_test_functions = &functions;
+    state.receive_paused = true;
+
+    bool valid = true;
+
+    rocketnet_address_t to;
+    memset( &to, 0, sizeof( to ) );
+    to.type = ROCKETNET_ADDRESS_IPV4;
+    to.data.ipv4[0] = 127;
+    to.data.ipv4[3] = 1;
+    to.port = 40001;
+
+    // Two finishes out of range, below one byte and past the ceiling: each
+    // packet is lost and counted, and the post phase skips its slot.
+
+    rocketnet_assert_function_t saved_assert = rn_assert_function;
+    rn_assert_function = rocketnet_rio_accounting_test_assert;
+    const int lengths[2] = { 0, ROCKETNET_RECEIVE_CEILING + 1 };
+    for ( int i = 0; i < 2; ++i )
+    {
+        uint64_t id = 0;
+        uint8_t * frame = rocketnet_server_rio_start_packet( rio, &to, &id );
+        valid &= frame != NULL;
+        if ( frame )
+            rocketnet_server_rio_finish_packet( rio, id, frame, lengths[i] );
+        valid &= rio->counters[ROCKETNET_RIO_COUNTER_SEND_FAILED].load() == (uint64_t) ( i + 1 );
+    }
+    rn_assert_function = saved_assert;
+
+    // Three good packets beside them, and a commit refused on the next four
+    // tries. The phase posts three sends and the worker retries the commit
+    // until it is taken; nothing is counted until the sends complete.
+
+    valid &= rocketnet_rio_test_stage( rio, 3 );
+    rocketnet_server_rio_test_fail_next( rio, ROCKETNET_RIO_TEST_FAULT_COMMIT, 4, WSAENOBUFS );
+    rocketnet_server_rio_send_packets( rio );
+
+    for ( int pass = 0; pass < 8 && rocketnet_server_rio_test_faults_left( rio, ROCKETNET_RIO_TEST_FAULT_COMMIT ) > 0; ++pass )
+    {
+        rocketnet_rio_worker_pass( rio );
+        valid &= rio->uncommitted && state.commits == 0;
+        valid &= rio->counters[ROCKETNET_RIO_COUNTER_SEND_FAILED].load() == 2;
+    }
+
+    valid &= rocketnet_server_rio_test_faults_left( rio, ROCKETNET_RIO_TEST_FAULT_COMMIT ) == 0;
+    for ( int pass = 0; pass < 4 && rocketnet_rio_outstanding_sends( rio ) > 0; ++pass )
+        rocketnet_rio_worker_pass( rio );
+
+    valid &= state.commits == 1 && !rio->uncommitted && rocketnet_rio_outstanding_sends( rio ) == 0;
+    valid &= rio->counters[ROCKETNET_RIO_COUNTER_COMMITS].load() == 1;
+    valid &= rio->counters[ROCKETNET_RIO_COUNTER_PACKETS_SENT].load() == 3;
+    valid &= rio->counters[ROCKETNET_RIO_COUNTER_SEND_FAILED].load() == 2;
+    valid &= rocketnet_rio_accounting_test_asserts == 2;
+
+    rocketnet_rio_handoff_test_state = NULL;
+    rocketnet_rio_test_fixture_free( rio );
+
+    return valid;
+}
+
 #endif // #if ROCKETNET_DEV
 
 // proofs/tla/RNRioDriver.tla TransportReads: the views of the exposed bank
