@@ -1459,9 +1459,9 @@ static void test_loopback_transport_server_batch_drops_packet_larger_than_stride
 }
 
 // The loopback refusals a datagram can meet: a size outside 1 ..
-// ROCKETNET_RECEIVE_CEILING is never queued and never counted; a destination
-// no endpoint holds and a full queue are each one send failure for the sender
-// (and the full queue one drop for the receiver); a batch skips its refused
+// ROCKETNET_RECEIVE_CEILING, a destination no endpoint holds and a full queue
+// are each one send failure for the sender (and the full queue one drop for
+// the receiver); a batch skips its refused
 // datagrams and queues the rest in order; a server receive with no room
 // (stride 0) drops what is queued; an endpoint with no address family is
 // refused at create.
@@ -1502,13 +1502,16 @@ static void test_loopback_transport_io_refusals()
     static uint8_t data[ROCKETNET_RECEIVE_CEILING + 1];
     memset( data, 0x3C, sizeof( data ) );
 
-    // sizes outside 1 .. ROCKETNET_RECEIVE_CEILING: nothing queued, nothing counted
+    // sizes outside 1 .. ROCKETNET_RECEIVE_CEILING: nothing queued, one send
+    // failure each for the sender, no drop for the receiver
 
     const int bad_sizes[] = { 0, -1, ROCKETNET_RECEIVE_CEILING + 1 };
     for ( int i = 0; i < 3; ++i )
+    {
         client.operations->send( client.instance, &server_address, data, bad_sizes[i] );
+        rocketnet_unit_check( client.operations->send_failures( client.instance ) == (uint64_t) i + 1 );
+    }
 
-    rocketnet_unit_check( client.operations->send_failures( client.instance ) == 0 );
     rocketnet_unit_check( rocketnet_loopback_endpoint_dropped( server.instance ) == 0 );
 
     rocketnet_address_t from;
@@ -1530,7 +1533,7 @@ static void test_loopback_transport_io_refusals()
         nowhere.port = (uint16_t) ( nowhere.port + 1 );
 
     client.operations->send( client.instance, &nowhere, data, 4 );
-    rocketnet_unit_check( client.operations->send_failures( client.instance ) == 1 );
+    rocketnet_unit_check( client.operations->send_failures( client.instance ) == 4 );
 
     const rocketnet_platform_send_t mixed[] = {
         { &nowhere, data, 4 },
@@ -1540,7 +1543,7 @@ static void test_loopback_transport_io_refusals()
         { &client_address, data, 5 },
     };
     server.operations->send_batch( server.instance, mixed, 5 );
-    rocketnet_unit_check( server.operations->send_failures( server.instance ) == 1 );
+    rocketnet_unit_check( server.operations->send_failures( server.instance ) == 3 );
     rocketnet_unit_check( client.operations->receive( client.instance, &from, received, sizeof( received ) ) == 3 );
     rocketnet_unit_check( client.operations->receive( client.instance, &from, received, sizeof( received ) ) == 5 );
     rocketnet_unit_check( client.operations->receive( client.instance, &from, received, sizeof( received ) ) == 0 );
@@ -1552,7 +1555,7 @@ static void test_loopback_transport_io_refusals()
         client.operations->send( client.instance, &server_address, data, 4 );
 
     rocketnet_unit_check( rocketnet_loopback_endpoint_dropped( server.instance ) == 1 );
-    rocketnet_unit_check( client.operations->send_failures( client.instance ) == 2 );
+    rocketnet_unit_check( client.operations->send_failures( client.instance ) == 5 );
 
     // a receive with no room (stride 0) drops every queued datagram, as it
     // drops each one larger than the room it has

@@ -592,11 +592,16 @@ static bool loopback_stopped( void * )
 
 static void loopback_send( void * transport, const rocketnet_address_t * to, const uint8_t * data, int bytes )
 {
-    if ( bytes <= 0 || bytes > ROCKETNET_RECEIVE_CEILING )
-        return;
-
     rocketnet_loopback_endpoint_t * sender = (rocketnet_loopback_endpoint_t *) transport;
     rocketnet_loopback_hub_t * hub = sender->hub;
+
+    // a size no receive buffer takes is refused here, one send failure
+
+    if ( bytes <= 0 || bytes > ROCKETNET_RECEIVE_CEILING )
+    {
+        loopback_send_failed( sender, 1 );
+        return;
+    }
 
     // Ordinary client sends preserve in-process delivery under concurrent
     // receive traffic. Disconnect/stop/check never invoke this callback:
@@ -648,7 +653,10 @@ static void loopback_server_send_batch_impl( void * transport, const rocketnet_p
     {
         const rocketnet_platform_send_t & packet = packets[i];
         if ( packet.packet_bytes <= 0 || packet.packet_bytes > ROCKETNET_RECEIVE_CEILING )
+        {
+            loopback_send_failed( sender, 1 );
             continue;
+        }
 
         rocketnet_loopback_endpoint_t * dst = loopback_find_destination( hub, *packet.to );
         if ( !dst )

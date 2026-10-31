@@ -16,8 +16,10 @@
 // server's sized from the hub's clients). Endpoint create and destroy only
 // register and unregister a record. Send and receive never allocate or grow
 // storage. A datagram arriving at the queue ceiling is dropped and counted;
-// queued datagrams keep their arrival order. One hub mutex guards the records
-// and queues.
+// queued datagrams keep their arrival order. The sender counts every datagram
+// it could not queue in its send failures (SEND_FAILED): a size outside
+// 1 .. ROCKETNET_RECEIVE_CEILING, a destination no endpoint holds, or a full
+// queue. One hub mutex guards the records and queues.
 
 #include "rocketnet.h"
 #include "rocketnet_constants.h"
