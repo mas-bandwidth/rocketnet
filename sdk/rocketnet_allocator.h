@@ -228,8 +228,8 @@ struct rn_resend_link_t                 // 12 bytes: resend sequence entry, inde
 // whose descriptor took another ticket is a tombstone; the per-channel reliable
 // FIFO is linked by queue_next and nothing leaves it from the middle.
 // Resend capacity stays W: one slot is in at most one resend sequence, linked
-// to its neighbours by slot index in rn_resend_link_t, and an acked hole stays
-// sequenced until a named removal so a resend walk still counts it.
+// to its neighbours by slot index in rn_resend_link_t, and leaves it on the ack
+// that marks its number acked (proofs/tla/RNResendGenerations.tla).
 
 // ----------------------------------------------------------------
 //                        the region's layout

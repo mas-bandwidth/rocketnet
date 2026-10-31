@@ -30,8 +30,9 @@
 //   - region->send_numbers : W entries of 32 bytes (sender per-number table)
 //   - region->resend_fifo  : W entries of 12 bytes (prev/next slot links plus the descriptor generation),
 //                            shared by the two resend sequences: a number is in at most one.
-//                            Capacity is W. An acked hole stays sequenced until a
-//                            named removal, so a walk still counts it (proofs/tla/RNChannelQueues.tla).
+//                            Capacity is W. A number leaves its sequence on the ack that
+//                            marks it acked, so no acked number is sequenced
+//                            (proofs/tla/RNResendGenerations.tla StampNamesOwner).
 //
 // Each sent packet gets a fresh transport sequence `packet_id`, including
 // every resend. An ack of `packet_id` therefore measures the exact send that
@@ -171,7 +172,7 @@ static inline double rn_window_ack_class_delay( const rn_window_ack_t * ack, boo
 
 // The first slot of a class's resend sequence, or RN_RESEND_NONE, and
 // the slot after `slot` in that sequence, or RN_RESEND_NONE. Walkers follow
-// the resend_fifo array by its slot links (proofs/tla/RNChannelQueues.tla).
+// the resend_fifo array by its slot links (proofs/tla/RNResendFifoLayout.tla).
 uint32_t rn_window_ack_resend_first( const rn_window_ack_t * ack, bool chunk );
 uint32_t rn_window_ack_resend_next( const rn_window_ack_t * ack, bool chunk, uint32_t slot );
 
