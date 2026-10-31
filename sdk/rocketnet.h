@@ -186,6 +186,10 @@
 #define ROCKETNET_MAX_CHANNELS                             32
 #endif // #ifndef ROCKETNET_MAX_CHANNELS
 
+#if ROCKETNET_MAX_CHANNELS < 1 || ROCKETNET_MAX_CHANNELS > 65536
+#error ROCKETNET_MAX_CHANNELS must be between 1 and 65536
+#endif // #if ROCKETNET_MAX_CHANNELS < 1 || ROCKETNET_MAX_CHANNELS > 65536
+
 /// The default client to server send budget, in kbps.
 
 #define ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS            1000
