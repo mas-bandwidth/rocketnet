@@ -4,7 +4,9 @@
 #include "rocketnet_platform.h"
 #include "rocketnet_server_iocp.h"
 #include "rocketnet_server_rio.h"
+#include "rocketnet_memory.h"
 #include <ws2tcpip.h>
+#include <malloc.h>
 #include <atomic>
 #include <thread>
 #include <vector>
@@ -210,6 +212,7 @@ static void iocp_flush( rocketnet_server_iocp_t * transport )
 }
 
 static std::atomic<int> live_allocations{ 0 };
+static std::atomic<int64_t> live_bytes{ 0 };
 static std::atomic<int> allocations{ 0 };
 static int fail_allocation = -1;
 
@@ -224,6 +227,7 @@ static void * allocate( void *, size_t bytes )
     {
         memset( p, 0xB5, bytes );
         live_allocations.fetch_add( 1 );
+        live_bytes.fetch_add( (int64_t) _msize( p ) );
     }
 
     return p;
@@ -234,6 +238,7 @@ static void release( void *, void * p )
     if ( p )
     {
         live_allocations.fetch_sub( 1 );
+        live_bytes.fetch_sub( (int64_t) _msize( p ) );
         free( p );
     }
 }
@@ -2050,6 +2055,69 @@ static void send_failed_log( void *, rocketnet_log_level_t, const char * message
 // counted on the socket and logged with WSAGetLastError(); a good send is not
 // counted. An IPv4 socket and an IPv6 socket: both sendto arms.
 
+// Both Windows server transports size every client-scaled array from the
+// configured max_clients at create: the plan for a server grows with its
+// max_clients alone (the build's ROCKETNET_MAX_CLIENTS is only the bound),
+// the transport holds the send queue that max_clients sets, and the
+// allocator bytes create holds stay within the plan.
+static void test_windows_transports_sized_by_max_clients()
+{
+    const uint64_t iocp_small = rocketnet_server_iocp_allocation_bytes( 1, 4 );
+    const uint64_t iocp_1000 = rocketnet_server_iocp_allocation_bytes( 1, 1000 );
+    const uint64_t rio_small = rocketnet_server_rio_allocation_bytes( 4 );
+    const uint64_t rio_1000 = rocketnet_server_rio_allocation_bytes( 1000 );
+    const uint64_t region_1000 = rocketnet_server_rio_registered_region_bytes( 1000 );
+    printf( "test_windows_transports_sized_by_max_clients iocp_plan_1000=%llu rio_plan_1000=%llu rio_region_1000=%llu iocp_plan_4=%llu rio_plan_4=%llu\n",
+            (unsigned long long) iocp_1000, (unsigned long long) rio_1000, (unsigned long long) region_1000,
+            (unsigned long long) iocp_small, (unsigned long long) rio_small );
+    CHECK( iocp_small > 0 && iocp_small < iocp_1000 );
+    CHECK( rio_small > 0 && rio_small < rio_1000 && region_1000 > 0 );
+    CHECK( rocketnet_server_iocp_allocation_bytes( 1, ROCKETNET_MAX_CLIENTS ) >= iocp_1000 );
+    CHECK( rocketnet_server_iocp_allocation_bytes( 1, 0 ) == 0 && rocketnet_server_iocp_allocation_bytes( 1, ROCKETNET_MAX_CLIENTS + 1 ) == 0 );
+    CHECK( rocketnet_server_rio_allocation_bytes( 0 ) == 0 && rocketnet_server_rio_allocation_bytes( ROCKETNET_MAX_CLIENTS + 1 ) == 0 );
+    CHECK( rocketnet_server_iocp_send_queue_size( 4 ) == 1024 && rocketnet_server_iocp_send_queue_size( 1000 ) == 2048 );
+    CHECK( rocketnet_server_rio_receives( 1000 ) == 4096 );
+
+    rocketnet_address_t bind = address( "127.0.0.1:0" );
+    CHECK( !rocketnet_server_iocp_create( NULL, &bind, 1, 0 ) );
+    CHECK( !rocketnet_server_iocp_create( NULL, &bind, 1, ROCKETNET_MAX_CLIENTS + 1 ) );
+
+    for ( int max_clients : { 4, 1000 } )
+    {
+        const int64_t before = live_bytes.load();
+        bind = address( "127.0.0.1:0" );
+        rocketnet_server_iocp_t * transport = rocketnet_server_iocp_create( NULL, &bind, 1, max_clients );
+        CHECK( transport );
+        const int64_t held = live_bytes.load() - before;
+        rocketnet_server_iocp_test_queue_stats_t stats;
+        rocketnet_server_iocp_test_queue_stats( transport, &stats );
+        CHECK( stats.free_count == rocketnet_server_iocp_send_queue_size( max_clients ) );
+        CHECK( rocketnet_server_iocp_send_room( transport ) == rocketnet_server_iocp_send_queue_size( max_clients ) );
+        printf( "test_windows_transports_sized_by_max_clients iocp max_clients=%d held=%lld plan=%llu\n", max_clients, (long long) held,
+                (unsigned long long) rocketnet_server_iocp_allocation_bytes( 1, max_clients ) );
+        CHECK( held > 0 && (uint64_t) held <= rocketnet_server_iocp_allocation_bytes( 1, max_clients ) );
+        wait_stopped( transport );
+        rocketnet_server_iocp_destroy( transport );
+    }
+
+    CHECK( rocketnet_server_rio_available() );
+    for ( int max_clients : { 4, 1000 } )
+    {
+        const int64_t before = live_bytes.load();
+        bind = address( "127.0.0.1:0" );
+        rocketnet_server_rio_t * transport = rocketnet_server_rio_create( NULL, &bind, max_clients );
+        CHECK( transport );
+        const int64_t held = live_bytes.load() - before;
+        CHECK( rocketnet_server_rio_send_room( transport ) == rocketnet_server_rio_send_queue_size( max_clients ) );
+        const uint64_t plan = rocketnet_server_rio_allocation_bytes( max_clients ) +
+                              rocketnet_memory_allocations( { rocketnet_server_rio_registered_region_bytes( max_clients ) } );
+        printf( "test_windows_transports_sized_by_max_clients rio max_clients=%d held=%lld plan=%llu\n", max_clients, (long long) held,
+                (unsigned long long) plan );
+        CHECK( held > 0 && (uint64_t) held <= plan );
+        rn_native_backend_stop_and_destroy( transport, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy );
+    }
+}
+
 static void test_windows_send_failures_counted()
 {
     const char * binds[] = { "127.0.0.1:0", "[::1]:0" };
@@ -2171,6 +2239,7 @@ static const fault_case_t fault_cases[] = {
     { "test_rio_transport_stop_retries_refused_deferred_commit", test_rio_stop_retries_refused_deferred_commit },
     { "test_windows_port_exclusive", test_windows_port_exclusive },
     { "test_windows_send_failures_counted", test_windows_send_failures_counted },
+    { "test_windows_transports_sized_by_max_clients", test_windows_transports_sized_by_max_clients },
 };
 
 // With no argument every case runs; with names, only those cases run.
