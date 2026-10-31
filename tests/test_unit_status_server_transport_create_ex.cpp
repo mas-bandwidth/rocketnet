@@ -18,7 +18,6 @@
 #include "portable_crt.h"
 
 #include "rocketnet_internal.h"
-#include "rocketnet_config.h"
 #include "rocketnet_connect_token.h"
 
 #include <stdint.h>
@@ -80,19 +79,14 @@ static void own_packet_filter( struct rocketnet_server_transport_config_t * conf
 
 // production-like keys: non-zero and different from the published development
 // keys, so the dev-keys refusal (S11) does not fire and S7/S12/S14 are reached
-static void production_fields( struct rocketnet_server_transport_config_t * config )
+static void production_config( struct rocketnet_server_transport_config_t * config )
 {
+    rocketnet_server_transport_default_config( config );
     own_packet_filter( config );
     memset( config->backend_public_key, 0x42, 32 );
     memset( config->server_public_key, 0x43, 32 );
     memset( config->server_secret_key, 0x44, 32 );
     config->protocol_id = 1;
-}
-
-static void production_config( struct rocketnet_server_transport_config_t * config )
-{
-    rocketnet_server_transport_default_config( config );
-    production_fields( config );
 }
 
 // A named production server rung with a concrete memory plan. The budget=1
@@ -255,13 +249,10 @@ static void test_server_transport_create_ex_reports_every_status()
 
     // S10 and S14: a fault-injecting allocator failing at each allocation in
     // turn yields OUT_OF_MEMORY, and once every allocation succeeds the create
-    // completes with ROCKETNET_STATUS_OK. create_ex reads the revision-1
-    // config prefix, which ends before loopback_hub, so the sweep creates
-    // through the current-size create_current_ex over the current defaults
+    // completes with ROCKETNET_STATUS_OK
     {
         struct rocketnet_server_transport_config_t config;
-        rocketnet_server_transport_default_config_current( &config );
-        production_fields( &config );
+        production_config( &config );
         snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
         rocketnet_test_loopback_hub_context( &state );
         config.loopback_hub = rocketnet_test_loopback_hub();
@@ -274,7 +265,7 @@ static void test_server_transport_create_ex_reports_every_status()
         {
             state.fail_at = state.calls + k;
             status = -1;
-            struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_current_ex(
+            struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex(
                 &state, "127.0.0.1:12345", &config, 1000.0, &status );
             if ( server )
             {

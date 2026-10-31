@@ -49,11 +49,7 @@ void rocketnet_client_transport_default_config( struct rocketnet_client_transpor
     if ( !rocketnet_api_null_guard( config ) )
         return;
 
-    struct rocketnet_client_transport_config_t defaults;
-    rocketnet_client_transport_default_config_current( &defaults );
-
-    memset( config, 0, sizeof( *config ) );
-    memcpy( config, &defaults, ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_PRE_SIMULATOR );
+    rocketnet_client_transport_default_config_current( config );
 }
 
 void rocketnet_server_transport_default_config_current( struct rocketnet_server_transport_config_t * config )
@@ -67,11 +63,7 @@ void rocketnet_server_transport_default_config( struct rocketnet_server_transpor
     if ( !rocketnet_api_null_guard( config ) )
         return;
 
-    struct rocketnet_server_transport_config_t defaults;
-    rocketnet_server_transport_default_config_current( &defaults );
-
-    memset( config, 0, sizeof( *config ) );
-    memcpy( config, &defaults, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1 );
+    rocketnet_server_transport_default_config_current( config );
 }
 
 void rocketnet_message_default_config( struct rocketnet_message_config_t * config )

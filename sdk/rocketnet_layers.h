@@ -279,7 +279,7 @@ void rocketnet_free( void * context, void * p );
 // compiled against. A struct only grows at its end; a known size reads the
 // caller's prefix and defaults the rest, and an unknown size is refused with a
 // log line and nothing is read or written. The unsized entry points read and
-// write exactly revision 1
+// write the whole struct of this header
 
 // -----------------------------------------
 //                   client transport
