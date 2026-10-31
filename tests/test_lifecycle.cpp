@@ -302,6 +302,110 @@ static void check_packet_leases( allocator_state & state )
     check( !leases.insert( context ) && context.packet_id == original.packet_id );
 }
 
+// retired() reads an entry of an earlier epoch while an insert on another
+// thread may claim and rewrite that same entry (proofs/tla/RNPacketLease.tla
+// TRead and TValidate, MCRNPacketLeaseBrokenRetiredPlainFields.cfg). The
+// fields are atomic, so the overlapping read is no data race; with plain
+// fields stored one by one this case is a ThreadSanitizer report in the tsan
+// leg. Each round the owner leases the frame, resets, hands the reader a copy
+// of the retired lease and, once the reader is calling retired() on it,
+// inserts the frame again, which rewrites the retired entry.
+static const int lease_retired_rounds = 20000;
+
+struct lease_retired_race
+{
+    rocketnet_packet_leases_t<8> * leases;
+    rocketnet_packet_context_t copy;
+    std::atomic<int> round;
+    std::atomic<int> reading;
+    std::atomic<int> calls;
+    std::atomic<int> inserted;
+    std::atomic<int> done;
+    int retired_calls;
+};
+
+static void lease_retired_reader( rocketnet_platform_thread_t *, void * data )
+{
+    auto * race = (lease_retired_race *) data;
+    for ( int round = 1; round <= lease_retired_rounds; ++round )
+    {
+        while ( race->round.load( std::memory_order_acquire ) != round )
+        {
+        }
+
+        const rocketnet_packet_context_t copy = race->copy;
+        race->calls.store( 0, std::memory_order_relaxed );
+        race->reading.store( round, std::memory_order_release );
+        for ( int calls = 1; race->inserted.load( std::memory_order_acquire ) != round; ++calls )
+        {
+            race->leases->retired( copy );
+            race->retired_calls++;
+            race->calls.store( calls, std::memory_order_relaxed );
+        }
+
+        race->leases->retired( copy );
+        race->done.store( round, std::memory_order_release );
+    }
+}
+
+static void check_packet_lease_retired_race( allocator_state & state )
+{
+    static rocketnet_packet_leases_t<8> leases{};
+    static uint8_t frame[128]{};
+    static lease_retired_race race;
+    race.leases = &leases;
+    race.round.store( 0 );
+    race.reading.store( 0 );
+    race.inserted.store( 0 );
+    race.done.store( 0 );
+    race.retired_calls = 0;
+
+    auto * reader = rocketnet_platform_thread_create( &state, lease_retired_reader, &race );
+    check( reader );
+
+    for ( int round = 1; round <= lease_retired_rounds; ++round )
+    {
+        rocketnet_packet_context_t context{};
+        context.frame = frame;
+        context.packet_id = (uint64_t) round;
+        context.sequence = (uint64_t) round;
+        context.payload_capacity = 64;
+        check( leases.insert( context ) );
+        leases.reset();
+        check( leases.retired( context ) );
+
+        race.copy = context;
+        race.round.store( round, std::memory_order_release );
+        while ( race.reading.load( std::memory_order_acquire ) != round )
+        {
+        }
+
+        // relaxed: the reader is calling retired() when the insert lands, and
+        // nothing here orders its reads before the insert's writes
+        while ( race.calls.load( std::memory_order_relaxed ) < 2 )
+        {
+        }
+
+        rocketnet_packet_context_t rewrite{};
+        rewrite.frame = frame;
+        rewrite.packet_id = (uint64_t) round + 1;
+        rewrite.sequence = (uint64_t) round + 1;
+        rewrite.payload_capacity = 32;
+        check( leases.insert( rewrite ) );
+        race.inserted.store( round, std::memory_order_release );
+        while ( race.done.load( std::memory_order_acquire ) != round )
+        {
+        }
+
+        check( !leases.retired( context ) );
+        leases.reset();
+    }
+
+    rocketnet_platform_thread_join( reader );
+    rocketnet_platform_thread_destroy( reader );
+    check( race.retired_calls > 0 );
+}
+
 static void check_stats_cadence()
 {
     struct bucket
@@ -1078,6 +1182,7 @@ int main()
 
     check_ack_retention( state );
     check_packet_leases( state );
+    check_packet_lease_retired_race( state );
     check_stats_cadence();
     check_frame_conservation();
     check_memory_geometry( state );

@@ -368,10 +368,11 @@ static void test_packet_lease_resolve_skips_writing_entry()
 REGISTER_UNIT_TEST( test_packet_lease_resolve_skips_writing_entry );
 
 // bug: retired rereads the state after reading the fields and drops a rewritten entry
-// (proofs/tla/RNPacketLease.tla TCmp, MCRNPacketLeaseRetired.cfg; the race is
+// (proofs/tla/RNPacketLease.tla TValidate, MCRNPacketLeaseRetired.cfg; the race is
 // MCRNPacketLeaseBrokenRetiredRace.cfg and the torn answer MCRNPacketLeaseBrokenRetiredTorn.cfg). The race
-// itself is an interleaving inside one call, which a single thread cannot reach, so the model
-// case and its reversed witnesses are the proof of the fix. This test pins the outcomes a
+// itself is an interleaving inside one call, which a single thread cannot reach: the model
+// case and its reversed witnesses prove the fix, and test_lifecycle.cpp
+// check_packet_lease_retired_race drives it on two threads under tsan. This test pins the outcomes a
 // single thread can reach: an unconsumed lease is retired by the reset, and the entry once an
 // insert has claimed it (state writing of the new epoch, one field changed) answers false for
 // the old copy and for a copy changed to match. Not a fail-before test: the old code also
@@ -398,7 +399,7 @@ static void test_packet_lease_retired_rewritten_entry()
 
     const size_t home = decltype( leases )::hash( frame );
     leases.entries[home].state.store( ( leases.epoch << 2 ) | 1, std::memory_order_release );
-    leases.entries[home].context.sequence = 7;
+    leases.entries[home].sequence.store( 7, std::memory_order_relaxed );
 
     rocketnet_packet_context_t changed = original;
     changed.sequence = 7;

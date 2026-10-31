@@ -495,6 +495,7 @@ MCRNPortableTxBrokenNoWake.cfg	MCRNPortableTx.tla	temporal	EveryAcceptedSent	che
 MCRNPacketLease.cfg	MCRNPacketLease.tla	pass	-	check	rnpacketlease	required	-
 MCRNPacketLeaseRetired.cfg	MCRNPacketLease.tla	pass	-	check	rnpacketlease	required	-
 MCRNPacketLeaseBrokenRetiredRace.cfg	MCRNPacketLease.tla	invariant	NoRacyRead	check	rnpacketlease	required	-
+MCRNPacketLeaseBrokenRetiredPlainFields.cfg	MCRNPacketLease.tla	invariant	NoRacyRead	check	rnpacketlease	required	-
 MCRNPacketLeaseBrokenRetiredTorn.cfg	MCRNPacketLease.tla	invariant	NoWrongSuccess	check	rnpacketlease	required	-
 MCRNPacketLeaseBrokenSpinPausedWriter.cfg	MCRNPacketLease.tla	temporal	ResolveCompletes	check	rnpacketlease	required	-
 MCRNPacketLeaseInsertWaitFree.cfg	MCRNPacketLease.tla	pass	-	check	rnpacketlease	required	-
