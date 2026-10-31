@@ -819,6 +819,41 @@ static inline void rocketnet_fuzz_state_save( struct rocketnet_fuzz_pair_t * pai
     saved->client_clock_time = rocketnet_fuzz_client_clock_time;
 }
 
+// Whether two images of one block hold the same bytes. A block holds bytes
+// the library never writes (allocation padding, fields a path leaves alone),
+// so its images do too; the comparison is of the harness's own snapshots,
+// not a read the library makes, and under MemorySanitizer it runs
+// uninstrumented and compares those bytes as the values they hold. The
+// images keep their shadow: a restore copies a never-written byte back as
+// uninitialised, so a library read of it still reports.
+#if defined( __has_feature )
+#if __has_feature( memory_sanitizer )
+#define ROCKETNET_FUZZ_COMPARE_UNINSTRUMENTED 1
+#endif // #if __has_feature( memory_sanitizer )
+#endif // #if defined( __has_feature )
+
+#if defined( ROCKETNET_FUZZ_COMPARE_UNINSTRUMENTED )
+__attribute__(( no_sanitize( "memory" ) ))
+static inline bool rocketnet_fuzz_bytes_equal( const void * a, const void * b, size_t bytes )
+{
+    // a byte loop, not memcmp: the MSan memcmp interceptor checks its
+    // arguments whatever the caller's attribute
+    const uint8_t * x = (const uint8_t *) a;
+    const uint8_t * y = (const uint8_t *) b;
+    for ( size_t i = 0; i < bytes; i++ )
+    {
+        if ( x[i] != y[i] )
+            return false;
+    }
+    return true;
+}
+#else
+static inline bool rocketnet_fuzz_bytes_equal( const void * a, const void * b, size_t bytes )
+{
+    return memcmp( a, b, bytes ) == 0;
+}
+#endif // #if defined( ROCKETNET_FUZZ_COMPARE_UNINSTRUMENTED )
+
 // The page-tracked restore (Linux). A full restore copies every live block
 // back, about 112 MB for the pair, and that copy was most of each input's
 // time. Once both states are saved, every block page is write-protected;
@@ -953,7 +988,7 @@ static inline bool rocketnet_fuzz_protect_setup()
                 break;
 
             const size_t n = bytes - from < rocketnet_fuzz_page_bytes ? bytes - from : rocketnet_fuzz_page_bytes;
-            if ( memcmp( a + from, b + from, n ) != 0 )
+            if ( !rocketnet_fuzz_bytes_equal( a + from, b + from, n ) )
             {
                 rocketnet_fuzz_differ[rocketnet_fuzz_num_differ].block = i;
                 rocketnet_fuzz_differ[rocketnet_fuzz_num_differ].page = (uint32_t) k;
@@ -1068,7 +1103,7 @@ static inline void rocketnet_fuzz_restore_blocks( int which )
     if ( rocketnet_fuzz_check_restore )
     {
         for ( int i = 0; i < rocketnet_fuzz_num_blocks; i++ )
-            rocketnet_fuzz_pair_require( memcmp( rocketnet_fuzz_blocks[i].p, rocketnet_fuzz_block_copies[which][i], rocketnet_fuzz_blocks[i].bytes ) == 0,
+            rocketnet_fuzz_pair_require( rocketnet_fuzz_bytes_equal( rocketnet_fuzz_blocks[i].p, rocketnet_fuzz_block_copies[which][i], rocketnet_fuzz_blocks[i].bytes ),
                                          "a restore leaves every block equal to its saved copy" );
     }
 }
