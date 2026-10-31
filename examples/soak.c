@@ -568,6 +568,19 @@ static int cmp_double( const void * a, const void * b )
     return ( da > db ) - ( da < db );
 }
 
+// a whole decimal argument from min to max: anything else (no digits, trailing
+// characters, out of range, too large for long) is refused
+
+static bool soak_parse_int( const char * text, int min, int max, int * value )
+{
+    char * end = NULL;
+    const long parsed = strtol( text, &end, 10 );
+    if ( end == text || *end != '\0' || parsed < (long) min || parsed > (long) max )
+        return false;
+    *value = (int) parsed;
+    return true;
+}
+
 int main( int argc, char ** argv )
 {
     int num_clients = 1000, seconds = 3, exit_code = 1;
@@ -583,11 +596,19 @@ int main( int argc, char ** argv )
     {
         if ( strcmp( argv[i], "--clients" ) == 0 && i + 1 < argc )
         {
-            num_clients = atoi( argv[++i] );
+            if ( !soak_parse_int( argv[++i], 1, MAX_SOAK_CLIENTS, &num_clients ) )
+            {
+                printf( "FAIL: --clients takes 1 .. %d\n", MAX_SOAK_CLIENTS );
+                return 1;
+            }
         }
         else if ( strcmp( argv[i], "--seconds" ) == 0 && i + 1 < argc )
         {
-            seconds = atoi( argv[++i] );
+            if ( !soak_parse_int( argv[++i], 1, MAX_TICKS / 60, &seconds ) )
+            {
+                printf( "FAIL: --seconds takes 1 .. %d\n", MAX_TICKS / 60 );
+                return 1;
+            }
         }
         else if ( strcmp( argv[i], "--arena-mib" ) == 0 && i + 1 < argc )
         {
@@ -629,7 +650,7 @@ int main( int argc, char ** argv )
     if ( allocator_self_test )
         return soak_arena_self_test();
 #endif // #if defined( ROCKETNET_DEV ) && ROCKETNET_DEV
-    if ( num_clients < 1 || num_clients > MAX_SOAK_CLIENTS || seconds < 1 || seconds * 60 > MAX_TICKS )
+    if ( num_clients < 1 || num_clients > MAX_SOAK_CLIENTS || seconds < 1 || seconds > MAX_TICKS / 60 )
         return 1;
 
     if ( pause_start )
