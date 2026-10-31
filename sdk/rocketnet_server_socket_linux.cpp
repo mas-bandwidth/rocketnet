@@ -1636,7 +1636,9 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
     server_socket->gateway_refresh.address_type = public_address.type;
     server_socket->gateway_resolve = rocketnet_server_socket_resolve_gateway;
     server_socket->gateway_resolve_context = server_socket;
-    snprintf( server_socket->interface_name, sizeof( server_socket->interface_name ), "%s", interface_name );
+    const size_t interface_name_bytes = strnlen( interface_name, sizeof( server_socket->interface_name ) - 1 );
+    memcpy( server_socket->interface_name, interface_name, interface_name_bytes );
+    server_socket->interface_name[interface_name_bytes] = '\0';
 
     // STATE IDENTITY (re-derived twice at review): the identity
     // input contains NOTHING process-derived -- a random 64-bit token
