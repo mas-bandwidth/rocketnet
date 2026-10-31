@@ -52,7 +52,7 @@ so a seed that fails on one OS replays on the others. The reference is
     ./bin/dst --seeds 1-50
     PASS seeds=1-50 runs=50 trace=510908e5051b7f68
 
-measured equal, Release, at executable source 968673ea (current main c456b6fc
+measured equal, Release, at executable source 968673ea (then-current main c456b6fc
 merged into the nightly carry) on all three OSes:
 
     Linux   (x64, gcc)     PASS seeds=1-50 runs=50 trace=510908e5051b7f68
@@ -88,7 +88,7 @@ line or a trace mismatch fails the leg; the log holds the replay line.
 The Linux and macOS sweep lengths were refreshed in Release at executable
 source 968673ea: Linux 10950 seeds PASS in 1442.42 s and macOS 13950 seeds
 PASS in 1153.10 s. Windows (x64, MSVC, Release) was run at executable source
-809ad504 (current main 6fa04f88 merged into the same carry), holding the
+809ad504 (then-current main 6fa04f88 merged into the same carry), holding the
 Windows host exclusively: the build had 0 warnings, the fifteen cases passed,
 `--seeds 1-50` printed `trace=510908e5051b7f68` in 10.90 s, and 5950 seeds
 passed in three chunks with no FAIL line, 1273.25 s in all (0.21 s/seed):

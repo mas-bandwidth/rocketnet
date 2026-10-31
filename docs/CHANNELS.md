@@ -44,42 +44,80 @@ flow layer. Broadcast is an application loop over connected slots.
 
 ## Reliability
 
-The eight values in `enum rocketnet_reliability_t` provide unreliable,
-sequenced, reliable, ordered and receipt-bearing combinations. Ordered and
-sequenced state is per channel. Unreliable records are at most once. Reliable
-records are retransmitted until acknowledged or the reliable timeout ends the
-connection. Large messages use bounded fragmentation and reassembly sized at
-create.
+The eight values in `enum rocketnet_reliability_t` have these delivery rules.
+Names in the table omit the `ROCKETNET_RELIABILITY_` prefix.
 
-A sequenced message in its ordered turn follows one rule whether it is one
-record or a reliable-sequenced block of fragments: it is delivered as soon as
-it is complete and newer than the channel's sequenced watermark; a newer
-in-turn message supersedes an in-turn block still collecting fragments, and
-one no newer is discarded; a held future state never touches it. Only a
-message ahead of its turn is held, at most one per channel, newest wins
-(`proofs/tla/RNChannelTypes.tla`, `InTurnOneRule`).
+| Mode | Delivery while the connection survives | Channel behavior |
+| --- | --- | --- |
+| `UNRELIABLE` | At most once; may be lost | No ordering channel |
+| `UNRELIABLE_SEQUENCED` | Newer state replaces older state; may be lost | Sequenced per channel |
+| `RELIABLE` | Retransmitted until acknowledged | No ordering channel; no send-order guarantee |
+| `RELIABLE_ORDERED` | Retransmitted until acknowledged; delivered in send order | Ordered per channel |
+| `RELIABLE_SEQUENCED` | Retransmitted, but newer state may supersede older state | Sequenced per channel |
+| `UNRELIABLE_WITH_ACK_RECEIPT` | Unreliable delivery plus ACKED or LOSS outcome | No ordering channel |
+| `RELIABLE_WITH_ACK_RECEIPT` | Reliable delivery plus ACKED outcome | No ordering channel |
+| `RELIABLE_ORDERED_WITH_ACK_RECEIPT` | Reliable ordered delivery plus ACKED outcome | Ordered per channel |
 
-The resend delay starts at `message_resend_delay_initial_ms`, follows the shared RTT
-estimator, and remains within `message_resend_delay_min_ms` and
-`message_resend_delay_max_ms`. `reliable_message_timeout_ms` bounds the complete reliable
-operation. `packets_per_update` bounds packet work per connection per update.
+Reliability does not persist across a disconnect. If an application needs a
+transaction to survive reconnect, it must track completion and make retries
+safe at the application level.
+
+All modes accept up to the configured `max_message_bytes`. Messages larger
+than one packet are fragmented and reassembled by the reliable path:
+`UNRELIABLE` promotes to `RELIABLE`, `UNRELIABLE_SEQUENCED` to
+`RELIABLE_SEQUENCED`, and `UNRELIABLE_WITH_ACK_RECEIPT` to
+`RELIABLE_WITH_ACK_RECEIPT`. For state that must never retransmit, keep its size
+at or below `rocketnet_max_unfragmented_message_bytes( reliability, channel )`.
+Plain unreliable messages have a compile-time limit of
+`ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES` (1,411 bytes) before promotion.
+
+Ordered and sequenced modes share a channel's ordering state. A sequenced
+message in its current ordered turn is delivered as soon as it is complete
+and newer than that channel's sequenced watermark. A newer message can
+supersede an incomplete reliable-sequenced message. A sequenced message ahead
+of its ordered turn waits for that turn; at most one such future state is held
+per channel, newest wins. Put independent traffic on different channels to
+avoid ordering dependencies, while remembering that channels still share the
+connection's memory, reliable window, and send budget.
+
+The resend delay starts at `message_resend_delay_initial_ms`, follows the RTT
+estimator, and stays within `message_resend_delay_min_ms` and
+`message_resend_delay_max_ms`. `reliable_message_timeout_ms` ends the connection
+when its oldest unacknowledged reliable number has waited that long since its
+first send. It is not a deadline from `finish_message`: work waiting for its
+first send has no reliable-send timeout, and each fragment has its own first
+send time. `packets_per_update` bounds packet work per connection per update.
 
 ## Receipts and stats
 
-Receipt-bearing sends report `ROCKETNET_RECEIPT_STATUS_ACKED` or
-`ROCKETNET_RECEIPT_STATUS_LOSS` through `rocketnet_client_receipts` or
-`rocketnet_server_receipts`. Receipt serials are scoped to their endpoint.
-A type-5 receipt reports LOSS only after its receipt deadline, the packet's
-send time plus `message_resend_delay_max_ms`; an acknowledgement that arrives
-after the adaptive resend delay but inside that deadline reports ACKED. A send
-refused by the send budget or the transport reports LOSS at once, and an
-entry evicted from the sent-packet map reports LOSS at the eviction, the one
-exception (standard/MESSAGES.md m12).
-The stats structs filled by `rocketnet_client_stats`, `rocketnet_server_stats`
-and `rocketnet_server_client_stats` distinguish ordinary connection-state drops
-(`messages_dropped_not_connected`), budget drops (`messages_dropped_over_budget`) and API misuse
-(`api_misuses`). The field and enum comments in `sdk/rocketnet.h` define each
-public stat and status exactly.
+Only the three `*_WITH_ACK_RECEIPT` modes generate outcomes, although every
+successful finish returns a nonzero serial. Read outcomes with
+`rocketnet_client_receipts` or `rocketnet_server_receipts`. Match serials within
+their endpoint and connection; a reconnect starts fresh message state.
+
+ACKED means the peer acknowledged the containing packet or all fragments; it
+does not confirm that the application committed a transaction. LOSS is only
+reported for unpromoted unreliable receipt sends. It can reflect a missing
+acknowledgement even if the peer received the data. A promoted or explicitly
+reliable receipt send produces ACKED only; no in-flight send receives a
+terminal outcome when its connection ends.
+
+An unreliable receipt's deadline is its packet send time plus
+`message_resend_delay_max_ms`, not the shorter adaptive resend delay. A send
+refused by the send budget or transport reports LOSS immediately; evicting an
+entry from the sent-packet map can also resolve it as LOSS before that deadline.
+
+Receipt reads return the number available and copy only what fits. Iterate
+up to `min(returned_count, capacity)`; rereading returns the same list rather
+than consuming it. Read or copy outcomes before the next update. A full ring
+drops its oldest outcome and increments `receipts_dropped`; choose
+`max_message_receipts` for the application's peak outcomes between updates.
+See [Usage](USAGE.md#receipts) for the complete read pattern.
+
+The public stats distinguish ordinary disconnected sends
+(`messages_dropped_not_connected`), budget drops
+(`messages_dropped_over_budget`), and API misuse (`api_misuses`). Their fields
+and units are defined in [rocketnet.h](../sdk/rocketnet.h).
 
 ## Memory and failure
 
@@ -91,8 +129,9 @@ briefly wait for a lock shared with the I/O thread. Exhausting connection messag
 that connection: the server's slot reads
 `ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED` and the client's state
 reads `ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED`. Unreliable work may be
-dropped at its documented bounded queues; reliable work is retained until it
-is delivered or the connection reaches its timeout.
+dropped at its documented bounded queues; queued reliable work is retained
+while the connection survives. Use `can_send_message` to defer discretionary
+sends before exhausting message memory.
 
 ## Queue scheduling
 

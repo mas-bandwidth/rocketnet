@@ -6,10 +6,10 @@ the config at the documented lifecycle point, and invalid or out-of-range
 values are refused rather than clamped. `docs/ABI-EVOLUTION.md` describes the
 config-size rules.
 
-`rocketnet_client_create` and `rocketnet_server_create` read every variable
-once: the defaults, then the config struct, then the environment, before the
-config is validated and the endpoint's memory is sized. Client connect and
-server start use that resolved config and never read the environment again,
+`rocketnet_client_create` and `rocketnet_server_create` resolve endpoint
+configuration once: defaults, then the config struct, then environment
+overrides, before the config is validated and the endpoint's memory is sized. Client connect and
+server start use that resolved config and do not re-read those endpoint overrides,
 so a variable changed after create has no effect on that endpoint. The
 variables below are read the same way, at create, except
 `ROCKETNET_DEV_SESSION_SEQUENCE_START`, which is read once per process. Each is
@@ -20,8 +20,8 @@ either an environment form of a public config field (`token_epoch_unix_seconds`,
 | --- | --- |
 | `ROCKETNET_SERVER_IPV4_ADDRESS` | Overrides the `ipv4_address` argument of `rocketnet_server_create`, read at create. Form `a.b.c.d:port`. |
 | `ROCKETNET_SERVER_IPV6_ADDRESS` | Overrides the `ipv6_address` argument of `rocketnet_server_create`, read at create. Form `[v6]:port`. |
-| `ROCKETNET_CLIENT_TOKEN_EPOCH_UNIX_SECONDS` | Sets `token_epoch_unix_seconds`: Unix seconds at the client's game clock zero, for the connect token's time check; 0 reads the wall clock once, at connect. |
-| `ROCKETNET_SERVER_TOKEN_EPOCH_UNIX_SECONDS` | Sets `token_epoch_unix_seconds`: Unix seconds at the server's game clock zero, for the connect token's time check; 0 reads the wall clock once, at the first update after start. |
+| `ROCKETNET_CLIENT_TOKEN_EPOCH_UNIX_SECONDS` | Sets `token_epoch_unix_seconds`: Unix seconds at the client's game clock zero, for the connect token's time check; 0 reads the wall clock once at connect and subtracts the caller's time to establish the epoch. |
+| `ROCKETNET_SERVER_TOKEN_EPOCH_UNIX_SECONDS` | Sets `token_epoch_unix_seconds`: Unix seconds at the server's game clock zero, for the connect token's time check; 0 reads the wall clock once at the first update after start and subtracts that update's time to establish the epoch. |
 | `ROCKETNET_CLIENT_STEP_DRIVEN` | Development libraries only: 1 runs the client's I/O step inside update and send_packets on the caller's thread, with no network thread; 0 (the default) keeps the network thread. Production libraries do not recognize this variable. |
 | `ROCKETNET_DEV_SESSION_SEQUENCE_START` | Development libraries only: the first session-phase sequence every session in this process sends, in place of 1, so a run reaches the wire's 32-bit sequence wrap in seconds. Read once per process, at the first create that asks, and fixed from then on. Decimal, or hex with `0x`; range `1 .. 2^62`. Unset or empty is 1; any other value is refused with one error line and 1 is used. Production libraries do not read it. |
 | `ROCKETNET_DEV_CLIENT_PACKET_LOSS_PERCENT` | Development only: outgoing client loss, 0 .. 100; 0 is off. |
@@ -36,8 +36,8 @@ either an environment form of a public config field (`token_epoch_unix_seconds`,
 | `ROCKETNET_SERVER_SIMULATED_DROP_EVERY_NTH` | Development only: drop every Nth outgoing server datagram, 2 .. 1000000; 0 is off. |
 | `ROCKETNET_CLIENT_SIMULATED_REVERSE_WINDOW` | Development only: reverse each window of W outgoing client datagrams, 2 .. 64; 0 is off. |
 | `ROCKETNET_SERVER_SIMULATED_REVERSE_WINDOW` | Development only: reverse each window of W outgoing server datagrams, 2 .. 64; 0 is off. |
-| `ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES` | The operator memory budget: allocator bytes the client's pre-allocation plan must fit; 0 is no budget. |
-| `ROCKETNET_SERVER_MEMORY_BUDGET_BYTES` | The operator memory budget: allocator bytes a server transport candidate's pre-allocation plan must fit; 0 is no budget. |
+| `ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES` | Maximum bytes for each client transport candidate's plan, excluding the create-time endpoint/message block; 0 is no budget. See below. |
+| `ROCKETNET_SERVER_MEMORY_BUDGET_BYTES` | Maximum bytes for each server transport candidate's plan, including UMEM but excluding the create-time endpoint/message block; 0 is no budget. See below. |
 
 The `ROCKETNET_DEV_` network simulator variables exist in a development
 library only and are read at create; in code, the same settings are
@@ -53,7 +53,7 @@ Process-wide and platform-specific controls:
 | --- | --- |
 | `ROCKETNET_TEST_XDP_FAIL_AT_QUEUE` | Development libraries only (DEV=1): fail XDP queue creation at the named queue index. Production libraries do not recognize this variable. |
 | `ROCKETNET_TEST_GSO_PLAIN` | Read only under `ROCKETNET_DEV` at `sdk/rocketnet_server_gso_linux.cpp`: `1` forces the plain GSO send path. A production build (`ROCKETNET_DEV=0`) does not recognize this variable. |
-| `ROCKETNET_LOG_LEVEL` | Maximum emitted log level before initialization logs: 0 .. 5 (`ROCKETNET_LOG_LEVEL_NONE` .. `ROCKETNET_LOG_LEVEL_SPAM`). A value outside that range is ignored with a warning. |
+| `ROCKETNET_LOG_LEVEL` | Maximum emitted log level before initialization logs: 0 .. 5 (`ROCKETNET_LOG_LEVEL_NONE` .. `ROCKETNET_LOG_LEVEL_SPAM`). Only a whole-string decimal integer is accepted; names such as `info` and values outside that range are ignored with a warning. |
 | `ROCKETNET_GATEWAY_ETHERNET_ADDRESS` | Linux XDP only: overrides gateway MAC discovery in `xx:xx:xx:xx:xx:xx` form. A malformed value refuses socket creation. |
 
 Development token support is an API helper, not an environment variable.
@@ -85,8 +85,12 @@ development key must not be used for production.
      violates a cross-field invariant (such as
      `max_message_bytes > receive_message_buffer_bytes`,
      a send buffer whose large-slab share cannot hold one maximum message, or
-     `packets_in_flight < reliable_messages_in_flight`) fails with
-     `ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE`. Values are never silently clamped.
+     `packets_in_flight < reliable_messages_in_flight`) usually fails with
+     `ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE`. Some fields have
+     a specific status: for example, a negative send budget returns
+     `ROCKETNET_STATUS_INVALID_ARGUMENT`, and the published test filter in a
+     production library returns `ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION`.
+     Values are never silently clamped.
 3. **Frozen at `create` (never re-read at `connect` or `start`)**:
    `rocketnet_client_create` and `rocketnet_server_create` store the resolved
    transport config, message config, wire send budget, and
@@ -142,14 +146,15 @@ include:
   receive queue and fill set, a 32,768-entry fill ring, and 49,152 UMEM frames
   per queue.
 - **Right-sizing server match capacity**: set `ROCKETNET_SERVER_MAX_CLIENTS` to
-  the server instance's actual player cap (`1 .. ROCKETNET_MAX_CLIENTS`) when
-  the binary leaves `config.max_clients` at `0`. Above 1,000 players, callers
+  the server instance's actual player cap (`1 .. ROCKETNET_MAX_CLIENTS`),
+  regardless of `config.max_clients`; environment values take
+  precedence over the struct. Above 1,000 players, callers
   must research, stabilize, and qualify their own configuration and host
   deployment; no arbitrary client count or validated-above-1000 guarantee is
   provided.
 - **Keeping client and server protocol geometry aligned**: if you override
-  `ROCKETNET_SERVER_NUM_CHANNELS`, `ROCKETNET_SERVER_MAX_MESSAGE_BYTES`,
+  `ROCKETNET_SERVER_NUM_CHANNELS`, `ROCKETNET_SERVER_RELIABLE_MESSAGES_IN_FLIGHT`,
   `ROCKETNET_SERVER_RECEIVE_MESSAGE_BUFFER_BYTES`, or
-  `ROCKETNET_SERVER_SEND_MESSAGE_BUFFER_BYTES`, apply matching compatible
-  values on the client (`ROCKETNET_CLIENT_NUM_CHANNELS`, etc.) so both sides
-  agree on channel count and maximum message size.
+  `ROCKETNET_SERVER_MAX_MESSAGE_BYTES`, set the matching client field to the
+  same value. Local send buffers, queues, and rates may differ; each endpoint
+  must still satisfy its own cross-field constraints.

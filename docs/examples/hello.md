@@ -1,15 +1,14 @@
 # Hello
 
-The least RocketNet program that works: a server and a client in one process
+A small introductory RocketNet program: a server and a client in one process
 over the in-memory `loopback` transport, which needs no socket and no network.
 
 ## What it shows
 
 1. Initialize the library.
 2. Fill a server config with `rocketnet_server_default_config`, copy
-   `ROCKETNET_DEV_BACKEND_PUBLIC_KEY` into `backend_public_key`, select an
-   ephemeral port, and pin the `loopback` transport. Server create generates
-   the server's ephemeral sealing keypair.
+   `ROCKETNET_DEV_BACKEND_PUBLIC_KEY` into `backend_public_key`, create a shared loopback hub, select a virtual ephemeral port, and pin the `loopback` transport. Server create generates
+   the server object's sealing keypair, retained until destroy.
 3. After start, read the bound address with `rocketnet_server_ipv4_address`
    and the generated public key with `rocketnet_server_public_key`. Pass both
    to `rocketnet_create_dev_connect_token`, which writes an opaque,
@@ -20,8 +19,8 @@ over the in-memory `loopback` transport, which needs no socket and no network.
    server with `rocketnet_client_can_send_message`, `rocketnet_client_start_message`, checking that the returned pointer is
    non-`NULL` (`if ( out )`) before writing the text straight into the returned buffer
    and calling `rocketnet_client_finish_message` with the bytes written inside that
-   branch (calling `finish_message` without a successful outstanding `start_message`
-   is an error and returns `0`).
+   branch (calling `finish_message` without a live start asserts in debug builds
+   and returns `0` in release builds).
 6. Receive and print it on the server, disconnect the
    client, poll `rocketnet_client_disconnected` (stepping `rocketnet_client_update`)
    before destroying that client.
@@ -57,26 +56,13 @@ PASS
 ```
 
 The first line is the message the server received. `PASS` means the client
-connected, the message arrived, and the client reconnected with a second
-token and disconnected cleanly. The informational log lines before it come
+connected, the message arrived, and a second client connected with a second
+token and disconnected cleanly. This does not exercise reuse of one client
+object for reconnect. The informational log lines before it come
 from the library and are not part of the check.
 
-## Public calls it uses
+<a id="public-calls-it-uses"></a>
 
-- `rocketnet_init`, `rocketnet_term`
-- `rocketnet_server_default_config`, `rocketnet_server_create`,
-  `rocketnet_server_start`, `rocketnet_server_stop`, `rocketnet_server_stopped`,
-  `rocketnet_server_destroy`,
-  `rocketnet_server_update`, `rocketnet_server_send_packets`,
-  `rocketnet_server_ipv4_address`,
-  `rocketnet_server_public_key`, `rocketnet_server_receive_messages`
-- `rocketnet_client_default_config`, `rocketnet_client_create`,
-  `rocketnet_client_connect`, `rocketnet_client_disconnected`,
-  `rocketnet_client_destroy`,
-  `rocketnet_client_update`, `rocketnet_client_send_packets`,
-  `rocketnet_client_disconnect`, `rocketnet_client_state`,
-  `rocketnet_client_start_message`, `rocketnet_client_finish_message`,
-  `rocketnet_client_receive_messages`
-- `rocketnet_create_dev_connect_token` and
-  `ROCKETNET_DEV_BACKEND_PUBLIC_KEY` (development library only)
-- `rocketnet_status_name`, `rocketnet_time`, `rocketnet_sleep`
+Source: [`examples/hello.c`](../../examples/hello.c). See the
+[integration guide](../USAGE.md) for shared lifecycle, threading, and message
+ownership rules.

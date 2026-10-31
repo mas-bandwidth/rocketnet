@@ -97,10 +97,17 @@ example uses that default. A deployment that needs a stable server identity
 can instead supply `config.server_secret_key` at create; it has no environment
 variable. Wipe the caller's copy after create. The server keeps its key across
 stop/start, and destroy wipes its copy. See [Keys](KEYS.md#where-each-key-lives). After `rocketnet_server_start` succeeds, the server
-exports its bound UDP address and 32-byte X25519 public key
-(`rocketnet_server_public_key`) so the backend can seal tokens to it. From
-[examples/backend_server.c](../examples/backend_server.c), lines 101 to 120 and
-127 to 163:
+exports its bound UDP address and 32-byte X25519 public key. The complete
+[backend server example](../examples/backend_server.c) checks create and start
+separately, calls `rocketnet_server_ipv4_address` and
+`rocketnet_server_public_key`, and writes the public registration fields to
+`backend.env`. Its shutdown helper waits for completion before destroying the
+server. Use reachable advertised addresses in a deployment; a loopback address
+in this local example is reachable only from the same host.
+
+The create/start failure branch below is an excerpt, with `config`, `address`,
+and the example shutdown helper already defined. From
+[examples/backend_server.c](../examples/backend_server.c), lines 101 to 120:
 
 ```c
     enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
@@ -123,46 +130,6 @@ exports its bound UDP address and 32-byte X25519 public key
 
         return 1;
     }
-```
-
-```c
-    char served_address[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
-    uint8_t server_public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
-    char server_public_key_base64[4 * ( ( ROCKETNET_SERVER_PUBLIC_KEY_BYTES + 2 ) / 3 ) + 1];
-    if ( !rocketnet_server_ipv4_address( server, served_address, sizeof( served_address ) ) )
-    {
-        printf( "FAIL: server ipv4 address\n" );
-        rn_cli_server_stop_and_destroy( server );
-
-        const enum rocketnet_status_t term_status = rocketnet_term();
-        if ( term_status != ROCKETNET_STATUS_OK )
-        {
-            printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
-        }
-
-        return 1;
-    }
-
-    rocketnet_server_public_key( server, server_public_key );
-    write_base64( server_public_key, ROCKETNET_SERVER_PUBLIC_KEY_BYTES, server_public_key_base64 );
-
-    FILE * env = fopen( ENV_FILE, "w" );
-    if ( !env )
-    {
-        printf( "FAIL: could not write %s\n", ENV_FILE );
-        rn_cli_server_stop_and_destroy( server );
-
-        const enum rocketnet_status_t term_status = rocketnet_term();
-        if ( term_status != ROCKETNET_STATUS_OK )
-        {
-            printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
-        }
-
-        return 1;
-    }
-
-    fprintf( env, "ROCKETNET_BACKEND_SERVER_ADDRESSES=%s\nROCKETNET_BACKEND_SERVER_PUBLIC_KEY=%s\n", served_address, server_public_key_base64 );
-    fclose( env );
 ```
 
 Start the production server in Terminal 1 with only the public verification key,
@@ -194,7 +161,7 @@ curl -i -X PUT http://localhost:8080/servers/local \
 **Title-owned seam — server registration authentication:** The example backend
 accepts unauthenticated `PUT /servers/{serverID}` requests on `localhost` (up to
 4096 bytes) for local testing. In production, authenticate server registration
-on a trusted control plane (mTLS, fleet credentials, or private network) so
+on a trusted control plane (for example, mTLS or fleet credentials) so
 untrusted callers cannot add or overwrite servers in the registry.
 
 ## 4. Authenticate a player, mint a token, and connect the C client
@@ -205,9 +172,7 @@ example backends, `GET /match/{clientID}` accepts an unauthenticated decimal
 random (`registry.random()` / `registry.Random()`). In production, your match
 endpoint authenticates the player's platform or account session first, derives
 the authoritative `uint64_t` `client_id` on the backend, and selects a server by
-region, capacity (such as the demonstrated 1000-player `ROCKETNET_MAX_CLIENTS`
-server configuration under its stated workload and deployment conditions), or
-match assignment before minting the token.
+region, available capacity, or match assignment before minting the token.
 
 The minted 768-byte connect token (`ROCKETNET_CONNECT_TOKEN_BYTES`, encoded as
 1024 base64 characters) binds:
@@ -227,65 +192,13 @@ The minted 768-byte connect token (`ROCKETNET_CONNECT_TOKEN_BYTES`, encoded as
   256-byte `user_data`) is sealed via `crypto_box_seal`, with the 576-byte
   `signed_connect_data` signed by `ROCKETNET_BACKEND_PRIVATE_KEY`.
 
-Pass the opaque base64 token to `rocketnet_client_connect`. From
-[examples/backend_client.c](../examples/backend_client.c), lines 50 to 103:
-
-```c
-    const uint8_t packet_filter[ROCKETNET_PACKET_FILTER_BYTES] = EXAMPLE_BACKEND_PACKET_FILTER;
-    struct rocketnet_client_config_t config;
-    const enum rocketnet_status_t client_config_status = rocketnet_client_default_config( &config );
-    if ( client_config_status != ROCKETNET_STATUS_OK )
-    {
-        printf( "FAIL: client default config: %s\n", rocketnet_status_name( client_config_status ) );
-
-        const enum rocketnet_status_t term_status = rocketnet_term();
-        if ( term_status != ROCKETNET_STATUS_OK )
-        {
-            printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
-        }
-
-        return 1;
-    }
-
-    config.transport = "portable";
-    memcpy( config.packet_filter, packet_filter, sizeof( packet_filter ) );
-    config.state_change_callback = state_changed;
-
-    enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
-    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &config, &create_status );
-    if ( !client || create_status != ROCKETNET_STATUS_OK )
-    {
-        printf( "FAIL: client create: %s\n", rocketnet_status_name( create_status ) );
-
-        const enum rocketnet_status_t term_status = rocketnet_term();
-        if ( term_status != ROCKETNET_STATUS_OK )
-        {
-            printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
-        }
-
-        return 1;
-    }
-
-    // connect checks the token first: a string that does not parse, or one
-    // already expired, is refused here
-
-    const enum rocketnet_status_t status = rocketnet_client_connect( client, argv[2] );
-    if ( status != ROCKETNET_STATUS_OK )
-    {
-        printf( "FAIL: connect refused: %s\n", rocketnet_status_name( status ) );
-        rn_cli_client_stop_and_destroy( client, 1000.0 );
-
-        const enum rocketnet_status_t term_status = rocketnet_term();
-        if ( term_status != ROCKETNET_STATUS_OK )
-        {
-            printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
-        }
-
-        return 1;
-    }
-
-    printf( "backend_client: mode=%s transport=%s\n", ROCKETNET_DEV ? "development" : "production", rocketnet_client_transport_name( client ) );
-```
+Pass the opaque base64 token to `rocketnet_client_connect`. A return of
+`ROCKETNET_STATUS_OK` starts the handshake; it does not mean connected. The
+[backend client example](../examples/backend_client.c) sets the matching title
+packet filter, checks create and connect separately, then drives updates until
+`rocketnet_client_state` reports `ROCKETNET_CLIENT_STATE_CONNECTED` or a
+terminal state. It drains received messages and waits for disconnect completion
+before destroying the client.
 
 Request a fresh token and connect the production C client (or run the automated
 end-to-end verification across both Go and C# backends):
@@ -297,51 +210,25 @@ python3 tools/run_backend_examples.py --build build-production --production
 
 ## 5. Handle token and handshake refusals safely
 
-- **Backend HTTP refusals:**
-  - `GET /match/{clientID}` returns `HTTP 503 Service Unavailable` when no
-    servers are registered; register a live server via `PUT /servers/{serverID}`
-    (`HTTP 204 No Content`) before matching.
-  - `GET /match/{clientID}` returns `HTTP 400 Bad Request` if `clientID` is not
-    an unsigned 64-bit decimal integer.
-  - `PUT /servers/{serverID}` returns `HTTP 400 Bad Request` (or `HTTP 413` in
-    C# when the body exceeds 4096 bytes) if `serverID` is empty or over the
-    limit (Go: `> 128` bytes; C#: `> 128` characters), JSON is malformed, `addresses` is empty, has `> 2` entries, repeats
-    an IP family, uses a hostname instead of a literal IP, uses port `0`, or
-    `public_key` is not 32-byte base64.
-  - For unknown JSON fields, the Go backend returns `HTTP 400 Bad Request`; the
-    C# backend currently accepts and ignores them. Send only the documented
-    `addresses` and `public_key` fields, and do not rely on that C# behavior.
-- **Synchronous pre-send refusals at `rocketnet_client_connect(client, token)`:**
-  - `NULL` pointer -> `ROCKETNET_STATUS_INVALID_ARGUMENT` (`-6`).
-  - Empty string, length `!= 1024`, invalid base64, wrong `wire_version`, bad
-    `address_flags`, `timeout_seconds <= 0`, or `create_timestamp > expire_timestamp`
-    -> `ROCKETNET_STATUS_INVALID_CONNECT_TOKEN` (`-15`) (setting
-    `ROCKETNET_CLIENT_STATE_INVALID_CONNECT_TOKEN` = `-6` when the 768-byte
-    token decoded but failed field validation).
-  - Token already expired (`expire_timestamp <= current_timestamp`) ->
-    `ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED` (`-16`) and state
-    `ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED` (`-7`).
-  - Token sealed to the published development server key in a `ROCKETNET_DEV=0`
-    build -> `ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION` (`-30`).
-  - Token naming port `0` -> `ROCKETNET_STATUS_CONNECT_TOKEN_PORT_ZERO` (`-31`).
-  - **Safe action:** Do not enter the connected loop; request a fresh token from
-    the backend before calling `rocketnet_client_connect` again.
-- **Asynchronous handshake refusals (`rocketnet_client_state(client) < 0` during `rocketnet_client_update`):**
-  - Wrong `protocol_id`, wrong or stale `server_public_key` (e.g., server object was
-    recreated with a new key without re-registering), unadvertised server address, or token
-    expired on arrival -> server ignores the request before the cookie gate;
-    client ends in `ROCKETNET_CLIENT_STATE_COOKIE_REQUEST_TIMED_OUT` (`-2`) or
-    `ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED` (`-7`).
-  - Wrong backend signing key (`ROCKETNET_SERVER_BACKEND_PUBLIC_KEY` mismatch),
-    corrupted sealed private block, token already used by another client
-    address, or `client_id` already connected -> server ignores the post-cookie
-    connection request; client ends in
-    `ROCKETNET_CLIENT_STATE_CONNECTION_REQUEST_TIMED_OUT` (`-3`) or
-    `ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED` (`-7`).
-  - All `max_clients` server slots full -> server sends a sealed denial; client
-    ends in `ROCKETNET_CLIENT_STATE_CONNECTION_DENIED` (`-1`).
-  - **Safe action:** Call `rocketnet_client_disconnect(client)`, poll
-    `rocketnet_client_disconnected(client)` until `true`, and request a
-    **fresh** connect token from the backend before reconnecting (or call
-    `rocketnet_client_destroy(client)`). Never reuse an expired or consumed
-    connect token.
+Treat each stage separately:
+
+- HTTP failures come from registration or matching. An empty registry returns
+  503; malformed registration or client IDs are rejected. Correct the request
+  or fleet state before retrying.
+- A negative status from `rocketnet_client_connect` refuses the attempt
+  immediately. Check the specific status: invalid or expired token, production
+  development-key guard, port zero, pending shutdown, or transport failure.
+- A successful connect can still end in a negative client state during updates.
+  Timeouts alone do not identify the cause: address, filter, key, protocol,
+  token age, load, and network loss can all prevent the handshake.
+
+On a terminal state, request disconnect and poll
+`rocketnet_client_disconnected` from the event loop (updating step-driven
+clients) until it returns true. Then fetch a fresh token just before reconnect,
+or destroy the client if exiting. Do not spin on an expired token or on a
+worker that is still stopping.
+
+The [backend reference](../examples/backend/README.md#failure-and-refusal-flows-status-codes-and-safe-recovery-actions)
+lists exact HTTP refusals and handshake stages. For general configuration,
+transport, messaging, and shutdown recovery, use
+[Troubleshooting](ERRORS-AND-LOGGING.md).

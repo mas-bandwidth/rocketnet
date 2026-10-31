@@ -11,14 +11,15 @@ The version lives in `sdk/rocketnet.h`, in two branches selected by
 
 The shipping branch carries `ROCKETNET_VERSION_FULL` and the integer macros
 `ROCKETNET_VERSION_MAJOR`, `ROCKETNET_VERSION_MINOR` and
-`ROCKETNET_VERSION_PATCH`. Main targets the next preview: the full label is
+`ROCKETNET_VERSION_PATCH`. At this revision, the full label is
 `"v1.0.0-preview-5"` and the integers are `1.0.0`. The development branch uses
 `"dev"` and the integer sentinel `255.255.255`.
 
-Preview-5 is an unreleased candidate. Its version records the standard
-corrections and CI repairs since preview-4; advancing the label does not tag
-or publish a release. Preview-4 remains the latest published release until
-the release procedure below is completed.
+The header label does not identify the current checkout as a release. The
+`v1.0.0-preview-5` tag identifies commit
+`77cd38b0a4f879f3ae04ee6681ac7d94bfd63151`; later commits can still carry that
+label. Check the exact tag and the repository's published release when choosing
+an artifact. Advancing a label alone neither tags nor publishes a release.
 
 The numeric `ROCKETNET_VERSION`, CMake project `VERSION` and installed
 `RocketNetConfigVersion.cmake` remain numeric. CMake reads the full label
@@ -42,7 +43,7 @@ label. Keep the installed libraries, export list and consumers consistent.
 The `unreleased-wire-changes` job in the same workflow enforces that `main` does
 not drift past the newest release with unannounced wire changes. It runs on a
 push to `main`, not on a pull request or a tag push, and compares `main` with the newest
-`v*` tag. A commit is wire-affecting when it touches one of these paths:
+`v*` tag. The job classifies a commit as wire-affecting when it touches one of these paths:
 
 - `standard/TRANSPORT.md`
 - `standard/MESSAGES.md`
@@ -51,6 +52,9 @@ push to `main`, not on a pull request or a tag push, and compares `main` with th
 - `sdk/rocketnet_protocol.cpp`
 - `sdk/rocketnet_connect_token.h`
 - `sdk/rocketnet_connect_token.cpp`
+
+This is a path-based check: comments and explanatory edits in those files also
+match, even when no wire behavior changes. The job does not inspect semantics.
 
 When there are wire-affecting commits past the newest tag and the shipping
 version still equals the tag version, the job fails: nothing announces that a
@@ -66,7 +70,7 @@ release once a wire change is on `main`.
 
 ## Default CI requirements
 
-The release commit's green CI run is its qualification. Tag only a `main`
+The release commit's required CI results are its qualification evidence. Tag only a `main`
 commit whose required runs are green; the qualifying run is the green CI run on
 the tagged commit, found from the commit itself, and the release notes do not
 mention it. There is no separate per-release qualification record. The
@@ -106,6 +110,12 @@ required runs are:
   `version consistency` on the pull request that carries the release version
   and on the tag push itself, and `unreleased wire changes`.
 
+The [GCC analyzer evidence limit](TESTING.md#static-analysis-evidence-limit)
+also applies to release qualification: the current wrapper can return green
+without a completed, clean analyzer invocation. Review the actual invocations,
+exit statuses and diagnostics before crediting that job. Required green jobs
+do not override a known failure in the checks they are intended to run.
+
 The other `nightly*.yml` workflows and the fuzz-nightly workflow are watches,
 not release gates. The `msan` workflow (`MemorySanitizer`) is advisory: its
 job is `continue-on-error`. The release commit must also be the commit the tag
@@ -127,10 +137,12 @@ A pushed tag is never moved or reused.
 4. Build and test with `make && ./bin/test`, then `./bin/functional` where the
    platform permits it.
 5. Open the release pull request against `main` with the version change.
-   Merge it, then wait for the CI run on the merged commit to be green.
+   Merge it, then wait for every required run on that merged commit to be green,
+   including the dispatched threaded TSan run. Resolve the evidence limitation
+   above before treating the GCC result as a clean analyzer pass.
 6. On the merged `main` commit, create an annotated tag `vMAJOR.MINOR.PATCH`,
    or `vMAJOR.MINOR.PATCH-PRERELEASE` for a prerelease, for example
-   `v1.0.0-preview-4`, whose complete label equals the shipping
+   `v1.0.0-preview-N`, whose complete label equals the shipping
    `ROCKETNET_VERSION_FULL`. Do not tag a different commit, and do not move or
    reuse a tag after pushing it. Verify its consistency with the header before
    pushing it. Release Check also performs this check on the tag push.

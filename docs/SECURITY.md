@@ -49,7 +49,10 @@ advisory reference in its release notes.
 
 ## Fuzz findings
 
-A fuzz finding is minimized first (`-minimize_crash=1`), then converted with
+A security-sensitive fuzz finding follows the private reporting and disclosure
+process above. Its regression is prepared with the fix, without publishing an
+unresolved vulnerability. A fuzz finding is minimized first
+(`-minimize_crash=1`), then converted with
 `tools/fuzz_finding_to_pcapng.py <harness> <input> --name <name>`, and lands
 with its fix in the same pull request. The functional-tier replay
 (`test_pcapng_corpus_replay` in `tests/functional/corpus_consistency.cpp`, run by
@@ -65,8 +68,7 @@ This policy covers the rocketnet library and its wire protocol. The threat model
 the guarantees, and the explicit non-goals are normative in
 [standard/TRANSPORT.md](../standard/TRANSPORT.md) and
 [standard/MESSAGES.md](../standard/MESSAGES.md), each under **Security
-considerations**. In that
-document's terms, session traffic has forward secrecy while the handshake does
+considerations**. Under RN-1, session traffic has forward secrecy while the handshake does
 not; a sealed box proves nothing about its sender; connection-request replay is a
 denial of service against one client rather than an authentication break; no
 response may be larger than the packet that provoked it; and volumetric floods
@@ -77,10 +79,14 @@ reasoning.
 The connect-token create and expire checks read the application's clock: the
 epoch `token_epoch_unix_seconds` (or `ROCKETNET_CLIENT_TOKEN_EPOCH_UNIX_SECONDS`
 and `ROCKETNET_SERVER_TOKEN_EPOCH_UNIX_SECONDS`) plus the time the caller
-passes. An epoch of 0 reads the wall clock once, at client connect and at the
-server's first update after start, as the epoch; no check reads it again. The application already supplies the clock every other
-deadline reads, so the token clock has the same trust; the expire check stays
-and only its clock source changes.
+passes. An epoch of 0 resolves the epoch once, at client connect and at the
+server's first update after start: wall-clock Unix seconds minus the caller's
+elapsed seconds, with a positive fallback when subtraction is not possible.
+Later checks add the caller's elapsed seconds to that epoch; they do not read
+the wall clock again. Pausing the caller's clock therefore pauses token expiry.
+The application must advance the supplied clock correctly; an explicit epoch
+must represent Unix time at that clock's zero, not Unix time at the current
+update.
 
 The following are in scope for a report: packet parsing and generation, the
 connect handshake and token handling, replay and acknowledgement state, fragment

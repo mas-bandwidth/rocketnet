@@ -4127,7 +4127,7 @@ f8 12 00 00 00 a4 58 a7 b3 00 00 00 98 21 4f fa
 
 An implementation MUST provide the defences the table below names, each by the
 mechanism its row names. A change to any mechanism MUST be re-checked against
-the property the row it carries.
+the property its row names.
 
 | Property | Mechanism |
 |---|---|
@@ -4192,8 +4192,9 @@ input: each row's packet type (u8) and wire size (u16), in the rows' order
 ### t19.2. Development keys
 
 The published development key is a fixed backend signing key. Its public half
-is `ROCKETNET_DEV_BACKEND_PUBLIC_KEY`. It is public: anyone who holds it can
-forge a token a server accepts. It exists so a first wiring works without a
+is `ROCKETNET_DEV_BACKEND_PUBLIC_KEY`. Its signing secret is also published for
+development use, so anyone can mint a token a server using that key accepts.
+It exists so a first wiring works without a
 backend, and it MUST NOT be load-bearing in production. A server still
 generates its own keypair, and a development token still needs a nonzero
 protocol id.

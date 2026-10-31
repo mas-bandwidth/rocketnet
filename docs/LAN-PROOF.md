@@ -9,18 +9,28 @@ interface, and whether that interface is the machine uplink. The real
 inventory lives outside this repository. `scripts/lan-proof.inventory.example`
 has placeholder names only.
 
-`scripts/lan-proof --dry-run` prints every step and contacts no host.
+Add `--dry-run` to a complete `scripts/lan-proof` command to print its plan
+without contacting a host; the inventory, cell and duration are still required.
 `scripts/lan-proof-selftest` checks that dry run and the result-row parser
 on canned logs, and it opens no socket.
+
+The orchestration host needs Bash, Python 3, SSH/SCP and a `timeout` command.
+Remote build steps, and the selftest's build fixtures, require `timeout` or
+`gtimeout` with `--kill-after` support. A macOS host may need that tool installed
+separately; its absence fails the build fixture rather than establishing a
+passing LAN selftest. Live hosts also need the per-platform build tools and
+the bench-lock utilities used by the script. Inventory access and provisioned
+test interfaces are prerequisites, not work performed by a dry run.
 
 A live run, for example the bounded Linux gso cell:
 
 ```text
 scripts/lan-proof --inventory INVENTORY --cell gso --duration 120 \
-    --clients 1000 --commit HEAD --run-dir DIR --run-id 0123456789abcdef
+    --clients 1000 --commit "$(git rev-parse HEAD)" --run-dir DIR --run-id 0123456789abcdef
 ```
 
-checks every host is at the same head and builds it, records each host's
+uses the full commit ID (not the literal string `HEAD`), checks every host is
+at that head and builds it, records each host's
 OS, kernel and every test interface's model, driver, negotiated speed and
 duplex, and refuses to start when a host's foreign load is at or above
 half its core count. Samples are retained every 60 seconds while the cell
@@ -34,7 +44,7 @@ plus the cell duration plus 600 seconds for the copy step and for the
 server's exclusive hold. It starts the server pinned to the transport (Linux
 and macOS by ssh with the copied remote script, the open-file limit raised
 on macOS; Windows under an exclusive lock; the xdp server inside a guest
-on a dedicated test interface), starts shards of at most 250 clients on
+on a dedicated test interface by default), starts shards of at most 250 clients on
 the client machines and never on the server's machine, with no client host
 running more shard processes than half its logical cores, collects every
 log, writes the allocation manifest, runs
@@ -74,10 +84,9 @@ categories are `unknown` rather than all being labeled failed. A speed or NIC
 model that cannot be read is `unknown`. A
 slower switch link is recorded when it is known.
 
-For an xdp cell, the inventory's server interface is a dedicated Linux bridge
-backed by X540 port 0, cabled to the LAN switch. It must not be the host's
-uplink. The XDP cell has no recorded result until that test port is cabled and
-the bridge exists. The script starts the server with the host's own kernel
+For the default xdp guest path, the inventory's server interface is a dedicated
+Linux bridge connected to the test LAN. It must not be the host's uplink.
+The script starts the server with the host's own kernel
 inside a `virtme-ng` guest with three CPUs,
 `irqaffinity=0 isolcpus=1-2 nohz_full=1-2`, and
 `--network bridge=<test bridge>`. The guest holds the whole server, so its
@@ -86,12 +95,24 @@ memory is computed, not fixed: the script runs `load_split plan-server <clients>
 up to whole GiB. The 9848630-byte per-client reserve is the measured run
 reserve (start-time allocations and UMEM) from
 [LOAD.md](LOAD.md#the-nightly-af_xdp-cells-guest-memory); the 1 GiB is the
-guest kernel's own. At 1000 clients the plan is 18394142400 bytes and the
-guest is 34 GiB. The script refuses the xdp cell when the host's
+guest kernel's own. The recorded 1,000-client plan was 18394142400 bytes,
+giving a 34 GiB guest; use the current planner output for another build or
+configuration. The script refuses the xdp cell when the host's
 `MemAvailable` is below the guest size. The guest provisions its bridged LAN
 interface, and the clients use the address printed by the guest's ready line.
 The script refuses the xdp cell when the inventory marks this interface as the
-uplink.
+uplink, unless the separate bare-metal mode below is explicitly selected.
+
+The optional `--xdp-uplink IFACE` selects a bare-metal XDP server instead of
+the guest. The named interface must match the inventory's server interface;
+this mode permits that interface to be the uplink. The script checks that the
+interface is provisioned and has no attached XDP program, then arms a
+`systemd-run` detach timer for the requested duration plus 300 seconds before
+starting the server. Normal teardown detaches, cancels the timer and checks
+the interface. This mode changes a live interface and can interrupt host
+connectivity; a dry run only displays the plan. The historical
+[XDP result](runs/lan-1000-proof-xdp.md) used this mode, not the default guest
+path, and retains its original delivery and timing verdicts.
 
 ## Recorded cells
 

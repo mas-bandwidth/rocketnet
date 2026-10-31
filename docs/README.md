@@ -42,10 +42,17 @@ message exchange → integrate a frame loop → connect a backend → qualify a 
 | Verification models and their execution inventory | [TLA inventory](TLA-INVENTORY.md), [model guide](../proofs/tla/README.md) |
 | Development conventions | [Development notes](CLAUDE.md), [style](STYLE.md) |
 
+For a browsable API reference, run `make docs` from the repository root and
+open `build/docs/html/index.html`. The [reference build instructions](BUILD-REFERENCE.md)
+cover the pinned MrDocs tool and Python dependencies. The generated pages
+come from the public header in the same checkout; use the header that matches
+the library you link.
+
 ## Qualification and history
 
 Start with [Testing and qualification](TESTING.md). The [release process](RELEASING.md#default-ci-requirements)
-uses the release commit's green CI run as qualification. The index explains
+uses the release commit's required CI results as qualification evidence,
+subject to the documented check limitations. The index explains
 what each test tier establishes and labels older qualification records as history. [Release notes](RELEASE-NOTES-v1.0.0-preview-5.md)
 describe migrations; [Hardening](HARDENING.md) explains the verification methods
 and their limits. A plan, model, host-shim test, or successful build is
@@ -68,9 +75,12 @@ cite source ranges for tutorial excerpts and check them when examples change.
 Keep a usable first-success path for every supported platform. Preserve old
 deep links when moving a section, and label historical evidence by scope.
 
-From the repository root, the documentation checks are:
+From the repository root on Linux or macOS, prepare the libraries for the
+compile/run check, then run the documentation checks:
 
 ```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DROCKETNET_BUILD_DEV_LIBRARIES=ON
+cmake --build build --target rocketnet rocketnet_dev --parallel 4
 python3 tools/docs/check_links.py
 python3 tools/docs/check_getting_started.py
 sh tools/docs/check_agents_md.sh all

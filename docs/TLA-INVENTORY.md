@@ -5,6 +5,14 @@ bounded protocol and message machines. `proofs/tla/RUNS.tsv` is the
 maintained run inventory; the repository TLA checker validates its schema,
 inputs and recorded result for each required group.
 
+This is a navigation inventory, not a claim that every model matches every
+current implementation detail. In particular, `RNOutgoingBuild` describes the
+earlier one-message-per-frame design; its recorded results do not qualify the
+current [unreliable aggregation path](OUTGOING-BUILD.md#evidence-and-scope).
+`RNMessageViews` models internal view ownership; the public receive API has no
+release call. Check each model's abstraction and recorded inputs at the source
+revision under review.
+
 | Concern | Main modules | Required property |
 | --- | --- | --- |
 | lossy link | `Link` | the configured loss pattern and fairness assumptions are explicit |
