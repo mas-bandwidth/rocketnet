@@ -703,7 +703,7 @@ structs, except `config_bytes` and `token_epoch_unix_seconds` (listed under
 |---|---|---|---|---|
 | packet_filter | ROCKETNET_CLIENT_PACKET_FILTER | uint8_t[4], base64 | `b7 59 01 00` (test filter) | not exactly 4 bytes, or invalid base64: refuses the create; the test filter in a production build (`ROCKETNET_DEV=0`): refuses the create with `TEST_PACKET_FILTER_IN_PRODUCTION` |
 | max_fragmented_messages | ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES | int | `0` (8) | refuses the create unless `0` or `1..256` |
-| transport | ROCKETNET_CLIENT_TRANSPORT | const char * | `NULL` (`"auto"`) | an unknown name, an empty element, or `auto` inside a list: refuses the create; a list whose every name is skipped for this endpoint on this platform falls back to `auto` with a warning |
+| transport | ROCKETNET_CLIENT_TRANSPORT | const char * | `NULL` (`"auto"`) | an unknown name, an empty element, `auto` inside a list, or a list longer than 63 characters: refuses the create; a list whose every name is skipped for this endpoint on this platform falls back to `auto` with a warning |
 | state_change_callback | none | `void (*)( void *, enum rocketnet_client_state_t, enum rocketnet_client_state_t )` | `NULL` | no environment form |
 | send_kbps | ROCKETNET_CLIENT_SEND_KBPS | int | `1000` | a non-integer refuses the create; `0` is the default (`1000`); a negative value refuses the create with `ROCKETNET_STATUS_INVALID_ARGUMENT`; `ROCKETNET_SEND_KBPS_UNLIMITED` is no send budget; each connection's starting rate |
 | num_channels | ROCKETNET_CLIENT_NUM_CHANNELS | int | `32` (`ROCKETNET_MAX_CHANNELS` when smaller) | refuses the create unless `1..ROCKETNET_MAX_CHANNELS` |
@@ -733,7 +733,7 @@ structs, except `config_bytes` and `token_epoch_unix_seconds` (listed under
 | max_fragmented_messages | ROCKETNET_SERVER_MAX_FRAGMENTED_MESSAGES | int | `0` (8) | refuses the create unless `0` or `1..256` |
 | max_timeout_seconds | ROCKETNET_SERVER_MAX_TIMEOUT_SECONDS | int | `60` | refuses the create unless `1..3600` |
 | handshake_deadline_seconds | ROCKETNET_SERVER_HANDSHAKE_DEADLINE_SECONDS | int | `5` | refuses the create unless `1..60` |
-| transport | ROCKETNET_SERVER_TRANSPORT | const char * | `NULL` (`"auto"`) | an unknown name, an empty element, or `auto` inside a list: refuses the create; a list whose every name is skipped for this endpoint on this platform falls back to `auto` with a warning |
+| transport | ROCKETNET_SERVER_TRANSPORT | const char * | `NULL` (`"auto"`) | an unknown name, an empty element, `auto` inside a list, or a list longer than 63 characters: refuses the create; a list whose every name is skipped for this endpoint on this platform falls back to `auto` with a warning |
 | per_client_send_kbps | ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS | int | `10000` | a non-integer refuses the create; `0` is the default (`10000`); a negative value refuses the create with `ROCKETNET_STATUS_INVALID_ARGUMENT`; `ROCKETNET_SEND_KBPS_UNLIMITED` is no send budget; each client connection's starting rate |
 | num_channels | ROCKETNET_SERVER_NUM_CHANNELS | int | `32` (`ROCKETNET_MAX_CHANNELS` when smaller) | refuses the create unless `1..ROCKETNET_MAX_CHANNELS` |
 | reliable_messages_in_flight | ROCKETNET_SERVER_RELIABLE_MESSAGES_IN_FLIGHT | int | `1024` | refuses the create unless `64..1048576`, a power of two, and at least the fragments of one `max_message_bytes` message (one per 1152 bytes: 911 at the default, so `1024` and up) |
