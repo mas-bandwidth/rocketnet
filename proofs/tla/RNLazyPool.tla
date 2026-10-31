@@ -6,8 +6,8 @@
 (* in the descriptors' free_slot array). The send store's chunk classes    *)
 (* share only this model's lazy watermark discipline (fresh, the in-use    *)
 (* guard and untouched-above-fresh below); their take scans the meta       *)
-(* array's live bits for a contiguous free run and is modelled in          *)
-(* tla/RNSendStore.tla, not by this stack.                                 *)
+(* array's live bits from a cursor for the lowest free chunk, and both     *)
+(* pools are modelled at the code's layout in RNSendStoreLayout.tla.       *)
 (*                                                                         *)
 (* An eager pool threads its free list through every entry at reset, so    *)
 (* the reset writes every entry and touches every page of the pool.  The   *)
@@ -68,7 +68,7 @@ Init ==
     /\ gen = [ i \in Ids |-> 0 ]
     /\ touched = {}
 
-\* rn_region_descriptor_take / rn_send_store_alloc: the free list's head, or
+\* rn_region_descriptor_take: the free list's head, or
 \* the first entry never taken; the taker writes the entry whole
 Take(o) ==
     /\ held[o] = NONE
@@ -83,7 +83,7 @@ Take(o) ==
           \* the eager pool takes its head on the same step
           /\ eager' = Tail(eager)
 
-\* rn_region_send_free / rn_send_store_free_checked: the entry is marked free
+\* rn_region_send_free (rn_region_descriptor_release): the entry is marked free
 \* and pushed on both lists
 Release(o) ==
     /\ held[o] # NONE
@@ -95,7 +95,7 @@ Release(o) ==
           /\ touched' = touched \cup {i}
           /\ UNCHANGED <<fresh, gen>>
 
-\* rn_region_carve / rn_send_store_init_counts: every holder lets go (the
+\* rn_region_carve: every holder lets go (the
 \* region's connection ended), the lazy list empties and the watermark goes
 \* to zero, writing no entry; the eager pool threads every entry again
 Reset ==
@@ -111,9 +111,9 @@ Next == \/ \E o \in Owners : Take(o) \/ Release(o)
 
 Spec == Init /\ [][Next]_vars
 
-\* the lazy in-use query (rn_region_send_data, rn_region_send_free and the
-\* store's free_checked and chunk_next refuse an entry at or past fresh
-\* before reading it)
+\* the lazy in-use query (rn_region_send_data, rn_region_send_free and
+\* rn_region_send_free_fragment refuse a descriptor at or past fresh before
+\* reading it)
 InUse(i) == IF GuardFresh THEN i <= fresh /\ mem[i] = "held" ELSE mem[i] = "held"
 
 TypeOK ==

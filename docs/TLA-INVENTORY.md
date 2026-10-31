@@ -13,6 +13,7 @@ inputs and recorded result for each required group.
 | replay and ACKs | `ReplayWindow`, `RNSentHistory` | replay refusal, honest ACK ranges and bounded retained history |
 | channel delivery | `RNChannel`, `RNChannelTypes` | reliable exactly once, ordered in order, sequenced newest and unreliable at most once |
 | fragmentation | `RNBlocks`, `FragmentsAndAcks` | exact reconstruction, bounded slots and ACK coupling |
+| send store and descriptor pool | `RNSendStore`, `RNLazyPool`, `RNSendStoreLayout` | no chunk or descriptor handed out while live, exact free counts and free stack, a refusal only when nothing is free, no read of never-taken memory, live generations never 0 |
 | receipts | `RNReceipts` | at most one terminal receipt for a receipt-bearing send |
 | endpoint reset | `RNSlots`, `ClientSession` | no state or payload crosses a connection generation |
 | client I/O | `RNBufferHandoff`, `RNClientIo`, `RNClientIoDecrypt` | exclusive buffer ownership, index-only exchanges under a mutex the game thread never waits on, replay before admission and one retirement |

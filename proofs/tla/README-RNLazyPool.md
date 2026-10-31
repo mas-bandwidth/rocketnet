@@ -3,9 +3,11 @@
 The lazily initialized pools of the message layer's region, in
 `sdk/rocketnet_allocator.cpp`: the send descriptor pool
 (`rn_region_descriptor_take`, `rn_region_send_free`,
-`rn_region_send_free_fragment`, `rn_region_carve`) and each class of the send
-store (`rn_send_store_alloc`, `rn_send_store_free_checked`,
-`rn_send_store_chunk_next`, `rn_send_store_init_counts`).
+`rn_region_send_free_fragment`, `rn_region_carve`). Each class of the send
+store (`rn_send_store_find`, `rn_send_store_take`,
+`rn_send_store_free_checked`, `rn_send_store_init_counts`) keeps the same
+watermark discipline with a cursor scan instead of a stack; both pools are
+modelled at the code's layout in [RNSendStoreLayout](README-RNSendStoreLayout.md).
 
 An eager pool threads its free list through every entry when it is reset, so
 a reset writes every entry and touches every page of the pool. At the

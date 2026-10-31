@@ -311,6 +311,7 @@ bool rn_send_store_find( const rn_send_store_t * store, int bytes, uint32_t * ou
 
 // proofs/tla/RNSendStoreLayout.tla Alloc: the chunk is marked live under its
 // next generation, and the watermark and the cursor move past it
+// (proofs/tla/RNSendStore.tla Alloc)
 
 uint32_t rn_send_store_take( rn_send_store_t * store, int bytes, uint32_t index )
 {
@@ -345,7 +346,8 @@ uint32_t rn_send_store_take( rn_send_store_t * store, int bytes, uint32_t index 
 // proofs/tla/RNSendStoreLayout.tla Free: a held chunk's live bit cleared, its
 // generation kept, and the cursor lowered to it. A handle that names no held
 // chunk (RN_CHUNK_NONE, a class past the last, a chunk never taken, a chunk
-// already free) is refused with nothing changed.
+// already free) is refused with nothing changed (proofs/tla/RNSendStore.tla
+// Free and FreeAgain).
 
 bool rn_send_store_free_checked( rn_send_store_t * store, uint32_t handle )
 {
@@ -496,6 +498,7 @@ static void rn_region_point( rn_region_t * region, uint8_t * base, const rn_regi
 }
 
     // proofs/tla/RNConnectionMemory.tla, Reuse: the slate is carved clean
+    // proofs/tla/RNSendStoreLayout.tla Carve: both send pools empty, both watermarks at zero
 void rn_region_carve( rn_region_t * region )
 {
     rocketnet_assert( region && region->base );
@@ -763,7 +766,8 @@ int rn_region_send_fit_store( const rn_region_t * region, int bytes, uint32_t * 
 // exhausted (proofs/tla/RNConnectionMemory.tla, Exhaust) and its owner kicks it on
 // the next decision. A send refused while the region stays exhausted is
 // counted under MESSAGE_MEMORY_EXHAUSTED, the counter that names this refusal,
-// on every refused send, not just at the transition to exhausted.
+// on every refused send, not just at the transition to exhausted
+// (proofs/tla/RNSendStoreLayout.tla Refuse).
 
 static void rn_region_send_refuse( rn_region_t * region, int fit )
 {
