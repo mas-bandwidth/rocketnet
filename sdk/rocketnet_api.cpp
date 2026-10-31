@@ -1797,6 +1797,11 @@ int rocketnet_client_receipts( struct rocketnet_client_t * client, struct rocket
     if ( !rocketnet_api_null_guard( client ) )
         return 0;
 
+    // a NULL out with room to fill is misuse in every state, as the connection's own read counts it
+
+    if ( capacity > 0 && !rocketnet_api_null_guard( out ) )
+        return 0;
+
     struct rocketnet_message_client_t * connection = client->connection ? client->connection : ( client->receipts_retained ? client->retiring : NULL );
     if ( !connection )
         return 0;
@@ -3084,6 +3089,11 @@ const struct rocketnet_message_batch_t * rocketnet_server_receive_messages( stru
 int rocketnet_server_receipts( struct rocketnet_server_t * server, int client_index, struct rocketnet_receipt_t * out, int capacity )
 {
     if ( !rocketnet_api_null_guard( server ) )
+        return 0;
+
+    // a NULL out with room to fill is misuse in every state, as the slot's own read counts it
+
+    if ( capacity > 0 && !rocketnet_api_null_guard( out ) )
         return 0;
 
     int slot;
