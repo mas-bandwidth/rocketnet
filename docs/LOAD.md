@@ -94,35 +94,33 @@ memory or link capacity.
 
 The nightly many-client step (`.github/workflows/nightly-soak.yml`) runs the
 xdp cell as root inside a virtme-ng guest, with the server and all 1,000
-default-profile clients in one `bin/load` process. That guest must hold the
-whole run, including operating-system-owned memory outside the lifecycle
-allocator plan. Historical create-only measurements reported
-`total_public_required_bytes=18214470336` (16.96 GiB: 13.32 GB server, 4.90 MB
-per client), with the xdp server's start adding about 1.87 GB of allocator
-memory and 1.88 GB of UMEM. The current lifecycle plan includes the allocator
-portion; do not add it a second time. In those historical runs a fixed 16G
-guest was OOM-killed (exit 137,
-anon-rss 15.9 GB) and a 24G guest was killed at the shutdown wipe. The step
-runs `LOAD_PLAN_ONLY=1 ./bin/load 1000 60` with the cell's environment first
-and sizes the guest from the plan plus conservative operational headroom: `need = plan + 1000 * reserve_per_client_bytes`, and the guest is `need * 5 / 4 + 1 GiB` (the
-1 GiB is the guest kernel's own), rounded up to whole GiB. It prints `LOAD cell=xdp FAIL runner has ... MiB available` when the runner's `MemAvailable` is
-below that. The guest's load exit status, peak RSS, `/proc/meminfo` totals and
-`dmesg | tail -n 50` go into `vm.log` on every run, so an early end names its
-cause, and the step prints `guest_peak_rss_kib` beside `need_bytes`, with a
-WARN line when the peak passes the need.
+default-profile clients in one `bin/load` process. The plan
+(`LOAD_PLAN_ONLY=1 ./bin/load 1000 60` with the cell's environment) is the
+lifecycle allocator peak: an upper bound on the bytes requested, most of
+which is never touched, since UMEM, rings and pools are allocated whole and
+filled only by traffic. Two things must fit the guest:
 
-The historical reserve was measured against the create-only plan in an
-unconstrained 48G guest on a
-121 GB runner: peak RSS 27397952 kB at 1,000 clients and 13703716 kB at 500,
-against plans of 18214470336 and 9108290368 bytes. That is 9841033 and 9848630
-bytes per client; the step retains the larger as conservative operational
-headroom. It is not a measured residual above the current lifecycle plan:
-part of that historical difference is transport allocator memory now counted
-in the plan. The peak is 1.54 times
-the plan at both counts, so an earlier `plan * 3 / 2 + 2 GiB` sizing sat below
-the peak in its ratio term and passed only on its 2 GiB constant (28G guest,
-27.4 GiB `MemTotal`, 1.3 GiB over the 26.1 GiB peak). For that historical default-profile plan, the need was 28063100336 bytes
-(26.1 GiB) and the guest was 34G, about 7.9 GiB above the measured peak.
+- the server's plan, `server_public_required_bytes`, requested as one block:
+  the guest kernel's overcommit admits it only if the guest holds it;
+- the memory the run touches, its peak RSS.
+
+| Measured on main at 8e792181, Linux fleet host | Bytes |
+|---|---|
+| plan `total_public_required_bytes` | 49,784,521,567 |
+| plan `server_public_required_bytes` (one block) | 19,879,337,567 |
+| peak RSS, 64G guest | 1,687,416 kB |
+| peak RSS, 24G guest | 1,701,968 kB |
+| 16G guest | server create refused, `OUT_OF_MEMORY` |
+
+The step sizes the guest as `need = server plan + 1000 * touched_per_client_bytes`
+(1,742,815, the larger peak over 1,000 clients) and `need * 5 / 4 + 1 GiB`
+(the 1 GiB is the guest kernel's own), rounded up to whole GiB: 27G. It
+writes the plan, the server block, the need, the guest and the runner's
+`MemAvailable` to the job summary, and prints `LOAD cell=xdp FAIL runner has
+... MiB available` when the runner holds less than the guest. The guest's
+load exit status, peak RSS, `/proc/meminfo` totals and `dmesg | tail -n 50`
+go into `vm.log` on every run, and the step prints `guest_peak_rss_kib` with
+a WARN line when the peak passes the measured touched bytes.
 Current guest sizing uses the current plan and therefore differs. Measure
 residual OS and process overhead again against the exact current head,
 configuration and population before treating this allowance as measured
