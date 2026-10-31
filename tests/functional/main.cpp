@@ -29,10 +29,6 @@ const char * rocketnet_functional_test_name( int index );
 void rocketnet_functional_prepare();
 int rocketnet_functional_run_named( const char * name );
 
-// the allocator context rocketnet_init was given, NULL after rocketnet_term
-// (sdk/rocketnet.cpp; declared for Linux in rocketnet_platform.h)
-extern void * rocketnet_global_context;
-
 static int rocketnet_functional_worker( const char * name )
 {
 #if defined( _WIN32 )
@@ -74,12 +70,11 @@ static int rocketnet_functional_worker( const char * name )
     if ( !rocketnet_test_loopback_hub_release() )
         result = 1;
 
-    // a case that ended the library or re-initialised it with a context of
-    // its own installed its own allocator, which may hold that context: it is
-    // not called. Otherwise one probe allocation names the installed allocator
+    // a case that ended the library, or installed an allocator of its own,
+    // leaves the suite-wide bound; the installed allocator is read without
+    // calling it, so a case's allocator whose context has gone is never called
 
-    if ( result == 0 && rocketnet_library_initialized() && rocketnet_global_context == NULL &&
-         plan_rss_installed( rocketnet_malloc, rocketnet_free ) )
+    if ( result == 0 && rocketnet_library_initialized() && rocketnet_allocator_installed( plan_rss_malloc, plan_rss_free ) )
         plan_rss_report();
     rocketnet_term();
     fflush( stdout );

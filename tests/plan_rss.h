@@ -96,14 +96,6 @@ inline std::atomic<uint64_t> & plan_rss_peak()
     return peak;
 }
 
-// every allocation the counter served: plan_rss_installed reads it
-
-inline std::atomic<uint64_t> & plan_rss_calls()
-{
-    static std::atomic<uint64_t> calls( 0 );
-    return calls;
-}
-
 inline void plan_rss_count( uint64_t bytes )
 {
     const uint64_t live = plan_rss_live().fetch_add( bytes ) + bytes;
@@ -141,7 +133,6 @@ inline void plan_rss_unmap( void * block, size_t bytes )
 inline void * plan_rss_malloc( void * context, size_t bytes )
 {
     (void) context;
-    plan_rss_calls().fetch_add( 1 );
     if ( bytes > SIZE_MAX - sizeof( plan_rss_header_t ) - PLAN_RSS_MAP_GRANULE )
         return NULL;
 
@@ -202,24 +193,6 @@ inline long plan_rss_bound_mb()
 {
     const uint64_t mib = 1024 * 1024;
     return (long) ( ( plan_rss_peak().load() + mib - 1 ) / mib ) + PLAN_RSS_SLACK_MB;
-}
-
-// whether the counter is the installed allocator: allocate( 1 ) is the
-// installed allocator's rocketnet_malloc, free( block ) its rocketnet_free.
-// The caller probes only an initialised library with no allocator context,
-// so the probe never calls a case's allocator whose context has gone
-
-inline bool plan_rss_installed( void * ( *allocate )( void * context, size_t bytes ), void ( *release )( void * context, void * p ) )
-{
-    const uint64_t before = plan_rss_calls().load();
-    void * block = allocate( NULL, 1 );
-    if ( !block )
-        return false;
-
-    const bool counted = plan_rss_calls().load() != before;
-    release( NULL, block );
-
-    return counted;
 }
 
 // the report line of a case process that kept the counter

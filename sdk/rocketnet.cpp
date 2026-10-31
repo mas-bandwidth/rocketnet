@@ -518,6 +518,15 @@ static bool rn_allocator_installed_locked( void * ( *malloc_function )( void * c
     return malloc_function == installed->allocate && free_function == installed->release;
 }
 
+// whether these functions are the installed allocator, read with no lock
+// and no allocation; false while an install is publishing
+
+bool rocketnet_allocator_installed( void * ( *malloc_function )( void * context, size_t bytes ), void ( *free_function )( void * context, void * p ) )
+{
+    const rocketnet_allocator_pair_t * installed = rocketnet_allocator_pair.load( std::memory_order_seq_cst );
+    return installed != &rocketnet_allocator_installing && installed->allocate == malloc_function && installed->release == free_function;
+}
+
 int rocketnet_allocator_ex( void * ( *malloc_function )( void * context, size_t bytes ), void ( *free_function )( void * context, void * p ) )
 {
     int status = ROCKETNET_STATUS_INVALID_ARGUMENT;
@@ -714,8 +723,6 @@ const char * rocketnet_platform_name( int platform_id )
     return "unknown";
 }
 
-void * rocketnet_global_context = NULL;
-
 enum rocketnet_status_t rocketnet_init( void * context, void * ( *malloc_function )( void * context, size_t bytes ), void ( *free_function )( void * context, void * p ) )
 {
     int status = ROCKETNET_STATUS_OK;
@@ -769,7 +776,7 @@ bool rocketnet_init_ex( void * context, void * ( *malloc_function )( void * cont
         return false;
     }
 
-    rocketnet_global_context = context;
+    (void) context;
 
     const bool platform_ready = rocketnet_platform_init();
     const bool sodium_ready = platform_ready && sodium_init() >= 0;
@@ -777,8 +784,6 @@ bool rocketnet_init_ex( void * context, void * ( *malloc_function )( void * cont
     {
         if ( platform_ready )
             rocketnet_platform_term();
-
-        rocketnet_global_context = NULL;
 
         {
             rn_lifecycle_lock_t lock;
@@ -857,8 +862,6 @@ int rocketnet_term_ex()
     (void) randombytes_close();
 #endif // #if defined( ROCKETNET_BUNDLED_SODIUM ) && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     rocketnet_platform_term();
-
-    rocketnet_global_context = NULL;
 
     rn_lifecycle_lock_t lock;
 

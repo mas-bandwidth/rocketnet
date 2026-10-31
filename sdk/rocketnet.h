@@ -970,8 +970,9 @@ ROCKETNET_EXPORT uint32_t rocketnet_version( void );
 /// each request is larger than the bytes it uses. free_function receives the
 /// pointer malloc_function returned.
 ///
-/// context goes to the allocator calls init makes. Each create call passes
-/// its own context to the allocator calls for that object.
+/// Init allocates nothing, and its context is not used. Each create call
+/// (client, server and loopback hub) passes its own context to the
+/// allocator calls rocketnet makes for that object.
 ///
 /// Returns ROCKETNET_STATUS_OK, ROCKETNET_STATUS_INVALID_ARGUMENT,
 /// ROCKETNET_STATUS_ALREADY_INITIALIZED,
@@ -983,8 +984,7 @@ ROCKETNET_EXPORT uint32_t rocketnet_version( void );
 /// 0 .. 5, from ROCKETNET_LOG_LEVEL_NONE to ROCKETNET_LOG_LEVEL_SPAM. Other
 /// values are ignored with a warning.
 ///
-/// @param context Passed to malloc_function and free_function for init's own
-/// allocations. May be NULL.
+/// @param context Unused: init allocates nothing. May be NULL.
 /// @param malloc_function Allocates bytes, or NULL for the system allocator.
 /// @param free_function Frees a pointer malloc_function returned, or NULL for
 /// the system allocator.
