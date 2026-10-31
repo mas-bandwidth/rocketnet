@@ -635,6 +635,15 @@ jobs:
         if: runner.os == 'Linux' && matrix.leg == 'checks'
         run: python3 tools/check_platform_policy.py
 
+      # tools/check_tsan_flags.py exits 1 when a workflow compiles with
+      # -fsanitize=thread below -O1, where tsan misses a struct copy's
+      # memcpy write after an unordered read. It reads files only.
+      - name: Check every tsan build compiles at -O1 or above
+        if: runner.os == 'Linux' && matrix.leg == 'checks'
+        run: |
+          python3 tools/check_tsan_flags.py --self-test
+          python3 tools/check_tsan_flags.py
+
       # The static source-audit binary reads the repository's own source,
       # header and doc files (no socket, no thread, no network), so one Linux
       # leg runs it beside the client/server-words check.

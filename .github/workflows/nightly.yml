@@ -305,12 +305,16 @@ jobs:
           done
           exit "$missing"
 
+      # -O1, as ci.yml's tsan leg: at -O0 a struct assignment lowers to a
+      # memcpy, and tsan does not report a memcpy write that follows an
+      # unordered plain read (tools/check_tsan_flags.py holds every tsan
+      # build to this).
       - name: Configure
         run: >
           cmake -B build
           -DCMAKE_BUILD_TYPE=Debug
-          -DCMAKE_C_FLAGS="-fsanitize=thread -fno-omit-frame-pointer"
-          -DCMAKE_CXX_FLAGS="-fsanitize=thread -fno-omit-frame-pointer"
+          -DCMAKE_C_FLAGS="-fsanitize=thread -fno-omit-frame-pointer -O1"
+          -DCMAKE_CXX_FLAGS="-fsanitize=thread -fno-omit-frame-pointer -O1"
           -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread"
 
       - name: Build the suite
