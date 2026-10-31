@@ -101,10 +101,12 @@
 // 22904141 and is now 22904149; the server figure is unchanged.
 // The server figure includes the xdp plan's per-slot replay records,
 // 12133 bytes at 1000 clients (rocketnet_server_replay_marks_allocation_bytes).
+// Re-measured 2026-10-31 on vision (Linux x86-64, Debug, ROCKETNET_DEV=ON)
+// with the disconnect ring and the xdp replay records: 3248706435.
 // The non-dev figures below were not re-measured: this file is not linked
 // when ROCKETNET_DEV=OFF.
 #if ROCKETNET_DEV
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3248682403ULL )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3248706435ULL )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22904149 )
 #else
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3226203446ULL )
