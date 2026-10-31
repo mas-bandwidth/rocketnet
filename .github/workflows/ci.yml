@@ -747,18 +747,19 @@ jobs:
       # transport out. The library then carries no XDP code and no libbpf or
       # libxdp link, and a transport list naming xdp refuses it with
       # TRANSPORT_NOT_BUILT; the default build keeps all of it.
-      - name: Build without XDP; XDP is compiled out and a pin of it refuses
+      - name: Build without XDP; XDP is compiled out, a pin of it refuses, and functional links
         if: runner.os == 'Linux' && matrix.build_type == 'Release' && matrix.leg == 'builds'
         run: |
           python3 tools/test_check_xdp_compiled_out.py
           python3 tools/check_xdp_compiled_out.py --present bin/librocketnet.so build/librocketnet.a
           cmake -S . -B build-no-xdp -DCMAKE_BUILD_TYPE=Release -DROCKETNET_XDP=OFF -DROCKETNET_BUILD_EXAMPLES=OFF -DROCKETNET_BUILD_TOOLS=OFF \
             -DCMAKE_RUNTIME_OUTPUT_DIRECTORY="$PWD/build-no-xdp/bin" -DCMAKE_LIBRARY_OUTPUT_DIRECTORY="$PWD/build-no-xdp/bin"
-          cmake --build build-no-xdp --target rocketnet rocketnet_shared test --parallel
+          cmake --build build-no-xdp --target rocketnet rocketnet_shared test functional --parallel
           python3 tools/check_xdp_compiled_out.py --absent build-no-xdp/bin/librocketnet.so build-no-xdp/librocketnet.a
           for case in test_xdp_compiled_out_pin_refuses_not_built test_xdp_compiled_out_list_takes_the_next_candidate test_xdp_compiled_out_has_no_memory_plan; do
             ./build-no-xdp/bin/test --run "$case"
           done
+          ROCKETNET_SERVER_TRANSPORT=portable ./build-no-xdp/bin/functional --run test_transport_env_pin_is_honoured
 
       # The client build: liburing, libbpf and libxdp are server-only, so a
       # Linux build with ROCKETNET_XDP=OFF and ROCKETNET_IO_URING=OFF needs
