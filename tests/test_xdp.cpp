@@ -9,7 +9,6 @@ bool rocketnet_server_socket_test_buffer_exchange();
 bool rocketnet_server_socket_test_inactive_flow();
 bool rocketnet_server_socket_test_replay_marks();
 bool rocketnet_server_socket_test_send_failures_without_mutex();
-bool rocketnet_server_socket_test_receive_dropped();
 bool rocketnet_server_socket_test_reply_mac_refreshed_at_finish();
 
 int main()
@@ -23,7 +22,6 @@ int main()
     const bool inactive_passed = rocketnet_server_socket_test_inactive_flow();
     const bool replay_passed = rocketnet_server_socket_test_replay_marks();
     const bool send_failures_passed = rocketnet_server_socket_test_send_failures_without_mutex();
-    const bool receive_dropped_passed = rocketnet_server_socket_test_receive_dropped();
     const bool reply_mac_passed = rocketnet_server_socket_test_reply_mac_refreshed_at_finish();
     rocketnet_term();
 
@@ -58,14 +56,6 @@ int main()
     }
 
     printf( "test_xdp_transport_send_failures_without_mutex\n" );
-
-    if ( !receive_dropped_passed )
-    {
-        fprintf( stderr, "native XDP receive-dropped counter check failed\n" );
-        return 1;
-    }
-
-    printf( "test_xdp_transport_receive_frames_dropped_counted\n" );
 
     if ( !reply_mac_passed )
     {

@@ -3120,18 +3120,13 @@ uint64_t rocketnet_server_socket_receive_dropped( struct rocketnet_server_socket
 }
 
 #if ROCKETNET_DEV
-// the xdp operations table (sdk/rocketnet_driver_builtin.cpp) and the builtin
-// dispatch the transport's counter read calls (sdk/rocketnet_server_transport.cpp)
-extern const rocketnet_transport_backend_t rocketnet_xdp_transport;
-bool rocketnet_server_transport_io_receive_frames_dropped( const rocketnet_server_transport_io_operations_t * operations, void * transport,
-                                                           uint64_t * dropped );
-
-bool rocketnet_server_socket_test_receive_dropped()
+bool rocketnet_server_socket_test_receive_dropped( rocketnet_server_socket_test_frames_dropped_t * dispatch,
+                                                   const rocketnet_server_transport_io_operations_t * xdp )
 {
     // two synthetic queues, no worker: each queue's receive drops by reason
-    // reach the transport's XDP_RECEIVE_FRAME_DROPPED through the builtin
-    // dispatch only once the queue publishes them, summed over the reasons
-    // and the queues
+    // reach the transport's XDP_RECEIVE_FRAME_DROPPED through dispatch (the
+    // builtin one the transport's counter read calls, given the xdp table)
+    // only once the queue publishes them, summed over reasons and queues
     void * server_storage = rocketnet_malloc( NULL, sizeof( rocketnet_server_socket_t ) );
     void * queue_storage = rocketnet_malloc( NULL, 2 * sizeof( rocketnet_server_xdp_socket_t ) );
     if ( !server_storage || !queue_storage )
@@ -3148,9 +3143,8 @@ bool rocketnet_server_socket_test_receive_dropped()
     server->num_queues = 2;
     server->socket = queues;
 
-    const rocketnet_server_transport_io_operations_t * xdp = rocketnet_xdp_transport.server;
     uint64_t dropped = 99;
-    bool valid = rocketnet_server_transport_io_receive_frames_dropped( xdp, server, &dropped ) && dropped == 0;
+    bool valid = dispatch( xdp, server, &dropped ) && dropped == 0;
 
     queues[0].receive_drops.not_ip = 1;
     queues[0].receive_drops.ipv6_extension = 2;
@@ -3158,11 +3152,11 @@ bool rocketnet_server_socket_test_receive_dropped()
     queues[1].receive_drops.malformed = 8;
     queues[1].receive_drops.descriptor = 16;
 
-    valid = valid && rocketnet_server_transport_io_receive_frames_dropped( xdp, server, &dropped ) && dropped == 0;
+    valid = valid && dispatch( xdp, server, &dropped ) && dropped == 0;
 
     rocketnet_server_socket_publish_receive_dropped( &queues[0] );
     rocketnet_server_socket_publish_receive_dropped( &queues[1] );
-    valid = valid && rocketnet_server_transport_io_receive_frames_dropped( xdp, server, &dropped ) && dropped == 31;
+    valid = valid && dispatch( xdp, server, &dropped ) && dropped == 31;
 
     queues[1].~rocketnet_server_xdp_socket_t();
     queues[0].~rocketnet_server_xdp_socket_t();
