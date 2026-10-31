@@ -78,17 +78,17 @@ the backend's destroy (`portable_io_client_destroy`,
 caller's thread (3 for gso) before the split and none after it.
 
 The commit-keeps-ring trace is a LATE hand-off before the commit (the ring
-bound to the primary, IPv6, server), a commit to the other family, a LATE
-attempt after it with a slot committed, and the hand-off: the ring leaves
-for the IPv6 server and `rocketnet_client_race_send_batch`, with family 1
+bound to the primary, IPv6, server), a commit to the other family, and a
+hand-off whose attempt commits a slot after the commit: the ring leaves for
+the IPv6 server and `rocketnet_client_race_send_batch`, with family 1
 committed, sends nothing of it. `test_client_race_commit_rebinds_a_late_ring`
 holds the I/O mutex for the update that resends the cookie request, so that
 hand-off is LATE, then lets the cookie from IPv4 commit the race in an update
 whose connection request joins the same ring; before the rebind the request
 never left, and with it the request reaches IPv4 in that update.
 
-The no-snapshot trace is a send failure on family 1, a read (1), a commit
-to family 0, and a read before the reader's step: the kept family's count
+The no-snapshot trace is a send failure on family 0, a read (1), a commit
+to family 1, and a read before the reader's step: the kept family's count
 plus `closed_send_failures`, still 0, is 0.
 `test_client_race_send_failed_holds_across_the_commit` injects send failures
 on the losing family, reads the counters in the update that commits, before

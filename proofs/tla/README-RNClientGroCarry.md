@@ -43,10 +43,10 @@ whenever the room left holds `ROCKETNET_CLIENT_GSO_RECEIVE_MAX_SEGMENTS`.
 | `MCRNClientGroCarryBrokenPastRoom.cfg` | the delivery loop runs while `total <= room` | `InRoom` |
 
 Each counterexample was checked by hand against the code. The drop-tail
-trace is a message of three arriving, a call with room 1 that reads it and
+trace is a message of two arriving, a call with room 1 that reads it and
 delivers its first segment, and the end of that call: in the code before the
 carry, the loop over the segments met `total >= max_packets` at the second
-and added the remaining two to `gro_packets_dropped`, and the next call read
-the socket again. `test_client_gso_receive_splits_gro_by_stride` gives a call
+and added it to `gro_packets_dropped`, and the next call read the socket
+again. `test_client_gso_receive_splits_gro_by_stride` gives a call
 room for four of a ten-segment message and checks that the next calls return
 the other six, in order, before the datagram behind it, with one `recvmmsg`.
