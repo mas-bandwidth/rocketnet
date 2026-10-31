@@ -232,13 +232,15 @@ static int load_timing_init( struct load_timing_t * timing )
     return timing->buckets != NULL;
 }
 
-static uint64_t load_timing_quantile_upper_us( const struct load_timing_t * timing, enum load_timing_call_t call, unsigned percentile )
+/* The upper bound in microseconds of the permille-th quantile: 500 is the
+ * median, 990 is p99, 999 is p999. */
+static uint64_t load_timing_permille_upper_us( const struct load_timing_t * timing, enum load_timing_call_t call, unsigned permille )
 {
     const uint64_t count = timing->count[call];
     if ( count == 0 )
         return 0;
 
-    const uint64_t target = count * percentile / 100;
+    const uint64_t target = count * permille / 1000;
     uint64_t seen = 0;
     const uint64_t offset = (uint64_t) call * LOAD_TIMING_BUCKET_COUNT;
 
@@ -254,6 +256,11 @@ static uint64_t load_timing_quantile_upper_us( const struct load_timing_t * timi
     }
 
     return ( timing->max_ns[call] + 999ULL ) / 1000ULL;
+}
+
+static uint64_t load_timing_quantile_upper_us( const struct load_timing_t * timing, enum load_timing_call_t call, unsigned percentile )
+{
+    return load_timing_permille_upper_us( timing, call, percentile * 10 );
 }
 
 static void load_timing_print( const struct load_timing_t * timing )
@@ -319,6 +326,20 @@ static int load_timing_selftest( void )
     timing.enabled = 0;
     LOAD_TIMED_VOID( &timing, LOAD_TIMING_CLIENT_UPDATE, calls++ );
     ok = ok && calls == 2 && timing.count[LOAD_TIMING_CLIENT_UPDATE] == 3;
+
+    /* 999 samples in the first microsecond and one at 50 us: p99 stays in
+     * the first bucket, p999 is the 1000th sample's bucket. */
+    memset( timing.buckets, 0, (size_t) LOAD_TIMING_BUCKET_COUNT * sizeof( uint64_t ) );
+    timing.enabled = 1;
+    timing.count[LOAD_TIMING_CLIENT_UPDATE] = 0;
+    timing.overbudget_count[LOAD_TIMING_CLIENT_UPDATE] = 0;
+    timing.max_ns[LOAD_TIMING_CLIENT_UPDATE] = 0;
+    for ( int i = 0; i < 999; ++i )
+        load_timing_record_elapsed( &timing, LOAD_TIMING_CLIENT_UPDATE, 500ULL );
+    load_timing_record_elapsed( &timing, LOAD_TIMING_CLIENT_UPDATE, 50500ULL );
+    ok = ok && load_timing_quantile_upper_us( &timing, LOAD_TIMING_CLIENT_UPDATE, 99 ) == 1 &&
+         load_timing_permille_upper_us( &timing, LOAD_TIMING_CLIENT_UPDATE, 990 ) == 1 &&
+         load_timing_permille_upper_us( &timing, LOAD_TIMING_CLIENT_UPDATE, 999 ) == 51;
     free( timing.buckets );
 
     return ok;

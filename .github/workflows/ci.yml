@@ -2508,6 +2508,17 @@ jobs:
           printf '%s\n' "$output"
           grep -Eq '^[1-9][0-9]* release version fixtures passed$' <<<"$output"
 
+      - name: Test the real-load nightly's report
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v go >/dev/null 2>&1; then echo "TOOL-MISSING go (any) (missing) on $RUNNER_NAME"; exit 1; fi
+          cd tools/real_load_report
+          test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+          go vet ./...
+          go test -count=1 -v ./... 2>&1 | grep -E '^(--- |ok|FAIL|PASS)'
+          test "${PIPESTATUS[0]}" -eq 0
+
       - name: Test the header-guard checker's verdicts
         shell: bash
         run: |
