@@ -438,7 +438,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_RECEIVE_PAYLOAD_BYTES == ROCKETNET_MAX_PACKET
 // that revision's alignment (ROCKETNET_CONFIG_REVISION_BYTES). A known size
 // reads the caller's prefix and defaults the rest; an unknown size, larger or
 // smaller, is refused with a log line and nothing is read or written. The
-// unsized entry points stay, and read and write exactly revision 1
+// unsized entry points read and write the whole struct of this header
 
 // internal to the SDK: the one read and the one write every sized entry point
 // makes (docs/ABI-EVOLUTION.md 3). write copies the first config_bytes of

@@ -1273,13 +1273,7 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create_ex( void
                                                                             const struct rocketnet_server_transport_config_t * config,
                                                                             double time, int * status )
 {
-    if ( !config )
-        return rocketnet_server_transport_create_internal( context, public_address_string, NULL, time, status );
-    struct rocketnet_server_transport_config_t current;
-    rocketnet_server_transport_default_config_current( &current );
-    memcpy( &current, config, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1 );
-
-    return rocketnet_server_transport_create_internal( context, public_address_string, &current, time, status );
+    return rocketnet_server_transport_create_internal( context, public_address_string, config, time, status );
 }
 
 struct rocketnet_server_transport_t * rocketnet_server_transport_create_current( void * context, const char * address,

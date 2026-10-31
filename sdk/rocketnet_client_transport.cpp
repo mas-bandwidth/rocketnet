@@ -1342,7 +1342,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
 
 rocketnet_client_transport_t * rocketnet_client_transport_create_ex( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, int * status )
 {
-    return rocketnet_client_transport_create_internal( context, connect_token, config, time, status, NULL, NULL, ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_PRE_SIMULATOR, 0 );
+    return rocketnet_client_transport_create_internal( context, connect_token, config, time, status, NULL, NULL, sizeof( struct rocketnet_client_transport_config_t ), 0 );
 }
 
 rocketnet_client_transport_t * rocketnet_client_transport_create_current( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time )
@@ -1369,7 +1369,7 @@ rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven( vo
     if ( !operations )
         return NULL;
 
-    return rocketnet_client_transport_create_internal( context, connect_token, config, time, NULL, operations, transport_context, ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_PRE_SIMULATOR, 0 );
+    return rocketnet_client_transport_create_internal( context, connect_token, config, time, NULL, operations, transport_context, sizeof( struct rocketnet_client_transport_config_t ), 0 );
 }
 
 rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven_at_timestamp( void * context, const uint8_t * connect_token,
@@ -1407,7 +1407,7 @@ rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven_ex(
     if ( !operations )
         return NULL;
 
-    return rocketnet_client_transport_create_internal( context, connect_token, config, time, status, operations, transport_context, ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_PRE_SIMULATOR, 0 );
+    return rocketnet_client_transport_create_internal( context, connect_token, config, time, status, operations, transport_context, sizeof( struct rocketnet_client_transport_config_t ), 0 );
 }
 #endif // #if ROCKETNET_DEV
 
