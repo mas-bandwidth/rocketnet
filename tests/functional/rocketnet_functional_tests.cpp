@@ -10756,6 +10756,8 @@ struct rocketnet_functional_test_t
 };
 
 #if ROCKETNET_DEV
+extern void test_client_destroy_early_threaded_frees();
+extern void test_server_destroy_early_threaded_frees();
 extern void test_client_destroy_early_threaded_keeps_then_frees();
 extern void test_server_destroy_early_threaded_keeps_then_frees();
 #endif // bodies live in destroy_early_keep.cpp, not in the production executable
@@ -12540,6 +12542,8 @@ extern void rocketnet_test_session_reconnect_isolation_rio();
 
 static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
 #if ROCKETNET_DEV
+    { "test_client_destroy_early_threaded_frees", test_client_destroy_early_threaded_frees, NULL },
+    { "test_server_destroy_early_threaded_frees", test_server_destroy_early_threaded_frees, NULL },
     { "test_client_destroy_early_threaded_keeps_then_frees", test_client_destroy_early_threaded_keeps_then_frees, NULL },
     { "test_server_destroy_early_threaded_keeps_then_frees", test_server_destroy_early_threaded_keeps_then_frees, NULL },
     { "test_real_environment_dev_session_sequence_start", rocketnet_test_real_environment_dev_session_sequence_start, NULL },

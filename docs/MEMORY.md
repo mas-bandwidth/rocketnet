@@ -167,8 +167,8 @@ To check a config, create with it and read the status out-parameter, then
 destroy the result if it was never connected or started. For an active object,
 request shutdown and poll completion before destroy. Destroy asserts completion;
 called early, it logs one error naming the skipped completion function, records
-the misuse, then requests shutdown itself and updates a bounded number of
-times without sleeping. Once complete it joins any remaining thread handle and
+the misuse, then requests shutdown itself and polls for the worker's exit,
+sleeping 1 ms between polls, for at most one second. Once complete it joins any remaining thread handle and
 wipes/frees resources synchronously; if the worker has not exited it logs a
 second error and keeps the object rather than free memory the worker owns. Keep
 allocator/callback contexts and all borrowed storage alive until destroy

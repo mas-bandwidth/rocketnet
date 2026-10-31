@@ -347,10 +347,12 @@ disconnects under load:
    - Calling `rocketnet_client_destroy` when `!rocketnet_client_disconnected(client)`
      or `rocketnet_server_destroy` when `!rocketnet_server_stopped(server)`
      triggers a debug `rocketnet_assert`, increments `api_misuses`, logs an
-     `ERROR`, and attempts at most `32` non-sleeping transport updates
-     (`RN_DESTROY_STOP_UPDATES`).
-   - If the transport worker thread has still not exited after those 32 bounded
-     updates, **`destroy` intentionally leaves the allocation alive and returns
+     `ERROR`, requests the shutdown itself, and steps the transport and polls
+     for the worker's exit, sleeping 1 ms between polls, for at most one
+     second (`RN_DESTROY_STOP_SECONDS`). A worker that exits in that time is
+     joined and the object freed.
+   - If the transport worker thread has still not exited when that second
+     ends, **`destroy` intentionally leaves the allocation alive and returns
      without calling `rocketnet_free`** (`"the worker has not exited; the client/server is kept, not freed"`). Freeing an arena while a background
      worker thread still holds pointers into it would cause a use-after-free
      or memory corruption.

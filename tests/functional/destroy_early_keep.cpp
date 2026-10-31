@@ -3,14 +3,16 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// destroy_early_keep.cpp -- the early-destroy keep path on the platform's
-// default threaded transport: a destroy before completion logs the misuse
-// and the keep, counts one misuse, and keeps the object because its worker
-// has not exited inside the destroy's bounded, no-sleep updates. The handle
-// stays valid, the completion query later reads true, and a second destroy
-// then frees the object and returns the allocator to its baseline. The
-// loopback/step-driven path, where the early destroy completes instead,
-// lives in tests/test_unit_destroy_before_completion.cpp.
+// destroy_early_keep.cpp -- early destroy on the platform's default threaded
+// transport. A destroy before completion logs and counts the misuse, then
+// polls the stop for a bounded wall-clock budget. A worker that exits inside
+// it is joined and the object freed, so "disconnect, destroy" frees and term
+// returns OK. A worker that has not exited when the budget ends keeps the
+// object: the keep cases set the budget to 0 (one pass, no sleep), the
+// handle stays valid, the completion query later reads true, and a second
+// destroy then frees the object and returns the allocator to its baseline.
+// The loopback/step-driven path lives in
+// tests/test_unit_destroy_before_completion.cpp.
 
 #include "../token_string.h"
 #include "rocketnet.h"
@@ -240,8 +242,8 @@ static void destroy_client_teardown( destroy_pair_t * pair )
     rocketnet_client_destroy( pair->client );
 }
 
-// Whether a worker exits within destroy's bounded updates is the scheduler's
-// call: a destroy that sees it exit frees the handle (one error line), which is
+// Whether a worker exits within destroy's one pass is the scheduler's call: a
+// destroy that sees it exit frees the handle (one error line), which is
 // correct but not the keep path under test, so the pair is torn down and the
 // case tries again, at most this many times.
 static const int DESTROY_KEEP_ATTEMPTS = 20;
@@ -261,6 +263,7 @@ static void destroy_begin_counted( destroy_allocator_t * state, int * before )
 
 static void destroy_end_counted( destroy_allocator_t * state )
 {
+    rocketnet_destroy_stop_seconds_for_test( -1.0 );
     check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
     check( state->live == 0 );
     check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
@@ -269,6 +272,63 @@ static void destroy_end_counted( destroy_allocator_t * state )
 }
 
 // --- cases -----------------------------------------------------------------
+
+// disconnect or stop, then destroy at once with no completion poll: the
+// destroy waits out the worker inside its budget, frees, and term is clean
+
+void test_client_destroy_early_threaded_frees()
+{
+    destroy_env_guard_t env_all( "ROCKETNET_TRANSPORT" );
+    destroy_env_guard_t env_server( "ROCKETNET_SERVER_TRANSPORT" );
+    destroy_env_guard_t env_client( "ROCKETNET_CLIENT_TRANSPORT" );
+
+    destroy_allocator_t state = { 0 };
+    int before = 0;
+    destroy_begin_counted( &state, &before );
+
+    destroy_pair_t pair;
+    destroy_pair_create( &pair, &state );
+    const uint64_t misuse = rocketnet_api_misuse_count();
+    destroy_error_lines = 0;
+    rocketnet_client_disconnect( pair.client );
+    rocketnet_client_destroy( pair.client );
+    check( destroy_error_lines == 1 );
+    check( strstr( destroy_last_error, "rocketnet_client_destroy" ) != NULL );
+    check( rocketnet_api_misuse_count() == misuse + 1 );
+
+    destroy_server_teardown( &pair );
+    check( state.live == before );
+
+    destroy_end_counted( &state );
+}
+
+void test_server_destroy_early_threaded_frees()
+{
+    destroy_env_guard_t env_all( "ROCKETNET_TRANSPORT" );
+    destroy_env_guard_t env_server( "ROCKETNET_SERVER_TRANSPORT" );
+    destroy_env_guard_t env_client( "ROCKETNET_CLIENT_TRANSPORT" );
+
+    destroy_allocator_t state = { 0 };
+    int before = 0;
+    destroy_begin_counted( &state, &before );
+
+    destroy_pair_t pair;
+    destroy_pair_create( &pair, &state );
+    const uint64_t misuse = rocketnet_api_misuse_count();
+    destroy_error_lines = 0;
+    rocketnet_server_stop( pair.server );
+    rocketnet_server_destroy( pair.server );
+    check( destroy_error_lines == 1 );
+    check( strstr( destroy_last_error, "rocketnet_server_destroy" ) != NULL );
+    check( rocketnet_api_misuse_count() == misuse + 1 );
+
+    destroy_client_teardown( &pair );
+    check( state.live == before );
+
+    destroy_end_counted( &state );
+}
+
+// the keep path: with no budget the destroy makes one pass and does not sleep
 
 void test_client_destroy_early_threaded_keeps_then_frees()
 {
@@ -279,6 +339,7 @@ void test_client_destroy_early_threaded_keeps_then_frees()
     destroy_allocator_t state = { 0 };
     int before = 0;
     destroy_begin_counted( &state, &before );
+    rocketnet_destroy_stop_seconds_for_test( 0.0 );
 
     destroy_pair_t pair;
     uint64_t misuse = 0;
@@ -331,6 +392,7 @@ void test_server_destroy_early_threaded_keeps_then_frees()
     destroy_allocator_t state = { 0 };
     int before = 0;
     destroy_begin_counted( &state, &before );
+    rocketnet_destroy_stop_seconds_for_test( 0.0 );
 
     destroy_pair_t pair;
     uint64_t misuse = 0;

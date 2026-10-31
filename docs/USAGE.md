@@ -508,9 +508,9 @@ worker thread. After a successful start, stop requests transport shutdown;
 `rocketnet_server_stopped` remains false until transport I/O has exited.
 Destroy normally follows completion and synchronously joins the transport
 worker before freeing its storage; called early, it logs and counts the
-misuse, requests shutdown and updates a bounded number of times without
-sleeping, then joins and frees once complete, or logs and keeps the object if
-the worker has not exited.
+misuse, requests shutdown and polls for the worker's exit, sleeping 1 ms
+between polls, for at most one second, then joins and frees once complete, or
+logs and keeps the object if the worker has not exited.
 
 ## Connection lifecycle
 
@@ -581,8 +581,9 @@ void end_server_client( struct rocketnet_server_t * server, int client_index )
 Destroy every client and server before `rocketnet_term`. Request shutdown first,
 wait by polling completion from the event loop, then destroy. An early destroy
 is API misuse: it logs one error naming the skipped completion function, records
-the misuse, then requests shutdown, updates a bounded number of times without
-sleeping and frees once complete; otherwise it logs and keeps the object. A stalled
+the misuse, then requests shutdown, polls for the worker's exit for at most one
+second (sleeping 1 ms between polls) and frees once complete; otherwise it logs
+and keeps the object. A stalled
 worker keeps completion false, so its object and contexts must remain alive.
 Destroy is synchronous after completion; allocator hooks and thread-handle
 cleanup do not have a strict wall-time guarantee.

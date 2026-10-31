@@ -107,6 +107,11 @@ struct rocketnet_server_t * rocketnet_server_adopt( void * context, struct rocke
 int rocketnet_server_secret_spans_for_test( size_t * offsets, size_t * bytes, int max );
 int rocketnet_server_transport_secret_spans_for_test( size_t * offsets, size_t * bytes, int max );
 int rocketnet_client_transport_secret_spans_for_test( size_t * offsets, size_t * bytes, int max );
+
+// the wall-clock budget an early destroy polls a worker's exit for: 0 makes
+// one pass with no sleep (the keep path's tests), a negative value restores
+// the default
+void rocketnet_destroy_stop_seconds_for_test( double seconds );
 #endif // #if ROCKETNET_DEV
 
 #ifdef __cplusplus

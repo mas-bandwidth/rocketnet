@@ -2257,9 +2257,10 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_connect( struct rocket
 
 /// Expects rocketnet_client_disconnected(client) to be true; asserts otherwise.
 /// Called early, it logs one error naming the skipped completion poll, records
-/// the misuse, requests disconnect and updates the transport a bounded number
-/// of times without sleeping. Once disconnected it joins, wipes and frees; if
-/// the worker has not exited it logs a second error and keeps the client, which
+/// the misuse, requests disconnect, then steps the transport and polls for the
+/// worker's exit, sleeping 1 ms between polls, for at most one second. Once
+/// disconnected it joins, wipes and frees; if the worker has not exited by
+/// then it logs a second error and keeps the client, which
 /// stays owned by that worker. Client pointers become invalid only when destroy frees
 /// the client; on the keep path the client and its pointers stay valid.
 ///

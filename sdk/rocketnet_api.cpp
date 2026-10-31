@@ -1231,10 +1231,22 @@ struct rocketnet_client_t * rocketnet_client_create( void * context, const struc
 
 static void rn_client_connection_counts( struct rocketnet_message_client_t * message_client, uint64_t counts[RN_CLIENT_COUNT], struct rocketnet_client_transport_stats_t * transport_stats );
 
-// An early destroy drives a caller-stepped transport through its stop with
-// at most this many updates; a threaded worker that has not exited by then is
-// left owning its memory rather than freed under it.
-static const int RN_DESTROY_STOP_UPDATES = 32;
+// An early destroy steps the retiring transport and polls its stop, sleeping
+// a millisecond between polls, for at most this long: a threaded worker
+// needs wall-clock time to see its stop and exit. One that has not exited by
+// then is left owning its memory rather than freed under it.
+static const double RN_DESTROY_STOP_SECONDS = 1.0;
+
+#if ROCKETNET_DEV
+static double rn_destroy_stop_seconds = RN_DESTROY_STOP_SECONDS;
+
+void rocketnet_destroy_stop_seconds_for_test( double seconds )
+{
+    rn_destroy_stop_seconds = seconds < 0.0 ? RN_DESTROY_STOP_SECONDS : seconds;
+}
+#else
+static const double rn_destroy_stop_seconds = RN_DESTROY_STOP_SECONDS;
+#endif // #if ROCKETNET_DEV
 
 // The retiring connection is destroyed. Its packet, byte and message totals
 // belong to that connection and are not kept. Not-connected drops have no
@@ -1411,19 +1423,24 @@ void rocketnet_client_destroy( struct rocketnet_client_t * client )
     if ( !rocketnet_client_disconnected( client ) )
     {
         // Release has no assert: say what was skipped, count it, then do the
-        // shutdown the caller skipped. Updates are bounded and never sleep: a
-        // worker that has not exited still owns the memory, so it is kept.
+        // shutdown the caller skipped, polling for at most
+        // RN_DESTROY_STOP_SECONDS: a worker that has not exited by then still
+        // owns the memory, so it is kept.
         rocketnet_api_misuse_record();
 
         rocketnet_error( "rocketnet_client_destroy: the client is not disconnected; call rocketnet_client_disconnect and poll rocketnet_client_disconnected before destroy" );
 
         rocketnet_client_disconnect( client );
 
-        for ( int update = 0; update < RN_DESTROY_STOP_UPDATES && !rocketnet_client_disconnected( client ); update++ )
+        const double deadline = rocketnet_platform_time() + rn_destroy_stop_seconds;
+        for ( ;; )
         {
             struct rocketnet_client_transport_t * transport = client->retiring ? rocketnet_message_client_transport( client->retiring ) : NULL;
             if ( transport )
                 rocketnet_client_transport_update( transport, 0.0 );
+            if ( rocketnet_client_disconnected( client ) || rocketnet_platform_time() >= deadline )
+                break;
+            rocketnet_platform_sleep( 0.001 );
         }
 
         if ( !rocketnet_client_disconnected( client ) )
@@ -2730,19 +2747,24 @@ void rocketnet_server_destroy( struct rocketnet_server_t * server )
     if ( !rocketnet_server_stopped( server ) )
     {
         // Release has no assert: say what was skipped, count it, then do the
-        // shutdown the caller skipped. Updates are bounded and never sleep: a
-        // worker that has not exited still owns the memory, so it is kept.
+        // shutdown the caller skipped, polling for at most
+        // RN_DESTROY_STOP_SECONDS: a worker that has not exited by then still
+        // owns the memory, so it is kept.
         rocketnet_api_misuse_record();
 
         rocketnet_error( "rocketnet_server_destroy: the server is not stopped; call rocketnet_server_stop and poll rocketnet_server_stopped before destroy" );
 
         rocketnet_server_stop( server );
 
-        for ( int update = 0; update < RN_DESTROY_STOP_UPDATES && !rocketnet_server_stopped( server ); update++ )
+        const double deadline = rocketnet_platform_time() + rn_destroy_stop_seconds;
+        for ( ;; )
         {
             struct rocketnet_server_transport_t * transport = server->retiring ? rocketnet_message_server_transport( server->retiring ) : NULL;
             if ( transport )
                 rocketnet_server_transport_update( transport, 0.0 );
+            if ( rocketnet_server_stopped( server ) || rocketnet_platform_time() >= deadline )
+                break;
+            rocketnet_platform_sleep( 0.001 );
         }
 
         if ( !rocketnet_server_stopped( server ) )
