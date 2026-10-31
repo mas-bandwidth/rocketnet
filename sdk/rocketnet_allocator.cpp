@@ -888,7 +888,10 @@ static uint32_t rn_region_descriptor_take( rn_region_t * region )
     region->descriptors_free--;
 
     rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
-    const uint32_t generation = fresh_take ? 1 : descriptor->generation + 1;
+    // 0 is never a live name (proofs/tla/RNLazyPool.tla HeldGenerationPositive): a
+    // resend link stamped 0 is skipped by the ack while the descriptor is in use
+
+    const uint32_t generation = fresh_take || descriptor->generation == UINT32_MAX ? 1 : descriptor->generation + 1;
     const bool keep_free_slot = !fresh_take && d < region->descriptors_free_top;
     const uint32_t free_slot = descriptor->free_slot;
     memset( descriptor, 0, sizeof( *descriptor ) );
