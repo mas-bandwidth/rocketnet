@@ -1109,6 +1109,9 @@ ROCKETNET_EXPORT void rocketnet_log_function( rocketnet_log_function_t function,
 /// - Connect runs from a state other than DISCONNECTED or a connection-ended
 ///   state.
 /// - Server start runs while the server is already running.
+/// - rocketnet_loopback_hub_destroy is refused: an endpoint is still
+///   registered with the hub, or another build of the library made it.
+/// - A development network simulator call is given a value outside its range.
 ///
 /// A NULL object or NULL required argument asserts first in a debug build,
 /// where the default assert handler logs and traps. In a release build, or
@@ -1754,8 +1757,9 @@ struct rocketnet_receipt_t
 /// @param public_key Receives ROCKETNET_BACKEND_PUBLIC_KEY_BYTES.
 /// @param secret_key Receives ROCKETNET_BACKEND_SECRET_KEY_BYTES. Wipe it
 /// when done.
-/// @return ROCKETNET_STATUS_OK, ROCKETNET_STATUS_INVALID_ARGUMENT for a NULL
-/// buffer, or ROCKETNET_STATUS_CRYPTO_INIT_FAILED.
+/// @return ROCKETNET_STATUS_OK, or ROCKETNET_STATUS_INVALID_ARGUMENT for a
+/// NULL buffer. The key comes from the OS random source; when that source is
+/// unavailable the bundled libsodium aborts the process.
 
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_generate_backend_keypair( uint8_t * public_key, uint8_t * secret_key );
 
@@ -1769,8 +1773,9 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_generate_backend_keypair( uin
 /// @param public_key Receives ROCKETNET_SERVER_PUBLIC_KEY_BYTES.
 /// @param secret_key Receives ROCKETNET_SERVER_SECRET_KEY_BYTES. Wipe it
 /// when done.
-/// @return ROCKETNET_STATUS_OK, ROCKETNET_STATUS_INVALID_ARGUMENT for a NULL
-/// buffer, or ROCKETNET_STATUS_CRYPTO_INIT_FAILED.
+/// @return ROCKETNET_STATUS_OK, or ROCKETNET_STATUS_INVALID_ARGUMENT for a
+/// NULL buffer. The key comes from the OS random source; when that source is
+/// unavailable the bundled libsodium aborts the process.
 
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_generate_server_keypair( uint8_t * public_key, uint8_t * secret_key );
 
@@ -2668,8 +2673,9 @@ ROCKETNET_EXPORT size_t rocketnet_server_required_memory( const struct rocketnet
 /// ROCKETNET_STATUS_LOOPBACK_HUB_MISSING or
 /// ROCKETNET_STATUS_LOOPBACK_HUB_MISMATCH for a list naming loopback,
 /// ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION,
-/// ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED, ROCKETNET_STATUS_OUT_OF_MEMORY or
-/// ROCKETNET_STATUS_CRYPTO_INIT_FAILED when the server key cannot be made.
+/// ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED or ROCKETNET_STATUS_OUT_OF_MEMORY.
+/// A server key generated here comes from the OS random source; when that
+/// source is unavailable the bundled libsodium aborts the process.
 
 ROCKETNET_EXPORT struct rocketnet_server_t * rocketnet_server_create( void * context, const char * ipv4_address, const char * ipv6_address, const struct rocketnet_server_config_t * config, enum rocketnet_status_t * status );
 

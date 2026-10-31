@@ -85,6 +85,10 @@ struct rocketnet_message_client_t * rocketnet_client_message_client( struct rock
 struct rocketnet_message_server_t * rocketnet_server_message_server( struct rocketnet_server_t * server );
 
 #if ROCKETNET_DEV
+// the label the default log sink prints for a level: "???" for a level
+// outside ERROR .. SPAM
+const char * rocketnet_log_level_word_for_test( int level );
+
 // the address a created server serves for one family, after the
 // environment overrides. Writes it and returns true, or returns false when
 // the server does not serve that family. Reads no socket
@@ -390,7 +394,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_RECEIVE_PAYLOAD_BYTES == ROCKETNET_MAX_PACKET
 #define ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT     (1<<0)
 /** @brief Config-field flag that redacts its value in override logs. */
 #define ROCKETNET_CONFIG_SECRET                 (1<<1)
-/** @brief Config-field flag for a field no environment variable sets: the public server's own keypair, which create generates. */
+/** @brief Config-field flag for a field no environment variable sets: the server's keypair, which create generates; the public addresses, which create takes as arguments; and the simulated_* link fields, which the development network simulator sets. */
 #define ROCKETNET_CONFIG_NO_ENV                 (1<<2)
 
 /** @brief Zero initializer for fixed-size byte-array configuration fields. */

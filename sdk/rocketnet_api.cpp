@@ -3311,27 +3311,19 @@ void rocketnet_server_client_stats( const struct rocketnet_server_t * server, in
 }
 
 // ---------------------------------------------------------------------------
-// The development network simulator: a development library's calls, and a
-// unit-test build's (the test hooks switch the development posture on).
+// The development network simulator: these calls exist only in a
+// development library (ROCKETNET_DEV).
 //
 // The setting applies at once to a live connection and to a running server:
 // the call hands it to the thread that owns the simulator as a config record
 // under a tiny mutex, and that thread takes it before its next send. The
-// connection's threads do not move, and a production library refuses the
-// simulator and carries none of its memory.
+// connection's threads do not move. A production library has neither these
+// calls nor the simulator's memory.
 
 #if ROCKETNET_DEV
 
 static bool rn_network_simulator_valid( const char * who, int latency_ms, int jitter_ms, int packet_loss_percent, int duplicate_percent )
 {
-    if ( !rocketnet_public_link_simulator_development() )
-    {
-        rocketnet_api_misuse_record();
-
-        rocketnet_error( "%s network simulator refused: a production library has no network simulator", who );
-        return false;
-    }
-
     if ( latency_ms < 0 || latency_ms > 60000 || jitter_ms < 0 || jitter_ms > 60000 ||
          packet_loss_percent < 0 || packet_loss_percent > 100 || duplicate_percent < 0 || duplicate_percent > 100 )
     {

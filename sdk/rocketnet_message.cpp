@@ -9,8 +9,8 @@
 
 #include <string.h>
 
-// Layer 2, message records: STANDARD.md _Messages_ and standard/MESSAGES.md
-// m2 to m4. No TLA+ module covers this layer: it holds no state
+// Layer 2, message records: standard/MESSAGES.md m2 to m4. No TLA+ module
+// covers this layer: it holds no state
 // between calls, so it is checked by known-answer vectors, the pack/parse
 // property test and the fuzz target.
 
@@ -41,8 +41,8 @@ const char * rocketnet_message_violation_name( int violation )
 //                     the fields of a code
 // -----------------------------------------
 
-// Which fields a record carries, from its flags byte alone (STANDARD.md
-// _Messages_, the record table). Defined for every flags byte, valid or not,
+// Which fields a record carries, from its flags byte alone (standard/MESSAGES.md
+// m3, the record table). Defined for every flags byte, valid or not,
 // so the receiver can run check 2 (the header fits) before check 3 (the
 // flags are allowed), in the standard's order.
 
@@ -74,7 +74,7 @@ static int rocketnet_message_flags_header_bytes( uint8_t flags )
 
 static bool rocketnet_message_flags_allowed( uint8_t flags )
 {
-    // check 3 (STANDARD.md _Messages_): the flag combinations a correct sender writes
+    // check 3 (standard/MESSAGES.md m4): the flag combinations a correct sender writes
 
     const int code = flags & ROCKETNET_MESSAGE_FLAG_CODE_MASK;
     const bool block = ( flags & ROCKETNET_MESSAGE_FLAG_BLOCK ) != 0;
@@ -189,8 +189,8 @@ int rocketnet_message_writer_space( const struct rocketnet_message_writer_t * wr
     return space > 0 ? space : 0;
 }
 
-// The record layout, field by field in the standard's order (STANDARD.md
-// _Messages_; standard/MESSAGES.md m3): flags, length, then number, ring,
+// The record layout, field by field in the standard's order (standard/MESSAGES.md
+// m3): flags, length, then number, ring,
 // sequencing, ordering, channel, fragment, fragments, each only when its
 // code or flags carry it, then the data.
 
@@ -332,7 +332,7 @@ static int rocketnet_message_decode_record( const uint8_t * record_start, int re
                                             struct rocketnet_message_record_t * record, int * record_bytes )
 {
     // one record at body[offset], with remaining = body bytes from offset on.
-    // Runs checks 2 to 9 of STANDARD.md _Messages_ in order and stops at the
+    // Runs checks 2 to 9 of standard/MESSAGES.md m4 in order and stops at the
     // first that fails. Reads only [body + offset, body + offset + remaining).
 
     // check 2: the fixed part, then every field the flags name, inside the body
@@ -566,7 +566,7 @@ int rocketnet_message_reader_next( struct rocketnet_message_reader_t * reader, s
 
 void rocketnet_message_write_config_body( uint8_t * output, const struct rocketnet_message_config_body_t * body )
 {
-    // the CONFIG body (STANDARD.md _Messages_; standard/MESSAGES.md m11):
+    // the CONFIG body (standard/MESSAGES.md m11):
     // kind, version, enabled, zero, then five u32 and four zero bytes.
 
     rocketnet_assert( output );

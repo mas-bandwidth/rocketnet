@@ -144,9 +144,16 @@ static const char * rocketnet_log_level_word( enum rocketnet_log_level_t level )
         case ROCKETNET_LOG_LEVEL_INFO:  return "info";
         case ROCKETNET_LOG_LEVEL_DEBUG: return "debug";
         case ROCKETNET_LOG_LEVEL_SPAM:  return "spam";
-        default:                        return "none";
+        default:                        return "???";
     }
 }
+
+#if ROCKETNET_DEV
+const char * rocketnet_log_level_word_for_test( int level )
+{
+    return rocketnet_log_level_word( (enum rocketnet_log_level_t) level );
+}
+#endif // #if ROCKETNET_DEV
 
 const char * rocketnet_status_name( enum rocketnet_status_t status )
 {

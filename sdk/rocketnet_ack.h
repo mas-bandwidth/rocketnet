@@ -13,7 +13,7 @@
 #include "rocketnet_constants.h"
 #include "rocketnet_encryption_map.h"
 
-// The general ack system, per STANDARD.md _Acks_: the transport tells a
+// The general ack system, per standard/TRANSPORT.md t15: the transport tells a
 // sender which of its packets arrived, and never resends anything. The
 // sealed plaintext of every session packet begins with an ack block built
 // from the receiver's ACK-eligible history; a sender that reads one marks its own
@@ -327,9 +327,10 @@ struct rocketnet_ack_endpoint_t
     volatile uint64_t num_aggregates;           // monotonic; the next aggregate's id is this plus one
 
     // bit (slot) set: the record at slot was written since the reset. The three
-    // record rings are never zeroed (271 KB a connection): a record is read
-    // only when its written bit is set, and an unwritten one reads as the
-    // empty record (sequence 0, id 0), so the reset clears only these bits
+    // record rings are never zeroed (256 KiB a connection at the default
+    // history): a record is read only when its written bit is set, and an
+    // unwritten one reads as the empty record (sequence 0, id 0), so the reset
+    // clears only these bits
     uint64_t sent_written[ROCKETNET_SENT_BITMAP_WORDS];
     uint64_t received_written[ROCKETNET_RECEIVED_WRITTEN_WORDS];
     uint64_t aggregates_written[ROCKETNET_AGGREGATES_WRITTEN_WORDS];
@@ -349,6 +350,12 @@ struct rocketnet_ack_endpoint_t
     // ROCKETNET_ACK_RTT_NONE); node 1 is the minimum. A sample is O(log n).
     float stats_rtt_min_tree[ROCKETNET_RTT_HISTORY_SIZE];
 };
+
+#if ROCKETNET_HISTORY_PACKETS == 4096
+static_assert( sizeof( ( (struct rocketnet_ack_endpoint_t *) 0 )->sent ) + sizeof( ( (struct rocketnet_ack_endpoint_t *) 0 )->received ) +
+               sizeof( ( (struct rocketnet_ack_endpoint_t *) 0 )->aggregates ) == 256 * 1024,
+               "the three record rings are 256 KiB at the default history" );
+#endif // #if ROCKETNET_HISTORY_PACKETS == 4096
 
 static_assert( ( ROCKETNET_RTT_HISTORY_SIZE & ( ROCKETNET_RTT_HISTORY_SIZE - 1 ) ) == 0,
                "the rtt min tree needs a power-of-two history" );

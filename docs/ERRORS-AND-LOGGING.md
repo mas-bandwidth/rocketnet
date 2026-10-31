@@ -484,7 +484,8 @@ server. The client stays `DISCONNECTED`, and connect logs one `ERROR` line.
 refuse a transport list that names `loopback` when the config's
 `loopback_hub` is `NULL`. `ROCKETNET_STATUS_LOOPBACK_HUB_MISMATCH` is -33:
 create and `rocketnet_loopback_hub_destroy` refuse a hub whose magic, version
-or layout id differ from this library's, one made by another build.
+or layout id differ from this library's, one made by another build; the
+destroy's refusal counts API misuse.
 `ROCKETNET_STATUS_LOOPBACK_HUB_IN_USE` is -34, the last code:
 `rocketnet_loopback_hub_destroy` refuses while a server or client endpoint is
 registered with the hub, keeps the hub, logs one `ERROR` line and counts API

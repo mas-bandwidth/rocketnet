@@ -411,7 +411,6 @@ void rocketnet_ack_endpoint_reset( struct rocketnet_ack_endpoint_t * endpoint )
 // record/block visits and cannot grow into the old quadratic insertion walk.
 
 #define ROCKETNET_ACK_STATS_SENT_HALF ( (uint64_t) ROCKETNET_SENT_PACKET_BUFFER_SIZE / 2 )
-#define ROCKETNET_ACK_STATS_RECEIVED_HALF ( (uint64_t) ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE / 2 )
 #define ROCKETNET_ACK_RTT_NONE 1e9f
 
 static inline uint64_t rocketnet_ack_stats_window_base( uint64_t highest, uint64_t ring )

@@ -15,7 +15,7 @@
 
 // The packet size limits, each asserted against its derivation so a change
 // to the MTU in rocketnet_wire.h is one line and a failed assert names the
-// limit that no longer follows (STANDARD.md _Packet sizes_). The public
+// limit that no longer follows (standard/TRANSPORT.md t8.11). The public
 // header carries its values as written numbers, since it cannot see the
 // internal constants; these asserts hold them to the derivation.
 
