@@ -19,6 +19,7 @@
 #include <inttypes.h>
 #include <atomic>
 #include <mutex>
+#include <condition_variable>
 
 // -------------------------------------------------
 
@@ -706,6 +707,80 @@ void rocketnet_random_bytes( uint8_t * data, size_t bytes )
     randombytes_buf( data, bytes );
 }
 
+// The bundled sodium opens its random source on a draw, without a lock,
+// whenever its flag is clear: before sodium_init, and on macOS after
+// rocketnet_term closed the source (proofs/tla/RNCryptoSource.tla DrawCheck,
+// DrawOpen). The key and token generators run before rocketnet_init and
+// beside rocketnet_term on any thread, so each holds the source across its
+// draws (rocketnet_crypto_acquire, rocketnet_crypto_release). The first
+// holder opens it under the mutex, and term closes it under the mutex once
+// no holder is left. open, holders and closing change only under the mutex,
+// and open is clear only while holders is zero.
+
+static std::mutex rocketnet_crypto_mutex;
+static std::condition_variable rocketnet_crypto_changed;
+static bool rocketnet_crypto_open = false;
+static bool rocketnet_crypto_closing = false;
+static int rocketnet_crypto_holders = 0;
+
+// proofs/tla/RNCryptoSource.tla StirCheck, StirOpen: sodium_init opens the
+// source only the first time it runs, so the stir reopens it after a term
+// closed it. Called with the mutex held.
+static bool rocketnet_crypto_open_locked()
+{
+    if ( rocketnet_crypto_open )
+        return true;
+    if ( sodium_init() < 0 )
+        return false;
+    randombytes_stir();
+    rocketnet_crypto_open = true;
+    return true;
+}
+
+static bool rocketnet_crypto_open_source()
+{
+    std::lock_guard<std::mutex> lock( rocketnet_crypto_mutex );
+    return rocketnet_crypto_open_locked();
+}
+
+// proofs/tla/RNCryptoSource.tla Acquire, Recheck and Publish: the source a
+// holder holds stays open until the matching release
+bool rocketnet_crypto_acquire()
+{
+    std::unique_lock<std::mutex> lock( rocketnet_crypto_mutex );
+    rocketnet_crypto_changed.wait( lock, []() { return !rocketnet_crypto_closing; } );
+    if ( !rocketnet_crypto_open_locked() )
+        return false;
+    rocketnet_crypto_holders++;
+    return true;
+}
+
+// proofs/tla/RNCryptoSource.tla Release
+void rocketnet_crypto_release()
+{
+    std::lock_guard<std::mutex> lock( rocketnet_crypto_mutex );
+    rocketnet_crypto_holders--;
+    if ( rocketnet_crypto_holders == 0 )
+        rocketnet_crypto_changed.notify_all();
+}
+
+// proofs/tla/RNCryptoSource.tla Term: the bundled sodium keeps /dev/urandom
+// open on macOS, so term closes it once no draw is in flight; holders that
+// arrive meanwhile wait for the close. A system libsodium may be shared with
+// the application, so only the bundled one is closed.
+static void rocketnet_crypto_close()
+{
+#if defined( ROCKETNET_BUNDLED_SODIUM ) && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+    std::unique_lock<std::mutex> lock( rocketnet_crypto_mutex );
+    rocketnet_crypto_closing = true;
+    rocketnet_crypto_changed.wait( lock, []() { return rocketnet_crypto_holders == 0; } );
+    (void) randombytes_close();
+    rocketnet_crypto_open = false;
+    rocketnet_crypto_closing = false;
+    rocketnet_crypto_changed.notify_all();
+#endif // #if defined( ROCKETNET_BUNDLED_SODIUM ) && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+}
+
 // -------------------------------------------------------------
 
 size_t rocketnet_copy_string( char * dest, const char * source, size_t dest_size )
@@ -805,7 +880,7 @@ bool rocketnet_init_ex( void * context, void * ( *malloc_function )( void * cont
     (void) context;
 
     const bool platform_ready = rocketnet_platform_init();
-    const bool sodium_ready = platform_ready && sodium_init() >= 0;
+    const bool sodium_ready = platform_ready && rocketnet_crypto_open_source();
     if ( !sodium_ready )
     {
         if ( platform_ready )
@@ -881,12 +956,7 @@ int rocketnet_term_ex()
         return ROCKETNET_STATUS_LIVE_ALLOCATIONS;
     }
 
-    // the bundled sodium keeps /dev/urandom open on macOS. a system libsodium
-    // may be shared with the application, so only the bundled one is closed.
-    // after the first term there is nothing open, and the close returns -1
-#if defined( ROCKETNET_BUNDLED_SODIUM ) && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
-    (void) randombytes_close();
-#endif // #if defined( ROCKETNET_BUNDLED_SODIUM ) && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+    rocketnet_crypto_close();
     rocketnet_platform_term();
 
     rn_lifecycle_lock_t lock;

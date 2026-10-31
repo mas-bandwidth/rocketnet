@@ -1286,6 +1286,18 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
                                                                                          double time, int * status,
                                                                                          const uint64_t * resolved_memory_budget = NULL );
 
+// The config staging seam, compiled into the development library only: each
+// stack copy of a server config, which carries server_secret_key, is wiped on
+// every exit of the function that holds it, and is then handed to the hook so
+// a unit case reads what the copy still holds (test_unit_secrets_wiped.cpp).
+
+#if ROCKETNET_DEV
+void ( *rocketnet_server_transport_config_staging_hook )( const uint8_t * secret_key, int stage ) = NULL;
+#define ROCKETNET_SERVER_TRANSPORT_CONFIG_STAGING_SEEN( secret_key, stage ) do { if ( rocketnet_server_transport_config_staging_hook ) rocketnet_server_transport_config_staging_hook( secret_key, stage ); } while ( 0 )
+#else
+#define ROCKETNET_SERVER_TRANSPORT_CONFIG_STAGING_SEEN( secret_key, stage ) do {} while ( 0 )
+#endif // #if ROCKETNET_DEV
+
 struct rocketnet_server_transport_t * rocketnet_server_transport_create_ex( void * context, const char * public_address_string,
                                                                             const struct rocketnet_server_transport_config_t * config,
                                                                             double time, int * status )
@@ -1331,11 +1343,12 @@ struct rocketnet_server_transport_resolved_t
     bool budget_refused[ROCKETNET_NUM_TRANSPORTS];
 };
 
-static bool rocketnet_server_transport_resolve( const char * public_address_string,
-                                                const struct rocketnet_server_transport_config_t * config,
-                                                const uint64_t * resolved_memory_budget,
-                                                struct rocketnet_server_transport_resolved_t * out,
-                                                int * status )
+static bool rocketnet_server_transport_resolve_staged( const char * public_address_string,
+                                                       const struct rocketnet_server_transport_config_t * config,
+                                                       const uint64_t * resolved_memory_budget,
+                                                       struct rocketnet_server_transport_resolved_t * out,
+                                                       int * status,
+                                                       struct rocketnet_server_transport_config_t & effective_config )
 {
     rocketnet_assert( public_address_string );
     rocketnet_assert( out );
@@ -1349,7 +1362,6 @@ static bool rocketnet_server_transport_resolve( const char * public_address_stri
     // takes no second environment pass: start uses the config create
     // validated and sized, whatever the environment says now.
 
-    struct rocketnet_server_transport_config_t effective_config;
     if ( config )
         effective_config = *config;
     else
@@ -1597,6 +1609,22 @@ static bool rocketnet_server_transport_resolve( const char * public_address_stri
     return true;
 }
 
+// effective_config carries the caller's server_secret_key: it is wiped on
+// every exit of the resolve, refused or resolved
+
+static bool rocketnet_server_transport_resolve( const char * public_address_string,
+                                                const struct rocketnet_server_transport_config_t * config,
+                                                const uint64_t * resolved_memory_budget,
+                                                struct rocketnet_server_transport_resolved_t * out,
+                                                int * status )
+{
+    struct rocketnet_server_transport_config_t effective_config;
+    const bool resolved = rocketnet_server_transport_resolve_staged( public_address_string, config, resolved_memory_budget, out, status, effective_config );
+    sodium_memzero( &effective_config, sizeof( effective_config ) );
+    ROCKETNET_SERVER_TRANSPORT_CONFIG_STAGING_SEEN( effective_config.server_secret_key, ROCKETNET_SERVER_TRANSPORT_CONFIG_STAGING_RESOLVE );
+    return resolved;
+}
+
 // THE LADDER: opens the resolved candidates in order until one grants,
 // into server_transport->io. Returns the granted transport, with bind_address
 // holding what it bound; -1 when none granted, with *status saying why (an
@@ -1822,11 +1850,12 @@ static int rocketnet_server_transport_open_ladder( struct rocketnet_server_trans
     return granted_transport;
 }
 
-static struct rocketnet_server_transport_t * rocketnet_server_transport_create_internal( void * context,
-                                                                                         const char * public_address_string,
-                                                                                         const struct rocketnet_server_transport_config_t * config,
-                                                                                         double time, int * status,
-                                                                                         const uint64_t * resolved_memory_budget )
+static struct rocketnet_server_transport_t * rocketnet_server_transport_create_staged( void * context,
+                                                                                       const char * public_address_string,
+                                                                                       const struct rocketnet_server_transport_config_t * config,
+                                                                                       double time, int * status,
+                                                                                       const uint64_t * resolved_memory_budget,
+                                                                                       struct rocketnet_server_transport_resolved_t & resolved )
 {
     // docs/ERRORS-AND-LOGGING.md 2.1 and the settled Q2: a NULL required
     // argument is a logged INVALID_ARGUMENT and a NULL return in debug and
@@ -1853,7 +1882,6 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
 
     rocketnet_assert( public_address_string );
 
-    struct rocketnet_server_transport_resolved_t resolved;
     if ( !rocketnet_server_transport_resolve( public_address_string, config, resolved_memory_budget, &resolved, status ) )
         return NULL;
 
@@ -2116,6 +2144,22 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
 
     if ( status )
         *status = ROCKETNET_STATUS_OK;
+    return server_transport;
+}
+
+// resolved.config carries the server_secret_key the protocol copies: it is
+// wiped on every exit of the create, failed or created
+
+static struct rocketnet_server_transport_t * rocketnet_server_transport_create_internal( void * context,
+                                                                                         const char * public_address_string,
+                                                                                         const struct rocketnet_server_transport_config_t * config,
+                                                                                         double time, int * status,
+                                                                                         const uint64_t * resolved_memory_budget )
+{
+    struct rocketnet_server_transport_resolved_t resolved;
+    struct rocketnet_server_transport_t * server_transport = rocketnet_server_transport_create_staged( context, public_address_string, config, time, status, resolved_memory_budget, resolved );
+    sodium_memzero( &resolved, sizeof( resolved ) );
+    ROCKETNET_SERVER_TRANSPORT_CONFIG_STAGING_SEEN( resolved.config.server_secret_key, ROCKETNET_SERVER_TRANSPORT_CONFIG_STAGING_CREATE );
     return server_transport;
 }
 

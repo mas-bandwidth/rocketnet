@@ -12679,6 +12679,7 @@ extern void rocketnet_test_frame_sync_lifecycle();
 extern void rocketnet_test_frame_sync_create_ex_success_status();
 #if defined( __APPLE__ ) && !defined( ROCKETNET_USE_SYSTEM_SODIUM )
 extern void rocketnet_test_bundled_rng_closes_and_reopens_on_mac();
+extern void rocketnet_test_bundled_rng_opens_once_under_concurrent_keygen_on_mac();
 #endif // #if defined(__APPLE__) && !defined(ROCKETNET_USE_SYSTEM_SODIUM)
 #if ROCKETNET_DEV
 extern void rocketnet_test_frame_sync_high_resolution_timer_required();
@@ -12828,6 +12829,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_frame_sync_create_ex_success_status", rocketnet_test_frame_sync_create_ex_success_status, NULL },
 #if defined( __APPLE__ ) && !defined( ROCKETNET_USE_SYSTEM_SODIUM )
     { "test_bundled_rng_closes_and_reopens_on_mac", rocketnet_test_bundled_rng_closes_and_reopens_on_mac, NULL },
+    { "test_bundled_rng_opens_once_under_concurrent_keygen_on_mac", rocketnet_test_bundled_rng_opens_once_under_concurrent_keygen_on_mac, NULL },
 #endif // #if defined(__APPLE__) && !defined(ROCKETNET_USE_SYSTEM_SODIUM)
 #if ROCKETNET_DEV
     { "test_frame_sync_high_resolution_timer_required", rocketnet_test_frame_sync_high_resolution_timer_required, NULL },
