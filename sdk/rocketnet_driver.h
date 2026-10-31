@@ -93,7 +93,10 @@ struct rocketnet_server_transport_io_operations_t
     // in these callbacks. Refuse/drop or retain work for a later worker pass.
     // start returns NULL with the id ROCKETNET_TRANSPORT_PACKET_UNREACHABLE when
     // the transport has no link-layer destination for the address (the
-    // transport counts SEND_NO_LINK_ADDRESS); any other NULL is a full ring.
+    // transport counts SEND_NO_LINK_ADDRESS). Any other NULL is a full staging
+    // when send_room reports no room, else a refusal of that one frame (an
+    // address the socket cannot carry), which the transport counts in its
+    // send_failures.
     uint8_t * ( *start_packet )( void *, const rocketnet_address_t *, uint64_t * );
     void ( *finish_packet )( void *, uint64_t, uint8_t *, int );
     void ( *abort_packet )( void *, uint64_t, uint8_t * );

@@ -24,6 +24,7 @@
 
 #include "rocketnet_driver.h"
 #include "rocketnet_driver_loopback.h"
+#include "rocketnet_server_protocol.h"
 #include "rocketnet_client_io.h"
 #include "loopback_hub.h"
 

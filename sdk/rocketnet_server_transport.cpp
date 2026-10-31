@@ -606,6 +606,14 @@ static int rocketnet_server_transport_io_send_room( const rocketnet_server_trans
     return room > 0 ? room : 0;
 }
 
+// A refused start with room left refused that one frame; without room, or
+// from a transport that does not report it, it is a full staging.
+static bool rocketnet_server_transport_io_refused_full( const rocketnet_server_transport_t * server_transport )
+{
+    return !server_transport->io.operations || !server_transport->io.operations->send_room ||
+           server_transport->io.operations->send_room( server_transport->io.instance ) <= 0;
+}
+
 // How many payload frames may still start this update: the payload ring's
 // free slots on a buffered transport, the transport's own send room on a
 // staged one, so a full staging stops the fair send pass where the next
@@ -621,17 +629,26 @@ int rocketnet_server_transport_send_capacity_available( const rocketnet_server_t
     return used >= (uint64_t) server_transport->send_capacity ? 0 : (int) ( (uint64_t) server_transport->send_capacity - used );
 }
 
-// a NULL start with the id ROCKETNET_TRANSPORT_PACKET_UNREACHABLE is the
-// transport's refusal for want of a link-layer destination (TRANSPORTS.md, xdp):
-// counted here, never as a full ring, and never sent or counted as sent
+// Every refused start is counted once, by what refused it: the id
+// ROCKETNET_TRANSPORT_PACKET_UNREACHABLE is the transport's refusal for want
+// of a link-layer destination (TRANSPORTS.md, xdp), SEND_NO_LINK_ADDRESS; a
+// refusal with no send room left (or from a transport that does not report
+// its room) is a full staging, SEND_RING_FULL; any
+// other is the transport refusing that one frame (an address its socket
+// cannot carry), which the transport counts in its own send_failures,
+// SEND_FAILED. None is ever sent or counted as sent.
 static uint8_t * rocketnet_server_transport_io_start_packet( rocketnet_server_transport_t * transport, const rocketnet_address_t * to, uint64_t * id )
 {
     *id = 0;
 
     uint8_t * frame = transport->io.operations->start_packet( transport->io.instance, to, id );
-    if ( !frame && *id == ROCKETNET_TRANSPORT_PACKET_UNREACHABLE )
+    if ( frame )
+        return frame;
+    if ( *id == ROCKETNET_TRANSPORT_PACKET_UNREACHABLE )
         rocketnet_platform_atomic_add_u64( &transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_NO_LINK_ADDRESS], 1 );
-    return frame;
+    else if ( rocketnet_server_transport_io_refused_full( transport ) )
+        rocketnet_platform_atomic_add_u64( &transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_RING_FULL], 1 );
+    return NULL;
 }
 static void rocketnet_server_transport_io_finish_packet( rocketnet_server_transport_t * transport, uint64_t id, uint8_t * frame, int bytes )
 {
@@ -2941,11 +2958,7 @@ uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_trans
         uint64_t packet_id;
         frame = rocketnet_server_transport_io_start_packet( server_transport, &to, &packet_id );
         if ( !frame )
-        {
-            if ( packet_id != ROCKETNET_TRANSPORT_PACKET_UNREACHABLE )
-                rocketnet_platform_atomic_add_u64( &server_transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_RING_FULL], 1 );
             return NULL;
-        }
 
         rocketnet_platform_atomic_add_u64( &server_transport->send_staged, 1 );
         context->packet_id = packet_id;
@@ -3087,11 +3100,7 @@ static int rocketnet_server_reserve_fill_frame( struct rocketnet_server_transpor
     {
         frame->data = rocketnet_server_transport_io_start_packet( server_transport, to, &frame->socket_packet_id );
         if ( !frame->data )
-        {
-            if ( frame->socket_packet_id != ROCKETNET_TRANSPORT_PACKET_UNREACHABLE )
-                rocketnet_platform_atomic_add_u64( &server_transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_RING_FULL], 1 );
             return 0;
-        }
 
         rocketnet_platform_atomic_add_u64( &server_transport->send_staged, 1 );
         return 1;
@@ -3622,8 +3631,9 @@ static void rocketnet_server_transport_defer_disconnect_burst( struct rocketnet_
 // pass in ring order, so a burst's packets leave at consecutive sequences as
 // the immediate burst's do. The caller's max_seals is within the transport's
 // send room, so no start is refused for room. A burst whose last packet is
-// sealed leaves the ring and its key is wiped. A start refused for want of a
-// link-layer destination abandons that burst: it is marked complete, and the
+// sealed leaves the ring and its key is wiped. A start refused for its
+// destination (no link-layer address, or one the socket cannot carry) with
+// room left abandons that burst: it is marked complete, and the
 // pass passes over a complete entry until it reaches the head, so no packet
 // past a burst's sequences is ever sealed. Any other refusal ends the drain;
 // what is left waits for the next update or stop step.
@@ -3648,10 +3658,14 @@ static void rocketnet_server_transport_drain_disconnect_bursts( struct rocketnet
         uint8_t * frame_data = rocketnet_server_reserve_send_frame( server_transport, &burst->to, &frame, shutdown );
         if ( !frame_data )
         {
-            if ( frame.packet_id != ROCKETNET_TRANSPORT_PACKET_UNREACHABLE )
+            // a full staging: the burst waits for the next update or stop step
+
+            if ( frame.packet_id != ROCKETNET_TRANSPORT_PACKET_UNREACHABLE && rocketnet_server_transport_io_refused_full( server_transport ) )
                 break;
 
-            // no link-layer destination: no packet of this burst can leave
+            // the transport refused this destination with room left (no
+            // link-layer address, or an address its socket cannot carry): no
+            // packet of this burst can leave
 
             burst->sealed = ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS;
         }

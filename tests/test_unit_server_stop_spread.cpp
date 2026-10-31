@@ -31,6 +31,7 @@ struct stop_spread_fixture_t
     int used;                                           // frames staged since the last flush
     int refused_for_room;                               // starts called with the staging full
     int unreachable_port;                               // a destination with no link-layer address, 0: none
+    int refused_port;                                   // a destination the socket cannot carry, 0: none
     int stops;                                          // the I/O told to stop
     int staged[STOP_SPREAD_MAX_CLIENTS];                // disconnect packets staged, by client
     int flushed[STOP_SPREAD_MAX_CLIENTS];               // disconnect packets flushed, by client
@@ -59,6 +60,8 @@ static uint8_t * stop_spread_start_packet( void * p, const rocketnet_address_t *
         *id = ROCKETNET_TRANSPORT_PACKET_UNREACHABLE;
         return NULL;
     }
+    if ( f->refused_port != 0 && to->port == f->refused_port )
+        return NULL;
     if ( f->used >= f->capacity )
     {
         f->refused_for_room++;
@@ -376,7 +379,69 @@ static void test_server_send_capacity_reports_staged_room()
     printf( "test_server_send_capacity_reports_staged_room\n" );
 }
 
+// A refused start is counted by what refused it: a full staging is
+// SEND_RING_FULL, a destination with no link-layer address
+// SEND_NO_LINK_ADDRESS, and a destination the socket cannot carry, with room
+// left, neither (the transport counts it in its own send_failures). The stop
+// abandons the burst of such a destination and finishes.
+static void test_server_refused_starts_counted_by_cause()
+{
+    stop_spread_fixture_t * f = new stop_spread_fixture_t();
+    f->capacity = 1;
+    const int clients = 3;
+
+    rocketnet_server_transport_io_operations_t operations;
+    rocketnet_server_transport_t * server = stop_spread_server( f, &operations, clients, true );
+    const uint64_t * counters = server->protocol.counters->values;
+    const uint64_t ring_full = counters[ROCKETNET_COUNTER_SEND_RING_FULL];
+    const uint64_t no_link = counters[ROCKETNET_COUNTER_SEND_NO_LINK_ADDRESS];
+
+    struct rocketnet_packet_context_t context;
+    uint8_t * frame = rocketnet_server_transport_start_packet( server, 0, 16, &context );
+    rocketnet_unit_check( frame );
+    memset( frame + context.payload_index, 1, 16 );
+    rocketnet_unit_check( rocketnet_server_transport_finish_packet( server, &context, 16 ) > 0 );
+
+    // the staging is full: a full ring
+
+    rocketnet_unit_check( !rocketnet_server_transport_start_packet( server, 0, 16, &context ) );
+    rocketnet_unit_check( counters[ROCKETNET_COUNTER_SEND_RING_FULL] == ring_full + 1 );
+    rocketnet_server_transport_send_packets( server );
+
+    // room left, but the transport refuses the destination: not a full ring
+
+    f->refused_port = 1001;
+    rocketnet_unit_check( !rocketnet_server_transport_start_packet( server, 1, 16, &context ) );
+    rocketnet_unit_check( counters[ROCKETNET_COUNTER_SEND_RING_FULL] == ring_full + 1 );
+    rocketnet_unit_check( counters[ROCKETNET_COUNTER_SEND_NO_LINK_ADDRESS] == no_link );
+
+    // no link-layer address: its own counter
+
+    f->unreachable_port = 1002;
+    rocketnet_unit_check( !rocketnet_server_transport_start_packet( server, 2, 16, &context ) );
+    rocketnet_unit_check( counters[ROCKETNET_COUNTER_SEND_RING_FULL] == ring_full + 1 );
+    rocketnet_unit_check( counters[ROCKETNET_COUNTER_SEND_NO_LINK_ADDRESS] == no_link + 1 );
+
+    // the stop abandons both refused destinations' bursts and finishes
+
+    f->capacity = 4;
+    stop_spread_stop_server( server, clients );
+    for ( int poll = 0; poll < 8 && !rocketnet_server_transport_stopped( server ); poll++ )
+    {
+    }
+
+    rocketnet_unit_check( rocketnet_server_transport_stopped( server ) );
+    rocketnet_unit_check( f->flushed[0] == ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
+    rocketnet_unit_check( f->flushed[1] == 0 && f->flushed[2] == 0 );
+    rocketnet_unit_check( f->refused_for_room == 1 );
+
+    rn_test_server_transport_stop_and_destroy( server );
+    delete f;
+    printf( "test_server_refused_starts_counted_by_cause\n" );
+}
+
 REGISTER_UNIT_TEST( test_server_stop_spreads_disconnect_bursts_across_updates );
+REGISTER_UNIT_TEST( test_server_refused_starts_counted_by_cause );
 REGISTER_UNIT_TEST( test_server_stop_polls_are_the_stop_steps );
 REGISTER_UNIT_TEST( test_server_stop_abandons_an_unreachable_burst );
 REGISTER_UNIT_TEST( test_server_kick_spreads_its_burst_across_updates );

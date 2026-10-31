@@ -1379,6 +1379,8 @@ uint8_t * rocketnet_server_iocp_start_packet( rocketnet_server_iocp_t * iocp, co
     op->address_bytes = rocketnet_platform_sockaddr_for( iocp->ipv6, to, &op->address );
     if ( !op->address_bytes )
     {
+        // an address this socket cannot carry: counted SEND_FAILED, not a full staging
+        iocp->counters[ROCKETNET_IOCP_SEND_FAILED].fetch_add( 1, std::memory_order_relaxed );
         rocketnet_iocp_release_send( iocp, ref, ROCKETNET_IOCP_OPERATION_STAGED );
         return NULL;
     }
