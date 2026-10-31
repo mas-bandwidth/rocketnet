@@ -285,7 +285,8 @@ int rocketnet_message_validate_config_ex( const struct rocketnet_message_config_
         return 0;
     }
 
-    // the store's large class must hold one maximal block whole (4, 14)
+    // the store's large class holds at least ceil(max_message_bytes / 1152)
+    // chunks: a sizing floor on send_message_buffer_bytes (4, 14)
 
     const uint32_t large = rn_send_store_chunks_for( (uint64_t) config->send_message_buffer_bytes, RN_STORE_LARGE );
     if ( large < (uint32_t) fragments )

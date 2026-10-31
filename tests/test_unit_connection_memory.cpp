@@ -932,6 +932,23 @@ static void test_span_links_pin_oldest_live()
     rn_arena_destroy( arena );
 }
 
+// A store class may hold as many chunks as a handle's 30 index bits name:
+// a send buffer large enough for more than 2^20 small chunks lays out.
+
+static void test_store_class_holds_up_to_the_handle_index()
+{
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    config.send_message_buffer_bytes = 1 << 30;
+
+    check( rocketnet_message_validate_config( &config ) );
+
+    rn_region_layout_t layout;
+    check( rn_region_layout( &config, &layout ) );
+    check( layout.store_chunks[RN_STORE_SMALL] > ( 1u << 20 ) );
+    check( layout.store_chunks[RN_STORE_SMALL] <= RN_HANDLE_INDEX );
+}
+
 // A send descriptor's generation wraps to 1, never to 0: a resend link
 // stamped 0 is never unlinked by the ack while its descriptor is in use, so
 // the number would be resent until the connection timed out
@@ -1024,3 +1041,4 @@ REGISTER_UNIT_TEST( test_span_links_pin_oldest_live );
 REGISTER_UNIT_TEST( test_store_chunk_generation_never_zero );
 #endif // #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_message_descriptor_generation_never_zero );
+REGISTER_UNIT_TEST( test_store_class_holds_up_to_the_handle_index );

@@ -159,9 +159,11 @@ bool rn_region_layout( const rocketnet_message_config_t * config, rn_region_layo
         const uint64_t payload_bytes = typical_payload[c];
         const uint64_t count = rn_send_store_chunks_for( (uint64_t) config->send_message_buffer_bytes, c ) + ( reserve + payload_bytes - 1 ) / payload_bytes;
 
-        // a chunk's meta packs its run count in 20 bits, so a class holds at most 2^20 chunks; a config past that is refused whole
+        // a chunk's handle is its class in the top two bits and its index in
+        // the low 30, so a class holds at most RN_HANDLE_INDEX + 1 chunks; a
+        // config past that is refused whole
 
-        if ( count >= ( 1u << 20 ) )
+        if ( count > RN_HANDLE_INDEX )
             return false;
 
         chunks[c] = (uint32_t) count;
@@ -222,7 +224,6 @@ bool rn_region_layout( const rocketnet_message_config_t * config, rn_region_layo
 //                          the send store
 // ----------------------------------------------------------------
 
-#define RN_HANDLE_INDEX         0x3FFFFFFFu
 
 static const uint32_t rn_class_bytes[RN_STORE_NUM_CLASSES] = { RN_STORE_SMALL_BYTES, RN_STORE_MEDIUM_BYTES, RN_STORE_LARGE_BYTES };
 

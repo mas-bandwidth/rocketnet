@@ -48,6 +48,7 @@
 
 #define RN_DESCRIPTOR_NONE      0xFFFFFFFFu
 #define RN_CHUNK_NONE           0xFFFFFFFFu
+#define RN_HANDLE_INDEX         0x3FFFFFFFu     // a chunk handle's index bits; its class is the top two
 #define RN_RESEND_NONE          0xFFFFFFFFu
 
 struct rn_channel_send_t                // 40 bytes (7.1): ready membership is a ticket plus the head generation, linked by channel index

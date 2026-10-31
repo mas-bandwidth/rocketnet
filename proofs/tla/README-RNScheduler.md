@@ -99,7 +99,7 @@ every update, and 1 transport loss.
 |---|---|
 | `Init`, `Seeds` | `rn_packet_builder_init` -> `rn_builder_reset_clocks`; `round_robin = num_channels - 1`, so the first turn is channel 0's |
 | `IsHead`, `Boost` | `rn_builder_plan`: once per call, stable radix passes group the full 16-bit channel and class into contiguous ranges while preserving caller order; a reverse pass stores every position's suffix priority minimum, so each range cursor is `IsHead` and its suffix minimum is `Boost`; `rn_builder_take_head` advances only that cursor |
-| `PickLevel`, `PickIn` | `rn_builder_next_in_class`, one selection operation per current channel/class range head (with `rn_builder_effective_clock`, the pull-forward); every flat entry validates the current full-width call epoch and caller item index; `test_packet_builder_matches_reference_order` holds it to the quadratic scan it replaced, take for take |
+| `PickLevel`, `PickIn` | `rn_builder_next_in_class`, one selection operation per current channel/class range head (with `rn_builder_effective_clock`, the pull-forward); every flat entry, built afresh on the call's stack, validates its caller item index and group; `test_packet_builder_matches_reference_order` holds it to the quadratic scan it replaced, take for take |
 | `Write` (class order, clock step, `rr'`) | `rn_packet_builder_write`'s class loop, `rn_builder_take_level` |
 | `Tick`'s clock reset | the end of `rn_packet_builder_write`: every item taken -> `rn_builder_reset_clocks` |
 
