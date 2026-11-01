@@ -1766,7 +1766,7 @@ struct rocketnet_receipt_t
 /// @param secret_key Receives ROCKETNET_BACKEND_SECRET_KEY_BYTES. Wipe it
 /// when done.
 /// An unavailable OS random source aborts the process after one error line
-/// (rocketnet_init installs the line; docs/ERRORS-AND-LOGGING.md).
+/// (rocketnet_init installs the line).
 /// @return ROCKETNET_STATUS_OK, or ROCKETNET_STATUS_INVALID_ARGUMENT for a
 /// NULL buffer.
 
@@ -1783,7 +1783,7 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_generate_backend_keypair( uin
 /// @param secret_key Receives ROCKETNET_SERVER_SECRET_KEY_BYTES. Wipe it
 /// when done.
 /// An unavailable OS random source aborts the process after one error line
-/// (rocketnet_init installs the line; docs/ERRORS-AND-LOGGING.md).
+/// (rocketnet_init installs the line).
 /// @return ROCKETNET_STATUS_OK, or ROCKETNET_STATUS_INVALID_ARGUMENT for a
 /// NULL buffer.
 

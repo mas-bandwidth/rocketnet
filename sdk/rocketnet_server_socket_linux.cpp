@@ -3054,7 +3054,7 @@ bool rocketnet_server_socket_test_gateway_refresh()
     server->gateway_refresh.address_type = ROCKETNET_ADDRESS_IPV4;
     server->gateway_resolve = rocketnet_server_socket_test_resolve_gateway;
     server->gateway_resolve_context = &gateway;
-    snprintf( server->interface_name, sizeof( server->interface_name ), "test0" );
+    memcpy( server->interface_name, "test0", sizeof( "test0" ) );
 
     rocketnet_address_t client = {};
     client.type = ROCKETNET_ADDRESS_IPV4;
@@ -3499,7 +3499,10 @@ void rocketnet_server_socket_xdp_counters( struct rocketnet_server_socket_t * se
         if ( !fit )
             rocketnet_error( "xdp stats not read: %d possible cpus is outside 1 .. %d; the last read stands", num_cpus, ROCKETNET_XDP_STATS_MAX_CPUS );
         else
-            rocketnet_error( "xdp stats not read: map lookup failed: %s; the last read stands", strerror( read_error ) );
+        {
+            char reason[128];
+            rocketnet_error( "xdp stats not read: map lookup failed: %s; the last read stands", strerror_r( read_error, reason, sizeof( reason ) ) );
+        }
     }
 }
 
@@ -3949,7 +3952,7 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
         {
             // reserve entries in the send queue
 
-            uint32_t send_queue_index;
+            uint32_t send_queue_index = 0;
             int send_packets = (int) xsk_ring_prod__reserve( &socket->send_queue, (uint32_t) num_batch_packets, &send_queue_index );
 
             // All-or-zero: zero keeps the batch intact for retry.
