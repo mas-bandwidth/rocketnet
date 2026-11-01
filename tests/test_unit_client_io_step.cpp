@@ -533,3 +533,109 @@ static void test_client_io_step_idle_wait_is_a_guard_not_a_cadence()
     rocketnet_client_io_rig_destroy( rig );
 }
 REGISTER_UNIT_TEST( test_client_io_step_idle_wait_is_a_guard_not_a_cadence );
+
+// A partial batch keeps its immutable ring; neither an aborted slot nor a
+// second queued ring may make the already-consumed prefix repeat.
+static int client_io_progress_allow;
+static int client_io_progress_calls;
+
+static int client_io_progress_send( void * instance, const rocketnet_platform_send_t * sends, int count )
+{
+    client_io_progress_calls++;
+    const int consumed = count < client_io_progress_allow ? count : client_io_progress_allow;
+    if ( consumed > 0 )
+        rocketnet_fake_client_send_batch( instance, sends, consumed );
+    return consumed;
+}
+
+static void test_client_io_step_retains_partial_send_prefix()
+{
+    rocketnet_fake_client_transport_io_t fake = {};
+    rocketnet_client_transport_io_operations_t operations = rocketnet_fake_client_operations_io;
+    operations.send_batch = rocketnet_fake_client_send_batch;
+    operations.send_batch_progress = client_io_progress_send;
+    rocketnet_client_transport_io_t transport = {};
+    client_io_step_test_open( &fake, &operations, &transport );
+    rocketnet_client_io_rig_t * rig = rocketnet_client_io_rig_create();
+    client_io_step_test_clock_t clock = { 1000.0 };
+    rocketnet_client_io_t io = {};
+    rocketnet_client_io_rig_init( rig, &io, &transport, client_io_step_test_time, &clock );
+    rocketnet_address_t to = {};
+    rocketnet_address_load_ipv4( &to, 0x7f000001, 9000 );
+    rig->counts[0][0] = 1;
+    rig->counts[0][2] = 1;
+    rig->counts[0][3] = 1;
+    rocketnet_client_io_rig_slot( rig, 0, 0 )[0] = 10;
+    rocketnet_client_io_rig_slot( rig, 0, 2 )[0] = 20;
+    rocketnet_client_io_rig_slot( rig, 0, 3 )[0] = 30;
+    rocketnet_unit_check( rocketnet_client_io_hand_off( &io, 4, &to ) == ROCKETNET_CLIENT_RINGS_HANDED_OFF );
+    rig->counts[1][0] = 1;
+    rocketnet_client_io_rig_slot( rig, 1, 0 )[0] = 40;
+    rocketnet_unit_check( rocketnet_client_io_hand_off( &io, 1, &to ) == ROCKETNET_CLIENT_RINGS_HANDED_OFF );
+
+    client_io_progress_calls = 0;
+    client_io_progress_allow = 1;
+    rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_WORKED );
+    rocketnet_unit_check( io.send_ring == 0 && io.send_slot == 2 );
+    rocketnet_unit_check( io.send.free_count == 0 && fake.num_sent == 1 );
+    rocketnet_unit_check( fake.sent[0].data[0] == 10 );
+
+    client_io_progress_allow = 0;
+    const int waits = fake.wait_calls;
+    rocketnet_unit_check( rocketnet_client_io_step( &io, true ) == ROCKETNET_CLIENT_IO_IDLE );
+    rocketnet_unit_check( fake.wait_calls == waits + 1 );
+    rocketnet_unit_check( client_io_progress_calls == 2 );
+    rocketnet_unit_check( io.send_ring == 0 && io.send_slot == 2 && io.send.free_count == 0 );
+    rocketnet_unit_check( fake.num_sent == 1 );
+
+    client_io_progress_allow = 4;
+    rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_WORKED );
+    rocketnet_unit_check( io.send_ring == 0 && io.send_slot == 4 && fake.num_sent == 3 );
+    rocketnet_unit_check( fake.sent[1].data[0] == 20 && fake.sent[2].data[0] == 30 );
+    rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_WORKED );
+    rocketnet_unit_check( io.send_ring == 1 && fake.num_sent == 4 && fake.sent[3].data[0] == 40 );
+    rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_IDLE );
+    rocketnet_unit_check( io.send_ring == -1 && io.send.free_count == 2 && fake.num_sent == 4 );
+    rocketnet_client_transport_io_close( &transport );
+    rocketnet_client_io_rig_destroy( rig );
+}
+REGISTER_UNIT_TEST( test_client_io_step_retains_partial_send_prefix );
+
+// Quit attempts only the remaining suffix once through the terminal callback,
+// even when the running callback would refuse forever.
+static void test_client_io_stop_finishes_only_unconsumed_suffix()
+{
+    rocketnet_fake_client_transport_io_t fake = {};
+    rocketnet_client_transport_io_operations_t operations = rocketnet_fake_client_operations_io;
+    operations.send_batch = rocketnet_fake_client_send_batch;
+    operations.send_batch_progress = client_io_progress_send;
+    rocketnet_client_transport_io_t transport = {};
+    client_io_step_test_open( &fake, &operations, &transport );
+    rocketnet_client_io_rig_t * rig = rocketnet_client_io_rig_create();
+    client_io_step_test_clock_t clock = { 1000.0 };
+    rocketnet_client_io_t io = {};
+    rocketnet_client_io_rig_init( rig, &io, &transport, client_io_step_test_time, &clock );
+    rocketnet_address_t to = {};
+    rocketnet_address_load_ipv4( &to, 0x7f000001, 9000 );
+    for ( int i = 0; i < 3; i++ )
+    {
+        rig->counts[0][i] = 1;
+        rocketnet_client_io_rig_slot( rig, 0, i )[0] = (uint8_t) ( i + 1 );
+    }
+    rocketnet_unit_check( rocketnet_client_io_hand_off( &io, 3, &to ) == ROCKETNET_CLIENT_RINGS_HANDED_OFF );
+    client_io_progress_allow = 1;
+    client_io_progress_calls = 0;
+    rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_WORKED );
+    rocketnet_unit_check( fake.num_sent == 1 && io.send_slot == 1 );
+    client_io_progress_allow = 0;
+    rocketnet_client_io_stop( &io, 0, &to );
+    rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_EXITED );
+    rocketnet_unit_check( client_io_progress_calls == 1 && fake.num_sent == 3 );
+    rocketnet_unit_check( fake.sent[0].data[0] == 1 && fake.sent[1].data[0] == 2 && fake.sent[2].data[0] == 3 );
+    rocketnet_unit_check( io.stopped.load( std::memory_order_acquire ) );
+    rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_EXITED );
+    rocketnet_unit_check( fake.num_sent == 3 );
+    rocketnet_client_transport_io_close( &transport );
+    rocketnet_client_io_rig_destroy( rig );
+}
+REGISTER_UNIT_TEST( test_client_io_stop_finishes_only_unconsumed_suffix );

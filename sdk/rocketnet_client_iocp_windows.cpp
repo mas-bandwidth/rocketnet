@@ -587,7 +587,7 @@ const rocketnet_client_transport_io_operations_t rocketnet_client_iocp_operation
     rocketnet_client_iocp_create, rocketnet_client_iocp_destroy, rocketnet_client_iocp_send, rocketnet_client_iocp_receive,
     rocketnet_client_iocp_send_batch, rocketnet_client_iocp_receive_batch_operation, rocketnet_client_iocp_wait_operation,
     rocketnet_client_iocp_wake_operation, rocketnet_client_iocp_send_failures, rocketnet_client_iocp_connect,
-    rocketnet_client_iocp_close_operation
+    rocketnet_client_iocp_close_operation, NULL
 };
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS

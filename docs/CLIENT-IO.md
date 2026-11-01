@@ -46,7 +46,15 @@ Each built-in client transport fills the same operations
 runs under this I/O thread: create opens the socket and its wake and
 allocates everything, connect connects the socket to the one server, and the
 I/O thread alone calls send_batch, receive_batch and wait. On Linux, `portable`
-batches with plain `sendmmsg` and `recvmmsg`, and `gso`
+batches with plain `sendmmsg` and `recvmmsg`. A transient send refusal keeps
+the unsent suffix in its I/O-owned ring. The next attempt resumes at that
+cursor; later rings wait in order, and zero progress uses the existing wake
+wait. No socket-owned copy or allocation is added. Shutdown attempts only
+the remaining suffix through the existing terminal send path, counting its
+refused packets before returning the ring. The optional internal progress
+callback borrows packet bytes only during its call and returns an original
+input prefix; other backends keep their synchronous callback contract.
+The `gso` transport
 (`sdk/rocketnet_client_gso_linux.cpp`, the Linux `auto` choice) sends each run of
 equal-sized datagrams as one `UDP_SEGMENT` message and falls back to plain
 messages without loss when the kernel refuses (TRANSPORTS.md, UDP

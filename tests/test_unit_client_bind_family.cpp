@@ -428,6 +428,8 @@ struct race_pair_t
     rocketnet_fake_client_transport_io_t fake[2];
     int creates;
     uint64_t send_failures[2];
+    int progress_refusals[2];
+    int progress_calls[2];
 };
 
 static race_pair_t * race_pair;
@@ -446,6 +448,20 @@ static uint64_t race_pair_send_failures( void * instance )
     return race_pair->send_failures[instance == &race_pair->fake[1] ? 1 : 0];
 }
 
+static int race_pair_send_progress( void * instance, const rocketnet_platform_send_t * sends, int count )
+{
+    const int family = instance == &race_pair->fake[1] ? 1 : 0;
+    rocketnet_unit_check( race_pair->fake[family].close_calls == 0 );
+    race_pair->progress_calls[family]++;
+    if ( race_pair->progress_refusals[family] > 0 )
+    {
+        race_pair->progress_refusals[family]--;
+        return 0;
+    }
+    rocketnet_fake_client_send_batch( instance, sends, count );
+    return count;
+}
+
 struct race_harness_t
 {
     rocketnet_address_t ipv4_server, ipv6_server, client_address;
@@ -459,7 +475,7 @@ struct race_harness_t
     int forwarded;      // fake[1]'s sends already handed to the server
 };
 
-static void race_harness_setup( race_harness_t * h )
+static void race_harness_setup( race_harness_t * h, bool progress = false )
 {
     rocketnet_unit_check( rocketnet_address_parse( &h->ipv4_server, "203.0.113.10:40000" ) );
     rocketnet_unit_check( rocketnet_address_parse( &h->ipv6_server, "[2001:db8::1]:40000" ) );
@@ -472,6 +488,11 @@ static void race_harness_setup( race_harness_t * h )
     h->operations.connect = rocketnet_fake_client_connect;
     h->operations.close = rocketnet_fake_client_close;
     h->operations.send_failures = race_pair_send_failures;
+    if ( progress )
+    {
+        h->operations.send_batch = rocketnet_fake_client_send_batch;
+        h->operations.send_batch_progress = race_pair_send_progress;
+    }
     race_pair = &h->pair;
 
     h->clock.now = 1000.0;
@@ -637,4 +658,83 @@ static void test_client_race_send_failed_holds_across_the_commit()
 }
 
 REGISTER_UNIT_TEST( test_client_race_send_failed_holds_across_the_commit );
+// Exercise the real family adapter directly; only the physical transports
+// are fake. A refused copy must not make its already-sent twin repeat.
+extern bool rocketnet_client_transport_commit_race_for_test( rocketnet_client_transport_t *, int );
+
+static void test_client_race_partial_fanout_retries_physical_copy_once()
+{
+    race_harness_t * storage = new race_harness_t();
+    race_harness_t & h = *storage;
+    race_harness_setup( &h, true );
+    const rocketnet_client_transport_io_t * io = h.io->transport;
+    const uint8_t data[] = { 10, 20 };
+    rocketnet_platform_send_t sends[2] = {
+        { &h.ipv6_server, &data[0], 1 }, { &h.ipv6_server, &data[1], 1 }
+    };
+    h.pair.progress_refusals[1] = 1;
+    rocketnet_unit_check( io->operations->send_batch_progress( io->instance, sends, 2 ) == 0 );
+    rocketnet_unit_check( h.pair.fake[0].num_sent == 1 && h.pair.fake[1].num_sent == 0 );
+    rocketnet_unit_check( io->operations->send_batch_progress( io->instance, sends, 2 ) == 2 );
+    for ( int family = 0; family < 2; family++ )
+    {
+        rocketnet_unit_check( h.pair.fake[family].num_sent == 2 );
+        rocketnet_unit_check( h.pair.fake[family].sent[0].data[0] == 10 );
+        rocketnet_unit_check( h.pair.fake[family].sent[1].data[0] == 20 );
+    }
+    race_harness_teardown( &h );
+    delete storage;
+}
+REGISTER_UNIT_TEST( test_client_race_partial_fanout_retries_physical_copy_once );
+
+static void test_client_race_partial_fanout_commit_keeps_winning_copy()
+{
+    for ( int blocked = 0; blocked < 2; blocked++ )
+        for ( int winner = 0; winner < 2; winner++ )
+        {
+            race_harness_t * storage = new race_harness_t();
+            race_harness_t & h = *storage;
+            race_harness_setup( &h, true );
+            const rocketnet_client_transport_io_t * io = h.io->transport;
+            const uint8_t data = 42;
+            rocketnet_platform_send_t send = { &h.ipv6_server, &data, 1 };
+            h.pair.progress_refusals[blocked] = 1;
+            rocketnet_unit_check( io->operations->send_batch_progress( io->instance, &send, 1 ) == 0 );
+            rocketnet_unit_check( h.pair.fake[blocked].num_sent == 0 && h.pair.fake[1 - blocked].num_sent == 1 );
+            rocketnet_unit_check( h.pair.progress_calls[0] == 1 && h.pair.progress_calls[1] == 1 );
+            rocketnet_unit_check( rocketnet_client_transport_commit_race_for_test( h.transport, winner ) );
+            rocketnet_address_t from;
+            uint8_t receive[16];
+            rocketnet_unit_check( io->operations->receive( io->instance, &from, receive, sizeof( receive ) ) == 0 );
+            rocketnet_unit_check( h.pair.fake[1 - winner].close_calls == 1 );
+            rocketnet_unit_check( io->operations->send_batch_progress( io->instance, &send, 1 ) == 1 );
+            for ( int family = 0; family < 2; family++ )
+                rocketnet_unit_check( h.pair.fake[family].num_sent == ( family != blocked || family == winner ? 1 : 0 ) );
+            rocketnet_unit_check( h.pair.fake[winner].sent[0].data[0] == 42 );
+            race_harness_teardown( &h );
+            delete storage;
+        }
+}
+REGISTER_UNIT_TEST( test_client_race_partial_fanout_commit_keeps_winning_copy );
+
+static void test_client_race_partial_fanout_shutdown_attempts_only_missing_copy()
+{
+    race_harness_t * storage = new race_harness_t();
+    race_harness_t & h = *storage;
+    race_harness_setup( &h, true );
+    const rocketnet_client_transport_io_t * io = h.io->transport;
+    const uint8_t data = 73;
+    rocketnet_platform_send_t send = { &h.ipv6_server, &data, 1 };
+    h.pair.progress_refusals[1] = 1000;
+    rocketnet_unit_check( io->operations->send_batch_progress( io->instance, &send, 1 ) == 0 );
+    rocketnet_unit_check( h.pair.fake[0].num_sent == 1 && h.pair.fake[1].num_sent == 0 );
+    io->operations->send_batch( io->instance, &send, 1 );
+    rocketnet_unit_check( h.pair.fake[0].num_sent == 1 && h.pair.fake[1].num_sent == 1 );
+    rocketnet_unit_check( h.pair.fake[0].sent[0].data[0] == 73 && h.pair.fake[1].sent[0].data[0] == 73 );
+    rocketnet_unit_check( h.pair.progress_calls[0] == 1 && h.pair.progress_calls[1] == 1 );
+    race_harness_teardown( &h );
+    delete storage;
+}
+REGISTER_UNIT_TEST( test_client_race_partial_fanout_shutdown_attempts_only_missing_copy );
+
 #endif // #if ROCKETNET_DEV
