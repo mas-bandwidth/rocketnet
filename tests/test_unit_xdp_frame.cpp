@@ -305,6 +305,16 @@ static void test_parse_refuses_truncated_ipv6_frames()
 // counted when there is neither. No socket: the table is driven directly.
 
 static struct rocketnet_xdp_reply_macs_t reply_macs_under_test;
+static struct rocketnet_xdp_reply_mac_entry_t reply_macs_under_test_entries[ROCKETNET_XDP_REPLY_MAC_DEFAULT_ENTRIES];
+
+// binds the table to its storage, sized as a default-config server sizes it,
+// and resets it with gateway_mac (NULL: none)
+static void reply_macs_under_test_bind( struct rocketnet_xdp_reply_macs_t * table, const uint8_t * gateway_mac )
+{
+    rocketnet_unit_check( rocketnet_xdp_reply_macs_bind( table, reply_macs_under_test_entries, ROCKETNET_XDP_REPLY_MAC_DEFAULT_ENTRIES ) );
+    rocketnet_unit_check( (int) table->mask + 1 == rocketnet_xdp_reply_mac_entries( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
+    rocketnet_xdp_reply_macs_reset( table, gateway_mac );
+}
 
 static void test_xdp_transport_reply_mac_follows_the_client()
 {
@@ -322,7 +332,7 @@ static void test_xdp_transport_reply_mac_follows_the_client()
 
     // with a gateway: an unlearned address goes to the gateway
 
-    rocketnet_xdp_reply_macs_reset( table, gateway_mac );
+    reply_macs_under_test_bind( table, gateway_mac );
     const uint8_t * mac = rocketnet_xdp_reply_mac( table, &client, NULL, &refused );
     rocketnet_unit_check( mac && memcmp( mac, gateway_mac, 6 ) == 0 );
 
@@ -420,7 +430,7 @@ static void test_xdp_transport_reply_mac_follows_the_client()
     rocketnet_address_t many = client;
     uint8_t many_mac[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x00 };
 
-    for ( int i = 0; i < ROCKETNET_XDP_REPLY_MAC_ENTRIES * 2; ++i )
+    for ( int i = 0; i < (int) ( table->mask + 1 ) * 2; ++i )
     {
         many.port = (uint16_t) ( 1000 + i );
         many_mac[4] = (uint8_t) ( i >> 8 );

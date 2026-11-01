@@ -2621,15 +2621,15 @@ void rocketnet_server_transport_begin_message_update( struct rocketnet_server_tr
 // view_index names the packet in a staged transport's receive view, -1 on
 // the batch path.
 // The unit seam: the payload batch's capacity for this update's receive,
-// below ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE, so a case can fill it
-// with a few packets. 0 keeps the full batch.
+// below the batch the server's max_clients sizes, so a case can fill it with
+// a few packets. 0 keeps the full batch.
 #if ROCKETNET_DEV
 static int rocketnet_server_test_payload_batch_capacity = 0;
 
 void rocketnet_server_transport_set_payload_batch_capacity_for_test( int payloads )
 {
     rocketnet_server_test_payload_batch_capacity =
-        payloads > 0 && payloads <= ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE ? payloads : 0;
+        payloads > 0 && payloads <= rocketnet_server_receive_packets_per_update( ROCKETNET_MAX_CLIENTS ) ? payloads : 0;
 }
 #else // #if ROCKETNET_DEV
 static const int rocketnet_server_test_payload_batch_capacity = 0;
@@ -2711,7 +2711,7 @@ static void rocketnet_server_receive_one( struct rocketnet_server_transport_t * 
     else if ( payload && payload_bytes > 0 )
     {
         // the batch holds one entry per packet the update's drain takes, at
-        // most ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE, so this
+        // most the payload batch's capacity, so this
         // stays zero while that bound holds
         rocketnet_spam( "server dropped payload. receive batch full" );
         server_transport->counters.values[ROCKETNET_COUNTER_PAYLOAD_BATCH_FULL]++;

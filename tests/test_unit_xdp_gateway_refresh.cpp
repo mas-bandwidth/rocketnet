@@ -44,6 +44,16 @@ static bool reply_mac_is( struct rocketnet_xdp_reply_macs_t * table, const rocke
 }
 
 static struct rocketnet_xdp_reply_macs_t refresh_reply_macs;
+static struct rocketnet_xdp_reply_mac_entry_t refresh_reply_macs_entries[ROCKETNET_XDP_REPLY_MAC_DEFAULT_ENTRIES];
+
+// binds the table to its storage, sized as a default-config server sizes it,
+// and resets it with gateway_mac (NULL: none)
+static void refresh_reply_macs_bind( struct rocketnet_xdp_reply_macs_t * table, const uint8_t * gateway_mac )
+{
+    rocketnet_unit_check( rocketnet_xdp_reply_macs_bind( table, refresh_reply_macs_entries, ROCKETNET_XDP_REPLY_MAC_DEFAULT_ENTRIES ) );
+    rocketnet_unit_check( (int) table->mask + 1 == rocketnet_xdp_reply_mac_entries( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
+    rocketnet_xdp_reply_macs_reset( table, gateway_mac );
+}
 
 static const uint8_t old_gateway[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x01 };
 static const uint8_t new_gateway[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x02 };
@@ -55,7 +65,7 @@ static void test_xdp_transport_gateway_refresh_follows_a_replaced_router()
     static const uint8_t client_mac[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x0a };
 
     struct rocketnet_xdp_reply_macs_t * table = &refresh_reply_macs;
-    rocketnet_xdp_reply_macs_reset( table, old_gateway );
+    refresh_reply_macs_bind( table, old_gateway );
 
     rocketnet_address_t client, stranger;
     rocketnet_unit_check( rocketnet_address_parse( &client, "10.77.4.2:50000" ) );
@@ -114,7 +124,7 @@ static void test_xdp_transport_gateway_refresh_keeps_the_gateway_on_a_bad_resolv
     static const uint8_t zero_mac[6] = { 0, 0, 0, 0, 0, 0 };
 
     struct rocketnet_xdp_reply_macs_t * table = &refresh_reply_macs;
-    rocketnet_xdp_reply_macs_reset( table, old_gateway );
+    refresh_reply_macs_bind( table, old_gateway );
 
     rocketnet_address_t stranger;
     rocketnet_unit_check( rocketnet_address_parse( &stranger, "203.0.113.9:40000" ) );
@@ -169,7 +179,7 @@ static void test_xdp_transport_gateway_refresh_both_families()
     static const uint8_t ipv6_gateway[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x06 };
 
     struct rocketnet_xdp_reply_macs_t * table = &refresh_reply_macs;
-    rocketnet_xdp_reply_macs_reset( table, NULL );
+    refresh_reply_macs_bind( table, NULL );
     memcpy( table->gateway_ipv4, old_gateway, 6 );
     table->gateway_ipv4_known = true;
 

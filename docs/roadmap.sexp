@@ -37,10 +37,6 @@
    :title "Seed the message resend delay from the measured RTT"
    :text "The two channels nightly seeds that fail every run (4879047, 4879943) time out because the message layer waits its 2000 ms default while the transport has already measured RTT. Branch rowan/resend-seeded-rtt at 511ead80: works on macOS, TLC and standard m9.2 updated. Owed: diagnose the Linux test_light_profile_server_1000_required_memory failure; the full nightly seed range; re-measure the ordered stream's completion multiple; squash the WIP commits."
    :date "2026-10-31" :origin "Red channels nightly")
-  (item "size-by-config" :group "finish" :area "rocketnet"
-   :title "Size per-server arrays from the configured max_clients"
-   :text "In a ROCKETNET_MAX_CLIENTS=10000 build a 1000-slot server plans 3.93 GB because per-server arrays use the build constant (audit 39). Branch rowan/size-by-config; memory is the user's choice via config."
-   :date "2026-10-31" :origin "Audit item 39")
   (item "macos-net-thread-priority" :group "finish" :area "rocketnet"
    :title "macOS network thread just above default priority"
    :text "Since #624 the macOS network thread runs at SCHED_RR maximum and outranks the game thread. Branch rowan/macos-net-thread-priority at 1e9ecedf (priority 32): msgx P=32 p99 43.3 to 19.6 us on mini-m5. Owed: 200+ single-cell closed_port runs and a contention A/B against 47 to show #624's fix holds. If it does not hold under contention, Glenn decides between network latency and game-thread p99."

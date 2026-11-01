@@ -1489,7 +1489,7 @@ bool rocketnet_server_iocp_send_idle( rocketnet_server_iocp_t * iocp )
         return false;
     const uint64_t dequeue = iocp->free_sends.dequeue.load( std::memory_order_acquire );
     const uint64_t enqueue = iocp->free_sends.enqueue.load( std::memory_order_acquire );
-    return enqueue - dequeue >= ROCKETNET_IOCP_SEND_QUEUE_SIZE;
+    return enqueue - dequeue >= (uint64_t) iocp->send_queue_size;
 }
 
 uint8_t * rocketnet_server_iocp_start_packet( rocketnet_server_iocp_t * iocp, const rocketnet_address_t * to, uint64_t * packet_id )

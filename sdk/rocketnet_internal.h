@@ -663,10 +663,8 @@ void rocketnet_sleep_set_platform_dispatch_for_test( void ( *dispatch )( double 
 //
 // rocketnet_server_transport_receive_buffer_request is the SO_RCVBUF every
 // server socket of a built-in transport asks for, and the size the host memory
-// estimate charges per socket. Each socket is sized for the full client count:
-// the portable and msgx socket at the config's max_clients, and every gso and
-// io_uring queue socket and the iocp and rio socket at ROCKETNET_MAX_CLIENTS,
-// because those creates do not carry max_clients. A queue socket is not sized
+// estimate charges per socket. Each socket is sized for the config's full
+// max_clients, every gso and io_uring queue socket included. A queue socket is not sized
 // for a share of the clients: SO_REUSEPORT hashes flows to sockets, so any
 // one socket may carry any number of them. xdp opens no UDP socket and returns
 // 0, as does a name that is not a built-in transport.

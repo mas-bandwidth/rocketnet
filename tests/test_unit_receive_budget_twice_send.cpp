@@ -15,9 +15,6 @@
 #include "test_unit_registry.h"
 
 #include "rocketnet_constants.h"
-#ifndef ROCKETNET_SERVER_MAX_SEND_PACKETS
-#define ROCKETNET_SERVER_MAX_SEND_PACKETS ROCKETNET_MAX_CLIENTS // BASE keeps this constant in the transport source
-#endif // #ifndef ROCKETNET_SERVER_MAX_SEND_PACKETS
 #include "rocketnet_driver_loopback.h"
 #include "rocketnet_server_gso.h"
 #include "rocketnet_server_iocp.h"
@@ -27,10 +24,20 @@
 
 #define check rocketnet_unit_check
 
+// every server buffer is sized from the configured max_clients, so each
+// relation is checked at the smallest count, the default, and every count the
+// build holds at its ends
+static const int budget_client_counts[] = { 1, ROCKETNET_SERVER_MIN_SIZED_CLIENTS - 1, ROCKETNET_SERVER_MIN_SIZED_CLIENTS,
+                                            ROCKETNET_DEFAULT_MAX_CLIENTS, ROCKETNET_MAX_CLIENTS - 1, ROCKETNET_MAX_CLIENTS };
+
 static void test_portable_transport_receive_budget_twice_send()
 {
-    check( ROCKETNET_SERVER_MAX_SEND_PACKETS > 0 );
-    check( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE >= 2 * ROCKETNET_SERVER_MAX_SEND_PACKETS );
+    for ( const int clients : budget_client_counts )
+    {
+        check( rocketnet_server_send_batch_packets( clients ) > 0 );
+        check( rocketnet_server_send_batch_packets( clients ) >= ROCKETNET_SERVER_MIN_SEND_PACKETS );
+        check( rocketnet_server_receive_packets_per_update( clients ) >= 2 * rocketnet_server_send_batch_packets( clients ) );
+    }
 }
 
 #if defined( __APPLE__ )
@@ -38,8 +45,11 @@ static void test_msgx_transport_receive_budget_twice_send()
 {
     // msgx shares the portable transport budgets
 
-    check( ROCKETNET_SERVER_MAX_SEND_PACKETS > 0 );
-    check( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE >= 2 * ROCKETNET_SERVER_MAX_SEND_PACKETS );
+    for ( const int clients : budget_client_counts )
+    {
+        check( rocketnet_server_send_batch_packets( clients ) > 0 );
+        check( rocketnet_server_receive_packets_per_update( clients ) >= 2 * rocketnet_server_send_batch_packets( clients ) );
+    }
 }
 #endif // #if defined( __APPLE__ )
 
@@ -49,8 +59,11 @@ static void test_loopback_transport_receive_budget_twice_send()
     // endpoint receives every client's
 
     check( ROCKETNET_LOOPBACK_QUEUE_PACKETS >= 2 * ROCKETNET_CONNECTION_MAX_PACKETS_PER_UPDATE );
-    check( rocketnet_loopback_server_queue_packets( ROCKETNET_MAX_CLIENTS ) >= 2 * ROCKETNET_SERVER_MAX_SEND_PACKETS );
-    check( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE >= 2 * ROCKETNET_SERVER_MAX_SEND_PACKETS );
+    for ( const int clients : budget_client_counts )
+    {
+        check( rocketnet_loopback_server_queue_packets( clients ) >= 2 * rocketnet_server_send_batch_packets( clients ) );
+        check( rocketnet_server_receive_packets_per_update( clients ) >= 2 * rocketnet_server_send_staging_packets( clients ) );
+    }
 }
 
 #if defined( __linux__ )
@@ -58,16 +71,20 @@ static void test_gso_transport_receive_budget_twice_send()
 {
     check( ROCKETNET_GSO_SEND_QUEUE_SIZE > 0 );
     check( ROCKETNET_GSO_RECV_QUEUE_SIZE >= 2 * ROCKETNET_GSO_SEND_QUEUE_SIZE );
-    check( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE >= 2 * ROCKETNET_GSO_SEND_QUEUE_SIZE );
+    for ( const int clients : budget_client_counts )
+        check( rocketnet_server_receive_packets_per_update( clients ) >= 2 * ROCKETNET_GSO_SEND_QUEUE_SIZE );
 }
 
 static void test_io_uring_transport_receive_budget_twice_send()
 {
     check( ROCKETNET_URING_SEND_QUEUE_SIZE > 0 );
     check( ROCKETNET_URING_RECV_BUFFERS >= 2 * ROCKETNET_URING_SEND_QUEUE_SIZE );
-    check( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE >= 2 * ROCKETNET_URING_SEND_QUEUE_SIZE );
-    check( ROCKETNET_URING_RECEIVE_BUDGET >= 2 * ROCKETNET_URING_SEND_QUEUE_SIZE );
-    check( ROCKETNET_URING_RECEIVE_BUDGET >= ROCKETNET_URING_SEND_BUDGET );
+    for ( const int clients : budget_client_counts )
+    {
+        check( rocketnet_server_receive_packets_per_update( clients ) >= 2 * ROCKETNET_URING_SEND_QUEUE_SIZE );
+        check( rocketnet_server_uring_bank_packets( clients ) >= 2 * ROCKETNET_URING_SEND_QUEUE_SIZE );
+        check( rocketnet_server_uring_bank_packets( clients ) >= ROCKETNET_URING_SEND_BUDGET );
+    }
 }
 #endif // #if defined( __linux__ )
 
@@ -76,23 +93,30 @@ static void test_xdp_transport_receive_budget_twice_send()
 {
     check( ROCKETNET_XDP_SEND_QUEUE_SIZE > 0 );
     check( ROCKETNET_XDP_RECV_QUEUE_SIZE >= 2 * ROCKETNET_XDP_SEND_QUEUE_SIZE );
-    check( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE >= 2 * ROCKETNET_XDP_SEND_QUEUE_SIZE );
+    for ( const int clients : budget_client_counts )
+        check( rocketnet_server_receive_packets_per_update( clients ) >= 2 * ROCKETNET_XDP_SEND_QUEUE_SIZE );
 }
 #endif // #if defined( ROCKETNET_XDP_SEND_QUEUE_SIZE ) && defined( ROCKETNET_XDP_RECV_QUEUE_SIZE )
 
 #if defined( _WIN32 )
 static void test_iocp_transport_receive_budget_twice_send()
 {
-    check( ROCKETNET_IOCP_SEND_QUEUE_SIZE > 0 );
-    check( ROCKETNET_IOCP_RECEIVE_QUEUE_SIZE >= 2 * ROCKETNET_IOCP_SEND_QUEUE_SIZE );
-    check( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE >= 2 * ROCKETNET_IOCP_SEND_QUEUE_SIZE );
+    for ( const int clients : budget_client_counts )
+    {
+        check( rocketnet_server_iocp_send_queue_size( clients ) > 0 );
+        check( rocketnet_server_iocp_receive_queue_size( clients ) >= 2 * rocketnet_server_iocp_send_queue_size( clients ) );
+        check( rocketnet_server_receive_packets_per_update( clients ) >= 2 * rocketnet_server_iocp_send_queue_size( clients ) );
+    }
 }
 
 static void test_rio_transport_receive_budget_twice_send()
 {
-    check( ROCKETNET_RIO_SEND_QUEUE_SIZE > 0 );
-    check( ROCKETNET_RIO_RECEIVES >= 2 * ROCKETNET_RIO_SEND_QUEUE_SIZE );
-    check( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE >= 2 * ROCKETNET_RIO_SEND_QUEUE_SIZE );
+    for ( const int clients : budget_client_counts )
+    {
+        check( rocketnet_server_rio_send_queue_size( clients ) > 0 );
+        check( rocketnet_server_rio_receives( clients ) >= 2 * rocketnet_server_rio_send_queue_size( clients ) );
+        check( rocketnet_server_receive_packets_per_update( clients ) >= 2 * rocketnet_server_rio_send_queue_size( clients ) );
+    }
 }
 #endif // #if defined( _WIN32 )
 

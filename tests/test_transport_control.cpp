@@ -109,7 +109,7 @@ static void fixture_stop( void * ) {}
 static bool fixture_stopped( void * ) { return true; }
 static void send_batch( void * p, const rocketnet_platform_send_t * sends, int count )
 {
-    CHECK( count > 0 && count <= ROCKETNET_SERVER_MAX_SEND_PACKETS );
+    CHECK( count > 0 && count <= rocketnet_server_send_batch_packets( ROCKETNET_MAX_CLIENTS ) );
     for ( int i = 0; i < count; ++i )
     {
         record( (control_fixture_t *) p, sends[i].to, sends[i].packet_data );
