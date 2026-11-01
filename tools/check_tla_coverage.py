@@ -29,6 +29,7 @@ CITATION_SCAN_FILES = (
     "sdk/rocketnet_server_uring_linux.cpp",
     "sdk/rocketnet_server_uring.h",
     "sdk/rocketnet_replay.h",
+    "proofs/tla/COVERAGE.tsv",
     "proofs/tla/ReplayWindow.tla",
     "proofs/tla/MCReplayWindow.tla",
     "proofs/tla/ServerSession.tla",
