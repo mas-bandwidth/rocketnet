@@ -200,30 +200,34 @@ static void test_dst_check_ack_after_endpoint_reset()
     rocketnet_unit_check( strcmp( st.check, "acked_means_opened" ) == 0 );
 }
 
-// The ledger holds LEDGER_PACKETS ids: one an ack names inside it is
-// answered exactly, one older is refused rather than aliased.
+// The ledger holds LEDGER_PACKETS ids. Odd ids are issued, so last is odd:
+// an issued id inside the ledger is answered, an even id inside it was never
+// issued, and an issued id LEDGER_PACKETS older than the newest, which shares
+// its slot, is refused rather than aliased.
 
 static void test_dst_check_ack_ledger_wraps()
 {
     static struct rocketnet_dst_check_state_t st;
     rocketnet_dst_check_init( &st, 1, 54 );
 
-    const uint64_t last = 3 * ROCKETNET_DST_CHECK_LEDGER_PACKETS;
+    const uint64_t last = 3 * ROCKETNET_DST_CHECK_LEDGER_PACKETS + 1;
     for ( uint64_t id = 1; id <= last; id += 2 )
         rocketnet_dst_check_issued( &st, 0, id );
     rocketnet_dst_check_ack_id( &st, 0, last );
-    rocketnet_dst_check_ack_id( &st, 0, last - ROCKETNET_DST_CHECK_LEDGER_PACKETS + 1 );
+    rocketnet_dst_check_ack_id( &st, 0, last - ROCKETNET_DST_CHECK_LEDGER_PACKETS + 2 );
     rocketnet_unit_check( st.failed == 0 );
     rocketnet_dst_check_ack_id( &st, 0, last - 1 );
     rocketnet_unit_check( st.failed == 1 );
+    rocketnet_unit_check( strcmp( st.check, "acked_means_opened" ) == 0 );
 
     static struct rocketnet_dst_check_state_t old;
     rocketnet_dst_check_init( &old, 1, 55 );
     for ( uint64_t id = 1; id <= last; id += 2 )
         rocketnet_dst_check_issued( &old, 0, id );
-    rocketnet_dst_check_ack_id( &old, 0, last - ROCKETNET_DST_CHECK_LEDGER_PACKETS - 1 );
+    rocketnet_dst_check_ack_id( &old, 0, last - ROCKETNET_DST_CHECK_LEDGER_PACKETS );
     rocketnet_unit_check( old.failed == 1 );
     rocketnet_unit_check( strcmp( old.check, "acked_means_opened" ) == 0 );
+    rocketnet_unit_check( strstr( old.detail, "older than the ledger" ) != NULL );
 }
 
 static void test_dst_check_stale_session_payload_fails()
