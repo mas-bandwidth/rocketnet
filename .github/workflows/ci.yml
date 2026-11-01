@@ -1981,7 +1981,9 @@ jobs:
 
   big-endian:
     name: big endian s390x / ${{ matrix.build_type }}
-    runs-on: [self-hosted, Linux, X64, fleet]
+    # ubuntu-2404: the s390x multiarch libraries are provisioned on the 24.04
+    # fleet hosts, not on the ubuntu-2604 ones.
+    runs-on: [self-hosted, Linux, X64, fleet, ubuntu-2404]
     timeout-minutes: ${{ inputs.full && 10 || 2 }}
     strategy:
       fail-fast: false
@@ -2250,7 +2252,9 @@ jobs:
     name: pinned libsodium (built from source)
     # nightly tier
     if: inputs.full
-    runs-on: [self-hosted, Linux, X64, fleet]   # was ubuntu-24.04, then one host's rocketnet label; the fleet's org runners (see build-and-test's note)
+    # ubuntu-2404: the cached prefix is keyed by runner.os alone and built
+    # against the host's glibc, so it is built and restored on one distro.
+    runs-on: [self-hosted, Linux, X64, fleet, ubuntu-2404]
     timeout-minutes: 10
     env:
       SODIUM_VERSION: "1.0.20"
@@ -2503,12 +2507,12 @@ jobs:
   # cache restores the prefix and builds nothing.
   instruction-gate:
     name: instruction count gate
-    # Any fleet runner: cachegrind counts instructions, not time, so the gate
-    # needs a host the pinned toolchain's cache key names (distro, arch, C
-    # library: every Linux fleet runner is ubuntu-24.04 x86_64 glibc-2.39),
-    # not a quiet one, and it leaves the libxdp-1-4 runners to the functional
-    # rows that need them.
-    runs-on: [self-hosted, Linux, X64, fleet]
+    # A fleet runner labelled ubuntu-2404: cachegrind counts instructions, not
+    # time, so the gate needs a host the pinned toolchain's cache key names
+    # (ubuntu-24.04 x86_64 glibc-2.39), not a quiet one. The fleet also holds
+    # ubuntu-2604 runners, where that key misses and the per-commit tier
+    # refuses a cold cache, so the label is what keeps the gate off them.
+    runs-on: [self-hosted, Linux, X64, fleet, ubuntu-2404]
     # Per commit the gate restores the pinned toolchain and never builds it
     # (396s cold); the nightly tier builds it on a miss and saves it from
     # main, where every branch and pull request can restore it.
