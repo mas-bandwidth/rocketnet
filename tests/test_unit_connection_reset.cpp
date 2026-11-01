@@ -34,7 +34,8 @@
 // The loopback pair names the in-memory loopback transport in its transport configs;
 // a caller's ROCKETNET_SERVER_TRANSPORT / ROCKETNET_CLIENT_TRANSPORT pin wins over
 // the struct by design, so a CI leg pinned to a real transport would replace it. Each
-// create sets its pin aside and puts it back, as test_unit_status_server_transport_create_ex.cpp does.
+// create sets its pin aside and puts it back; the unit runner (tests/test.cpp) also
+// clears both pins for the whole run.
 #if ROCKETNET_DEV
 struct reset_env_pin_t
 {

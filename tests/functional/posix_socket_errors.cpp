@@ -1379,6 +1379,83 @@ static void test_msgx_send_replay_refusals_counted_apart( int ipv6 )
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+
+// test_mmsg_full_socket_logs_its_errno: a sendmmsg refused with EAGAIN drops
+// the unsent tail and logs one line per entry with the refusal's own errno.
+// The log sink sets errno to EBADF on every line, as a sink's own I/O can, so
+// a loop that reread errno after logging would name the wrong error from the
+// second entry on.
+
+static std::atomic<int> posix_mmsg_lines( 0 );
+static std::atomic<int> posix_mmsg_lines_eagain( 0 );
+
+static void posix_mmsg_log( void * context, enum rocketnet_log_level_t level, const char * message, size_t length )
+{
+    (void) context;
+    (void) level;
+    (void) length;
+
+    if ( strstr( message, "sendmmsg (" ) != NULL )
+    {
+        posix_mmsg_lines++;
+        if ( strstr( message, strerror( EAGAIN ) ) != NULL )
+            posix_mmsg_lines_eagain++;
+    }
+
+    errno = EBADF;
+}
+
+static void test_mmsg_full_socket_logs_its_errno( int ipv6 )
+{
+    const int num_packets = 4;
+
+    rocketnet_address_t bind_address;
+    posix_check( rocketnet_address_parse( &bind_address, ipv6 ? "::1" : "127.0.0.1" ) );
+    rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0,
+                                                                             ROCKETNET_SOCKET_SEND_BUFFER_SIZE, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
+    posix_check( socket != NULL );
+
+    rocketnet_address_t to;
+    posix_check( rocketnet_address_parse( &to, ipv6 ? "::1" : "127.0.0.1" ) );
+    to.port = bind_address.port;
+
+    uint8_t packets[num_packets][64];
+    struct rocketnet_platform_send_t sends[num_packets];
+    for ( int i = 0; i < num_packets; i++ )
+    {
+        memset( packets[i], i + 1, sizeof( packets[i] ) );
+        sends[i].to = &to;
+        sends[i].packet_data = packets[i];
+        sends[i].packet_bytes = (int) sizeof( packets[i] );
+    }
+
+    const enum rocketnet_log_level_t level = rocketnet_log_level_current();
+    posix_mmsg_lines = 0;
+    posix_mmsg_lines_eagain = 0;
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_DEBUG );
+    rocketnet_log_function( posix_mmsg_log, NULL );
+
+    const uint64_t failures_before = rocketnet_platform_socket_send_failures( socket );
+    rocketnet_platform_socket_fail_next_sends( socket, 1, EAGAIN );
+    rocketnet_platform_socket_send_packets_mmsg( socket, sends, num_packets );
+    rocketnet_platform_socket_fail_next_sends( socket, 0, 0 );
+    const uint64_t failures = rocketnet_platform_socket_send_failures( socket ) - failures_before;
+
+    rocketnet_log_function( NULL, NULL );
+    rocketnet_log_level( level );
+
+    printf( "  ipv%d mmsg: %d lines, %d name EAGAIN, %llu failures\n", ipv6 ? 6 : 4, posix_mmsg_lines.load(), posix_mmsg_lines_eagain.load(), (unsigned long long) failures );
+    fflush( stdout );
+    posix_check( failures == (uint64_t) num_packets );
+    posix_check( posix_mmsg_lines == num_packets );
+    posix_check( posix_mmsg_lines_eagain == num_packets );
+
+    rocketnet_platform_socket_destroy( socket );
+}
+
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+
 void rocketnet_test_posix_transport_send_seam()
 {
     for ( int ipv6 = 0; ipv6 < 2; ipv6++ )
@@ -1388,6 +1465,9 @@ void rocketnet_test_posix_transport_send_seam()
         test_msgx_send_replay_refusals_counted_apart( ipv6 );
         posix_transport_send_seam_cell( ipv6, "msgx", "msgx" );
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+        test_mmsg_full_socket_logs_its_errno( ipv6 );
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     }
 }
 
@@ -1872,6 +1952,44 @@ static void posix_linux_uring_fail_sends( struct posix_pair_t * pair, int count 
     rocketnet_server_uring_test_fail_sends( (struct rocketnet_server_uring_t *) pair->transport, count );
 }
 
+// a flush on a full socket: the next refusals sendmmsg calls answer -1 with
+// the full-socket errno, and the eight payloads staged behind them are kept,
+// not dropped. Each update wakes the TX worker to try again; once the socket
+// takes them they reach the client in order, and neither the gso drop count
+// nor the transport's SEND_FAILED moved (proofs/tla/RNGsoHandoff.tla SentOrHeld)
+
+static void posix_linux_gso_full_socket_flush( struct posix_pair_t * pair, int error, int tag )
+{
+    const int refusals = 16;
+
+    posix_pair_update( pair );
+    posix_linux_wait_send_idle( pair, "before the full-socket flush" );
+
+    const uint64_t sent_before = posix_native_counter( pair->native, pair->transport, ROCKETNET_SERVER_GSO_COUNTER_PACKETS_SENT, 0 );
+    const uint64_t dropped_before = posix_native_counter( pair->native, pair->transport, ROCKETNET_SERVER_GSO_COUNTER_SEND_DROPPED, 0 );
+    const uint64_t syscalls_before = posix_native_counter( pair->native, pair->transport, ROCKETNET_SERVER_GSO_COUNTER_SEND_SYSCALLS, 0 );
+    const uint64_t transport_failed_before = rocketnet_server_transport_counters( pair->server )->values[ROCKETNET_COUNTER_SEND_FAILED];
+
+    rocketnet_server_gso_test_fail_sends( (struct rocketnet_server_gso_t *) pair->transport, refusals, error );
+    posix_linux_server_traffic_resumes( pair, tag );
+    posix_linux_wait_send_idle( pair, "after the full-socket flush" );
+
+    const uint64_t sent = posix_native_counter( pair->native, pair->transport, ROCKETNET_SERVER_GSO_COUNTER_PACKETS_SENT, 0 ) - sent_before;
+    const uint64_t dropped = posix_native_counter( pair->native, pair->transport, ROCKETNET_SERVER_GSO_COUNTER_SEND_DROPPED, 0 ) - dropped_before;
+    const uint64_t syscalls = posix_native_counter( pair->native, pair->transport, ROCKETNET_SERVER_GSO_COUNTER_SEND_SYSCALLS, 0 ) - syscalls_before;
+    const uint64_t transport_failed = rocketnet_server_transport_counters( pair->server )->values[ROCKETNET_COUNTER_SEND_FAILED] - transport_failed_before;
+    if ( dropped != 0 || transport_failed != 0 || sent < 8 || syscalls < (uint64_t) refusals + 1 )
+    {
+        printf( "full-socket flush: sent %llu dropped %llu syscalls %llu transport SEND_FAILED +%llu\n", (unsigned long long) sent,
+                (unsigned long long) dropped, (unsigned long long) syscalls, (unsigned long long) transport_failed );
+    }
+
+    posix_check( dropped == 0 );
+    posix_check( transport_failed == 0 );
+    posix_check( sent >= 8 );
+    posix_check( syscalls >= (uint64_t) refusals + 1 );
+}
+
 static void posix_linux_gso_send_cell( int ipv6, int plain )
 {
     posix_force_gso_plain( plain );
@@ -1880,21 +1998,33 @@ static void posix_linux_gso_send_cell( int ipv6, int plain )
     posix_pair_create( &pair, ipv6, "gso", "portable", NULL, "portable" );
     posix_force_gso_plain( 0 );
 
-    const int errors[2] = { ENOBUFS, EAGAIN };
-    int tag = 0;
+    // a refusal for the destination drops and counts each refused message
 
-    for ( int e = 0; e < 2; e++ )
+    posix_linux_fail_error = EHOSTUNREACH;
+    uint64_t dropped = 0;
+    uint64_t transport_failed = 0;
+    posix_linux_dropped_flush( &pair, posix_linux_gso_fail_sends, &dropped, &transport_failed );
+    posix_linux_server_traffic_resumes( &pair, 0 );
+    posix_pair_check_connected( &pair );
+    printf( "  gso%s sendmmsg EHOSTUNREACH %s: dropped and counted %llu, transport SEND_FAILED +%llu, pump kept, resumed 8/8\n", plain ? " (plain)" : "",
+            ipv6 ? "ipv6" : "ipv4", (unsigned long long) dropped, (unsigned long long) transport_failed );
+    fflush( stdout );
+
+    // a full socket drops nothing: the payloads wait and arrive in order
+
+    const int errors[3] = { ENOBUFS, EAGAIN, EINTR };
+    const char * names[3] = { "ENOBUFS", "EAGAIN", "EINTR" };
+    int tag = 8;
+
+    for ( int e = 0; e < 3; e++ )
     {
-        posix_linux_fail_error = errors[e];
-
-        uint64_t dropped = 0;
-        uint64_t transport_failed = 0;
-        posix_linux_dropped_flush( &pair, posix_linux_gso_fail_sends, &dropped, &transport_failed );
+        posix_linux_gso_full_socket_flush( &pair, errors[e], tag );
+        tag += 8;
         posix_linux_server_traffic_resumes( &pair, tag );
         tag += 8;
         posix_pair_check_connected( &pair );
-        printf( "  gso%s sendmmsg %s %s: dropped and counted %llu, transport SEND_FAILED +%llu, pump kept, resumed 8/8\n", plain ? " (plain)" : "",
-                errors[e] == ENOBUFS ? "ENOBUFS" : "EAGAIN", ipv6 ? "ipv6" : "ipv4", (unsigned long long) dropped, (unsigned long long) transport_failed );
+        printf( "  gso%s sendmmsg %s %s: kept, none dropped, arrived 8/8 in order, resumed 8/8\n", plain ? " (plain)" : "", names[e],
+                ipv6 ? "ipv6" : "ipv4" );
         fflush( stdout );
     }
 

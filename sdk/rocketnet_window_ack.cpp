@@ -23,9 +23,9 @@ rn_ack_cost_t rn_window_ack_cost_read() { return rn_ack_cost; }
 // m9; TLA+ actions Init, WritePacket, WriteOldest, ReceiveAck and
 // invariants TablesBounded and EveryReliableAckedAndDelivered in
 // proofs/tla/RNWindow.tla). A resend link names its message number's slot and
-// the descriptor generation it was stamped with (proofs/tla/RNChannelQueues.tla).
-// Acked holes are not compacted on the walk: capacity stays W and walk_visits
-// still counts them.
+// the descriptor generation it was stamped with (proofs/tla/RNResendGenerations.tla).
+// An ack unlinks its number from the resend sequence before it marks it
+// acked, so a walk visits only unacked numbers and walk_visits counts no hole.
 
 static void rn_window_ack_count( const rn_region_t * region, int counter )
 {
@@ -165,8 +165,8 @@ static bool rn_resend_fifo_unlink( rn_window_ack_t * ack, uint32_t slot )
     return true;
 }
 
-// proofs/tla/RNChannelQueues.tla Resend, Ack and StaleAck. Names the link with the live descriptor's generation.
-// Generation 0 is never a live name.
+// proofs/tla/RNResendGenerations.tla Write and Send: names the link with the live descriptor's
+// generation on every link, park and requeue alike. Generation 0 is never a live name.
 static void rn_resend_fifo_stamp( rn_window_ack_t * ack, uint32_t slot )
 {
     rn_region_t * region = ack->region;
@@ -184,7 +184,10 @@ static void rn_resend_fifo_stamp( rn_window_ack_t * ack, uint32_t slot )
 
 // Unlinks only the named generation of this number. A stale generation leaves
 // the FIFO as it is; reset clears every link, so no earlier connection's entry
-// is ever linked.
+// is ever linked. proofs/tla/RNResendGenerations.tla Ack: a linked entry's stamp is
+// always its live descriptor's generation (StampNamesOwner), so the refusal
+// never fires on a reachable state (MCRNResendGenerationsNoCompare.cfg); a
+// stale packet's number is refused by the caller's number comparison.
 static bool rn_resend_fifo_unlink_named( rn_window_ack_t * ack, uint32_t slot, uint64_t number, uint32_t generation )
 {
     if ( generation == 0 || !rn_resend_fifo_is_linked( ack, slot ) )
@@ -245,6 +248,7 @@ static void rn_resend_fifo_insert_after( rn_window_ack_t * ack, uint32_t after, 
 }
 
 // proofs/tla/RNResendFifoLayout.tla PushTail: a slot that is already the tail links after its prev.
+// proofs/tla/RNResendGenerations.tla Send: the relink stamps the live generation again.
 static void rn_resend_fifo_push_tail( rn_window_ack_t * ack, uint32_t slot )
 {
     const bool chunk = rn_window_ack_slot_is_chunk( ack, slot );
@@ -260,7 +264,7 @@ static void rn_resend_fifo_push_head( rn_window_ack_t * ack, uint32_t slot )
     rn_resend_fifo_insert_after( ack, RN_RESEND_NONE, slot );
 }
 
-// proofs/tla/RNResendFifoLayout.tla Park
+// proofs/tla/RNResendFifoLayout.tla Park and proofs/tla/RNResendGenerations.tla Write
 void rn_window_ack_park( rn_window_ack_t * ack, uint32_t after, uint32_t slot_index )
 {
     rocketnet_assert( ack );
@@ -478,7 +482,7 @@ void rn_window_ack_init( rn_window_ack_t * ack, rn_window_send_t * send, rn_regi
     ack->resend_delay_max = (double) config->message_resend_delay_max_ms / 1000.0;
     ack->reliable_timeout = (double) config->reliable_message_timeout_ms / 1000.0;
 
-    ack->resend_delay = ack->resend_delay_initial;                // proofs/tla/RNResendTiming.tla Init: resend_delay = ResendDelayInitial
+    ack->resend_delay = ack->resend_delay_initial;                // proofs/tla/RNResendTiming.tla Init: rto = RtoInitial
 
     ack->resend_head = RN_RESEND_NONE;
     ack->resend_tail = RN_RESEND_NONE;
@@ -610,6 +614,7 @@ static void rn_window_ack_commit( rn_window_ack_t * ack, uint64_t packet_id, con
     const uint32_t max_refs = region->sent_ref_entries;
 
     static_assert( RN_MESSAGE_RECEIPT_SERIALS_MAX == ROCKETNET_PACKET_BUILDER_MAX_RECORDS, "the receipt bound is the sent map's record limit" );
+    static_assert( RN_MESSAGE_RECEIPT_SERIALS_MAX <= UINT16_MAX, "a sent entry's 16-bit ref_count holds every legal count" );
     rocketnet_assert( count + receipt_count <= RN_MESSAGE_RECEIPT_SERIALS_MAX ); // one record table holds at most this many records
 
     const uint32_t total = count + receipt_count;
@@ -688,7 +693,6 @@ static void rn_window_ack_commit( rn_window_ack_t * ack, uint64_t packet_id, con
     entry->ref_count = (uint16_t) count;
     entry->unreliable_receipts = (uint16_t) receipt_count;
     entry->receipt_first = ( ref_first + count ) % max_refs;
-    entry->flags = 0;
     ack->pkt_tail++;
 
     rn_sent_index_insert( region, packet_id, entry_index );
@@ -703,6 +707,23 @@ void rn_window_ack_commit_packet( rn_window_ack_t * ack, uint64_t packet_id, con
 void rn_window_ack_commit_receipt_packet( rn_window_ack_t * ack, uint64_t packet_id, const uint32_t * serials, uint32_t count, double now )
 {
     rn_window_ack_commit( ack, packet_id, NULL, 0, serials, count, now );
+}
+
+// proofs/tla/RNResendTiming.tla Seed: the transport's measured round trip is
+// the first sample, taken only while the estimator has none of its own.
+int rn_window_ack_seed_rtt( rn_window_ack_t * ack, double rtt )
+{
+    rocketnet_assert( ack );
+
+    if ( ack->has_rtt || !( rtt > 0.0 ) )
+        return 0;
+
+    ack->srtt = rtt;
+    ack->rttvar = rtt;
+    ack->has_rtt = 1;
+    ack->resend_delay = rn_window_ack_compute_resend_delay( ack->srtt, ack->rttvar, ack->resend_delay_min, ack->resend_delay_max );
+
+    return 1;
 }
 
 // Processes one acked transport sequence `packet_id` at time `now`
@@ -765,6 +786,10 @@ int rn_window_ack_on_ack( rn_window_ack_t * ack, uint64_t packet_id, double now 
         const uint32_t slot_index = ref_u32 & ( W - 1 );
         rn_send_number_t * slot = &region->send_numbers[slot_index];
 
+        // proofs/tla/RNResendGenerations.tla Ack: a packet can reference a number
+        // whose slot now holds a later one, possibly of the same descriptor at a
+        // later generation; the number comparison skips it (NamedGenerationOnly).
+
         if ( slot->acked || slot->number < send->U || slot->number >= send->next || (uint32_t) slot->number != ref_u32 )
             continue;
 
@@ -773,7 +798,7 @@ int rn_window_ack_on_ack( rn_window_ack_t * ack, uint64_t packet_id, double now 
             const rn_resend_link_t * link = &region->resend_fifo[slot_index];
 
             // A named generation unlinks only that generation. Generation 0 means
-            // the link was stamped with no in-use descriptor (proofs/tla/RNChannelQueues.tla
+            // the link was stamped with no in-use descriptor (proofs/tla/RNResendGenerations.tla
             // Ack). That link still leaves on this ack while no descriptor has been
             // attached since the stamp.
 

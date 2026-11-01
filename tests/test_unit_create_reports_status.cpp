@@ -326,6 +326,48 @@ static void test_create_refuses_sent_map_below_window()
 }
 REGISTER_UNIT_TEST( test_create_refuses_sent_map_below_window );
 
+// ---- the resend reserve past the region's 32-bit fields ---------------------
+
+// A send rate and maximum resend delay that each pass their range but whose
+// resend reserve does not fit the region's 32-bit fields is refused at create
+// with CONFIG_OUT_OF_RANGE, and the refusal is logged as one error line naming
+// the rule and its figures (sdk/rocketnet_allocator.cpp, rn_region_layout).
+// Red before the line: create refused silently.
+
+static bool g_create_status_reserve_logged = false;
+
+static void create_status_note_reserve( void * context, enum rocketnet_log_level_t level, const char * message, size_t length )
+{
+    (void) context;
+    (void) length;
+
+    if ( level == ROCKETNET_LOG_LEVEL_ERROR && strstr( message, "resend reserve" ) && strstr( message, "60000" ) )
+        g_create_status_reserve_logged = true;
+}
+
+static void test_create_refuses_resend_reserve_past_region_fields()
+{
+    const enum rocketnet_log_level_t saved_level = rocketnet_log_level_current();
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+    rocketnet_log_function( create_status_note_reserve, NULL );
+    g_create_status_reserve_logged = false;
+
+    struct rocketnet_client_config_t client_config;
+    check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
+    client_config.send_kbps = 2000000;
+    client_config.message_resend_delay_max_ms = 60000;
+
+    enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
+    check( rocketnet_client_create( NULL, &client_config, &status ) == NULL );
+    check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
+
+    rocketnet_log_function( NULL, NULL );
+    rocketnet_log_level( saved_level );
+
+    check( g_create_status_reserve_logged );
+}
+REGISTER_UNIT_TEST( test_create_refuses_resend_reserve_past_region_fields );
+
 // ---- config refusals --------------------------------------------------------
 
 static void test_create_reports_status_config_refusals()

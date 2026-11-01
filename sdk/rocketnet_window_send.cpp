@@ -6,13 +6,13 @@
 #include "rocketnet_window_send.h"
 #include "rocketnet_platform.h"
 
-// standard/MESSAGES.md m5.1 len16; RNRing Len16 and PlaceSingle/PlaceBlock.
+// standard/MESSAGES.md m5.1 len16; proofs/tla/RNRing.tla Len16, PlaceSingle and PlaceBlock.
 static uint64_t rn_window_send_round16( uint32_t bytes )
 {
     return ( (uint64_t) bytes + 15 ) & ~(uint64_t) 15;
 }
 
-// standard/MESSAGES.md m5.1 boundary padding; RNRing Pos and PlaceSingle/PlaceBlock.
+// standard/MESSAGES.md m5.1 boundary padding; proofs/tla/RNRing.tla Pos, PlaceSingle and PlaceBlock.
 static uint64_t rn_window_send_position( const rn_window_send_t * send, uint64_t span )
 {
     const uint64_t B = send->region->ring_bytes;
@@ -21,8 +21,8 @@ static uint64_t rn_window_send_position( const rn_window_send_t * send, uint64_t
     return span > remaining ? send->ring_next + remaining : send->ring_next;
 }
 
-// standard/MESSAGES.md m5.1's count and byte bounds; RNWindow NumberRecord and RNRing
-// Admits/PlaceSingle/PlaceBlock. Subtraction avoids overflowing U'+W or
+// standard/MESSAGES.md m5.1's count and byte bounds; RNWindow NumberRecord and
+// proofs/tla/RNRing.tla Admits, PlaceSingle and PlaceBlock. Subtraction avoids overflowing U'+W or
 // p+span. A failed first write counts once until U' moves or one succeeds.
 // proofs/tla/RNWindow.tla NumberRecord
 static int rn_window_send_admit( rn_window_send_t * send, uint32_t count,
@@ -74,15 +74,13 @@ static int rn_window_send_admit( rn_window_send_t * send, uint32_t count,
     return 1;
 }
 
-// standard/MESSAGES.md m5, m5.1; RNWindow NumberRecord and RNRing PlaceSingle/PlaceBlock.
+// standard/MESSAGES.md m5, m5.1; RNWindow NumberRecord and proofs/tla/RNRing.tla PlaceSingle and PlaceBlock.
 // Code 2 gets a zero-byte ring anchor at p so it can safely be U'.
 // proofs/tla/RNWindow.tla NumberRecord
 static void rn_window_send_set_number( rn_window_send_t * send, uint64_t number,
                                        uint32_t descriptor, uint16_t fragment,
-                                       uint64_t ring_start, uint64_t bytes16 )
+                                       uint64_t ring_start )
 {
-    rocketnet_assert( bytes16 % 16 == 0 && bytes16 / 16 <= UINT8_MAX );
-
     rn_send_number_t * entry = &send->region->send_numbers[number % send->region->window];
     entry->number = number;
     entry->ring_start = ring_start;
@@ -93,7 +91,6 @@ static void rn_window_send_set_number( rn_window_send_t * send, uint64_t number,
     entry->last_send = RN_SEND_NUMBER_NEVER_SENT;
     entry->descriptor = descriptor;
     entry->fragment = fragment;
-    entry->ring_units = (uint8_t) ( bytes16 / 16 );
     entry->acked = 0;
 }
 
@@ -114,7 +111,7 @@ void rn_window_send_init( rn_window_send_t * send, rn_region_t * region, uint64_
     send->stalled = 0;
 }
 
-// standard/MESSAGES.md m5.1; RNWindow NumberRecord and RNRing PlaceSingle. This
+// standard/MESSAGES.md m5.1; RNWindow NumberRecord and proofs/tla/RNRing.tla PlaceSingle. This
 // is called only at first packet write, never when send_message queues it.
 // proofs/tla/RNWindow.tla NumberRecord
 int rn_window_send_first_write( rn_window_send_t * send, int code, uint32_t bytes,
@@ -137,7 +134,7 @@ int rn_window_send_first_write( rn_window_send_t * send, int code, uint32_t byte
         return RN_WINDOW_SEND_STALL;
 
     const uint64_t n = send->next;
-    rn_window_send_set_number( send, n, descriptor, 0, p, span );
+    rn_window_send_set_number( send, n, descriptor, 0, p );
     send->next++;
 
     if ( holdable )
@@ -150,7 +147,7 @@ int rn_window_send_first_write( rn_window_send_t * send, int code, uint32_t byte
     return RN_WINDOW_SEND_NUMBERED;
 }
 
-// standard/MESSAGES.md m5.1, m8; RNWindow NumberRecord and RNRing PlaceBlock. Reserve
+// standard/MESSAGES.md m5.1, m8; RNWindow NumberRecord and proofs/tla/RNRing.tla PlaceBlock. Reserve
 // all k consecutive numbers and one span at first fragment write, checking
 // both bounds once. The concrete final fragment uses rounded actual bytes
 // (standard/MESSAGES.md m4); RNRing abstracts it to a full F stride.
@@ -179,8 +176,7 @@ uint32_t rn_window_send_first_write_block( rn_window_send_t * send, int code, ui
 
     const uint64_t first = send->next;
     for ( uint32_t i = 0; i < count; i++ )
-        rn_window_send_set_number( send, first + i, descriptor, (uint16_t) i,
-                                   p + (uint64_t) i * F, i + 1 == count ? last16 : F );
+        rn_window_send_set_number( send, first + i, descriptor, (uint16_t) i, p + (uint64_t) i * F );
 
     send->next += count;
     send->ring_next = p + span;

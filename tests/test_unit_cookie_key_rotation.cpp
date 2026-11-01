@@ -460,9 +460,9 @@ static void test_cookie_rotation_receive_after_stall_rejects_outgoing_key()
 
 // The handshake work budget is per update: it reopens at the top of
 // rocketnet_server_protocol_update (sdk/rocketnet_server_protocol.cpp,
-// rocketnet_server_protocol_update) and is spent only after the cookie
-// validates (the check under "the handshake budget check" in
-// rocketnet_server_protocol_process_connection_request).
+// rocketnet_server_protocol_update) and is spent only by a request that
+// reaches the signature verify (the check under "the handshake work budget"
+// in rocketnet_server_protocol_process_connection_request).
 
 static void test_handshake_budget_reopens_after_update()
 {
@@ -470,6 +470,12 @@ static void test_handshake_budget_reopens_after_update()
     rocketnet_rotation_server_setup( &test, 0 );
 
     const int budget = ROCKETNET_DEFAULT_SERVER_HANDSHAKES_PER_UPDATE;
+
+    // room for every request's half-open mapping: a full table refuses
+    // before the verify, and only a request that reaches it spends budget
+    rocketnet_encryption_map_destroy( test.server.encryption_map );
+    test.server.encryption_map = rocketnet_encryption_map_create( NULL, 2 * ( budget + 2 ) );
+    rocketnet_unit_check( test.server.encryption_map );
 
     uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
 
@@ -508,6 +514,12 @@ static void test_cookie_requests_spend_no_handshake_budget()
     rocketnet_rotation_server_setup( &test, 0 );
 
     const int budget = ROCKETNET_DEFAULT_SERVER_HANDSHAKES_PER_UPDATE;
+
+    // room for every request's half-open mapping: a full table refuses
+    // before the verify, and only a request that reaches it spends budget
+    rocketnet_encryption_map_destroy( test.server.encryption_map );
+    test.server.encryption_map = rocketnet_encryption_map_create( NULL, 2 * ( budget + 2 ) );
+    rocketnet_unit_check( test.server.encryption_map );
 
     uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
 

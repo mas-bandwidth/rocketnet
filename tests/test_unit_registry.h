@@ -48,6 +48,13 @@ struct rocketnet_unit_file_test_t
 
 #define ROCKETNET_UNIT_FILE_TEST_CAPACITY 2048
 
+// The fixed Unix time the DEV unit suite's wall clock reads
+// (rocketnet_platform_set_wall_clock_for_testing, tests/test.cpp): a connect
+// token check with token_epoch_unix_seconds zero reads this, never the real
+// clock.
+
+#define ROCKETNET_UNIT_WALL_CLOCK 1800000000ULL
+
 struct rocketnet_unit_file_registry_t
 {
     struct rocketnet_unit_file_test_t tests[ROCKETNET_UNIT_FILE_TEST_CAPACITY];

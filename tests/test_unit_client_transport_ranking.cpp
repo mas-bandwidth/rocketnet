@@ -139,8 +139,6 @@ static void test_client_ranking_portable_is_last_everywhere()
         check( available[i] == expected[i] );
     }
     check( available[num_available - 1] == ROCKETNET_TRANSPORT_LOOPBACK );
-
-    printf( "test_client_ranking_portable_is_last_everywhere\n" );
 }
 REGISTER_UNIT_TEST( test_client_ranking_portable_is_last_everywhere );
 
@@ -331,7 +329,6 @@ static void test_client_ranking_auto_picks_native_client()
     }
 
     ranking_env_put_back( &env );
-    printf( "test_client_ranking_auto_picks_native_client\n" );
 }
 
 static void test_client_ranking_falls_back_to_portable()
@@ -379,7 +376,6 @@ static void test_client_ranking_falls_back_to_portable()
     }
 
     ranking_env_put_back( &env );
-    printf( "test_client_ranking_falls_back_to_portable\n" );
 }
 
 static void test_client_ranking_pin_is_honoured()
@@ -446,7 +442,6 @@ static void test_client_ranking_pin_is_honoured()
     }
 
     ranking_env_put_back( &env );
-    printf( "test_client_ranking_pin_is_honoured\n" );
 }
 
 static void test_client_ladder_parse_iocp_on_linux_takes_auto()
@@ -482,7 +477,6 @@ static void test_client_ladder_parse_iocp_on_linux_takes_auto()
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
     ranking_env_put_back( &env );
-    printf( "test_client_ladder_parse_iocp_on_linux_takes_auto\n" );
 }
 
 REGISTER_UNIT_TEST( test_client_ranking_auto_picks_native_client );

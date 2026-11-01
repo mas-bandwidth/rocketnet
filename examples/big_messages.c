@@ -169,7 +169,12 @@ int main( void )
 
     enum rocketnet_status_t client_status = ROCKETNET_STATUS_OK;
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, &client_status );
-    if ( !client || client_status != ROCKETNET_STATUS_OK || rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
+    if ( client && client_status == ROCKETNET_STATUS_OK )
+    {
+        client_status = rocketnet_client_connect( client, connect_token );
+    }
+
+    if ( !client || client_status != ROCKETNET_STATUS_OK )
     {
         printf( "FAIL: client create/connect: %s\n", rocketnet_status_name( client_status ) );
         rn_cli_client_stop_and_destroy( client, 1000.0 );
@@ -262,8 +267,9 @@ int main( void )
             }
             else if ( big_arrived && !oversize_sent )
             {
-                // above one packet's limit: an unreliable send with a receipt is
-                // promoted, where one without a receipt is refused
+                // above one packet's limit every unreliable mode is promoted to
+                // its reliable twin; this one keeps its receipt, so the promotion
+                // shows as an ACKED receipt
 
                 acked_before = receipts_acked( client );
                 printf( "promotion counter before: %llu\n", (unsigned long long) acked_before );

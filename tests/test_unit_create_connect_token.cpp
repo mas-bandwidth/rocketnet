@@ -76,8 +76,6 @@ static void test_create_connect_token_defaults()
     struct rocketnet_connect_token_config_t zeroed;
     memset( &zeroed, 0, sizeof( zeroed ) );
     check( rocketnet_connect_token_default_config_internal( &zeroed ) == ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED );
-
-    printf( "test_create_connect_token_defaults\n" );
 }
 
 // the decoded token against the inputs: the signature verifies with the
@@ -127,8 +125,6 @@ static void test_create_connect_token_decodes_to_its_inputs()
                                                      CREATE_TOKEN_CLIENT_ID, CREATE_TOKEN_TIMESTAMP, CREATE_TOKEN_TIMESTAMP + 30, 10,
                                                      config.user_data, reference, sizeof( reference ) ) == ROCKETNET_STATUS_OK );
     check( memcmp( reference, token, ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK ) == 0 );
-
-    printf( "test_create_connect_token_decodes_to_its_inputs\n" );
 }
 
 // every refusal returns its status and leaves the output unchanged
@@ -220,8 +216,6 @@ static void test_create_connect_token_refusals()
     check( rocketnet_create_connect_token( &config, token_string ) == ROCKETNET_STATUS_OK );
 
     rocketnet_quiet( 0 );
-
-    printf( "test_create_connect_token_refusals\n" );
 }
 
 // the published development keys: a production build refuses them, by the
@@ -259,8 +253,6 @@ static void test_create_connect_token_development_keys()
 #endif // #if ROCKETNET_DEV
 
     rocketnet_quiet( 0 );
-
-    printf( "test_create_connect_token_development_keys\n" );
 }
 
 REGISTER_UNIT_TEST( test_create_connect_token_defaults );
@@ -386,8 +378,6 @@ static void test_create_connect_token_fresh_keys_connect()
     check( rocketnet_server_client_id( pair.server, 0 ) == CREATE_TOKEN_CLIENT_ID );
 
     create_token_pair_destroy( &pair );
-
-    printf( "test_create_connect_token_fresh_keys_connect\n" );
 }
 
 // the server refuses a token once its epoch plus the caller's time reaches
@@ -430,8 +420,6 @@ static void test_token_epoch_server_refuses_after_expiry()
     check( rocketnet_client_state( pair.client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
 
     create_token_pair_destroy( &pair );
-
-    printf( "test_token_epoch_server_refuses_after_expiry\n" );
 }
 
 // a paused caller clock pauses token expiry: the token lives one second from
@@ -477,8 +465,6 @@ static void test_token_epoch_no_expiry_while_time_is_paused()
     check( rocketnet_server_num_connected_clients( pair.server ) == 0 );
 
     create_token_pair_destroy( &pair );
-
-    printf( "test_token_epoch_no_expiry_while_time_is_paused\n" );
 }
 
 REGISTER_UNIT_TEST( test_create_connect_token_fresh_keys_connect );

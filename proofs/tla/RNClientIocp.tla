@@ -26,15 +26,21 @@
 (*                                                                         *)
 (* FreeWaitsDrain = FALSE lets Free follow Close at once, the reversed    *)
 (* witness MCRNClientIocpBrokenFreeBeforeDrain.cfg, which fails on        *)
-(* FreedOnlyWhenDrained.                                                  *)
+(* FreedOnlyWhenDrained.  DrainOnlyReady = FALSE lets Drain copy a buffer *)
+(* that was not dequeued ready (a receive_batch that walks the buffers    *)
+(* instead of the ready ring), the reversed witness                       *)
+(* MCRNClientIocpBrokenCopyPosted.cfg, which fails on                     *)
+(* NeverCopiedWhilePosted.                                                *)
 (***************************************************************************)
 EXTENDS Naturals, FiniteSets
 
 CONSTANTS Buffers,          \* posted receives, allocated at create
           MaxDatagrams,     \* datagrams the kernel delivers, bounding the model
-          FreeWaitsDrain    \* Free waits until no receive is posted or queued
+          FreeWaitsDrain,   \* Free waits until no receive is posted or queued
+          DrainOnlyReady    \* Drain copies only a buffer dequeued ready
 
 ASSUME Buffers \in Nat \ {0} /\ MaxDatagrams \in Nat /\ FreeWaitsDrain \in BOOLEAN
+ASSUME DrainOnlyReady \in BOOLEAN
 
 BufferIds == 1..Buffers
 
@@ -101,10 +107,11 @@ DequeueWake ==
     /\ woken' = TRUE
     /\ UNCHANGED << state, copied, delivered, closed, freed >>
 
-\* copy into the caller's slot, then re-post (or keep it idle once closed)
+\* copy into the caller's slot, then re-post (or keep it idle once closed);
+\* the code takes b from the ready ring and asserts state[b] is ready
 Drain(b) ==
     /\ ~freed
-    /\ state[b] = "ready"
+    /\ IF DrainOnlyReady THEN state[b] = "ready" ELSE state[b] # "idle"
     /\ copied' = IF state[b] = "ready" THEN copied ELSE copied \cup {b}
     /\ state' = [state EXCEPT ![b] = IF closed THEN "idle" ELSE "posted"]
     /\ UNCHANGED << delivered, wakePosted, woken, closed, freed >>

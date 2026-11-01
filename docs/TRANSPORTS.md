@@ -74,11 +74,11 @@ See [the implementation reference](TRANSPORT-INTERNALS.md#server-capabilities-an
 
 GSO has 4096 slots in its current shared send bank; io_uring has 2048 shared
 send slots, including outstanding sends. More receive queues do not increase
-these capacities. Under staging pressure, the current message-layer rotation
-can repeatedly defer later clients. Some POSIX receive paths also lack a
-bound on work spent discarding invalid datagrams under sustained traffic.
-See [current staging and drain limitations](TRANSPORT-INTERNALS.md#current-staging-and-drain-limitations)
-before relying on fairness or shutdown-time bounds, and the
+these capacities; under staging pressure the message-layer rotation and the
+disconnect bursts spread across updates as the transport's send room reports.
+Receive drains bound work spent on both kept and discarded datagrams using
+backend-specific budgets. See [staging and drain bounds](TRANSPORT-INTERNALS.md#staging-and-drain-bounds),
+and the
 [capacity table](TRANSPORT-INTERNALS.md#per-update-send-and-receive-budgets)
 for each backend's storage geometry.
 

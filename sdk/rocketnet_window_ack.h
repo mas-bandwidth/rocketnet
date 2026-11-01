@@ -30,8 +30,9 @@
 //   - region->send_numbers : W entries of 32 bytes (sender per-number table)
 //   - region->resend_fifo  : W entries of 12 bytes (prev/next slot links plus the descriptor generation),
 //                            shared by the two resend sequences: a number is in at most one.
-//                            Capacity is W. An acked hole stays sequenced until a
-//                            named removal, so a walk still counts it (proofs/tla/RNChannelQueues.tla).
+//                            Capacity is W. An ack unlinks its number before marking it
+//                            acked, so a walk visits only unacked numbers
+//                            (proofs/tla/RNResendGenerations.tla StampNamesOwner).
 //
 // Each sent packet gets a fresh transport sequence `packet_id`, including
 // every resend. An ack of `packet_id` therefore measures the exact send that
@@ -98,7 +99,7 @@ struct rn_window_ack_t
 
     // Two resend sequences over the one flat array region->resend_fifo, one per
     // delay class (standard/MESSAGES.md m9.3; proofs/tla/RNResendTiming.tla
-    // SmallNeverHeldByChunk): single-packet records, and the chunks of a
+    // NoDueRecordHeld): single-packet records, and the chunks of a
     // block (a record whose send descriptor has more than one fragment). Each
     // is ordered by its entries' sequence keys and walked from its head while due.
     uint32_t resend_head;           // oldest slot in the small-record sequence (0..W-1), or RN_RESEND_NONE
@@ -106,7 +107,7 @@ struct rn_window_ack_t
     uint32_t resend_count;          // number of slots sequenced in both resend sequences
     uint32_t chunk_head;            // oldest slot in the chunk sequence (0..W-1), or RN_RESEND_NONE
     uint32_t chunk_tail;            // newest slot in the chunk sequence (0..W-1), or RN_RESEND_NONE
-    uint32_t walk_visits;           // FIFO entries the last resend walk examined (O(due): due + acked + one stop per FIFO)
+    uint32_t walk_visits;           // FIFO entries the last resend walk examined (O(due): due + one stop per FIFO)
 
     uint64_t pkt_head;              // oldest live or un-reclaimed slot in sent_packets
     uint64_t pkt_tail;              // next slot to write in sent_packets (pkt_tail - pkt_head <= P)
@@ -171,7 +172,7 @@ static inline double rn_window_ack_class_delay( const rn_window_ack_t * ack, boo
 
 // The first slot of a class's resend sequence, or RN_RESEND_NONE, and
 // the slot after `slot` in that sequence, or RN_RESEND_NONE. Walkers follow
-// the resend_fifo array by its slot links (proofs/tla/RNChannelQueues.tla).
+// the resend_fifo array by its slot links (proofs/tla/RNResendFifoLayout.tla).
 uint32_t rn_window_ack_resend_first( const rn_window_ack_t * ack, bool chunk );
 uint32_t rn_window_ack_resend_next( const rn_window_ack_t * ack, bool chunk, uint32_t slot );
 
@@ -186,7 +187,8 @@ void rn_window_ack_park( rn_window_ack_t * ack, uint32_t after, uint32_t slot_in
 // proofs/tla/RNWindow.tla Init). NULL config uses rocketnet_message_default_config.
 void rn_window_ack_init( rn_window_ack_t * ack, rn_window_send_t * send, rn_region_t * region, const rocketnet_message_config_t * config );
 
-// Commits a sent packet carrying `count` reliable message numbers (1 <= count <= 16P)
+// Commits a sent packet carrying `count` reliable message numbers (1 <= count, and
+// count plus the packet's receipt serials at most RN_MESSAGE_RECEIPT_SERIALS_MAX, 16)
 // under `packet_id` at time `now` (standard/MESSAGES.md m9.1;
 // proofs/tla/RNWindow.tla WritePacket and WriteOldest).
 // Updates each number's last_send = now (and first_send = now on its first send),
@@ -209,6 +211,16 @@ void rn_window_ack_receipt_emit_loss( rn_window_ack_t * ack, uint32_t serial );
 // Returns the available count and copies at most capacity entries. NULL out
 // with zero capacity is a count query; invalid arguments return zero.
 int rn_window_ack_receipts( const rn_window_ack_t * ack, rocketnet_message_receipt_t * out, int capacity );
+
+// Takes the transport's reported round-trip time of the connection, in
+// seconds, as the first RTT sample while the estimator has none of its own
+// (standard/MESSAGES.md m9.2; proofs/tla/RNResendTiming.tla Seed): srtt and
+// rttvar become `rtt` and resend_delay is recomputed by the sample rule. A
+// later ack's sample then moves the estimate 5% as any later sample does.
+// Does nothing and returns 0 once the estimator has a sample, or when `rtt`
+// is not positive (the transport has no measurement yet). Returns 1 when it
+// seeded.
+int rn_window_ack_seed_rtt( rn_window_ack_t * ack, double rtt );
 
 // Processes one acked transport sequence `packet_id` at time `now`
 // (standard/MESSAGES.md m9.1 and m9.2; proofs/tla/RNWindow.tla ReceiveAck,

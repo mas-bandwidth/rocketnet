@@ -16,7 +16,7 @@
 #include "rocketnet_encryption_map.h"
 #include "rocketnet_ack.h"
 
-// The client state machine, per STANDARD.md: the machine steps forward or
+// The client state machine, per standard/TRANSPORT.md t11: the machine steps forward or
 // fails, never sideways. A client climbs 1, 2, 3, 4 entering each state
 // exactly once per attempt; on any failure it dies to a terminal state, and
 // recovery is a fresh connect with a fresh token -- the ordinary path, run
@@ -288,5 +288,11 @@ void rocketnet_client_protocol_disconnect( struct rocketnet_client_protocol_t * 
 
 // Commit only after the message layer accepted the entire payload.
 void rocketnet_client_protocol_accept_payload( struct rocketnet_client_protocol_t * client, uint64_t sequence );
+
+// The reported round-trip time of the client's connection, in seconds
+// (standard/TRANSPORT.md t15.5): the minimum retained first-ack sample, 0
+// while it has none. The message layer takes it as the connection's first
+// RTT sample (standard/MESSAGES.md m9.2).
+double rocketnet_client_protocol_rtt( const struct rocketnet_client_protocol_t * client );
 
 #endif // ROCKETNET_SDK_ROCKETNET_CLIENT_PROTOCOL_H

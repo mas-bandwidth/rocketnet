@@ -130,8 +130,6 @@ static void test_unit_transport_pins_ignored()
         pins_set( "ROCKETNET_CLIENT_TRANSPORT", saved_client );
     else
         pins_clear( "ROCKETNET_CLIENT_TRANSPORT" );
-
-    printf( "test_unit_transport_pins_ignored\n" );
 }
 
 REGISTER_UNIT_TEST( test_unit_transport_pins_ignored );

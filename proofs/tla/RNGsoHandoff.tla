@@ -19,7 +19,10 @@
 (* bank, retaining the producer when the FIFO's free list is empty or      *)
 (* the mutex is contended.  The TX worker takes banks FIFO outside the     *)
 (* mutex, sends them, and returns each bank only after its synchronous     *)
-(* sends finish.  Stop hands the worker the final unpublished producer     *)
+(* sends finish.  A full socket takes a prefix of the held bank (possibly  *)
+(* none); the worker keeps the unsent rest, in order, and sends it before  *)
+(* taking any later bank, so nothing staged is dropped for lack of room.  *)
+(* Stop hands the worker the final unpublished producer                   *)
 (* after every ready bank; the worker sends it last and exits without      *)
 (* returning it.                                                           *)
 (*                                                                         *)
@@ -29,10 +32,15 @@
 (*                                                                         *)
 (* Defect switches, FALSE in the passing run: PublishWhileHeld (the RX     *)
 (* worker writes a datagram into the buffer main currently holds, as if    *)
-(* it published over main's view) and MainBlocks (main acquires the TX     *)
-(* mutex with a blocking wait instead of a try).  The reversed witness     *)
-(* MCRNGsoHandoffBrokenPublishWhileHeld.cfg restores the first and        *)
-(* violates NoPublishWhileHeld.                                            *)
+(* it published over main's view), MainBlocks (main acquires the TX       *)
+(* mutex with a blocking wait instead of a try), FullDrops (a full socket  *)
+(* drops packets after the prefix it took and the worker goes on with the  *)
+(* rest of the bank) and CarryBehind (the unsent rest is queued behind     *)
+(* the banks published since, instead of being kept).  The reversed        *)
+(* witnesses MCRNGsoHandoffBrokenPublishWhileHeld.cfg,                     *)
+(* MCRNGsoHandoffBrokenFullDrops.cfg and                                   *)
+(* MCRNGsoHandoffBrokenCarryBehind.cfg restore one each and violate        *)
+(* NoPublishWhileHeld, SentOrHeld and TxInOrder.                           *)
 (***************************************************************************)
 EXTENDS Naturals, Sequences
 
@@ -41,7 +49,9 @@ CONSTANTS RxCap,            \* packets one receive buffer holds
           MaxRx,            \* datagrams that arrive in one behaviour
           MaxTx,            \* packets staged in one behaviour
           PublishWhileHeld, \* defect: worker writes into main's buffer
-          MainBlocks        \* defect: main waits on the TX mutex
+          MainBlocks,       \* defect: main waits on the TX mutex
+          FullDrops,        \* defect: a full socket drops the rest of its batch
+          CarryBehind       \* defect: the unsent rest queues behind newer banks
 
 ASSUME RxCap >= 1 /\ TxCap >= 1 /\ MaxRx >= 1 /\ MaxTx >= 1
 
@@ -286,6 +296,32 @@ TxSend ==
                     rxCursor, rxView, arrived, rxConsumed, txProducer, txFree,
                     txReady, staged, quit, rxExited, joined, freed >>
 
+(* a full socket: it takes the first k packets of the held bank, k less   *)
+(* than the bank holds (rocketnet_server_gso_flush returning the first     *)
+(* unsent slot with full set). The worker keeps the rest in the bank and   *)
+(* stays sending (rocketnet_server_gso_send_bank's caller waits for main's *)
+(* next update, then sends from that slot). FullDrops instead drops d      *)
+(* packets after the prefix, the rest of the refused batch, and goes on;   *)
+(* CarryBehind queues the bank behind the ready banks instead of keeping   *)
+(* it                                                                      *)
+TxSendFull ==
+    /\ pc["worker"] = "sending" /\ txHeld # NONE
+    /\ LET c == txContent[txHeld] IN
+       \E k \in 0 .. Len(c) - 1 :
+          /\ txSent' = txSent \o SubSeq( c, 1, k )
+          /\ IF FullDrops
+             THEN \E d \in 1 .. Len(c) - k :
+                     txContent' = [ txContent EXCEPT ![txHeld] = SubSeq( c, k + d + 1, Len(c) ) ]
+             ELSE txContent' = [ txContent EXCEPT ![txHeld] = SubSeq( c, k + 1, Len(c) ) ]
+    /\ IF CarryBehind /\ ~txFinal
+       THEN /\ txReady' = Append( txReady, txHeld )
+            /\ txHeld' = NONE
+            /\ pc' = [ pc EXCEPT !["worker"] = "run" ]
+       ELSE UNCHANGED << txReady, txHeld, pc >>
+    /\ UNCHANGED << pcRx, lock, rxWorker, rxReady, rxMain, rxFree, rxContent,
+                    rxCursor, rxView, arrived, rxConsumed, txProducer, txFree,
+                    txFinal, staged, quit, rxExited, txExited, joined, freed >>
+
 (* the return, mutex held: a sent bank rejoins the free FIFO only after   *)
 (* its sends finished (TxSend cleared it)                                 *)
 TxReturn ==
@@ -361,14 +397,15 @@ Next ==
     \/ Terminated
     \/ RxFill \/ WriteHeld \/ RxPublish \/ RxClaim \/ RxConsume
     \/ TxStage \/ TxMainLock \/ TxMainWait \/ TxPublish
-    \/ TxWorkerLock \/ TxTake \/ TxTakeNone \/ TxSend \/ TxReturn
+    \/ TxWorkerLock \/ TxTake \/ TxTakeNone \/ TxSend \/ TxSendFull \/ TxReturn
     \/ \E t \in Threads : Unlock(t)
     \/ MainStop \/ RxWorkerExit \/ TxWorkerExitIdle \/ Join \/ Free
 
 Spec == Init /\ [][Next]_vars
 
 (* the worker runs whenever it can, main keeps updating and finishes what *)
-(* it started, and stop is never forced                                   *)
+(* it started, and stop is never forced; a full socket drains, so the     *)
+(* worker's whole send stays enabled until it is taken (WF TxSend)        *)
 SpecFair ==
     /\ Spec
     /\ WF_vars( RxFill ) /\ WF_vars( RxPublish ) /\ WF_vars( RxClaim )
@@ -416,6 +453,11 @@ NoPublishWhileHeld == rxContent[rxMain] = rxView
 FreeIsEmpty ==
     /\ ( rxFree # NONE => rxContent[rxFree] = << >> )
     /\ \A i \in 1 .. Len(txFree) : txContent[txFree[i]] = << >>
+
+(* nothing staged is lost: every staged packet was sent or is still in a  *)
+(* bank, a full socket's unsent rest included                             *)
+SentOrHeld ==
+    Len(txSent) + Len(txContent[0]) + Len(txContent[1]) + Len(txContent[2]) = staged
 
 (* packets are consumed and sent once each, in the order they arrived     *)
 RxInOrder == \A i \in 1 .. Len(rxConsumed) : rxConsumed[i] = i

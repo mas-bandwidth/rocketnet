@@ -207,6 +207,31 @@ static void test_log_callback_last_registration_wins()
     rocketnet_log_level( saved );
 }
 
+// an unknown level reaches the sink as passed, and the default sink labels
+// it "???" (rocketnet_printf's contract in sdk/rocketnet_layers.h)
+
+static void test_log_unknown_level_reaches_the_sink_and_reads_unknown()
+{
+    enum rocketnet_log_level_t saved = rocketnet_log_level_current();
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_SPAM );
+    rocketnet_log_function( capture_callback, NULL );
+
+    g_level = 99;
+    rocketnet_printf( -1, "below error" );
+    check( g_level == -1 );
+    check( strcmp( g_buf, "below error" ) == 0 );
+
+    rocketnet_log_function( NULL, NULL );
+    rocketnet_log_level( saved );
+
+#if ROCKETNET_DEV
+    check( strcmp( rocketnet_log_level_word_for_test( -1 ), "???" ) == 0 );
+    check( strcmp( rocketnet_log_level_word_for_test( ROCKETNET_LOG_LEVEL_SPAM + 1 ), "???" ) == 0 );
+    check( strcmp( rocketnet_log_level_word_for_test( ROCKETNET_LOG_LEVEL_ERROR ), "error" ) == 0 );
+#endif // #if ROCKETNET_DEV
+}
+
 REGISTER_UNIT_TEST( test_log_callback_preformatted_contract );
+REGISTER_UNIT_TEST( test_log_unknown_level_reaches_the_sink_and_reads_unknown );
 REGISTER_UNIT_TEST( test_log_callback_filters_before_formatting );
 REGISTER_UNIT_TEST( test_log_callback_last_registration_wins );

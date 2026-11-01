@@ -95,11 +95,10 @@ of at most `ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES`, which it passes to
 `rocketnet_client_connect`. The token carries the two token keys for that one
 connection, which the backend draws fresh for each token; they are not
 long-lived and they identify nothing outside that connection. Fetch a token
-just before connecting: a token expires (30 seconds is the recommended
-lifetime; the development token's lifetime is
-`ROCKETNET_DEV_CONNECT_TOKEN_EXPIRE_SECONDS`, defined in
-[sdk/rocketnet_connect_token.h](../sdk/rocketnet_connect_token.h), an internal
-header, not in the public [sdk/rocketnet.h](../sdk/rocketnet.h)).
+just before connecting: a token expires. 30 seconds is the recommended
+lifetime and the `expire_seconds` that `rocketnet_connect_token_default_config`
+fills in; a development token lives for the `expire_seconds` passed to
+`rocketnet_create_dev_connect_token`.
 
 ## Development keys and production keys
 
@@ -193,6 +192,15 @@ from the fixed test keys and inputs; the unit suite compiles the committed copy
 into `./bin/test` and checks it byte for byte against the same generator
 (`test_vectors_regenerate_byte_identical`). A real backend authenticates the
 player before it writes them a token.
+
+The backend must also rate-limit token issuance per account. A server bounds
+half-open handshakes per token and per source address, not per client id: its
+encryption mapping table holds `2 * max_clients` mappings, and each token buys
+at most one half-open mapping. One account that is issued tokens freely and
+presents each from its own source address (an IPv6 prefix supplies many) can
+fill that table, and the server refuses everyone else's handshakes until those
+mappings reach their handshake deadline. Issue an account only the tokens a
+player needs to connect and retry.
 
 ## Rotation
 

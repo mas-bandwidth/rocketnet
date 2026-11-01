@@ -113,7 +113,7 @@ void rocketnet_platform_term( void );
 
 int rocketnet_platform_id( void );
 
-// seconds since rocketnet_platform_init
+// seconds since rocketnet_platform_init; 0 before the first init has set up the clock
 double rocketnet_platform_time( void );
 
 // the connect token clock's epoch in Unix seconds: configured when nonzero,
@@ -308,14 +308,16 @@ bool rocketnet_platform_receive_status_is_reset( int status );
 void rocketnet_platform_count_receive_reset( void );
 uint64_t rocketnet_platform_receive_resets( void );
 
-// the process-wide count of zero-length datagrams the per-packet receive
-// (rocketnet_platform_socket_receive_packet) skipped: its 0 return means the
-// socket is drained, so a zero-length datagram is read past and counted here.
-// The batch receive hands one to the transport at 0 bytes instead, where the
-// prefilter counts it.
-uint64_t rocketnet_platform_receive_empties( void );
-
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+
+// the process-wide counts of datagrams a receive read and skipped: a
+// zero-length datagram, which the per-packet receive cannot return (its 0
+// means drained) and the POSIX batch receives compact out, and a datagram
+// whose source the socket refuses (a mapped IPv4 source on a socket that is
+// not dual stack). The Windows batch receive hands a zero-length datagram
+// to the transport at 0 bytes instead, where the prefilter counts it.
+uint64_t rocketnet_platform_receive_empties( void );
+uint64_t rocketnet_platform_receive_refused_sources( void );
 
 // counts each dropped datagram and each refused sendmsg_x chunk once; the replay's refusals count in send_replay_failures
 uint64_t rocketnet_platform_socket_send_failures( struct rocketnet_platform_socket_t * socket );

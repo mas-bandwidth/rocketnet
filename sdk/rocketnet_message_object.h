@@ -112,7 +112,9 @@ struct rn_message_link_t
     // Observe). The server's link answers
     // rocketnet_server_transport_client_connection_id, which differs for every
     // connection a slot holds (P9a). The client's link answers 1 while it is
-    // CONNECTED.
+    // CONNECTED. Required by the object's update and send passes, as update,
+    // payloads and acked are; only a bare object that starts and finishes
+    // messages and never updates or sends may leave it NULL.
     uint64_t ( *connection )( void * transport, int client_index );
 
     void ( *disconnect )( void * transport, int client_index );
@@ -127,6 +129,16 @@ struct rn_message_link_t
     // a slot it held free (RN_SLOTS_DROP). NULL (the unit suite's fakes): the
     // transport names none.
     int ( *end_reason )( void * transport, int client_index );
+
+    // the transport's reported round-trip time of the slot's connection, in
+    // seconds (standard/TRANSPORT.md t15.5): the minimum first-ack sample, 0
+    // while it has none. While a connection's message layer has no RTT sample
+    // of its own, each update takes a nonzero answer as its first sample
+    // (standard/MESSAGES.md m9.2, rn_window_ack_seed_rtt). The server's link
+    // reads rocketnet_server_transport_client_rtt, the client's
+    // rocketnet_client_transport_rtt. NULL (the unit suite's fakes): the
+    // transport measures none.
+    double ( *rtt )( void * transport, int client_index );
 
     // NULL: the object does not own the transport
     void ( *stop )( void * transport );
@@ -266,10 +278,14 @@ struct rocketnet_message_server_t
     struct rn_message_object_t object;
 };
 
-// the block an object of num_connections connections needs at config: the
-// object, its connections, their receive bookkeeping and the arena. 0 for a
-// refused config or count.
-uint64_t rn_message_object_required_bytes( const struct rocketnet_message_config_t * config, int num_connections, int is_server );
+// the block an object of num_connections connections needs at config and
+// send budget kbps (0: the config's field for this direction; reserve_unlimited:
+// the public unlimited ceiling, which reserves nothing), exactly the block
+// rn_message_object_create sizes with the same arguments: the object, its
+// connections, their receive bookkeeping and the arena. 0 for a refused config
+// or count.
+uint64_t rn_message_object_required_bytes( const struct rocketnet_message_config_t * config, int num_connections, int is_server,
+                                           int32_t kbps = 0, bool reserve_unlimited = false );
 
 // builds the object on a link, in `memory` (NULL: one rocketnet_malloc). The
 // object owns the link's transport when link->destroy is set. NULL, with the
@@ -291,7 +307,9 @@ uint32_t rn_message_object_finish( struct rn_message_object_t * object, int inde
 
 // the room query: true when rn_message_object_start with these arguments, now,
 // would be given its room; false when it would be dropped or refused, or would
-// find no room and end the connection (R5). Pure, O(1), allocates nothing.
+// find no room and end the connection (R5). Pure and allocation-free; the
+// store lookup scans the chosen class's chunks from its cursor
+// (rn_send_store_find).
 bool rn_message_object_send_room( const struct rn_message_object_t * object, int index, int channel, int reliability, int bytes );
 void rn_message_object_abort( struct rn_message_object_t * object, int index );
 uint32_t rn_message_object_send( struct rn_message_object_t * object, int index, int channel, int reliability, const uint8_t * data, int bytes );

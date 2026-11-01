@@ -29,6 +29,11 @@
 // 2026-10-29: the per-slot transport end reason adds 4 bytes a slot;
 // measured +4087 bytes on the macOS DEV server at 1000 slots, so every server
 // figure below is raised by 4096.
+// 2026-10-31: the server transport's disconnect ring holds
+// 2 * ROCKETNET_MAX_CLIENTS bursts, one for every client the stop disconnects
+// beside the bursts a running server keeps waiting (proofs/tla/ServerStopSpread.tla
+// RingSize); measured +1088048 bytes on the macOS DEV server, 1088 bytes a
+// ring entry, so every server figure below is raised by 1088048.
 #if defined( _WIN32 )
 // Windows adds, on the server, over the figures before them: the TX banks
 // sized at 16 packets per client (3 banks x 15,000 more packets x 1500 bytes
@@ -54,10 +59,10 @@
 // network thread makes the DEV ON client 22971951 (the windows Release (a)
 // and (c) legs) and the DEV OFF client at most 22182891.
 #if ROCKETNET_DEV
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1607280656 )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1608368704 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22971951 )
 #else
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1596899594 )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1597987642 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22182891 )
 #endif // #if ROCKETNET_DEV
 #elif defined( __APPLE__ )
@@ -76,10 +81,10 @@
 // link 12W): client was 22746605, now 22754581. At 0e32e225 (descriptor
 // 72 bytes, span links) server was 1603277086, now 1607276904; client unchanged.
 #if ROCKETNET_DEV
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1607281000 )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1608369048 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22754581 )
 #else
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1584814168 )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1585902216 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 21960801 )
 #endif // #if ROCKETNET_DEV
 #else
@@ -94,13 +99,22 @@
 // Re-measured 2026-10-29 by the ubuntu-24.04 Debug CI leg: the
 // client config's loopback_hub pointer adds 8 bytes to the client, which was
 // 22904141 and is now 22904149; the server figure is unchanged.
+// The server figure includes the xdp plan's per-slot replay records,
+// 12133 bytes at 1000 clients (rocketnet_server_replay_marks_allocation_bytes).
+// Re-measured 2026-10-31 on vision (Linux x86-64, Debug, ROCKETNET_DEV=ON)
+// with the disconnect ring and the xdp replay records: 3248706443.
+// Re-measured 2026-11-01 on vision (Linux x86-64, Debug, ROCKETNET_DEV=ON):
+// the message link's rtt reader (8 bytes) takes rn_message_object_t from
+// 535808 to 535816 bytes, past a 64-byte boundary, and the object's head
+// block is rounded up to 64 bytes (rn_message_align64), so the server was
+// 3248706443 and is now 3248706507.
 // The non-dev figures below were not re-measured: this file is not linked
 // when ROCKETNET_DEV=OFF.
 #if ROCKETNET_DEV
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3247582222ULL )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3248706507ULL )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22904149 )
 #else
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3225115398ULL )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3226203446ULL )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22110441 )
 #endif // #if ROCKETNET_DEV
 #endif // #if defined( _WIN32 )

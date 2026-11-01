@@ -99,7 +99,9 @@ bool rocketnet_client_gso_init( rocketnet_client_gso_t * gso, const rocketnet_cl
     gso->packets_received = 0;
     gso->gro_batches = 0;
     gso->gro_cmsg_faults = 0;
-    gso->gro_packets_dropped = 0;
+    gso->carry_segment = 0;
+    gso->carry_segments = 0;
+    memset( &gso->carry_source, 0, sizeof( gso->carry_source ) );
     return gso->segment;
 }
 
@@ -315,6 +317,32 @@ static bool rocketnet_client_gso_receive_weather( int error )
 
 #define ROCKETNET_CLIENT_GSO_RECEIVE_WEATHER_RETRIES 8
 
+// proofs/tla/RNClientGroCarry.tla Deliver: copies the held message's segments
+// into the slots from total, in order, while the call has room, and returns
+// the new total. Segments it has no room for stay held.
+
+static int rocketnet_client_gso_receive_deliver( rocketnet_client_gso_t * gso, rocketnet_address_t * from, uint8_t * packet_data, int packet_stride, int * packet_bytes,
+                                                 int max_packets, int total )
+{
+    while ( gso->carry_segment < gso->carry_segments && total < max_packets )
+    {
+        const int s = gso->carry_segment++;
+        const int bytes = gso->segment_lengths[s];
+        const int copy_bytes = bytes < packet_stride ? bytes : packet_stride;
+        memcpy( packet_data + (size_t) total * (size_t) packet_stride, gso->coalesce_buffer + gso->segment_offsets[s], (size_t) copy_bytes );
+
+        from[total] = gso->carry_source;
+        packet_bytes[total] = bytes;
+        total++;
+        gso->packets_received++;
+    }
+
+    return total;
+}
+
+// proofs/tla/RNClientGroCarry.tla Begin and End: one call, max_packets slots
+// from 0, returning the slots it filled.
+
 int rocketnet_client_gso_receive_batch( rocketnet_client_gso_t * gso, rocketnet_address_t * from, uint8_t * packet_data, int packet_stride, int * packet_bytes, int max_packets )
 {
     rocketnet_assert( gso );
@@ -324,13 +352,20 @@ int rocketnet_client_gso_receive_batch( rocketnet_client_gso_t * gso, rocketnet_
     rocketnet_assert( packet_bytes );
     rocketnet_assert( max_packets > 0 );
 
-    int total = 0;
     int weather = 0;
     int skipped = 0;
 
+    // proofs/tla/RNClientGroCarry.tla Deliver: the segments the last call had
+    // no room for come first, and the socket is not read while any is held:
+    // the coalesce buffer holds one message
+
+    int total = rocketnet_client_gso_receive_deliver( gso, from, packet_data, packet_stride, packet_bytes, max_packets, 0 );
+
     while ( total < max_packets )
     {
-        // a message can hold up to the kernel's segment count: past the first, one is read only while all of it fits, and the rest wait in the socket for the next call
+        // proofs/tla/RNClientGroCarry.tla Read: a message can hold up to the
+        // kernel's segment count: past the first slot, one is read only while
+        // all of it fits, and the rest wait in the socket for the next call
         if ( total > 0 && max_packets - total < ROCKETNET_CLIENT_GSO_RECEIVE_MAX_SEGMENTS )
             break;
 
@@ -404,23 +439,13 @@ int rocketnet_client_gso_receive_batch( rocketnet_client_gso_t * gso, rocketnet_
 #endif // #if ROCKETNET_DEV
         }
 
-        for ( int s = 0; s < num_segments; s++ )
-        {
-            if ( total >= max_packets )
-            {
-                gso->gro_packets_dropped += (uint64_t) ( num_segments - s );
-                break;
-            }
+        // the message is held from here: what does not fit in this call's
+        // slots is the next call's, before the socket is read again
 
-            const int bytes = gso->segment_lengths[s];
-            const int copy_bytes = bytes < packet_stride ? bytes : packet_stride;
-            memcpy( packet_data + (size_t) total * (size_t) packet_stride, gso->coalesce_buffer + gso->segment_offsets[s], (size_t) copy_bytes );
-
-            from[total] = source;
-            packet_bytes[total] = bytes;
-            total++;
-            gso->packets_received++;
-        }
+        gso->carry_source = source;
+        gso->carry_segment = 0;
+        gso->carry_segments = num_segments;
+        total = rocketnet_client_gso_receive_deliver( gso, from, packet_data, packet_stride, packet_bytes, max_packets, total );
     }
 
     return total;

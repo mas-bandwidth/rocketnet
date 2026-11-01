@@ -431,7 +431,7 @@ bool rn_channels_deliver_sequenced( struct rn_channels_t * channels, uint32_t ch
     const rn_channel_receive_t * receive = channels->region->channel_receive + channel;
     const uint32_t sequence_gap = ( sequencing - receive->sequenced_watermark ) & ROCKETNET_MESSAGE_U24_MASK;
     if ( ( ordering & ROCKETNET_MESSAGE_U24_MASK ) != ( receive->ordered_read & ROCKETNET_MESSAGE_U24_MASK ) ||
-         sequence_gap >= ( 1u << 23 ) )
+         sequence_gap >= ROCKETNET_MESSAGE_HALF_RANGE )
         return false;
 
     rn_channel_receive_t * slot = channels->region->channel_receive + channel;
@@ -546,6 +546,8 @@ int rn_channels_dispatch( struct rn_channels_t * channels, const struct rocketne
             // dies with it, so nothing is copied (THE COPIES (b)).
             // the unreliable budget Du: the rest are dropped and counted (6.3
             // step 4). Unreliable semantics allow it, so it is not a violation.
+            // proofs/tla/RNOrderingWrap.tla ReceiveUnreliable: delivered while
+            // unreliable_delivered is below Du and the table has room.
             if ( channels->unreliable_delivered >= channels->region->delivery_entries - channels->region->window ||
                  channels->deliveries >= channels->delivery_capacity )
             {
@@ -579,6 +581,9 @@ int rn_channels_dispatch( struct rn_channels_t * channels, const struct rocketne
         case ROCKETNET_MESSAGE_CODE_RELIABLE:
             return rn_channels_dispatch_reliable( channels, record, out );
 
+        // proofs/tla/RNOrderingWrap.tla HoldSequenced: a future code-1 or
+        // code-4 record is taken into the channel's one sequenced hold by
+        // rn_channels_dispatch_sequenced (sdk/rocketnet_channel_sequenced.cpp)
         case ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED:
         case ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED:
             return rn_channels_dispatch_sequenced( channels, record, out );
@@ -680,7 +685,7 @@ int rn_channels_dispatch_ordered( struct rn_channels_t * channels, const struct 
     const uint32_t ordering = rn_u24( record->ordering );
     const uint32_t delta = rn_u24( ordering - rx->ordered_read );
 
-    if ( delta >= ( 1u << 23 ) )
+    if ( delta >= ROCKETNET_MESSAGE_HALF_RANGE )
     {
         // 7.2: a reliable ordered record behind the read index can only be a
         // duplicate, and layer 3 already caught those.
@@ -1478,11 +1483,11 @@ bool rn_ordered_init( struct rn_ordered_t * ordered, struct rn_region_t * region
         return false;
     }
 
-    rn_window_send_init( &ordered->send, region, 0 );
+    rn_window_send_init( &ordered->send, region, ROCKETNET_MESSAGE_FIRST_NUMBER );
 
     rn_window_ack_init( &ordered->ack, &ordered->send, region, config );
 
-    rn_window_receive_init( &ordered->receive, region, 0 );
+    rn_window_receive_init( &ordered->receive, region, ROCKETNET_MESSAGE_FIRST_NUMBER );
 
     if ( !rn_packet_builder_init( &ordered->builder, region, &ordered->ack, budget, packets_per_update, payload_capacity ) )
     {
@@ -1586,11 +1591,8 @@ static bool rn_ordered_walk( rn_ordered_t * ordered, bool chunk, double now, rn_
 
         ack->walk_visits++;
 
-        if ( slot->acked )
-        {
-            cursor = next_slot;
-            continue;
-        }
+        // an ack unlinks its number before marking it acked
+        rocketnet_assert( !slot->acked );
 
         const bool unsent = rn_send_number_unsent_due( slot->last_send );
         if ( !unsent && !( now >= slot->last_send + delay ) )
@@ -1653,12 +1655,13 @@ int rn_ordered_write( struct rn_ordered_t * ordered, double now, uint8_t ** payl
     plan.room = room;
     plan.capacity = capacity;
 
-    // 1. The two resend FIFOs (6.4 "Resend"): single-packet records at
-    // min( resend_delay, resend_interval ), then the chunks of blocks at the resend delay alone
+    // 1. The two resend FIFOs (6.4 "Resend"): single-packet records at the
+    // resend delay (rn_window_ack_resend_delay), then the chunks of blocks at
+    // the resend delay capped at reliable_timeout / 4
     // (rn_window_ack_chunk_resend_delay), retransmits first (R6). Each walk
-    // stops at its own first number not yet due, so a chunk that is not due
-    // never holds back a small record that is (RNResendTiming!
-    // SmallNeverHeldByChunk) and the work is O(due).
+    // stops at its own first number not yet due, so a record that is not due
+    // never holds back one of the other class that is (RNResendTiming!
+    // NoDueRecordHeld) and the work is O(due).
 
     ack->walk_visits = 0;
 
@@ -1806,10 +1809,19 @@ static uint32_t rn_receive_delivery_reservation( const rn_channels_t * channels,
     if ( rn_u24( record->ordering ) != rn_u24( rx->ordered_read ) )
         return needed;
 
-    // at most one sequenced hold can be released by this channel's drain
+    // at most one sequenced hold can be released by this channel's drain,
+    // and it needs a slot only when its release can take one: a code-4 hold
+    // always can, a code-1 hold only while the update's unreliable deliveries
+    // are below the allowance Du (rn_sequenced_room refuses it otherwise).
+    // Counting a code-1 hold past Du would defer a packet whose deliveries fit
+    // (proofs/tla/RNOrderingWrap.tla Receive, NeverDeferWithRoom).
 
     if ( rx->held_sequenced != RN_DESCRIPTOR_NONE )
-        needed++;
+    {
+        const bool reliable_hold = ( rx->held_sequenced & RN_SEQUENCED_RELIABLE_HOLD ) != 0;
+        if ( reliable_hold || channels->unreliable_delivered < region->delivery_entries - region->window )
+            needed++;
+    }
 
     uint32_t ordering = rn_u24( record->ordering + 1 );
     for ( uint32_t i = 0; i < region->window; ++i, ordering = rn_u24( ordering + 1 ) )

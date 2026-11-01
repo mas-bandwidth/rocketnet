@@ -70,6 +70,7 @@ struct control_fixture_t
     uint8_t feed_data[4][ROCKETNET_RECEIVE_CEILING];
     int feed_bytes[4];
     bool unreachable;
+    uint16_t unreachable_port;
     int accepted[4];
     int num_accepted;
 };
@@ -150,7 +151,7 @@ static uint8_t * start_packet( void * p, const rocketnet_address_t * to, uint64_
     auto * f = (control_fixture_t *) p;
     ++f->start_calls;
 
-    if ( f->unreachable )
+    if ( f->unreachable || ( f->unreachable_port && to->port == f->unreachable_port ) )
     {
         *id = ROCKETNET_TRANSPORT_PACKET_UNREACHABLE;
         return NULL;
@@ -433,6 +434,46 @@ static void test_staged_control_fairness()
     rn_native_server_transport_stop_and_destroy( server );
     delete f;
     printf( "test_staged_control_fairness\n" );
+}
+
+static void test_staged_unreachable_client_does_not_pin_sweep()
+{
+    // proofs/tla/RNServerMaintenanceSweep.tla BoundedWait, on the code. The
+    // transport refuses every start to client 0 for want of a link-layer
+    // destination, with room left. The sweep counts SEND_NO_LINK_ADDRESS once
+    // per update and still serves clients 1 and 2 in the same update; client
+    // 0's keep-alive stays due. Mutation that must bite: break on the
+    // unreachable refusal as on a full staging; the sweep then stops at
+    // client 0 every update and clients 1 and 2 are never served. Time is an
+    // argument.
+
+    auto * f = new control_fixture_t();
+    f->capacity = 16;
+    f->unreachable_port = 1000;
+
+    rocketnet_server_transport_io_operations_t operations;
+    auto * server = make_server( f, &operations, 3, true );
+    seed_stats_connection_ids( server, 3 );
+    seed_stats_rtt_samples( server, 3 );
+
+    const uint64_t * counters = server->protocol.counters->values;
+    const uint64_t ring_full = counters[ROCKETNET_COUNTER_SEND_RING_FULL];
+    const uint64_t no_link = counters[ROCKETNET_COUNTER_SEND_NO_LINK_ADDRESS];
+
+    for ( int step = 0; step < 3; ++step )
+    {
+        rocketnet_server_transport_update( server, 1.0 + step );
+        CHECK( f->keep_alives[0] == 0 );
+        CHECK( f->keep_alives[1] == step + 1 );
+        CHECK( f->keep_alives[2] == step + 1 );
+        CHECK( counters[ROCKETNET_COUNTER_SEND_NO_LINK_ADDRESS] == no_link + (uint64_t) step + 1 );
+    }
+
+    CHECK( counters[ROCKETNET_COUNTER_SEND_RING_FULL] == ring_full );
+
+    rn_native_server_transport_stop_and_destroy( server );
+    delete f;
+    printf( "test_staged_unreachable_client_does_not_pin_sweep\n" );
 }
 
 static void test_staged_idle_maintenance_preflight()
@@ -856,6 +897,7 @@ int main( int argc, char ** argv )
     test_disconnect_burst_next_send( false );
     test_disconnect_burst_next_send( true );
     test_staged_control_fairness();
+    test_staged_unreachable_client_does_not_pin_sweep();
     test_staged_idle_maintenance_preflight();
     test_single_frame_arena();
     test_staged_lease_table_full();

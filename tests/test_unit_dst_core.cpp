@@ -12,6 +12,7 @@
 #include "test_unit_registry.h"
 #include "dst_harness.h"
 
+#include <stdio.h>
 #include <string.h>
 
 static struct rocketnet_dst_options_t dst_test_options( uint64_t steps )
@@ -216,25 +217,32 @@ static void test_dst_clock_back_reaches_endpoints()
     rocketnet_unit_check( result.clock_back_seen == 0 );
 }
 
-// seq-gap advances one end's send sequence past the 1024-packet replay
-// history in one step: the receiver's highest opened sequence rises by more
-// than 1024 at once, which no run without the schedule does.
+// seq-gap advances one end's send sequence past the replay history
+// (ROCKETNET_HISTORY_PACKETS) in one step: on every seed the applied gap is
+// larger than the whole history, and the receiver's highest opened sequence
+// rises by at least the gap at once, which no run without the schedule does.
 
 static void test_dst_seq_gap_exceeds_history()
 {
     struct rocketnet_dst_options_t options = dst_test_options( 600 );
     options.fault_steps = 400;
-    options.schedule = ROCKETNET_DST_SCHEDULE_SEQ_GAP;
 
     struct rocketnet_dst_result_t result;
-    rocketnet_unit_check( rocketnet_dst_run_seed_with_options( 7, &options, &result ) );
-    rocketnet_unit_check( result.passed );
-    rocketnet_unit_check( result.schedule_fired == 1 );
-    rocketnet_unit_check( result.max_sequence_jump > 1024 );
+    for ( uint64_t seed = 1; seed <= 8; seed++ )
+    {
+        options.schedule = ROCKETNET_DST_SCHEDULE_SEQ_GAP;
+        rocketnet_unit_check( rocketnet_dst_run_seed_with_options( seed, &options, &result ) );
+        rocketnet_unit_check( result.passed );
+        rocketnet_unit_check( result.schedule_fired == 1 );
+        rocketnet_unit_check( result.sequence_gap > ROCKETNET_HISTORY_PACKETS );
+        rocketnet_unit_check( result.max_sequence_jump >= result.sequence_gap );
+        rocketnet_unit_check( result.max_sequence_jump > ROCKETNET_HISTORY_PACKETS );
 
-    options.schedule = ROCKETNET_DST_SCHEDULE_NONE;
-    rocketnet_unit_check( rocketnet_dst_run_seed_with_options( 7, &options, &result ) );
-    rocketnet_unit_check( result.max_sequence_jump <= 1024 );
+        options.schedule = ROCKETNET_DST_SCHEDULE_NONE;
+        rocketnet_unit_check( rocketnet_dst_run_seed_with_options( seed, &options, &result ) );
+        rocketnet_unit_check( result.sequence_gap == 0 );
+        rocketnet_unit_check( result.max_sequence_jump <= ROCKETNET_HISTORY_PACKETS );
+    }
 }
 
 // The burst schedule sends and receives hundreds of packets in one step: the
@@ -284,6 +292,33 @@ static void test_dst_dup_storm_duplicates_payloads()
     rocketnet_unit_check( result.duplicate_payloads == 0 );
 }
 
+// A reliable sequenced send late in the quiet window can wait behind its
+// session's outstanding reliable bytes at the send budget, and the run must
+// not owe it before that queue drains (ROCKETNET_DST_CHECK_IN_FLIGHT_STEPS).
+// Each of these seeds, in the nightly's full shape, sends a type 4 between 30
+// and 40 steps before the last step that arrives 32 to 42 steps after it.
+
+static void dst_quiet_window_seed_passes( uint64_t seed )
+{
+    struct rocketnet_dst_options_t options = dst_test_options( 4000 );
+    options.fault_steps = 2000;
+
+    struct rocketnet_dst_result_t result;
+    rocketnet_unit_check( rocketnet_dst_run_seed_with_options( seed, &options, &result ) );
+    if ( !result.passed )
+        printf( "seed %llu: %s %s\n", (unsigned long long) seed, result.check, result.detail );
+    rocketnet_unit_check( result.passed );
+}
+
+static void test_dst_budget_queued_sequenced_seed_69363() { dst_quiet_window_seed_passes( 69363 ); }
+static void test_dst_budget_queued_sequenced_seed_71434() { dst_quiet_window_seed_passes( 71434 ); }
+static void test_dst_budget_queued_sequenced_seed_84959() { dst_quiet_window_seed_passes( 84959 ); }
+static void test_dst_budget_queued_sequenced_seed_93289() { dst_quiet_window_seed_passes( 93289 ); }
+
+REGISTER_UNIT_TEST( test_dst_budget_queued_sequenced_seed_69363 );
+REGISTER_UNIT_TEST( test_dst_budget_queued_sequenced_seed_71434 );
+REGISTER_UNIT_TEST( test_dst_budget_queued_sequenced_seed_84959 );
+REGISTER_UNIT_TEST( test_dst_budget_queued_sequenced_seed_93289 );
 REGISTER_UNIT_TEST( test_dst_same_seed_same_trace );
 REGISTER_UNIT_TEST( test_dst_schedule_same_seed_same_trace );
 REGISTER_UNIT_TEST( test_dst_clock_back_reaches_endpoints );
@@ -309,3 +344,46 @@ static void test_dst_steps_refused_past_int_range()
     rocketnet_unit_check( rocketnet_dst_run_seed_with_options( 1, &options, &result ) == 0 );
 }
 REGISTER_UNIT_TEST( test_dst_steps_refused_past_int_range );
+
+// Reversed witnesses: each plants one defect in what the checks observe, and
+// the same seed that passes clean must fail naming the check that guards it.
+// ORDERED_SWAP hands the checks two ordered deliveries of one stream swapped;
+// FOREIGN_ACK has a client's ack name a packet id the server issued and the
+// client did not, which one id set shared by every endpoint would accept.
+
+// ORDERED_SWAP needs a second ordered delivery on the held stream inside the
+// run: seed 6 holds its first at step 44 and pairs it soon after (seed 1's
+// only ordered delivery in 600 steps comes at step 534, and nothing pairs it).
+
+static void test_dst_witness_ordered_swap_fails()
+{
+    struct rocketnet_dst_options_t options = dst_test_options( 600 );
+
+    struct rocketnet_dst_result_t clean;
+    rocketnet_unit_check( rocketnet_dst_run_seed_with_options( 6, &options, &clean ) );
+    rocketnet_unit_check( clean.passed );
+
+    options.witness = ROCKETNET_DST_WITNESS_ORDERED_SWAP;
+    struct rocketnet_dst_result_t planted;
+    rocketnet_unit_check( rocketnet_dst_run_seed_with_options( 6, &options, &planted ) );
+    rocketnet_unit_check( !planted.passed );
+    rocketnet_unit_check( strcmp( planted.check, "ordered_in_order" ) == 0 );
+}
+
+static void test_dst_witness_foreign_ack_fails()
+{
+    struct rocketnet_dst_options_t options = dst_test_options( 600 );
+
+    struct rocketnet_dst_result_t clean;
+    rocketnet_unit_check( rocketnet_dst_run_seed_with_options( 1, &options, &clean ) );
+    rocketnet_unit_check( clean.passed );
+
+    options.witness = ROCKETNET_DST_WITNESS_FOREIGN_ACK;
+    struct rocketnet_dst_result_t planted;
+    rocketnet_unit_check( rocketnet_dst_run_seed_with_options( 1, &options, &planted ) );
+    rocketnet_unit_check( !planted.passed );
+    rocketnet_unit_check( strcmp( planted.check, "acked_means_opened" ) == 0 );
+}
+
+REGISTER_UNIT_TEST( test_dst_witness_ordered_swap_fails );
+REGISTER_UNIT_TEST( test_dst_witness_foreign_ack_fails );

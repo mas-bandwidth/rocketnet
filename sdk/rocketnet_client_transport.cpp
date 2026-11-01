@@ -195,15 +195,30 @@ static_assert( offsetof( rocketnet_client_payload_ring_t, data ) % 16 == 0 &&
 static_assert( sizeof( rocketnet_client_payload_ring_t ) == offsetof( rocketnet_client_payload_ring_t, padding_3 ) + 4096,
                "client ring has no implicit tail padding" );
 
+// One update processes at most ROCKETNET_CLIENT_UPDATE_PACKET_BUDGET packets:
+// the legacy path exposes ready buffers up to that many packets, and the I/O
+// core exposes one buffer, which never holds more. Each processed packet
+// places at most one payload (an opened payload, or the payload its fragment
+// completed), so the batch, sized by the same budget, always has a slot for
+// the packet being processed: a payload is never counted delivered without
+// being placed (proofs/tla/RNClientDelivery.tla SlotForNextPacket).
+
+#define ROCKETNET_CLIENT_UPDATE_PACKET_BUDGET ROCKETNET_NUM_CLIENT_PACKETS
+
 struct rocketnet_client_received_packets_t
 {
     int num_packets;
     int receive_index;
-    uint8_t * packet_data[ROCKETNET_NUM_CLIENT_PACKETS];
-    int packet_bytes[ROCKETNET_NUM_CLIENT_PACKETS];
-    uint64_t sequence[ROCKETNET_NUM_CLIENT_PACKETS];
-    uint8_t data[ROCKETNET_FRAME_SIZE * ROCKETNET_NUM_CLIENT_PACKETS];
+    uint8_t * packet_data[ROCKETNET_CLIENT_UPDATE_PACKET_BUDGET];
+    int packet_bytes[ROCKETNET_CLIENT_UPDATE_PACKET_BUDGET];
+    uint64_t sequence[ROCKETNET_CLIENT_UPDATE_PACKET_BUDGET];
+    uint8_t data[ROCKETNET_FRAME_SIZE * ROCKETNET_CLIENT_UPDATE_PACKET_BUDGET];
 };
+
+static_assert( sizeof( ( (rocketnet_client_receive_buffer_t *) 0 )->packet_data ) / sizeof( uint8_t * ) <= ROCKETNET_CLIENT_UPDATE_PACKET_BUDGET,
+               "one exposed receive buffer fits the update's packet budget" );
+static_assert( sizeof( ( (rocketnet_client_received_packets_t *) 0 )->packet_data ) / sizeof( uint8_t * ) >= ROCKETNET_CLIENT_UPDATE_PACKET_BUDGET,
+               "the payload batch holds one payload for every packet an update processes" );
 
 // The statistics ring advances by elapsed time, independently of update cadence,
 // accumulation riding the walks the transport already makes, published
@@ -316,9 +331,10 @@ struct rocketnet_client_transport_t
 
 // The members construction does not zero. Three are buffers: their bytes
 // are written before they are read, at the count or ring index that names
-// them, so only their counts are state, and construction and the connection
-// reset set the counts and never touch the bytes (6.5 MB of receive buffers,
-// 2.1 MB of received packets and 1.6 MB of payload rings at the defaults).
+// them, so only their counts are state, and construction, the connection
+// reset (the payload rings) and update (the received batch) set the counts
+// and never touch the bytes (6.5 MB of receive buffers, 2.1 MB of received
+// packets and 1.6 MB of payload rings at the defaults).
 // Two initialize themselves: the lease table by its constructor, and the
 // protocol by rocketnet_client_protocol_init.
 
@@ -393,7 +409,6 @@ bool rocketnet_client_transport_reset_witness_for_test( struct rocketnet_client_
         memset( client->payload_ring[ring].data, 0xA5, sizeof( client->payload_ring[ring].data ) );
     }
 
-    memset( &client->received_packets, 0xA5, sizeof( client->received_packets ) );
     client->stats_counted = UINT64_MAX;
     rocketnet_client_connection_reset( client );
 
@@ -410,9 +425,7 @@ bool rocketnet_client_transport_reset_witness_for_test( struct rocketnet_client_
 
     rocketnet_send_arena_reset( client->send_arena );
 
-    return arena_clean &&
-           client->received_packets.num_packets == 0 && client->received_packets.receive_index == 0 &&
-           client->stats_counted == 0;
+    return arena_clean && client->stats_counted == 0;
 }
 
 void rocketnet_client_transport_mark_connection_state_for_test( struct rocketnet_client_transport_t * client )
@@ -442,8 +455,6 @@ bool rocketnet_client_transport_connection_state_clean_for_test( struct rocketne
 
     if ( !member && client->send_arena->num_used != 0 )
         member = "send_arena";
-    if ( !member && ( client->received_packets.num_packets != 0 || client->received_packets.receive_index != 0 ) )
-        member = "received_packets";
     if ( !member && client->stats_counted != 0 )
         member = "stats_counted";
     if ( member )
@@ -493,8 +504,12 @@ void rocketnet_client_connection_reset( struct rocketnet_client_transport_t * cl
 
     rocketnet_send_arena_reset( client->send_arena );
 
-    client->received_packets.num_packets = 0;
-    client->received_packets.receive_index = 0;
+    // the received batch is left as it is: its payloads were counted
+    // CLIENT_PAYLOAD_DELIVERED, and they stay the caller's until the next
+    // update clears the batch (proofs/tla/RNClientDelivery.tla
+    // CountedImpliesHanded). A transport runs one connection, so no later
+    // connection reads them.
+
     client->stats_counted = 0;
 }
 
@@ -597,7 +612,7 @@ struct rocketnet_client_race_t
     rocketnet_address_t server_address[2];                  // the server of each family, from the token
     std::atomic<int> committed;                             // -1 while both are in flight, else the family kept
     bool closed;                                            // the losing family's socket is closed (the reading thread)
-    std::atomic<uint64_t> closed_send_failures;             // the losing socket's send failures, kept at its close
+    std::atomic<uint64_t> closed_send_failures;             // the losing socket's send failures, kept at the commit and again at its close
     void * context;
 };
 
@@ -617,7 +632,9 @@ static uint64_t rocketnet_client_race_family_send_failures( const rocketnet_clie
 }
 
 // the reading thread closes the losing family's handles once it sees the
-// commit (proofs/tla/RNClientRace.tla ReaderStep); its memory stays until destroy
+// commit (proofs/tla/RNClientRace.tla ReaderStep); its memory stays until destroy.
+// The losing family's send failures are stored again at the close, at least
+// the count the commit kept, since a family's count never goes down.
 
 static int rocketnet_client_race_kept( rocketnet_client_race_t * race )
 {
@@ -785,6 +802,10 @@ static void rocketnet_client_race_wake( void * instance )
             race->family[i].operations->wake( race->family[i].instance );
 }
 
+// proofs/tla/RNClientRace.tla CallerRead: SEND_FAILED read on the caller's
+// thread, both families while they are in flight, then the kept family and
+// the losing family's count kept at the commit and the close
+
 static uint64_t rocketnet_client_race_send_failures( void * instance )
 {
     rocketnet_client_race_t * race = (rocketnet_client_race_t *) instance;
@@ -799,11 +820,20 @@ static uint64_t rocketnet_client_race_send_failures( void * instance )
 
 // the commit, on the caller's thread (proofs/tla/RNClientRace.tla CallerCommit): the
 // attempt keeps the family that answered first, and its server is the
-// protocol's server from now on
+// protocol's server from now on. A Filling ring a deferred hand-off bound to
+// the losing server leaves for the kept one (PostCommitSlotsKept). The losing
+// family's send failures so far are kept before the commit is published,
+// while that family is still open, so SEND_FAILED never dips between the
+// commit and the reading thread's close, which stores them again with any
+// that arrived since (SendFailedMonotonic).
 
 static void rocketnet_client_race_commit( rocketnet_client_transport_t * transport, rocketnet_client_race_t * race, int family )
 {
     transport->protocol.server_address = race->server_address[family];
+
+    rocketnet_client_io_rebind_held( &transport->client_io, &race->server_address[1 - family], &race->server_address[family] );
+
+    race->closed_send_failures.store( rocketnet_client_race_family_send_failures( &race->family[1 - family] ), std::memory_order_relaxed );
 
     race->committed.store( family, std::memory_order_release );
 
@@ -1107,6 +1137,14 @@ void rocketnet_client_transport_set_memory_plan_seam_for_test( bool enable )
 {
     rocketnet_client_memory_plan_seam_enabled = enable;
 }
+
+// Stop's wakes of the legacy receive thread, counted before the seam returns.
+static uint64_t rocketnet_client_legacy_wakes = 0;
+
+uint64_t rocketnet_client_transport_legacy_wakes_for_test()
+{
+    return rocketnet_client_legacy_wakes;
+}
 #endif // #if ROCKETNET_DEV
 
 // The client network thread's create and release. The memory plan seam stands in
@@ -1126,6 +1164,27 @@ static rocketnet_platform_thread_t * rocketnet_client_thread_create( void * cont
 
     return rocketnet_platform_thread_create( context, function, argument, status );
 }
+
+// The legacy receive thread's wake, after stop stores quit. The seam's record is a
+// bare allocation with no wake to signal.
+// proofs/tla/RNClientReceiveQuit.tla StopWake: the wake ends the thread's wait, so stop
+// never depends on the wait's timeout firing.
+// proofs/tla/RNClientReceiveQuit.tla StopQuitLate: the reversed witness's quit store after
+// the wake; the code stores quit first.
+
+static void rocketnet_client_thread_wake( rocketnet_platform_thread_t * thread )
+{
+#if ROCKETNET_DEV
+    rocketnet_client_legacy_wakes++;
+    if ( rocketnet_client_memory_plan_seam_enabled )
+        return;
+#endif // #if ROCKETNET_DEV
+
+    rocketnet_platform_thread_wake( thread );
+}
+
+// proofs/tla/RNClientReceiveQuit.tla JoinBegin, JoinReturns and DestroyFree: the join
+// returns once the legacy receive thread has returned; the handle is freed after it.
 
 static void rocketnet_client_thread_release( void * context, rocketnet_platform_thread_t * thread )
 {
@@ -1342,7 +1401,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
 
 rocketnet_client_transport_t * rocketnet_client_transport_create_ex( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, int * status )
 {
-    return rocketnet_client_transport_create_internal( context, connect_token, config, time, status, NULL, NULL, ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_PRE_SIMULATOR, 0 );
+    return rocketnet_client_transport_create_internal( context, connect_token, config, time, status, NULL, NULL, sizeof( struct rocketnet_client_transport_config_t ), 0 );
 }
 
 rocketnet_client_transport_t * rocketnet_client_transport_create_current( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time )
@@ -1369,7 +1428,7 @@ rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven( vo
     if ( !operations )
         return NULL;
 
-    return rocketnet_client_transport_create_internal( context, connect_token, config, time, NULL, operations, transport_context, ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_PRE_SIMULATOR, 0 );
+    return rocketnet_client_transport_create_internal( context, connect_token, config, time, NULL, operations, transport_context, sizeof( struct rocketnet_client_transport_config_t ), 0 );
 }
 
 rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven_at_timestamp( void * context, const uint8_t * connect_token,
@@ -1407,7 +1466,7 @@ rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven_ex(
     if ( !operations )
         return NULL;
 
-    return rocketnet_client_transport_create_internal( context, connect_token, config, time, status, operations, transport_context, ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_PRE_SIMULATOR, 0 );
+    return rocketnet_client_transport_create_internal( context, connect_token, config, time, status, operations, transport_context, sizeof( struct rocketnet_client_transport_config_t ), 0 );
 }
 #endif // #if ROCKETNET_DEV
 
@@ -2531,7 +2590,13 @@ void rocketnet_client_transport_stop( rocketnet_client_transport_t * client_tran
     }
     else
     {
+        // proofs/tla/RNClientReceiveQuit.tla StopQuit, then StopWake: quit is stored with
+        // release before the wake, so the wait the wake ends is followed by a check
+        // that reads it. The wake takes only the thread's own wake mutex, which the
+        // thread holds only while it enters or leaves its wait.
         client_transport->quit.store( true, std::memory_order_release );
+        if ( client_transport->thread )
+            rocketnet_client_thread_wake( client_transport->thread );
 
         bool stopped_now = !client_transport->thread && !client_transport->link_simulator && !client_transport->stop_burst_pending.load( std::memory_order_acquire );
 #if ROCKETNET_DEV
@@ -2609,10 +2674,9 @@ int rocketnet_client_transport_secret_spans_for_test( size_t * offsets, size_t *
 
 // proofs/tla/RNClientIoShutdown.tla DestroyBegin, Join and Free: destroy refuses a
 // transport not yet stopped, joins the worker thread, then frees.
-// proofs/tla/RNClientIo.tla DestroyBegin, DestroyWait, DestroyWaitDone, Timeout and
-// Done: destroy makes its last hand-off, waits at the deadline for the other
-// ring to reach Sent, drops the committed slots it cannot hand off, joins,
-// frees and ends.
+// proofs/tla/RNClientIo.tla Done: destroy of a stopped transport joins and frees;
+// stop already handed the Filling ring over as the final ring, so destroy waits
+// on no ring and drops nothing.
 // proofs/tla/RNClientIoShutdown.tla BeginRestart: a restart joins the prior worker
 // generation before the next one runs, as the synchronous destroy and the
 // next connect do here.
@@ -2696,9 +2760,13 @@ static void rocketnet_client_process_packet( rocketnet_client_transport_t * clie
 
     struct rocketnet_client_received_packets_t * received = &client_transport->received_packets;
 
-    uint8_t * payload = received->num_packets < ROCKETNET_NUM_CLIENT_PACKETS ? received->data + received->num_packets * ROCKETNET_FRAME_SIZE : NULL;
+    // the slot this packet's payload lands in: the update processes no more
+    // packets than the batch holds, and each places at most one payload
+    // (ROCKETNET_CLIENT_UPDATE_PACKET_BUDGET), so the slot always exists
 
-    uint8_t overflow[ROCKETNET_RECEIVE_CEILING];
+    rocketnet_assert( received->num_packets < ROCKETNET_CLIENT_UPDATE_PACKET_BUDGET );
+
+    uint8_t * payload = received->data + received->num_packets * ROCKETNET_FRAME_SIZE;
     int payload_bytes = 0;
 
     // proofs/tla/RNClientIoDecrypt.tla UpdateConsume: a record the I/O thread opened
@@ -2707,9 +2775,7 @@ static void rocketnet_client_process_packet( rocketnet_client_transport_t * clie
 
     rocketnet_client_protocol_process_record( &client_transport->protocol, packet_data, packet_bytes, verdict, sequence,
                                               current_time,
-                                              payload ? payload : overflow,
-                                              payload ? ROCKETNET_FRAME_SIZE : ROCKETNET_RECEIVE_CEILING,
-                                              &payload_bytes );
+                                              payload, ROCKETNET_FRAME_SIZE, &payload_bytes );
 
     // the first valid cookie moves the client out of requesting cookie: the
     // race commits to the family it arrived on (proofs/tla/ClientConnection.tla
@@ -2721,7 +2787,16 @@ static void rocketnet_client_process_packet( rocketnet_client_transport_t * clie
 
     const uint64_t session_sequence = client_transport->protocol.received_session_sequence;
 
-    if ( payload_bytes > 0 && payload )
+    // proofs/tla/RNClientDelivery.tla RecvPayload: the payload the protocol
+    // opened into the slot and counted CLIENT_PAYLOAD_DELIVERED is placed in
+    // the same step; nothing between the two can leave it unplaced. A
+    // fragment that completed its payload takes the slot instead (a packet is
+    // one type, so never both), in arrival position: the reassembled bytes
+    // live in the reassembly's delivered arena, valid until the next update.
+
+    struct rocketnet_reassembly_set_t * reassembly = client_transport->protocol.reassembly;
+
+    if ( payload_bytes > 0 )
     {
         const int index = received->num_packets;
         received->packet_data[index] = payload;
@@ -2729,28 +2804,13 @@ static void rocketnet_client_process_packet( rocketnet_client_transport_t * clie
         received->sequence[index] = session_sequence;
         received->num_packets++;
     }
-
-    // a fragment that completed its payload delivers here, in arrival
-    // position: the reassembled bytes live in the reassembly's delivered
-    // arena, valid until the next update, and join the same batch
-
-    struct rocketnet_reassembly_set_t * reassembly = client_transport->protocol.reassembly;
-    if ( reassembly && reassembly->completed_bytes > 0 )
+    else if ( reassembly && reassembly->completed_bytes > 0 )
     {
-        if ( received->num_packets < ROCKETNET_NUM_CLIENT_PACKETS )
-        {
-            const int index = received->num_packets;
-            received->packet_data[index] = reassembly->completed_payload;
-            received->packet_bytes[index] = reassembly->completed_bytes;
-            received->sequence[index] = 0; // fragmented unreliable payload: no delivery ACK
-            received->num_packets++;
-        }
-        else
-        {
-            rocketnet_spam( "client dropped reassembled payload. receive batch full" );
-
-            client_transport->counters.values[ROCKETNET_COUNTER_CLIENT_FRAGMENT_PAYLOAD_BATCH_FULL]++;
-        }
+        const int index = received->num_packets;
+        received->packet_data[index] = reassembly->completed_payload;
+        received->packet_bytes[index] = reassembly->completed_bytes;
+        received->sequence[index] = 0; // fragmented unreliable payload: no delivery ACK
+        received->num_packets++;
     }
 }
 
@@ -2771,6 +2831,9 @@ static void rocketnet_client_process_packet( rocketnet_client_transport_t * clie
 // hand-off it empties the reopened ring send_fill now names.
 // proofs/tla/RNClientIo.tla WaitDone: the reversed witness's blocked main resumes once
 // the other ring is Sent; the fixed main never waits for the I/O thread.
+// proofs/tla/RNClientRace.tla CallerHandOff and CallerHandOffLate: during the family
+// race the ring leaves for the destination its first attempt bound, through
+// the race's send_batch, or stays bound to it after a LATE.
 
 static void rocketnet_client_transport_io_hand_off( rocketnet_client_transport_t * client_transport, const rocketnet_address_t * destination = NULL )
 {
@@ -2911,7 +2974,7 @@ static int rocketnet_client_update_expose_legacy_receive( rocketnet_client_trans
     while ( state->handoff.ready_count > 0 )
     {
         const int packets = client_transport->receive_buffer[state->handoff.ready_index[state->handoff.ready_head]].num_packets;
-        if ( num_exposed > 0 && num_packets + packets > ROCKETNET_NUM_CLIENT_PACKETS )
+        if ( num_exposed > 0 && num_packets + packets > ROCKETNET_CLIENT_UPDATE_PACKET_BUDGET )
             break;
 
         exposed[num_exposed++] = rocketnet_buffer_handoff_take( &state->handoff );
@@ -3087,6 +3150,9 @@ void rocketnet_client_transport_update( rocketnet_client_transport_t * client_tr
         num_receive_buffers = num_legacy_exposed;
     }
 
+    // proofs/tla/RNClientDelivery.tla Begin: the last update's batch, kept
+    // through a connection's end, is cleared here and never offered again
+
     client_transport->received_packets.num_packets = 0;
     client_transport->received_packets.receive_index = 0;
 
@@ -3095,6 +3161,15 @@ void rocketnet_client_transport_update( rocketnet_client_transport_t * client_tr
     rocketnet_reassembly_set_begin_update( client_transport->reassembly );
 
     const int stats_index = client_transport->current_stats_index;
+
+#if ROCKETNET_ASSERTS
+    {
+        int exposed_packets = 0;
+        for ( int b = 0; b < num_receive_buffers; b++ )
+            exposed_packets += receive_buffers[b]->num_packets;
+        rocketnet_assert( exposed_packets <= ROCKETNET_CLIENT_UPDATE_PACKET_BUDGET );
+    }
+#endif // #if ROCKETNET_ASSERTS
 
     for ( int b = 0; b < num_receive_buffers; b++ )
     {
@@ -3125,6 +3200,10 @@ void rocketnet_client_transport_update( rocketnet_client_transport_t * client_tr
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
     int packet_bytes = 0;
     rocketnet_client_protocol_update( &client_transport->protocol, current_time, packet, &packet_bytes );
+
+    // the connection ended inside this update: the reset keeps the batch, so
+    // the payloads this update counted delivered reach the caller
+    // (proofs/tla/RNClientDelivery.tla Return)
 
     if ( state_before > ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED &&
          client_transport->protocol.state <= ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
@@ -3625,10 +3704,11 @@ int rocketnet_client_transport_receive_packet( rocketnet_client_transport_t * cl
 
     struct rocketnet_client_received_packets_t * received = &client_transport->received_packets;
 
-    // a payload larger than the caller's buffer is refused whole and
-    // counted, never truncated, and the cursor moves on to the next
-    // payload that fits -- a caller sizing by the configured maximum
-    // payload never refuses anything
+    // proofs/tla/RNClientDelivery.tla Read: the cursor copies out the entry at
+    // receive_index. a payload larger than the caller's buffer is refused
+    // whole and counted, never truncated, and the cursor moves on to the next
+    // payload that fits -- a caller sizing by the configured maximum payload
+    // never refuses anything
 
     while ( received->receive_index < received->num_packets )
     {
@@ -3777,6 +3857,9 @@ void rocketnet_client_transport_disconnect( rocketnet_client_transport_t * clien
     int burst_bytes = 0;
     rocketnet_client_protocol_disconnect( &client_transport->protocol, burst, &burst_count, &burst_bytes );
 
+    // proofs/tla/RNClientDelivery.tla Disconnect: the reset keeps the batch the
+    // last update delivered, readable until the next update
+
     rocketnet_client_connection_reset( client_transport );
 
     // every state change reaches the callback, from update or from disconnect:
@@ -3886,6 +3969,14 @@ int rocketnet_client_transport_acked_packets( rocketnet_client_transport_t * cli
     *packet_ids = client_transport->protocol.acked_packet_ids;
 
     return client_transport->protocol.num_acked;
+}
+
+double rocketnet_client_transport_rtt( rocketnet_client_transport_t * client_transport )
+{
+    if ( !rocketnet_api_null_guard( client_transport ) )
+        return 0.0;
+    rocketnet_assert( client_transport );
+    return rocketnet_client_protocol_rtt( &client_transport->protocol );
 }
 
 void rocketnet_client_transport_stats( rocketnet_client_transport_t * client_transport, struct rocketnet_client_transport_stats_t * stats )
@@ -4152,12 +4243,15 @@ void rocketnet_client_transport_legacy_receive_state_for_test(
 // behaviour ends with both threads done.
 // proofs/tla/RNClientIoShutdown.tla WorkerExit: the legacy worker returns after its
 // stop is complete.
+// proofs/tla/RNClientReceiveQuit.tla Check, WaitBegin, WaitWoken and WaitTimesOut: quit
+// is checked at the top of every pass, then the drain, then the timed wait, which
+// returns on stop's wake or its 1 ms timeout.
 
 static void rocketnet_client_thread_function( rocketnet_platform_thread_t * thread, void * data )
 {
     rocketnet_client_transport_t * client_transport = (rocketnet_client_transport_t *) data;
 
-    // quit is read with acquire on every iteration; the wait between polls is bounded at 1 ms. Stop does not acquire the platform wake mutex.
+    // quit is read with acquire on every iteration; the wait between polls is bounded at 1 ms, and stop's wake ends it early.
 
     while ( !client_transport->quit.load( std::memory_order_acquire ) )
     {

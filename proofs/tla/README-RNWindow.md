@@ -12,16 +12,22 @@ once and, on the ordered channel, in order, under loss, resend duplicates, reord
 wraparound of the number space, with every table inside its bound; and, under fair links,
 every number is eventually acked and delivered.
 
-**The window code does not exist yet.** At `371e5a7` (main) nothing under `sdk/`
-implements layer 3: `git grep "SLOT_COLLISION\|received_bitset" -- 'sdk/*.cpp'` finds
-nothing on main or on any branch. What the code has is the wire codec, which writes and
-reads the number as a raw u24 (`sdk/rocketnet_message.h:22`, `:70`, `:110`;
-`sdk/rocketnet_message.cpp:202`, `:312`) and checks a block's fragment count against `W`
-(`sdk/rocketnet_message.cpp:357-361`, matching 13.3 check 7). The model is therefore the
-design, written before the code as the standing practice asks: the card
-`the-receive-window-accepts-each-reliable-number-once` builds to it, and the card
-`the-window-code-replays-every-rnwindow-and-rnring-witness` replays the traces below
-against that code. Every "the code does" below reads "the design says".
+The code it models is layer 3 of the message layer. Each action maps to these
+functions, which cite it by name:
+
+| Action | Code |
+|---|---|
+| `Init` | `rn_window_send_init` (`sdk/rocketnet_window_send.cpp`), `rn_window_receive_init` (`sdk/rocketnet_window_receive.cpp`), `rn_window_ack_init` (`sdk/rocketnet_window_ack.cpp`) |
+| `NumberRecord` | `rn_window_send_admit`, `rn_window_send_first_write` and `rn_window_send_first_write_block` (`sdk/rocketnet_window_send.cpp`) |
+| `WritePacket`, `WriteOldest` | `rn_window_ack_commit`, the sent-packet map and the resend FIFO (`sdk/rocketnet_window_ack.cpp`) |
+| `ReceiveAck` | `rn_window_send_mark_acked` (`sdk/rocketnet_window_send.cpp`) and `rn_window_ack_on_ack` (`sdk/rocketnet_window_ack.cpp`) |
+| `OpenPacket` | `rn_window_receive_accept` (`sdk/rocketnet_window_receive.cpp`) |
+| `EndUpdate` | `rn_window_receive_release` (`sdk/rocketnet_window_receive.cpp`) |
+| `FixBatch` | the server transport update (`sdk/rocketnet_server_transport.cpp`) |
+| `SendAck` | the ack block of each session packet (`sdk/rocketnet_server_protocol.cpp`) |
+
+`tests/test_unit_window_sequences.cpp` drives the same operation sequences against
+those functions (below).
 
 `proofs/tla/MCRNWindow.tla` holds the instance, and there are seven committed cases, each one
 inside tlacheck's 110 s budget:
@@ -154,7 +160,8 @@ value exhausts TLC's tableau.
   stronger adversary than the transport lets through, except where it matters for
   wraparound (below).
 - The receiver reconstructs every number of a packet against the `R` the packet found;
-  the code will reconstruct record by record as `R` advances inside the packet. Both
+  the code (`rn_window_receive_accept`) reconstructs record by record as `R` advances
+  inside the packet. Both
   values lie in one window, and `WireNumberReconstructs` holds for the reading the model
   makes.
 
@@ -164,11 +171,10 @@ The model's operation sequences are also driven in C++ by
 `test_unit_window_sequences.cpp` (a unit-file test in `./bin/test`, registered
 with `REGISTER_UNIT_TEST`). An independent reference of count, `U'`, ring
 occupancy, descriptor ownership and delivery is compared with the sender and
-receiver window operations after every action. Those operations are
-`rn_window_send_*` and `rn_window_receive_*`. A tree that has
-`sdk/rocketnet_window_send.h` drives that code. This base does not have those
-files yet, so the test compiles the landed admit, `U'` and receive rules and
-drives them. The count bound and the ring floor both read `U'`, not `U`.
+receiver window operations after every action. Those operations are the
+production `rn_window_send_*` and `rn_window_receive_*` functions
+(`sdk/rocketnet_window_send.h`, `sdk/rocketnet_window_receive.h`), which the test
+includes and calls. The count bound and the ring floor both read `U'`, not `U`.
 Putting `U` in either place is the pre-fix sender: the partial-block count
 probe and the floor-at-`U` probe go red.
 
@@ -232,8 +238,8 @@ Bench runs (each is `MCRNWindow.cfg` with the changes named):
 ## What TLC found
 
 Every counterexample was replayed by hand through the module's actions and through the
-argument of CHANNELS.md 6.3 and 13.5. The window code does not exist yet, so none of
-them is a defect in code. The traces are written `id{numbers}` for a packet. The
+argument of CHANNELS.md 6.3 and 13.5. Each witness turns off a rule the window code
+keeps, so none of them is a defect in code. The traces are written `id{numbers}` for a packet. The
 committed instance is `W = 2`, Link capacity 2, `"alternate"` loss both ways (the 1st,
 3rd, 5th ... send on each link is lost), `NumMod = 4`, numbers `0..4`, the block
 `{1, 2}`, `Ordered = {0, 1, 2, 4}`. The state counts are TLC's trace lengths, the

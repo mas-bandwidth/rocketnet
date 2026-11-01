@@ -23,7 +23,11 @@
 (* probe, any other field mismatch refuses; take compare-and-swaps active to     *)
 (* consumed, resolve only tests that the state is active.  retired scans  *)
 (* the whole table for an entry of an earlier epoch still in phase 2 that *)
-(* equals the supplied context.                                            *)
+(* equals the supplied context: it reads the entry's fields (TRead), then *)
+(* reads the state again (TValidate) and discards the entry if it changed.*)
+(* A concurrent insert may claim and rewrite that entry between the two:  *)
+(* with plain fields the read and the writer's stores are then unordered, *)
+(* a data race whether or not they overlapped in time.                    *)
 (*                                                                         *)
 (* The model carries the code's arithmetic: the state word is the epoch   *)
 (* shifted by two plus the phase, in a word of WordMod values (2^64 in    *)
@@ -46,8 +50,8 @@
 (*   ProbeBound      the entries of the current epoch never exceed         *)
 (*                   Capacity / 2.                                         *)
 (*   InsertFindsSlot insert never runs out of probes.                      *)
-(*   NoRacyRead      no thread reads an entry's fields while another      *)
-(*                   thread may be writing them (a data race).             *)
+(*   NoRacyRead      no thread's read of an entry's fields is a data race *)
+(*                   with another thread's stores to them.                 *)
 (*   SpinBounded, ResolveCompletes, InsertCompletes  (liveness) see the    *)
 (*                   README: the spin ends when the writer takes its       *)
 (*                   steps; it is unbounded if the writer pauses.          *)
@@ -69,6 +73,10 @@
 (*                   check resolve and take alone).                        *)
 (*   RetiredValidates retired rereads the state after reading the fields  *)
 (*                   and discards the entry if it was rewritten.           *)
+(*   AtomicFields    the entry's fields are atomic, so retired's read of   *)
+(*                   an entry an insert rewrites is no data race.  resolve *)
+(*                   is checked as if they were plain: it reads only       *)
+(*                   entries no insert can rewrite.                        *)
 (***************************************************************************)
 EXTENDS Integers, Sequences, FiniteSets
 
@@ -83,12 +91,14 @@ CONSTANTS Capacity,      \* ROCKETNET_SERVER_PACKET_LEASES-style table size, a p
           EpochLimit,    \* the largest epoch before 0 (UINT64_MAX >> 2)
           UsedLimit,
           UseCas, ConsumeCas, BumpEpoch, EpochLimited, RetiredOn, RetiredValidates, OnWriting,
-          ValidCallers   \* resolve and take are given only leases of the current fill
+          ValidCallers,  \* resolve and take are given only leases of the current fill
+          AtomicFields   \* the entry's fields are atomic
 
 ASSUME Threads = {1, 2}
 ASSUME Capacity \in {2, 4, 8} /\ HashSpread \in 1..Capacity
 ASSUME OnWriting \in {{"spin"}, {"skip"}, {"read"}}
-ASSUME {UseCas, ConsumeCas, BumpEpoch, EpochLimited, RetiredOn, RetiredValidates, ValidCallers} \subseteq BOOLEAN
+ASSUME {UseCas, ConsumeCas, BumpEpoch, EpochLimited, RetiredOn, RetiredValidates, ValidCallers,
+        AtomicFields} \subseteq BOOLEAN
 
 Slots == 0..Capacity - 1
 OpsMax(t) == IF t = 1 THEN MaxOps1 ELSE MaxOps2
@@ -99,15 +109,15 @@ NoLease == <<>>
 
 VARIABLES st, fr, tk, vl, bk,         \* per entry: state word, frame, ticket, value, backend id
           used, epoch, nextTicket,    \* the table's used count and epoch; the ticket counter
-          pc, slot, probe, seen, mode, af, av, at, myT, todo, ops,   \* per thread
+          pc, slot, probe, seen, mode, af, av, at, myT, todo, ops, tm, \* per thread
           issued, takes, gen, wrong, racy, exhausted                 \* ghost
 
 entryVars == <<st, fr, tk, vl, bk>>
 tableVars == <<used, epoch, nextTicket>>
-tvars == <<pc, slot, probe, seen, mode, af, av, at, myT, todo, ops>>
+tvars == <<pc, slot, probe, seen, mode, af, av, at, myT, todo, ops, tm>>
 ghostVars == <<issued, takes, gen, wrong, racy, exhausted>>
 vars == <<st, fr, tk, vl, bk, used, epoch, nextTicket, pc, slot, probe, seen, mode, af, av,
-          at, myT, todo, ops, issued, takes, gen, wrong, racy, exhausted>>
+          at, myT, todo, ops, tm, issued, takes, gen, wrong, racy, exhausted>>
 
 Word(e, p) == (e * 4 + p) % WordMod
 EpochOf(w) == w \div 4
@@ -136,6 +146,7 @@ Init ==
     /\ myT = [t \in Threads |-> 0]
     /\ todo = [t \in Threads |-> {}]
     /\ ops = [t \in Threads |-> 0]
+    /\ tm = [t \in Threads |-> FALSE]
     /\ issued = [k \in Tickets |-> NoLease]
     /\ takes = [k \in Tickets |-> 0]
     /\ gen = 0
@@ -160,7 +171,7 @@ StartInsert(t) ==
           /\ av' = [av EXCEPT ![t] = v]
     /\ ops' = [ops EXCEPT ![t] = @ + 1]
     /\ pc' = [pc EXCEPT ![t] = IF epoch = 0 THEN "idle" ELSE "i_used"]
-    /\ UNCHANGED <<entryVars, tableVars, ghostVars, slot, probe, seen, mode, at, myT, todo>>
+    /\ UNCHANGED <<entryVars, tableVars, ghostVars, slot, probe, seen, mode, at, myT, todo, tm>>
 
 \* used.fetch_add( 1 ) >= Capacity / 2 refuses
 IUsed(t) ==
@@ -168,7 +179,7 @@ IUsed(t) ==
     /\ used' = used + 1
     /\ pc' = [pc EXCEPT ![t] = IF used >= UsedLimit THEN "idle" ELSE "i_ticket"]
     /\ UNCHANGED <<entryVars, epoch, nextTicket, ghostVars, slot, probe, seen, mode, af, av,
-                   at, myT, todo, ops>>
+                   at, myT, todo, ops, tm>>
 
 \* rocketnet_next_packet_lease_id, then the probe starts at the frame's hash
 ITicket(t) ==
@@ -178,7 +189,7 @@ ITicket(t) ==
     /\ slot' = [slot EXCEPT ![t] = Hash(af[t])]
     /\ probe' = [probe EXCEPT ![t] = 0]
     /\ pc' = [pc EXCEPT ![t] = "i_load"]
-    /\ UNCHANGED <<entryVars, used, epoch, ghostVars, seen, mode, af, av, at, todo, ops>>
+    /\ UNCHANGED <<entryVars, used, epoch, ghostVars, seen, mode, af, av, at, todo, ops, tm>>
 
 \* load the entry's state; an entry of the current epoch is skipped
 ILoad(t) ==
@@ -194,7 +205,7 @@ ILoad(t) ==
                      /\ UNCHANGED <<pc, exhausted>>
          ELSE /\ pc' = [pc EXCEPT ![t] = "i_cas"]
               /\ UNCHANGED <<slot, probe, exhausted>>
-    /\ UNCHANGED <<entryVars, tableVars, mode, af, av, at, myT, todo, ops, issued, takes, gen,
+    /\ UNCHANGED <<entryVars, tableVars, mode, af, av, at, myT, todo, ops, tm, issued, takes, gen,
                    wrong, racy>>
 
 \* compare-and-swap the loaded state to writing; a lost race continues the probe
@@ -214,7 +225,7 @@ ICas(t) ==
                         /\ slot' = [slot EXCEPT ![t] = Next1(@)]
                         /\ probe' = [probe EXCEPT ![t] = @ + 1]
                         /\ UNCHANGED exhausted
-    /\ UNCHANGED <<fr, tk, vl, bk, tableVars, seen, mode, af, av, at, myT, ops, issued, takes,
+    /\ UNCHANGED <<fr, tk, vl, bk, tableVars, seen, mode, af, av, at, myT, ops, tm, issued, takes,
                    gen, wrong, racy>>
 
 \* the backend id and the context fields, in any order
@@ -227,7 +238,7 @@ IWrite(t) ==
              \/ fld = "f" /\ fr' = [fr EXCEPT ![slot[t]] = af[t]] /\ UNCHANGED <<tk, vl, bk>>
              \/ fld = "t" /\ tk' = [tk EXCEPT ![slot[t]] = myT[t]] /\ UNCHANGED <<fr, vl, bk>>
              \/ fld = "v" /\ vl' = [vl EXCEPT ![slot[t]] = av[t]] /\ UNCHANGED <<fr, tk, bk>>
-    /\ UNCHANGED <<st, tableVars, pc, slot, probe, seen, mode, af, av, at, myT, ops, ghostVars>>
+    /\ UNCHANGED <<st, tableVars, pc, slot, probe, seen, mode, af, av, at, myT, ops, tm, ghostVars>>
 
 \* the release store of active publishes the lease
 IPublish(t) ==
@@ -236,7 +247,7 @@ IPublish(t) ==
     /\ st' = [st EXCEPT ![slot[t]] = Word(epoch, 2)]
     /\ issued' = [issued EXCEPT ![myT[t]] = [f |-> af[t], v |-> av[t], gen |-> gen, slot |-> slot[t]]]
     /\ pc' = [pc EXCEPT ![t] = "idle"]
-    /\ UNCHANGED <<fr, tk, vl, bk, tableVars, slot, probe, seen, mode, af, av, at, myT, todo, ops,
+    /\ UNCHANGED <<fr, tk, vl, bk, tableVars, slot, probe, seen, mode, af, av, at, myT, todo, ops, tm,
                    takes, gen, wrong, racy, exhausted>>
 
 \* ------------------------------------------------------------------------
@@ -257,7 +268,7 @@ StartResolve(t) ==
     /\ slot' = [slot EXCEPT ![t] = Hash(af'[t])]
     /\ probe' = [probe EXCEPT ![t] = 0]
     /\ pc' = [pc EXCEPT ![t] = IF epoch = 0 THEN "idle" ELSE "r_load"]
-    /\ UNCHANGED <<entryVars, tableVars, ghostVars, seen, myT, todo>>
+    /\ UNCHANGED <<entryVars, tableVars, ghostVars, seen, myT, todo, tm>>
 
 \* load the state: another epoch ends the chain; phase 1 is the spin
 RLoad(t) ==
@@ -281,7 +292,7 @@ RLoad(t) ==
                                      ELSE /\ slot' = [slot EXCEPT ![t] = Next1(@)]
                                           /\ probe' = [probe EXCEPT ![t] = @ + 1]
                                           /\ UNCHANGED pc
-    /\ UNCHANGED <<entryVars, tableVars, mode, af, av, at, myT, todo, ops, ghostVars>>
+    /\ UNCHANGED <<entryVars, tableVars, mode, af, av, at, myT, todo, ops, tm, ghostVars>>
 
 \* while ( ( state & 3 ) == 1 ) state = load: the entry is still being written
 RSpinWait(t) ==
@@ -297,7 +308,7 @@ RSpinDone(t) ==
     /\ PhaseOf(st[slot[t]]) # 1
     /\ seen' = [seen EXCEPT ![t] = st[slot[t]]]
     /\ pc' = [pc EXCEPT ![t] = "r_cmp"]
-    /\ UNCHANGED <<entryVars, tableVars, slot, probe, mode, af, av, at, myT, todo, ops, ghostVars>>
+    /\ UNCHANGED <<entryVars, tableVars, slot, probe, mode, af, av, at, myT, todo, ops, tm, ghostVars>>
 
 \* an entry is rewritten when it is claimed again, so a read is a race if the entry is
 \* in phase 1 now or was rewritten since the state was loaded
@@ -317,7 +328,7 @@ RCmp(t) ==
                      /\ probe' = [probe EXCEPT ![t] = @ + 1]
          ELSE /\ pc' = [pc EXCEPT ![t] = IF vl[slot[t]] # av[t] THEN "idle" ELSE "r_commit"]
               /\ UNCHANGED <<slot, probe>>
-    /\ UNCHANGED <<entryVars, tableVars, seen, mode, af, av, at, myT, todo, ops, issued, takes,
+    /\ UNCHANGED <<entryVars, tableVars, seen, mode, af, av, at, myT, todo, ops, tm, issued, takes,
                    gen, wrong, exhausted>>
 
 \* the success check against the contract
@@ -342,7 +353,7 @@ RCommit(t) ==
                ELSE UNCHANGED <<st, takes>>
           /\ wrong' = (wrong \/ (ok /\ ~Exact(t, s)))
     /\ pc' = [pc EXCEPT ![t] = "idle"]
-    /\ UNCHANGED <<fr, tk, vl, bk, tableVars, slot, probe, seen, mode, af, av, at, myT, todo, ops,
+    /\ UNCHANGED <<fr, tk, vl, bk, tableVars, slot, probe, seen, mode, af, av, at, myT, todo, ops, tm,
                    issued, gen, racy, exhausted>>
 
 \* ------------------------------------------------------------------------
@@ -361,7 +372,7 @@ StartRetired(t) ==
     /\ slot' = [slot EXCEPT ![t] = Hash(af'[t])]
     /\ probe' = [probe EXCEPT ![t] = 0]
     /\ pc' = [pc EXCEPT ![t] = IF epoch = 0 THEN "idle" ELSE "t_load"]
-    /\ UNCHANGED <<entryVars, tableVars, ghostVars, seen, mode, myT, todo>>
+    /\ UNCHANGED <<entryVars, tableVars, ghostVars, seen, mode, myT, todo, tm>>
 
 \* load the state: an empty entry ends the scan; the current epoch or a phase other
 \* than active is skipped
@@ -380,41 +391,47 @@ TLoad(t) ==
                             /\ UNCHANGED pc
                 ELSE /\ pc' = [pc EXCEPT ![t] = "t_cmp"]
                      /\ UNCHANGED <<slot, probe>>
-    /\ UNCHANGED <<entryVars, tableVars, mode, af, av, at, myT, todo, ops, ghostVars>>
+    /\ UNCHANGED <<entryVars, tableVars, mode, af, av, at, myT, todo, ops, tm, ghostVars>>
 
-\* read the fields of the old entry and compare them with the supplied context
-TCmp(t) ==
+\* read the fields of the old entry (the code's relaxed loads) and compare them with
+\* the supplied context.  With plain fields a read of an entry in phase 1, or one
+\* rewritten since its state was loaded, is a data race.
+TRead(t) ==
     /\ pc[t] = "t_cmp"
     /\ LET s == slot[t]
+       IN /\ tm' = [tm EXCEPT ![t] = fr[s] = af[t] /\ tk[s] = at[t] /\ vl[s] = av[t]]
+          /\ racy' = (racy \/ (~AtomicFields /\ Racy(t)))
+    /\ pc' = [pc EXCEPT ![t] = "t_val"]
+    /\ UNCHANGED <<entryVars, tableVars, slot, probe, seen, mode, af, av, at, myT, todo, ops,
+                   issued, takes, gen, wrong, exhausted>>
+
+\* fetch_add( 0, release ) reads the state again.  An insert that claimed the entry
+\* since TLoad is seen here, and its stores and the field reads are unordered: with
+\* plain fields that is a data race even if no store overlapped the read.  An insert
+\* that claims the entry later reads this release, so the reads come first.  Under
+\* RetiredValidates a changed state discards the entry; otherwise the read is used.
+TValidate(t) ==
+    /\ pc[t] = "t_val"
+    /\ LET s == slot[t]
            rewritten == st[s] # seen[t]
-           match == fr[s] = af[t] /\ tk[s] = at[t] /\ vl[s] = av[t]
            exactOld == /\ issued[at[t]] # NoLease
                        /\ issued[at[t]].f = af[t]
                        /\ issued[at[t]].v = av[t]
                        /\ issued[at[t]].gen < gen
                        /\ takes[at[t]] = 0
-       IN IF RetiredValidates /\ rewritten
-            THEN \* the state changed under the read: discard the entry
-                 /\ IF probe[t] + 1 >= Capacity
-                      THEN /\ pc' = [pc EXCEPT ![t] = "idle"]
-                           /\ UNCHANGED <<slot, probe>>
-                      ELSE /\ pc' = [pc EXCEPT ![t] = "t_load"]
-                           /\ slot' = [slot EXCEPT ![t] = Next1(@)]
-                           /\ probe' = [probe EXCEPT ![t] = @ + 1]
-                 /\ UNCHANGED <<racy, wrong>>
-            ELSE /\ racy' = (racy \/ Racy(t))
-                 /\ IF match
-                      THEN /\ wrong' = (wrong \/ ~exactOld)
-                           /\ pc' = [pc EXCEPT ![t] = "idle"]
-                           /\ UNCHANGED <<slot, probe>>
-                      ELSE /\ UNCHANGED wrong
-                           /\ IF probe[t] + 1 >= Capacity
-                                THEN /\ pc' = [pc EXCEPT ![t] = "idle"]
-                                     /\ UNCHANGED <<slot, probe>>
-                                ELSE /\ pc' = [pc EXCEPT ![t] = "t_load"]
-                                     /\ slot' = [slot EXCEPT ![t] = Next1(@)]
-                                     /\ probe' = [probe EXCEPT ![t] = @ + 1]
-    /\ UNCHANGED <<entryVars, tableVars, seen, mode, af, av, at, myT, todo, ops, issued, takes,
+       IN /\ racy' = (racy \/ (~AtomicFields /\ rewritten))
+          /\ IF tm[t] /\ ~(RetiredValidates /\ rewritten)
+               THEN /\ wrong' = (wrong \/ ~exactOld)
+                    /\ pc' = [pc EXCEPT ![t] = "idle"]
+                    /\ UNCHANGED <<slot, probe>>
+               ELSE /\ UNCHANGED wrong
+                    /\ IF probe[t] + 1 >= Capacity
+                         THEN /\ pc' = [pc EXCEPT ![t] = "idle"]
+                              /\ UNCHANGED <<slot, probe>>
+                         ELSE /\ pc' = [pc EXCEPT ![t] = "t_load"]
+                              /\ slot' = [slot EXCEPT ![t] = Next1(@)]
+                              /\ probe' = [probe EXCEPT ![t] = @ + 1]
+    /\ UNCHANGED <<entryVars, tableVars, seen, mode, af, av, at, myT, todo, ops, tm, issued, takes,
                    gen, exhausted>>
 
 \* ------------------------------------------------------------------------
@@ -441,7 +458,7 @@ Next ==
           \/ StartInsert(t) \/ IUsed(t) \/ ITicket(t) \/ ILoad(t) \/ ICas(t) \/ IWrite(t)
           \/ IPublish(t)
           \/ StartResolve(t) \/ RLoad(t) \/ RSpinWait(t) \/ RSpinDone(t) \/ RCmp(t) \/ RCommit(t)
-          \/ StartRetired(t) \/ TLoad(t) \/ TCmp(t)
+          \/ StartRetired(t) \/ TLoad(t) \/ TRead(t) \/ TValidate(t)
     \/ Reset
 
 Spec == Init /\ [][Next]_vars
@@ -449,7 +466,7 @@ Spec == Init /\ [][Next]_vars
 ThreadStep(t) ==
     \/ StartInsert(t) \/ IUsed(t) \/ ITicket(t) \/ ILoad(t) \/ ICas(t) \/ IWrite(t) \/ IPublish(t)
     \/ StartResolve(t) \/ RLoad(t) \/ RSpinDone(t) \/ RCmp(t) \/ RCommit(t)
-    \/ StartRetired(t) \/ TLoad(t) \/ TCmp(t)
+    \/ StartRetired(t) \/ TLoad(t) \/ TRead(t) \/ TValidate(t)
 
 \* Every thread is scheduled: it takes a step whenever one is enabled.
 SpecFair == Spec /\ \A t \in Threads : WF_vars(ThreadStep(t))
@@ -466,7 +483,7 @@ TypeOK ==
     /\ epoch \in 0..EpochLimit + 1
     /\ nextTicket \in 1..MaxTickets + 1
     /\ pc \in [Threads -> {"idle", "i_used", "i_ticket", "i_load", "i_cas", "i_w", "r_load",
-                           "r_spin", "r_cmp", "r_commit", "t_load", "t_cmp"}]
+                           "r_spin", "r_cmp", "r_commit", "t_load", "t_cmp", "t_val"}]
     /\ {wrong, racy, exhausted} \subseteq BOOLEAN
 
 NoWrongSuccess == ~wrong

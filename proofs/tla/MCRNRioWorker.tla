@@ -14,6 +14,8 @@
 (*                                            FreedOnlyWhenDrained         *)
 (*   MCRNRioWorkerBrokenNoWake.cfg            (WakeOnReturn)               *)
 (*                                            EveryDatagramConsumed        *)
+(*   MCRNRioWorkerBrokenCloseCancelsSends.cfg (DrainSendsBeforeClose)      *)
+(*                                            StopSendsFinished            *)
 (* README-RNRioWorker.md gives each trace and its check against the code.  *)
 (***************************************************************************)
 EXTENDS RNRioWorker

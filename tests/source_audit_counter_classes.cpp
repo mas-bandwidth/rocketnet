@@ -301,7 +301,7 @@ struct counters_ladder_t
 };
 
 static const counters_ladder_t counters_ladders[] = {
-    { "sdk/rocketnet_server_protocol.cpp", "rocketnet_server_protocol_process_connection_request", "CONNECTION_REQUEST_RECEIVED" },
+    { "sdk/rocketnet_server_protocol.cpp", "rocketnet_server_protocol_process_connection_request_known", "CONNECTION_REQUEST_RECEIVED" },
     { "sdk/rocketnet_server_protocol.cpp", "rocketnet_server_process_opened_request", "CONNECTION_REQUEST_RECEIVED" },
     { "sdk/rocketnet_server_protocol.cpp", "rocketnet_server_process_connection_response", "CONNECTION_RESPONSE_RECEIVED" },
     { "sdk/rocketnet_client_protocol.cpp", "rocketnet_client_process_cookie", "CLIENT_COOKIE_RECEIVED" },
