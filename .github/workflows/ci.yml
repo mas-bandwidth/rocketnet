@@ -233,6 +233,7 @@ jobs:
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: ./.github/actions/ccache
 
       # One SDK source list for the library and every vendoring application;
       # first, so a later red step cannot skip it.
@@ -943,6 +944,7 @@ jobs:
     timeout-minutes: ${{ inputs.full && 10 || 2 }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: ./.github/actions/ccache
       - name: Build the XDP functional cell (Debug)
         shell: bash
         run: |
@@ -1363,6 +1365,7 @@ jobs:
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: ./.github/actions/ccache
 
       - name: Check the fleet's build dependencies are present
         shell: bash
@@ -1481,6 +1484,7 @@ jobs:
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: ./.github/actions/ccache
 
       - name: Check the fleet's toolchain is on PATH
         shell: bash
@@ -1575,6 +1579,7 @@ jobs:
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: ./.github/actions/ccache
 
       - name: Check the fleet's build dependencies are present
         shell: bash
@@ -1706,6 +1711,7 @@ jobs:
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: ./.github/actions/ccache
 
       - name: Check the fleet's build dependencies are present
         shell: bash
@@ -1843,6 +1849,7 @@ jobs:
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: ./.github/actions/ccache
 
       - name: Check the fleet's build dependencies are present
         shell: bash
@@ -2012,6 +2019,7 @@ jobs:
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: ./.github/actions/ccache
 
       - name: Check the s390x cross toolchain, libraries, and qemu are present
         shell: bash
@@ -2192,6 +2200,7 @@ jobs:
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: ./.github/actions/ccache
 
       - name: Check the fleet's build dependencies are present
         shell: bash
@@ -2280,6 +2289,7 @@ jobs:
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: ./.github/actions/ccache
 
       - name: Check the fleet's build dependencies are present
         shell: bash
@@ -2420,6 +2430,7 @@ jobs:
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: ./.github/actions/ccache
 
       - name: Check the fleet's build dependencies are present
         shell: bash
@@ -2665,6 +2676,7 @@ jobs:
     timeout-minutes: ${{ inputs.full && 10 || 2 }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: ./.github/actions/ccache
         with:
           persist-credentials: false
 

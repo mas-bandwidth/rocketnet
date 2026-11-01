@@ -1,0 +1,37 @@
+# The compiler cache on the fleet's self-hosted runners. Every CMake configure
+# after this step compiles through ccache (CMake reads
+# CMAKE_<LANG>_COMPILER_LAUNCHER from the environment), into one cache
+# directory per host user that survives between jobs, so a job recompiles
+# only the translation units its commit changed. ccache keys each object on
+# the compiler binary's content, the preprocessed source and the flags, so
+# Debug, Release, the sanitizers and the cross compilers share the directory
+# without sharing an object. CCACHE_BASEDIR rewrites the checkout's absolute
+# path to a relative one, so the runners on one host (each with its own work
+# directory) share hits. A runner without ccache builds uncached and says so.
+name: compiler cache
+description: Route every CMake compile in this job through the host's ccache
+runs:
+  using: composite
+  steps:
+    - name: Compiler cache (ccache)
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "runner $RUNNER_NAME: $(getconf _NPROCESSORS_ONLN 2>/dev/null || echo '?') processors"
+        if ! command -v ccache >/dev/null 2>&1; then
+          echo "CCACHE-ABSENT on $RUNNER_NAME: this job compiles uncached"
+          exit 0
+        fi
+        dir="$HOME/.cache/rocketnet-ccache"
+        mkdir -p "$dir"
+        {
+          echo "CCACHE_DIR=$dir"
+          echo "CCACHE_BASEDIR=$GITHUB_WORKSPACE"
+          echo "CCACHE_NOHASHDIR=true"
+          echo "CCACHE_COMPILERCHECK=content"
+          echo "CCACHE_MAXSIZE=5G"
+          echo "CMAKE_C_COMPILER_LAUNCHER=ccache"
+          echo "CMAKE_CXX_COMPILER_LAUNCHER=ccache"
+        } >> "$GITHUB_ENV"
+        echo "ccache $(ccache --version | head -1) at $dir"
+        CCACHE_DIR="$dir" ccache --zero-stats >/dev/null
