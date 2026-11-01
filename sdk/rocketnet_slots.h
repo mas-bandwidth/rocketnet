@@ -16,7 +16,9 @@
 // observe from the transport's slot accessor and admit from the entry's
 // connection tag; every batch entry carries its connection's id.
 //
-// Header only state, so the object embeds it in its one allocation.
+// The state is the header and two arrays of max_clients entries the caller
+// provides: the message object carves them from its one allocation, sized
+// from its configured count.
 
 #include <stdint.h>
 
@@ -34,12 +36,13 @@
 struct rn_slots_t
 {
     int max_clients;
-    uint64_t connection_id[ROCKETNET_MAX_CLIENTS];   // 0 when the slot is free
-    uint8_t changed[ROCKETNET_MAX_CLIENTS];          // bound or dropped in this update
+    uint64_t * connection_id;           // max_clients entries, 0 when the slot is free
+    uint8_t * changed;                  // max_clients entries, bound or dropped in this update
 };
 
-// A machine with every slot free.
-void rn_slots_init( struct rn_slots_t * slots, int max_clients );
+// A machine with every slot free, over the caller's storage of max_clients
+// entries in each array.
+void rn_slots_init( struct rn_slots_t * slots, int max_clients, uint64_t * connection_id, uint8_t * changed );
 
 // RNSlots Observe: reads one slot's connection id after the transport's
 // update. Every call refreshes the slot's per-update changed bit, which the

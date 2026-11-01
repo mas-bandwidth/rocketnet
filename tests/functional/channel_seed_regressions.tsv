@@ -1,0 +1,9 @@
+# The channel seed regressions: (case, seed) pairs a nightly sweep found red,
+# each fixed and kept here so the nightly replays it first
+# (.github/workflows/nightly-channel-seeds.yml). One pair per line: the
+# functional case, a tab, the seed, a tab, what failed. Replay one with
+#   ROCKETNET_CHANNEL_SEED=<seed> ./bin/functional --run <case>
+# or all of them with
+#   scripts/channel-seed-sweep --regressions tests/functional/channel_seed_regressions.tsv
+test_unreliable_receipts_over_lossy_link	4879047	the server CONFIG lost on each send at the 2 s initial resend delay until the reliable timeout (the seeded resend delay, standard/MESSAGES.md m9.2)
+test_unreliable_receipts_over_lossy_link	4879943	the same, on the other of the two seeds

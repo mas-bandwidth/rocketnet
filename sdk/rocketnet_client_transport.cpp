@@ -2688,8 +2688,9 @@ static void rocketnet_client_transport_finish_stop( rocketnet_client_transport_t
 }
 
 #if ROCKETNET_DEV
-int rocketnet_client_transport_secret_spans_for_test( size_t * offsets, size_t * bytes, int max )
+int rocketnet_client_transport_secret_spans_for_test( const void * object, size_t * offsets, size_t * bytes, int max )
 {
+    (void) object;
     const size_t protocol = offsetof( rocketnet_client_transport_t, protocol );
     const size_t open = offsetof( rocketnet_client_transport_t, client_io ) + offsetof( rocketnet_client_io_t, open );
     const size_t spans[5][2] = {
@@ -4011,6 +4012,14 @@ int rocketnet_client_transport_acked_packets( rocketnet_client_transport_t * cli
     *packet_ids = client_transport->protocol.acked_packet_ids;
 
     return client_transport->protocol.num_acked;
+}
+
+double rocketnet_client_transport_rtt( rocketnet_client_transport_t * client_transport )
+{
+    if ( !rocketnet_api_null_guard( client_transport ) )
+        return 0.0;
+    rocketnet_assert( client_transport );
+    return rocketnet_client_protocol_rtt( &client_transport->protocol );
 }
 
 void rocketnet_client_transport_stats( rocketnet_client_transport_t * client_transport, struct rocketnet_client_transport_stats_t * stats )

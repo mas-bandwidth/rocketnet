@@ -29,7 +29,7 @@
 (***************************************************************************)
 EXTENDS Integers, Sequences, FiniteSets
 
-CONSTANTS Q,          \* ROCKETNET_RIO_SEND_QUEUE_SIZE: slots per phase
+CONSTANTS Q,          \* rio->send_queue_size: configured slots per phase
           P,          \* ROCKETNET_RIO_SEND_PHASES (3)
           Width,      \* the counter's modulus: 0 never wraps, else a signed width
           Tries,      \* start_packet calls in one open of a phase

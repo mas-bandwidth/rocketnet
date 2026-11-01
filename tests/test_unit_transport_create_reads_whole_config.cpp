@@ -118,6 +118,33 @@ static void test_server_transport_create_honors_second_public_address()
     whole_config_check_both_families( true, 40504 );
 }
 
+// second_public_address alone: a second address the resolve refuses (the
+// public address's family, then a port other than its own) is refused with
+// INVALID_ADDRESS before any transport opens, so the loopback_hub field plays
+// no part. A create that read only the first revision would default the
+// field to empty, resolve, and fail later at the open for some other reason.
+static void test_server_transport_create_ex_refuses_a_bad_second_public_address()
+{
+    rocketnet_quiet( 1 );
+
+    whole_config_keys_t keys;
+    whole_config_keys( &keys );
+
+    const char * refused[] = { "127.0.0.2:40505", "[::1]:40506" };
+    for ( size_t i = 0; i < sizeof( refused ) / sizeof( refused[0] ); ++i )
+    {
+        struct rocketnet_server_transport_config_t config;
+        whole_config_server( &config, &keys );
+        snprintf( config.second_public_address, sizeof( config.second_public_address ), "%s", refused[i] );
+
+        int status = -1;
+        check( rocketnet_server_transport_create_ex( NULL, "127.0.0.1:40505", &config, WHOLE_CONFIG_TIME, &status ) == NULL );
+        check( status == ROCKETNET_STATUS_INVALID_ADDRESS );
+    }
+
+    rocketnet_quiet( 0 );
+}
+
 // simulated_reverse_window is past the first revision: create_ex reads it,
 // so a window of 1 (the range is 2 to 64, 0 off) is refused before the
 // token is read
@@ -187,4 +214,5 @@ REGISTER_UNIT_TEST( test_client_transport_create_honors_loopback_hub );
 REGISTER_UNIT_TEST( test_server_transport_create_ex_honors_loopback_hub );
 REGISTER_UNIT_TEST( test_server_transport_create_ex_honors_second_public_address );
 REGISTER_UNIT_TEST( test_server_transport_create_honors_second_public_address );
+REGISTER_UNIT_TEST( test_server_transport_create_ex_refuses_a_bad_second_public_address );
 REGISTER_UNIT_TEST( test_client_transport_create_ex_reads_simulated_fields );

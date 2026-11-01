@@ -47,7 +47,7 @@
 EXTENDS Integers, FiniteSets
 
 CONSTANTS
-    N,                  \* ROCKETNET_XDP_REPLY_MAC_ENTRIES
+    N,                  \* rocketnet_xdp_reply_mac_entries(max_clients)
     P,                  \* ROCKETNET_XDP_REPLY_MAC_PROBES
     Addrs,              \* client addresses
     Macs,               \* usable MACs

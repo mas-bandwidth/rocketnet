@@ -36,13 +36,15 @@ static const int PORTABLE_RX_BANKS = 3;
 static int portable_tx_capacity( const rocketnet_server_transport_config_t * config )
 {
     // a TX bank holds ROCKETNET_SEND_PACKETS_PER_CLIENT packets per configured
-    // client, and never fewer than ROCKETNET_SERVER_MAX_SEND_PACKETS, so a burst
-    // queues behind the worker instead of finding every bank in flight. The banks
-    // are one allocation sized at create from max_clients, as the RX banks are.
+    // client, and never fewer than the server's portable send batch
+    // (rocketnet_server_send_batch_packets), so a burst queues behind the worker
+    // instead of finding every bank in flight. The banks are one allocation
+    // sized at create from max_clients, as the RX banks are.
 
     const int max_clients = config && config->max_clients > 0 ? config->max_clients : ROCKETNET_DEFAULT_MAX_CLIENTS;
     const int capacity = ROCKETNET_SEND_PACKETS_PER_CLIENT * max_clients;
-    return capacity > ROCKETNET_SERVER_MAX_SEND_PACKETS ? capacity : ROCKETNET_SERVER_MAX_SEND_PACKETS;
+    const int batch = rocketnet_server_send_batch_packets( max_clients );
+    return capacity > batch ? capacity : batch;
 }
 
 static uint64_t portable_tx_storage_bytes( int capacity )
@@ -983,7 +985,7 @@ bool rocketnet_portable_tx_test_handoff()
         return false;
 
     portable_server_t * server = new ( storage ) portable_server_t();
-    if ( !portable_tx_storage_create( server, ROCKETNET_SERVER_MAX_SEND_PACKETS ) ||
+    if ( !portable_tx_storage_create( server, rocketnet_server_send_batch_packets( ROCKETNET_DEFAULT_MAX_CLIENTS ) ) ||
          !rocketnet_platform_mutex_create( &server->mutex ) )
     {
         portable_server_cleanup( server );
@@ -1155,7 +1157,7 @@ static uint64_t portable_tx_test_burst( portable_server_t * server, int updates 
 bool rocketnet_portable_tx_test_sizing()
 {
     // sizing: one bank holds ROCKETNET_SEND_PACKETS_PER_CLIENT per configured
-    // client, never fewer than ROCKETNET_SERVER_MAX_SEND_PACKETS, and the memory
+    // client, never fewer than the portable send batch, and the memory
     // plan counts the allocation. A burst of three updates of 1100 packets behind
     // a busy worker drops at banks of 1000 packets (one per client at 1000
     // clients, whatever ROCKETNET_MAX_CLIENTS is) and drops nothing at the banks
@@ -1168,8 +1170,8 @@ bool rocketnet_portable_tx_test_sizing()
     bool valid = portable_tx_capacity( NULL ) == ROCKETNET_SEND_PACKETS_PER_CLIENT * ROCKETNET_DEFAULT_MAX_CLIENTS;
 
     config.max_clients = 1;
-    valid &= portable_tx_capacity( &config ) == ROCKETNET_SERVER_MAX_SEND_PACKETS;
-    config.max_clients = ROCKETNET_SERVER_MAX_SEND_PACKETS / ROCKETNET_SEND_PACKETS_PER_CLIENT + 1;
+    valid &= portable_tx_capacity( &config ) == rocketnet_server_send_batch_packets( 1 );
+    config.max_clients = rocketnet_server_send_batch_packets( 1 ) / ROCKETNET_SEND_PACKETS_PER_CLIENT + 1;
     valid &= portable_tx_capacity( &config ) == ROCKETNET_SEND_PACKETS_PER_CLIENT * config.max_clients;
     config.max_clients = 1000;
 
@@ -1272,7 +1274,7 @@ bool rocketnet_portable_tx_test_drop_paths()
 #if !defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
     return true;
 #else
-    portable_server_t * server = portable_tx_test_owner( ROCKETNET_SERVER_MAX_SEND_PACKETS );
+    portable_server_t * server = portable_tx_test_owner( rocketnet_server_send_batch_packets( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
     if ( !server )
         return false;
 
@@ -1841,7 +1843,7 @@ static void * gso_create( void * context, const rocketnet_server_transport_io_co
         return NULL;
     }
 
-    return rocketnet_server_gso_create( context, bind, config->transport->num_xdp_queues, 0, config->status );
+    return rocketnet_server_gso_create( context, bind, config->transport->num_xdp_queues, config->transport->max_clients, 0, config->status );
 }
 
 static void gso_destroy( void * transport ) { rocketnet_server_gso_destroy( (rocketnet_server_gso_t *) transport ); }
@@ -1888,7 +1890,7 @@ static void * io_uring_create( void * context, const rocketnet_server_transport_
         return NULL;
     }
 
-    return rocketnet_server_uring_create( context, bind, config->transport->num_xdp_queues, config->status );
+    return rocketnet_server_uring_create( context, bind, config->transport->num_xdp_queues, config->transport->max_clients, config->status );
 }
 
 static void io_uring_destroy( void * transport ) { rocketnet_server_uring_destroy( (rocketnet_server_uring_t *) transport ); }
@@ -1936,7 +1938,7 @@ static void * xdp_create( void * context, const rocketnet_server_transport_io_co
     if ( config->transport->second_public_address[0] != '\0' )
         second = config->transport->second_public_address;
 
-    return rocketnet_server_socket_create( context, config->public_address, config->transport->packet_filter, queues, cpus, second, config->status );
+    return rocketnet_server_socket_create( context, config->public_address, config->transport->packet_filter, config->transport->max_clients, queues, cpus, second, config->status );
 }
 
 static void xdp_stop( void * transport )
@@ -2033,9 +2035,9 @@ static void * iocp_create( void * context, const rocketnet_server_transport_io_c
     // rn-iocp-one-completion-worker: iocp always runs one completion worker plus one send worker
 
 #if ROCKETNET_DEV
-    return rocketnet_server_iocp_create( context, bind, ROCKETNET_IOCP_DEFAULT_WORKERS, 0, 0, config->status );
+    return rocketnet_server_iocp_create( context, bind, ROCKETNET_IOCP_DEFAULT_WORKERS, config->transport->max_clients, 0, 0, config->status );
 #else // #if ROCKETNET_DEV
-    return rocketnet_server_iocp_create( context, bind, ROCKETNET_IOCP_DEFAULT_WORKERS, config->status );
+    return rocketnet_server_iocp_create( context, bind, ROCKETNET_IOCP_DEFAULT_WORKERS, config->transport->max_clients, config->status );
 #endif // #if ROCKETNET_DEV
 }
 
@@ -2087,9 +2089,9 @@ extern const rocketnet_transport_backend_t rocketnet_iocp_transport = { &iocp_op
 static void * rio_create( void * context, const rocketnet_server_transport_io_config_t * config, rocketnet_address_t * bind )
 {
 #if ROCKETNET_DEV
-    return rocketnet_server_rio_create( context, bind, 0, config->status );
+    return rocketnet_server_rio_create( context, bind, config->transport->max_clients, 0, config->status );
 #else // #if ROCKETNET_DEV
-    return rocketnet_server_rio_create( context, bind, config->status );
+    return rocketnet_server_rio_create( context, bind, config->transport->max_clients, config->status );
 #endif // #if ROCKETNET_DEV
 }
 
@@ -2190,14 +2192,14 @@ bool rocketnet_builtin_server_memory_plan( const rocketnet_server_transport_conf
     else if ( strcmp( transport, "gso" ) == 0 )
     {
         const int queues = config->num_xdp_queues > 0 ? config->num_xdp_queues : ROCKETNET_GSO_DEFAULT_QUEUES;
-        plan.transport_io_bytes = rocketnet_server_gso_allocation_bytes( queues );
+        plan.transport_io_bytes = rocketnet_server_gso_allocation_bytes( queues, config->max_clients );
         plan.worker_threads = queues + 1;
         plan.sockets = queues;
     }
     else if ( strcmp( transport, "io_uring" ) == 0 )
     {
         const int queues = config->num_xdp_queues > 0 ? config->num_xdp_queues : ROCKETNET_URING_DEFAULT_QUEUES;
-        plan.transport_io_bytes = rocketnet_server_uring_allocation_bytes( queues );
+        plan.transport_io_bytes = rocketnet_server_uring_allocation_bytes( queues, config->max_clients );
         plan.mapped_ring_bytes = rocketnet_server_uring_mapped_bytes( queues );
         plan.worker_threads = 0;
         plan.sockets = queues;
@@ -2206,7 +2208,7 @@ bool rocketnet_builtin_server_memory_plan( const rocketnet_server_transport_conf
     else if ( strcmp( transport, "xdp" ) == 0 )
     {
         const int queues = config->num_xdp_queues > 0 ? config->num_xdp_queues : ROCKETNET_XDP_DEFAULT_QUEUES;
-        plan.transport_io_bytes = rocketnet_server_xdp_allocation_bytes( queues );
+        plan.transport_io_bytes = rocketnet_server_xdp_allocation_bytes( queues, config->max_clients );
         plan.umem_bytes = rocketnet_xdp_umem_bytes( queues );
         plan.worker_threads = queues;
         plan.sockets = queues;
@@ -2218,17 +2220,17 @@ bool rocketnet_builtin_server_memory_plan( const rocketnet_server_transport_conf
     {
         // rn-iocp-one-completion-worker: iocp always plans one completion worker plus one send worker
 
-        plan.transport_io_bytes = rocketnet_server_iocp_allocation_bytes( ROCKETNET_IOCP_DEFAULT_WORKERS );
+        plan.transport_io_bytes = rocketnet_server_iocp_allocation_bytes( ROCKETNET_IOCP_DEFAULT_WORKERS, config->max_clients );
         plan.worker_threads = ROCKETNET_IOCP_DEFAULT_WORKERS + 1;
         plan.sockets = 1;
     }
     else if ( strcmp( transport, "rio" ) == 0 )
     {
-        plan.transport_io_bytes = rocketnet_server_rio_allocation_bytes();
+        plan.transport_io_bytes = rocketnet_server_rio_allocation_bytes( config->max_clients );
 
         // the registered region is one rocketnet_malloc (rocketnet_server_rio_create)
 
-        const uint64_t region = rocketnet_server_rio_registered_region_bytes();
+        const uint64_t region = rocketnet_server_rio_registered_region_bytes( config->max_clients );
         if ( !region )
             return false;
 

@@ -64,7 +64,10 @@ struct control_fixture_t
     int lease_starts;
     rocketnet_address_t reserved_to;
     alignas( 16 ) uint8_t frame[ROCKETNET_FRAME_STRIDE];
-    rocketnet_server_socket_process_packets_t received;
+    rocketnet_server_socket_process_packets_t received;     // a view of the received_ arrays
+    rocketnet_address_t received_from[4];
+    int received_bytes[4];
+    uint8_t * received_data[4];
     int feed_count;
     rocketnet_address_t feed_from[4];
     uint8_t feed_data[4][ROCKETNET_RECEIVE_CEILING];
@@ -109,7 +112,7 @@ static void fixture_stop( void * ) {}
 static bool fixture_stopped( void * ) { return true; }
 static void send_batch( void * p, const rocketnet_platform_send_t * sends, int count )
 {
-    CHECK( count > 0 && count <= ROCKETNET_SERVER_MAX_SEND_PACKETS );
+    CHECK( count > 0 && count <= rocketnet_server_send_batch_packets( ROCKETNET_MAX_CLIENTS ) );
     for ( int i = 0; i < count; ++i )
     {
         record( (control_fixture_t *) p, sends[i].to, sends[i].packet_data );
@@ -196,6 +199,10 @@ static void flush( void * p )
 static rocketnet_server_socket_process_packets_t * receive( void * p )
 {
     auto * f = (control_fixture_t *) p;
+    f->received.capacity = 4;
+    f->received.from = f->received_from;
+    f->received.packet_bytes = f->received_bytes;
+    f->received.packet_data = f->received_data;
     if ( f->feed_count )
     {
         // fed client packets, delivered once

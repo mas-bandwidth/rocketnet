@@ -130,7 +130,7 @@ performs shared protocol work. The workers use the selected msgx or portable
 socket pump; the client path is separate.
 
 Each TX bank holds `ROCKETNET_SEND_PACKETS_PER_CLIENT` (16) packets per
-configured client, and never fewer than `ROCKETNET_SERVER_MAX_SEND_PACKETS`;
+configured client, and never fewer than `rocketnet_server_send_batch_packets`;
 the three banks are one allocation made at create. A packet sent while all
 three banks are in flight is dropped and counted in `SEND_FAILED`. Measured on
 a 1000-client msgx LAN cell, the transmit worker spends about 18 us per
@@ -331,10 +331,10 @@ refused destination in the middle delivers every other packet
 
 The hard-killed-client cases in `tests/functional/posix_hard_killed_client.cpp`
 exercise ICMP handling for portable and msgx combinations; see
-[ICMP errors](TRANSPORT-INTERNALS.md#icmp-errors). This error-retry budget does
-not cover all discarded datagrams. Sustained empty or rejected traffic can
-keep the current portable/msgx drain running and delay receive publication or
-shutdown; see [current drain limitations](TRANSPORT-INTERNALS.md#current-staging-and-drain-limitations).
+[ICMP errors](TRANSPORT-INTERNALS.md#icmp-errors). Discarded datagrams spend
+the same read budget as errors and kept datagrams, so empty or rejected
+traffic ends a portable or msgx drain like any other; see
+[staging and drain bounds](TRANSPORT-INTERNALS.md#staging-and-drain-bounds).
 
 ## The file-descriptor limit
 

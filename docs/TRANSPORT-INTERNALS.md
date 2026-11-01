@@ -148,7 +148,7 @@ Two I/O shapes preserve the existing implementations:
 The staged callbacks are start, finish, abort, flush and receive. Start returns
 a `ROCKETNET_FRAME_STRIDE` root; the wire starts at `ROCKETNET_FRAME_WIRE_OFFSET`.
 The caller-visible payload alignment must remain valid. Receive returns at most
-`ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE` datagrams, each within the receive
+`rocketnet_server_receive_packets_per_update( max_clients )` datagrams, each within the receive
 ceiling, with normalized source addresses. Its data remains valid until the
 next receive or destruction, including while workers accept further packets.
 
@@ -176,28 +176,32 @@ that reports it.
 ## Per-update send and receive budgets
 
 The backend constants pair send staging with receive storage, checked by
-static assertions beside the constants. The table describes storage and processing units at the default
-`ROCKETNET_MAX_CLIENTS=1000`; it is not a guaranteed packet rate or a bound
-on every syscall or worker pass. Some capacities scale with the build's
-client ceiling; see [Memory and capacity](MEMORY.md#maximum-clients).
+static assertions and the configured-limit cases in `test_unit_max_clients.cpp`.
+The table describes storage and processing units for a server with the default
+`max_clients` of 1000; it is not a guaranteed packet rate or a bound on every
+syscall or worker pass. The capacities that scale with clients are sized at
+create from the server's configured `max_clients`; see
+[Memory and capacity](MEMORY.md#maximum-clients).
 
-The server process batch `ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE`
-(`sdk/rocketnet_constants.h`, 16000 by default) bounds packets exposed for
-protocol processing. It does not bound all work spent discarding datagrams
-before that batch is returned; see the limitations below.
+The server process batch `rocketnet_server_receive_packets_per_update`
+(`sdk/rocketnet_constants.h`, 16000 at 1000 clients) bounds packets exposed for
+protocol processing. Datagrams discarded before that batch is returned are
+bounded per receive call by the read budget below.
 
 | Transport | Send budget | Receive capacity |
 | --- | --- | --- |
-| portable | 256–1000, max `ROCKETNET_SERVER_MAX_SEND_PACKETS` (1000, `sdk/rocketnet_constants.h`) | 16000 per update (`ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE`) |
+| portable | 256–1000, max `rocketnet_server_send_batch_packets` (1000, `sdk/rocketnet_constants.h`) | 16000 per update (`rocketnet_server_receive_packets_per_update`) |
 | msgx | portable batch, 256–1000 | 16000 per update |
 | loopback | portable batch, 256–1000 | 2048 per client endpoint; server queue scales with hub capacity (16384 at 1000 clients), with 16000 processed per update (`sdk/rocketnet_driver_loopback.h`) |
 | gso | 4096 in the current shared producer bank (`ROCKETNET_GSO_SEND_QUEUE_SIZE`) | 8192 per queue buffer (`ROCKETNET_GSO_RECV_QUEUE_SIZE`) |
-| io_uring | 2048 shared send slots per phase, two phases; 10240 completion reaps per send call (`ROCKETNET_URING_SEND_QUEUE_SIZE`, `ROCKETNET_URING_SEND_PHASES`, `ROCKETNET_URING_SEND_BUDGET`) | 4096 receive buffers of 66 KiB per queue; 16000 in each shared receive bank (`ROCKETNET_URING_RECV_BUFFERS`, `ROCKETNET_URING_BANK_SIZE`) |
+| io_uring | 2048 shared send slots per phase, two phases; 10240 completion reaps per send call (`ROCKETNET_URING_SEND_QUEUE_SIZE`, `ROCKETNET_URING_SEND_PHASES`, `ROCKETNET_URING_SEND_BUDGET`) | 4096 receive buffers of 66 KiB per queue; 16000 in each shared receive bank (`ROCKETNET_URING_RECV_BUFFERS`, `rocketnet_server_uring_bank_packets`) |
 | xdp | 4096 per queue (`ROCKETNET_XDP_SEND_QUEUE_SIZE`) | 16384 staging per queue (`ROCKETNET_XDP_RECV_QUEUE_SIZE`) |
-| iocp | 2048 (`ROCKETNET_IOCP_SEND_QUEUE_SIZE`) | 4096 queue (`ROCKETNET_IOCP_RECEIVE_QUEUE_SIZE`) |
-| rio | 2048 per phase (`ROCKETNET_RIO_SEND_QUEUE_SIZE`) | 4096 posted receives (`ROCKETNET_RIO_RECEIVES`) |
+| iocp | 2048 (`rocketnet_server_iocp_send_queue_size`) | 4096 queue (`rocketnet_server_iocp_receive_queue_size`) |
+| rio | 2048 per phase (`rocketnet_server_rio_send_queue_size`) | 4096 posted receives (`rocketnet_server_rio_receives`) |
 
-### Current staging and drain limitations
+<a id="current-staging-and-drain-limitations"></a>
+
+### Staging and drain bounds
 
 GSO's three send banks are shared across all sockets. Only its current
 producer bank can be filled; the transmit worker consumes published banks.
@@ -225,20 +229,26 @@ never retires a bank of disconnect packets unsent. A custom transport without
 `send_room` is treated as unbounded; a start it refuses ends that update's
 drain, and the bursts wait for the next.
 
-The POSIX portable receive helpers, Darwin msgx receive pump, and Linux GSO
-server receive worker count retained records rather than every discarded
-datagram. Sustained empty or otherwise rejected datagrams can keep a drain
-running, delaying publication of valid packets already read and delaying
-worker shutdown. Short batches, an empty socket, or a full retained-packet
-buffer normally end the pass. Error retries have a separate finite budget in
-the portable/msgx helpers; invalid datagrams do not consume it. The Linux GSO
-client's plain fallback also uses the affected helper; its GRO path has a
-skip budget. Treat the receive capacities above as storage limits, not a
-worst-case worker-time or shutdown-time guarantee under such traffic.
-
-These are implementation limitations in the current source, not changes to
-the intended bounded-work and fairness contracts. Runtime corrections and
-regression coverage are separate from this documentation.
+The platform receive helpers spend one read of a fixed budget for each
+datagram, kept or discarded: a zero-length datagram, a refused source, a
+weather errno (POSIX) or a reset status (Windows) spends a read as a kept
+datagram does, and the call returns when the budget is spent. A batch call's
+budget is its `max_packets`; a single-packet call's is `ROCKETNET_PLATFORM_RECEIVE_READS`
+(64), on the POSIX helpers, the Darwin msgx pump and its per-packet arm, the
+generic batch pump and the Windows per-packet loop (`sdk/rocketnet_platform.cpp`).
+The Linux GSO server worker's drain (`rocketnet_server_gso_drain`,
+`sdk/rocketnet_server_gso_linux.cpp`) counts each message and interrupted call
+against `ROCKETNET_GSO_RECV_QUEUE_SIZE` (4096). It checks that threshold before
+each receive batch; the final batch can take the count past it by at most
+`ROCKETNET_GSO_RECV_BATCH - 1` (63).
+The Linux GSO client's plain fallback uses the platform helpers; its GRO path
+counts skipped datagrams against `max_packets` and weather errnos against
+their own retry budget (`sdk/rocketnet_client_gso_linux.cpp`). These limits
+prevent a stream of empty or rejected datagrams from keeping a drain running
+indefinitely before publication or a quit test; they do not establish a
+worst-case worker-time or shutdown-time bound. The portable receive worker's
+model reads one datagram per step against its capacity
+(`proofs/tla/RNPortableRx.tla`, `ReadBudget`).
 
 ## UDP coalescing
 
@@ -561,8 +571,8 @@ up to 64 KiB, so a provided buffer is 66 KiB (`ROCKETNET_URING_RECV_BUFFER_BYTES
 (8 MiB of 2 KiB buffers before `UDP_GRO`), and the buffers are not written at
 create, so a page is resident only once the kernel writes it: small datagrams
 keep about one page of each buffer resident. Each `send_packets` and `receive_packets` call reaps at most a
-fixed completion budget (`ROCKETNET_URING_SEND_BUDGET`,
-`ROCKETNET_URING_RECEIVE_BUDGET`) and `send_packets` waits at most once, so an
+fixed completion budget (`ROCKETNET_URING_SEND_BUDGET`, and the receive
+bank's size, `rocketnet_server_uring_bank_size`) and `send_packets` waits at most once, so an
 update returns under sustained traffic; completions past a budget stay queued
 for the next call, and a send without its completion keeps its slot until a
 later call reaps it. A queue count past
@@ -864,7 +874,7 @@ for the next update. In-place unreliable writes use only surplus capacity above
 a complete round of connected clients; otherwise they join the queue so application call order cannot
 starve another connection or that connection's reliable work. Control packets
 use the transport's separate send path. A staged transport reports its own
-send room as the capacity ([above](#current-staging-and-drain-limitations)),
+send room as the capacity ([above](#staging-and-drain-bounds)),
 so the same rotation applies to it; a custom staged transport without
 `send_room` reports none and is not covered.
 

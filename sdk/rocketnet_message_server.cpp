@@ -66,6 +66,8 @@ struct rn_message_object_layout_t
 {
     uint64_t hot_connections;       // compact slot records walked by update/send
     uint64_t connections;           // offset of the connection array
+    uint64_t slot_connection_ids;   // the slots machine's arrays (rn_slots_t), one entry per connection
+    uint64_t slot_changed;
     uint64_t views;                 // offset of the first connection's views; each connection's next at + view_stride
     uint64_t view_stride;
     uint64_t arena;
@@ -94,6 +96,10 @@ static bool rn_message_object_layout( const rocketnet_message_config_t * config,
     offset += rn_message_align64( sizeof( rn_message_connection_hot_t ) * n );
     layout->connections = offset;
     offset += rn_message_align64( sizeof( rn_message_connection_t ) * n );
+    layout->slot_connection_ids = offset;
+    offset += rn_message_align64( sizeof( uint64_t ) * n );
+    layout->slot_changed = offset;
+    offset += rn_message_align64( sizeof( uint8_t ) * n );
     layout->views = offset;
     layout->view_stride = rn_message_align64( deliveries );
     offset += layout->view_stride * n;
@@ -310,7 +316,7 @@ struct rn_message_object_t * rn_message_object_create( void * context, const str
     object->owns_block = owns_block ? 1 : 0;
     object->hot_connections = (rn_message_connection_hot_t *) ( block + layout.hot_connections );
     object->connections = (rn_message_connection_t *) ( block + layout.connections );
-    rn_slots_init( &object->slots, num_connections );
+    rn_slots_init( &object->slots, num_connections, (uint64_t *) ( block + layout.slot_connection_ids ), block + layout.slot_changed );
 
     object->arena = rn_arena_create_in_block( block + layout.arena, layout.arena_bytes, config, num_connections, &object->counters );
     if ( !object->arena )
@@ -800,6 +806,17 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
             continue;
 
         rn_message_connection_t * connection = &object->connections[i];
+
+        // proofs/tla/RNResendTiming.tla Seed (standard/MESSAGES.md m9.2): until
+        // the connection's own first RTT sample, the transport's measured round
+        // trip is taken as that sample, after this update's acks, so the
+        // resend delay follows the path from the first round trip the
+        // transport measures rather than waiting message_resend_delay_initial_ms;
+        // rn_window_ack_seed_rtt does nothing once the connection has a sample
+
+        if ( object->link.rtt )
+            rn_window_ack_seed_rtt( &connection->ordered.ack, object->link.rtt( object->link.transport, i ) );
+
         rn_endpoint_tick( connection, time );          // RNEndpoint Tick: RNReceipts SweepLoss, the reliable timeout
     }
 
@@ -1631,6 +1648,7 @@ void rn_message_server_link( struct rn_message_link_t * link, struct rocketnet_s
     link->disconnect = RN_LINK_FORWARD( rocketnet_server_transport_disconnect_client )::call;
     link->state = RN_LINK_FORWARD( rocketnet_server_transport_state )::call;
     link->end_reason = RN_LINK_FORWARD( rocketnet_server_transport_client_end_reason )::call;
+    link->rtt = RN_LINK_FORWARD( rocketnet_server_transport_client_rtt )::call;
     link->stop = RN_LINK_FORWARD( rocketnet_server_transport_stop )::call;
     link->stopped = RN_LINK_FORWARD( rocketnet_server_transport_stopped )::call_const;
     link->destroy = RN_LINK_FORWARD( rocketnet_server_transport_destroy )::call;

@@ -770,25 +770,33 @@ static inline bool rocketnet_xdp_stats_publish( bool read, const struct rocketne
 // proofs/tla/RNXdpReplay.tla models the rule: NeverSeenNeverSentTo and
 // HeldReplyFindsItsMac.
 //
-// The table is fixed-size and lives inside its owner's create-time
-// allocation: open addressing over ROCKETNET_XDP_REPLY_MAC_ENTRIES slots,
-// a lookup stopping at the first never-used slot and probing at most
-// ROCKETNET_XDP_REPLY_MAC_PROBES slots. A learn into a full probe window
-// replaces the entry learned longest ago; a forget leaves the address's entry
-// in place as its answered entry. No allocation, no clock and no lock: its
+// The table is fixed-size from its bind and its entries live in its owner's
+// create-time allocation: open addressing over a power-of-two count of
+// slots (the index mask is the count less one), a lookup stopping at the
+// first never-used slot and probing at most ROCKETNET_XDP_REPLY_MAC_PROBES
+// slots. A learn into a full probe window replaces the entry learned longest
+// ago; a forget leaves the address's entry in place as its answered entry.
+// No allocation, no clock and no lock: its
 // owner serialises writes.
 
-// The table holds a learned MAC for every client at most a quarter full:
-// four slots per client, rounded up to a power of two for the index mask
-// (4096 at 1000 clients).
+// The table holds a learned MAC for every client of the server's configured
+// max_clients at most a quarter full: four slots per sized client, rounded
+// up to a power of two for the index mask (4096 at 1000 clients). The
+// smallest table (at ROCKETNET_SERVER_MIN_SIZED_CLIENTS) is far wider than
+// one probe window, so a window never wraps onto itself.
 
-#define ROCKETNET_XDP_REPLY_MAC_ENTRIES     ROCKETNET_POWER_OF_TWO_AT_LEAST( 4 * ROCKETNET_MAX_CLIENTS )
 #define ROCKETNET_XDP_REPLY_MAC_PROBES      16
 
-ROCKETNET_STATIC_ASSERT( ROCKETNET_XDP_REPLY_MAC_ENTRIES >= 4 * ROCKETNET_MAX_CLIENTS,
-                         "the reply MAC table holds every client's MAC at most a quarter full" );
-ROCKETNET_STATIC_ASSERT( ( ROCKETNET_XDP_REPLY_MAC_ENTRIES & ( ROCKETNET_XDP_REPLY_MAC_ENTRIES - 1 ) ) == 0,
-                         "the reply MAC table size is a power of two for its index mask" );
+static inline int rocketnet_xdp_reply_mac_entries( int max_clients )
+{
+    return rocketnet_power_of_two_at_least( 4 * rocketnet_server_sized_clients( max_clients ) );
+}
+
+// the entries at the default configuration, for storage a test declares statically
+#define ROCKETNET_XDP_REPLY_MAC_DEFAULT_ENTRIES     ROCKETNET_POWER_OF_TWO_AT_LEAST( 4 * ROCKETNET_DEFAULT_MAX_CLIENTS )
+
+ROCKETNET_STATIC_ASSERT( ROCKETNET_POWER_OF_TWO_AT_LEAST( 4 * ROCKETNET_SERVER_MIN_SIZED_CLIENTS ) >= 4 * ROCKETNET_XDP_REPLY_MAC_PROBES,
+                         "the smallest reply MAC table is wider than a probe window" );
 
 #define ROCKETNET_XDP_REPLY_MAC_EMPTY       0
 #define ROCKETNET_XDP_REPLY_MAC_LIVE        1
@@ -807,7 +815,8 @@ struct rocketnet_xdp_reply_macs_t
     uint8_t gateway_mac[6];
     bool gateway_known;
     uint64_t learn_count;
-    struct rocketnet_xdp_reply_mac_entry_t entries[ROCKETNET_XDP_REPLY_MAC_ENTRIES];
+    struct rocketnet_xdp_reply_mac_entry_t * entries;      // the owner's storage, bound by rocketnet_xdp_reply_macs_bind
+    uint32_t mask;                                          // the entry count less one; the count is a power of two
     // Per-family gateways. Zero after reset, so a one-family table still uses gateway_mac.
     bool gateway_ipv4_known;
     bool gateway_ipv6_known;
@@ -815,12 +824,35 @@ struct rocketnet_xdp_reply_macs_t
     uint8_t gateway_ipv6[6];
 };
 
+// Binds the table to count entries of its owner's storage (count a power of
+// two, at least four probe windows) and resets it with no gateway.
+
+static inline void rocketnet_xdp_reply_macs_reset( struct rocketnet_xdp_reply_macs_t * table, const uint8_t * gateway_mac );
+
+static inline bool rocketnet_xdp_reply_macs_bind( struct rocketnet_xdp_reply_macs_t * table, struct rocketnet_xdp_reply_mac_entry_t * entries, int count )
+{
+    memset( table, 0, sizeof( *table ) );
+    if ( !entries || count < 4 * ROCKETNET_XDP_REPLY_MAC_PROBES || ( count & ( count - 1 ) ) != 0 )
+        return false;
+    table->entries = entries;
+    table->mask = (uint32_t) count - 1;
+    rocketnet_xdp_reply_macs_reset( table, NULL );
+    return true;
+}
+
+// Every entry never used, the gateways cleared, the binding kept.
 // gateway_mac NULL: no gateway is known for this interface.
 
 // proofs/tla/RNXdpReplyMacsLayout.tla Reset: every slot EMPTY
 static inline void rocketnet_xdp_reply_macs_reset( struct rocketnet_xdp_reply_macs_t * table, const uint8_t * gateway_mac )
 {
+    struct rocketnet_xdp_reply_mac_entry_t * entries = table->entries;
+    const uint32_t mask = table->mask;
     memset( table, 0, sizeof( *table ) );
+    table->entries = entries;
+    table->mask = mask;
+    if ( entries )
+        memset( entries, 0, ( (size_t) mask + 1 ) * sizeof( *entries ) );
 
     if ( gateway_mac )
     {
@@ -829,7 +861,7 @@ static inline void rocketnet_xdp_reply_macs_reset( struct rocketnet_xdp_reply_ma
     }
 }
 
-static inline uint32_t rocketnet_xdp_reply_macs_slot( const rocketnet_address_t * address )
+static inline uint32_t rocketnet_xdp_reply_macs_slot( const struct rocketnet_xdp_reply_macs_t * table, const rocketnet_address_t * address )
 {
     // FNV-1a over the family, the port and the address bytes the family uses
 
@@ -843,18 +875,18 @@ static inline uint32_t rocketnet_xdp_reply_macs_slot( const rocketnet_address_t 
     for ( int i = 0; i < bytes; ++i )
         hash = ( hash ^ data[i] ) * 16777619u;
 
-    return hash & ( ROCKETNET_XDP_REPLY_MAC_ENTRIES - 1 );
+    return hash & table->mask;
 }
 
 // proofs/tla/RNXdpReplyMacsLayout.tla TableIsMap and NoEntryPastEmpty: the probe
 // passes every used slot and ends only at an EMPTY one or after the window
 static inline struct rocketnet_xdp_reply_mac_entry_t * rocketnet_xdp_reply_macs_find_state( struct rocketnet_xdp_reply_macs_t * table, const rocketnet_address_t * address, uint8_t state )
 {
-    const uint32_t slot = rocketnet_xdp_reply_macs_slot( address );
+    const uint32_t slot = rocketnet_xdp_reply_macs_slot( table, address );
 
     for ( int i = 0; i < ROCKETNET_XDP_REPLY_MAC_PROBES; ++i )
     {
-        struct rocketnet_xdp_reply_mac_entry_t * entry = &table->entries[( slot + (uint32_t) i ) & ( ROCKETNET_XDP_REPLY_MAC_ENTRIES - 1 )];
+        struct rocketnet_xdp_reply_mac_entry_t * entry = &table->entries[( slot + (uint32_t) i ) & table->mask];
         if ( entry->state == ROCKETNET_XDP_REPLY_MAC_EMPTY )
             return NULL;
 
@@ -898,12 +930,12 @@ static inline void rocketnet_xdp_reply_macs_learn( struct rocketnet_xdp_reply_ma
 
     if ( !entry )
     {
-        const uint32_t slot = rocketnet_xdp_reply_macs_slot( address );
+        const uint32_t slot = rocketnet_xdp_reply_macs_slot( table, address );
         struct rocketnet_xdp_reply_mac_entry_t * oldest = NULL;
 
         for ( int i = 0; i < ROCKETNET_XDP_REPLY_MAC_PROBES; ++i )
         {
-            struct rocketnet_xdp_reply_mac_entry_t * candidate = &table->entries[( slot + (uint32_t) i ) & ( ROCKETNET_XDP_REPLY_MAC_ENTRIES - 1 )];
+            struct rocketnet_xdp_reply_mac_entry_t * candidate = &table->entries[( slot + (uint32_t) i ) & table->mask];
             if ( candidate->state != ROCKETNET_XDP_REPLY_MAC_LIVE )
             {
                 entry = candidate;
@@ -941,12 +973,12 @@ static inline void rocketnet_xdp_reply_macs_answer( struct rocketnet_xdp_reply_m
     struct rocketnet_xdp_reply_mac_entry_t * entry = rocketnet_xdp_reply_macs_find_state( table, address, ROCKETNET_XDP_REPLY_MAC_ANSWERED );
     if ( !entry )
     {
-        const uint32_t slot = rocketnet_xdp_reply_macs_slot( address );
+        const uint32_t slot = rocketnet_xdp_reply_macs_slot( table, address );
         struct rocketnet_xdp_reply_mac_entry_t * oldest = NULL;
 
         for ( int i = 0; i < ROCKETNET_XDP_REPLY_MAC_PROBES; ++i )
         {
-            struct rocketnet_xdp_reply_mac_entry_t * candidate = &table->entries[( slot + (uint32_t) i ) & ( ROCKETNET_XDP_REPLY_MAC_ENTRIES - 1 )];
+            struct rocketnet_xdp_reply_mac_entry_t * candidate = &table->entries[( slot + (uint32_t) i ) & table->mask];
             if ( candidate->state == ROCKETNET_XDP_REPLY_MAC_EMPTY )
             {
                 entry = candidate;

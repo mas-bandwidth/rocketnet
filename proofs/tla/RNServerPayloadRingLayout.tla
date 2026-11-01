@@ -41,7 +41,7 @@ EXTENDS Integers, FiniteSets
 CONSTANTS
     Threads,        \* game threads
     Cap,            \* send_capacity
-    RingSize,       \* ROCKETNET_SERVER_PAYLOAD_RING_SIZE
+    RingSize,       \* payload_ring.size, allocated from configured max_clients
     Stride,         \* ROCKETNET_FRAME_STRIDE
     WrongStride,    \* the stride the broken recovery divides by
     MaxCount,       \* acquires between flushes in the bounded instance

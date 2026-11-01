@@ -19,7 +19,9 @@
 static void test_slots_observe_and_admit()
 {
     struct rn_slots_t slots;
-    rn_slots_init( &slots, 4 );
+    uint64_t connection_ids[4];
+    uint8_t changed[4];
+    rn_slots_init( &slots, 4, connection_ids, changed );
 
     // a free slot: no binding, and no entry carries the id 0
 
@@ -77,7 +79,9 @@ static void test_slots_observe_and_admit()
 static void test_slots_same_batch_churn_discards_the_old_connection()
 {
     struct rn_slots_t slots;
-    rn_slots_init( &slots, 2 );
+    uint64_t connection_ids[2];
+    uint8_t changed[2];
+    rn_slots_init( &slots, 2, connection_ids, changed );
 
     // the update before the churn: A is bound to slot 0
 
@@ -122,18 +126,24 @@ static void test_slots_init_out_of_range_count_has_no_slots()
     rocketnet_assert_function( slots_quiet_assert );
 
     struct rn_slots_t slots;
+    static uint64_t connection_ids[ROCKETNET_MAX_CLIENTS];
+    static uint8_t changed[ROCKETNET_MAX_CLIENTS];
 
-    rn_slots_init( &slots, -1 );
+    rn_slots_init( &slots, -1, connection_ids, changed );
     check( slots.max_clients == 0 );
     check( rn_slots_observe( &slots, 0, 7 ) == RN_SLOTS_NONE );
     check( rn_slots_admit( &slots, 0, 7 ) == RN_SLOTS_DISCARD );
 
-    rn_slots_init( &slots, ROCKETNET_MAX_CLIENTS + 1 );
+    rn_slots_init( &slots, ROCKETNET_MAX_CLIENTS + 1, connection_ids, changed );
     check( slots.max_clients == 0 );
     check( rn_slots_observe( &slots, 0, 7 ) == RN_SLOTS_NONE );
     check( rn_slots_admit( &slots, 0, 7 ) == RN_SLOTS_DISCARD );
 
-    rn_slots_init( &slots, ROCKETNET_MAX_CLIENTS );
+    rn_slots_init( &slots, 4, NULL, NULL );
+    check( slots.max_clients == 0 );
+    check( rn_slots_observe( &slots, 0, 7 ) == RN_SLOTS_NONE );
+
+    rn_slots_init( &slots, ROCKETNET_MAX_CLIENTS, connection_ids, changed );
     check( slots.max_clients == ROCKETNET_MAX_CLIENTS );
     check( rn_slots_observe( &slots, 0, 7 ) == RN_SLOTS_RESET );
 

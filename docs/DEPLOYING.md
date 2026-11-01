@@ -68,11 +68,11 @@ not change the client selection.
 
 The public IOCP adapter ignores `num_xdp_queues` and always starts one
 completion worker and one transmit worker. The completion worker owns the
-single socket's receive completions. At the default `ROCKETNET_MAX_CLIENTS`
+single socket's receive completions. At the default `max_clients` of 1000
 there are 128 posted receives, 4096 receive staging slots per worker buffer,
 and 2048 shared send frames. Its three command banks hold references to that
 frame pool; they do not multiply it. Staging and send capacities scale with
-`ROCKETNET_MAX_CLIENTS`; see [Maximum clients](MEMORY.md#maximum-clients). These are resource bounds,
+the server's configured `max_clients`; see [Maximum clients](MEMORY.md#maximum-clients). These are resource bounds,
 not timing or packet-rate requirements. A send frame still owned by the OS is
 unavailable to the next fill, even after an application flush.
 

@@ -190,6 +190,7 @@ static void windows_socket_errors_sender_close( windows_socket_errors_sender_t *
 struct windows_socket_errors_session_t
 {
     windows_socket_errors_transport_t transport;
+    int max_clients;                    // the server's configured client count
     struct rocketnet_server_transport_t * server;
     struct rocketnet_client_transport_t * client;
     int client_index;
@@ -265,6 +266,7 @@ static void windows_socket_errors_session_start( windows_socket_errors_session_t
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 4;
+    session->max_clients = server_config.max_clients;
     snprintf( server_config.transport, sizeof( server_config.transport ), "%s", transport->transport );
 
     char bind[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
@@ -395,7 +397,7 @@ static int windows_socket_errors_full_pending( windows_socket_errors_session_t *
     if ( strcmp( session->transport.transport, "iocp" ) == 0 )
         return ROCKETNET_IOCP_DEFAULT_WORKERS * ROCKETNET_IOCP_RECEIVES_PER_WORKER;
     if ( strcmp( session->transport.transport, "rio" ) == 0 )
-        return ROCKETNET_RIO_RECEIVES;
+        return rocketnet_server_rio_receives( session->max_clients );
 
     return -1;
 }

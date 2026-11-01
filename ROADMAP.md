@@ -6,8 +6,8 @@ Planned work for RocketNet that is not on main. Work lands on main before new wo
 
 ## Contents
 
-- [Started work to finish and land](#started-work-to-finish-and-land) (13)
-- [Audit items not yet fixed](#audit-items-not-yet-fixed) (10)
+- [Started work to finish and land](#started-work-to-finish-and-land) (9)
+- [Audit items not yet fixed](#audit-items-not-yet-fixed) (8)
 - [Investigations that need a quiet host](#investigations-that-need-a-quiet-host) (3)
 - [Older open pull requests](#older-open-pull-requests) (2)
 - [Decisions for Glenn](#decisions-for-glenn) (5)
@@ -28,12 +28,6 @@ Glenn ruled remove (audit 13). Branch rowan/remove-type9-fragmentation at 068941
 
 From: Audit item 13; Glenn, 2026-10-31
 
-### Seed the message resend delay from the measured RTT
-
-The two channels nightly seeds that fail every run (4879047, 4879943) time out because the message layer waits its 2000 ms default while the transport has already measured RTT. Branch rowan/resend-seeded-rtt at 511ead80: works on macOS, TLC and standard m9.2 updated. Owed: diagnose the Linux test_light_profile_server_1000_required_memory failure; the full nightly seed range; re-measure the ordered stream's completion multiple; squash the WIP commits.
-
-From: Red channels nightly
-
 ### Size per-server arrays from the configured max_clients
 
 In a ROCKETNET_MAX_CLIENTS=10000 build a 1000-slot server plans 3.93 GB because per-server arrays use the build constant (audit 39). Branch rowan/size-by-config; memory is the user's choice via config.
@@ -52,29 +46,11 @@ Audit 33. Branch rowan/gate-nightly-proofs-split at 3522e523: one job per reader
 
 From: Audit item 33
 
-### ClientConnection KeysErasedWhenDown matches the code
-
-Audit 66. Branch rowan/model-clientkeys at 5bbf6e7a: the model is done. Owed: the clientconnection group's RUNS.tsv on a quiet, fast Linux host (MCClientConnectionReachSFirstkind runs 117-132 s on captain against the 110 s budget, 50 s on Linux).
-
-From: Audit item 66
-
-### One address hash per connection request
-
-Audit 97. Branch rowan/sdkfu-request-one-hash at d3c2edfb: the resend shape is 15% faster (120.6 to 102.8 ns per request on intel). Owed: a macOS unit run; put the numbers in the commit.
-
-From: Audit item 97
-
 ### Live message matrix: a late probe copy counts as its probe
 
 Audit 59. Branch rowan/low-matrix-flake at a1693544, never built. Owed: functional build and repeated runs on Linux and macOS, a negative control, and a reproduction on main with injected latency.
 
 From: Audit item 59
-
-### Remove the resend FIFO's generation stamp
-
-RNResendGenerations shows the stamp never decides; the number comparison refuses a stale ack. Removing it shrinks each resend entry from 12 to 8 bytes. Uncommitted edits in the worktree rocketnet-remove-stamp, branch rowan/remove-resend-generation-stamp.
-
-From: Audit item 12 follow-on
 
 ### Land #797: CBMC low items
 
@@ -97,18 +73,6 @@ From: FABLE-AUDIT.md
 ## Audit items not yet fixed
 
 Suspects from FABLE-AUDIT.md that nothing on main fixes. Each is verified at the cited line first; a confirmed defect gets a lock-in test and a negative control.
-
-### A create test that fails on second_public_address alone
-
-The whole-config create test goes red under the old truncation only because loopback_hub is also cut off.
-
-From: #737 follow-on
-
-### Drain limitation text after #740
-
-docs/CLIENT-IO.md and TRANSPORT-INTERNALS.md 'current staging and drain limitations' still describe the drain bound #740 fixed.
-
-From: #740 follow-on
 
 ### ROCKETNET_MAX_CHANNELS CMake option
 

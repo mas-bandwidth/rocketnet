@@ -58,8 +58,13 @@
 // for the timers ledger generation in a development build. The clients one
 // network thread makes the DEV ON client 22971951 (the windows Release (a)
 // and (c) legs) and the DEV OFF client at most 22182891.
+// The server's client-scaled buffers carved from layouts sized by its
+// configured max_clients (+64 bytes in rn_message_object_layout and +58384
+// bytes in rocketnet_server_transport_layout at 1000 clients, less the 25
+// bytes of prior ceiling slack on Windows): 1608427127 by the windows
+// Release (a) and (c) CI legs.
 #if ROCKETNET_DEV
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1608368704 )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1608427127 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22971951 )
 #else
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1597987642 )
@@ -80,8 +85,10 @@
 // Re-measured 2026-10-28 on mini-m5 at fd3cc227 (unreliable ring 16Q, resend
 // link 12W): client was 22746605, now 22754581. At 0e32e225 (descriptor
 // 72 bytes, span links) server was 1603277086, now 1607276904; client unchanged.
+// The server's client-scaled buffers carved from layouts sized by its
+// configured max_clients: 1608427487 by the macos-15 Debug CI leg.
 #if ROCKETNET_DEV
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1608369048 )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1608427487 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22754581 )
 #else
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1585902216 )
@@ -103,10 +110,15 @@
 // 12133 bytes at 1000 clients (rocketnet_server_replay_marks_allocation_bytes).
 // Re-measured 2026-10-31 on vision (Linux x86-64, Debug, ROCKETNET_DEV=ON)
 // with the disconnect ring and the xdp replay records: 3248706443.
+// The server's client-scaled buffers are carved at create from layouts sized
+// by its configured max_clients, each carve 64-byte aligned and the receive
+// views their own allocations (rn_message_object_t is 526832 bytes with the
+// message link's 8-byte rtt reader, within the same 526848-byte 64-aligned
+// head block): 3248767123 by the ubuntu-24.04 Debug CI leg.
 // The non-dev figures below were not re-measured: this file is not linked
 // when ROCKETNET_DEV=OFF.
 #if ROCKETNET_DEV
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3248706443ULL )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3248767123ULL )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22904149 )
 #else
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3226203446ULL )

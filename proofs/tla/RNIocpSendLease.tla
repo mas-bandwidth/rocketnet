@@ -32,7 +32,7 @@
 EXTENDS Integers, Sequences, FiniteSets
 
 CONSTANTS
-    NumOps,     \* send operations: ROCKETNET_IOCP_SEND_QUEUE_SIZE
+    NumOps,     \* send operations: send_queue_size, rocketnet_server_iocp_send_queue_size( max_clients )
     Callers,    \* threads that start packets
     GenMax,     \* the largest generation: UINT64_MAX >> 16 in the code
     MaxLeases,  \* exploration bound: acquisitions

@@ -7,22 +7,30 @@
 
 #include "rocketnet_slots.h"
 
-void rn_slots_init( struct rn_slots_t * slots, int max_clients )
+void rn_slots_init( struct rn_slots_t * slots, int max_clients, uint64_t * connection_id, uint8_t * changed )
 {
     if ( !slots )
         return;
 
-    // an out-of-range count is refused as zero slots, never clamped to a working machine of the wrong size
-
-    if ( max_clients < 0 || max_clients > ROCKETNET_MAX_CLIENTS )
-    {
-        rocketnet_assert( max_clients >= 0 && max_clients <= ROCKETNET_MAX_CLIENTS );
-        rocketnet_error( "slots init refused: max_clients %d is outside 0..%d; using zero slots", max_clients, ROCKETNET_MAX_CLIENTS );
-        max_clients = 0;
-    }
+    // an out-of-range count, or no storage for it, is refused as zero slots,
+    // never clamped to a working machine of the wrong size
 
     memset( slots, 0, sizeof( *slots ) );
+    if ( max_clients < 0 || max_clients > ROCKETNET_MAX_CLIENTS || ( max_clients > 0 && ( !connection_id || !changed ) ) )
+    {
+        rocketnet_assert( max_clients >= 0 && max_clients <= ROCKETNET_MAX_CLIENTS );
+        rocketnet_error( "slots init refused: max_clients %d is outside 0..%d or has no storage; using zero slots", max_clients, ROCKETNET_MAX_CLIENTS );
+        return;
+    }
+
     slots->max_clients = max_clients;
+    slots->connection_id = connection_id;
+    slots->changed = changed;
+    if ( max_clients > 0 )
+    {
+        memset( connection_id, 0, (size_t) max_clients * sizeof( *connection_id ) );
+        memset( changed, 0, (size_t) max_clients * sizeof( *changed ) );
+    }
 }
 
 // proofs/tla/RNSlots.tla Observe
