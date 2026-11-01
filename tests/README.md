@@ -120,7 +120,10 @@ peak directly; there is no second bound table. The outer functional row keeps
 the 120-second limit but does not compare the unit controller's aggregate child
 usage with one case's bound. Its inner runner retains the 120-second per-case
 Release limit, including the existing Debug and sanitizer scaling, and enforces
-each unit case separately.
+each unit case separately. A sanitizer build enforces no bound unless
+`ROCKETNET_TEST_MAX_CASE_RSS_MB` sets one, so there the row would check nothing;
+it is left out and printed as `SKIPPED test_unit_case_memory: suite_max_case_rss_mb`,
+and each sanitizer job runs the unit suite as its own step.
 
 The suite-wide bound is
 `ROCKETNET_TEST_MAX_CASE_RSS_MB`, 698 MiB in `tests/suite_runner.h` (the larger
