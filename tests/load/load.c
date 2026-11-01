@@ -53,9 +53,9 @@
     when the result is below 2 fds per client plus 64, so `ulimit -n 512`
     fails a 1000-client run before it starts.
     .github/workflows/nightly-soak.yml runs `load 1000 60` once per cell.
-    A -DROCKETNET_MAX_CLIENTS=10000 build runs `LOAD_PROFILE=light load 10000
-    30` nightly (.github/workflows/nightly-max-clients.yml); the default
-    profile's per-client config plans about 183 GB for that server.
+    The light profile remains available for custom-capacity experiments.
+    The 10000-client nightly load tier was retired; its older results are
+    archived in docs/QUALIFICATION-max-clients-10000.md.
 */
 
 /* the title's protocol id: the server config's and every token's */

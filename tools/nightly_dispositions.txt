@@ -23,6 +23,5 @@ fuzz-nightly.yml	nightly fuzz MSan (rocketnet_fuzz_server_transport)	#723	MSan r
 fuzz-nightly.yml	nightly fuzz MSan (rocketnet_fuzz_session)	#723	MSan report in rocketnet_fuzz_protect_setup memcmp
 nightly-channels-stress.yml	channels-stress-	#749	stress config refused by the sent-map rule; plan is the lifecycle peak
 nightly-dst.yml	dst-	#766	in-flight slack left out the send budget queue
-nightly-max-clients.yml	max-clients 10000	#755	loopback hub sized by the build's clients squared; two fixtures assumed 1000
 nightly-soak.yml	soak (	#775	xdp guest sized from the whole plan (71 GiB)
 nightly-proofs.yml	nightly CBMC proofs	#754	harness_prefilter PARSING ERROR in packet_open

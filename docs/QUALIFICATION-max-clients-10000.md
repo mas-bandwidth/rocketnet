@@ -1,12 +1,14 @@
-# Qualification: 10000-client build
+# Historical qualification: 10000-client build
 
-`ROCKETNET_MAX_CLIENTS` (`sdk/rocketnet.h`) is 1000 by default, the supported
-server size. A build sets 10000 with `-DROCKETNET_MAX_CLIENTS=10000`
-(BUILDING.md, "Maximum clients"); nothing else changes. This record proves
-such a build compiles with zero warnings, runs the unit suite, and runs a
-bounded loopback load of all 10000 clients. `.github/workflows/nightly-max-clients.yml`
-repeats it nightly on the Linux fleet runner: gcc and clang, ROCKETNET_DEV ON
-and OFF, fail-fast false.
+The supported server size is 1000 clients. The 10000-client load requirement
+and its scheduled nightly were retired on 2026-11-01. This page preserves the
+results of the older source revisions named below; it is not a current
+qualification or a release/audit completion requirement.
+
+Those custom builds used `-DROCKETNET_MAX_CLIENTS=10000`, compiled with zero
+warnings, ran the unit suite, and ran the bounded light-profile loopback
+load recorded here. The results and resource figures apply only to those
+revisions and workloads.
 
 ## Head and host
 

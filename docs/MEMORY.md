@@ -254,19 +254,13 @@ another value; the generated `rocketnet_server_xdp.h` refuses to compile into a
 library whose `ROCKETNET_MAX_CLIENTS` or `ROCKETNET_HISTORY_PACKETS` differs
 from the program's.
 
-An earlier 10000-client build has a bounded correctness record in
-[QUALIFICATION-max-clients-10000.md](QUALIFICATION-max-clients-10000.md).
-[`.github/workflows/nightly-max-clients.yml`](../.github/workflows/nightly-max-clients.yml)
-is configured to repeat that build/load tier on the Linux fleet runner:
-zero-warning builds with gcc and clang at DEV ON and OFF, the unit suite, and
-a bounded loopback load of all 10000 clients for 30 seconds
-(`LOAD_PROFILE=light ./bin/load 10000 30`). The load uses the light
-per-client config, about 25 GB planned for the server and its 10000
-in-process clients, because the default per-client config plans about
-183 GB for the server alone (below); the runner checks host room against the
-plan before the load runs. Those byte figures belong to the recorded build;
-query the current binary. This is a same-process loopback correctness tier,
-not a performance or general workload qualification above 1000 clients.
+The supported server size is 1000 clients. The 10000-client load tier was
+retired on 2026-11-01 and is not a release or audit completion requirement.
+An earlier custom build's bounded correctness results remain archived in
+[QUALIFICATION-max-clients-10000.md](QUALIFICATION-max-clients-10000.md);
+they do not qualify current code or establish support above 1000 clients.
+The compile-time capacity setting remains available for callers who qualify
+their own workload and deployment.
 
 The value raises the ceiling, not the default: `max_clients` still defaults
 to 1000 (or the build's maximum when that is smaller), and a server asks for
