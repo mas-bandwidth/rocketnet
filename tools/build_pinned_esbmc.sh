@@ -8,7 +8,7 @@
 # What is built, in order, each from its pinned source:
 #   LLVM and clang 22.1.6   the C++ frontend ESBMC links (static libraries)
 #   Z3 4.13.3               the solver the proof runs (--z3), static
-#   Boost 1.89.0            date_time, program_options, iostreams, static
+#   Boost 1.89.0            date_time, program_options, iostreams, filesystem, static
 #   ESBMC <version>         with fmt 12.1.0, nlohmann json 3.11.3,
 #                           yaml-cpp 0.9.0 and immer 0.9.1 handed to its
 #                           FetchContent as verified local trees
@@ -130,11 +130,11 @@ cmake -G Ninja -S "$z3_src" -B "$work/z3-build" \
 ninja -C "$work/z3-build" -j "$jobs" install
 rm -rf "$work/z3" "$work/z3-build"
 
-# Boost: the three compiled libraries ESBMC requires, static, with no
+# Boost: the compiled libraries ESBMC links, static, with no
 # compression backends (ESBMC reads goto binaries from memory only)
 boost_src=$(fetch "https://archives.boost.io/release/$boost_version/source/boost_${boost_version//./_}.tar.bz2" "$boost_sha256" "$work/boost")
 ( cd "$boost_src" \
-  && ./bootstrap.sh --with-libraries=date_time,program_options,iostreams --prefix="$deps" \
+  && ./bootstrap.sh --with-libraries=date_time,program_options,iostreams,filesystem --prefix="$deps" \
   && ./b2 -j "$jobs" link=static variant=release threading=multi \
        -sNO_ZLIB=1 -sNO_BZIP2=1 -sNO_LZMA=1 -sNO_ZSTD=1 install ) > "$work/boost.log" 2>&1 \
   || { tail -50 "$work/boost.log"; exit 1; }
@@ -162,7 +162,7 @@ cmake -G Ninja -S "$esbmc_src" -B "$work/esbmc-build" \
     -DZ3_DIR="$deps" -DENABLE_Z3=ON \
     -DBoost_ROOT="$deps" -DBoost_USE_STATIC_LIBS=ON \
     -DENABLE_SMTLIB=OFF -DENABLE_GOTO_CONTRACTOR=OFF -DENABLE_MIMALLOC=OFF \
-    -DENABLE_BITWUZLLOB=OFF -DENABLE_NEUROSYM=OFF \
+    -DENABLE_BITWUZLA=OFF -DENABLE_NEUROSYM=OFF \
     -DENABLE_PYTHON_FRONTEND=OFF -DENABLE_SOLIDITY_FRONTEND=OFF -DENABLE_JIMPLE_FRONTEND=OFF \
     -DPython_EXECUTABLE="$(command -v python3)"
 ninja -C "$work/esbmc-build" -j "$jobs" install
