@@ -3,9 +3,13 @@
 The `proofs/tla/` directory contains executable specifications for RocketNet's
 bounded protocol and message machines. `proofs/tla/CASES.tsv`,
 `proofs/tla/RUNS.tsv` and `proofs/tla/COVERAGE.tsv` are the maintained case,
-run and action-coverage ledgers; `tools/check_tla_records.py` and
-`tools/check_tla_coverage.py` validate their schema, inputs, citations and
-recorded results.
+run and action-coverage ledgers: `tools/check_tla_records.py` validates the
+ledger schema, exact one-to-one `(config, module)` declaration and record
+mapping, expected outcomes and exit codes, and the pinned TLC JAR digest
+(`jar_sha256`); `tlacheck groups --stale` and `tlacheck merge` check
+current-input fingerprint freshness (`input_sha256` against `.tla` and `.cfg`
+sources); and `tools/check_tla_coverage.py` validates module, action, symbol
+and citation coverage in `proofs/tla/COVERAGE.tsv`.
 
 This is a navigation inventory, not a claim that every model matches every
 current implementation detail. In particular, `RNOutgoingBuild` describes the

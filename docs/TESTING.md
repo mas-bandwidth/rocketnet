@@ -42,10 +42,14 @@ before merging. The main [CI run](https://github.com/mas-bandwidth/rocketnet/act
 includes the platform, sanitizer, functional and fuzz smoke results.
 
 `proofs/tla/CASES.tsv` and `proofs/tla/RUNS.tsv` are the authoritative TLA
-ledgers for all required `PASS` cases (`gate` in `smoke`, `ci`, `full`) and
-declared `bench` timeout-debt rows (`debt != -`). `tools/check_tla_records.py`
-verifies that every case in `CASES.tsv` has a matching current record in
-`RUNS.tsv` and that every required case passed. A timeout is not a completed
+ledgers for all required `PASS` cases (`gate=required`) and declared `bench`
+timeout-debt rows (`gate=bench`, `debt != -`). `tools/check_tla_records.py`
+validates the ledger schema, exact one-to-one `(config, module)` declaration and
+record mapping, expected outcomes and exit codes, and the pinned TLC JAR digest
+(`jar_sha256`), while `tlacheck groups --stale` and `tlacheck merge` verify
+current-input fingerprint freshness (`input_sha256` against `.tla` and `.cfg`
+sources) and `tools/check_tla_coverage.py` checks module, action, symbol and
+citation coverage in `proofs/tla/COVERAGE.tsv`. A timeout is not a completed
 proof; the [model guide](../proofs/tla/README.md) explains those boundaries.
 
 [Standard witnesses](WITNESSES.tsv) map recorded requirements to their evidence;
