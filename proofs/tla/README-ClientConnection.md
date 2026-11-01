@@ -24,7 +24,9 @@ timed out, -3 request timed out, -2 cookie request timed out, -1 denied, 0 disco
 |---|---|---|
 | `cstate` | `state` | the state above |
 | `cAttempt` | `connection_salt`, ephemeral keypair | the attempt number; fresh per `connect` |
-| `cHasCookie` | `has_cookie` | a cookie is held and carried in every request |
+| `cKept` | `has_cookie`, `return_cookie` | the attempt's first cookie, kept |
+| `cLatest` | `has_latest_cookie`, `latest_cookie` | a later cookie (`ClientRecvCookie`) |
+| `cAltLatest` | `send_latest_cookie` | the next request carries the latest cookie |
 | `cKeys` | `keys`, `session_nonce` | the committed keys, `[att, nonce]`, or none |
 | `cEph` | `client_ephemeral_secret_key` | the ephemeral secret is live (not zeroed) |
 | `cIndex` | `client_index` | the index is known (from the first keep-alive) |
@@ -50,7 +52,7 @@ models in the module:
 | `ClientRecvCookie` | a packet arrives | `rocketnet_client_process_cookie`: 1 or 2, salt matches, store, 1 → 2 |
 | `ClientRecvChallenge` | a packet arrives | `rocketnet_client_process_challenge`: 2 only, commit keys, erase ephemeral, 2 → 3 |
 | `ClientRecvDenied` | a packet arrives | `rocketnet_client_process_denied`: 2 or 3, → -1, keys and ephemeral zeroed |
-| `ClientRecvSession` | a packet arrives | `rocketnet_client_open_session` then keep-alive (3 → 4, index set), payload (accepted from 3 on), disconnect (→ 0) |
+| `ClientRecvSession` | a packet arrives | `rocketnet_client_open_session` then keep-alive (3 → 4, index set), payload (accepted in 4 only, `rocketnet_client_session_state_accepts`), disconnect (→ 0, keys zeroed) |
 | `ServerRecvRequest` | a packet arrives | `rocketnet_server_protocol_process_connection_request`: connected address ignored; half-open mapping answers its stored challenge; no cookie → cookie; no slot → denied, no mapping; else a mapping and its challenge |
 | `ServerRecvResponse` | a packet arrives | `rocketnet_server_process_connection_response`: already connected → ignored (the mapping is refreshed); no slot → denied, mapping kept; else slot assigned and the first keep-alive |
 | `ServerRecvSession` | a packet arrives | the sealed ladder for a connected mapping: a keep-alive refreshes and its block sets the latch; a disconnect releases slot and mapping |
@@ -96,8 +98,7 @@ Liveness, under the fairness described below:
 | `CrashedServerTimesOut` | a connected client whose server has gone silent reaches -5 (or its own application disconnects) |
 | `AttemptResolves` | every attempt leaves the handshake range |
 
-`TerminalAbsorbing` and `EphemeralErasedOutsideHandshake` hold. `KeysErasedWhenDown`
-is still an observation and its run is expected to fail (see below).
+`TerminalAbsorbing`, `EphemeralErasedOutsideHandshake` and `KeysErasedWhenDown` hold.
 
 ### The hang the request named
 
@@ -252,7 +253,8 @@ only the measured changes the table names; the TSV has one row per run.
 | `Reach-delay` | the S-delay constants, Timeout 3 | SpecReach | NotReached | 16493 | fail as expected (NotReached violated) |
 | `F4-ephemeral` | Timeout 2, ServerMute TRUE, KindLoss "none" | Spec | EphemeralErasedOutsideHandshake | 20 | pass |
 | `F8-terminal` | Timeout 2, MaxAttempts 2, Disconnects TRUE, ServerMute TRUE, KindLoss "none" | Spec | TerminalAbsorbing | 149 | pass |
-| `OBS-keys` | Timeout 2, Deadline 4, ServerDeadline 3, MaxAttempts 2, MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", C2SPattern "arbitrary", S2CPattern "arbitrary", MaxDelay 1, Duplication TRUE, Reordering TRUE | Spec | KeysErasedWhenDown | 13059 | fail as expected (observation) |
+| `keys-erased` | Timeout 2, Deadline 4, ServerDeadline 3, MaxAttempts 1, MaxNonces 1, OthersMayJoin FALSE, Disconnects TRUE, KindLoss "none", FIFO links | Spec | SafetyInvariants, KeysErasedWhenDown | 21987 | pass |
+| `W-down-keeps-keys` | the keys-erased constants | SpecDownKeepsKeys | KeysErasedWhenDown | 151 | fail as expected |
 | `W-denied-keeps-keys` | Timeout 0, Deadline 0, OthersMayJoin TRUE, Disconnects FALSE, ServerPayloads FALSE, KindLoss "none" | SpecDeniedKeepsKeys | KeysErasedWhenDown | 250 | fail as expected |
 
 The small instance: `SendInterval = 1`, `MaxIds = 2`, `MaxSlots = 1`,
@@ -367,14 +369,16 @@ acknowledges one (`rocketnet_server_protocol_write_keep_alive_if_due`,
    `sdk/rocketnet.h` documents that. The property allows that step, to 0, and a
    connect, to 1. `DisconnectIsTerminal` still says the only way up from a
    non-positive state is a fresh connect.
-6. **The session keys survive a timeout or a received disconnect** (`OBS-keys`,
-   `KeysErasedWhenDown`, 11 states): the challenge commits the keys; two ticks
-   later the client is down and `cKeys` is still set. A denial zeroes the keys,
-   matching `rocketnet_client_set_state`. A timeout (`rocketnet_client_check_deadlines`)
-   and a received disconnect (`rocketnet_client_process_disconnect`) also go
-   through `set_state`, which zeroes the keys, and this model does not. The run
-   stays the observation. The state gate refuses every session packet below 3,
-   so the keys cannot be used, only read from memory.
+6. **Every way down zeroes the session keys** (`keys-erased`, `KeysErasedWhenDown`,
+   pass; `W-down-keeps-keys`, fail as expected). `rocketnet_client_set_state`
+   zeroes the keys and the ephemeral (`rocketnet_client_connection_reset`) at every
+   state at or below `DISCONNECTED`, and every automatic terminal transition goes
+   through it: the deadline and the idle timeout (`rocketnet_client_check_deadlines`),
+   a denial, and a received disconnect. The model's `Tick` (`TickRule` with `Erase`
+   TRUE) and `ClientRecvSession` (`ClientRecvSessionRule` with `Erase` TRUE) zero
+   `cKeys` as the code does. `SpecDownKeepsKeys` adds the pre-fix rules
+   (`TickKeepsKeys`, `ClientRecvSessionKeepsKeys`) that leave the keys, and TLC
+   finds a timeout from state 3 or 4 that reaches a state below 0 with the keys set.
 
 ### Model errors, fixed
 
@@ -451,10 +455,10 @@ original parameters and is not a completed proof.
 | 29 | `MCClientConnectionSDelay.cfg` | pass (handshake up to the timeout) |
 | 30 | `MCClientConnectionF4Ephemeral.cfg` | pass |
 | 31 | `MCClientConnectionF8Terminal.cfg` | pass |
-| 32 | `MCClientConnectionObsKeys.cfg` | invariant / KeysErasedWhenDown |
 | 33 | `MCClientConnectionBrokenDeniedKeepsKeys.cfg` | invariant / KeysErasedWhenDown |
 
 Seven reversed reachability witnesses have no historical row: `MCClientConnectionReachSNone.cfg`, `MCClientConnectionReachSFirst.cfg`, `MCClientConnectionReachSAlternate.cfg`, `MCClientConnectionReachSBurst.cfg`, `MCClientConnectionReachSArbitrary.cfg`, `MCClientConnectionReachSFirstkind.cfg` and `MCClientConnectionReachSDelay.cfg` (invariant / NotReached).
+`MCClientConnectionKeysErased.cfg` (pass) and its reversed witness `MCClientConnectionBrokenDownKeepsKeys.cfg` (invariant / KeysErasedWhenDown) replace historical row 32's observation, which recorded the model keeping the keys where the code zeroes them.
 
 ### The cookie restarts nothing (OnlyAuthenticatedRefreshes)
 
@@ -567,9 +571,14 @@ and `rocketnet_client_protocol_connect` runs it again before anything else,
 so `has_cookie` and `return_cookie` are zero at the new attempt; only the
 pre-fix action carries them.
 
-The `clientconnection` group has 37 cases and `tlacheck groups --root . --stale`
+The `clientconnection` group has 40 cases and `tlacheck groups --root . --stale`
 prints `[]`. Every required case reaches its declared result: `RetryFromFailure`
 passes and `BrokenRetryKeepsAttempt` exits 13 on `FreshAttemptFromFailure`, and the
 seven `Reach-*` witnesses each exit 12 on `NotReached`. The six bench debt cases
 (`LArbitrary`, `LCrash`, `SNone`, `SAlternate`, `SBurst`, `SArbitrary`) exit 124 at
 the 110 s budget.
+
+On 2026-11-01 the reconciled model was checked with the pinned native runner
+and TLC jar on Linux: all 34 required cases reached their declared outcomes.
+The six declared bench cases were remeasured at the unchanged 110-second
+budget and timed out (exit 124); their current records remain debt, not passes.

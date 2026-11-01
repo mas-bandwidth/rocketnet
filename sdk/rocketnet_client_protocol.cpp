@@ -286,7 +286,8 @@ int rocketnet_client_protocol_connect( struct rocketnet_client_protocol_t * clie
 // after the token's timeout with nothing received, and the whole handshake
 // dies to connect token expired once the token's lifetime has elapsed
 
-// proofs/tla/ClientConnection.tla Tick
+// proofs/tla/ClientConnection.tla Tick (TickRule with Erase TRUE): the deadline or the
+// timeout goes through rocketnet_client_set_state, which zeroes the keys.
 
 static void rocketnet_client_check_deadlines( struct rocketnet_client_protocol_t * client, double current_time )
 {
@@ -851,8 +852,9 @@ static bool rocketnet_client_session_state_accepts( const struct rocketnet_clien
     return packet_type != ROCKETNET_CONNECTION_PAYLOAD_PACKET;
 }
 
-// proofs/tla/ClientConnection.tla ClientRecvSession and proofs/tla/RNClientIoDecrypt.tla
-// UpdateConsume: one session packet through the reading order -- wire
+// proofs/tla/ClientConnection.tla ClientRecvSession (ClientRecvSessionRule with Erase
+// TRUE: an accepted disconnect zeroes the keys through rocketnet_client_set_state)
+// and proofs/tla/RNClientIoDecrypt.tla UpdateConsume: one session packet through the reading order -- wire
 // floor, state, sequence, replay, open, replay advance, ack block, the type's
 // size and own check, then the commit. The packet is either raw (opened
 // here) or a record the I/O thread already worked, whose verdict takes the

@@ -30,7 +30,7 @@ Seams, by the files that carry them:
 | GSO send-error and worker-handoff seams | `sdk/rocketnet_client_gso.h`, `sdk/rocketnet_client_gso_linux.cpp`, `sdk/rocketnet_server_gso.h`, `sdk/rocketnet_server_gso_linux.cpp` |
 | XDP staging checks and AF_XDP socket cases | `sdk/rocketnet_server_transport.cpp`, `sdk/rocketnet_server_socket_linux.cpp`, `sdk/rocketnet_server_socket.h` |
 | IOCP and RIO fault injection, RIO completion overflow | `sdk/rocketnet_server_iocp.h`, `sdk/rocketnet_server_iocp_windows.cpp`, `sdk/rocketnet_server_rio.h`, `sdk/rocketnet_server_rio_windows.cpp` |
-| Windows lifecycle ledger | `sdk/rocketnet_frame_sync.cpp`, `sdk/rocketnet_frame_sync.h`, `sdk/rocketnet_platform.cpp`, `sdk/rocketnet_platform.h` |
+| Windows lifecycle ledger | `sdk/rocketnet_platform.cpp`, `sdk/rocketnet_platform.h` |
 | Client and server transport seams, session sequence start, packet-builder and encryption-map probes | `sdk/rocketnet_client_transport.cpp`, `sdk/rocketnet_server_transport.cpp`, `sdk/rocketnet_client_protocol.cpp`, `sdk/rocketnet_client_slots.cpp`, `sdk/rocketnet_encryption_map.cpp`, `sdk/rocketnet_packet_builder.cpp`, `sdk/rocketnet_channel_sequenced.cpp`, `sdk/rocketnet_test_seams.h` |
 
 Seams armed by the environment rather than by a test call, each inert unless its variable is set, and present in every `ROCKETNET_DEV=1` library: `ROCKETNET_DEV_SESSION_SEQUENCE_START` (`sdk/rocketnet_test_seams.h`), `ROCKETNET_TEST_GSO_PLAIN` and `ROCKETNET_TEST_XDP_FAIL_AT_QUEUE` (Linux).
@@ -80,7 +80,7 @@ One build shape remains that is not a development switch: `ROCKETNET_CONFIG_PARS
 
 1. **Linux (`sdk/rocketnet_server_uring_linux.cpp`, `sdk/rocketnet_server_socket_linux.cpp`)**: the fake io_uring CQE source and multishot rearm counters; the AF_XDP socket and UMEM cases `test_xdp` runs; the TX staging invariant checker; the unit endpoint test's linker `--wrap=rocketnet_platform_time` clock-read counter in `test`.
 2. **macOS (`sdk/rocketnet_platform.cpp`)**: `sendmsg_x` / `recvmsg_x` batch and `EMSGSIZE` fault hooks, run by `test_msgx` (linked against `rocketnet_dev`).
-3. **Windows (`sdk/rocketnet_server_iocp_windows.cpp`, `sdk/rocketnet_server_rio_windows.cpp`)**: IOCP and RIO fault hooks in `test_iocp` (in `DEV=0`, `test_windows_transports_production` links the production `rocketnet` library); the fake RIO completion overflow seam; and the handle/socket/thread lifecycle ledger in `sdk/rocketnet_platform.h`, `sdk/rocketnet_platform.cpp`, `sdk/rocketnet_frame_sync.h`, `sdk/rocketnet_frame_sync.cpp`, `sdk/rocketnet_server_iocp_windows.cpp`, and `sdk/rocketnet_server_rio_windows.cpp`.
+3. **Windows (`sdk/rocketnet_server_iocp_windows.cpp`, `sdk/rocketnet_server_rio_windows.cpp`)**: IOCP and RIO fault hooks in `test_iocp` (in `DEV=0`, `test_windows_transports_production` links the production `rocketnet` library); the fake RIO completion overflow seam; and the handle/socket/thread lifecycle ledger in `sdk/rocketnet_platform.h`, `sdk/rocketnet_platform.cpp`, `sdk/rocketnet_server_iocp_windows.cpp`, and `sdk/rocketnet_server_rio_windows.cpp`.
 
 ---
 

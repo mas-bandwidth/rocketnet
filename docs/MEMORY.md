@@ -39,13 +39,27 @@ results is a measurement of your current build. See [Testing](TESTING.md).
 
 ## Server memory footprint
 
-An illustrative default 1000-client estimate recorded in this guide is about
-21.0 GB (21,027,222,087 bytes), with a marginal cost of about 19.2 MB
-(19,175,094 bytes) per slot. These are sizing examples, not portable constants:
+The 2026-11-01 Linux x86-64 Release planner query described in
+[LOAD.md](LOAD.md#platform-build-and-allocator-assumptions) reports
+21,025,323,013 bytes (about 21.0 GB) for the default 1000-client server.
+The difference from one to two slots is 19,171,098 bytes (about 19.2 MB).
+These are source-specific sizing examples, not portable constants:
 build options, platform, transport availability, and configuration affect the
 result. Query your own build with `rocketnet_server_required_memory` before
 allocating. It reports the planned allocator peak over create, start, stop,
-restart, and destroy for the largest candidate transport:
+restart, and destroy for the largest candidate transport (accounting for the
+SDK's planned allocations and existing create-time overlap), plus a fixed 1 MiB
+(1,048,576-byte) allowance for caller-allocator overhead. The number is
+deliberately conservative, not exact: additional caller-allocator metadata or
+fragmentation beyond that 1 MiB allowance must be included in the application's
+budget, and custom arena sufficiency must be verified for the actual allocator
+and configuration. Test coverage exercises the four-client loopback
+64-byte-per-allocation overhead case and a separate unit-test packed-arena
+oracle whose chunk table metadata sits outside the region, while
+[examples/fixed_memory.c](../examples/fixed_memory.c) is a budget-accounting
+`malloc` example with a 16-byte accounting header per allocation that holds the
+process to that budget over the whole lifecycle and fails if a byte past it is
+asked for:
 
 ```c
 #include "rocketnet.h"
@@ -76,16 +90,14 @@ cc -I sdk measure_server_memory.c build/librocketnet.a -lbpf -lxdp -luring -lstd
 ./measure_server_memory
 ```
 
-On Linux x86-64 with io_uring and XDP built (the default development build) it
-prints `1000 clients: 20908851166`, `1 client: 1894073074`, `2 clients: 1913106854`
-and `delta: 19033780` in the build used for this recorded example. The figures
-differ by platform and
-build, because each counts the largest transport that platform's ladder can grant.
-
-The byte counts in this section are recorded sizing examples, not a fresh
-measurement of the current source. Some predate the figures in
+On the same Linux x86-64 build with io_uring and XDP enabled and
+`ROCKETNET_DEV=ON`, it prints `1000 clients: 21025323013`,
+`1 client: 1873364239`, `2 clients: 1892535337` and `delta: 19171098`.
+These queries include the 1 MiB allowance. The figures differ by platform,
+configuration, and source revision because each counts the largest transport
+that platform's ladder can grant. Use the planner from the exact library you
+will deploy; the regeneration details are in
 [LOAD.md](LOAD.md#deterministic-memory-planning-and-regenerated-sizing-examples).
-Use the planner from the exact library you will deploy.
 
 A light-client server uses `rocketnet_server_light_config`, which fills the
 defaults and then sizes for one 1,500-byte MTU packet per 100 ms to each
@@ -97,21 +109,19 @@ window numbers, so the reliable window is 256. The receive buffer is 142,400
 bytes, the send buffer is 141,500 bytes, the send queue is 128 messages,
 packets in flight are 256, each update may send 4 packets and 4 unreliable
 messages, 100 sequenced messages are held, 128 receipts are kept, and there
-are eight channels. At `max_clients` 1000, `rocketnet_server_required_memory`
-reports 3,108,118,087 bytes (about 3.1 GB) on Linux x86-64 with io_uring
-and XDP built. The matching `rocketnet_client_light_config` makes
-`rocketnet_client_required_memory` report 14,146,994 bytes.
+are eight channels. At `max_clients` 1000, the same Linux development build
+reports 3,109,291,013 bytes (about 3.1 GB) from
+`rocketnet_server_required_memory`. The matching `rocketnet_client_light_config`
+makes `rocketnet_client_required_memory` report 15,194,522 bytes.
 
-Both figures are the lifecycle peak the caller's allocator sees: create, the
-transport connect or start allocates for the largest transport the ladder can
-grant, disconnect or stop, the next cycle, and destroy. They exclude the
-memory the operating system owns (worker thread stacks, XDP UMEM, io_uring
-rings, kernel socket buffers) and process overhead. In a production build
-(`ROCKETNET_DEV=OFF`) they are 3,101,736,931 and 13,362,070 bytes. Other
-platforms report their own figures (macOS has no io_uring or XDP, so its
-server figure is about half; Windows x64 with MSVC has no io_uring or XDP
-either). The default profile
-remains the stock acceptance.
+Both figures are the planned lifecycle peak (create, connect or start, stop or
+disconnect, the next cycle, and destroy) plus the 1 MiB allowance. They exclude
+memory owned by the operating system (worker thread stacks, XDP UMEM, io_uring
+rings, kernel socket buffers) and process overhead. The same source built with
+`ROCKETNET_DEV=OFF` reports 3,102,909,849 and 14,409,654 bytes, using an accepted
+non-test packet filter. Other platforms have different transport candidates and
+layouts; the older Windows and macOS examples predate this query and are not
+current measurements. The default profile remains the stock acceptance.
 
 ```c
 #include "rocketnet.h"
@@ -167,13 +177,14 @@ bool finish_stop( struct rocketnet_client_t * client, struct rocketnet_server_t 
 
 To check a config, create with it and read the status out-parameter, then
 destroy the result if it was never connected or started. For an active object,
-request shutdown and poll completion before destroy. Destroy requires completed
-shutdown and then joins and frees resources synchronously. Its diagnostic
-fallback for an early destroy can retain the object while a worker owns memory;
-do not use that misuse path as a cleanup strategy. Keep allocator/callback
-contexts and all borrowed storage alive through completion and the subsequent
-destroy. A completion query neither frees the object nor promises receipt by
-the other side of the connection.
+request shutdown and poll completion before destroy. Destroy asserts completion;
+called early, it logs one error naming the skipped completion function, records
+the misuse, then requests shutdown itself and polls for the worker's exit,
+sleeping 1 ms between polls, for at most one second. Once complete it joins any remaining thread handle and
+wipes/frees resources synchronously; if the worker has not exited it logs a
+second error and keeps the object rather than free memory the worker owns. Keep
+allocator/callback contexts and all borrowed storage alive until destroy
+returns. A completion query does not free the object or promise receipt by the other side of the connection.
 
 ## Receive buffer sizing
 
@@ -335,7 +346,8 @@ queue count rather than using older total-memory figures.
 `rocketnet_server_required_memory(config)` returns the peak bytes held by the
 allocator over create, start, stop, restart and destroy for `config` at its
 `max_clients`, including planned built-in transport allocations and the
-development link simulator in development builds. The bound assumes unchanged
+development link simulator in development builds, plus 1 MiB of slack for the
+caller's heap. The bound assumes unchanged
 configuration and environment overrides; OS-owned memory and custom-transport
 allocations are excluded. It works before
 `rocketnet_init`, opens no sockets, starts no workers and allocates no memory.

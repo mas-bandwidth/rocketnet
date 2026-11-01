@@ -25,6 +25,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <limits.h>
 #include <string.h>
 
 #define check rocketnet_unit_check
@@ -301,11 +302,19 @@ static void test_finish_requires_start_public_client_and_server()
         check( rocketnet_client_finish_message( client, 4 ) == 0 );
         check_asserted_once();
 
-        int invalid_rel = 8;
-        check( rocketnet_client_start_message( client, 0, (enum rocketnet_reliability_t) invalid_rel, 4 ) == NULL );
-        check_not_asserted();
-        check( rocketnet_client_finish_message( client, 4 ) == 0 );
-        check_asserted_once();
+        const int invalid_rels[] = { INT_MIN, -1, 8, INT_MAX };
+        for ( size_t i = 0; i < sizeof( invalid_rels ) / sizeof( invalid_rels[0] ); i++ )
+        {
+            const enum rocketnet_reliability_t invalid_rel = (enum rocketnet_reliability_t) invalid_rels[i];
+            check( rocketnet_client_start_message( client, 0, invalid_rel, 4 ) == NULL );
+            check_not_asserted();
+            check( rocketnet_client_finish_message( client, 4 ) == 0 );
+            check_asserted_once();
+            check( rocketnet_server_start_message( server, (uint64_t) slot, 0, invalid_rel, 4 ) == NULL );
+            check_not_asserted();
+            check( rocketnet_server_finish_message( server, 4 ) == 0 );
+            check_asserted_once();
+        }
 
         check( rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 0 ) == NULL );
         check_not_asserted();

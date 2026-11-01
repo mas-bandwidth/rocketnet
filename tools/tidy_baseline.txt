@@ -67,7 +67,6 @@ clang-tidy	sdk/rocketnet_driver.cpp	bugprone-macro-parentheses	aad041ae2583497d
 clang-tidy	sdk/rocketnet_driver.cpp	bugprone-macro-parentheses	e81258cedddda7ca
 clang-tidy	sdk/rocketnet_endpoint.h	bugprone-macro-parentheses	14a49f99ac806d63
 clang-tidy	sdk/rocketnet_endpoint.h	bugprone-macro-parentheses	7859cacd64111dd8
-clang-tidy	sdk/rocketnet_frame_sync.cpp	concurrency-mt-unsafe	240bfcaf55b84e6c
 clang-tidy	sdk/rocketnet_internal.h	bugprone-reserved-identifier,cert-dcl37-c,cert-dcl51-cpp	91ef67400e48578e
 clang-tidy	sdk/rocketnet_keys.cpp	bugprone-misplaced-widening-cast	35c7b4ef45b5d72a
 clang-tidy	sdk/rocketnet_layers.h	bugprone-macro-parentheses	30589e5d69a7ddc6

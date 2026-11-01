@@ -1215,6 +1215,8 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     # test_posix_client_server_gone_xdp_ipv4_client_portable and
     # test_posix_client_server_gone_xdp_ipv6_client_portable (their body is
     # tests/functional/posix_hard_killed_client.cpp), and
+    # test_loopback_transport_live_message_matrix_late_probes (the development
+    # link simulator; the ordinary live matrix remains in production), and
     # test_client_destroy_early_threaded_keeps_then_frees and
     # test_server_destroy_early_threaded_keeps_then_frees (their body is
     # tests/functional/destroy_early_keep.cpp, which this executable does not

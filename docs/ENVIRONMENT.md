@@ -114,7 +114,7 @@ development key must not be used for production.
     candidate over budget is skipped; if no candidate can be granted,
     connect/start returns `ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED`.
     `rocketnet_*_required_memory` still reports the complete caller-allocator
-    lifecycle peak and does not return `0` merely because this transport budget
+    lifecycle peak (plus its 1 MiB slack) and does not return `0` merely because this transport budget
     is smaller than the create-time endpoint/message block.
 - **Compile-time CMake caps (`BUILDING.md` and [`docs/LOAD.md`](LOAD.md))**:
   - `-DROCKETNET_MAX_CLIENTS` (default `1000`) sets the compile-time upper

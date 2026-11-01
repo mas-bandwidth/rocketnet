@@ -2,15 +2,15 @@
     RocketNet. Copyright 2026 Más Bandwidth LLC.
     Licensed under the GNU Affero General Public License v3.0
 
-    Functional cases that the unit suite must not run: real threads, real
-    frame pacing and wall-clock reads belong here, never in ./bin/test.
+    Functional cases that the unit suite must not run: real threads and
+    wall-clock reads belong here, never in ./bin/test.
     Each test is one process, and starts a real platform primitive.
 */
 
 #include "rocketnet_internal.h"
 #include "rocketnet_ack.h"
 #include "rocketnet_connect_token.h"
-#include "rocketnet_frame_sync.h"
+#include "rocketnet_platform.h"
 #include "rocketnet_test_vectors.h"
 #include "rocketnet_address.h"
 #include "rocketnet_config.h"
@@ -62,256 +62,6 @@ void rocketnet_test_platform_thread()
     rocketnet_check( threads_work );
 }
 
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-static bool rocketnet_windows_handle_is_closed( HANDLE handle )
-{
-    DWORD flags = 0;
-#if defined( _MSC_VER )
-    __try
-    {
-        if ( GetHandleInformation( handle, &flags ) != 0 )
-            return false;
-        return GetLastError() == ERROR_INVALID_HANDLE;
-    }
-    __except ( GetExceptionCode() == STATUS_INVALID_HANDLE ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH )
-    {
-        return true;
-    }
-#else
-    return GetHandleInformation( handle, &flags ) == 0 && GetLastError() == ERROR_INVALID_HANDLE;
-#endif // #if defined( _MSC_VER )
-}
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-
-void rocketnet_test_frame_sync_wait()
-{
-    // paced for real, briefly: 25 frames at 250hz is ~100ms of wall time.
-    // the assertion is pacing and accounting, never precision -- precision
-    // was the measurement campaign's job, and CI runners are noisy.
-
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS && ROCKETNET_DEV
-    rocketnet_lifecycle_track_begin();
-
-    rocketnet_lifecycle_resources_t before_resources;
-    rocketnet_check( rocketnet_lifecycle_track_read( &before_resources ) );
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS && ROCKETNET_DEV
-
-    int create_status = ROCKETNET_STATUS_INVALID_ARGUMENT;
-    struct rocketnet_frame_sync_t * frame_sync = rocketnet_frame_sync_create_ex( NULL, 250.0, &create_status );
-    rocketnet_check( frame_sync );
-    rocketnet_check( create_status == ROCKETNET_STATUS_OK );
-
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    const HANDLE timer_handle = frame_sync->waitable_timer;
-    rocketnet_check( timer_handle != NULL && timer_handle != INVALID_HANDLE_VALUE );
-    rocketnet_check( !rocketnet_windows_handle_is_closed( timer_handle ) );
-#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    rocketnet_lifecycle_resources_t live_resources;
-    rocketnet_check( rocketnet_lifecycle_track_read( &live_resources ) );
-    rocketnet_check( live_resources.errors == 0 );
-    rocketnet_check( live_resources.created[ROCKETNET_LIFECYCLE_TIMER] == before_resources.created[ROCKETNET_LIFECYCLE_TIMER] + 1 );
-    rocketnet_check( live_resources.closed[ROCKETNET_LIFECYCLE_TIMER] == before_resources.closed[ROCKETNET_LIFECYCLE_TIMER] );
-    rocketnet_check( live_resources.live_count == before_resources.live_count + 1 );
-#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-
-    const double start = rocketnet_platform_time();
-
-    for ( int i = 0; i < 25; i++ )
-    {
-        rocketnet_frame_sync_wait( frame_sync );
-    }
-
-    const double elapsed = rocketnet_platform_time() - start;
-
-#if ROCKETNET_DEV
-    struct rocketnet_frame_sync_stats_t stats;
-    rocketnet_frame_sync_stats( frame_sync, &stats );
-    rocketnet_check( stats.frame == 25 );
-#endif // #if ROCKETNET_DEV
-    rocketnet_check( elapsed > 0.06 );                              // it actually paced: a free run finishes in microseconds
-
-    // the suite watchdog catches a hang; scheduler latency is not a failure
-
-#if ROCKETNET_DEV
-    rocketnet_check( !stats.spinning || stats.priority_held );      // never an unprivileged spin
-    rocketnet_check( stats.guard_seconds <= ( 1.0 / 250.0 ) / ROCKETNET_FRAME_SYNC_GUARD_CAP_DIVISOR + 1e-9 );
-#endif // #if ROCKETNET_DEV
-
-    rocketnet_frame_sync_destroy( frame_sync );
-
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    rocketnet_check( rocketnet_windows_handle_is_closed( timer_handle ) );
-#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    rocketnet_lifecycle_resources_t after_resources;
-    rocketnet_check( rocketnet_lifecycle_track_read( &after_resources ) );
-    rocketnet_check( after_resources.errors == 0 );
-    rocketnet_check( after_resources.created[ROCKETNET_LIFECYCLE_TIMER] == before_resources.created[ROCKETNET_LIFECYCLE_TIMER] + 1 );
-    rocketnet_check( after_resources.closed[ROCKETNET_LIFECYCLE_TIMER] == before_resources.closed[ROCKETNET_LIFECYCLE_TIMER] + 1 );
-    rocketnet_check( after_resources.live_count == before_resources.live_count );
-    rocketnet_lifecycle_track_end();
-#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-}
-
-// The successful create, first stats and destroy of a frame sync. Moved from
-// the unit suite's frame sync lifecycle case: a create that succeeds creates
-// the real Windows high-resolution waitable timer, and destroy closes it. The
-// frame-rate refusals that return before any timer stay unit coverage
-// (test_frame_sync_create_refuses_invalid_rates).
-void rocketnet_test_frame_sync_lifecycle()
-{
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS && ROCKETNET_DEV
-    rocketnet_lifecycle_track_begin();
-
-    rocketnet_lifecycle_resources_t before_resources;
-    rocketnet_check( rocketnet_lifecycle_track_read( &before_resources ) );
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS && ROCKETNET_DEV
-
-    struct rocketnet_frame_sync_t * frame_sync = rocketnet_frame_sync_create( NULL, 60.0 );
-    rocketnet_check( frame_sync );
-
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    const HANDLE timer_handle = frame_sync->waitable_timer;
-    rocketnet_check( timer_handle != NULL && timer_handle != INVALID_HANDLE_VALUE );
-    rocketnet_check( !rocketnet_windows_handle_is_closed( timer_handle ) );
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-
-#if ROCKETNET_DEV
-    struct rocketnet_frame_sync_stats_t stats;
-    rocketnet_frame_sync_stats( frame_sync, &stats );
-    rocketnet_check( stats.frame == 0 );
-    rocketnet_check( stats.dropped_frames == 0 );
-    rocketnet_check( stats.priority_held == 0 );                    // taken at the first wait, not before
-    rocketnet_check( stats.spinning == 0 );
-    rocketnet_check( stats.wakeup_error_seconds == 0.0 );
-    rocketnet_check( stats.guard_seconds > 0.0 );
-    rocketnet_check( stats.guard_seconds <= ( 1.0 / 60.0 ) / ROCKETNET_FRAME_SYNC_GUARD_CAP_DIVISOR + 1e-9 );
-#endif // #if ROCKETNET_DEV
-
-    rocketnet_frame_sync_destroy( frame_sync );
-
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    rocketnet_check( rocketnet_windows_handle_is_closed( timer_handle ) );
-#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    rocketnet_lifecycle_resources_t after_resources;
-    rocketnet_check( rocketnet_lifecycle_track_read( &after_resources ) );
-    rocketnet_check( after_resources.errors == 0 );
-    rocketnet_check( after_resources.created[ROCKETNET_LIFECYCLE_TIMER] == before_resources.created[ROCKETNET_LIFECYCLE_TIMER] + 1 );
-    rocketnet_check( after_resources.closed[ROCKETNET_LIFECYCLE_TIMER] == before_resources.closed[ROCKETNET_LIFECYCLE_TIMER] + 1 );
-    rocketnet_check( after_resources.live_count == before_resources.live_count );
-    rocketnet_lifecycle_track_end();
-#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-}
-
-// The structured create's success exit. Moved from the unit lifecycle case
-// test_lifecycle_ex_reports_every_status: a create that succeeds creates the
-// real Windows high-resolution waitable timer. The library runs on a counting
-// allocator given in context, as there, so the one frame sync allocation is
-// seen to be released by destroy and nothing is left at term.
-
-struct rocketnet_frame_sync_create_ex_allocator_t
-{
-    int live;
-    int calls;
-};
-
-static rocketnet_frame_sync_create_ex_allocator_t rocketnet_frame_sync_create_ex_allocator;
-
-static void * rocketnet_frame_sync_create_ex_malloc( void * context, size_t bytes )
-{
-    rocketnet_frame_sync_create_ex_allocator_t * state = (rocketnet_frame_sync_create_ex_allocator_t *) context;
-    rocketnet_check( state == &rocketnet_frame_sync_create_ex_allocator );
-    ++state->calls;
-
-    void * p = malloc( bytes );
-    if ( p )
-    {
-        ++state->live;
-    }
-
-    return p;
-}
-
-static void rocketnet_frame_sync_create_ex_free( void * context, void * pointer )
-{
-    if ( !pointer )
-        return;
-
-    rocketnet_frame_sync_create_ex_allocator_t * state = (rocketnet_frame_sync_create_ex_allocator_t *) context;
-    rocketnet_check( state == &rocketnet_frame_sync_create_ex_allocator );
-    rocketnet_check( state->live > 0 );
-    --state->live;
-    free( pointer );
-}
-
-void rocketnet_test_frame_sync_create_ex_success_status()
-{
-    memset( &rocketnet_frame_sync_create_ex_allocator, 0, sizeof( rocketnet_frame_sync_create_ex_allocator ) );
-
-    rocketnet_frame_sync_create_ex_allocator_t * state = &rocketnet_frame_sync_create_ex_allocator;
-
-    // the worker starts the process initialized; restart it on the counting
-    // allocator with that allocator's state as context
-
-    rocketnet_check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
-
-    int status = -1;
-    rocketnet_check( rocketnet_init_ex( state, rocketnet_frame_sync_create_ex_malloc, rocketnet_frame_sync_create_ex_free, &status ) );
-    rocketnet_check( status == ROCKETNET_STATUS_OK );
-
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS && ROCKETNET_DEV
-    rocketnet_lifecycle_track_begin();
-
-    rocketnet_lifecycle_resources_t before_resources;
-    rocketnet_check( rocketnet_lifecycle_track_read( &before_resources ) );
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS && ROCKETNET_DEV
-
-    const int live_before = state->live;
-    const int calls_before = state->calls;
-
-    // frame sync success
-
-    status = -1;
-
-    struct rocketnet_frame_sync_t * frame_sync = rocketnet_frame_sync_create_ex( state, 60.0, &status );
-    rocketnet_check( frame_sync != NULL );
-    rocketnet_check( status == ROCKETNET_STATUS_OK );
-    rocketnet_check( state->calls == calls_before + 1 );
-    rocketnet_check( state->live == live_before + 1 );
-
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    const HANDLE timer_handle = frame_sync->waitable_timer;
-    rocketnet_check( timer_handle != NULL && timer_handle != INVALID_HANDLE_VALUE );
-    rocketnet_check( !rocketnet_windows_handle_is_closed( timer_handle ) );
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-
-    rocketnet_frame_sync_destroy( frame_sync );
-    rocketnet_check( state->live == live_before );
-
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    rocketnet_check( rocketnet_windows_handle_is_closed( timer_handle ) );
-#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    rocketnet_lifecycle_resources_t after_resources;
-    rocketnet_check( rocketnet_lifecycle_track_read( &after_resources ) );
-    rocketnet_check( after_resources.errors == 0 );
-    rocketnet_check( after_resources.created[ROCKETNET_LIFECYCLE_TIMER] == before_resources.created[ROCKETNET_LIFECYCLE_TIMER] + 1 );
-    rocketnet_check( after_resources.closed[ROCKETNET_LIFECYCLE_TIMER] == before_resources.closed[ROCKETNET_LIFECYCLE_TIMER] + 1 );
-    rocketnet_check( after_resources.live_count == before_resources.live_count );
-    rocketnet_lifecycle_track_end();
-#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-
-    // a clean term is OK and leaves no allocation behind
-
-    rocketnet_check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
-    rocketnet_check( state->live == 0 );
-
-    // the default allocator again, for the worker's own term
-
-    rocketnet_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
-}
 
 #if defined( __APPLE__ ) && !defined( ROCKETNET_USE_SYSTEM_SODIUM )
 
@@ -514,270 +264,6 @@ void rocketnet_test_bundled_rng_opens_once_under_concurrent_keygen_on_mac()
 }
 
 #endif // #if defined(__APPLE__) && !defined(ROCKETNET_USE_SYSTEM_SODIUM)
-
-#if ROCKETNET_DEV
-
-struct rocketnet_frame_sync_timer_seam_state_t
-{
-    int calls;
-    unsigned flags[8];
-    int live_allocations;
-    int total_allocations;
-    size_t live_bytes;
-    int error_lines;
-};
-
-static rocketnet_frame_sync_timer_seam_state_t rocketnet_frame_sync_timer_seam_state;
-
-static void * rocketnet_frame_sync_seam_malloc( void * context, size_t bytes )
-{
-    rocketnet_frame_sync_timer_seam_state_t * state = (rocketnet_frame_sync_timer_seam_state_t *) context;
-    rocketnet_check( state == &rocketnet_frame_sync_timer_seam_state );
-
-    void * raw = malloc( sizeof( size_t ) + bytes );
-    if ( !raw )
-        return NULL;
-    memcpy( raw, &bytes, sizeof( size_t ) );
-    ++state->total_allocations;
-    ++state->live_allocations;
-    state->live_bytes += bytes;
-
-    return (uint8_t *) raw + sizeof( size_t );
-}
-
-static void rocketnet_frame_sync_seam_free( void * context, void * pointer )
-{
-    if ( !pointer )
-        return;
-
-    rocketnet_frame_sync_timer_seam_state_t * state = (rocketnet_frame_sync_timer_seam_state_t *) context;
-    rocketnet_check( state == &rocketnet_frame_sync_timer_seam_state );
-
-    void * raw = (uint8_t *) pointer - sizeof( size_t );
-    size_t bytes = 0;
-    memcpy( &bytes, raw, sizeof( size_t ) );
-    rocketnet_check( state->live_allocations > 0 );
-    rocketnet_check( state->live_bytes >= bytes );
-    --state->live_allocations;
-    state->live_bytes -= bytes;
-    free( raw );
-}
-
-static void rocketnet_frame_sync_seam_log( void * context, rocketnet_log_level_t level, const char * message, size_t )
-{
-    rocketnet_frame_sync_timer_seam_state_t * state = (rocketnet_frame_sync_timer_seam_state_t *) context;
-    if ( state && level == ROCKETNET_LOG_LEVEL_ERROR &&
-         strstr( message, "frame sync: could not create high resolution waitable timer" ) != NULL )
-    {
-        ++state->error_lines;
-    }
-}
-
-static void * rocketnet_frame_sync_reject_high_resolution_timer( unsigned flags )
-{
-    if ( rocketnet_frame_sync_timer_seam_state.calls < 8 )
-    {
-        rocketnet_frame_sync_timer_seam_state.flags[rocketnet_frame_sync_timer_seam_state.calls] = flags;
-    }
-
-    ++rocketnet_frame_sync_timer_seam_state.calls;
-
-    if ( ( flags & 0x00000002u ) != 0 )
-    {
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-        SetLastError( ERROR_NOT_SUPPORTED );
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-        return NULL;
-    }
-
-    return rocketnet_platform_priority_calls_real()->create_waitable_timer( flags );
-}
-
-void rocketnet_test_frame_sync_high_resolution_timer_required()
-{
-    memset( &rocketnet_frame_sync_timer_seam_state, 0, sizeof( rocketnet_frame_sync_timer_seam_state ) );
-
-    rocketnet_check( rocketnet_term() == ROCKETNET_STATUS_OK );
-    rocketnet_check( rocketnet_init( &rocketnet_frame_sync_timer_seam_state,
-                                     rocketnet_frame_sync_seam_malloc,
-                                     rocketnet_frame_sync_seam_free ) == ROCKETNET_STATUS_OK );
-
-    const rocketnet_log_level_t saved_level = rocketnet_log_level_current();
-
-    rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
-    rocketnet_log_function( rocketnet_frame_sync_seam_log, &rocketnet_frame_sync_timer_seam_state );
-
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    DWORD handles_before = 0;
-    rocketnet_check( GetProcessHandleCount( GetCurrentProcess(), &handles_before ) != 0 );
-#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    rocketnet_lifecycle_track_begin();
-
-    rocketnet_lifecycle_resources_t before_resources;
-    rocketnet_check( rocketnet_lifecycle_track_read( &before_resources ) );
-#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-
-    struct rocketnet_platform_priority_calls_t fake = *rocketnet_platform_priority_calls_real();
-    fake.create_waitable_timer = rocketnet_frame_sync_reject_high_resolution_timer;
-    rocketnet_platform_set_priority_calls_for_testing( &fake );
-
-    const int allocations_before = rocketnet_frame_sync_timer_seam_state.total_allocations;
-
-    int status = ROCKETNET_STATUS_OK;
-
-    struct rocketnet_frame_sync_t * frame_sync =
-        rocketnet_frame_sync_create_ex( &rocketnet_frame_sync_timer_seam_state, 250.0, &status );
-    rocketnet_check( frame_sync == NULL );
-    rocketnet_check( status == ROCKETNET_STATUS_TIMER_CREATE_FAILED );
-    rocketnet_check( rocketnet_frame_sync_timer_seam_state.calls == 1 );
-    rocketnet_check( rocketnet_frame_sync_timer_seam_state.flags[0] == 0x00000002u );
-    rocketnet_check( rocketnet_frame_sync_timer_seam_state.total_allocations == allocations_before + 1 );
-    rocketnet_check( rocketnet_frame_sync_timer_seam_state.live_allocations == 0 );
-    rocketnet_check( rocketnet_frame_sync_timer_seam_state.live_bytes == 0 );
-    rocketnet_check( rocketnet_frame_sync_timer_seam_state.error_lines == 1 );
-
-    rocketnet_check( rocketnet_frame_sync_create( &rocketnet_frame_sync_timer_seam_state, 250.0 ) == NULL );
-    rocketnet_check( rocketnet_frame_sync_timer_seam_state.calls == 2 );
-    rocketnet_check( rocketnet_frame_sync_timer_seam_state.flags[1] == 0x00000002u );
-    rocketnet_check( rocketnet_frame_sync_timer_seam_state.total_allocations == allocations_before + 2 );
-    rocketnet_check( rocketnet_frame_sync_timer_seam_state.live_allocations == 0 );
-    rocketnet_check( rocketnet_frame_sync_timer_seam_state.live_bytes == 0 );
-    rocketnet_check( rocketnet_frame_sync_timer_seam_state.error_lines == 2 );
-
-    rocketnet_platform_set_priority_calls_for_testing( NULL );
-
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    DWORD handles_after = 0;
-    rocketnet_check( GetProcessHandleCount( GetCurrentProcess(), &handles_after ) != 0 );
-    rocketnet_check( handles_after <= handles_before );
-#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    rocketnet_lifecycle_resources_t after_resources;
-    rocketnet_check( rocketnet_lifecycle_track_read( &after_resources ) );
-    rocketnet_check( after_resources.errors == 0 );
-    rocketnet_check( after_resources.live_count == before_resources.live_count );
-    rocketnet_check( after_resources.created[ROCKETNET_LIFECYCLE_TIMER] == before_resources.created[ROCKETNET_LIFECYCLE_TIMER] );
-    rocketnet_check( after_resources.closed[ROCKETNET_LIFECYCLE_TIMER] == before_resources.closed[ROCKETNET_LIFECYCLE_TIMER] );
-    rocketnet_lifecycle_track_end();
-#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-
-    rocketnet_log_function( NULL, NULL );
-    rocketnet_log_level( saved_level );
-
-    rocketnet_check( rocketnet_term() == ROCKETNET_STATUS_OK );
-    rocketnet_check( rocketnet_frame_sync_timer_seam_state.live_allocations == 0 );
-    rocketnet_check( rocketnet_frame_sync_timer_seam_state.live_bytes == 0 );
-    rocketnet_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
-}
-
-#endif // #if ROCKETNET_DEV
-
-#if ROCKETNET_DEV
-void rocketnet_test_frame_sync_dropped_stats()
-{
-    // The dropped-frame observability case: the real public path
-    // (create/wait/stats/destroy) must make missed server frame intervals
-    // visible in dropped_frames. A baseline normal cadence stays clean
-    // within its documented bound, a bounded expensive frame workload
-    // spanning several configured periods must raise the public count
-    // inside bounds derived from independently measured elapsed time, and
-    // recovery at normal cadence must leave the total cumulative. No
-    // exact OS schedule is asserted anywhere: the workload is
-    // predicate-driven (busy work until the target elapsed time is
-    // measured on the steady clock), never a fixed sleep treated as proof.
-
-    const double frame_rate = 250.0;
-    const uint64_t period_ns = (uint64_t) ( 1000000000.0 / frame_rate );   // 4ms
-    struct rocketnet_frame_sync_t * frame_sync = rocketnet_frame_sync_create( NULL, frame_rate );
-    rocketnet_check( frame_sync );
-
-    // Phase A: baseline normal cadence, 12 frames (~48ms of wall time)
-
-    for ( int i = 0; i < 12; i++ )
-    {
-        rocketnet_frame_sync_wait( frame_sync );
-    }
-
-    struct rocketnet_frame_sync_stats_t stats;
-    rocketnet_frame_sync_stats( frame_sync, &stats );
-    rocketnet_check( stats.frame == 12 );
-
-    const uint64_t baseline_drops = stats.dropped_frames;
-
-    // documented bound: a clean cadence on a noisy host may still lose a
-    // couple of frames to scheduler latency; more than that is a defect
-
-    rocketnet_check( baseline_drops <= 2 );
-
-    // Phase B: bounded expensive frame work spanning several periods.
-    // Busy work until at least 10 periods have elapsed, measured
-    // independently with the steady clock; the work itself is the frame
-    // load, and its elapsed time is the evidence the bounds derive from.
-
-    const uint64_t target_work_ns = 10 * period_ns;
-    volatile uint64_t sink = 0;
-    const auto work_start = std::chrono::steady_clock::now();
-
-    for ( ;; )
-    {
-        sink += 1;
-        if ( std::chrono::duration<double, std::nano>(
-                 std::chrono::steady_clock::now() - work_start )
-                 .count() >= (double) target_work_ns )
-            break;
-    }
-
-    const uint64_t work_elapsed_ns = (uint64_t) std::chrono::duration<double, std::nano>(
-                                         std::chrono::steady_clock::now() - work_start )
-                                         .count();
-    rocketnet_check( work_elapsed_ns >= target_work_ns );
-
-    // the wait that observes the miss, as a real frame loop would call it
-    // after expensive work
-
-    rocketnet_frame_sync_wait( frame_sync );
-
-    rocketnet_frame_sync_stats( frame_sync, &stats );
-
-    const uint64_t after_work_drops = stats.dropped_frames;
-    const uint64_t work_drops = after_work_drops - baseline_drops;
-
-    // Bounds from the measured elapsed time and the configured period,
-    // tolerant of scheduler noise on both sides. The work spans at least
-    // 10 periods, so the accounting must be multiple intervals high.
-
-    const double periods_of_work = (double) work_elapsed_ns / (double) period_ns;
-
-    rocketnet_check( work_drops >= 3 );                                     // nonzero, multiple missed intervals
-    rocketnet_check( (double) work_drops > periods_of_work - 3.0 );         // not undercounting
-    rocketnet_check( (double) work_drops < periods_of_work + 3.0 );         // not overcounting
-
-    // Phase C: recovery at normal cadence. The total stays cumulative
-    // (a reset would clear it), the frame count advances by exactly the
-    // waits run, and lateness stays coherent.
-
-    for ( int i = 0; i < 12; i++ )
-    {
-        rocketnet_frame_sync_wait( frame_sync );
-    }
-
-    rocketnet_frame_sync_stats( frame_sync, &stats );
-    rocketnet_check( stats.frame == 25 );                                   // 12 + 1 + 12 waits
-    rocketnet_check( stats.dropped_frames >= after_work_drops );             // cumulative, never reset
-    rocketnet_check( stats.dropped_frames <= after_work_drops + 2 );         // recovery adds at most noise
-    rocketnet_check( stats.wakeup_error_seconds >= 0.0 );                   // lateness coherent
-
-    printf( "    frame sync dropped stats: period_ns %llu, work_elapsed_ns %llu, baseline %llu, work_drops %llu, final %llu\n",
-            (unsigned long long) period_ns, (unsigned long long) work_elapsed_ns,
-            (unsigned long long) baseline_drops, (unsigned long long) work_drops,
-            (unsigned long long) stats.dropped_frames );
-    fflush( stdout );
-    (void) sink;
-
-    rocketnet_frame_sync_destroy( frame_sync );
-}
-#endif // #if ROCKETNET_DEV
 
 static void rocketnet_test_fill_vector_fields( struct rocketnet_signed_connect_data_t * signed_fields,
                                                struct rocketnet_connect_token_private_t * private_fields )
@@ -1420,6 +906,127 @@ static void rocketnet_platform_primitives_priority_thread( rocketnet_platform_th
     state->signaled = rocketnet_platform_wake_wait( state->wake, false, 30.0 );
 }
 
+#if ROCKETNET_DEV
+
+// The library's priority request on a real running thread, recorded on its
+// way to the real operating-system call. What the case checks is the
+// library's side: which call it made, with which values, on which thread,
+// and that it counted exactly the refusals the real call returned. Whether
+// the operating system grants the priority is its own business and is never
+// asserted: either answer passes, and either answer must be handled.
+
+struct rocketnet_platform_primitives_priority_record_t
+{
+    int calls;
+    int refused;
+    rocketnet_platform_thread_t * thread[4];
+    int policy[4];
+    int priority[4];
+};
+
+static rocketnet_platform_primitives_priority_record_t rocketnet_platform_primitives_priority_record;
+
+static void rocketnet_platform_primitives_priority_note( rocketnet_platform_thread_t * thread, int policy, int priority, bool refused )
+{
+    rocketnet_platform_primitives_priority_record_t * record = &rocketnet_platform_primitives_priority_record;
+    if ( record->calls < 4 )
+    {
+        record->thread[record->calls] = thread;
+        record->policy[record->calls] = policy;
+        record->priority[record->calls] = priority;
+    }
+    record->calls++;
+    if ( refused )
+        record->refused++;
+}
+
+static int rocketnet_platform_primitives_record_set_sched( rocketnet_platform_thread_t * thread, int policy, int priority )
+{
+    const int result = rocketnet_platform_priority_calls_real()->set_sched( thread, policy, priority );
+    rocketnet_platform_primitives_priority_note( thread, policy, priority, result != 0 );
+    return result;
+}
+
+static int rocketnet_platform_primitives_record_set_thread_priority( rocketnet_platform_thread_t * thread, int priority )
+{
+    const int result = rocketnet_platform_priority_calls_real()->set_thread_priority( thread, priority );
+    rocketnet_platform_primitives_priority_note( thread, 0, priority, result == 0 );
+    return result;
+}
+
+static void rocketnet_platform_primitives_priority()
+{
+    rocketnet_platform_primitives_priority_thread_t state = { rocketnet_platform_wake_create( NULL, NULL ), false };
+    rocketnet_check( state.wake );
+
+    rocketnet_platform_thread_t * thread = rocketnet_platform_thread_create( NULL, rocketnet_platform_primitives_priority_thread, &state );
+    rocketnet_check( thread );
+
+    struct rocketnet_platform_priority_calls_t recording = *rocketnet_platform_priority_calls_real();
+    recording.set_sched = rocketnet_platform_primitives_record_set_sched;
+    recording.set_thread_priority = rocketnet_platform_primitives_record_set_thread_priority;
+    rocketnet_platform_set_priority_calls_for_testing( &recording );
+
+    // on: one request per call, on the thread given, with the library's values
+
+    memset( &rocketnet_platform_primitives_priority_record, 0, sizeof( rocketnet_platform_primitives_priority_record ) );
+    const bool enabled = rocketnet_platform_thread_priority_enabled();
+    rocketnet_platform_set_thread_priority_enabled( true );
+
+    const uint64_t refusals = rocketnet_platform_thread_priority_refusals();
+
+    rocketnet_platform_client_thread_priority( thread );
+    rocketnet_platform_server_thread_priority( thread );
+
+    const rocketnet_platform_primitives_priority_record_t * record = &rocketnet_platform_primitives_priority_record;
+    rocketnet_check( record->calls == 2 );
+    for ( int i = 0; i < 2; i++ )
+    {
+        rocketnet_check( record->thread[i] == thread );
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+        rocketnet_check( record->priority[i] == THREAD_PRIORITY_TIME_CRITICAL );
+#else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+        rocketnet_check( record->policy[i] == SCHED_RR );
+        rocketnet_check( record->priority[i] == rocketnet_platform_network_thread_rr_priority() );
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    }
+
+    // every refusal the real call returned is counted, and nothing else is
+
+    rocketnet_check( rocketnet_platform_thread_priority_refusals() - refusals == (uint64_t) record->refused );
+
+    // off: no request and nothing counted
+
+    memset( &rocketnet_platform_primitives_priority_record, 0, sizeof( rocketnet_platform_primitives_priority_record ) );
+    rocketnet_platform_set_thread_priority_enabled( false );
+
+    const uint64_t refusals_off = rocketnet_platform_thread_priority_refusals();
+
+    rocketnet_platform_client_thread_priority( thread );
+    rocketnet_platform_server_thread_priority( thread );
+
+    rocketnet_check( record->calls == 0 );
+    rocketnet_check( rocketnet_platform_thread_priority_refusals() == refusals_off );
+
+    rocketnet_platform_set_thread_priority_enabled( enabled );
+    rocketnet_platform_set_priority_calls_for_testing( NULL );
+
+    // granted or refused, the thread carries on and is woken as before
+
+    rocketnet_platform_wake_set( state.wake );
+    rocketnet_platform_thread_join( thread );
+    rocketnet_platform_thread_destroy( thread );
+    rocketnet_platform_wake_destroy( state.wake );
+    rocketnet_check( state.signaled );
+}
+
+#else // #if ROCKETNET_DEV
+
+// A production build has no call table to record through: the case makes the
+// library's real requests and checks that a refusal is counted at most once
+// per request and that the thread carries on either way. The operating
+// system's answer is never asserted.
+
 static void rocketnet_platform_primitives_priority()
 {
     rocketnet_platform_primitives_priority_thread_t state = { rocketnet_platform_wake_create( NULL, NULL ), false };
@@ -1441,6 +1048,8 @@ static void rocketnet_platform_primitives_priority()
     rocketnet_platform_wake_destroy( state.wake );
     rocketnet_check( state.signaled );
 }
+
+#endif // #if ROCKETNET_DEV
 
 int main()
 {
@@ -1470,17 +1079,9 @@ int main()
     rocketnet_test_platform_thread();
     rocketnet_platform_primitives_priority();
 
-    int status = ROCKETNET_STATUS_OK;
-    rocketnet_check( rocketnet_frame_sync_create_ex( NULL, 0.0, &status ) == NULL );
-    rocketnet_check( status == ROCKETNET_STATUS_INVALID_ARGUMENT );
-#if ROCKETNET_DEV
-    rocketnet_test_frame_sync_high_resolution_timer_required();
-#endif // #if ROCKETNET_DEV
-    rocketnet_test_frame_sync_wait();
-
     rocketnet_check( rocketnet_term() == ROCKETNET_STATUS_OK );
     rocketnet_thread_priority( priority_enabled );
-    printf( "platform primitives OK: DEV=%d, real environment/lookup/thread/frame sync, IPv6=%d\n",
+    printf( "platform primitives OK: DEV=%d, real environment/lookup/thread, IPv6=%d\n",
             ROCKETNET_DEV, ipv6_available ? 1 : 0 );
     return 0;
 }

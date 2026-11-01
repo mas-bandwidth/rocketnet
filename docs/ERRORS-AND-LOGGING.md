@@ -46,10 +46,10 @@ status code and the accompanying `ERROR` log line:
 | `CONFIG_NOT_INITIALIZED` | `create`, `required_memory` | `config->config_bytes` is `0` or smaller than `sizeof(size_t)` (see [sized configs](ABI-EVOLUTION.md)). | Initialize with `rocketnet_client_default_config(&cfg)` / `rocketnet_server_default_config(&cfg)` (or the light function) before modifying fields. |
 | `CONFIG_ENV_INVALID` | `create` (`required_memory` returns `0`) | A `ROCKETNET_*` environment variable failed strict syntax parsing (whitespace, `+` prefix, non-decimal characters, integer overflow, or wrong base64 key/filter length). | Read the `ERROR` line naming the variable, fix or unset it (`docs/ENVIRONMENT.md`), and recreate the endpoint. Empty variables are ignored and logged. |
 | `CONFIG_OUT_OF_RANGE` | `create` (`required_memory` returns `0`) | A field is outside its public-header range or violates a cross-field invariant (`max_message_bytes > receive_message_buffer_bytes`, `packets_in_flight < reliable_messages_in_flight`, or simulator settings in `ROCKETNET_DEV=0`). | Read the field and rule from the `ERROR` line and adjust the configuration using [`docs/LOAD.md`](LOAD.md). Values are never silently clamped. |
-| `INVALID_ADDRESS` | `rocketnet_server_create` | `ipv4_address` or `ipv6_address` (or its environment override) could not be parsed as its address family (`a.b.c.d:port` or `[v6]:port`). | Pass a valid address string with port for at least one family. |
+| `INVALID_ADDRESS` | `rocketnet_server_create`, `rocketnet_server_start`, `rocketnet_create_connect_token`, `rocketnet_create_dev_connect_token` | Create: `ipv4_address` or `ipv6_address` (or its environment override) could not be parsed as its address family (`a.b.c.d:port` or `[v6]:port`). Start: the transport could not bind or use the address. The token minters: a server address does not parse. | Pass a valid address string with port for at least one family. |
 | `TRANSPORT_PORT_ZERO_UNSUPPORTED` | `rocketnet_server_start` | The address specifies port `0` on a server transport that cannot discover the kernel-assigned port (such as `xdp`). | Bind an explicit UDP port (`1 .. 65535`) or include a transport that discovers its assigned port. |
 | `CONNECT_TOKEN_PORT_ZERO` | `rocketnet_client_connect` | The token advertises a server address with port `0`. | Fix the token issuer so each advertised address carries the server's bound non-zero port. |
-| `OUT_OF_MEMORY`, `MUTEX_CREATE_FAILED`, `THREAD_CREATE_FAILED`, `TIMER_CREATE_FAILED` | `create`, `connect`, `start` (`THREAD_CREATE_FAILED`: `connect`, when the OS refuses the thread; a refused allocation is `OUT_OF_MEMORY`) | The caller allocator returned `NULL` or the OS refused a mutex, thread, or high-resolution waitable timer (`CREATE_WAITABLE_TIMER_HIGH_RESOLUTION`, required by Windows frame sync without coarse fallback). | Provision the full `rocketnet_*_required_memory` result and verify OS thread/descriptor/timer support (`ulimit -u`, `ulimit -n`). Do not retry in an unbounded loop. |
+| `OUT_OF_MEMORY`, `MUTEX_CREATE_FAILED`, `THREAD_CREATE_FAILED` | `OUT_OF_MEMORY`: `create`, `connect`, `start`; `MUTEX_CREATE_FAILED`: `connect`, `start`; `THREAD_CREATE_FAILED`: `connect`, when the OS refuses the thread (a refused allocation is `OUT_OF_MEMORY`) | The caller allocator returned `NULL` or the OS refused a mutex or thread. | Provision the full `rocketnet_*_required_memory` result and verify OS thread/descriptor support (`ulimit -u`, `ulimit -n`). Do not retry in an unbounded loop. |
 
 <a id="52-token-filter-transport-mismatch-and-handshake-failures"></a>
 
@@ -60,7 +60,7 @@ status code and the accompanying `ERROR` log line:
      `rocketnet_client_create` and `rocketnet_server_create` (and causes
      `rocketnet_*_required_memory` to return `0`) when `config.packet_filter`
      is set to the published four-byte test filter
-     (`b7:59:01:00`, `ROCKETNET_TEST_FILTER_VALUE`) in a production library
+     (`b7:59:01:00`) in a production library
      (`ROCKETNET_DEV=0`). That is the default value, so a config that is never
      given a title filter is refused; an all-zero filter is not the test
      filter and is not refused by this rule.
@@ -94,13 +94,12 @@ status code and the accompanying `ERROR` log line:
      `ROCKETNET_*_TRANSPORT`) contains an unknown transport name, an empty
      comma-separated token, or mixes `"auto"` with other names (`"auto"` must
      stand alone).
-   - `TRANSPORT_NOT_BUILT`: a pinned transport (such as `"xdp"` or
-     `"io_uring"`) was not compiled into the binary (`docs/LINUX.md`).
+   - `TRANSPORT_NOT_BUILT`: a pinned `"xdp"` was not compiled into the
+     binary (`docs/LINUX.md`).
    - `TRANSPORT_FAMILIES_UNSUPPORTED`: the selected transport cannot
      serve the configured IPv4/IPv6 family combination.
    - `TRANSPORT_LADDER_EXHAUSTED`: every candidate in the resolved
-     transport ladder failed host preflight, socket bind (on a client, the
-     connect to every server family the token names), or the operator
+     transport ladder failed host preflight, socket bind, or the operator
      transport memory budget (`ROCKETNET_*_MEMORY_BUDGET_BYTES`, which checks
      `allocator_bytes + umem_bytes` per candidate, not the create-time block).
    - **Action**: inspect the `WARN` / `ERROR` log lines emitted by each
@@ -124,23 +123,21 @@ status code and the accompanying `ERROR` log line:
        reachable on the UDP port named in the token; (b) `packet_filter` bytes
        match on client and server (a mismatch causes the server prefilter to
        drop incoming packets silently); (c) `protocol_id` in the token matches
-       `server_config.protocol_id`; (d) the server public key in the
-       token matches `rocketnet_server_public_key(server, ...)`. Backend signature
-       verification happens later, after the cookie gate.
+       `server_config.protocol_id`; (d) the server public key sealed into the
+       token matches `rocketnet_server_public_key(server, ...)`; and (e) the
+       server's `backend_public_key` matches the backend key that signed the
+       token.
      - `ROCKETNET_CLIENT_STATE_CONNECTION_REQUEST_TIMED_OUT` (`-3`) or
        `ROCKETNET_CLIENT_STATE_CONNECTION_RESPONSE_TIMED_OUT` (`-4`): check
        `s.handshakes_dropped_over_budget` in `rocketnet_server_stats_t` (which
-       counts requests dropped unanswered after the server exhausts its
-       `handshakes_per_update` allowance; a client can retry them) and
-       check path MTU / packet loss. At the connection-request stage, also
-       verify the backend signing key and check for an already-connected
-       client ID or a token claimed from another address.
+       increments when a connection request waits past the server's
+       `handshakes_per_update` budget; raise it if a mass join times out) and
+       check path MTU / packet loss.
      - `ROCKETNET_CLIENT_STATE_CONNECTION_DENIED` (`-1`): the server explicitly
        rejected the connection. Check `s.connections_denied_full` in
        `rocketnet_server_stats_t` (all `max_clients` slots are occupied) and
-       select a server with capacity. Reused tokens from another address and
-       duplicate live client IDs are ignored, leading to a timeout rather
-       than this explicit denial.
+       verify that the connect token was not already consumed by another
+       connection or a duplicate `client_id`.
      - `ROCKETNET_CLIENT_STATE_CONFIG_MISMATCH` (`-11`) /
        `ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH`: client and server
        configurations disagree on protocol geometry (such as `num_channels`).
@@ -154,25 +151,35 @@ Understanding the difference between `rocketnet_*_can_send_message` and
 `rocketnet_*_start_message` is critical for avoiding self-inflicted
 disconnects under load:
 
-1. **Message storage exhaustion ends the connection**:
-   - Each connection has a fixed send descriptor pool and send store, sized by
-     `send_queue_messages` and `send_message_buffer_bytes`. If a valid start
-     needs message storage and none is available, it returns `NULL` and ends
-     the connection with `MESSAGE_MEMORY_EXHAUSTED`.
-   - The reliable window, packet capacity, and wire budget can delay sending
-     queued work. This can eventually fill message storage, but a temporarily
-     full reliable window or exhausted wire budget is not itself a fatal
-     start refusal.
-2. **Use `can_send_message` as a queue-room preflight**:
-   - It checks arguments, connection state, and message-storage availability
-     without reserving memory, counting drops, or disconnecting. It does not
-     promise wire budget, packet capacity, or immediate transmission.
-   - A `true` answer holds until an intervening start or update takes room.
-     Always check the actual pointer returned by start.
-   - A `false` can mean a disconnected endpoint, invalid arguments, an open
-     reservation, or full message storage. It may be pessimistic for a small
-     unreliable message that start can place directly in a transport frame.
-     The query itself does not change the connection's state.
+1. **Why calling `start_message` blindly on a full send region disconnects the session**:
+   - Each connection operates inside a fixed, pre-allocated connection region
+     (`connection_bytes`, [`docs/LOAD.md`](LOAD.md)).
+   - Any send (reliable, or unreliable that finds no room in the send region)
+     that finds no message memory ends the connection with
+     `MESSAGE_MEMORY_EXHAUSTED` and returns `NULL`: if a connected caller calls
+     `rocketnet_client_start_message` or `rocketnet_server_start_message` when
+     the connection's send descriptor pool (`send_queue_messages`), send store
+     (`send_message_buffer_bytes`), reliable sliding window
+     (`reliable_messages_in_flight`), or sent-packet ring
+     (`packets_in_flight`) cannot accommodate the message (for example, when
+     messages accumulate faster than ACKs arrive or `send_kbps` /
+     `per_client_send_kbps` paces them out), the message layer treats region
+     exhaustion on an attempted `start_message` as fatal to that connection
+     (`proofs/tla/RNConnectionMemory.tla` `Kick`, requirement `R5`): `start_message`
+     returns `NULL` and **immediately disconnects that connection** with
+     `ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED` (transitioning
+     the client to `ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED`, `-12`).
+2. **How `can_send_message` prevents `MESSAGE_MEMORY_EXHAUSTED`**:
+   - `rocketnet_client_can_send_message(client, channel, reliability, max_bytes)`
+     and `rocketnet_server_can_send_message(server, client_index, channel, reliability, max_bytes)`
+     execute the exact same room, window, per-update cap, and wire-budget check
+     (`rn_message_object_send_room`) as `start_message`, but **purely (`O(1)`,
+     zero state mutation, zero drops, no disconnect)**.
+   - When `can_send_message` returns `true`, `start_message` with the same
+     `(channel, reliability, max_bytes)` arguments is given room provided no
+     intervening start or update changes that single-thread-owned object.
+   - When `can_send_message` returns `false`, the connection remains healthy
+     and connected.
 3. **Other reasons `start_message` returns `NULL` (and how they are counted)**:
    - **Endpoint or slot not connected**: calling `start_message` when the
      client is not `ROCKETNET_CLIENT_STATE_CONNECTED`, when the server is
@@ -242,6 +249,9 @@ disconnects under load:
      `receive_messages`, `update`, `disconnect`, `stop`,
      or `destroy` call; copy any payload bytes that must outlive the current
      batch iteration.
+   - Check `receipts_dropped` in `rocketnet_client_stats_t` /
+     `rocketnet_server_stats_t`; if positive, increase `max_message_receipts`
+     so receipt events between frames do not overflow the receipt ring.
 
 <a id="55-reconnect-negative-client-states-and-session-isolation"></a>
 
@@ -273,12 +283,13 @@ disconnects under load:
      returns `ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED` without counting
      `api_misuses` (`proofs/tla/ClientSession.tla` `RetryPending`).
    - **Safe reconnect sequence**:
-     1. Call `rocketnet_client_disconnect(client)` and on each normal game
+     1. Obtain a **fresh** connect token from the backend (a connect token is
+        single-use once consumed by a server).
+     2. Call `rocketnet_client_disconnect(client)` and on each normal game
         frame run `rocketnet_client_update(client, time)` until
         `rocketnet_client_disconnected(client)` returns `true`.
-     2. Obtain a fresh connect token from the backend immediately before
-        the next attempt, so shutdown does not consume its short lifetime.
-     3. Call `rocketnet_client_connect(client, fresh_token)`. Never spin in a
+     3. Once `rocketnet_client_disconnected(client)` is `true`, call
+        `rocketnet_client_connect(client, fresh_token)`. Never spin in a
         blocking same-frame retry loop on `CLIENT_NOT_DISCONNECTED`.
 3. **Generational isolation and lazy server slot reset**:
    - **Client side**: when `rocketnet_client_disconnect(client)` runs and moves
@@ -334,20 +345,21 @@ disconnects under load:
 2. **Why early `destroy` is refused and retains memory if a worker is still live**:
    - Calling `rocketnet_client_destroy` when `!rocketnet_client_disconnected(client)`
      or `rocketnet_server_destroy` when `!rocketnet_server_stopped(server)`
-     triggers a debug `rocketnet_assert`. In a release build, it increments
-     `api_misuses`, logs an `ERROR`, and attempts at most `32` non-sleeping transport updates
-     (`RN_DESTROY_STOP_UPDATES`).
-   - If the transport worker thread has still not exited after those 32 bounded
-     updates, **`destroy` intentionally leaves the allocation alive and returns
+     triggers a debug `rocketnet_assert`, increments `api_misuses`, logs an
+     `ERROR`, requests the shutdown itself, and steps the transport and polls
+     for the worker's exit, sleeping 1 ms between polls, for at most one
+     second (`RN_DESTROY_STOP_SECONDS`). A worker that exits in that time is
+     joined and the object freed.
+   - If the transport worker thread has still not exited when that second
+     ends, **`destroy` intentionally leaves the allocation alive and returns
      without calling `rocketnet_free`** (`"the worker has not exited; the client/server is kept, not freed"`). Freeing an arena while a background
      worker thread still holds pointers into it would cause a use-after-free
      or memory corruption.
 3. **Preserving endpoint, allocator, and callback context ownership through `destroy` and `rocketnet_term`**:
    - Keep the endpoint handle, the `context` pointer passed to `create` /
      `rocketnet_init`, the custom allocator backing store, the
-     `state_change_callback` context valid through endpoint destruction. Keep
-     the allocator and process-wide log context valid until all callers and
-     workers have finished. In particular, follow this order:
+     `state_change_callback` context, and the `rocketnet_log_function` context
+     valid and in scope until:
      1. `rocketnet_client_disconnected(client)` / `rocketnet_server_stopped(server)`
         returns `true`;
      2. `rocketnet_client_destroy(client)` / `rocketnet_server_destroy(server)`
@@ -383,7 +395,7 @@ application error.
 
 | Public Entry Point | Return on Refusal |
 | :--- | :--- |
-| `rocketnet_init( context, malloc_fn, free_fn )` | the status code: `INVALID_ARGUMENT` for one allocator function without the other, `ALREADY_INITIALIZED`, `LIVE_ALLOCATIONS` for an allocator change while allocations are live, `PLATFORM_INIT_FAILED`, or `CRYPTO_INIT_FAILED` when sodium cannot take its own lock |
+| `rocketnet_init( context, malloc_fn, free_fn )` | the status code: `INVALID_ARGUMENT` for one allocator function without the other, `ALREADY_INITIALIZED`, `LIVE_ALLOCATIONS` for an allocator change while allocations are live, `PLATFORM_INIT_FAILED` or `CRYPTO_INIT_FAILED` |
 | `rocketnet_term( void )` | the status code: `NOT_INITIALIZED` or `LIVE_ALLOCATIONS`; nothing changes |
 | `rocketnet_client_default_config( config )` | `INVALID_ARGUMENT` for a NULL config, counted; `CONFIG_NOT_INITIALIZED` is never returned, because the inline call sets `config_bytes` first |
 | `rocketnet_client_required_memory( config )` | `0` for a refused config, a `config_bytes` too small included |
@@ -396,11 +408,10 @@ application error.
 | `rocketnet_client_update( client, time )` / `rocketnet_server_update( server, time )` | nothing (`void`); a refused time is counted as API misuse and logged |
 | `rocketnet_create_dev_connect_token`, `*_set_send_kbps` | the status code; see each declaration in `sdk/rocketnet.h` |
 
-The client and server create paths read `config_bytes`, merge defaults and the
-supplied prefix,
+The client and server create paths read `config_bytes`, validate the config,
 apply the environment overrides (`ROCKETNET_CLIENT_*`, `ROCKETNET_SERVER_*`,
-with precedence DEFAULT < CONFIG STRUCT < ENVIRONMENT), validate the resolved
-config, and allocate through the allocator; client connect and server start start the
+with precedence DEFAULT < CONFIG STRUCT < ENVIRONMENT), and make the one
+allocation through the allocator; client connect and server start start the
 selected transport. Create is the one check of a config: there is no separate
 validate call. The detailed transport create failure branches belong to the
 internal transport layer (`sdk/rocketnet_layers.h`); a game sees the public
@@ -440,10 +451,6 @@ Lifecycle calls use `enum rocketnet_status_t`. Other operations use their
 documented handle, boolean, count, or output result:
 `rocketnet_init` reports `INVALID_ARGUMENT`, `ALREADY_INITIALIZED`,
 `LIVE_ALLOCATIONS`, `PLATFORM_INIT_FAILED` or `CRYPTO_INIT_FAILED`.
-An unavailable OS random source is not a status anywhere: sodium aborts the
-process, and the misuse handler `rocketnet_init` installs logs one `ERROR`
-line naming the cause first. The key generators and server create therefore
-never return `CRYPTO_INIT_FAILED`.
 `rocketnet_term` reports `NOT_INITIALIZED` or `LIVE_ALLOCATIONS`. The client and server create
 calls return a handle or `NULL`, write the code through the status
 out-parameter, and log one `ERROR` line with the reason: `NOT_INITIALIZED`,
@@ -454,8 +461,8 @@ out-parameter, and log one `ERROR` line with the reason: `NOT_INITIALIZED`,
 return the token and transport codes: `CLIENT_NOT_DISCONNECTED`,
 `INVALID_CONNECT_TOKEN`, `CONNECT_TOKEN_EXPIRED`, `CONNECT_TOKEN_PORT_ZERO`, `SERVER_NOT_STOPPED`,
 `TRANSPORT_LADDER_EXHAUSTED`, `TRANSPORT_FAMILIES_UNSUPPORTED`, `TRANSPORT_NOT_BUILT`, `MISSING_KEYS`,
-`TRANSPORT_PORT_ZERO_UNSUPPORTED`, `MUTEX_CREATE_FAILED`,
-`THREAD_CREATE_FAILED` and `TIMER_CREATE_FAILED`. Server start reports a
+`TRANSPORT_PORT_ZERO_UNSUPPORTED`, `MUTEX_CREATE_FAILED` and
+`THREAD_CREATE_FAILED`. Server start reports a
 transport whose thread the platform refused as `TRANSPORT_LADDER_EXHAUSTED`;
 `THREAD_CREATE_FAILED` comes from client connect when the operating system
 refuses its network thread. An allocation refused anywhere in connect or start,
@@ -487,8 +494,7 @@ server. The client stays `DISCONNECTED`, and connect logs one `ERROR` line.
 refuse a transport list that names `loopback` when the config's
 `loopback_hub` is `NULL`. `ROCKETNET_STATUS_LOOPBACK_HUB_MISMATCH` is -33:
 create and `rocketnet_loopback_hub_destroy` refuse a hub whose magic, version
-or layout id differ from this library's, one made by another build; the
-destroy's refusal counts API misuse.
+or layout id differ from this library's, one made by another build.
 `ROCKETNET_STATUS_LOOPBACK_HUB_IN_USE` is -34, the last code:
 `rocketnet_loopback_hub_destroy` refuses while a server or client endpoint is
 registered with the hub, keeps the hub, logs one `ERROR` line and counts API
@@ -539,9 +545,8 @@ ROCKETNET_EXPORT void rocketnet_log_function(
 
 1. **Parameters**:
    - `context`: opaque pointer passed to `rocketnet_log_function` (may be `NULL`).
-   - `level`: the level of the log call. `rocketnet_printf` takes an explicit
-     level; `ROCKETNET_LOG_LEVEL_NONE` (`0`) bypasses level filtering but still
-     respects `rocketnet_quiet`.
+   - `level`: `ROCKETNET_LOG_LEVEL_ERROR` (`1`) .. `ROCKETNET_LOG_LEVEL_SPAM` (`5`),
+     or `ROCKETNET_LOG_LEVEL_NONE` (`0`) for `rocketnet_printf`.
    - `message`: non-NULL pointer to a formatted UTF-8 / ASCII stack buffer
      (`char buffer[1024]`). `message[length]` is guaranteed to be `'\0'`, with
      no trailing newline added by the SDK.
@@ -552,8 +557,9 @@ ROCKETNET_EXPORT void rocketnet_log_function(
    - `message` borrows a stack buffer in the logging frame and is valid **only
      for the synchronous duration of the callback call**. Callbacks that retain
      messages past return must copy `[message, message + length)`.
-   - The callback may be invoked on an application thread or an internal
-     transport worker thread. Callbacks must be thread-safe, must not call
+   - The callback may be invoked on the main thread, on any game fill thread
+     between `update` and `send_packets`, or on a transport receive
+     thread. Callbacks must be thread-safe, must not call
      `rocketnet_log_function` re-entrantly, and must not unwind via C++
      exceptions or `longjmp`.
    - The `(callback, context)` pair is guarded by
