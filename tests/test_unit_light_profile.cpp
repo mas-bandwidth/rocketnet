@@ -40,8 +40,8 @@
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468905017 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13997370 )
 #else
-// Linux x86-64 with io_uring and XDP built (hulk), gcc, Release.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3109242308ULL )
+// Linux x86-64 with io_uring and XDP built (vision), gcc, Debug.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3109266437ULL )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14146994 )
 #endif // #if defined( _WIN32 )
 

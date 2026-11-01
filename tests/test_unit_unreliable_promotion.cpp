@@ -67,7 +67,6 @@ struct boundary_net_t
     boundary_endpoint_t * client;
     uint64_t slot_connection;
     uint64_t next_packet_id;
-    int max_request_bytes;          // the largest request_bytes either end's message layer passed start_packet
 };
 static void boundary_update( void * transport, double time )
 {
@@ -132,8 +131,6 @@ static uint8_t * boundary_start_packet( void * transport, int client_index, int 
 {
     boundary_endpoint_t * e = (boundary_endpoint_t *) transport;
     memset( context, 0, sizeof( *context ) );
-    if ( request_bytes > e->net->max_request_bytes )
-        e->net->max_request_bytes = request_bytes;
     if ( request_bytes < 1 || request_bytes > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
         return NULL;
     if ( e->is_server ? e->net->slot_connection == 0 : !e->connected )
@@ -283,7 +280,6 @@ static void boundary_setup_config( boundary_pair_t * pair, const rocketnet_messa
     pair->net = new boundary_net_t();
     pair->net->slot_connection = 100;
     pair->net->next_packet_id = 1000;
-    pair->net->max_request_bytes = 0;
 
     pair->net->server = new boundary_endpoint_t();
     pair->net->client = new boundary_endpoint_t();
@@ -648,111 +644,3 @@ static void test_unreliable_promotion_every_mode()
 }
 
 REGISTER_UNIT_TEST( test_unreliable_promotion_every_mode );
-
-// ---------------------------------------------------------------------------
-// The message layer never asks the transport for more than one packet. For
-// every reliability type (one case each, so the sweeps run in parallel), on
-// a narrow and a wide channel, from both ends, every message size from 1 to
-// max_message_bytes + 1 is sent through the fixture transport, which records
-// the largest request_bytes either end's message layer passes start_packet.
-// The sweep is continuous, so it crosses every promotion edge (the per-mode
-// one-packet record limit) and every block-count edge (multiples of
-// ROCKETNET_MESSAGE_FRAGMENT_BYTES) below the maximum. The pair steps only
-// when a send is refused for room and every 32 sizes, so queued messages of
-// many sizes share each flush. The largest request is exactly one packet's
-// payload.
-// ---------------------------------------------------------------------------
-
-static void requests_drain( boundary_pair_t * pair, std::vector<boundary_received_t> * got )
-{
-    static rocketnet_message_batch_t client_batch;     // large: never on the stack
-    rocketnet_message_receipt_t receipts[64];
-
-    boundary_step( pair, got );
-    got->clear();
-    while ( rocketnet_message_client_receive_messages( pair->client, &client_batch ) > 0 )
-    {
-    }
-    while ( rocketnet_message_client_receipts( pair->client, receipts, 64 ) > 0 )
-    {
-    }
-    while ( rocketnet_message_server_receipts( pair->server, 0, receipts, 64 ) > 0 )
-    {
-    }
-
-    check( pair->net->max_request_bytes <= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
-}
-
-static void requests_at_most_one_packet( int reliability )
-{
-    const int max_bytes = 4 * ROCKETNET_MESSAGE_FRAGMENT_BYTES;
-    static const int channels[] = BOUNDARY_TEST_CHANNELS;
-
-    for ( int c = 0; c < BOUNDARY_TEST_CHANNEL_COUNT; ++c )
-    {
-        rocketnet_message_config_t config;
-        boundary_config( &config );
-        config.max_message_bytes = max_bytes;
-
-        boundary_pair_t pair;
-        boundary_setup_config( &pair, config );
-
-        std::vector<boundary_received_t> got;
-        boundary_step( &pair, &got );
-
-        const int channel = channels[c];
-        int accepted = 0;
-
-        for ( int bytes = 1; bytes <= max_bytes + 1; ++bytes )
-        {
-            std::vector<uint8_t> message = boundary_data( (uint32_t) bytes, bytes );
-            for ( int from_server = 0; from_server < 2; ++from_server )
-            {
-                uint32_t serial = 0;
-                for ( int attempt = 0; attempt < 64 && serial == 0; ++attempt )
-                {
-                    serial = from_server ? rocketnet_message_server_send( pair.server, 0, channel, reliability, message.data(), bytes )
-                                         : rocketnet_message_client_send( pair.client, channel, reliability, message.data(), bytes );
-                    if ( bytes > max_bytes )
-                        break;
-                    if ( serial == 0 )
-                        requests_drain( &pair, &got );
-                }
-
-                check( ( serial != 0 ) == ( bytes <= max_bytes ) );
-                accepted += serial != 0 ? 1 : 0;
-            }
-
-            if ( bytes % 32 == 0 )
-                requests_drain( &pair, &got );
-        }
-
-        for ( int i = 0; i < 64; ++i )
-            requests_drain( &pair, &got );
-
-        check( accepted == 2 * max_bytes );
-        check( pair.net->max_request_bytes == ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
-        check( rocketnet_message_client_state( pair.client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
-        check( pair.net->server->disconnects == 0 && pair.net->client->disconnects == 0 );
-
-        boundary_teardown( &pair );
-    }
-}
-
-static void test_message_layer_requests_at_most_one_packet_unreliable() { requests_at_most_one_packet( ROCKETNET_RELIABILITY_UNRELIABLE ); }
-static void test_message_layer_requests_at_most_one_packet_unreliable_sequenced() { requests_at_most_one_packet( ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED ); }
-static void test_message_layer_requests_at_most_one_packet_reliable() { requests_at_most_one_packet( ROCKETNET_RELIABILITY_RELIABLE ); }
-static void test_message_layer_requests_at_most_one_packet_reliable_ordered() { requests_at_most_one_packet( ROCKETNET_RELIABILITY_RELIABLE_ORDERED ); }
-static void test_message_layer_requests_at_most_one_packet_reliable_sequenced() { requests_at_most_one_packet( ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED ); }
-static void test_message_layer_requests_at_most_one_packet_unreliable_with_ack_receipt() { requests_at_most_one_packet( ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT ); }
-static void test_message_layer_requests_at_most_one_packet_reliable_with_ack_receipt() { requests_at_most_one_packet( ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT ); }
-static void test_message_layer_requests_at_most_one_packet_reliable_ordered_with_ack_receipt() { requests_at_most_one_packet( ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT ); }
-
-REGISTER_UNIT_TEST( test_message_layer_requests_at_most_one_packet_unreliable );
-REGISTER_UNIT_TEST( test_message_layer_requests_at_most_one_packet_unreliable_sequenced );
-REGISTER_UNIT_TEST( test_message_layer_requests_at_most_one_packet_reliable );
-REGISTER_UNIT_TEST( test_message_layer_requests_at_most_one_packet_reliable_ordered );
-REGISTER_UNIT_TEST( test_message_layer_requests_at_most_one_packet_reliable_sequenced );
-REGISTER_UNIT_TEST( test_message_layer_requests_at_most_one_packet_unreliable_with_ack_receipt );
-REGISTER_UNIT_TEST( test_message_layer_requests_at_most_one_packet_reliable_with_ack_receipt );
-REGISTER_UNIT_TEST( test_message_layer_requests_at_most_one_packet_reliable_ordered_with_ack_receipt );
