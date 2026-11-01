@@ -71,6 +71,7 @@ no size constants. The measured records are in `proofs/tla/RUNS.tsv` (group
 | `MCRNClientReceiveQuitWindows.cfg` | windows | fair | pass |
 | `MCRNClientReceiveQuitBrokenWakeBeforeQuit.cfg` | linux | unreliable | fails `WokenSeesQuit` |
 | `MCRNClientReceiveQuitBrokenNoWakeNoTimeout.cfg` | linux | none | fails `DestroyCompletes` |
+| `MCRNClientReceiveQuitBrokenNoWake.cfg` | linux | unreliable | fails `DestroyCompletes` |
 
 ## The witnesses, checked against the code by hand
 
@@ -81,6 +82,16 @@ false. In the code `quit.store` precedes `rocketnet_client_thread_wake` on the
 same thread, and the wake's mutex (on mac, its release store paired with the
 wait's acquire load) orders the two, so a wait the wake ends is followed by a
 check that reads `quit` true.
+
+**`NoWake` alone with `WaitTimeout = "unreliable"` (DestroyCompletes).**
+This changes only `NoWake` from the healthy Linux configuration. A timeout
+remains enabled, but `SpecFair` does not require it to occur in this
+environment. A thread already waiting when stop makes no wake can therefore
+stutter while destroy waits in the join, violating `DestroyCompletes`.
+This witness does not assume a fair timeout or remove an enabled timeout.
+
+The older two-switch configuration below is retained as historical evidence
+for the stricter environment with no timeout transition.
 
 **`NoWake` with `WaitTimeout = "none"` (DestroyCompletes).** The thread checks
 `quit` false and blocks in its wait; stop stores `quit` and makes no wake;
