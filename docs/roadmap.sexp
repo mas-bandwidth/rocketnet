@@ -62,11 +62,6 @@
    :text "Audit 59. Branch rowan/low-matrix-flake at a1693544, never built. Owed: functional build and repeated runs on Linux and macOS, a negative control, and a reproduction on main with injected latency."
    :date "2026-10-31" :origin "Audit item 59")
 
-  (item "resend-generation-stamp" :group "finish" :area "rocketnet"
-   :title "Remove the resend FIFO's generation stamp"
-   :text "RNResendGenerations shows the stamp never decides; the number comparison refuses a stale ack. Removing it shrinks each resend entry from 12 to 8 bytes. Uncommitted edits in the worktree rocketnet-remove-stamp, branch rowan/remove-resend-generation-stamp."
-   :date "2026-10-31" :origin "Audit item 12 follow-on")
-
   (item "cbmc-lows-797" :group "finish" :area "proofs"
    :title "Land #797: CBMC low items"
    :text "Audit 150-156, fleet-verified on vision (CBMC 6.6.0, ESBMC 8.5.0): esbmc_r_ok runs nightly; the message-reader harnesses cover every accepted limit; the 24-bit window arithmetic moves into rocketnet_message_u24_delta and is proved; the fragment-bounds proof and dead fallbacks are deleted. 150 is refuted: ack-run-bound-8 runs out of memory at 48 GB, so a working ACK proof needs the harness redesigned. Stacked on #782 and #754; left out of the 2026-10-31 landing so the fleet run did not restart."
