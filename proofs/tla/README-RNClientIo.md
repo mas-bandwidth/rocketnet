@@ -394,9 +394,10 @@ The reversed witness, `MCRNClientIoBrokenStepStartsThread.cfg`, sets
 `StepModeStartsThread = TRUE` and `MaxDatagrams = 0`: create starts the
 thread in step mode too, but `Arrive` is disabled throughout this instance.
 `NoIoThreadActionInStepMode` forbids both an enabled I/O-thread action and
-a core action previously taken by that thread. From `Init`, `Stop` sets
-the stopping phase and wake, enabling `IoExit` and `IoClearWake`; the
-enabled-action conjunct can therefore fail without receiving any datagram.
+a core action previously taken by that thread. The refreshed trace takes
+`OnMain(Disconnect)` from `Init`: ring A is handed off and the wake is set,
+while `arrived = 0` and `lastExec = "none"`. The enabled-action conjunct
+fails before any I/O-thread action, without receiving a datagram.
 The separately reported experiment checking only the `lastExec` conjunct
 (exit 12) is historical, not the committed configuration's oracle.
 The historical planted defects below exercise the step-mode liveness
