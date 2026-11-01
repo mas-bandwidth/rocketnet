@@ -2,18 +2,17 @@
 (***************************************************************************)
 (* The staged send path of the server transport: the reserve/commit seam  *)
 (* every driver serves (sdk/rocketnet_server_transport.cpp,               *)
-(* rocketnet_server_reserve_send_frame at line 260 and                    *)
-(* rocketnet_server_commit_send_frame at line 288), the staged branch of  *)
-(* rocketnet_server_transport_send_packets (line 1725, the counter test   *)
-(* at line 1745), the maintenance half of                                 *)
-(* rocketnet_server_transport_update (line 983), and the out-of-band      *)
-(* rocketnet_server_transport_disconnect_client (line 1812).              *)
+(* rocketnet_server_reserve_send_frame and                               *)
+(* rocketnet_server_commit_send_frame), the staged branch of             *)
+(* rocketnet_server_transport_send_packets, the maintenance half of      *)
+(* rocketnet_server_transport_update, and the out-of-band                *)
+(* rocketnet_server_transport_disconnect_client.                         *)
 (*                                                                         *)
 (* On a staged driver a committed frame seals straight into the driver's  *)
 (* own staging and leaves only when the driver flushes.  The transport    *)
-(* publishes staged work by counter: send_packets flushes exactly when    *)
-(* the staged counter differs from the flushed counter.  The rule this    *)
-(* model states is that every commit through the seam advances the staged *)
+(* publishes staged work when counters differ, and retries transports    *)
+(* with ROCKETNET_TRANSPORT_REFLUSHES even when they agree. Commit projects*)
+(* both the sealing helper and its caller's bookkeeping: it advances the  *)
 (* counter, disconnect bursts included, so the next send_packets after a  *)
 (* disconnect flushes the burst.  DisconnectAdvancesStaged = FALSE        *)
 (* removes that advance: disconnect_client seals its burst into the send  *)
@@ -104,7 +103,8 @@ Reserve(f) ==
     /\ ranSend' = FALSE
     /\ UNCHANGED <<staged, flushed, buffer, sent, dropped, discOwed, tick>>
 
-\* rocketnet_server_commit_send_frame: seal the reserved frame into staging
+\* rocketnet_server_commit_send_frame seals the frame; Commit also includes
+\* its caller advancing send_staged. The helper alone does not advance it.
 Commit ==
     /\ reserved # 0
     /\ buffer' = buffer \cup {reserved}

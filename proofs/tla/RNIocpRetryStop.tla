@@ -310,7 +310,9 @@ RetryOwned ==
 PendingIsPosted ==
     pending = Cardinality({ o \in Ops : state[o] = "posted" })
 
-(* the queue never fills: the clamp and the RETIRED path never fire *)
+(* Single-state occupancy is bounded. This does not constrain queue_count's *)
+(* separate atomic snapshots: their sampled difference can need clamping.  *)
+(* It does not prove the clamp or RETIRED fallback unreachable in the code. *)
 WithinCapacity == absEnq - absDeq \in 0 .. Cap
 
 (* once every worker exited nothing is posted: every completion was taken *)
