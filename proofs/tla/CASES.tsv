@@ -631,6 +631,8 @@ MCRNXdpReplayMarksLayout.cfg	MCRNXdpReplayMarksLayout.tla	pass	-	check	rnxdprepl
 MCRNXdpReplayMarksLayoutBrokenFullOffByOne.cfg	MCRNXdpReplayMarksLayout.tla	invariant	InBounds	check	rnxdpreplaymarkslayout	required	-
 MCRNXdpReplayMarksLayoutBrokenKeptSearchPastPrefix.cfg	MCRNXdpReplayMarksLayout.tla	invariant	LayoutIsQueue	check	rnxdpreplaymarkslayout	required	-
 MCRNXdpReplayMarksLayoutBrokenCompactOverUnread.cfg	MCRNXdpReplayMarksLayout.tla	invariant	LayoutIsQueue	check	rnxdpreplaymarkslayout	required	-
+MCRNXdpReplayMarksLayoutCapacityOne.cfg	MCRNXdpReplayMarksLayout.tla	pass	-	check	rnxdpreplaymarkslayout	required	-
+MCRNXdpReplayMarksLayoutBrokenForgetDuplicates.cfg	MCRNXdpReplayMarksLayout.tla	invariant	LayoutIsQueue	check	rnxdpreplaymarkslayout	required	-
 MCRNXdpReplyMacsLayout.cfg	MCRNXdpReplyMacsLayout.tla	pass	-	check	rnxdpreplymacslayout	required	-
 MCRNXdpReplyMacsLayoutBrokenForgottenEndsProbe.cfg	MCRNXdpReplyMacsLayout.tla	invariant	TableIsMap	check	rnxdpreplymacslayout	required	-
 MCRNXdpReplyMacsLayoutBrokenEvictNewest.cfg	MCRNXdpReplyMacsLayout.tla	invariant	EvictOnlyOldest	check	rnxdpreplymacslayout	required	-

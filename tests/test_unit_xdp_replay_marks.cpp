@@ -168,6 +168,79 @@ static void test_xdp_transport_replay_marks_full_refuses_and_counts()
     rocketnet_unit_check( marks.refused == 1 );
 }
 
+static void test_xdp_transport_replay_marks_duplicate_forgets_preserve_capacity()
+{
+    struct rocketnet_xdp_replay_marks_t marks;
+    rocketnet_xdp_replay_marks_bind( &marks, replay_marks_forgets, replay_marks_mark_keys, replay_marks_mark_values, 2 );
+
+    const struct rocketnet_address_t a = replay_marks_ipv4( 50000 );
+    const struct rocketnet_address_t b = replay_marks_ipv6( 50000 );
+    const struct rocketnet_address_t c = replay_marks_ipv4( 50001 );
+
+    for ( int i = 0; i < 4; i++ )
+        rocketnet_unit_check( rocketnet_xdp_replay_marks_forget( &marks, &a ) );
+    rocketnet_unit_check( marks.forget_count == 1 && marks.refused == 0 );
+
+    rocketnet_unit_check( rocketnet_xdp_replay_marks_forget( &marks, &b ) );
+    rocketnet_unit_check( rocketnet_xdp_replay_marks_forget( &marks, &a ) );
+    rocketnet_unit_check( rocketnet_xdp_replay_marks_forget( &marks, &b ) );
+    rocketnet_unit_check( marks.forget_count == 2 && marks.refused == 0 );
+
+    struct rocketnet_server_xdp_replay_key_t key_a, key_b;
+    rocketnet_xdp_replay_key_from_address( &a, &key_a );
+    rocketnet_xdp_replay_key_from_address( &b, &key_b );
+    rocketnet_unit_check( memcmp( &marks.forgets[0], &key_a, sizeof( key_a ) ) == 0 );
+    rocketnet_unit_check( memcmp( &marks.forgets[1], &key_b, sizeof( key_b ) ) == 0 );
+
+    // A refused distinct forget must not discard a mark still owed to the kernel.
+    rocketnet_unit_check( rocketnet_xdp_replay_marks_mark( &marks, &c, 9 ) );
+    const bool forget_failed[2] = { true, true };
+    const bool mark_refused[1] = { false };
+    rocketnet_xdp_replay_marks_reset_keeping( &marks, forget_failed, mark_refused );
+    rocketnet_unit_check( !rocketnet_xdp_replay_marks_forget( &marks, &c ) );
+    rocketnet_unit_check( marks.forget_count == 2 && marks.refused == 1 );
+    rocketnet_unit_check( marks.mark_count == 1 && marks.kept_mark_count == 1 && marks.mark_values[0].high_water == 9 );
+}
+
+static void test_xdp_transport_replay_marks_duplicate_forget_drops_kept_mark()
+{
+    struct rocketnet_xdp_replay_marks_t marks;
+    rocketnet_xdp_replay_marks_bind( &marks, replay_marks_forgets, replay_marks_mark_keys, replay_marks_mark_values, 2 );
+
+    const struct rocketnet_address_t a = replay_marks_ipv4( 50000 );
+    const struct rocketnet_address_t b = replay_marks_ipv4( 50001 );
+    rocketnet_unit_check( rocketnet_xdp_replay_marks_forget( &marks, &a ) );
+    rocketnet_unit_check( rocketnet_xdp_replay_marks_forget( &marks, &b ) );
+    rocketnet_unit_check( rocketnet_xdp_replay_marks_mark( &marks, &a, 40 ) );
+    rocketnet_unit_check( rocketnet_xdp_replay_marks_mark( &marks, &b, 50 ) );
+
+    const bool forget_failed[2] = { true, true };
+    const bool mark_refused[2] = { false, false };
+    rocketnet_xdp_replay_marks_reset_keeping( &marks, forget_failed, mark_refused );
+    rocketnet_unit_check( marks.forget_count == 2 && marks.kept_mark_count == 2 );
+
+    // Even at capacity, the duplicate is accepted and removes the older kept
+    // mark. Returning early on the duplicate would let that mark be rewritten.
+    rocketnet_unit_check( rocketnet_xdp_replay_marks_forget( &marks, &a ) );
+    rocketnet_unit_check( marks.forget_count == 2 && marks.refused == 0 );
+    rocketnet_unit_check( marks.mark_count == 1 && marks.kept_mark_count == 1 );
+    struct rocketnet_server_xdp_replay_key_t key_b;
+    rocketnet_xdp_replay_key_from_address( &b, &key_b );
+    rocketnet_unit_check( memcmp( &marks.mark_keys[0], &key_b, sizeof( key_b ) ) == 0 );
+    rocketnet_unit_check( marks.mark_values[0].high_water == 50 );
+
+    // A refused newer mark does not supersede the forget. Once the newer mark
+    // lands, only its same-key forget is removed.
+    rocketnet_unit_check( rocketnet_xdp_replay_marks_mark( &marks, &a, 3 ) );
+    rocketnet_xdp_replay_marks_reset_keeping( &marks, forget_failed, mark_refused );
+    rocketnet_unit_check( marks.forget_count == 2 && marks.kept_mark_count == 2 );
+    const bool mark_applied[2] = { false, true };
+    rocketnet_xdp_replay_marks_reset_keeping( &marks, forget_failed, mark_applied );
+    rocketnet_unit_check( marks.forget_count == 1 && marks.mark_count == 1 && marks.kept_mark_count == 1 );
+    rocketnet_unit_check( memcmp( &marks.forgets[0], &key_b, sizeof( key_b ) ) == 0 );
+    rocketnet_unit_check( marks.mark_values[0].high_water == 50 );
+}
+
 static void test_xdp_transport_replay_marks_failed_forgets_kept()
 {
     // proofs/tla/RNXdpReplay.tla ForgetOwedUntilApplied: a forget the kernel refused
@@ -363,6 +436,47 @@ static bool replay_fake_sink_forget( void * context, const struct rocketnet_addr
 static bool replay_fake_sink_mark( void * context, const struct rocketnet_address_t * address, uint32_t high_water )
 {
     return rocketnet_xdp_replay_marks_mark( (struct rocketnet_xdp_replay_marks_t *) context, address, high_water );
+}
+
+static void test_xdp_transport_replay_marks_released_sessions_coalesce_forgets()
+{
+    struct rocketnet_encryption_map_t * map = rocketnet_encryption_map_create( NULL, 4 );
+    struct rocketnet_client_slots_t * slots = rocketnet_client_slots_create( NULL, 2 );
+    struct rocketnet_server_replay_marks_t * walk = rocketnet_server_replay_marks_create( NULL, 2 );
+    rocketnet_unit_check( map && slots && walk );
+
+    struct rocketnet_xdp_replay_marks_t marks;
+    rocketnet_xdp_replay_marks_bind( &marks, replay_marks_forgets, replay_marks_mark_keys, replay_marks_mark_values, 2 );
+    struct rocketnet_server_replay_sink_t sink = { &marks, replay_fake_sink_forget, replay_fake_sink_mark };
+    uint8_t user_data[ROCKETNET_USER_DATA_BYTES] = { 0 };
+    const bool forget_failed[2] = { true, true };
+    const bool mark_refused[2] = { false, false };
+
+    // Three successive sessions at A release while the kernel refuses deletes
+    // and marks. The pending delete must leave space for a different source B.
+    for ( int session = 0; session < 4; session++ )
+    {
+        const struct rocketnet_address_t address = replay_marks_ipv4( session < 3 ? 50000 : 50001 );
+        const int mapping = rocketnet_encryption_map_add( map, &address, 1005.0 );
+        rocketnet_unit_check( mapping >= 0 );
+        const int slot = rocketnet_client_slots_assign( slots, (uint64_t) ( 100 + session ), mapping,
+                                                        rocketnet_encryption_map_owner_generation( map, mapping ), user_data );
+        rocketnet_unit_check( slot >= 0 );
+        rocketnet_server_replay_marks_walk( walk, slots, map, &sink );
+        rocketnet_xdp_replay_marks_reset_keeping( &marks, forget_failed, mark_refused );
+        rocketnet_unit_check( marks.kept_mark_count == 1 );
+
+        rocketnet_client_slots_release( slots, slot );
+        rocketnet_encryption_map_remove_current( map, mapping );
+        rocketnet_server_replay_marks_walk( walk, slots, map, &sink );
+        rocketnet_unit_check( marks.forget_count == ( session < 3 ? 1U : 2U ) );
+        rocketnet_unit_check( marks.mark_count == 0 && marks.kept_mark_count == 0 && marks.refused == 0 );
+        rocketnet_xdp_replay_marks_reset_keeping( &marks, forget_failed, mark_refused );
+    }
+
+    rocketnet_server_replay_marks_destroy( walk );
+    rocketnet_client_slots_destroy( slots );
+    rocketnet_encryption_map_destroy( map );
 }
 
 static void test_xdp_transport_replay_marks_stale_forget_never_deletes_a_newer_mark()
@@ -711,6 +825,9 @@ static void test_xdp_transport_replay_marks_refused_reconnect_mark_is_retried()
 REGISTER_UNIT_TEST( test_xdp_transport_replay_key_matches_golden_bytes );
 REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_commit_forgets_before_marks );
 REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_full_refuses_and_counts );
+REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_duplicate_forgets_preserve_capacity );
+REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_duplicate_forget_drops_kept_mark );
+REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_released_sessions_coalesce_forgets );
 REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_failed_forgets_kept );
 REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_refusals_reach_the_socket );
 REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_stale_forget_never_deletes_a_newer_mark );
