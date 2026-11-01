@@ -264,7 +264,19 @@ struct rocketnet_dst_options_t
     uint32_t faults;
     int force_fail_step;        // a test's forced failure, -1 for none
     int schedule;               // ROCKETNET_DST_SCHEDULE_*, 0 for none
+    int witness;                // ROCKETNET_DST_WITNESS_*, 0 for none: a unit case's planted defect
 };
+
+// Reversed witnesses: a unit case plants one defect in what the checks
+// observe and requires the run to fail naming the check that guards it.
+// ORDERED_SWAP holds the run's first ordered (type 3) delivery and passes it
+// to the checks after the next ordered delivery on the same stream.
+// FOREIGN_ACK has a client's ack name the lowest packet id the server issued
+// and the client did not.
+
+#define ROCKETNET_DST_WITNESS_NONE          0
+#define ROCKETNET_DST_WITNESS_ORDERED_SWAP  1
+#define ROCKETNET_DST_WITNESS_FOREIGN_ACK   2
 
 struct rocketnet_dst_result_t
 {
@@ -353,6 +365,16 @@ struct rocketnet_dst_schedule_t
     uint64_t burst_received;
 };
 
+// the delivery ROCKETNET_DST_WITNESS_ORDERED_SWAP holds back
+
+struct rocketnet_dst_held_delivery_t
+{
+    int session, channel, type, incarnation, expected_incarnation;
+    uint32_t sequence, generation, epoch, expected_generation;
+    uint64_t identity;
+    int bytes;
+};
+
 typedef struct rocketnet_dst_world_t
 {
     struct rocketnet_network_simulator_t * sim;
@@ -385,6 +407,9 @@ typedef struct rocketnet_dst_world_t
     uint64_t fault_steps;
     struct rocketnet_dst_schedule_t schedule;
     struct rocketnet_dst_check_state_t check;
+    int witness;
+    int witness_state;                  // 0 armed, 1 holding (ORDERED_SWAP), 2 fired
+    struct rocketnet_dst_held_delivery_t witness_held;
     int failed;
     uint64_t fail_step;
     char fail_check[64];
@@ -692,16 +717,29 @@ static inline int rocketnet_dst_endpoint_acked( void * transport, const int ** c
         *packet_ids = w->server.acks->acked_packet_ids;
         for ( int i = 0; i < w->server.acks->num_acked; i++ )
         {
-            rocketnet_dst_check_ack_id( &w->check, w->server.acks->acked_packet_ids[i] );
+            rocketnet_dst_check_ack_id( &w->check, 0, w->server.acks->acked_packet_ids[i] );
         }
         return w->server.acks->num_acked;
     }
 
     *client_index = NULL;
     *packet_ids = w->client[endpoint->client_index].protocol.acked_packet_ids;
+    if ( w->witness == ROCKETNET_DST_WITNESS_FOREIGN_ACK && w->witness_state == 0 )
+    {
+        const int self = endpoint->client_index + 1;
+        for ( uint64_t foreign = w->check.issued_high[self] + 1; foreign <= w->check.issued_high[0]; foreign++ )
+        {
+            if ( rocketnet_dst_check_ledger_bit( w->check.issued_bits[0], foreign ) )
+            {
+                rocketnet_dst_check_ack_id( &w->check, self, foreign );
+                w->witness_state = 2;
+                break;
+            }
+        }
+    }
     for ( int i = 0; i < w->client[endpoint->client_index].protocol.num_acked; i++ )
     {
-        rocketnet_dst_check_ack_id( &w->check, w->client[endpoint->client_index].protocol.acked_packet_ids[i] );
+        rocketnet_dst_check_ack_id( &w->check, endpoint->client_index + 1, w->client[endpoint->client_index].protocol.acked_packet_ids[i] );
     }
 
     return w->client[endpoint->client_index].protocol.num_acked;
@@ -770,7 +808,7 @@ static inline int rocketnet_dst_endpoint_finish_packet( void * transport, struct
     {
         endpoint->frame_bytes[endpoint->pending_frame] = wire_bytes;
         endpoint->outgoing_count++;
-        rocketnet_dst_check_issued( &w->check, context->packet_id );
+        rocketnet_dst_check_issued( &w->check, endpoint->is_server ? 0 : endpoint->client_index + 1, context->packet_id );
     }
 
     endpoint->pending_frame = -1;
@@ -1012,6 +1050,7 @@ static inline int rocketnet_dst_client_message_build( rocketnet_dst_world_t * w,
     client->endpoint.pending_frame = -1;
     client->endpoint.outgoing_count = 0;
     client->endpoint.next_packet_id = 0;
+    rocketnet_dst_check_endpoint_reset( &w->check, index + 1 );
 
     struct rn_message_link_t client_link;
     rocketnet_dst_endpoint_link( &client_link, &client->endpoint );
@@ -1263,6 +1302,39 @@ static inline void rocketnet_dst_check_deliveries( rocketnet_dst_world_t * w, in
     rocketnet_dst_trace_u64( &w->trace, (uint64_t) type );
     rocketnet_dst_trace_u64( &w->trace, (uint64_t) sequence );
     rocketnet_dst_trace_u64( &w->trace, (uint64_t) bytes );
+
+    if ( w->witness == ROCKETNET_DST_WITNESS_ORDERED_SWAP && type == 3 && w->witness_state < 2 )
+    {
+        struct rocketnet_dst_held_delivery_t * held = &w->witness_held;
+        if ( w->witness_state == 0 )
+        {
+            held->session = session;
+            held->channel = channel;
+            held->type = type;
+            held->sequence = sequence;
+            held->generation = generation;
+            held->incarnation = incarnation;
+            held->identity = identity;
+            held->epoch = epoch;
+            held->bytes = bytes;
+            held->expected_generation = expected_generation;
+            held->expected_incarnation = expected_incarnation;
+            w->witness_state = 1;
+            return;
+        }
+        if ( held->session == session && held->channel == channel )
+        {
+            rocketnet_dst_check_delivery( &w->check, w->now, session, channel, type, sequence, generation,
+                                          incarnation, identity, epoch, bytes, expected_generation,
+                                          expected_incarnation );
+            rocketnet_dst_check_delivery( &w->check, w->now, held->session, held->channel, held->type,
+                                          held->sequence, held->generation, held->incarnation, held->identity,
+                                          held->epoch, held->bytes, held->expected_generation,
+                                          held->expected_incarnation );
+            w->witness_state = 2;
+            return;
+        }
+    }
 
     rocketnet_dst_check_delivery( &w->check, w->now, session, channel, type, sequence, generation,
                                   incarnation, identity, epoch, bytes, expected_generation,
@@ -1594,6 +1666,7 @@ static inline int rocketnet_dst_world_create( rocketnet_dst_world_t * w, uint64_
     memset( w, 0, sizeof( *w ) );
     w->seed = seed;
     w->faults = options->faults;
+    w->witness = options->witness;
     w->fault_steps = options->fault_steps;
     w->now = 1000.0;
     w->unix_ts = 1700000000ULL;

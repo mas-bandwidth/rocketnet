@@ -6,7 +6,7 @@ Planned work for RocketNet that is not on main. Work lands on main before new wo
 
 ## Contents
 
-- [Started work to finish and land](#started-work-to-finish-and-land) (14)
+- [Started work to finish and land](#started-work-to-finish-and-land) (13)
 - [Audit items not yet fixed](#audit-items-not-yet-fixed) (11)
 - [Investigations that need a quiet host](#investigations-that-need-a-quiet-host) (3)
 - [Older open pull requests](#older-open-pull-requests) (2)
@@ -45,12 +45,6 @@ From: Audit item 39
 Since #624 the macOS network thread runs at SCHED_RR maximum and outranks the game thread. Branch rowan/macos-net-thread-priority at 1e9ecedf (priority 32): msgx P=32 p99 43.3 to 19.6 us on mini-m5. Owed: 200+ single-cell closed_port runs and a contention A/B against 47 to show #624's fix holds. If it does not hold under contention, Glenn decides between network latency and game-thread p99.
 
 From: Frame budget bisect
-
-### DST invariant checks that are called, and a per-endpoint ack ledger
-
-Audit 56 and 57. Branch rowan/gate-dst-checks at 9d362f2f has never compiled on the fleet. Owed: build, unit cases, seeds 1-2050, the schedules, and the shared-ledger negative control.
-
-From: Audit items 56, 57
 
 ### Nightly proofs split so the job can finish
 
