@@ -6,7 +6,7 @@ Planned work for RocketNet that is not on main. Work lands on main before new wo
 
 ## Contents
 
-- [Started work to finish and land](#started-work-to-finish-and-land) (12)
+- [Started work to finish and land](#started-work-to-finish-and-land) (11)
 - [Audit items not yet fixed](#audit-items-not-yet-fixed) (8)
 - [Investigations that need a quiet host](#investigations-that-need-a-quiet-host) (3)
 - [Older open pull requests](#older-open-pull-requests) (2)
@@ -51,12 +51,6 @@ From: Audit item 33
 Audit 66. Branch rowan/model-clientkeys at 5bbf6e7a: the model is done. Owed: the clientconnection group's RUNS.tsv on a quiet, fast Linux host (MCClientConnectionReachSFirstkind runs 117-132 s on captain against the 110 s budget, 50 s on Linux).
 
 From: Audit item 66
-
-### One address hash per connection request
-
-Audit 97. Branch rowan/sdkfu-request-one-hash at d3c2edfb: the resend shape is 15% faster (120.6 to 102.8 ns per request on intel). Owed: a macOS unit run; put the numbers in the commit.
-
-From: Audit item 97
 
 ### Live message matrix: a late probe copy counts as its probe
 
