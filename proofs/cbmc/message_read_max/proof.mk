@@ -4,8 +4,6 @@
 
 NIGHTLY += proofs-message_read_max
 
-ESBMC ?= $(shell command -v esbmc 2>/dev/null || echo $(HOME)/sdk/bin/esbmc)
-
 MESSAGE_READ_MAX_SOURCE = $(CURDIR)/message_read_max/proof_message_read_max.c
 MESSAGE_READ_MAX_FLAGS = --std c++17 --overflow-check --ub-shift-check \
                          -DROCKETNET_ESBMC -DNDEBUG -I$(SDK) --include-file $(CURDIR)/esbmc_shim.h \
@@ -14,7 +12,8 @@ MESSAGE_READ_MAX_TIMEOUT = 1800
 
 # harness:unwind:extra flags (comma for space)
 MESSAGE_READ_MAX_HARNESSES = \
-    harness_message_reader:7:--bitwuzla \
+    harness_message_reader:7:--bitwuzla,-DW_PARTITION=1 \
+    harness_message_reader:7:--bitwuzla,-DW_PARTITION=2 \
     harness_message_reader_single_max:2:--z3 \
     harness_message_read_config_body:1:--z3
 

@@ -42,17 +42,22 @@ static int round16( int bytes )
     return ( bytes + 15 ) & ~15;
 }
 
+/* every limit the configuration accepts and below: W and B up to their
+   INT_FIELD maximum in sdk/rocketnet_internal.h, max_message_bytes up to
+   ROCKETNET_MAX_MESSAGE_BYTES. */
+#define LIMIT_MAX ( 1 << 20 )
+
 static void fill_limits( struct rocketnet_message_limits_t * limits )
 {
     limits->num_channels = nondet_int();
     __CPROVER_assume( limits->num_channels >= 1 && limits->num_channels <= 65536 );
     limits->enabled_codes = nondet_uint();
     limits->reliable_messages_in_flight = nondet_int();
-    __CPROVER_assume( limits->reliable_messages_in_flight >= 1 && limits->reliable_messages_in_flight <= 4096 );
+    __CPROVER_assume( limits->reliable_messages_in_flight >= 1 && limits->reliable_messages_in_flight <= LIMIT_MAX );
     limits->max_message_bytes = nondet_int();
-    __CPROVER_assume( limits->max_message_bytes >= 1 && limits->max_message_bytes <= 65536 );
+    __CPROVER_assume( limits->max_message_bytes >= 1 && limits->max_message_bytes <= ROCKETNET_MAX_MESSAGE_BYTES );
     limits->receive_message_buffer_bytes = nondet_int();
-    __CPROVER_assume( limits->receive_message_buffer_bytes >= 0 && limits->receive_message_buffer_bytes <= 65536 );
+    __CPROVER_assume( limits->receive_message_buffer_bytes >= 0 && limits->receive_message_buffer_bytes <= LIMIT_MAX );
 }
 
 static void harness_reader( void )

@@ -44,10 +44,7 @@ int rn_window_receive_accept( rn_window_receive_t * receive, const rocketnet_mes
     *slot = RN_DESCRIPTOR_NONE;
 
     const uint32_t W = receive->region->window;
-    const uint32_t wire = record->number & ROCKETNET_MESSAGE_U24_MASK;
-    const uint32_t reference = (uint32_t) receive->R & ROCKETNET_MESSAGE_U24_MASK;
-    const uint32_t unsigned_delta = ( wire - reference ) & ROCKETNET_MESSAGE_U24_MASK;
-    const int32_t delta = unsigned_delta >= ROCKETNET_MESSAGE_HALF_RANGE ? (int32_t) unsigned_delta - (int32_t) ROCKETNET_MESSAGE_NUMBER_RANGE : (int32_t) unsigned_delta;
+    const int32_t delta = rocketnet_message_u24_delta( record->number, receive->R );
 
     // A negative signed half-range difference is behind R, including when
     // R is zero. No unsigned subtraction can turn it into a huge fresh n.

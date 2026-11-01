@@ -53,16 +53,6 @@
    :text "Audit 59. Branch rowan/low-matrix-flake at a1693544, never built. Owed: functional build and repeated runs on Linux and macOS, a negative control, and a reproduction on main with injected latency."
    :date "2026-10-31" :origin "Audit item 59")
 
-  (item "cbmc-lows-797" :group "finish" :area "proofs"
-   :title "Land #797: CBMC low items"
-   :text "Audit 150-156, fleet-verified on vision (CBMC 6.6.0, ESBMC 8.5.0): esbmc_r_ok runs nightly; the message-reader harnesses cover every accepted limit; the 24-bit window arithmetic moves into rocketnet_message_u24_delta and is proved; the fragment-bounds proof and dead fallbacks are deleted. 150 is refuted: ack-run-bound-8 runs out of memory at 48 GB, so a working ACK proof needs the harness redesigned. Stacked on #782 and #754; left out of the 2026-10-31 landing so the fleet run did not restart."
-   :date "2026-10-31" :origin "FABLE-AUDIT.md low proofs items")
-
-  (item "ack-proof-nightly-studio" :group "finish" :area "proofs"
-   :title "Run the ack-run-bound-8 CBMC proof nightly on studio"
-   :text "Audit 150. The proof and its negative control exhaust 48 GB on vision; studio has 512 GB. Make it a nightly job on studio (pinned CBMC built from source under the project, no system binary), not a per-commit gate. It lands with #797."
-   :date "2026-10-31" :origin "Glenn, live, 2026-10-31: run as nightly")
-
   (item "proofs-lows" :group "finish" :area "proofs"
    :title "Low-severity proofs items"
    :text "Not started, by family. Coverage and citations: 89, 109, 233, 234 (rio row, and the check_tla_coverage.py lock-in comparing each row's lists with its cfgs and CASES.tsv), 235, 243, 251, 255, 264, 286. Session and protocol docs: 92, 254, 268, 285, 288-290. Handoff layouts: 232, 236, 237, 239, 241, 256. Rio and IndexRing: 242, 244, 248, 262. Update and ownership: 253, 257, 260, 265, 266. Channel and pools: 99, 249, 259, 263, 267, 291. Code gaps: 250 (iocp count load order), 258 and 269 (dedupe pending XDP forgets), each with a unit lock-in. Lows on models other work owns: 238, 240, 245-247, 252, 261, 293. 292 rides #729, 287 #721."

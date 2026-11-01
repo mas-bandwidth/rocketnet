@@ -2,14 +2,13 @@
     RocketNet. Copyright 2026 Más Bandwidth LLC.
     Licensed under the GNU Affero General Public License v3.0
 
-    CBMC proof of rocketnet_reconstruct_sequence (k = 32) and of the 24-bit
-    window reconstruction (k = 24, signed half range).
-
-    rocketnet_reconstruct_near and rocketnet_reconstruct_sequence are the
-    leaf in sdk/rocketnet_protocol.cpp. The 24-bit function is the standard's
-    half-range reading: delta is the signed residue in -2^23 .. 2^23-1, and
-    a tie at 2^23 goes to the lower value. The sdk has no symbol for that
-    reading yet; this file proves the arithmetic.
+    CBMC proof of the wire-value reconstructions: rocketnet_reconstruct_near
+    and rocketnet_reconstruct_sequence (k = 32), from
+    sdk/rocketnet_protocol.cpp, and the 24-bit message number's signed half
+    range, rocketnet_message_u24_delta from sdk/rocketnet_message.h
+    (rn_window_receive_accept takes reference + delta when the delta is zero
+    or more, and refuses a negative one as behind). Both SDK files are
+    included below, never copied.
 
     Both satisfy |result - reference| <= 2^(k-1), and every in-window value
     round-trips, including values whose low k bits sit across the modulus
@@ -27,10 +26,27 @@
 
     Flags: --bounds-check --pointer-check --signed-overflow-check
            --unsigned-overflow-check --div-by-zero-check
-    Unwinding: 1. Both reconstructions are straight-line.
+    Unwinding: 1. The reconstructions are straight-line.
 */
 
+#define thread_local
+
+#include <stdbool.h>
 #include <stdint.h>
+#include <stdlib.h>
+
+/*
+    rocketnet_ack.h is C++ (templates, default arguments). rocketnet_protocol.cpp
+    calls one function from it, the ack block builder, which this harness does
+    not reach. The guard is taken and that one declaration stands in, so the C
+    front end parses the translation unit.
+*/
+#define ROCKETNET_SDK_ROCKETNET_ACK_H
+struct rocketnet_replay_protection_t;
+int rocketnet_ack_block_build( uint8_t * output, int capacity, const struct rocketnet_replay_protection_t * replay );
+
+#include "rocketnet_protocol.cpp"
+#include "rocketnet_message.h"
 
 #ifndef __CPROVER__
 #define __CPROVER_assert( c, m ) ( (void) ( c ), (void) ( m ) )
@@ -46,68 +62,16 @@ unsigned char nondet_uchar( void );
 
 #define U32_MOD  0x100000000ULL
 #define U32_HALF 0x80000000ULL
-#define U24_MOD  0x1000000ULL
 #define U24_HALF 0x800000ULL
 #define U24_MASK 0xFFFFFFULL
 
-uint64_t rocketnet_reconstruct_near( uint32_t wire_value, uint64_t expected )
+/* the number rn_window_receive_accept takes: the reference plus the signed
+   half-range delta. */
+static uint64_t reconstruct_u24( uint32_t wire, uint64_t reference )
 {
-    uint64_t base = expected & 0xFFFFFFFF00000000ULL;
-
-    uint64_t candidate = base | wire_value;
-
-    uint64_t best = candidate;
-    uint64_t best_distance = candidate > expected ? candidate - expected : expected - candidate;
-
-    if ( base >= 0x100000000ULL )
-    {
-        uint64_t below = ( base - 0x100000000ULL ) | wire_value;
-        uint64_t distance = below > expected ? below - expected : expected - below;
-        if ( distance < best_distance || ( distance == best_distance && below > best ) )
-        {
-            best = below;
-            best_distance = distance;
-        }
-    }
-
-    {
-        uint64_t above = ( base + 0x100000000ULL ) | wire_value;
-        uint64_t distance = above > expected ? above - expected : expected - above;
-        if ( distance < best_distance || ( distance == best_distance && above > best ) )
-        {
-            best = above;
-            best_distance = distance;
-        }
-    }
-
-    return best;
-}
-
-uint64_t rocketnet_reconstruct_sequence( uint32_t wire_sequence, uint64_t highest_opened )
-{
-    return rocketnet_reconstruct_near( wire_sequence, highest_opened + 1 );
-}
-
-/* Signed half range. delta is in [-2^23, 2^23). A residue of exactly 2^23
-   is the lower candidate. */
-uint64_t rocketnet_reconstruct_u24( uint32_t wire, uint64_t reference )
-{
-    uint32_t w = wire & (uint32_t) U24_MASK;
-    uint32_t rlow = (uint32_t) ( reference & U24_MASK );
-    uint32_t d;
-
-    if ( w >= rlow )
-    {
-        d = w - rlow;
-    }
-    else
-    {
-        d = ( w + (uint32_t) U24_MOD ) - rlow;
-    }
-
-    if ( d >= (uint32_t) U24_HALF )
-        return reference - ( U24_MOD - (uint64_t) d );
-    return reference + (uint64_t) d;
+    const int64_t delta = rocketnet_message_u24_delta( wire, reference );
+    const uint64_t magnitude = (uint64_t) ( delta < 0 ? 0 - delta : delta );
+    return delta < 0 ? reference - magnitude : reference + magnitude;
 }
 
 static uint64_t abs_diff( uint64_t a, uint64_t b )
@@ -181,7 +145,7 @@ int main( void )
     __CPROVER_assume( reference <= UINT64_MAX - ( U24_HALF - 1 ) );
 
     wire = nondet_uint32();
-    result = rocketnet_reconstruct_u24( wire, reference );
+    result = reconstruct_u24( wire, reference );
     __CPROVER_assert( ( result & U24_MASK ) == ( (uint64_t) wire & U24_MASK ),
                       "24-bit result keeps the wire low bits" );
     __CPROVER_assert( abs_diff( result, reference ) <= U24_HALF,
@@ -195,7 +159,7 @@ int main( void )
     __CPROVER_assume( !neg || mag <= reference );
     __CPROVER_assume( neg || reference <= UINT64_MAX - mag );
     n = neg ? reference - mag : reference + mag;
-    __CPROVER_assert( rocketnet_reconstruct_u24( (uint32_t) n, reference ) == n,
+    __CPROVER_assert( reconstruct_u24( (uint32_t) n, reference ) == n,
                       "24-bit in-window value round-trips across the wrap" );
 
 #if defined( REACHABILITY_CONTROL )

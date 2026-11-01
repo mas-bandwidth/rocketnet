@@ -2,8 +2,9 @@
     RocketNet. Copyright 2026 Más Bandwidth LLC.
     Licensed under the GNU Affero General Public License v3.0
 
-    CBMC proof of the packet prefilter, the filter epoch table, the sealed
-    packet opener, the associated data writer and the sequence nonce.
+    CBMC proof of the packet prefilter (with its unkeyed filter epoch
+    check), the sealed packet opener, the associated data writer and the
+    sequence nonce.
 
     The readers are sdk/rocketnet_protocol.cpp, included below. libsodium is
     not proved: each call the readers make is a model in this harness that
@@ -20,8 +21,10 @@
     Flags: --bounds-check --pointer-check --signed-overflow-check
            --unsigned-overflow-check --div-by-zero-check
            --unwinding-assertions
-    Unwinding: 64. The epoch table is at most four entries; the fixed-length
-    memcpy and memcmp models are at most 32 bytes.
+    Unwinding: 64. The loops reached are the eight IPv6 words in
+    rocketnet_write_packet_associated_data and the eight-byte nonce check in
+    harness_sequence_nonce; the fixed-length copies are memcpy, which CBMC
+    models without a loop.
 */
 
 #define thread_local

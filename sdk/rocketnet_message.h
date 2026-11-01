@@ -74,6 +74,16 @@
 
 #define ROCKETNET_MESSAGE_WIDE_CHANNEL                      256
 
+// a 24-bit wire value's signed half-range difference from a reference's low
+// 24 bits, in -2^23 .. 2^23 - 1: an exact half lies behind the reference.
+// The full value is reference + delta (proofs/cbmc/proof_reconstruct_sequence.c).
+
+static inline int32_t rocketnet_message_u24_delta( uint32_t wire, uint64_t reference )
+{
+    const uint32_t unsigned_delta = ( ( wire & ROCKETNET_MESSAGE_U24_MASK ) + ROCKETNET_MESSAGE_NUMBER_RANGE - ( (uint32_t) reference & ROCKETNET_MESSAGE_U24_MASK ) ) & ROCKETNET_MESSAGE_U24_MASK;
+    return unsigned_delta >= ROCKETNET_MESSAGE_HALF_RANGE ? (int32_t) unsigned_delta - (int32_t) ROCKETNET_MESSAGE_NUMBER_RANGE : (int32_t) unsigned_delta;
+}
+
 // the CONFIG control record (standard/MESSAGES.md m11)
 
 #define ROCKETNET_MESSAGE_CONTROL_CONFIG                    1

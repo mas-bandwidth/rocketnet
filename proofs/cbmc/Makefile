@@ -16,7 +16,8 @@
 #                      over the full domain (with valid per-partition
 #                      witnesses), then proves each partition with its
 #                      intended-failure reachability control.
-#   reconstruct        proved: proof_reconstruct_sequence.c, unwind 1:
+#   reconstruct        proved: proof_reconstruct_sequence.c, unwind 1, on
+#                      sdk/rocketnet_protocol.cpp and sdk/rocketnet_message.h:
 #                      - rocketnet_reconstruct_near (k=32, 2^32 <= expected <
 #                        2^64 - 2^32): keeps wire low 32 bits, |result -
 #                        expected| <= 2^31, round-trips every in-window value
@@ -24,11 +25,11 @@
 #                      - rocketnet_reconstruct_sequence (reference =
 #                        highest_opened + 1, 2^32 - 1 <= highest_opened <
 #                        2^64 - 2^32 - 1): same claims.
-#                      - rocketnet_reconstruct_u24 (k=24 signed half-range,
-#                        2^23 <= reference <= 2^64 - 2^23): keeps wire low 24
-#                        bits, |result - reference| <= 2^23, round-trips every
-#                        in-window value (tie at 2^23 goes to the lower
-#                        candidate).
+#                      - rocketnet_message_u24_delta (k=24 signed half-range,
+#                        2^23 <= reference <= 2^64 - 2^23): reference + delta
+#                        keeps wire low 24 bits, |result - reference| <= 2^23,
+#                        round-trips every in-window value (tie at 2^23 goes
+#                        to the lower candidate).
 #   replay-far         proved: harness_replay_far in proof_replay_advance.c,
 #                      unwind 65, sequence - highest_opened >= 4096: a delta of
 #                      at least 4096 clears every word, then sets the new
@@ -36,9 +37,13 @@
 #                      itself, which the harness includes.
 #
 # `ack-run-bound-8`, `ack-run-full-4096`, and `ack-run-negative-control`
-# use ESBMC on the current C++ leaf in sdk/rocketnet_ack.cpp. They remain
-# explicit targets until their exact-head results are recorded in
-# full-bounds-results.md.
+# use ESBMC on the current C++ leaf in sdk/rocketnet_ack.cpp. They are on no
+# list here: the run-8 instance exhausts 48 GB (INVENTORY.md records the
+# measurements). `ack-run-bound-8` and `ack-run-negative-control` run each
+# night on studio (512 GB) by .github/workflows/nightly-ack-proof.yml, on an
+# ESBMC built from pinned source (tools/build_pinned_esbmc.sh), with
+# ACK_RUN_MEMORY_KB and ACK_RUN_TIMEOUT raised. run_bounded.sh applies both
+# limits on Linux and macOS.
 
 CBMC ?= cbmc
 
@@ -77,7 +82,9 @@ XDP_FRAME_SIZE := $(call deployed_literal,ROCKETNET_XDP_FRAME_SIZE,rocketnet_con
 #                      no byte past the given length. An accepted holdable
 #                      record or block has its ring span inside
 #                      receive_message_buffer_bytes. A refused payload yields no
-#                      record. The fixed-size config body reader refuses a
+#                      record. The limits are symbolic over every value the
+#                      configuration accepts (W and B up to 1 << 20,
+#                      max_message_bytes up to ROCKETNET_MAX_MESSAGE_BYTES). The fixed-size config body reader refuses a
 #                      short buffer.
 #   xdp-free-list      proved: proof_xdp_free_list.c, unwind 5, capacity 3,
 #                      four push/pop steps. Push refuses a full list, a
@@ -180,9 +187,11 @@ replay-far: proof_replay_advance.c
 	$(CBMC) $(CBMC_FLAGS) --unwind $(REPLAY_UNWIND) -I$(SDK) \
 	    --function harness_replay_far proof_replay_advance.c
 
+RECONSTRUCT_FLAGS = -DNDEBUG -I$(SDK) -I$(SDK)/../sodium
+
 reconstruct: proof_reconstruct_sequence.c
 	@echo "reconstruct bound 32-bit and 24-bit wire half-ranges deployed ROCKETNET_REPLAY_WINDOW_BITS=$(REPLAY_WINDOW_BITS)"
-	$(CBMC) $(CBMC_FLAGS) --unwind 1 proof_reconstruct_sequence.c
+	$(CBMC) $(CBMC_FLAGS) --unwind 1 $(RECONSTRUCT_FLAGS) proof_reconstruct_sequence.c
 
 ESBMC ?= esbmc
 ACK_RUN_SOURCE = $(CURDIR)/proof_ack_apply_run.c
@@ -192,33 +201,45 @@ ACK_RUN_FLAGS = --std c++17 --z3 --overflow-check --ub-shift-check \
 ACK_RUN_TIMEOUT ?= 1800
 ACK_RUN_MEMORY_KB ?= 16000000
 
+# Loop 0 initializes at most ACK_RUN_BOUND records. A named limit avoids
+# expanding this harness loop to the larger production-loop limit. Keep
+# ESBMC's unwinding assertions enabled so an insufficient limit stays HOLD.
+# The static endpoint's send times are zero, initialization only writes zero,
+# and apply_run never changes them. With time=-1, its sample>=0 RTT branch
+# is unreachable; limit that unentered loop to 1 in this harness only.
+# In the bound-eight instance, each linear segment spans at most two bitmap
+# words and a masked word contains at most eight selected bits. Keep these
+# limits off the full-window instance. Quote the names: the template has <.
+ACK_RUN_SMALL_UNWINDS = harness_ack_apply_run:0:9,rocketnet_ack.cpp@rocketnet_ack_stats_rtt_write:0:1,rocketnet_ack.cpp@rn_bitmap_range_popcount:0:3,rocketnet_ack.cpp@rn_bitmap_walk_bits_desc<:0:9,rocketnet_ack.cpp@rn_bitmap_walk_bits_desc<:1:3
+
 define run_ack_proof
 	@command -v $(ESBMC) >/dev/null || { echo "$(1): $(ESBMC) not on PATH" >&2; exit 1; }; \
 	work=$$(mktemp -d); \
 	trap 'rm -rf "$$work"' EXIT HUP INT TERM; \
 	printf '#include "%s"\n' "$(ACK_RUN_SOURCE)" > "$$work/proof.cpp"; \
 	status=0; \
-	( ulimit -v $(ACK_RUN_MEMORY_KB); \
-	  timeout $(ACK_RUN_TIMEOUT) $(ESBMC) $(ACK_RUN_FLAGS) --unwind $(3) \
+	$(CURDIR)/run_bounded.sh $(ACK_RUN_MEMORY_KB) $(ACK_RUN_TIMEOUT) \
+	  $(ESBMC) $(ACK_RUN_FLAGS) --unwind $(3) \
+	    --unwindsetname '$(4)' \
 	    -DACK_RUN_BOUND=$(2) --function harness_ack_apply_run \
-	    "$$work/proof.cpp" ) > "$$work/output.log" 2>&1 || status=$$?; \
+	    "$$work/proof.cpp" > "$$work/output.log" 2>&1 || status=$$?; \
 	cat "$$work/output.log"; \
 	if [ $$status -eq 124 ]; then echo "$(1) HOLD timeout after $(ACK_RUN_TIMEOUT)s"; exit 1; fi; \
 	if [ $$status -eq 137 ] || grep -qi 'out of memory' "$$work/output.log"; then echo "$(1) HOLD out of memory"; exit 1; fi; \
 	if grep -q 'UNKNOWN' "$$work/output.log"; then echo "$(1) HOLD UNKNOWN"; exit 1; fi; \
 	if grep -A3 '^Violated property' "$$work/output.log" | grep -q 'unwinding assertion'; then echo "$(1) HOLD unwinding assertion failed"; exit 1; fi; \
 	if [ $$status -eq 0 ] && grep -q '^VERIFICATION SUCCESSFUL' "$$work/output.log"; then \
-	  echo "$(1) VERIFICATION SUCCESSFUL bound=$(2) unwind=$(3)"; \
+	  echo "$(1) VERIFICATION SUCCESSFUL bound=$(2) unwind=$(3) named-unwinds=$(4)"; \
 	else \
-	  echo "$(1) HOLD exit=$$status bound=$(2) unwind=$(3)"; exit 1; \
+	  echo "$(1) HOLD exit=$$status bound=$(2) unwind=$(3) named-unwinds=$(4)"; exit 1; \
 	fi
 endef
 
 ack-run-bound-8: proof_ack_apply_run.c esbmc_shim.h
-	$(call run_ack_proof,ack-run-bound-8,8,65)
+	$(call run_ack_proof,ack-run-bound-8,8,65,$(ACK_RUN_SMALL_UNWINDS))
 
 ack-run-full-4096: proof_ack_apply_run.c esbmc_shim.h
-	$(call run_ack_proof,ack-run-full-4096,$(REPLAY_WINDOW_BITS),4097)
+	$(call run_ack_proof,ack-run-full-4096,$(REPLAY_WINDOW_BITS),4097,harness_ack_apply_run:0:4097)
 
 ack-run-negative-control: proof_ack_apply_run.c esbmc_shim.h
 	@command -v $(ESBMC) >/dev/null || { echo "ack-run-negative-control: $(ESBMC) not on PATH" >&2; exit 1; }; \
@@ -226,10 +247,11 @@ ack-run-negative-control: proof_ack_apply_run.c esbmc_shim.h
 	trap 'rm -rf "$$work"' EXIT HUP INT TERM; \
 	printf '#include "%s"\n' "$(ACK_RUN_SOURCE)" > "$$work/proof.cpp"; \
 	status=0; \
-	( ulimit -v $(ACK_RUN_MEMORY_KB); \
-	  timeout $(ACK_RUN_TIMEOUT) $(ESBMC) $(ACK_RUN_FLAGS) --unwind 65 \
+	$(CURDIR)/run_bounded.sh $(ACK_RUN_MEMORY_KB) $(ACK_RUN_TIMEOUT) \
+	  $(ESBMC) $(ACK_RUN_FLAGS) --unwind 65 \
+	    --unwindsetname '$(ACK_RUN_SMALL_UNWINDS)' \
 	    -DACK_RUN_BOUND=8 -DACK_NEGATIVE_CONTROL=1 \
-	    --function harness_ack_apply_run "$$work/proof.cpp" ) \
+	    --function harness_ack_apply_run "$$work/proof.cpp" \
 	    > "$$work/output.log" 2>&1 || status=$$?; \
 	cat "$$work/output.log"; \
 	if [ $$status -eq 124 ]; then echo "ack-run-negative-control HOLD timeout after $(ACK_RUN_TIMEOUT)s"; exit 1; fi; \
@@ -240,7 +262,7 @@ ack-run-negative-control: proof_ack_apply_run.c esbmc_shim.h
 	   grep -q '^VERIFICATION FAILED' "$$work/output.log" && \
 	   grep -q 'negative control reaches the production ACK operation' "$$work/output.log" && \
 	   grep -Eq '\*\* 1 of [0-9]+ properties failed' "$$work/output.log"; then \
-	  echo "ack-run-negative-control EXPECTED FAILURE"; \
+	  echo "ack-run-negative-control EXPECTED FAILURE bound=8 unwind=65 named-unwinds=$(ACK_RUN_SMALL_UNWINDS)"; \
 	else \
 	  echo "ack-run-negative-control HOLD: expected assertion did not fail (exit=$$status)"; exit 1; \
 	fi
@@ -298,7 +320,7 @@ replay-far-reachability: proof_replay_advance.c
 	$(call run_reachability,replay-far,$(REPLAY_UNWIND),-I$(SDK) -DREPLAY_FAR_REACHABILITY=1 --function harness_replay_far proof_replay_advance.c,,replay-far reachability control)
 
 reconstruct-reachability: proof_reconstruct_sequence.c
-	$(call run_reachability,reconstruct,1,-DREACHABILITY_CONTROL=1 proof_reconstruct_sequence.c,,reconstruct reachability control)
+	$(call run_reachability,reconstruct,1,$(RECONSTRUCT_FLAGS) -DREACHABILITY_CONTROL=1 proof_reconstruct_sequence.c,,reconstruct reachability control)
 
 read-write-reachability: proof_read_write.c
 	$(call run_reachability,read-write,9,-I$(SDK) -DREACHABILITY_CONTROL=1 proof_read_write.c,,read-write reachability control)

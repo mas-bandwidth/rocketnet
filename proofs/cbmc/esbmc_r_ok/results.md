@@ -112,3 +112,59 @@ VERIFICATION FAILED
 | `connect_token` / `harness_verify_signed_connect_data` | `VERIFICATION SUCCESSFUL` | 12 / 12 | 2 s | `PROOF_R_OK(m, mlen + 1)` | `VERIFICATION FAILED` (`1 of 12 failed`) |
 | `connect_token` / `harness_private_consistent` | `VERIFICATION SUCCESSFUL` | 36 / 36 | 2 s | `private_data[ROCKETNET_PRIVATE_BLOCK_BYTES - 1]` | `VERIFICATION FAILED` |
 | `connect_token` / `harness_connect_token_identifier` | `VERIFICATION SUCCESSFUL` | 10 / 10 | 2 s | `PROOF_W_OK(out, outlen + 1)` | `VERIFICATION FAILED` |
+
+## Nightly target
+
+`make -C proofs/cbmc proofs-esbmc_r_ok` (esbmc_r_ok/proof.mk, on the nightly
+list) runs both controls in C and in C++17 mode. The reproducer must verify;
+the planted overrun must fail exactly one property, the planted one. On
+vision, ESBMC 8.5.0, at a26abaf8:
+
+```
+repro_r_ok_symbolic (c) VERIFICATION SUCCESSFUL; ** 0 of 9 properties failed, 9 passed
+planted_oob (c) EXPECTED FAILURE; ** 1 of 5 properties failed, 1 passed, 3 not checked
+repro_r_ok_symbolic (cpp) VERIFICATION SUCCESSFUL; ** 0 of 9 properties failed, 9 passed
+planted_oob (cpp) EXPECTED FAILURE; ** 1 of 5 properties failed, 1 passed, 3 not checked
+```
+
+With the shim's extent check widened by one byte
+(`n <= sz - uoff + 1`), the planted overrun passes and the target fails:
+
+```
+planted_oob (c) HOLD: the planted overrun did not fail alone (exit=0); ** 0 of 5 properties failed, 5 passed
+planted_oob (cpp) HOLD: the planted overrun did not fail alone (exit=0); ** 0 of 5 properties failed, 5 passed
+make: *** [esbmc_r_ok/proof.mk:15: proofs-esbmc_r_ok] Error 1
+```
+
+## Native continuation controls (2026-11-01)
+
+At `ffe88b3db18ba2b3650925980d609cf49826b526`, the actual
+`proofs-esbmc_r_ok` target passed on intel (Linux x86_64) in both C and
+C++17, using ESBMC 8.5.0 executable SHA-256
+`d314db72d213859d6cd1cf9045c227489a817cb133dc14d390a5e2663c31ca0a`.
+The pinned Darwin build passed the same four controls. Those earlier
+results are also recorded in `../message_read_max/results.md`.
+
+The target was rerun on Studio (Darwin arm64) against the immutable type-9
+integration `59752f6f4878360534f03ef7112a27e09013e9ca`. The exact
+ESBMC 8.5.0 executable SHA-256 was
+`07d695c150bf7a90ee781b18d1dee17878a6c48ec3592b00aebcef918f0709cd`,
+built by `tools/build_pinned_esbmc.sh` from the pinned v8.5 archive
+(SHA-256 `61a240ca75cccbd037292d4921b7da01bf12fef0ae760401d3284a3a8a17cff3`).
+
+| Mode | Valid slices | Planted one-byte overrun |
+| --- | --- | --- |
+| C | 0/9 failed; VERIFICATION SUCCESSFUL | 1/5 failed; EXPECTED FAILURE |
+| C++17 | 0/9 failed; VERIFICATION SUCCESSFUL | 1/5 failed; EXPECTED FAILURE |
+
+The target exited zero. Each planted run failed only the named overrun;
+ESBMC reported one passed and three not-checked properties after that
+failure. This is the expected control outcome, not a claim that those
+three properties were independently proved.
+
+The shim is byte-identical between the earlier continuation and this
+integration: SHA-256
+`834a6a3775ef5ac0d25d3e50b64c8189e50f8eab86a822815eee1ff951f724cf`.
+The Darwin-only `std::isnan` import and the allocation-extent checks remain
+unchanged. These results validate the compatibility shim, not the ACK
+operation; the ACK controls and positive proof remain HOLD.
