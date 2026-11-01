@@ -184,8 +184,8 @@ client ceiling; see [Memory and capacity](MEMORY.md#maximum-clients).
 
 The server process batch `ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE`
 (`sdk/rocketnet_constants.h`, 16000 by default) bounds packets exposed for
-protocol processing. It does not bound all work spent discarding datagrams
-before that batch is returned; see the limitations below.
+protocol processing. Datagrams discarded before that batch is returned are
+bounded per receive call by the read budget below.
 
 | Transport | Send budget | Receive capacity |
 | --- | --- | --- |
@@ -198,7 +198,9 @@ before that batch is returned; see the limitations below.
 | iocp | 2048 (`ROCKETNET_IOCP_SEND_QUEUE_SIZE`) | 4096 queue (`ROCKETNET_IOCP_RECEIVE_QUEUE_SIZE`) |
 | rio | 2048 per phase (`ROCKETNET_RIO_SEND_QUEUE_SIZE`) | 4096 posted receives (`ROCKETNET_RIO_RECEIVES`) |
 
-### Current staging and drain limitations
+<a id="current-staging-and-drain-limitations"></a>
+
+### Staging and drain bounds
 
 GSO's three send banks are shared across all sockets. Only its current
 producer bank can be filled; the transmit worker consumes published banks.
@@ -226,20 +228,26 @@ never retires a bank of disconnect packets unsent. A custom transport without
 `send_room` is treated as unbounded; a start it refuses ends that update's
 drain, and the bursts wait for the next.
 
-The POSIX portable receive helpers, Darwin msgx receive pump, and Linux GSO
-server receive worker count retained records rather than every discarded
-datagram. Sustained empty or otherwise rejected datagrams can keep a drain
-running, delaying publication of valid packets already read and delaying
-worker shutdown. Short batches, an empty socket, or a full retained-packet
-buffer normally end the pass. Error retries have a separate finite budget in
-the portable/msgx helpers; invalid datagrams do not consume it. The Linux GSO
-client's plain fallback also uses the affected helper; its GRO path has a
-skip budget. Treat the receive capacities above as storage limits, not a
-worst-case worker-time or shutdown-time guarantee under such traffic.
-
-These are implementation limitations in the current source, not changes to
-the intended bounded-work and fairness contracts. Runtime corrections and
-regression coverage are separate from this documentation.
+The platform receive helpers spend one read of a fixed budget for each
+datagram, kept or discarded: a zero-length datagram, a refused source, a
+weather errno (POSIX) or a reset status (Windows) spends a read as a kept
+datagram does, and the call returns when the budget is spent. A batch call's
+budget is its `max_packets`; a single-packet call's is `ROCKETNET_PLATFORM_RECEIVE_READS`
+(64), on the POSIX helpers, the Darwin msgx pump and its per-packet arm, the
+generic batch pump and the Windows per-packet loop (`sdk/rocketnet_platform.cpp`).
+The Linux GSO server worker's drain (`rocketnet_server_gso_drain`,
+`sdk/rocketnet_server_gso_linux.cpp`) counts each message and interrupted call
+against `ROCKETNET_GSO_RECV_QUEUE_SIZE` (4096). It checks that threshold before
+each receive batch; the final batch can take the count past it by at most
+`ROCKETNET_GSO_RECV_BATCH - 1` (63).
+The Linux GSO client's plain fallback uses the platform helpers; its GRO path
+counts skipped datagrams against `max_packets` and weather errnos against
+their own retry budget (`sdk/rocketnet_client_gso_linux.cpp`). These limits
+prevent a stream of empty or rejected datagrams from keeping a drain running
+indefinitely before publication or a quit test; they do not establish a
+worst-case worker-time or shutdown-time bound. The portable receive worker's
+model reads one datagram per step against its capacity
+(`proofs/tla/RNPortableRx.tla`, `ReadBudget`).
 
 ## UDP coalescing
 
@@ -865,7 +873,7 @@ for the next update. In-place unreliable writes use only surplus capacity above
 a complete round of connected clients; otherwise they join the queue so application call order cannot
 starve another connection or that connection's reliable work. Control packets
 use the transport's separate send path. A staged transport reports its own
-send room as the capacity ([above](#current-staging-and-drain-limitations)),
+send room as the capacity ([above](#staging-and-drain-bounds)),
 so the same rotation applies to it; a custom staged transport without
 `send_room` reports none and is not covered.
 

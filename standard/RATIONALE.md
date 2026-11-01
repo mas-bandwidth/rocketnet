@@ -1942,8 +1942,13 @@ later packet. Resend delay follows the measured round trip, with a fixed additiv
 margin, an optional configured floor and no exponential backoff, because a game
 connection has a bounded lifetime: backing off would make the last seconds of a lossy
 connection slower than the first, while a steady rate converges as soon as the path
-recovers. The send budget is a rate in elapsed time, not a rate per update. Update
-frequency still affects when eligible work is sent, and the finite bucket depth caps
+recovers. Until the sender's own first sample, the connection's measured round trip
+is taken as that sample: the connection layer has a round trip from the first
+keep-alive it sees acknowledged, and a record lost on its first send would otherwise
+wait the whole initial delay, which on a lossy path leaves a reliable record only a
+few sends before the reliable timeout. The initial delay remains for the interval
+before any round trip is known. The send budget is a rate in elapsed time, not a rate
+per update. Update frequency still affects when eligible work is sent, and the finite bucket depth caps
 what accumulates between updates.
 
 <a id="m10"></a>

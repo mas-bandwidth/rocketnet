@@ -38,10 +38,6 @@
    :text "Glenn ruled remove (audit 13). Branch rowan/remove-type9-fragmentation at 0689412d: unreachability confirmed; the code, config field, status code, 41 counters, standard sections and the model's fragment half are gone; server required_memory at 1000 clients drops 379 MB and the client's from 29.3 MB to 20.3 MB. Owed: a full fleet run at the head; five one-line negative controls; timing the split lock-in sweep under the sanitizers; a Windows light-profile ceiling measurement; the fragment text left in proofs/tla/Link.tla (editing it pushes MCRNChannel past the 110 s TLC budget). Rebase onto main (conflicts with the counter renumbering)."
    :date "2026-10-31" :origin "Audit item 13; Glenn, 2026-10-31")
 
-  (item "resend-seeded-rtt" :group "finish" :area "rocketnet"
-   :title "Seed the message resend delay from the measured RTT"
-   :text "The two channels nightly seeds that fail every run (4879047, 4879943) time out because the message layer waits its 2000 ms default while the transport has already measured RTT. Branch rowan/resend-seeded-rtt at 511ead80: works on macOS, TLC and standard m9.2 updated. Owed: diagnose the Linux test_light_profile_server_1000_required_memory failure; the full nightly seed range; re-measure the ordered stream's completion multiple; squash the WIP commits."
-   :date "2026-10-31" :origin "Red channels nightly")
 
   (item "size-by-config" :group "finish" :area "rocketnet"
    :title "Size per-server arrays from the configured max_clients"
@@ -63,10 +59,6 @@
    :text "Audit 66. Branch rowan/model-clientkeys at 5bbf6e7a: the model is done. Owed: the clientconnection group's RUNS.tsv on a quiet, fast Linux host (MCClientConnectionReachSFirstkind runs 117-132 s on captain against the 110 s budget, 50 s on Linux)."
    :date "2026-10-31" :origin "Audit item 66")
 
-  (item "request-one-hash" :group "finish" :area "rocketnet"
-   :title "One address hash per connection request"
-   :text "Audit 97. Branch rowan/sdkfu-request-one-hash at d3c2edfb: the resend shape is 15% faster (120.6 to 102.8 ns per request on intel). Owed: a macOS unit run; put the numbers in the commit."
-   :date "2026-10-31" :origin "Audit item 97")
 
   (item "live-matrix-flake" :group "finish" :area "tests"
    :title "Live message matrix: a late probe copy counts as its probe"
@@ -89,15 +81,7 @@
 
 
 
-  (item "test-737-second-address" :group "audit-remaining" :area "tests"
-   :title "A create test that fails on second_public_address alone"
-   :text "The whole-config create test goes red under the old truncation only because loopback_hub is also cut off."
-   :date "2026-10-31" :origin "#737 follow-on")
 
-  (item "stale-drain-text" :group "audit-remaining" :area "docs"
-   :title "Drain limitation text after #740"
-   :text "docs/CLIENT-IO.md and TRANSPORT-INTERNALS.md 'current staging and drain limitations' still describe the drain bound #740 fixed."
-   :date "2026-10-31" :origin "#740 follow-on")
 
   (item "max-channels-cmake" :group "audit-remaining" :area "build"
    :title "ROCKETNET_MAX_CHANNELS CMake option"

@@ -11,6 +11,11 @@
 (* are all that fit before the timeout at 10 s, three where four are       *)
 (* owed.  It passes ConfigAccepted, so the validation rule alone does not  *)
 (* keep the property; it needs the delay without back-off.                 *)
+(* MCRNResendTimingSeeded.cfg is the seeded start at the current defaults  *)
+(* (2 s initial and maximum delay, the transport's round trip reported at  *)
+(* 200 ms giving a 300 ms delay) and MCRNResendTimingBrokenUnseeded.cfg    *)
+(* its reversed witness, the transport's round trip ignored: it must fail  *)
+(* SeededGapBounded.                                                       *)
 (***************************************************************************)
 EXTENDS RNResendTiming
 =============================================================================

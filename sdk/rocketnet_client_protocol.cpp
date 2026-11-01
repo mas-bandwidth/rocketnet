@@ -1752,6 +1752,17 @@ void rocketnet_client_protocol_disconnect( struct rocketnet_client_protocol_t * 
         rocketnet_client_connection_reset( client );
 }
 
+double rocketnet_client_protocol_rtt( const struct rocketnet_client_protocol_t * client )
+{
+    rocketnet_assert( client );
+
+    // the ack endpoint publishes its rtt, the minimum retained first-ack
+    // sample in milliseconds (0 while there is none), on every block that
+    // newly acks; the connection's reset clears it
+
+    return (double) client->ack.rtt / 1000.0;
+}
+
 void rocketnet_client_protocol_accept_payload( struct rocketnet_client_protocol_t * client, uint64_t sequence )
 {
     if ( !sequence || client->state != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED ||
