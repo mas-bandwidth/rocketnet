@@ -316,9 +316,8 @@ peak before create, including the largest planned built-in transport in the
 configured ladder. Query the exact build and configuration for its requirement;
 a 10000-client server can set lighter per-client limits (send and receive
 buffers, queues, windows, receipts and reassembly slots) for its game.
-A build for more clients also carries larger fixed per-server tables (the
-receive arrays and payload batches above), about 0.6 GB more at 10000 whatever
-the server's `max_clients`.
+A build for more clients adds nothing to a smaller server: the receive arrays
+and payload batches above are sized from the server's own `max_clients`.
 
 ## History memory budget
 

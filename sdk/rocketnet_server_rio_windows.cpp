@@ -754,7 +754,7 @@ static bool rocketnet_rio_sized_layout( int max_clients, rocketnet_rio_sized_lay
     layout->process_packet_data = rocketnet_carve( carve, process, sizeof( uint8_t * ) );
     for ( int i = 0; i < ROCKETNET_RIO_RECEIVE_BANKS; ++i )
     {
-        layout->bank_data[i] = rocketnet_carve( carve, receives, ROCKETNET_FRAME_STRIDE );
+        layout->bank_data[i] = rocketnet_carve( carve, receives, (uint64_t) ROCKETNET_FRAME_STRIDE );
         layout->bank_from[i] = rocketnet_carve( carve, receives, sizeof( rocketnet_address_t ) );
         layout->bank_packet_bytes[i] = rocketnet_carve( carve, receives, sizeof( int ) );
     }
@@ -787,7 +787,7 @@ static void rocketnet_rio_sized_bind( rocketnet_server_rio_t * rio, uint8_t * ba
     for ( int i = 0; i < ROCKETNET_RIO_RECEIVE_BANKS; ++i )
     {
         rocketnet_rio_bank_t * bank = &rio->banks[i];
-        bank->data = (uint8_t ( * )[ROCKETNET_FRAME_STRIDE]) ( base + layout->bank_data[i] );
+        bank->data = ( uint8_t( * )[ROCKETNET_FRAME_STRIDE] )( base + layout->bank_data[i] );
         bank->from = (rocketnet_address_t *) ( base + layout->bank_from[i] );
         bank->packet_bytes = (int *) ( base + layout->bank_packet_bytes[i] );
         bank->num_packets = 0;
@@ -1637,8 +1637,7 @@ static rocketnet_server_rio_t * rocketnet_rio_test_fixture()
     if ( base )
         rocketnet_rio_sized_bind( rio, base, &sized );
     rocketnet_assert( !base || ( rio->send_queue_size == ROCKETNET_RIO_TEST_SEND_QUEUE_SIZE && rio->receives == ROCKETNET_RIO_TEST_RECEIVES ) );
-    ok = ok && base && rocketnet_rio_layout_plan( rio->send_frames, rio->receives,
-                                                  ROCKETNET_FRAME_STRIDE, ROCKETNET_RIO_RECEIVE_SLICE_BYTES, (int) sizeof( SOCKADDR_INET ), 4096, &rio->layout );
+    ok = ok && base && rocketnet_rio_layout_plan( rio->send_frames, rio->receives, ROCKETNET_FRAME_STRIDE, ROCKETNET_RIO_RECEIVE_SLICE_BYTES, (int) sizeof( SOCKADDR_INET ), 4096, &rio->layout );
     rio->region = ok ? (uint8_t *) rocketnet_rio_test_zeroed( (size_t) rio->layout.total_bytes ) : NULL;
     ok = ok && rio->region && rocketnet_platform_mutex_create( &rio->mutex );
     rio->wake = ok ? CreateEventW( NULL, FALSE, FALSE, NULL ) : NULL;

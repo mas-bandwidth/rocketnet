@@ -935,7 +935,7 @@ static bool rocketnet_server_socket_sized_create( rocketnet_server_socket_t * se
     view->from = (rocketnet_address_t *) ( base + layout.process_from );
     view->packet_bytes = (int *) ( base + layout.process_packet_bytes );
     view->packet_data = (uint8_t **) ( base + layout.process_packet_data );
-    server_socket->process_eth = (uint8_t ( * )[ETH_ALEN]) ( base + layout.process_eth );
+    server_socket->process_eth = ( uint8_t( * )[ETH_ALEN] )( base + layout.process_eth );
     return true;
 }
 

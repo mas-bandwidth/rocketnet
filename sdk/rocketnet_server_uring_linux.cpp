@@ -681,7 +681,7 @@ static bool rocketnet_server_uring_banks_layout( int bank_size, rocketnet_server
     {
         layout->from[i] = rocketnet_carve( carve, (uint64_t) bank_size, sizeof( rocketnet_address_t ) );
         layout->packet_bytes[i] = rocketnet_carve( carve, (uint64_t) bank_size, sizeof( int ) );
-        layout->packet_data[i] = rocketnet_carve( carve, (uint64_t) bank_size, ROCKETNET_FRAME_STRIDE );
+        layout->packet_data[i] = rocketnet_carve( carve, (uint64_t) bank_size, (uint64_t) ROCKETNET_FRAME_STRIDE );
     }
     layout->bytes = carve.bytes;
     return !carve.failed && carve.bytes <= SIZE_MAX;
@@ -733,7 +733,7 @@ static bool rocketnet_server_uring_buffers_create( struct rocketnet_server_uring
         uring->banks[i].num_packets = 0;
         uring->banks[i].from = (rocketnet_address_t *) ( base + layout.from[i] );
         uring->banks[i].packet_bytes = (int *) ( base + layout.packet_bytes[i] );
-        uring->banks[i].packet_data = (uint8_t ( * )[ROCKETNET_FRAME_STRIDE]) ( base + layout.packet_data[i] );
+        uring->banks[i].packet_data = ( uint8_t( * )[ROCKETNET_FRAME_STRIDE] )( base + layout.packet_data[i] );
     }
     return true;
 }

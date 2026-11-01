@@ -1119,7 +1119,7 @@ static bool rocketnet_iocp_sized_layout( int max_clients, int workers, rocketnet
     {
         for ( int b = 0; b < ROCKETNET_IOCP_RECEIVE_BANKS; ++b )
         {
-            layout->bank_data[w][b] = rocketnet_carve( carve, receive, ROCKETNET_FRAME_STRIDE );
+            layout->bank_data[w][b] = rocketnet_carve( carve, receive, (uint64_t) ROCKETNET_FRAME_STRIDE );
             layout->bank_from[w][b] = rocketnet_carve( carve, receive, sizeof( rocketnet_address_t ) );
             layout->bank_packet_bytes[w][b] = rocketnet_carve( carve, receive, sizeof( int ) );
         }
@@ -1259,7 +1259,7 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
         for ( int bank = 0; bank < ROCKETNET_IOCP_RECEIVE_BANKS; ++bank )
         {
             rocketnet_iocp_receive_buffer_t * buffer = &worker->buffers[bank];
-            buffer->data = (uint8_t ( * )[ROCKETNET_FRAME_STRIDE]) ( base + layout.bank_data[i][bank] );
+            buffer->data = ( uint8_t( * )[ROCKETNET_FRAME_STRIDE] )( base + layout.bank_data[i][bank] );
             buffer->from = (rocketnet_address_t *) ( base + layout.bank_from[i][bank] );
             buffer->packet_bytes = (int *) ( base + layout.bank_packet_bytes[i][bank] );
             buffer->num_packets = 0;

@@ -396,7 +396,7 @@ static bool rocketnet_server_transport_layout( int max_clients, rocketnet_server
     rocketnet_carve( carve, 1, 4096 );
     layout->ring_info = rocketnet_carve( carve, ring, sizeof( rocketnet_server_payload_slot_info_t ) );
     rocketnet_carve( carve, 1, 4096 );
-    layout->ring_data = rocketnet_carve( carve, ring, ROCKETNET_FRAME_STRIDE );
+    layout->ring_data = rocketnet_carve( carve, ring, (uint64_t) ROCKETNET_FRAME_STRIDE );
     rocketnet_carve( carve, 1, 4096 );
     layout->ring_sends = rocketnet_carve( carve, ring, sizeof( rocketnet_platform_send_t ) );
     layout->ring_send_client_index = rocketnet_carve( carve, ring, sizeof( int ) );
@@ -446,8 +446,8 @@ static rocketnet_server_transport_t * rocketnet_server_transport_allocate( void 
     if ( !base )
         return NULL;
 
-    memset( base, 0, sizeof( rocketnet_server_transport_t ) );
-    rocketnet_server_transport_t * server_transport = new ( base ) rocketnet_server_transport_t;
+    // value-initialized: zeroed, then its default member initializers
+    rocketnet_server_transport_t * server_transport = new ( base ) rocketnet_server_transport_t();
 
     rocketnet_server_payload_ring_t * ring = &server_transport->payload_ring;
     ring->size = layout.ring_slots;
@@ -472,7 +472,7 @@ static rocketnet_server_transport_t * rocketnet_server_transport_allocate( void 
     receive->data = base + layout.receive_data;
 
     server_transport->disconnect_bursts = (rocketnet_server_disconnect_burst_t *) ( base + layout.disconnect_bursts_offset );
-    server_transport->disconnect_burst_keys = (uint8_t ( * )[ROCKETNET_KEY_BYTES]) ( base + layout.disconnect_burst_keys );
+    server_transport->disconnect_burst_keys = ( uint8_t( * )[ROCKETNET_KEY_BYTES] )( base + layout.disconnect_burst_keys );
     server_transport->disconnect_burst_capacity = layout.disconnect_bursts;
     server_transport->disconnect_burst_steady_cap = max_clients;
     memset( server_transport->disconnect_burst_keys, 0, (size_t) layout.disconnect_bursts * ROCKETNET_KEY_BYTES );

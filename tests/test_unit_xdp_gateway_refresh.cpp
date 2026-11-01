@@ -47,12 +47,12 @@ static struct rocketnet_xdp_reply_macs_t refresh_reply_macs;
 static struct rocketnet_xdp_reply_mac_entry_t refresh_reply_macs_entries[ROCKETNET_XDP_REPLY_MAC_DEFAULT_ENTRIES];
 
 // binds the table to its storage, sized as a default-config server sizes it,
-// and resets it with gateway_mac (NULL: none)
-static void refresh_reply_macs_bind( struct rocketnet_xdp_reply_macs_t * table, const uint8_t * gateway_mac )
+// and resets it with gateway (NULL: none)
+static void refresh_reply_macs_bind( struct rocketnet_xdp_reply_macs_t * table, const uint8_t * gateway )
 {
     rocketnet_unit_check( rocketnet_xdp_reply_macs_bind( table, refresh_reply_macs_entries, ROCKETNET_XDP_REPLY_MAC_DEFAULT_ENTRIES ) );
     rocketnet_unit_check( (int) table->mask + 1 == rocketnet_xdp_reply_mac_entries( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
-    rocketnet_xdp_reply_macs_reset( table, gateway_mac );
+    rocketnet_xdp_reply_macs_reset( table, gateway );
 }
 
 static const uint8_t old_gateway[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x01 };
