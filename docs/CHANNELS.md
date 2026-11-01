@@ -82,7 +82,10 @@ connection's memory, reliable window, and send budget.
 
 The resend delay starts at `message_resend_delay_initial_ms`, follows the RTT
 estimator, and stays within `message_resend_delay_min_ms` and
-`message_resend_delay_max_ms`. `reliable_message_timeout_ms` ends the connection
+`message_resend_delay_max_ms`. The estimator's first sample is the transport's
+measured round trip as soon as the transport has one, so a record lost on its
+first send is resent after a delay derived from the path rather than after the
+initial delay. `reliable_message_timeout_ms` ends the connection
 when its oldest unacknowledged reliable number has waited that long since its
 first send. It is not a deadline from `finish_message`: work waiting for its
 first send has no reliable-send timeout, and each fragment has its own first

@@ -41,7 +41,9 @@
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13997378 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Debug.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3109266437ULL )
+// The RTT reader added to the message link crosses the message object's
+// 64-byte head-block alignment, as measured on main, adding 64 bytes.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3109266501ULL )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14146994 )
 #endif // #if defined( _WIN32 )
 

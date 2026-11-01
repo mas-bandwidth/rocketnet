@@ -3717,6 +3717,14 @@ int rocketnet_client_transport_acked_packets( rocketnet_client_transport_t * cli
     return client_transport->protocol.num_acked;
 }
 
+double rocketnet_client_transport_rtt( rocketnet_client_transport_t * client_transport )
+{
+    if ( !rocketnet_api_null_guard( client_transport ) )
+        return 0.0;
+    rocketnet_assert( client_transport );
+    return rocketnet_client_protocol_rtt( &client_transport->protocol );
+}
+
 void rocketnet_client_transport_stats( rocketnet_client_transport_t * client_transport, struct rocketnet_client_transport_stats_t * stats )
 {
     if ( !rocketnet_api_null_guard( client_transport ) )

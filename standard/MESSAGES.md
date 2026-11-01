@@ -2769,6 +2769,13 @@ the smoothed RTT MUST then move 5 percent toward the new sample. The resend dela
 
 The values srtt and deviation, the converted clamp bounds and the result are
 in seconds. Division by 1000 is real-valued, not integer division.
+A sample is either the elapsed time of [m9.1 Acknowledgement mapping](#m9.1) or the
+connection's reported round-trip time of
+[RN-1 t15.5 Round-trip sampling](TRANSPORT.md#t15.5). While the sender has no
+sample, on each update in which the connection reports a nonzero round-trip
+time, after that update's acknowledgements and before its resends, the sender
+MUST take the reported value, converted to seconds, as its first sample. It
+MUST NOT take a reported round-trip time once it has a sample.
 Before the first sample, the resend delay MUST be
 `message_resend_delay_initial_ms / 1000` seconds, whose default is 2 seconds.
 The minimum defaults to 0, which applies no floor;

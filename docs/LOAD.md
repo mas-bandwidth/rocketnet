@@ -479,7 +479,7 @@ requirements to each configuration group:
     and 2048 slots in io_uring's send array. Extra receive queues do not
     multiply these capacities; sends past them, disconnect bursts included,
     spread across updates as the
-    [send room](TRANSPORT-INTERNALS.md#current-staging-and-drain-limitations)
+    [send room](TRANSPORT-INTERNALS.md#staging-and-drain-bounds)
     reports.
 - **Runtime memory budgets (`ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES`, `ROCKETNET_SERVER_MEMORY_BUDGET_BYTES`)**:
   - Set `ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES` or
