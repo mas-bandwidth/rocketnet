@@ -129,7 +129,7 @@ jobs:
             -machine s390-ccw-virtio \
             -cpu max \
             -accel tcg,thread=multi \
-            -m 4096 \
+            -m 49152 \
             -smp 4 \
             -display none \
             -serial file:"$WORK/serial.log" \
@@ -189,8 +189,13 @@ jobs:
           # TCG gives each case a fraction of a native CPU. Keep the Release
           # workloads unchanged, but opt their completion bounds into the
           # suites' stated 5x emulation scale.
-          # This guest has 4 GiB. Bare --parallel lets Make launch every
-          # translation unit at once; bound compiler concurrency, not run time.
+          # The 1000-client scale fixtures reserve about 36 GiB of sparse
+          # virtual plans while touching about 1 GiB. Give the guest 48 GiB
+          # of addressable RAM so its normal allocation policy accepts those
+          # plans; QEMU commits host pages on demand. Keep the suite RSS
+          # assertions and the guest memory policy unchanged.
+          # Bare --parallel launches every translation unit at once; keep
+          # compiler concurrency bounded independently of test run time.
           "${SSH[@]}" 'cd ~/src && cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS=-ffp-contract=off -DCMAKE_CXX_FLAGS="-ffp-contract=off -DROCKETNET_TEST_EMULATED=1" && cmake --build build --target test functional --parallel 2' 2>&1 | tee "$WORK/build.log"
           "${SSH[@]}" 'cd ~/src && readelf -h bin/test && readelf -h bin/functional && readelf -h bin/test | grep -F -q "big endian" && readelf -h bin/test | grep -F -q "IBM S/390"'
 
