@@ -394,6 +394,7 @@ MCRNPortableRxBrokenWakeFirst.cfg	MCRNPortableRx.tla	temporal	StopCompletes	chec
 MCRNPortableRxBrokenNoWake.cfg	MCRNPortableRx.tla	temporal	EveryDatagramDelivered	check	rnportablerx	required	-
 MCRNPortableRxBrokenUnboundedRead.cfg	MCRNPortableRx.tla	invariant	ReadBudget	check	rnportablerx	required	-
 MCRNRioWorker.cfg	MCRNRioWorker.tla	pass	-	check	rnrioworker	required	-
+MCRNRioWorkerThreeSends.cfg	MCRNRioWorker.tla	pass	-	check	rnrioworker	required	-
 MCRNRioWorkerReceiveLive.cfg	MCRNRioWorker.tla	pass	-	check	rnrioworker	required	-
 MCRNRioWorkerSendLive.cfg	MCRNRioWorker.tla	pass	-	check	rnrioworker	required	-
 MCRNRioWorkerTwoBanks.cfg	MCRNRioWorker.tla	pass	-	check	rnrioworker	required	-

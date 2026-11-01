@@ -474,6 +474,10 @@ void rocketnet_test_server_receive_1000_clients_256kbps_10hz()
     server_config.max_clients = max_clients;
     server_config.token_epoch_unix_seconds = 1700000000ULL;
     server_config.handshake_deadline_seconds = 30;
+    // This measures payload receive at 10 Hz after a synchronized 1000-client
+    // setup. Admit that burst within the unchanged token lifetime; separate
+    // handshake-budget tests pin the default 16 and its refusal behavior.
+    server_config.handshakes_per_update = max_clients;
     snprintf( server_config.transport, sizeof( server_config.transport ), "%s", "portable" );
 
     // each portable client holds a socket and wake descriptors: raise the

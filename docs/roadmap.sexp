@@ -90,11 +90,6 @@
    :text "Seen once the 1000-client xdp soak cell runs, with the host at load 170. Reproduce on a quiet host, then fix the cause."
    :date "2026-10-31" :origin "Audit item 41")
 
-  (item "low-tick-nightly" :group "quiet-host" :area "rocketnet"
-   :title "Low-tick nightly ends at 996 of 1000 connected"
-   :text "Reproduce on an idle Linux host with the per-client state output now in the nightly."
-   :date "2026-10-31" :origin "Audit item 42")
-
   (item "frame-budget-quiet" :group "quiet-host" :area "ci"
    :title "Confirm the frame-budget fix on amd-2/amd-3"
    :text "The ack statistics fix brings P=32 p99 from 212 to 59 us on hulk; confirm on the quiet runner through the nightly frame budget."
