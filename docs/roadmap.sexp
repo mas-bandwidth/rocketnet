@@ -51,12 +51,12 @@
 
   (item "tlc-timeout-debt" :group "proof-debt" :area "proofs"
    :title "Ten recorded TLC benchmark timeouts"
-   :text "The committed RUNS.tsv still records FAIL/124 at the existing 110-second limit for ClientConnection LArbitrary, LCrash, SNone, SAlternate, SBurst and SArbitrary; ReplayWindowMid; RNEndpointTwoWay and RNEndpointPartial; and SessionAcksLive. The existing TLC nightly retries each declared timeout-debt case and every stale-group case, once each, without rerunning healthy siblings solely because another case timed out. Another timeout fails the nightly and is not a proof. Fresh measured records require a reviewed commit; the workflow does not commit them automatically."
+   :text "The committed RUNS.tsv still records FAIL/124 at the existing 110-second limit for ClientConnection LArbitrary, LCrash, SNone, SAlternate, SBurst and SArbitrary; ReplayWindowMid; RNEndpointTwoWay and RNEndpointPartial; and SessionAcksLive. The existing TLC nightly retries each declared timeout-debt case and every stale-group case, once each, without rerunning healthy siblings solely because another case timed out. The nightly now runs without a project elapsed-time cap and preserves separate JSON evidence through the pinned engine; the bounded committed measurements remain unchanged. Failure, cancellation or resource exhaustion is not a proof. Fresh measured records require a reviewed commit; the workflow does not commit them automatically."
    :date "2026-11-01" :origin "proofs/tla/CASES.tsv and RUNS.tsv; existing TLC nightly; #833")
 
   (item "ack-proof-hold" :group "proof-debt" :area "proofs"
    :title "ACK run proof remains HOLD"
-   :text "The source-bound ACK run-eight proof and its negative control have no completed accepted result; the full retained-window proof is also not established. #797 landed with this HOLD explicitly retained. The existing Nightly ACK proof runs ack-run-bound-8 and ack-run-negative-control serially with pinned ESBMC on Studio, at 384 GiB and four hours per target. It requires VERIFICATION SUCCESSFUL and the intended EXPECTED FAILURE; memory exhaustion, timeout, UNKNOWN or an unwinding failure stays red. The full-4096 target is declared separately and is not run by that nightly. Do not infer a proof from observed loop cutoffs or make successful completion a new per-commit landing requirement."
+   :text "The source-bound ACK run-eight proof and its negative control have no completed accepted result; the full retained-window proof is also not established. #797 landed with this HOLD explicitly retained. The existing Nightly ACK proof runs ack-run-bound-8 and ack-run-negative-control serially with pinned ESBMC on Studio, at 384 GiB per target without a project elapsed-time cap. GitHub still imposes its five-day self-hosted job ceiling. It requires VERIFICATION SUCCESSFUL and the intended EXPECTED FAILURE; memory exhaustion, timeout, UNKNOWN or an unwinding failure stays red. The full-4096 target is declared separately and is not run by that nightly. Do not infer a proof from observed loop cutoffs or make successful completion a new per-commit landing requirement."
    :date "2026-11-01" :origin "proofs/cbmc/INVENTORY.md; .github/workflows/nightly-ack-proof.yml; #797")
 
   (item "windows-reflush" :group "audit-remaining" :area "rocketnet"
@@ -70,10 +70,10 @@
    :text "The page's exact byte figures go stale with every merge. Generate them, with a CI check that the page matches the generator."
    :date "2026-10-31" :origin "#721 follow-on")
 
-  (item "low-docs-standard-tests" :group "audit-remaining" :area "rocketnet"
-   :title "Low-severity docs, standard, tests and CI items"
-   :text "The low items under docs/, standard/, tests/, tools/, .github/, scripts/, CMakeLists.txt or sodium/ whose class is not defect: 94 95 96 108 120 127 132 138 140 141 143 144 146 147 148 149 157 158 159 160 161 167 177-185 198 200 201 202 217-227 230 231 284."
-   :date "2026-10-31" :origin "FABLE-AUDIT.md")
+  (item "audit-follow-on-proposals" :group "decisions" :area "tools"
+   :title "Optional audit follow-on proposals"
+   :text "The concrete low-severity docs, standard, test and tooling mismatches are repaired. Four audit suggestions introduce new requirements: 148 extends the make-jobs policy to cmake --build --parallel; 185 cross-checks each t8 field-table sum against its summary row; 223 adds in-loop protocol assertions to the structured receive fuzzer; 226 changes the socket-error loopback burst/deadline. Evaluate these separately; they are not unresolved violations of the existing gates."
+   :date "2026-11-01" :origin "FABLE-AUDIT.md items 148, 185, 223, 226; #835, #837, #838, #839")
 
   (item "xdp-receive-loss" :group "quiet-host" :area "rocketnet"
    :title "Loaded-host XDP receive loss report: not reproduced"
