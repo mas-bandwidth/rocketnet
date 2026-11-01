@@ -13,7 +13,7 @@
 # compilation, and is skipped.
 set -u
 
-files="Makefile benchmarks/Makefile .github/workflows/ci.yml .github/workflows/fuzz-nightly.yml .github/workflows/nightly.yml .github/workflows/nightly-soak.yml .github/workflows/release-check.yml"
+files="Makefile benchmarks/Makefile tests/fuzz/Makefile tools/fuzz_ndebug.sh .github/workflows/ci.yml .github/workflows/fuzz-nightly.yml .github/workflows/nightly.yml .github/workflows/nightly-soak.yml .github/workflows/release-check.yml"
 
 # clang-cl, by name or through a variable that names it
 # ("$ROCKETNET_FUZZ_CLANG_CL", "$CLANG_CL").
@@ -28,12 +28,19 @@ is_clang_cl()
 is_compiler()
 {
     local cmd="$1"
+    cmd="${cmd#\"}"
+    cmd="${cmd%\"}"
+    cmd="${cmd#\'}"
+    cmd="${cmd%\'}"
     is_clang_cl "$cmd" && return 0
+    if [[ "$cmd" =~ ^(.+)-[0-9]+$ ]]; then
+        cmd="${BASH_REMATCH[1]}"
+    fi
     # pull the last dash-delimited component so target-triple prefixes
     # (e.g. s390x-linux-gnu-g++) and paths (/usr/bin/clang++) still match
     local last="${cmd##*-}"
     case "$last" in
-        cc|cl|c++|cl.exe|clang|clang++|gcc|g++|'$(CC)'|'$(CXX)') return 0 ;;
+        cc|cl|c++|cl.exe|clang|clang++|gcc|g++|'$(CC)'|'$(CXX)'|'${CC}'|'${CXX}'|'$CC'|'$CXX') return 0 ;;
     esac
     return 1
 }
@@ -49,7 +56,7 @@ has_floor()
         return 1
     fi
     case "$1" in
-        *-ffp-contract=off*|*/fp:precise*|*'$(CFLAGS)'*|*'$(CXXFLAGS)'*) return 0 ;;
+        *-ffp-contract=off*|*/fp:precise*|*'$(CFLAGS)'*|*'$(CXXFLAGS)'*|*'$(FLAGS)'*) return 0 ;;
     esac
     return 1
 }
@@ -69,8 +76,13 @@ for f in $files; do
         case "$buf" in
             *\\) continue ;;
         esac
-        # strip leading whitespace; take the command word
+        # strip leading whitespace and optional YAML single-line `run:` prefix;
+        # take the command word
         line="${buf#"${buf%%[![:space:]]*}"}"
+        if [[ "$line" =~ ^-?[[:space:]]*run:[[:space:]]*(.+)$ ]]; then
+            line="${BASH_REMATCH[1]}"
+            line="${line#"${line%%[![:space:]]*}"}"
+        fi
         cmd="${line%%[[:space:]]*}"
         # cmake -D defines configure the toolchain; the actual compilation is
         # routed through the CMake target, which carries the floor PRIVATE.
@@ -96,9 +108,9 @@ for f in $files; do
     done < "$f"
 done
 
-# the shared CFLAGS/CXXFLAGS definitions themselves must carry the floor, so a
-# rule that expands $(CFLAGS) inherits it.
-for f in Makefile benchmarks/Makefile; do
+# the shared CFLAGS/CXXFLAGS/FLAGS definitions themselves must carry the floor,
+# so a rule that expands $(CFLAGS)/$(CXXFLAGS)/$(FLAGS) inherits it.
+for f in Makefile benchmarks/Makefile tests/fuzz/Makefile; do
     [ -f "$f" ] || continue
     while IFS= read -r line; do
         stript="${line#"${line%%[![:space:]]*}"}"
@@ -107,9 +119,9 @@ for f in Makefile benchmarks/Makefile; do
         # (`CFLAGS  ?= ...`), so match it explicitly; the old case patterns only
         # matched the operator flush against the name and let the spaced form
         # through unexamined.
-        if [[ "$stript" =~ ^(override[[:space:]]+)?(CFLAGS|CXXFLAGS)[[:space:]]*(\?=|\+=|=) ]]; then
+        if [[ "$stript" =~ ^(override[[:space:]]+)?(CFLAGS|CXXFLAGS|FLAGS)[[:space:]]*(\?=|\+=|=) ]]; then
             if ! has_floor "$line"; then
-                echo "$f: CFLAGS/CXXFLAGS missing -ffp-contract=off or /fp:precise: $line"
+                echo "$f: CFLAGS/CXXFLAGS/FLAGS missing -ffp-contract=off or /fp:precise: $line"
                 bad=1
             fi
         fi

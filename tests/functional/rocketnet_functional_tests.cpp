@@ -6520,6 +6520,12 @@ static void rocketnet_test_server_gso_wire_exchange( const char * /* test_name *
             rocketnet_server_gso_counters( gso, counters );
             rocketnet_check( counters[ROCKETNET_SERVER_GSO_COUNTER_GRO_BATCHES] > gro_before );
         }
+        else
+        {
+            rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE,
+                              "%s: loopback did not coalesce UDP_SEGMENT into GRO batch; skipping GRO_BATCHES check\n",
+                              case_name );
+        }
     }
 
     rocketnet_platform_socket_destroy( client_socket );

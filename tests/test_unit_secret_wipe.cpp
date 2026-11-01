@@ -164,8 +164,8 @@ static void test_client_token_keys_are_wiped_on_disconnect()
 }
 
 // ---------------------------------------------------------------------------
-// expected-fail: the automatic terminal paths that still leak the ephemeral
-// secret (model finding F4, fix card rnfix-client-terminal-states-wipe-their-secrets)
+// Automatic terminal-state transitions that must wipe the client handshake
+// ephemeral secret before entering the terminal state.
 // ---------------------------------------------------------------------------
 
 // The cookie-request timeout (-2): an attempt that never hears back from the
@@ -257,7 +257,7 @@ static void test_client_ephemeral_secret_wiped_on_denied()
 
 // The connection-request timeout (-3): reach sending-connection-request via
 // cookie, plant canary in the still-live ephemeral, let the per-state timeout
-// fire. This path still leaks (F4) so expected-fail names the fix card.
+// fire and verify the ephemeral secret is wiped.
 static void test_client_ephemeral_secret_wiped_on_connection_request_timeout()
 {
     struct rocketnet_counters_t counters;

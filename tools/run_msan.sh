@@ -13,12 +13,12 @@
 # `make && ./bin/test` is not a stale sanitizer build.
 #
 # Exit status: 0 when the run is clean, or when every finding is listed in
-# tools/msan_known.txt and every failed test carries the MSan exit code; 1
-# when a finding is not listed there, a test crashes or exits for any other
-# reason, a fatal MemorySanitizer ERROR appears in any process (its exit
-# code is 0 here, so the suite reads that case as passed), or the run stops
-# without a test fail line. A finding is the top
-# frame of a MemorySanitizer warning. Its origin trace is printed with it.
+# tools/msan_known.txt and every test passes; 1 when a finding is not listed
+# there, a test crashes or exits non-zero, a fatal MemorySanitizer ERROR
+# appears in any process (its exit code is 0 here, so the suite reads that
+# case as passed), or the run stops without a test fail line. A finding is
+# the top frame of a MemorySanitizer warning. Its origin trace is printed
+# with it.
 #
 # The C++ standard library is the MSan-instrumented libc++ for the active
 # clang, /opt/msan-libcxx-<clang++ -dumpversion>, built by
@@ -38,7 +38,6 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 build_dir=build-msan
-msan_exitcode=86
 # -O1, as MemorySanitizer's own documentation configures it: at -O0 every
 # libc++ element operation is an out-of-line call that pays for its origin
 # bookkeeping, and the suite's byte vectors made one case run 534 s on a Linux x64 bench
@@ -123,12 +122,11 @@ set +e
 status=$?
 set -e
 
-python3 - "$log" "$reports" "$known_file" "$status" "$PWD" "$msan_exitcode" << 'PY'
+python3 - "$log" "$reports" "$known_file" "$status" "$PWD" << 'PY'
 import glob, os, re, sys
 
-log_path, reports, known_file, status, root, exitcode = sys.argv[1:]
+log_path, reports, known_file, status, root = sys.argv[1:]
 status = int(status)
-exitcode = int(exitcode)
 root = root.rstrip("/") + "/"
 
 failed = []
@@ -143,7 +141,7 @@ if os.path.exists(log_path):
         parts = re.match(r"^(.*) (signal \d+|exceeded .+|exit \d+|wait failed)$", detail)
         if parts is None:
             failed.append((detail, ""))
-        elif parts.group(2) != "exit %d" % exitcode:
+        else:
             failed.append((parts.group(1), parts.group(2)))
 
 def shorten(line):

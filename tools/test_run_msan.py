@@ -10,7 +10,6 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 RUN_MSAN = REPO_ROOT / "tools" / "run_msan.sh"
 
-MSAN_EXITCODE = 86
 KNOWN_TOP = "known_frame tools/fixture.cpp:2:1"
 UNKNOWN_TOP = "unlisted_frame tools/fixture.cpp:1:1"
 
@@ -111,9 +110,9 @@ class RunMsanGateTest(unittest.TestCase):
         self.assertEqual(code, 1, output)
         self.assertIn("MSan: test run failed with status 133", output)
 
-    def test_msan_exit_code_with_known_findings_passes(self):
-        stdout = "check failed: test_random_bytes exit %d\n" % MSAN_EXITCODE
-        code, output = self.run_gate(stdout, 1, KNOWN_TOP)
+    def test_known_findings_with_zero_exit_passes(self):
+        stdout = "test_random_bytes\n*** ALL TESTS PASSED ***\n"
+        code, output = self.run_gate(stdout, 0, KNOWN_TOP)
         self.assertEqual(code, 0, output)
         self.assertIn("(all known)", output)
 

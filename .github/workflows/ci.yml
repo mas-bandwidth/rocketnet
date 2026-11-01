@@ -2979,6 +2979,11 @@ jobs:
           grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
           python3 tools/check_tla_records.py
 
+      - name: Test and check the fuzz regression corpus
+        run: |
+          python3 tools/check_fuzz_regressions.py --selftest
+          python3 tools/check_fuzz_regressions.py
+
       - name: Test the unit-case coverage checker's verdicts
         shell: bash
         run: |
