@@ -404,7 +404,7 @@ jobs:
 
       # Driver selection is runtime now (#106), so one build serves the whole
       # matrix. ./bin/test is the unit suite: no socket, no real driver, the
-      # state machines and the in-memory simulator, parallel, 120s kill. ./bin/functional is the driver matrix. On this unprivileged
+      # state machines and the in-memory simulator, parallel, bounded per commit. ./bin/functional is the driver matrix. On this unprivileged
       # runner the linux functional leg is the FALL made real -- xdp refused
       # for missing privilege, gso granted -- so the functional suite runs
       # over the gso driver here (and over the darwin msgx pump on macOS);
@@ -1000,6 +1000,11 @@ jobs:
             exit 1
           fi
           timing_elapsed_ms=$(( ( timing_end_ns - timing_start_ns + 999999 ) / 1000000 ))
+          if [[ "${ROCKETNET_NIGHTLY_NO_TIMEOUT:-0}" == 1 ]]; then
+            printf 'CI_UNIT_FUNCTIONAL_TIMING row=%s start_ns=%s end_ns=%s elapsed_ms=%s budget_ms=none\n' \
+              "$CI_TIMING_ROW" "$timing_start_ns" "$timing_end_ns" "$timing_elapsed_ms"
+            exit 0
+          fi
           printf 'CI_UNIT_FUNCTIONAL_TIMING row=%s start_ns=%s end_ns=%s elapsed_ms=%s budget_ms=120000 ideal_ms=60000\n' \
             "$CI_TIMING_ROW" "$timing_start_ns" "$timing_end_ns" "$timing_elapsed_ms"
           if (( timing_elapsed_ms >= 120000 )); then
@@ -1139,7 +1144,7 @@ jobs:
     # captain's job-started hook waits up to 2 minutes for one of its three
     # shared build slots on a check-in run (Glenn 2026-10-24: --slots 3), inside
     # "Set up runner" (73 s on run 40890503823): the limit is that wait plus
-    # the 3-minute law. The test window inside stays timed against 120 s.
+    # the per-commit law. The nightly test window is measured without a cap.
     #
     # NIGHTLY TIER (2026-10-31). Leg (a) alone, narrowed to the unit suite's
     # targets, measured 143s on run 41240496784 (checkout 11s, configure 19s,
@@ -1571,6 +1576,7 @@ jobs:
         shell: bash
         run: |
           cd tools/happy_path
+          go test happy_path.go happy_path_test.go
           go run happy_path.go
 
       - name: Enforce combined unit and functional timing
@@ -1935,7 +1941,7 @@ jobs:
 
       # The bounded pass: fixed seed, fixed WALL-CLOCK BUDGET, and the corpus
       # copied out first so the source tree is not mutated. Every target gets
-      # the same few seconds, and the step's timeout is the runaway guard that
+      # the same few seconds, and the per-input timeout is the hang oracle that
       # fails red if a pass cannot finish; the CI budget is one minute end to
       # end per job. The gate's determinism argument stays the replay above --
       # this pass only adds a few seconds of mutation on top of it.
@@ -2916,6 +2922,9 @@ jobs:
       # having discovered no tests fails here too -- the runner's "Ran N tests"
       # line (the release-version suite's own count line) must name a positive
       # count. Seconds of wall time; the per-commit tier keeps it.
+      - name: Test nightly execution policy
+        run: python3 tools/test_nightly_timeout.py -v
+
       - name: Test the frame-budget checker's verdicts
         shell: bash
         run: |
