@@ -103,11 +103,12 @@ required runs are:
   everything the per-commit tier leaves out (listed in nightly-ci.yml's
   header). Run it on the release commit with
   `gh workflow run nightly-ci.yml --ref main` once that commit is `main`'s
-  head, and require it green.
+  head, and require it green. Release Check enforces this on the tag push.
 - **msan** ([.github/workflows/msan.yml](../.github/workflows/msan.yml)) and
   **CBMC** ([.github/workflows/cbmc.yml](../.github/workflows/cbmc.yml)),
   nightly: `MemorySanitizer` and `cbmc (arithmetic leaf proofs)`, dispatched
-  on the release commit the same way.
+  on the release commit the same way. Release Check enforces a green `cbmc.yml`
+  run on the tag push (`msan.yml` is advisory; see below).
 - **nightly** ([.github/workflows/nightly.yml](../.github/workflows/nightly.yml)):
   `tsan (threaded transport) (main)` on the release commit. Run it with
   workflow_dispatch on `main` (`gh workflow run nightly.yml --ref main`) once
@@ -122,16 +123,19 @@ required runs are:
 - **TLC records** ([.github/workflows/tlc.yml](../.github/workflows/tlc.yml)):
   `Model records are current`, a nightly workflow: run it with
   workflow_dispatch on the release commit
-  (`gh workflow run tlc.yml --ref main`).
+  (`gh workflow run tlc.yml --ref main`). Release Check enforces this on the
+  tag push.
 - **docs** ([.github/workflows/docs.yml](../.github/workflows/docs.yml)):
   `docs (MrDocs HTML reference build)`.
 - **Release Check** ([.github/workflows/release-check.yml](../.github/workflows/release-check.yml)):
   `version consistency` on the pull request that carries the release version
   and on the tag push itself, and `unreleased wire changes`. On the tag push,
-  `threaded tsan run on the release commit` asks the Actions API for a
-  nightly.yml run whose head is the tagged commit with
-  `tsan (threaded transport) (<that run's ref>)` concluded `success`, and
-  fails when there is none (`tools/check_release_tsan.py`).
+  `threaded tsan run on the release commit` asks the Actions API for green runs
+  whose head is the tagged commit for `nightly.yml`
+  (`tsan (threaded transport) (<that run's ref>)`), `nightly-ci.yml`
+  (`Nightly CI`), `cbmc.yml` (`CBMC`), and `tlc.yml` (`TLC records`), and fails
+  when any of the four is missing or not `success`
+  (`tools/check_release_tsan.py`).
 
 The [GCC analyzer evidence limit](TESTING.md#static-analysis-evidence-limit)
 also applies to release qualification: the current wrapper can return green
@@ -160,9 +164,10 @@ A pushed tag is never moved or reused.
 4. Build and test with `make && ./bin/test`, then `./bin/functional` where the
    platform permits it.
 5. Open the release pull request against `main` with the version change.
-   Merge it, dispatch nightly.yml on `main`, then wait for every required run
-   on that merged commit to be green, including the dispatched threaded TSan
-   run. Resolve the evidence limitation
+   Merge it, dispatch `nightly.yml`, `nightly-ci.yml`, `cbmc.yml`, and
+   `tlc.yml` on `main`, then wait for every required run on that merged commit
+   to be green, including the dispatched `nightly.yml` threaded TSan leg,
+   `nightly-ci.yml`, `cbmc.yml`, and `tlc.yml`. Resolve the evidence limitation
    above before treating the GCC result as a clean analyzer pass.
 6. On the merged `main` commit, create an annotated tag `vMAJOR.MINOR.PATCH`,
    or `vMAJOR.MINOR.PATCH-PRERELEASE` for a prerelease, for example
@@ -170,9 +175,10 @@ A pushed tag is never moved or reused.
    `ROCKETNET_VERSION_FULL`. Do not tag a different commit, and do not move or
    reuse a tag after pushing it. Verify its consistency with the header before
    pushing it. Release Check also performs this check on the tag push, and
-   fails the tag push when the threaded TSan run on that commit is not green.
-   Do not publish the release while that job is red; re-run it once the
-   threaded TSan run is green.
+   fails the tag push when `nightly.yml`'s threaded TSan leg, `nightly-ci.yml`,
+   `cbmc.yml`, or `tlc.yml` is not green on that commit.
+   Do not publish the release while that job is red; re-run it once those
+   required runs are green.
 7. Publish the GitHub release for that tag.
 
 ## Release notes
