@@ -35,7 +35,7 @@ static_assert( sizeof( rn_sequenced_payload_t ) == ROCKETNET_MAX_PACKET_PAYLOAD_
 static_assert( sizeof( rn_sequenced_hold_t ) + sizeof( rn_sequenced_payload_t ) == 1432, "separate hot and cold arrays retain the 1432Ru hold term (14)" );
 static_assert( sizeof( rn_sequenced_hold_t ) + sizeof( rn_sequenced_payload_t ) + 2 * sizeof( uint32_t ) == 1440, "a hold with its free-stack and delivered-list indices is the 1440Ru region term (14)" );
 static_assert( sizeof( rn_receipt_t ) == 16, "a receipt is 16 bytes (14)" );
-static_assert( sizeof( rn_resend_link_t ) == 12, "a resend FIFO link is 12 bytes (14)" );
+static_assert( sizeof( rn_resend_link_t ) == 8, "a resend FIFO link is 8 bytes (14)" );
 static_assert( sizeof( ( (rn_send_descriptor_t *) 0 )->reserved ) >= 2, "a send descriptor keeps two spare bytes (14)" );
 static_assert( sizeof( rn_store_class_t ) >= 32, "a store class header stays a small fixed record" );
 static_assert( RN_STORE_LARGE_BYTES % 16 == 0, "the block stride keeps ring placements 16-aligned (4)" );
@@ -105,7 +105,7 @@ static const char * const rn_part_formulas[RN_NUM_PARTS] = {
     "24(W+Du)",
     "1440Ru",
     "16Rq",
-    "12W",
+    "8W",
     "8*2Q",
     "SR",
 };
@@ -573,7 +573,6 @@ void rn_region_carve( rn_region_t * region )
         region->send_numbers[n].descriptor = RN_DESCRIPTOR_NONE;
         region->resend_fifo[n].prev = 0;
         region->resend_fifo[n].next = 0;
-        region->resend_fifo[n].generation = 0;
     }
 
     memset( region->receive_descriptors, 0, sizeof( rn_receive_descriptor_t ) * region->window );
@@ -740,8 +739,7 @@ static uint32_t rn_region_descriptor_take( rn_region_t * region )
     region->descriptors_free--;
 
     rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
-    // 0 is never a live name (proofs/tla/RNLazyPool.tla HeldGenerationPositive): a
-    // resend link stamped 0 is skipped by the ack while the descriptor is in use.
+    // 0 is never a live name (proofs/tla/RNLazyPool.tla HeldGenerationPositive).
     // Each take names the next generation (proofs/tla/RNResendGenerations.tla Write).
 
     const uint32_t generation = fresh_take || descriptor->generation == UINT32_MAX ? 1 : descriptor->generation + 1;
@@ -1646,7 +1644,7 @@ int rocketnet_message_connection_sizing( const struct rocketnet_message_config_t
 
     rn_text_t text = { buffer, buffer_size, 0 };
     rn_text_append( &text, "message connection sizing (docs/LOAD.md Table 3)\n" );
-    rn_text_append( &text, "connection_bytes = 64C + 116.125W + B + 88Q + S + 128P + 24(W + Du) + 1440Ru + 16Rq + SR, Q/S/SR include maximum resend-delay payload reserve (typical pool payloads 128/512/1024 bytes)\n" );
+    rn_text_append( &text, "connection_bytes = 64C + 112.125W + B + 88Q + S + 128P + 24(W + Du) + 1440Ru + 16Rq + SR, Q/S/SR include maximum resend-delay payload reserve (typical pool payloads 128/512/1024 bytes)\n" );
     rn_text_append( &text, "C=%d W=%d B=%d S=%d Q=%d P=%d Du=%d Ru=%d Rq=%d\n",
                     config->num_channels, config->reliable_messages_in_flight, config->receive_message_buffer_bytes, config->send_message_buffer_bytes,
                     config->send_queue_messages, config->packets_in_flight, config->unreliable_messages_per_update,
