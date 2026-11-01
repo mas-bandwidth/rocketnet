@@ -365,6 +365,14 @@ int rocketnet_platform_send_errnos_format( struct rocketnet_platform_send_errnos
 #if ROCKETNET_DEV && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 // test only: the next count sends on the socket fail with error without reaching the kernel
 void rocketnet_platform_socket_fail_next_sends( struct rocketnet_platform_socket_t * socket, int count, int error );
+// test only: observe an actual injected call before changing its fault.
+int rocketnet_platform_socket_send_failures_remaining_for_testing( struct rocketnet_platform_socket_t * socket );
+
+#if defined( __linux__ )
+// test only: a real sendmmsg prefix reaches the kernel, then one call fails.
+// Counts accepted datagrams, not attempted calls; fail_next_sends clears it.
+void rocketnet_platform_socket_fail_mmsg_after_packets( struct rocketnet_platform_socket_t * socket, int accepted_packets, int error );
+#endif // #if defined( __linux__ )
 
 // test only: lets a functional case find the socket a transport created
 int rocketnet_platform_sockets_for_testing( struct rocketnet_platform_socket_t ** sockets, int max_sockets );
@@ -415,6 +423,10 @@ struct rocketnet_platform_socket_t * rocketnet_server_transport_platform_socket_
 #if defined( __linux__ )
 // Linux sendmmsg path; behaves as socket_send_packets
 void rocketnet_platform_socket_send_packets_mmsg( struct rocketnet_platform_socket_t * socket, const struct rocketnet_platform_send_t * sends, int num_packets );
+// Retaining caller: returns the ORIGINAL input prefix sent or terminally
+// refused. EAGAIN/EWOULDBLOCK/ENOBUFS leave the remaining suffix for a later
+// call, with no failure count or log for that transient refusal.
+int rocketnet_platform_socket_send_packets_mmsg_progress( struct rocketnet_platform_socket_t * socket, const struct rocketnet_platform_send_t * sends, int num_packets );
 // Linux recvmmsg path; same layout and oversize rule as socket_receive_packets, and zero-length datagrams make no entry
 int rocketnet_platform_socket_receive_packets_mmsg( struct rocketnet_platform_socket_t * socket, struct rocketnet_address_t * from, uint8_t * packet_data, int packet_stride, int * packet_bytes, int max_packets );
 #endif // #if defined( __linux__ )

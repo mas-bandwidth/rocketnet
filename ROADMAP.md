@@ -7,7 +7,7 @@ Planned work for RocketNet that is not on main. Work lands on main before new wo
 ## Contents
 
 - [Started work to finish and land](#started-work-to-finish-and-land) (4)
-- [Audit items not yet fixed](#audit-items-not-yet-fixed) (7)
+- [Audit items not yet fixed](#audit-items-not-yet-fixed) (5)
 - [Investigations that need a quiet host](#investigations-that-need-a-quiet-host) (3)
 - [Older open pull requests](#older-open-pull-requests) (2)
 - [Decisions for Glenn](#decisions-for-glenn) (5)
@@ -50,12 +50,6 @@ Pass it through as ROCKETNET_MAX_CLIENTS is, document it, and give it a CI build
 
 From: Audit item 171 follow-on
 
-### Portable sendmmsg keeps the unsent rest of a batch
-
-On a full socket the portable sendmmsg path drops the rest of the batch; GSO now keeps it (audit 111). Same rule: spread across updates, never drop.
-
-From: Audit item 111 follow-on
-
 ### A duplicated deferred packet does not redeliver its code-0 prefix
 
 Audit 101 remainder, MESSAGES.md m1.4 rule 2. Recommended: remember the deferred packet and how many records were processed, so a duplicate skips them.
@@ -73,12 +67,6 @@ From: Audit items 88, 124
 The page's exact byte figures go stale with every merge. Generate them, with a CI check that the page matches the generator.
 
 From: #721 follow-on
-
-### A release commit requires a green Nightly CI run
-
-docs/RELEASING.md asks for it; nothing enforces it. Extend tools/check_release_tsan.py to require nightly-ci.yml, msan and CBMC green at the tagged commit.
-
-From: CI under two minutes
 
 ### Low-severity docs, standard, tests and CI items
 

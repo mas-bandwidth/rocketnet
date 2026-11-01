@@ -62,10 +62,6 @@
    :text "Pass it through as ROCKETNET_MAX_CLIENTS is, document it, and give it a CI build."
    :date "2026-10-31" :origin "Audit item 171 follow-on")
 
-  (item "portable-sendmmsg-carry" :group "audit-remaining" :area "rocketnet"
-   :title "Portable sendmmsg keeps the unsent rest of a batch"
-   :text "On a full socket the portable sendmmsg path drops the rest of the batch; GSO now keeps it (audit 111). Same rule: spread across updates, never drop."
-   :date "2026-10-31" :origin "Audit item 111 follow-on")
 
 
   (item "message-prefix-dedupe" :group "audit-remaining" :area "rocketnet"
@@ -83,11 +79,6 @@
    :title "Generate LOAD.md's byte tables"
    :text "The page's exact byte figures go stale with every merge. Generate them, with a CI check that the page matches the generator."
    :date "2026-10-31" :origin "#721 follow-on")
-
-  (item "release-requires-nightly" :group "audit-remaining" :area "ci"
-   :title "A release commit requires a green Nightly CI run"
-   :text "docs/RELEASING.md asks for it; nothing enforces it. Extend tools/check_release_tsan.py to require nightly-ci.yml, msan and CBMC green at the tagged commit."
-   :date "2026-10-31" :origin "CI under two minutes")
 
   (item "low-docs-standard-tests" :group "audit-remaining" :area "rocketnet"
    :title "Low-severity docs, standard, tests and CI items"
