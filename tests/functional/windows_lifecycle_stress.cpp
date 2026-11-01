@@ -11,6 +11,7 @@
         threads        a Toolhelp32 walk of this process's threads
                        (process_resources_walk_threads, tests/process_resources.h)
         heap_bytes     HeapSummary cbAllocated on the library's test heap
+        library_allocated_bytes HeapSize accounting in its allocator callbacks
         private_bytes  GetProcessMemoryInfo PrivateUsage
 
     The library's public allocator callbacks use a heap owned by this case.
@@ -26,7 +27,11 @@
     but committed pages, which a heap keeps as it fragments, so they are
     judged per cycle: the growth must stay under one page per cycle, which
     any mapping left behind by a cycle exceeds. Counts below the warm count
-    pass. The run time is read from the performance counter directly, since
+    pass. Under ASan, private bytes include sanitizer quarantine and shadow
+    metadata, so they remain diagnostic; the allocator callbacks still enforce
+    the same flat allowance on SDK-owned live bytes. The unsanitized runs
+    retain the private-byte check, including mappings outside the allocator.
+    The run time is read from the performance counter directly, since
     rocketnet_platform_time restarts at rocketnet_init.
     Each case prints the before and after counts, every heap's allocated
     bytes, SDK-owned resource identities and the run time. Process-wide
@@ -101,13 +106,19 @@ struct windows_resource_counts_t
     int64_t handles;
     int64_t threads;
     int64_t heap_bytes;
+    int64_t library_allocated_bytes;
     int64_t private_bytes;
+    bool asan;
     int heap_count;
     HANDLE heap_handles[256];
     int64_t heap_used_bytes[256];
 };
 
 static HANDLE windows_library_heap = NULL;
+// Windows ASan intercepts custom-heap blocks, which HeapSummary does not
+// count. Account directly at the SDK allocator boundary in every build.
+static std::atomic<int64_t> windows_library_allocated_bytes( 0 );
+static std::atomic<int> windows_library_accounting_failed( 0 );
 
 static void * windows_library_malloc( void * context, size_t bytes )
 {
@@ -115,18 +126,42 @@ static void * windows_library_malloc( void * context, size_t bytes )
     // installed. All allocations in this case still belong to its one heap.
 
     (void) context;
-    return HeapAlloc( windows_library_heap, 0, bytes );
+    void * p = HeapAlloc( windows_library_heap, 0, bytes );
+    if ( p )
+    {
+        const SIZE_T allocated = HeapSize( windows_library_heap, 0, p );
+        if ( allocated == (SIZE_T) -1 || allocated > (SIZE_T) INT64_MAX )
+            windows_library_accounting_failed.store( 1, std::memory_order_relaxed );
+        else
+        {
+            const int64_t previous = windows_library_allocated_bytes.fetch_add( (int64_t) allocated, std::memory_order_relaxed );
+            if ( previous > INT64_MAX - (int64_t) allocated )
+                windows_library_accounting_failed.store( 1, std::memory_order_relaxed );
+        }
+    }
+    return p;
 }
 
 static void windows_library_free( void * context, void * p )
 {
     (void) context;
+    const SIZE_T allocated = HeapSize( windows_library_heap, 0, p );
     windows_lifecycle_check( HeapFree( windows_library_heap, 0, p ) != 0 );
+    if ( allocated == (SIZE_T) -1 || allocated > (SIZE_T) INT64_MAX )
+        windows_library_accounting_failed.store( 1, std::memory_order_relaxed );
+    else
+    {
+        const int64_t previous = windows_library_allocated_bytes.fetch_sub( (int64_t) allocated, std::memory_order_relaxed );
+        if ( previous < (int64_t) allocated )
+            windows_library_accounting_failed.store( 1, std::memory_order_relaxed );
+    }
 }
 
 static void windows_library_heap_begin()
 {
     windows_lifecycle_check( rocketnet_term() == ROCKETNET_STATUS_OK );
+    windows_library_allocated_bytes.store( 0, std::memory_order_relaxed );
+    windows_library_accounting_failed.store( 0, std::memory_order_relaxed );
     windows_library_heap = HeapCreate( 0, 0, 0 );
     windows_lifecycle_check( windows_library_heap != NULL );
     windows_lifecycle_check( rocketnet_init( windows_library_heap, windows_library_malloc, windows_library_free ) == ROCKETNET_STATUS_OK );
@@ -203,7 +238,11 @@ static windows_resource_counts_t windows_read_counts()
     counts.handles = -1;
     counts.threads = -1;
     counts.heap_bytes = -1;
+    counts.library_allocated_bytes = windows_library_accounting_failed.load( std::memory_order_relaxed )
+                                         ? -1
+                                         : windows_library_allocated_bytes.load( std::memory_order_relaxed );
     counts.private_bytes = -1;
+    counts.asan = GetModuleHandleA( "clang_rt.asan_dynamic-x86_64.dll" ) != NULL;
     counts.heap_count = 0;
 
     // the handle count first: the thread walk opens and closes one handle
@@ -261,15 +300,21 @@ static int64_t windows_private_allowance_bytes()
 
 static bool windows_counts_flat( const windows_resource_counts_t * before, const windows_resource_counts_t * after, double seconds )
 {
-    if ( before->handles < 0 || before->threads < 0 || before->heap_bytes < 0 || before->private_bytes < 0 ||
+    if ( before->library_allocated_bytes < 0 || after->library_allocated_bytes < 0 ||
+         before->handles < 0 || before->threads < 0 || before->heap_bytes < 0 || before->private_bytes < 0 ||
          after->handles < 0 || after->threads < 0 || after->heap_bytes < 0 || after->private_bytes < 0 )
         return false;
     // the process thread count includes the operating system's thread pool
     // workers, which come and go on their own; the library's threads are
     // checked exactly by the SDK identity ledger, so threads are reported here
     // and not compared
-    return after->heap_bytes <= before->heap_bytes + windows_memory_allowance_bytes( seconds ) &&
-           after->private_bytes < before->private_bytes + windows_private_allowance_bytes();
+    if ( before->asan != after->asan )
+        return false;
+
+    const int64_t allowance = windows_memory_allowance_bytes( seconds );
+    const bool memory_flat = before->asan || after->private_bytes < before->private_bytes + windows_private_allowance_bytes();
+    return after->heap_bytes <= before->heap_bytes + allowance &&
+           after->library_allocated_bytes <= before->library_allocated_bytes + allowance && memory_flat;
 }
 
 // A transport's threads are joined inside destroy, and a joined thread leaves
@@ -302,12 +347,41 @@ static windows_resource_counts_t windows_stable_counts()
         rocketnet_platform_sleep( 0.001 );
 
         const windows_resource_counts_t current = windows_read_counts();
-        if ( current.handles == previous.handles && current.threads == previous.threads && current.heap_bytes == previous.heap_bytes && current.private_bytes == previous.private_bytes )
+        if ( current.handles == previous.handles && current.threads == previous.threads && current.heap_bytes == previous.heap_bytes && current.private_bytes == previous.private_bytes && current.asan == previous.asan && current.library_allocated_bytes == previous.library_allocated_bytes )
             return current;
         previous = current;
     }
 
     return previous;
+}
+
+// A real retained allocation must fail the resource oracle under both native
+// heaps and ASan interception; freeing it restores the original baseline.
+void rocketnet_test_windows_lifecycle_memory_accounting()
+{
+    windows_library_heap_begin();
+    const windows_resource_counts_t before = windows_stable_counts();
+    void * retained = windows_library_malloc( NULL, 8192 );
+    windows_lifecycle_check( retained != NULL );
+    const windows_resource_counts_t during = windows_read_counts();
+    windows_lifecycle_check( during.library_allocated_bytes >= before.library_allocated_bytes + 8192 );
+    windows_lifecycle_check( !windows_counts_flat( &before, &during, 1.0 ) );
+    windows_library_free( NULL, retained );
+    const windows_resource_counts_t after = windows_settled_counts( &before, 1.0 );
+    windows_lifecycle_check( windows_counts_flat( &before, &after, 1.0 ) );
+
+    if ( !before.asan )
+    {
+        const SIZE_T bytes = (SIZE_T) windows_private_allowance_bytes() + (SIZE_T) windows_page_bytes();
+        void * mapping = VirtualAlloc( NULL, bytes, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE );
+        windows_lifecycle_check( mapping != NULL );
+        const windows_resource_counts_t mapped = windows_read_counts();
+        windows_lifecycle_check( !windows_counts_flat( &after, &mapped, 1.0 ) );
+        windows_lifecycle_check( VirtualFree( mapping, 0, MEM_RELEASE ) != 0 );
+        const windows_resource_counts_t unmapped = windows_settled_counts( &after, 1.0 );
+        windows_lifecycle_check( windows_counts_flat( &after, &unmapped, 1.0 ) );
+    }
+    windows_library_heap_end();
 }
 
 // ---------------------------------------------------------------
@@ -529,11 +603,20 @@ static bool windows_case_result( const char * case_name, const windows_cell_t * 
 {
     const bool flat = windows_counts_flat( before, after, seconds );
 
-    printf( "%s [%s]: handles %lld -> %lld, threads %lld -> %lld, library_heap_bytes %lld -> %lld (allowed +%lld), private_bytes %lld -> %lld (allowed under +%lld), %.3fs%s",
+    printf( "%s [%s]: handles %lld -> %lld, threads %lld -> %lld, library_heap_bytes %lld -> %lld (allowed +%lld)",
             case_name, cell->name, (long long) before->handles, (long long) after->handles, (long long) before->threads,
             (long long) after->threads, (long long) before->heap_bytes, (long long) after->heap_bytes,
-            (long long) windows_memory_allowance_bytes( seconds ), (long long) before->private_bytes, (long long) after->private_bytes,
-            (long long) windows_private_allowance_bytes(), seconds, flat ? "" : " FAIL resource count moved" );
+            (long long) windows_memory_allowance_bytes( seconds ) );
+    printf( ", library_allocated_bytes %lld -> %lld (allowed +%lld)",
+            (long long) before->library_allocated_bytes, (long long) after->library_allocated_bytes,
+            (long long) windows_memory_allowance_bytes( seconds ) );
+    if ( before->asan )
+        printf( ", private_bytes %lld -> %lld (ASan quarantine/shadow diagnostic)",
+                (long long) before->private_bytes, (long long) after->private_bytes );
+    else
+        printf( ", private_bytes %lld -> %lld (allowed under +%lld)", (long long) before->private_bytes,
+                (long long) after->private_bytes, (long long) windows_private_allowance_bytes() );
+    printf( ", %.3fs%s", seconds, flat ? "" : " FAIL resource count moved" );
     const HANDLE library_heap = windows_library_heap;
     const HANDLE process_heap = GetProcessHeap();
 
