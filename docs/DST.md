@@ -73,7 +73,8 @@ three equal PASS lines.
 ref in `ROCKETNET_NIGHTLY_REFS`, with `fail-fast: false`. Each leg builds
 Release `dst` and `test`, runs the `test_dst_` unit cases by `--run`,
 runs `--seeds 1-50` and fails unless its PASS line carries the reference trace,
-then runs one named short step per fault schedule (`clock-back`, `seq-gap`,
+requires every check to pass over the fixed range `--seeds 1-2050`, then runs
+one named short step per fault schedule (`clock-back`, `seq-gap`,
 `seq-wrap-31`, `seq-wrap-32`, `burst` and `dup-storm`, each over seeds 1-50)
 printing a `PASS schedule=<name> seeds=1-50 fired=<count>` line; a schedule
 that fires zero times fails its step. Each leg then sweeps a longer range
@@ -98,8 +99,8 @@ passed in three chunks with no FAIL line, 1273.25 s in all (0.21 s/seed):
     PASS seeds=2051-4050 runs=2000 trace=a89d7fe691fe9216  421.72 s
     PASS seeds=4051-6000 runs=1950 trace=b9551ab88eec7cbd  418.88 s
 
-Each leg's `timeout-minutes: 50` is about
-twice the sweep plus the build.
+Each leg's `timeout-minutes: 50` covers the sweep, the fixed range 1-2050
+and the build with room to spare.
 
 ## Fault kinds
 

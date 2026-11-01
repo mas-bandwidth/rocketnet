@@ -45,10 +45,6 @@
    :title "macOS network thread just above default priority"
    :text "Since #624 the macOS network thread runs at SCHED_RR maximum and outranks the game thread. Branch rowan/macos-net-thread-priority at 1e9ecedf (priority 32): msgx P=32 p99 43.3 to 19.6 us on mini-m5. Owed: 200+ single-cell closed_port runs and a contention A/B against 47 to show #624's fix holds. If it does not hold under contention, Glenn decides between network latency and game-thread p99."
    :date "2026-10-31" :origin "Frame budget bisect")
-  (item "gate-dst-checks" :group "finish" :area "rocketnet"
-   :title "DST invariant checks that are called, and a per-endpoint ack ledger"
-   :text "Audit 56 and 57. Branch rowan/gate-dst-checks at 9d362f2f has never compiled on the fleet. Owed: build, unit cases, seeds 1-2050, the schedules, and the shared-ledger negative control."
-   :date "2026-10-31" :origin "Audit items 56, 57")
   (item "gate-nightly-proofs-split" :group "finish" :area "ci"
    :title "Nightly proofs split so the job can finish"
    :text "Audit 33. Branch rowan/gate-nightly-proofs-split at 3522e523: one job per reader and per partition. The planted-failure control works on vision. Owed: the rewritten workflow has never run, and the held partition needs its full 1800 s."

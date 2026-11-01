@@ -82,9 +82,7 @@ struct rocketnet_dst_check_stream_t
 
     // ordered (RNChannel::OrderedExactlyOnceInOrder, RNChannelTypes::
     // OrderedExactlyOnceInOrder, RNEndpoint::OrderedInOrder, RNWindow::
-    // OrderedDeliveredInOrder): the k-th delivery has sequence k from 0.
-    unsigned ordered_seen;
-    uint32_t ordered_expect;
+    // OrderedDeliveredInOrder): the newest ordered delivery.
     uint32_t ordered_last;
     int ordered_has_last;
 
@@ -92,7 +90,6 @@ struct rocketnet_dst_check_stream_t
     // OrderedTraceUnchangedBySequenced, RNChannelTypes::
     // OrderedTraceUnchangedBySequenced): the same rule on channel 8.
     unsigned unchanged_seen;
-    uint32_t unchanged_expect;
     uint32_t unchanged_last;
 
     // sequenced (RNChannelTypes::SequencedNeverBackwards,
