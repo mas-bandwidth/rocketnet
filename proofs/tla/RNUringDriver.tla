@@ -26,10 +26,13 @@
 (*  Swap).  work counts the CQEs the current call has reaped, and a call  *)
 (*  reaps at most Budget of them; CQEs past it stay in cq for a later     *)
 (*  call.  ReapWithinBudget is the property every Reap step keeps.  A     *)
-(*  receive CQE is reaped only while the fill bank has Room for a whole   *)
-(*  coalesced receive (Segments datagrams); one without room stays in cq  *)
-(*  and ends the call, so FillWithinRoom holds however many the kernel    *)
-(*  posts between two swaps.                                              *)
+(*  receive CQE is copied only while the fill bank has Room for a whole   *)
+(*  coalesced receive (Segments datagrams); one without room, or reaped   *)
+(*  while an earlier one is held, is held: it leaves cq with its buffer   *)
+(*  still filled, and CopyHeld copies it once a swap brings room.  So     *)
+(*  FillWithinRoom holds however many the kernel posts between two swaps, *)
+(*  and no call ends while a send CQE waits in cq with budget left        *)
+(*  (NoCallEndsBehindRoom).                                               *)
 (*                                                                         *)
 (*  RECEIVE.  One multishot RECVMSG over a ring of Buffers provided       *)
 (*  buffers.  The kernel fills a ring buffer with one to Segments         *)
@@ -61,11 +64,15 @@
 (* RunRetiredByCqe = FALSE hands a run's slots after its head back to the *)
 (* staging at Submit, while the kernel still reads their frames.          *)
 (*                                                                         *)
-(* Two definitions a configuration may replace with <- (so a cfg that     *)
+(* Three definitions a configuration may replace with <- (so a cfg that   *)
 (* does not name them checks the rule): Segments, the most datagrams one  *)
-(* KernelFill puts in a buffer, and the sixth rule switch                 *)
-(* ReturnAfterLastCopy; FALSE marks the buffer copied, so ReturnBuffer    *)
-(* may run, once its first segment is copied, the rest still to copy.     *)
+(* KernelFill puts in a buffer; the seventh rule switch                   *)
+(* ReturnAfterLastCopy, FALSE marks the buffer copied, so ReturnBuffer    *)
+(* may run, once its first segment is copied, the rest still to copy;     *)
+(* and the eighth, HoldWithoutRoom, FALSE leaves a receive CQE without    *)
+(* room in cq and ends the call at it, as the code did before the hold:   *)
+(* the CQ is a FIFO, so the reap stopped there and every send CQE behind  *)
+(* it waited for a swap (the order itself is in RNUringReapLayout).       *)
 (***************************************************************************)
 EXTENDS Naturals, FiniteSets
 
@@ -89,11 +96,13 @@ ASSUME BoundedReap \in BOOLEAN
 ASSUME RearmOnReceive \in BOOLEAN
 ASSUME RunRetiredByCqe \in BOOLEAN
 
-\* the most datagrams one receive buffer carries (UDP_GRO coalescing) and
-\* the rule switch on the buffer's return: definitions, so a cfg replaces
-\* them with <- (MCRNUringDriver.tla gives the replacement values)
+\* the most datagrams one receive buffer carries (UDP_GRO coalescing), the
+\* rule switch on the buffer's return and the rule switch on a receive
+\* without room: definitions, so a cfg replaces them with <-
+\* (MCRNUringDriver.tla gives the replacement values)
 Segments == 2
 ReturnAfterLastCopy == TRUE
+HoldWithoutRoom == TRUE
 
 SlotIds == 1..Slots
 BufIds  == 1..Buffers
@@ -128,10 +137,11 @@ VARIABLES sstate,   \* per slot: Free, Reserved, Finished or Kernel
           nextdg,   \* the next datagram id the kernel delivers
           phase,    \* Running, Destroying or Freed
           call,     \* the main thread's call: none, send or recv
-          work      \* CQEs the current call has reaped
+          work,     \* CQEs the current call has reaped
+          held      \* receive CQEs reaped without room: their buffers, still filled
 
 vars == <<sstate, bytes, idx, kown, head, pending, sending, bstate, bufdg, copied,
-          fill, exposed, snap, gen, cq, armed, nextdg, phase, call, work>>
+          fill, exposed, snap, gen, cq, armed, nextdg, phase, call, work, held>>
 
 Init ==
     /\ sstate = [s \in SlotIds |-> "Free"]
@@ -154,8 +164,9 @@ Init ==
     /\ phase = "Running"
     /\ call = "none"
     /\ work = 0
+    /\ held = {}
 
-RecvVars == <<bstate, bufdg, copied, fill, exposed, snap, gen, armed, nextdg>>
+RecvVars == <<bstate, bufdg, copied, fill, exposed, snap, gen, armed, nextdg, held>>
 
 \* the segments one reap copies out of a buffer's datagrams D: all of them,
 \* or under ReturnAfterLastCopy = FALSE only the first before the buffer
@@ -252,7 +263,7 @@ KernelFill(b) ==
           /\ nextdg' = nextdg + n
     /\ bstate' = [bstate EXCEPT ![b] = "Filled"]
     /\ cq' = cq \cup {RecvCqe(b)}
-    /\ UNCHANGED <<copied, fill, exposed, snap, gen, armed, phase>>
+    /\ UNCHANGED <<copied, fill, exposed, snap, gen, armed, phase, held>>
     /\ UNCHANGED SendVars
     /\ UNCHANGED CallVars
 
@@ -262,29 +273,35 @@ KernelStop ==
     /\ Term \notin cq
     /\ armed' = FALSE
     /\ cq' = cq \cup {Term}
-    /\ UNCHANGED <<bstate, bufdg, copied, fill, exposed, snap, gen, nextdg, phase>>
+    /\ UNCHANGED <<bstate, bufdg, copied, fill, exposed, snap, gen, nextdg, phase, held>>
     /\ UNCHANGED SendVars
     /\ UNCHANGED CallVars
 
 \* the fill bank has room for a whole coalesced receive: the code's
-\* rocketnet_server_uring_reap_has_room, num_packets + MAX_SEGMENTS <= BANK_SIZE
+\* rocketnet_server_uring_bank_has_room, num_packets + MAX_SEGMENTS <= BANK_SIZE
 HasRoom == Cardinality(fill) + Segments <= Room
 
-\* a receive CQE waits in cq for room: the code's reap stops at it, so the
-\* call ends as it does on a spent budget
-RecvWaitsForRoom == ReapWithinRoom /\ ~HasRoom /\ \E c \in cq : c.k = "recv"
+\* without the hold, a receive CQE waits in cq for room: the reap stopped at
+\* it, so the call ended as it does on a spent budget
+RecvWaitsForRoom == ReapWithinRoom /\ ~HoldWithoutRoom /\ ~HasRoom /\ \E c \in cq : c.k = "recv"
+
+\* a reaped receive CQE is held, not copied: the bank has no room for it, or
+\* an earlier receive is held (the code copies in posting order); destroy's
+\* drain copies at once
+HoldsRecv == ReapWithinRoom /\ HoldWithoutRoom /\ phase = "Running" /\ (~HasRoom \/ held # {})
 
 \* the main thread reaps one CQE: inside a send_packets or receive_packets
 \* call, at most Budget of them per call under BoundedReap, or in destroy's
 \* drain (destroy's rounds are bounded in the code, not here); a receive
-\* CQE only with room for its segments in the fill bank
+\* CQE without room for its segments in the fill bank is held, or under
+\* HoldWithoutRoom = FALSE not reaped at all
 Reap(c) ==
     /\ c \in cq
     /\ phase # "Freed"
     /\ \/ /\ phase = "Running"
           /\ call # "none"
           /\ BoundedReap => work < Budget
-          /\ (ReapWithinRoom /\ c.k = "recv") => HasRoom
+          /\ (ReapWithinRoom /\ ~HoldWithoutRoom /\ c.k = "recv") => HasRoom
           /\ work' = work + 1
        \/ /\ phase = "Destroying"
           /\ UNCHANGED work
@@ -295,7 +312,14 @@ Reap(c) ==
               /\ pending' = pending \ {c.x}
               /\ UNCHANGED <<sstate, bytes, idx, kown, head, sending>>
               /\ UNCHANGED RecvVars
-         [] c.k = "recv" ->
+         [] c.k = "recv" /\ HoldsRecv ->
+              \* rocketnet_server_uring_receive_or_hold: the CQE leaves cq,
+              \* its buffer stays filled until CopyHeld
+              /\ held' = held \cup {c.x}
+              /\ UNCHANGED <<bstate, bufdg, copied, fill, exposed, snap, gen,
+                             armed, nextdg>>
+              /\ UNCHANGED SendVars
+         [] c.k = "recv" /\ ~HoldsRecv ->
               \* rocketnet_server_uring_receive_cqe's loop over the
               \* rocketnet_coalesce_split segments: every segment into the
               \* bank (a segment dropped by size or a full bank is counted in
@@ -310,7 +334,7 @@ Reap(c) ==
               \* the copied segments leave the buffer: what remains is the
               \* datagrams still to copy, none once every segment is in
               /\ bufdg' = [bufdg EXCEPT ![c.x] = @ \ CopiedSegments(@)]
-              /\ UNCHANGED <<snap, gen, armed, nextdg>>
+              /\ UNCHANGED <<snap, gen, armed, nextdg, held>>
               /\ UNCHANGED SendVars
          [] c.k = "term" ->
               \* the multishot ended. while running, the CQE handler's one-shot
@@ -319,12 +343,35 @@ Reap(c) ==
               \* destroy it is never re-armed
               /\ armed' \in IF phase = "Running" THEN {FALSE, TRUE} ELSE {FALSE}
               /\ UNCHANGED <<bstate, bufdg, copied, fill, exposed, snap, gen,
-                             nextdg>>
+                             nextdg, held>>
               /\ UNCHANGED SendVars
          [] c.k = "cancel" ->
               /\ UNCHANGED RecvVars
               /\ UNCHANGED SendVars
     /\ UNCHANGED phase
+
+\* a held receive is copied into the fill bank: inside a call while the
+\* bank has room for a whole coalesced receive (the code copies the held
+\* receives first in every reap), or in destroy's drain at once.  The copy
+\* is the Reap "recv" case's, and the buffer then goes back by
+\* ReturnBuffer as any copied buffer does
+\* (rocketnet_server_uring_copy_held)
+CopyHeld(b) ==
+    /\ b \in held
+    /\ \/ phase = "Running" /\ call # "none" /\ HasRoom
+       \/ phase = "Destroying"
+    /\ held' = held \ {b}
+    /\ bstate' = [bstate EXCEPT ![b] = "Copied"]
+    /\ copied' = copied \cup CopiedSegments(bufdg[b])
+    /\ IF ReapIntoFill
+       THEN /\ fill' = fill \cup CopiedSegments(bufdg[b])
+            /\ UNCHANGED exposed
+       ELSE /\ exposed' = exposed \cup CopiedSegments(bufdg[b])
+            /\ UNCHANGED fill
+    /\ bufdg' = [bufdg EXCEPT ![b] = @ \ CopiedSegments(@)]
+    /\ UNCHANGED <<snap, gen, armed, nextdg, cq, phase>>
+    /\ UNCHANGED SendVars
+    /\ UNCHANGED CallVars
 
 \* the copied buffer goes back to the provided buffer ring, after the copy
 \* of its last segment (under ReturnAfterLastCopy = FALSE, after the first)
@@ -333,7 +380,7 @@ ReturnBuffer(b) ==
     /\ phase # "Freed"
     /\ bstate' = [bstate EXCEPT ![b] = "Ring"]
     /\ UNCHANGED <<bufdg, copied, fill, exposed, snap, gen, armed,
-                   nextdg, cq, phase>>
+                   nextdg, cq, phase, held>>
     /\ UNCHANGED SendVars
     /\ UNCHANGED CallVars
 
@@ -373,7 +420,7 @@ RecvBegin ==
     /\ call' = "recv"
     /\ work' = 0
     /\ UNCHANGED <<bstate, bufdg, copied, fill, exposed, snap, gen, armed,
-                   nextdg, cq, phase>>
+                   nextdg, cq, phase, held>>
     /\ UNCHANGED SendVars
 
 \* the end of receive_packets, once its reap stops (the cq is empty, or
@@ -391,7 +438,7 @@ Swap ==
     /\ gen' = IF gen < MaxSteps THEN gen + 1 ELSE gen
     \* receive_packets re-arms a disarmed multishot when the rule has the fix
     /\ armed' = (RearmOnReceive \/ armed)
-    /\ UNCHANGED <<bstate, bufdg, copied, nextdg, cq, phase>>
+    /\ UNCHANGED <<bstate, bufdg, copied, nextdg, cq, phase, held>>
     /\ UNCHANGED SendVars
 
 \* the transport reads the views of the exposed bank: a read changes no
@@ -408,7 +455,7 @@ Destroy ==
     /\ phase' = "Destroying"
     /\ armed' = FALSE
     /\ cq' = cq \cup {Cancel} \cup (IF armed THEN {Term} ELSE {})
-    /\ UNCHANGED <<bstate, bufdg, copied, fill, exposed, snap, gen, nextdg>>
+    /\ UNCHANGED <<bstate, bufdg, copied, fill, exposed, snap, gen, nextdg, held>>
     /\ UNCHANGED SendVars
     /\ UNCHANGED CallVars
 
@@ -416,7 +463,7 @@ Destroy ==
 \* slots, banks and the ring are freed
 Free ==
     /\ phase = "Destroying"
-    /\ kown = {} /\ cq = {} /\ ~armed
+    /\ kown = {} /\ cq = {} /\ held = {} /\ ~armed
     /\ phase' = "Freed"
     /\ sstate' = [s \in SlotIds |-> "Free"]
     /\ UNCHANGED <<bytes, idx, kown, head, pending, sending, cq>>
@@ -432,7 +479,7 @@ Next ==
     \/ Reserve
     \/ \E s \in SlotIds : Finish(s) \/ Abort(s) \/ KernelComplete(s)
     \/ Submit
-    \/ \E b \in BufIds : KernelFill(b) \/ ReturnBuffer(b)
+    \/ \E b \in BufIds : KernelFill(b) \/ ReturnBuffer(b) \/ CopyHeld(b)
     \/ KernelStop
     \/ \E c \in Cqes : Reap(c)
     \/ ResetIndex
@@ -462,6 +509,7 @@ SpecFair ==
     /\ \A s \in SlotIds : SF_vars(Reap(SendCqe(s)))
     /\ \A c \in Cqes : WF_vars(Reap(c))
     /\ \A b \in BufIds : WF_vars(ReturnBuffer(b))
+    /\ \A b \in BufIds : WF_vars(CopyHeld(b))
     /\ SF_vars(Submit)
     /\ WF_vars(ResetIndex)
     /\ WF_vars(SendReturn)
@@ -492,6 +540,7 @@ TypeOK ==
     /\ phase \in {"Running", "Destroying", "Freed"}
     /\ call \in {"none", "send", "recv"}
     /\ work \in Nat
+    /\ held \subseteq BufIds
 
 \* Reserve never returns a slot the kernel owns: a slot the staging holds
 \* (free for the next Reserve, reserved or finished by a fill thread) is
@@ -525,10 +574,25 @@ ReapWithinBudget ==
     work <= Budget
 
 \* the fill bank never holds more than Room datagrams: a receive CQE whose
-\* segments would not fit waits in cq, whatever the kernel posts between
-\* two swaps and whichever call reaps
+\* segments would not fit is held, whatever the kernel posts between two
+\* swaps and whichever call reaps
 FillWithinRoom ==
     Cardinality(fill) <= Room
+
+\* a held receive's buffer stays filled until its copy: the kernel never
+\* refills it, and its datagrams are still to copy
+HeldStillFilled ==
+    \A b \in held : bstate[b] = "Filled"
+
+\* no running call ends while a send CQE waits in cq and the call has
+\* budget left: a receive the fill bank has no room for never holds a send
+\* CQE behind it until a swap.  Without the hold the reap stopped at that
+\* receive and the call ended, and under an inbound flood that keeps the
+\* bank full every send's CQE stayed behind one, so send_packets never
+\* reset the index and staging filled
+NoCallEndsBehindRoom ==
+    [][(phase = "Running" /\ call # "none" /\ call' = "none")
+         => (work >= Budget \/ \A c \in cq : c.k # "send")]_vars
 
 \* every slot the kernel was handed is eventually free again
 SubmittedEventuallyFree ==
