@@ -59,9 +59,9 @@ cookie key bytes	transport.tsv: token key
 KDF context strings	transport.tsv: handshake/server/client session labels
 #
 # ---- the packet size table (check_standard.py, Packet sizes) ----
-packet type N and wire size for type N	RN-1 t5 wire-size rows (transport.tsv and t5.tsv)
+packet type N and wire size for type N	RN-1 t3 packet-type rows and t8/t10 wire-size rows (transport.tsv, t8.tsv and t10.tsv)
 receive ceiling on session types	transport.tsv: receive ceiling
-the implementation defines no unpublished packet type	carried by the t5 packet-type rows
+the implementation defines no unpublished packet type	carried by the t3 packet-type rows (transport.tsv)
 #
 # ---- known divergences (known_divergences.tsv, removed) ----
 timing.send_rate	transport.tsv: send rate

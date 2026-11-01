@@ -274,12 +274,15 @@ ignore rules 1 to 5 and keeps rule 6.
 <a id="t3"></a>
 ## t3. Constants and registries
 
-Every constant of RN-1 is a row of the table below, and is stated nowhere
-else; every configuration field and its default is a row of the table in
+Every protocol-wide constant and registry entry of RN-1 is a row of the table
+below, while section-specific constants, derived wire sizes, state numbers and
+limits are rows of the pinned tables in their defining sections; every
+configuration field and its default is a row of the table in
 [t2.3 Configuration surface](#t2.3). A section that uses a value names its
-row. An implementation MUST use every row of this table exactly. A row of
-kind `protocol value` is a rate, a count or a size the protocol fixes rather
-than a wire format; it is not configurable in this revision.
+row. An implementation MUST use every row of this table and of each section's
+pinned tables exactly. A row of kind `protocol value` is a rate, a count or a
+size the protocol fixes rather than a wire format; it is not configurable in
+this revision.
 
 Registry rules:
 
@@ -2369,15 +2372,15 @@ d3 30 e5 ec f7 45 2e 8e 62
 
 The client is in exactly one of the states of the table below. A state number is signed: a negative state is how the last attempt or connection ended, and a non-negative state is a state the client acts in.
 
-1. A client MUST be created in disconnected (0) and MUST hold no connect token at creation. A connect token MUST be accepted only in disconnected (0). In every other state, a connect token MUST be ignored and the state MUST NOT change.
-2. A connect token accepted in disconnected (0) MUST be checked before any packet is sent. The token is invalid when its address flags name no family or set any bit above the two family flags, when its create timestamp is later than its expire timestamp, when its timeout seconds is zero or negative, or when its version is not the version of [t3 Constants and registries](#t3). An invalid token MUST put the client in invalid connect token (-6). A token whose expire timestamp is not later than the current time MUST put the client in connect token expired (-7). Neither check sends a packet.
+1. A client MUST be created in disconnected (0) and MUST hold no connect token at creation. A connect token MUST be accepted only in disconnected (0) or in a negative state once any retiring transport from the ended attempt has finished stopping. In every positive state, or while a retiring transport has not finished stopping, a connect token MUST be ignored and the state MUST NOT change.
+2. An accepted connect token MUST perform the per-connection reset of [t13 Session: keep-alive, timeout, disconnect, slot reset](#t13) and MUST be checked before any packet is sent. The token is invalid when its address flags name no family or set any bit above the two family flags, when its create timestamp is later than its expire timestamp, when its timeout seconds is zero or negative, or when its version is not the version of [t3 Constants and registries](#t3). An invalid token MUST put the client in invalid connect token (-6). A token whose expire timestamp is not later than the current time MUST put the client in connect token expired (-7). Neither check sends a packet.
 3. An accepted token MUST select one server address for the whole attempt: the IPv6 address when its flag is set and the client's host can open an IPv6 socket; otherwise the IPv4 address when its flag is set; otherwise the IPv6 address. A host that cannot open a socket of the selected family MUST NOT send to it. When the token names both families and the client's socket for the selected IPv6 address is refused, at open or at connect, for any reason but a want of memory, the client MUST open a socket for the IPv4 address on the same transport and connect it before it treats that transport as refused; when that socket is granted, the IPv4 address is the server address for the attempt and nothing races. A refusal for want of memory on either family ends the attempt. When the token names both families and the host can use both, the selected address is the IPv6 address and the client MUST also dial the IPv4 address, from a socket of its own opened with the connect, and send each requesting cookie (1) packet to both addresses until the first valid connection cookie arrives. Only this stateless stage races: that first cookie commits the attempt to the family it arrived on, the committed family's address is the server address for the rest of the attempt, the client MUST send its connection request only to that family, and it MUST close the other family's socket. A packet from the other family's address after the commit, a late cookie included, MUST be dropped and counted as from a foreign source. The token's lifetime and timeout bound the attempt as for one address. With one family named, or one family usable, the choice is the single address exactly as above.
 4. An attempt MUST begin with a fresh connection salt and a fresh ephemeral keypair. The handshake and session sending sequences MUST start at one and MUST NOT be reset within the attempt.
 5. The client MUST enter requesting cookie (1), sending connection request (2), sending connection response (3) and connected (4) in that order, each at most once per attempt.
 6. While the client is in requesting cookie (1), sending connection request (2) or sending connection response (3), it MUST abandon the attempt for connect token expired (-7) once the token's lifetime, the difference between its expire timestamp and its create timestamp, has elapsed since the attempt began. The check does not apply in connected (4).
 7. In requesting cookie (1), sending connection request (2) and sending connection response (3), the client MUST retransmit its current packet at the send rate of [t3 Constants and registries](#t3) until a packet advances it or a deadline ends the attempt. A client MUST NOT send a packet because a packet arrived.
 8. In a positive state below connected (4), a client that has accepted no authenticated packet for the token's timeout MUST move to the state whose number is one less than the negation of its current state: requesting cookie (1) to cookie request timed out (-2), sending connection request (2) to connection request timed out (-3), sending connection response (3) to connection response timed out (-4). In connected (4) the same silence MUST move the client to connection timed out (-5). An authenticated packet is one that opens under the attempt's keys: a connection challenge or a session packet. The timeout runs from the attempt's start until the first one, and a connection cookie never restarts it ([t11.1 Cookie processing](#t11.1)).
-9. A negative state MUST persist until the client disconnects. A disconnect from any state MUST perform the per-connection reset of [t13 Session: keep-alive, timeout, disconnect, slot reset](#t13) and MUST return the client to disconnected (0). From disconnected (0) the client MAY connect again with a new token.
+9. A negative state MUST persist until the client disconnects or accepts a new connect token after any retiring transport from the ended attempt has finished stopping. A disconnect from any state MUST perform the per-connection reset of [t13 Session: keep-alive, timeout, disconnect, slot reset](#t13) and MUST return the client to disconnected (0). From disconnected (0), or from a negative state once any retiring transport has finished stopping, the client MAY connect again with a new token.
 
 The state numbers:
 
@@ -2424,12 +2427,12 @@ A session packet opens under the session keys from sending connection response (
 
 | State | Event | Guard | Action | Next state |
 |---|---|---|---|---|
-| disconnected (0) | connect | token invalid | do not begin an attempt | invalid connect token (-6) |
-| disconnected (0) | connect | token expired | do not begin an attempt | connect token expired (-7) |
-| disconnected (0) | connect | token valid | fresh salt and ephemeral keypair; sequences at one | requesting cookie (1) |
+| disconnected (0) or any negative state | connect | retiring transport still stopping | ignore | unchanged |
+| disconnected (0) or any negative state | connect | no retiring transport stopping; token invalid | per-connection reset; do not begin an attempt | invalid connect token (-6) |
+| disconnected (0) or any negative state | connect | no retiring transport stopping; token expired | per-connection reset; do not begin an attempt | connect token expired (-7) |
+| disconnected (0) or any negative state | connect | no retiring transport stopping; token valid | per-connection reset; fresh salt and ephemeral keypair; sequences at one | requesting cookie (1) |
 | disconnected (0) | any other event | | ignore | disconnected (0) |
 | any negative state | disconnect | | per-connection reset | disconnected (0) |
-| any negative state | connect | | ignore | unchanged |
 | any negative state | any other event | | ignore | unchanged |
 | requesting cookie (1) | update, send due | | send request with a zero return cookie | requesting cookie (1) |
 | requesting cookie (1) | cookie | size correct, salt matches | store the last 24 bytes as the kept cookie | sending connection request (2) |

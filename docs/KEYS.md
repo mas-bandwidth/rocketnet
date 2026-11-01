@@ -221,9 +221,9 @@ What the code supports today:
   before issuing tokens. Supplying the same secret at create retains that key
   across object replacements. To rotate a supplied key, create the replacement
   with a new secret (or use the generated-key default), then update registration.
-  A token sealed to the old key cannot be opened by a server using the new key,
-  which ignores the request
-  (`ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_OPEN_SEALED_BLOCK`).
+  A token naming and sealed to the old key is refused at the server public-key
+  check by a server using the new key, which ignores the request
+  (`ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_SERVER_KEY`).
   Short token lifetimes bound how long a token for a replaced key is out.
 
 What it does not support: a server cannot accept two backend public keys at

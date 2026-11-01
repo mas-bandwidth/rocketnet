@@ -1400,7 +1400,7 @@ bool rocketnet_server_transport_host_memory_estimate( const struct rocketnet_ser
     }
 
     if ( strcmp( transport, "io_uring" ) == 0 )
-        append( "io_uring submission and completion rings and the provided buffer rings (kernel and liburing mappings outside the SDK allocator)" );
+        append( "io_uring submission and completion rings and the provided buffer rings (plan.mapped_ring_bytes counts the provided buffer rings; kernel and liburing mappings outside the SDK allocator)" );
     if ( plan.worker_threads > 0 )
         append( "thread guard pages, thread-local storage and kernel thread structures; stacks count reserved address space, not resident pages" );
     append( "kernel page tables and loader/shared-library memory" );

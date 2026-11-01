@@ -105,9 +105,9 @@ do not increment packet or seal totals.
 
 | Struct | Field | Decision | Reason |
 |---|---|---|---|
-| server protocol | protocol/filter, server keys, advertised addresses, cookie keys and rotation state | KEEP | server identity and configuration |
-| | used-token history | KEEP | the standard's rationale (`standard/RATIONALE.md`) says, “Entries expire with the tokens they name”; token lifetime is independent of stop/start |
-| | signature verification budget and counters | KEEP | shared abuse budget and lifetime accounting |
+| server protocol | protocol/filter, server keys, advertised addresses, cookie keys and rotation state | KEEP (per-slot reset; recreated on public `stop`/`start`, which keeps `server_secret_key`, `lifetime` counters and `connection_id_base`) | server identity and configuration within a running server generation |
+| | used-token history | KEEP (per-slot reset; recreated on public `stop`/`start`) | the standard's rationale (`standard/RATIONALE.md`) says, “Entries expire with the tokens they name”; preserved across per-slot connection resets within a running server instance |
+| | signature verification budget and counters | KEEP (per-slot reset; budget recreated on public `stop`/`start`, `lifetime` counters preserved) | shared abuse budget within a running server instance and lifetime accounting across restarts |
 | server transport | transport, I/O owner, config, whole-server wire totals and stats | KEEP | server-wide or lifetime state |
 | message object | config, arena owner, aggregate counters, clock and transport link | KEEP | object lifetime |
 
