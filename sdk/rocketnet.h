@@ -1722,19 +1722,18 @@ struct rocketnet_server_config_t
 /// next connect or start frees it before it allocates the next, and destroy
 /// frees it, so a reconnect or restart takes the same bytes again and the
 /// peak never grows across cycles. The required_memory calls report that
-/// peak plus 1 MiB of slack: the peak is the most the allocator holds over
-/// create, connect or start, disconnect or stop, reconnect or restart, and
-/// destroy, each allocation with its alignment header, for whichever
-/// transport of the config's list is granted (the largest of them). The
-/// slack is a 1 MiB allowance for caller allocator overhead inside a region of
-/// that size. The number is deliberately conservative, not exact. For the
-/// planned built-in transports, with unchanged configuration and environment
-/// overrides, a region of that size is sufficient for an allocator charging up
-/// to 64 bytes of overhead per allocation or the fixed_memory example's packed
-/// chunk arena (whose chunk table metadata sits outside the region); allocator
-/// metadata or fragmentation beyond that 1 MiB allowance remains the caller's
-/// responsibility. The development link simulator is included in development
-/// builds.
+/// peak plus a fixed 1 MiB (1,048,576-byte) allowance for caller-allocator
+/// overhead: the peak accounts for the SDK's planned allocations and existing
+/// create-time overlap over create, connect or start, disconnect or stop,
+/// reconnect or restart, and destroy, each allocation with its alignment
+/// header, for whichever transport of the config's list is granted (the
+/// largest of them). The number is deliberately conservative, not exact. For
+/// the planned built-in transports, with unchanged configuration and
+/// environment overrides, additional caller-allocator metadata or
+/// fragmentation beyond that 1 MiB allowance must be included in the
+/// application's budget, and custom arena sufficiency must be verified for the
+/// actual allocator and configuration. The development link simulator is
+/// included in development builds.
 ///
 /// Not counted, because the operating system owns it: each worker thread's
 /// stack (the platform default: pthread's default attribute, or the

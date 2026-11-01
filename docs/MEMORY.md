@@ -45,16 +45,19 @@ An illustrative default 1000-client estimate recorded in this guide is about
 build options, platform, transport availability, and configuration affect the
 result. Query your own build with `rocketnet_server_required_memory` before
 allocating. It reports the planned allocator peak over create, start, stop,
-restart, and destroy for the largest candidate transport, plus a 1 MiB
-allowance for caller allocator overhead inside a region of that size. The
-number is deliberately conservative, not exact: a region of that size is
-sufficient for a budgeted allocator charging up to 64 bytes of overhead per
-allocation or a packed chunk arena whose chunk table metadata sits outside the
-region, while allocator metadata or fragmentation beyond that 1 MiB allowance
-remains the caller's responsibility.
-[examples/fixed_memory.c](../examples/fixed_memory.c) sizes a
-server and a client this way, holds the process to that budget over the whole
-lifecycle, and fails if a byte past it is asked for:
+restart, and destroy for the largest candidate transport (accounting for the
+SDK's planned allocations and existing create-time overlap), plus a fixed 1 MiB
+(1,048,576-byte) allowance for caller-allocator overhead. The number is
+deliberately conservative, not exact: additional caller-allocator metadata or
+fragmentation beyond that 1 MiB allowance must be included in the application's
+budget, and custom arena sufficiency must be verified for the actual allocator
+and configuration. Test coverage exercises the four-client loopback
+64-byte-per-allocation overhead case and a separate unit-test packed-arena
+oracle whose chunk table metadata sits outside the region, while
+[examples/fixed_memory.c](../examples/fixed_memory.c) is a budget-accounting
+`malloc` example with a 16-byte accounting header per allocation that holds the
+process to that budget over the whole lifecycle and fails if a byte past it is
+asked for:
 
 ```c
 #include "rocketnet.h"

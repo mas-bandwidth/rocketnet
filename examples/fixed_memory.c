@@ -23,13 +23,14 @@
 #include <time.h>
 
 // ---------------------------------------------------------------------------
-// The budget allocator. A game puts its own heap (tlsf or similar) over one
-// region per object of exactly the size required_memory returned: that size
-// already includes slack for the heap's block headers, alignment and
-// fragmentation, so the region needs no margin of its own. This one does not
-// implement a heap. It takes each block from malloc, charges the block and
-// its own 16-byte header (the cost a heap's block header has) to the
-// object's budget, and refuses past it.
+// The budget-accounting malloc allocator. required_memory accounts for the
+// SDK's planned allocations and existing create-time overlap, with a fixed
+// 1 MiB (1,048,576-byte) allowance for caller-allocator overhead; additional
+// metadata or fragmentation beyond that 1 MiB allowance must be included in
+// the application's budget, and custom arena sufficiency must be verified for
+// the actual allocator and configuration. This example does not implement a
+// custom arena: it takes each block from malloc, charges the block and a
+// 16-byte accounting header to the object's budget, and refuses past it.
 //
 // Each create passes its context to every allocation for that object, so the
 // budget is the context. Allocations with no budget (init's and the hub's,

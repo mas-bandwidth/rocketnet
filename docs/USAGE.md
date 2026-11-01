@@ -484,12 +484,16 @@ can finalize the old run and activate a new transport. Clients are identified by
 Each client and server starts with one block that create allocates through the
 allocator. `rocketnet_client_required_memory` and
 `rocketnet_server_required_memory` report the peak allocator memory over the
-whole lifecycle, including transport allocations at connect and start and the
-development link simulator in development builds, plus 1 MiB of slack for the
-heap a caller puts over that region. The number is conservative, not exact. For planned built-in
-transports with unchanged configuration and environment overrides, a program
-can pass `rocketnet_init` an allocator over a region of that size, aligned to
-`ROCKETNET_ALLOCATION_ALIGNMENT`. Operating-system-owned memory and a custom
+whole lifecycle, accounting for the SDK's planned allocations and existing
+create-time overlap (including transport allocations at connect and start and
+the development link simulator in development builds), plus a fixed 1 MiB
+(1,048,576-byte) allowance for caller-allocator overhead. The number is
+conservative, not exact. For planned built-in transports with unchanged
+configuration and environment overrides, additional caller-allocator metadata
+or fragmentation beyond that 1 MiB allowance must be included in the
+application's budget, and custom arena sufficiency (with allocations aligned to
+`ROCKETNET_ALLOCATION_ALIGNMENT`) must be verified for the actual allocator and
+configuration. Operating-system-owned memory and a custom
 transport's own allocations are outside this bound. A normal client connect starts
 one background network thread. A transport with wait/wake support uses that
 thread for bounded batched I/O and hands buffers to the frame thread; the
