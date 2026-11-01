@@ -58,8 +58,13 @@
 // for the timers ledger generation in a development build. The clients one
 // network thread makes the DEV ON client 22971951 (the windows Release (a)
 // and (c) legs) and the DEV OFF client at most 22182891.
+// The server's client-scaled buffers carved from layouts sized by its
+// configured max_clients (+64 bytes in rn_message_object_layout and +58384
+// bytes in rocketnet_server_transport_layout at 1000 clients, less the 25
+// bytes of prior ceiling slack on Windows): 1608427127 by the windows
+// Release (a) and (c) CI legs.
 #if ROCKETNET_DEV
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1608368704 )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1608427127 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22971951 )
 #else
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1597987642 )
