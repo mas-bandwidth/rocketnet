@@ -18,7 +18,9 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        echo "runner $RUNNER_NAME: $(getconf _NPROCESSORS_ONLN 2>/dev/null || echo '?') processors"
+        host="$(uname -sm)"
+        if [ -r /etc/os-release ]; then host="$host $(. /etc/os-release && echo "$ID-$VERSION_ID") $(getconf GNU_LIBC_VERSION 2>/dev/null | tr ' ' '-')"; fi
+        echo "runner $RUNNER_NAME: $(getconf _NPROCESSORS_ONLN 2>/dev/null || echo '?') processors, $host"
         if ! command -v ccache >/dev/null 2>&1; then
           echo "CCACHE-ABSENT on $RUNNER_NAME: this job compiles uncached"
           exit 0
