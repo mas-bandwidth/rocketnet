@@ -11643,6 +11643,9 @@ static void rocketnet_test_public_dev_connect_token_round_trip()
 
 #if !defined( _WIN32 ) && ROCKETNET_DEV && !defined( ROCKETNET_USE_SYSTEM_SODIUM )
 
+#include <errno.h>
+#include <fcntl.h>
+#include <poll.h>
 #include <signal.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -11686,27 +11689,80 @@ void rocketnet_test_sodium_misuse_logs_before_abort()
 
     // Under macOS leaks --atExit, libLeaksAtExit.dylib interposes abort with
     // kill(getpid(), SIGSTOP) before the real abort(), stopping the child with
-    // its pipe write descriptors still open. Reap the child first (resuming
-    // SIGSTOP with SIGCONT) so its descriptors close before draining the pipe.
-    int child_status = 0;
-    for ( ;; )
-    {
-        rocketnet_check( waitpid( pid, &child_status, WUNTRACED ) == pid );
-        if ( !( WIFSTOPPED( child_status ) && WSTOPSIG( child_status ) == SIGSTOP ) )
-            break;
-        rocketnet_check( kill( pid, SIGCONT ) == 0 );
-    }
+    // its pipe write descriptors still open. Drain the pipe nonblockingly while
+    // polling waitpid(..., WUNTRACED) and resuming SIGSTOP with SIGCONT.
+    const int flags = fcntl( pipe_fds[0], F_GETFL, 0 );
+    rocketnet_check( flags >= 0 );
+    rocketnet_check( fcntl( pipe_fds[0], F_SETFL, flags | O_NONBLOCK ) == 0 );
 
     char output[4096];
     size_t length = 0;
-    for ( ;; )
+    int child_status = 0;
+    bool pipe_eof = false;
+    bool child_reaped = false;
+
+    while ( !pipe_eof || !child_reaped )
     {
-        const ssize_t got = read( pipe_fds[0], output + length, sizeof( output ) - 1 - length );
-        if ( got <= 0 )
+        while ( !pipe_eof && length < sizeof( output ) - 1 )
+        {
+            const ssize_t got = read( pipe_fds[0], output + length, sizeof( output ) - 1 - length );
+            if ( got > 0 )
+            {
+                length += (size_t) got;
+                continue;
+            }
+            if ( got == 0 )
+            {
+                pipe_eof = true;
+                break;
+            }
+            if ( errno == EINTR )
+                continue;
+            if ( errno == EAGAIN || errno == EWOULDBLOCK )
+            {
+                if ( child_reaped )
+                    pipe_eof = true;
+                break;
+            }
+            pipe_eof = true;
             break;
-        length += (size_t) got;
+        }
         if ( length == sizeof( output ) - 1 )
-            break;
+            pipe_eof = true;
+
+        if ( !child_reaped )
+        {
+            const int wait_flags = ( pipe_eof ? 0 : WNOHANG ) | WUNTRACED;
+            pid_t waited;
+            do
+            {
+                waited = waitpid( pid, &child_status, wait_flags );
+            } while ( waited < 0 && errno == EINTR );
+
+            rocketnet_check( waited == 0 || waited == pid );
+            if ( waited == pid )
+            {
+                if ( WIFSTOPPED( child_status ) && WSTOPSIG( child_status ) == SIGSTOP )
+                {
+                    rocketnet_check( kill( pid, SIGCONT ) == 0 );
+                    continue;
+                }
+                if ( !WIFSTOPPED( child_status ) )
+                {
+                    child_reaped = true;
+                    continue;
+                }
+            }
+        }
+
+        if ( !pipe_eof && !child_reaped )
+        {
+            struct pollfd pfd;
+            pfd.fd = pipe_fds[0];
+            pfd.events = POLLIN | POLLHUP;
+            pfd.revents = 0;
+            (void) poll( &pfd, 1, 5 );
+        }
     }
     output[length] = '\0';
     close( pipe_fds[0] );

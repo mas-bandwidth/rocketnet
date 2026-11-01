@@ -72,6 +72,7 @@
 #include <sys/utsname.h>
 #include <sys/wait.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <unistd.h>
 extern char ** environ;
 #endif // #if defined( _WIN32 )
@@ -599,7 +600,7 @@ inline int suite_job_count_for( unsigned cores, uint64_t budget, int requested, 
     if ( budget > 0 )
     {
         const uint64_t fit = budget / SUITE_JOB_MEMORY_BYTES;
-        jobs = (unsigned) (std::min) ( (uint64_t) jobs, (std::max) ( fit, (uint64_t) 1 ) );
+        jobs = (unsigned) ( std::min )( (uint64_t) jobs, ( std::max )( fit, (uint64_t) 1 ) );
     }
 
     if ( requested > 0 )
@@ -1135,41 +1136,115 @@ inline int suite_run_names_only( int ( *worker )( const char * ), const char * n
         const int rc = worker( name );
         fflush( stdout );
         fflush( stderr );
-        close( STDOUT_FILENO );
-        close( STDERR_FILENO );
         _exit( rc );
     }
 
     close( pipefd[1] );
 
-    std::string output;
-    suite_drain( pipefd[0], output );
-    close( pipefd[0] );
-
-    int status = 0;
-    pid_t waited;
-
-    for ( ;; )
+    const int fl = fcntl( pipefd[0], F_GETFL, 0 );
+    if ( fl >= 0 )
     {
-        do
-        {
-            waited = waitpid( pid, &status, WUNTRACED );
-        } while ( waited < 0 && errno == EINTR );
-
-        if ( waited == pid && WIFSTOPPED( status ) && WSTOPSIG( status ) == SIGSTOP )
-        {
-            kill( pid, SIGCONT );
-            continue;
-        }
-        break;
+        fcntl( pipefd[0], F_SETFL, fl | O_NONBLOCK );
     }
+
+    // Under macOS leaks --atExit, libLeaksAtExit.dylib interposes _exit and
+    // abort with kill(getpid(), SIGSTOP) before the real call, stopping the
+    // child while its pipe write descriptors are still open. Drain the pipe
+    // nonblockingly while polling waitpid(..., WUNTRACED) and resuming SIGSTOP
+    // with SIGCONT so neither a full pipe nor a stopped child can deadlock.
+    std::string output;
+    int status = 0;
+    pid_t waited = -1;
+    bool pipe_eof = false;
+    bool child_reaped = false;
+    char buf[4096];
+
+    while ( !pipe_eof || !child_reaped )
+    {
+        while ( !pipe_eof )
+        {
+            const ssize_t n = ::read( pipefd[0], buf, sizeof( buf ) );
+            if ( n > 0 )
+            {
+                output.append( buf, (size_t) n );
+                continue;
+            }
+            if ( n == 0 )
+            {
+                pipe_eof = true;
+                break;
+            }
+            if ( errno == EINTR )
+                continue;
+            if ( errno == EAGAIN || errno == EWOULDBLOCK )
+            {
+                if ( child_reaped )
+                    pipe_eof = true;
+                break;
+            }
+            pipe_eof = true;
+            break;
+        }
+
+        if ( !child_reaped )
+        {
+            const int wait_flags = ( pipe_eof ? 0 : WNOHANG ) | WUNTRACED;
+            pid_t w;
+            do
+            {
+                w = waitpid( pid, &status, wait_flags );
+            } while ( w < 0 && errno == EINTR );
+
+            if ( w == pid )
+            {
+                if ( WIFSTOPPED( status ) && WSTOPSIG( status ) == SIGSTOP )
+                {
+                    kill( pid, SIGCONT );
+                    continue;
+                }
+                if ( !WIFSTOPPED( status ) )
+                {
+                    waited = w;
+                    child_reaped = true;
+                    continue;
+                }
+            }
+            else if ( w < 0 )
+            {
+                waited = w;
+                child_reaped = true;
+                continue;
+            }
+        }
+
+        if ( !pipe_eof && !child_reaped )
+        {
+            struct pollfd pfd;
+            pfd.fd = pipefd[0];
+            pfd.events = POLLIN | POLLHUP;
+            pfd.revents = 0;
+            (void) poll( &pfd, 1, 5 );
+        }
+    }
+
+    close( pipefd[0] );
 
     int rc = 1;
     if ( waited >= 0 && WIFEXITED( status ) )
         rc = WEXITSTATUS( status );
     else if ( waited >= 0 && WIFSIGNALED( status ) )
-        rc = 128 + WTERMSIG( status );
+        rc = 1;
     suite_emit_captured( output, rc != 0 );
+    if ( rc != 0 && output.find( "check failed" ) == std::string::npos )
+    {
+        if ( waited >= 0 && WIFSIGNALED( status ) )
+            printf( "check failed: %s signal %d\n", name, WTERMSIG( status ) );
+        else if ( waited >= 0 && WIFEXITED( status ) )
+            printf( "check failed: %s exit %d\n", name, WEXITSTATUS( status ) );
+        else
+            printf( "check failed: %s wait failed\n", name );
+        fflush( stdout );
+    }
 
     return rc;
 }
@@ -1233,7 +1308,7 @@ inline int suite_main( int argc, char ** argv,
     if ( !suite_collect( pending, results, count, name_at, execs, nexecs, group_of, suite_directory_of( self ), "" ) )
         return 1;
 
-    const int jobs = max_jobs > 0 ? (std::min) ( suite_job_count(), max_jobs ) : suite_job_count();
+    const int jobs = max_jobs > 0 ? ( std::min )( suite_job_count(), max_jobs ) : suite_job_count();
     double limit_s = case_limit_s;
     if ( !suite_case_limit( case_limit_s, &limit_s ) )
         return 1;
@@ -1607,7 +1682,7 @@ inline int suite_main( int argc, char ** argv,
     if ( !suite_collect( pending, results, count, name_at, execs, nexecs, group_of, suite_directory_of( self ), ".exe" ) )
         return 1;
 
-    const int jobs = max_jobs > 0 ? (std::min) ( suite_job_count(), max_jobs ) : suite_job_count();
+    const int jobs = max_jobs > 0 ? ( std::min )( suite_job_count(), max_jobs ) : suite_job_count();
     double limit_s = case_limit_s;
     if ( !suite_case_limit( case_limit_s, &limit_s ) )
         return 1;
@@ -1722,7 +1797,7 @@ inline int suite_main( int argc, char ** argv,
         {
             static_assert( SUITE_WAIT_HANDLES == MAXIMUM_WAIT_OBJECTS, "the wait set is one WaitForMultipleObjects call" );
             HANDLE handles[SUITE_WAIT_HANDLES];
-            const size_t n = (std::min) ( running.size(), (size_t) SUITE_WAIT_HANDLES );
+            const size_t n = ( std::min )( running.size(), (size_t) SUITE_WAIT_HANDLES );
             for ( size_t i = 0; i < n; i++ )
             {
                 handles[i] = running[i].process;

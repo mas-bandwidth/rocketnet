@@ -507,12 +507,16 @@ MallocStackLogging=1 ROCKETNET_TEST_SUITE_CAPTURE=1 leaks --atExit -- ./bin/func
 
 The extracted leak runner retains a 180 s watchdog for callers that do not
 set `ROCKETNET_NIGHTLY_NO_TIMEOUT=1`. Nightly sets that exact opt-in and does
-not terminate an inspection because of elapsed time. The allocator-trap and
-sodium-misuse witnesses fork children that deliberately exit or abort. Their
-interaction with Apple's exit inspection has produced hangs; removing an
-elapsed cap does not resolve that compatibility issue or establish leak
-coverage. Those cases still require completed inspections, with their original
-exit/abort assertions intact, before this leg can pass.
+not terminate an inspection because of elapsed time. Under `leaks --atExit`,
+`/usr/lib/libLeaksAtExit.dylib` interposes `_exit` and `abort` with
+`kill(getpid(), SIGSTOP)` so `leaks` can inspect its direct child and resume it
+with `SIGCONT`; forked children that do not `exec` inherit that interposition
+without being direct children of `leaks`. The allocator-trap witness
+(`test_channels_allocator_trap_witness`), sodium-misuse witness
+(`test_sodium_misuse_logs_before_abort`), and single-case capture wrapper
+(`suite_run_names_only`) poll `waitpid(..., WUNTRACED)` alongside nonblocking
+pipe drains and resume `SIGSTOP`-stopped children with `SIGCONT`, completing
+leak inspection with their exit and abort assertions intact.
 
 ## Fuzzing
 

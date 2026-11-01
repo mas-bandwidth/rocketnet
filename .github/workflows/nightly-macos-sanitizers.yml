@@ -134,9 +134,10 @@ jobs:
               sleep 1; waited=$((waited + 1))
               if [ "${ROCKETNET_NIGHTLY_NO_TIMEOUT:-0}" != "1" ] && [ "$waited" -ge "$limit" ]; then kill -KILL -- "-$pid" 2>/dev/null; echo "TIMEOUT $1 after ${limit}s"; wait "$pid"; return 1; fi
             done
-            wait "$pid"
+            wait "$pid"; rc=$?
             # an exec binary's own lines name no registered case: the suite answers "unknown ... test"
             if grep -q "^unknown .* test $1\$" "$out"; then rm -f "$out"; return 0; fi
+            if [ "$rc" -ne 0 ] || grep -q "^check failed:" "$out"; then echo "LEAKS $1"; grep -E '^check failed:|Process [0-9]+: [0-9]+ leaks? for' "$out"; return 1; fi
             if grep -qE 'Process [0-9]+: 0 leaks for 0 total leaked bytes' "$out"; then rm -f "$out"; return 0; fi
             echo "LEAKS $1"; grep -E 'Process [0-9]+: [0-9]+ leaks? for' "$out"; return 1
           }
