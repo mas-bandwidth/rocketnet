@@ -1,10 +1,12 @@
 # Nightly TLC. The model checks run once a night, not per commit: a TLC
 # case takes up to the runner's 110 s per-case limit, and the per-commit tier
-# is bounded at two minutes. The job measures every stale case again with the
-# pinned runner and JAR, checks the committed records' outcomes and the
-# coverage rows, and fails the run on any case that does not reach its
+# is bounded at two minutes. The job measures every stale-group case and each
+# declared timeout-debt case again with the pinned runner and JAR, checks the
+# committed records' outcomes and coverage rows, and fails the run on any
+# case that does not reach its
 # declared result. A model edit still commits fresh records where its author
-# can run TLC (proofs/tla/README.md); the night catches what is left stale.
+# can run TLC (proofs/tla/README.md); the night catches what is left stale and
+# retries committed FAIL/124 bench debt without treating a timeout as a proof.
 
 name: TLC records
 
@@ -35,6 +37,9 @@ jobs:
       - name: Coverage checker tests pass
         shell: bash
         run: python3 tools/test_check_tla_coverage.py
+      - name: Nightly case planner controls pass
+        shell: bash
+        run: python3 tools/test_plan_tlc_nightly.py
       - name: Check the fleet's Go is on PATH
         shell: bash
         run: |
@@ -66,8 +71,10 @@ jobs:
           (cd "$job/runner" && go build -o "$job/tlacheck" ./tools/tlacheck)
           "$job/tlacheck" groups --root proofs --stale > "$job/stale.json"
           cat "$job/stale.json"
-          if [ "$(cat "$job/stale.json")" = '[]' ]; then
-            echo "TLC-STALE none"
+          plan="$job/plan"
+          python3 tools/plan_tlc_nightly.py --stale "$job/stale.json" > "$plan"
+          if [ ! -s "$plan" ]; then
+            echo "TLC-PLAN no stale cases or recorded timeout debt"
             exit 0
           fi
 
@@ -83,18 +90,9 @@ jobs:
             exit 1
           fi
 
-          # every case of every stale group in its own shard, so each gets the
-          # runner's whole per-case limit; shards run in parallel, two workers each
-          plan="$job/plan"
-          : > "$plan"
-          group_column=$(head -1 proofs/tla/CASES.tsv | tr '\t' '\n' | grep -n '^group$' | cut -d: -f1)
-          for group in $(tr -d '[]"' < "$job/stale.json" | tr ',' ' '); do
-            cases=$(awk -F'\t' -v c="$group_column" -v g="$group" 'NR > 1 && $c == g' proofs/tla/CASES.tsv | wc -l)
-            for shard in $(seq 0 $((cases - 1))); do
-              echo "$group $cases $shard" >> "$plan"
-            done
-          done
-          echo "TLC-STALE cases=$(wc -l < "$plan")"
+          # Each selected case keeps its index and cardinality within the full
+          # group. Stale/debt overlap is run once; healthy siblings of current
+          # debt are omitted. The pinned runner retains its 110 s case limit.
           parallel=$(( $(nproc) / 2 ))
           [ "$parallel" -ge 1 ] || parallel=1
           export TLACHECK="$job/tlacheck" TLC_JAR="$jar" TLC_JOB="$job"
@@ -110,7 +108,7 @@ jobs:
             grep -h '^CASE FAIL' "$job"/run-*.log
             exit 1
           fi
-          echo "TLC-PASS every stale case reached its declared result; commit fresh records from a bench run"
+          echo "TLC-PASS every selected stale/debt case reached its declared result; commit fresh records from a bench run"
       - name: Check required outcomes and explicit timeout debt
         shell: bash
         run: |

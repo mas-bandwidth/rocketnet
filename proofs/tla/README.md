@@ -115,18 +115,21 @@ Use fresh output directories for every attempt and preserve earlier evidence.
 
 The model checks run nightly, not per commit
 ([tlc.yml](../../.github/workflows/tlc.yml), daily and on workflow_dispatch).
-The nightly job builds the same pinned runner on a self-hosted Linux runner,
-runs every case of every stale group with the pinned JAR from
+The nightly job builds the same pinned runner on a self-hosted Linux runner.
+It selects every case of every stale group, plus each declared `bench` debt
+case whose committed record is `FAIL` with exit `124`. Their union runs once:
+healthy siblings of a current debt case are not rerun. Each selected case keeps
+its index and cardinality within the full group, using the pinned JAR from
 `/opt/tla/tla2tools.jar` (one shard per case, two workers, the runner's
-110-second per-case limit), and fails on any case that does not reach its
-declared result. A missing, mismatched or incomplete case plan is also a
-failure. It then checks the committed records (`tools/check_tla_records.py`): exact
+110-second per-case limit). Any case that does not reach its declared result
+fails the night, including a debt case that times out again. A missing,
+mismatched or incomplete case plan is also a failure. It then checks the committed records (`tools/check_tla_records.py`): exact
 `(config, module)` bijection with `CASES.tsv`, matching `expected` and
 `property`, the pinned JAR and bounded mode, the declared TLC exit code on
 every `PASS` record (`0` for `pass`, `12` for `invariant`, `13` for `action`
 and `temporal`) with positive state counts, and no failed record unless it is
-explicit `bench` debt with actual exit 124. A night that passes with stale groups still leaves the records to
-be committed from a bench run; the nightly run does not commit them.
+explicit `bench` debt with actual exit 124. Fresh records still need to be
+committed from a bench run; the nightly run does not commit them.
 
 ## Case inventory
 
