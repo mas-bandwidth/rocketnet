@@ -326,9 +326,10 @@ struct rocketnet_ack_endpoint_t
     uint32_t stats_pad;
 
     // bit (slot) set: the record at slot was written since the reset. The two
-    // record rings are never zeroed: a record is read only when its written
-    // bit is set, and an unwritten one reads as the empty record (sequence 0,
-    // id 0), so the reset clears only these bits
+    // record rings are never zeroed (176 KiB a connection at the default
+    // history): a record is read only when its written bit is set, and an
+    // unwritten one reads as the empty record (sequence 0, id 0), so the reset
+    // clears only these bits
     uint64_t sent_written[ROCKETNET_SENT_BITMAP_WORDS];
     uint64_t received_written[ROCKETNET_RECEIVED_WRITTEN_WORDS];
 
@@ -348,10 +349,9 @@ struct rocketnet_ack_endpoint_t
 };
 
 #if ROCKETNET_HISTORY_PACKETS == 4096
-static_assert( sizeof( ( (struct rocketnet_ack_endpoint_t *) 0 )->sent ) + sizeof( ( (struct rocketnet_ack_endpoint_t *) 0 )->received ) +
-                       sizeof( ( (struct rocketnet_ack_endpoint_t *) 0 )->aggregates ) ==
-                   (size_t) 256 * 1024,
-               "the three record rings are 256 KiB at the default history" );
+static_assert( sizeof( ( (struct rocketnet_ack_endpoint_t *) 0 )->sent ) + sizeof( ( (struct rocketnet_ack_endpoint_t *) 0 )->received ) ==
+                   (size_t) 176 * 1024,
+               "the two record rings are 176 KiB at the default history" );
 #endif // #if ROCKETNET_HISTORY_PACKETS == 4096
 
 static_assert( ( ROCKETNET_RTT_HISTORY_SIZE & ( ROCKETNET_RTT_HISTORY_SIZE - 1 ) ) == 0,
