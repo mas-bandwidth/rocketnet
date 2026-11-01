@@ -21,7 +21,7 @@
 (* past the floor shows.  The reference is the bit-by-bit walk the word    *)
 (* pass replaced: from largest down to the floor, the first run, then      *)
 (* (gap, run) pairs, a trailing gap dropped, the first max_ranges pairs    *)
-(* kept.  ReplayWindow.tla and FragmentsAndAcks.tla take the block as that *)
+(* kept.  ReplayWindow.tla and SessionAcks.tla take the block as that    *)
 (* set; this module checks that the word pass builds it.                  *)
 (*                                                                         *)
 (* Broken selects a reversed witness:                                      *)

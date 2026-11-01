@@ -4,39 +4,11 @@
 #include "native_shutdown.h"
 #include "../sdk/rocketnet_server_protocol.h"
 #include "../sdk/rocketnet_replay.h"
-#include "../sdk/rocketnet_fragment.h"
 // This target compiles the transport into its own deterministic fixture.
-static bool fail_seal;
-static int checked_seals;
-static bool check_arena_copy;
-static int arena_pattern;
-static int controlled_seal( rocketnet_server_protocol_t * server, int client_index, uint64_t sequence,
-                            uint64_t packet_id, uint8_t * wire, int bytes, double time );
-#define rocketnet_server_protocol_seal_payload_frame controlled_seal
 #include "../sdk/rocketnet_server_transport.cpp"
 #include "loopback_hub.h"
-#undef rocketnet_server_protocol_seal_payload_frame
 
 #define CHECK( x ) do { if (!(x)) { fprintf(stderr, "control check failed: %s (%s:%d)\n", #x, __FILE__, __LINE__); exit(1); } } while (0)
-
-static int controlled_seal( rocketnet_server_protocol_t * server, int client_index, uint64_t sequence,
-                            uint64_t packet_id, uint8_t * wire, int bytes, double time )
-{
-    if ( check_arena_copy )
-    {
-        CHECK( bytes == 64 );
-        for ( int i = 0; i < bytes; ++i )
-        {
-            CHECK( wire[ROCKETNET_FRAME_PAYLOAD_OFFSET - ROCKETNET_FRAME_WIRE_OFFSET + i] == uint8_t( i + arena_pattern ) );
-        }
-        ++checked_seals;
-    }
-
-    if ( fail_seal )
-        return 0;
-
-    return rocketnet_server_protocol_seal_payload_frame( server, client_index, sequence, packet_id, wire, bytes, time );
-}
 
 // The fake staged frame must satisfy the public packet lease's 16-byte
 // alignment contract. Its intentional struct padding triggers MSVC C4324.
@@ -64,7 +36,10 @@ struct control_fixture_t
     int lease_starts;
     rocketnet_address_t reserved_to;
     alignas( 16 ) uint8_t frame[ROCKETNET_FRAME_STRIDE];
-    rocketnet_server_socket_process_packets_t received;
+    rocketnet_server_socket_process_packets_t received;     // a view of the received_ arrays
+    rocketnet_address_t received_from[4];
+    int received_bytes[4];
+    uint8_t * received_data[4];
     int feed_count;
     rocketnet_address_t feed_from[4];
     uint8_t feed_data[4][ROCKETNET_RECEIVE_CEILING];
@@ -109,7 +84,7 @@ static void fixture_stop( void * ) {}
 static bool fixture_stopped( void * ) { return true; }
 static void send_batch( void * p, const rocketnet_platform_send_t * sends, int count )
 {
-    CHECK( count > 0 && count <= ROCKETNET_SERVER_MAX_SEND_PACKETS );
+    CHECK( count > 0 && count <= rocketnet_server_send_batch_packets( ROCKETNET_MAX_CLIENTS ) );
     for ( int i = 0; i < count; ++i )
     {
         record( (control_fixture_t *) p, sends[i].to, sends[i].packet_data );
@@ -196,6 +171,10 @@ static void flush( void * p )
 static rocketnet_server_socket_process_packets_t * receive( void * p )
 {
     auto * f = (control_fixture_t *) p;
+    f->received.capacity = 4;
+    f->received.from = f->received_from;
+    f->received.packet_bytes = f->received_bytes;
+    f->received.packet_data = f->received_data;
     if ( f->feed_count )
     {
         // fed client packets, delivered once
@@ -222,7 +201,6 @@ static rocketnet_server_transport_t * make_server( control_fixture_t * f, rocket
     rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config( &config );
     config.max_clients = clients;
-    config.max_fragmented_messages = 1;
 
     // the real adapter is closed immediately below; all behavior under test
     // runs through the deterministic buffered or staged fixture operations
@@ -324,7 +302,7 @@ static void seed_stats_rtt_samples( rocketnet_server_transport_t * server, int c
         block.largest = sequence;
 
         auto * endpoint = &server->protocol.acks->endpoints[i];
-        CHECK( rocketnet_ack_endpoint_record_sent_classified( endpoint, sequence, 100, 0, 0, 0, 0.0 ) == ROCKETNET_ACK_SENT_RECORDED );
+        CHECK( rocketnet_ack_endpoint_record_sent_classified( endpoint, sequence, 100, 0, 0, 0.0 ) == ROCKETNET_ACK_SENT_RECORDED );
 
         uint64_t acked_ids[1] = {};
         uint64_t unknown = 0, batch_full = 0;
@@ -549,57 +527,6 @@ static void test_staged_idle_maintenance_preflight()
     printf( "test_staged_idle_maintenance_preflight\n" );
 }
 
-static void test_single_frame_arena()
-{
-    for ( int staged = 0; staged < 2; ++staged )
-    {
-        auto * f = new control_fixture_t();
-        f->capacity = 1;
-
-        rocketnet_server_transport_io_operations_t operations;
-        auto * server = make_server( f, &operations, 1, staged != 0 );
-        checked_seals = 0;
-        check_arena_copy = true;
-
-        for ( int attempt = 0; attempt < 2; ++attempt )
-        {
-            rocketnet_packet_context_t context;
-            CHECK( rocketnet_server_transport_start_packet( server, 0, 5000, &context ) );
-            CHECK( context.payload_index == 0 ); // The oversized reservation selected the arena.
-
-            int capacity;
-            uint8_t * payload = rocketnet_server_transport_packet_payload( server, &context, &capacity );
-            CHECK( payload && capacity >= 5000 );
-            arena_pattern = 37 + attempt * 17;
-            for ( int i = 0; i < 64; ++i )
-            {
-                payload[i] = uint8_t( i + arena_pattern );
-            }
-            fail_seal = attempt == 0;
-
-            int bytes = rocketnet_server_transport_finish_packet( server, &context, 64 );
-            CHECK( ( bytes > 0 ) == ( attempt == 1 ) && !context.frame );
-            if ( staged )
-            {
-                CHECK( f->aborts == 1 );
-                CHECK( f->used == attempt );
-            }
-            else if ( attempt == 0 )
-                CHECK( server->payload_ring.info[0].wire_bytes == 0 );
-            rocketnet_server_transport_send_packets( server );
-            CHECK( f->payloads == attempt ); // Failed seal never reached the transport.
-        }
-
-        CHECK( checked_seals == 2 );
-        check_arena_copy = false;
-        fail_seal = false;
-        rn_native_server_transport_stop_and_destroy( server );
-        delete f;
-    }
-
-    printf( "test_single_frame_arena_seal_and_abort\n" );
-}
-
 static void test_staged_lease_table_full()
 {
     // Keep every staged frame outstanding. Distinct 16-aligned frames make
@@ -681,7 +608,7 @@ static void test_entries_carry_connection_id( bool staged )
             memset( payload, 0x50 + k, 8 );
 
             // the server assigns the sequence when finish accepts the payload
-            // (test_unit_sequence_burn.cpp; proofs/tla/FragmentsAndAcks.tla
+            // (test_unit_sequence_burn.cpp; proofs/tla/SessionAcks.tla
             // BurnedNeverNamed), so it is read after finish, never at start
 
             CHECK( rocketnet_server_transport_finish_packet( server, &context, 8 ) > 0 );
@@ -750,58 +677,6 @@ static void test_entries_carry_connection_id( bool staged )
     }
 
     CHECK( acked_per_client[0] == 3 && acked_per_client[1] == 3 );
-
-    // the fragment-completion path on its own: client 1 sends one payload
-    // as two fragments in the next update, so the only batch entry is the
-    // reassembled payload, and its tag comes from the transport's
-    // fragment-completion append site (buffered or staged). Mutation that
-    // must bite: drop the tag copy there; this id check goes red.
-    {
-        const int c = 1;
-        auto * mapping = rocketnet_encryption_map_entry( protocol->encryption_map,
-                                                         rocketnet_client_slots_mapping_index( protocol->client_slots, c ) );
-        rocketnet_replay_protection_t replay;
-        memset( &replay, 0, sizeof( replay ) );
-        for ( int k = 0; k < 3; ++k )
-        {
-            rocketnet_replay_advance( &replay, sequences[c][k] );
-        }
-
-        uint8_t fragmented[24];
-        for ( int b = 0; b < 24; ++b )
-        {
-            fragmented[b] = (uint8_t) ( 0xC0 + b );
-        }
-
-        const int stride = 16;
-
-        for ( int k = 0; k < 2; ++k )
-        {
-            uint8_t plaintext[ROCKETNET_ACK_BLOCK_MAX_BYTES + ROCKETNET_FRAGMENT_HEADER_BYTES + 24];
-            const int block = rocketnet_ack_block_build( plaintext, ROCKETNET_ACK_BLOCK_MAX_BYTES, &replay );
-            CHECK( block > 0 );
-            rocketnet_write_fragment_header( plaintext + block, 1, k, 2 );
-
-            const int fragment_bytes = k == 0 ? stride : 24 - stride;
-            memcpy( plaintext + block + ROCKETNET_FRAGMENT_HEADER_BYTES, fragmented + k * stride, (size_t) fragment_bytes );
-            f->feed_from[k] = f->feed_from[c];
-            f->feed_bytes[k] = rocketnet_write_sealed_packet( f->feed_data[k], ROCKETNET_CONNECTION_FRAGMENT_PACKET,
-                                                              protocol->packet_filter, 2 + (uint64_t) k, NULL, plaintext, block + ROCKETNET_FRAGMENT_HEADER_BYTES + fragment_bytes,
-                                                              protocol->protocol_id, mapping->connection_salt, NULL, mapping->keys.session_client_to_server );
-            CHECK( f->feed_bytes[k] > 0 );
-        }
-
-        f->feed_count = 2;
-        rocketnet_server_transport_update( server, time + 0.002 );
-
-        const int num_fragmented = rocketnet_server_transport_payloads( server, &client_index, &payload_data, &payload_bytes );
-        CHECK( num_fragmented == 1 );
-        CHECK( rocketnet_server_transport_payload_connection_ids( server, &connection_id ) == num_fragmented );
-        CHECK( client_index[0] == c );
-        CHECK( payload_bytes[0] == 24 && memcmp( payload_data[0], fragmented, 24 ) == 0 );
-        CHECK( connection_id[0] == 2 );
-        CHECK( connection_id[0] == rocketnet_server_transport_client_connection_id( server, c ) );
-    }
 
     rn_native_server_transport_stop_and_destroy( server );
     delete f;
@@ -899,7 +774,6 @@ int main( int argc, char ** argv )
     test_staged_control_fairness();
     test_staged_unreachable_client_does_not_pin_sweep();
     test_staged_idle_maintenance_preflight();
-    test_single_frame_arena();
     test_staged_lease_table_full();
     test_entries_carry_connection_id( false );
     test_entries_carry_connection_id( true );

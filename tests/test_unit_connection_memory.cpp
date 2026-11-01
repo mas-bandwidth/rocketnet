@@ -17,7 +17,6 @@
 #include "rocketnet_channel.h"
 #include "rocketnet_counters.h"
 #include "rocketnet_internal.h"
-#include "rocketnet_fragment.h"
 #include "rocketnet_memory.h"
 
 #include <stdint.h>
@@ -668,59 +667,6 @@ static void test_receive_without_room_exhausts_the_region()
     rn_arena_destroy( arena );
 }
 
-// Reassembly geometry: an out-of-range argument (connections and slots at
-// least 1, slots at most ROCKETNET_MAX_FRAGMENTS, payload between
-// ROCKETNET_MAX_PACKET_PAYLOAD_BYTES and ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES,
-// delivered at least 1) or an over-budget geometry is refused before any
-// allocation (sdk/rocketnet_fragment.cpp rocketnet_reassembly_memory_required,
-// rocketnet_reassembly_memory_allowed, rocketnet_reassembly_set_create).
-
-static void test_reassembly_geometry_refuses_bad_arguments_and_budget()
-{
-    const int MP = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
-
-    // a bad argument yields required 0 and allowed false
-
-    const int bad[][4] = {
-        { 0, 1, MP, 1 },
-        { 1, 0, MP, 1 },
-        { 1, ROCKETNET_MAX_FRAGMENTS + 1, MP, 1 },
-        { 1, 1, MP - 1, 1 },
-        { 1, 1, ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES + 1, 1 },
-        { 1, 1, MP, 0 },
-    };
-    for ( size_t i = 0; i < sizeof( bad ) / sizeof( bad[0] ); i++ )
-    {
-        check( rocketnet_reassembly_memory_required( bad[i][0], bad[i][1], bad[i][2], bad[i][3] ) == 0 );
-        check( !rocketnet_reassembly_memory_allowed( bad[i][0], bad[i][1], bad[i][2], bad[i][3] ) );
-    }
-
-    // valid geometries are accepted
-
-    check( rocketnet_reassembly_memory_required( 4, 8, 16384, 32 ) != 0 );
-    check( rocketnet_reassembly_memory_allowed( 4, 8, 16384, 32 ) );
-    check( rocketnet_reassembly_memory_required( 1, 1, MP, 1 ) != 0 );
-    check( rocketnet_reassembly_memory_allowed( 1, 1, MP, 1 ) );
-
-    // an over-budget geometry: required is non-zero and over the budget,
-    // allowed is false, and create refuses it before any allocation
-
-    const uint64_t required = rocketnet_reassembly_memory_required(
-        1024, ROCKETNET_MAX_FRAGMENTS, ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES, 1024 );
-    const uint64_t budget = (uint64_t) ROCKETNET_REASSEMBLY_MEMORY_MIB * 1024 * 1024;
-    check( required != 0 );
-    check( required > budget );
-    check( !rocketnet_reassembly_memory_allowed(
-        1024, ROCKETNET_MAX_FRAGMENTS, ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES, 1024 ) );
-
-    cm_install();
-
-    const uint64_t before = cm_calls();
-    check( rocketnet_reassembly_set_create( NULL, 1024, ROCKETNET_MAX_FRAGMENTS, ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES, 1024 ) == NULL );
-    check( cm_calls() == before );
-    cm_restore();
-}
-
 // RNConnectionMemory Use requires ~exhausted for every way a send takes room,
 // the large-message span path too (rn_region_send_alloc_span). A region
 // exhausted by its descriptor table, with one descriptor then returned, still
@@ -1023,7 +969,6 @@ static void test_store_chunk_generation_never_zero()
 #endif // #if ROCKETNET_DEV
 
 REGISTER_UNIT_TEST( test_memory_isolation_between_slots );
-REGISTER_UNIT_TEST( test_reassembly_geometry_refuses_bad_arguments_and_budget );
 #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_exhaustion_is_a_kick_with_its_reason );
 #endif // #if ROCKETNET_DEV

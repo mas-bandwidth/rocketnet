@@ -12,12 +12,6 @@
 
 #include "rocketnet.h"                          // ROCKETNET_MAX_CLIENTS
 
-// The reassembly budget scales with the clients a server holds: 512 MiB per
-// 1000, so 512 at the default and 5120 at 10000.
-#ifndef ROCKETNET_REASSEMBLY_MEMORY_MIB
-#define ROCKETNET_REASSEMBLY_MEMORY_MIB ( 512 * ( ( ROCKETNET_MAX_CLIENTS + 999 ) / 1000 ) )
-#endif // #ifndef ROCKETNET_REASSEMBLY_MEMORY_MIB
-
 #ifndef ROCKETNET_XDP_MEMORY_MIB
 #define ROCKETNET_XDP_MEMORY_MIB 4096
 #endif // #ifndef ROCKETNET_XDP_MEMORY_MIB
@@ -25,9 +19,9 @@
 // Component budgets are explicit build choices; they do not estimate available
 // host RAM or authorize overcommit. Callers must leave room for other components,
 // allocator overhead, thread stacks, kernel buffers and their application.
-#if ROCKETNET_REASSEMBLY_MEMORY_MIB < 1 || ROCKETNET_REASSEMBLY_MEMORY_MIB > 1048576 || ROCKETNET_XDP_MEMORY_MIB < 1 || ROCKETNET_XDP_MEMORY_MIB > 1048576
+#if ROCKETNET_XDP_MEMORY_MIB < 1 || ROCKETNET_XDP_MEMORY_MIB > 1048576
 #error RocketNet memory budgets must be 1..1048576 MiB
-#endif // #if ROCKETNET_REASSEMBLY_MEMORY_MIB < 1 || ROCKETNET_REASSEMBLY_MEMORY_MIB > 1048576 || ROCKETNET_XDP_MEMORY_MIB < 1 || ROCKETNET_XDP_MEMORY_MIB > 1048576
+#endif // #if ROCKETNET_XDP_MEMORY_MIB < 1 || ROCKETNET_XDP_MEMORY_MIB > 1048576
 
 inline bool rocketnet_memory_add( uint64_t & total, uint64_t count, uint64_t stride )
 {
@@ -36,6 +30,40 @@ inline bool rocketnet_memory_add( uint64_t & total, uint64_t count, uint64_t str
 
     total += count * stride;
     return true;
+}
+
+// A create-time layout: an owner's fixed part followed by the buffers its
+// config sizes, carved out of the one allocation create makes. The owner's
+// layout function takes the carves in order and returns each offset; its
+// create and its memory plan both call it, so the plan counts exactly the
+// bytes create allocates. Each offset is aligned to align (a power of two at
+// most ROCKETNET_ALLOCATION_ALIGNMENT, the alignment rocketnet_malloc gives
+// the base). An overflow sets failed and every later carve returns 0.
+struct rocketnet_carve_t
+{
+    uint64_t bytes;
+    bool failed;
+};
+
+inline uint64_t rocketnet_carve( rocketnet_carve_t & carve, uint64_t count, uint64_t stride, uint64_t align = ROCKETNET_ALLOCATION_ALIGNMENT )
+{
+    if ( carve.failed || align == 0 || ( align & ( align - 1 ) ) != 0 || align > ROCKETNET_ALLOCATION_ALIGNMENT ||
+         carve.bytes > UINT64_MAX - ( align - 1 ) )
+    {
+        carve.failed = true;
+        return 0;
+    }
+
+    const uint64_t offset = ( carve.bytes + align - 1 ) & ~( align - 1 );
+    uint64_t end = offset;
+    if ( !rocketnet_memory_add( end, count, stride ) )
+    {
+        carve.failed = true;
+        return 0;
+    }
+
+    carve.bytes = end;
+    return offset;
 }
 
 // the bytes rocketnet_malloc adds to each allocation
@@ -74,13 +102,12 @@ uint64_t rocketnet_client_slots_allocation_bytes( int clients );
 uint64_t rocketnet_encryption_map_allocation_bytes( int capacity );
 uint64_t rocketnet_token_table_allocation_bytes( int capacity );
 uint64_t rocketnet_server_acks_allocation_bytes( int clients );
-uint64_t rocketnet_send_arena_allocation_bytes( int slots, int bytes );
 uint64_t rocketnet_platform_socket_allocation_bytes();
 uint64_t rocketnet_platform_thread_allocation_bytes();
-uint64_t rocketnet_server_gso_allocation_bytes( int queues );
-uint64_t rocketnet_server_iocp_allocation_bytes( int workers );
-uint64_t rocketnet_server_xdp_allocation_bytes( int queues );
-uint64_t rocketnet_server_rio_registered_region_bytes();
+uint64_t rocketnet_server_gso_allocation_bytes( int queues, int max_clients );
+uint64_t rocketnet_server_iocp_allocation_bytes( int workers, int max_clients );
+uint64_t rocketnet_server_xdp_allocation_bytes( int queues, int max_clients );
+uint64_t rocketnet_server_rio_registered_region_bytes( int max_clients );
 
 // UMEM bytes for a queue count. Plan and the XDP preflight share this; do not restate the product.
 uint64_t rocketnet_xdp_umem_bytes( int queues );
@@ -100,7 +127,7 @@ uint64_t rocketnet_server_uring_mapped_bytes( int queues );
 struct rocketnet_server_transport_config_t;
 struct rocketnet_server_memory_plan_t
 {
-    uint64_t transport_bytes, protocol_bytes, reassembly_bytes, send_arena_bytes;
+    uint64_t transport_bytes, protocol_bytes;
     uint64_t transport_io_bytes, umem_bytes, registered_region_bytes, total_bytes;
     uint64_t allocator_bytes, thread_stack_bytes, mapped_ring_bytes, os_bytes;
     int worker_threads, sockets;

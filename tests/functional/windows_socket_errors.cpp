@@ -190,6 +190,7 @@ static void windows_socket_errors_sender_close( windows_socket_errors_sender_t *
 struct windows_socket_errors_session_t
 {
     windows_socket_errors_transport_t transport;
+    int max_clients;                    // the server's configured client count
     struct rocketnet_server_transport_t * server;
     struct rocketnet_client_transport_t * client;
     int client_index;
@@ -265,6 +266,7 @@ static void windows_socket_errors_session_start( windows_socket_errors_session_t
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 4;
+    session->max_clients = server_config.max_clients;
     snprintf( server_config.transport, sizeof( server_config.transport ), "%s", transport->transport );
 
     char bind[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
@@ -395,7 +397,7 @@ static int windows_socket_errors_full_pending( windows_socket_errors_session_t *
     if ( strcmp( session->transport.transport, "iocp" ) == 0 )
         return ROCKETNET_IOCP_DEFAULT_WORKERS * ROCKETNET_IOCP_RECEIVES_PER_WORKER;
     if ( strcmp( session->transport.transport, "rio" ) == 0 )
-        return ROCKETNET_RIO_RECEIVES;
+        return rocketnet_server_rio_receives( session->max_clients );
 
     return -1;
 }
@@ -758,14 +760,15 @@ static void windows_client_drops_oversize_and_garbage( bool ipv6 )
 // for a drained socket, so it reads past a zero-length datagram
 // (sdk/rocketnet_platform.cpp, rocketnet_platform_socket_receive_datagram with
 // keep_empty false) and counts it on rocketnet_platform_receive_empties. The
-// case sends a zero-length datagram and then a real one at a platform socket:
-// the first call returns the real one, and the empty one is counted once.
+// case sends a zero-length datagram and then a real one at a non-blocking
+// platform socket: the first nonzero receive returns the real one, the empty
+// one is counted once, and the next receive finds the socket drained.
 static void windows_per_packet_receive_counts_empty_datagram( bool ipv6 )
 {
     rocketnet_address_t bind_address;
     rocketnet_address_parse( &bind_address, ipv6 ? "[::1]:0" : "127.0.0.1:0" );
 
-    rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_BLOCKING, 0.5f, 64 * 1024, 64 * 1024 );
+    rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f, 64 * 1024, 64 * 1024 );
     windows_socket_errors_require( socket != NULL );
     windows_socket_errors_require( bind_address.port != 0 );
 
@@ -784,7 +787,14 @@ static void windows_per_packet_receive_counts_empty_datagram( bool ipv6 )
 
     uint8_t packet[ROCKETNET_RECEIVE_PACKET_BYTES];
     rocketnet_address_t from;
-    const int first = rocketnet_platform_socket_receive_packet( socket, &from, packet, (int) sizeof( packet ) );
+    int first = 0;
+    const double deadline = rocketnet_platform_time() + 5.0;
+    while ( first == 0 && rocketnet_platform_time() < deadline )
+    {
+        first = rocketnet_platform_socket_receive_packet( socket, &from, packet, (int) sizeof( packet ) );
+        if ( first == 0 )
+            rocketnet_platform_sleep( 0.001 );
+    }
     const uint64_t empties = rocketnet_platform_receive_empties() - empties_before;
     const int second = rocketnet_platform_socket_receive_packet( socket, &from, packet, (int) sizeof( packet ) );
 

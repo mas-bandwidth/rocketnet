@@ -26,7 +26,6 @@
 #include "rocketnet_encryption_map.h"
 #include "rocketnet_client_slots.h"
 #include "rocketnet_ack.h"
-#include "rocketnet_fragment.h"
 #include "rocketnet_server_protocol.h"
 #include "rocketnet_test_vectors.h"
 #include "fake_client_driver.h"
@@ -221,11 +220,9 @@ static void bind_family_server_setup( struct rocketnet_server_protocol_t * serve
     server->used_token_history = rocketnet_used_token_history_create( NULL, 64 );
     server->client_slots = rocketnet_client_slots_create( NULL, 4 );
     server->acks = rocketnet_server_acks_create( NULL, 4 );
-    server->reassembly = rocketnet_reassembly_set_create( NULL, 4, 4, 16384, 4 * 4 );
     server->counters = counters;
     rocketnet_unit_check( server->encryption_map && server->used_token_history &&
-                          server->client_slots && server->acks && server->reassembly );
-    rocketnet_reassembly_set_begin_update( server->reassembly );
+                          server->client_slots && server->acks );
     rocketnet_server_protocol_update( server, ROCKETNET_TEST_CREATE_TS );
 }
 
@@ -235,7 +232,6 @@ static void bind_family_server_teardown( struct rocketnet_server_protocol_t * se
     rocketnet_used_token_history_destroy( server->used_token_history );
     rocketnet_client_slots_destroy( server->client_slots );
     rocketnet_server_acks_destroy( server->acks );
-    rocketnet_reassembly_set_destroy( server->reassembly );
 }
 
 // a connection request whose return cookie field is not all zero

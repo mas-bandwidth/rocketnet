@@ -10,7 +10,7 @@
 // sends one small reliable message per step; the other side sends nothing of
 // its own. The sender's link seam records each packet's send time
 // (finish_packet) and the time its ack reaches the layer (acked), so every
-// RTT sample the window takes (sdk/rocketnet_window_ack.cpp:605) is seen.
+// RTT sample the window takes (rn_window_ack_on_ack) is seen.
 //
 // Each step updates client and server at times separated by LOOPBACK_RTT_DT. The
 // sender writes after both updates, the receiver consumes it on the next
@@ -19,8 +19,8 @@
 // so the opposite update order may need one additional step. The sample bound
 // is [dt, 4*dt] = [10, 40] ms; this follows
 // from the test's update cadence,
-// not the transport's keep-alive rate (sdk/rocketnet_client_protocol.cpp:296,
-// sdk/rocketnet_server_protocol.cpp:1611).
+// not the transport's keep-alive rate (rocketnet_client_protocol_update and
+// rocketnet_server_write_keep_alive).
 //
 // The link loses nothing. A delivered message must not be resent. The resend
 // delay is the adaptive resend delay, and the receiver's ack arrives by 4*dt, so both update

@@ -14,11 +14,11 @@ The `io-uring-reap-layout` row in `COVERAGE.tsv` tracks the coverage.
 |---|---|
 | `cqArr`, `cqHead`, `cqTail`, entry at `counter % CqCap` | the kernel's completion ring, read by `rocketnet_server_uring_ring_peek` and consumed by `rocketnet_server_uring_ring_advance`, oldest first |
 | `RecvE(b)`, `SendE` | a receive CQE naming its provided buffer, a send CQE |
-| `bank`, `Seg`, `Room`, `HasRoom` | the fill bank's `num_packets`, `ROCKETNET_URING_MAX_SEGMENTS`, `ROCKETNET_URING_BANK_SIZE`, `rocketnet_server_uring_bank_has_room` |
+| `bank`, `Seg`, `Room`, `HasRoom` | the fill bank's `num_packets`, `ROCKETNET_URING_MAX_SEGMENTS`, `rocketnet_server_uring_bank_size`, `rocketnet_server_uring_bank_has_room` |
 | `heldArr`, `hHead`, `hCount`, `HeldCap` | `held`, `held_head`, `held_count`, `ROCKETNET_URING_HELD_RECEIVES` |
 | `PushIdx` | `( held_head + held_count ) % ROCKETNET_URING_HELD_RECEIVES` in `rocketnet_server_uring_receive_or_hold` |
 | `ring`, `Buffers` | the provided buffers the kernel may fill; a held receive keeps its buffer |
-| `Budget`, `work` | `ROCKETNET_URING_SEND_BUDGET` and `ROCKETNET_URING_RECEIVE_BUDGET`, one constant here |
+| `Budget`, `work` | `ROCKETNET_URING_SEND_BUDGET` and the bank size, one constant here |
 
 ## Actions
 

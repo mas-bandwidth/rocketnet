@@ -16,8 +16,8 @@ priorities, the CONFIG control record, receipts and the send budget.
 <a id="m1.1"></a>
 ### m1.1. Scope and conventions
 
-RN-2 specifies the bytes of an RN-1 payload (a type 5 packet, or a whole
-fragmented payload of type 9 packets) before the connection layer seals it,
+RN-2 specifies the bytes of an RN-1 payload (the payload of a type 5 packet)
+before the connection layer seals it,
 and the behaviour of the two message layer endpoints that exchange them. RN-2
 changes no byte and no rule of RN-1. An RN-1 implementation that carries
 opaque payloads conforms to RN-1 without RN-2; an implementation of the
@@ -89,10 +89,8 @@ implementation, stated here because RN-2 is the party that relies on it.
    MUST be accepted normally. Existing reliable-message timeouts still apply.
    Admission MUST reserve space for every held delivery an ordered record can
    release, not only the record itself. Malformed records remain protocol errors.
-3. **A fragmented payload carries no delivery fact.** An acknowledgement of
-   the fragments of a type 9 payload does not prove the payload was
-   delivered. A message layer sender MUST NOT place a reliable record or a
-   CONTROL record in a payload longer than the row `payload capacity`.
+3. **No payload exceeds one packet.** A message layer sender MUST NOT hand
+   the connection layer a payload longer than the row `payload capacity`.
 4. **Silence is not loss.** The connection layer MAY leave a sequence
    unacknowledged indefinitely. A message layer sender MUST NOT infer loss
    from a missing acknowledgement; it resends after its timeout

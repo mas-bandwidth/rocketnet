@@ -42,8 +42,8 @@ contents:
   `send` (from `Submit` to `ResetIndex` or `SendReturn`) or `recv` (from
   `RecvBegin` to `Swap`). `work` counts the CQEs the current call has
   reaped, and `Budget` is how many one call may reap
-  (`ROCKETNET_URING_SEND_BUDGET` and `ROCKETNET_URING_RECEIVE_BUDGET` in
-  the code, one constant here). While running, the main thread reaps only
+  (`ROCKETNET_URING_SEND_BUDGET` and the bank size,
+  `rocketnet_server_uring_bank_size`, in the code, one constant here). While running, the main thread reaps only
   inside a call; destroy's drain reaps outside the budget, and its rounds
   are bounded in the code (`ROCKETNET_URING_DESTROY_MAX_ROUNDS`), not here.
 
@@ -51,7 +51,7 @@ Six constants act as rule switches and carry the reversed witnesses:
 `ResetWaitsForReap`, `ReapIntoFill`, `BoundedReap`, `RearmOnReceive`,
 `RunRetiredByCqe` and `ReapWithinRoom`. All are `TRUE` in the rule.
 `Room` is how many datagrams the fill bank holds between two swaps
-(`ROCKETNET_URING_BANK_SIZE`); under `ReapWithinRoom` a receive CQE is
+(`rocketnet_server_uring_bank_size`, sized from the configured max_clients); under `ReapWithinRoom` a receive CQE is
 copied only while the bank has room for `Segments` more
 (`rocketnet_server_uring_bank_has_room`). Otherwise, or while an earlier
 receive is held, it is held: it leaves the cq, its buffer stays `Filled`

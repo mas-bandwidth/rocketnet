@@ -30,6 +30,11 @@
 // the sink cannot queue leaves the slot's mark record where it was and the
 // slot owes the mark, so the next walk takes it again; once queued, the
 // transport owns the mark until the kernel applies it (MarkOwedUntilApplied).
+// A forget or mark the sink queues clears every other slot's record of the
+// same address (proofs/tla/RNServerReplaySlots.tla Walk, KernelHoldsMark): an
+// owed forget superseded by a newer mark is never sent, so it cannot delete
+// the entry of the slot now at the address, and a connected slot whose mark
+// the forget deletes is marked again in the same walk.
 
 struct rocketnet_server_replay_sink_t
 {

@@ -370,8 +370,9 @@ static void posix_hk_client_disconnect_and_destroy( struct rocketnet_client_tran
     rn_native_client_transport_stop_and_destroy( client );
 }
 
-// one tracked in-process client: its slot, what it sent and received, and
-// the longest receive gap on each side of the wire
+// one tracked in-process client: its slot, what it sent and received, the
+// longest receive gap on each side of the wire, and each transport's wire
+// datagram totals at the last posix_hk_wire_mark
 
 struct posix_hk_live_t
 {
@@ -385,6 +386,11 @@ struct posix_hk_live_t
     double last_down;
     double max_gap_up;
     double max_gap_down;
+    uint64_t wire_up_sent;      // the client transport's datagrams sent
+    uint64_t wire_up_received;  // the server transport's datagrams received on the slot
+    uint64_t wire_down_sent;    // the server transport's datagrams sent on the slot
+    uint64_t wire_down_received;// the client transport's datagrams received
+    uint8_t epoch;              // byte 2 of every payload to and from this client; only the current epoch counts
 };
 
 static void posix_hk_live_init( posix_hk_live_t & live, struct rocketnet_client_transport_t * client )
@@ -392,6 +398,17 @@ static void posix_hk_live_init( posix_hk_live_t & live, struct rocketnet_client_
     memset( &live, 0, sizeof( live ) );
     live.client = client;
     live.slot = -1;
+}
+
+// the counting epoch of the live client on a slot, stamped into byte 2 of a
+// payload down to it; 0 for a slot no live client holds
+
+static uint8_t posix_hk_slot_epoch( const std::vector<posix_hk_live_t> & live, int slot )
+{
+    for ( size_t i = 0; i < live.size(); i++ )
+        if ( live[i].slot == slot )
+            return live[i].epoch;
+    return 0;
 }
 
 // one server update interval of traffic: every live client drains, the
@@ -413,7 +430,7 @@ static void posix_hk_tick( struct rocketnet_server_transport_t * server, std::ve
         {
             int bytes = 0;
             uint8_t * data = rocketnet_client_transport_payload( live[i].client, p, &bytes );
-            if ( !data || bytes != (int) sizeof( payload ) || data[0] != 0xD0 )
+            if ( !data || bytes != (int) sizeof( payload ) || data[0] != 0xD0 || data[2] != live[i].epoch )
                 continue;
             live[i].received_down++;
             if ( measure && live[i].last_down > 0.0 && now - live[i].last_down > live[i].max_gap_down )
@@ -438,7 +455,7 @@ static void posix_hk_tick( struct rocketnet_server_transport_t * server, std::ve
 
         for ( size_t i = 0; i < live.size(); i++ )
         {
-            if ( live[i].slot != slot )
+            if ( live[i].slot != slot || data[2] != live[i].epoch )
                 continue;
             live[i].received_up++;
             if ( measure && live[i].last_up > 0.0 && now - live[i].last_up > live[i].max_gap_up )
@@ -462,6 +479,7 @@ static void posix_hk_tick( struct rocketnet_server_transport_t * server, std::ve
         memset( payload, 0, sizeof( payload ) );
         payload[0] = 0xD0;
         payload[1] = (uint8_t) slot;
+        payload[2] = posix_hk_slot_epoch( live, slot );
         rocketnet_server_transport_send_packet( server, slot, payload, (int) sizeof( payload ) );
 
         if ( sent_to_slot_total )
@@ -492,6 +510,7 @@ static void posix_hk_tick( struct rocketnet_server_transport_t * server, std::ve
             memset( payload, 0, sizeof( payload ) );
             payload[0] = 0x0U;
             payload[1] = (uint8_t) i;
+            payload[2] = live[i].epoch;
             rocketnet_client_transport_send_packet( live[i].client, payload, (int) sizeof( payload ) );
             rocketnet_client_transport_send_packets( live[i].client );
             live[i].sent_up++;
@@ -560,12 +579,15 @@ static void posix_hk_connect_all( struct rocketnet_server_transport_t * server, 
     }
 }
 
-// drain in-flight traffic without sending, so sent and received counts can
-// be compared exactly. The drain is at least 50 passes as well as 0.25 s: a
-// runner descheduled inside a window of wall time alone ends it before the
-// last tick's datagrams are read, each flow one short (79/80 each way, macOS
-// Release CI), or leaves them to be counted after the reset. With balance it
-// runs on until every live flow has received what it sent, up to 2 s.
+// drain in-flight traffic without sending. The drain is counted in passes,
+// never in wall time, so a descheduled runner cannot end it early: a pass is
+// one update of every end and a 5 ms sleep. With balance, so sent and
+// received counts can be compared, it runs until every live flow has
+// received what it sent, or 400 passes; a flow still short after that lost
+// datagrams, and posix_hk_require_accounted says where. Without balance it
+// runs 50 passes: the counts before a reset never balance (a client counts
+// payloads down before it knows its slot), and the epoch, not the drain,
+// keeps a payload sent before the reset from counting after it.
 
 static bool posix_hk_balanced( const std::vector<posix_hk_live_t> & live )
 {
@@ -577,13 +599,8 @@ static bool posix_hk_balanced( const std::vector<posix_hk_live_t> & live )
 
 static void posix_hk_quiesce( struct rocketnet_server_transport_t * server, std::vector<posix_hk_live_t> & live, bool balance )
 {
-    const double start = rocketnet_platform_time();
-    for ( int pass = 0;; pass++ )
+    for ( int pass = 0; balance ? pass < 400 && !posix_hk_balanced( live ) : pass < 50; pass++ )
     {
-        const double elapsed = rocketnet_platform_time() - start;
-        if ( pass >= 50 && ( elapsed >= 2.0 || ( elapsed >= 0.25 && ( !balance || posix_hk_balanced( live ) ) ) ) )
-            break;
-
         const double now = rocketnet_platform_time();
 
         for ( size_t i = 0; i < live.size(); i++ )
@@ -595,7 +612,7 @@ static void posix_hk_quiesce( struct rocketnet_server_transport_t * server, std:
             {
                 int bytes = 0;
                 uint8_t * data = rocketnet_client_transport_payload( live[i].client, p, &bytes );
-                if ( data && bytes == 32 && data[0] == 0xD0 )
+                if ( data && bytes == 32 && data[0] == 0xD0 && data[2] == live[i].epoch )
                 {
                     live[i].received_down++;
                 }
@@ -613,7 +630,7 @@ static void posix_hk_quiesce( struct rocketnet_server_transport_t * server, std:
             if ( !data || bytes != 32 || data[0] != 0x0U )
                 continue;
             for ( size_t i = 0; i < live.size(); i++ )
-                if ( live[i].slot == slot )
+                if ( live[i].slot == slot && data[2] == live[i].epoch )
                 {
                     live[i].received_up++;
                 }
@@ -621,6 +638,66 @@ static void posix_hk_quiesce( struct rocketnet_server_transport_t * server, std:
 
         rocketnet_server_transport_send_packets( server );
         rocketnet_platform_sleep( 0.005 );
+    }
+}
+
+// Each transport counts every datagram it hands to its socket and every
+// datagram its socket hands up, before any check (client and server stats,
+// packets_sent and packets_received). Between a mark and a later read, a
+// datagram one end sent that the other end never received was lost below
+// the transports: refused by the sending kernel (SEND_FAILED) or dropped
+// on the way. A payload short at the receiver is accounted for only by such
+// a datagram; a payload short with every datagram received was lost inside
+// a transport, and fails the case.
+
+static void posix_hk_wire_read( struct rocketnet_server_transport_t * server, const posix_hk_live_t & live, uint64_t * up_sent, uint64_t * up_received,
+                                uint64_t * down_sent, uint64_t * down_received )
+{
+    struct rocketnet_client_transport_stats_t client_stats;
+    rocketnet_client_transport_stats( live.client, &client_stats );
+
+    struct rocketnet_server_transport_client_stats_t server_stats;
+    rocketnet_server_transport_client_stats( server, live.slot, &server_stats );
+
+    *up_sent = client_stats.packets_sent;
+    *up_received = server_stats.packets_received;
+    *down_sent = server_stats.packets_sent;
+    *down_received = client_stats.packets_received;
+}
+
+static void posix_hk_wire_mark( struct rocketnet_server_transport_t * server, std::vector<posix_hk_live_t> & live )
+{
+    for ( size_t i = 0; i < live.size(); i++ )
+    {
+        posix_hk_wire_read( server, live[i], &live[i].wire_up_sent, &live[i].wire_up_received, &live[i].wire_down_sent, &live[i].wire_down_received );
+    }
+}
+
+static uint64_t posix_hk_wire_lost( uint64_t sent_before, uint64_t sent_after, uint64_t received_before, uint64_t received_after )
+{
+    const uint64_t sent = sent_after - sent_before;
+    const uint64_t received = received_after - received_before;
+    return sent > received ? sent - received : 0;
+}
+
+static void posix_hk_require_accounted( struct rocketnet_server_transport_t * server, const std::vector<posix_hk_live_t> & live )
+{
+    for ( size_t i = 0; i < live.size(); i++ )
+    {
+        uint64_t up_sent, up_received, down_sent, down_received;
+        posix_hk_wire_read( server, live[i], &up_sent, &up_received, &down_sent, &down_received );
+
+        const uint64_t lost_up = posix_hk_wire_lost( live[i].wire_up_sent, up_sent, live[i].wire_up_received, up_received );
+        const uint64_t lost_down = posix_hk_wire_lost( live[i].wire_down_sent, down_sent, live[i].wire_down_received, down_received );
+
+        if ( lost_up > 0 || lost_down > 0 )
+            printf( "  live client %d: datagrams lost below the transports: up %llu down %llu\n", (int) i, (unsigned long long) lost_up,
+                    (unsigned long long) lost_down );
+
+        posix_hard_killed_require( live[i].sent_up > 0 && live[i].received_up <= live[i].sent_up );
+        posix_hard_killed_require( live[i].sent_down > 0 && live[i].received_down <= live[i].sent_down );
+        posix_hard_killed_require( live[i].sent_up - live[i].received_up <= lost_up );
+        posix_hard_killed_require( live[i].sent_down - live[i].received_down <= lost_down );
     }
 }
 
@@ -1095,7 +1172,10 @@ static void posix_send_to_closed_port( const posix_hk_cell_t & cell )
     {
         live[i].sent_up = live[i].received_up = live[i].sent_down = live[i].received_down = 0;
         live[i].last_up = live[i].last_down = 0.0;
+        live[i].epoch++;
     }
+
+    posix_hk_wire_mark( server, live );
 
     rocketnet_address_t closed;
     rocketnet_address_parse( &closed, posix_hk_is_xdp( cell ) ? ( cell.ipv6 ? "[2001:db8:77::2]" : "10.77.2.2" ) : ( cell.ipv6 ? "[::1]" : "127.0.0.1" ) );
@@ -1122,6 +1202,20 @@ static void posix_send_to_closed_port( const posix_hk_cell_t & cell )
         sent_closed += 20;
         posix_hk_tick( server, live, true, NULL );
         posix_hk_sleep_rest_of_tick( tick_start );
+    }
+
+    // receive progress on every flow, both ways, during the closed-port
+    // datagrams and in the ticks after them: what the ICMP errors must not
+    // stop. Exact counts are not required: loopback UDP on a loaded host
+    // drops datagrams below the transports, and posix_hk_require_accounted
+    // holds the transports to every datagram that did arrive.
+
+    std::vector<uint64_t> up_during( 3 ), down_during( 3 );
+    for ( size_t i = 0; i < 3; i++ )
+    {
+        up_during[i] = live[i].received_up;
+        down_during[i] = live[i].received_down;
+        posix_hard_killed_require( up_during[i] > 0 && down_during[i] > 0 );
     }
 
     for ( int t = 0; t < 30; t++ )
@@ -1160,8 +1254,13 @@ static void posix_send_to_closed_port( const posix_hk_cell_t & cell )
     for ( size_t i = 0; i < 3; i++ )
     {
         posix_hard_killed_require( rocketnet_client_transport_state( live[i].client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
-        posix_hard_killed_require( live[i].sent_up > 0 && live[i].received_up == live[i].sent_up );
-        posix_hard_killed_require( live[i].sent_down > 0 && live[i].received_down == live[i].sent_down );
+    }
+
+    posix_hk_require_accounted( server, live );
+
+    for ( size_t i = 0; i < 3; i++ )
+    {
+        posix_hard_killed_require( live[i].received_up > up_during[i] && live[i].received_down > down_during[i] );
     }
 
     posix_hard_killed_require( rocketnet_server_transport_num_connected_clients( server ) == 3 );

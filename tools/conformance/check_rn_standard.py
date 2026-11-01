@@ -15,7 +15,7 @@ checks, and fails with one line per fault naming the section id:
               each with its anchor; subsection anchors also exist and their
               ids are unique; RN-R adds 'rh Revision history'
   layouts     RN-1 packet field offsets are contiguous, including symbolic
-              acknowledgement, payload and fragment lengths
+              acknowledgement and payload lengths
   pins        every pin row's sdk expression, compiled through the real
               headers in one generated translation unit, equals the pin
               file's value and the value cell of the document row it names;
@@ -73,7 +73,6 @@ BASE_INCLUDES = """
 #include "rocketnet_wire.h"
 #include "rocketnet_protocol.h"
 #include "rocketnet_connect_token.h"
-#include "rocketnet_fragment.h"
 #include "rocketnet_history.h"
 #include "rocketnet_replay.h"
 #include "rocketnet_server_protocol.h"
@@ -319,12 +318,12 @@ def check_outline(docs, outline, faults, only):
 
 
 def packet_offset(value):
-    """A linear byte offset: constant, ACK size, payload size, fragment size.
+    """A linear byte offset: constant, ACK size, payload size.
 
     Parse only the field table's small additive notation, never evaluate code.
     """
-    variables = {"ack block size": 1, "payload size": 2, "fragment size": 3}
-    result = [0, 0, 0, 0]
+    variables = {"ack block size": 1, "payload size": 2}
+    result = [0, 0, 0]
     for term in re.split(r"\s+(?:plus|and)\s+|\s*\+\s*", value.strip().strip("`")):
         term = re.sub(r"^the\s+", "", term)
         if re.fullmatch(r"\d+", term):
@@ -341,12 +340,11 @@ def check_packet_layouts(docs, faults, only):
     if only and only != "t8":
         return
     doc = docs["RN-1"]
-    variable_sizes = {"ack block": "ack block size", "payload data": "payload size",
-                      "fragment data": "fragment size"}
-    wanted = {"t8.%d" % n for n in range(1, 11)}
+    variable_sizes = {"ack block": "ack block size", "payload data": "payload size"}
+    wanted = {"t8.%d" % n for n in range(1, 10)}
     section = None
     in_table = False
-    expected = (0, 0, 0, 0)
+    expected = (0, 0, 0)
     for number, line in enumerate(doc.lines, 1):
         heading = HEADING_RE.match(line)
         if heading:
@@ -360,7 +358,7 @@ def check_packet_layouts(docs, faults, only):
         cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
         if cells[:3] == ["Name", "Offset", "Size"]:
             in_table = True
-            expected = (0, 0, 0, 0)
+            expected = (0, 0, 0)
             continue
         if not in_table or set("".join(cells)) <= set("-: "):
             continue

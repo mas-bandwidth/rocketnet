@@ -5,7 +5,7 @@ Compares the current gcc -fanalyzer findings against tools/static_baseline.txt.
 
 gcc -fanalyzer runs over the parser translation units: every sdk/*.cpp that
 includes rocketnet_read_write.h, plus the parser files named in the card
-(base64, fragment, message, ack, replay, connect_token). The analyzer walks
+(base64, message, ack, replay, connect_token). The analyzer walks
 these paths interprocedurally, which is where wire parsing defects live.
 
 A finding is one line in the baseline: <file> <check> <hash>, where the hash is
@@ -40,7 +40,6 @@ BASELINE = os.path.join(ROOT, "tools", "static_baseline.txt")
 
 NAMED_PARSER_FILES = [
     "sdk/rocketnet_base64.cpp",
-    "sdk/rocketnet_fragment.cpp",
     "sdk/rocketnet_message.cpp",
     "sdk/rocketnet_ack.cpp",
     "sdk/rocketnet_replay.cpp",

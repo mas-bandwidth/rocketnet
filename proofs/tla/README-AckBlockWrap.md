@@ -22,7 +22,7 @@ builder that writes the block and the reader that decides it.
 | `ReadBlock` | `rocketnet_ack_block_read` (sdk/rocketnet_ack.cpp): empty on the wire fields, refused when the first range length is 0 with anything else nonzero, else the largest reconstructed by `rocketnet_reconstruct_near` (sdk/rocketnet_protocol.cpp; nearest to highest sent, the larger on a tie) and refused when the first range length exceeds it |
 
 Ranges below the first are abstracted (the honest count is 0); their walk,
-rules 3-5, is FragmentsAndAcks' subject. Reconstruction takes the nearest of
+rules 3-5, is SessionAcks' subject. Reconstruction takes the nearest of
 every candidate sharing the wire value, which picks the same value as the
 code's three candidates (base - 2^32, base, base + 2^32).
 

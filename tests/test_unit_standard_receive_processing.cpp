@@ -19,7 +19,6 @@
 #include "rocketnet_counters.h"
 #include "rocketnet_encryption_map.h"
 #include "rocketnet_client_slots.h"
-#include "rocketnet_fragment.h"
 #include "rocketnet_read_write.h"
 #include "rocketnet_test_vectors.h"
 #include "rocketnet_client_protocol.h"
@@ -66,7 +65,7 @@ static const rn_standard_vector_t standard_receive_processing_table[] = {
                                                    "00000000000000000000000000" ),
     RN_STANDARD_VECTOR( "t10.prefilter-wrong-epoch", "0501b7590100" ),
     RN_STANDARD_VECTOR( "t10.prefilter-wrong-value", "050000000000" ),
-    RN_STANDARD_VECTOR( "t10.reserved-type", "0a00b7590100" ),
+    RN_STANDARD_VECTOR( "t10.reserved-type", "0900b7590100" ),
     RN_STANDARD_VECTOR( "t10.server-wrong-direction", "0100b7590100" ),
     RN_STANDARD_VECTOR( "t10.client-wrong-direction", "0000b7590100" ),
     RN_STANDARD_VECTOR( "t10.client-session-wrong-size", "0400b7590100" ),
@@ -80,7 +79,6 @@ static const rn_standard_vector_t standard_receive_processing_table[] = {
     RN_STANDARD_VECTOR( "t10.bad-ack-block", "0400b7590100e80300001b9e1564b9d8a08f69ab9303a53cd6c126ae3cae1bd178c4a3c6ca6f48a017" ),
     RN_STANDARD_VECTOR( "t10.wrong-opened-size", "0400b7590100e80300001e9e1564b9d8a08f69ab9303a53cd6c62e2c88afc2454f6f6277034b30f3492a" ),
     RN_STANDARD_VECTOR( "t10.keep-alive-invalid-index", "0400b7590100e80300001e9e1564b9d8a08b69ab9307a53cd611137c3d36904ed330e5ecf7452e8e62" ),
-    RN_STANDARD_VECTOR( "t10.fragment-zero-payload-id", "0900b7590100e80300001e9e1564b9d8a08f69ab9303a4d2eca3b0d7eb0eaf4b9bb6e394bd3b5d2c" ),
 };
 
 static const uint8_t standard_time_start = 0;
@@ -234,18 +232,6 @@ static int standard_wrong_opened_size_plaintext( uint8_t * out )
     return (int) ( p - out );
 }
 
-// a fresh block, a fragment header naming payload id zero, and one body byte
-
-static int standard_fragment_plaintext( uint8_t * out )
-{
-    uint8_t * p = out + standard_fresh_block( out );
-    rocketnet_write_uint32( &p, 0 );
-    rocketnet_write_uint8( &p, 0 );
-    rocketnet_write_uint8( &p, 1 );
-    rocketnet_write_uint8( &p, 0xEE );
-    return (int) ( p - out );
-}
-
 static int standard_seal( uint8_t type, uint64_t sequence, const uint8_t * plaintext, int plaintext_bytes,
                           const uint8_t * key, uint8_t * out )
 {
@@ -297,7 +283,7 @@ static int standard_receive_processing_generate( const char * id, uint8_t * out,
     if ( strcmp( id, "t10.reserved-type" ) == 0 )
     {
         uint8_t * p = out;
-        rocketnet_write_prefilter_header( &p, ROCKETNET_CONNECTION_FRAGMENT_PACKET + 1, standard_filter );
+        rocketnet_write_prefilter_header( &p, ROCKETNET_FIRST_RESERVED_PACKET_TYPE, standard_filter );
         return ROCKETNET_PREFILTER_BYTES;
     }
 
@@ -402,13 +388,6 @@ static int standard_receive_processing_generate( const char * id, uint8_t * out,
                               standard_server_to_client_key, out );
     }
 
-    if ( strcmp( id, "t10.fragment-zero-payload-id" ) == 0 )
-    {
-        const int plaintext_bytes = standard_fragment_plaintext( plaintext );
-        return standard_seal( ROCKETNET_CONNECTION_FRAGMENT_PACKET, 1000, plaintext, plaintext_bytes,
-                              standard_server_to_client_key, out );
-    }
-
     return -1;
 }
 
@@ -429,15 +408,12 @@ static void standard_client_setup( struct standard_client_t * fixture, int state
     memcpy( fixture->client.connection_salt, standard_salt, ROCKETNET_CONNECTION_SALT_BYTES );
     memcpy( fixture->client.keys.session_server_to_client, standard_server_to_client_key, ROCKETNET_KEY_BYTES );
     fixture->client.send_sequence_session = 1;
-    fixture->client.reassembly = rocketnet_reassembly_set_create( NULL, 1, 4, 16384, ROCKETNET_NUM_CLIENT_PACKETS / 2 );
-    rocketnet_unit_check( fixture->client.reassembly != NULL );
-
-    rocketnet_reassembly_set_begin_update( fixture->client.reassembly );
 }
 
 static void standard_client_teardown( struct standard_client_t * fixture )
 {
-    rocketnet_reassembly_set_destroy( fixture->client.reassembly );
+    // the client fixture allocates nothing
+    (void) fixture;
 }
 
 static int standard_client_process( struct standard_client_t * fixture, const uint8_t * packet, int packet_bytes )
@@ -509,6 +485,7 @@ static void standard_server_process( struct standard_server_t * fixture, const u
 static void standard_receive_processing_counters()
 {
     uint8_t packet[RN_STANDARD_VECTOR_MAX_BYTES];
+    uint8_t plaintext[256];
 
     // the prefilter's four refusals, through the shipped comparison
     {
@@ -721,9 +698,36 @@ static void standard_receive_processing_counters()
         static struct standard_client_t client;
         standard_client_setup( &client, ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
 
-        int bytes = standard_receive_processing_generate( "t10.fragment-zero-payload-id", packet, (int) sizeof( packet ) );
+        int bytes = standard_receive_processing_generate( "t10.reserved-type", packet, (int) sizeof( packet ) );
         standard_client_process( &client, packet, bytes );
-        rocketnet_unit_check( client.counters.values[ROCKETNET_COUNTER_CLIENT_FRAGMENT_ZERO_PAYLOAD_ID] == 1 );
+        rocketnet_unit_check( client.counters.values[ROCKETNET_COUNTER_RESERVED_TYPE] == 1 );
+
+        standard_client_teardown( &client );
+    }
+
+    // type 9 is the first reserved type: a session packet sealed under the
+    // live session key with its type byte set to 9 is refused at the type
+    // gate before decryption on a connected client, and nothing else moves
+    {
+        static struct standard_client_t client;
+        standard_client_setup( &client, ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+
+        rocketnet_unit_check( ROCKETNET_FIRST_RESERVED_PACKET_TYPE == 9 );
+        uint8_t * p = plaintext + standard_fresh_block( plaintext );
+        memset( p, 0xEE, 7 );
+        p += 7;
+        int bytes = standard_seal( ROCKETNET_CONNECTION_PAYLOAD_PACKET, 1000, plaintext, (int) ( p - plaintext ),
+                                   standard_server_to_client_key, packet );
+        rocketnet_unit_check( bytes > 0 );
+        packet[0] = ROCKETNET_FIRST_RESERVED_PACKET_TYPE;
+        uint64_t before[ROCKETNET_NUM_COUNTERS];
+        memcpy( before, client.counters.values, sizeof( before ) );
+        standard_client_process( &client, packet, bytes );
+        for ( int i = 0; i < ROCKETNET_NUM_COUNTERS; i++ )
+        {
+            const uint64_t expected = before[i] + ( i == ROCKETNET_COUNTER_RESERVED_TYPE || i == ROCKETNET_COUNTER_PACKETS_RECEIVED ? 1u : 0u );
+            rocketnet_unit_check( client.counters.values[i] == expected );
+        }
 
         standard_client_teardown( &client );
     }

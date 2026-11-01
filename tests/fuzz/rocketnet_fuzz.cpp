@@ -4,33 +4,27 @@
 */
 
 // The wire-facing parser fuzz harness. One libFuzzer binary covering
-// the four surfaces that read bytes rocketnet did not write -- the packet
-// prefilter, the fragment header and its reassembly, base64 decoding, and
-// the config value parses -- because one binary is one compile of the sdk,
-// and the per-commit budget is minutes.
+// the three surfaces that read bytes rocketnet did not write -- the packet
+// prefilter, base64 decoding, and the config value parses -- because one
+// binary is one compile of the sdk, and the per-commit budget is minutes.
 //
 // THE SELECTOR BYTE: input[0] & 3 chooses the surface, and the rest of the
-// input is that surface's bytes. 0 = prefilter, 1 = fragment, 2 = base64,
+// input is that surface's bytes. 0 and 1 = prefilter, 2 = base64,
 // 3 = config. The committed corpus under tests/fuzz/corpus is named for the
 // surface each file selects, so a regression input stays readable.
 //
 // PER-INPUT DETERMINISM IS A REQUIREMENT HERE, not a nicety: the per-commit
 // gate is a corpus REPLAY, and a replay is only a gate if input N behaves
-// the same whether it is replayed alone or after input N-1. So no state
-// survives a call: the reassembly set -- the one surface with memory -- is
-// reset at the top of every input, and the multi-fragment sequences that
-// reassembly needs are built INSIDE one input from its length-prefixed
-// records rather than across inputs.
+// the same whether it is replayed alone or after input N-1. No surface
+// keeps state across a call.
 //
 // THE INPUT BOUNDS ARE THE TRANSPORT'S OWN. A parser is only obliged to
-// survive what the transport can hand it, and the transport never hands a
-// reassembly more than the receive ceiling allows. Fuzzing past that
-// contract manufactures crashes that no packet can cause, so each surface
-// caps its slice where the transport caps it, and the cap is named.
+// survive what the transport can hand it. Fuzzing past that contract
+// manufactures crashes that no packet can cause, so each surface caps its
+// slice where the transport caps it, and the cap is named.
 
 #include "rocketnet_internal.h"
 #include "rocketnet_protocol.h"
-#include "rocketnet_fragment.h"
 #include "rocketnet_base64.h"
 #include "rocketnet_config.h"
 #include "rocketnet_counters.h"
@@ -55,40 +49,19 @@ static void rocketnet_fuzz_require( bool condition, const char * property )
     abort();
 }
 
-// the counter table the reassembly engine fires into: the server's family,
-// the same one the suite's fragment tests use
-
-static const struct rocketnet_reassembly_counters_t rocketnet_fuzz_fragment_counters = {
-    ROCKETNET_COUNTER_FRAGMENT_ZERO_PAYLOAD_ID,
-    ROCKETNET_COUNTER_FRAGMENT_STALE,
-    ROCKETNET_COUNTER_FRAGMENT_COUNT_INVALID,
-    ROCKETNET_COUNTER_FRAGMENT_INDEX_OUT_OF_RANGE,
-    ROCKETNET_COUNTER_FRAGMENT_COUNT_MISMATCH,
-    ROCKETNET_COUNTER_FRAGMENT_SIZE_MISMATCH,
-    ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_TOO_LARGE,
-    ROCKETNET_COUNTER_FRAGMENT_DUPLICATE_INDEX,
-    ROCKETNET_COUNTER_FRAGMENT_ACCEPTED,
-    ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_REASSEMBLED,
-    ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_ABANDONED,
-    ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_BATCH_FULL
-};
-
-static struct rocketnet_reassembly_set_t * rocketnet_fuzz_reassembly = NULL;
-
 // -----------------------------------------------------------------------
 //  the types this harness's parsers read, and the counter each raises
 // -----------------------------------------------------------------------
 //
-// Four surfaces read bytes here, and each branches on a type the wire
-// carries: the packet type the prefilter hands back, the outcome the
-// reassembly engine reaches, the shape a base64 string has, and the shape
-// a config value has. A type with no seed is a branch the fuzzer never
+// Three surfaces read bytes here, and each branches on a type the wire
+// carries: the packet type the prefilter hands back, the shape a base64
+// string has, and the shape a config value has. A type with no seed is a branch the fuzzer never
 // enters, so every type gets a counter and the seed generator asks the
 // only question that matters -- does a seed reach this type at all --
 // with a number that only goes up.
 //
-// Where the library counts the type itself (the prefilter's refusals,
-// the reassembly's outcomes) the library's counter is the one the
+// Where the library counts the type itself (the prefilter's refusals)
+// the library's counter is the one the
 // generator reads, and the harness raises it as the parser runs. The
 // types the library does not count (the packet types the prefilter
 // returns, the base64 shapes, the config shapes) have no library row to
@@ -105,23 +78,11 @@ enum rocketnet_fuzz_type_t
     ROCKETNET_FUZZ_TYPE_PREFILTER_DISCONNECT,
     ROCKETNET_FUZZ_TYPE_PREFILTER_COOKIE,
     ROCKETNET_FUZZ_TYPE_PREFILTER_ACK,
-    ROCKETNET_FUZZ_TYPE_PREFILTER_FRAGMENT,
     ROCKETNET_FUZZ_TYPE_PREFILTER_RESERVED,
     ROCKETNET_FUZZ_TYPE_PREFILTER_TOO_SHORT,
     ROCKETNET_FUZZ_TYPE_PREFILTER_TOO_LARGE,
     ROCKETNET_FUZZ_TYPE_PREFILTER_WRONG_EPOCH,
     ROCKETNET_FUZZ_TYPE_PREFILTER_WRONG_VALUE,
-    ROCKETNET_FUZZ_TYPE_FRAGMENT_ACCEPTED,
-    ROCKETNET_FUZZ_TYPE_FRAGMENT_ZERO_PAYLOAD_ID,
-    ROCKETNET_FUZZ_TYPE_FRAGMENT_STALE,
-    ROCKETNET_FUZZ_TYPE_FRAGMENT_COUNT_INVALID,
-    ROCKETNET_FUZZ_TYPE_FRAGMENT_INDEX_OUT_OF_RANGE,
-    ROCKETNET_FUZZ_TYPE_FRAGMENT_COUNT_MISMATCH,
-    ROCKETNET_FUZZ_TYPE_FRAGMENT_PAYLOAD_TOO_LARGE,
-    ROCKETNET_FUZZ_TYPE_FRAGMENT_DUPLICATE_INDEX,
-    ROCKETNET_FUZZ_TYPE_FRAGMENT_REASSEMBLED,
-    ROCKETNET_FUZZ_TYPE_FRAGMENT_ABANDONED,
-    ROCKETNET_FUZZ_TYPE_FRAGMENT_BATCH_FULL,
     ROCKETNET_FUZZ_TYPE_BASE64_DECODED,
     ROCKETNET_FUZZ_TYPE_BASE64_OVER_CAPACITY,
     ROCKETNET_FUZZ_TYPE_BASE64_ENCODED,
@@ -141,10 +102,6 @@ struct rocketnet_fuzz_type_info_t
 };
 
 // the library counters the harness raises: the prefilter's four refusals
-// and the reassembly engine's outcomes. The reassembly engine's size
-// mismatch is not among them: this harness never hands the engine a
-// fragment below the header or above the receive ceiling, so that row
-// cannot be reached from here and no seed can raise it.
 
 static const struct rocketnet_fuzz_type_info_t rocketnet_fuzz_types[ROCKETNET_FUZZ_TYPE_COUNT] = {
     { "prefilter_request", -1 },
@@ -156,23 +113,11 @@ static const struct rocketnet_fuzz_type_info_t rocketnet_fuzz_types[ROCKETNET_FU
     { "prefilter_disconnect", -1 },
     { "prefilter_cookie", -1 },
     { "prefilter_ack", -1 },
-    { "prefilter_fragment", -1 },
     { "prefilter_reserved_type", -1 },
     { "prefilter_too_short", ROCKETNET_COUNTER_PREFILTER_TOO_SHORT },
     { "prefilter_too_large", ROCKETNET_COUNTER_PREFILTER_TOO_LARGE },
     { "prefilter_wrong_epoch", ROCKETNET_COUNTER_PREFILTER_WRONG_EPOCH },
     { "prefilter_wrong_value", ROCKETNET_COUNTER_PREFILTER_WRONG_VALUE },
-    { "fragment_accepted", ROCKETNET_COUNTER_FRAGMENT_ACCEPTED },
-    { "fragment_zero_payload_id", ROCKETNET_COUNTER_FRAGMENT_ZERO_PAYLOAD_ID },
-    { "fragment_stale", ROCKETNET_COUNTER_FRAGMENT_STALE },
-    { "fragment_count_invalid", ROCKETNET_COUNTER_FRAGMENT_COUNT_INVALID },
-    { "fragment_index_out_of_range", ROCKETNET_COUNTER_FRAGMENT_INDEX_OUT_OF_RANGE },
-    { "fragment_count_mismatch", ROCKETNET_COUNTER_FRAGMENT_COUNT_MISMATCH },
-    { "fragment_payload_too_large", ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_TOO_LARGE },
-    { "fragment_duplicate_index", ROCKETNET_COUNTER_FRAGMENT_DUPLICATE_INDEX },
-    { "fragment_reassembled", ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_REASSEMBLED },
-    { "fragment_abandoned", ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_ABANDONED },
-    { "fragment_batch_full", ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_BATCH_FULL },
     { "base64_decoded", -1 },
     { "base64_over_capacity", -1 },
     { "base64_encoded", -1 },
@@ -190,15 +135,15 @@ static const struct rocketnet_fuzz_type_info_t rocketnet_fuzz_types[ROCKETNET_FU
 static struct rocketnet_counters_t rocketnet_fuzz_counters;
 static uint64_t rocketnet_fuzz_type_counters[ROCKETNET_FUZZ_TYPE_COUNT];
 
-// the prefilter hands back the type byte it read: 0 through 9 are the
-// wire's packet types and 10 through 255 are reserved, so the reserved
+// the prefilter hands back the type byte it read: 0 through 8 are the
+// wire's packet types and 9 through 255 are reserved, so the reserved
 // types share one counter
 
 static int rocketnet_fuzz_prefilter_type_index( int type_byte )
 {
     if ( type_byte < 0 || type_byte > 255 )
         return -1;
-    if ( type_byte <= ROCKETNET_CONNECTION_FRAGMENT_PACKET )
+    if ( type_byte < ROCKETNET_FIRST_RESERVED_PACKET_TYPE )
         return ROCKETNET_FUZZ_TYPE_PREFILTER_REQUEST + type_byte;
 
     return ROCKETNET_FUZZ_TYPE_PREFILTER_RESERVED;
@@ -292,114 +237,6 @@ static void rocketnet_fuzz_prefilter( const uint8_t * data, size_t bytes )
         }
 
         rocketnet_fuzz_type_counters[index]++;
-    }
-}
-
-// -----------------------------------------------------------------------
-//  1: the fragment header and reassembly
-// -----------------------------------------------------------------------
-
-static void rocketnet_fuzz_fragment( const uint8_t * data, size_t bytes )
-{
-    if ( rocketnet_fuzz_reassembly == NULL )
-        return;
-
-    // no state crosses an input: both connections start empty and the
-    // delivery window opens here
-
-    rocketnet_reassembly_set_reset_connection( rocketnet_fuzz_reassembly, 0 );
-    rocketnet_reassembly_set_reset_connection( rocketnet_fuzz_reassembly, 1 );
-    rocketnet_reassembly_set_begin_update( rocketnet_fuzz_reassembly );
-
-    // the input is a sequence of records: one length byte pair, then that
-    // many bytes of fragment type data, delivered alternately to the two
-    // connections. a payload takes at least two fragments, so one record
-    // per input would never reach the completion path.
-
-    const int max_type_data = ROCKETNET_FRAGMENT_HEADER_BYTES + ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES;
-
-    size_t offset = 0;
-    int connection = 0;
-
-    while ( offset + 2 <= bytes )
-    {
-        size_t record = (size_t) data[offset] | ( (size_t) data[offset + 1] << 8 );
-
-        offset += 2;
-
-        if ( record > bytes - offset )
-        {
-            record = bytes - offset;
-        }
-
-        // the transport hands the engine what came out of one seal, and a
-        // seal is bounded by the receive ceiling. THE FLOOR IS THE READING
-        // ORDER'S: the engine documents -- and asserts -- that its caller
-        // has already applied the standard's opened-size check, so a
-        // record below the header plus one byte is not an input the
-        // transport can produce, and feeding it here would manufacture a
-        // crash no packet can cause.
-
-        int record_bytes = (int) record;
-        if ( record_bytes > max_type_data )
-        {
-            record_bytes = max_type_data;
-        }
-
-        if ( record_bytes >= ROCKETNET_FRAGMENT_HEADER_BYTES + 1 )
-        {
-            std::unique_ptr<uint8_t[]> fragment( new uint8_t[(size_t) record_bytes] );
-            memcpy( fragment.get(), data + offset, (size_t) record_bytes );
-            rocketnet_reassembly_process_fragment( rocketnet_fuzz_reassembly,
-                                                   connection,
-                                                   fragment.get(),
-                                                   record_bytes,
-                                                   rocketnet_fuzz_counters.values,
-                                                   &rocketnet_fuzz_fragment_counters );
-        }
-
-        offset += record;
-        connection = connection ? 0 : 1;
-    }
-
-    // the header reader on its own, and the split plan the sender computes
-    // from a payload size the caller chose
-
-    if ( bytes >= ROCKETNET_FRAGMENT_HEADER_BYTES )
-    {
-        uint8_t header[ROCKETNET_FRAGMENT_HEADER_BYTES];
-        memcpy( header, data, sizeof( header ) );
-
-        uint32_t payload_id = 0;
-        int fragment_index = 0;
-        int fragment_count = 0;
-        rocketnet_read_fragment_header( header, &payload_id, &fragment_index, &fragment_count );
-
-        int plan_count = 0;
-        int plan_stride = 0;
-        const int payload_bytes = (int) ( payload_id % ( ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES + 4096 ) );
-        if ( rocketnet_fragment_plan( payload_bytes, &plan_count, &plan_stride ) )
-        {
-            // a plan is a promise about the split: every fragment but the
-            // last is exactly the stride, the last is between one byte and
-            // the stride, and the pieces sum to the payload
-
-            if ( plan_count < 2 || plan_count > ROCKETNET_MAX_FRAGMENTS )
-            {
-                abort();
-            }
-
-            if ( plan_stride < 1 || plan_stride > ROCKETNET_MAX_FRAGMENT_BYTES )
-            {
-                abort();
-            }
-
-            const int last = payload_bytes - plan_stride * ( plan_count - 1 );
-            if ( last < 1 || last > plan_stride )
-            {
-                abort();
-            }
-        }
     }
 }
 
@@ -586,8 +423,7 @@ static void rocketnet_fuzz_config( const uint8_t * data, size_t bytes )
 //  the seed generator: ROCKETNET_FUZZ_SEED_DIR=<dir>
 //
 // One named seed per type, each built from the wire's own constants: a
-// prefilter header of the type's packet, a fragment header of the shape
-// the outcome needs, a base64 string of the shape the decoder reads, a
+// prefilter header of the type's packet, a base64 string of the shape the decoder reads, a
 // config value of the shape the parser reads. Every seed is replayed
 // through the target before it is written, and the generator refuses to
 // finish unless every type the parsers read has a seed that raises that
@@ -603,46 +439,6 @@ static void rocketnet_fuzz_config( const uint8_t * data, size_t bytes )
 // -----------------------------------------------------------------------
 
 #define ROCKETNET_FUZZ_SEED_MAX 2048
-
-// one fragment record: the length prefix the harness reads, then the
-// fragment's own bytes: the header (payload id, index, count - 1) and the
-// payload
-
-static int rocketnet_fuzz_fragment_record( uint8_t * out, int at, uint32_t payload_id, int index, int count_minus_one,
-                                           int payload_bytes, uint8_t fill )
-{
-    const int bytes = ROCKETNET_FRAGMENT_HEADER_BYTES + payload_bytes;
-    if ( at + 2 + bytes > ROCKETNET_FUZZ_SEED_MAX )
-        return at;
-    out[at] = (uint8_t) ( bytes & 0xFF );
-    out[at + 1] = (uint8_t) ( bytes >> 8 );
-    at += 2;
-    out[at] = (uint8_t) ( payload_id & 0xFF );
-    out[at + 1] = (uint8_t) ( ( payload_id >> 8 ) & 0xFF );
-    out[at + 2] = (uint8_t) ( ( payload_id >> 16 ) & 0xFF );
-    out[at + 3] = (uint8_t) ( ( payload_id >> 24 ) & 0xFF );
-    out[at + 4] = (uint8_t) index;
-    out[at + 5] = (uint8_t) count_minus_one;
-
-    for ( int i = 0; i < payload_bytes; i++ )
-    {
-        out[at + ROCKETNET_FRAGMENT_HEADER_BYTES + i] = fill;
-    }
-
-    return at + bytes;
-}
-
-// an empty record: the harness reads its length and hands the engine
-// nothing, so the next record lands on the same connection
-
-static int rocketnet_fuzz_fragment_gap( uint8_t * out, int at )
-{
-    if ( at + 2 > ROCKETNET_FUZZ_SEED_MAX )
-        return at;
-    out[at] = 0;
-    out[at + 1] = 0;
-    return at + 2;
-}
 
 static int rocketnet_fuzz_seed_prefilter( uint8_t * out, int type_byte, int epoch_byte, int filter_wrong, int bytes )
 {
@@ -682,11 +478,10 @@ static int rocketnet_fuzz_seed_build( int type, uint8_t * out, int capacity )
         case ROCKETNET_FUZZ_TYPE_PREFILTER_DISCONNECT:
         case ROCKETNET_FUZZ_TYPE_PREFILTER_COOKIE:
         case ROCKETNET_FUZZ_TYPE_PREFILTER_ACK:
-        case ROCKETNET_FUZZ_TYPE_PREFILTER_FRAGMENT:
             return rocketnet_fuzz_seed_prefilter( out, type - ROCKETNET_FUZZ_TYPE_PREFILTER_REQUEST,
                                                   ROCKETNET_FILTER_EPOCH_UNKEYED, 0, ROCKETNET_PREFILTER_BYTES );
         case ROCKETNET_FUZZ_TYPE_PREFILTER_RESERVED:
-            return rocketnet_fuzz_seed_prefilter( out, 10, ROCKETNET_FILTER_EPOCH_UNKEYED, 0, ROCKETNET_PREFILTER_BYTES );
+            return rocketnet_fuzz_seed_prefilter( out, ROCKETNET_FIRST_RESERVED_PACKET_TYPE, ROCKETNET_FILTER_EPOCH_UNKEYED, 0, ROCKETNET_PREFILTER_BYTES );
 
         // the prefilter's refusals: one byte short of the header, one byte
         // past the receive ceiling, an epoch this build does not hold, and
@@ -699,113 +494,6 @@ static int rocketnet_fuzz_seed_build( int type, uint8_t * out, int capacity )
             return rocketnet_fuzz_seed_prefilter( out, 0, ROCKETNET_FILTER_EPOCH_UNKEYED + 1, 0, ROCKETNET_PREFILTER_BYTES );
         case ROCKETNET_FUZZ_TYPE_PREFILTER_WRONG_VALUE:
             return rocketnet_fuzz_seed_prefilter( out, 0, ROCKETNET_FILTER_EPOCH_UNKEYED, 1, ROCKETNET_PREFILTER_BYTES );
-
-        // 1: the reassembly engine's outcomes
-        case ROCKETNET_FUZZ_TYPE_FRAGMENT_ACCEPTED:
-        {
-            out[0] = 1;                                 // the selector: the fragment
-
-            int at = rocketnet_fuzz_fragment_record( out, 1, 1, 0, 1, 1, 0x33 );
-            return at;
-        }
-        case ROCKETNET_FUZZ_TYPE_FRAGMENT_ZERO_PAYLOAD_ID:
-        {
-            out[0] = 1;
-            return rocketnet_fuzz_fragment_record( out, 1, 0, 0, 1, 1, 0x33 );
-        }
-        case ROCKETNET_FUZZ_TYPE_FRAGMENT_STALE:
-        {
-            // half the id space ahead of the newest completed id and half
-            // behind it: no honest id is that far from the reference
-
-            out[0] = 1;
-            return rocketnet_fuzz_fragment_record( out, 1, 0x50000000u, 0, 1, 1, 0x33 );
-        }
-        case ROCKETNET_FUZZ_TYPE_FRAGMENT_COUNT_INVALID:
-        {
-            // a count of one: the wire byte holds count - 1
-
-            out[0] = 1;
-            return rocketnet_fuzz_fragment_record( out, 1, 1, 0, 0, 1, 0x33 );
-        }
-        case ROCKETNET_FUZZ_TYPE_FRAGMENT_INDEX_OUT_OF_RANGE:
-        {
-            out[0] = 1;
-            return rocketnet_fuzz_fragment_record( out, 1, 1, 2, 1, 1, 0x33 );
-        }
-        case ROCKETNET_FUZZ_TYPE_FRAGMENT_COUNT_MISMATCH:
-        {
-            // the same payload id twice, the second naming another count
-
-            out[0] = 1;
-
-            int at = rocketnet_fuzz_fragment_record( out, 1, 1, 0, 1, 1, 0x33 );
-            at = rocketnet_fuzz_fragment_gap( out, at );
-            at = rocketnet_fuzz_fragment_record( out, at, 1, 1, 2, 1, 0x33 );
-            return at;
-        }
-        case ROCKETNET_FUZZ_TYPE_FRAGMENT_DUPLICATE_INDEX:
-        {
-            // the same payload id and the same index twice
-
-            out[0] = 1;
-
-            int at = rocketnet_fuzz_fragment_record( out, 1, 1, 0, 1, 1, 0x33 );
-            at = rocketnet_fuzz_fragment_gap( out, at );
-            at = rocketnet_fuzz_fragment_record( out, at, 1, 0, 1, 1, 0x33 );
-            return at;
-        }
-        case ROCKETNET_FUZZ_TYPE_FRAGMENT_PAYLOAD_TOO_LARGE:
-        {
-            // 256 fragments of the largest fragment the engine takes: the
-            // payload they add up to is past the set's ceiling
-
-            out[0] = 1;
-            return rocketnet_fuzz_fragment_record( out, 1, 1, 0, ROCKETNET_MAX_FRAGMENTS - 1,
-                                                   ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES, 0x44 );
-        }
-        case ROCKETNET_FUZZ_TYPE_FRAGMENT_REASSEMBLED:
-        {
-            // the payload's two fragments, in order
-
-            out[0] = 1;
-
-            int at = rocketnet_fuzz_fragment_record( out, 1, 1, 0, 1, 1, 0x33 );
-            at = rocketnet_fuzz_fragment_gap( out, at );
-            at = rocketnet_fuzz_fragment_record( out, at, 1, 1, 1, 1, 0x33 );
-            return at;
-        }
-        case ROCKETNET_FUZZ_TYPE_FRAGMENT_ABANDONED:
-        {
-            // a newer payload id claims the slot the first one holds
-
-            out[0] = 1;
-
-            int at = rocketnet_fuzz_fragment_record( out, 1, 1, 0, 1, 1, 0x33 );
-            at = rocketnet_fuzz_fragment_gap( out, at );
-            at = rocketnet_fuzz_fragment_record( out, at, 5, 0, 1, 1, 0x33 );
-            return at;
-        }
-        case ROCKETNET_FUZZ_TYPE_FRAGMENT_BATCH_FULL:
-        {
-            // more completed payloads in one update than the delivered
-            // batch holds: the engine counts the one it drops
-
-            out[0] = 1;
-
-            int at = 1;
-            uint32_t payload_id = 1;
-
-            for ( int i = 0; i < 12; i++ )
-            {
-                at = rocketnet_fuzz_fragment_record( out, at, payload_id, 0, 1, 1, 0x33 );
-                at = rocketnet_fuzz_fragment_gap( out, at );
-                at = rocketnet_fuzz_fragment_record( out, at, payload_id, 1, 1, 1, 0x33 );
-                payload_id++;
-            }
-
-            return at;
-        }
 
         // 2: the base64 shapes: a string that decodes, one that decodes
         // past a key's worth of bytes, and one the decoder refuses
@@ -986,8 +674,8 @@ static void rocketnet_fuzz_run( const uint8_t * data, size_t size )
 
     switch ( data[0] & 3 )
     {
-        case 0: rocketnet_fuzz_prefilter( body, body_size ); break;
-        case 1: rocketnet_fuzz_fragment( body, body_size ); break;
+        case 0:
+        case 1: rocketnet_fuzz_prefilter( body, body_size ); break;
         case 2: rocketnet_fuzz_base64( body, body_size ); break;
         case 3: rocketnet_fuzz_config( body, body_size ); break;
     }
@@ -1003,12 +691,6 @@ extern "C" int LLVMFuzzerInitialize( int * argc, char *** argv )
     // sodium, and the harness stays as deterministic as the parsers are
 
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
-
-    rocketnet_fuzz_reassembly = rocketnet_reassembly_set_create( NULL, 2, 4, 8192, 2 * 4 );
-    if ( rocketnet_fuzz_reassembly == NULL )
-    {
-        abort();
-    }
 
     char seed_dir[1024];
     const int have_dir = rocketnet_test_getenv( "ROCKETNET_FUZZ_SEED_DIR", seed_dir, sizeof( seed_dir ) );

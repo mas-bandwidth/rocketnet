@@ -165,7 +165,6 @@ static int lifecycle( const rocketnet_server_transport_config_t & transport_conf
     memcpy( server_config.backend_public_key, backend_public, sizeof( server_config.backend_public_key ) );
     server_config.transport = transport;
     server_config.max_clients = transport_config.max_clients;
-    server_config.max_fragmented_messages = transport_config.max_fragmented_messages;
     server_config.num_xdp_queues = transport_config.num_xdp_queues;
 
     const size_t server_required = rocketnet_server_required_memory( &server_config );
@@ -722,18 +721,18 @@ static int light_lifecycle( const rocketnet_server_transport_config_t & transpor
 
 int main( int argc, char ** argv )
 {
-    if ( argc < 4 || argc > 7 )
+    if ( argc < 3 || argc > 6 )
     {
-        fprintf( stderr, "usage: transport_memory clients payload_bytes reassembly_slots [transport [queues [--plan-only|--session-plan-only|--lifecycle|--light-lifecycle]]]\n" );
+        fprintf( stderr, "usage: transport_memory clients payload_bytes [transport [queues [--plan-only|--session-plan-only|--lifecycle|--light-lifecycle]]]\n" );
         return 1;
     }
 
-    const char * transport = argc >= 5 ? argv[4] : "portable";
-    const bool plan_only = argc == 7 && strcmp( argv[6], "--plan-only" ) == 0;
-    const bool session_plan_only = argc == 7 && strcmp( argv[6], "--session-plan-only" ) == 0;
-    const bool lifecycle_only = argc == 7 && strcmp( argv[6], "--lifecycle" ) == 0;
-    const bool light_lifecycle_only = argc == 7 && strcmp( argv[6], "--light-lifecycle" ) == 0;
-    if ( argc == 7 && !plan_only && !session_plan_only && !lifecycle_only && !light_lifecycle_only )
+    const char * transport = argc >= 4 ? argv[3] : "portable";
+    const bool plan_only = argc == 6 && strcmp( argv[5], "--plan-only" ) == 0;
+    const bool session_plan_only = argc == 6 && strcmp( argv[5], "--session-plan-only" ) == 0;
+    const bool lifecycle_only = argc == 6 && strcmp( argv[5], "--lifecycle" ) == 0;
+    const bool light_lifecycle_only = argc == 6 && strcmp( argv[5], "--light-lifecycle" ) == 0;
+    if ( argc == 6 && !plan_only && !session_plan_only && !lifecycle_only && !light_lifecycle_only )
         return 1;
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
 
@@ -743,8 +742,7 @@ int main( int argc, char ** argv )
         return 1;
     snprintf( config.transport, sizeof( config.transport ), "%s", transport );
     config.max_clients = number( argv[1] );
-    config.max_fragmented_messages = number( argv[3] );
-    config.num_xdp_queues = argc >= 6 ? number( argv[5] ) : 0;
+    config.num_xdp_queues = argc >= 5 ? number( argv[4] ) : 0;
 
     rocketnet_server_memory_plan_t plan;
     if ( !rocketnet_server_transport_memory_plan( &config, transport, plan ) )
@@ -766,7 +764,6 @@ int main( int argc, char ** argv )
             return 1;
         endpoint.transport = transport;
         endpoint.max_clients = config.max_clients;
-        endpoint.max_fragmented_messages = config.max_fragmented_messages;
         endpoint.num_xdp_queues = config.num_xdp_queues;
 
         const size_t endpoint_payload = rocketnet_server_required_memory( &endpoint );
@@ -805,15 +802,14 @@ int main( int argc, char ** argv )
         return 0;
     }
 
-    printf( "{\"transport\":\"%s\",\"clients\":%d,\"payload_bytes\":%d,\"reassembly_slots\":%d,"
-            "\"planned_bytes\":%llu,\"transport_bytes\":%llu,\"protocol_bytes\":%llu,\"reassembly_bytes\":%llu,"
-            "\"send_arena_bytes\":%llu,\"transport_allocator_bytes\":%llu,\"umem_bytes\":%llu,"
+    printf( "{\"transport\":\"%s\",\"clients\":%d,\"payload_bytes\":%d,"
+            "\"planned_bytes\":%llu,\"transport_bytes\":%llu,\"protocol_bytes\":%llu,"
+            "\"transport_allocator_bytes\":%llu,\"umem_bytes\":%llu,"
             "\"worker_threads\":%d,\"sockets\":%d,\"allocator_bytes\":%llu,\"os_bytes\":%llu,"
             "\"thread_stack_bytes\":%llu,\"mapped_ring_bytes\":%llu,\"os_and_application_bytes\":null}\n",
-            transport, config.max_clients, ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES, config.max_fragmented_messages,
+            transport, config.max_clients, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES,
             (unsigned long long) plan.total_bytes, (unsigned long long) plan.transport_bytes,
-            (unsigned long long) plan.protocol_bytes, (unsigned long long) plan.reassembly_bytes,
-            (unsigned long long) plan.send_arena_bytes, (unsigned long long) plan.transport_bytes,
+            (unsigned long long) plan.protocol_bytes, (unsigned long long) plan.transport_bytes,
             (unsigned long long) plan.umem_bytes, plan.worker_threads, plan.sockets,
             (unsigned long long) plan.allocator_bytes, (unsigned long long) plan.os_bytes,
             (unsigned long long) plan.thread_stack_bytes, (unsigned long long) plan.mapped_ring_bytes );

@@ -48,6 +48,7 @@ template <int NumBuffers> struct rocketnet_buffer_handoff_t
 
 // every buffer but the producer's first one starts free
 
+// proofs/tla/RNBankFifoLayout.tla Init: the loop, which is the model's with the producer at 0.
 template <int NumBuffers> inline void rocketnet_buffer_handoff_init( rocketnet_buffer_handoff_t<NumBuffers> * handoff, int producer )
 {
     static_assert( NumBuffers >= 3, "a producer buffer, a consumer buffer and one in between" );
@@ -74,6 +75,9 @@ template <int NumBuffers> inline void rocketnet_buffer_handoff_init( rocketnet_b
 // publish is owed. A max_ready of 1 is the triple buffer: the consumer always
 // takes everything published since its last take in one buffer. Mutex held.
 
+// proofs/tla/RNBankFifoLayout.tla Publish: the free head and the ready tail at their layout. A max_ready
+// of NumBuffers would also be safe, MCRNBankFifoLayoutHandoffMaxReadyAll.cfg: the
+// producer always holds one buffer, so the free test refuses first.
 template <int NumBuffers> inline int rocketnet_buffer_handoff_publish( rocketnet_buffer_handoff_t<NumBuffers> * handoff, int producer, int max_ready )
 {
     rocketnet_assert( producer >= 0 && producer < NumBuffers );
@@ -102,6 +106,7 @@ template <int NumBuffers> inline int rocketnet_buffer_handoff_publish( rocketnet
 // RNBufferHandoff ConsumerExchange, its take: the consumer takes the oldest ready buffer, or -1
 // when none is ready. Mutex held.
 
+// proofs/tla/RNBankFifoLayout.tla Take: the ready head advances % NumBuffers.
 template <int NumBuffers> inline int rocketnet_buffer_handoff_take( rocketnet_buffer_handoff_t<NumBuffers> * handoff )
 {
     if ( handoff->ready_count == 0 )
@@ -118,6 +123,7 @@ template <int NumBuffers> inline int rocketnet_buffer_handoff_take( rocketnet_bu
 // RNBufferHandoff ConsumerExchange, its release: the consumer returns a buffer it has finished with
 // to the free queue. Mutex held.
 
+// proofs/tla/RNBankFifoLayout.tla Release: the free tail ( free_head + free_count ) % NumBuffers.
 template <int NumBuffers> inline void rocketnet_buffer_handoff_release( rocketnet_buffer_handoff_t<NumBuffers> * handoff, int index )
 {
     rocketnet_assert( index >= 0 && index < NumBuffers );

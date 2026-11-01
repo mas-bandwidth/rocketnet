@@ -23,7 +23,6 @@
 #include "rocketnet_client_slots.h"
 #include "rocketnet_token_tables.h"
 #include "rocketnet_ack.h"
-#include "rocketnet_fragment.h"
 #include "rocketnet_keys.h"
 #include "rocketnet_read_write.h"
 #include "rocketnet_server_protocol.h"
@@ -97,12 +96,10 @@ static void token_time_setup( struct token_time_server_t * t )
     server->used_token_history = rocketnet_used_token_history_create( NULL, 8 );
     server->client_slots = rocketnet_client_slots_create( NULL, 1 );
     server->acks = rocketnet_server_acks_create( NULL, 1 );
-    server->reassembly = rocketnet_reassembly_set_create( NULL, 1, 4, 16384, 4 );
     server->counters = &t->counters;
     check( server->encryption_map && server->used_token_history && server->client_slots &&
-           server->acks && server->reassembly );
+           server->acks );
 
-    rocketnet_reassembly_set_begin_update( server->reassembly );
     rocketnet_server_protocol_update( server, TOKEN_TIME_NOW );
 
     check( rocketnet_address_parse( &t->client_address, "198.51.100.7:56789" ) );
@@ -115,7 +112,6 @@ static void token_time_teardown( struct token_time_server_t * t )
     rocketnet_used_token_history_destroy( t->server.used_token_history );
     rocketnet_client_slots_destroy( t->server.client_slots );
     rocketnet_server_acks_destroy( t->server.acks );
-    rocketnet_reassembly_set_destroy( t->server.reassembly );
 }
 
 static void token_time_build_request( uint8_t * request, uint64_t create, uint64_t expire )

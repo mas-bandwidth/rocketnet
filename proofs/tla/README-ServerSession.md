@@ -33,7 +33,7 @@ change).
 | Variable | Code | Meaning |
 |---|---|---|
 | `state` | the public server object, `struct rocketnet_server_t`: RUNNING while its running block is set (`rocketnet_server_running`, sdk/rocketnet_api.cpp:1738); STOPPING after `rocketnet_server_stop` (:1685) until `rocketnet_server_stopped` (:1713) | `NONE` (no object), `STOPPED`, `STOPPING`, `RUNNING` |
-| `slot[i].st`, `slot[i].sess` | `struct rocketnet_client_slots_t` (`sdk/rocketnet_client_slots.cpp:14`): `connected[i]`, assigned by `rocketnet_client_slots_assign` (`:163`) and freed by `rocketnet_client_slots_release` (`:251`) | `FREE`, `HANDSHAKE` (a mapping is open for the slot), `CONNECTED`; the session tag of the slot's client |
+| `slot[i].st`, `slot[i].sess` | `struct rocketnet_client_slots_t` (`sdk/rocketnet_client_slots.cpp`): `connected[i]`, assigned by `rocketnet_client_slots_assign` and freed by `rocketnet_client_slots_release` | `FREE`, `HANDSHAKE` (a mapping is open for the slot), `CONNECTED`; the session tag of the slot's client |
 | `slot[i].rec[f]` | the slot's per-connection state: the encryption mapping (`sdk/rocketnet_encryption_map.cpp`), the slot record, and the message layer's connection (`rn_message_connection_reset`, `sdk/rocketnet_message_server.cpp:127`) | one field per row of the reset inventory, each 0 (Init) or the tag of the session that wrote it |
 | `slot[i].reason` | `rocketnet_server_disconnect_reason` (`sdk/rocketnet_api.cpp:1393-1401` at `4e1be4e8`), over `rocketnet_message_server_disconnect_reason` | per run: kept through the reset, cleared to NONE when the slot's next client is established, NONE while STOPPED (`rn_server_slot` refuses with no running block, `sdk/rocketnet_api.cpp:931`) and NONE at each start (the new message server zeroes its block and sets each reason to NONE, `sdk/rocketnet_message_server.cpp:246`, `:285`) |
 | `kept.used` | the used-token history, `rocketnet_used_token_history_check` and `_record` (`sdk/rocketnet_token_tables.cpp:229`, `:241`), held at `sdk/rocketnet_server_protocol.h:63` | server-wide, never per slot; per run: fresh at each start (a start builds a new server transport, which creates the history), kept across slot resets and the stop within the run (standard/TRANSPORT.md t13.4) |
@@ -74,7 +74,7 @@ inventory each field below stands for, citing this model.
 |---|---|
 | `ClientConnects(i, t)` (the mapping is created) | `token_state` (the slot's challenge, cookie and token state), `client_id`, `user_data`, `timeouts`, `session_keys` |
 | `ServerSend(i)` | `packet_sequence`, `message_sequence`, `sent_packets`, `reliable_send_queue`, `ordering_indices`, `send_budget`, `connection_counters`, `ack_receipt_ring` |
-| `Deliver(s)` (a client packet opens) | `received_packets`, `reliable_receive_queue`, `ack_bits`, `replay_window`, `fragment_reassembly`, `rtt_estimator`, `loss_estimator`, `connection_counters` |
+| `Deliver(s)` (a client packet opens) | `received_packets`, `reliable_receive_queue`, `ack_bits`, `replay_window`, `rtt_estimator`, `loss_estimator`, `connection_counters` |
 | `DisconnectClient(i)`, `DisconnectAll` | `pending_disconnect` (the disconnect burst) |
 
 **The used-token history is per run.** standard/TRANSPORT.md t13.4 (Slot reset): a slot
@@ -127,7 +127,7 @@ reset `Clean`: `EndSlot` applies it through `Reset(i)`, and `Stop` applies it to
 | `DropLeavesNothing` | invariant | a drop happens only to a FREE or HANDSHAKE slot, and such a slot holds no send-side field, so nothing dropped is sent to the client that connects into it |
 | `ResetIsInit` | invariant | a free slot's per-connection fields are all Init; the history holds every token established in this run, the lifetime counter every connection of the object, and the keys and config stay |
 | `RecordIsCurrent` | invariant | a slot's record holds only Init and its current session's writes |
-| `SlotReuseObservesNothing` | invariant | per slot, no packet of session s opens in another session, and no step reads a field another session wrote (a stale ack, a stale fragment, a replay-window false reject) |
+| `SlotReuseObservesNothing` | invariant | per slot, no packet of session s opens in another session, and no step reads a field another session wrote (a stale ack, a replay-window false reject) |
 | `NoClientWhileStopped` | invariant | no slot is occupied while STOPPING, STOPPED, or with no object |
 | `NoReceiveUnlessRunning` | invariant | a read happens only while RUNNING (`readIn` holds only that state) |
 | `NoAdmitUnlessRunning` | invariant | `ClientConnects` and `Establish` run only while RUNNING |

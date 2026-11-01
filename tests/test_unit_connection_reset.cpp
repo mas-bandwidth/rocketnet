@@ -17,7 +17,6 @@
 #include "../sdk/rocketnet_client_slots.h"
 #include "../sdk/rocketnet_server_replay_marks.h"
 #include "../sdk/rocketnet_encryption_map.h"
-#include "../sdk/rocketnet_fragment.h"
 #include "../sdk/rocketnet_message_object.h"
 #include "../sdk/rocketnet_layers.h"
 #include "../sdk/rocketnet_client_io.h"
@@ -196,8 +195,8 @@ static void test_connection_reset_inventory_covers_every_field()
             keep_fields++;
     }
 
-    check( reset_fields == 37 );
-    check( keep_fields == 9 );
+    check( reset_fields == 36 );
+    check( keep_fields == 8 );
 
     reset_walk_passes( rocketnet_reset_inventory_matches( "rocketnet_encryption_mapping_t",
                                                           encryption_mapping_layout, RESET_COUNT( encryption_mapping_layout ),
@@ -252,8 +251,8 @@ static void test_connection_reset_inventory_covers_every_field()
     check( rocketnet_server_replay_marks_reset_witness_for_test() );
 
     // a mapping removal and same-index reuse must reproduce its exact fresh
-    // initializer for every mapping field, including the nonzero sequence and
-    // fragment seeds and the -1 client index
+    // initializer for every mapping field, including the nonzero sequence
+    // seeds and the -1 client index
 
     rocketnet_encryption_map_t * map = rocketnet_encryption_map_create( NULL, 1 );
     check( map );
@@ -1181,10 +1180,9 @@ static void reset_server_setup( reset_server_fixture_t * f )
     f->server.encryption_map = rocketnet_encryption_map_create( NULL, 4 );
     f->server.client_slots = rocketnet_client_slots_create( NULL, 2 );
     f->server.acks = rocketnet_server_acks_create( NULL, 2 );
-    f->server.reassembly = rocketnet_reassembly_set_create( NULL, 2, 2, 8192, 4 );
     f->server.counters = &f->counters;
     f->server.connection_ids = f->connection_ids;
-    check( f->server.encryption_map && f->server.client_slots && f->server.acks && f->server.reassembly );
+    check( f->server.encryption_map && f->server.client_slots && f->server.acks );
 }
 
 static int reset_server_assign( reset_server_fixture_t * f, const char * address, uint64_t client_id )
@@ -1214,7 +1212,6 @@ static int reset_server_assign( reset_server_fixture_t * f, const char * address
 
 static void reset_server_teardown( reset_server_fixture_t * f )
 {
-    rocketnet_reassembly_set_destroy( f->server.reassembly );
     rocketnet_server_acks_destroy( f->server.acks );
     rocketnet_client_slots_destroy( f->server.client_slots );
     rocketnet_encryption_map_destroy( f->server.encryption_map );
@@ -1348,22 +1345,14 @@ static void test_connection_reset_server_slot_reuse_is_clean()
     const rocketnet_ack_endpoint_t fresh_ack = f.server.acks->endpoints[a];
     memset( &f.server.acks->endpoints[a], 0xA5, sizeof( f.server.acks->endpoints[a] ) );
 
-    rocketnet_reassembly_slot_t fresh_slots[2];
-    memcpy( fresh_slots, f.server.reassembly->slots + a * f.server.reassembly->num_slots, sizeof( fresh_slots ) );
-    memset( f.server.reassembly->slots + a * f.server.reassembly->num_slots, 0xA5, sizeof( fresh_slots ) );
-    f.server.reassembly->newest_completed[a] = 77;
     rocketnet_server_connection_reset( &f.server, a, ROCKETNET_DISCONNECT_REASON_NONE );
     check( !rocketnet_client_slots_connected( f.server.client_slots, a ) );
     check( f.connection_ids[a] == 0 );
     check( rocketnet_ack_endpoint_state_equal( &f.server.acks->endpoints[a], &fresh_ack ) );
-    check( memcmp( f.server.reassembly->slots + a * f.server.reassembly->num_slots,
-                   fresh_slots, sizeof( fresh_slots ) ) == 0 );
-    check( f.server.reassembly->newest_completed[a] == 0 );
 
     const int b = reset_server_assign( &f, "198.51.100.2:4000", 2 );
     check( b == a );
     check( f.server.acks->endpoints[b].highest_sequence == 0 );
-    check( f.server.reassembly->newest_completed[b] == 0 );
     reset_server_teardown( &f );
 }
 REGISTER_UNIT_TEST( test_connection_reset_server_slot_reuse_is_clean );
@@ -1500,15 +1489,12 @@ static void test_connection_reset_server_reset_touches_only_its_slot()
     const int b = reset_server_assign( &f, "198.51.100.4:4000", 4 );
     f.server.acks->endpoints[a].highest_sequence = 11;
     f.server.acks->endpoints[b].highest_sequence = 22;
-    f.server.reassembly->newest_completed[a] = 33;
-    f.server.reassembly->newest_completed[b] = 44;
 
     const uint64_t b_id = f.connection_ids[b];
     rocketnet_server_connection_reset( &f.server, a, ROCKETNET_DISCONNECT_REASON_NONE );
     check( !rocketnet_client_slots_connected( f.server.client_slots, a ) );
     check( rocketnet_client_slots_connected( f.server.client_slots, b ) );
     check( f.server.acks->endpoints[b].highest_sequence == 22 );
-    check( f.server.reassembly->newest_completed[b] == 44 );
     check( f.connection_ids[b] == b_id );
     reset_server_teardown( &f );
 }
@@ -1594,8 +1580,6 @@ static void test_connection_reset_client_disconnect_is_clean()
 
     rocketnet_client_protocol_t client;
     rocketnet_client_protocol_init( &client, &counters );
-    client.reassembly = rocketnet_reassembly_set_create( NULL, 1, 2, 8192, 4 );
-    check( client.reassembly );
     client.state = ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_TIMED_OUT;
     memset( &client.keys, 0xA5, sizeof( client.keys ) );
     memset( &client.token, 0xA5, sizeof( client.token ) );
@@ -1603,15 +1587,10 @@ static void test_connection_reset_client_disconnect_is_clean()
     memset( client.session_nonce, 0xA5, sizeof( client.session_nonce ) );
     client.send_sequence_handshake = 7;
     client.send_sequence_session = 9;
-    client.next_fragment_payload_id = 12;
     client.replay_session.highest_opened = 100;
     client.ack.highest_sequence = 101;
     client.num_acked = 2;
 
-    rocketnet_reassembly_slot_t fresh_slots[2];
-    memcpy( fresh_slots, client.reassembly->slots, sizeof( fresh_slots ) );
-    memset( client.reassembly->slots, 0xA5, sizeof( fresh_slots ) );
-    client.reassembly->newest_completed[0] = 8;
     rocketnet_client_connection_reset( &client );
 
     rocketnet_connection_keys_t zero_keys;
@@ -1631,22 +1610,17 @@ static void test_connection_reset_client_disconnect_is_clean()
     check( memcmp( client.session_nonce, zero_nonce, sizeof( zero_nonce ) ) == 0 );
     check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_TIMED_OUT );
     check( client.send_sequence_handshake == 0 && client.send_sequence_session == 0 );
-    check( client.next_fragment_payload_id == 1 );
     check( client.replay_session.highest_opened == 0 );
     check( client.ack.highest_sequence == 0 && client.num_acked == 0 );
-    check( client.reassembly->newest_completed[0] == 0 );
-    check( memcmp( client.reassembly->slots, fresh_slots, sizeof( fresh_slots ) ) == 0 );
-    rocketnet_reassembly_set_destroy( client.reassembly );
 }
 REGISTER_UNIT_TEST( test_connection_reset_client_disconnect_is_clean );
 
 // A connect from each failure state (CONNECTION_DENIED down to
 // CONNECT_TOKEN_EXPIRED) is a fresh attempt: rocketnet_client_protocol_connect
 // runs rocketnet_client_connection_reset first, so no key, cookie, sequence,
-// replay window, ack, reassembly slot or fragment id of the earlier attempt
-// is carried, the salt and the ephemeral keypair are new, the sequences are
-// at one, and what the client keeps across attempts (counters, filter, send
-// rate, reassembly set) is kept. proofs/tla/ClientConnection.tla
+// replay window or ack of the earlier attempt is carried, the salt and the
+// ephemeral keypair are new, the sequences are at one, and what the client
+// keeps across attempts (counters, filter, send rate) is kept. proofs/tla/ClientConnection.tla
 // FreshAttemptFromFailure, MCClientConnectionRetryFromFailure.cfg.
 
 static void test_connection_reset_connect_from_each_failure_state()
@@ -1667,12 +1641,6 @@ static void test_connection_reset_connect_from_each_failure_state()
 
         rocketnet_client_protocol_t client;
         rocketnet_client_protocol_init( &client, &counters );
-        client.reassembly = rocketnet_reassembly_set_create( NULL, 1, 2, 8192, 4 );
-        check( client.reassembly );
-
-        rocketnet_reassembly_set_t * const reassembly = client.reassembly;
-        rocketnet_reassembly_slot_t fresh_slots[2];
-        memcpy( fresh_slots, client.reassembly->slots, sizeof( fresh_slots ) );
 
         // what the client keeps across attempts
 
@@ -1702,7 +1670,6 @@ static void test_connection_reset_connect_from_each_failure_state()
         client.client_index = 3;
         client.send_sequence_handshake = 7;
         client.send_sequence_session = 9;
-        client.next_fragment_payload_id = 12;
         client.handshake_highest_opened = 0xA5A5A5A5A5A5A5A5ULL;
         memset( &client.replay_session, 0xA5, sizeof( client.replay_session ) );
         memset( &client.accepted_session, 0xA5, sizeof( client.accepted_session ) );
@@ -1711,8 +1678,6 @@ static void test_connection_reset_connect_from_each_failure_state()
         client.rtt_estimate = 0.25;
         client.ack.highest_sequence = 101;
         client.num_acked = 2;
-        memset( client.reassembly->slots, 0xA5, sizeof( fresh_slots ) );
-        client.reassembly->newest_completed[0] = 8;
 
         uint8_t dirty_salt[ROCKETNET_CONNECTION_SALT_BYTES];
         memcpy( dirty_salt, client.connection_salt, sizeof( dirty_salt ) );
@@ -1750,9 +1715,6 @@ static void test_connection_reset_connect_from_each_failure_state()
         check( client.integrity_failures == 0 );
         check( client.rtt_estimate == 0.0 );
         check( client.ack.highest_sequence == 0 && client.num_acked == 0 );
-        check( client.next_fragment_payload_id == 1 );
-        check( client.reassembly->newest_completed[0] == 0 );
-        check( memcmp( client.reassembly->slots, fresh_slots, sizeof( fresh_slots ) ) == 0 );
 
         // a fresh attempt: new salt and ephemeral keypair, sequences at one,
         // timers from the connect time
@@ -1768,10 +1730,8 @@ static void test_connection_reset_connect_from_each_failure_state()
         check( memcmp( &counters, &kept_counters, sizeof( counters ) ) == 0 );
         check( memcmp( client.packet_filter, kept_filter, sizeof( kept_filter ) ) == 0 );
         check( client.send_rate == 20.0 );
-        check( client.reassembly == reassembly );
 
         rocketnet_client_connection_reset( &client );
-        rocketnet_reassembly_set_destroy( reassembly );
     }
 }
 REGISTER_UNIT_TEST( test_connection_reset_connect_from_each_failure_state );

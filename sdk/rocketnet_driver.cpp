@@ -112,8 +112,7 @@ struct rocketnet_transport_lists_t
 
         const size_t used = strlen( buffer );
         const size_t bytes = strlen( text );
-        if ( used + bytes >= sizeof( buffer ) )
-            return;
+        rocketnet_assert( used + bytes < sizeof( buffer ) );
 
         memcpy( buffer + used, text, bytes + 1 );
     }

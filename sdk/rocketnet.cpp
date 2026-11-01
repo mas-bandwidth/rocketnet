@@ -172,7 +172,6 @@ const char * rocketnet_status_name( enum rocketnet_status_t status )
         case ROCKETNET_STATUS_INVALID_ARGUMENT:                 return "INVALID_ARGUMENT";
         case ROCKETNET_STATUS_CONFIG_ENV_INVALID:               return "CONFIG_ENV_INVALID";
         case ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE:              return "CONFIG_OUT_OF_RANGE";
-        case ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED:           return "MEMORY_BUDGET_EXCEEDED";
         case ROCKETNET_STATUS_MISSING_KEYS:                     return "MISSING_KEYS";
         case ROCKETNET_STATUS_INVALID_PROTOCOL_ID:              return "INVALID_PROTOCOL_ID";
         case ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION:           return "DEV_KEYS_IN_PRODUCTION";
@@ -838,11 +837,13 @@ const char * rocketnet_platform_name( int platform_id )
 // that names the cause. Installed only on the bundled sodium, whose handler
 // slot is this library's own; a system libsodium's belongs to the application.
 
+#if defined( ROCKETNET_BUNDLED_SODIUM )
 static void rocketnet_sodium_misuse()
 {
     rocketnet_error( "sodium refused an operation it cannot complete (the OS random source is unavailable, or a sodium misuse). the process aborts" );
     (void) fflush( stdout );
 }
+#endif // #if defined( ROCKETNET_BUNDLED_SODIUM )
 
 #if ROCKETNET_DEV
 void rocketnet_sodium_misuse_for_test()

@@ -8,8 +8,8 @@
 // the IPv6 UDP payload of a 1500-byte link, equal to the send budget, the
 // payload capacity the budget less the fixed overhead and the minimum ack
 // block rounded down to eight, and the SINGLE message the capacity less its
-// form byte. A game packet of 1400 bytes travels as one unfragmented type 5
-// packet, zero copy, on either address family.
+// form byte. A game packet of 1400 bytes travels as one type 5 packet, zero
+// copy, on either address family.
 //
 // Every case runs a client and server protocol pair in memory on a mocked
 // clock: no sockets, no real time.
@@ -27,7 +27,6 @@
 #include "rocketnet_client_slots.h"
 #include "rocketnet_ack.h"
 #include "rocketnet_replay.h"
-#include "rocketnet_fragment.h"
 #include "rocketnet_message.h"
 #include "rocketnet_server_protocol.h"
 #include "rocketnet_client_protocol.h"
@@ -108,18 +107,13 @@ static void max_payload_pair_setup( struct max_payload_pair_t * pair )
     server->used_token_history = rocketnet_used_token_history_create( NULL, 64 );
     server->client_slots = rocketnet_client_slots_create( NULL, 4 );
     server->acks = rocketnet_server_acks_create( NULL, 4 );
-    server->reassembly = rocketnet_reassembly_set_create( NULL, 4, 4, 16384, 4 * 4 );
     server->counters = &pair->server_counters;
     check( server->encryption_map && server->used_token_history &&
-           server->client_slots && server->acks && server->reassembly );
-    rocketnet_reassembly_set_begin_update( server->reassembly );
+           server->client_slots && server->acks );
     rocketnet_server_protocol_update( server, ROCKETNET_TEST_CREATE_TS );
     check( rocketnet_address_parse( &pair->client_address, "198.51.100.7:56789" ) );
 
     rocketnet_client_protocol_init( &pair->client, &pair->client_counters );
-    pair->client.reassembly = rocketnet_reassembly_set_create( NULL, 1, 4, 16384, ROCKETNET_NUM_CLIENT_PACKETS / 2 );
-    check( pair->client.reassembly );
-    rocketnet_reassembly_set_begin_update( pair->client.reassembly );
 
     uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
     max_payload_mint_token( token_data );
@@ -153,12 +147,10 @@ static void max_payload_pair_teardown( struct max_payload_pair_t * pair )
 {
     rocketnet_counters_assert_conserved( &pair->server_counters );
     rocketnet_counters_assert_conserved( &pair->client_counters );
-    rocketnet_reassembly_set_destroy( pair->client.reassembly );
     rocketnet_encryption_map_destroy( pair->server.encryption_map );
     rocketnet_used_token_history_destroy( pair->server.used_token_history );
     rocketnet_client_slots_destroy( pair->server.client_slots );
     rocketnet_server_acks_destroy( pair->server.acks );
-    rocketnet_reassembly_set_destroy( pair->server.reassembly );
 }
 
 // hands one client packet to the server; the opened payload lands in out
@@ -173,17 +165,6 @@ static int max_payload_to_server( struct max_payload_pair_t * pair, const uint8_
     return rocketnet_server_protocol_process_packet( &pair->server, &pair->client_address, packet, packet_bytes,
                                                      ROCKETNET_TEST_CREATE_TS, pair->time,
                                                      response, &response_bytes, out, out_bytes, &client_index );
-}
-
-static uint64_t max_payload_fragment_counters( const struct rocketnet_counters_t * counters )
-{
-    uint64_t sum = 0;
-    for ( int c = ROCKETNET_COUNTER_FRAGMENT_RECEIVED; c <= ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_BATCH_FULL; c++ )
-    {
-        sum += counters->values[c];
-    }
-    sum += counters->values[ROCKETNET_COUNTER_CLIENT_FRAGMENT_RECEIVED];
-    return sum;
 }
 
 static void max_payload_fill( uint8_t * data, int bytes, int salt )
@@ -334,10 +315,8 @@ static void test_message_of_1400_bytes_is_one_unfragmented_packet()
         check( memcmp( read.data, message, sizeof( message ) ) == 0 );
     }
 
-    // three messages, three type 5 packets, no fragment anywhere
+    // three messages, three type 5 packets, none over the receive ceiling
 
-    check( max_payload_fragment_counters( &pair.client_counters ) == 0 );
-    check( max_payload_fragment_counters( &pair.server_counters ) == 0 );
     check( pair.server_counters.values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE] == 0 );
 
     max_payload_pair_teardown( &pair );
@@ -365,8 +344,6 @@ static void test_limits_are_derived_from_the_packet_size()
            ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );   // 1416
     check( ROCKETNET_MESSAGE_SINGLE_BYTES == ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1 );                                  // 1415
     check( ROCKETNET_MESSAGE_SINGLE_BYTES >= MAX_PAYLOAD_TEST_GAME_PACKET_BYTES );
-    check( ROCKETNET_MAX_FRAGMENT_BYTES == room - ROCKETNET_FRAGMENT_HEADER_BYTES );                             // 1413
-    check( ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES == ROCKETNET_MAX_FRAGMENT_BYTES ); // 1413
 
     // the config table's floor for max_message_bytes is the SINGLE size
 
@@ -501,39 +478,6 @@ static void test_sealed_packet_at_max_size_opens()
         check( received == (int) sizeof( payload ) && memcmp( g_received, payload, sizeof( payload ) ) == 0 );
     }
 
-    // a fragment at the full stride, under both long histories: the ack block
-    // takes only the room the fragment header and bytes leave, so the packet
-    // stays inside the send budget from either end
-    {
-        static uint8_t fragment[ROCKETNET_MAX_FRAGMENT_BYTES];
-        max_payload_fill( fragment, (int) sizeof( fragment ), 17 );
-
-        static uint8_t packet[ROCKETNET_RECEIVE_CEILING + 64];
-        uint64_t sequence = 0;
-
-        // the acks a packet carries are built from the accepted history
-
-        for ( uint64_t s = 4000; s <= 6000; s++ )
-        {
-            if ( s % 3 != 0 )
-                rocketnet_replay_advance( &pair.client.accepted_session, s );
-            if ( s % 5 != 0 )
-                rocketnet_replay_advance( &mapping->accepted_session, s );
-        }
-
-        static uint8_t block[ROCKETNET_ACK_BLOCK_MAX_BYTES];
-        check( rocketnet_ack_block_build( block, ROCKETNET_ACK_BLOCK_MAX_BYTES, &pair.client.accepted_session ) > 100 );
-        check( rocketnet_ack_block_build( block, ROCKETNET_ACK_BLOCK_MAX_BYTES, &mapping->accepted_session ) > 100 );
-
-        check( rocketnet_client_protocol_start_fragments( &pair.client, 2, &sequence ) );
-        int wire_bytes = rocketnet_client_protocol_seal_fragment( &pair.client, sequence, 1, 0, 2, fragment, (int) sizeof( fragment ), 0, pair.time, packet );
-        check( wire_bytes > 0 && wire_bytes <= ROCKETNET_SEND_BUDGET );
-
-        check( rocketnet_server_protocol_start_fragments( &pair.server, 0, 2, &sequence ) );
-        wire_bytes = rocketnet_server_protocol_seal_fragment( &pair.server, 0, sequence, 1, 0, 2, fragment, (int) sizeof( fragment ), 0, pair.time, packet );
-        check( wire_bytes > 0 && wire_bytes <= ROCKETNET_SEND_BUDGET );
-    }
-
     // one byte over the capacity is refused at the seal, not truncated
     {
         static uint8_t payload[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 1];
@@ -541,17 +485,15 @@ static void test_sealed_packet_at_max_size_opens()
         check( rocketnet_client_protocol_write_payload( &pair.client, payload, (int) sizeof( payload ), pair.time, packet ) == 0 );
     }
 
-    check( max_payload_fragment_counters( &pair.client_counters ) == 0 );
-    check( max_payload_fragment_counters( &pair.server_counters ) == 0 );
-
     max_payload_pair_teardown( &pair );
 }
 #endif // #if ROCKETNET_DEV
 
 // ---------------------------------------------------------------------------
 // Both endpoints accept the sender's bounds and reject the first byte over.
-// A full datagram uses the unrounded fragment stride; type 5 is capped at
-// the separately rounded payload capacity, including when the datagram fits.
+// A datagram at the receive ceiling passes the size check; one byte over is
+// PREFILTER_TOO_LARGE before anything else reads it. Type 5 is capped at the
+// separately rounded payload capacity, including when the datagram fits.
 // ---------------------------------------------------------------------------
 
 static void test_receive_ceiling_refuses_one_byte_over()
@@ -565,18 +507,16 @@ static void test_receive_ceiling_refuses_one_byte_over()
 
     for ( int direction = 0; direction < 2; direction++ )
     {
-        // a legal maximum fragment fills the entire datagram, even though
-        // its type data (header + body) is larger than the type-5 capacity
+        // a payload at the full capacity, sealed and accepted
         memset( plaintext, 0, sizeof( plaintext ) );
-        rocketnet_write_fragment_header( plaintext + ROCKETNET_ACK_BLOCK_MIN_BYTES, 1, 0, 2 );
-        max_payload_fill( plaintext + ROCKETNET_ACK_BLOCK_MIN_BYTES + ROCKETNET_FRAGMENT_HEADER_BYTES,
-                          ROCKETNET_MAX_FRAGMENT_BYTES, 17 );
+        max_payload_fill( plaintext + ROCKETNET_ACK_BLOCK_MIN_BYTES, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, 17 );
 
         const uint8_t * key = direction == 0 ? pair.client.keys.session_client_to_server : pair.client.keys.session_server_to_client;
-        const int wire_bytes = rocketnet_write_sealed_packet( packet, ROCKETNET_CONNECTION_FRAGMENT_PACKET,
-                                                              pair.client.packet_filter, 100, NULL, plaintext, ROCKETNET_SEND_BUDGET - ROCKETNET_PACKET_OVERHEAD_BYTES,
+        const int wire_bytes = rocketnet_write_sealed_packet( packet, ROCKETNET_CONNECTION_PAYLOAD_PACKET,
+                                                              pair.client.packet_filter, (uint64_t) ( 100 + direction ), NULL, plaintext,
+                                                              ROCKETNET_ACK_BLOCK_MIN_BYTES + ROCKETNET_MAX_PACKET_PAYLOAD_BYTES,
                                                               ROCKETNET_TEST_PROTOCOL_ID, pair.client.connection_salt, NULL, key );
-        check( wire_bytes == ROCKETNET_SEND_BUDGET );
+        check( wire_bytes > 0 && wire_bytes <= ROCKETNET_SEND_BUDGET );
 
         int received = 0;
         if ( direction == 0 )
@@ -584,16 +524,27 @@ static void test_receive_ceiling_refuses_one_byte_over()
         else
             check( rocketnet_client_protocol_process_packet( &pair.client, packet, wire_bytes, pair.time,
                                                              output, (int) sizeof( output ), &received ) );
-        check( received == 0 ); // incomplete reassembly, not a payload delivery
+        check( received == ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
 
-        packet[wire_bytes] = 0;
+        // a datagram at exactly the receive ceiling passes the size check (it
+        // is refused later, by its own type's rules); one byte more is
+        // refused by size alone
+
+        memset( packet + wire_bytes, 0, (size_t) ( ROCKETNET_SEND_BUDGET + 1 - wire_bytes ) );
 
         struct rocketnet_counters_t * counters = direction == 0 ? &pair.server_counters : &pair.client_counters;
         const uint64_t too_large = counters->values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE];
         if ( direction == 0 )
-            check( max_payload_to_server( &pair, packet, wire_bytes + 1, output, &received ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+            (void) max_payload_to_server( &pair, packet, ROCKETNET_RECEIVE_CEILING, output, &received );
         else
-            check( !rocketnet_client_protocol_process_packet( &pair.client, packet, wire_bytes + 1, pair.time,
+            (void) rocketnet_client_protocol_process_packet( &pair.client, packet, ROCKETNET_RECEIVE_CEILING, pair.time,
+                                                             output, (int) sizeof( output ), &received );
+        check( counters->values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE] == too_large );
+
+        if ( direction == 0 )
+            check( max_payload_to_server( &pair, packet, ROCKETNET_RECEIVE_CEILING + 1, output, &received ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+        else
+            check( !rocketnet_client_protocol_process_packet( &pair.client, packet, ROCKETNET_RECEIVE_CEILING + 1, pair.time,
                                                               output, (int) sizeof( output ), &received ) );
         check( received == 0 );
         check( counters->values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE] == too_large + 1 );
@@ -647,8 +598,8 @@ static void test_receive_payload_refuses_above_send_capacity()
 // ---------------------------------------------------------------------------
 // The client drops reserved packet types and server-bound types, counted.
 // The client's two refusals live in rocketnet_client_protocol_process_packet
-// (sdk/rocketnet_client_protocol.cpp): RESERVED_TYPE for a type above
-// ROCKETNET_CONNECTION_FRAGMENT_PACKET, WRONG_DIRECTION for a request or a
+// (sdk/rocketnet_client_protocol.cpp): RESERVED_TYPE for a type at or above
+// ROCKETNET_FIRST_RESERVED_PACKET_TYPE, WRONG_DIRECTION for a request or a
 // response. Each refusal also counts the packet's arrival.
 // ---------------------------------------------------------------------------
 
@@ -673,13 +624,13 @@ static void test_client_drops_reserved_and_wrong_direction_types()
 
     const uint64_t packets_before = pair.client_counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED];
 
-    // types 10 through 255 are reserved and ignored: PACKETS_RECEIVED and
+    // types 9 through 255 are reserved and ignored: PACKETS_RECEIVED and
     // RESERVED_TYPE each rise by exactly one and nothing else moves, so the
-    // counter sum rises by exactly two
+    // counter sum rises by exactly two. Type 9 is the first reserved type.
 
-    static const uint8_t reserved_type[3] = { 10, 200, 255 };
+    static const uint8_t reserved_type[4] = { ROCKETNET_FIRST_RESERVED_PACKET_TYPE, 10, 200, 255 };
 
-    for ( int i = 0; i < 3; i++ )
+    for ( int i = 0; i < 4; i++ )
     {
         const uint64_t before = client_all_counters_sum( &pair.client_counters );
         memset( packet, 0, sizeof( packet ) );
@@ -709,7 +660,7 @@ static void test_client_drops_reserved_and_wrong_direction_types()
         check( !rocketnet_client_protocol_process_packet( &pair.client, packet, 64, pair.time,
                                                           out, (int) sizeof( out ), &out_bytes ) );
         check( client_all_counters_sum( &pair.client_counters ) == before + 2 );
-        check( pair.client_counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED] == packets_before + 4 + (uint64_t) i );
+        check( pair.client_counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED] == packets_before + 5 + (uint64_t) i );
         check( pair.client_counters.values[ROCKETNET_COUNTER_WRONG_DIRECTION] == (uint64_t) ( i + 1 ) );
     }
 

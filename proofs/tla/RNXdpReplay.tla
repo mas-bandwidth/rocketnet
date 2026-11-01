@@ -4,7 +4,7 @@
 (*                                                                         *)
 (* The XDP program (server_xdp/server_xdp.c) holds a BPF hash map,         *)
 (* server_xdp_replay_map, keyed by the source address and port.  For the   *)
-(* session packet types (keep-alive, payload, disconnect, ack, fragment)   *)
+(* session packet types (keep-alive, payload, disconnect, ack)            *)
 (* it looks the source up and, with an entry, drops a packet whose         *)
 (* sequence is KernelWindow or more behind the entry's high_water; the     *)
 (* design's KernelWindow is W, the userspace replay window.  The kernel    *)

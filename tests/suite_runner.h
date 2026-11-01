@@ -413,7 +413,7 @@ inline int suite_layer_of( const std::string & name )
         // acks: the transport's ack system and sequence buffers
         { "ack", "sequence", "send_history", "loss", "jitter", "out_of_order", "reply", "previous", "pending", "never", "newer", "older", "newest", "equal", "same", "repeated", "higher", "round", "one", "both", "first", "each", NULL },
         // the message layer: fragments, the window, receipts, channels, the endpoint and the message objects
-        { "fragment", "reassembly", "window", "receipt", "rnreceipts", "resend", "resent", "watermark", "held", "hold", "endpoint", "budget", "send_budget", "rnscheduler", "message", "channel", "rnchannel", "reliab", "unreliable", "ordered", "violation", "wide", "dispatch", "block", "promoted", "mixed", "rtt_estimator", "shares", "generation", "reservation", "store", "chunk", "span", "builder", NULL },
+        { "fragment", "window", "receipt", "rnreceipts", "resend", "resent", "watermark", "held", "hold", "endpoint", "budget", "send_budget", "rnscheduler", "message", "channel", "rnchannel", "reliab", "unreliable", "ordered", "violation", "wide", "dispatch", "block", "promoted", "mixed", "rtt_estimator", "shares", "generation", "reservation", "store", "chunk", "span", "builder", NULL },
         // transport basics: the driver/transport interface and the ladder
         { "driver", "transport", "ladder", "network_simulator", "sim", "link", "send", "receive", "fake", "table", "rnslots", NULL },
         // each transport type

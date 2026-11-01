@@ -34,7 +34,6 @@ set(ROCKETNET_SDK_SOURCES_COMMON
     sdk/rocketnet_connect_token.cpp
     sdk/rocketnet_counters.cpp
     sdk/rocketnet_encryption_map.cpp
-    sdk/rocketnet_fragment.cpp
     sdk/rocketnet_hash.cpp
     sdk/rocketnet_keys.cpp
     sdk/rocketnet_message.cpp

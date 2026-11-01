@@ -11,7 +11,7 @@ connect tokens use only the published development keys from
 
 | target | what it drives | seeds | dictionary |
 |---|---|---|---|
-| `rocketnet_fuzz` | the stateless wire parsers: prefilter, fragment header and reassembly, base64, config values (`input[0] & 3` picks one) | `corpus/` | `dict/rocketnet_fuzz.dict` |
+| `rocketnet_fuzz` | the stateless wire parsers: prefilter, base64, config values (`input[0]` picks one) | `corpus/` | `dict/rocketnet_fuzz.dict` |
 | `rocketnet_fuzz_message` | the message record decoder, with oracles on the layer's promises | `corpus_message/` | `dict/rocketnet_fuzz_message.dict` |
 | `rocketnet_fuzz_connect_token` | the server's token ladder and the client's connect parse, raw and structured halves | `corpus_connect_token/` | `dict/rocketnet_fuzz_connect_token.dict` |
 | `rocketnet_fuzz_token_private` | the token layouts behind the signature and the sealed block, reached directly | `corpus_token_private/` | `dict/rocketnet_fuzz_token_private.dict` |
@@ -231,8 +231,7 @@ The pair generators record one real handshake and one scripted session
 between the deterministic pair, then turn every recorded packet type into
 seeds. The two stateless generators turn the types their own parsers read
 into seeds: `rocketnet_fuzz` writes one seed per packet type the prefilter
-returns, per outcome the reassembly engine reaches, and per base64 and
-config shape, and `rocketnet_fuzz_message` writes one seed per violation
+returns, and per base64 and config shape, and `rocketnet_fuzz_message` writes one seed per violation
 the decoder names and per code a record carries. `rocketnet_fuzz_connect_token`
 writes one seed per branch the connect-token ladder and the client's
 pre-send checks take (raw and structured halves, the signature verdicts, the

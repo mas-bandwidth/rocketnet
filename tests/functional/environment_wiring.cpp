@@ -121,19 +121,19 @@ void rocketnet_test_real_environment_log_level_before_init()
 
 void rocketnet_test_real_environment_config_precedence_and_invalid()
 {
-    rocketnet_real_environment_guard_t environment( "ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES" );
+    rocketnet_real_environment_guard_t environment( "ROCKETNET_CLIENT_SEND_MESSAGE_BUFFER_BYTES" );
 
     rocketnet_client_config_t config;
     rocketnet_check( rocketnet_client_default_config( &config ) == ROCKETNET_STATUS_OK );
-    config.max_fragmented_messages = 8;
+    config.send_message_buffer_bytes = 8388608;
 
-    environment.set( "4" );
+    environment.set( "4194304" );
 
     const size_t environment_bytes = rocketnet_client_required_memory( &config );
     rocketnet_check( environment_bytes > 0 );
 
     environment.clear();
-    config.max_fragmented_messages = 4;
+    config.send_message_buffer_bytes = 4194304;
     rocketnet_check( rocketnet_client_required_memory( &config ) == environment_bytes );
 
     environment.set( "not-a-number" );

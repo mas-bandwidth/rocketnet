@@ -3,13 +3,12 @@
 # cited from sdk/), and the address grammar's punctuation.
 
 # selectors (input[0] % 8): request, cookie, sealed, ack read, ack build,
-# fragment header, token layouts, address
+# token layouts, address (5 is unassigned)
 sel_request="\x00"
 sel_cookie="\x01"
 sel_sealed="\x02"
 sel_ack_read="\x03"
 sel_ack_build="\x04"
-sel_fragment="\x05"
 sel_token="\x06"
 sel_address="\x07"
 
@@ -21,7 +20,6 @@ type_keep_alive="\x04"
 type_payload="\x05"
 type_disconnect="\x06"
 type_ack="\x08"
-type_fragment="\x09"
 
 # sequence one and the 32-bit wrap, as u64 (rocketnet_reconstruct_sequence)
 sequence_one="\x01\x00\x00\x00\x00\x00\x00\x00"
@@ -36,9 +34,6 @@ version="\x93\x1a\x7c\x4e"
 
 # ROCKETNET_ACK_BLOCK_MAX_RANGES 255 as the block's range count (sdk/rocketnet_wire.h)
 ack_max_ranges="\xff"
-
-# ROCKETNET_MAX_FRAGMENTS 256 as the header's count - 1 (sdk/rocketnet_fragment.h)
-fragment_max_count="\xff"
 
 # the address grammar (rocketnet_address_parse, sdk/rocketnet_address.h)
 addr_open="["

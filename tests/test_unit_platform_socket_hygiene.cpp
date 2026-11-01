@@ -4,10 +4,8 @@
 */
 
 // Platform socket hygiene: pure functions verifying that mapped IPv6 sources
-// are refused on non-dual-stack receive paths, socket timeout conversions
-// split seconds and microseconds (tv_usec < 1000000), sleep conversions split
-// seconds and microseconds without signed integer overflow, and descriptor 0
-// is treated as a valid socket handle.
+// are refused on non-dual-stack receive paths and descriptor 0 is treated as
+// a valid socket handle.
 
 #include "test_unit_registry.h"
 
@@ -77,35 +75,6 @@ static void test_platform_socket_hygiene_mapped_source_decision()
 
     rocketnet_unit_check( !accepted );
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_BSD || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
-}
-
-static void test_platform_socket_hygiene_timeout_timeval()
-{
-    // A 1.5 s timeout must split seconds and microseconds:
-    // tv_sec = 1, tv_usec = 500000 (< 1000000, avoiding EINVAL on SO_RCVTIMEO).
-
-    struct timeval tv = rocketnet_platform_timeval_from_seconds( 1.5f );
-    rocketnet_unit_check( tv.tv_sec == 1 );
-    rocketnet_unit_check( tv.tv_usec < 1000000 );
-    rocketnet_unit_check( tv.tv_usec == 500000 );
-}
-
-static void test_platform_socket_hygiene_timeout_milliseconds_rounds_up()
-{
-    rocketnet_unit_check( rocketnet_platform_timeout_milliseconds( 0.0005f ) == 1 );
-    rocketnet_unit_check( rocketnet_platform_timeout_milliseconds( 1.5f ) == 1500 );
-    rocketnet_unit_check( rocketnet_platform_timeout_milliseconds( 1e10f ) == UINT32_C( 0xFFFFFFFE ) );
-}
-
-static void test_platform_socket_hygiene_sleep_split()
-{
-    // A 3000 s sleep conversion must split seconds and microseconds:
-    // 3000 s would overflow a 32-bit signed int microsecond counter (3000 * 1000000 > 2^31 - 1).
-
-    struct rocketnet_platform_sleep_split_t split = rocketnet_platform_sleep_split( 3000.0 );
-    rocketnet_unit_check( split.seconds == 3000 );
-    rocketnet_unit_check( split.microseconds == 0 );
-    rocketnet_unit_check( (int32_t) split.microseconds >= 0 );
 }
 
 static void test_platform_socket_hygiene_descriptor_valid()
@@ -501,13 +470,10 @@ static void test_platform_msgx_receive_weather_drain_is_bounded()
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC && ROCKETNET_DEV
 
 REGISTER_UNIT_TEST( test_platform_socket_hygiene_mapped_source_decision );
-REGISTER_UNIT_TEST( test_platform_socket_hygiene_timeout_timeval );
-REGISTER_UNIT_TEST( test_platform_socket_hygiene_sleep_split );
 REGISTER_UNIT_TEST( test_platform_socket_hygiene_descriptor_valid );
 REGISTER_UNIT_TEST( test_platform_socket_hygiene_refused_source_reads_next );
 REGISTER_UNIT_TEST( test_platform_socket_hygiene_refused_source_then_drained );
 REGISTER_UNIT_TEST( test_platform_socket_hygiene_dual_stack_accepts_mapped );
-REGISTER_UNIT_TEST( test_platform_socket_hygiene_timeout_milliseconds_rounds_up );
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC && ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_platform_receive_weather_drain_is_bounded );

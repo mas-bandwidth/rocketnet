@@ -234,7 +234,7 @@ static int sequenced_large_start_calls;
 
 static int sequenced_large_max_payload( void * )
 {
-    return ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES;
+    return ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
 }
 
 static uint64_t sequenced_large_connected( void *, int )
@@ -266,14 +266,14 @@ static void test_large_state_promotes_to_reliable_sequenced()
     // an oversize unreliable send is promoted to its reliable twin (the
     // promotion rule), never dropped as unreliable
 
-    uint8_t * pointer = rn_message_object_start( object, 0, 0, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED,
-                                                 ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES );
+    const int large_bytes = 2 * ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
+    uint8_t * pointer = rn_message_object_start( object, 0, 0, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, large_bytes );
     rocketnet_unit_check( pointer != NULL );
 
     if ( pointer )
     {
-        memset( pointer, 0, ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES );
-        rocketnet_unit_check( rn_message_object_finish( object, 0, ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES ) != 0 );
+        memset( pointer, 0, (size_t) large_bytes );
+        rocketnet_unit_check( rn_message_object_finish( object, 0, large_bytes ) != 0 );
     }
 
     rn_message_connection_t * connection = &object->connections[0];

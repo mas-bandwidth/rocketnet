@@ -547,8 +547,7 @@ static inline struct rocketnet_encryption_mapping_t * rocketnet_fuzz_pair_mappin
 static inline bool rocketnet_fuzz_session_type( uint8_t type )
 {
     return type == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET || type == ROCKETNET_CONNECTION_PAYLOAD_PACKET ||
-           type == ROCKETNET_CONNECTION_DISCONNECT_PACKET || type == ROCKETNET_CONNECTION_ACK_PACKET ||
-           type == ROCKETNET_CONNECTION_FRAGMENT_PACKET;
+           type == ROCKETNET_CONNECTION_DISCONNECT_PACKET || type == ROCKETNET_CONNECTION_ACK_PACKET;
 }
 
 // Seal plaintext as a client -> server packet of the given type under the
@@ -1241,7 +1240,7 @@ static inline void rocketnet_fuzz_pair_dump( struct rocketnet_fuzz_pair_t * pair
 // never enters.
 // -----------------------------------------------------------------------
 
-#define ROCKETNET_FUZZ_NUM_PACKET_TYPES 10
+#define ROCKETNET_FUZZ_NUM_PACKET_TYPES 9
 
 struct rocketnet_fuzz_recorded_t
 {
@@ -1408,20 +1407,6 @@ static inline void rocketnet_fuzz_pair_record( struct rocketnet_fuzz_pair_t * pa
     {
         rocketnet_fuzz_pair_record_step( pair, rec, false );
     }
-
-    // the message layer promotes a large unreliable message to a reliable
-    // block, so the transport's own fragmentation is reached through the
-    // transport's payload send: one payload past a packet's room, each way
-
-    rocketnet_fuzz_pair_acquire( pair, true );
-    rocketnet_fuzz_record_steps = 0;
-    rocketnet_client_transport_send_packet( rocketnet_message_client_transport( pair->client ), message, 3000 );
-    rocketnet_server_transport_send_packet( pair->transport, 0, message, 3000 );
-
-    for ( int i = 0; i < 5; i++ )
-    {
-        rocketnet_fuzz_pair_record_step( pair, rec, false );
-    }
 }
 
 // one record: [mode][u16 length][bytes], the record shape the server and
@@ -1510,7 +1495,7 @@ static inline const struct rocketnet_counters_t * rocketnet_fuzz_server_counters
 }
 
 static const char * const rocketnet_fuzz_packet_type_names[ROCKETNET_FUZZ_NUM_PACKET_TYPES] = {
-    "request", "denied", "challenge", "response", "keep_alive", "payload", "disconnect", "cookie", "ack", "fragment"
+    "request", "denied", "challenge", "response", "keep_alive", "payload", "disconnect", "cookie", "ack"
 };
 
 #define ROCKETNET_FUZZ_PAIR_TARGET( run, generate )                                          \

@@ -17,7 +17,7 @@
 //                 table, not cloned) of the family whose output interface is
 //                 this interface: its RTA_GATEWAY is the gateway. An IPv4
 //                 multipath default route answers with its first next hop,
-//                 as /proc/net/route (netstat -rn) did.
+//                 as /proc/net/route (netstat -rn) shows it.
 //   RTM_GETNEIGH  the family's neighbour entry on this interface whose
 //                 NDA_DST is the gateway, in a state ip(8) shows (reachable,
 //                 stale, delay, probe or permanent) and carrying a 6-byte

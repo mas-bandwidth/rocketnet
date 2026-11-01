@@ -290,7 +290,6 @@ static void test_client_payload_burst_past_batch_capacity_spreads_across_updates
     check( full_updates == 1 );
     check( next == DELIVERED_ON_END_BURST );
     check( delivered_on_end_delivered( &pair ) - delivered_before == DELIVERED_ON_END_BURST );
-    check( rocketnet_client_transport_counters( pair.client )->values[ROCKETNET_COUNTER_CLIENT_FRAGMENT_PAYLOAD_BATCH_FULL] == 0 );
 
     rn_test_client_transport_stop_and_destroy( pair.client );
     rn_test_server_transport_stop_and_destroy( pair.server );

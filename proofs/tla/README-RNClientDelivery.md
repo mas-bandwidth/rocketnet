@@ -10,7 +10,7 @@ repeat, so a payload offered twice, or a stale slot exposed, is visible.
 |---|---|
 | `Begin` | `rocketnet_client_transport_update` clears both counts before it processes a packet; the bytes stay |
 | `RecvPayload` | `rocketnet_client_process_packet`: a payload opened while connected is counted `CLIENT_PAYLOAD_DELIVERED` and placed at slot `num_packets` in one step; it takes one packet of the update's budget (environment action) |
-| `RecvOther` | a processed packet that places no payload (an ack, a keep-alive, a fragment that completes nothing): one packet of the budget, no slot (environment action) |
+| `RecvOther` | a processed packet that places no payload (an ack, a keep-alive): one packet of the budget, no slot (environment action) |
 | `EndInUpdate` | the server's disconnect opens, or `rocketnet_client_protocol_update` finds a deadline passed (environment action) |
 | `Return` | the end of update: `rocketnet_client_connection_reset` when this update took the connection from live to ended |
 | `Read` | `rocketnet_client_transport_receive_packet`: the cursor copies out the entry at `receive_index` |
@@ -77,13 +77,8 @@ state cannot be built: changing the budget past the batch fails the
 ## Scope
 
 The handshake is abstracted to a live connection; payloads open only while
-connected. A packet places at most one payload: an opened payload, or the
-payload its fragment completed (a packet is one type, and the code places
-them in one `if`/`else if`). Reassembled payloads join the batch the same
-way and are not modeled separately; their bytes live in the
-reassembly's delivered arena, which `rocketnet_reassembly_set_reset_connection`
-does not touch and the next update's `rocketnet_reassembly_set_begin_update`
-clears. A transport runs one connection, so no later connection reads the
+connected. A packet places at most one payload. A transport runs one
+connection, so no later connection reads the
 kept batch; `ClientSession.tla` abstracts the batch as a per-connection field
 that the next connection never observes, which holds because the next connect
 runs on a new transport generation.

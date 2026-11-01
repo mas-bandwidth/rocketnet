@@ -188,67 +188,6 @@ static bool rocketnet_platform_test_environment_getenv( const char * name, char 
 // rounding forgives the floating-point error of the scaling (a millionth of
 // a unit), so 0.0005 s is exactly 5000 units and not 5001.
 
-struct timeval rocketnet_platform_timeval_from_seconds( float seconds )
-{
-    struct timeval tv;
-
-    if ( !( seconds > 0.0f ) )
-    {
-        tv.tv_sec = 0;
-        tv.tv_usec = 0;
-        return tv;
-    }
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    tv.tv_sec = (long) seconds;
-    tv.tv_usec = (long) ( ( seconds - (float) tv.tv_sec ) * 1000000.0f );
-#else
-    tv.tv_sec = (time_t) seconds;
-    tv.tv_usec = (suseconds_t) ( ( seconds - (float) tv.tv_sec ) * 1000000.0f );
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    if ( tv.tv_usec >= 1000000 )
-    {
-        tv.tv_sec += 1;
-        tv.tv_usec -= 1000000;
-    }
-
-    return tv;
-}
-
-uint32_t rocketnet_platform_timeout_milliseconds( float seconds )
-{
-    // Round positive timeouts up and cap before conversion, never requesting an infinite wait.
-    const double milliseconds = ceil( (double) seconds * 1000.0 );
-    if ( !( milliseconds > 1.0 ) )
-        return 1;
-    if ( milliseconds >= 4294967294.0 )
-        return UINT32_C( 0xFFFFFFFE );
-    return (uint32_t) milliseconds;
-}
-
-struct rocketnet_platform_sleep_split_t rocketnet_platform_sleep_split( double time )
-{
-    struct rocketnet_platform_sleep_split_t split;
-
-    if ( !( time > 0.0 ) )
-    {
-        split.seconds = 0;
-        split.microseconds = 0;
-        return split;
-    }
-
-    split.seconds = (uint32_t) time;
-
-    double frac = time - (double) split.seconds;
-    split.microseconds = (uint32_t) ( frac * 1000000.0 );
-    if ( split.microseconds >= 1000000 )
-    {
-        split.seconds += 1;
-        split.microseconds -= 1000000;
-    }
-
-    return split;
-}
-
 struct rocketnet_platform_sleep_plan_t
 {
     bool yield_only;
@@ -459,18 +398,25 @@ const rocketnet_platform_priority_calls_t * rocketnet_platform_priority_calls_re
 }
 #endif // #if ROCKETNET_DEV
 
-// The network threads run above every ordinary thread. On Linux the SCHED_RR
-// minimum (1) already does: ordinary threads are SCHED_OTHER at 0. On macOS
-// the SCHED_RR range is 15 to 47 and an ordinary thread sits at 31, so the
-// minimum demoted the client I/O thread and under CPU contention its sends and
-// receives stalled for hundreds of milliseconds; there the maximum (47, the
-// band of user-interactive threads) is the same intent. Elsewhere the minimum,
-// raised to a default thread's priority where that is higher.
+// On macOS request 32, one above the ordinary-thread priority of 31, clamped
+// to the SCHED_RR range. The minimum (15) demoted client I/O under contention;
+// the recorded frame-tail regression at the maximum (47) motivated this lower
+// request. Do not derive the macOS fallback from fallible attribute queries:
+// their failure must not silently restore the demoting minimum.
+// Other POSIX platforms retain the existing minimum, raised to the default
+// thread's priority when that is higher.
 
 int rocketnet_platform_network_thread_rr_priority()
 {
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
-    return sched_get_priority_max( SCHED_RR );
+    const int lowest = sched_get_priority_min( SCHED_RR );
+    const int highest = sched_get_priority_max( SCHED_RR );
+    int priority = 32;
+    if ( priority < lowest )
+        priority = lowest;
+    if ( priority > highest )
+        priority = highest;
+    return priority;
 #else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     int priority = sched_get_priority_min( SCHED_RR );
 
@@ -864,11 +810,9 @@ int rocketnet_server_transport_receive_buffer_request( const char * transport, i
 {
     if ( !transport )
         return 0;
-    if ( strcmp( transport, "portable" ) == 0 || strcmp( transport, "msgx" ) == 0 )
+    if ( strcmp( transport, "portable" ) == 0 || strcmp( transport, "msgx" ) == 0 || strcmp( transport, "gso" ) == 0 ||
+         strcmp( transport, "io_uring" ) == 0 || strcmp( transport, "iocp" ) == 0 || strcmp( transport, "rio" ) == 0 )
         return rocketnet_server_receive_buffer_request( max_clients );
-    if ( strcmp( transport, "gso" ) == 0 || strcmp( transport, "io_uring" ) == 0 ||
-         strcmp( transport, "iocp" ) == 0 || strcmp( transport, "rio" ) == 0 )
-        return rocketnet_server_receive_buffer_request( ROCKETNET_MAX_CLIENTS );
     return 0;
 }
 
@@ -1114,23 +1058,41 @@ double rocketnet_platform_time()
 #endif // #if defined( __APPLE__ )
 }
 
+// sleeps until a CLOCK_MONOTONIC deadline; a signal that interrupts the
+// nanosleep (EINTR) resumes it for the time that remains
 void rocketnet_platform_sleep( double time )
 {
     if ( !( time > 0.0 ) )
         return;
-    const rocketnet_platform_sleep_split_t split = rocketnet_platform_sleep_split( time );
-    if ( split.seconds == 0 && split.microseconds == 0 )
-        return;
 
-    // a signal handler cuts nanosleep short and leaves the rest in remaining;
-    // sleep that rest until the whole interval has passed
+    const time_t whole = (time_t) time;
+    struct timespec deadline;
+    clock_gettime( CLOCK_MONOTONIC, &deadline );
+    deadline.tv_sec += whole;
+    deadline.tv_nsec += (long) ( ( time - (double) whole ) * 1000000000.0 );
+    if ( deadline.tv_nsec >= 1000000000L )
+    {
+        deadline.tv_sec += 1;
+        deadline.tv_nsec -= 1000000000L;
+    }
 
-    struct timespec request;
-    request.tv_sec = (time_t) split.seconds;
-    request.tv_nsec = (long) split.microseconds * 1000L;
-    struct timespec remaining;
-    while ( nanosleep( &request, &remaining ) != 0 && errno == EINTR )
-        request = remaining;
+    for ( ;; )
+    {
+        struct timespec now;
+        clock_gettime( CLOCK_MONOTONIC, &now );
+        if ( now.tv_sec > deadline.tv_sec || ( now.tv_sec == deadline.tv_sec && now.tv_nsec >= deadline.tv_nsec ) )
+            return;
+
+        struct timespec remaining;
+        remaining.tv_sec = deadline.tv_sec - now.tv_sec;
+        remaining.tv_nsec = deadline.tv_nsec - now.tv_nsec;
+        if ( remaining.tv_nsec < 0 )
+        {
+            remaining.tv_sec -= 1;
+            remaining.tv_nsec += 1000000000L;
+        }
+        nanosleep( &remaining, NULL );
+    }
 }
 
 // ---------------------------------------------------
@@ -1266,6 +1228,7 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
 {
     rocketnet_assert( address );
     rocketnet_assert( address->type != ROCKETNET_ADDRESS_NONE );
+    (void) timeout_seconds;
 
     rocketnet_platform_socket_t * socket = (rocketnet_platform_socket_t *) rocketnet_malloc( context, sizeof( rocketnet_platform_socket_t ) );
     if ( !socket )
@@ -1276,7 +1239,6 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
 
     memset( socket, 0, sizeof( rocketnet_platform_socket_t ) );
     socket->context = context;
-    socket->type = socket_type;
     socket->ipv6 = address->type == ROCKETNET_ADDRESS_IPV6;
 
 #if ROCKETNET_DEV
@@ -1431,16 +1393,6 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
         if ( flags == -1 || fcntl( socket->handle, F_SETFL, rocketnet_platform_nonblocking_flags( flags ) ) == -1 )
         {
             rocketnet_error( "failed to set socket to non-blocking" );
-            rocketnet_platform_socket_destroy( socket );
-            return NULL;
-        }
-    }
-    else if ( timeout_seconds > 0.0f )
-    {
-        struct timeval tv = rocketnet_platform_timeval_from_seconds( timeout_seconds );
-        if ( setsockopt( socket->handle, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof( tv ) ) < 0 )
-        {
-            rocketnet_error( "failed to set socket receive timeout" );
             rocketnet_platform_socket_destroy( socket );
             return NULL;
         }
@@ -1720,7 +1672,7 @@ static ssize_t rocketnet_platform_receive_one( rocketnet_platform_socket_t * soc
     (void) overflow;
     (void) overflow_bytes;
     socklen_t from_length = sizeof( sockaddr_storage );
-    const int flags = ( socket->type == ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING ? MSG_DONTWAIT : 0 ) | MSG_TRUNC;
+    const int flags = MSG_DONTWAIT | MSG_TRUNC;
     return recvfrom( socket->handle, (char *) packet_data, (size_t) max_packet_size, flags, (sockaddr *) from, &from_length );
 #endif // #if defined( __APPLE__ )
 }
@@ -2895,8 +2847,8 @@ void rocketnet_platform_thread_wake( rocketnet_platform_thread_t * thread )
 
 // IMPORTANT: adjust the client and server network thread priority here. Both
 // set SCHED_RR at rocketnet_platform_network_thread_rr_priority() and nothing
-// else. That priority is sched_get_priority_max( SCHED_RR ) on macOS, and
-// elsewhere sched_get_priority_min( SCHED_RR ), never below the default's.
+// else. On macOS it requests 32 clamped to the SCHED_RR range; elsewhere
+// it retains the minimum raised to the default thread's priority (1 on Linux).
 // No macOS server transport calls the server hook.
 
 void rocketnet_platform_client_thread_priority( rocketnet_platform_thread_t * thread )
@@ -3216,8 +3168,7 @@ static int rocketnet_platform_real_mutex_init( rocketnet_platform_mutex_t * mute
 {
     rocketnet_assert( mutex );
     memset( mutex, 0, sizeof( rocketnet_platform_mutex_t ) );
-    if ( !InitializeCriticalSectionAndSpinCount( (LPCRITICAL_SECTION) &mutex->handle, 0xFF ) )
-        return 1;
+    InitializeSRWLock( &mutex->handle );
     mutex->ok = true;
 
     return 0;
@@ -3505,20 +3456,20 @@ void rocketnet_platform_mutex_acquire( rocketnet_platform_mutex_t * mutex )
 {
     rocketnet_assert( mutex );
     rocketnet_assert( mutex->ok );
-    EnterCriticalSection( (LPCRITICAL_SECTION) &mutex->handle );
+    AcquireSRWLockExclusive( &mutex->handle );
 }
 
 bool rocketnet_platform_mutex_try_acquire( rocketnet_platform_mutex_t * mutex )
 {
     rocketnet_assert( mutex && mutex->ok );
-    return TryEnterCriticalSection( &mutex->handle ) != 0;
+    return TryAcquireSRWLockExclusive( &mutex->handle ) != 0;
 }
 
 void rocketnet_platform_mutex_release( rocketnet_platform_mutex_t * mutex )
 {
     rocketnet_assert( mutex );
     rocketnet_assert( mutex->ok );
-    LeaveCriticalSection( (LPCRITICAL_SECTION) &mutex->handle );
+    ReleaseSRWLockExclusive( &mutex->handle );
 }
 
 void rocketnet_platform_mutex_destroy( rocketnet_platform_mutex_t * mutex )
@@ -3526,10 +3477,7 @@ void rocketnet_platform_mutex_destroy( rocketnet_platform_mutex_t * mutex )
     rocketnet_assert( mutex );
 
     if ( mutex->ok )
-    {
-        DeleteCriticalSection( (LPCRITICAL_SECTION) &mutex->handle );
         memset( mutex, 0, sizeof( rocketnet_platform_mutex_t ) );
-    }
 }
 
 // time
@@ -3746,6 +3694,8 @@ int rocketnet_platform_socket_receive_buffer_bytes( rocketnet_platform_socket_t 
 
 rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size, int * status )
 {
+    (void) timeout_seconds;
+
     rocketnet_platform_socket_t * s = (rocketnet_platform_socket_t *) rocketnet_malloc( context, sizeof( rocketnet_platform_socket_t ) );
 
     if ( !s )
@@ -3905,21 +3855,6 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
             rocketnet_platform_socket_destroy( s );
             return NULL;
         }
-    }
-    else if ( timeout_seconds > 0.0f )
-    {
-        // set receive timeout
-        DWORD tv = (DWORD) rocketnet_platform_timeout_milliseconds( timeout_seconds );
-        if ( setsockopt( s->handle, SOL_SOCKET, SO_RCVTIMEO, (const char *) ( &tv ), sizeof( tv ) ) < 0 )
-        {
-            rocketnet_error( "failed to set socket receive timeout" );
-            rocketnet_platform_socket_destroy( s );
-            return NULL;
-        }
-    }
-    else
-    {
-        // timeout < 0, socket is blocking with no timeout
     }
 
     // set don't fragment bit
@@ -4114,12 +4049,6 @@ receive_again:
         {
             int error = WSAGetLastError();
 
-            if ( error == WSAEMSGSIZE )
-            {
-                result = max_packet_size + 1;
-                break;
-            }
-
             // an ICMP report of an earlier send is not the end of the
             // queue: skip it and keep reading, or one dead remote endpoint ends every
             // drain early (windows-udp-connreset audit, portable receive)
@@ -4130,7 +4059,7 @@ receive_again:
                 continue;
             }
 
-            if ( error != WSAEWOULDBLOCK && error != WSAETIMEDOUT )
+            if ( error != WSAEWOULDBLOCK )
             {
                 rocketnet_debug( "WSARecvFrom failed with error %d", error );
             }

@@ -500,7 +500,7 @@ static void xdp_host_redirect_rows( int family, std::vector<xdp_host_row_t> & ro
     {
         uint8_t type;
         int bytes;
-    } inbound[] = { { 0, 710 }, { 3, 50 }, { 4, 41 }, { 5, 34 }, { 6, 33 }, { 8, 33 }, { 9, 40 } };
+    } inbound[] = { { 0, 710 }, { 3, 50 }, { 4, 41 }, { 5, 34 }, { 6, 33 }, { 8, 33 } };
 
     for ( size_t i = 0; i < sizeof( inbound ) / sizeof( inbound[0] ); i++ )
     {
@@ -1556,6 +1556,8 @@ static void test_xdp_transport_host_invalid_type_drops()
             { 1, 34, "connection denied" },
             { 2, 66, "connection challenge" },
             { 7, 38, "connection cookie" },
+            { 9, 40, "reserved type 9" },
+            { 9, 1452, "reserved type 9 at the receive ceiling" },
             { 10, 100, "reserved type 10" },
             { 255, 100, "reserved type 255" },
             { 0, 709, "connection request one byte short" },
@@ -1564,7 +1566,6 @@ static void test_xdp_transport_host_invalid_type_drops()
             { 3, 51, "connection response one byte long" },
             { 4, 40, "keep-alive below its minimum" },
             { 5, 33, "payload below its minimum" },
-            { 9, 39, "payload fragment below its minimum" },
         };
 
         for ( size_t i = 0; i < sizeof( refused ) / sizeof( refused[0] ); i++ )
@@ -1583,7 +1584,7 @@ static void test_xdp_transport_host_invalid_type_drops()
 // the exhaustive sweep: every type byte at every UDP payload size from 0 to
 // one past the receive ceiling, both families, against the size table of
 // STANDARD.md (Packet sizes; Reading packets: the server ignores denied,
-// challenge and cookie, and types 10 to 255 are reserved). The table is
+// challenge and cookie, and types 9 to 255 are reserved). The table is
 // written here, never taken from ROCKETNET_WIRE_SERVER_PACKET_VALID.
 
 static void test_xdp_transport_host_type_and_size_sweep_matches_the_standard()
@@ -1603,7 +1604,6 @@ static void test_xdp_transport_host_type_and_size_sweep_matches_the_standard()
         { 5, 34, ceiling },     // payload
         { 6, 33, ceiling },     // disconnect
         { 8, 33, ceiling },     // ack
-        { 9, 40, ceiling },     // payload fragment
     };
     const int standard_rows = (int) ( sizeof( standard ) / sizeof( standard[0] ) );
 
@@ -1614,6 +1614,15 @@ static void test_xdp_transport_host_type_and_size_sweep_matches_the_standard()
     }
 
     rocketnet_unit_check( floor == 33 );
+
+    // the first reserved type is 9, and the shared inbound rule accepts it
+    // at no size
+
+    rocketnet_unit_check( ROCKETNET_FIRST_RESERVED_PACKET_TYPE == 9 );
+    for ( int bytes = 0; bytes <= ceiling + 1; bytes++ )
+    {
+        rocketnet_unit_check( !ROCKETNET_WIRE_SERVER_PACKET_VALID( ROCKETNET_FIRST_RESERVED_PACKET_TYPE, bytes ) );
+    }
 
     // One reset per family, one frame per size with its type byte patched
     // per run, and the counters checked against a running expectation after
@@ -1692,10 +1701,10 @@ static void test_xdp_transport_host_type_and_size_sweep_matches_the_standard()
     }
 
     // 2 families x 256 types x 1454 sizes, and the accepted set is exactly
-    // the table's: 2 x ( 1 + 1 + 1412 + 1419 + 1420 + 1420 + 1413 )
+    // the table's: 2 x ( 1 + 1 + 1412 + 1419 + 1420 + 1420 )
 
     rocketnet_unit_check( runs == 2L * 256 * ( ceiling + 2 ) );
-    rocketnet_unit_check( redirects == 2L * ( 1 + 1 + 1412 + 1419 + 1420 + 1420 + 1413 ) );
+    rocketnet_unit_check( redirects == 2L * ( 1 + 1 + 1412 + 1419 + 1420 + 1420 ) );
 }
 
 // ---------------------------------------------------------------------------
@@ -1759,7 +1768,6 @@ static void xdp_host_replay_rows( int family, std::vector<xdp_host_row_t> & rows
         { ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, "keep-alive a window behind the high-water" },
         { ROCKETNET_CONNECTION_ACK_PACKET, "ack a window behind the high-water" },
         { ROCKETNET_CONNECTION_DISCONNECT_PACKET, "disconnect a window behind the high-water" },
-        { ROCKETNET_CONNECTION_FRAGMENT_PACKET, "fragment a window behind the high-water" },
     };
     for ( size_t i = 0; i < sizeof( session ) / sizeof( session[0] ); i++ )
         rows.push_back( xdp_host_expect( xdp_host_replay_row( session[i].label, family, session[i].type, xdp_host_replay_behind( window ), high_water ),
@@ -1813,9 +1821,8 @@ static void test_xdp_transport_host_replay_drops_behind_the_window()
 static void test_xdp_transport_host_replay_never_writes_the_map()
 {
     const int families[2] = { 4, 6 };
-    const uint8_t session[5] = { ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, ROCKETNET_CONNECTION_PAYLOAD_PACKET,
-                                 ROCKETNET_CONNECTION_DISCONNECT_PACKET, ROCKETNET_CONNECTION_ACK_PACKET,
-                                 ROCKETNET_CONNECTION_FRAGMENT_PACKET };
+    const uint8_t session[4] = { ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, ROCKETNET_CONNECTION_PAYLOAD_PACKET,
+                                 ROCKETNET_CONNECTION_DISCONNECT_PACKET, ROCKETNET_CONNECTION_ACK_PACKET };
 
     for ( int f = 0; f < 2; f++ )
     {
@@ -1831,7 +1838,7 @@ static void test_xdp_transport_host_replay_never_writes_the_map()
         {
             xdp_host_frame_t frame;
             frame.family = families[f];
-            frame.packet_type = i < 0 ? ROCKETNET_CONNECTION_PAYLOAD_PACKET : session[i % 5];
+            frame.packet_type = i < 0 ? ROCKETNET_CONNECTION_PAYLOAD_PACKET : session[i % 4];
             frame.sequence = i < 0 ? 0x7fffffffu : (uint32_t) ( i * 3 );
             const bool behind = (int32_t) ( entry_high_water - frame.sequence ) >= ROCKETNET_XDP_REPLAY_WINDOW;
             const int want_verdict = behind ? XDP_HOST_DROP : XDP_HOST_REDIRECT;

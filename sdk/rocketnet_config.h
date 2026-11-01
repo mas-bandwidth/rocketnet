@@ -87,9 +87,9 @@ bool rocketnet_server_config_resolve( const struct rocketnet_server_config_t * c
                                       struct rocketnet_server_transport_config_t * transport, struct rocketnet_message_config_t * message, uint32_t * kbps );
 #endif // #if ROCKETNET_DEV
 
-// the per-endpoint derivation (ruling 11): "server" + "max_fragmented_messages" ->
-// "ROCKETNET_SERVER_MAX_FRAGMENTED_MESSAGES" and "client" + "max_fragmented_messages" ->
-// "ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES". each transport table's field is read
+// the per-endpoint derivation (ruling 11): "server" + "simulated_drop_every_nth" ->
+// "ROCKETNET_SERVER_SIMULATED_DROP_EVERY_NTH" and "client" + "simulated_drop_every_nth" ->
+// "ROCKETNET_CLIENT_SIMULATED_DROP_EVERY_NTH". each transport table's field is read
 // under its own endpoint's name, so a server and a client in one process
 // never share a variable. returns false when the buffer cannot hold it.
 

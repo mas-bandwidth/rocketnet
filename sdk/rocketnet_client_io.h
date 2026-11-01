@@ -160,7 +160,9 @@ struct rocketnet_client_io_t
     std::atomic<bool> stopped; // released only after the final core access
     struct rocketnet_client_io_open_t open;
     uint64_t transport_faults;                     // a receive count or byte count this step refused
-    uint64_t * prefilter_too_large;             // optional: counts PREFILTER_TOO_LARGE for a datagram rejected by the byte-count check
+    std::atomic<uint64_t> receive_too_large;    // written by the I/O thread only: datagrams the byte-count check refused as too large
+    uint64_t receive_too_large_folded;          // main thread only: the part of receive_too_large already added to prefilter_too_large
+    uint64_t * prefilter_too_large;             // main thread only, optional: the PREFILTER_TOO_LARGE counter rocketnet_client_io_fold_counters adds to
 };
 
 // RNBufferHandoff Init; main thread. Takes the ring views and the receive
@@ -218,7 +220,25 @@ inline void rocketnet_client_io_init( rocketnet_client_io_t * io, const rocketne
     memset( &io->open.replay, 0, sizeof( io->open.replay ) );
     io->open.loaded_epoch = ROCKETNET_CLIENT_IO_EPOCH_NONE;
     io->transport_faults = 0;
+    io->receive_too_large.store( 0, std::memory_order_relaxed );
+    io->receive_too_large_folded = 0;
     io->prefilter_too_large = NULL;
+}
+
+// Main thread, at update after the expose. The I/O thread counts the
+// datagrams its byte-count check refuses as too large in its own field; this
+// adds the growth since the last call to the PREFILTER_TOO_LARGE counter,
+// which the main thread's prefilter also counts into, so one oversize datagram
+// reads PREFILTER_TOO_LARGE wherever it is refused.
+
+inline void rocketnet_client_io_fold_counters( rocketnet_client_io_t * io )
+{
+    const uint64_t too_large = io->receive_too_large.load( std::memory_order_relaxed );
+
+    if ( io->prefilter_too_large )
+        *io->prefilter_too_large += too_large - io->receive_too_large_folded;
+
+    io->receive_too_large_folded = too_large;
 }
 
 // proofs/tla/RNClientIoDecrypt.tla PublishKeys; main thread, where the challenge
@@ -306,7 +326,6 @@ inline int rocketnet_client_io_session_floor( int type )
         case ROCKETNET_CONNECTION_PAYLOAD_PACKET:    return ROCKETNET_CONNECTION_PAYLOAD_MIN_WIRE_BYTES;
         case ROCKETNET_CONNECTION_DISCONNECT_PACKET: return ROCKETNET_CONNECTION_DISCONNECT_MIN_WIRE_BYTES;
         case ROCKETNET_CONNECTION_ACK_PACKET:        return ROCKETNET_CONNECTION_ACK_MIN_WIRE_BYTES;
-        case ROCKETNET_CONNECTION_FRAGMENT_PACKET:   return ROCKETNET_CONNECTION_FRAGMENT_MIN_WIRE_BYTES;
         default:                                     return 0;
     }
 }
@@ -322,7 +341,7 @@ inline int rocketnet_client_io_session_floor( int type )
 // rocketnet_open_sealed_packet with the copy and, on success,
 // rocketnet_replay_advance on the I/O thread's own window, and the plaintext
 // replaces the ciphertext behind the wire header. The wire byte count is kept.
-// The I/O thread writes no counter.
+// The I/O thread writes no counter in the transport's counter block.
 
 inline void rocketnet_client_io_decrypt_datagram( rocketnet_client_io_t * io, const rocketnet_address_t * from,
                                                   uint8_t * packet_data, int packet_bytes, uint8_t * out_verdict, uint64_t * out_sequence )
@@ -719,6 +738,8 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
                 count = max_packets;
             }
 
+            // proofs/tla/RNClientIoCompactLayout.tla Receive, Step and EndBatch: a faulty datagram is skipped and each
+            // other one moved down to slot fill_slots + accepted, the slot its record names.
             int accepted = 0;
 
             for ( int i = 0; i < count; i++ )
@@ -726,8 +747,8 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
                 if ( packet_bytes[i] < 0 || packet_bytes[i] > ROCKETNET_TRANSPORT_MAX_DATAGRAM_BYTES )
                 {
                     io->transport_faults++;
-                    if ( io->prefilter_too_large && packet_bytes[i] > ROCKETNET_FRAME_SIZE )
-                        ( *io->prefilter_too_large )++;
+                    if ( packet_bytes[i] > ROCKETNET_FRAME_SIZE )
+                        io->receive_too_large.store( io->receive_too_large.load( std::memory_order_relaxed ) + 1, std::memory_order_relaxed );
                     continue;
                 }
 
@@ -761,8 +782,8 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
             if ( bytes < 0 || bytes > ROCKETNET_TRANSPORT_MAX_DATAGRAM_BYTES )
             {
                 io->transport_faults++;
-                if ( io->prefilter_too_large && bytes > ROCKETNET_RECEIVE_PACKET_BYTES )
-                    ( *io->prefilter_too_large )++;
+                if ( bytes > ROCKETNET_RECEIVE_PACKET_BYTES )
+                    io->receive_too_large.store( io->receive_too_large.load( std::memory_order_relaxed ) + 1, std::memory_order_relaxed );
                 break;
             }
 
@@ -773,6 +794,7 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
     }
 
     // proofs/tla/RNClientIo.tla IoPublish: publishes the filled buffer and takes a free one when one is waiting.
+    // proofs/tla/RNClientIoCompactLayout.tla Publish: the next buffer fills from slot 0 again.
     // proofs/tla/RNClientIo.tla IoOwe: records the publish as owed when no free buffer is waiting.
     // proofs/tla/RNClientIoDecrypt.tla IoPublish: publishes the fill buffer after each datagram was opened.
     // proofs/tla/RNClientIoDecrypt.tla IoOwe: keeps that buffer when the publish cannot take a free one.

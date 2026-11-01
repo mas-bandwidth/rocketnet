@@ -34,8 +34,11 @@
 (* keep-alive-acknowledged latch.  At most MapCap mappings are live (the   *)
 (* code's table is 2 x max_clients, sdk/rocketnet_server_transport.cpp).    *)
 (* Slots: used, the address of the mapping it is bound to, the token (the  *)
-(* client id is a function of the token), confirmed.  The lowest free slot *)
-(* is assigned, as rocketnet_client_slots_assign scans.                     *)
+(* client id is a function of the token), confirmed.  The model assigns    *)
+(* the lowest free slot; rocketnet_client_slots_assign pops the top of a   *)
+(* LIFO free stack (the slot released last), whose layout                  *)
+(* RNClientSlotsLayout.tla checks.  Which free slot is taken changes no    *)
+(* predicate here.                                                         *)
 (*                                                                         *)
 (* Tokens.  A token is a number; its client id is IdOf(t).  A client       *)
 (* presents its own token (TokenChoice = "own") or any token the           *)
@@ -281,7 +284,8 @@ FreeSlots   == MaxSlots - Cardinality(UsedSlots)
 LiveAddrs   == {a \in Addrs : smap[a].live}
 NumMappings == Cardinality(LiveAddrs)
 
-\* the lowest free slot, as rocketnet_client_slots_assign scans
+\* the lowest free slot: the model's choice of a free slot (the code pops
+\* its LIFO free stack, RNClientSlotsLayout.tla)
 LowestFree == CHOOSE i \in Slots \ UsedSlots : \A j \in Slots \ UsedSlots : i <= j
 
 \* a client with this id holds a slot (rocketnet_client_slots_find)

@@ -160,17 +160,6 @@ static void test_server_transport_create_ex_reports_every_status()
         check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
     }
 
-    // S5: the reassembly cross-field allocation exceeds the operator memory budget
-    {
-        struct rocketnet_server_transport_config_t config;
-        production_config( &config );
-        config.max_clients = ROCKETNET_MAX_CLIENTS;
-        config.max_fragmented_messages = 256;    // ROCKETNET_MAX_FRAGMENTS
-        status = -1;
-        check( rocketnet_server_transport_create_ex( &state, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
-        check( status == ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED );
-    }
-
     // Real environment budget parsing and both production budget rungs
     // are covered by test_platform_primitives.
 

@@ -302,7 +302,7 @@ static void rocketnet_fuzz_session_reverse( struct rocketnet_fuzz_ring_t * ring 
 
 static const uint8_t rocketnet_fuzz_session_sealed_types[] = {
     ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, ROCKETNET_CONNECTION_PAYLOAD_PACKET, ROCKETNET_CONNECTION_DISCONNECT_PACKET,
-    ROCKETNET_CONNECTION_ACK_PACKET, ROCKETNET_CONNECTION_FRAGMENT_PACKET
+    ROCKETNET_CONNECTION_ACK_PACKET
 };
 
 static uint64_t rocketnet_fuzz_session_run( const uint8_t * data, size_t size )

@@ -36,7 +36,6 @@ ROOT = Path(__file__).resolve().parents[2]
 
 DEFAULT_FILES = [
     "sdk/rocketnet_ack.cpp",
-    "sdk/rocketnet_fragment.cpp",
     "sdk/rocketnet_protocol.cpp",
     "sdk/rocketnet_window_ack.cpp",
     "sdk/rocketnet_window_receive.cpp",

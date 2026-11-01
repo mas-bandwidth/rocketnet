@@ -591,7 +591,7 @@ static void test_wire_bytes_match_the_transport()
                                                                         0x1122334455667788ULL, salt, test_key );
             check( sealed > 0 );
 
-            rocketnet_ack_endpoint_record_sent( &g_endpoint, sequence, sealed, sequence, 1, 0, (double) sequence );
+            rocketnet_ack_endpoint_record_sent( &g_endpoint, sequence, sealed, sequence, 1, (double) sequence );
             const uint32_t recorded = g_endpoint.sent[sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE].wire_bytes;
 
             check( (int) recorded == sealed );
@@ -629,7 +629,7 @@ static void test_wire_bytes_match_the_transport()
         while ( seq <= ROCKETNET_SENT_PACKET_BUFFER_SIZE &&
                 rocketnet_send_budget_admit( &budget, ROCKETNET_SEND_CLASS_NEW_RELIABLE, wire ) == ROCKETNET_SEND_BUDGET_SEND )
         {
-            rocketnet_ack_endpoint_record_sent( &g_endpoint, seq, wire, seq, 1, 0, now );
+            rocketnet_ack_endpoint_record_sent( &g_endpoint, seq, wire, seq, 1, now );
             seq++;
         }
     }

@@ -25,10 +25,9 @@
 
 #define ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS             10
 
-// Pointer-only dependencies, deliberately incomplete here: the reassembly
-// set (rocketnet_fragment.h) and the counters (rocketnet_counters.h). The
-// implementation file includes the full definitions it consumes.
-struct rocketnet_reassembly_set_t;
+// Pointer-only dependency, deliberately incomplete here: the counters
+// (rocketnet_counters.h). The implementation file includes the full
+// definition it consumes.
 struct rocketnet_counters_t;
 
 // The verdict a client I/O thread records for each datagram it worked
@@ -85,7 +84,6 @@ typedef void ( *rocketnet_client_retire_keys_t )( void * context );
     X( max_clients, int max_clients ) \
     X( send_sequence_handshake, uint64_t send_sequence_handshake ) \
     X( send_sequence_session, uint64_t send_sequence_session ) \
-    X( next_fragment_payload_id, uint64_t next_fragment_payload_id ) \
     X( handshake_highest_opened, uint64_t handshake_highest_opened ) \
     X( replay_session, struct rocketnet_replay_protection_t replay_session ) \
     X( accepted_session, struct rocketnet_replay_protection_t accepted_session ) \
@@ -103,7 +101,6 @@ typedef void ( *rocketnet_client_retire_keys_t )( void * context );
     X( ack, struct rocketnet_ack_endpoint_t ack ) \
     X( num_acked, int num_acked ) \
     X( acked_packet_ids, uint64_t acked_packet_ids[ROCKETNET_SENT_PACKET_BUFFER_SIZE] ) \
-    X( reassembly, struct rocketnet_reassembly_set_t * reassembly ) \
     X( publish_keys, rocketnet_client_publish_keys_t publish_keys ) \
     X( retire_keys, rocketnet_client_retire_keys_t retire_keys ) \
     X( keys_context, void * keys_context ) \
@@ -156,10 +153,8 @@ void rocketnet_client_protocol_update( struct rocketnet_client_protocol_t * clie
 // least ROCKETNET_RECEIVE_PAYLOAD_BYTES: a smaller capacity refuses the
 // call at entry, before the packet is read, counts RECEIVE_CURSOR_TOO_SMALL,
 // leaves out_payload and the protocol state untouched, and never overruns.
-// An ordinary single-packet payload lands in out_payload with its length in
-// out_payload_bytes; every other outcome leaves it zero. A completed
-// fragmented payload is never written here -- it can exceed this buffer --
-// and is reported through the reassembly set's completed fields instead.
+// A payload lands in out_payload with its length in out_payload_bytes;
+// every other outcome leaves it zero.
 
 int rocketnet_client_protocol_process_packet( struct rocketnet_client_protocol_t * client,
                                               const uint8_t * packet_data,
@@ -224,53 +219,6 @@ int rocketnet_client_protocol_write_payload( struct rocketnet_client_protocol_t 
                                              int payload_bytes,
                                              double current_time,
                                              uint8_t * out_packet );
-#endif // #if ROCKETNET_DEV
-
-// The fragmented send path, per _Fragmentation_. The payload id counter is
-// this attempt's, per direction, starting at one; a sequence block is
-// reserved with one atomic add so fill threads split concurrently; and
-// each fragment is sealed as an ordinary type 9 session packet whose sent
-// record names the payload's aggregate -- the payload's one packet id
-// surfaces when every fragment's wire packet is acknowledged.
-
-uint32_t rocketnet_client_protocol_next_fragment_payload_id( struct rocketnet_client_protocol_t * client );
-
-int rocketnet_client_protocol_start_fragments( struct rocketnet_client_protocol_t * client, int fragment_count, uint64_t * base_sequence );
-
-// Seals one fragment packet: the ack block, the fragment header, then the
-// fragment bytes, at this sequence under the session keys. The block
-// truncates to the budget's remaining room -- the stride is chosen against
-// the minimum block and never shrinks to make room. aggregate_id is the
-// payload's sender-internal aggregate, or zero when no packet id rides
-// this payload. Returns the wire size, or 0 when not connected or the
-// fragment is out of range.
-
-int rocketnet_client_protocol_seal_fragment( struct rocketnet_client_protocol_t * client,
-                                             uint64_t sequence,
-                                             uint32_t payload_id,
-                                             int fragment_index,
-                                             int fragment_count,
-                                             const uint8_t * fragment_data,
-                                             int fragment_bytes,
-                                             uint64_t aggregate_id,
-                                             double current_time,
-                                             uint8_t * out_packet );
-
-// The whole split in one call, for callers that drive the protocol
-// directly: plans the fragments, assigns the payload id, reserves the
-// sequences and seals every fragment packet at ROCKETNET_SEND_BUDGET
-// stride in out_packets, each wire size in out_packet_bytes. Returns the
-// fragment count, or 0 when the payload does not need fragmenting, does
-// not fit the fragment cap or max_packets, or the connection is not up.
-
-#if ROCKETNET_DEV
-int rocketnet_client_protocol_write_fragments( struct rocketnet_client_protocol_t * client,
-                                               const uint8_t * payload_data,
-                                               int payload_bytes,
-                                               double current_time,
-                                               uint8_t * out_packets,
-                                               int * out_packet_bytes,
-                                               int max_packets );
 #endif // #if ROCKETNET_DEV
 
 // The deliberate disconnect: fills the redundant burst -- ten sealed

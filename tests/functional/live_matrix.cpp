@@ -52,6 +52,12 @@ uint64_t rocketnet_functional_token_timestamp( uint64_t token_epoch_unix_seconds
 #define LIVE_MATRIX_CHANNELS                32
 #define LIVE_MATRIX_MAX_SEQUENCES           256
 #define LIVE_MATRIX_TINY                    ROCKETNET_LIVE_HEADER_BYTES
+// A wait is counted in passes of one update and a LIVE_MATRIX_WAIT_SLEEP
+// sleep, never in wall time: a runner descheduled for longer than a wall-time
+// wait would end it before the datagrams already sent are read. The nominal
+// sleep budget names each bound; scheduling can make the elapsed time longer.
+#define LIVE_MATRIX_WAIT_SLEEP              0.0005
+#define LIVE_MATRIX_WAIT_PASSES( seconds )  ( (int) ( ( seconds ) / LIVE_MATRIX_WAIT_SLEEP ) )
 #define LIVE_MATRIX_TOKEN_TIMEOUT           10.0            // the development connect token's timeout_seconds
 // Use the unlimited create-time reserve policy with this same runtime ceiling.
 // The matrix pays its working storage explicitly; it does not need two seconds
@@ -798,8 +804,7 @@ static void live_matrix_connect( struct live_matrix_t * m )
     m->client = rocketnet_message_client_create_ex( NULL, token, NULL, &m->message_config, NULL, 0, LIVE_MATRIX_SEND_KBPS, NULL, 1 );
     live_matrix_check( m->client );
 
-    const double start = rocketnet_platform_time();
-    while ( rocketnet_platform_time() - start < 5.0 )
+    for ( int pass = 0; pass < LIVE_MATRIX_WAIT_PASSES( 5.0 ); pass++ )
     {
         live_matrix_pump( m );
         live_matrix_flush( m );
@@ -807,7 +812,7 @@ static void live_matrix_connect( struct live_matrix_t * m )
             break;
         if ( rocketnet_message_client_state( m->client ) <= ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
             break;
-        rocketnet_platform_sleep( 0.0005 );
+        rocketnet_platform_sleep( LIVE_MATRIX_WAIT_SLEEP );
     }
 
     if ( !live_matrix_up( m ) )
@@ -935,9 +940,9 @@ static uint32_t live_matrix_probe_sequence( struct live_matrix_t * m, int mode, 
     return 0;
 }
 
-// One more copy of a probe, alone on the connection, then up to 0.25 s for any
-// copy of it to arrive verified on the channel section 5 names. The quarter
-// second paces the tries; it judges nothing, since a copy that lands later
+// One more copy of a probe, alone on the connection, then 0.25 s worth of
+// poll passes for any copy to arrive verified on the channel section 5 names.
+// Those passes pace the tries; they judge nothing, since a copy that lands later
 // still counts (live_matrix_take_probe_copy). Returns 1 when a copy arrived.
 static int live_matrix_probe_one( struct live_matrix_t * m, struct live_matrix_probe_t * probe )
 {
@@ -963,9 +968,13 @@ static int live_matrix_probe_one( struct live_matrix_t * m, struct live_matrix_p
         d->receipts_expected++;
     }
 
-    const double start = rocketnet_platform_time();
-    while ( probe->copies_received == 0 && m->failures == 0 && rocketnet_platform_time() - start < 0.25 )
+    for ( int pass = 0; probe->copies_received == 0 && m->failures == 0 && pass < LIVE_MATRIX_WAIT_PASSES( 0.25 ); pass++ )
     {
+        if ( pass > 0 )
+        {
+            rocketnet_platform_sleep( LIVE_MATRIX_WAIT_SLEEP );
+        }
+
         live_matrix_flush( m );
         live_matrix_pump( m );
         live_matrix_check( live_matrix_up( m ) );
@@ -1062,11 +1071,16 @@ static void live_matrix_edge_probes( struct live_matrix_t * m )
 
     // every probe's receipt is in before the matrix starts its own sends
 
-    const double start = rocketnet_platform_time();
-    while ( m->failures == 0 && rocketnet_platform_time() - start < 2.0 &&
-            ( live_matrix_directions[0].receipts_seen < live_matrix_directions[0].receipts_expected ||
-              live_matrix_directions[1].receipts_seen < live_matrix_directions[1].receipts_expected ) )
+    for ( int pass = 0; m->failures == 0 && pass < LIVE_MATRIX_WAIT_PASSES( 2.0 ) &&
+                        ( live_matrix_directions[0].receipts_seen < live_matrix_directions[0].receipts_expected ||
+                          live_matrix_directions[1].receipts_seen < live_matrix_directions[1].receipts_expected );
+          pass++ )
     {
+        if ( pass > 0 )
+        {
+            rocketnet_platform_sleep( LIVE_MATRIX_WAIT_SLEEP );
+        }
+
         live_matrix_flush( m );
         live_matrix_pump( m );
         live_matrix_check( live_matrix_up( m ) );
@@ -1177,13 +1191,13 @@ static void live_matrix_window( struct live_matrix_t * m, double deadline )
                 {
                     rn_message_client_send_fits( m->client, 1, &c0_free, &c0_pool, &free_messages );
                     rn_message_client_send_fits( m->client, 256, &c1_free, &c1_pool, &free_messages );
-                    rn_message_client_send_fits( m->client, ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES, &span_free, &span_pool, &free_messages );
+                    rn_message_client_send_fits( m->client, 16384, &span_free, &span_pool, &free_messages );
                 }
                 else
                 {
                     rn_message_server_send_fits( m->server, 0, 1, &c0_free, &c0_pool, &free_messages );
                     rn_message_server_send_fits( m->server, 0, 256, &c1_free, &c1_pool, &free_messages );
-                    rn_message_server_send_fits( m->server, 0, ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES, &span_free, &span_pool, &free_messages );
+                    rn_message_server_send_fits( m->server, 0, 16384, &span_free, &span_pool, &free_messages );
                 }
 
                 const struct rocketnet_counters_t * c = live_matrix_sender_counters( m, direction );
@@ -1418,11 +1432,10 @@ static void live_matrix_close( struct live_matrix_t * m )
         // sending the other ring (proofs/tla/RNClientIo.tla Defer) and leaves with
         // the client's next hand-off, so the client is updated too
 
-        const double start = rocketnet_platform_time();
-        while ( rocketnet_message_server_client_connected( m->server, 0 ) && rocketnet_platform_time() - start < 2.0 )
+        for ( int pass = 0; rocketnet_message_server_client_connected( m->server, 0 ) && pass < LIVE_MATRIX_WAIT_PASSES( 2.0 ); pass++ )
         {
             live_matrix_pump( m );
-            rocketnet_platform_sleep( 0.0005 );
+            rocketnet_platform_sleep( LIVE_MATRIX_WAIT_SLEEP );
         }
 
         live_matrix_check( !rocketnet_message_server_client_connected( m->server, 0 ) );
@@ -1433,10 +1446,9 @@ static void live_matrix_close( struct live_matrix_t * m )
     struct rocketnet_server_transport_t * server_transport = rocketnet_message_server_transport( m->server );
     rocketnet_server_transport_stop( server_transport );
 
-    const double stop_start = rocketnet_platform_time();
-    while ( rocketnet_server_transport_state( server_transport ) != ROCKETNET_SERVER_TRANSPORT_STOPPED && rocketnet_platform_time() - stop_start < 5.0 )
+    for ( int pass = 0; rocketnet_server_transport_state( server_transport ) != ROCKETNET_SERVER_TRANSPORT_STOPPED && pass < LIVE_MATRIX_WAIT_PASSES( 5.0 ); pass++ )
     {
-        rocketnet_platform_sleep( 0.001 );
+        rocketnet_platform_sleep( LIVE_MATRIX_WAIT_SLEEP );
         rocketnet_message_server_update( m->server, live_matrix_now( m ) );
     }
 
@@ -1487,10 +1499,10 @@ void live_message_matrix_loopback()
 #if ROCKETNET_DEV
 
 // This regression requires the development link simulator.
-// The edge probes over a server-to-client latency of 400 ms, past the quarter
-// second a try waits: every copy of a server probe lands during a later try or
-// a later probe, and each is counted as its own probe's arrival, never as a
-// wrong sequence or a duplicate of another. Every probe arrives. Mutation that
+// The edge probes over a server-to-client latency of 400 ms, beyond the
+// nominal quarter-second pacing of a try. Copies that land during a later try
+// or probe are counted as their own probe's arrival, never as a wrong sequence
+// or a duplicate of another. Every probe arrives. Mutation that
 // must bite: judge a received message by the current try's probe alone; the
 // first late copy fails the case.
 void live_message_matrix_late_probes()

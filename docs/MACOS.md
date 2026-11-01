@@ -130,7 +130,7 @@ performs shared protocol work. The workers use the selected msgx or portable
 socket pump; the client path is separate.
 
 Each TX bank holds `ROCKETNET_SEND_PACKETS_PER_CLIENT` (16) packets per
-configured client, and never fewer than `ROCKETNET_SERVER_MAX_SEND_PACKETS`;
+configured client, and never fewer than `rocketnet_server_send_batch_packets`;
 the three banks are one allocation made at create. A packet sent while all
 three banks are in flight is dropped and counted in `SEND_FAILED`. Measured on
 a 1000-client msgx LAN cell, the transmit worker spends about 18 us per
@@ -240,16 +240,20 @@ On macOS the platform layer builds the kqueue wake (`sdk/rocketnet_platform.h`,
 an `EVFILT_USER` trigger (`sdk/rocketnet_platform.cpp`, the kqueue wake). The
 thread is a plain `pthread_create` with default attributes
 (`rocketnet_platform_thread_create`). Right after the create, the creating
-thread makes one call on it: `pthread_setschedparam( thread, SCHED_RR, { 47 } )`
+thread makes one call on it: `pthread_setschedparam( thread, SCHED_RR, { 32 } )`
 (`rocketnet_platform_client_thread_priority` in `sdk/rocketnet_platform.cpp`,
 through `rocketnet_platform_network_thread_priority`). The priority is
-`rocketnet_platform_network_thread_rr_priority`: on macOS
-`sched_get_priority_max( SCHED_RR )`, 47, the band of user-interactive threads,
-above the default 31 of every ordinary thread, which is what Linux's SCHED_RR
-minimum gives there. The macOS minimum, 15, demoted the client I/O thread:
+`rocketnet_platform_network_thread_rr_priority`: 32 clamped to the SCHED_RR
+range, one above the ordinary-thread default of 31. The macOS request does not
+depend on querying thread attributes, so a failed query cannot demote it.
+Other POSIX platforms retain their previous selection; on Linux that remains
+the SCHED_RR minimum, 1. The macOS minimum, 15, demoted the client I/O thread:
 under CPU contention its sends and receives stalled for hundreds of
 milliseconds while the game thread ran (`test_posix_send_to_closed_port` on a
-loaded runner).
+loaded runner). The maximum, 47 (the user-interactive band), outranked the
+game's ordinary threads. In the recorded MacBook Air sample, the P=32 client frame p99
+(`benchmarks/client_main_thread_cost.cpp`, portable) went from 35 to 97 us
+when the maximum landed.
 That is the only thing the library sets on the macOS client network thread: no QoS
 class (`thread_function_shim` in `sdk/rocketnet_platform.cpp` calls the thread
 function and nothing else), no `THREAD_TIME_CONSTRAINT_POLICY`, no pinning, and

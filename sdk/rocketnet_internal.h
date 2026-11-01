@@ -112,11 +112,13 @@ struct rocketnet_server_t * rocketnet_server_adopt( void * context, struct rocke
 
 // the secret bytes of an object, as spans of its allocation (offset, bytes):
 // what destroy must leave zero when it frees the allocation, and the only
-// bytes it may write. Each returns the span count, at most max. For the
-// destroy tests, which see the allocation only in the allocator's free
-int rocketnet_server_secret_spans_for_test( size_t * offsets, size_t * bytes, int max );
-int rocketnet_server_transport_secret_spans_for_test( size_t * offsets, size_t * bytes, int max );
-int rocketnet_client_transport_secret_spans_for_test( size_t * offsets, size_t * bytes, int max );
+// bytes it may write. Each returns the span count, at most max. The
+// destroy tests inspect these spans in the allocator's free callback. The
+// object is the live object, whose own config sizes any span that scales with
+// it (the server transport's disconnect keys).
+int rocketnet_server_secret_spans_for_test( const void * object, size_t * offsets, size_t * bytes, int max );
+int rocketnet_server_transport_secret_spans_for_test( const void * object, size_t * offsets, size_t * bytes, int max );
+int rocketnet_client_transport_secret_spans_for_test( const void * object, size_t * offsets, size_t * bytes, int max );
 
 // the wall-clock budget an early destroy polls a worker's exit for: 0 makes
 // one pass with no sleep (the keep path's tests), a negative value restores
@@ -418,8 +420,8 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_RECEIVE_PAYLOAD_BYTES == ROCKETNET_MAX_PACKET
 /** @brief Zero initializer for fixed-size byte-array configuration fields. */
 #define ROCKETNET_CONFIG_ZERO_BYTES             {0}
 
-// the client transport config table: filter value, fragmentation shape
-// (zero means the defaults above), and the transport candidate list
+// the client transport config table: filter value, the transport candidate
+// list and the token epoch
 //
 //   INT_FIELD( name, default, min, max, flags )
 //   UINT64_FIELD( name, default, flags )
@@ -428,7 +430,6 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_RECEIVE_PAYLOAD_BYTES == ROCKETNET_MAX_PACKET
 
 #define ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE_V1( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                                    \
     BYTES_FIELD(  packet_filter,          4,                              ROCKETNET_TEST_FILTER_VALUE,                          0 )                          \
-    INT_FIELD(    max_fragmented_messages,  0,                              1, ROCKETNET_MAX_FRAGMENTS,                            ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
     STRING_FIELD( transport,                ROCKETNET_TRANSPORT_STRING_LENGTH, "auto",                                               0 )                          \
     UINT64_FIELD( token_epoch_unix_seconds,      0,                                                                                    0 )
 
@@ -527,7 +528,6 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
     BYTES_FIELD(  server_secret_key,    32,                              ROCKETNET_CONFIG_ZERO_BYTES,                          ROCKETNET_CONFIG_SECRET | ROCKETNET_CONFIG_NO_ENV )    \
     INT_FIELD(    num_xdp_queues,        0,                              1, 1024,                                              ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
     INT_FIELD(    num_os_cpus,           0,                              1, 256,                                               ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
-    INT_FIELD(    max_fragmented_messages,  0,                              1, ROCKETNET_MAX_FRAGMENTS,                            ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
     STRING_FIELD( transport,                ROCKETNET_TRANSPORT_STRING_LENGTH, "auto",                                               0 )                          \
     STRING_FIELD( public_address,        ROCKETNET_MAX_ADDRESS_STRING_LENGTH, "",                                              ROCKETNET_CONFIG_NO_ENV )                          \
     INT_FIELD(    max_timeout_seconds,   60,                             1, 3600,                                              0 )                          \
@@ -662,10 +662,8 @@ void rocketnet_sleep_set_platform_dispatch_for_test( void ( *dispatch )( double 
 //
 // rocketnet_server_transport_receive_buffer_request is the SO_RCVBUF every
 // server socket of a built-in transport asks for, and the size the host memory
-// estimate charges per socket. Each socket is sized for the full client count:
-// the portable and msgx socket at the config's max_clients, and every gso and
-// io_uring queue socket and the iocp and rio socket at ROCKETNET_MAX_CLIENTS,
-// because those creates do not carry max_clients. A queue socket is not sized
+// estimate charges per socket. Each socket is sized for the config's full
+// max_clients, every gso and io_uring queue socket included. A queue socket is not sized
 // for a share of the clients: SO_REUSEPORT hashes flows to sockets, so any
 // one socket may carry any number of them. xdp opens no UDP socket and returns
 // 0, as does a name that is not a built-in transport.

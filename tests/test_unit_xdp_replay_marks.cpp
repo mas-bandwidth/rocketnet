@@ -22,8 +22,18 @@
 #include "../sdk/rocketnet_encryption_map.h"
 #include "../sdk/rocketnet_server_replay_marks.h"
 
-// the AF_XDP code is Linux only, so its tests are built there only
-#if defined( __linux__ )
+// the buffer bound to storage for every client the build holds, the largest
+// a server binds
+static struct rocketnet_server_xdp_replay_key_t replay_marks_forgets[ROCKETNET_XDP_REPLAY_MAX_ENTRIES];
+static struct rocketnet_server_xdp_replay_key_t replay_marks_mark_keys[ROCKETNET_XDP_REPLAY_MAX_ENTRIES];
+static struct rocketnet_server_xdp_replay_value_t replay_marks_mark_values[ROCKETNET_XDP_REPLAY_MAX_ENTRIES];
+
+static void replay_marks_bind( struct rocketnet_xdp_replay_marks_t * marks )
+{
+    rocketnet_xdp_replay_marks_bind( marks, replay_marks_forgets, replay_marks_mark_keys, replay_marks_mark_values,
+                                     ROCKETNET_XDP_REPLAY_MAX_ENTRIES );
+    rocketnet_unit_check( marks->capacity == ROCKETNET_XDP_REPLAY_MAX_ENTRIES );
+}
 
 static struct rocketnet_address_t replay_marks_ipv4( uint16_t port )
 {
@@ -85,7 +95,7 @@ static void test_xdp_transport_replay_key_matches_golden_bytes()
 static void test_xdp_transport_replay_marks_commit_forgets_before_marks()
 {
     struct rocketnet_xdp_replay_marks_t marks;
-    rocketnet_xdp_replay_marks_reset( &marks );
+    replay_marks_bind( &marks );
 
     struct rocketnet_address_t a = replay_marks_ipv4( 50000 );
     struct rocketnet_address_t b = replay_marks_ipv4( 50001 );
@@ -134,7 +144,7 @@ static void test_xdp_transport_replay_marks_commit_forgets_before_marks()
 static void test_xdp_transport_replay_marks_full_refuses_and_counts()
 {
     struct rocketnet_xdp_replay_marks_t marks;
-    rocketnet_xdp_replay_marks_reset( &marks );
+    replay_marks_bind( &marks );
 
     for ( uint32_t i = 0; i < ROCKETNET_XDP_REPLAY_MAX_ENTRIES; i++ )
     {
@@ -164,7 +174,7 @@ static void test_xdp_transport_replay_marks_failed_forgets_kept()
     // stays pending, in order, ahead of the next walk's forgets
 
     struct rocketnet_xdp_replay_marks_t marks;
-    rocketnet_xdp_replay_marks_reset( &marks );
+    replay_marks_bind( &marks );
 
     const uint16_t ports[6] = { 50000, 50001, 50002, 50003, 50004, 50005 };
 
@@ -233,7 +243,7 @@ static void test_xdp_transport_replay_marks_refusals_reach_the_socket()
     // the socket's commit failure count, rather than zeroed by the reset
 
     struct rocketnet_xdp_replay_marks_t marks;
-    rocketnet_xdp_replay_marks_reset( &marks );
+    replay_marks_bind( &marks );
 
     for ( uint32_t i = 0; i < ROCKETNET_XDP_REPLAY_MAX_ENTRIES; i++ )
     {
@@ -368,7 +378,7 @@ static void test_xdp_transport_replay_marks_stale_forget_never_deletes_a_newer_m
     rocketnet_unit_check( map && slots && walk );
 
     static struct rocketnet_xdp_replay_marks_t marks;
-    rocketnet_xdp_replay_marks_reset( &marks );
+    replay_marks_bind( &marks );
 
     struct replay_fake_map_t kernel;
     memset( &kernel, 0, sizeof( kernel ) );
@@ -487,7 +497,7 @@ static void test_xdp_transport_replay_marks_reconnect_admits_the_new_session()
     rocketnet_unit_check( map && slots && walk );
 
     static struct rocketnet_xdp_replay_marks_t marks;
-    rocketnet_xdp_replay_marks_reset( &marks );
+    replay_marks_bind( &marks );
 
     struct replay_fake_map_t kernel;
     memset( &kernel, 0, sizeof( kernel ) );
@@ -616,7 +626,7 @@ static void test_xdp_transport_replay_marks_refused_reconnect_mark_is_retried()
     rocketnet_unit_check( map && slots && walk );
 
     static struct rocketnet_xdp_replay_marks_t marks;
-    rocketnet_xdp_replay_marks_reset( &marks );
+    replay_marks_bind( &marks );
 
     struct replay_fake_map_t kernel;
     memset( &kernel, 0, sizeof( kernel ) );
@@ -706,5 +716,3 @@ REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_refusals_reach_the_socket );
 REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_stale_forget_never_deletes_a_newer_mark );
 REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_reconnect_admits_the_new_session );
 REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_refused_reconnect_mark_is_retried );
-
-#endif // #if defined(__linux__)

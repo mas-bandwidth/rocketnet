@@ -6,7 +6,7 @@
 // The client's real receive loop, stateful: the step-driven client transport
 // draining its loopback endpoint inside rocketnet_client_transport_update (the
 // client io step, the source check, the prefilter, the handshake and session
-// reading order, reassembly) and the message client above it, on a client
+// reading order) and the message client above it, on a client
 // connected to a real server. Every datagram the input names arrives from the
 // server's real address, so it passes the client's source check and lands in
 // the parsers.
@@ -40,7 +40,7 @@
 
 static const uint8_t rocketnet_fuzz_s2c_types[] = {
     ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, ROCKETNET_CONNECTION_PAYLOAD_PACKET, ROCKETNET_CONNECTION_DISCONNECT_PACKET,
-    ROCKETNET_CONNECTION_ACK_PACKET, ROCKETNET_CONNECTION_FRAGMENT_PACKET
+    ROCKETNET_CONNECTION_ACK_PACKET
 };
 
 static struct rocketnet_fuzz_pair_t rocketnet_fuzz_client_pair;
@@ -209,7 +209,7 @@ static uint64_t rocketnet_fuzz_client_run( const uint8_t * data, size_t size )
 //  the seed generator (ROCKETNET_FUZZ_SEED_DIR=<dir>, rocketnet_fuzz_pair.h)
 //
 // For every server -> client type the client reads (denied, challenge,
-// keep-alive, payload, disconnect, cookie, ack, fragment): the real datagram,
+// keep-alive, payload, disconnect, cookie, ack): the real datagram,
 // raw, from the server's address; its real plaintext sealed under the live
 // keys; and for the cookie, its real expire and mac through the cookie mode.
 // Each seed must raise its type's counter when replayed: the received
@@ -237,7 +237,6 @@ static const struct rocketnet_fuzz_client_seed_type_t rocketnet_fuzz_client_seed
     { ROCKETNET_CONNECTION_DISCONNECT_PACKET, ROCKETNET_COUNTER_CLIENT_DISCONNECT_RECEIVED, ROCKETNET_COUNTER_CLIENT_DISCONNECT_ACCEPTED },
     { ROCKETNET_CONNECTION_COOKIE_PACKET, ROCKETNET_COUNTER_CLIENT_COOKIE_RECEIVED, -1 },
     { ROCKETNET_CONNECTION_ACK_PACKET, ROCKETNET_COUNTER_CLIENT_ACK_RECEIVED, ROCKETNET_COUNTER_CLIENT_ACK_ACCEPTED },
-    { ROCKETNET_CONNECTION_FRAGMENT_PACKET, ROCKETNET_COUNTER_CLIENT_FRAGMENT_RECEIVED, ROCKETNET_COUNTER_CLIENT_FRAGMENT_ACCEPTED },
 };
 
 static bool rocketnet_fuzz_client_excluded( uint8_t type )

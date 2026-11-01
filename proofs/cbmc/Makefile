@@ -1,7 +1,6 @@
 # CBMC proofs. `make -C proofs/cbmc` runs the proofs that finish:
 # the arithmetic leaves below, then the bounded readers, the message reader,
-# and the XDP free list. The reassembly code is proved on ESBMC by
-# proofs/cbmc/fragment_reassembly, on the nightly list.
+# and the XDP free list.
 #
 # Every target prints the bound it proves beside the deployed constant the
 # bound is measured against, so a bounded proof cannot read as the whole
@@ -66,7 +65,6 @@ REPLAY_WINDOW_BITS := $(call deployed_literal,ROCKETNET_HISTORY_PACKETS,rocketne
 # ROCKETNET_REPLAY_WINDOW_BITS): one iteration per history word plus one.
 REPLAY_UNWIND := $(shell expr $(REPLAY_WINDOW_BITS) / 64 + 1)
 MAX_PAYLOAD_BYTES := $(call deployed_literal,ROCKETNET_MAX_PACKET_PAYLOAD_BYTES,rocketnet.h)
-MAX_FRAGMENT_BYTES := $(call deployed_comment,ROCKETNET_MAX_FRAGMENT_BYTES,rocketnet_fragment.h)
 XDP_NUM_FRAMES := $(call deployed_literal,ROCKETNET_XDP_NUM_FRAMES,rocketnet_constants.h)
 XDP_FRAME_SIZE := $(call deployed_literal,ROCKETNET_XDP_FRAME_SIZE,rocketnet_constants.h)
 
@@ -270,7 +268,7 @@ ack-run-negative-control: proof_ack_apply_run.c esbmc_shim.h
 	fi
 
 read-write: proof_read_write.c
-	@echo "read-write bound buffers 8 bytes deployed ROCKETNET_MAX_FRAGMENT_BYTES=$(MAX_FRAGMENT_BYTES)"
+	@echo "read-write bound buffers 8 bytes deployed ROCKETNET_MAX_PACKET_PAYLOAD_BYTES=$(MAX_PAYLOAD_BYTES)"
 	$(CBMC) $(CBMC_FLAGS) --unwind 9 -I$(SDK) proof_read_write.c
 
 message-read: proof_message_read.c

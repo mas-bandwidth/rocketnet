@@ -27,7 +27,6 @@
 #include "rocketnet_test_vectors.h"
 #include "rocketnet_server.h"
 #include "rocketnet_ack.h"
-#include "rocketnet_fragment.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -65,10 +64,8 @@ static void request_one_hash_setup( struct request_one_hash_server_t * test )
     server->used_token_history = rocketnet_used_token_history_create( NULL, 4 * REQUEST_ONE_HASH_REQUESTS );
     server->client_slots = rocketnet_client_slots_create( NULL, 4 * REQUEST_ONE_HASH_REQUESTS );
     server->acks = rocketnet_server_acks_create( NULL, 4 );
-    server->reassembly = rocketnet_reassembly_set_create( NULL, 4, 4, 16384, 4 * 4 );
     server->counters = &test->counters;
-    check( server->encryption_map && server->used_token_history && server->client_slots && server->acks && server->reassembly );
-    rocketnet_reassembly_set_begin_update( server->reassembly );
+    check( server->encryption_map && server->used_token_history && server->client_slots && server->acks );
     rocketnet_server_protocol_update( server, 1000.0 );
 }
 
@@ -78,7 +75,6 @@ static void request_one_hash_teardown( struct request_one_hash_server_t * test )
     rocketnet_used_token_history_destroy( test->server.used_token_history );
     rocketnet_client_slots_destroy( test->server.client_slots );
     rocketnet_server_acks_destroy( test->server.acks );
-    rocketnet_reassembly_set_destroy( test->server.reassembly );
 }
 
 static void request_one_hash_address( struct rocketnet_address_t * address, int i )

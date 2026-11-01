@@ -15,7 +15,7 @@ The inputs are any window: any largest, any word values with the largest's
 bit set (an advance always sets it), any `max_ranges`. Bits for sequences
 outside `floor .. largest` are arbitrary, so a read past the floor shows. The
 reference is the bit-by-bit walk the word pass replaced. `ReplayWindow.tla`
-and `FragmentsAndAcks.tla` take the block as that set.
+and `SessionAcks.tla` take the block as that set.
 
 ## The instance
 

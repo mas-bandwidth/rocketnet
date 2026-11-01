@@ -32,7 +32,6 @@
 #include "rocketnet_client_protocol.h"
 #include "rocketnet_encryption_map.h"
 #include "rocketnet_ack.h"
-#include "rocketnet_fragment.h"
 #include "rocketnet_protocol.h"
 #include "rocketnet_address.h"
 #include "rocketnet_counters.h"
@@ -215,9 +214,7 @@ static void rocketnet_server_setup( struct rocketnet_server_protocol_t * server,
     server->used_token_history = rocketnet_used_token_history_create( NULL, 64 );
     server->client_slots = rocketnet_client_slots_create( NULL, 8 );
     server->acks = rocketnet_server_acks_create( NULL, 8 );
-    server->reassembly = rocketnet_reassembly_set_create( NULL, 8, 4, 16384, 16 );
     server->counters = counters;
-    rocketnet_reassembly_set_begin_update( server->reassembly );
     rocketnet_server_protocol_update( server, (double) now );
 }
 
@@ -227,7 +224,6 @@ static void rocketnet_server_teardown( struct rocketnet_server_protocol_t * serv
     rocketnet_used_token_history_destroy( server->used_token_history );
     rocketnet_client_slots_destroy( server->client_slots );
     rocketnet_server_acks_destroy( server->acks );
-    rocketnet_reassembly_set_destroy( server->reassembly );
 }
 
 static void rocketnet_classify( const struct rocketnet_counters_t * counters, struct decision_t * d )

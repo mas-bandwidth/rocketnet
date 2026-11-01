@@ -18,7 +18,7 @@
 (*                                                                         *)
 (* Ranges below the first are abstracted: the honest builder's count is   *)
 (* zero here, and their walk (rules 3-5) is the subject of                 *)
-(* FragmentsAndAcks.  Forge writes the malformed shapes with a zero first *)
+(* SessionAcks.  Forge writes the malformed shapes with a zero first     *)
 (* range length, so the reader's refusal of them is checked too.          *)
 (*                                                                         *)
 (* BrokenHalfRange selects the rule before 2026-10-24: the empty test made *)

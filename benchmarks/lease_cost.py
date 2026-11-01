@@ -88,7 +88,7 @@ def run(variant, endpoint, operation, size, threads, sample, plant=False):
 
 for sample in range(args.samples):
     for endpoint, operation, size, threads in itertools.product(
-            ("server", "client"), ("finish", "abort", "access"), (64, 1192, 4096), (1, 4)):
+            ("server", "client"), ("finish", "abort", "access"), (64, 1192), (1, 4)):
         order = ("checked", "control") if sample % 2 == 0 else ("control", "checked")
         for variant in order:
             run(variant, endpoint, operation, size, threads, sample)

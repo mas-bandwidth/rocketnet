@@ -8,8 +8,8 @@
 // input names. Where rocketnet_fuzz_receive_structured drives the protocol
 // layer's process_packet directly, this target goes in at the top -- the
 // receive drain, the wire totals, the admission gate, the send-frame
-// reservation, process_packet_capacity, the payload batch and the
-// reassembled-payload hand-off -- and up through the message layer that reads
+// reservation, process_packet_capacity and the payload batch -- and up
+// through the message layer that reads
 // what the transport delivers.
 //
 // INPUT: [config selector][record]...
@@ -43,7 +43,7 @@
 
 static const uint8_t rocketnet_fuzz_c2s_types[] = {
     ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, ROCKETNET_CONNECTION_PAYLOAD_PACKET, ROCKETNET_CONNECTION_DISCONNECT_PACKET,
-    ROCKETNET_CONNECTION_ACK_PACKET, ROCKETNET_CONNECTION_FRAGMENT_PACKET, ROCKETNET_CONNECTION_RESPONSE_PACKET
+    ROCKETNET_CONNECTION_ACK_PACKET, ROCKETNET_CONNECTION_RESPONSE_PACKET
 };
 
 static struct rocketnet_fuzz_pair_t rocketnet_fuzz_server_pair;
@@ -58,7 +58,7 @@ static void rocketnet_fuzz_server_step( struct rocketnet_fuzz_pair_t * pair )
     const struct rocketnet_server_transport_t * transport = pair->transport;
     for ( int i = 0; i < transport->payloads.num_payloads; i++ )
         rocketnet_fuzz_pair_require( transport->payloads.payload_bytes[i] > 0 &&
-                                         transport->payloads.payload_bytes[i] <= ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES,
+                                         transport->payloads.payload_bytes[i] <= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES,
                                      "a delivered payload is within the payload bound" );
 
     rocketnet_fuzz_pair_client_update( pair );
@@ -182,7 +182,7 @@ static uint64_t rocketnet_fuzz_server_run( const uint8_t * data, size_t size )
 //  the seed generator (ROCKETNET_FUZZ_SEED_DIR=<dir>, rocketnet_fuzz_pair.h)
 //
 // For every client -> server type the server reads (request, response,
-// keep-alive, payload, disconnect, ack, fragment): the real datagram, raw,
+// keep-alive, payload, disconnect, ack): the real datagram, raw,
 // from the client's address, and -- every type but the request -- its real
 // plaintext sealed under the live keys. Each seed must raise its type's
 // counter when replayed: the received counter for the raw seed, the
@@ -205,7 +205,6 @@ static const struct rocketnet_fuzz_server_seed_type_t rocketnet_fuzz_server_seed
     { ROCKETNET_CONNECTION_PAYLOAD_PACKET, ROCKETNET_COUNTER_PAYLOAD_RECEIVED, ROCKETNET_COUNTER_PAYLOAD_DELIVERED },
     { ROCKETNET_CONNECTION_DISCONNECT_PACKET, ROCKETNET_COUNTER_DISCONNECT_RECEIVED, ROCKETNET_COUNTER_DISCONNECT_DISCONNECTED },
     { ROCKETNET_CONNECTION_ACK_PACKET, ROCKETNET_COUNTER_ACK_RECEIVED, ROCKETNET_COUNTER_ACK_ACCEPTED },
-    { ROCKETNET_CONNECTION_FRAGMENT_PACKET, ROCKETNET_COUNTER_FRAGMENT_RECEIVED, ROCKETNET_COUNTER_FRAGMENT_ACCEPTED },
 };
 
 static int rocketnet_fuzz_server_type_index( uint8_t type )
