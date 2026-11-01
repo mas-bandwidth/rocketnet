@@ -1340,8 +1340,9 @@ generation are driven by elapsed time and nothing else.
 **Retransmission is at a fixed rate, with no backoff and no round-trip estimation.**
 This is a connection protocol whose handshake completes in a handful of packets and
 whose deadline is a few seconds; an adaptive scheme would add state and failure modes to
-buy nothing measurable over that interval. A deployment may raise the send rate — 20 Hz
-is reasonable — and must keep it constant for the duration of an attempt.
+buy nothing measurable over that interval. This revision pins the send rate at 10 Hz in
+[RN-1 t3 Constants and registries](TRANSPORT.md#t3) and keeps it constant for the
+duration of an attempt.
 
 [RN-1 t17 Timing and defaults](TRANSPORT.md#t17)
 **Only the server's handshake deadline and maximum session timeout are configuration fields** ([RN-1 t2.3 Configuration surface](TRANSPORT.md#t2.3)); the per-connection session timeout comes from the connect token and is capped by the server's maximum. The send rate, cookie lifetime and cookie key rotation interval are fixed constants of this revision ([RN-1 t3 Constants and registries](TRANSPORT.md#t3)). The values are chosen so that a game that never
