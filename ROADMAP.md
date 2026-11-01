@@ -6,7 +6,7 @@ Planned work for RocketNet that is not on main. Work lands on main before new wo
 
 ## Contents
 
-- [Started work to finish and land](#started-work-to-finish-and-land) (15)
+- [Started work to finish and land](#started-work-to-finish-and-land) (14)
 - [Audit items not yet fixed](#audit-items-not-yet-fixed) (12)
 - [Investigations that need a quiet host](#investigations-that-need-a-quiet-host) (3)
 - [Older open pull requests](#older-open-pull-requests) (2)
@@ -21,12 +21,6 @@ Work begun on 2026-10-31 and stopped when the landing froze. Each names its bran
 Merged to main on Glenn's word with the nightly to catch the rest. Red on the fleet at ab74c810: (1) DEV=OFF unit test_message_required_memory_takes_the_create_budget, the client never reaches stopped in unit_shutdown.h:24 (from rowan/low-channel-message); (2) check_tla_coverage --actions-strict: RNGsoHandoff TxSendFull and RNOrderingWrap HoldSequenced, ReceiveUnreliable are cited nowhere in the code; (3) functional test_gso_transport_posix_server_create_destroy_1000 past its 120 s bound on loaded vision, host load not confirmed; (4) Windows Debug never finished (CreateProcessW 1455, paging file). Not run before the merge: the GitHub CI run, Linux DEV=OFF functional beyond these, Windows Debug.
 
 From: Integration fleet run, ab74c810
-
-### TLC cases within 20% of the 110 s budget
-
-Required cases recorded above 88 s at 2 workers on main or PR #801: MCRNChannel 108.1 s and MCRNChannelSafety 107.8 s (16 cpus), MCRNXdpReplayReconnect 106.6 s, MCRNSecurityTables 103.0 s, MCServerSession 101.7 s (93.1 s on intel), MCRNXdpReplayHeldReply 101.2 s, MCRNChannelTypes 95.2 s, MCRNSlotsExhaustion 94.8 s, MCClientSession 91.4 s (89.4 s on intel), MCRNClientIoLiveDestroy 91.2 s, MCRNSlotsTwoSlots 90.7 s. On vision (Threadripper 2990WX), MCRNChannel, MCRNChannelSafety, MCRNChannelTypes, MCClientSession and MCServerSession time out at 110 s with 2 workers; with 16/32 workers (plain TLC, same instance) they take 96.2/91.1 s, 36.8/28.0 s, 32.7/27.6 s, 131.4/136.6 s and 31.5/42.6 s. MCClientSession does not speed up with workers: TLC builds the liveness graph during exploration, while its two temporal checks take only 9 s and 15 s. MCRNChannel spends 76 s in the final temporal check. The pinned tlacheck accepts only 1 or 2 workers (nova-tools pkg/tlc/suite.go), and the worker count is part of every fingerprint. Splitting by obligation (branch rowan/type9-tlc-split) fits the safety halves in 12-62 s on hulk but not every liveness half.
-
-From: PR #801 TLC records
 
 ### Seed the message resend delay from the measured RTT
 

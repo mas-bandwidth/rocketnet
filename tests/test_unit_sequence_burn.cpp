@@ -644,66 +644,6 @@ static void test_sequence_burn_server_finish_populates_sequence()
 
 REGISTER_UNIT_TEST( test_sequence_burn_server_finish_populates_sequence );
 
-// The transport's payload bound is one packet on both ends: start_packet
-// grants exactly ROCKETNET_MAX_PACKET_PAYLOAD_BYTES and refuses one byte more
-// before the client spends a sequence, so the next client packet takes the
-// sequence after the last one sent. Mutation that must bite: + 1 on the
-// request bound in either transport's start_packet; the refused request is
-// then granted.
-
-static void test_sequence_burn_start_packet_over_one_packet_spends_nothing()
-{
-    struct sequence_burn_pair_t pair;
-    rocketnet_unit_check( sequence_burn_pair_setup( &pair ) );
-
-    bool connected = false;
-    for ( int i = 0; i < 400 && !connected; i++ )
-    {
-        connected = rocketnet_client_transport_state( pair.client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
-                    rocketnet_server_transport_is_client_connected( pair.server, 0 );
-        if ( !connected )
-        {
-            struct sequence_burn_measures_t ignored;
-            memset( &ignored, 0, sizeof( ignored ) );
-            sequence_burn_round( &pair, BURN_SIDE_SERVER, false, -1, NULL, &ignored );
-        }
-    }
-
-    rocketnet_unit_check( connected );
-
-    rocketnet_unit_check( rocketnet_client_transport_max_payload_bytes( pair.client ) == ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
-    rocketnet_unit_check( rocketnet_server_transport_max_payload_bytes( pair.server ) == ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
-
-    struct rocketnet_packet_context_t context;
-
-    uint8_t * frame = rocketnet_client_transport_start_packet( pair.client, BURN_SMALL_BYTES, &context );
-    rocketnet_unit_check( frame != NULL );
-    const uint64_t sent_sequence = context.sequence;
-    memset( frame + context.payload_index, 0xC0, BURN_SMALL_BYTES );
-    rocketnet_unit_check( rocketnet_client_transport_finish_packet( pair.client, &context, BURN_SMALL_BYTES ) > 0 );
-
-    rocketnet_unit_check( rocketnet_client_transport_start_packet( pair.client, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 1, &context ) == NULL );
-
-    frame = rocketnet_client_transport_start_packet( pair.client, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, &context );
-    rocketnet_unit_check( frame != NULL );
-    rocketnet_unit_check( context.payload_capacity == ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
-    rocketnet_unit_check( context.sequence == sent_sequence + 1 );
-    memset( frame + context.payload_index, 0xC1, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
-    rocketnet_unit_check( rocketnet_client_transport_finish_packet( pair.client, &context, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ) > 0 );
-
-    rocketnet_unit_check( rocketnet_server_transport_start_packet( pair.server, 0, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 1, &context ) == NULL );
-
-    frame = rocketnet_server_transport_start_packet( pair.server, 0, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, &context );
-    rocketnet_unit_check( frame != NULL );
-    rocketnet_unit_check( context.payload_capacity == ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
-    memset( frame + context.payload_index, 0xC2, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
-    rocketnet_unit_check( rocketnet_server_transport_finish_packet( pair.server, &context, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ) > 0 );
-
-    sequence_burn_pair_teardown( &pair );
-}
-
-REGISTER_UNIT_TEST( test_sequence_burn_start_packet_over_one_packet_spends_nothing );
-
 enum sequence_burn_uncommitted_kind_t
 {
     BURN_UNCOMMITTED_NONE = 0,

@@ -627,8 +627,6 @@ static void test_client_drops_reserved_and_wrong_direction_types()
     // types 9 through 255 are reserved and ignored: PACKETS_RECEIVED and
     // RESERVED_TYPE each rise by exactly one and nothing else moves, so the
     // counter sum rises by exactly two. Type 9 is the first reserved type.
-    // Mutation that must bite: > for >= on the client's reserved-type check;
-    // type 9 then passes the gate and RESERVED_TYPE does not rise.
 
     static const uint8_t reserved_type[4] = { ROCKETNET_FIRST_RESERVED_PACKET_TYPE, 10, 200, 255 };
 

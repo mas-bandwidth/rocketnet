@@ -1616,8 +1616,7 @@ static void test_xdp_transport_host_type_and_size_sweep_matches_the_standard()
     rocketnet_unit_check( floor == 33 );
 
     // the first reserved type is 9, and the shared inbound rule accepts it
-    // at no size. Mutation that must bite: a type 9 row added to
-    // ROCKETNET_WIRE_SERVER_PACKET_VALID; the rule then accepts it.
+    // at no size
 
     rocketnet_unit_check( ROCKETNET_FIRST_RESERVED_PACKET_TYPE == 9 );
     for ( int bytes = 0; bytes <= ceiling + 1; bytes++ )

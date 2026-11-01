@@ -375,9 +375,6 @@ static std::vector<uint8_t> boundary_data( uint32_t sequence, int bytes )
 // (the promotion rule): code 0 to 2, code 1 to 4, code 5 to its reliable
 // receipt twin (wire code 2, receipt kept). The threshold is the mode's own
 // one-packet record edge; max_message_bytes is accepted and max+1 is refused.
-// Mutation that must bite: + 64 on the threshold in
-// rn_endpoint_unreliable_over_record_capacity; edge + 1 is then sent
-// unpromoted and its promotion counter does not rise.
 // ---------------------------------------------------------------------------
 
 static void test_unreliable_promotion_every_mode()
