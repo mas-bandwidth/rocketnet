@@ -66,8 +66,8 @@ static std::atomic<int> log_level{ ROCKETNET_LOG_LEVEL_INFO };
 
 void rocketnet_log_level( enum rocketnet_log_level_t level )
 {
-    // a value outside NONE .. SPAM is ignored. read as an int: a C caller may
-    // pass any int, and loading an out-of-range enum is undefined in C++
+    // A value outside NONE .. SPAM is ignored. Read the int-sized C ABI
+    // representation without relying on the C caller's enum signedness.
 
     int value;
     memcpy( &value, &level, sizeof( value ) );

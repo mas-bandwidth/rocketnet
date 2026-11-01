@@ -6,7 +6,7 @@ Planned work for RocketNet that is not on main. Work lands on main before new wo
 
 ## Contents
 
-- [Started work to finish and land](#started-work-to-finish-and-land) (11)
+- [Started work to finish and land](#started-work-to-finish-and-land) (9)
 - [Audit items not yet fixed](#audit-items-not-yet-fixed) (8)
 - [Investigations that need a quiet host](#investigations-that-need-a-quiet-host) (3)
 - [Older open pull requests](#older-open-pull-requests) (2)
@@ -46,23 +46,11 @@ Audit 33. Branch rowan/gate-nightly-proofs-split at 3522e523: one job per reader
 
 From: Audit item 33
 
-### ClientConnection KeysErasedWhenDown matches the code
-
-Audit 66. Branch rowan/model-clientkeys at 5bbf6e7a: the model is done. Owed: the clientconnection group's RUNS.tsv on a quiet, fast Linux host (MCClientConnectionReachSFirstkind runs 117-132 s on captain against the 110 s budget, 50 s on Linux).
-
-From: Audit item 66
-
 ### Live message matrix: a late probe copy counts as its probe
 
 Audit 59. Branch rowan/low-matrix-flake at a1693544, never built. Owed: functional build and repeated runs on Linux and macOS, a negative control, and a reproduction on main with injected latency.
 
 From: Audit item 59
-
-### Remove the resend FIFO's generation stamp
-
-RNResendGenerations shows the stamp never decides; the number comparison refuses a stale ack. Removing it shrinks each resend entry from 12 to 8 bytes. Uncommitted edits in the worktree rocketnet-remove-stamp, branch rowan/remove-resend-generation-stamp.
-
-From: Audit item 12 follow-on
 
 ### Land #797: CBMC low items
 

@@ -26,9 +26,9 @@ linked, so `SetClass` flips `isChunk[s]` at any time. The class bit stored in
 `next` at link time is what the unlink follows. The carve clears every link
 (`Init`: every field 0).
 
-Generations are not modelled. `rn_resend_fifo_unlink_named` either
-unlinks or changes nothing, so `Unlink` of any slot at any time covers it; the
-generation rule is [RNResendGenerations](README-RNResendGenerations.md)'s.
+An entry is `prev` and `next` only (`rn_resend_link_t`, 8 bytes). Which number
+an ack may unlink is [RNResendGenerations](README-RNResendGenerations.md)'s;
+`Unlink` of any slot at any time covers it.
 
 ## Actions and the code they mirror
 
@@ -37,8 +37,7 @@ Functions in `sdk/rocketnet_window_ack.cpp`.
 - **`Unlink(s)`**: `rn_resend_fifo_unlink`: an unlinked slot is left
   alone; otherwise the class from bit 31 of `next`, the neighbors' fields or
   the class's head and tail, then `prev = 0`, `next = 0`, and the count.
-  Called from `rn_window_ack_on_ack` (directly, and through
-  `rn_resend_fifo_unlink_named`).
+  Called from `rn_window_ack_on_ack`.
 - **`PushTail(s)`**: `rn_resend_fifo_push_tail` from
   `rn_window_ack_commit`: the tail of the slot's class, stepped back to
   the slot's prev when the slot is itself that tail, then

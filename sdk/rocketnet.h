@@ -413,9 +413,18 @@ enum rocketnet_status_t
     ROCKETNET_STATUS_LOOPBACK_HUB_IN_USE = -34
 };
 
-/// The process-wide log levels, least to most verbose.
+/// The process-wide log levels, least to most verbose. A log callback may
+/// receive an integer outside these named levels.
 
+#if defined( __cplusplus ) && __cplusplus >= 201103L
+#if defined( __clang__ )
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wc++98-compat"
+#endif // #if defined( __clang__ )
+enum rocketnet_log_level_t : int
+#else // #if defined( __cplusplus ) && __cplusplus >= 201103L
 enum rocketnet_log_level_t
+#endif // #if defined( __cplusplus ) && __cplusplus >= 201103L
 {
     /// As the maximum level, only lines logged at NONE are emitted. Quiet mode
     /// suppresses every line.
@@ -442,6 +451,9 @@ enum rocketnet_log_level_t
 
     ROCKETNET_LOG_LEVEL_SPAM = 5
 };
+#if defined( __cplusplus ) && __cplusplus >= 201103L && defined( __clang__ )
+#pragma clang diagnostic pop
+#endif // #if defined( __cplusplus ) && __cplusplus >= 201103L && defined( __clang__ )
 
 /// The address family of an endpoint.
 
