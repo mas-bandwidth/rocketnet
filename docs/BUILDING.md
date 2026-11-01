@@ -342,6 +342,11 @@ detailed runner, sanitizer, and toolchain instructions.
 See [Memory and capacity](MEMORY.md#maximum-clients) for compile-time
 capacity, sizing, and the qualification limits above 1000 clients.
 
+## Maximum channels
+
+See [Maximum channels](MEMORY.md#maximum-channels): `-DROCKETNET_MAX_CHANNELS`
+sets the most channels a connection may use.
+
 ## History memory budget
 
 See [History memory budget](MEMORY.md#history-memory-budget).

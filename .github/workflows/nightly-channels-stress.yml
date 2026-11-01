@@ -6,6 +6,10 @@
 # test_wide is built. They live here, not in ci.yml: the per-push tier stays
 # at or under two minutes, and a nightly is exempt from that rule.
 #
+# A fourth job builds the library itself with -DROCKETNET_MAX_CHANNELS=1024,
+# the CMake option a game sets (MEMORY.md, "Maximum channels"): every default
+# target at the strict flags with zero warnings, then the unit suite.
+#
 # One job per platform on the fleet runner labels ci.yml uses: the Linux fleet
 # pool, the macOS Apple-silicon runner (rocketnet-macos) and the Windows runner
 # (rocketnet-windows). A red night prints the failed check's file and line.
@@ -42,6 +46,36 @@ jobs:
 
       - name: Stress at 10000 channels
         run: ./bin/test_channels_10k
+
+  max-channels-build-linux:
+    runs-on: ["self-hosted", "Linux", "X64", "fleet"]
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+    steps:
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          ref: ${{ matrix.ref }}
+
+      - name: Build at 1024 channels
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf build-max-channels
+          cmake -S . -B build-max-channels -DCMAKE_BUILD_TYPE=Release -DROCKETNET_MAX_CHANNELS=1024
+          cmake --build build-max-channels --parallel 4 2>&1 | tee build-max-channels.log
+          if grep -q "warning:" build-max-channels.log; then
+            echo "BUILD warnings in the 1024-channel build:"
+            grep "warning:" build-max-channels.log
+            exit 1
+          fi
+
+      - name: Unit suite at 1024 channels
+        shell: bash
+        run: ./bin/test
 
   channels-stress-macos:
     runs-on: ["self-hosted", "macOS", "ARM64", "rocketnet-macos"]

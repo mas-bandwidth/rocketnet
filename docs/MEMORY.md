@@ -311,6 +311,25 @@ A build for more clients also carries larger fixed per-server tables (the
 receive arrays and payload batches above), about 0.6 GB more at 10000 whatever
 the server's `max_clients`.
 
+## Maximum channels
+
+`ROCKETNET_MAX_CHANNELS` (`sdk/rocketnet.h`) is the most channels a
+connection's `num_channels` may ask for. It is 32 by default, and a build may
+set another value from 1 through 65536:
+
+    cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DROCKETNET_MAX_CHANNELS=1024
+
+or `-DROCKETNET_MAX_CHANNELS=1024` on every compile when building the sources
+into your own build. CMake hands the value to the libraries and their
+consumers (a `PUBLIC` definition, so the header a game compiles matches its
+library), the tests and the tools; rebuild everything together. `num_channels`
+still defaults to 32 (or the build's maximum when that is smaller), and is a
+wire setting: client and server use the same value. Per-connection memory
+grows with the `num_channels` a config asks for, not with the build's maximum.
+[`.github/workflows/nightly-channels-stress.yml`](../.github/workflows/nightly-channels-stress.yml)
+builds every default target at 1024 channels with the strict flags and runs
+the unit suite, beside the message-layer stress at 1024 and 10000 channels.
+
 ## History memory budget
 
 `cmake -B build -DROCKETNET_HISTORY_PACKETS=8192` chooses the per-connection

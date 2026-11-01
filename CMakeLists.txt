@@ -159,6 +159,18 @@ if(ROCKETNET_MAX_CLIENTS LESS 512 OR ROCKETNET_MAX_CLIENTS GREATER 32768)
     message(FATAL_ERROR "ROCKETNET_MAX_CLIENTS must be 512..32768")
 endif()
 
+# The most channels a connection holds (sdk/rocketnet.h ROCKETNET_MAX_CHANNELS).
+# 32 is the default; a build may set 1..65536 (docs/MEMORY.md, "Maximum
+# channels"). Handed to every target and, PUBLIC, to the libraries'
+# consumers, as ROCKETNET_MAX_CLIENTS is.
+set(ROCKETNET_MAX_CHANNELS 32 CACHE STRING "Maximum channels per connection (1..65536)")
+if(NOT ROCKETNET_MAX_CHANNELS MATCHES "^[0-9]+$")
+    message(FATAL_ERROR "ROCKETNET_MAX_CHANNELS must be an integer")
+endif()
+if(ROCKETNET_MAX_CHANNELS LESS 1 OR ROCKETNET_MAX_CHANNELS GREATER 65536)
+    message(FATAL_ERROR "ROCKETNET_MAX_CHANNELS must be 1..65536")
+endif()
+
 # Empty ROCKETNET_REASSEMBLY_MEMORY_MIB scales with the clients: 512 MiB per
 # 1000 (sdk/rocketnet_memory.h), so 512 at the default and 5120 at 10000.
 set(ROCKETNET_REASSEMBLY_MEMORY_MIB "" CACHE STRING "Maximum reassembly component allocation in MiB (empty: 512 per 1000 clients)")
@@ -231,6 +243,7 @@ else()
 endif()
 add_compile_definitions(
     ROCKETNET_MAX_CLIENTS=${ROCKETNET_MAX_CLIENTS}
+    ROCKETNET_MAX_CHANNELS=${ROCKETNET_MAX_CHANNELS}
     ROCKETNET_HISTORY_PACKETS=${ROCKETNET_HISTORY_PACKETS}
     ${ROCKETNET_MEMORY_BUDGET_DEFINITIONS})
 
@@ -357,6 +370,20 @@ endif()
 # dependencies), so it reaches every target, named here or not. The function
 # stays as the place a target names the floor it is checked against; it adds
 # nothing the directory scope has not already given the target.
+# A binary that compiles the SDK sources itself at its own channel count
+# (test_wide, the channel stress binaries): its ROCKETNET_MAX_CHANNELS replaces
+# the build's, which the directory and rocketnet_dev's definitions carry, so
+# the compiler sees one value. The rest of rocketnet_dev's definitions apply.
+function(rocketnet_own_max_channels target channels)
+    get_target_property(inherited ${target} COMPILE_DEFINITIONS)
+    if(inherited)
+        list(FILTER inherited EXCLUDE REGEX "^ROCKETNET_MAX_CHANNELS=")
+        set_target_properties(${target} PROPERTIES COMPILE_DEFINITIONS "${inherited}")
+    endif()
+    target_compile_definitions(${target} PRIVATE ROCKETNET_MAX_CHANNELS=${channels}
+        "$<FILTER:$<TARGET_PROPERTY:rocketnet_dev,COMPILE_DEFINITIONS>,EXCLUDE,^ROCKETNET_MAX_CHANNELS=>")
+endfunction()
+
 function(rocketnet_warning_floor target)
 endfunction()
 
@@ -467,7 +494,8 @@ foreach(target IN LISTS rocketnet_static_targets rocketnet_shared_targets)
     endif()
     # PUBLIC for the same reason: the consumer's ROCKETNET_MAX_CLIENTS is the
     # library's.
-    target_compile_definitions(${target} PUBLIC ROCKETNET_MAX_CLIENTS=${ROCKETNET_MAX_CLIENTS})
+    target_compile_definitions(${target} PUBLIC ROCKETNET_MAX_CLIENTS=${ROCKETNET_MAX_CLIENTS}
+                                                ROCKETNET_MAX_CHANNELS=${ROCKETNET_MAX_CHANNELS})
     if(ROCKETNET_TRANSPORT_REGISTRY_HEADER)
         target_compile_definitions(${target} PRIVATE "ROCKETNET_TRANSPORT_REGISTRY_HEADER=\"${ROCKETNET_TRANSPORT_REGISTRY_HEADER}\"")
     endif()
@@ -840,8 +868,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         sdk/rocketnet_tests.cpp tests/c_caller.c ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
     set_target_properties(test_wide PROPERTIES EXPORT_COMPILE_COMMANDS OFF)
     add_dependencies(test_wide rocketnet_xdp_header)
-    target_compile_definitions(test_wide PRIVATE ROCKETNET_MAX_CHANNELS=512
-        $<TARGET_PROPERTY:rocketnet_dev,COMPILE_DEFINITIONS>)
+    rocketnet_own_max_channels(test_wide 512)
     target_include_directories(test_wide PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/sdk"
         "${CMAKE_CURRENT_BINARY_DIR}/generated")
@@ -879,8 +906,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         add_dependencies(${rocketnet_stress_target} rocketnet_xdp_header)
         # server stats: rocketnet_server_update_stats runs on the caller
         # inside rocketnet_server_transport_update, as in test_wide
-        target_compile_definitions(${rocketnet_stress_target} PRIVATE ROCKETNET_MAX_CHANNELS=${rocketnet_stress_channels}
-            $<TARGET_PROPERTY:rocketnet_dev,COMPILE_DEFINITIONS>)
+        rocketnet_own_max_channels(${rocketnet_stress_target} ${rocketnet_stress_channels})
         target_include_directories(${rocketnet_stress_target} PRIVATE
             "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/sdk"
             "${CMAKE_CURRENT_BINARY_DIR}/generated")
