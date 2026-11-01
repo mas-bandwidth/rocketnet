@@ -161,36 +161,32 @@ static void max_clients_server_config( rocketnet_server_config_t * config )
 }
 
 // A server's memory is its config's choice: its plan follows the configured
-// max_clients, not the build's ROCKETNET_MAX_CLIENTS. Nearly all of the light
-// config's plan is buffers that scale with clients, so a 1000-client server
-// plans close to 1000 / ROCKETNET_MAX_CLIENTS of a full one, and the check
-// allows twice that for the plan's client-independent part. Sized from the
-// build ceiling instead, a 1000-client server in a 10000 build would plan
-// nearly what a 10000-client one does, ten times its share. In the default
-// build the two plans are the same server.
+// max_clients, not the build's ROCKETNET_MAX_CLIENTS. The portable plan at
+// the light config is nearly all buffers that scale with clients (it has no
+// fixed transport memory such as XDP's UMEM), so a 1000-client server plans
+// close to 1000 / ROCKETNET_MAX_CLIENTS of a full one, and the check allows
+// twice that. Sized from the build ceiling instead, a 1000-client server in
+// a 10000 build plans 3.93 GB where a full one plans 10.07 GB, almost four
+// times its share. In the default build the two plans are the same server.
 
 static void test_server_plan_follows_configured_max_clients()
 {
     if ( ROCKETNET_MAX_CLIENTS < 1000 )
         return;
 
-    const char * transports[] = { "portable", NULL };
-    for ( const char * transport : transports )
-    {
-        rocketnet_server_config_t config;
-        max_clients_server_config( &config );
-        config.transport = transport;
+    rocketnet_server_config_t config;
+    max_clients_server_config( &config );
+    config.transport = "portable";
 
-        const uint64_t at_max = (uint64_t) rocketnet_server_required_memory( &config );
-        config.max_clients = 1000;
-        const uint64_t at_1000 = (uint64_t) rocketnet_server_required_memory( &config );
-        config.max_clients = 999;
-        const uint64_t at_999 = (uint64_t) rocketnet_server_required_memory( &config );
+    const uint64_t at_max = (uint64_t) rocketnet_server_required_memory( &config );
+    config.max_clients = 1000;
+    const uint64_t at_1000 = (uint64_t) rocketnet_server_required_memory( &config );
+    config.max_clients = 999;
+    const uint64_t at_999 = (uint64_t) rocketnet_server_required_memory( &config );
 
-        check( at_max > 0 && at_1000 > 0 && at_999 > 0 );
-        check( at_999 <= at_1000 && at_1000 <= at_max );
-        check( at_1000 * (uint64_t) ROCKETNET_MAX_CLIENTS <= 2 * 1000 * at_max );
-    }
+    check( at_max > 0 && at_1000 > 0 && at_999 > 0 );
+    check( at_999 <= at_1000 && at_1000 <= at_max );
+    check( at_1000 * (uint64_t) ROCKETNET_MAX_CLIENTS <= 2 * 1000 * at_max );
 }
 
 REGISTER_UNIT_TEST( test_server_plan_follows_configured_max_clients );
