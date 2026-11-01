@@ -31,6 +31,10 @@ jobs:
           sudo apt-get install -y cmake
       - name: Run
         run: make
+  distro:
+    runs-on: [self-hosted, Linux, X64, fleet, ubuntu-2404]
+    steps:
+      - run: make
 EOF
 
 # A dirty workflow: hosted label and an unguarded apt-get install.
