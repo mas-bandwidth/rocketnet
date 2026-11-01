@@ -969,29 +969,9 @@ static int live_matrix_probe_one( struct live_matrix_t * m, struct live_matrix_p
         live_matrix_flush( m );
         live_matrix_pump( m );
         live_matrix_check( live_matrix_up( m ) );
-        {
-            const uint8_t * data = NULL;
-            int bytes = 0;
-            int c = 0;
-            while ( direction == 0 ? rocketnet_message_server_receive( m->server, NULL, &c, &data, &bytes ) : rocketnet_message_client_receive( m->client, &c, &data, &bytes ) )
-            {
-                if ( !live_matrix_take_probe_copy( m, direction, c, data, bytes ) )
-                {
-                    const int result = rocketnet_live_check( &m->live, data, bytes, direction, probe->mode, probe->channel, m->cycle, -1, NULL );
-                    live_matrix_fail( m, "edge", direction, probe->mode, probe->channel, probe->sequence,
-                                      result != ROCKETNET_LIVE_OK ? rocketnet_live_result_name( result ) : "wrong-sequence", bytes );
-                }
-
-                if ( direction == 0 )
-                {
-                    rocketnet_message_server_release( m->server, data );
-                }
-                else
-                {
-                    rocketnet_message_client_release( m->client, data );
-                }
-            }
-        }
+        // Late copies can belong to any earlier probe in either direction.
+        // Drain both receive batches before the next update invalidates them.
+        live_matrix_receive( m );
         live_matrix_take_receipts( m, 0 );
         live_matrix_take_receipts( m, 1 );
     }
@@ -1090,6 +1070,7 @@ static void live_matrix_edge_probes( struct live_matrix_t * m )
         live_matrix_flush( m );
         live_matrix_pump( m );
         live_matrix_check( live_matrix_up( m ) );
+        live_matrix_receive( m );
         live_matrix_take_receipts( m, 0 );
         live_matrix_take_receipts( m, 1 );
     }
@@ -1461,7 +1442,6 @@ static void live_matrix_close( struct live_matrix_t * m )
 
     live_matrix_check( rocketnet_server_transport_state( server_transport ) == ROCKETNET_SERVER_TRANSPORT_STOPPED );
     rn_native_message_server_stop_and_destroy( m->server );
-
 }
 
 void live_message_matrix_loopback()
