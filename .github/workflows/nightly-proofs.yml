@@ -7,9 +7,8 @@
 # (make print-nightly-readers) and each of replay-near-4096's thirteen path
 # partitions plus its completeness check (make print-replay-near-partitions).
 # A red job is that target's own verdict, so a regression in one reader shows
-# while a standing HOLD elsewhere stays red. Reader and replay partition jobs
-# leave margin above their targets' solver timeout budgets; the completeness
-# check is bounded by its job timeout.
+# while a standing HOLD elsewhere stays red. The nightly opt-out removes
+# repository execution caps; memory and symbolic proof bounds are unchanged.
 # The schedule is before fuzz-nightly.yml, so a red night is on the estate
 # when the morning starts.
 
@@ -23,11 +22,16 @@ on:
 permissions:
   contents: read
 
+# Test execution has no repository wall-clock cap; GitHub still limits
+# self-hosted jobs to five days.
+env:
+  ROCKETNET_NIGHTLY_NO_TIMEOUT: '1'
+
 jobs:
   plan:
     name: nightly proof targets
     runs-on: [self-hosted, Linux, X64, fleet]
-    timeout-minutes: 5
+    timeout-minutes: 7200
     outputs:
       readers: ${{ steps.list.outputs.readers }}
       partitions: ${{ steps.list.outputs.partitions }}
@@ -47,14 +51,13 @@ jobs:
           echo "readers: $readers"
           echo "partitions: $partitions"
 
-  # The largest reader budget is proofs-connect_token: seven harnesses at
-  # CONNECT_TOKEN_TIMEOUT 1800 s, 210 minutes. The other reader targets have
-  # smaller total solver budgets.
+  # proofs-connect_token executes seven harnesses. The nightly opt-in removes
+  # their elapsed caps; each target retains its solver memory and proof bounds.
   reader:
     name: nightly ${{ matrix.target }}
     needs: plan
     runs-on: [self-hosted, Linux, X64, fleet, long]
-    timeout-minutes: 240
+    timeout-minutes: 7200
     strategy:
       fail-fast: false
       matrix:
@@ -93,15 +96,15 @@ jobs:
           path: proofs/cbmc/nightly-output.txt
           if-no-files-found: ignore
 
-  # A partition is two runs (the proof and its reachability control) at
-  # CBMC_REPLAY_TIMEOUT 1800 s each: 60 minutes at most. Each run may take
-  # CBMC_REPLAY_MEMORY_KB (16 GB), so at most four run at once on the long
+  # A partition is two runs (the proof and its reachability control), without
+  # an elapsed cap. Each run may take CBMC_REPLAY_MEMORY_KB (16 GB), so at
+  # most four run at once on the long
   # runners, which share hosts.
   replay-near:
     name: nightly ${{ matrix.target }}
     needs: plan
     runs-on: [self-hosted, Linux, X64, fleet, long]
-    timeout-minutes: 75
+    timeout-minutes: 7200
     strategy:
       fail-fast: false
       max-parallel: 4

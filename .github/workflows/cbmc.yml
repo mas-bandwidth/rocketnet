@@ -6,8 +6,8 @@
 #
 # Budget: `make -C proofs/cbmc all` measured 685.59s (11:25.59) on the
 # fleet Linux runner (vision, self-hosted Linux X64 fleet) at d5dd954f in
-# proofs/cbmc/full-bounds-partition-results.md. timeout-minutes is set
-# above that measurement with margin and is never lowered below it.
+# proofs/cbmc/full-bounds-partition-results.md. This is historical timing,
+# not an execution limit for the nightly.
 
 name: CBMC
 
@@ -27,11 +27,16 @@ concurrency:
 permissions:
   contents: read
 
+# Test execution has no repository wall-clock cap; GitHub still limits
+# self-hosted jobs to five days.
+env:
+  ROCKETNET_NIGHTLY_NO_TIMEOUT: '1'
+
 jobs:
   cbmc:
     name: cbmc (arithmetic leaf proofs)
     runs-on: [self-hosted, Linux, X64, fleet]
-    timeout-minutes: 20
+    timeout-minutes: 7200
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 

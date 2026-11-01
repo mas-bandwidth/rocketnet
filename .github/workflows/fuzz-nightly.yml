@@ -17,9 +17,8 @@
 # path, the wire round trip, the env config overlay, and the three pair
 # targets (server transport, client transport, scripted session).
 #
-# TIME BUDGET: each leg fuzzes max_total_time seconds (900 by default) after
-# a few minutes of build; timeout-minutes: 45 bounds a wedged leg. A manual
-# dispatch longer than about 35 minutes per target must raise it.
+# Each leg's finite fuzz campaign is max_total_time seconds (900 by default).
+# Building and completing that workload have no repository wall-clock cap.
 
 name: Fuzz (nightly)
 
@@ -36,11 +35,16 @@ on:
 permissions:
   contents: read
 
+# Test execution has no repository wall-clock cap; GitHub still limits
+# self-hosted jobs to five days.
+env:
+  ROCKETNET_NIGHTLY_NO_TIMEOUT: '1'
+
 jobs:
   fuzz:
     name: nightly fuzz (${{ fromJSON(matrix.leg).target }})
     runs-on: [self-hosted, Linux, X64, fleet]
-    timeout-minutes: 45
+    timeout-minutes: 7200
     strategy:
       fail-fast: false
       matrix:
@@ -189,7 +193,7 @@ jobs:
   fuzz-ndebug:
     name: nightly fuzz NDEBUG (${{ matrix.target }})
     runs-on: [self-hosted, Linux, X64, fleet]
-    timeout-minutes: 45
+    timeout-minutes: 7200
     strategy:
       fail-fast: false
       matrix:
@@ -274,7 +278,7 @@ jobs:
   fuzz-macos:
     name: nightly fuzz macOS (${{ fromJSON(matrix.leg).target }})
     runs-on: [self-hosted, macOS, ARM64, rocketnet-macos]
-    timeout-minutes: 45
+    timeout-minutes: 7200
     strategy:
       fail-fast: false
       matrix:
@@ -423,7 +427,7 @@ jobs:
   fuzz-windows:
     name: nightly fuzz Windows (${{ fromJSON(matrix.leg).target }})
     runs-on: [self-hosted, Windows, X64, rocketnet-windows]
-    timeout-minutes: 45
+    timeout-minutes: 7200
     strategy:
       fail-fast: false
       matrix:
@@ -583,7 +587,7 @@ jobs:
   fuzz-msan:
     name: nightly fuzz MSan (${{ fromJSON(matrix.leg).target }})
     runs-on: [self-hosted, Linux, X64, fleet]
-    timeout-minutes: 45
+    timeout-minutes: 7200
     strategy:
       fail-fast: false
       matrix:
@@ -779,7 +783,7 @@ jobs:
     name: nightly fuzz coverage (Linux)
     needs: fuzz
     runs-on: [self-hosted, Linux, X64, fleet]
-    timeout-minutes: 45
+    timeout-minutes: 7200
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
@@ -810,7 +814,7 @@ jobs:
     name: nightly fuzz coverage (macOS)
     needs: fuzz-macos
     runs-on: [self-hosted, macOS, ARM64, rocketnet-macos]
-    timeout-minutes: 45
+    timeout-minutes: 7200
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0

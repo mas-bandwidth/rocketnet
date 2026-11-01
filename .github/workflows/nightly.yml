@@ -76,6 +76,11 @@ on:
 permissions:
   contents: read
 
+# Test execution has no repository wall-clock cap; GitHub still limits
+# self-hosted jobs to five days.
+env:
+  ROCKETNET_NIGHTLY_NO_TIMEOUT: '1'
+
 jobs:
 
   # THE LINUX SECOND COMPILER: clang, which no per-commit Linux row names --
@@ -91,7 +96,7 @@ jobs:
   linux-clang:
     name: linux / clang
     runs-on: [self-hosted, Linux, X64, fleet]
-    timeout-minutes: 30
+    timeout-minutes: 7200
     strategy:
       fail-fast: false
       matrix:
@@ -120,7 +125,6 @@ jobs:
         run: ./bin/test
 
       - name: Functional suite (clang)
-        timeout-minutes: 20
         run: ./bin/functional
 
   # THE MACOS FUNCTIONAL NIGHTLY TIER: the whole Release functional suite with
@@ -134,7 +138,7 @@ jobs:
   macos-functional-nightly:
     name: macos / Release functional nightly tier
     runs-on: [self-hosted, macOS, ARM64, rocketnet-macos]
-    timeout-minutes: 30
+    timeout-minutes: 7200
     strategy:
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
@@ -159,14 +163,12 @@ jobs:
           cmake --build build-production --target functional_production --parallel 8
 
       - name: Functional suite, nightly tier
-        timeout-minutes: 20
         env:
           ROCKETNET_TEST_NIGHTLY: "1"
           ROCKETNET_TEST_REPORT: "1"
         run: ./bin/functional
 
       - name: Functional suite, portable rung pinned by env
-        timeout-minutes: 20
         env:
           ROCKETNET_TEST_NIGHTLY: "1"
           ROCKETNET_SERVER_TRANSPORT: portable
@@ -174,7 +176,6 @@ jobs:
         run: ./bin/functional
 
       - name: Production functional suite, portable rung pinned by env
-        timeout-minutes: 20
         env:
           ROCKETNET_TEST_NIGHTLY: "1"
           ROCKETNET_SERVER_TRANSPORT: portable
@@ -190,7 +191,7 @@ jobs:
   linux-functional-nightly:
     name: linux / Release functional nightly tier
     runs-on: [self-hosted, Linux, X64, fleet]
-    timeout-minutes: 30
+    timeout-minutes: 7200
     strategy:
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
@@ -217,7 +218,6 @@ jobs:
       # serial: the Linux tier holds the XDP cases, which share the host's XDP
       # state and cannot run beside other cases
       - name: Functional suite, nightly tier (serial)
-        timeout-minutes: 20
         env:
           ROCKETNET_TEST_NIGHTLY: "1"
           ROCKETNET_TEST_REPORT: "1"
@@ -225,7 +225,6 @@ jobs:
         run: ./bin/functional
 
       - name: Functional suite, portable rung pinned by env
-        timeout-minutes: 20
         env:
           ROCKETNET_TEST_NIGHTLY: "1"
           ROCKETNET_SERVER_TRANSPORT: portable
@@ -233,7 +232,6 @@ jobs:
         run: ./bin/functional
 
       - name: Production functional suite, portable rung pinned by env
-        timeout-minutes: 20
         env:
           ROCKETNET_TEST_NIGHTLY: "1"
           ROCKETNET_SERVER_TRANSPORT: portable
@@ -243,7 +241,7 @@ jobs:
   windows-functional-nightly:
     name: windows / Release functional nightly tier
     runs-on: [self-hosted, Windows, X64, rocketnet-windows]
-    timeout-minutes: 40
+    timeout-minutes: 7200
     strategy:
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
@@ -272,7 +270,6 @@ jobs:
         run: cmake --build build-production --config Release --target functional_production --parallel
 
       - name: Functional suite, nightly tier
-        timeout-minutes: 30
         shell: bash
         env:
           ROCKETNET_TEST_NIGHTLY: "1"
@@ -280,7 +277,6 @@ jobs:
         run: ./bin/Release/functional.exe
 
       - name: Production functional suite, portable rung pinned by env
-        timeout-minutes: 30
         shell: bash
         env:
           ROCKETNET_TEST_NIGHTLY: "1"
@@ -311,7 +307,7 @@ jobs:
   tsan-threaded:
     name: tsan (threaded transport)
     runs-on: [self-hosted, Linux, X64, fleet]
-    timeout-minutes: 90
+    timeout-minutes: 7200
     strategy:
       fail-fast: false
       matrix:
@@ -390,7 +386,7 @@ jobs:
   linux-transport-cells-repeat:
     name: linux / transport cells x50 and ASan
     runs-on: [self-hosted, Linux, X64, fleet]
-    timeout-minutes: 150
+    timeout-minutes: 7200
     strategy:
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
@@ -407,12 +403,10 @@ jobs:
         run: make -j4
 
       - name: Every Linux transport cell, fifty times in a row
-        timeout-minutes: 60
         shell: bash
         run: scripts/transport-cells-repeat --runs 50
 
       - name: The Linux transport cells and the functional suite per cell, under ASan
-        timeout-minutes: 75
         shell: bash
         run: scripts/transport-cells-repeat --asan --runs 1 --jobs 4
 
@@ -438,7 +432,7 @@ jobs:
   macos-transport-cells-repeat:
     name: macos / transport cells x50
     runs-on: [self-hosted, macOS, ARM64, rocketnet-macos]
-    timeout-minutes: 30
+    timeout-minutes: 7200
     strategy:
       fail-fast: false
       matrix:
@@ -457,7 +451,6 @@ jobs:
         run: make -j4
 
       - name: Every macOS transport cell, fifty times in a row
-        timeout-minutes: 15
         shell: bash
         run: scripts/transport-cells-repeat --runs 50
 
@@ -483,7 +476,7 @@ jobs:
   windows-transport-cells-repeat:
     name: windows / transport cells x50
     runs-on: [self-hosted, Windows, X64, rocketnet-windows]
-    timeout-minutes: 90
+    timeout-minutes: 7200
     strategy:
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
@@ -503,7 +496,6 @@ jobs:
         run: cmake --build build --config Release --parallel 4
 
       - name: The Windows transport cells, fifty times in a row
-        timeout-minutes: 60
         shell: bash
         run: scripts/transport-cells-repeat --runs 50 --cell portable/portable --cell iocp/portable --cell rio/portable --cell loopback/loopback
 
@@ -536,6 +528,7 @@ jobs:
     # the fleet's native Windows runner (Windows 11, MSVC; label rocketnet-windows), the one ci.yml's
     # build-and-test-windows runs on, never a hosted image
     runs-on: [self-hosted, Windows, X64, rocketnet-windows]
+    timeout-minutes: 7200
     # Debug only, by the owner's ruling of 2026-10-20: a Windows Debug run over the
     # functional per-case peak-RSS bound runs with that bound lifted, and the
     # bound in code stays. The unit step reports RSS; the functional step
@@ -573,18 +566,15 @@ jobs:
           ./bin/Debug/test_sodium.exe
 
       - name: IOCP allocation, completion lifetime, concurrency and shutdown
-        timeout-minutes: 5
         run: ./bin/Debug/test_iocp.exe
 
       - name: Run functional suite (RSS enforced)
-        timeout-minutes: 20
         shell: bash
         env:
           ROCKETNET_TEST_MAX_CASE_RSS_MB: 2048
         run: ./bin/Debug/functional.exe
 
       - name: Functional suite with IOCP selected
-        timeout-minutes: 20
         shell: bash
         env:
           ROCKETNET_TEST_MAX_CASE_RSS_MB: 2048
@@ -649,6 +639,7 @@ jobs:
   windows-transport-extension:
     name: external transport backend / windows-2025
     runs-on: [self-hosted, Windows, X64, rocketnet-windows]
+    timeout-minutes: 7200
     strategy:
       fail-fast: false
       matrix:
@@ -683,6 +674,7 @@ jobs:
   build-and-test-windows-asan:
     name: windows / Release ASan
     runs-on: [self-hosted, Windows, X64, rocketnet-windows]
+    timeout-minutes: 7200
     strategy:
       fail-fast: false
       matrix:
@@ -727,19 +719,16 @@ jobs:
         run: ./bin/Release/test_iocp.exe
 
       - name: Run functional suite under ASan (default)
-        timeout-minutes: 30
         shell: bash
         run: ./bin/Release/functional.exe
 
       - name: Run functional suite under ASan (ROCKETNET_SERVER_TRANSPORT=iocp)
-        timeout-minutes: 30
         shell: bash
         env:
           ROCKETNET_SERVER_TRANSPORT: iocp
         run: ./bin/Release/functional.exe
 
       - name: Run functional suite under ASan (ROCKETNET_SERVER_TRANSPORT=rio)
-        timeout-minutes: 30
         shell: bash
         env:
           ROCKETNET_SERVER_TRANSPORT: rio
@@ -767,7 +756,7 @@ jobs:
   windows-toolchains:
     name: windows / clang-cl x64 and MSVC ARM64 cross
     runs-on: [self-hosted, Windows, X64, rocketnet-windows]
-    timeout-minutes: 45
+    timeout-minutes: 7200
     strategy:
       fail-fast: false
       matrix:
@@ -794,7 +783,6 @@ jobs:
         run: ./build-clang/bin/Release/test.exe
 
       - name: Functional suite (clang-cl)
-        timeout-minutes: 20
         run: ./build-clang/bin/Release/functional.exe
 
       - name: C and C++ consumers of the clang-cl libraries

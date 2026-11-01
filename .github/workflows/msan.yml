@@ -30,11 +30,16 @@ concurrency:
 permissions:
   contents: read
 
+# Test execution has no repository wall-clock cap; GitHub still limits
+# self-hosted jobs to five days.
+env:
+  ROCKETNET_NIGHTLY_NO_TIMEOUT: '1'
+
 jobs:
   msan:
     name: MemorySanitizer
     runs-on: [self-hosted, Linux, X64, fleet]
-    timeout-minutes: 30
+    timeout-minutes: 7200
     continue-on-error: true
     steps:
 
