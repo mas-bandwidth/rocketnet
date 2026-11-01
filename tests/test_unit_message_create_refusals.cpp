@@ -127,8 +127,9 @@ static void test_message_server_create_refuses_budget_and_config()
 // positive budget over a config field of 0, makes its object in a block of
 // exactly the bytes required_memory reported for that budget, and refuses a
 // block of the config field's size before its transport opens (allocating
-// nothing). The transports are loopback: no socket opens. The client create
-// that succeeds runs in development builds only (see below). Mutation that must
+// nothing). The server transport is loopback: no socket opens. The client
+// create that succeeds starts its transport, so it is the functional case
+// test_message_client_create_takes_the_create_budget. Mutation that must
 // bite: size with the config's field alone, whatever the create's budget; the
 // checks on required_memory's answer go red.
 // ---------------------------------------------------------------------------
@@ -225,17 +226,6 @@ static void test_message_required_memory_takes_the_create_budget()
         check( status == ROCKETNET_STATUS_OUT_OF_MEMORY );
         check( mcr_mallocs == client_before );
 
-        // the client create that succeeds is development-only: a production
-        // client ignores step_driven (its transport starts a network thread)
-        // and probes IPv6 with a real socket, which a unit test never does
-
-#if ROCKETNET_DEV
-        rocketnet_message_client_t * client = rocketnet_message_client_create( NULL, token, &client_config, &config, client_block, client_at_create, create_kbps );
-        check( client != NULL );
-        check( (void *) client == client_block );
-
-        rn_test_message_client_stop_and_destroy( client );
-#endif // #if ROCKETNET_DEV
         rn_test_message_server_stop_and_destroy( server );
     }
 
