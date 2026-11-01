@@ -112,6 +112,14 @@ buffers, the budget, maximal draining and absence of a main wait state. It
 makes no fairness or bounded-latency claim about eventual successful try-locks.
 The existing threaded receive model retains its wake/liveness checks.
 
+`MCRNBufferHandoffBaseThreeBuffers.cfg` adds a matched healthy three-buffer
+instance for `BrokenDeferred` (`OneOwner`) and `BrokenSingleTake`
+(`MaximalDrain`). It differs from the four-buffer healthy configuration only
+in `N`; both keep all ten invariants and the same capacity, item count,
+packet weight and packet budget. Each of those two three-buffer witnesses
+then changes only its named defect switch. The four-buffer control remains
+part of the declared suite.
+
 The `rnbufferhandoffbase` records use the same pinned runner and TLC JAR as CI.
 Reversed controls restore one defect each: `BaseBrokenSingleTake` leaves a
 second fitting READY buffer behind (`MaximalDrain`); `BaseBrokenBudget` takes

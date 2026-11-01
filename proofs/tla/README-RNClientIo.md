@@ -6,17 +6,16 @@ is separately modeled in [RNClientIoShutdown](README-RNClientIoShutdown.md).
 That additive ownership model is not a proved refinement of this one; existing
 data-path/session checks do not establish the new shutdown implementation.
 
-The client transport with its socket I/O on one I/O thread, as
-`docs/CLIENT-IO.md` designs it. The design replaces code in
-`sdk/rocketnet_client_transport.cpp` at the base of the design: the payload
-ring filled by `rocketnet_client_transport_start_packet` (line 697), the
-per-packet send walk of `rocketnet_client_transport_send_packets` (line 987,
-the walk at lines 1001-1017), which `rocketnet_client_transport_send_packet`
-calls after every packet, the receive thread (created at line 407, its loop
-at line 1275, the 1 ms sleep at line 1283), and the receive buffers swapped
-under a mutex by `rocketnet_client_update_swap_receive_buffers` (line 515)
-and filled by `rocketnet_client_receive_packets` (line 1234). No code
-implements the design yet; `proofs/tla/COVERAGE.tsv` marks the machine owed.
+The client I/O core is implemented in `sdk/rocketnet_client_io.h`:
+`rocketnet_client_io_init`, `rocketnet_client_io_hand_off`,
+`rocketnet_client_io_expose`, `rocketnet_client_io_return` and
+`rocketnet_client_io_step`. `proofs/tla/COVERAGE.tsv` maps the retained
+actions to that source. This model preserves the earlier two-send-ring and
+two-receive-buffer design; the current N-buffer ownership exchange is
+modeled separately by [RNBufferHandoff](README-RNBufferHandoff.md).
+[Client I/O](../../docs/CLIENT-IO.md) describes the current implementation.
+The historical traces below that refer to "the code at the base" describe
+the implementation before send offload, not today's source.
 
 - **The two send rings.** Game threads write slots of the ring that is
   Filling (`Write`, then `Commit`). A hand-off (`send_packets`, `send_packet`
@@ -392,11 +391,16 @@ minutes on a 16-core bench), outside the budget, so it has no row in
 `RUNS.tsv`.
 
 The reversed witness, `MCRNClientIoBrokenStepStartsThread.cfg`, sets
-`StepModeStartsThread = TRUE`: create starts the thread in step mode too, and
-TLC names `NoIoThreadActionInStepMode` once a datagram arrives and the thread
-can receive it. With the invariant cut to its `lastExec` conjunct alone it
-still fails (exit 12), so the witness is caught by a step the thread takes,
-not by the flag. Two planted defects confirm that the step-mode liveness
-checks are not vacuous: a receive that is only weakly fair, a `StepEnd` that
+`StepModeStartsThread = TRUE` and `MaxDatagrams = 0`: create starts the
+thread in step mode too, but `Arrive` is disabled throughout this instance.
+`NoIoThreadActionInStepMode` forbids both an enabled I/O-thread action and
+a core action previously taken by that thread. The refreshed trace takes
+`OnMain(Disconnect)` from `Init`: ring A is handed off and the wake is set,
+while `arrived = 0` and `lastExec = "none"`. The enabled-action conjunct
+fails before any I/O-thread action, without receiving a datagram.
+The separately reported experiment checking only the `lastExec` conjunct
+(exit 12) is historical, not the committed configuration's oracle.
+The historical planted defects below exercise the step-mode liveness
+checks: a receive that is only weakly fair, a `StepEnd` that
 may return with the ring it took unsent, and an unfair `StepBegin` (no update
 calls) each fail the temporal properties (exit 13).

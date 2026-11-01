@@ -29,6 +29,7 @@ CITATION_SCAN_FILES = (
     "sdk/rocketnet_server_uring_linux.cpp",
     "sdk/rocketnet_server_uring.h",
     "sdk/rocketnet_replay.h",
+    "proofs/tla/COVERAGE.tsv",
     "proofs/tla/ReplayWindow.tla",
     "proofs/tla/MCReplayWindow.tla",
     "proofs/tla/ServerSession.tla",
@@ -182,12 +183,14 @@ def iter_rows():
     if not lines:
         return
     header = lines[0].split("\t")
-    for line in lines[1:]:
+    for line_no, line in enumerate(lines[1:], start=2):
         if not line.strip():
             continue
         parts = line.split("\t")
-        if len(parts) < len(header):
-            continue
+        if len(parts) != len(header):
+            raise ValueError(
+                f"proofs/tla/COVERAGE.tsv:{line_no}: expected {len(header)} columns, "
+                f"found {len(parts)}")
         yield dict(zip(header, parts))
 
 
@@ -709,7 +712,12 @@ def main():
                         help="exit 1 while uncited actions remain")
     args = parser.parse_args()
 
-    rows = list(iter_rows())
+    try:
+        rows = list(iter_rows())
+    except ValueError as error:
+        print(error)
+        print("COVERAGE FAIL 1")
+        return 1
     failures = []
     dst_names = dst_check_names()
     for row in rows:

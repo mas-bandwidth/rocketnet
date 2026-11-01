@@ -551,7 +551,7 @@ ServerRecvRequest(p) ==
                  /\ CASE FreeSlots = 0 ->
                            /\ ServerSendPacket([type |-> "denied", to |-> p.from, salt |-> p.salt, nonce |-> 0])
                            /\ UNCHANGED smap
-                           /\ churnDenied' = (churnDenied \/ (fresh /\ (FreeSlots > 0)))
+                           /\ UNCHANGED churnDenied
                       [] NumMappings = MapCap ->
                            ServerSilent /\ UNCHANGED <<smap, churnDenied>>
                        [] OTHER ->
@@ -589,7 +589,7 @@ ServerRecvResponse(p) ==
                         /\ smap' = [smap EXCEPT ![a] = m1]
                         /\ bound' = bound1
                         /\ ServerSendPacket([type |-> "denied", to |-> p.from, salt |-> m.salt, nonce |-> m.nonce])
-                        /\ churnDenied' = (churnDenied \/ (Fresh(m.tok) /\ (FreeSlots > 0)))
+                        /\ UNCHANGED churnDenied
                         /\ UNCHANGED slot
                    [] OTHER ->
                         LET i == LowestFree IN
