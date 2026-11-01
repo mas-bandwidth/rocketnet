@@ -242,6 +242,12 @@ run_socket_cell() { # server client
 # the xdp cell, exactly as the matrix step runs it: one guest per run, the
 # cases as root inside it, the host never touched
 run_xdp_cell() { # server client
+    local timeout_command=(timeout 120)
+    local nightly_no_timeout=0
+    if [ "${ROCKETNET_NIGHTLY_NO_TIMEOUT:-}" = 1 ]; then
+        timeout_command=()
+        nightly_no_timeout=1
+    fi
     vm_kernel="$HOME/vm-kernels/vmlinuz-$(uname -r)"
     run=1
     while [ "$run" -le "$runs" ]; do
@@ -252,8 +258,8 @@ run_xdp_cell() { # server client
                 record "$1" "$2" "$case" "$run" 1 "$prefix.$case.log"
             done
         else
-            timeout 120 vng --run "$vm_kernel" --memory 1536M --cpus 2 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir "$PWD" -- \
-                sh -c 'for case in '"$xdp_cases"'; do sudo '"$functional"' --run "$case" > "'"$prefix"'.$case.log" 2>&1; echo $? > "'"$prefix"'.$case.rc"; done' \
+            ${timeout_command[@]+"${timeout_command[@]}"} vng --run "$vm_kernel" --memory 1536M --cpus 2 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir "$PWD" -- \
+                sh -c 'for case in '"$xdp_cases"'; do sudo env ROCKETNET_NIGHTLY_NO_TIMEOUT='"$nightly_no_timeout"' '"$functional"' --run "$case" > "'"$prefix"'.$case.log" 2>&1; echo $? > "'"$prefix"'.$case.rc"; done' \
                 > "$prefix.vm.log" 2>&1
             for case in $xdp_cases; do
                 if [ -f "$prefix.$case.rc" ]; then

@@ -135,6 +135,10 @@ fi
 
 # the bound past the run itself: soak's teardown, plus the guest's boot for xdp
 TIMEOUT=$(( SECONDS_PER_CELL + 120 ))
+TIMEOUT_COMMAND=(timeout "$TIMEOUT")
+if [ "${ROCKETNET_NIGHTLY_NO_TIMEOUT:-}" = 1 ]; then
+    TIMEOUT_COMMAND=()
+fi
 
 failures=0
 
@@ -185,7 +189,7 @@ run_host_cell()
     local cell=$1 want=$2
     shift 2
     local log="$LOG_DIR/$cell.log"
-    env "$@" "${IMPAIRMENT[@]}" timeout "$TIMEOUT" "$SOAK" --seconds "$SECONDS_PER_CELL" --assert-flat > "$log" 2>&1
+    env "$@" "${IMPAIRMENT[@]}" ${TIMEOUT_COMMAND[@]+"${TIMEOUT_COMMAND[@]}"} "$SOAK" --seconds "$SECONDS_PER_CELL" --assert-flat > "$log" 2>&1
     judge "$cell" "$want" "$log" $?
 }
 
@@ -228,8 +232,8 @@ run_xdp_cell()
     # vng from a short directory: its virtiofs socket path must stay under 108 bytes
     local short
     short=$(mktemp -d /tmp/rnsoak.XXXXXX)
-    ( cd "$short" && timeout "$TIMEOUT" vng --run "$vm_kernel" --memory "$XDP_MEMORY" --cpus 16 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir "$LOG_DIR" -- \
-        sudo sh "$guest/run.sh" ) > "$guest/vm.log" 2>&1 || echo "vng exit=$? (124 is the $TIMEOUT s timeout)" >> "$guest/vm.log"
+    ( cd "$short" && ${TIMEOUT_COMMAND[@]+"${TIMEOUT_COMMAND[@]}"} vng --run "$vm_kernel" --memory "$XDP_MEMORY" --cpus 16 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir "$LOG_DIR" -- \
+        sudo sh "$guest/run.sh" ) > "$guest/vm.log" 2>&1 || echo "vng exit=$? (execution watchdog: ${TIMEOUT_COMMAND[*]:-disabled})" >> "$guest/vm.log"
     rmdir "$short" 2>/dev/null
     local status
     status=$(sed -nE 's/^guest soak exit=([0-9]+)$/\1/p' "$guest/status" 2>/dev/null | tail -n 1)

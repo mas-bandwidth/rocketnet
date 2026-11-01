@@ -29,6 +29,8 @@ import subprocess
 import sys
 import tempfile
 
+from nightly_timeout import execution_timeout
+
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = Path(__file__).resolve()
 
@@ -259,7 +261,7 @@ def compile_and_run(language, linkage, source, link_library, staging_library, bu
                 return
         try:
             run = subprocess.run([str(executable)], capture_output=True, text=True,
-                                 cwd=directory, env=environment, timeout=30)
+                                 cwd=directory, env=environment, timeout=execution_timeout(30))
         except subprocess.TimeoutExpired:
             report(False, f"{language} client against the {linkage} library runs in five seconds (wall clock exceeded)")
             return

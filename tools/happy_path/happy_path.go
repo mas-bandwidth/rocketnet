@@ -11,6 +11,7 @@
 // HAPPY_PATH_BREAK=client-skip-mode-<n> makes the client omit one send. It
 // exists only to prove this tool's failing path; a normal run does not set it.
 // HAPPY_PATH_DEADLINE_SECONDS overrides the tool's hard deadline (default 60).
+// ROCKETNET_NIGHTLY_NO_TIMEOUT=1 disables only that harness execution deadline.
 //
 // The two binary names are constants below. When the examples' message-sending
 // examples land, point these two constants at the example binaries so this
@@ -117,6 +118,13 @@ func formatSeconds(seconds float64) string {
 	return strconv.FormatFloat(seconds, 'g', -1, 64)
 }
 
+func executionDeadline(seconds float64) time.Time {
+	if os.Getenv("ROCKETNET_NIGHTLY_NO_TIMEOUT") == "1" {
+		return time.Time{}
+	}
+	return time.Now().Add(time.Duration(seconds * float64(time.Second)))
+}
+
 func deadlineError(seconds float64, stage string) error {
 	return fmt.Errorf("deadline of %s seconds exceeded at stage %s", formatSeconds(seconds), stage)
 }
@@ -160,7 +168,7 @@ func waitForLine(c *child, want string, deadline time.Time, seconds float64, sta
 			}
 			return fmt.Errorf("%s: %s exited before %s (exit code %d)", stage, c.name, what, c.exitCode())
 		}
-		if !time.Now().Before(deadline) {
+		if !deadline.IsZero() && !time.Now().Before(deadline) {
 			return deadlineError(seconds, stage)
 		}
 		time.Sleep(10 * time.Millisecond)
@@ -172,7 +180,7 @@ func waitForExit(c *child, deadline time.Time, seconds float64, stage string) er
 		if c.exited() {
 			return nil
 		}
-		if !time.Now().Before(deadline) {
+		if !deadline.IsZero() && !time.Now().Before(deadline) {
 			return deadlineError(seconds, stage)
 		}
 		time.Sleep(10 * time.Millisecond)
@@ -247,7 +255,7 @@ func run() int {
 		}
 		seconds = parsed
 	}
-	deadline := time.Now().Add(time.Duration(seconds * float64(time.Second)))
+	deadline := executionDeadline(seconds)
 
 	var children []*child
 	defer func() {

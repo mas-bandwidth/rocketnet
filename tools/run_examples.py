@@ -13,7 +13,8 @@ lines). The second form is needed because the server's stdout is a pipe and
 the C library buffers it, so that line arrives only when the buffer is
 flushed. A server that exits before it is ready because it could not bind
 ("FAIL: server != NULL") has lost its port and is retried on a new one, at
-most three tries; one not ready within READY_SECONDS fails.
+most three tries; unless ROCKETNET_NIGHTLY_NO_TIMEOUT=1, one not ready
+within READY_SECONDS fails.
 Every example that runs alone also runs in its own fresh temporary working
 directory, so files it writes (example_soak writes soak-results.tsv) never
 collide between two runs.
@@ -27,7 +28,8 @@ script.
 The backend pair (example_backend_server and example_backend_client) is not
 run here: its client takes a token from a backend in examples/backend/, so
 tools/run_backend_examples.py runs it with each backend between the two.
-Each process gets a 120-second timeout and must exit 0 with PASS as its last
+Unless ROCKETNET_NIGHTLY_NO_TIMEOUT=1, each process gets a 120-second timeout
+and startup gets READY_SECONDS. Every process must exit 0 with PASS as its last
 line. Prints one PASS example_<name> line per example; exits 1 on a failure.
 Some examples then run again in another mode (EXTRA_RUNS), each with an
 exit status and a line its output must hold: example_client_server_client
@@ -52,6 +54,8 @@ import tempfile
 import threading
 import time
 from pathlib import Path
+
+from nightly_timeout import execution_timeout, no_execution_timeout
 
 ROOT = Path(__file__).resolve().parents[1]
 EXAMPLES = ROOT / "examples"
@@ -152,7 +156,7 @@ def run_single(name, binary, args=None, environment=None, odd_path=False, no_dri
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            timeout=TIMEOUT_SECONDS,
+            timeout=execution_timeout(TIMEOUT_SECONDS),
             cwd=workdir,
             env=child_environment,
         )
@@ -230,7 +234,7 @@ def keys_written(base, output, workdir):
 
 def wait_server_ready(base, server, server_out, workdir):
     deadline = time.monotonic() + READY_SECONDS
-    while time.monotonic() < deadline:
+    while no_execution_timeout() or time.monotonic() < deadline:
         if keys_written(base, server_out, workdir):
             return "ready"
         if server.poll() is not None:
@@ -296,7 +300,7 @@ def run_pair_once(base, server_binary, client_binary, port, workdir, client_args
     )
 
     try:
-        client_out, client_err = client.communicate(timeout=TIMEOUT_SECONDS)
+        client_out, client_err = client.communicate(timeout=execution_timeout(TIMEOUT_SECONDS))
     except subprocess.TimeoutExpired:
         kill(client)
         stop(server)
@@ -313,7 +317,7 @@ def run_pair_once(base, server_binary, client_binary, port, workdir, client_args
         return failure(base, f"client exited {client.returncode}\n{client_out}{client_err}")
 
     try:
-        server.wait(timeout=TIMEOUT_SECONDS)
+        server.wait(timeout=execution_timeout(TIMEOUT_SECONDS))
     except subprocess.TimeoutExpired:
         stop(server)
         return failure(base, f"server timed out after {TIMEOUT_SECONDS}s")

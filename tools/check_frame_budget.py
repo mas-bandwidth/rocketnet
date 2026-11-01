@@ -22,6 +22,8 @@ import subprocess
 import sys
 from typing import Callable, List, Optional, Tuple
 
+from nightly_timeout import execution_timeout
+
 GATE_US = 100.0
 DEFAULT_RUNS = 3
 PACKETS_PER_FRAME = 32
@@ -167,7 +169,7 @@ def run_benchmark_with_load_checks(
             [bin_path, drv, str(PACKETS_PER_FRAME), str(FRAMES)],
             capture_output=True,
             text=True,
-            timeout=300,
+            timeout=execution_timeout(300),
         )
         return proc.returncode, proc.stdout, proc.stderr
 

@@ -24,7 +24,8 @@ This is the functional tier: it uses sockets and the wall clock. The unit
 tests of the backends are `go test` in examples/backend/go and
 `dotnet run --project Tests` in examples/backend/csharp. Each backend is
 built before it runs, so the timing below is the run, not the compile.
-Every process gets a 60-second timeout; the whole run takes seconds.
+Every process gets a 60-second timeout and startup gets READY_SECONDS unless
+ROCKETNET_NIGHTLY_NO_TIMEOUT=1. Per-request and termination cleanup waits stay bounded.
 
     python3 tools/run_backend_examples.py --build build [--backend go|csharp]
 """
@@ -42,6 +43,8 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+
+from nightly_timeout import execution_timeout, no_execution_timeout
 
 ROOT = Path(__file__).resolve().parents[1]
 BACKEND = ROOT / "examples" / "backend"
@@ -95,17 +98,17 @@ def build_backend(name, outdir):
     """Builds one backend and returns the command line that runs it."""
     if name == "go":
         binary = outdir / ("rocketnet-backend-go" + (".exe" if os.name == "nt" else ""))
-        subprocess.run(["go", "build", "-o", str(binary), "."], cwd=BACKEND / "go", check=True, timeout=TIMEOUT_SECONDS)
+        subprocess.run(["go", "build", "-o", str(binary), "."], cwd=BACKEND / "go", check=True, timeout=execution_timeout(TIMEOUT_SECONDS))
         return [str(binary)]
     output = outdir / "csharp"
     subprocess.run(["dotnet", "build", "Backend", "-c", "Release", "-o", str(output), "--nologo", "-v", "q"],
-                   cwd=BACKEND / "csharp", check=True, timeout=TIMEOUT_SECONDS, stdout=subprocess.DEVNULL)
+                   cwd=BACKEND / "csharp", check=True, timeout=execution_timeout(TIMEOUT_SECONDS), stdout=subprocess.DEVNULL)
     return ["dotnet", str(output / "rocketnet-backend.dll")]
 
 
 def generate_keys(name, command):
     generated = subprocess.run(command + ["--keygen"], env=backend_environment({}),
-                               capture_output=True, text=True, timeout=TIMEOUT_SECONDS)
+                               capture_output=True, text=True, timeout=execution_timeout(TIMEOUT_SECONDS))
     if generated.returncode != 0:
         fail(f"backend_{name}_keygen", f"keygen exited {generated.returncode}")
         return None
@@ -132,11 +135,11 @@ def check_token(name, command, check_binary, keys):
         "ROCKETNET_BACKEND_SERVER_ADDRESSES": "127.0.0.1:40000,[::1]:40000",
         "ROCKETNET_BACKEND_PRIVATE_KEY": keys["ROCKETNET_BACKEND_PRIVATE_KEY"],
     })
-    minted = subprocess.run(command + ["--mint", str(CLIENT_ID)], env=env, capture_output=True, text=True, timeout=TIMEOUT_SECONDS)
+    minted = subprocess.run(command + ["--mint", str(CLIENT_ID)], env=env, capture_output=True, text=True, timeout=execution_timeout(TIMEOUT_SECONDS))
     if minted.returncode != 0:
         return fail(label, f"mint exited {minted.returncode}\n{minted.stdout}{minted.stderr}")
     checked = subprocess.run([str(check_binary), str(CLIENT_ID), PROTOCOL_ID, keys["ROCKETNET_SERVER_BACKEND_PUBLIC_KEY"]], input=minted.stdout,
-                             capture_output=True, text=True, timeout=TIMEOUT_SECONDS)
+                             capture_output=True, text=True, timeout=execution_timeout(TIMEOUT_SECONDS))
     if checked.returncode != 0 or last_line(checked.stdout) != "PASS":
         return fail(label, f"backend_check_token exited {checked.returncode}\n{checked.stdout}{checked.stderr}")
     return True
@@ -153,7 +156,7 @@ def stop(process):
 
 def wait_for(condition, process, seconds):
     deadline = time.monotonic() + seconds
-    while time.monotonic() < deadline:
+    while no_execution_timeout() or time.monotonic() < deadline:
         value = condition()
         if value:
             return value
@@ -238,11 +241,11 @@ def end_to_end(name, command, server_binary, client_binary, keys, production):
             out, _ = stop(backend)
             return fail(label, f"backend served no token\n{out}")
 
-        client = subprocess.run([str(client_binary), "--token", token], cwd=workdir, env=backend_environment({}), capture_output=True, text=True, timeout=TIMEOUT_SECONDS)
+        client = subprocess.run([str(client_binary), "--token", token], cwd=workdir, env=backend_environment({}), capture_output=True, text=True, timeout=execution_timeout(TIMEOUT_SECONDS))
         if client.returncode != 0 or last_line(client.stdout) != "PASS":
             return fail(label, f"client exited {client.returncode}\n{client.stdout}{client.stderr}")
         try:
-            server_out, _ = server.communicate(timeout=TIMEOUT_SECONDS)
+            server_out, _ = server.communicate(timeout=execution_timeout(TIMEOUT_SECONDS))
         except subprocess.TimeoutExpired:
             return fail(label, "server did not exit after its client disconnected")
         if server.returncode != 0 or last_line(server_out) != "PASS":
