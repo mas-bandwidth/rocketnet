@@ -33,7 +33,10 @@
 #ifdef __cplusplus
 #include <cmath>
 using std::isfinite;
+#if defined( __APPLE__ )
+// The Darwin verifier header exposes isnan only in std; glibc also declares it globally.
 using std::isnan;
+#endif // #if defined( __APPLE__ )
 extern "C"
 {
 #endif // #ifdef __cplusplus
