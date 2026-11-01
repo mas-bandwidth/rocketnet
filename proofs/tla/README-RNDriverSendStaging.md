@@ -72,13 +72,12 @@ unrelated commit advances the staged counter. The unit check
 The staged send path of the server transport: the reserve/commit seam every
 driver serves, the staged branch of `send_packets`, the maintenance half of
 `update`, and the out-of-band `disconnect_client`. The code is
-`sdk/rocketnet_server_transport.cpp` at the base of this change:
-`rocketnet_server_reserve_send_frame` (line 260),
-`rocketnet_server_commit_send_frame` (line 288),
-`rocketnet_server_transport_update` (line 983),
-`rocketnet_server_transport_send_packets` (line 1725, the staged branch's
-counter test at line 1745), and
-`rocketnet_server_transport_disconnect_client` (line 1812).
+`sdk/rocketnet_server_transport.cpp`: `rocketnet_server_reserve_send_frame`,
+`rocketnet_server_commit_send_frame`, `rocketnet_server_transport_update`,
+`rocketnet_server_transport_send_packets`, and
+`rocketnet_server_transport_disconnect_client`. The disconnect trace below
+records the earlier implementation; its numeric locations are historical,
+not locations in the current source.
 
 - **The seam.** Reserve takes a staging slot for one frame; commit seals the
   frame into the driver's own staging. A reserve that exhausts packet-slot capacity
