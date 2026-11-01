@@ -10,6 +10,7 @@
 */
 
 #include "native_shutdown.h"
+#include "loopback_hub.h"
 #include "serialize.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_connect_token.h"
@@ -37,6 +38,7 @@ int main()
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 4;
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
 
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config );
     check( server );
@@ -47,7 +49,10 @@ int main()
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
     check( rocketnet_write_test_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
-    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, NULL, rocketnet_time() );
+    struct rocketnet_client_transport_config_t client_config;
+    rocketnet_client_transport_default_config( &client_config );
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
+    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, &client_config, rocketnet_time() );
     check( client );
 
     double start = rocketnet_time();
@@ -159,6 +164,7 @@ int main()
 
     rn_native_client_transport_stop_and_destroy( client );
     rn_native_server_transport_stop_and_destroy( server );
+    check( rocketnet_test_loopback_hub_release() );
     rocketnet_term();
 
     printf( "serialize surface OK\n" );

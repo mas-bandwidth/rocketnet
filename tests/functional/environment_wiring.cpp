@@ -4,6 +4,7 @@
 */
 
 #include "rocketnet_internal.h"
+#include "../loopback_hub.h"
 #include "rocketnet_test_seams.h"
 #include "../../examples/shutdown.h"
 
@@ -126,6 +127,7 @@ void rocketnet_test_real_environment_config_precedence_and_invalid()
     rocketnet_client_config_t config;
     rocketnet_check( rocketnet_client_default_config( &config ) == ROCKETNET_STATUS_OK );
     config.send_message_buffer_bytes = 8388608;
+    config.loopback_hub = rocketnet_test_loopback_hub();
 
     environment.set( "4194304" );
 
@@ -147,17 +149,20 @@ void rocketnet_test_real_environment_client_step_driven()
 
     rocketnet_real_environment_guard_t environment( "ROCKETNET_CLIENT_STEP_DRIVEN" );
 
+    struct rocketnet_client_config_t config;
+    rocketnet_check( rocketnet_client_default_config( &config ) == ROCKETNET_STATUS_OK );
+    config.loopback_hub = rocketnet_test_loopback_hub();
     enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
 
     environment.set( "2" );
 
-    rocketnet_client_t * refused = rocketnet_client_create( NULL, NULL, &status );
+    rocketnet_client_t * refused = rocketnet_client_create( NULL, &config, &status );
     rocketnet_check( refused == NULL );
     rocketnet_check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
 
     environment.set( "1" );
 
-    rocketnet_client_t * client = rocketnet_client_create( NULL, NULL, &status );
+    rocketnet_client_t * client = rocketnet_client_create( NULL, &config, &status );
     rocketnet_check( client != NULL );
     rocketnet_check( status == ROCKETNET_STATUS_OK );
     rocketnet_client_destroy( client );
@@ -167,17 +172,20 @@ void rocketnet_test_real_environment_dev_simulator_number()
 {
     rocketnet_real_environment_guard_t environment( "ROCKETNET_DEV_CLIENT_LATENCY_MS" );
 
+    struct rocketnet_client_config_t config;
+    rocketnet_check( rocketnet_client_default_config( &config ) == ROCKETNET_STATUS_OK );
+    config.loopback_hub = rocketnet_test_loopback_hub();
     enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
 
     environment.set( "invalid" );
 
-    rocketnet_client_t * refused = rocketnet_client_create( NULL, NULL, &status );
+    rocketnet_client_t * refused = rocketnet_client_create( NULL, &config, &status );
     rocketnet_check( refused == NULL );
     rocketnet_check( status == ROCKETNET_STATUS_CONFIG_ENV_INVALID );
 
     environment.set( "17" );
 
-    rocketnet_client_t * client = rocketnet_client_create( NULL, NULL, &status );
+    rocketnet_client_t * client = rocketnet_client_create( NULL, &config, &status );
     rocketnet_check( client != NULL );
     rocketnet_check( status == ROCKETNET_STATUS_OK );
     rocketnet_client_destroy( client );
