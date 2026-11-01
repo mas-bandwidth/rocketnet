@@ -7,9 +7,13 @@
 (* The receiver's descriptors are W slots indexed number % W.  A slot is   *)
 (* owned by what took its number: a held code-3 message (its held key), a  *)
 (* code-4 block's fragment (OB) or a message delivered at once (OD,        *)
-(* freed when the update ends).  The window takes the next number only     *)
-(* into a free slot; a live slot is a SLOT_COLLISION, which ends the       *)
-(* connection.                                                             *)
+(* freed when the update ends).  The ordered drain transfers its live     *)
+(* descriptor to OD until EndUpdate releases it.  The window takes a      *)
+(* number only into a free slot; a live slot is a SLOT_COLLISION that     *)
+(* ends the connection.                                                   *)
+(* This model starts held code-3 entries at complete descriptors; the     *)
+(* collecting code-2/3 block anchor and its settle-time repoint to the    *)
+(* first fragment are outside this model.                                 *)
 (*                                                                         *)
 (* The held index is N = 2W open-addressed cells, linear probing from a    *)
 (* key's home, deletion by backward shift that clears the final hole last  *)
@@ -187,7 +191,7 @@ Deliver(k) ==
           THEN /\ err' = TRUE
                /\ UNCHANGED <<desc, pc, hole, scan, scanned, staleDelivered>>
           ELSE /\ staleDelivered' = (staleDelivered \/ ~ok)
-               /\ desc' = [ desc EXCEPT ![s] = Free ]
+               /\ desc' = [ desc EXCEPT ![s].owner = OD ]
                /\ pc' = "erase" /\ hole' = c /\ scan' = c /\ scanned' = 0
                /\ UNCHANGED err
     /\ UNCHANGED <<home, next, cell, ent, block, foreignFreed>>
