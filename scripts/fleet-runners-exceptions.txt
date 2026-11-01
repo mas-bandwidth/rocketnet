@@ -4,5 +4,4 @@
 #   GUEST      an install inside a VM the job boots
 # `<job> *` covers every job in the workflow.
 
-nightly-examples.yml examples-windows DISABLED no Windows fleet runner registered for this repository; owed: the Windows fleet machine
 nightly-bigendian-system.yml bigendian-system GUEST apt install inside the s390x guest the job boots
