@@ -35,18 +35,11 @@
 
 
 
-  (item "gate-nightly-proofs-split" :group "finish" :area "ci"
-   :title "Nightly proofs split so the job can finish"
-   :text "Audit 33. Branch rowan/gate-nightly-proofs-split at 3522e523: one job per reader and per partition. The planted-failure control works on vision. Owed: the rewritten workflow has never run, and the held partition needs its full 1800 s."
-   :date "2026-10-31" :origin "Audit item 33")
 
 
 
 
-  (item "live-matrix-flake" :group "finish" :area "tests"
-   :title "Live message matrix: a late probe copy counts as its probe"
-   :text "Audit 59. Branch rowan/low-matrix-flake at a1693544, never built. Owed: functional build and repeated runs on Linux and macOS, a negative control, and a reproduction on main with injected latency."
-   :date "2026-10-31" :origin "Audit item 59")
+
 
   (item "proofs-lows" :group "finish" :area "proofs"
    :title "Low-severity proofs items"
@@ -57,17 +50,11 @@
 
 
 
-  (item "max-channels-cmake" :group "audit-remaining" :area "build"
-   :title "ROCKETNET_MAX_CHANNELS CMake option"
-   :text "Pass it through as ROCKETNET_MAX_CLIENTS is, document it, and give it a CI build."
-   :date "2026-10-31" :origin "Audit item 171 follow-on")
 
 
 
-  (item "message-prefix-dedupe" :group "audit-remaining" :area "rocketnet"
-   :title "A duplicated deferred packet does not redeliver its code-0 prefix"
-   :text "Audit 101 remainder, MESSAGES.md m1.4 rule 2. Recommended: remember the deferred packet and how many records were processed, so a duplicate skips them."
-   :date "2026-10-31" :origin "Audit item 101")
+
+
 
   (item "windows-reflush" :group "audit-remaining" :area "rocketnet"
    :title "Windows iocp and rio re-flush"
@@ -92,7 +79,7 @@
 
   (item "xdp-receive-loss" :group "quiet-host" :area "rocketnet"
    :title "About 0.3% of client-to-server packets lost in the XDP receive path"
-   :text "Seen once the 1000-client xdp soak cell runs, with the host at load 170. Reproduce on a quiet host, then fix the cause."
+   :text "The loaded-host report (load 170) has not reproduced in the controlled 2026-11-01 observation at 3e8e4d17: 1000 clients for 60 seconds, 600000 sent/received, zero drops and restored descriptor/thread baselines. The existing guest was 7.0.0-34-generic; host 7.0.0-38-generic lacks its matching image. Exact-current-kernel nightly reproduction remains open. No cause or SDK fix is established by the different-kernel pass."
    :date "2026-10-31" :origin "Audit item 41")
 
   (item "low-tick-nightly" :group "quiet-host" :area "rocketnet"
@@ -100,14 +87,11 @@
    :text "Reproduce on an idle Linux host with the per-client state output now in the nightly."
    :date "2026-10-31" :origin "Audit item 42")
 
-  (item "frame-budget-quiet" :group "quiet-host" :area "ci"
-   :title "Confirm the frame-budget fix on amd-2/amd-3"
-   :text "The ack statistics fix brings P=32 p99 from 212 to 59 us on hulk; confirm on the quiet runner through the nightly frame budget."
-   :date "2026-10-31" :origin "Frame budget bisect")
+
 
   (item "older-prs-triage" :group "older-prs" :area "rocketnet"
    :title "Merge or close the pull requests outside the landing"
-   :text "#711 and #729 (securing passes for layers 7 and 6, both conflicting; #729 carries audit 85, 86, 113, 122, 125, 203-205, 278, 280, 282, and rowan/sdkfu-loopback-send-count for audit 119 is built on it), #714 to #720, #723 to #725, #727, #618, #619, #592, #564, #558, #418, #402, #380."
+   :text "Open outside the audit continuation as of 2026-11-01: #716, #717, #718, #719, #720, #727, #618, #619, #592, #564, #558, #418, #402, #380. #711, #724 and #729 have landed; the other closed entries are no longer pending. Triage these separately against current source."
    :date "2026-10-31" :origin "Glenn, 2026-10-31")
 
   (item "issue-122" :group "older-prs" :area "github"
@@ -120,10 +104,7 @@
    :text "Audit 16: with message_resend_delay_max_ms above reliable_message_timeout_ms/4, a single-packet record gets fewer than four sends before timeout. Recommended: cap it as chunks are. Then both resend classes share one delay, and the two resend queues could collapse to one; that removes machinery."
    :date "2026-10-31" :origin "Audit item 16")
 
-  (item "decision-type9-wire-version" :group "decisions" :area "rocketnet"
-   :title "Wire version after removing type 9"
-   :text "The removal leaves ROCKETNET_WIRE_VERSION unchanged because no surviving packet changes a byte."
-   :date "2026-10-31" :origin "Audit item 13")
+
 
   (item "decision-unit-env" :group "decisions" :area "tests"
    :title "Unit tests and the process environment"
