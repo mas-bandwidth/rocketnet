@@ -105,3 +105,27 @@ slices verified (`0 of 9` failed), and the planted overrun alone failed
 controls. A first unguarded `using std::isnan` import caused a real glibc
 C++ parsing conflict; the final shim imports it only on Darwin, whose verifier
 math header exposes it in `std`. The failed parsing attempt is not a proof.
+
+## Type-9 integration refresh (2026-11-01)
+
+The frozen source was `59752f6f4878360534f03ef7112a27e09013e9ca`, which
+integrates type9 `7047d7c68d2f18caf2dc9c54a4b9ead4a16cad14`. Each of the
+four cases ran serially on vision (Linux x86_64) with the exact flags and
+1800-second per-case timeout in `proof.mk`; raw output was retained for
+every case. The existing ESBMC 8.5.0 executable was verified live, SHA-256
+`d314db72d213859d6cd1cf9045c227489a817cb133dc14d390a5e2663c31ca0a`.
+Recorded native source hashes match the immutable source snapshot.
+
+| Harness | Properties passed / total | Elapsed |
+| --- | ---: | ---: |
+| `harness_message_reader`, W 1..4096 | 216 / 216 | 19.72 s |
+| `harness_message_reader`, W 4097..`1 << 20` | 217 / 217 | 19.22 s |
+| `harness_message_reader_single_max` | 205 / 205 | 3.31 s |
+| `harness_message_read_config_body` | 71 / 71 | 0.90 s |
+
+All four processes exited zero with `VERIFICATION SUCCESSFUL`: 709 checked
+properties, zero failures. Unwinds remain 7/7/2/1 with the named memset
+limit 64. The two multi-record partitions still cover payload lengths only
+0..24; the single-record and config cases retain their full 0..1416 bounds.
+These receipts do not extend the unproved multi-record range or establish
+a timing qualification.
