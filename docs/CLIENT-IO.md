@@ -87,10 +87,10 @@ must preserve these invariants:
 - internal client and server transports use the same stop, stopped, destroy
   order. Their stop requests and completion checks never wait for workers.
 
-The receive budget limits admitted packets. Every datagram the backend
-inspects, kept or discarded, also spends one read of the receive call's own
-read budget, so sustained discarded datagrams end a drain like any other and
-never delay receive publication or worker completion after stop; see
+The receive budget limits admitted packets. The backend also bounds work
+spent inspecting discarded datagrams, so sustained discarded traffic cannot
+keep a drain running indefinitely before receive publication or the worker's
+next stop check. These work limits are not wall-clock completion bounds; see
 [staging and drain bounds](TRANSPORT-INTERNALS.md#staging-and-drain-bounds).
 
 The optional `time_callback` in the client config (development builds only)

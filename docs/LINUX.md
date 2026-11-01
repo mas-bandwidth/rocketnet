@@ -567,8 +567,8 @@ What each path does with the errors it can see:
 
 `tests/functional/posix_hard_killed_client.cpp` and `tests/functional/posix_socket_errors.cpp`
 cover a hard-killed client and the socket error paths per transport cell.
-Empty or rejected datagrams spend a read of the drain's budget as kept ones
-do, so they never hold a receive loop past it. See
+Receive drains also bound work spent on empty or rejected datagrams, so a
+stream of them cannot keep a drain running indefinitely. See
 [staging and drain bounds](TRANSPORT-INTERNALS.md#staging-and-drain-bounds).
 
 ## 8. Limits for 1000 clients

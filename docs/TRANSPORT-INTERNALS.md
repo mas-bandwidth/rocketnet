@@ -226,22 +226,26 @@ never retires a bank of disconnect packets unsent. A custom transport without
 `send_room` is treated as unbounded; a start it refuses ends that update's
 drain, and the bursts wait for the next.
 
-Every receive drain spends one read of a fixed budget for each datagram it
-reads, kept or discarded: a zero-length datagram, a refused source, a weather
-errno (POSIX) or a reset status (Windows) spends a read as a kept datagram
-does, and the drain returns when the budget is spent. A batch call's budget is
-its `max_packets`; a single-packet call's is `ROCKETNET_PLATFORM_RECEIVE_READS`
+The platform receive helpers spend one read of a fixed budget for each
+datagram, kept or discarded: a zero-length datagram, a refused source, a
+weather errno (POSIX) or a reset status (Windows) spends a read as a kept
+datagram does, and the call returns when the budget is spent. A batch call's
+budget is its `max_packets`; a single-packet call's is `ROCKETNET_PLATFORM_RECEIVE_READS`
 (64), on the POSIX helpers, the Darwin msgx pump and its per-packet arm, the
 generic batch pump and the Windows per-packet loop (`sdk/rocketnet_platform.cpp`).
 The Linux GSO server worker's drain (`rocketnet_server_gso_drain`,
-`sdk/rocketnet_server_gso_linux.cpp`) spends one read of a
-`ROCKETNET_GSO_RECV_QUEUE_SIZE` budget per message and per interrupted call.
+`sdk/rocketnet_server_gso_linux.cpp`) counts each message and interrupted call
+against `ROCKETNET_GSO_RECV_QUEUE_SIZE` (4096). It checks that threshold before
+each receive batch; the final batch can take the count past it by at most
+`ROCKETNET_GSO_RECV_BATCH - 1` (63).
 The Linux GSO client's plain fallback uses the platform helpers; its GRO path
 counts skipped datagrams against `max_packets` and weather errnos against
-their own retry budget (`sdk/rocketnet_client_gso_linux.cpp`). So a stream of
-empty or rejected datagrams never holds a worker away from publishing what it
-read or from its quit test. The portable receive worker reads one datagram per
-step against its capacity (`proofs/tla/RNPortableRx.tla`, `ReadBudget`).
+their own retry budget (`sdk/rocketnet_client_gso_linux.cpp`). These limits
+prevent a stream of empty or rejected datagrams from keeping a drain running
+indefinitely before publication or a quit test; they do not establish a
+worst-case worker-time or shutdown-time bound. The portable receive worker's
+model reads one datagram per step against its capacity
+(`proofs/tla/RNPortableRx.tla`, `ReadBudget`).
 
 ## UDP coalescing
 
