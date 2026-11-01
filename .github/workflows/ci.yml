@@ -299,10 +299,6 @@ jobs:
       # Each job's window is everything after its build, one leg of the row
       # (Glenn 2026-10-29: "Move anything that is not under 120s limit to
       # nightly and/or release checks"; the legs run in parallel).
-      - name: ccache statistics (probe)
-        if: runner.os == 'Linux'
-        run: ccache -s -v || true; grep -m3 -i launcher build/CMakeCache.txt || true
-
       - name: Start the job's timing (everything after the build)
         shell: bash
         run: &start_unit_functional_timing |
@@ -683,6 +679,40 @@ jobs:
           ROCKETNET_CLIENT_TRANSPORT: portable
         run: ./bin/test_lifecycle
 
+      # THE libxdp 1.4 XDP CELL, on the Linux Debug functional row, which
+      # already holds the Debug bin/functional and a libxdp-1-4 runner, so the
+      # cell needs no build or runner of its own. sdk/rocketnet_server_socket_linux.cpp
+      # initializes the UMEM ring sizes; libxdp 1.4 rejects zeroed ring sizes
+      # and 1.6 accepts them, so the cell is pinned to 1.4. timeout 120 on vng
+      # bounds a hung guest.
+      - name: XDP max size on IPv4 and IPv6 in the runner kernel guest (libxdp 1.4)
+        if: runner.os == 'Linux' && matrix.build_type == 'Debug' && matrix.leg == 'functional'
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(pkg-config --modversion libxdp)
+          echo "libxdp $version"
+          case "$version" in 1.4.*) ;; *) echo "libxdp-1-4 requires libxdp 1.4.x"; exit 1 ;; esac
+          vm_kernel="$HOME/vm-kernels/vmlinuz-$(uname -r)"
+          command -v vng
+          test -r "$vm_kernel"
+          test -w /dev/kvm
+          cat > build/xdp-libxdp-1-4.sh <<'GUEST'
+          uname -r
+          failed=0
+          for case in test_xdp_transport_max_size_both_ways_ipv4 test_xdp_transport_max_size_both_ways_ipv6; do
+            log="build/libxdp-1-4.$case.log"
+            sudo ./bin/functional --run "$case" > "$log" 2>&1
+            rc=$?
+            cat "$log"
+            echo "CASE $case EXIT $rc"
+            if [ "$rc" != 0 ] || ! grep -qx "$case" "$log" || grep -q '\[SKIPPED' "$log"; then failed=1; fi
+          done
+          exit "$failed"
+          GUEST
+          timeout 120 vng --run "$vm_kernel" --memory 1536M --cpus 2 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir "$PWD" -- \
+            sh build/xdp-libxdp-1-4.sh
+
       - name: Check test scaffolding boundary (red controls)
         if: matrix.leg == 'checks' && ( runner.os == 'Linux' && matrix.dev == 'OFF' )
         run: python3 tools/check_test_scaffolding_boundary.py --red-controls
@@ -937,60 +967,6 @@ jobs:
       - name: Provisioning script selftest
         if: runner.os == 'Linux' && matrix.leg == 'checks'
         run: bash scripts/rocketnet-provision selftest
-
-  # sdk/rocketnet_server_socket_linux.cpp:1807 initializes UMEM ring sizes.
-  # libxdp 1.4 rejects zeroed ring sizes; 1.6 accepts them, so pin this XDP cell.
-  xdp-libxdp-1-4:
-    name: XDP / libxdp 1.4 / Debug
-    runs-on: [self-hosted, Linux, X64, fleet, libxdp-1-4]
-    # 47-69s on the fleet (build 40s, guest 6s); timeout 120 on vng bounds a
-    # hung guest, and the job bound holds the per-commit run to two minutes.
-    timeout-minutes: ${{ inputs.full && 10 || 2 }}
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
-      - uses: ./.github/actions/ccache
-      - name: Build the XDP functional cell (Debug)
-        shell: bash
-        run: |
-          set -euo pipefail
-          version=$(pkg-config --modversion libxdp)
-          echo "libxdp $version"
-          case "$version" in 1.4.*) ;; *) echo "libxdp-1-4 requires libxdp 1.4.x"; exit 1 ;; esac
-          cmake -B build -DCMAKE_BUILD_TYPE=Debug
-          cmake --build build --target functional --parallel 2
-      - name: XDP max size on IPv4 and IPv6 in the runner kernel guest
-        shell: bash
-        run: |
-          set -euo pipefail
-          vm_kernel="$HOME/vm-kernels/vmlinuz-$(uname -r)"
-          command -v vng
-          test -r "$vm_kernel"
-          test -w /dev/kvm
-          cat > build/xdp-libxdp-1-4.sh <<'GUEST'
-          uname -r
-          failed=0
-          for case in test_xdp_transport_max_size_both_ways_ipv4 test_xdp_transport_max_size_both_ways_ipv6; do
-            log="build/libxdp-1-4.$case.log"
-            sudo ./bin/functional --run "$case" > "$log" 2>&1
-            rc=$?
-            cat "$log"
-            echo "CASE $case EXIT $rc"
-            if [ "$rc" != 0 ] || ! grep -qx "$case" "$log" || grep -q '\[SKIPPED' "$log"; then failed=1; fi
-          done
-          exit "$failed"
-          GUEST
-          timing_receipt="$RUNNER_TEMP/rocketnet-unit-functional.start"
-          rm -f "$timing_receipt"
-          timing_start_ns=$(python3 -c 'import time; print(time.clock_gettime_ns(time.CLOCK_MONOTONIC) if hasattr(time, "CLOCK_MONOTONIC") else time.monotonic_ns())')
-          [[ "$timing_start_ns" =~ ^[0-9]+$ ]] || { echo "CI_UNIT_FUNCTIONAL_TIMING=FAIL reason=invalid_start"; exit 1; }
-          printf '%s %s %s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$timing_start_ns" > "$timing_receipt"
-          timeout 120 vng --run "$vm_kernel" --memory 1536M --cpus 2 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir "$PWD" -- \
-            sh build/xdp-libxdp-1-4.sh
-      - name: Enforce combined unit and functional timing
-        shell: bash
-        env:
-          CI_TIMING_ROW: ${{ format('{0}/{1}', runner.os, github.job) }}
-        run: *enforce_unit_functional_timing
 
   # The windows leg (#81's baseline doctrine): the portable driver built with
   # MSVC — the first machine ever to compile the windows arm — and the full
@@ -2535,7 +2511,11 @@ jobs:
   # cache restores the prefix and builds nothing.
   instruction-gate:
     name: instruction count gate
-    runs-on: [self-hosted, Linux, X64, rocketnet-quiet]
+    # Any of the three hetzner2 runners: cachegrind counts instructions, not
+    # time, so the gate needs the host the pinned toolchain's cache key names
+    # (distro, arch, C library), not a quiet runner, and three runners pick it
+    # up sooner than one.
+    runs-on: [self-hosted, Linux, X64, fleet, hetzner2]
     # Per commit the gate restores the pinned toolchain and never builds it
     # (396s cold); the nightly tier builds it on a miss and saves it from
     # main, where every branch and pull request can restore it.
