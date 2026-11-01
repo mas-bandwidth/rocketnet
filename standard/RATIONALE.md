@@ -95,7 +95,7 @@ break.*
 [RN-1 t5 Prefilter header](TRANSPORT.md#t5)
 **The tag depends on nothing but the title.** Not the source address, not the
 destination address, not the port, not the packet length. This is a requirement, not a
-simplification, and it is the accumulated lesson of the design this one descends from:
+simplification, and it is the accumulated lesson of the design this one descends from.
 
 [RN-1 t5 Prefilter header](TRANSPORT.md#t5)
 *This is the reason the keyless per-packet structural header — a value derived from the
@@ -310,8 +310,7 @@ token security is downstream of getting this one right.*
 [RN-1 t6 Connect token](TRANSPORT.md#t6)
 **So this standard specifies no client address field in the connect token**, and a
 server must not require that a request arrive from any particular address. The address
-is still the connection identity once a connection exists, per _The client address is
-the connection identity_, and the handshake still proves the client can receive at the
+is still the connection identity once a connection exists, per [RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13), and the handshake still proves the client can receive at the
 address it claimed. Those are properties of a *connection*; they are not a property of
 the *credential*.
 
@@ -333,7 +332,7 @@ backend's, never the transport's.
 [RN-1 t6 Connect token](TRANSPORT.md#t6)
 **A single server still enforces the property locally, with no backend at all**, and
 this standard requires it: a connection request or response naming a client id already
-connected to this server is refused, per _Processing Connection Requests_. That is the
+connected to this server is refused, per [RN-1 t12 Handshake: server](TRANSPORT.md#t12). That is the
 same rule at the scope one server can see. The backend widens the scope from one server
 to the fleet; it does not introduce the idea.
 
@@ -466,19 +465,19 @@ checked, an off-path attacker must guess an eight-byte random value it has never
 [RN-1 t9 Packet protection](TRANSPORT.md#t9)
 **The session types — keep-alive (4), payload (5), disconnect (6) and ack (8) — share one
 sealed framing: the sealed plaintext begins with the ack block
-of _Acks_, and the per-packet type data follows it.** One framing for every session
+of [RN-1 t15 Acknowledgement](TRANSPORT.md#t15), and the per-packet type data follows it.** One framing for every session
 packet means the ack path is exercised by every session packet ever sent — there is no
 rare ack codepath — and a receiver validates one geometry, not four. The handshake types
 1, 2 and 3 carry no ack block: their delivery is proven by the handshake's own progress,
-and their layouts do not move. Types 8 and 9 are session-phase packets: they seal under
-the session keys and spend the session sequence spaces, and are never valid under
+and their layouts do not move. Type 8 is a session-phase packet: it seals under
+the session keys and spends the session sequence spaces, and is never valid under
 handshake keys.
 
 [RN-1 t9 Packet protection](TRANSPORT.md#t9)
 **The challenge and the denied packet are both preceded, in the clear and outside the
 sealed data, by the session nonce the server chose for the mapping**, because both can
 be the first packet of a handshake the client ever receives, and the client cannot
-derive the handshake key without it:
+derive the handshake key without it.
 
 [RN-1 t9 Packet protection](TRANSPORT.md#t9)
 **The client's ephemeral public key is in the associated data of the connection
@@ -486,7 +485,7 @@ challenge and the connection response**, types 2 and 3 only. It is omitted from 
 connection denied packet, type 1, because its authenticity rests on the handshake key,
 which the ephemeral exchange does not feed — binding the ephemeral into its associated
 data would add nothing, where types 2 and 3 bind it because they are the packets that
-carry out the exchange — and from the session types 4, 5, 6, 8 and 9 — so it costs
+carry out the exchange — and from the session types 4, 5, 6 and 8 — so it costs
 nothing on any game packet. It is there because the client ephemeral travels in the
 clear, outside the signature, and without this binding an on-path attacker who alters it
 in flight achieves something worse than a dropped packet: the handshake runs to
@@ -661,12 +660,12 @@ secret generated at server start.** The obvious objection to hashing an
 attacker-influenced key is that an attacker can choose collisions and restore the linear
 behavior deliberately. A secret hash key prevents choosing known collisions
 without first learning that key; bounded capacity still supplies the worst-case
-probe limit. The tradeoff is recorded below:
+probe limit. The alternative is recorded below.
 
 [RN-1 t12 Handshake: server](TRANSPORT.md#t12)
 *The header spends two bytes on the epoch and the wider filter value, and this document
 declines two bytes twice elsewhere — the slot index just below, and a connection
-identifier under _The client address is the connection identity_. The difference is that
+identifier under [RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13). The difference is that
 both of those buy a capability for the packet carrying them, where these two buy the
 ability to change the filter later without moving the wire, which is a cost paid once
 against a break that would otherwise be paid by every implementation at once. A reader
@@ -706,7 +705,7 @@ design gets both from one symmetric check, because the shared key makes the bar 
 *and* makes enforcing it cost about a microsecond, so cheap rejection and a high bar are
 the same operation. Without a shared secret the two separate, and they are rebuilt as a
 ladder, each rung rejecting what it can at its own cost so the expensive rung is reached
-only by traffic that has already cleared the cheap ones:
+only by traffic that has already cleared the cheap ones ([RN-1 t12 Handshake: server](TRANSPORT.md#t12)).
 
 [RN-1 t12 Handshake: server](TRANSPORT.md#t12)
 **Address validation always comes before asymmetric work.** A server must require a
@@ -802,8 +801,7 @@ block does not equal the signed one, ignore the packet. * If a client with this 
 id is already connected, ignore it. * Do not record the token in the used-token history
 here. **A request proves nothing about who holds the token's keys** — anyone who saw it
 on the wire can replay it from an address of their own — so the binding is made only
-when a response from this address opens under the handshake key (_Processing Connection
-Response Packets_). Until then several addresses may each hold a mapping for one token;
+when a response from this address opens under the handshake key ([RN-1 t12 Handshake: server](TRANSPORT.md#t12)). Until then several addresses may each hold a mapping for one token;
 at most one of them can be admitted.
 
 [RN-1 t12 Handshake: server](TRANSPORT.md#t12)
@@ -959,7 +957,7 @@ repeat, which is sound because it accepts only data already verified.
 of its connection to a server.** This is stated rather than left implicit, because it is
 the assumption everything else rests on: a server keys its encryption mapping — the
 server's per-address record of derived keys and handshake state, specified fully in
-_Processing Connection Requests_ — its client slot, its replay state and its cookie
+[RN-1 t12 Handshake: server](TRANSPORT.md#t12) — its client slot, its replay state and its cookie
 check on the client's source address and port. A packet arriving from a different
 address is a packet from a different client.
 
@@ -995,7 +993,7 @@ whether the client received its keep-alive; the paragraph below states why it ca
 **What the flag does not decide.** The confirmed flag says a sealed packet arrived from
 this client. It does **not** say the client holds its client index: the session keys
 exist from the challenge, so a client can legally seal before it is _connected_ — indeed
-_Acks_ permits one to send a standalone ack from _sending connection response_.
+[RN-1 t15 Acknowledgement](TRANSPORT.md#t15) permits one to send a standalone ack from _sending connection response_.
 **Keep-alive generation therefore does not read this flag**; it reads the acknowledgment
 test below. The flag keeps its own job, which is telling the server whether it has heard
 from a slot at all.
@@ -1026,7 +1024,7 @@ connected, and the packet whose receipt it claims is the packet that connects it
 [RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13)
 **It is a claim, not a proof, and the server neither validates it nor needs to.** An ack
 block is the sender's statement about its own receive state, and no receiver can check
-it — _Acks_ requires a block to name only sequences its sender opened, but that is a
+it — [RN-1 t15 Acknowledgement](TRANSPORT.md#t15) requires a block to name only sequences its sender opened, but that is a
 sender obligation, unverifiable on the wire. The server takes the claim at face value.
 Every session packet carries a block, so the claim arrives on whatever the client is
 already sending, and no particular packet type is required of it.
@@ -1035,8 +1033,7 @@ already sending, and no particular packet type is required of it.
 **What makes it the right test is which clients can trip it.** The defect this rule
 exists to prevent is *a client that has not established being starved of the packet that
 would establish it*, so the test must not be satisfiable by a client that is behaving
-correctly but has not established. Measured on that axis, two alternatives that look
-adequate are not:
+correctly but has not established. Measured on that axis, neither the confirmed flag above nor any unacknowledged send count is adequate.
 
 [RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13)
 **Both failure directions.** If the client's acks are lost or delayed, the test stays
@@ -1118,7 +1115,7 @@ suppress every keep-alive to it, purely from answering that client's own inbound
 silently.** The test above is exact only because *an authentically opened keep-alive
 always reaches its state transition at the client*. That is not self-evident, because
 two checks stand between opening a packet and acting on it — the ack block's validity
-check and the type's opened-size check — and _Reading packets_ requires the replay
+check and the type's opened-size check — and [RN-1 t10 Receive processing](TRANSPORT.md#t10) requires the replay
 window to be marked **before** both. A packet's sequence therefore enters the client's
 outgoing ack block earlier than the point at which the packet is acted on. If either
 check were reachable for an authentic keep-alive, a *correct* client could acknowledge a
@@ -1133,7 +1130,7 @@ out.
 encoding or validity rules, to the keep-alive's type data or size, or to the order in
 which the replay window is marked relative to those checks, must preserve it. A change
 that makes either check reachable for an authentic keep-alive breaks the reasoning
-above, and _Keep-alive generation_'s confirmation test must then be re-derived rather
+above, and the [RN-1 t13.1 Keep-alive generation](TRANSPORT.md#t13.1) confirmation test must then be re-derived rather
 than assumed to still hold.
 
 [RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13)
@@ -1141,8 +1138,7 @@ than assumed to still hold.
 packet that carries the client index, and receiving one is the only thing that moves a
 client from _sending connection response_ to _connected_. A client that has not received
 one cannot ask for one. It is not that the server ignores everything such a client sends
-— a standalone ack from _sending connection response_ is acted on, per _Processing
-session packets at the server_ — but that **nothing it can send re-provokes a
+— a standalone ack from _sending connection response_ is acted on, per [RN-1 t10 Receive processing](TRANSPORT.md#t10) — but that **nothing it can send re-provokes a
 keep-alive**: its connection response is ignored as already connected, and no session
 type elicits one. So the repair can only come from the server's own pacing. If
 suppression read the last send of anything in that state, a server application sending
@@ -1175,7 +1171,7 @@ keep-alive it receives, taking its client index and the slot count from that pac
 [RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13)
 *If a client stays in _sending connection response_ while other traffic arrives
 normally, a leading candidate is its own ack block — see the failure directions under
-_Keep-alive generation_.* The thing to audit is whether the block can name a
+[RN-1 t13.1 Keep-alive generation](TRANSPORT.md#t13.1).* The thing to audit is whether the block can name a
 **keep-alive** sequence the client never opened. Over-claiming across payload sequences
 alone does not produce this symptom, because the server reads only the keep-alives it
 sent; a cumulative or optimistic scheme whose ranges can extend over a missed keep-alive
@@ -1279,16 +1275,16 @@ statement about the sender's own receive state, and every received run it enumer
 must consist of sequences it actually opened. This is a *sender* obligation and the
 receiver cannot verify it — a block that over-claims is indistinguishable on the wire
 from a truthful one, because only the sender knows what it received. It is stated as a
-must because rules elsewhere depend on it: _Keep-alive generation_ reads an
+must because rules elsewhere depend on it: [RN-1 t13.1 Keep-alive generation](TRANSPORT.md#t13.1) reads an
 acknowledgment as the client's claim to have received a keep-alive, and delivery
 notification generally is only as truthful as the blocks it is built from. An
 implementation that over-claims corrupts its own delivery information and, per
-_Keep-alive generation_, can strand its own connection; it cannot affect any other.
+[RN-1 t13.1 Keep-alive generation](TRANSPORT.md#t13.1), can strand its own connection; it cannot affect any other.
 
 [RN-1 t15 Acknowledgement](TRANSPORT.md#t15)
 **Validity.** A block is malformed, and refuses its whole packet as `BAD_ACK_BLOCK`,
-when any of the following holds — each stated so that two implementations reject the
-same bytes:
+when any of the conditions in [RN-1 t15.1 Acknowledgement block](TRANSPORT.md#t15.1) holds — each stated so that two implementations reject the
+same bytes.
 
 [RN-1 t15 Acknowledgement](TRANSPORT.md#t15)
 **Build rule.** A sender fills the block from its current receive state: _largest
@@ -1307,9 +1303,9 @@ are never acked; a handshake proves its own delivery by progressing.
 [RN-1 t15 Acknowledgement](TRANSPORT.md#t15)
 **Blocks report opened packets; elicitation decides only when a block must be sent, and
 the two are deliberately not the same set.** A block's contents are built from every
-opened session sequence, all five types — one received state, the same one replay
+opened session sequence, all four types — one received state, the same one replay
 protection already maintains, with no second high-water mark and no holes manufactured
-by exemptions. Received session packets of types 4, 5, 6 and 9 **elicit**
+by exemptions. Received session packets of types 4, 5 and 6 **elicit**
 acknowledgment: they add to the ack debt that obliges a block to go out. **Type 8 does
 not elicit.** A standalone ack is opened, replay-marked and reported like any session
 packet, but receiving one never obliges an ack in return, because a quiet client and
@@ -1344,12 +1340,12 @@ generation are driven by elapsed time and nothing else.
 **Retransmission is at a fixed rate, with no backoff and no round-trip estimation.**
 This is a connection protocol whose handshake completes in a handful of packets and
 whose deadline is a few seconds; an adaptive scheme would add state and failure modes to
-buy nothing measurable over that interval. A deployment may raise the send rate — 20 Hz
-is reasonable — and must keep it constant for the duration of an attempt.
+buy nothing measurable over that interval. This revision pins the send rate at 10 Hz in
+[RN-1 t3 Constants and registries](TRANSPORT.md#t3) and keeps it constant for the
+duration of an attempt.
 
 [RN-1 t17 Timing and defaults](TRANSPORT.md#t17)
-**Only the handshake deadline is a configuration field.** The other timing values are
-fixed constants of this revision. The values are chosen so that a game that never
+**Only the server's handshake deadline and maximum session timeout are configuration fields** ([RN-1 t2.3 Configuration surface](TRANSPORT.md#t2.3)); the per-connection session timeout comes from the connect token and is capped by the server's maximum. The send rate, cookie lifetime and cookie key rotation interval are fixed constants of this revision ([RN-1 t3 Constants and registries](TRANSPORT.md#t3)). The values are chosen so that a game that never
 touches them is correct and safe.
 
 [RN-1 t17 Timing and defaults](TRANSPORT.md#t17)
@@ -1387,7 +1383,7 @@ in a kernel filter, so the two report in the same shape.
 [RN-1 t18 Error handling and counters](TRANSPORT.md#t18)
 **The connection request path is the one that matters most**, because it is the attack
 surface and because it has the most ways to fail. Every step of the ordered list in
-_Processing Connection Requests_ gets its own counter, in that order:
+[RN-1 t12 Handshake: server](TRANSPORT.md#t12) gets its own counter, in that order.
 
 [RN-1 t18 Error handling and counters](TRANSPORT.md#t18)
 **`MAPPING_HANDSHAKE_DEADLINE_EXPIRED` is the direct observable for the stalled
@@ -1677,15 +1673,14 @@ completes.
 
 [RN-1 ta Appendix A: test vectors](TRANSPORT.md#ta)
 **Fixed inputs.** The test backend and server keypairs and the test title constant are
-the published values from _Development without a backend_ and _The Prefilter Header_. In
-addition:
+the published values from [RN-1 t19.2 Development keys](TRANSPORT.md#t19.2) and [RN-1 t5 Prefilter header](TRANSPORT.md#t5), alongside the fixed client keypair, nonces and salts in [RN-1 ta Appendix A: test vectors](TRANSPORT.md#ta).
 
 [RN-1 ta Appendix A: test vectors](TRANSPORT.md#ta)
 **Deterministic outputs.**
 
 [RN-1 ta Appendix A: test vectors](TRANSPORT.md#ta)
 **Ack block encodings.** Frozen now; they involve no key. Each is checkable by eye
-against _Acks_:
+against [RN-1 t15 Acknowledgement](TRANSPORT.md#t15).
 
 [RN-1 ta Appendix A: test vectors](TRANSPORT.md#ta)
 **Assembled wire packets**, byte-complete as they leave the socket — these pin the
@@ -1747,7 +1742,7 @@ nobody mistakes them for security. A default magic would be a different thing: i
 make a **secured-looking** path work out of the box, and a deployment inheriting it
 would hold a filter that verifies against a secret every attacker also has. The keyed
 filter is available to deployments that have a backend distributing real magics, and to
-nobody else — see _The Prefilter Header_.
+nobody else — see [RN-1 t5 Prefilter header](TRANSPORT.md#t5).
 
 [RN-1 tc Appendix C (informative): implementation notes](TRANSPORT.md#tc)
 **The safety property is that the keys are public, not that a flag is off**, and that

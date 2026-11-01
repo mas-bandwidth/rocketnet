@@ -784,7 +784,7 @@ int rocketnet_server_uring_bank_size( const struct rocketnet_server_uring_t * ur
 // each queue's provided buffer ring, mapped by liburing (or by the fallback
 // mmap in rocketnet_server_uring_setup_buf_ring), whole pages, outside the
 // allocator; the submission and completion rings are the kernel's and are not
-// counted
+// counted in the pre-create memory plan
 uint64_t rocketnet_server_uring_mapped_bytes( int queues )
 {
     if ( queues < 1 || queues > ROCKETNET_URING_MAX_QUEUES )

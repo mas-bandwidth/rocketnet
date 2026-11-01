@@ -41,9 +41,15 @@ passed all 48 applicable checks at `f6f396d9748762fadbec81e24e93515a5659a8e2`
 before merging. The main [CI run](https://github.com/mas-bandwidth/rocketnet/actions/runs/40964376451)
 includes the platform, sanitizer, functional and fuzz smoke results.
 
-The current TLA ledger contains **639 required cases with PASS results** and
-**16 non-required bench cases that exhausted their declared time budget**.
-The model-record check verifies current inputs. A timeout is not a completed
+`proofs/tla/CASES.tsv` and `proofs/tla/RUNS.tsv` are the authoritative TLA
+ledgers for all required `PASS` cases (`gate=required`) and declared `bench`
+timeout-debt rows (`gate=bench`, `debt != -`). `tools/check_tla_records.py`
+validates the ledger schema, exact one-to-one `(config, module)` declaration and
+record mapping, expected outcomes and exit codes, and the pinned TLC JAR digest
+(`jar_sha256`), while `tlacheck groups --stale` and `tlacheck merge` verify
+current-input fingerprint freshness (`input_sha256` against `.tla` and `.cfg`
+sources) and `tools/check_tla_coverage.py` checks module, action, symbol and
+citation coverage in `proofs/tla/COVERAGE.tsv`. A timeout is not a completed
 proof; the [model guide](../proofs/tla/README.md) explains those boundaries.
 
 [Standard witnesses](WITNESSES.tsv) map recorded requirements to their evidence;

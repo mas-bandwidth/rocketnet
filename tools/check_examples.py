@@ -39,8 +39,8 @@ ALLOWED_HEADERS = {
 HARNESS_HEADERS = {
     "soak.c": {"windows.h", "pthread.h", "sys/mman.h"},
     # config_env.c runs itself again with one variable set, spawned from its
-    # argument vector with an explicit environment, never through a shell
-    "config_env.c": {"process.h", "spawn.h", "sys/wait.h"},
+    # executable path with an explicit environment, never through a shell
+    "config_env.c": {"windows.h", "wchar.h", "spawn.h", "sys/wait.h"},
 }
 
 INCLUDE = re.compile(r'^\s*#\s*include\s*([<"])([^>"]+)[>"]', re.M)
