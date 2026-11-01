@@ -7,7 +7,7 @@ Planned work for RocketNet that is not on main. Work lands on main before new wo
 ## Contents
 
 - [Started work to finish and land](#started-work-to-finish-and-land) (4)
-- [Audit items not yet fixed](#audit-items-not-yet-fixed) (7)
+- [Audit items not yet fixed](#audit-items-not-yet-fixed) (6)
 - [Investigations that need a quiet host](#investigations-that-need-a-quiet-host) (3)
 - [Older open pull requests](#older-open-pull-requests) (2)
 - [Decisions for Glenn](#decisions-for-glenn) (5)
@@ -49,12 +49,6 @@ Suspects from FABLE-AUDIT.md that nothing on main fixes. Each is verified at the
 Pass it through as ROCKETNET_MAX_CLIENTS is, document it, and give it a CI build.
 
 From: Audit item 171 follow-on
-
-### Portable sendmmsg keeps the unsent rest of a batch
-
-On a full socket the portable sendmmsg path drops the rest of the batch; GSO now keeps it (audit 111). Same rule: spread across updates, never drop.
-
-From: Audit item 111 follow-on
 
 ### A duplicated deferred packet does not redeliver its code-0 prefix
 
