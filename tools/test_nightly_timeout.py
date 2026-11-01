@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import textwrap
 import tempfile
 import unittest
 from unittest import mock
@@ -33,6 +34,25 @@ class NightlyTimeoutTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {"ROCKETNET_NIGHTLY_NO_TIMEOUT": "1"}):
             result = subprocess.run(command, timeout=policy.execution_timeout(.001), check=False)
             self.assertEqual(result.returncode, 7)
+
+    def test_embedded_macos_leaks_watchdog_and_verdict(self):
+        workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/nightly-macos-sanitizers.yml").read_text()
+        start = workflow.index("          one() {\n")
+        end = workflow.index("          export -f one;", start)
+        function = textwrap.dedent(workflow[start:end])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            leaks = root / "leaks"
+            leaks.write_text("#!/bin/sh\nsleep .15\ncase $LEAKS_CONTROL in\nclean) echo 'Process 123: 0 leaks for 0 total leaked bytes';;\nleak) echo 'Process 123: 1 leak for 8 total leaked bytes';;\nmissing) echo 'inspection failed';;\nesac\n")
+            leaks.chmod(0o755)
+            script = root / "control.sh"
+            script.write_text('set -u\nbin=fixture; logs="$1"; run=""; limit=1\nsleep() { command sleep .01; }\n' + function + '\none test_control\n')
+            for opt_in, verdict, expected in (("", "clean", 1), ("0", "clean", 1), ("true", "clean", 1), ("1", "clean", 0), ("1", "leak", 1), ("1", "missing", 1)):
+                with self.subTest(opt_in=opt_in, verdict=verdict):
+                    env = dict(os.environ, PATH=str(root) + os.pathsep + os.environ["PATH"], ROCKETNET_NIGHTLY_NO_TIMEOUT=opt_in, LEAKS_CONTROL=verdict)
+                    result = subprocess.run(["/bin/bash", str(script), str(root)], env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=10)
+                    self.assertEqual(result.returncode, expected, result.stdout)
+                    self.assertEqual("TIMEOUT test_control" in result.stdout, opt_in != "1", result.stdout)
 
     def test_example_subprocess_cap_and_original_oracle(self):
         for value, expected in (("0", 120), ("1", None)):
