@@ -107,7 +107,6 @@ double rocketnet_update_clock_advance( double last_good, double * raw_time, doub
 
         rocketnet_error( "update refused its time %f: it is not finite; the last good time %f is kept", time, last_good );
 
-        rocketnet_assert( isfinite( time ) );
         return last_good;
     }
 
@@ -127,7 +126,6 @@ double rocketnet_update_clock_advance( double last_good, double * raw_time, doub
 
         rocketnet_error( "update refused its time %f: it goes back from %f; the last good time %f is kept", time, raw, last_good );
 
-        rocketnet_assert( time >= raw );
         return last_good;
     }
 
@@ -271,7 +269,8 @@ struct rocketnet_client_legacy_receive_state_t
 
 /*
     The declaration manifest: the struct is declared from this list, so a
-    member exists only as an entry here. The RESET/KEEP inventory in
+    member exists only as an entry here, besides the tail padding the struct
+    writes out after them. The RESET/KEEP inventory in
     rocketnet_connection_reset.h is compared with it by name, and a member with
     no decision is named in test_connection_reset_inventory_covers_every_field.
 */
@@ -279,8 +278,8 @@ struct rocketnet_client_legacy_receive_state_t
 #define ROCKETNET_CLIENT_TRANSPORT_LAYOUT_FIELDS( X )                       \
     /* the cache-line-aligned members lead, each a whole number of cache */ \
     /* lines, so the compiler inserts no alignment padding before any of them */                                     \
-    X( packet_leases, rocketnet_packet_leases_t<1024> packet_leases ) /* three rings of one layout (proofs/tla/RNBufferHandoff.tla): game threads */ /* fill payload_ring[client_io.send_fill]. The BASE path never hands */ /* off, so it fills ring 0 only. */                                                                              \
-    X( payload_ring, struct rocketnet_client_payload_ring_t payload_ring[ROCKETNET_CLIENT_IO_NUM_RINGS] )            \
+    X( packet_leases, rocketnet_packet_leases_t<1024> packet_leases )                                                \
+    X( payload_ring, struct rocketnet_client_payload_ring_t payload_ring[ROCKETNET_CLIENT_IO_NUM_RINGS] ) /* three rings of one layout (proofs/tla/RNBufferHandoff.tla): game threads */ /* fill payload_ring[client_io.send_fill]. The BASE path never hands */ /* off, so it fills ring 0 only. */ \
     X( context, void * context )                                                                                     \
     X( bound_port, uint16_t bound_port )                                                                             \
     X( transport, int transport ) /* the granted transport (ROCKETNET_TRANSPORT_*), decided by the ladder at create */           \
@@ -303,11 +302,11 @@ struct rocketnet_client_legacy_receive_state_t
     X( time_offset, double time_offset ) /* the backwards offset, exactly 0.0 until the first step */                \
     X( frame, uint64_t frame ) /* advanced once per update; identifies initialized stats buckets */                  \
     X( last_state, int last_state )                                                                                  \
-    X( config, struct rocketnet_client_transport_config_t config ) /* the packet id counter behind the acquire/commit surface: unique and */ /* monotonic, the join key the acked-packet batch surfaces. the ring */ /* slot is recovered from the frame pointer wherever it is needed. */ /* the fragmentation shape from the config, and the storage it sizes: */ /* the send arena for over-wire-capacity requests, and the reassembly */ /* set the protocol delivers completed payloads through -- both */ /* allocated once at create, to the configured maximum */                                                        \
-    X( max_payload_bytes, int max_payload_bytes )                                                                    \
+    X( config, struct rocketnet_client_transport_config_t config )                                                   \
+    X( max_payload_bytes, int max_payload_bytes ) /* the fragmentation shape from the config, and the storage it sizes: */ /* the send arena for over-wire-capacity requests, and the reassembly */ /* set the protocol delivers completed payloads through -- both */ /* allocated once at create, to the configured maximum */ \
     X( send_arena, struct rocketnet_send_arena_t * send_arena )                                                      \
-    X( reassembly, struct rocketnet_reassembly_set_t * reassembly ) /* the I/O thread design (docs/CLIENT-IO.md): true when the granted */ /* transport has wait and wake; step_driven when no I/O thread runs and the */ /* caller calls rocketnet_client_io_step itself (unit tests) */                                                  \
-    X( io_thread, bool io_thread )                                                                                   \
+    X( reassembly, struct rocketnet_reassembly_set_t * reassembly )                                                  \
+    X( io_thread, bool io_thread ) /* the I/O thread design (docs/CLIENT-IO.md): true when the granted */ /* transport has wait and wake; step_driven when no I/O thread runs and the */ /* caller calls rocketnet_client_io_step itself (unit tests) */ \
     X( step_driven, bool step_driven ) /* an internal unit-test create: the caller runs the step */                  \
     X( step_in_update, bool step_in_update ) /* the public config field: update and send_packets run the step */     \
     X( client_io, rocketnet_client_io_t client_io )                                                                  \
@@ -322,12 +321,51 @@ struct rocketnet_client_legacy_receive_state_t
     X( current_stats_index, int current_stats_index )
 // clang-format on
 
+#define ROCKETNET_CLIENT_TRANSPORT_LAYOUT_FIELDS_DECLARE( name, declaration ) declaration;
+
+// The manifest's members alone, never constructed: it measures where the last
+// member ends, so the transport can write its tail padding out. The measure
+// keeps its own tail padding implicit, so MSVC C4324 is off for it alone.
+#if defined( _MSC_VER )
+#pragma warning( push )
+#pragma warning( disable : 4324 )
+#endif // #if defined( _MSC_VER )
+struct rocketnet_client_transport_members_t
+{
+    ROCKETNET_CLIENT_TRANSPORT_LAYOUT_FIELDS( ROCKETNET_CLIENT_TRANSPORT_LAYOUT_FIELDS_DECLARE )
+};
+#if defined( _MSC_VER )
+#pragma warning( pop )
+#endif // #if defined( _MSC_VER )
+
+// the bytes of the manifest's members, padding between them included
+#define ROCKETNET_CLIENT_TRANSPORT_MEMBER_BYTES ( offsetof( rocketnet_client_transport_members_t, current_stats_index ) + sizeof( int ) )
+#define ROCKETNET_CLIENT_TRANSPORT_ALIGNMENT    alignof( rocketnet_client_transport_members_t )
+
 struct rocketnet_client_transport_t
 {
-#define ROCKETNET_CLIENT_TRANSPORT_LAYOUT_FIELDS_DECLARE( name, declaration ) declaration;
     ROCKETNET_CLIENT_TRANSPORT_LAYOUT_FIELDS( ROCKETNET_CLIENT_TRANSPORT_LAYOUT_FIELDS_DECLARE )
-#undef ROCKETNET_CLIENT_TRANSPORT_LAYOUT_FIELDS_DECLARE
+    // the rest of the last cache line, explicit so the compiler adds no tail
+    // padding (MSVC C4324); a whole cache line when the members end on one
+    uint8_t padding[ROCKETNET_CLIENT_TRANSPORT_ALIGNMENT - ROCKETNET_CLIENT_TRANSPORT_MEMBER_BYTES % ROCKETNET_CLIENT_TRANSPORT_ALIGNMENT];
 };
+
+#undef ROCKETNET_CLIENT_TRANSPORT_LAYOUT_FIELDS_DECLARE
+
+static_assert( alignof( rocketnet_client_transport_t ) == 64 && ROCKETNET_CLIENT_TRANSPORT_ALIGNMENT == 64,
+               "the transport is cache-line aligned by its leading members" );
+static_assert( offsetof( rocketnet_client_transport_t, payload_ring ) == sizeof( ( (rocketnet_client_transport_t *) 0 )->packet_leases ) &&
+                   offsetof( rocketnet_client_transport_t, payload_ring ) % 64 == 0,
+               "the payload rings start on a cache line with no implicit padding" );
+static_assert( offsetof( rocketnet_client_transport_t, context ) ==
+                   offsetof( rocketnet_client_transport_t, payload_ring ) + sizeof( ( (rocketnet_client_transport_t *) 0 )->payload_ring ),
+               "the cache-line-aligned members leave no implicit padding after them" );
+static_assert( offsetof( rocketnet_client_transport_t, current_stats_index ) == offsetof( rocketnet_client_transport_members_t, current_stats_index ) &&
+                   offsetof( rocketnet_client_transport_t, padding ) == ROCKETNET_CLIENT_TRANSPORT_MEMBER_BYTES,
+               "current_stats_index is the last member, and the padding follows it" );
+static_assert( sizeof( rocketnet_client_transport_t ) == offsetof( rocketnet_client_transport_t, padding ) + sizeof( ( (rocketnet_client_transport_t *) 0 )->padding ) &&
+                   sizeof( rocketnet_client_transport_t ) % 64 == 0,
+               "the transport has no implicit tail padding" );
 
 // The members construction does not zero. Three are buffers: their bytes
 // are written before they are read, at the count or ring index that names
@@ -379,11 +417,14 @@ static void rocketnet_client_transport_construct( rocketnet_client_transport_t *
 #if ROCKETNET_DEV
 bool rocketnet_client_transport_inventory_matches_for_test( char * failure, size_t failure_bytes )
 {
+    // the tail padding follows the manifest's members and is never written: KEEP
 #define TRANSPORT_MEMBER( field, declaration ) ROCKETNET_RESET_MEMBER( rocketnet_client_transport_t, field, -1 ),
-    static const rocketnet_reset_member_t members[] = { ROCKETNET_CLIENT_TRANSPORT_LAYOUT_FIELDS( TRANSPORT_MEMBER ) };
+    static const rocketnet_reset_member_t members[] = { ROCKETNET_CLIENT_TRANSPORT_LAYOUT_FIELDS( TRANSPORT_MEMBER )
+                                                            ROCKETNET_RESET_MEMBER( rocketnet_client_transport_t, padding, -1 ) };
 #undef TRANSPORT_MEMBER
 #define TRANSPORT_DECISION( decision, field ) ROCKETNET_RESET_MEMBER( rocketnet_client_transport_t, field, #decision[0] == 'R' ),
-    static const rocketnet_reset_member_t decisions[] = { ROCKETNET_CLIENT_TRANSPORT_CONNECTION_FIELDS( TRANSPORT_DECISION ) };
+    static const rocketnet_reset_member_t decisions[] = { ROCKETNET_CLIENT_TRANSPORT_CONNECTION_FIELDS( TRANSPORT_DECISION )
+                                                              ROCKETNET_RESET_MEMBER( rocketnet_client_transport_t, padding, 0 ) };
 #undef TRANSPORT_DECISION
     return rocketnet_reset_inventory_matches( "rocketnet_client_transport_t", members, sizeof( members ) / sizeof( members[0] ),
                                               decisions, sizeof( decisions ) / sizeof( decisions[0] ), 0,
@@ -936,8 +977,8 @@ static void rocketnet_client_transport_io_commit_packet( rocketnet_client_transp
 // where they go instead.  The setting in force decides there whether a
 // packet is let out, lost or held, and a held packet leaves with the drain
 // when it comes due.  Nothing here changes the threading of the connection:
-// the ring, the hand-off and the drain are the caller's thread, as they
-// were before the simulator was here.
+// the ring, the hand-off and the drain are the caller's thread, as they are
+// without the simulator.
 
 static void rocketnet_client_link_hold( rocketnet_client_transport_t * transport, const rocketnet_address_t * to )
 {
@@ -2394,11 +2435,11 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
     // running connection.  The simulator is in the send path either way: in
     // the I/O ring path the hand-off hands the sealed packets to it, and in
     // the per-packet path the send does.
-    // A connection created with a simulator setting runs no network thread:
-    // the simulator holds its packets and the caller sends them, one by one,
-    // on its own thread.  That was decided when the simulator was configured
-    // and it never moves: a live setting change does not move a running
-    // connection between the two paths.
+    // A connection created with a simulator setting runs no I/O thread: the
+    // caller sends its packets one by one, and the BASE receive thread
+    // receives. That was decided when the simulator was configured and it
+    // never moves: a live setting change does not move a running connection
+    // between the two paths.
 
     client_transport->io_thread = !rocketnet_network_simulator_created_active( client_transport->link_simulator ) &&
 #if ROCKETNET_DEV
@@ -2735,9 +2776,9 @@ static void rocketnet_client_process_packet( rocketnet_client_transport_t * clie
     // only the dialed server is listened to; everything else is junk. While
     // the attempt holds a server address every such drop is counted. Once a
     // terminal state ends the attempt, the reset clears the address
-    // (sdk/rocketnet_client_protocol.cpp:56-57,
-    // sdk/rocketnet_connection_reset.cpp:42), and the server's own
-    // redundant disconnect packets still in flight are dropped uncounted.
+    // (rocketnet_client_set_state, rocketnet_client_connection_reset), and
+    // the server's own redundant disconnect packets still in flight are
+    // dropped uncounted.
 
     // While the family race is in flight the other family's server is
     // dialed too (proofs/tla/ServerConnection.tla InFlight); once the race commits
@@ -3134,6 +3175,7 @@ void rocketnet_client_transport_update( rocketnet_client_transport_t * client_tr
             rocketnet_client_io_step( &client_transport->client_io, false ); // RNClientIo CallerStep
 #endif // #if ROCKETNET_DEV
         receive_buffers[0] = rocketnet_client_io_expose( &client_transport->client_io );
+        rocketnet_client_io_fold_counters( &client_transport->client_io );
         num_receive_buffers = receive_buffers[0] ? 1 : 0;
     }
     else

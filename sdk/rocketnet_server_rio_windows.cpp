@@ -78,9 +78,11 @@ struct rocketnet_server_rio_t
     // next and outstanding lead, each starting a cache line (next's line
     // padded out explicitly), so the compiler inserts no alignment padding.
     // next is read by fill threads, which run only while the main thread is
-    // outside send_packets.
-    alignas( 64 ) std::atomic<int> next[ROCKETNET_RIO_SEND_PHASES]{};
-    uint8_t next_padding[64 - ROCKETNET_RIO_SEND_PHASES * sizeof( std::atomic<int> )];
+    // outside send_packets. It is 64 bits, as IOCP's num_staged: a fill phase
+    // never reserves 2^64 slots, so the count never wraps back onto a slot
+    // it handed out.
+    alignas( 64 ) std::atomic<uint64_t> next[ROCKETNET_RIO_SEND_PHASES]{};
+    uint8_t next_padding[64 - ROCKETNET_RIO_SEND_PHASES * sizeof( std::atomic<uint64_t> )];
     // posted sends of each phase not yet retired: the worker writes, pending reads
     alignas( 64 ) std::atomic<int> outstanding[ROCKETNET_RIO_SEND_PHASES]{};
 
@@ -365,7 +367,7 @@ static int rocketnet_rio_frame_index( rocketnet_server_rio_t * rio, const uint8_
     const int phase = rio->fill.load( std::memory_order_relaxed );
     const int slot = index - phase * rio->send_queue_size;
     if ( slot < 0 || slot >= rio->send_queue_size ||
-         slot >= rio->next[phase].load( std::memory_order_relaxed ) )
+         (uint64_t) slot >= rio->next[phase].load( std::memory_order_relaxed ) )
         return -1;
     return index;
 }
@@ -401,7 +403,7 @@ static bool rocketnet_rio_post_receive( rocketnet_server_rio_t * rio, int slice 
     {
         // a post refused with an ICMP report of an earlier send is counted
         // with the reset statuses; a refused re-post waits on the retry list in
-        // rocketnet_rio_complete_receive (windows-udp-connreset audit, rio post)
+        // rocketnet_rio_complete_receive
         if ( rocketnet_platform_receive_status_is_reset( WSAGetLastError() ) )
             rocketnet_platform_count_receive_reset();
         return false;
@@ -439,6 +441,7 @@ static void rocketnet_rio_retire_send( rocketnet_server_rio_t * rio, const RIORE
 
 // proofs/tla/RNRioDriver.tla DequeueSend: dequeues the send
 // completion queue without blocking. Returns the completions retired.
+// proofs/tla/RNRioSendSlotLayout.tla Complete: each completion frees its slot.
 static int rocketnet_rio_dequeue_send( rocketnet_server_rio_t * rio )
 {
     int total = 0;
@@ -561,9 +564,8 @@ static bool rocketnet_rio_stop_pass( rocketnet_server_rio_t * rio )
         const int fill = rio->fill.load( std::memory_order_relaxed );
         if ( rio->phase_state[fill] == ROCKETNET_RIO_PHASE_FILL )
         {
-            int count = rio->next[fill].load( std::memory_order_relaxed );
-            if ( count > rio->send_queue_size )
-                count = rio->send_queue_size;
+            const uint64_t staged = rio->next[fill].load( std::memory_order_relaxed );
+            const int count = staged < (uint64_t) rio->send_queue_size ? (int) staged : rio->send_queue_size;
             if ( count > 0 )
             {
                 phases[num_phases] = fill;
@@ -782,6 +784,7 @@ static void rocketnet_rio_sized_bind( rocketnet_server_rio_t * rio, uint8_t * ba
     rio->process.packet_data = (uint8_t **) ( base + layout->process_packet_data );
 
     // RNRioWorker Init: bank 0 fills, every other bank is free
+    // proofs/tla/RNBankFifoLayout.tla Init: the loop pushes banks 1 .. N - 1 on the free stack.
 
     rio->free_count = 0;
     for ( int i = 0; i < ROCKETNET_RIO_RECEIVE_BANKS; ++i )
@@ -958,8 +961,8 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
 
     setsockopt( rio->socket, rio->ipv6 ? IPPROTO_IPV6 : IPPROTO_IP,
                 rio->ipv6 ? IPV6_DONTFRAG : IP_DONTFRAGMENT, (const char *) &enabled, sizeof( enabled ) );
-    // windows-udp-connreset audit, rio socket: both ICMP reset reports off;
-    // a refusal is logged once and the receive path skips the statuses
+    // both ICMP reset reports off; a refusal is logged once and the receive
+    // path skips the statuses
 
     rocketnet_platform_socket_disable_udp_resets( (uintptr_t) rio->socket );
     if ( bind( rio->socket, (sockaddr *) &address, address_bytes ) == SOCKET_ERROR )
@@ -985,7 +988,7 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
     // RIORegisterBuffer takes any committed memory and locks the pages it
     // spans, so ROCKETNET_ALLOCATION_ALIGNMENT is enough (the layout's
     // sub-regions are offsets from the region's base). It is zeroed once
-    // here, as VirtualAlloc's pages were, before any traffic.
+    // here, before any traffic.
 
     rio->region = (uint8_t *) rocketnet_malloc( context, (size_t) rio->layout.total_bytes );
     if ( !rio->region )
@@ -1088,8 +1091,8 @@ int rocketnet_server_rio_send_room( rocketnet_server_rio_t * rio )
     if ( rio->stopping.load( std::memory_order_acquire ) )
         return 0;
     const int phase = rio->fill.load( std::memory_order_relaxed );
-    const int used = rio->next[phase].load( std::memory_order_relaxed );
-    return used < 0 || used >= rio->send_queue_size ? 0 : rio->send_queue_size - used;
+    const uint64_t used = rio->next[phase].load( std::memory_order_relaxed );
+    return used >= (uint64_t) rio->send_queue_size ? 0 : (int) ( (uint64_t) rio->send_queue_size - used );
 }
 
 // proofs/tla/ServerStopSpread.tla RequestIoStop: no slot staged, handed or
@@ -1116,23 +1119,21 @@ bool rocketnet_server_rio_send_idle( rocketnet_server_rio_t * rio )
 // phase; past the last slot it returns NULL and counts SEND_FULL.
 // proofs/tla/RNRioWorker.tla Stage, first half: a fill thread takes a slot of the
 // open fill phase.
+// proofs/tla/RNRioSendSlotLayout.tla Reserve: one fetch_add per call, refused or not; a counter that wraps
+// within reach hands out a staged slot again (MCRNRioSendSlotLayoutBrokenIntWrap.cfg).
 uint8_t * rocketnet_server_rio_start_packet( rocketnet_server_rio_t * rio, const rocketnet_address_t * to, uint64_t * packet_id )
 {
     if ( rio->stopping.load( std::memory_order_acquire ) )
         return NULL;
     const int phase = rio->fill.load( std::memory_order_relaxed );
-    const int slot = rio->next[phase].fetch_add( 1, std::memory_order_relaxed );
-
-    // the lower bound too: a caller that stages forever without a flush
-    // wraps the index negative, and a negative index is an out-of-bounds write
-
-    if ( slot < 0 || slot >= rio->send_queue_size )
+    const uint64_t slot = rio->next[phase].fetch_add( 1, std::memory_order_relaxed );
+    if ( slot >= (uint64_t) rio->send_queue_size )
     {
         rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_SEND_FULL );
         return NULL;
     }
 
-    const int index = phase * rio->send_queue_size + slot;
+    const int index = phase * rio->send_queue_size + (int) slot;
     rio->slot_bytes[index] = 0;
     if ( !rocketnet_rio_address_write( to, rio->ipv6, rocketnet_rio_send_address( rio, index ) ) )
     {
@@ -1147,6 +1148,7 @@ uint8_t * rocketnet_server_rio_start_packet( rocketnet_server_rio_t * rio, const
 
 // proofs/tla/RNRioDriver.tla Finish: the slot records its bytes.
 // proofs/tla/RNRioWorker.tla Stage, second half: the staged packet is postable.
+// proofs/tla/RNRioSendSlotLayout.tla Finish: the reserved slot finished.
 void rocketnet_server_rio_finish_packet( rocketnet_server_rio_t * rio, uint64_t packet_id, uint8_t * frame, int packet_bytes )
 {
     rocketnet_assert( packet_bytes > 0 && packet_bytes <= ROCKETNET_RECEIVE_CEILING );
@@ -1164,6 +1166,7 @@ void rocketnet_server_rio_finish_packet( rocketnet_server_rio_t * rio, uint64_t 
 }
 
 // proofs/tla/RNRioDriver.tla Abort: the slot's bytes are zeroed and it is never posted
+// proofs/tla/RNRioSendSlotLayout.tla Finish: the reserved slot aborted, free again.
 void rocketnet_server_rio_abort_packet( rocketnet_server_rio_t * rio, uint64_t packet_id, uint8_t * frame )
 {
     (void) packet_id;
@@ -1182,16 +1185,17 @@ void rocketnet_server_rio_abort_packet( rocketnet_server_rio_t * rio, uint64_t p
 // never waits and makes no RIO call.
 // proofs/tla/RNRioDriver.tla SwitchPhase: the fill phase switches only to a phase
 // whose sends have all completed, and counts SEND_WAITS otherwise.
+// proofs/tla/RNRioSendSlotLayout.tla SendPackets: count = next[fill] clamped to the queue, the send_ready
+// tail % ROCKETNET_RIO_SEND_PHASES, next[next] = 0 and fill = next.
 void rocketnet_server_rio_send_packets( rocketnet_server_rio_t * rio )
 {
     if ( rio->stopping.load( std::memory_order_acquire ) )
         return;
     const int phase = rio->fill.load( std::memory_order_relaxed );
-    int count = rio->next[phase].load( std::memory_order_relaxed );
-    if ( count <= 0 )
+    const uint64_t staged = rio->next[phase].load( std::memory_order_relaxed );
+    if ( staged == 0 )
         return;                  // nothing staged
-    if ( count > rio->send_queue_size )
-        count = rio->send_queue_size;
+    const int count = staged < (uint64_t) rio->send_queue_size ? (int) staged : rio->send_queue_size;
 #if ROCKETNET_DEV
     if ( rio->test_try_fails )
         return;
@@ -1227,6 +1231,7 @@ void rocketnet_server_rio_send_packets( rocketnet_server_rio_t * rio )
 // and completion the kernel owns the slot's frame and its address slot.
 // proofs/tla/RNRioDriver.tla Post: posts every finished slot of the phase and adds
 // the posted count to the phase's outstanding count.
+// proofs/tla/RNRioSendSlotLayout.tla TakeAndPost: finished slots below the count posted, the rest zeroed.
 static void rocketnet_rio_post_phase( rocketnet_server_rio_t * rio, int phase, int count )
 {
     int posted = 0;
@@ -1292,7 +1297,7 @@ static void rocketnet_rio_complete_receive( rocketnet_server_rio_t * rio, const 
         status = (LONG) injected;
     // an ICMP report of an earlier send (port, host or network unreachable)
     // is counted with the failed receives and the slice is re-posted below,
-    // never the end of the drain (windows-udp-connreset audit, rio completion)
+    // never the end of the drain
 
     if ( rocketnet_platform_receive_status_is_reset( (int) status ) )
         rocketnet_platform_count_receive_reset();
@@ -1316,10 +1321,10 @@ static void rocketnet_rio_complete_receive( rocketnet_server_rio_t * rio, const 
         }
         else if ( !rocketnet_rio_address_read( rocketnet_rio_receive_address( rio, slice ), rio->ipv6, &from ) )
             rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_RECEIVE_FAILED );
-        else if ( bank->num_packets >= bank->capacity )
-            rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_OVERFLOW );    // unreachable: the dequeue is bounded by the room
         else
         {
+            rocketnet_assert( bank->num_packets < bank->capacity );     // the dequeue takes at most the bank's room
+
             const int index = bank->num_packets++;
             bank->from[index] = from;
             bank->packet_bytes[index] = bytes;
@@ -1398,6 +1403,9 @@ static int rocketnet_rio_dequeue_receive( rocketnet_server_rio_t * rio )
 
 // proofs/tla/RNRioWorker.tla WTake, WRetire and WPublish: one worker pass, with
 // WPost, WCommit and WDequeue in the calls it makes. True when it did work.
+// proofs/tla/RNBankFifoLayout.tla Publish: the receive ready tail % ROCKETNET_RIO_RECEIVE_BANKS and the free
+// stack's top. proofs/tla/RNRioSendSlotLayout.tla TakeAndPost and Retire: the send_ready head % ROCKETNET_RIO_SEND_PHASES
+// and a drained posted phase idle again.
 static bool rocketnet_rio_worker_pass( rocketnet_server_rio_t * rio )
 {
     bool progress = false;
@@ -1516,6 +1524,8 @@ static void rocketnet_rio_worker( rocketnet_platform_thread_t *, void * argument
 // fill bank may be waiting for one).
 // proofs/tla/RNRioDriver.tla Swap: the banks the worker filled become the exposed
 // banks whose views process_packets returns until the next call.
+// proofs/tla/RNBankFifoLayout.tla Release and Take: the exposed banks back on the free stack, then the
+// ready banks that fit from the ready head, MCRNBankFifoLayoutLifoExposed.cfg.
 void rocketnet_server_rio_receive_packets( rocketnet_server_rio_t * rio )
 {
     rio->process.num_packets = 0;
@@ -2255,6 +2265,44 @@ int rocketnet_server_rio_test_retry_receives( rocketnet_server_rio_t * rio )
 {
     return rio->num_retry.load( std::memory_order_relaxed );
 }
+// A fill phase that has taken 2^32 - 1 reservations without a flush refuses
+// the next two as full: the reservation count does not wrap back onto a slot
+// it handed out.
+bool rocketnet_server_rio_test_reservation_wrap()
+{
+    rocketnet_server_rio_t * rio = rocketnet_rio_test_fixture();
+    if ( !rio )
+        return false;
+
+    rocketnet_address_t to;
+    memset( &to, 0, sizeof( to ) );
+    to.type = ROCKETNET_ADDRESS_IPV4;
+    to.data.ipv4[0] = 127;
+    to.data.ipv4[3] = 1;
+    to.port = 40001;
+
+    typedef decltype( rio->next[0].load() ) rocketnet_rio_test_count_t;
+    const int phase = rio->fill.load( std::memory_order_relaxed );
+    bool valid = rocketnet_server_rio_send_room( rio ) == rio->send_queue_size;
+    rio->next[phase].store( (uint64_t) rio->send_queue_size - 1, std::memory_order_relaxed );
+    valid &= rocketnet_server_rio_send_room( rio ) == 1;
+    rio->next[phase].store( (uint64_t) rio->send_queue_size, std::memory_order_relaxed );
+    valid &= rocketnet_server_rio_send_room( rio ) == 0;
+    rio->next[phase].store( (rocketnet_rio_test_count_t) 0xFFFFFFFFull, std::memory_order_relaxed );
+    valid &= rocketnet_server_rio_send_room( rio ) == 0;
+
+    uint64_t id = 0;
+    valid &= rocketnet_server_rio_start_packet( rio, &to, &id ) == NULL;
+    valid &= rocketnet_server_rio_send_room( rio ) == 0;
+    valid &= rocketnet_server_rio_start_packet( rio, &to, &id ) == NULL;
+    valid &= rocketnet_server_rio_send_room( rio ) == 0;
+    valid &= rio->counters[ROCKETNET_RIO_COUNTER_SEND_FULL].load() == 2;
+
+    rocketnet_rio_test_fixture_free( rio );
+
+    return valid;
+}
+
 #endif // #if ROCKETNET_DEV
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS

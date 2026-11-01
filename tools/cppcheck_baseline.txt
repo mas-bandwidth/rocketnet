@@ -35,4 +35,3 @@ cppcheck	sdk/rocketnet_tests.cpp	memsetClassFloat	969eada2de601b16
 cppcheck	sdk/rocketnet_tests.cpp	memsetClassFloat	deff5be03b1b868a
 cppcheck	sdk/rocketnet_tests.cpp	memsetClassFloat	fb1c2204c9511c90
 cppcheck	sdk/rocketnet_window_ack.cpp	memsetClassFloat	5668ed929a46f963
-cppcheck	sdk/rocketnet_xdp_frame.h	ctunullpointer	0e04de3e226b215e

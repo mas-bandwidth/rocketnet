@@ -18,6 +18,7 @@
 bool rocketnet_server_rio_test_receive_overflow( uint64_t * counters, int * packet_counts,
                                                  int * repost_calls, int * pending_receives, int * guard_hit );
 bool rocketnet_server_rio_test_worker_handoff();
+bool rocketnet_server_rio_test_reservation_wrap();
 bool rocketnet_server_rio_test_stop_drains_sends();
 bool rocketnet_server_rio_test_send_accounting();
 
@@ -64,6 +65,14 @@ static void test_rio_transport_worker_handoff()
 
 REGISTER_UNIT_TEST( test_rio_transport_worker_handoff );
 
+// A fill phase past 2^32 reservations without a flush refuses the next slot as
+// full, and never hands out a slot it handed out before.
+static void test_rio_transport_reservation_does_not_wrap()
+{
+    check( rocketnet_server_rio_test_reservation_wrap() );
+}
+
+REGISTER_UNIT_TEST( test_rio_transport_reservation_does_not_wrap );
 // Stop keeps the socket open while committed sends are in flight
 // (proofs/tla/RNRioWorker.tla WClose), so closesocket cancels none of the stop
 // burst: a fake kernel, no socket, no worker thread, no clock.

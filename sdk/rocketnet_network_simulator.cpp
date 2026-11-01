@@ -17,82 +17,48 @@
 #include <float.h>
 #include <limits.h>
 
-/*
-    THE SELECTION RULE, WHICH IS THE WIRE'S BEHAVIOUR AND DOES NOT CHANGE
-
-    receive( to, now ) delivers the packet in the LOWEST OCCUPIED SLOT INDEX
-    that is due ( delivery_time <= now ) and addressed to `to`. send() places
-    a packet in the LOWEST FREE SLOT INDEX.
-
-    Those two sentences are the whole observable contract, and they were the
-    contract before this file carried an index too: the original receive()
-    scanned the packet array from slot 0 and returned the first slot passing
-    those three predicates, and the original insert scanned from slot 0 and
-    took the first free one. Slot-index order is not delivery-time order and
-    it is not FIFO -- it is an artifact of the array walk -- but it is the
-    order every soak and every functional test has run against, so it is
-    preserved exactly rather than improved. A faster instrument that delivers
-    a different packet sequence is a different instrument, and the numbers
-    taken through it are not comparable with the numbers taken before it.
-
-    What changed is only the COST of finding that slot. receive() used
-    to walk all `capacity` slots on every call: at soak_sim's shape that is
-    a 4096-entry scan nine times per iteration, most of them finding nothing,
-    and it held 38.6% of soak cycles on the test box -- harness, not product.
-
-    The index: each destination shard owns a flat bitmap of occupied physical
-    slots and a summary bitmap over its nonempty words. The shard is a hash of
-    the destination address, so all slots addressed to a given destination
-    live in exactly one shard. Walking summary words, occupancy words and bits
-    from low to high visits every candidate in the same ascending physical-slot
-    order the full array walk did. The address predicate still runs because a
-    shard may hold more than one destination. Same visits, same order, same
-    winner -- no pointer ownership and no insertion walk.
-
-    Two further aids, both exact, and neither one constant-cost -- free_hint's
-    scan is O(the gap it skips) and the bound's refresh is O(the entries it
-    walked). They are cheap in every shape this file meets, which is not the
-    same claim:
-
-      - free_hint: the lowest slot index that may be free. Every slot below it
-        is occupied, so insert's scan starts there instead of at 0 and still
-        finds the globally lowest free slot.
-
-      - shard_min_delivery_time: a LOWER BOUND on the earliest delivery time
-        in the shard. If that bound is in the future nothing in the shard can
-        be due and receive() returns 0 without walking at all -- which is the
-        common case, because the soak's drain loop calls receive() until it
-        comes back empty. The bound is lowered on insert and refreshed to the
-        exact minimum by any walk that ends up proving nothing was due, which
-        is the walk that had to look at everything anyway. Removals leave it
-        stale-low, which costs a walk and can never hide a due packet.
-
-    THE FAILURE STATE
-
-    An instrument with no failure state is not an instrument, and an index is
-    exactly the kind of machinery that can go quietly wrong -- a lost link
-    does not crash, it silently withholds packets, and a soak that silently
-    loses packets reports a hostile wire that nobody configured.
-
-    So the index carries an audit ( rocketnet_network_simulator_audit ): with
-    it on, every receive() re-runs the ORIGINAL full-array scan as a reference
-    and compares the slot the two selections chose, then walks the whole index
-    checking it against the packet arrays. Any divergence prints the specifics
-    and aborts the process. It is deliberately slow -- it is proof mode, not
-    soak mode -- and it does not depend on rocketnet_assert, which compiles
-    out under NDEBUG, because a Release soak is exactly where the audit has
-    to be able to fire.
-
-    And the audit has its own negative control: rocketnet_network_simulator_
-    inject_index_fault() deliberately drops one occupied slot out of the
-    index, so the audit can be watched failing on demand rather than trusted.
-    scripts/soak-sim-selftest runs both legs. That injection is ONE fault of
-    several the audit catches -- a cold reader has since driven it red with a
-    mis-ordered link, a wrong shard assignment, a shard bound set one
-    nanosecond too high, and three others, four of which leave no trace in the
-    soak's own output -- so it is the negative control, not the boundary of
-    what is checked.
-*/
+// THE SELECTION RULE
+//
+// receive( to, now ) delivers the packet in the lowest occupied slot index
+// that is due ( delivery_time <= now ) and addressed to `to`; send() places a
+// packet in the lowest free slot index. That is the wire's whole observable
+// order: it is neither delivery-time order nor FIFO, and every soak and
+// functional trace is a function of it, so a selection that changes it is a
+// different instrument.
+//
+// THE INDEX
+//
+// Each destination shard owns a flat bitmap of occupied physical slots and a
+// summary bitmap over its nonempty occupancy words. The shard is a hash of the
+// destination address, so every slot addressed to one destination lives in one
+// shard. Walking summary words, occupancy words and bits from low to high
+// visits the candidates in ascending physical-slot order, the order of the
+// full array scan (rocketnet_simulator_select_reference), so both choose the
+// same slot. The address predicate still runs because a shard may hold more
+// than one destination.
+//
+// Two exact aids, neither constant cost:
+//
+//   - free_hint: every slot below it is occupied, so insert starts its scan
+//     there and still finds the lowest free slot. Its scan is O(the gap).
+//
+//   - shard_min_delivery_time: a lower bound on the earliest delivery time in
+//     the shard. When it is in the future nothing in the shard is due and
+//     receive() returns 0 without a walk, the common case of a drain loop that
+//     calls receive() until it comes back empty. Insert lowers it, a walk
+//     that finds nothing due sets it to the exact minimum, and a removal
+//     leaves it low, which costs a walk and never hides a due packet.
+//
+// THE AUDIT
+//
+// A broken index does not crash: it withholds packets, and a soak reads that
+// as a hostile wire nobody configured. With the audit on
+// (rocketnet_network_simulator_audit) every receive() also runs the full
+// array scan, compares the two chosen slots, and checks the whole index
+// against the packet arrays; a divergence prints its detail and aborts. It
+// does not use rocketnet_assert, which compiles out under NDEBUG, the build
+// the soaks run. rocketnet_network_simulator_inject_index_fault is its
+// negative control, and scripts/soak-sim-selftest runs both legs.
 
 // proofs/tla/Link.tla: Send, Deliver, Drop, Duplicate, Reorder, ReverseWindow, Delay, Age;
 // the drop-every-Nth schedule is Link!Send with Pattern "everynth", the window
@@ -538,6 +504,7 @@ bool rocketnet_network_simulator_patterns( struct rocketnet_network_simulator_t 
         simulator->window = (struct rocketnet_simulator_window_entry_t *) rocketnet_malloc( simulator->context, sizeof( struct rocketnet_simulator_window_entry_t ) * (size_t) reverse_window );
         if ( !simulator->window )
         {
+            simulator->drop_every_nth = 0;
             simulator->reverse_window = 0;
             return false;
         }
@@ -619,6 +586,8 @@ static void rocketnet_simulator_record_membership_updates( struct rocketnet_netw
         simulator->index_stats.max_membership_word_updates = updates;
 }
 
+// proofs/tla/RNSimulatorStoreLayout.tla Send: the slot's bit in its shard's occupancy word, the summary bit
+// when that word was empty, the shard's bound lowered to the delivery time
 static void rocketnet_simulator_index_add( struct rocketnet_network_simulator_t * simulator, int slot )
 {
     // membership is one physical-slot bit and, only when its occupancy word
@@ -650,6 +619,8 @@ static void rocketnet_simulator_index_add( struct rocketnet_network_simulator_t 
         simulator->shard_min_delivery_time[shard] = simulator->delivery_time[slot];
 }
 
+// proofs/tla/RNSimulatorStoreLayout.tla Receive, ReceiveAny and StaleRetire: a stale handle is refused; the
+// slot's bit cleared, the summary bit only when its word is empty, the bound left low
 static bool rocketnet_simulator_index_remove( struct rocketnet_network_simulator_t * simulator,
                                               const struct rocketnet_network_simulator_slot_handle_t * handle )
 {
@@ -691,6 +662,7 @@ static bool rocketnet_simulator_index_remove( struct rocketnet_network_simulator
     return true;
 }
 
+// proofs/tla/RNSimulatorStoreLayout.tla Receive, ReceiveAny and StaleRetire: the slot freed and free_hint lowered to it
 static bool rocketnet_simulator_retire( struct rocketnet_network_simulator_t * simulator,
                                         const struct rocketnet_network_simulator_slot_handle_t * handle )
 {
@@ -705,6 +677,7 @@ static bool rocketnet_simulator_retire( struct rocketnet_network_simulator_t * s
     return true;
 }
 
+// proofs/tla/RNSimulatorStoreLayout.tla ReceiveAny: the lowest used slot due now, retired through its handle
 int rocketnet_network_simulator_receive_any( struct rocketnet_network_simulator_t * simulator,
                                              double current_time,
                                              struct rocketnet_address_t * out_from,
@@ -755,8 +728,8 @@ static int rocketnet_simulator_select_reference( const struct rocketnet_network_
                                                  const struct rocketnet_address_t * to,
                                                  double current_time )
 {
-    // the reference: the original full-array scan, unchanged, pure. It mutates
-    // nothing, so the audit can run it beside the fast path on the same state.
+    // the reference: the full-array scan of the selection rule. It mutates
+    // nothing, so the audit runs it beside the fast path on the same state.
 
     for ( int i = 0; i < simulator->capacity; i++ )
     {
@@ -772,6 +745,8 @@ static int rocketnet_simulator_select_reference( const struct rocketnet_network_
     return ROCKETNET_SIMULATOR_NO_SLOT;
 }
 
+// proofs/tla/RNSimulatorStoreLayout.tla Receive: the walk over summary bits, occupancy bits and the bound,
+// which must choose the slot rocketnet_simulator_select_reference chooses (SelectMatchesReference)
 static int rocketnet_simulator_select_fast( struct rocketnet_network_simulator_t * simulator,
                                             const struct rocketnet_address_t * to,
                                             double current_time )
@@ -797,8 +772,7 @@ static int rocketnet_simulator_select_fast( struct rocketnet_network_simulator_t
         while ( summary != 0 )
         {
             const int occupancy_index = summary_index * 64 + rocketnet_simulator_ctz64( summary );
-            if ( occupancy_index >= simulator->occupancy_words )
-                break;
+            rocketnet_assert( occupancy_index < simulator->occupancy_words );
 
             uint64_t occupancy = *rocketnet_simulator_occupancy_word( simulator, shard, occupancy_index );
             occupancy_words++;
@@ -1108,6 +1082,7 @@ int rocketnet_network_simulator_deliver_packets( struct rocketnet_network_simula
     return accepted;
 }
 
+// proofs/tla/RNSimulatorStoreLayout.tla Receive: select_fast, then the chosen slot's handle retired
 int rocketnet_network_simulator_receive( struct rocketnet_network_simulator_t * simulator,
                                          const struct rocketnet_address_t * to,
                                          double current_time,
@@ -1164,6 +1139,7 @@ bool rocketnet_network_simulator_test_handle_for_slot( const struct rocketnet_ne
     return true;
 }
 
+// proofs/tla/RNSimulatorStoreLayout.tla StaleRetire: a caller's handle, refused once its slot's generation changed
 bool rocketnet_network_simulator_test_remove_handle( struct rocketnet_network_simulator_t * simulator,
                                                      const struct rocketnet_network_simulator_slot_handle_t * handle )
 {

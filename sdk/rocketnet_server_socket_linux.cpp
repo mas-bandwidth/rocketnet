@@ -93,7 +93,7 @@ struct rocketnet_server_socket_send_buffer_t
 {
     uint8_t padding_0[4096];
 
-    std::atomic<int> num_packets{ 0 };
+    std::atomic<uint64_t> num_packets{ 0 };
 
     uint8_t padding_1[4096];
 
@@ -129,6 +129,8 @@ struct rocketnet_server_socket_receive_buffer_t
 // handoff mutex held; they exchange indices only, never packet bytes. The
 // producer is exclusive, ready buffers wait in FIFO order, and a claimed
 // buffer remains owned by its consumer until recycle().
+// proofs/tla/RNBankFifoLayout.tla Init (the constructor's loop), Publish (publish), Take (claim) and
+// Release (recycle); MCRNBankFifoLayoutLoopFour.cfg checks them at N = 4.
 template <int N> struct rocketnet_xdp_buffer_exchange_t
 {
     static_assert( N >= 3, "producer, consumer and spare XDP buffers" );
@@ -219,8 +221,8 @@ struct rocketnet_server_xdp_socket_t
     // this queue's xdp thread outside the handoff lock
     std::atomic<uint64_t> send_refused_length{ 0 };
 
-    // staged packets the start path refused because the queue was full or its
-    // counter had wrapped negative (rocketnet_xdp_send_claim); written by the
+    // staged packets the start path refused because the queue was full
+    // (rocketnet_xdp_send_claim); written by the
     // fill threads, read by this queue's xdp thread at flush time
     std::atomic<uint64_t> send_refused_overflow{ 0 };
 
@@ -1484,11 +1486,10 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         return NULL;
     }
 
-    // the queue and cpu counts, and since the review the public
-    // address too, arrive from the transport config table (with loud
-    // override logging and deprecated aliases handled there) -- no env is
-    // read here, so the address the pre-flight verified is the address
-    // this create binds, always
+    // the queue and cpu counts and the public address arrive from the
+    // transport config table (with loud override logging and deprecated
+    // aliases handled there) -- no env is read here, so the address the
+    // pre-flight verified is the address this create binds, always
 
     rocketnet_info( "server public address is %s", public_address_string );
 
@@ -2052,8 +2053,8 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         // fails create at the top of queue n, after the earlier queues are
         // fully built (their mutexes created, their xdp threads running) and
         // before queue n creates anything, so destroy meets a queue whose
-        // mutexes were never created (test_xdp_filter.cpp:1603,
-        // xdp_create_fails_part_way_tears_down)
+        // mutexes were never created (xdp_create_fails_part_way_tears_down
+        // in tests/test_xdp_filter.cpp)
         {
             char fail_at_queue[ROCKETNET_PLATFORM_GETENV_MAX_BYTES];
             if ( rocketnet_platform_getenv( "ROCKETNET_TEST_XDP_FAIL_AT_QUEUE", fail_at_queue, sizeof( fail_at_queue ) ) > 0 && atoi( fail_at_queue ) == queue )
@@ -2339,7 +2340,7 @@ void rocketnet_server_socket_destroy( rocketnet_server_socket_t * server_socket 
 
         // destroy mutexes: a create that failed part way reaches here with
         // later queues' mutexes never created, so only a created one is
-        // destroyed (the IOCP transport's guard, rocketnet_server_iocp_windows.cpp:436)
+        // destroyed, as rocketnet_server_iocp_destroy guards its mutexes
 
         if ( socket->send_mutex.ok )
             rocketnet_platform_mutex_destroy( &socket->send_mutex );
@@ -2456,9 +2457,6 @@ uint8_t * rocketnet_server_socket_start_packet_internal( struct rocketnet_server
         return NULL;
     rocketnet_server_socket_send_buffer_t * send_buffer = &socket->send_buffer[flow_index];
 
-    // the lower bound matters too: an app that stages forever without ever
-    // flushing wraps this counter negative after ~2^31 packets, and a
-    // negative index here is an out-of-bounds write, not a dropped packet.
     // the claim counts a refusal instead of logging on this hot path
 
     const int packet_index = rocketnet_xdp_send_claim( send_buffer->num_packets, ROCKETNET_XDP_SEND_QUEUE_SIZE, socket->send_refused_overflow );
@@ -2493,8 +2491,8 @@ int rocketnet_server_socket_send_room( struct rocketnet_server_socket_t * server
         const int flow_index = socket->send_flow_index.load( std::memory_order_acquire );
         if ( flow_index < 0 )
             return 0;
-        const int used = socket->send_buffer[flow_index].num_packets.load( std::memory_order_relaxed );
-        const int slots = used < 0 || used >= ROCKETNET_XDP_SEND_QUEUE_SIZE ? 0 : ROCKETNET_XDP_SEND_QUEUE_SIZE - used;
+        const uint64_t used = socket->send_buffer[flow_index].num_packets.load( std::memory_order_relaxed );
+        const int slots = used >= (uint64_t) ROCKETNET_XDP_SEND_QUEUE_SIZE ? 0 : (int) ( (uint64_t) ROCKETNET_XDP_SEND_QUEUE_SIZE - used );
         if ( slots < room )
             room = slots;
     }
@@ -2600,9 +2598,9 @@ void rocketnet_server_socket_finish_packet( struct rocketnet_server_socket_t * s
     // authenticated packet is that case: the transport reserves it before
     // the packet opens, and the open learns the MAC before this commit.
     // Taking the learned MAC here sends it the way the same update's
-    // payloads go; through the gateway it arrived after them (the router's
-    // hairpin, ~200 us on the Linux x64 XDP bench), and the client was handed payloads before
-    // the keep-alive that connects it. The table is written only by update,
+    // payloads go; through the gateway it takes the router's hairpin and
+    // arrives after them, and the client is handed payloads before the
+    // keep-alive that connects it. The table is written only by update,
     // never during a fill.
 
     rocketnet_server_socket_send_packet_info_t * info = &send_buffer->packet_info[packet_index];
@@ -2661,8 +2659,8 @@ static void rocketnet_server_socket_hold_greetings( struct rocketnet_server_sock
     const bool hold_all = server_socket->replay_hold_all_greetings;
     if ( !hold_all && !( server_socket->replay_marks && rocketnet_xdp_replay_marks_holding_greetings( server_socket->replay_marks ) ) )
         return;
-    const int num_packets = send_buffer->num_packets.load( std::memory_order_relaxed );
-    for ( int i = 0; i < num_packets && i < ROCKETNET_XDP_SEND_QUEUE_SIZE; i++ )
+    const uint64_t num_packets = send_buffer->num_packets.load( std::memory_order_relaxed );
+    for ( int i = 0; (uint64_t) i < num_packets && i < ROCKETNET_XDP_SEND_QUEUE_SIZE; i++ )
     {
         rocketnet_server_socket_send_packet_info_t * info = &send_buffer->packet_info[i];
 
@@ -2684,7 +2682,7 @@ void rocketnet_server_socket_send_packets( struct rocketnet_server_socket_t * se
     {
         rocketnet_server_xdp_socket_t * socket = &server_socket->socket[queue];
         const int index = socket->send_flow_index.load( std::memory_order_relaxed );
-        if ( index < 0 || socket->send_buffer[index].num_packets.load( std::memory_order_relaxed ) <= 0 )
+        if ( index < 0 || socket->send_buffer[index].num_packets.load( std::memory_order_relaxed ) == 0 )
             continue;
         rocketnet_server_socket_hold_greetings( server_socket, &socket->send_buffer[index] );
         if ( !rocketnet_platform_mutex_try_acquire( &socket->send_mutex ) )
@@ -2924,6 +2922,17 @@ bool rocketnet_server_socket_test_buffer_exchange()
     }
 
     socket->send_flow_index.store( socket->send_handoff.producer );
+
+    // Room stays zero when a refused claim count crosses the 32-bit boundary.
+    // In particular 2^32 must not narrow to an apparently empty buffer.
+    const uint64_t claims[] = { 0, (uint64_t) ROCKETNET_XDP_SEND_QUEUE_SIZE - 1, (uint64_t) ROCKETNET_XDP_SEND_QUEUE_SIZE, 0xFFFFFFFFull, 0x100000000ull, UINT64_MAX };
+    const int rooms[] = { ROCKETNET_XDP_SEND_QUEUE_SIZE, 1, 0, 0, 0, 0 };
+    for ( int i = 0; i < 6; i++ )
+    {
+        socket->send_buffer[0].num_packets.store( claims[i], std::memory_order_relaxed );
+        valid &= rocketnet_server_socket_send_room( server ) == rooms[i];
+    }
+    socket->send_buffer[0].num_packets.store( 0, std::memory_order_relaxed );
 
     static const uint8_t gateway_mac[ETH_ALEN] = { 0x02, 0, 0, 0, 0, 2 };
     rocketnet_xdp_reply_macs_reset( &server->reply_macs, gateway_mac );
@@ -3429,16 +3438,12 @@ void rocketnet_server_socket_process_staged_packet( rocketnet_server_socket_t * 
     if ( packet_bytes < ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES )
         return;
 
-    // Bound by the ARRAY, not by the queue depth. These are different numbers:
-    // ROCKETNET_XDP_RECV_QUEUE_SIZE is 4096*4 = 16384 (how deep one queue's staging
-    // buffer is), while process_packets.from/packet_bytes/packet_data and
-    // process_eth hold process_packets.capacity entries,
-    // rocketnet_server_receive_packets_per_update (16 * 1000 = 16000 at 1000
-    // clients). Guarding on the larger one writes past the end of all four
-    // arrays, attacker-timed POINTERS among them, which the caller then
-    // dereferences. num_packets accumulates across every queue and both
-    // off-buffers before it is reset in receive_packets, so one flooded queue
-    // reaches it.
+    // Bound by the arrays, not by the queue depth: process_packets.from,
+    // packet_bytes, packet_data and process_eth hold process_packets.capacity
+    // entries. num_packets accumulates across every queue and both
+    // off-buffers before receive_packets resets it, so one flooded queue can
+    // reach the array bound. A write past it would put attacker-timed pointers
+    // past the allocation, which the caller dereferences.
 
     if ( server_socket->process_packets.num_packets >= server_socket->process_packets.capacity )
         return;
@@ -3740,9 +3745,8 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
 
     pin_thread_to_cpu( socket->num_os_cpus + socket->queue );
 
-    // flow_server_socket_linux.cpp:1374-1381: pin, then SCHED_RR at the
-    // minimum on itself. the priority call follows the off switch; the pin
-    // is the queue's cpu and always runs
+    // pin, then SCHED_RR at the minimum on itself. the priority call follows
+    // the off switch; the pin is the queue's cpu and always runs
 
     if ( rocketnet_platform_thread_priority_enabled() )
     {
@@ -3819,23 +3823,22 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
         {
             // receive packets
 
-            // How many descriptors this pass actually took. The loop below can
-            // stop early when the staging buffer fills, and everything after
-            // this point -- the release, the refill, the pending-return spill --
-            // must cover exactly that many, not the number peeked. Releasing
-            // more would hand the kernel uninitialized stack as umem addresses:
-            // rejected (leaking the frame forever) or in range and aliasing a
-            // LIVE frame, which is the packet corruption the shouty comment at
-            // rocketnet_constants.h:22 warns about.
+            // How many descriptors this pass took. The peek is capped by the
+            // staging room (receive_limit), so the loop below takes every
+            // peeked descriptor; the release, the refill and the
+            // pending-return spill each cover exactly num_consumed. Releasing
+            // more than were read would hand the kernel uninitialized stack
+            // as umem addresses: rejected, leaking the frame, or in range and
+            // aliasing a live frame.
             //
-            // The peek above advanced the ring's cached consumer past all
+            // The peek advanced the ring's cached consumer past all
             // num_packets descriptors; rocketnet_xdp_receive_ring_finish
-            // cancels the num_packets - num_consumed descriptors not taken
+            // cancels any num_packets - num_consumed descriptors not taken
             // (xsk_ring_cons__cancel) before releasing num_consumed
-            // (xsk_ring_cons__release), so the next peek returns the skipped
-            // descriptors first. The frame ownership is modelled in
-            // proofs/tla/RNXdpReceiveRing.tla; the loop below is its Take, one
-            // descriptor read and its frame held while the staging buffer has room.
+            // (xsk_ring_cons__release), so a later peek returns them first.
+            // The frame ownership is modelled in proofs/tla/RNXdpReceiveRing.tla;
+            // the loop below is its Take, one descriptor read and its frame
+            // held while the staging buffer has room.
 
             uint32_t num_consumed = 0;
 
@@ -3852,8 +3855,7 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
 
             for ( uint32_t i = 0; i < num_packets; i++ )
             {
-                if ( receive_buffer->num_packets >= ROCKETNET_XDP_RECV_QUEUE_SIZE )
-                    break;
+                rocketnet_assert( receive_buffer->num_packets < ROCKETNET_XDP_RECV_QUEUE_SIZE );
 
                 const struct xdp_desc * __restrict__ desc = xsk_ring_cons__rx_desc( &socket->receive_queue, receive_index + i );
 
@@ -3978,12 +3980,8 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
 
                 // IMPORTANT: clamp num packets because it's an atomic increment across multiple threads so it can go over max if unlucky
 
-                int num_staged_packets = send_buffer->num_packets;
-
-                if ( num_staged_packets > ROCKETNET_XDP_SEND_QUEUE_SIZE )
-                {
-                    num_staged_packets = ROCKETNET_XDP_SEND_QUEUE_SIZE;
-                }
+                const uint64_t num_claimed = send_buffer->num_packets;
+                const int num_staged_packets = num_claimed < (uint64_t) ROCKETNET_XDP_SEND_QUEUE_SIZE ? (int) num_claimed : ROCKETNET_XDP_SEND_QUEUE_SIZE;
 
                 rocketnet_assert( num_staged_packets >= 0 );
                 rocketnet_assert( num_staged_packets <= ROCKETNET_XDP_SEND_QUEUE_SIZE );

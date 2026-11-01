@@ -167,9 +167,10 @@ struct rocketnet_client_slots_t * rocketnet_client_slots_create( void * context,
     for ( int i = 0; i < max_clients; i++ )
         slots->mapping_index[i] = -1;
 
-    // the free list is filled so the first max_clients assigns pop 0, 1, 2
-    // and so on in order: the stack holds the indices highest-first, and
-    // the pop at the top of the stack is index 0
+    // proofs/tla/RNClientSlotsLayout.tla Init: the free list is filled so the
+    // first max_clients assigns pop 0, 1, 2 and so on in order: the stack
+    // holds the indices highest-first, and the pop at the top of the stack
+    // is index 0
 
     for ( int i = 0; i < max_clients; i++ )
         slots->free_stack[i] = max_clients - 1 - i;
@@ -299,6 +300,8 @@ int rocketnet_client_slots_find( const struct rocketnet_client_slots_t * slots, 
 // proofs/tla/RNOpenAddress.tla Insert: linear probe from the home cell to the first
 // empty one, wrapping at the end of the index
 // proofs/tla/RNFreeStackLayout.tla TakeSlots: the free stack peeked, refused on the owner generation before the pop
+// proofs/tla/RNClientSlotsLayout.tla AssignFresh and AssignStale: the top of the
+// free stack, refused when it last held this owner generation, then popped.
 int rocketnet_client_slots_assign( struct rocketnet_client_slots_t * slots,
                                    uint64_t client_id,
                                    int mapping_index,
@@ -484,6 +487,9 @@ static void rocketnet_client_slots_erase_index( struct rocketnet_client_slots_t 
     entries[hole] = -1;
 }
 
+// proofs/tla/RNClientSlotsLayout.tla ReleaseHandle: only the exact tenure (the
+// slot connected under this client id and generation) is released, and its
+// index is pushed at free_stack[free_stack_count++].
 static bool rocketnet_client_slots_release_exact( struct rocketnet_client_slots_t * slots,
                                                   uint64_t client_id,
                                                   int client_index,
@@ -579,12 +585,14 @@ uint64_t rocketnet_client_slots_test_total_probes( const struct rocketnet_client
 #endif // #if ROCKETNET_DEV
 
 // proofs/tla/RNDestroyWipe.tla Remove: clears the slot's user data and returns the slot to the free list.
+// proofs/tla/RNClientSlotsLayout.tla Release: a slot not connected is refused, so
+// no index is pushed twice.
 
 void rocketnet_client_slots_release( struct rocketnet_client_slots_t * slots, int client_index )
 {
     rocketnet_assert( slots );
     rocketnet_assert( client_index >= 0 && client_index < slots->max_clients );
-    rocketnet_assert( slots->connected[client_index] );
+    rocketnet_assert( client_index >= 0 && client_index < slots->max_clients && slots->connected[client_index] );
 
     // proofs/tla/RNDestroyWipe.tla Remove requires m \in live: a free slot is refused before anything is touched
 

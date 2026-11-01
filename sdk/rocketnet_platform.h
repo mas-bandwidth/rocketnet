@@ -76,7 +76,6 @@ bool rocketnet_lifecycle_track_read( rocketnet_lifecycle_resources_t * result );
 #endif
 
 #define ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING       0
-#define ROCKETNET_PLATFORM_SOCKET_BLOCKING           1
 
 struct rocketnet_address_t;
 struct sockaddr_in;
@@ -120,21 +119,10 @@ double rocketnet_platform_time( void );
 // otherwise the wall clock read once now, less the caller's time
 uint64_t rocketnet_platform_token_epoch( uint64_t configured, double time );
 
-// Windows treats non-positive and NaN as a yield; POSIX is usleep
+// Windows treats non-positive and NaN as a yield; POSIX returns at once for
+// them, and otherwise nanosleeps to a monotonic deadline, resuming after a
+// signal interrupts it
 void rocketnet_platform_sleep( double time );
-
-struct timeval rocketnet_platform_timeval_from_seconds( float seconds );
-
-// Whole milliseconds rounded up and clamped to 1 .. 0xFFFFFFFE.
-uint32_t rocketnet_platform_timeout_milliseconds( float seconds );
-
-struct rocketnet_platform_sleep_split_t
-{
-    uint32_t seconds;
-    uint32_t microseconds;
-};
-
-struct rocketnet_platform_sleep_split_t rocketnet_platform_sleep_split( double time );
 
 // 1 set and copied, 0 unset, -1 value too long for size; buffer is left empty unless 1
 int rocketnet_platform_getenv( const char * var, char * buffer, size_t size );
@@ -226,6 +214,8 @@ extern "C"
 #endif // #ifdef __cplusplus
 
 // port zero is written back as the assigned port; release with socket_destroy.
+// socket_type is ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, the one mode;
+// timeout_seconds is not read.
 // The socket, wake and thread creates write OUT_OF_MEMORY through status when
 // their allocation is refused (rocketnet_create_status); NULL: not asked.
 struct rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, struct rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size, int * status ROCKETNET_DEFAULT_NULL );
@@ -623,10 +613,12 @@ bool rocketnet_platform_mutex_create( struct rocketnet_platform_mutex_t * mutex 
 // no thread may hold or wait on the mutex
 void rocketnet_platform_mutex_destroy( struct rocketnet_platform_mutex_t * mutex );
 
-// not recursive: a second acquire on one thread deadlocks
+// not recursive on any platform (PTHREAD_MUTEX_NORMAL on POSIX, an SRWLOCK
+// on Windows): a second acquire on one thread deadlocks
 void rocketnet_platform_mutex_acquire( struct rocketnet_platform_mutex_t * mutex );
 
-// Acquires only when immediately available; never waits for the owner.
+// Acquires only when immediately available; never waits, and fails for the
+// thread that already holds the mutex.
 bool rocketnet_platform_mutex_try_acquire( struct rocketnet_platform_mutex_t * mutex );
 
 void rocketnet_platform_mutex_release( struct rocketnet_platform_mutex_t * mutex );
@@ -680,7 +672,6 @@ typedef int rocketnet_platform_socket_handle_t;
 struct rocketnet_platform_socket_t
 {
     void * context;
-    int type;
     bool ipv6;
     bool connected;                 // connected to its one remote endpoint (rocketnet_platform_socket_connect); sends name no destination
     rocketnet_platform_socket_handle_t handle;
@@ -764,7 +755,7 @@ struct rocketnet_platform_thread_t
 struct rocketnet_platform_mutex_t
 {
     bool ok;
-    CRITICAL_SECTION handle;
+    SRWLOCK handle;
 };
 
 #if ROCKETNET_UNREAL_ENGINE

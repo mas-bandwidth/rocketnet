@@ -38,7 +38,6 @@ static_assert( ROCKETNET_DEFAULT_COOKIE_ROTATION_SECONDS > ROCKETNET_DEFAULT_COO
 #include "rocketnet_network_simulator.h"
 #include "rocketnet_memory.h"
 
-// Defined beside the builtin operation tables in rocketnet_driver_builtin.cpp.
 static void rocketnet_server_transport_abort_create( struct rocketnet_server_transport_t * transport );
 
 bool rocketnet_server_transport_io_receive_drops( const struct rocketnet_server_transport_io_operations_t * operations,
@@ -209,7 +208,7 @@ struct rocketnet_server_payloads_t
     int capacity;                                       // rocketnet_server_receive_packets_per_update
     int * client_index;
     uint64_t * connection_id;
-    uint64_t * sequence;                                // P9b: the connection each entry was received for
+    uint64_t * sequence;                                // the sequence each entry arrived at, for rocketnet_server_transport_accept_payload
     uint8_t ** payload_data;
     int * payload_bytes;
 };
@@ -268,16 +267,15 @@ struct rocketnet_server_transport_t
 
     // the transport's receive_drops totals as last read: each read adds only the
     // growth since to PREFILTER_TOO_SHORT and PREFILTER_TOO_LARGE, which the
-    // protocol's own prefilter also counts into (sdk/rocketnet_server_protocol.cpp:1255)
+    // protocol's own prefilter (rocketnet_prefilter_check) also counts into
     uint64_t transport_receive_too_short = 0;
     uint64_t transport_receive_too_large = 0;
 
     struct rocketnet_server_protocol_t protocol;
 
-    // the portable path's buffers ride the struct on every platform now
-    // that the transport is runtime: about a megabyte a staged grant never
-    // touches, priced once per server against carrying the runtime fork
-    // without allocation branches
+    // the portable path's buffers ride the struct on every platform: about a
+    // megabyte a staged grant never touches, priced once per server against
+    // carrying the runtime fork without allocation branches
 
     struct rocketnet_server_send_buffer_t send_buffer;
     struct rocketnet_server_receive_buffer_t receive_buffer;
@@ -335,8 +333,10 @@ struct rocketnet_server_transport_t
     // disconnect), its first sequence, salt and session key wait here in a
     // ring, and each update seals at most disconnect_packets_per_update of
     // them within the transport's room, one packet per waiting burst per
-    // pass, so every client's first disconnect packet leaves before any
-    // burst's redundant copies. Stop appends every connected client's burst
+    // pass. Each burst waiting when a pass starts is sealed once before
+    // that pass ends (proofs/tla/RNDisconnectBurstRing.tla PassFair). A new
+    // burst joining during a pass can follow redundant copies already due.
+    // Stop appends every connected client's burst
     // and each stop step seals what the room takes. The keys are wiped as
     // each burst completes and at destroy.
     struct rocketnet_server_disconnect_burst_t * disconnect_bursts;
@@ -1128,7 +1128,7 @@ static void rocketnet_server_commit_send_frame( struct rocketnet_server_transpor
         return;
     }
 
-    // the portable frame is charged here, at its commit, as before
+    // the portable frame is charged here, at its commit
 
     rocketnet_server_charge_send_frame( server_transport, frame->client_index, &frame->to, packet_bytes );
 
@@ -1853,7 +1853,7 @@ static int rocketnet_server_transport_open_ladder( struct rocketnet_server_trans
 
         if ( budget_refused[candidate] )
         {
-            if ( candidate >= 0 && candidate < ROCKETNET_NUM_TRANSPORTS && !refused_seen[candidate] )
+            if ( !refused_seen[candidate] )
             {
                 refused_seen[candidate] = true;
 
@@ -1898,7 +1898,7 @@ static int rocketnet_server_transport_open_ladder( struct rocketnet_server_trans
             // one. No two names collide today; an id key cannot collide
             // whatever anyone adds.
 
-            if ( candidate >= 0 && candidate < ROCKETNET_NUM_TRANSPORTS && !port_zero_refused_seen[candidate] )
+            if ( !port_zero_refused_seen[candidate] )
             {
                 port_zero_refused_seen[candidate] = true;
 
@@ -1953,7 +1953,7 @@ static int rocketnet_server_transport_open_ladder( struct rocketnet_server_trans
             // summary lines disagreeing about that reads as a bug in one
             // of them
 
-            if ( candidate >= 0 && candidate < ROCKETNET_NUM_TRANSPORTS && !refused_seen[candidate] )
+            if ( !refused_seen[candidate] )
             {
                 refused_seen[candidate] = true;
 
@@ -2025,9 +2025,8 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_s
                                                                                        const uint64_t * resolved_memory_budget,
                                                                                        struct rocketnet_server_transport_resolved_t & resolved )
 {
-    // docs/ERRORS-AND-LOGGING.md 2.1 and the settled Q2: a NULL required
-    // argument is a logged INVALID_ARGUMENT and a NULL return in debug and
-    // release (S1).
+    // docs/ERRORS-AND-LOGGING.md 2.1: a NULL required argument is a logged
+    // INVALID_ARGUMENT and a NULL return in debug and release
     if ( !rocketnet_api_null_guard( public_address_string ) )
     {
         if ( status )
@@ -2047,8 +2046,6 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_s
         rocketnet_api_misuse_record();
         return NULL;
     }
-
-    rocketnet_assert( public_address_string );
 
     if ( !rocketnet_server_transport_resolve( public_address_string, config, resolved_memory_budget, &resolved, status ) )
         return NULL;
@@ -2076,7 +2073,6 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_s
     // the token clock's epoch: configured, or 0 until the first update reads
     // the wall clock once (rocketnet_server_transport_update)
     server_transport->token_epoch_unix_seconds = config->token_epoch_unix_seconds;
-    rocketnet_server_link_drain( server_transport );
 
     // the fragmentation shape: zero means the defaults; the table already
     // refused anything out of range, loudly, never clamped
@@ -2822,7 +2818,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
     // Drain the receive queue up to this update's packet budget. Each read
     // takes whatever the endpoint has queued, up to the remaining budget, and
     // is processed before the next read; what is left past the budget stays
-    // in the transport's queue for the next update, as before. The budget is
+    // in the transport's queue for the next update. The budget is
     // rocketnet_server_receive_packets_per_update (16 * 1000 = 16000 at 1000
     // clients), which equals the payload-batch capacity, so all packets read
     // in one update fit the payload batch that feeds the application.
@@ -3193,6 +3189,8 @@ uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_trans
     {
         struct rocketnet_server_payload_ring_t * ring = &server_transport->payload_ring;
 
+        // proofs/tla/RNServerPayloadRingLayout.tla Acquire: one fetch-add; a slot at or past
+        // send_capacity is refused, though the counter has moved past it
         uint64_t slot = rocketnet_platform_atomic_add_u64( &ring->num_packets, 1 );
         if ( slot >= (uint64_t) server_transport->send_capacity )
         {
@@ -3256,6 +3254,7 @@ static void rocketnet_server_transport_abort_packet_unchecked( struct rocketnet_
     }
     else
     {
+        // proofs/tla/RNServerPayloadRingLayout.tla Abort: the slot from the frame pointer and the stride
         const uint64_t slot = (uint64_t) ( context->frame - server_transport->payload_ring.data ) / ROCKETNET_FRAME_STRIDE;
         server_transport->payload_ring.info[slot].wire_bytes = 0;
     }
@@ -3271,10 +3270,7 @@ uint8_t * rocketnet_server_transport_packet_payload( rocketnet_server_transport_
         return NULL;
     if ( !rocketnet_api_null_guard( capacity ) )
         return NULL;
-    if ( capacity )
-        *capacity = 0;
-    if ( !transport || !context || !capacity )
-        return NULL;
+    *capacity = 0;
     rocketnet_packet_context_t trusted;
     uint64_t backend_id = 0;
     if ( !transport->packet_leases.resolve( *context, trusted, backend_id, false ) )
@@ -3289,8 +3285,6 @@ void rocketnet_server_transport_abort_packet( rocketnet_server_transport_t * ser
     if ( !rocketnet_api_null_guard( server_transport ) )
         return;
     if ( !rocketnet_api_null_guard( context ) )
-        return;
-    if ( !server_transport || !context )
         return;
     rocketnet_packet_context_t trusted;
     uint64_t backend_id;
@@ -3334,6 +3328,8 @@ static int rocketnet_server_reserve_fill_frame( struct rocketnet_server_transpor
 
     struct rocketnet_server_payload_ring_t * ring = &server_transport->payload_ring;
 
+    // proofs/tla/RNServerPayloadRingLayout.tla Acquire: one fetch-add; a slot at or past
+    // send_capacity is refused, though the counter has moved past it
     frame->slot = rocketnet_platform_atomic_add_u64( &ring->num_packets, 1 );
     if ( frame->slot >= (uint64_t) server_transport->send_capacity )
     {
@@ -3379,6 +3375,7 @@ static bool rocketnet_server_commit_fill_frame( struct rocketnet_server_transpor
         return rocketnet_server_commit_staged( server_transport, &frame->to, frame->socket_packet_id, &frame->data, wire_bytes );
     }
 
+    // proofs/tla/RNServerPayloadRingLayout.tla Finish: the slot the fill frame kept
     server_transport->payload_ring.info[frame->slot].wire_bytes = wire_bytes;
 
     return false;
@@ -3396,6 +3393,7 @@ static void rocketnet_server_abort_fill_frame( struct rocketnet_server_transport
         return;
     }
 
+    // proofs/tla/RNServerPayloadRingLayout.tla Abort: the slot the fill frame kept
     server_transport->payload_ring.info[frame->slot].wire_bytes = 0;
     frame->data = NULL;
 }
@@ -3622,11 +3620,11 @@ static int rocketnet_server_transport_finish_packet_unchecked( struct rocketnet_
         // a datagram is counted sent only once the link took it
 
         if ( rocketnet_server_commit_staged( server_transport, mapped_to, backend_id, &context->frame, wire_bytes ) )
-            rocketnet_server_charge_staged_frame( server_transport, context->client_index,
-                                                  mapped_to ? mapped_to->type : ROCKETNET_ADDRESS_NONE, wire_bytes );
+            rocketnet_server_charge_staged_frame( server_transport, context->client_index, mapped_to->type, wire_bytes );
     }
     else
     {
+        // proofs/tla/RNServerPayloadRingLayout.tla Finish: the slot from the frame pointer and the stride
         const uint64_t slot = (uint64_t) ( context->frame - server_transport->payload_ring.data ) / ROCKETNET_FRAME_STRIDE;
         server_transport->payload_ring.info[slot].wire_bytes = wire_bytes;
     }
@@ -3641,8 +3639,6 @@ int rocketnet_server_transport_finish_packet( rocketnet_server_transport_t * ser
     if ( !rocketnet_api_null_guard( server_transport ) )
         return 0;
     if ( !rocketnet_api_null_guard( context ) )
-        return 0;
-    if ( !server_transport || !context )
         return 0;
     rocketnet_packet_context_t trusted;
     uint64_t backend_id;
@@ -3718,6 +3714,8 @@ static void rocketnet_server_transport_flush( struct rocketnet_server_transport_
 
     struct rocketnet_server_payload_ring_t * ring = &server_transport->payload_ring;
 
+    // proofs/tla/RNServerPayloadRingLayout.tla Flush: the counter clamped to send_capacity, every
+    // finished slot below it sent, the counter reset
     uint64_t num_packets = ring->num_packets;
     if ( num_packets > (uint64_t) server_transport->send_capacity )
         num_packets = (uint64_t) server_transport->send_capacity;
@@ -3808,12 +3806,8 @@ void rocketnet_server_transport_send_packet( struct rocketnet_server_transport_t
     rocketnet_server_transport_finish_packet( server_transport, &context, payload_bytes );
 }
 
-// proofs/tla/ServerSession.tla DisconnectAll: the slot ends in this step. What the
-// burst needs from the mapping is copied into the ring first -- the ack block
-// built once from the receive state, as every packet of the immediate burst
-// opens with the same block -- then the slot is released exactly as
-// rocketnet_server_protocol_disconnect_client releases it. O(1) per slot: no
-// seal and no send here.
+// The slot ends here with no packet sent: it is released exactly as
+// rocketnet_server_protocol_disconnect_client releases it.
 static void rocketnet_server_transport_close_client_locally( struct rocketnet_server_transport_t * server_transport,
                                                              int client_index, bool missing_mapping )
 {
@@ -3826,6 +3820,7 @@ static void rocketnet_server_transport_close_client_locally( struct rocketnet_se
     rocketnet_server_connection_reset( protocol, client_index, ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED );
 }
 
+// proofs/tla/RNDisconnectBurstRing.tla Defer: append within the ring capacity (NoOverwrite).
 // proofs/tla/ServerStopSpread.tla Kick and Stop: the burst is appended at
 // ( head + count ) % disconnect_burst_capacity.
 static void rocketnet_server_transport_defer_disconnect_burst( struct rocketnet_server_transport_t * server_transport, int client_index,
@@ -3863,6 +3858,8 @@ static void rocketnet_server_transport_defer_disconnect_burst( struct rocketnet_
 // pass passes over a complete entry until it reaches the head, so no packet
 // past a burst's sequences is ever sealed. Any other refusal ends the drain;
 // what is left waits for the next update or stop step.
+// proofs/tla/RNDisconnectBurstRing.tla SealStep: the cursor restarts at count
+// (SealOnlyLive) and falls with each pop at the head (SealedFallFromHead).
 static void rocketnet_server_transport_drain_disconnect_bursts( struct rocketnet_server_transport_t * server_transport, int max_seals, bool shutdown )
 {
     struct rocketnet_server_protocol_t * protocol = &server_transport->protocol;

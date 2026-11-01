@@ -19,18 +19,19 @@ struct rocketnet_server_socket_t;
 #include <atomic>
 
 // Claims the next staging slot of an XDP send buffer. A claim at or past limit
-// (or from a counter that wrapped negative) is refused and counted in refused.
-// Returns the slot index or -1.
-inline int rocketnet_xdp_send_claim( std::atomic<int> & num_packets, int limit, std::atomic<uint64_t> & refused )
+// is refused and counted in refused. The count is 64 bits: a buffer never takes
+// 2^64 claims without a flush, so it never wraps back onto a slot it handed
+// out. Returns the slot index or -1.
+inline int rocketnet_xdp_send_claim( std::atomic<uint64_t> & num_packets, int limit, std::atomic<uint64_t> & refused )
 {
-    const int index = num_packets.fetch_add( 1 );
-    if ( index < 0 || index >= limit )
+    const uint64_t index = num_packets.fetch_add( 1 );
+    if ( index >= (uint64_t) limit )
     {
         refused.fetch_add( 1, std::memory_order_relaxed );
         return -1;
     }
 
-    return index;
+    return (int) index;
 }
 #endif // #if defined( __cplusplus )
 

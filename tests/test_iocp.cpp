@@ -179,6 +179,19 @@ bool rocketnet_server_rio_test_receive_overflow( uint64_t * counters, int * pack
 
 #define CHECK( x ) do { if (!(x)) { fprintf(stderr, "IOCP check failed: %s (%s:%d)\n", #x, __FILE__, __LINE__); exit(1); } } while (0)
 
+// The library's default assert handler logs through rocketnet_error, which
+// ROCKETNET_LOG_LEVEL_NONE silences, so a failed assert would end this binary
+// with no message. main installs this handler: it prints the assert to stderr,
+// then traps through the default handler.
+static rocketnet_assert_function_t iocp_default_assert = NULL;
+
+static void iocp_print_assert( const char * condition, const char * function, const char * file, int line )
+{
+    fprintf( stderr, "assert failed: ( %s ), function %s, file %s, line %d\n", condition, function, file, line );
+    fflush( stderr );
+    iocp_default_assert( condition, function, file, line );
+}
+
 // Native workers advance in real time. Wait for the asserted state, never for
 // an assumed amount of work to fit inside one caller flush or a fixed sleep.
 
@@ -1042,8 +1055,27 @@ static void iocp_finish( rocketnet_server_iocp_t * transport, rocketnet_platform
     rocketnet_platform_socket_destroy( client );
 }
 
+// Where asserts are on, finish and abort assert on a frame or generation the
+// transport did not issue before they refuse it; an id out of range is refused
+// before the assert. The case counts the asserts through the assert seam
+// instead of letting the default handler trap.
+static int iocp_refused_asserts = 0;
+
+static void iocp_count_refused_assert( const char * condition, const char * function, const char * file, int line )
+{
+    (void) condition;
+    (void) function;
+    (void) file;
+    (void) line;
+    iocp_refused_asserts++;
+}
+
 static void test_iocp_finish_refuses_unissued_packet_id()
 {
+    const rocketnet_assert_function_t saved_assert = rn_assert_function;
+    rocketnet_assert_function( iocp_count_refused_assert );
+    iocp_refused_asserts = 0;
+
     rocketnet_address_t bind = address( "127.0.0.1:0" );
     rocketnet_server_iocp_t * transport = rocketnet_server_iocp_create( NULL, &bind, 1, ROCKETNET_DEFAULT_MAX_CLIENTS, 0, ROCKETNET_IOCP_DISABLE_USO );
     CHECK( transport );
@@ -1055,13 +1087,16 @@ static void test_iocp_finish_refuses_unissued_packet_id()
     CHECK( first_frame && second_frame && first_id != second_id );
 
     rocketnet_server_iocp_finish_packet( transport, second_id, first_frame, FAULT_BYTES );
+    CHECK( iocp_refused_asserts == ROCKETNET_ASSERTS );
     CHECK( rocketnet_server_iocp_test_packet_bytes( transport, second_id ) == 0 );
     rocketnet_server_iocp_finish_packet( transport, second_id, second_frame, FAULT_BYTES );
     CHECK( rocketnet_server_iocp_test_packet_bytes( transport, second_id ) == FAULT_BYTES );
     rocketnet_server_iocp_abort_packet( transport, second_id, first_frame );
+    CHECK( iocp_refused_asserts == 2 * ROCKETNET_ASSERTS );
     CHECK( rocketnet_server_iocp_test_packet_bytes( transport, second_id ) == FAULT_BYTES );
     rocketnet_server_iocp_finish_packet( transport, rocketnet_server_iocp_send_queue_size( ROCKETNET_DEFAULT_MAX_CLIENTS ), first_frame, FAULT_BYTES );
     rocketnet_server_iocp_abort_packet( transport, rocketnet_server_iocp_send_queue_size( ROCKETNET_DEFAULT_MAX_CLIENTS ), first_frame );
+    CHECK( iocp_refused_asserts == 2 * ROCKETNET_ASSERTS );
 
     // recycle the exact physical operation, then prove its old packet handle
     // cannot finish the new generation (the ABA-shaped stale-handle case)
@@ -1095,6 +1130,7 @@ static void test_iocp_finish_refuses_unissued_packet_id()
     CHECK( empty.free_pops - before.free_pops == rocketnet_server_iocp_send_queue_size( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
 #endif // #if ROCKETNET_DEV
     rocketnet_server_iocp_finish_packet( transport, first_id, frames[(size_t) reused], FAULT_BYTES );
+    CHECK( iocp_refused_asserts == 3 * ROCKETNET_ASSERTS );
     CHECK( rocketnet_server_iocp_test_packet_bytes( transport, ids[(size_t) reused] ) == 0 );
     for ( int i = 0; i < rocketnet_server_iocp_send_queue_size( ROCKETNET_DEFAULT_MAX_CLIENTS ); ++i )
     {
@@ -1110,6 +1146,8 @@ static void test_iocp_finish_refuses_unissued_packet_id()
 #endif // #if ROCKETNET_DEV
     wait_stopped( transport );
     rn_native_backend_stop_and_destroy( transport, rocketnet_server_iocp_stop, rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy );
+    CHECK( iocp_refused_asserts == 3 * ROCKETNET_ASSERTS );
+    rocketnet_assert_function( saved_assert );
     printf( "test_iocp_transport_finish_refuses_unissued_packet_id\n" );
 }
 
@@ -2260,6 +2298,8 @@ static const fault_case_t fault_cases[] = {
 
 int main( int argc, char ** argv )
 {
+    iocp_default_assert = rn_assert_function;
+    rocketnet_assert_function( iocp_print_assert );
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
     CHECK( rocketnet_init( NULL, allocate, release ) == ROCKETNET_STATUS_OK );
 

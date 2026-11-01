@@ -22,9 +22,6 @@
 #include "../sdk/rocketnet_encryption_map.h"
 #include "../sdk/rocketnet_server_replay_marks.h"
 
-// the AF_XDP code is Linux only, so its tests are built there only
-#if defined( __linux__ )
-
 // the buffer bound to storage for every client the build holds, the largest
 // a server binds
 static struct rocketnet_server_xdp_replay_key_t replay_marks_forgets[ROCKETNET_XDP_REPLAY_MAX_ENTRIES];
@@ -719,5 +716,3 @@ REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_refusals_reach_the_socket );
 REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_stale_forget_never_deletes_a_newer_mark );
 REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_reconnect_admits_the_new_session );
 REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_refused_reconnect_mark_is_retried );
-
-#endif // #if defined(__linux__)

@@ -189,6 +189,18 @@ static void test_io_uring_transport_codec_recvmsg_refuses_truncation_and_short_b
                               buf, (int) sizeof( buf ), 8, 0,
                               &name, &name_bytes, &payload, &payload_bytes, NULL, NULL ) == ROCKETNET_URING_RECV_PAYLOAD_TRUNCATED );
 
+    // payload truncated: a payloadlen with the top bit set (0x80000000) is
+    // past the bytes left, not a negative length, with MSG_TRUNC clear.
+
+    memset( buf, 0, sizeof( buf ) );
+    put_u32_native( buf + 0, 0 );
+    put_u32_native( buf + 4, 0 );
+    put_u32_native( buf + 8, 0x80000000u );
+    put_u32_native( buf + 12, 0 );
+    rocketnet_unit_check( rocketnet_uring_recvmsg_parse(
+                              buf, (int) sizeof( buf ), 8, 0,
+                              &name, &name_bytes, &payload, &payload_bytes, NULL, NULL ) == ROCKETNET_URING_RECV_PAYLOAD_TRUNCATED );
+
     // a zero-length payload accepted as OK with payload_bytes 0.
 
     uint8_t zerobuf[16];

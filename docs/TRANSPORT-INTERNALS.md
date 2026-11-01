@@ -176,11 +176,11 @@ that reports it.
 ## Per-update send and receive budgets
 
 The backend constants pair send staging with receive storage, checked by
-`test_unit_receive_budget_twice_send.cpp` and static assertions beside the
-constants. The table describes storage and processing units for a server of
-the default `max_clients` of 1000; it is not a guaranteed packet rate or a
-bound on every syscall or worker pass. The capacities that scale with clients
-are sized at create from the server's configured `max_clients`; see
+static assertions and the configured-limit cases in `test_unit_max_clients.cpp`.
+The table describes storage and processing units for a server with the default
+`max_clients` of 1000; it is not a guaranteed packet rate or a bound on every
+syscall or worker pass. The capacities that scale with clients are sized at
+create from the server's configured `max_clients`; see
 [Memory and capacity](MEMORY.md#maximum-clients).
 
 The server process batch `rocketnet_server_receive_packets_per_update`

@@ -581,8 +581,8 @@ static void test_loopback_transport_io_destroy_frees_the_port()
 // the vendored sodium/ on this one source's include path (as the transport's
 // own targets have it), so its calls reach the renamed implementations the
 // production archive carries; a ROCKETNET_USE_SYSTEM_SODIUM build links the
-// system library instead. No original-name shim is needed either way, and the
-// test no longer depends on a system sodium header being installed.
+// system library instead. No original-name shim is needed either way, and no
+// system sodium header is needed.
 
 struct wire_totals_staged_fixture_t
 {
@@ -1042,9 +1042,9 @@ static void test_loopback_transport_io_refuses_past_hub_capacity()
 
 // Junk from many sources takes no per-source state: the portable path reads
 // 300 one-byte datagrams, each from its own address, then a real client still
-// connects, and its slot's wire totals start at the slot's assignment. The
-// table that once held each unknown source's totals is gone (owner,
-// 2026-10-21: request bytes are not tracked), so nothing here can fill.
+// connects, and its slot's wire totals start at the slot's assignment. No
+// table holds an unknown source's totals (request bytes are not tracked), so
+// nothing here can fill.
 
 struct junk_sources_fixture_t
 {
@@ -1506,6 +1506,114 @@ static void test_loopback_transport_server_batch_drops_packet_larger_than_stride
     rocketnet_client_transport_io_close( &client );
 }
 
+// The loopback refusals a datagram can meet: a size outside 1 ..
+// ROCKETNET_RECEIVE_CEILING is never queued and never counted; a destination
+// no endpoint holds and a full queue are each one send failure for the sender
+// (and the full queue one drop for the receiver); a batch skips its refused
+// datagrams and queues the rest in order; a server receive with no room
+// (stride 0) drops what is queued; an endpoint with no address family is
+// refused at create.
+
+static void test_loopback_transport_io_refusals()
+{
+    const rocketnet_transport_backend_t * backend = &rocketnet_loopback_transport;
+    rocketnet_loopback_hub_t * hub = rocketnet_test_loopback_hub();
+
+    rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_dev_config( &server_config );
+    server_config.loopback_hub = hub;
+
+    rocketnet_client_transport_config_t client_config;
+    rocketnet_client_transport_default_config_current( &client_config );
+    client_config.loopback_hub = hub;
+
+    const rocketnet_server_transport_io_config_t server_setup = { "loopback", &server_config, NULL, NULL };
+    const rocketnet_client_transport_io_config_t client_setup = { "loopback", &client_config, NULL };
+
+    rocketnet_address_t none;
+    memset( &none, 0, sizeof( none ) );
+    rocketnet_server_transport_io_t refused_server = {};
+    rocketnet_unit_check( !rocketnet_server_transport_io_open( backend->server, NULL, &server_setup, &none, &refused_server ) );
+    rocketnet_client_transport_io_t refused_client = {};
+    rocketnet_unit_check( !rocketnet_client_transport_io_open( backend->client, NULL, &client_setup, &none, &refused_client ) );
+    rocketnet_unit_check( rocketnet_loopback_endpoints_live( hub ) == 0 );
+
+    rocketnet_address_t server_address, client_address;
+    rocketnet_unit_check( rocketnet_address_parse( &server_address, "127.0.0.1:0" ) );
+    rocketnet_unit_check( rocketnet_address_parse( &client_address, "127.0.0.1:0" ) );
+
+    rocketnet_server_transport_io_t server = {};
+    rocketnet_client_transport_io_t client = {};
+    rocketnet_unit_check( rocketnet_server_transport_io_open( backend->server, NULL, &server_setup, &server_address, &server ) );
+    rocketnet_unit_check( rocketnet_client_transport_io_open( backend->client, NULL, &client_setup, &client_address, &client ) );
+
+    static uint8_t data[ROCKETNET_RECEIVE_CEILING + 1];
+    memset( data, 0x3C, sizeof( data ) );
+
+    // sizes outside 1 .. ROCKETNET_RECEIVE_CEILING: nothing queued, nothing counted
+
+    const int bad_sizes[] = { 0, -1, ROCKETNET_RECEIVE_CEILING + 1 };
+    for ( int i = 0; i < 3; ++i )
+        client.operations->send( client.instance, &server_address, data, bad_sizes[i] );
+
+    rocketnet_unit_check( client.operations->send_failures( client.instance ) == 0 );
+    rocketnet_unit_check( rocketnet_loopback_endpoint_dropped( server.instance ) == 0 );
+
+    rocketnet_address_t from;
+    static uint8_t received[ROCKETNET_RECEIVE_CEILING];
+    int bytes = 0;
+    rocketnet_unit_check( server.operations->receive_batch( server.instance, &from, received, sizeof( received ), &bytes, 1 ) == 0 );
+
+    // the largest datagram is taken whole
+
+    client.operations->send( client.instance, &server_address, data, ROCKETNET_RECEIVE_CEILING );
+    rocketnet_unit_check( server.operations->receive_batch( server.instance, &from, received, sizeof( received ), &bytes, 1 ) == 1 );
+    rocketnet_unit_check( bytes == ROCKETNET_RECEIVE_CEILING && memcmp( received, data, sizeof( received ) ) == 0 );
+
+    // a destination no endpoint holds: one send failure per datagram, from either side
+
+    rocketnet_address_t nowhere = server_address;
+    nowhere.port = (uint16_t) ( server_address.port == 65535 ? 1 : server_address.port + 1 );
+    if ( nowhere.port == client_address.port )
+        nowhere.port = (uint16_t) ( nowhere.port + 1 );
+
+    client.operations->send( client.instance, &nowhere, data, 4 );
+    rocketnet_unit_check( client.operations->send_failures( client.instance ) == 1 );
+
+    const rocketnet_platform_send_t mixed[] = {
+        { &nowhere, data, 4 },
+        { &client_address, data, 0 },
+        { &client_address, data, ROCKETNET_RECEIVE_CEILING + 1 },
+        { &client_address, data, 3 },
+        { &client_address, data, 5 },
+    };
+    server.operations->send_batch( server.instance, mixed, 5 );
+    rocketnet_unit_check( server.operations->send_failures( server.instance ) == 1 );
+    rocketnet_unit_check( client.operations->receive( client.instance, &from, received, sizeof( received ) ) == 3 );
+    rocketnet_unit_check( client.operations->receive( client.instance, &from, received, sizeof( received ) ) == 5 );
+    rocketnet_unit_check( client.operations->receive( client.instance, &from, received, sizeof( received ) ) == 0 );
+
+    // a full queue: one drop for the receiver and one send failure for the sender
+
+    const int server_queue = rocketnet_loopback_server_queue_packets( ROCKETNET_TEST_LOOPBACK_HUB_CLIENTS );
+    for ( int i = 0; i < server_queue + 1; ++i )
+        client.operations->send( client.instance, &server_address, data, 4 );
+
+    rocketnet_unit_check( rocketnet_loopback_endpoint_dropped( server.instance ) == 1 );
+    rocketnet_unit_check( client.operations->send_failures( client.instance ) == 2 );
+
+    // a receive with no room (stride 0) drops every queued datagram, as it
+    // drops each one larger than the room it has
+
+    rocketnet_unit_check( server.operations->receive_batch( server.instance, &from, received, 0, &bytes, 2 ) == 0 );
+    rocketnet_unit_check( rocketnet_loopback_endpoint_dropped( server.instance ) == 1 + (uint64_t) server_queue );
+    rocketnet_unit_check( server.operations->receive_batch( server.instance, &from, received, sizeof( received ), &bytes, 1 ) == 0 );
+
+    rn_test_server_io_stop_and_close( &server );
+    rocketnet_client_transport_io_close( &client );
+    rocketnet_unit_check( rocketnet_loopback_endpoints_live( hub ) == 0 );
+}
+
 // This fake starts with a known completed input queue. It tests the server's
 // bounded drain independently of any asynchronous client's send completion.
 struct server_queued_budget_t
@@ -1697,6 +1805,7 @@ REGISTER_UNIT_TEST( test_server_connects_after_junk_from_many_sources );
 REGISTER_UNIT_TEST( test_server_shape_check_first_on_the_staged_loop );
 REGISTER_UNIT_TEST( test_server_shape_check_first_on_the_portable_loop );
 REGISTER_UNIT_TEST( test_loopback_transport_server_batch_drops_packet_larger_than_stride );
+REGISTER_UNIT_TEST( test_loopback_transport_io_refusals );
 
 #include "test_unit_driver_results_checked.cpp"
 #include "test_unit_server_stop_spread.cpp"

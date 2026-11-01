@@ -2069,9 +2069,8 @@ void rocketnet_test_client_ack_stats_computed_on_read()
     ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
 }
 
-// the NaN update below is loud in a debug build: the clamp asserts. the hook
-// is non-aborting so the assert is observed rather than trapping the suite,
-// the same pattern the unit tier uses for the clamp.
+// The NaN update is clamped and counted without asserting. A returning hook
+// observes any regression without trapping before the count can be checked.
 
 static int rocketnet_test_update_time_clamped_asserts = 0;
 
@@ -2129,8 +2128,7 @@ void rocketnet_test_transport_update_time_clamped()
 
     const uint64_t misuse_before = rocketnet_api_misuse_count();
 
-    // one NaN update, clamped and counted; loud in a debug build, observed
-    // through a non-aborting hook so the suite goes on
+    // one NaN update, clamped and counted without an assert in any build
 
     rocketnet_test_update_time_clamped_asserts = 0;
     rocketnet_assert_function( rocketnet_test_update_time_clamped_assert_hook );
@@ -2141,9 +2139,7 @@ void rocketnet_test_transport_update_time_clamped()
 
     rocketnet_check( rocketnet_api_misuse_count() == misuse_before + 1 );
 
-#if ROCKETNET_ASSERTS
-    rocketnet_check( rocketnet_test_update_time_clamped_asserts == 1 );
-#endif // #if ROCKETNET_ASSERTS
+    rocketnet_check( rocketnet_test_update_time_clamped_asserts == 0 );
 
     // the client now goes silent: only the server is updated, and its clock
     // advances past the token's ten second timeout
@@ -2332,11 +2328,9 @@ static void rocketnet_test_platform_socket_exchange( const char * address, int m
 
     rocketnet_platform_socket_send_packet( socket, &local_address, sent, (int) sizeof( sent ) );
 
-    // Every mode, including blocking with no timeout, first observes
-    // readiness under the shared harness watchdog, so a missing datagram
-    // fails as a harness timeout instead of hanging in the receive. The
-    // blocking/no-timeout wrapper is still created and exercised by the
-    // one receive below; readiness does not change its mode.
+    // The receive first observes readiness under the shared harness
+    // watchdog, so a missing datagram fails as a harness timeout instead of
+    // a drained receive.
 
     rocketnet_address_t from;
 
@@ -2356,11 +2350,7 @@ static void rocketnet_test_platform_socket_exchange( const char * address, int m
 void rocketnet_test_platform_socket()
 {
     rocketnet_test_platform_socket_exchange( "127.0.0.1", ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f );
-    rocketnet_test_platform_socket_exchange( "127.0.0.1", ROCKETNET_PLATFORM_SOCKET_BLOCKING, 0.01f );
-    rocketnet_test_platform_socket_exchange( "127.0.0.1", ROCKETNET_PLATFORM_SOCKET_BLOCKING, -1.0f );
     rocketnet_test_platform_socket_exchange( "[::1]", ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f );
-    rocketnet_test_platform_socket_exchange( "[::1]", ROCKETNET_PLATFORM_SOCKET_BLOCKING, 0.01f );
-    rocketnet_test_platform_socket_exchange( "[::1]", ROCKETNET_PLATFORM_SOCKET_BLOCKING, -1.0f );
 }
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
@@ -13093,7 +13083,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_server_async_delivery_with_max_clients", rocketnet_test_server_async_delivery_with_max_clients, NULL },
     { "test_server_receive_buffer_sized_from_max_clients", rocketnet_test_server_receive_buffer_sized_from_max_clients, NULL },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-    { "test_server_gso_receive_buffer_request", rocketnet_test_server_gso_receive_buffer_request, NULL },
+    { "test_server_gso_receive_buffer_request", rocketnet_test_server_gso_receive_buffer_request, rocketnet_test_server_pin_allows_gso },
     { "test_server_receive_1000_clients_256kbps_10hz", rocketnet_test_server_receive_1000_clients_256kbps_10hz, rocketnet_test_server_receive_low_tick_measurement_requested },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS

@@ -73,7 +73,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MIN_RECEIVE_PACKETS_PER_UPDATE >= 2 * 
 struct rocketnet_server_iocp_t;
 
 // bind_address is updated with the actual port. IPv6 sockets accept both
-// families and normalize mapped IPv4 sources. Zero workers selects the default.
+// families and normalize mapped IPv4 sources.
 // max_clients is the server's configured client count: it sizes the send
 // queue, the receive banks, the process view and the socket receive buffer
 // request.

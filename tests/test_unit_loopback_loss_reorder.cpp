@@ -264,7 +264,7 @@ static void loopback_check_trace( const struct loopback_trace_t * got, const str
     check( got->connected_step == want->connected_step );
 }
 
-// Repinned because every eliciting packet now gets a standalone ACK on the next update;
+// Every eliciting packet gets a standalone ACK on the next update, and
 // simulator latency adds two connected steps (24 without it, 26 with it).
 // The counter hashes cover every counter in index order, zeros included, so they
 // move when a counter is added or removed.

@@ -305,9 +305,9 @@ XDP has 4096 send slots per queue and fixed UMEM geometry; increasing its
 queue count adds staging, subject to memory and host limits.
 
 GSO and io_uring differ: GSO has three shared send banks of 4096 slots, with
-one bank available to producers at a time; io_uring has one shared 2048-slot
-send array, including slots still held by pending completions. These are
-server-wide capacities. Adding receive queues does not multiply either
+one bank available to producers at a time. io_uring has two 2048-slot send
+phases, with one phase available to producers at a time; the other can
+remain held by pending completions. These are server-wide capacities. Adding receive queues does not multiply either
 producer's capacity. Each staged transport reports its remaining room
 (`rocketnet_server_transport_send_capacity_available`), so the message
 layer's send pass stops where the next unserved client waits and resumes
