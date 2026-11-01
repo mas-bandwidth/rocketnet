@@ -150,7 +150,7 @@ concurrency:
 #       runs past two minutes fails; tools/check_ci_budget.py, run in the lint
 #       job, refuses a per-commit job in any workflow without that bound.
 #       The job count is sized to the pools that run it at once: two macOS
-#       runners (rocketnet-macos), three Windows runners (rocketnet-windows),
+#       runners (rocketnet-macos-ci; the other nightly workflows use rocketnet-macos, a separate pool), three Windows runners (rocketnet-windows),
 #       and the shared Linux fleet.
 #   nightly (nightly-ci.yml, full: true, no time limit): every job and every
 #       step in this file, the per-commit ones included. What runs only here:
@@ -204,8 +204,8 @@ jobs:
     name: ${{ matrix.os }} / ${{ matrix.build_type }} / ${{ matrix.leg }}
     # Linux rows run on the fleet's organization runners (labels self-hosted,Linux,X64,fleet: Linux x64 gcc
     # hosts), provisioned by the fleet's provisioning repository (group_vars ci_apt_packages), which is why the
-    # self-hosted apt step is skipped. macOS rows run on the self-hosted macOS 27 arm64 host (label
-    # rocketnet-macos). matrix.os is the display name the check names carry (macos-15 on the macOS rows);
+    # self-hosted apt step is skipped. macOS rows run on the self-hosted macOS arm64 hosts (label
+    # rocketnet-macos-ci, kept apart from the nightly pool rocketnet-macos so the other nightly workflows never queue ahead of a commit). matrix.os is the display name the check names carry (macos-15 on the macOS rows);
     # runner is the label set runs-on uses.
     runs-on: ${{ fromJSON(matrix.runner) }}
     timeout-minutes: ${{ inputs.full && 10 || 2 }}
@@ -237,7 +237,7 @@ jobs:
           # what a per-commit run waits for. The nightly tier runs the builds
           # row on its own.
           - { os: ubuntu-24.04, build_type: Release, leg: unit, with_builds: true, runner: '["self-hosted","Linux","X64","fleet"]' }
-          - { os: macos-15, runner: '["self-hosted","macOS","ARM64","rocketnet-macos"]' }
+          - { os: macos-15, runner: '["self-hosted","macOS","ARM64","rocketnet-macos-ci"]' }
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
@@ -1322,8 +1322,8 @@ jobs:
 
   happy-path:
     name: happy path / ${{ matrix.os }}
-    # every OS on the fleet: Linux on the fleet pool, macOS on rocketnet-macos, Windows on rocketnet-windows
-    runs-on: ${{ fromJSON(matrix.os == 'windows' && '["self-hosted","Windows","X64","rocketnet-windows"]' || startsWith(matrix.os, 'macos') && '["self-hosted","macOS","ARM64","rocketnet-macos"]' || '["self-hosted","Linux","X64","fleet"]') }}
+    # every OS on the fleet: Linux on the fleet pool, macOS on rocketnet-macos-ci, Windows on rocketnet-windows
+    runs-on: ${{ fromJSON(matrix.os == 'windows' && '["self-hosted","Windows","X64","rocketnet-windows"]' || startsWith(matrix.os, 'macos') && '["self-hosted","macOS","ARM64","rocketnet-macos-ci"]' || '["self-hosted","Linux","X64","fleet"]') }}
     # the Windows row waits for a captain build slot first (build-and-test-windows)
     timeout-minutes: ${{ inputs.full && 5 || 2 }}
     strategy:
@@ -2398,7 +2398,7 @@ jobs:
           # the Linux platform selftest runs on the fleet bench; a host that
           # cannot build a harness reports it as SKIPPED and fails a built one
           - { os: ubuntu-24.04, runner: '["self-hosted","Linux","X64","fleet"]' }
-          - { os: macos-15, runner: '["self-hosted","macOS","ARM64","rocketnet-macos"]' }
+          - { os: macos-15, runner: '["self-hosted","macOS","ARM64","rocketnet-macos-ci"]' }
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
