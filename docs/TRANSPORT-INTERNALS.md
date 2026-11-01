@@ -198,6 +198,8 @@ bounded per receive call by the read budget below.
 | iocp | 2048 (`ROCKETNET_IOCP_SEND_QUEUE_SIZE`) | 4096 queue (`ROCKETNET_IOCP_RECEIVE_QUEUE_SIZE`) |
 | rio | 2048 per phase (`ROCKETNET_RIO_SEND_QUEUE_SIZE`) | 4096 posted receives (`ROCKETNET_RIO_RECEIVES`) |
 
+<a id="current-staging-and-drain-limitations"></a>
+
 ### Staging and drain bounds
 
 GSO's three send banks are shared across all sockets. Only its current
