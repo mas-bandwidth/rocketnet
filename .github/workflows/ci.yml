@@ -150,7 +150,7 @@ concurrency:
 #       runs past two minutes fails; tools/check_ci_budget.py, run in the lint
 #       job, refuses a per-commit job in any workflow without that bound.
 #       The job count is sized to the pools that run it at once: two macOS
-#       runners (rocketnet-macos), three Windows runners (rocketnet-windows),
+#       runners (rocketnet-ci-macos; the other nightly workflows use rocketnet-macos, a separate pool), three Windows runners (rocketnet-windows),
 #       and the shared Linux fleet.
 #   nightly (nightly-ci.yml, full: true, no time limit): every job and every
 #       step in this file, the per-commit ones included. What runs only here:
@@ -204,8 +204,8 @@ jobs:
     name: ${{ matrix.os }} / ${{ matrix.build_type }} / ${{ matrix.leg }}
     # Linux rows run on the fleet's organization runners (labels self-hosted,Linux,X64,fleet: Linux x64 gcc
     # hosts), provisioned by the fleet's provisioning repository (group_vars ci_apt_packages), which is why the
-    # self-hosted apt step is skipped. macOS rows run on the self-hosted macOS 27 arm64 host (label
-    # rocketnet-macos). matrix.os is the display name the check names carry (macos-15 on the macOS rows);
+    # self-hosted apt step is skipped. macOS rows run on the self-hosted macOS arm64 hosts (label
+    # rocketnet-ci-macos, kept apart from the nightly pool rocketnet-macos so the other nightly workflows never queue ahead of a commit). matrix.os is the display name the check names carry (macos-15 on the macOS rows);
     # runner is the label set runs-on uses.
     runs-on: ${{ fromJSON(matrix.runner) }}
     timeout-minutes: ${{ inputs.full && 10 || 2 }}
@@ -215,24 +215,33 @@ jobs:
         os: [ubuntu-24.04, macos-15]
         build_type: [Debug, Release]
         leg: [unit, functional, checks, builds]
-        # The per-commit tier runs eight of the sixteen rows: six Linux rows
-        # and two macOS rows, one per macOS runner. The nightly tier runs all.
-        exclude: ${{ fromJSON(inputs.full && '[]' || '[{"os":"ubuntu-24.04","build_type":"Debug","leg":"checks"},{"os":"ubuntu-24.04","build_type":"Debug","leg":"builds"},{"os":"macos-15","build_type":"Debug","leg":"functional"},{"os":"macos-15","build_type":"Debug","leg":"checks"},{"os":"macos-15","build_type":"Debug","leg":"builds"},{"os":"macos-15","build_type":"Release","leg":"unit"},{"os":"macos-15","build_type":"Release","leg":"checks"},{"os":"macos-15","build_type":"Release","leg":"builds"}]') }}
+        # The per-commit tier runs seven of the sixteen rows: five Linux rows
+        # (the Release unit row carries the builds leg's steps) and two macOS
+        # rows, one per macOS runner. The nightly tier runs all.
+        exclude: ${{ fromJSON(inputs.full && '[]' || '[{"os":"ubuntu-24.04","build_type":"Debug","leg":"checks"},{"os":"ubuntu-24.04","build_type":"Debug","leg":"builds"},{"os":"ubuntu-24.04","build_type":"Release","leg":"builds"},{"os":"macos-15","build_type":"Debug","leg":"functional"},{"os":"macos-15","build_type":"Debug","leg":"checks"},{"os":"macos-15","build_type":"Debug","leg":"builds"},{"os":"macos-15","build_type":"Release","leg":"unit"},{"os":"macos-15","build_type":"Release","leg":"checks"},{"os":"macos-15","build_type":"Release","leg":"builds"}]') }}
         # dev: the ROCKETNET_DEV setting. Debug rows build the default
         # development library (ON); Release rows build the production library
         # (OFF), so every OS runs the suite both ways and the production
         # boundary checks read a production library. runner is the label set
         # runs-on uses; the Linux functional rows select libxdp-1-4, the label
-        # of the VM-tier runner the xdp matrix cell needs.
+        # of the VM-tier runner the xdp matrix cell needs, and not fleet, so a
+        # libxdp-1-4 runner kept out of the general fleet still serves them.
         include:
           - { build_type: Debug, dev: 'ON' }
           - { build_type: Release, dev: 'OFF' }
           - { os: ubuntu-24.04, runner: '["self-hosted","Linux","X64","fleet"]' }
-          - { os: ubuntu-24.04, leg: functional, runner: '["self-hosted","Linux","X64","fleet","libxdp-1-4"]' }
-          - { os: macos-15, runner: '["self-hosted","macOS","ARM64","rocketnet-macos"]' }
+          - { os: ubuntu-24.04, leg: functional, runner: '["self-hosted","Linux","X64","libxdp-1-4"]' }
+          # Per commit the Linux Release unit row also runs the builds leg's
+          # steps over the same production build: one Release build and one
+          # runner instead of two, on a fleet where runners, not cores, are
+          # what a per-commit run waits for. The nightly tier runs the builds
+          # row on its own.
+          - { os: ubuntu-24.04, build_type: Release, leg: unit, with_builds: true, runner: '["self-hosted","Linux","X64","fleet"]' }
+          - { os: macos-15, runner: '["self-hosted","macOS","ARM64","rocketnet-ci-macos"]' }
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: ./.github/actions/ccache
 
       # One SDK source list for the library and every vendoring application;
       # first, so a later red step cannot skip it.
@@ -678,6 +687,22 @@ jobs:
           ROCKETNET_CLIENT_TRANSPORT: portable
         run: ./bin/test_lifecycle
 
+      # THE libxdp 1.4 XDP CELL. sdk/rocketnet_server_socket_linux.cpp
+      # initializes the UMEM ring sizes; libxdp 1.4 rejects zeroed ring sizes
+      # and 1.6 accepts them, so the Linux functional rows run on libxdp-1-4
+      # runners, where the transport family matrix's xdp cell (above) runs
+      # test_xdp_transport_max_size_both_ways_ipv4 and _ipv6 in a guest of the
+      # runner's kernel. This step holds the runner to its label: the cell
+      # proves the ring sizes against 1.4 only while the host's libxdp is 1.4.
+      - name: The XDP cell ran against libxdp 1.4
+        if: runner.os == 'Linux' && matrix.leg == 'functional'
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(pkg-config --modversion libxdp)
+          echo "libxdp $version"
+          case "$version" in 1.4.*) ;; *) echo "libxdp-1-4 requires libxdp 1.4.x"; exit 1 ;; esac
+
       - name: Check test scaffolding boundary (red controls)
         if: matrix.leg == 'checks' && ( runner.os == 'Linux' && matrix.dev == 'OFF' )
         run: python3 tools/check_test_scaffolding_boundary.py --red-controls
@@ -772,7 +797,7 @@ jobs:
       # extern "C" block, and a C and a C++ client and server built from only
       # the header and the prebuilt static library (seconds)
       - name: Check the public header is clean and self-contained
-        if: runner.os == 'Linux' && matrix.build_type == 'Release' && matrix.leg == 'builds'
+        if: runner.os == 'Linux' && matrix.build_type == 'Release' && (matrix.leg == 'builds' || (matrix.with_builds && !inputs.full))
         run: python3 tools/check_public_header.py --build build
 
       # The library is callable from a C and a C++ program through rocketnet.h
@@ -780,15 +805,15 @@ jobs:
       # production shared library exports only the reviewed list (so the
       # development token minting symbol stays out of it).
       - name: Check the library is callable from C and C++ through rocketnet.h
-        if: (runner.os == 'Linux' || runner.os == 'macOS') && matrix.build_type == 'Release' && matrix.leg == 'builds'
+        if: (runner.os == 'Linux' || runner.os == 'macOS') && matrix.build_type == 'Release' && (matrix.leg == 'builds' || (matrix.with_builds && !inputs.full))
         run: python3 tools/check_dll_consumer.py --build build
 
       - name: Check the examples against the house rules
-        if: runner.os == 'Linux' && matrix.build_type == 'Release' && matrix.leg == 'builds'
+        if: runner.os == 'Linux' && matrix.build_type == 'Release' && (matrix.leg == 'builds' || (matrix.with_builds && !inputs.full))
         run: python3 tools/check_examples.py
 
       - name: Check larger history budget and reject undersized history
-        if: inputs.full && runner.os == 'Linux' && matrix.build_type == 'Release' && matrix.leg == 'builds'
+        if: inputs.full && runner.os == 'Linux' && matrix.build_type == 'Release' && (matrix.leg == 'builds' || (matrix.with_builds && !inputs.full))
         run: |
           cmake -S . -B build-history -DCMAKE_BUILD_TYPE=Release -DROCKETNET_HISTORY_PACKETS=32768 -DCMAKE_RUNTIME_OUTPUT_DIRECTORY="$PWD/build-history/bin"
           cmake --build build-history --target test_lifecycle --parallel
@@ -804,7 +829,7 @@ jobs:
       # libxdp link, and a transport list naming xdp refuses it with
       # TRANSPORT_NOT_BUILT; the default build keeps all of it.
       - name: Build without XDP; XDP is compiled out, a pin of it refuses, and functional links
-        if: inputs.full && runner.os == 'Linux' && matrix.build_type == 'Release' && matrix.leg == 'builds'
+        if: inputs.full && runner.os == 'Linux' && matrix.build_type == 'Release' && (matrix.leg == 'builds' || (matrix.with_builds && !inputs.full))
         run: |
           python3 tools/test_check_xdp_compiled_out.py
           python3 tools/check_xdp_compiled_out.py --present bin/librocketnet.so build/librocketnet.a
@@ -828,7 +853,7 @@ jobs:
       # check_package.py --client asserts the installed RocketNetConfig and
       # then builds and runs a C client against both installed libraries.
       - name: Build Linux client without server libraries; package requires none of them
-        if: runner.os == 'Linux' && matrix.build_type == 'Release' && matrix.leg == 'builds'
+        if: runner.os == 'Linux' && matrix.build_type == 'Release' && (matrix.leg == 'builds' || (matrix.with_builds && !inputs.full))
         run: |
           cmake -S . -B build-no-server-libs -DCMAKE_BUILD_TYPE=Release -DROCKETNET_XDP=OFF -DROCKETNET_IO_URING=OFF \
             -DROCKETNET_BUILD_EXAMPLES=OFF -DROCKETNET_BUILD_TOOLS=OFF -DROCKETNET_BUILD_TESTS=OFF \
@@ -844,7 +869,7 @@ jobs:
           python3 tools/check_package.py build-no-server-libs --config Release --client
 
       - name: Install and relocate the SDK; run C/C++ static/shared consumers
-        if: matrix.leg == 'builds'
+        if: (matrix.leg == 'builds' || (matrix.with_builds && !inputs.full))
         run: python3 tools/check_package.py build --config ${{ matrix.build_type }} --embedded
 
       - name: Memory plans echo the allocator observation on macOS
@@ -933,59 +958,6 @@ jobs:
         if: runner.os == 'Linux' && matrix.leg == 'checks'
         run: bash scripts/rocketnet-provision selftest
 
-  # sdk/rocketnet_server_socket_linux.cpp:1807 initializes UMEM ring sizes.
-  # libxdp 1.4 rejects zeroed ring sizes; 1.6 accepts them, so pin this XDP cell.
-  xdp-libxdp-1-4:
-    name: XDP / libxdp 1.4 / Debug
-    runs-on: [self-hosted, Linux, X64, fleet, libxdp-1-4]
-    # 47-69s on the fleet (build 40s, guest 6s); timeout 120 on vng bounds a
-    # hung guest, and the job bound holds the per-commit run to two minutes.
-    timeout-minutes: ${{ inputs.full && 10 || 2 }}
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
-      - name: Build the XDP functional cell (Debug)
-        shell: bash
-        run: |
-          set -euo pipefail
-          version=$(pkg-config --modversion libxdp)
-          echo "libxdp $version"
-          case "$version" in 1.4.*) ;; *) echo "libxdp-1-4 requires libxdp 1.4.x"; exit 1 ;; esac
-          cmake -B build -DCMAKE_BUILD_TYPE=Debug
-          cmake --build build --target functional --parallel 2
-      - name: XDP max size on IPv4 and IPv6 in the runner kernel guest
-        shell: bash
-        run: |
-          set -euo pipefail
-          vm_kernel="$HOME/vm-kernels/vmlinuz-$(uname -r)"
-          command -v vng
-          test -r "$vm_kernel"
-          test -w /dev/kvm
-          cat > build/xdp-libxdp-1-4.sh <<'GUEST'
-          uname -r
-          failed=0
-          for case in test_xdp_transport_max_size_both_ways_ipv4 test_xdp_transport_max_size_both_ways_ipv6; do
-            log="build/libxdp-1-4.$case.log"
-            sudo ./bin/functional --run "$case" > "$log" 2>&1
-            rc=$?
-            cat "$log"
-            echo "CASE $case EXIT $rc"
-            if [ "$rc" != 0 ] || ! grep -qx "$case" "$log" || grep -q '\[SKIPPED' "$log"; then failed=1; fi
-          done
-          exit "$failed"
-          GUEST
-          timing_receipt="$RUNNER_TEMP/rocketnet-unit-functional.start"
-          rm -f "$timing_receipt"
-          timing_start_ns=$(python3 -c 'import time; print(time.clock_gettime_ns(time.CLOCK_MONOTONIC) if hasattr(time, "CLOCK_MONOTONIC") else time.monotonic_ns())')
-          [[ "$timing_start_ns" =~ ^[0-9]+$ ]] || { echo "CI_UNIT_FUNCTIONAL_TIMING=FAIL reason=invalid_start"; exit 1; }
-          printf '%s %s %s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$timing_start_ns" > "$timing_receipt"
-          timeout 120 vng --run "$vm_kernel" --memory 1536M --cpus 2 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir "$PWD" -- \
-            sh build/xdp-libxdp-1-4.sh
-      - name: Enforce combined unit and functional timing
-        shell: bash
-        env:
-          CI_TIMING_ROW: ${{ format('{0}/{1}', runner.os, github.job) }}
-        run: *enforce_unit_functional_timing
-
   # The windows leg (#81's baseline doctrine): the portable driver built with
   # MSVC — the first machine ever to compile the windows arm — and the full
   # test suite run on the runner, Debug and Release. /fp:precise comes from
@@ -1058,9 +1030,11 @@ jobs:
   # Narrowing it would buy each leg perhaps fifteen seconds and would cost
   # "everything in the tree compiles under MSVC", which is coverage, not
   # duplication -- the one thing this file's header says a gate may never
-  # trade away. Caching the object tree would buy more and is refused for the
-  # same reason it is refused everywhere else in this workflow: a stale object
-  # is a green for the wrong reason.
+  # trade away. No build directory is ever carried between jobs, because a
+  # stale object is a green for the wrong reason; the Linux and macOS jobs
+  # compile through ccache (.github/actions/ccache), which keys each object
+  # on the compiler, the flags and the preprocessed source and so never
+  # serves a stale one. The Windows runners have no ccache.
   #
   # The doctrine the row itself carries (#81's baseline): the portable driver
   # built with MSVC, the full test suite run on the runner. /fp:precise comes
@@ -1348,8 +1322,8 @@ jobs:
 
   happy-path:
     name: happy path / ${{ matrix.os }}
-    # every OS on the fleet: Linux on the fleet pool, macOS on rocketnet-macos, Windows on rocketnet-windows
-    runs-on: ${{ fromJSON(matrix.os == 'windows' && '["self-hosted","Windows","X64","rocketnet-windows"]' || startsWith(matrix.os, 'macos') && '["self-hosted","macOS","ARM64","rocketnet-macos"]' || '["self-hosted","Linux","X64","fleet"]') }}
+    # every OS on the fleet: Linux on the fleet pool, macOS on rocketnet-ci-macos, Windows on rocketnet-windows
+    runs-on: ${{ fromJSON(matrix.os == 'windows' && '["self-hosted","Windows","X64","rocketnet-windows"]' || startsWith(matrix.os, 'macos') && '["self-hosted","macOS","ARM64","rocketnet-ci-macos"]' || '["self-hosted","Linux","X64","fleet"]') }}
     # the Windows row waits for a captain build slot first (build-and-test-windows)
     timeout-minutes: ${{ inputs.full && 5 || 2 }}
     strategy:
@@ -1363,6 +1337,7 @@ jobs:
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: ./.github/actions/ccache
 
       - name: Check the fleet's build dependencies are present
         shell: bash
@@ -1481,6 +1456,7 @@ jobs:
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: ./.github/actions/ccache
 
       - name: Check the fleet's toolchain is on PATH
         shell: bash
@@ -1575,6 +1551,7 @@ jobs:
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: ./.github/actions/ccache
 
       - name: Check the fleet's build dependencies are present
         shell: bash
@@ -1706,6 +1683,7 @@ jobs:
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: ./.github/actions/ccache
 
       - name: Check the fleet's build dependencies are present
         shell: bash
@@ -1843,6 +1821,7 @@ jobs:
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: ./.github/actions/ccache
 
       - name: Check the fleet's build dependencies are present
         shell: bash
@@ -2012,6 +1991,7 @@ jobs:
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: ./.github/actions/ccache
 
       - name: Check the s390x cross toolchain, libraries, and qemu are present
         shell: bash
@@ -2192,6 +2172,7 @@ jobs:
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: ./.github/actions/ccache
 
       - name: Check the fleet's build dependencies are present
         shell: bash
@@ -2280,6 +2261,7 @@ jobs:
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: ./.github/actions/ccache
 
       - name: Check the fleet's build dependencies are present
         shell: bash
@@ -2416,10 +2398,11 @@ jobs:
           # the Linux platform selftest runs on the fleet bench; a host that
           # cannot build a harness reports it as SKIPPED and fails a built one
           - { os: ubuntu-24.04, runner: '["self-hosted","Linux","X64","fleet"]' }
-          - { os: macos-15, runner: '["self-hosted","macOS","ARM64","rocketnet-macos"]' }
+          - { os: macos-15, runner: '["self-hosted","macOS","ARM64","rocketnet-ci-macos"]' }
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: ./.github/actions/ccache
 
       - name: Check the fleet's build dependencies are present
         shell: bash
@@ -2520,7 +2503,12 @@ jobs:
   # cache restores the prefix and builds nothing.
   instruction-gate:
     name: instruction count gate
-    runs-on: [self-hosted, Linux, X64, rocketnet-quiet]
+    # Any fleet runner: cachegrind counts instructions, not time, so the gate
+    # needs a host the pinned toolchain's cache key names (distro, arch, C
+    # library: every Linux fleet runner is ubuntu-24.04 x86_64 glibc-2.39),
+    # not a quiet one, and it leaves the libxdp-1-4 runners to the functional
+    # rows that need them.
+    runs-on: [self-hosted, Linux, X64, fleet]
     # Per commit the gate restores the pinned toolchain and never builds it
     # (396s cold); the nightly tier builds it on a miss and saves it from
     # main, where every branch and pull request can restore it.
@@ -2665,6 +2653,7 @@ jobs:
     timeout-minutes: ${{ inputs.full && 10 || 2 }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: ./.github/actions/ccache
         with:
           persist-credentials: false
 
