@@ -6,7 +6,7 @@ Planned work for RocketNet that is not on main. Work lands on main before new wo
 
 ## Contents
 
-- [Started work to finish and land](#started-work-to-finish-and-land) (9)
+- [Started work to finish and land](#started-work-to-finish-and-land) (8)
 - [Audit items not yet fixed](#audit-items-not-yet-fixed) (8)
 - [Investigations that need a quiet host](#investigations-that-need-a-quiet-host) (3)
 - [Older open pull requests](#older-open-pull-requests) (2)
@@ -27,12 +27,6 @@ From: Integration fleet run, ab74c810
 Glenn ruled remove (audit 13). Branch rowan/remove-type9-fragmentation at 0689412d: unreachability confirmed; the code, config field, status code, 41 counters, standard sections and the model's fragment half are gone; server required_memory at 1000 clients drops 379 MB and the client's from 29.3 MB to 20.3 MB. Owed: a full fleet run at the head; five one-line negative controls; timing the split lock-in sweep under the sanitizers; a Windows light-profile ceiling measurement; the fragment text left in proofs/tla/Link.tla (editing it pushes MCRNChannel past the 110 s TLC budget). Rebase onto main (conflicts with the counter renumbering).
 
 From: Audit item 13; Glenn, 2026-10-31
-
-### Size per-server arrays from the configured max_clients
-
-In a ROCKETNET_MAX_CLIENTS=10000 build a 1000-slot server plans 3.93 GB because per-server arrays use the build constant (audit 39). Branch rowan/size-by-config; memory is the user's choice via config.
-
-From: Audit item 39
 
 ### macOS network thread just above default priority
 
