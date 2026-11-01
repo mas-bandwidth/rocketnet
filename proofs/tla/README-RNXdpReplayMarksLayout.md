@@ -34,9 +34,10 @@ freely.
 An update is the walk's forget pass, its mark pass, then the commit; the walk
 forgets and marks each key at most once per update.
 
-- **`Forget(k)`**: `rocketnet_xdp_replay_marks_forget`: refused at
-  `forget_count >= ROCKETNET_XDP_REPLAY_MAX_ENTRIES`, else appended; then the
-  first kept mark of the key is dropped by `rocketnet_xdp_replay_marks_drop_kept`,
+- **`Forget(k)`**: `rocketnet_xdp_replay_marks_forget`: a pending key is
+  coalesced before the capacity test; a new key is refused at
+  `forget_count >= capacity`, else appended. An accepted forget, including a
+  duplicate at capacity, then drops the first kept mark of the key by `rocketnet_xdp_replay_marks_drop_kept`,
   which shifts `[i + 1, mark_count)` down one and decrements both counts.
 - **`Mark(k, v)`**: `rocketnet_xdp_replay_marks_mark`: a kept mark of the key
   is replaced in place; else refused at `mark_count >= MAX`, else appended.
@@ -70,10 +71,11 @@ so each move reads its source before anything overwrites it.
 ## The instance
 
 `MCRNXdpReplayMarksLayout.cfg`: three entries, two keys, two values. Kept
-forgets accumulate across updates, a kept mark is dropped by a forget or
-replaced by a mark, both refusals are reached, and stale cells past each count
-are left behind. The witnesses use the same instance, the full test's at two
-entries.
+forgets coalesce across updates, a kept mark is dropped by a forget or
+replaced by a mark, and stale cells past each count are left behind.
+`MCRNXdpReplayMarksLayoutCapacityOne.cfg` uses one entry and two keys so
+new-key capacity refusals are reachable. The full-test witness uses that
+same one-entry instance; the other witnesses use three entries.
 
 ## Reversed witnesses
 
@@ -82,10 +84,10 @@ counterexample below was checked against the C by hand.
 
 1. **`MCRNXdpReplayMarksLayoutBrokenFullOffByOne.cfg`**
    (`FullTestExact = FALSE`): `rocketnet_xdp_replay_marks_forget` refusing
-   at `forget_count > MAX`. Violates `InBounds`: in a buffer of two, a forget
-   the kernel refuses is kept; the next update forgets two keys, and the
-   second, at `forget_count == MAX`, is written at `forgets[2]`, past the
-   array.
+   at `forget_count > capacity`. Violates `InBounds`: in a buffer of one,
+   the first key fills the buffer; the second distinct key is written at
+   `forgets[1]`, past the array. Repeating one key cannot reach this witness
+   because duplicate forgets coalesce.
 2. **`MCRNXdpReplayMarksLayoutBrokenKeptSearchPastPrefix.cfg`**
    (`KeptSearchBound = FALSE`): the forget's kept search running
    `i <= kept_mark_count`. Violates `LayoutIsQueue`: a mark of `k1` is
@@ -102,6 +104,12 @@ counterexample below was checked against the C by hand.
    has not read (here past the count, so a phantom copy; with a second pending
    mark there, that mark is overwritten before it is read), and `mark_count`
    becomes 2 for one pending mark.
+
+4. **`MCRNXdpReplayMarksLayoutBrokenForgetDuplicates.cfg`**
+   (`DeduplicateForgets = FALSE`): a pending forget is appended again. A
+   kernel-refused forget survives a commit; forgetting that source in a
+   later update consumes a second cell. `LayoutIsQueue` fails because the
+   independent contract keeps one pending entry per source key.
 
 ## Runs
 

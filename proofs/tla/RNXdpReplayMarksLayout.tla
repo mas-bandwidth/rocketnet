@@ -8,7 +8,8 @@
 (* The buffer: the array forgets with forget_count, the parallel arrays    *)
 (* mark_keys and mark_values with mark_count, and kept_mark_count, the     *)
 (* length of the prefix of the marks the last commit refused.  An update   *)
-(* is the walk's forget pass (rocketnet_xdp_replay_marks_forget: append,   *)
+(* is the walk's forget pass (rocketnet_xdp_replay_marks_forget: coalesce    *)
+(* a pending key or append a new key,                                     *)
 (* then drop a kept mark of the same key by shifting the rest down,        *)
 (* rocketnet_xdp_replay_marks_drop_kept), then its mark pass               *)
 (* (rocketnet_xdp_replay_marks_mark: replace a kept mark of the key in     *)
@@ -28,6 +29,7 @@
 (* refused, which marks it applied) is chosen freely.                      *)
 (*                                                                         *)
 (* Reversed witnesses (each flag FALSE is a real bug class):               *)
+(*   DeduplicateForgets pending forgets append a duplicate key            *)
 (*   FullTestExact   the forget full test one late (forget_count > MAX)    *)
 (*   KeptSearchBound the forget's kept search runs one past the prefix     *)
 (*   CompactFromZero the mark compaction writes from the old kept count,   *)
@@ -36,16 +38,17 @@
 EXTENDS Integers, Sequences, FiniteSets
 
 CONSTANTS
-    M,                  \* ROCKETNET_XDP_REPLAY_MAX_ENTRIES
+    M,                  \* configured marks->capacity
     Keys,               \* source addresses (keys of the kernel map)
     Vals,               \* high-water values
+    DeduplicateForgets, \* a pending forget of the key consumes no new cell
     FullTestExact,      \* rocketnet_xdp_replay_marks_forget refuses at forget_count >= MAX
     KeptSearchBound,    \* the forget's kept search runs i < kept_mark_count
     CompactFromZero,    \* reset_keeping's mark compaction writes from index 0
     NONE                \* a cell nothing has written (a model value)
 
 ASSUME M \in Nat \ {0}
-ASSUME \A f \in {FullTestExact, KeptSearchBound, CompactFromZero} : f \in BOOLEAN
+ASSUME \A f \in {DeduplicateForgets, FullTestExact, KeptSearchBound, CompactFromZero} : f \in BOOLEAN
 
 Cells == 0..M                   \* cell M is the one past the end: a write there is out of bounds
 Idx == 0..(M - 1)
@@ -96,6 +99,9 @@ Sub(s, keep) == [ n \in 1..Cardinality({ p \in 1..Len(s) : keep[p] }) |->
                     IN s[Nth(n)] ]
 SeqWithout(s, p) == [ n \in 1..(Len(s) - 1) |-> IF n < p THEN s[n] ELSE s[n + 1] ]
 AbsKeptHit(k) == { p \in 1..absK : absM[p].k = k }
+ForgetHit(k) == { i \in 0..(fc - 1) : forgets[i] = k }
+PendingForget(k) == DeduplicateForgets /\ ForgetHit(k) # {}
+AbsForgetHit(k) == { p \in 1..Len(absF) : absF[p] = k }
 
 Init ==
     /\ forgets = [ x \in Cells |-> NONE ]
@@ -119,12 +125,12 @@ Forget(k) ==
     /\ phase = "forget"
     /\ k \notin doneF
     /\ doneF' = doneF \cup {k}
-    /\ IF IF FullTestExact THEN fc >= M ELSE fc > M
+    /\ IF ~PendingForget(k) /\ (IF FullTestExact THEN fc >= M ELSE fc > M)
        THEN /\ refused' = refused + 1
             /\ UNCHANGED <<forgets, fc, mkeys, mvals, mc, kc, overflow>>
-       ELSE /\ forgets' = Put(forgets, fc, k)
-            /\ fc' = fc + 1
-            /\ overflow' = (overflow \/ Past(fc))
+       ELSE /\ forgets' = IF PendingForget(k) THEN forgets ELSE Put(forgets, fc, k)
+            /\ fc' = IF PendingForget(k) THEN fc ELSE fc + 1
+            /\ overflow' = (overflow \/ (~PendingForget(k) /\ Past(fc)))
             /\ IF KeptHit(k) # {}
                THEN /\ mkeys' = Shift(mkeys, FirstKept(k), mc)
                     /\ mvals' = Shift(mvals, FirstKept(k), mc)
@@ -133,9 +139,9 @@ Forget(k) ==
                ELSE UNCHANGED <<mkeys, mvals, mc, kc>>
             /\ UNCHANGED refused
     \* the contract: the forget is owed, and a kept mark of its key is dropped
-    /\ IF Len(absF) >= M
+    /\ IF AbsForgetHit(k) = {} /\ Len(absF) >= M
        THEN UNCHANGED <<absF, absM, absK>>
-       ELSE /\ absF' = Append(absF, k)
+       ELSE /\ absF' = IF AbsForgetHit(k) # {} THEN absF ELSE Append(absF, k)
             /\ IF AbsKeptHit(k) # {}
                THEN LET p == CHOOSE p \in AbsKeptHit(k) : \A q \in AbsKeptHit(k) : p <= q
                     IN /\ absM' = SeqWithout(absM, p)
