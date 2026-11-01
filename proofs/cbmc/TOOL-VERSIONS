@@ -3,6 +3,8 @@
 # Both .github/workflows/cbmc.yml and .github/workflows/nightly-proofs.yml
 # compare `cbmc --version`, `cadical --version`, and `esbmc --version`
 # against this file and fail with TOOL-MISSING on any mismatch or absence.
+# .github/workflows/nightly-ack-proof.yml builds the ESBMC named here from
+# pinned source (tools/build_pinned_esbmc.sh) instead of taking it from PATH.
 CBMC 6.6.0
 CADICAL 2.1.3
 ESBMC 8.5.0

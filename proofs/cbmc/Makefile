@@ -38,9 +38,13 @@
 #                      itself, which the harness includes.
 #
 # `ack-run-bound-8`, `ack-run-full-4096`, and `ack-run-negative-control`
-# use ESBMC on the current C++ leaf in sdk/rocketnet_ack.cpp. They are
-# explicit targets, on no list: even the run-8 instance exhausts memory
-# (INVENTORY.md records the measurements).
+# use ESBMC on the current C++ leaf in sdk/rocketnet_ack.cpp. They are on no
+# list here: the run-8 instance exhausts 48 GB (INVENTORY.md records the
+# measurements). `ack-run-bound-8` and `ack-run-negative-control` run each
+# night on studio (512 GB) by .github/workflows/nightly-ack-proof.yml, on an
+# ESBMC built from pinned source (tools/build_pinned_esbmc.sh), with
+# ACK_RUN_MEMORY_KB and ACK_RUN_TIMEOUT raised. run_bounded.sh applies both
+# limits on Linux and macOS.
 
 CBMC ?= cbmc
 
@@ -199,10 +203,10 @@ define run_ack_proof
 	trap 'rm -rf "$$work"' EXIT HUP INT TERM; \
 	printf '#include "%s"\n' "$(ACK_RUN_SOURCE)" > "$$work/proof.cpp"; \
 	status=0; \
-	( ulimit -v $(ACK_RUN_MEMORY_KB); \
-	  timeout $(ACK_RUN_TIMEOUT) $(ESBMC) $(ACK_RUN_FLAGS) --unwind $(3) \
+	$(CURDIR)/run_bounded.sh $(ACK_RUN_MEMORY_KB) $(ACK_RUN_TIMEOUT) \
+	  $(ESBMC) $(ACK_RUN_FLAGS) --unwind $(3) \
 	    -DACK_RUN_BOUND=$(2) --function harness_ack_apply_run \
-	    "$$work/proof.cpp" ) > "$$work/output.log" 2>&1 || status=$$?; \
+	    "$$work/proof.cpp" > "$$work/output.log" 2>&1 || status=$$?; \
 	cat "$$work/output.log"; \
 	if [ $$status -eq 124 ]; then echo "$(1) HOLD timeout after $(ACK_RUN_TIMEOUT)s"; exit 1; fi; \
 	if [ $$status -eq 137 ] || grep -qi 'out of memory' "$$work/output.log"; then echo "$(1) HOLD out of memory"; exit 1; fi; \
@@ -227,10 +231,10 @@ ack-run-negative-control: proof_ack_apply_run.c esbmc_shim.h
 	trap 'rm -rf "$$work"' EXIT HUP INT TERM; \
 	printf '#include "%s"\n' "$(ACK_RUN_SOURCE)" > "$$work/proof.cpp"; \
 	status=0; \
-	( ulimit -v $(ACK_RUN_MEMORY_KB); \
-	  timeout $(ACK_RUN_TIMEOUT) $(ESBMC) $(ACK_RUN_FLAGS) --unwind 65 \
+	$(CURDIR)/run_bounded.sh $(ACK_RUN_MEMORY_KB) $(ACK_RUN_TIMEOUT) \
+	  $(ESBMC) $(ACK_RUN_FLAGS) --unwind 65 \
 	    -DACK_RUN_BOUND=8 -DACK_NEGATIVE_CONTROL=1 \
-	    --function harness_ack_apply_run "$$work/proof.cpp" ) \
+	    --function harness_ack_apply_run "$$work/proof.cpp" \
 	    > "$$work/output.log" 2>&1 || status=$$?; \
 	cat "$$work/output.log"; \
 	if [ $$status -eq 124 ]; then echo "ack-run-negative-control HOLD timeout after $(ACK_RUN_TIMEOUT)s"; exit 1; fi; \

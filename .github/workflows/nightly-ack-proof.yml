@@ -1,0 +1,71 @@
+# The ACK run proof, each night on studio. ack-run-bound-8 (harness
+# proof_ack_apply_run.c on sdk/rocketnet_ack.cpp) and its negative control
+# exhaust 48 GB on vision (proofs/cbmc/INVENTORY.md); studio has 512 GB. It is
+# a nightly, never a per-commit gate (Glenn, 2026-10-31). A HOLD (out of
+# memory, timeout, UNKNOWN) fails the job, so a red night shows as red.
+#
+# The runner is studio's own proof runner, label rocketnet-proof, apart from
+# the rocketnet-macos and rocketnet-macos-ci pools, so a night-long proof never
+# holds a macOS job.
+#
+# ESBMC is built from pinned source by tools/build_pinned_esbmc.sh, at the
+# version proofs/cbmc/TOOL-VERSIONS names, into a prefix beside the checkout
+# that persists across runs and is rebuilt only when its toolchain-id changes
+# (the first build is about an hour). No esbmc is taken from PATH.
+#
+# The two proofs run one after the other: each may use most of the machine's
+# memory, and the 384 GB limit apiece leaves the rest of studio its share.
+
+name: Nightly ACK proof
+
+on:
+  schedule:
+    - cron: "0 7 * * *"   # daily at 07:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ack-proof:
+    name: ACK run proof (ack-run-bound-8, studio)
+    runs-on: [self-hosted, macOS, ARM64, rocketnet-proof]
+    timeout-minutes: 600
+    env:
+      ESBMC_PREFIX: ${{ github.workspace }}/../pinned-esbmc
+      ACK_RUN_MEMORY_KB: "402653184"   # 384 GB
+      ACK_RUN_TIMEOUT: "14400"         # 4 hours apiece
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      - name: Build the pinned ESBMC
+        id: build
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(awk '$1=="ESBMC" {print $2}' proofs/cbmc/TOOL-VERSIONS)
+          bash tools/build_pinned_esbmc.sh "$ESBMC_PREFIX" "$version"
+          "$ESBMC_PREFIX/bin/esbmc" --version
+
+      - name: Run ack-run-bound-8
+        run: |
+          set -o pipefail
+          make -C proofs/cbmc ack-run-bound-8 ESBMC="$ESBMC_PREFIX/bin/esbmc" \
+            ACK_RUN_MEMORY_KB="$ACK_RUN_MEMORY_KB" ACK_RUN_TIMEOUT="$ACK_RUN_TIMEOUT" \
+            2>&1 | tee proofs/cbmc/ack-run-bound-8-output.txt
+
+      - name: Run ack-run-negative-control
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          set -o pipefail
+          make -C proofs/cbmc ack-run-negative-control ESBMC="$ESBMC_PREFIX/bin/esbmc" \
+            ACK_RUN_MEMORY_KB="$ACK_RUN_MEMORY_KB" ACK_RUN_TIMEOUT="$ACK_RUN_TIMEOUT" \
+            2>&1 | tee proofs/cbmc/ack-run-negative-control-output.txt
+
+      - name: Upload the proof output
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: nightly-ack-proof
+          path: proofs/cbmc/ack-run-*-output.txt
+          if-no-files-found: ignore
