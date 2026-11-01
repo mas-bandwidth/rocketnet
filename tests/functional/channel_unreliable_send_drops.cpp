@@ -136,7 +136,7 @@ void unreliable_dropped_while_reliable_waits_never_arrives()
         rocketnet_channel_harness_pump( &h, DROPS_TICK );
         elapsed += DROPS_TICK;
 
-        rocketnet_channel_delivery_t d;
+        rocketnet_channel_delivery_t d = {};
         while ( rocketnet_channel_harness_server_collect( &h, 0, &d ) )
         {
             if ( d.bytes == DROPS_UNRELIABLE_BYTES )
@@ -197,7 +197,7 @@ void unreliable_dropped_when_builder_out_of_budget_never_arrives()
     rocketnet_channel_harness_pump( &h, DROPS_TICK );      // the wire delivers at the next update
 
     int arrived = 0;
-    rocketnet_channel_delivery_t d;
+    rocketnet_channel_delivery_t d = {};
     while ( rocketnet_channel_harness_server_collect( &h, 0, &d ) )
     {
         drops_check( arrived < sent && drops_matches( &d, DROPS_BUILDER_BYTES, (uint8_t) ( 0x20 + arrived ) ), "an arrival is the next of the earliest sends" );

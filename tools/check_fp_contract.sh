@@ -241,10 +241,14 @@ check_file()
             w1="${w1%\"}"
             w1="${w1%)}"
             w1="${w1%\"}"
-            if [ "${#words[@]}" -eq 2 ] && { [ "$w1" = "--version" ] || [ "$w1" = "-dumpfullversion" ] || [ "$w1" = "-dumpversion" ]; }; then
-                buf=""
-                continue
-            fi
+            case "$w1" in
+                --version|-dumpfullversion|-dumpversion|--print-file-name=*|-print-file-name=*|--print-resource-dir|-print-resource-dir)
+                    if [ "${#words[@]}" -eq 2 ]; then
+                        buf=""
+                        continue
+                    fi
+                    ;;
+            esac
             if ! has_floor "$buf" "$cmd" "$ok_cflags" "$ok_cxxflags" "$ok_flags"; then
                 echo "$f:$start_line: compiler invocation missing -ffp-contract=off, /fp:precise (cl) or -Xclang -ffp-contract=off (clang-cl): $buf"
                 file_bad=1

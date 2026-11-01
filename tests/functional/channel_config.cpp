@@ -249,7 +249,7 @@ void config_equal_over_lossy_loopback()
         rocketnet_channel_harness_pump( &h, rocketnet_config_step );
         updates++;
 
-        rocketnet_channel_delivery_t delivery;
+        rocketnet_channel_delivery_t delivery = {};
         while ( rocketnet_channel_harness_server_collect( &h, 0, &delivery ) )
         {
             if ( delivered_server < rocketnet_config_message_count )

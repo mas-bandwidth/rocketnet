@@ -1090,7 +1090,7 @@ static void test_unreliable_fit_in_place_every_transport()
         {
             rocketnet_channel_harness_pump( &h, 1.0 / 60.0 );
 
-            rocketnet_channel_delivery_t d;
+            rocketnet_channel_delivery_t d = {};
             for ( int channel = 0; channel < 2; channel++ )
                 while ( from_server ? rocketnet_channel_harness_client_collect( &h, channel, &d ) : rocketnet_channel_harness_server_collect( &h, channel, &d ) )
                 {

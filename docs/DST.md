@@ -51,17 +51,18 @@ The same seeds and options print the same trace on Linux, macOS and Windows,
 so a seed that fails on one OS replays on the others. The reference is
 
     ./bin/dst --seeds 1-50
-    PASS seeds=1-50 runs=50 trace=510908e5051b7f68
+    PASS seeds=1-50 runs=50 trace=17999bcc78a7254d
 
-measured equal, Release, at executable source 968673ea (then-current main c456b6fc
-merged into the nightly carry) on all three OSes:
+measured equal, Release, at executable source e385557a (after 93eaebd06 seeded
+the message resend delay from the transport's measured RTT) on all three OSes:
 
-    Linux   (x64, gcc)     PASS seeds=1-50 runs=50 trace=510908e5051b7f68
-    macOS   (arm64, clang) PASS seeds=1-50 runs=50 trace=510908e5051b7f68
-    Windows (x64, MSVC)    PASS seeds=1-50 runs=50 trace=510908e5051b7f68
+    Linux   (x64, gcc)     PASS seeds=1-50 runs=50 trace=17999bcc78a7254d
+    macOS   (arm64, clang) PASS seeds=1-50 runs=50 trace=17999bcc78a7254d
+    Windows (x64, MSVC)    PASS seeds=1-50 runs=50 trace=17999bcc78a7254d
 
-The trace was f5b51aa640524001 at main 010c8167 (also equal on the three OSes);
-the library changes landed between the two moved it. A change that moves this
+The trace was 510908e5051b7f68 at 968673ea and f5b51aa640524001 at main 010c8167
+(also equal on the three OSes); seeding the message resend delay from the
+transport's measured RTT (93eaebd06) moved it. A change that moves this
 trace changes what a run does; it updates the reference here and
 `DST_REFERENCE_TRACE` in `.github/workflows/nightly-dst.yml` together, from
 three equal PASS lines.

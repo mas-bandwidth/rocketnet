@@ -80,7 +80,7 @@ void unreliable_small_messages_pack_in_place()
             {
                 packing_check( rocketnet_channel_harness_pump( &h, 1.0 / 60.0 ) );
 
-                rocketnet_channel_delivery_t delivery;
+                rocketnet_channel_delivery_t delivery = {};
                 while ( to_server ? rocketnet_channel_harness_server_collect( &h, 0, &delivery ) : rocketnet_channel_harness_client_collect( &h, 0, &delivery ) )
                 {
                     packing_check( delivery.bytes == bytes && delivery.data[0] < count );

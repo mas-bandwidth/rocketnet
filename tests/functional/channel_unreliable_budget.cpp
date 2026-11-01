@@ -54,7 +54,7 @@ void unreliable_over_receive_budget_dropped_and_counted()
     rocketnet_channel_harness_pump( &h, 1.0 / 60.0 );
 
     uint32_t seen = 0;
-    rocketnet_channel_delivery_t delivery;
+    rocketnet_channel_delivery_t delivery = {};
     while ( rocketnet_channel_harness_server_collect( &h, 0, &delivery ) )
     {
         const int id = delivery.bytes > 0 ? delivery.data[0] : -1;
@@ -109,7 +109,7 @@ void reliable_delivered_when_unreliable_budget_full()
 
     uint32_t unreliable_seen = 0;
     uint32_t reliable_seen = 0;
-    rocketnet_channel_delivery_t delivery;
+    rocketnet_channel_delivery_t delivery = {};
     while ( rocketnet_channel_harness_server_collect( &h, 0, &delivery ) )
     {
         const int id = delivery.bytes > 0 ? delivery.data[0] : -1;
