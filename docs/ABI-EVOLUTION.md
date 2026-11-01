@@ -142,7 +142,8 @@ status out-parameter, so a NULL result has a specific `rocketnet_status_t`.
 Each makes one block through the allocator; `rocketnet_client_required_memory`
 and `rocketnet_server_required_memory` give the lifecycle allocator peak,
 including planned built-in transport allocations at connect or start and
-repeated cycles with unchanged configuration and environment overrides.
+repeated cycles with unchanged configuration and environment overrides, plus
+1 MiB of slack for the caller's heap.
 Development builds include the link simulator. OS-owned memory and custom
 transport allocations are excluded. The process-wide
 allocator, assert function, log function, log level, quiet flag and thread

@@ -16,6 +16,7 @@
 
 #include "rocketnet_internal.h"
 
+#include <limits.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -221,11 +222,42 @@ static void test_log_unknown_level_reaches_the_sink_and_reads_unknown()
     check( g_level == -1 );
     check( strcmp( g_buf, "below error" ) == 0 );
 
+    rocketnet_printf( INT_MIN, "minimum int level" );
+    check( g_level == INT_MIN );
+    check( strcmp( g_buf, "minimum int level" ) == 0 );
+
+    // Unknown positive levels still obey the configured SPAM ceiling.
+
+    g_level = 99;
+    rocketnet_printf( ROCKETNET_LOG_LEVEL_SPAM + 1, "above spam" );
+    check( g_level == 99 );
+    rocketnet_printf( INT_MAX, "maximum int level" );
+    check( g_level == 99 );
+
+    // Every int can cross the enum-typed API without becoming an invalid
+    // enum load. Unknown settings are still refused, and names stay unknown.
+
+    const int unknown_levels[] = { INT_MIN, -1, ROCKETNET_LOG_LEVEL_SPAM + 1, INT_MAX };
+    for ( size_t i = 0; i < sizeof( unknown_levels ) / sizeof( unknown_levels[0] ); i++ )
+    {
+        const enum rocketnet_log_level_t level = (enum rocketnet_log_level_t) unknown_levels[i];
+        check( strcmp( rocketnet_log_level_name( level ), "UNKNOWN" ) == 0 );
+        rocketnet_log_level( level );
+        check( rocketnet_log_level_current() == ROCKETNET_LOG_LEVEL_SPAM );
+    }
+
     rocketnet_log_function( NULL, NULL );
+
+    // Exercise the default sink's enum load as well as the installed callback.
+
+    rocketnet_printf( -1, "default sink below error" );
+    rocketnet_printf( INT_MIN, "default sink minimum int level" );
     rocketnet_log_level( saved );
 
 #if ROCKETNET_DEV
     check( strcmp( rocketnet_log_level_word_for_test( -1 ), "???" ) == 0 );
+    check( strcmp( rocketnet_log_level_word_for_test( INT_MIN ), "???" ) == 0 );
+    check( strcmp( rocketnet_log_level_word_for_test( INT_MAX ), "???" ) == 0 );
     check( strcmp( rocketnet_log_level_word_for_test( ROCKETNET_LOG_LEVEL_SPAM + 1 ), "???" ) == 0 );
     check( strcmp( rocketnet_log_level_word_for_test( ROCKETNET_LOG_LEVEL_ERROR ), "error" ) == 0 );
 #endif // #if ROCKETNET_DEV

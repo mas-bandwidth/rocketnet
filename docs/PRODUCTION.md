@@ -176,8 +176,8 @@ endpoint authenticates the player's platform or account session first, derives
 the authoritative `uint64_t` `client_id` on the backend, and selects a server by
 region, available capacity, or match assignment before minting the token.
 
-The minted 768-byte connect token (`ROCKETNET_CONNECT_TOKEN_BYTES`, encoded as
-1024 base64 characters) binds:
+The minted 768-byte connect token (encoded as 1024 base64 characters, the
+`ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES` string with its NUL) binds:
 
 - `protocol_id`: 64-bit game protocol ID (`0x52434b544e455431` default via
   `ROCKETNET_BACKEND_PROTOCOL_ID`), which must be nonzero and match

@@ -117,6 +117,11 @@ struct rocketnet_server_t * rocketnet_server_adopt( void * context, struct rocke
 int rocketnet_server_secret_spans_for_test( size_t * offsets, size_t * bytes, int max );
 int rocketnet_server_transport_secret_spans_for_test( size_t * offsets, size_t * bytes, int max );
 int rocketnet_client_transport_secret_spans_for_test( size_t * offsets, size_t * bytes, int max );
+
+// the wall-clock budget an early destroy polls a worker's exit for: 0 makes
+// one pass with no sleep (the keep path's tests), a negative value restores
+// the default
+void rocketnet_destroy_stop_seconds_for_test( double seconds );
 #endif // #if ROCKETNET_DEV
 
 #ifdef __cplusplus
@@ -558,10 +563,6 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
 // the largest build-specific channel count: a WIDE record carries a u16 channel
 
 #define ROCKETNET_MAX_CHANNELS_LIMIT 65536
-
-#if ROCKETNET_MAX_CHANNELS < 1 || ROCKETNET_MAX_CHANNELS > ROCKETNET_MAX_CHANNELS_LIMIT
-#error ROCKETNET_MAX_CHANNELS must be between 1 and ROCKETNET_MAX_CHANNELS_LIMIT (65536)
-#endif // #if ROCKETNET_MAX_CHANNELS < 1 || ROCKETNET_MAX_CHANNELS > ROCKETNET_MAX_CHANNELS_LIMIT
 
 ROCKETNET_STATIC_ASSERT( ROCKETNET_MESSAGE_SINGLE_BYTES >= 1400, "a 1400-byte game packet is one SINGLE message, zero copy, unfragmented" );
 

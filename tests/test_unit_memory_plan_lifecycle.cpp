@@ -29,6 +29,12 @@
 #define check rocketnet_unit_check
 #define MEMORY_PLAN_PROTOCOL 0x7A11C1C1E5EED0A1ULL
 
+// the slack required_memory adds on top of the planned peak (sdk/rocketnet_api.cpp
+// rn_required_memory_slack_bytes), and the per-allocation cost of a caller's
+// heap (block header and alignment) that it must cover
+#define MEMORY_PLAN_SLACK_BYTES ( (uint64_t) 1024 * 1024 )
+#define MEMORY_PLAN_HEAP_BYTES_PER_ALLOCATION ( (uint64_t) 64 )
+
 // ---------------------------------------------------------------------------
 // The counting allocator: the bytes each request asks for, the bytes live and
 // the highest live seen. rocketnet_init accepts it only on an uninitialized
@@ -43,6 +49,7 @@ struct alignas( std::max_align_t ) memory_plan_allocation_t
 
 static uint64_t memory_plan_live = 0;
 static uint64_t memory_plan_peak = 0;
+static uint64_t memory_plan_calls = 0;
 
 static void * memory_plan_malloc( void * context, size_t bytes )
 {
@@ -52,6 +59,7 @@ static void * memory_plan_malloc( void * context, size_t bytes )
     if ( !allocation )
         return NULL;
     allocation->bytes = bytes;
+    memory_plan_calls++;
     memory_plan_live += bytes;
     if ( memory_plan_live > memory_plan_peak )
     {
@@ -122,6 +130,7 @@ static void test_memory_plan_covers_lifecycle()
     check( server_required > 0 );
 
     const uint64_t server_base = memory_plan_mark();
+    const uint64_t server_calls_base = memory_plan_calls;
     rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL );
     check( server != NULL );
     check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
@@ -143,6 +152,13 @@ static void test_memory_plan_covers_lifecycle()
                 (unsigned long long) server_first_peak, (unsigned long long) server_second_peak );
     check( server_first_peak <= server_required );
     check( server_second_peak == server_first_peak );
+
+    // conservative, not exact: the slack is on top of the peak, and it covers
+    // a heap's per-block cost for every allocation both cycles made
+
+    const uint64_t server_calls = memory_plan_calls - server_calls_base;
+    check( server_required >= server_first_peak + MEMORY_PLAN_SLACK_BYTES );
+    check( server_calls > 0 && MEMORY_PLAN_HEAP_BYTES_PER_ALLOCATION * server_calls <= MEMORY_PLAN_SLACK_BYTES );
 
     // the client half relies on the development-only caller-stepped fixture;
     // the production unit retains the independent server lifecycle oracle
@@ -172,6 +188,7 @@ static void test_memory_plan_covers_lifecycle()
     check( client_required > 0 );
 
     const uint64_t client_base = memory_plan_mark();
+    const uint64_t client_calls_base = memory_plan_calls;
     rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL );
     check( client != NULL );
     check( rocketnet_client_connect( client, token ) == ROCKETNET_STATUS_OK );
@@ -193,6 +210,10 @@ static void test_memory_plan_covers_lifecycle()
                 (unsigned long long) client_first_peak, (unsigned long long) client_second_peak );
     check( client_first_peak <= client_required );
     check( client_second_peak == client_first_peak );
+
+    const uint64_t client_calls = memory_plan_calls - client_calls_base;
+    check( client_required >= client_first_peak + MEMORY_PLAN_SLACK_BYTES );
+    check( client_calls > 0 && MEMORY_PLAN_HEAP_BYTES_PER_ALLOCATION * client_calls <= MEMORY_PLAN_SLACK_BYTES );
 
     rocketnet_client_destroy( client );
     check( memory_plan_live == client_base );

@@ -186,6 +186,10 @@
 #define ROCKETNET_MAX_CHANNELS                             32
 #endif // #ifndef ROCKETNET_MAX_CHANNELS
 
+#if ROCKETNET_MAX_CHANNELS < 1 || ROCKETNET_MAX_CHANNELS > 65536
+#error ROCKETNET_MAX_CHANNELS must be between 1 and 65536
+#endif // #if ROCKETNET_MAX_CHANNELS < 1 || ROCKETNET_MAX_CHANNELS > 65536
+
 /// The default client to server send budget, in kbps.
 
 #define ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS            1000
@@ -334,10 +338,8 @@ enum rocketnet_status_t
 
     ROCKETNET_STATUS_THREAD_CREATE_FAILED = -21,
 
-    /// Connect or start refused: the platform refused a timer. Retry after
-    /// freeing system resources.
-
-    ROCKETNET_STATUS_TIMER_CREATE_FAILED = -22,
+    // -22 is reserved: no call returns it, and the codes after it keep
+    // their values.
 
     /// Connect refused: an attempt is active, or an earlier attempt's worker
     /// still owns its storage. Call rocketnet_client_disconnect, then connect
@@ -411,9 +413,18 @@ enum rocketnet_status_t
     ROCKETNET_STATUS_LOOPBACK_HUB_IN_USE = -34
 };
 
-/// The process-wide log levels, least to most verbose.
+/// The process-wide log levels, least to most verbose. A log callback may
+/// receive an integer outside these named levels.
 
+#if defined( __cplusplus ) && __cplusplus >= 201103L
+#if defined( __clang__ )
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wc++98-compat"
+#endif // #if defined( __clang__ )
+enum rocketnet_log_level_t : int
+#else // #if defined( __cplusplus ) && __cplusplus >= 201103L
 enum rocketnet_log_level_t
+#endif // #if defined( __cplusplus ) && __cplusplus >= 201103L
 {
     /// As the maximum level, only lines logged at NONE are emitted. Quiet mode
     /// suppresses every line.
@@ -440,6 +451,9 @@ enum rocketnet_log_level_t
 
     ROCKETNET_LOG_LEVEL_SPAM = 5
 };
+#if defined( __cplusplus ) && __cplusplus >= 201103L && defined( __clang__ )
+#pragma clang diagnostic pop
+#endif // #if defined( __cplusplus ) && __cplusplus >= 201103L && defined( __clang__ )
 
 /// The address family of an endpoint.
 
@@ -462,7 +476,15 @@ enum rocketnet_address_type_t
 /// Ordered and sequenced types require the send's channel below num_channels.
 /// Other types accept any channel value, ignore it and use channel 0.
 
+#if defined( __cplusplus ) && __cplusplus >= 201103L
+#if defined( __clang__ )
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wc++98-compat"
+#endif // #if defined( __clang__ )
+enum rocketnet_reliability_t : int
+#else // #if defined( __cplusplus ) && __cplusplus >= 201103L
 enum rocketnet_reliability_t
+#endif // #if defined( __cplusplus ) && __cplusplus >= 201103L
 {
     /// Sent once without a delivery guarantee, order, or receipt.
     /// Delivered at most once; a lost packet loses the message.
@@ -502,6 +524,9 @@ enum rocketnet_reliability_t
 
     ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT = 7
 };
+#if defined( __cplusplus ) && __cplusplus >= 201103L && defined( __clang__ )
+#pragma clang diagnostic pop
+#endif // #if defined( __cplusplus ) && __cplusplus >= 201103L && defined( __clang__ )
 
 /// A receipt's outcome, the status field of struct rocketnet_receipt_t.
 /// LOSS is negative, like every failure.
@@ -1265,7 +1290,8 @@ struct rocketnet_client_config_t
     size_t config_bytes;
 
     /// ROCKETNET_CLIENT_TRANSPORT sets the candidate list. NULL means "auto".
-    /// Default is NULL.
+    /// The list is at most 63 characters; a longer one is refused at create
+    /// with ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE. Default is NULL.
 
     const char * transport;
 
@@ -1273,8 +1299,8 @@ struct rocketnet_client_config_t
     /// the value it last reported and the value a poll reads now: every
     /// public state, the negative ones included. NULL disables the callback.
     /// It runs on the caller thread at the end of connect, update,
-    /// disconnect, destroy, and a start message whose memory exhaustion ends
-    /// the connection. Do not call client functions from it. Default is NULL.
+    /// disconnect (the one an early destroy makes included), and a start
+    /// message whose memory exhaustion ends the connection. Do not call client functions from it. Default is NULL.
 
     void ( *state_change_callback )( void * context, enum rocketnet_client_state_t previous_state, enum rocketnet_client_state_t current_state );
 
@@ -1460,7 +1486,8 @@ struct rocketnet_server_config_t
     uint64_t protocol_id;
 
     /// ROCKETNET_SERVER_MAX_CLIENTS sets the client limit. Range is 1 ..
-    /// ROCKETNET_MAX_CLIENTS. Default is 1000.
+    /// ROCKETNET_MAX_CLIENTS. Default is 1000, or ROCKETNET_MAX_CLIENTS when
+    /// that is smaller.
     ///
     /// It also sizes the server socket's receive buffer request to hold one
     /// update's inbound traffic: ceil( max_clients x 1000 kbps x 125 x 2 /
@@ -1516,7 +1543,9 @@ struct rocketnet_server_config_t
     int handshake_deadline_seconds;
 
     /// ROCKETNET_SERVER_TRANSPORT sets the candidate list. NULL means "auto".
-    /// Every transport serves IPv4, IPv6, or both. Default is NULL.
+    /// The list is at most 63 characters; a longer one is refused at create
+    /// with ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE. Every transport serves IPv4,
+    /// IPv6, or both. Default is NULL.
 
     const char * transport;
 
@@ -1693,18 +1722,23 @@ struct rocketnet_server_config_t
 /// next connect or start frees it before it allocates the next, and destroy
 /// frees it, so a reconnect or restart takes the same bytes again and the
 /// peak never grows across cycles. The required_memory calls report that
-/// peak: the most the allocator holds over create, connect or start,
-/// disconnect or stop, reconnect or restart, and destroy, each allocation
-/// with its alignment header, for whichever transport of the config's list
-/// is granted (the largest of them). For the planned built-in transports,
-/// with unchanged configuration and environment overrides, an allocator over
-/// a region of that size never runs out. The development link simulator is
+/// peak plus a fixed 1 MiB (1,048,576-byte) allowance for caller-allocator
+/// overhead: the peak accounts for the SDK's planned allocations and existing
+/// create-time overlap over create, connect or start, disconnect or stop,
+/// reconnect or restart, and destroy, each allocation with its alignment
+/// header, for whichever transport of the config's list is granted (the
+/// largest of them). The number is deliberately conservative, not exact. For
+/// the planned built-in transports, with unchanged configuration and
+/// environment overrides, additional caller-allocator metadata or
+/// fragmentation beyond that 1 MiB allowance must be included in the
+/// application's budget, and custom arena sufficiency must be verified for the
+/// actual allocator and configuration. The development link simulator is
 /// included in development builds.
 ///
 /// Not counted, because the operating system owns it: each worker thread's
 /// stack (the platform default: pthread's default attribute, or the
 /// executable's /STACK reserve, 1 MiB by default, on Windows); on the xdp
-/// transport the page-aligned UMEM, 256 MiB per queue (65536 frames of 4096
+/// transport the page-aligned UMEM, 192 MiB per queue (49152 frames of 4096
 /// bytes), and the AF_XDP rings; on the
 /// io_uring transport its rings and each queue's provided buffer ring; kernel
 /// socket buffers. A custom transport's own memory and a
@@ -2028,7 +2062,8 @@ static inline enum rocketnet_status_t rocketnet_client_light_config( struct rock
 
 /// Returns the most memory the allocator holds for this config over the
 /// client's lifecycle: create's block plus the transport each connect
-/// allocates (see Messages above). It is at least the block create needs.
+/// allocates, plus 1 MiB of slack for the caller's heap (see Messages above).
+/// It is conservative, not exact, and at least the block create needs.
 /// Applies the same environment overrides as create.
 /// NULL config selects defaults. Invalid config returns 0.
 ///
@@ -2037,7 +2072,7 @@ static inline enum rocketnet_status_t rocketnet_client_light_config( struct rock
 ///
 /// @param config The config to size, or NULL for the defaults.
 /// @return The most bytes the allocator holds for the client over its
-/// lifecycle, or 0 when the config, its config_bytes or an environment
+/// lifecycle plus the slack, or 0 when the config, its config_bytes or an environment
 /// override is invalid.
 
 ROCKETNET_EXPORT size_t rocketnet_client_required_memory( const struct rocketnet_client_config_t * config );
@@ -2270,9 +2305,10 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_connect( struct rocket
 
 /// Expects rocketnet_client_disconnected(client) to be true; asserts otherwise.
 /// Called early, it logs one error naming the skipped completion poll, records
-/// the misuse, requests disconnect and updates the transport a bounded number
-/// of times without sleeping. Once disconnected it joins, wipes and frees; if
-/// the worker has not exited it logs a second error and keeps the client, which
+/// the misuse, requests disconnect, then steps the transport and polls for the
+/// worker's exit, sleeping 1 ms between polls, for at most one second. Once
+/// disconnected it joins, wipes and frees; if the worker has not exited by
+/// then it logs a second error and keeps the client, which
 /// stays owned by that worker. Client pointers become invalid only when destroy frees
 /// the client; on the keep path the client and its pointers stay valid.
 ///
@@ -2460,8 +2496,10 @@ ROCKETNET_EXPORT void rocketnet_client_abort_message( struct rocketnet_client_t 
 /// server acknowledges messages.
 ///
 /// For valid arguments, changes no state, counts nothing and allocates nothing.
-/// The room check may scan the configured message-store chunks. It does not
-/// reserve wire bandwidth or guarantee immediate transmission.
+/// Usually constant time; a message that needs a send store chunk scans that
+/// size class for a free one, so its worst case grows with the chunks in the
+/// class. It does not reserve wire bandwidth or guarantee immediate
+/// transmission.
 /// A false answer may be pessimistic for a small unreliable message: start
 /// can write it straight into a transport frame without message memory.
 ///
@@ -2630,8 +2668,9 @@ static inline enum rocketnet_status_t rocketnet_server_light_config( struct rock
 
 /// Returns the most memory the allocator holds for this config and
 /// max_clients over the server's lifecycle: create's block plus the
-/// transport and per-client tables each start allocates (see Messages above).
-/// It is at least the block create needs.
+/// transport and per-client tables each start allocates, plus 1 MiB of slack
+/// for the caller's heap (see Messages above). It is conservative, not exact,
+/// and at least the block create needs.
 /// Applies the same environment overrides as create.
 /// NULL config selects defaults. Invalid config returns 0, including the
 /// defaults' test filter in a production build. A named transport memory
@@ -2642,7 +2681,7 @@ static inline enum rocketnet_status_t rocketnet_server_light_config( struct rock
 ///
 /// @param config The config to size, or NULL for the defaults.
 /// @return The most bytes the allocator holds for the server over its
-/// lifecycle, or 0 when the config, its config_bytes or an environment
+/// lifecycle plus the slack, or 0 when the config, its config_bytes or an environment
 /// override is invalid.
 
 ROCKETNET_EXPORT size_t rocketnet_server_required_memory( const struct rocketnet_server_config_t * config );
