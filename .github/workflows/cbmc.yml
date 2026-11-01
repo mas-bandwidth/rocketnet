@@ -1,8 +1,8 @@
-# CBMC proofs of the arithmetic leaves that finish, on every push to main
-# (main advances by land merges and never receives pull requests, so a
-# pull_request-only trigger never fires there) and on pull requests that
-# touch the sdk. This workflow runs the default target only. It does not
-# run slow-unproved; replay-near-4096 runs nightly, one job per partition (nightly-proofs.yml).
+# CBMC proofs of the arithmetic leaves that finish, each night and on
+# demand. NIGHTLY TIER (2026-10-31): 614-705s on the fleet, over the
+# per-commit tier's two minutes. This workflow runs the default target only.
+# It does not run slow-unproved; replay-near-4096 runs nightly too, one job
+# per partition (nightly-proofs.yml).
 #
 # Budget: `make -C proofs/cbmc all` measured 685.59s (11:25.59) on the
 # fleet Linux runner (vision, self-hosted Linux X64 fleet) at d5dd954f in
@@ -12,17 +12,8 @@
 name: CBMC
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'sdk/**'
-      - 'proofs/cbmc/**'
-      - '.github/workflows/cbmc.yml'
-  pull_request:
-    paths:
-      - 'sdk/**'
-      - 'proofs/cbmc/**'
-      - '.github/workflows/cbmc.yml'
+  schedule:
+    - cron: "10 5 * * *"
   workflow_dispatch:
 
 concurrency:
@@ -61,6 +52,14 @@ jobs:
           check cbmc "$(pin CBMC)"
           check cadical "$(pin CADICAL)"
           check esbmc "$(pin ESBMC)"
+
+      # every bound the inventory, results and harness comments state for an
+      # SDK constant equals the SDK's value (tools/check_cbmc_bounds.py); the
+      # self-test plants stale statements and requires them refused
+      - name: Check the stated proof bounds against the SDK
+        run: |
+          python3 tools/check_cbmc_bounds.py --self-test
+          python3 tools/check_cbmc_bounds.py
 
       - name: Run the CBMC proofs
         run: make -C proofs/cbmc

@@ -48,6 +48,8 @@ lifecycle boundary. Token parsing and native thread mechanics are abstracted.
 | `Deliver` (a packet opens) | `received_packets`, `reliable_receive_queue`, `ack_bits`, `replay_window`, `fragment_reassembly`, `rtt_estimator`, `loss_estimator`, `connection_counters` |
 | `ClientDisconnect` | `pending_disconnect` (the disconnect burst) |
 
+The `received_packets` field stands for the last update's payload batch reaching a later connection, which it never does: a client transport runs one connection, and the next connect runs on a new transport generation. On the transport itself the reset keeps that batch until the next update clears it, so payloads counted delivered reach the caller ([RNClientDelivery](README-RNClientDelivery.md)).
+
 **Kept on purpose**: `kept.lifetime` (the lifetime counters, monotonic over the client's life),
 `kept.config`, and `reason`. Everything else is reset.
 

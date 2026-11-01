@@ -50,7 +50,8 @@
 
 // The environment's scale on case completion bounds. The nightly macOS TSAN
 // functional runs set ROCKETNET_TEST_CASE_TIME_SCALE (30, a one-hour case
-// limit); every other run leaves it unset. Unset or empty, the scale is 1.
+// limit), the nightly Linux threaded TSan leg sets 4 (nightly.yml); every
+// other run leaves it unset. Unset or empty, the scale is 1.
 // Set, it is a number over 0 and at most 1000; anything else returns 0 with
 // the scale at 1, and the caller refuses to run. The suite runner's case
 // limit and a case's own completion bound both read it here, and nowhere else.

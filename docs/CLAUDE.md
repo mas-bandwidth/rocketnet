@@ -93,3 +93,13 @@ Privileged XDP verification runs only through the documented Linux VM and bench
 procedure. Long soak, large load, multi-host throughput and profiler campaigns
 have separate qualification. [TESTING.md](TESTING.md) indexes recorded runs and
 remaining gaps; earlier-head evidence is not a current-build pass.
+
+## Roadmap
+
+Planned work lives in `docs/roadmap.sexp`; `ROADMAP.md` is generated from it.
+A pull request edits only `docs/roadmap.sexp` and never edits or regenerates
+`ROADMAP.md`. On a pull request the roadmap workflow runs `make roadmap-check`
+(the file parses and every id is unique); on each push to main that changes
+the sexp it runs `make roadmap` and commits `ROADMAP.md`. Keep exactly one
+blank line between items, and remove an item by deleting its lines only, so
+pull requests that remove neighboring items merge without conflict.

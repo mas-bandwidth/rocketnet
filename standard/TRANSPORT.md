@@ -2712,12 +2712,12 @@ The server turns a connection request into an encryption mapping, and a connecti
 
 1. On a connection request, a server MUST apply the checks below in the order given, and MUST stop at the first that refuses.
 2. A server MUST ignore a request whose size is not the request wire size, counting `CONNECTION_REQUEST_WRONG_SIZE`.
-3. A server MUST then ignore a request from a source address that is already connected, counting `CONNECTION_REQUEST_ALREADY_CONNECTED`. A request from a source address that holds a mapping without a connected slot MUST be answered with that mapping's stored connection challenge packet, byte-identical, regardless of the request's connection salt, counting `CONNECTION_REQUEST_CHALLENGE_RESENT`, and it MUST NOT create a second mapping or derive new keys for that address. Only a request whose connection salt matches the mapping's refreshes the mapping's half-open idle deadline ([t17 Timing and defaults](#t17) rule 4).
+3. A server MUST then ignore a request from a source address that is already connected, counting `CONNECTION_REQUEST_ALREADY_CONNECTED`. A request from a source address that holds a mapping without a connected slot, and whose connection salt or token identifier matches the mapping's, MUST be answered with that mapping's stored connection challenge packet, byte-identical, counting `CONNECTION_REQUEST_CHALLENGE_RESENT`, and it MUST NOT create a second mapping or derive new keys for that address. Only a request whose connection salt matches the mapping's refreshes the mapping's half-open idle deadline ([t17 Timing and defaults](#t17) rule 4). A request from that address whose connection salt and token identifier both differ from the mapping's is a new attempt: it MUST go through every later rule, and it MUST be refused, counting `CONNECTION_REQUEST_TOKEN_ALREADY_USED`, when its token identifier is bound to any source address, its own included. Only once it has passed every check, its signature verified, does it replace the half-open mapping: the server releases that mapping's request claim, removes it, and creates the new mapping in its place, which needs no free mapping slot. A refused request leaves the half-open mapping as it was. A mapping with a connected slot is never replaced.
 4. A server MUST then ignore a request whose version is not the protocol version, and then one whose protocol id is not the server's.
-5. A server MUST then refuse a token whose expire timestamp is not later than the server's current time, counting `CONNECTION_REQUEST_TOKEN_EXPIRED`, and then a token whose create timestamp is more than the creation skew after the server's current time, counting `CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE`. Such a token MUST NOT be answered. A server places no limit on a token's lifetime; `CONNECTION_REQUEST_TOKEN_LIFETIME_TOO_LONG` is a retired counter and stays zero.
+5. A server MUST then refuse a token whose expire timestamp is not later than the server's current time, counting `CONNECTION_REQUEST_TOKEN_EXPIRED`, and then a token whose create timestamp is more than the creation skew after the server's current time, counting `CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE`. Such a token MUST NOT be answered. A server places no limit on a token's lifetime.
 6. A server MUST then ignore a request whose timeout is zero or negative, then one whose address flags name no family or set a bit above bit 1, then one whose token address of the family the request arrived on (a v4-mapped source is IPv4) is not one this server serves, the token's other-family address unread, and then one whose server public key is not this server's. It MUST NOT answer a request that rules 2, 4, 5 or 6 refuse.
 7. A server MUST require a valid return cookie before any asymmetric work, and MUST answer a request without one, with a forged one, or with an expired one with a fresh connection cookie packet.
-8. A server MUST refuse, unanswered, a request whose cookie is valid when the per-update handshake work budget is spent, counting `CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED`.
+8. A server MUST check the per-update handshake work budget after the cheap rungs of rule 9 and immediately before the signature verify of rule 10, and MUST refuse, unanswered, a request that reaches that check when the budget is spent, counting `CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED`. Only a request that reaches the check spends budget; a request refused by an earlier rung spends none.
 9. A server MUST apply the cheap rungs below in the order given, before it verifies the signature in rule 10, and MUST stop at the first that refuses:
     1. Ignore, unanswered, a request whose token identifier is bound to a different source address, counting `CONNECTION_REQUEST_TOKEN_ALREADY_USED`.
     2. Ignore, unanswered, a request when the failed-signature budget of the current window is spent and the source has a recorded failure in that window, counting `CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT`. A source with no recorded failure in the window is not refused by that budget ([t17 Timing and defaults](#t17) item 12).
@@ -2757,17 +2757,19 @@ list is ignored in that state.
 | no mapping | request | token created in the future | ignore, count | no mapping |
 | no mapping | request | timeout, address flags, advertised address or server key check fails | ignore, count the reason | no mapping |
 | no mapping | request | cookie absent, forged or expired | send a fresh cookie packet | no mapping |
-| no mapping | request | handshake work budget spent | ignore, count | no mapping |
 | no mapping | request | token used from another address | ignore, count | no mapping |
 | no mapping | request | token claimed from another address until the handshake deadline or its half-open mapping's removal | ignore, count | no mapping |
 | no mapping | request | encryption mapping table full | ignore, count | no mapping |
 | no mapping | request | failed-signature budget spent and the source has a recorded failure in the window | ignore, count | no mapping |
+| no mapping | request | handshake work budget spent | ignore, count | no mapping |
 | no mapping | request | signature, seal or sealed-field check fails | ignore, count | no mapping |
 | no mapping | request | client id connected | ignore, count | no mapping |
 | no mapping | request | no free slot | send connection denied | no mapping |
 | no mapping | request | all checks pass | create mapping, derive keys, send challenge | mapping |
 | mapping | request | salt matches the mapping's | resend the stored challenge, refresh idle | mapping |
-| mapping | request | salt differs from the mapping's | resend the stored challenge | mapping |
+| mapping | request | salt differs, token matches the mapping's | resend the stored challenge | mapping |
+| mapping | request | salt and token differ from the mapping's, any check refuses | as for no mapping; the mapping is kept | mapping |
+| mapping | request | salt and token differ from the mapping's, token bound to no address, all checks pass | release the mapping's claim, replace the mapping, derive keys, send challenge | mapping |
 | mapping | response | mapping has no connected slot, source or client id already connected | ignore, count | mapping |
 | mapping | response | no free slot | send connection denied | mapping |
 | mapping | response | free slot | bind token, assign slot, send keep-alive | connected |
@@ -3646,8 +3648,9 @@ an input ([t1.4 Conventions](#t1.4)).
 10. Message retransmission belongs to RN-2. An endpoint implementing RN-2
     MUST apply [RN-2 m9 Acknowledgement mapping, resend and send budget](MESSAGES.md#m9).
     RN-1 alone does not retransmit application payloads.
-11. A server MUST enforce the handshake work budget after the cookie of a
-    connection request validates and before any asymmetric operation. A request
+11. A server MUST enforce the handshake work budget after the cheap refusals
+    of a connection request and immediately before its signature verification,
+    and MUST charge it only for a request that reaches that point. A request
     past the budget MUST be refused with no reply and counted as a refusal.
     The budget MUST be reset at the start of each update.
 12. A server MUST apply the failed-signature budget before the signature
@@ -3678,7 +3681,7 @@ The values this section introduces are:
 | Name | Value | Unit | Meaning |
 |---|---|---|---|
 | half-open idle deadline | `10` | seconds | a half-open mapping with no matching request from its address for this long is discarded |
-| handshake work budget | `16` | requests per update | default post-cookie connection requests one server processes in one update |
+| handshake work budget | `16` | requests per update | default connection requests one server takes to the signature verification in one update |
 | failed-signature budget | `90` | failed verifications per window | default failed Ed25519 verifications one server performs in one failed-signature window |
 | failed-signature window | `10` | seconds | the period over which the failed-signature budget is counted |
 
@@ -3720,9 +3723,10 @@ input: the timing defaults above, in the order stated, each as a little-endian u
    execution context and summed at readout; a counter MUST be monotonic and
    MUST NOT be reset.
 4. An implementation that exposes counters as an array MUST assign each counter
-   a unique index, MUST NOT renumber an index once assigned, and MUST give a new
-   counter an unused index at the end of its group. Two counters MUST NOT share
-   an index.
+   a unique index. Two counters MUST NOT share an index. Before the 1.0 release,
+   a retired counter is removed and the rest are renumbered; from the 1.0
+   release on, an index MUST NOT be renumbered once assigned, and a new counter
+   MUST take an unused index at the end of its group.
 5. An endpoint MUST expose the state of each connection and the reason a
    connection ended. A counter or a log entry is not a substitute for the state.
 6. An endpoint SHOULD log every refused packet or request. The counter MUST be
@@ -3761,7 +3765,6 @@ The registry of counters, in index order, is:
 | `CONNECTION_REQUEST_COULD_NOT_OPEN_SEALED_BLOCK` | `refusal` | `CONNECTION_REQUEST_RECEIVED` |
 | `CONNECTION_REQUEST_SEALED_MISMATCH` | `refusal` | `CONNECTION_REQUEST_RECEIVED` |
 | `CONNECTION_REQUEST_CLIENT_ID_ALREADY_CONNECTED` | `refusal` | `CONNECTION_REQUEST_RECEIVED` |
-| `CONNECTION_REQUEST_TOKEN_ALREADY_CONNECTED` | `refusal` | `CONNECTION_REQUEST_RECEIVED` |
 | `CONNECTION_REQUEST_SMALL_ORDER_KEY` | `refusal` | `CONNECTION_REQUEST_RECEIVED` |
 | `CONNECTION_REQUEST_NO_SLOTS` | `refusal` | `CONNECTION_REQUEST_RECEIVED` |
 | `CONNECTION_REQUEST_COULD_NOT_ADD_MAPPING` | `refusal` | `CONNECTION_REQUEST_RECEIVED` |
@@ -3774,7 +3777,6 @@ The registry of counters, in index order, is:
 | `CONNECTION_RESPONSE_DID_NOT_OPEN` | `refusal` | `CONNECTION_RESPONSE_RECEIVED` |
 | `CONNECTION_RESPONSE_ALREADY_CONNECTED` | `expected` | `CONNECTION_RESPONSE_RECEIVED` |
 | `CONNECTION_RESPONSE_CLIENT_ID_ALREADY_CONNECTED` | `refusal` | `CONNECTION_RESPONSE_RECEIVED` |
-| `CONNECTION_RESPONSE_ADMITTED_SET_FULL` | `refusal` | `CONNECTION_RESPONSE_RECEIVED` |
 | `CONNECTION_RESPONSE_NO_SLOTS` | `refusal` | `CONNECTION_RESPONSE_RECEIVED` |
 | `CONNECTION_RESPONSE_CONNECTED` | `expected` | `CONNECTION_RESPONSE_RECEIVED` |
 | `KEEP_ALIVE_RECEIVED` | `arrival` | `none` |
@@ -3972,7 +3974,6 @@ The registry of counters, in index order, is:
 | `CLIENT_CHALLENGE_WRONG_SIZE` | `refusal` | `CLIENT_CHALLENGE_RECEIVED` |
 | `CLIENT_DENIED_WRONG_SIZE` | `refusal` | `CLIENT_DENIED_RECEIVED` |
 | `CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE` | `refusal` | `CONNECTION_REQUEST_RECEIVED` |
-| `CONNECTION_REQUEST_TOKEN_LIFETIME_TOO_LONG` | `refusal` | `CONNECTION_REQUEST_RECEIVED` |
 | `SEND_NO_LINK_ADDRESS` | `refusal` | `none` |
 | `MESSAGE_PROMOTED_UNRELIABLE` | `expected` | `none` |
 | `MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED` | `expected` | `none` |
@@ -3997,6 +3998,8 @@ The registry of counters, in index order, is:
 | `MESSAGE_NOT_RECEIVED` | `refusal` | `none` |
 | `CONNECTION_RESPONSE_PADDING_NOT_ZERO` | `refusal` | `CONNECTION_RESPONSE_RECEIVED` |
 | `CONNECTION_REQUEST_CLAIM_TABLE_FULL` | `refusal` | `CONNECTION_REQUEST_RECEIVED` |
+| `PAYLOAD_BATCH_FULL` | `refusal` | `none` |
+| `XDP_RECEIVE_FRAME_DROPPED` | `refusal` | `none` |
 
 The vector below encodes the registry in index order. For each counter it holds
 the little-endian u32 FNV-1a hash of the ASCII name, the class as one byte
@@ -4017,110 +4020,110 @@ cc 7f 00 00 00 d0 a5 f5 ee 00 00 00 a0 f3 31 3d
 97 ae 01 08 00 f2 c0 a8 31 00 08 00 b0 54 ce 7a
 00 08 00 76 5c 65 f4 00 08 00 c6 3a 5e 6b 00 08
 00 83 ac 97 18 00 08 00 39 2d b3 8a 00 08 00 ca
-b3 52 27 00 08 00 22 c3 04 a2 00 08 00 d4 48 33
-55 00 08 00 2d 71 85 d4 00 08 00 9e 68 81 e9 00
-08 00 bc 8f a1 e8 01 08 00 3c 90 b3 08 00 08 00
-8d 40 41 06 03 00 00 dd a2 ee 3d 00 21 00 78 5d
-38 66 00 21 00 44 c9 d6 31 00 21 00 0e 50 9b 52
-00 21 00 12 66 6f 95 01 21 00 10 4e 2a f9 00 21
-00 e9 b6 43 44 00 21 00 c3 8d 49 3f 00 21 00 2d
-cb 1d e3 01 21 00 14 2d 62 74 03 00 00 dd 09 38
-74 01 2b 00 a7 18 c3 61 00 2b 00 7d 7e 14 78 00
-2b 00 23 9f e3 9f 00 2b 00 e4 d5 7b 22 00 2b 00
-0e ad 34 f4 01 2b 00 ed c0 b2 22 03 00 00 58 82
-f2 00 01 32 00 e4 5a 4f d7 00 32 00 a0 c9 d1 a9
-00 32 00 ee d1 5a 44 00 32 00 03 62 93 d9 00 32
-00 32 36 a2 08 01 32 00 0f 0d 2e 81 03 00 00 ea
-c2 5d fe 01 39 00 a2 a8 d3 d1 00 39 00 32 33 cd
-4e 00 39 00 ac 22 92 17 00 39 00 45 68 ca 46 00
-39 00 b7 e2 2f b2 01 39 00 aa 41 97 7f 01 00 00
-e8 16 dd d1 01 00 00 ce 68 d7 b2 01 00 00 82 b4
-9c 08 00 00 00 46 2e a2 74 01 00 00 aa 0c f9 d4
-00 00 00 83 bb 10 c2 00 00 00 90 a2 72 92 01 00
-00 4a 5a 6e f5 01 00 00 41 14 e7 e9 01 00 00 05
-ef 7a fd 03 00 00 41 c7 d8 79 01 4a 00 93 c7 db
-0b 00 4a 00 39 0d a1 71 01 4a 00 4e 97 94 f8 03
-00 00 c8 f0 ed d4 01 4e 00 d5 c9 a8 e0 00 4e 00
-d1 50 6e b9 00 4e 00 ef 25 50 d4 00 4e 00 e4 bc
-59 85 01 4e 00 4a 27 35 c2 03 00 00 14 27 17 91
-00 54 00 81 ec df 6c 00 54 00 85 60 5f 2c 00 54
-00 28 d5 7e 91 00 54 00 02 c6 94 a6 03 00 00 9c
-f4 48 b7 01 59 00 59 0f 01 f8 00 59 00 f3 6f 06
-86 00 59 00 3d 94 80 96 00 59 00 90 0e 20 d4 01
-59 00 57 9e e8 34 03 00 00 af 3f fc 5c 01 5f 00
-0a f3 97 98 00 5f 00 2a aa 48 00 00 5f 00 d4 c6
-3f 68 00 5f 00 ac 22 c8 ca 01 5f 00 39 ab 6d 3b
-03 00 00 e5 6b 74 99 01 65 00 80 f2 50 98 00 65
-00 bc fd cd 35 00 65 00 e2 f8 90 b5 00 65 00 93
-ae 2e 5f 01 65 00 70 4a ee ba 00 2b 00 ae 73 6c
-4b 00 2b 00 bd bd d0 30 00 32 00 29 8b cc 0a 00
-32 00 bb af 99 b0 00 39 00 7f 4a 29 11 00 39 00
-48 12 55 58 03 00 00 ec 98 a5 af 00 71 00 e9 82
-82 0e 01 71 00 4b dd b8 35 00 71 00 11 fb 6f a7
-00 71 00 af ca d6 4a 00 71 00 c0 d9 e3 57 00 71
-00 1a 2f 7e 36 00 71 00 ca 98 66 b0 01 71 00 ed
-f3 7c 75 01 00 00 50 0c 6a de 00 00 00 fa 02 ec
-a4 00 59 00 c8 4b e0 1e 00 59 00 83 6c 60 12 00
-5f 00 07 32 aa 00 00 5f 00 81 24 96 67 00 65 00
-4d 51 b5 f9 00 65 00 be 45 d6 10 03 00 00 58 52
-df 2f 01 82 00 0e dc 53 ed 00 82 00 a5 1c a6 87
-00 82 00 ef 8c 72 ea 00 82 00 01 8c 3c 77 00 82
-00 3c 00 08 3b 00 82 00 54 9b f7 7f 01 82 00 9f
-c8 27 da 01 00 00 32 bd 59 34 00 00 00 20 8d 29
-eb 00 2b 00 1f 85 bd 3d 00 32 00 95 2e 8f a2 00
-39 00 14 6d 25 e0 00 71 00 da 2f c9 1f 00 59 00
-fd 2f af ea 00 5f 00 9b d7 db 8e 00 65 00 36 4c
-15 f1 00 82 00 15 85 fa 9b 03 00 00 45 d5 c2 e0
-00 94 00 10 e1 ec 54 01 94 00 6c 08 41 6f 00 94
-00 78 e8 d1 7f 00 94 00 f6 89 25 b4 00 94 00 cb
-1b 1e 15 00 94 00 d1 30 e1 f6 00 94 00 e7 94 0e
-7e 00 94 00 27 51 97 bb 00 94 00 53 4a 56 eb 02
-94 00 4d 53 72 c5 00 94 00 21 3d 3a f3 00 94 00
-52 4f ed 8a 00 94 00 14 4b f7 f8 00 94 00 49 6d
-8a 2f 00 94 00 84 d7 ac 2f 00 94 00 d7 0f 30 4a
-01 94 00 48 b0 cf 54 01 00 00 33 4b 1d 7f 02 00
-00 c5 1b 4a 3b 00 00 00 87 7f a4 35 03 00 00 ff
-b4 7e 10 01 a9 00 13 3b 8f b1 00 a9 00 da d1 d8
-0c 00 a9 00 3a 47 73 6e 00 a9 00 04 ce 96 ae 00
-a9 00 97 78 a8 bd 00 a9 00 ed 64 90 13 00 a9 00
-b1 25 a1 12 00 a9 00 51 c3 b4 49 02 a9 00 1f 07
-08 67 00 a9 00 bf f6 bf 6e 00 a9 00 80 4b f1 6e
-00 a9 00 1a 79 66 45 00 a9 00 c7 81 a5 eb 00 a9
-00 72 61 03 19 00 a9 00 ed 19 7b ce 01 a9 00 5a
-f5 d9 f5 01 00 00 15 46 6d 2c 02 00 00 db 57 70
-09 00 00 00 35 2c d6 68 00 00 00 b8 11 00 f3 00
-00 00 3b c4 a0 c5 00 00 00 7e d1 94 cb 00 00 00
-c9 35 a9 56 00 00 00 95 84 42 e9 00 4a 00 87 ed
-87 5f 00 00 00 61 30 e8 50 00 00 00 c9 57 7e 86
-00 08 00 72 48 0e 32 00 08 00 e3 c7 97 df 00 00
-00 41 af 4d ad 00 00 00 12 05 76 0d 02 00 00 5c
-34 ae 7c 00 00 00 dd 1a c8 5c 00 00 00 ea 22 62
-4a 02 00 00 6e 2d 52 bb 00 00 00 68 59 e8 28 00
-00 00 a1 b5 72 18 00 00 00 55 a4 ca 83 00 00 00
-d2 8a a7 48 00 00 00 fe a3 8f b7 02 00 00 fd 92
-bd 5f 02 00 00 bc 11 09 05 00 00 00 2a 62 77 0c
-00 00 00 28 65 77 12 01 00 00 9f ad 65 96 02 00
-00 c2 2f db 2c 00 21 00 6b c6 a4 41 02 00 00 88
-ed b1 56 00 00 00 d6 92 db 95 00 00 00 d7 6a 4d
-f9 00 00 00 eb 03 7f 49 00 00 00 11 1a 37 e1 00
-00 00 9c 47 5e e7 00 00 00 8c 5c 05 26 01 00 00
-44 5b fe 0f 00 00 00 ff 64 f7 fa 01 00 00 75 4f
-7d 3a 00 00 00 b1 eb 07 8c 00 00 00 e9 53 9e 77
-00 00 00 b9 17 2c 07 00 00 00 34 b4 85 d8 00 00
-00 b0 cb 42 af 01 00 00 bd b0 38 5c 01 00 00 9f
-8d 1d fd 00 00 00 be a9 a8 b8 00 4e 00 22 20 3f
-b1 00 54 00 6a c0 70 be 00 08 00 17 6f 7f 78 00
-08 00 8b 6d 57 dc 00 00 00 bf 7a 1a af 01 00 00
-9b 86 1b 95 01 00 00 79 87 fe 4c 01 00 00 f9 84
-f0 6e 01 00 00 25 11 95 dc 00 00 00 df ff a1 97
-01 00 00 7e 01 4f a1 00 00 00 1d 39 f1 61 01 00
-00 ab 9f e2 5c 00 00 00 7d 98 4f 4e 00 00 00 58
-b6 0b 73 00 00 00 f9 25 ca 24 00 00 00 50 9a 50
-f5 00 00 00 0a 04 26 b7 00 00 00 dd 1a 04 77 00
-00 00 ee 4e 50 1b 00 00 00 37 af 52 db 00 00 00
-7a 31 93 22 00 00 00 79 b8 15 e7 00 00 00 39 5f
-f8 12 00 00 00 a4 58 a7 b3 00 00 00 98 21 4f fa
-00 21 00 49 b0 ba 62 00 08 00
+b3 52 27 00 08 00 d4 48 33 55 00 08 00 2d 71 85
+d4 00 08 00 9e 68 81 e9 00 08 00 bc 8f a1 e8 01
+08 00 3c 90 b3 08 00 08 00 8d 40 41 06 03 00 00
+dd a2 ee 3d 00 20 00 78 5d 38 66 00 20 00 44 c9
+d6 31 00 20 00 0e 50 9b 52 00 20 00 12 66 6f 95
+01 20 00 10 4e 2a f9 00 20 00 c3 8d 49 3f 00 20
+00 2d cb 1d e3 01 20 00 14 2d 62 74 03 00 00 dd
+09 38 74 01 29 00 a7 18 c3 61 00 29 00 7d 7e 14
+78 00 29 00 23 9f e3 9f 00 29 00 e4 d5 7b 22 00
+29 00 0e ad 34 f4 01 29 00 ed c0 b2 22 03 00 00
+58 82 f2 00 01 30 00 e4 5a 4f d7 00 30 00 a0 c9
+d1 a9 00 30 00 ee d1 5a 44 00 30 00 03 62 93 d9
+00 30 00 32 36 a2 08 01 30 00 0f 0d 2e 81 03 00
+00 ea c2 5d fe 01 37 00 a2 a8 d3 d1 00 37 00 32
+33 cd 4e 00 37 00 ac 22 92 17 00 37 00 45 68 ca
+46 00 37 00 b7 e2 2f b2 01 37 00 aa 41 97 7f 01
+00 00 e8 16 dd d1 01 00 00 ce 68 d7 b2 01 00 00
+82 b4 9c 08 00 00 00 46 2e a2 74 01 00 00 aa 0c
+f9 d4 00 00 00 83 bb 10 c2 00 00 00 90 a2 72 92
+01 00 00 4a 5a 6e f5 01 00 00 41 14 e7 e9 01 00
+00 05 ef 7a fd 03 00 00 41 c7 d8 79 01 48 00 93
+c7 db 0b 00 48 00 39 0d a1 71 01 48 00 4e 97 94
+f8 03 00 00 c8 f0 ed d4 01 4c 00 d5 c9 a8 e0 00
+4c 00 d1 50 6e b9 00 4c 00 ef 25 50 d4 00 4c 00
+e4 bc 59 85 01 4c 00 4a 27 35 c2 03 00 00 14 27
+17 91 00 52 00 81 ec df 6c 00 52 00 85 60 5f 2c
+00 52 00 28 d5 7e 91 00 52 00 02 c6 94 a6 03 00
+00 9c f4 48 b7 01 57 00 59 0f 01 f8 00 57 00 f3
+6f 06 86 00 57 00 3d 94 80 96 00 57 00 90 0e 20
+d4 01 57 00 57 9e e8 34 03 00 00 af 3f fc 5c 01
+5d 00 0a f3 97 98 00 5d 00 2a aa 48 00 00 5d 00
+d4 c6 3f 68 00 5d 00 ac 22 c8 ca 01 5d 00 39 ab
+6d 3b 03 00 00 e5 6b 74 99 01 63 00 80 f2 50 98
+00 63 00 bc fd cd 35 00 63 00 e2 f8 90 b5 00 63
+00 93 ae 2e 5f 01 63 00 70 4a ee ba 00 29 00 ae
+73 6c 4b 00 29 00 bd bd d0 30 00 30 00 29 8b cc
+0a 00 30 00 bb af 99 b0 00 37 00 7f 4a 29 11 00
+37 00 48 12 55 58 03 00 00 ec 98 a5 af 00 6f 00
+e9 82 82 0e 01 6f 00 4b dd b8 35 00 6f 00 11 fb
+6f a7 00 6f 00 af ca d6 4a 00 6f 00 c0 d9 e3 57
+00 6f 00 1a 2f 7e 36 00 6f 00 ca 98 66 b0 01 6f
+00 ed f3 7c 75 01 00 00 50 0c 6a de 00 00 00 fa
+02 ec a4 00 57 00 c8 4b e0 1e 00 57 00 83 6c 60
+12 00 5d 00 07 32 aa 00 00 5d 00 81 24 96 67 00
+63 00 4d 51 b5 f9 00 63 00 be 45 d6 10 03 00 00
+58 52 df 2f 01 80 00 0e dc 53 ed 00 80 00 a5 1c
+a6 87 00 80 00 ef 8c 72 ea 00 80 00 01 8c 3c 77
+00 80 00 3c 00 08 3b 00 80 00 54 9b f7 7f 01 80
+00 9f c8 27 da 01 00 00 32 bd 59 34 00 00 00 20
+8d 29 eb 00 29 00 1f 85 bd 3d 00 30 00 95 2e 8f
+a2 00 37 00 14 6d 25 e0 00 6f 00 da 2f c9 1f 00
+57 00 fd 2f af ea 00 5d 00 9b d7 db 8e 00 63 00
+36 4c 15 f1 00 80 00 15 85 fa 9b 03 00 00 45 d5
+c2 e0 00 92 00 10 e1 ec 54 01 92 00 6c 08 41 6f
+00 92 00 78 e8 d1 7f 00 92 00 f6 89 25 b4 00 92
+00 cb 1b 1e 15 00 92 00 d1 30 e1 f6 00 92 00 e7
+94 0e 7e 00 92 00 27 51 97 bb 00 92 00 53 4a 56
+eb 02 92 00 4d 53 72 c5 00 92 00 21 3d 3a f3 00
+92 00 52 4f ed 8a 00 92 00 14 4b f7 f8 00 92 00
+49 6d 8a 2f 00 92 00 84 d7 ac 2f 00 92 00 d7 0f
+30 4a 01 92 00 48 b0 cf 54 01 00 00 33 4b 1d 7f
+02 00 00 c5 1b 4a 3b 00 00 00 87 7f a4 35 03 00
+00 ff b4 7e 10 01 a7 00 13 3b 8f b1 00 a7 00 da
+d1 d8 0c 00 a7 00 3a 47 73 6e 00 a7 00 04 ce 96
+ae 00 a7 00 97 78 a8 bd 00 a7 00 ed 64 90 13 00
+a7 00 b1 25 a1 12 00 a7 00 51 c3 b4 49 02 a7 00
+1f 07 08 67 00 a7 00 bf f6 bf 6e 00 a7 00 80 4b
+f1 6e 00 a7 00 1a 79 66 45 00 a7 00 c7 81 a5 eb
+00 a7 00 72 61 03 19 00 a7 00 ed 19 7b ce 01 a7
+00 5a f5 d9 f5 01 00 00 15 46 6d 2c 02 00 00 db
+57 70 09 00 00 00 35 2c d6 68 00 00 00 b8 11 00
+f3 00 00 00 3b c4 a0 c5 00 00 00 7e d1 94 cb 00
+00 00 c9 35 a9 56 00 00 00 95 84 42 e9 00 48 00
+87 ed 87 5f 00 00 00 61 30 e8 50 00 00 00 c9 57
+7e 86 00 08 00 72 48 0e 32 00 08 00 e3 c7 97 df
+00 00 00 41 af 4d ad 00 00 00 12 05 76 0d 02 00
+00 5c 34 ae 7c 00 00 00 dd 1a c8 5c 00 00 00 ea
+22 62 4a 02 00 00 6e 2d 52 bb 00 00 00 68 59 e8
+28 00 00 00 a1 b5 72 18 00 00 00 55 a4 ca 83 00
+00 00 d2 8a a7 48 00 00 00 fe a3 8f b7 02 00 00
+fd 92 bd 5f 02 00 00 bc 11 09 05 00 00 00 2a 62
+77 0c 00 00 00 28 65 77 12 01 00 00 9f ad 65 96
+02 00 00 c2 2f db 2c 00 20 00 6b c6 a4 41 02 00
+00 88 ed b1 56 00 00 00 d6 92 db 95 00 00 00 d7
+6a 4d f9 00 00 00 eb 03 7f 49 00 00 00 11 1a 37
+e1 00 00 00 9c 47 5e e7 00 00 00 8c 5c 05 26 01
+00 00 44 5b fe 0f 00 00 00 ff 64 f7 fa 01 00 00
+75 4f 7d 3a 00 00 00 b1 eb 07 8c 00 00 00 e9 53
+9e 77 00 00 00 b9 17 2c 07 00 00 00 34 b4 85 d8
+00 00 00 b0 cb 42 af 01 00 00 bd b0 38 5c 01 00
+00 9f 8d 1d fd 00 00 00 be a9 a8 b8 00 4c 00 22
+20 3f b1 00 52 00 6a c0 70 be 00 08 00 8b 6d 57
+dc 00 00 00 bf 7a 1a af 01 00 00 9b 86 1b 95 01
+00 00 79 87 fe 4c 01 00 00 f9 84 f0 6e 01 00 00
+25 11 95 dc 00 00 00 df ff a1 97 01 00 00 7e 01
+4f a1 00 00 00 1d 39 f1 61 01 00 00 ab 9f e2 5c
+00 00 00 7d 98 4f 4e 00 00 00 58 b6 0b 73 00 00
+00 f9 25 ca 24 00 00 00 50 9a 50 f5 00 00 00 0a
+04 26 b7 00 00 00 dd 1a 04 77 00 00 00 ee 4e 50
+1b 00 00 00 37 af 52 db 00 00 00 7a 31 93 22 00
+00 00 79 b8 15 e7 00 00 00 39 5f f8 12 00 00 00
+a4 58 a7 b3 00 00 00 98 21 4f fa 00 20 00 49 b0
+ba 62 00 08 00 3a 68 d4 24 00 00 00 da 28 8a a6
+00 00 00
 ```
 <a id="t19"></a>
 ## t19. Security considerations

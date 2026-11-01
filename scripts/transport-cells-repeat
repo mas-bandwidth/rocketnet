@@ -232,7 +232,7 @@ run_socket_cell() { # server client
     while [ "$run" -le "$runs" ]; do
         for case in $socket_cases; do
             log="$logs/$1.$2.$case.run$run.log"
-            ROCKETNET_SERVER_TRANSPORT=$1 ROCKETNET_CLIENT_TRANSPORT=$2 "$functional" --run "$case" 2>&1 | tr -d '\r' > "$log"
+            ROCKETNET_SERVER_TRANSPORT=$1 ROCKETNET_CLIENT_TRANSPORT=${2#auto} "$functional" --run "$case" 2>&1 | tr -d '\r' > "$log"
             record "$1" "$2" "$case" "$run" "${PIPESTATUS[0]}" "$log"
         done
         run=$((run + 1))
@@ -311,7 +311,7 @@ if [ "$asan" = 1 ]; then
         [ "$server" = xdp ] && continue
         [ "$server" = io_uring ] && [ "$uring_offered" = 0 ] && continue
         log="$logs/$server.$client.suite.log"
-        ROCKETNET_SERVER_TRANSPORT=$server ROCKETNET_CLIENT_TRANSPORT=$client "$functional" 2>&1 | tr -d '\r' > "$log"
+        ROCKETNET_SERVER_TRANSPORT=$server ROCKETNET_CLIENT_TRANSPORT=${client#auto} "$functional" 2>&1 | tr -d '\r' > "$log"
         rc=${PIPESTATUS[0]}
         if [ "$rc" = 0 ]; then
             echo "SUITE $server/$client runs=1 pass=1 fail=0 log=$log"

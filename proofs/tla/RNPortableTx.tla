@@ -50,8 +50,12 @@
 (*   QuitUnderLock     the worker reads quit under the mutex with the      *)
 (*                     empty test (the fix of f0ee90fe); FALSE reads it    *)
 (*                     after the release, the former race.                 *)
-(*   PublishBeforeQuit stop publishes or drops the producer, then sets     *)
-(*                     quit; FALSE sets quit first.                        *)
+(*   PublishBeforeQuit stop publishes the producer, then sets quit; FALSE  *)
+(*                     sets quit first.                                    *)
+(*   PublishUntilSent  a refused final publish keeps the producer and each *)
+(*                     portable_stopped poll tries again (MStopRetry), so  *)
+(*                     quit follows the publish; FALSE is the one try that *)
+(*                     counted the producer dropped (StopDropsNothing).    *)
 (*   RetryOnIdle       portable_receive retries a deferred publish.        *)
 (*   WakeOnPublish     a successful publish signals the worker.            *)
 (*   Timeout           the worker's wait times out (0.1 s in the code).    *)
@@ -64,11 +68,11 @@ CONSTANTS NumBanks,           \* PORTABLE_TX_BANKS (3 in the code)
           Batch,              \* the most packets one portable_send call carries
           MaxPackets,         \* packets the harness offers in all
           FullSlack, HeadMod, TailMod,
-          QuitUnderLock, PublishBeforeQuit, RetryOnIdle, WakeOnPublish, Timeout
+          QuitUnderLock, PublishBeforeQuit, PublishUntilSent, RetryOnIdle, WakeOnPublish, Timeout
 
 ASSUME NumBanks >= 3 /\ Cap >= 1 /\ Batch >= 1 /\ MaxPackets >= 1
 ASSUME FullSlack \in 0..1 /\ HeadMod \in 0..NumBanks /\ TailMod \in 0..NumBanks
-ASSUME {QuitUnderLock, PublishBeforeQuit, RetryOnIdle, WakeOnPublish, Timeout} \subseteq BOOLEAN
+ASSUME {QuitUnderLock, PublishBeforeQuit, PublishUntilSent, RetryOnIdle, WakeOnPublish, Timeout} \subseteq BOOLEAN
 
 Banks == 0..NumBanks - 1
 NoBank == -1
@@ -257,15 +261,20 @@ MReturn ==
                         /\ left' = 0
               /\ UNCHANGED <<count, stopDropped>>
          [] ret = "stop" ->
-              /\ mpc' = IF PublishBeforeQuit THEN "stopq" ELSE "stopped"
               /\ IF pubOk
-                   THEN UNCHANGED <<count, stopDropped>>
-                   ELSE /\ stopDropped' = stopDropped \o Contents(producer)
+                   THEN /\ mpc' = IF PublishBeforeQuit THEN "stopq" ELSE "stopped"
+                        /\ UNCHANGED <<count, stopDropped>>
+                   ELSE IF PublishUntilSent
+                   THEN /\ mpc' = "stopretry"
+                        /\ UNCHANGED <<count, stopDropped>>
+                   ELSE /\ mpc' = IF PublishBeforeQuit THEN "stopq" ELSE "stopped"
+                        /\ stopDropped' = stopDropped \o Contents(producer)
                         /\ count' = [count EXCEPT ![producer] = 0]
               /\ UNCHANGED left
     /\ UNCHANGED <<cells, ringVars, flagVars, nextId, accepted, sent, workerVars, ret, pubOk>>
 
-\* portable_stop: stopping, then the final producer, then quit, then the wake
+\* portable_stop: stopping, then the final producer, then quit, then the wake.
+\* With PublishBeforeQuit = FALSE, quit and the wake come first.
 MStop ==
     /\ mpc = "idle"
     /\ ~stopping
@@ -291,6 +300,14 @@ MStopWake ==
     /\ mpc' = "stopped"
     /\ UNCHANGED <<dataVars, ringVars, lock, quit, stopping, oob, ghostVars, workerVars,
                    left, ret, pubOk>>
+
+\* portable_stopped while stop's last producer waits: one more publish try,
+\* and quit after it succeeds
+MStopRetry ==
+    /\ mpc = "stopretry"
+    /\ mpc' = "pub"
+    /\ ret' = "stop"
+    /\ UNCHANGED <<dataVars, ringVars, flagVars, ghostVars, workerVars, left, pubOk>>
 
 \* after stop main polls portable_stopped between frames; nothing changes
 MPollStopped ==
@@ -388,14 +405,14 @@ WRetSwap ==
 Next ==
     \/ MCall \/ MPut \/ MPutEnd \/ MRecv
     \/ MPubEmpty \/ MPubTry \/ MPubBusy \/ MPubSwap \/ MPubAfter \/ MReturn
-    \/ MStop \/ MStopQuit \/ MStopWake \/ MPollStopped
+    \/ MStop \/ MStopQuit \/ MStopWake \/ MStopRetry \/ MPollStopped
     \/ WTop \/ WTake \/ WEmpty \/ WWait \/ WSend \/ WSendDone \/ WRetLock \/ WRetSwap
 
 Spec == Init /\ [][Next]_vars
 
 WorkerStep == WTake \/ WEmpty \/ WWait \/ WSend \/ WSendDone \/ WRetSwap
 MainStep == MPut \/ MPutEnd \/ MPubEmpty \/ MPubBusy \/ MPubSwap \/ MPubAfter \/ MReturn
-            \/ MStopQuit \/ MStopWake
+            \/ MStopQuit \/ MStopWake \/ MStopRetry
 
 \* The worker runs whenever it can, and its blocking acquires are granted if
 \* the mutex is free infinitely often (main holds it for an index swap only).
@@ -464,6 +481,10 @@ MainLockIsBrief ==
 \* Stop publishes or drops the last producer before quit is set.
 QuitAfterFinalBank ==
     quit => count[producer] = 0
+
+\* Stop drops nothing: the last producer is published, however long its
+\* try is refused.
+StopDropsNothing == stopDropped = <<>>
 
 \* The worker exits only with nothing left to send.
 ExitSentAll ==

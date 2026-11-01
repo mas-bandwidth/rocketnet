@@ -284,6 +284,53 @@ static void test_xdp_transport_stats_cpus_are_bounded()
     rocketnet_unit_check( rocketnet_xdp_stats_cpus_fit( ROCKETNET_XDP_STATS_MAX_CPUS ) );
 }
 
+// a failed stats read publishes the last good sums, never zeros, and reports
+// only the read that starts a run of failures; a good read ends the run
+
+static void test_xdp_transport_stats_failed_read_keeps_last()
+{
+    struct rocketnet_server_xdp_stats_t values[2];
+    memset( values, 0, sizeof( values ) );
+    for ( int i = 0; i < ROCKETNET_SERVER_XDP_NUM_COUNTERS; i++ )
+    {
+        values[0].counters[i] = (uint64_t) ( i + 1 );
+        values[1].counters[i] = (uint64_t) ( 100 * ( i + 1 ) );
+    }
+
+    uint64_t last[ROCKETNET_SERVER_XDP_NUM_COUNTERS] = {};
+    bool failing = false;
+    uint64_t counters[ROCKETNET_SERVER_XDP_NUM_COUNTERS];
+
+    rocketnet_unit_check( !rocketnet_xdp_stats_publish( true, values, 2, last, &failing, counters ) );
+    for ( int i = 0; i < ROCKETNET_SERVER_XDP_NUM_COUNTERS; i++ )
+        rocketnet_unit_check( counters[i] == (uint64_t) ( 101 * ( i + 1 ) ) );
+
+    // the lookup fails twice: the sums stand and only the first is reported
+
+    memset( values, 0xFF, sizeof( values ) );
+    memset( counters, 0, sizeof( counters ) );
+    rocketnet_unit_check( rocketnet_xdp_stats_publish( false, values, 2, last, &failing, counters ) );
+    for ( int i = 0; i < ROCKETNET_SERVER_XDP_NUM_COUNTERS; i++ )
+        rocketnet_unit_check( counters[i] == (uint64_t) ( 101 * ( i + 1 ) ) );
+    rocketnet_unit_check( !rocketnet_xdp_stats_publish( false, values, 2, last, &failing, counters ) );
+    rocketnet_unit_check( counters[0] == 101 );
+
+    // a cpu count that does not fit is a failed read too
+
+    rocketnet_unit_check( !rocketnet_xdp_stats_publish( true, values, ROCKETNET_XDP_STATS_MAX_CPUS + 1, last, &failing, counters ) );
+    rocketnet_unit_check( counters[0] == 101 );
+
+    // a good read ends the run and replaces the sums; the next failure is
+    // reported again
+
+    memset( values, 0, sizeof( values ) );
+    values[0].counters[0] = 7;
+    rocketnet_unit_check( !rocketnet_xdp_stats_publish( true, values, 1, last, &failing, counters ) );
+    rocketnet_unit_check( counters[0] == 7 && counters[1] == 0 );
+    rocketnet_unit_check( rocketnet_xdp_stats_publish( false, values, 1, last, &failing, counters ) );
+    rocketnet_unit_check( counters[0] == 7 );
+}
+
 static void test_xdp_transport_receive_drain_rotates_first_queue()
 {
     rocketnet_unit_check( rocketnet_xdp_drain_queue( 0, 0, 1 ) == 0 );
@@ -327,5 +374,6 @@ REGISTER_UNIT_TEST( test_xdp_transport_refused_descriptor_not_refilled );
 REGISTER_UNIT_TEST( test_xdp_transport_pin_cpu_refuses_outside_the_set );
 REGISTER_UNIT_TEST( test_xdp_transport_preflight_refuses_pin_targets_outside_isolated );
 REGISTER_UNIT_TEST( test_xdp_transport_stats_cpus_are_bounded );
+REGISTER_UNIT_TEST( test_xdp_transport_stats_failed_read_keeps_last );
 
 #endif // #if defined(__linux__)

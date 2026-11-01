@@ -17,6 +17,16 @@ the bytes, the cookie and the handshake are `ClientConnection.tla`'s and
   with acquire. In that step it closes the losing family's operating-system
   handles through the backend's `close` operation and frees nothing
   (`ReaderStep`); afterwards it reads the kept family only.
+- The caller fills the I/O ring path's Filling ring and hands it off
+  (`CallerHandOff`), or a LATE hand-off leaves it with the caller, its
+  destination bound (`CallerHandOffLate`). The destination is the protocol's
+  server: the primary family's before the commit, the kept family's after it.
+  The commit rebinds a ring bound to the losing server to the kept one
+  (`rocketnet_client_io_rebind_held`).
+- Sends fail on either open family (`SendFails`); the caller reads
+  SEND_FAILED (`CallerRead`) as the race's `send_failures` computes it: both
+  families while they are in flight, then the kept family plus the losing
+  family's count, which the commit keeps and the reader's close stores again.
 - Stop asks the reading thread to exit (`CallerStop`, `ReaderExit`); destroy,
   on the caller's thread, joins it and frees both families' memory and the
   race block (`CallerJoin`, `CallerDestroy`).
@@ -42,6 +52,8 @@ races).
 | `FreedOnce`, `FreedIsClosed` | invariant | each family is freed once, and only closed |
 | `ClosedOnlyLoser`, `SeenMeansClosed` | invariant | the reader closes only the losing family, in the step that first sees the commit |
 | `EverythingFreed` | liveness | with fair threads, destroy frees every family |
+| `PostCommitSlotsKept` | invariant | no slot committed after the commit leaves for the losing family, where the race's send drops it |
+| `SendFailedMonotonic` | invariant | SEND_FAILED never goes down between two reads |
 | `LoserClosed` | liveness | a commit leads to the losing family's close |
 
 ## Cases
@@ -53,6 +65,8 @@ races).
 | `MCRNClientRaceBrokenCallerUsesLoser.cfg` | `NoUseAfterClose`: the caller sends to the losing family after its own commit |
 | `MCRNClientRaceBrokenFreeBeforeJoin.cfg` | `FreedOnlyAfterJoin`: destroy frees before the join |
 | `MCRNClientRaceBrokenReaderClosesEarly.cfg` | `NoUseAfterClose`: the reader closes a family before any commit |
+| `MCRNClientRaceBrokenCommitKeepsRing.cfg` | `PostCommitSlotsKept`: the commit leaves a ring bound to the losing server, as the code did before `rocketnet_client_io_rebind_held` |
+| `MCRNClientRaceBrokenNoKeepAtCommit.cfg` | `SendFailedMonotonic`: only the reader's close keeps the losing family's failures, as the code did before the commit kept them |
 
 Each counterexample was checked by hand against the code: the reader-frees
 trace is commit, then one reading step whose `rocketnet_client_race_kept`
@@ -62,3 +76,21 @@ the backend's destroy (`portable_io_client_destroy`,
 `rocketnet_free` on the reading thread; the functional case
 `test_family_race_frees_on_caller_thread` counted those frees off the
 caller's thread (3 for gso) before the split and none after it.
+
+The commit-keeps-ring trace is a LATE hand-off before the commit (the ring
+bound to the primary, IPv6, server), a commit to the other family, and a
+hand-off whose attempt commits a slot after the commit: the ring leaves for
+the IPv6 server and `rocketnet_client_race_send_batch`, with family 1
+committed, sends nothing of it. `test_client_race_commit_rebinds_a_late_ring`
+holds the I/O mutex for the update that resends the cookie request, so that
+hand-off is LATE, then lets the cookie from IPv4 commit the race in an update
+whose connection request joins the same ring; before the rebind the request
+never left, and with it the request reaches IPv4 in that update.
+
+The no-keep trace is a send failure on family 0, a read (1), a commit
+to family 1, and a read before the reader's step: the kept family's count
+plus `closed_send_failures`, still 0, is 0.
+`test_client_race_send_failed_holds_across_the_commit` injects send failures
+on the losing family, reads the counters in the update that commits, before
+the reading step, and checks SEND_FAILED did not go down; then steps and
+checks it is unchanged.

@@ -31,7 +31,9 @@ check() {
         return
       }
       if (t !~ /self-hosted/) { report(v, "does not select self-hosted (a GitHub-hosted runner)"); return }
-      if (t ~ /(ubuntu|macos|windows)-[0-9a-z]/) { report(v, "names a GitHub-hosted image"); return }
+      u = t
+      gsub(/ubuntu-[0-9][0-9][0-9][0-9]([^.0-9A-Za-z-]|$)/, "", u)   # the fleet distro labels (ubuntu-2404), never a hosted image
+      if (u ~ /(ubuntu|macos|windows)-[0-9a-z]/) { report(v, "names a GitHub-hosted image"); return }
       if (t ~ /\|\|[ \t]*(matrix|inputs)\./) { report(v, "falls through to a matrix/inputs value"); return }
     }
     FNR == 1 { if (pending) judge(val); pending = 0 }
@@ -53,14 +55,14 @@ check() {
 if [ "${1:-}" = "--self-test" ]; then
   d=$(mktemp -d) || exit 1
   trap 'rm -rf "$d"' EXIT
-  printf 'jobs:\n  a:\n    runs-on: [self-hosted, Linux, X64, fleet]\n  b:\n    runs-on:\n      - self-hosted\n      - macOS\n      - ARM64\n      - fleet\n  c:\n    runs-on: ${{ startsWith(matrix.os, '"'"'ubuntu'"'"') && fromJSON('"'"'["self-hosted","Linux","X64","fleet"]'"'"') || fromJSON('"'"'["self-hosted","macOS","ARM64","fleet"]'"'"') }}\n' > "$d/good.yml"
+  printf 'jobs:\n  a:\n    runs-on: [self-hosted, Linux, X64, fleet]\n  b:\n    runs-on:\n      - self-hosted\n      - macOS\n      - ARM64\n      - fleet\n  c:\n    runs-on: ${{ startsWith(matrix.os, '"'"'ubuntu'"'"') && fromJSON('"'"'["self-hosted","Linux","X64","fleet"]'"'"') || fromJSON('"'"'["self-hosted","macOS","ARM64","fleet"]'"'"') }}\n  e:\n    runs-on: [self-hosted, Linux, X64, fleet, ubuntu-2404]\n' > "$d/good.yml"
   printf 'jobs:\n  d:\n    runs-on: ${{ fromJSON(matrix.runner) }}\n    strategy:\n      matrix:\n        include:\n          - { os: ubuntu-24.04, runner: '"'"'["self-hosted","Linux","X64","fleet"]'"'"' }\n' >> "$d/good.yml"
   check "$d/good.yml" >/dev/null || { echo "self-test: a fleet workflow was refused"; check "$d/good.yml"; exit 1; }
   printf 'jobs:\n  a:\n    runs-on: ${{ fromJSON(matrix.runner) }}\n    strategy:\n      matrix:\n        include:\n          - { os: ubuntu-24.04, runner: '"'"'["self-hosted","Linux","X64","fleet"]'"'"' }\n          - { os: macos-15 }\n' > "$d/bad.yml"
   if check "$d/bad.yml" >/dev/null; then echo "self-test: a matrix row without a fleet runner was accepted"; exit 1; fi
   for v in 'ubuntu-latest' '[ubuntu-24.04]' 'macos-15' 'windows-latest' '${{ matrix.os }}' \
            '${{ startsWith(matrix.os, '"'"'ubuntu'"'"') \&\& fromJSON('"'"'["self-hosted","Linux","X64","fleet"]'"'"') || matrix.os }}' \
-           '[self-hosted, ubuntu-24.04]'; do
+           '[self-hosted, ubuntu-24.04]' '[self-hosted, windows-2025]' '[self-hosted, ubuntu-2404.1]'; do
     printf 'jobs:\n  a:\n    runs-on: %s\n' "$v" > "$d/bad.yml"
     if check "$d/bad.yml" >/dev/null; then echo "self-test: hosted runs-on was accepted: $v"; exit 1; fi
   done

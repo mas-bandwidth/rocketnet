@@ -2487,7 +2487,7 @@ static void test_message_objects_no_allocation_after_create()
         // caller memory: none at all
 
         mo_net_t * net = mo_net_new();
-        const uint64_t bytes = rocketnet_message_client_required_memory( &config );
+        const uint64_t bytes = rocketnet_message_client_required_memory( &config, 0 );
         check( bytes > 0 );
 
         const size_t alignment = ROCKETNET_ALLOCATION_ALIGNMENT;
@@ -4878,3 +4878,84 @@ static void test_region_reset_keeps_payload_bytes()
     check( (uint64_t) small_ring + small_store < (uint64_t) large_ring + large_store );
 }
 REGISTER_UNIT_TEST( test_region_reset_keeps_payload_bytes );
+
+#if ROCKETNET_DEV
+// ---------------------------------------------------------------------------
+// destroy before the owned transport has stopped: an error line and one
+// counted misuse, then destroy stops the transport itself, steps it until it
+// reports stopped, destroys it, and frees the object's block. Nothing leaks:
+// the counting allocator's frees match its mallocs. Mutation that must bite:
+// return from destroy while the transport runs; the link is never destroyed
+// and the block is never freed.
+// ---------------------------------------------------------------------------
+
+static int mo_early_stops = 0;
+static int mo_early_updates_after_stop = 0;
+static int mo_early_destroys = 0;
+
+static void mo_early_update( void * transport, double time )
+{
+    if ( mo_early_stops > 0 )
+        mo_early_updates_after_stop++;
+    mo_update( transport, time );
+}
+static void mo_early_stop( void * ) { mo_early_stops++; }
+static bool mo_early_stopped( const void * ) { return mo_early_updates_after_stop >= 1; }
+static void mo_early_destroy( void * ) { mo_early_destroys++; }
+
+static void test_message_object_destroy_before_stop_finishes_the_shutdown()
+{
+    check( rocketnet_test_loopback_hub_release() );
+    rocketnet_term();
+    check( rocketnet_init( NULL, mo_malloc, mo_free ) == ROCKETNET_STATUS_OK );
+
+    {
+        rocketnet_message_config_t config;
+        mo_config( &config );
+
+        mo_net_t * net = mo_net_new();
+        rn_message_link_t link = mo_link( mo_net_client( net, 0 ) );
+        link.update = mo_early_update;
+        link.stop = mo_early_stop;
+        link.stopped = mo_early_stopped;
+        link.destroy = mo_early_destroy;
+
+        mo_early_stops = 0;
+        mo_early_updates_after_stop = 0;
+        mo_early_destroys = 0;
+
+        const uint64_t mallocs = mo_mallocs;
+        const uint64_t frees = mo_frees;
+        rn_message_object_t * object = rn_message_object_create( NULL, &link, 0, 1, &config, NULL, 0, ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, MO_T0 );
+        check( object != NULL );
+        check( mo_mallocs > mallocs );
+
+        const uint64_t misuse = rocketnet_api_misuse_count();
+        rn_message_object_destroy( object );
+
+        check( rocketnet_api_misuse_count() == misuse + 1 );
+        check( mo_early_stops == 1 );
+        check( mo_early_updates_after_stop == 1 );
+        check( mo_early_destroys == 1 );
+        check( mo_mallocs - mallocs == mo_frees - frees );
+
+        // a destroy after the stop completed is no misuse
+
+        mo_early_stops = 0;
+        mo_early_destroys = 0;
+        object = rn_message_object_create( NULL, &link, 0, 1, &config, NULL, 0, ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, MO_T0 );
+        check( object != NULL );
+        rn_message_object_destroy( object );
+        check( rocketnet_api_misuse_count() == misuse + 1 );
+        check( mo_early_stops == 0 );
+        check( mo_early_destroys == 1 );
+
+        mo_net_free( net );
+    }
+
+    check( rocketnet_test_loopback_hub_release() );
+    rocketnet_term();
+    check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
+}
+REGISTER_UNIT_TEST( test_message_object_destroy_before_stop_finishes_the_shutdown );
+#endif // #if ROCKETNET_DEV

@@ -387,11 +387,13 @@ int rocketnet_gateway_netlink_parse_neighbor( const uint8_t * data, size_t bytes
 
 typedef int ( *rocketnet_gateway_netlink_parse_t )( const uint8_t * data, size_t bytes, uint32_t sequence, uint32_t port_id, void * context, int * error );
 
-static int rocketnet_gateway_netlink_dump( uint16_t request_type, int family, rocketnet_gateway_netlink_parse_t parse, void * context, int * error )
+// one dump on a fresh socket
+static int rocketnet_gateway_netlink_dump_once( const rocketnet_gateway_netlink_system_t * system, uint16_t request_type, int family,
+                                                rocketnet_gateway_netlink_parse_t parse, void * context, int * error )
 {
     *error = 0;
 
-    const int fd = socket( AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, NETLINK_ROUTE );
+    const int fd = system->socket( AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, NETLINK_ROUTE );
     if ( fd < 0 )
     {
         *error = errno;
@@ -407,13 +409,23 @@ static int rocketnet_gateway_netlink_dump( uint16_t request_type, int family, ro
     local.nl_family = AF_NETLINK;
     socklen_t local_bytes = sizeof( local );
 
-    if ( setsockopt( fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof( timeout ) ) != 0 ||
-         setsockopt( fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof( timeout ) ) != 0 ||
-         bind( fd, (struct sockaddr *) &local, sizeof( local ) ) != 0 ||
-         getsockname( fd, (struct sockaddr *) &local, &local_bytes ) != 0 || local_bytes != sizeof( local ) )
+    if ( system->setsockopt( fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof( timeout ) ) != 0 ||
+         system->setsockopt( fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof( timeout ) ) != 0 ||
+         system->bind( fd, (struct sockaddr *) &local, sizeof( local ) ) != 0 ||
+         system->getsockname( fd, (struct sockaddr *) &local, &local_bytes ) != 0 )
     {
         *error = errno;
-        close( fd );
+        system->close( fd );
+        return ROCKETNET_GATEWAY_NETLINK_SYSTEM;
+    }
+
+    // every call succeeded but the address is not a sockaddr_nl: no errno
+    // describes it, so the error is EPROTO
+
+    if ( local_bytes != sizeof( local ) )
+    {
+        *error = EPROTO;
+        system->close( fd );
         return ROCKETNET_GATEWAY_NETLINK_SYSTEM;
     }
 
@@ -452,10 +464,10 @@ static int rocketnet_gateway_netlink_dump( uint16_t request_type, int family, ro
     memset( &kernel, 0, sizeof( kernel ) );
     kernel.nl_family = AF_NETLINK;
 
-    if ( sendto( fd, request, header.nlmsg_len, 0, (struct sockaddr *) &kernel, sizeof( kernel ) ) != (ssize_t) header.nlmsg_len )
+    if ( system->sendto( fd, request, header.nlmsg_len, 0, (struct sockaddr *) &kernel, sizeof( kernel ) ) != (ssize_t) header.nlmsg_len )
     {
         *error = errno;
-        close( fd );
+        system->close( fd );
         return ROCKETNET_GATEWAY_NETLINK_SYSTEM;
     }
 
@@ -482,7 +494,7 @@ static int rocketnet_gateway_netlink_dump( uint16_t request_type, int family, ro
         message.msg_iov = &vector;
         message.msg_iovlen = 1;
 
-        const ssize_t received = recvmsg( fd, &message, 0 );
+        const ssize_t received = system->recvmsg( fd, &message, 0 );
         if ( received < 0 )
         {
             if ( errno == EINTR )
@@ -513,10 +525,36 @@ static int rocketnet_gateway_netlink_dump( uint16_t request_type, int family, ro
         *error = E2BIG;
     }
 
-    close( fd );
+    system->close( fd );
 
     return result;
 }
+
+// the dump, asked again on a fresh socket while it answers interrupted
+static int rocketnet_gateway_netlink_dump( const rocketnet_gateway_netlink_system_t * system, uint16_t request_type, int family,
+                                           rocketnet_gateway_netlink_parse_t parse, void * context, int * error )
+{
+    rocketnet_assert( system );
+
+    int result = ROCKETNET_GATEWAY_NETLINK_SYSTEM;
+    for ( int attempt = 0; attempt < ROCKETNET_GATEWAY_NETLINK_DUMP_ATTEMPTS; attempt++ )
+    {
+        result = rocketnet_gateway_netlink_dump_once( system, request_type, family, parse, context, error );
+        if ( result != ROCKETNET_GATEWAY_NETLINK_ERROR || *error != EINTR )
+            break;
+    }
+
+    return result;
+}
+
+static int rocketnet_gateway_netlink_libc_close( int fd )
+{
+    return close( fd );
+}
+
+static const rocketnet_gateway_netlink_system_t rocketnet_gateway_netlink_libc = {
+    socket, setsockopt, bind, getsockname, sendto, recvmsg, rocketnet_gateway_netlink_libc_close
+};
 
 static int rocketnet_gateway_netlink_route_parse( const uint8_t * data, size_t bytes, uint32_t sequence, uint32_t port_id, void * context, int * error )
 {
@@ -524,11 +562,17 @@ static int rocketnet_gateway_netlink_route_parse( const uint8_t * data, size_t b
     return rocketnet_gateway_netlink_parse_route( data, bytes, sequence, port_id, query->family, query->interface_index, query->gateway, error );
 }
 
-int rocketnet_gateway_netlink_route( int family, int interface_index, uint8_t * gateway, int * error )
+int rocketnet_gateway_netlink_route_with( const rocketnet_gateway_netlink_system_t * system, int family, int interface_index,
+                                          uint8_t * gateway, int * error )
 {
     rocketnet_assert( error );
     rocketnet_gateway_netlink_route_context_t query = { family, interface_index, gateway };
-    return rocketnet_gateway_netlink_dump( RTM_GETROUTE, family, rocketnet_gateway_netlink_route_parse, &query, error );
+    return rocketnet_gateway_netlink_dump( system, RTM_GETROUTE, family, rocketnet_gateway_netlink_route_parse, &query, error );
+}
+
+int rocketnet_gateway_netlink_route( int family, int interface_index, uint8_t * gateway, int * error )
+{
+    return rocketnet_gateway_netlink_route_with( &rocketnet_gateway_netlink_libc, family, interface_index, gateway, error );
 }
 
 struct rocketnet_gateway_netlink_neighbor_query_t
@@ -545,11 +589,17 @@ static int rocketnet_gateway_netlink_neighbor_parse( const uint8_t * data, size_
     return rocketnet_gateway_netlink_parse_neighbor( data, bytes, sequence, port_id, query->family, query->interface_index, query->gateway, query->mac, error );
 }
 
-int rocketnet_gateway_netlink_neighbor( int family, int interface_index, const uint8_t * gateway, uint8_t * mac, int * error )
+int rocketnet_gateway_netlink_neighbor_with( const rocketnet_gateway_netlink_system_t * system, int family, int interface_index,
+                                             const uint8_t * gateway, uint8_t * mac, int * error )
 {
     rocketnet_assert( error );
     rocketnet_gateway_netlink_neighbor_query_t query = { family, interface_index, gateway, mac };
-    return rocketnet_gateway_netlink_dump( RTM_GETNEIGH, family, rocketnet_gateway_netlink_neighbor_parse, &query, error );
+    return rocketnet_gateway_netlink_dump( system, RTM_GETNEIGH, family, rocketnet_gateway_netlink_neighbor_parse, &query, error );
+}
+
+int rocketnet_gateway_netlink_neighbor( int family, int interface_index, const uint8_t * gateway, uint8_t * mac, int * error )
+{
+    return rocketnet_gateway_netlink_neighbor_with( &rocketnet_gateway_netlink_libc, family, interface_index, gateway, mac, error );
 }
 
 const char * rocketnet_gateway_netlink_result_name( int result )

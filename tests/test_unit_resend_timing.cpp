@@ -407,7 +407,7 @@ REGISTER_UNIT_TEST( test_message_config_abi_size_is_unchanged );
 
 // ---------------------------------------------------------------------------
 // The chunks of a block wait the resend delay alone (standard/MESSAGES.md m9.3;
-// proofs/tla/RNResendTiming.tla Delay("c"), SmallNeverHeldByChunk and the reversed
+// proofs/tla/RNResendTiming.tla Delay("c"), NoDueRecordHeld and the reversed
 // witness MCRNResendTimingBrokenOneFifo.cfg). These cases read only what
 // every version of layer 3 has (the walk's output and resend_count), so they
 // build against the one-FIFO walk too and show where it differs.
@@ -538,13 +538,53 @@ static void test_small_record_behind_a_chunk_not_held()
 
 REGISTER_UNIT_TEST( test_small_record_behind_a_chunk_not_held );
 
+// test_chunk_behind_a_small_record_not_held: the one-FIFO hazard the other way
+// round (proofs/tla/RNResendTiming.tla NoDueRecordHeld and the reversed witness
+// MCRNResendTimingBrokenOneFifo.cfg). With reliable_message_timeout_ms 4000 the
+// chunk cap is 1 s, below the 1230 ms resend delay a 200 ms path gives; a
+// small record sent before a block is at the head of a single FIFO ordered by
+// last send, not yet due when the chunks are, and would hold them back. With
+// one FIFO per class the chunks go at their capped delay and the small record
+// at its own.
+static void test_chunk_behind_a_small_record_not_held()
+{
+    resend_timing_fixture_t f;
+    rocketnet_message_default_config( &f.config );
+    f.config.reliable_message_timeout_ms = 4000;
+    f.config.message_resend_delay_initial_ms = 1000;
+    f.config.message_resend_delay_max_ms = 2000;
+    resend_timing_open( &f );
+
+    const double t1 = resend_timing_sample( &f, resend_timing_start, 0.200 );
+    check( fabs( f.ack.resend_delay - 1.230 ) < 1e-9 );
+    check( fabs( rn_window_ack_chunk_resend_delay( &f.ack ) - 1.000 ) < 1e-9 );
+
+    uint64_t small = 0;
+    resend_timing_send( &f, t1, &small );
+    uint64_t chunks[8];
+    const uint32_t n = resend_timing_send_block( &f, t1 + 0.010, 2500, chunks, 8 );
+
+    uint64_t out[64];
+    uint32_t resent = resend_timing_pass_numbers( &f, t1 + 1.011, out );
+    check( resent == n );                                          // chunks at the capped delay
+    for ( uint32_t i = 0; i < n; i++ )
+    {
+        check( resend_timing_contains( out, resent, chunks[i] ) );
+    }
+    check( !resend_timing_contains( out, resent, small ) );
+
+    resent = resend_timing_pass_numbers( &f, t1 + 1.231, out );
+    check( resent == 1 && out[0] == small );                       // the small record at its own delay
+
+    resend_timing_close( &f );
+}
+
+REGISTER_UNIT_TEST( test_chunk_behind_a_small_record_not_held );
+
 // test_both_fifos_walk_only_what_is_due: each class is walked from its head while
-// due and no further. Tripwires show it: a number marked acked by hand stays
-// linked (the product walk skips it without unlinking), so walk_visits grows
-// past it only when a walk goes as far as the tripwire. One tripwire sits in
-// each class behind numbers that are not yet due; while the walks stop before
-// them only the due entries are visited, and a walk past a stop point would
-// visit the tripwire too.
+// due and no further. walk_visits counts every entry a walk examines: the due
+// entries and one stop per class, so a walk past a stop point would count
+// more.
 static void test_both_fifos_walk_only_what_is_due()
 {
     resend_timing_fixture_t f;
@@ -556,8 +596,7 @@ static void test_both_fifos_walk_only_what_is_due()
     check( f.ack.resend_count == 0 );
 
     // chunks c0..c2 and small s1 at t1, small s2 at +20 ms; at +30 ms a small
-    // tripwire s3 and a two-chunk block c3, c4 whose first chunk is the chunk
-    // tripwire
+    // s3 and a two-chunk block c3, c4
 
     uint64_t c[8];
     check( resend_timing_send_block( &f, t1, 2500, c, 8 ) == 3 );
@@ -568,9 +607,6 @@ static void test_both_fifos_walk_only_what_is_due()
     resend_timing_send( &f, t1 + 0.030, &s3 );
     check( resend_timing_send_block( &f, t1 + 0.030, 1500, c + 3, 5 ) == 2 );
 
-    const uint32_t W = f.region->window;
-    f.region->send_numbers[s3 & ( W - 1 )].acked = 1;              // tripwires: acked, still linked
-    f.region->send_numbers[c[3] & ( W - 1 )].acked = 1;
     const uint32_t linked = f.ack.resend_count;
     check( linked == 8 );
 
@@ -580,7 +616,7 @@ static void test_both_fifos_walk_only_what_is_due()
 
     uint32_t resent = resend_timing_pass_numbers( &f, t1 + 1.229, out );
     check( resent == 0 );
-    check( f.ack.resend_count == linked );                         // no tripwire reached
+    check( f.ack.resend_count == linked );
     check( f.ack.walk_visits == 2 );                               // both heads, neither due
 
     // the walks stop at their heads before the resend delay
@@ -608,8 +644,8 @@ static void test_both_fifos_walk_only_what_is_due()
     }
 
     check( !resend_timing_contains( out, resent, c[4] ) );
-    check( f.ack.resend_count == linked );                  // acked entries stay linked
-    check( f.ack.walk_visits == 7 );                        // s1, s2 (stop), c0, c1, c2, c3 (acked), c4 (stop)
+    check( f.ack.resend_count == linked );                  // a resend moves its number to the tail
+    check( f.ack.walk_visits == 6 );                        // s1, s2 (stop), c0, c1, c2, c3 (stop)
 
     // small records come out of the walk before chunks (R6 retransmit order)
 
@@ -618,12 +654,13 @@ static void test_both_fifos_walk_only_what_is_due()
     resent = resend_timing_pass_numbers( &f, t1 + 1.251, out );
     check( resent == 1 && out[0] == s2 );
     check( f.ack.resend_count == linked );
-    check( f.ack.walk_visits == 5 );                        // s2, s3 (acked), s1 (stop); c3 (acked), c4 (stop)
+    check( f.ack.walk_visits == 3 );                        // s2, s3 (stop); c3 (stop)
 
     resent = resend_timing_pass_numbers( &f, t1 + 1.261, out );
-    check( resent == 1 && out[0] == c[4] );              // the next chunk is now due
+    check( resent == 3 && out[0] == s3 );                   // s3 and the block c3, c4 are now due
+    check( resend_timing_contains( out, resent, c[3] ) && resend_timing_contains( out, resent, c[4] ) );
     check( f.ack.resend_count == linked );
-    check( f.ack.walk_visits == 5 );                        // s3 (acked), s1 (stop); c3 (acked), c4
+    check( f.ack.walk_visits == 5 );                        // s3, s1 (stop); c3, c4, c0 (stop)
 
     resend_timing_close( &f );
 }

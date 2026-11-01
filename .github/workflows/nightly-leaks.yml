@@ -12,8 +12,8 @@
 # print_suppressions=1 prints every suppression that matches during the run so
 # stale entries in tools/lsan.supp remain visible in the log.
 #
-# A red night here has a commit range and a bisect; whoever is on the estate
-# that morning owns walking it back.
+# A red night here has a commit range and a bisect (nightly-watch.yml prints
+# both); whoever is on the estate that morning owns walking it back.
 
 name: nightly-leaks
 

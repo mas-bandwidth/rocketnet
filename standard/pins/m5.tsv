@@ -2,19 +2,19 @@
 # Format and rules: standard/STYLE.md section 10. Section cards add rows to
 # standard/pins/<section id>.tsv, never to this file.
 #include "rocketnet_message.h"
-first number	0	0
-number bits	24	24
-number range	1u << 24	16777216
+first number	ROCKETNET_MESSAGE_FIRST_NUMBER	0
+number bits	ROCKETNET_MESSAGE_NUMBER_BITS	24
+number range	ROCKETNET_MESSAGE_NUMBER_RANGE	16777216
 number mask	ROCKETNET_MESSAGE_U24_MASK	0xFFFFFF
-half range	1u << 23	8388608
-ring unit	16	16
+half range	ROCKETNET_MESSAGE_HALF_RANGE	8388608
+ring unit	ROCKETNET_MESSAGE_RING_UNIT	16
 fragment bytes	ROCKETNET_MESSAGE_FRAGMENT_BYTES	1152
 window messages default	rn_pin_message_default_reliable_messages_in_flight	1024
 receive ring bytes default	rn_pin_message_default_receive_message_buffer_bytes	1048576
-window messages limit	1 << 20	1048576
+window messages limit	rn_pin_message_max_reliable_messages_in_flight	1048576
 replay window depth minimum	ROCKETNET_HISTORY_PACKETS_MIN	4096
 replay window depth maximum	ROCKETNET_HISTORY_PACKETS_MAX	32768
-minimum numbered record	1 + 6	7
-numbered records per packet maximum	ROCKETNET_MAX_PACKET_PAYLOAD_BYTES / ( 1 + 6 )	202
-block fragments maximum	( ( 1 << 20 ) + ROCKETNET_MESSAGE_FRAGMENT_BYTES - 1 ) / ROCKETNET_MESSAGE_FRAGMENT_BYTES	911
-stale copy bound	( 1 << 20 ) + ( ROCKETNET_HISTORY_PACKETS_MAX - 1 ) * ( ROCKETNET_MAX_PACKET_PAYLOAD_BYTES / ( 1 + 6 ) ) + ( ( 1 << 20 ) + ROCKETNET_MESSAGE_FRAGMENT_BYTES - 1 ) / ROCKETNET_MESSAGE_FRAGMENT_BYTES	7668421
+minimum numbered record	ROCKETNET_MESSAGE_RECORD_FIXED_BYTES + ROCKETNET_MESSAGE_NUMBER_BYTES + 1	7
+numbered records per packet maximum	ROCKETNET_MAX_PACKET_PAYLOAD_BYTES / ( ROCKETNET_MESSAGE_RECORD_FIXED_BYTES + ROCKETNET_MESSAGE_NUMBER_BYTES + 1 )	202
+block fragments maximum	( rn_pin_message_max_max_message_bytes + ROCKETNET_MESSAGE_FRAGMENT_BYTES - 1 ) / ROCKETNET_MESSAGE_FRAGMENT_BYTES	911
+stale copy bound	rn_pin_message_max_reliable_messages_in_flight + ( ROCKETNET_HISTORY_PACKETS_MAX - 1 ) * ( ROCKETNET_MAX_PACKET_PAYLOAD_BYTES / ( ROCKETNET_MESSAGE_RECORD_FIXED_BYTES + ROCKETNET_MESSAGE_NUMBER_BYTES + 1 ) ) + ( rn_pin_message_max_max_message_bytes + ROCKETNET_MESSAGE_FRAGMENT_BYTES - 1 ) / ROCKETNET_MESSAGE_FRAGMENT_BYTES	7668421

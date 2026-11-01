@@ -100,7 +100,7 @@ cannot peek at queued traffic. The first real batch call is the functional
 probe: a `recvmsg_x` there delivers what it reads, so a fixed-port bind that
 already has a datagram queued keeps it. A result of zero or more, or
 `EAGAIN`/`EWOULDBLOCK`, keeps the pump;
-ordinary receive-weather errors retry within a finite per-call budget.
+ordinary receive-weather errors are skipped within the call's read budget.
 An error outside that set pauses it and that same call finishes on the
 portable per-packet loop (`rocketnet_msgx_pause`, the receive block in
 `rocketnet_platform_socket_receive_packets`). The functional case
@@ -310,11 +310,13 @@ which skips it as weather. A server socket is never connected, and every send
 names its destination. A failed `sendto`
 is logged at debug level and the packet is dropped
 (`rocketnet_platform_socket_send_packet`). Receive-weather errors such as
-`ECONNREFUSED`, `EHOSTUNREACH`, `ENETUNREACH`, `ENOBUFS`, and `EINTR` retry
-within a finite per-call budget. EAGAIN, an exhausted retry budget, or another
-receive error ends the drain; unexpected errors are logged at debug level.
-A zero-length datagram is skipped
-rather than read as "drained", and a datagram longer than the caller's slot
+`ECONNREFUSED`, `EHOSTUNREACH`, `ENETUNREACH`, `ENOBUFS`, and `EINTR` are
+skipped. EAGAIN, a spent read budget, or another receive error ends the
+drain; unexpected errors are logged at debug level. A zero-length datagram or
+a refused source is skipped rather than read as "drained". Every read spends
+one unit of the call's read budget (`max_packets` for a batch, 64 for the
+single-packet call), kept or skipped, so a call returns after a bounded number
+of reads whatever the socket holds. A datagram longer than the caller's slot
 keeps its true length so the transport drops it as oversize
 (`rocketnet_platform_socket_receive_packet`). The msgx pump applies the
 weather and pause rules above to the same errnos.
@@ -329,10 +331,10 @@ refused destination in the middle delivers every other packet
 
 The hard-killed-client cases in `tests/functional/posix_hard_killed_client.cpp`
 exercise ICMP handling for portable and msgx combinations; see
-[ICMP errors](TRANSPORT-INTERNALS.md#icmp-errors). This error-retry budget does
-not cover all discarded datagrams. Sustained empty or rejected traffic can
-keep the current portable/msgx drain running and delay receive publication or
-shutdown; see [current drain limitations](TRANSPORT-INTERNALS.md#current-staging-and-drain-limitations).
+[ICMP errors](TRANSPORT-INTERNALS.md#icmp-errors). Discarded datagrams spend
+the same read budget as errors and kept datagrams, so empty or rejected
+traffic ends a portable or msgx drain like any other; see
+[staging and drain bounds](TRANSPORT-INTERNALS.md#staging-and-drain-bounds).
 
 ## The file-descriptor limit
 
@@ -442,8 +444,9 @@ toolchain), in three legs, each in its own job and its own build directory:
 - **asan+ubsan**: Debug with `-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer`, the flags of ci.yml's
   Linux sanitizers job. Apple silicon AddressSanitizer has no `detect_leaks`,
   so `ASAN_OPTIONS=detect_leaks=0` and the leaks leg is the leak check.
-- **tsan**: Debug with `-fsanitize=thread`,
-  `TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1`. The full TSAN
+- **tsan**: Debug with `-fsanitize=thread -fno-omit-frame-pointer -O1` (at
+  `-O0` tsan does not report a struct copy's memcpy write after an unordered
+  read), `TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1`. The full TSAN
   functional suite is a nightly check with a one-hour case limit (owner
   ruling, 2026-10-25): the leg's two functional steps set
   `ROCKETNET_TEST_CASE_TIME_SCALE=30`, which multiplies the suite's 120 s
@@ -470,8 +473,8 @@ One leg by hand, the tsan leg here (`asan+ubsan` takes the flags above,
 
 ```sh
 cmake -S . -B build-tsan -DCMAKE_BUILD_TYPE=Debug \
-  -DCMAKE_C_FLAGS="-fsanitize=thread -fno-omit-frame-pointer" \
-  -DCMAKE_CXX_FLAGS="-fsanitize=thread -fno-omit-frame-pointer"
+  -DCMAKE_C_FLAGS="-fsanitize=thread -fno-omit-frame-pointer -O1" \
+  -DCMAKE_CXX_FLAGS="-fsanitize=thread -fno-omit-frame-pointer -O1"
 cmake --build build-tsan --target test functional test_serialize test_transport_control test_msgx --parallel 4
 TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1 ROCKETNET_TEST_CASE_TIME_SCALE=30 \
   ROCKETNET_SERVER_TRANSPORT=msgx ROCKETNET_CLIENT_TRANSPORT=msgx ./bin/functional
@@ -494,13 +497,16 @@ and is named red by the case limit. Every other case is checked for leaks.
 
 The fuzz corpora replay on macOS without libFuzzer, as CI does on its macOS
 rows (`.github/workflows/ci.yml`, "Replay the fuzz corpora without
-libFuzzer"); `make` builds the four replay binaries:
+libFuzzer"); `make` builds a replay binary for each of the ten harnesses in
+[tests/fuzz/README.md](../tests/fuzz/README.md). Replay every corpus:
 
 ```sh
-./bin/fuzz_replay_rocketnet_fuzz tests/fuzz/corpus/*
-./bin/fuzz_replay_rocketnet_fuzz_message tests/fuzz/corpus_message/*
-./bin/fuzz_replay_rocketnet_fuzz_connect_token tests/fuzz/corpus_connect_token/*
-./bin/fuzz_replay_rocketnet_fuzz_receive_structured tests/fuzz/corpus_receive_structured/*
+for harness in rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token \
+    rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip \
+    rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport \
+    rocketnet_fuzz_session; do
+  ./bin/fuzz_replay_$harness tests/fuzz/corpus${harness#rocketnet_fuzz}/* || echo "FAIL $harness"
+done
 ```
 
 Each prints `replayed <n> inputs` and exits 0.

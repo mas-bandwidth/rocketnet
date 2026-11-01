@@ -1,15 +1,15 @@
 # Nightly CBMC proofs. The nightly proofs take minutes to hours. A failing
 # proof records a failed job: this workflow is a gate on the night, and a
 # red result must show as a failed run, never as a passing "not a gate"
-# note. The per-commit proofs remain in cbmc.yml.
+# note. The arithmetic leaf proofs remain in cbmc.yml.
 #
 # One job per target, run side by side: each reader directory's proof.mk
 # (make print-nightly-readers) and each of replay-near-4096's thirteen path
 # partitions plus its completeness check (make print-replay-near-partitions).
 # A red job is that target's own verdict, so a regression in one reader shows
-# while a standing HOLD elsewhere stays red. Every job's timeout is above the
-# timeouts its Makefile target can spend, so a slow proof ends on the
-# Makefile's HOLD line and never on a GitHub cancellation.
+# while a standing HOLD elsewhere stays red. Reader and replay partition jobs
+# leave margin above their targets' solver timeout budgets; the completeness
+# check is bounded by its job timeout.
 # The schedule is before fuzz-nightly.yml, so a red night is on the estate
 # when the morning starts.
 
@@ -48,8 +48,8 @@ jobs:
           echo "partitions: $partitions"
 
   # The largest reader budget is proofs-connect_token: seven harnesses at
-  # CONNECT_TOKEN_TIMEOUT 1800 s, 210 minutes (fragment_reassembly and
-  # message_read_max are three harnesses at 1800 s each).
+  # CONNECT_TOKEN_TIMEOUT 1800 s, 210 minutes. The other reader targets have
+  # smaller total solver budgets.
   reader:
     name: nightly ${{ matrix.target }}
     needs: plan

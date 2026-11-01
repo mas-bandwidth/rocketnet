@@ -84,7 +84,6 @@ static void test_loopback_transport_io_binds_and_discovers_a_port()
 
     rn_test_server_io_stop_and_close( &sa );
     rocketnet_client_transport_io_close( &cc );
-    printf( "test_loopback_transport_io_binds_and_discovers_a_port\n" );
 }
 
 static void test_loopback_transport_io_exchanges_both_ways()
@@ -157,7 +156,6 @@ static void test_loopback_transport_io_exchanges_both_ways()
 
     rn_test_server_io_stop_and_close( &server );
     rocketnet_client_transport_io_close( &client );
-    printf( "test_loopback_transport_io_exchanges_both_ways\n" );
 }
 
 // a server bound to the IPv6 wildcard is dual stack: it serves an IPv4
@@ -231,7 +229,61 @@ static void test_loopback_transport_io_dual_stack_serves_ipv4_and_ipv6()
     rn_test_server_io_stop_and_close( &server );
     rocketnet_client_transport_io_close( &client4 );
     rocketnet_client_transport_io_close( &client6 );
-    printf( "test_loopback_transport_io_dual_stack_serves_ipv4_and_ipv6\n" );
+}
+
+// a server bound to the IPv6 wildcard is dual stack, so it shares its port
+// with no IPv4 endpoint, in either order of binding, as a dual-stack socket's
+// bind fails with EADDRINUSE. An IPv6 endpoint bound to one address is not
+// dual stack and shares its port with an IPv4 endpoint. Mutation that must
+// bite: refuse only a second endpoint of the same family; the refusals below
+// go red.
+
+static void test_loopback_transport_io_dual_stack_port_is_exclusive()
+{
+    const rocketnet_transport_backend_t * backend = &rocketnet_loopback_transport;
+    rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_dev_config( &server_config );
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
+
+    rocketnet_client_transport_config_t client_config;
+    rocketnet_client_transport_default_config_current( &client_config );
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
+
+    const rocketnet_server_transport_io_config_t server_setup = { "loopback", &server_config, NULL, NULL };
+    const rocketnet_client_transport_io_config_t client_setup = { "loopback", &client_config, NULL };
+
+    rocketnet_address_t client_wildcard, client_loopback, server_dual, server_one;
+    rocketnet_unit_check( rocketnet_address_parse( &client_wildcard, "0.0.0.0:47001" ) );
+    rocketnet_unit_check( rocketnet_address_parse( &client_loopback, "127.0.0.1:47001" ) );
+    rocketnet_unit_check( rocketnet_address_parse( &server_dual, "[::]:47001" ) );
+    rocketnet_unit_check( rocketnet_address_parse( &server_one, "[::1]:47001" ) );
+
+    // an IPv4 client holds the port: a dual-stack server on it is refused
+
+    rocketnet_client_transport_io_t client = {};
+    rocketnet_server_transport_io_t server = {};
+    rocketnet_unit_check( rocketnet_client_transport_io_open( backend->client, NULL, &client_setup, &client_wildcard, &client ) );
+    rocketnet_unit_check( !rocketnet_server_transport_io_open( backend->server, NULL, &server_setup, &server_dual, &server ) );
+    rocketnet_client_transport_io_close( &client );
+
+    // the mirror order: a dual-stack server holds the port, and an IPv4 client
+    // on it, wildcard or not, is refused
+
+    client = {};
+    server = {};
+    rocketnet_unit_check( rocketnet_server_transport_io_open( backend->server, NULL, &server_setup, &server_dual, &server ) );
+    rocketnet_unit_check( !rocketnet_client_transport_io_open( backend->client, NULL, &client_setup, &client_wildcard, &client ) );
+    rocketnet_unit_check( !rocketnet_client_transport_io_open( backend->client, NULL, &client_setup, &client_loopback, &client ) );
+    rn_test_server_io_stop_and_close( &server );
+
+    // an IPv6 server bound to ::1 is not dual stack: an IPv4 client shares its port
+
+    client = {};
+    server = {};
+    rocketnet_unit_check( rocketnet_server_transport_io_open( backend->server, NULL, &server_setup, &server_one, &server ) );
+    rocketnet_unit_check( rocketnet_client_transport_io_open( backend->client, NULL, &client_setup, &client_loopback, &client ) );
+    rn_test_server_io_stop_and_close( &server );
+    rocketnet_client_transport_io_close( &client );
 }
 
 static void test_loopback_transport_io_full_queue_drops_and_counts()
@@ -299,7 +351,6 @@ static void test_loopback_transport_io_full_queue_drops_and_counts()
 
     rn_test_server_io_stop_and_close( &server );
     rocketnet_client_transport_io_close( &client );
-    printf( "test_loopback_transport_io_full_queue_drops_and_counts\n" );
 }
 
 // The allocator hook for test_loopback_transport_io_runtime_does_not_allocate: it
@@ -472,7 +523,6 @@ static void test_loopback_transport_io_runtime_does_not_allocate()
 
     rocketnet_unit_check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
     rocketnet_unit_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
-    printf( "test_loopback_transport_io_runtime_does_not_allocate\n" );
 }
 
 static void test_loopback_transport_io_destroy_frees_the_port()
@@ -525,7 +575,6 @@ static void test_loopback_transport_io_destroy_frees_the_port()
     rn_test_server_io_stop_and_close( &server2 );
     rocketnet_client_transport_io_close( &client );
     rocketnet_unit_check( rocketnet_loopback_endpoints_live( hub ) == live_before );
-    printf( "test_loopback_transport_io_destroy_frees_the_port\n" );
 }
 
 // The transport compiled into this TU includes <sodium.h>. CMakeLists.txt puts
@@ -688,7 +737,6 @@ static void test_wire_totals_staged_finish_counts_exactly()
     rocketnet_unit_check( cstats.bytes_sent == total_wire + (uint64_t) N * overhead );
 
     rn_test_server_transport_stop_and_destroy( server );
-    printf( "test_wire_totals_staged_finish_counts_exactly\n" );
 }
 
 // A zero-length datagram a batch receive hands the server transport (the
@@ -777,7 +825,6 @@ static void test_server_counts_zero_length_datagram_as_too_short()
     rocketnet_unit_check( rocketnet_counter_value( counters, ROCKETNET_COUNTER_PREFILTER_TOO_LARGE ) - large_before == 1 );
 
     rn_test_server_transport_stop_and_destroy( server );
-    printf( "test_server_counts_zero_length_datagram_as_too_short\n" );
 }
 
 // A hub at the most clients holds them all and its server. The process is
@@ -900,7 +947,6 @@ static void test_loopback_transport_io_holds_max_clients_plus_server()
     free( seen );
     free( clients );
     free( client_addresses );
-    printf( "test_loopback_transport_io_holds_max_clients_plus_server\n" );
 }
 
 static char g_loopback_refusal_log[1024];
@@ -992,7 +1038,6 @@ static void test_loopback_transport_io_refuses_past_hub_capacity()
 
     rocketnet_log_function( NULL, NULL );
     rocketnet_log_level( saved_level );
-    printf( "test_loopback_transport_io_refuses_past_hub_capacity\n" );
 }
 
 // Junk from many sources takes no per-source state: the portable path reads
@@ -1130,7 +1175,6 @@ static void test_server_connects_after_junk_from_many_sources()
 
     rn_test_client_transport_stop_and_destroy( client );
     rn_test_server_transport_stop_and_destroy( server );
-    printf( "test_server_connects_after_junk_from_many_sources\n" );
 }
 
 // The shape check runs first (rocketnet_server_packet_shape_valid): a
@@ -1346,7 +1390,6 @@ static void test_server_shape_check_first_on_the_staged_loop()
     shape_junk_expect_counters( &before, &server->counters );
 
     rn_test_server_transport_stop_and_destroy( server );
-    printf( "test_server_shape_check_first_on_the_staged_loop\n" );
 }
 
 static struct shape_junk_t shape_junk_portable;
@@ -1412,7 +1455,6 @@ static void test_server_shape_check_first_on_the_portable_loop()
     shape_junk_expect_counters( &before, &server->counters );
 
     rn_test_server_transport_stop_and_destroy( server );
-    printf( "test_server_shape_check_first_on_the_portable_loop\n" );
 }
 
 static void test_loopback_transport_server_batch_drops_packet_larger_than_stride()
@@ -1455,7 +1497,6 @@ static void test_loopback_transport_server_batch_drops_packet_larger_than_stride
     rocketnet_unit_check( memcmp( data, valid, sizeof( valid ) ) == 0 );
     rn_test_server_io_stop_and_close( &server );
     rocketnet_client_transport_io_close( &client );
-    printf( "test_loopback_transport_server_batch_drops_packet_larger_than_stride\n" );
 }
 
 // This fake starts with a known completed input queue. It tests the server's
@@ -1629,7 +1670,6 @@ static void test_loopback_queue_restarts_at_slot_zero_when_empty()
 
     rn_test_server_io_stop_and_close( &server );
     rocketnet_client_transport_io_close( &client );
-    printf( "test_loopback_queue_restarts_at_slot_zero_when_empty\n" );
 }
 
 REGISTER_UNIT_TEST( test_server_drains_completed_queue_to_budget );
@@ -1638,6 +1678,7 @@ REGISTER_UNIT_TEST( test_loopback_queue_restarts_at_slot_zero_when_empty );
 REGISTER_UNIT_TEST( test_loopback_transport_io_binds_and_discovers_a_port );
 REGISTER_UNIT_TEST( test_loopback_transport_io_exchanges_both_ways );
 REGISTER_UNIT_TEST( test_loopback_transport_io_dual_stack_serves_ipv4_and_ipv6 );
+REGISTER_UNIT_TEST( test_loopback_transport_io_dual_stack_port_is_exclusive );
 REGISTER_UNIT_TEST( test_loopback_transport_io_full_queue_drops_and_counts );
 REGISTER_UNIT_TEST( test_loopback_transport_io_runtime_does_not_allocate );
 REGISTER_UNIT_TEST( test_loopback_transport_io_destroy_frees_the_port );
@@ -1651,3 +1692,4 @@ REGISTER_UNIT_TEST( test_server_shape_check_first_on_the_portable_loop );
 REGISTER_UNIT_TEST( test_loopback_transport_server_batch_drops_packet_larger_than_stride );
 
 #include "test_unit_driver_results_checked.cpp"
+#include "test_unit_server_stop_spread.cpp"

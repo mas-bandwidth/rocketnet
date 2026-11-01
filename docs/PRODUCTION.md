@@ -18,9 +18,11 @@ Before deployment:
 2. Keep the backend signing secret on the backend; give game servers its public key.
 3. Supply your own nonzero protocol id and matching title packet filter.
 4. Register each live server's actual addresses and public key before issuing tokens.
-5. Fetch fresh tokens for clients, handle both immediate refusals and asynchronous
+5. Authenticate each player, and rate-limit token issuance per account
+   ([Keys, "Writing production tokens"](KEYS.md#writing-production-tokens)).
+6. Fetch fresh tokens for clients, handle both immediate refusals and asynchronous
    handshake outcomes, and wait for disconnect completion before reconnecting.
-6. Qualify the chosen transport, client count, workload, and host resources.
+7. Qualify the chosen transport, client count, workload, and host resources.
 
 The commands below run from the repository root in a POSIX shell. Windows
 builds add `--config Release`; use `bin\Release\` for executables and the
@@ -107,7 +109,7 @@ in this local example is reachable only from the same host.
 
 The create/start failure branch below is an excerpt, with `config`, `address`,
 and the example shutdown helper already defined. From
-[examples/backend_server.c](../examples/backend_server.c), lines 101 to 120:
+[examples/backend_server.c](../examples/backend_server.c), lines 109 to 128:
 
 ```c
     enum rocketnet_status_t status = ROCKETNET_STATUS_OK;

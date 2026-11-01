@@ -261,6 +261,172 @@ static void test_platform_socket_hygiene_dual_stack_accepts_mapped()
 #endif // #if defined( __OpenBSD__ )
 }
 
+// A stream of chaff far longer than any budget: zero-length datagrams, or
+// mapped sources on a socket that is not dual stack. Every read spends one
+// unit of the call's read budget, kept or skipped, so a call returns 0 after
+// a bounded number of reads (64 for the single-packet call, max_packets for
+// a batch) instead of reading until the source runs dry. The seam counts the
+// reads; the socket has no descriptor and nothing is opened.
+
+struct platform_socket_hygiene_chaff_t
+{
+    platform_socket_hygiene_datagram_t datagram;
+    int limit;
+    int calls;
+};
+
+static int platform_socket_hygiene_chaff_receive( void * user, void * packet_data, int max_packet_size, struct sockaddr_storage * from )
+{
+    platform_socket_hygiene_chaff_t * chaff = (platform_socket_hygiene_chaff_t *) user;
+    if ( ++chaff->calls > chaff->limit )
+        return -1;
+    struct sockaddr_in6 * in6 = (struct sockaddr_in6 *) from;
+    in6->sin6_family = AF_INET6;
+    in6->sin6_port = htons( chaff->datagram.port );
+    memcpy( &in6->sin6_addr, chaff->datagram.addr, 16 );
+    const int bytes = (int) strlen( chaff->datagram.payload );
+    rocketnet_unit_check( bytes <= max_packet_size );
+
+    memcpy( packet_data, chaff->datagram.payload, (size_t) bytes );
+    return bytes;
+}
+
+enum platform_socket_hygiene_arm_t
+{
+    PLATFORM_SOCKET_HYGIENE_SINGLE,
+    PLATFORM_SOCKET_HYGIENE_BATCH,
+    PLATFORM_SOCKET_HYGIENE_MSGX,
+    PLATFORM_SOCKET_HYGIENE_MMSG,
+};
+
+static int platform_socket_hygiene_chaff_reads( platform_socket_hygiene_arm_t arm, const platform_socket_hygiene_datagram_t & datagram, int max_packets )
+{
+    struct rocketnet_platform_socket_t socket;
+    memset( &socket, 0, sizeof( socket ) );
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    socket.handle = INVALID_SOCKET;
+#else
+    socket.handle = -1;
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+#if defined( __APPLE__ )
+    socket.msgx = arm == PLATFORM_SOCKET_HYGIENE_MSGX;
+#endif // #if defined( __APPLE__ )
+
+    platform_socket_hygiene_chaff_t chaff = { datagram, 1000000, 0 };
+    rocketnet_platform_socket_set_receive_hook( &socket, platform_socket_hygiene_chaff_receive, &chaff );
+
+    struct rocketnet_address_t from[128];
+    int packet_bytes[128];
+    static uint8_t packet_data[128 * 64];
+    rocketnet_unit_check( max_packets <= 128 );
+
+    int received = -1;
+    if ( arm == PLATFORM_SOCKET_HYGIENE_SINGLE )
+        received = rocketnet_platform_socket_receive_packet( &socket, from, packet_data, 64 );
+#if defined( __linux__ )
+    else if ( arm == PLATFORM_SOCKET_HYGIENE_MMSG )
+        received = rocketnet_platform_socket_receive_packets_mmsg( &socket, from, packet_data, 64, packet_bytes, max_packets );
+#endif // #if defined( __linux__ )
+    else
+        received = rocketnet_platform_socket_receive_packets( &socket, from, packet_data, 64, packet_bytes, max_packets );
+
+    rocketnet_platform_socket_set_receive_hook( &socket, NULL, NULL );
+
+    rocketnet_unit_check( received == 0 );
+
+    return chaff.calls;
+}
+
+static const platform_socket_hygiene_datagram_t platform_socket_hygiene_empty = { { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 }, 40001, "" };
+
+static const platform_socket_hygiene_datagram_t platform_socket_hygiene_chaff[] = { platform_socket_hygiene_empty, platform_socket_hygiene_mapped };
+
+static void platform_socket_hygiene_chaff_batch_is_bounded( platform_socket_hygiene_arm_t arm )
+{
+    const int budgets[] = { 1, 8, 128 };
+
+    for ( const platform_socket_hygiene_datagram_t & datagram : platform_socket_hygiene_chaff )
+    {
+        for ( int max_packets : budgets )
+        {
+            rocketnet_unit_check( platform_socket_hygiene_chaff_reads( arm, datagram, max_packets ) == max_packets );
+        }
+    }
+}
+
+static void test_platform_socket_hygiene_single_chaff_drain_is_bounded()
+{
+    for ( const platform_socket_hygiene_datagram_t & datagram : platform_socket_hygiene_chaff )
+    {
+        rocketnet_unit_check( platform_socket_hygiene_chaff_reads( PLATFORM_SOCKET_HYGIENE_SINGLE, datagram, 1 ) == 64 );
+    }
+}
+
+static void test_platform_socket_hygiene_batch_chaff_drain_is_bounded()
+{
+    // the portable batch: the per-packet loop on every platform but macOS
+    // (the generic pump), the per-packet arm of the msgx call on macOS
+
+    platform_socket_hygiene_chaff_batch_is_bounded( PLATFORM_SOCKET_HYGIENE_BATCH );
+}
+
+REGISTER_UNIT_TEST( test_platform_socket_hygiene_single_chaff_drain_is_bounded );
+REGISTER_UNIT_TEST( test_platform_socket_hygiene_batch_chaff_drain_is_bounded );
+
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS && !defined( __OpenBSD__ )
+
+// Every read a POSIX receive skips is counted process-wide: a zero-length
+// datagram in rocketnet_platform_receive_empties, a refused source in
+// rocketnet_platform_receive_refused_sources, one count per read.
+
+static void platform_socket_hygiene_chaff_is_counted( platform_socket_hygiene_arm_t arm, int max_packets )
+{
+    const uint64_t empties = rocketnet_platform_receive_empties();
+    const uint64_t refused = rocketnet_platform_receive_refused_sources();
+
+    const int empty_reads = platform_socket_hygiene_chaff_reads( arm, platform_socket_hygiene_empty, max_packets );
+    rocketnet_unit_check( rocketnet_platform_receive_empties() - empties == (uint64_t) empty_reads );
+    rocketnet_unit_check( rocketnet_platform_receive_refused_sources() == refused );
+
+    const int refused_reads = platform_socket_hygiene_chaff_reads( arm, platform_socket_hygiene_mapped, max_packets );
+    rocketnet_unit_check( rocketnet_platform_receive_refused_sources() - refused == (uint64_t) refused_reads );
+    rocketnet_unit_check( rocketnet_platform_receive_empties() - empties == (uint64_t) empty_reads );
+}
+
+static void test_platform_socket_hygiene_skipped_reads_are_counted()
+{
+    platform_socket_hygiene_chaff_is_counted( PLATFORM_SOCKET_HYGIENE_SINGLE, 1 );
+    platform_socket_hygiene_chaff_is_counted( PLATFORM_SOCKET_HYGIENE_BATCH, 8 );
+#if defined( __APPLE__ )
+    platform_socket_hygiene_chaff_is_counted( PLATFORM_SOCKET_HYGIENE_MSGX, 8 );
+#endif // #if defined( __APPLE__ )
+#if defined( __linux__ )
+    platform_socket_hygiene_chaff_is_counted( PLATFORM_SOCKET_HYGIENE_MMSG, 8 );
+#endif // #if defined( __linux__ )
+}
+
+REGISTER_UNIT_TEST( test_platform_socket_hygiene_skipped_reads_are_counted );
+
+#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS && !defined( __OpenBSD__ )
+
+#if defined( __APPLE__ )
+static void test_platform_socket_hygiene_msgx_chaff_drain_is_bounded()
+{
+    platform_socket_hygiene_chaff_batch_is_bounded( PLATFORM_SOCKET_HYGIENE_MSGX );
+}
+
+REGISTER_UNIT_TEST( test_platform_socket_hygiene_msgx_chaff_drain_is_bounded );
+#endif // #if defined( __APPLE__ )
+
+#if defined( __linux__ )
+static void test_platform_socket_hygiene_mmsg_chaff_drain_is_bounded()
+{
+    platform_socket_hygiene_chaff_batch_is_bounded( PLATFORM_SOCKET_HYGIENE_MMSG );
+}
+
+REGISTER_UNIT_TEST( test_platform_socket_hygiene_mmsg_chaff_drain_is_bounded );
+#endif // #if defined( __linux__ )
+
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC && ROCKETNET_DEV
 
 // A weather errno that repeats (a lasting mbuf shortage keeps returning

@@ -1067,7 +1067,7 @@ static size_t rn_client_required_memory_current( const struct rocketnet_client_c
     if ( rn_client_config_valid( &transport, &message ) != ROCKETNET_STATUS_OK )
         return 0;
 
-    const uint64_t connection_bytes = rocketnet_message_client_required_memory( &message );
+    const uint64_t connection_bytes = rocketnet_message_client_required_memory( &message, 0 );
     if ( connection_bytes == 0 )
         return 0;
 
@@ -1140,7 +1140,7 @@ static struct rocketnet_client_t * rn_client_create_current( void * context, con
         return NULL;
     }
 
-    const uint64_t connection_bytes = rocketnet_message_client_required_memory( &message );
+    const uint64_t connection_bytes = rocketnet_message_client_required_memory( &message, 0 );
     if ( connection_bytes == 0 )
     {
         if ( status )
@@ -1740,7 +1740,15 @@ int rocketnet_max_unfragmented_message_bytes( enum rocketnet_reliability_t relia
     memset( &shape, 0, sizeof( shape ) );
     shape.channel = (uint32_t) channel;
 
-    switch ( reliability )
+    // a C caller can pass any int here; the value is read as an int, never as
+    // the enum, so one outside the enumerators is refused below and not
+    // undefined behavior in this C++ translation unit
+
+    static_assert( sizeof( reliability ) == sizeof( int ), "rocketnet_reliability_t is int-sized" );
+    int value = 0;
+    memcpy( &value, &reliability, sizeof( value ) );
+
+    switch ( value )
     {
         case ROCKETNET_RELIABILITY_UNRELIABLE:
         case ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT:
@@ -1997,6 +2005,7 @@ bool rocketnet_server_served_address( const struct rocketnet_server_t * server, 
 {
     if ( !rocketnet_api_null_guard( server ) || !rocketnet_api_null_guard( address ) || address_bytes == 0 )
         return false;
+    address[0] = '\0';
 
     const char * served[2] = { server->address, server->transport.second_public_address };
 
@@ -2005,7 +2014,14 @@ bool rocketnet_server_served_address( const struct rocketnet_server_t * server, 
         struct rocketnet_address_t parsed;
         if ( served[i][0] != '\0' && rocketnet_address_parse( &parsed, served[i] ) && parsed.type == family )
         {
-            rocketnet_copy_string( address, served[i], address_bytes );
+            const size_t length = strlen( served[i] );
+            if ( length + 1 > address_bytes )
+            {
+                rocketnet_error( "served address refused: the buffer is %d bytes, the address needs %d", (int) address_bytes, (int) ( length + 1 ) );
+                return false;
+            }
+
+            memcpy( address, served[i], length + 1 );
             return true;
         }
     }
@@ -2252,7 +2268,7 @@ static size_t rn_server_required_memory_current( const struct rocketnet_server_c
         return 0;
     }
 
-    const uint64_t running_bytes = rocketnet_message_server_required_memory( &transport, &message );
+    const uint64_t running_bytes = rocketnet_message_server_required_memory( &transport, &message, 0 );
 
     // the peak over the lifecycle: create's one block as the allocator sees
     // it, plus the transport start creates for the candidate it grants; stop
@@ -2421,7 +2437,7 @@ static struct rocketnet_server_t * rn_server_create_current( void * context, con
         return NULL;
     }
 
-    const uint64_t running_bytes = rocketnet_message_server_required_memory( &transport, &message );
+    const uint64_t running_bytes = rocketnet_message_server_required_memory( &transport, &message, 0 );
     if ( running_bytes == 0 )
     {
         sodium_memzero( &transport, sizeof( transport ) );
@@ -2469,20 +2485,21 @@ static struct rocketnet_server_t * rn_server_create_current( void * context, con
     // pair for this object. The game reads the public key
     // (rocketnet_server_public_key) and registers it with its backend; start
     // refuses the published development key in a production build; destroy
-    // wipes the secret
+    // wipes the secret. Neither can fail: sodium's keypair and base
+    // multiplication return 0, and an unavailable OS random source aborts
+    // the process inside sodium after rocketnet_init's misuse handler logs it
 
-    if ( sodium_is_zero( transport.server_secret_key, sizeof( transport.server_secret_key ) )
-             ? rocketnet_generate_server_keypair( transport.server_public_key, transport.server_secret_key ) != ROCKETNET_STATUS_OK
-             : crypto_scalarmult_base( transport.server_public_key, transport.server_secret_key ) != 0 )
+    if ( sodium_is_zero( transport.server_secret_key, sizeof( transport.server_secret_key ) ) )
     {
-        sodium_memzero( &transport, sizeof( transport ) );
-
-        if ( !memory )
-            rocketnet_free( context, base );
-        if ( status )
-            *status = ROCKETNET_STATUS_CRYPTO_INIT_FAILED;
-
-        return NULL;
+        const enum rocketnet_status_t generated = rocketnet_generate_server_keypair( transport.server_public_key, transport.server_secret_key );
+        rocketnet_assert( generated == ROCKETNET_STATUS_OK );
+        (void) generated;
+    }
+    else
+    {
+        const int derived = crypto_scalarmult_base( transport.server_public_key, transport.server_secret_key );
+        rocketnet_assert( derived == 0 );
+        (void) derived;
     }
 
     struct rocketnet_server_t * server = (struct rocketnet_server_t *) base;
@@ -2603,9 +2620,12 @@ void rocketnet_server_disconnect_all_clients( struct rocketnet_server_t * server
     }
 }
 
-// proofs/tla/ServerSession.tla Stop: one call, every connected slot disconnected at
-// the transport and kicked, the bursts flushed, the transport stopped, and
-// the server no longer running on return.
+// proofs/tla/ServerSession.tla Stop and proofs/tla/ServerStopSpread.tla Stop:
+// one call, every connected slot disconnected at the transport and kicked,
+// its burst waiting in the disconnect ring, the transport STOPPING, and the
+// server no longer running on return. The bursts leave across the stop
+// steps, as much as the transport has room for each step, before its I/O
+// stops; rocketnet_server_stopped is each later step.
 
 void rocketnet_server_stop( struct rocketnet_server_t * server )
 {
@@ -2617,15 +2637,14 @@ void rocketnet_server_stop( struct rocketnet_server_t * server )
     {
         for ( int i = 0; i < server->max_clients; i++ )
         {
-            // Disconnect the transport first on the shutdown-only batch path.
-            // The message kick's regular link callback then finds a free slot.
+            // Disconnect the transport first, its burst appended to the
+            // disconnect ring. The message kick's regular link callback then
+            // finds a free slot.
             if ( rocketnet_server_transport_is_client_connected( transport, i ) )
                 rocketnet_server_transport_disconnect_client_shutdown( transport, i );
 
             rn_message_object_kick( &server->running->object, i, ROCKETNET_DISCONNECT_REASON_NONE );
         }
-
-        rocketnet_server_transport_send_packets_shutdown( transport );
     }
     else
     {
@@ -2643,6 +2662,8 @@ void rocketnet_server_stop( struct rocketnet_server_t * server )
 
 // proofs/tla/ServerSession.tla StopCompletes: a stopping server reports stopped only
 // once its retiring transport's workers have exited and it stores STOPPED.
+// While disconnect bursts wait, the transport's stopped is the next stop step
+// (proofs/tla/ServerStopSpread.tla SealOne, Flush and RequestIoStop).
 
 bool rocketnet_server_stopped( const struct rocketnet_server_t * server )
 {
@@ -3311,27 +3332,19 @@ void rocketnet_server_client_stats( const struct rocketnet_server_t * server, in
 }
 
 // ---------------------------------------------------------------------------
-// The development network simulator: a development library's calls, and a
-// unit-test build's (the test hooks switch the development posture on).
+// The development network simulator: these calls exist only in a
+// development library (ROCKETNET_DEV).
 //
 // The setting applies at once to a live connection and to a running server:
 // the call hands it to the thread that owns the simulator as a config record
 // under a tiny mutex, and that thread takes it before its next send. The
-// connection's threads do not move, and a production library refuses the
-// simulator and carries none of its memory.
+// connection's threads do not move. A production library has neither these
+// calls nor the simulator's memory.
 
 #if ROCKETNET_DEV
 
 static bool rn_network_simulator_valid( const char * who, int latency_ms, int jitter_ms, int packet_loss_percent, int duplicate_percent )
 {
-    if ( !rocketnet_public_link_simulator_development() )
-    {
-        rocketnet_api_misuse_record();
-
-        rocketnet_error( "%s network simulator refused: a production library has no network simulator", who );
-        return false;
-    }
-
     if ( latency_ms < 0 || latency_ms > 60000 || jitter_ms < 0 || jitter_ms > 60000 ||
          packet_loss_percent < 0 || packet_loss_percent > 100 || duplicate_percent < 0 || duplicate_percent > 100 )
     {

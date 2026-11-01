@@ -4,6 +4,10 @@
 # the median total_us_p99 <= 100 us on the dedicated quiet Linux runner
 # ([self-hosted, Linux, X64, rocketnet-quiet]).
 #
+# The schedule measures main and sprint/rocketnet-proof. A manual dispatch
+# measures the branch it was dispatched on, on every leg, so a fix can be
+# checked on the quiet runner before it lands.
+#
 # The macOS leg runs the same script with --report-only on the fleet's
 # Apple-silicon runner: it records the msgx per-frame latency every night
 # without gating on a machine that is not reserved quiet. The Windows leg runs
@@ -38,7 +42,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ref: [main, sprint/rocketnet-proof]
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON('["main", "sprint/rocketnet-proof"]') }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
@@ -66,7 +70,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ref: [main, sprint/rocketnet-proof]
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON('["main", "sprint/rocketnet-proof"]') }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:

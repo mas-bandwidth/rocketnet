@@ -1,41 +1,8 @@
 # rocketnet release checks (#111, serialize's release-check.yml pattern).
 #
-# WHO READS THIS, per job, because the three have different readers and
-# saying "the pull request" for all of them would be wrong.
-# version-consistency is a per-commit gate read by the pull request, same as
-# every job in ci.yml, and it is in this file rather than that one only
-# because it is about the RELEASE rather than the build, exactly as serialize
-# splits them. unreleased-wire-changes does NOT run on a pull request at all
-# -- it is a push-to-main job, for the reason given above it -- so its reader
-# is whoever watches main's runs, which today is the estate's notification
-# email, and its failure is a statement about main rather than about any one
-# PR. space-vendors-the-release is a release gate too: it runs on a v* tag
-# push and on a manual dispatch, so its reader is whoever cuts the release.
-#
-# Three failures are guarded here, and they are different failures:
-#
-#   version-consistency     the version sites in the tree disagree with each
-#                           other, or with the tag being built
-#   unreleased-wire-changes main has drifted past the newest release with
-#                           wire-affecting changes aboard and nothing says a
-#                           release is owed
-#   space-vendors-the-release
-#                           the integrating application vendors another
-#                           commit than the one being released, or vendors it
-#                           with different bytes
-#   space-builds-and-soaks-on-the-release
-#                           the integrating application, built against the
-#                           release, drops a frame, hitches, loses its server
-#                           or its bots under a bounded real-time swarm
-#
-# The second is DORMANT TODAY and says so in its own output: rocketnet has no
-# v* tags yet, so there is no newest release to compare against and the job
-# exits green having reported exactly that. It is here rather than in the
-# follow-up because the failure it catches happened in serialize -- four
-# merged PRs including a wire change, every version check green because the
-# version numbers still agreed with each other -- and the day rocketnet tags
-# its first release (v1.0.0-preview-1) is the day this needs to already exist. A dormant job that announces
-# its own dormancy is not a vacuous pass; a silent one would be.
+# Each job states its trigger and its reader above itself. This file is
+# about the release rather than the build, so it is separate from ci.yml,
+# as serialize splits them.
 
 name: Release Check
 
@@ -59,9 +26,38 @@ permissions:
 
 jobs:
 
+  # The release commit's threaded TSan run (docs/RELEASING.md). nightly.yml's
+  # `tsan (threaded transport)` is too long for the per-commit tier, so it is
+  # dispatched on the release commit before the tag; on a v* tag push this job
+  # fails unless the Actions API shows that job green for the tagged commit.
+  # Its reader is whoever cuts the release. tools/test_check_release_tsan.py
+  # drives the check with fake API answers.
+
+  tsan-qualified:
+    name: threaded tsan run on the release commit
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: [self-hosted, Linux, X64, fleet]
+    permissions:
+      actions: read
+      contents: read
+    steps:
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      - name: Find a green threaded TSan run for the tagged commit
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 tools/check_release_tsan.py
+
+  # The version sites in the tree agree with each other, and on a v* tag push
+  # with the tag. Runs on every trigger; its reader is the pull request, and
+  # on a tag push whoever cuts the release.
+
   version-consistency:
     name: version consistency
     runs-on: [self-hosted, Linux, X64, fleet]
+    # per-commit: bounded to two minutes (tools/check_ci_budget.py)
+    timeout-minutes: 2
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
@@ -143,35 +139,39 @@ jobs:
 
   # Version-site agreement cannot see the other failure mode: main drifting
   # past the newest release with wire-affecting changes aboard and nothing
-  # announcing that a release is owed. Runs on push to main only -- on a PR it
-  # would demand a version bump inside every wire-touching PR, which is not
-  # the process. The release train is main's.
+  # announcing that a release is owed. It runs on a pull request, where it
+  # judges the merge result, so the pull request that touches a wire path
+  # goes red until it carries the shipping version bump; and on a push to
+  # main, where it judges main itself.
 
   unreleased-wire-changes:
     name: unreleased wire changes
-    if: github.event_name != 'pull_request' && startsWith(github.ref, 'refs/heads/')
+    if: github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/')
     runs-on: [self-hosted, Linux, X64, fleet]
+    # per-commit: bounded to two minutes (tools/check_ci_budget.py)
+    timeout-minutes: 2
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
           fetch-depth: 0          # tags and full history: the whole job is a comparison against the newest tag
 
-      - name: Compare main against the newest release tag
+      - name: Compare HEAD against the newest release tag
         run: |
           set -euo pipefail
 
-          newest_tag=$(git tag --list 'v*' --sort=-v:refname | head -n1)
+          # versionsort.suffix=- sorts a prerelease (v1.0.0-preview-5) below
+          # its final release (v1.0.0); git's default puts it above.
+          newest_tag=$(git -c versionsort.suffix=- tag --list 'v*' --sort=-v:refname | head -n1)
           if [ -z "$newest_tag" ]; then
-            echo "DORMANT: rocketnet has no v* tags, so there is no release to have drifted from."
-            echo "This job wakes by itself the day the first release is tagged."
-            exit 0
+            echo "::error::No v* tag is visible in this checkout, so there is no release to compare against. The checkout must fetch tags."
+            exit 1
           fi
 
           total=$(git rev-list --count "$newest_tag"..HEAD)
           echo "Newest tag: $newest_tag ($total commit(s) behind HEAD)"
           if [ "$total" -eq 0 ]; then
-            echo "main is exactly at $newest_tag."
+            echo "HEAD is exactly at $newest_tag."
             exit 0
           fi
 
@@ -190,7 +190,7 @@ jobs:
             sdk/rocketnet_connect_token.h sdk/rocketnet_connect_token.cpp)
 
           if [ -z "$wire_log" ]; then
-            echo "main is $total commit(s) past $newest_tag, none of them wire-affecting. Fine."
+            echo "HEAD is $total commit(s) past $newest_tag, none of them wire-affecting."
             exit 0
           fi
 
@@ -198,7 +198,7 @@ jobs:
           {
             echo "## Unreleased wire-affecting changes"
             echo ""
-            echo "main is **$total** commit(s) past **$newest_tag**, and **$count** touch wire-affecting paths:"
+            echo "HEAD is **$total** commit(s) past **$newest_tag**, and **$count** touch wire-affecting paths:"
             echo ""
             echo '```'
             printf '%s\n' "$wire_log"
@@ -212,7 +212,7 @@ jobs:
           fi
           tag_version="$newest_tag"
           if [ "$version" = "$tag_version" ]; then
-            echo "::error::main carries $count wire-affecting commit(s) past $newest_tag and the shipping version is still $version — nothing announces that a release is owed. Bump the version and tag a release (or revert the wire change). The commit list is in the job summary."
+            echo "::error::HEAD carries $count wire-affecting commit(s) past $newest_tag and the shipping version is still $version — nothing announces that a release is owed. Bump the shipping version in sdk/rocketnet.h (docs/RELEASING.md) or revert the wire change. The commit list is in the job summary."
             exit 1
           fi
-          echo "::warning::main carries $count wire-affecting commit(s) past $newest_tag. The version is already bumped to $version — tag $version when the release is ready. The commit list is in the job summary."
+          echo "::warning::HEAD carries $count wire-affecting commit(s) past $newest_tag. The version is already bumped to $version — tag $version when the release is ready. The commit list is in the job summary."

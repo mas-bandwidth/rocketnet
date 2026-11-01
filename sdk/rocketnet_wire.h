@@ -45,6 +45,7 @@
 // standard, deliberately not implemented here, and no default magic exists.
 
 #define ROCKETNET_FILTER_EPOCH_UNKEYED          0
+#define ROCKETNET_FILTER_EPOCH_KEYED_LAST       255
 
 // the published test filter value, embedded so development works out of the
 // box at epoch 0. production titles get their own constant from the per-title

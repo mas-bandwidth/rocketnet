@@ -111,7 +111,7 @@ XDP_FRAME_SIZE := $(call deployed_literal,ROCKETNET_XDP_FRAME_SIZE,rocketnet_con
         ack-run-bound-8 ack-run-full-4096 ack-run-negative-control clean
 
 all: replay-delta-1-3 replay-far reconstruct \
-     read-write message-read xdp-free-list
+     read-write message-read xdp-free-list proofs-packet_open
 
 # The quick per-commit instance remains explicit about its reduced bound.
 replay-delta-1-3: proof_replay_advance.c
@@ -301,8 +301,19 @@ define run_reachability
 	fi
 endef
 
-.PHONY: replay-delta-1-3-reachability replay-far-reachability reconstruct-reachability \
+.PHONY: controls replay-delta-1-3-reachability replay-far-reachability reconstruct-reachability \
         read-write-reachability message-read-reachability xdp-free-list-reachability
+
+# The per-commit set runs every control beside its proof: a harness whose
+# assumptions became unsatisfiable proves anything, and only its control,
+# which must reach the code past them, can go red.
+
+CONTROLS = replay-delta-1-3-reachability replay-far-reachability reconstruct-reachability \
+           read-write-reachability message-read-reachability xdp-free-list-reachability
+
+controls: $(CONTROLS)
+
+all: controls
 
 replay-delta-1-3-reachability: proof_replay_advance.c
 	$(call run_reachability,replay-delta-1-3,$(REPLAY_UNWIND),-I$(SDK) -DREPLAY_DELTA_BOUND=4 -DREPLAY_REACHABILITY_WITNESS=1 --function harness_replay_near proof_replay_advance.c,,replay path reachability negative control)

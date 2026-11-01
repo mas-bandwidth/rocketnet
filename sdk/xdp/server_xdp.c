@@ -228,7 +228,8 @@ static __always_inline int server_xdp_ipv6_extension_step( __u8 ** cursor, __u8 
 }
 
 // The configuration, or NULL when there is none or it names no port: an
-// unconfigured program passes everything.
+// unconfigured program passes every frame except an IPv4 or IPv6 frame too
+// short to hold its IP header, which no host could deliver.
 
 static __always_inline struct rocketnet_server_xdp_config_t * server_xdp_config( void )
 {
