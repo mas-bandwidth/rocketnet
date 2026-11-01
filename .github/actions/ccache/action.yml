@@ -5,9 +5,10 @@
 # only the translation units its commit changed. ccache keys each object on
 # the compiler binary's content, the preprocessed source and the flags, so
 # Debug, Release, the sanitizers and the cross compilers share the directory
-# without sharing an object. CCACHE_BASEDIR rewrites the checkout's absolute
-# path to a relative one, so the runners on one host (each with its own work
-# directory) share hits. A runner without ccache builds uncached and says so.
+# without sharing an object. Paths stay absolute (no CCACHE_BASEDIR): tests
+# locate their corpora through __FILE__, which a relative rewrite would break,
+# so a hit needs the same work directory, which each runner keeps between
+# jobs. A runner without ccache builds uncached and says so.
 name: compiler cache
 description: Route every CMake compile in this job through the host's ccache
 runs:
@@ -26,8 +27,6 @@ runs:
         mkdir -p "$dir"
         {
           echo "CCACHE_DIR=$dir"
-          echo "CCACHE_BASEDIR=$GITHUB_WORKSPACE"
-          echo "CCACHE_NOHASHDIR=true"
           echo "CCACHE_COMPILERCHECK=content"
           echo "CCACHE_MAXSIZE=5G"
           echo "CMAKE_C_COMPILER_LAUNCHER=ccache"
