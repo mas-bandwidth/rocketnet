@@ -36,7 +36,7 @@ channel count.
 
 | Scope | Family | Removed links | Replacement | Capacity | Identity | Admission and eviction | Worst case | Status |
 |---|---|---|---|---|---|---|---|---|
-| sdk | ack received stats | receive-order doubly linked list through record `stats_prev`/`stats_next` | `stats_word` sdk/rocketnet_ack.h:122 (32-record block summaries in the received ring) | `ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE` 2048 records, 64 blocks | exact `uint64_t` packet sequence per record, written bitmap | slot is sequence mod 2048; a lap overwrites the oldest; a sequence at or below highest - 2048 is refused | 256 record or block visits per query | replaced |
+| sdk | ack received stats | receive-order doubly linked list through record `stats_prev`/`stats_next` | `stats_word` sdk/rocketnet_ack.h:119 (generation-tagged 32-sequence summaries and the older half's left suffixes in the received ring; middle and right pieces cached in the endpoint) | `ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE` 2048 records, 64 blocks | exact `uint64_t` packet sequence per record, written bitmap | slot is sequence mod 2048; a lap overwrites the oldest; a sequence at or below highest - 2048 is refused | 256 record or summary visits per receive (under 130 worst case; 3 in steady traffic inside a generation) | replaced |
 | sdk | encryption map | bucket chains and free chain through `next`, `bucket_head`, `free_head` | `free_indices` sdk/rocketnet_encryption_map.cpp:29 (dense LIFO) beside the flat probe `index` :28 | max_clients * 2 mappings | per-slot `uint64_t` generation from a map-wide counter; 0 is exhausted | refuses when no slot is free or generations are exhausted; never evicts; removal wipes secrets and pushes the slot | O(1) stack; probe and backward-shift erase O(capacity) | replaced |
 | sdk | client slots | bucket chains through `next` and `bucket_head` | `free_stack` sdk/rocketnet_client_slots.cpp:58 beside the flat `index_table` :50 | max_clients slots, 2 * max_clients index cells | `uint64_t` slot generation checked with the client id | refuses when full or on a duplicate generation; never evicts | O(1) stack; probe O(2 * max_clients) | replaced |
 | sdk | token tables | bucket chains, free chain and claim-order doubly linked list | claims: insertion-order ring `order_slot` sdk/rocketnet_token_tables.cpp with `order_ticket` and tombstones (proofs/tla/RNIndexRing.tla) beside `free_slots` and a flat index; bindings: `free_slots` and a flat index | max_clients * 8 per table (bindings, claims) | `uint64_t` insertion ticket per slot (0 unoccupied) | bindings take free, else the first expired, else the oldest ticket; claims take free or an expired oldest, else refuse; a live claim is never evicted | claims O(1) amortized select, record and release (one tombstone pass per capacity pushes); bindings full-table selection O(capacity), reached only after a valid signature | replaced |
@@ -67,8 +67,8 @@ A queue that needs insert-after, insert-at-head or interior removal in O(1)
 may link its entries by index inside one fixed, bounded array it owns: no
 pointers, no allocation, every link an index into that array. Glenn chose this
 on 2026-10-28 for the message layer's queues. Each linking site is listed by
-file, function and field; the audit fails on any link site not listed here,
-and on a row that matches no site.
+file, function and field; the audit fails on any detected link site not listed
+here, and on a row that matches no site. Its syntactic limits still apply.
 
 | File | Function | Field | Decision |
 |---|---|---|---|

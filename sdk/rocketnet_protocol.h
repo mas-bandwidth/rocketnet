@@ -10,7 +10,7 @@
 
 #include <stdint.h>
 
-// The connection protocol wire layer, per STANDARD.md. This module grows with
+// The connection protocol wire layer, per standard/TRANSPORT.md. This module grows with
 // the standard's own build order: the prefilter header, then packet layouts,
 // sealing, and the reading order.
 

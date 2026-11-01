@@ -1,0 +1,33 @@
+# The nightly watch (tools/check_nightly_dispositions.py): after the scheduled
+# nightlies finish, every red job prints its commit range (the newest earlier
+# scheduled run where that job was green, and this one) and a `git bisect
+# start` line, and is matched against tools/nightly_dispositions.txt. A red job
+# no row names (NEW-RED), or a row whose job is green or whose pull request is
+# merged or closed while the job is still red (STALE), fails the watch. Known
+# reds stay listed with the open pull request that fixes them, so a new red
+# stands out the next morning instead of hiding among them.
+
+name: nightly-watch
+
+on:
+  schedule:
+    - cron: "30 13 * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: read
+
+jobs:
+  watch:
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 15
+    steps:
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      - name: Every red nightly job has a commit range, a bisect line and an owner
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 tools/check_nightly_dispositions.py | tee -a "$GITHUB_STEP_SUMMARY"

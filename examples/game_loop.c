@@ -76,6 +76,16 @@ static void read_message( struct latency_t * l, uint32_t frame, const uint8_t * 
     l->count++;
 }
 
+// a whole decimal argument, or -1 for anything else (a sign, no digits,
+// trailing characters, more than a million), which the range check refuses
+
+static int parse_whole( const char * text )
+{
+    char * end = NULL;
+    const long parsed = strtol( text, &end, 10 );
+    return text[0] >= '0' && text[0] <= '9' && *end == '\0' && parsed <= 1000000 ? (int) parsed : -1;
+}
+
 int main( int argc, char ** argv )
 {
     int num_clients = 32, seconds = 5, wrong_order = 0;
@@ -88,11 +98,11 @@ int main( int argc, char ** argv )
         }
         else if ( strcmp( argv[i], "--clients" ) == 0 && i + 1 < argc )
         {
-            num_clients = atoi( argv[++i] );
+            num_clients = parse_whole( argv[++i] );
         }
         else if ( strcmp( argv[i], "--seconds" ) == 0 && i + 1 < argc )
         {
-            seconds = atoi( argv[++i] );
+            seconds = parse_whole( argv[++i] );
         }
         else
         {
@@ -239,7 +249,12 @@ int main( int argc, char ** argv )
         const enum rocketnet_status_t token_status = rocketnet_create_dev_connect_token( server_address, NULL, server_public_key, 30, 10, (uint64_t) i, EXAMPLE_PROTOCOL_ID, (uint64_t) time( NULL ), NULL, connect_token );
         enum rocketnet_status_t client_status = ROCKETNET_STATUS_OK;
         clients[i] = rocketnet_client_create( NULL, &client_config, &client_status );
-        if ( token_status != ROCKETNET_STATUS_OK || !clients[i] || client_status != ROCKETNET_STATUS_OK || rocketnet_client_connect( clients[i], connect_token ) != ROCKETNET_STATUS_OK )
+        if ( token_status == ROCKETNET_STATUS_OK && clients[i] && client_status == ROCKETNET_STATUS_OK )
+        {
+            client_status = rocketnet_client_connect( clients[i], connect_token );
+        }
+
+        if ( token_status != ROCKETNET_STATUS_OK || !clients[i] || client_status != ROCKETNET_STATUS_OK )
         {
             printf( "FAIL: client %d create/connect: %s\n", i, rocketnet_status_name( token_status != ROCKETNET_STATUS_OK ? token_status : client_status ) );
             for ( int j = 0; j <= i; j++ )

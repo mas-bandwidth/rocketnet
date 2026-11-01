@@ -4,7 +4,10 @@
 Each examples/*.c may include only "rocketnet.h", "dev_keys.h" (the examples'
 protocol id and packet filter), "shutdown.h" (the command-line wait for
 shutdown) and the C standard headers below, and may name only rocketnet_
-identifiers that sdk/rocketnet.h declares.
+identifiers that sdk/rocketnet.h declares. A rocketnet_client_connect call's
+status is kept in a variable, never compared where it is made, so a refused
+connect reports its own status and not the earlier create's
+(docs/GETTING-STARTED.md, "A call fails").
 Prints one OK line per source; exits 1 naming file:line for a refusal.
 """
 
@@ -27,11 +30,12 @@ ALLOWED_HEADERS = {
     "stdint.h",
     "stdbool.h",
     "inttypes.h",
+    "errno.h",
 }
 
-# examples/soak.c is a load harness, not a one-feature example: its allocator
-# telemetry takes a native lock across callback threads and, on Linux, maps its
-# arena, so it may also include these platform headers (and only it may)
+# examples that may also include platform headers, and only these. soak.c is
+# a load harness, not a one-feature example: its allocator telemetry takes a
+# native lock across callback threads and, on Linux, maps its arena
 HARNESS_HEADERS = {
     "soak.c": {"windows.h", "pthread.h", "sys/mman.h"},
     # config_env.c runs itself again with one variable set, spawned from its
@@ -41,6 +45,7 @@ HARNESS_HEADERS = {
 
 INCLUDE = re.compile(r'^\s*#\s*include\s*([<"])([^>"]+)[>"]', re.M)
 IDENTIFIER = re.compile(r"\brocketnet_[A-Za-z0-9_]+\b")
+CONNECT_COMPARED = re.compile(r"\brocketnet_client_connect\s*\([^;{}]*?\)\s*[!=]=")
 
 
 def strip_comments(text):
@@ -93,6 +98,10 @@ def main():
             if name not in declared:
                 print(f"{rel}:{line_of(cleaned, match.start())}: {name} is not declared in sdk/rocketnet.h", file=sys.stderr)
                 source_failed = True
+
+        for match in CONNECT_COMPARED.finditer(cleaned):
+            print(f"{rel}:{line_of(cleaned, match.start())}: rocketnet_client_connect's status is compared, not kept; keep it and report it", file=sys.stderr)
+            source_failed = True
 
         if source_failed:
             failed = True

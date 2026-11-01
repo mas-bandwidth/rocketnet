@@ -22,9 +22,10 @@ extern "C"
 #endif // #ifdef __cplusplus
 
 /// Config revision sizes (docs/ABI-EVOLUTION.md): the end of a revision's last
-/// field rounded up to that revision's alignment. The public configs have one
-/// revision each, the whole struct; a config_bytes the library does not know
-/// is refused.
+/// field rounded up to that revision's alignment. A public config_bytes below
+/// the current size is accepted when it ends where one of the struct's fields
+/// ends: that prefix is read and the fields past it take their defaults. A
+/// size inside a field, or below the config_bytes field, is refused.
 #define ROCKETNET_CONFIG_REVISION_BYTES( end, align ) ( ( ( end ) + ( align ) - 1 ) / ( align ) * ( align ) )
 #define ROCKETNET_CLIENT_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_client_config_t, reliable_message_timeout_ms ) + sizeof( int ), sizeof( void * ) )
 #define ROCKETNET_SERVER_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_config_t, reliable_message_timeout_ms ) + sizeof( int ), sizeof( void * ) )
@@ -255,13 +256,12 @@ void rocketnet_free( void * context, void * p );
 // The transport field: an ORDERED CANDIDATE LIST, comma separated, tried left
 // to right at create -- first grant wins, and a list exhausted by REFUSAL
 // fails loudly. "auto" (the default, also the empty string) expands to
-// this platform's recommended order for the endpoint: linux server
-// xdp,gso,portable; macOS msgx,portable; everywhere else portable
-// (clients: portable everywhere, plus msgx on macOS). A one-element list
-// is a pin: that transport or loud failure, never a silent fall. A name in
-// the known transport set (xdp, gso, msgx, portable) but absent on this
-// platform -- or not applicable to this endpoint, like xdp for a client --
-// is IGNORED with one soft log line, so one fleet-wide config line deploys
+// this platform's recommended order for the endpoint, ranked by
+// sdk/rocketnet_drivers.inc (the table in sdk/rocketnet_config.h). A
+// one-element list is a pin: that transport or loud failure, never a silent
+// fall. A name in the known transport set (rocketnet_drivers.inc) but absent
+// on this platform -- or not applicable to this endpoint, like xdp for a
+// client -- is IGNORED with one soft log line, so one fleet-wide config line deploys
 // unmodified to heterogeneous boxes; a list whose EVERY name is ignored
 // names no transport for this endpoint at all and falls to the endpoint's own
 // auto order, loudly, rather than bricking an endpoint the line was not
@@ -273,7 +273,7 @@ void rocketnet_free( void * context, void * p );
 // compiled against. A struct only grows at its end; a known size reads the
 // caller's prefix and defaults the rest, and an unknown size is refused with a
 // log line and nothing is read or written. The unsized entry points read and
-// write exactly revision 1
+// write the whole struct of this header
 
 // -----------------------------------------
 //                   client transport
@@ -944,8 +944,19 @@ void rocketnet_server_transport_destroy( struct rocketnet_server_transport_t * s
 /** @brief Request an orderly server stop.
  * @param server_transport [in,out] Created server transport; NULL is a counted no-op.
  * @return Nothing. Poll stopped until true, then destroy.
+ * @details The transport is STOPPING on return. The disconnect bursts still
+ * waiting leave first, as many each step as the transport has room for: this
+ * call is the first step, and each later stopped, state or update call while
+ * any is waiting is the next. The transport's I/O is told to stop once the
+ * last of them is flushed and the transport reports every flushed send
+ * finished (proofs/tla/ServerStopSpread.tla).
  */
 void rocketnet_server_transport_stop( struct rocketnet_server_transport_t * server_transport );
+/** @brief True once a stop has completed: every waiting disconnect burst
+ * handed to the transport and its workers exited.
+ * @details While disconnect bursts wait, each call is one bounded stop step
+ * (the transport's room in seals and one flush); it never waits.
+ */
 bool rocketnet_server_transport_stopped( const struct rocketnet_server_transport_t * server_transport );
 
 // a NULL server_transport is a counted no-op that returns 0
@@ -1450,7 +1461,11 @@ void rocketnet_server_transport_set_create_send_capacity_for_test( int packets )
 /** @brief Returns the transport's payload send capacity. */
 int rocketnet_server_transport_send_capacity( const struct rocketnet_server_transport_t * server_transport );
 #endif // #if ROCKETNET_DEV
-/** @brief Returns the payload frames that may still start this update. */
+/** @brief Returns the frames that may still start this update without a
+ * refusal for room: the payload ring's free slots on a buffered transport, the
+ * transport's reported send room on a staged one (unbounded when the
+ * transport does not report it). The send staging is server-wide.
+ */
 int rocketnet_server_transport_send_capacity_available( const struct rocketnet_server_transport_t * server_transport );
 
 // -----------------------------------------
@@ -1644,13 +1659,15 @@ uint64_t rocketnet_message_print_connection_sizing( const struct rocketnet_messa
 
 // ---- client ----
 
-// the bytes a caller block for a client object needs; 0 for a refused config
+// the bytes a caller block for a client object needs at the send budget create
+// is given; 0 for a refused config or budget
 /** @brief Measure caller-provided memory for one message client.
  * @param[in] message_config Message settings, or NULL for defaults.
- * @return Required bytes for one client object, or 0 for a refused config or arithmetic overflow.
- * @details This query is allocation-free. The create call requires at least this many bytes in caller-provided memory aligned to 64 bytes; the caller retains ownership of that region.
+ * @param[in] send_kbps The send budget the create is given: 0 takes client_send_kbps from the message config, a positive value overrides it, as rocketnet_message_client_create reads it.
+ * @return Required bytes for one client object, or 0 for a refused config, a budget above ROCKETNET_SEND_BUDGET_MAX_KBPS or arithmetic overflow.
+ * @details This query is allocation-free. A create with the same message config and send_kbps requires at least this many bytes in caller-provided memory aligned to 64 bytes, and refuses a shorter block before its transport opens; the caller retains ownership of that region.
  */
-uint64_t rocketnet_message_client_required_memory( const struct rocketnet_message_config_t * message_config );
+uint64_t rocketnet_message_client_required_memory( const struct rocketnet_message_config_t * message_config, uint32_t send_kbps );
 
 // a NULL connect_token is a counted no-op that returns NULL. NULL configs are the defaults.
 // create reads no clock: the connect attempt starts at the first update, at whatever time the game passes it, and every time comes in through update
@@ -1693,7 +1710,9 @@ struct rocketnet_message_client_t * rocketnet_message_client_create_sized( void 
                                                                            const struct rocketnet_message_config_t * message_config, size_t message_config_bytes,
                                                                            void * memory, uint64_t memory_bytes, uint32_t send_kbps );
 
-// a NULL client is a counted no-op
+// a NULL client is a counted no-op. Stop the client's transport and poll it
+// stopped first; a destroy before then logs an error, counts a misuse, and
+// stops the transport itself, waiting for it, before it frees everything
 void rocketnet_message_client_destroy( struct rocketnet_message_client_t * client );
 
 // the client's transport, for its stats and state; never its batches. a NULL client is a counted no-op that returns NULL
@@ -1763,14 +1782,18 @@ const struct rocketnet_counters_t * rocketnet_message_client_counters( struct ro
 
 // ---- server ----
 
-// the bytes a caller block for a server object needs, at the transport config's max_clients; 0 for a refused config
+// the bytes a caller block for a server object needs, at the transport config's
+// max_clients and the per-client send budget create is given; 0 for a refused
+// config or budget
 /** @brief Measure caller-provided memory for a message server and its client slots.
  * @param[in] transport_config Server transport settings, or NULL for defaults.
  * @param[in] message_config Message settings, or NULL for defaults.
- * @return Required bytes for the server object and configured client slots, or 0 for refused settings or arithmetic overflow.
- * @details This query is allocation-free. Create requires at least this many bytes in caller-provided memory aligned to 64 bytes; the caller retains ownership of that region.
+ * @param[in] per_client_send_kbps The per-client send budget the create is given: 0 takes server_send_kbps from the message config, a positive value overrides it, as rocketnet_message_server_create reads it.
+ * @return Required bytes for the server object and configured client slots, or 0 for refused settings, a budget above ROCKETNET_SEND_BUDGET_MAX_KBPS or arithmetic overflow.
+ * @details This query is allocation-free. A create with the same configs and per_client_send_kbps requires at least this many bytes in caller-provided memory aligned to 64 bytes, and refuses a shorter block before its transport opens; the caller retains ownership of that region.
  */
-uint64_t rocketnet_message_server_required_memory( const struct rocketnet_server_transport_config_t * transport_config, const struct rocketnet_message_config_t * message_config );
+uint64_t rocketnet_message_server_required_memory( const struct rocketnet_server_transport_config_t * transport_config, const struct rocketnet_message_config_t * message_config,
+                                                   uint32_t per_client_send_kbps );
 
 // a NULL address is a counted no-op that returns NULL. NULL configs are the defaults
 struct rocketnet_message_server_t * rocketnet_message_server_create( void * context, const char * address,
@@ -1812,7 +1835,9 @@ struct rocketnet_message_server_t * rocketnet_message_server_create_sized( void 
                                                                            const struct rocketnet_message_config_t * message_config, size_t message_config_bytes,
                                                                            void * memory, uint64_t memory_bytes, uint32_t per_client_send_kbps );
 
-// a NULL server is a counted no-op
+// a NULL server is a counted no-op. Stop the server's transport and poll it
+// stopped first; a destroy before then logs an error, counts a misuse, and
+// stops the transport itself, waiting for it, before it frees everything
 void rocketnet_message_server_destroy( struct rocketnet_message_server_t * server );
 
 // the server's transport, for its port, stats and stop; never its batches. a NULL server is a counted no-op that returns NULL

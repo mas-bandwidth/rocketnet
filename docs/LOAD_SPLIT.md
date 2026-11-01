@@ -4,7 +4,7 @@
 one machine and disjoint client shards on other machines. The established
 same-process `load` executable remains the correctness gate; its pass receipt
 does not qualify dedicated-server performance. This split harness currently
-supports at most `ROCKETNET_MAX_CLIENTS` (1000). Use the 10, 100, 250, 500,
+supports at most the build's `ROCKETNET_MAX_CLIENTS` (1000 by default). Use the 10, 100, 250, 500,
 1000 ladder with the SDK-default profile. A higher cap needs separate SDK
 configuration and validation work.
 
@@ -16,12 +16,38 @@ settings are the transport selectors and the server's AF_XDP core layout,
 are refused. Choose an explicit aggregate limit in kbps below the measured
 server and client host link capacity; the program does not invent a link rate.
 
+Build the harness from the repository root on each host:
+
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DROCKETNET_DEV=ON -DROCKETNET_BUILD_TOOLS=ON
+cmake --build build --target load_split --parallel 4
+```
+
+Commands below use POSIX shell syntax and `./bin/load_split` from the
+repository root. With Visual Studio, pass `--config Release` to the build,
+run `bin\Release\load_split.exe`, and set environment variables in the
+[Windows shell form](WINDOWS.md#pinning-a-transport).
+
+The basic example pins the server and clients to `portable` so the merger's
+expected transport names match. Set these before both planning and running:
+
+```sh
+# On the server host:
+export ROCKETNET_SERVER_TRANSPORT=portable
+# On every client host:
+export ROCKETNET_CLIENT_TRANSPORT=portable
+```
+
+For native-server qualification, change the server pin and the merger's
+`--server-transport` together. Do not infer the actual client transport from
+the host OS; retain each role's reported transport.
+
 Before allocating endpoints, run the role-specific, exact-binary public
 memory planners on the intended hosts:
 
 ```text
-load_split plan-server 1000
-load_split plan-client-shard 1000 250
+./bin/load_split plan-server 1000
+./bin/load_split plan-client-shard 1000 250
 ```
 
 The `split_plan:` receipt reports `scope=lifecycle_allocator_peak`: one server
@@ -53,7 +79,7 @@ override the SDK's advertised address. Replace `192.0.2.10` in this example
 with the server's actual client-reachable IPv4 address:
 
 ```text
-load_split server 1000 60 0123456789abcdef 192.0.2.10:40000 192.0.2.10 80000
+./bin/load_split server 1000 60 0123456789abcdef 192.0.2.10:40000 192.0.2.10 80000
 ```
 
 Do not pass `0.0.0.0:40000` as the first argument while publishing a concrete
@@ -67,7 +93,7 @@ same run ID, duration, total and aggregate limit, using nonoverlapping global
 client-index ranges. For example, the first of four 250-client shards is:
 
 ```text
-load_split client-shard 1000 60 0123456789abcdef 0 250 192.0.2.10:40000 <key-from-ready> 80000
+./bin/load_split client-shard 1000 60 0123456789abcdef 0 250 192.0.2.10:40000 <key-from-ready> 80000
 ```
 
 The server readiness lease is 60 seconds until the first connection. From
@@ -259,7 +285,9 @@ protocol and receipt correctness; it is not a dedicated-server performance
 result. Use paired uninstrumented releases for performance comparison and
 keep any diagnostic build as a separate attribution run.
 
-The merger always exits nonzero unless the entire run qualifies. It also
+For the default and `full` modes, the merger exits nonzero unless the entire
+run qualifies. The `proof` mode below judges delivery separately and can exit
+zero while reporting a failed timing verdict. It also
 prints one `split_merge_json:` line with `schema=split_merge_v2` as JSON. A
 fully validated run whose only failure is the unchanged server API p99
 100-microsecond budget reports `overall_verdict=FAIL`,
@@ -283,18 +311,20 @@ to every client shard, run the server pinned to one transport, and pass
 
 ```text
 ROCKETNET_SERVER_TRANSPORT=gso \
-load_split server 1000 60 0123456789abcdef 192.0.2.10:40000 192.0.2.10 600000 proof
-load_split client-shard 1000 60 0123456789abcdef 0 250 192.0.2.10:40000 <key-from-ready> 600000 proof
+./bin/load_split server 1000 60 0123456789abcdef 192.0.2.10:40000 192.0.2.10 600000 proof
+./bin/load_split client-shard 1000 60 0123456789abcdef 0 250 192.0.2.10:40000 <key-from-ready> 600000 proof
 ```
 
 The offer rate is full load's: every client updates at 10 Hz and offers once
 per update, and the server offers once per client every 100 ms
 (`rate_target_hz=10 load=proof payload_bytes=proof` in the receipts). The
 server itself ticks at 100 Hz, as in the default mode, with the clients'
-offer slots spread over five ticks: at 10 Hz the server socket's receive
-buffer (`ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE`, the SDK default) overflows
-between updates, since 1000 clients at 256 kbps are 32 MB/s inbound. Each
-offer, in each direction, is two messages: a 1200-byte small message in one
+offer slots spread over five ticks. This reduces bursts between socket
+drains: 1000 clients at 256 kbps offer 32 MB/s inbound. Receive-buffer requests
+and grants differ by transport and host; GSO requests 1,000,000 bytes per
+socket, while portable and io_uring use client-count sizing. Inspect the
+startup grants as described in [Receive buffer sizing](MEMORY.md#receive-buffer-sizing).
+Each offer, in each direction, is two messages: a 1200-byte small message in one
 of the eight reliability modes and a 2000-byte fragmented message in one of
 the five reliable modes, each rotating by offer from the client's index.
 That is 3200 payload bytes per offer, an offered 256 kbps per client per
@@ -380,17 +410,21 @@ address, the port and the public key the shards need:
 ```text
 # on the server bench
 ROCKETNET_SERVER_TRANSPORT=gso \
-  load_split server 1000 60 0123456789abcdef 192.0.2.10:40000 192.0.2.10 600000 proof
+  ./bin/load_split server 1000 60 0123456789abcdef 192.0.2.10:40000 192.0.2.10 600000 proof
 
-# on each of the two client benches, two shards each
-load_split client-shard 1000 60 0123456789abcdef 0 250 192.0.2.10:40000 <key-from-ready> 600000 proof
-load_split client-shard 1000 60 0123456789abcdef 250 250 192.0.2.10:40000 <key-from-ready> 600000 proof
-load_split client-shard 1000 60 0123456789abcdef 500 250 192.0.2.10:40000 <key-from-ready> 600000 proof
-load_split client-shard 1000 60 0123456789abcdef 750 250 192.0.2.10:40000 <key-from-ready> 600000 proof
+# On the client benches, keep ROCKETNET_CLIENT_TRANSPORT=portable.
+# Launch all four shards concurrently in separate terminals or managed jobs:
+# two shards on each client bench, never these four commands sequentially.
+./bin/load_split client-shard 1000 60 0123456789abcdef 0 250 192.0.2.10:40000 <key-from-ready> 600000 proof
+./bin/load_split client-shard 1000 60 0123456789abcdef 250 250 192.0.2.10:40000 <key-from-ready> 600000 proof
+./bin/load_split client-shard 1000 60 0123456789abcdef 500 250 192.0.2.10:40000 <key-from-ready> 600000 proof
+./bin/load_split client-shard 1000 60 0123456789abcdef 750 250 192.0.2.10:40000 <key-from-ready> 600000 proof
 ```
 
 The aggregate cap is the operator's argument: 1000 clients at 256 kbps is
-256 Mbit/s each way before packet overhead, under a 1 GbE path. The four
+256 Mbit/s each way before packet overhead. The example's 600000 kbps cap
+requires a path and every participating host with measured capacity above it;
+do not infer available capacity from a nominal 1 GbE link alone. The four
 shards carry disjoint client index ranges, two shards on each client bench.
 
 Keep the five logs unmodified (`server.log`, `shard0.log` ... `shard3.log`),

@@ -93,7 +93,10 @@ struct rocketnet_server_transport_io_operations_t
     // in these callbacks. Refuse/drop or retain work for a later worker pass.
     // start returns NULL with the id ROCKETNET_TRANSPORT_PACKET_UNREACHABLE when
     // the transport has no link-layer destination for the address (the
-    // transport counts SEND_NO_LINK_ADDRESS); any other NULL is a full ring.
+    // transport counts SEND_NO_LINK_ADDRESS). Any other NULL is a full staging
+    // when send_room reports no room, else a refusal of that one frame (an
+    // address the socket cannot carry), which the transport counts in its
+    // send_failures.
     uint8_t * ( *start_packet )( void *, const rocketnet_address_t *, uint64_t * );
     void ( *finish_packet )( void *, uint64_t, uint8_t *, int );
     void ( *abort_packet )( void *, uint64_t, uint8_t * );
@@ -139,6 +142,25 @@ struct rocketnet_server_transport_io_operations_t
     uint64_t ( *send_failures )( void * transport );
 
     void ( *send_batch_shutdown )( void *, const rocketnet_platform_send_t *, int );
+
+    // optional; main thread only. The frames the transport accepts before
+    // its next flush without a refusal for room: start_packet on the staged
+    // path, or the frames send_batch takes without dropping one on the
+    // buffered path. A frame the transport still holds from an earlier flush
+    // is not room. Producers on other threads only lower it, so with none
+    // running it is exact; a transport without it is treated as unbounded
+    // (proofs/tla/ServerStopSpread.tla Room).
+    int ( *send_room )( void * transport );
+
+    // optional; main thread only, never waits. True once every frame the
+    // transport was handed has finished: nothing staged, published, queued
+    // for a worker or waiting for its send to complete. A lock it cannot take
+    // at once reads as not idle; it may retry its own deferred publish, as
+    // stopped may service completions. Stop tells the I/O to stop only once
+    // this is true, so no flushed send is cut off. A transport without it is
+    // idle as soon as its flush returns (proofs/tla/ServerStopSpread.tla
+    // RequestIoStop).
+    bool ( *send_idle )( void * transport );
 };
 
 // the start_packet id of a refusal for want of a link-layer destination

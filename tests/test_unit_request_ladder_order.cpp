@@ -6,8 +6,8 @@
 // standard/TRANSPORT.md t12 rules 1 to 6 and t17 rule 4: the connection
 // request ladder and the half-open refresh.
 //
-// The refresh: a request from an address holding a half-open mapping is
-// answered with the stored challenge whatever its salt, and only a request
+// The refresh: a request for the mapping's token from an address holding a
+// half-open mapping is answered with the stored challenge whatever its salt, and only a request
 // whose connection salt matches the mapping's refreshes the half-open idle
 // deadline (sdk/rocketnet_server_protocol.cpp, the mapping branch of
 // rocketnet_server_protocol_process_connection_request).
@@ -158,11 +158,12 @@ static void test_request_ladder_wrong_salt_does_not_refresh_half_open()
     const struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( test.server.encryption_map, index );
     check( mapping->control->last_receive_time == 1000.0 );
 
-    // another salt from the same address: the stored challenge goes back, the idle clock stays
+    // the same token with another salt from the same address: the stored
+    // challenge goes back, the idle clock stays
 
     uint8_t other_request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
-    request_ladder_build_request( other_request, request_ladder_other_salt );
-    memcpy( other_request + ROCKETNET_PREFILTER_BYTES, request + ROCKETNET_PREFILTER_BYTES, ROCKETNET_COOKIE_FIELD_BYTES );
+    memcpy( other_request, request, sizeof( other_request ) );
+    memcpy( other_request + ROCKETNET_PREFILTER_BYTES + ROCKETNET_COOKIE_FIELD_BYTES, request_ladder_other_salt, ROCKETNET_CONNECTION_SALT_BYTES );
 
     const uint64_t resent_before = test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_CHALLENGE_RESENT];
     check( request_ladder_process( &test, other_request, ROCKETNET_TEST_CREATE_TS, 1003.0, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );

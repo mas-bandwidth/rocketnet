@@ -109,16 +109,14 @@ keyed value, which the sender computes from a secret and its own packet alone.*
 **The unkeyed filter cannot resist a targeted attacker, and is not asked to.** Nothing
 in it is secret: an attacker who observes one packet learns the constant and can
 reproduce it forever. So the only threat it addresses is *unaimed* traffic: internet
-background noise, scanners, and floods of random bytes at the port. Against that it is
-decisive. A 32-bit constant admits one packet in 4.3 billion, and the type and size
-checks that accompany it cost nothing; even a 10 Gbps flood of minimum-size frames —
-about 14.9 million packets per second — puts one packet every five minutes in front of a
-check that rejects it in a handful of instructions. **The drop is silent**: no error, no
-response, no timing signal, so a flood tool receives nothing to iterate against. *That
-last clause is true of the unkeyed form only. A keyed receiver rejects a dead epoch on a
-comparison and spends a MAC on a live one, which is measurable from outside and tells a
-patient prober which generations are live -- the cost of making verification cheap, and
-worth naming rather than leaving to be discovered.*
+background noise, scanners, and random bytes at the port. For independently uniform
+random header bytes, a 32-bit constant matches with probability 1 in 2^32. That is an
+input-distribution estimate, not a rate limit or a bound on the cost of receiving and
+rejecting packets. The accompanying type and size checks also consume work. **The drop
+is silent**: it sends no error or response. This gives a sender no direct response to
+time, but does not establish the absence of observable timing or resource side channels.
+A keyed receiver rejects a dead epoch on a comparison and spends a MAC on a live one;
+that difference in work is part of the keyed design's security considerations.
 
 [RN-1 t5 Prefilter header](TRANSPORT.md#t5)
 **The constant for the embedded test title of this standard, used with the published
@@ -364,7 +362,9 @@ is that they cannot both be on the same server.*
 fresh salt and ephemeral keypair for each attempt. The server chooses a fresh session
 nonce and ephemeral keypair when it creates a mapping. A repeated request for an
 existing mapping gets the stored challenge; it does not recreate the mapping or reset
-its sending sequence.
+its sending sequence. Only a request for another token, under another salt, that passes
+every check including the signature replaces a half-open mapping, and the replacement
+draws a fresh nonce and keypair like any new mapping.
 
 [RN-1 t7 Key schedule](TRANSPORT.md#t7)
 **Fresh randomness is a probabilistic safeguard, not proof that a collision is
@@ -759,10 +759,13 @@ carrying a passing filter value and a zero type byte, making the server a packet
 reflector for garbage and spending a hash and a system call on every piece of it.
 Everything below it is expensive — the used-token lookup hashes 576 bytes, and the three
 asymmetric operations follow — so nothing below may run for an address that has not
-answered. * **A server should bound the post-cookie handshake work it performs in one
-update: at most 16 connection requests whose cookie validated, per server, per update by
-default.** This check sits after the cookie validates and before the used-token lookup
-and the signature verify, so a request past the budget spends no asymmetric work. A
+answered. * **A server should bound the handshake work it performs in one update: at
+most 16 connection requests reaching the signature verify, per server, per update by
+default.** This check sits after the cheap rungs (the used-token lookup, the
+failed-signature budget, the claim and the two capacities) and immediately before the
+signature verify, so a request past the budget spends no asymmetric work, and a request
+the cheap rungs refuse spends no budget: a source past its failed-signature budget,
+refused at no cost to itself, cannot keep the budget full and starve honest requests. A
 refused request sees no answer, and the server increments
 `CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED`; the client sends its request again at
 its send rate, so a burst larger than the budget is spread across updates rather than
@@ -816,6 +819,18 @@ are generated at the send rate for as long as the client is connected, so the an
 repeats anyway. Silence is reserved for invalid traffic. When adding any new exchange,
 this invariant is part of its design: the response must be repeatable, and the state
 that repeats it must live somewhere.
+
+[RN-1 t12 Handshake: server](TRANSPORT.md#t12)
+**A new token replaces a stale half-open mapping; nothing less does.** An attacker on
+the path can capture a client's request and, within the cookie's life, replay it from
+the client's own address after that client's session has ended. The replay plants a
+half-open mapping, and if the stored challenge answered every later request from that
+address, the client's reconnect with a fresh token would get a challenge it cannot open
+until the handshake deadline removed the mapping. So a request for another token under
+another salt is treated as a new attempt and goes down the whole ladder. It replaces the
+mapping only once its signature has verified and its token is bound to no address, so a
+forged request cannot evict a handshake in flight, and neither can the replay of a token
+that has already connected. It pays the handshake work budget like any other verify.
 
 [RN-1 t12 Handshake: server](TRANSPORT.md#t12)
 **Half-open state, and the two deadlines that bound it.** A handshake that is started
@@ -1448,15 +1463,13 @@ rise legible.
 ## t19. Security considerations
 
 [RN-1 t19 Security considerations](TRANSPORT.md#t19)
-**The deliberate cost this design carries: rejecting a request that reaches the
-signature check costs an Ed25519 verify plus a seal-open, on the order of a hundred
-microseconds — roughly a hundred times a symmetric check.** That cost is the price of
-servers that hold no shared secret, and the reason it is safe to pay is that it is
-reachable only from an address that has proven it can receive: a request without a valid
-cookie is refused after one keyed hash. The prefilter, the used-token history and
-per-source rate limiting are all real and all specified above, but none of them binds a
-spoofing attacker, and this document says so where each is described. The cookie is the
-one that does.
+**Asymmetric work follows address validation.** A request that reaches the signature
+check costs an Ed25519 verification; only a successful verification proceeds to opening
+the sealed private block. Those costs depend on the implementation and hardware, not a
+fixed microsecond bound in this standard. A valid cookie demonstrates return
+reachability before either operation, so a spoofed source without a cookie cannot
+trigger them. The cookie does not authenticate the client or remove the need for the
+handshake work budget and token checks.
 
 [RN-1 t19 Security considerations](TRANSPORT.md#t19)
 **A sealed box proves nothing about its sender.** Repeated here because it is the one
@@ -1465,12 +1478,15 @@ implementation that treats a successful open as authenticity lets any party mint
 for that server. Verify, then open.
 
 [RN-1 t19 Security considerations](TRANSPORT.md#t19)
-**Session traffic has forward secrecy; the handshake does not, and that is the right
-split.** Recovering a token, a server's X25519 secret, or even the backend's signing key
-at some later date does not decrypt recorded game traffic, because the session keys also
-require an ephemeral secret that existed only for the duration of the connection and was
-never transmitted. What such a compromise still yields is the handshake packets — a
-cookie and a client index — which carry nothing worth recovering.
+**Session traffic has forward secrecy; the handshake does not.** Later recovery of a
+token or long-term key alone does not decrypt recorded session traffic: its keys also
+depend on the ephemeral X25519 exchange, whose secrets are erased after derivation.
+That guarantee assumes the ephemeral and session secrets were not retained or
+compromised. The earlier exchange has a different exposure: the server's long-term
+X25519 secret can open a recorded token's private block, including client identity,
+user data and handshake key material. Applications cannot treat those fields as
+forward-secret. The backend signing secret authorizes new tokens; it is not itself
+a decryption key for old sessions.
 
 [RN-1 t19 Security considerations](TRANSPORT.md#t19)
 *The exposure this closes is wider than it first appears.* The token keys are generated
@@ -1484,17 +1500,15 @@ across two handshake packets, two scalar multiplications per side, and **nothing
 per game packet**.
 
 [RN-1 t19 Security considerations](TRANSPORT.md#t19)
-**Connection-request replay cannot bind a token to the attacker's address.** An on-path
-observer can capture a connection request and replay it from its own address; it cannot
-complete the handshake, because the challenge returns sealed under a key it does not
-hold. The used-token history records a token only when a response opens under the
-handshake key, and the handshake key is derived from the token's sealed keys, so the
-replaying address never reaches the record: its mapping holds no slot and dies at the
-handshake deadline, while the legitimate client's own request, arriving before or after
-the replay, is answered and its response binds the token to the client's address. The
-replay costs the server one mapping for one handshake deadline, and an on-path attacker
-who wants the client kept out must drop the client's packets instead, which is no attack
-this layer can stop.
+**A replayed request can delay a client without completing its handshake.** An observer
+with the request but not the token's private keys cannot answer the sealed challenge.
+After address validation and signature verification, however, the request can hold a
+temporary token claim and half-open mapping. A legitimate request from another address
+is refused while that claim is live. The claim ends when the mapping is removed or its
+deadline expires, and a client can retry within its token timeout. Only an accepted
+response creates the used-token address binding and a live client slot. This separates
+the bounded request-claim denial of service from an authentication break; it does not
+promise that every replay leaves the legitimate attempt undelayed.
 
 [RN-1 t19 Security considerations](TRANSPORT.md#t19)
 **No response may be larger than the packet that provoked it.** This is a normative
@@ -1524,8 +1538,9 @@ of a volumetric flood, the cookie already defeats a spoofed one more cheaply, an
 attacker with real addresses needs real connect tokens to get past the bar at all.
 
 [RN-1 t19 Security considerations](TRANSPORT.md#t19)
-**This layer handles:** traffic that is not this title's, at line rate, for a byte
-comparison. Spoofed source addresses, for one keyed hash and no allocated state. Clients
+**This layer rejects:** traffic with the wrong title filter using a fixed-size
+comparison; this is not a measured line-rate guarantee. Spoofed source addresses
+without a valid cookie cannot reach asymmetric handshake work or allocate a mapping. Clients
 the matchmaker never authorized, by a signature they cannot produce. Zombie clients that
 never answer, which never reach a slot. Amplification, structurally, since no response
 may exceed the packet that provoked it. Tampering with any packet or any token field, by
@@ -1550,8 +1565,9 @@ history — where a server knows only an address. Rate limiting by identity is a
 that works; rate limiting by address is one an attacker routes around. So the real
 denial-of-service posture of a deployment lives in how its backend issues tokens, not in
 how its servers parse packets. This protocol's job is to make sure that anyone the
-backend did not send is rejected as cheaply as possible, and that being rejected is
-never more expensive for the server than for the attacker.
+backend did not send is rejected before avoidable expensive work. Address validation
+and fixed budgets limit that work; they do not establish a universal inequality between
+the attacker's cost and the server's cost.
 
 [RN-1 t19 Security considerations](TRANSPORT.md#t19)
 **It is also not a new responsibility.** A backend already decides whether a player owns
@@ -1824,7 +1840,7 @@ run under attack; the same principle applies to itself.
 ## m1. Scope, terminology and relation to RN-1
 
 [RN-2 m1 Scope, terminology and relation to RN-1](MESSAGES.md#m1)
-The preconditions in are the facts about the connection layer that the message layer's
+The preconditions are the facts about the connection layer that the message layer's
 correctness rests on. They are stated as requirements on the connection layer, in RN-2,
 because RN-2 is the party that relies on them, and an RN-1 implementation that carries
 only opaque payloads need not keep the stronger ones. The replay window bound is the
@@ -1926,8 +1942,9 @@ later packet. Resend delay follows the measured round trip, with a fixed additiv
 margin, an optional configured floor and no exponential backoff, because a game
 connection has a bounded lifetime: backing off would make the last seconds of a lossy
 connection slower than the first, while a steady rate converges as soon as the path
-recovers. The send budget is a rate in time, not a rate per update, so an application
-that updates at any rate gets the same wire behaviour.
+recovers. The send budget is a rate in elapsed time, not a rate per update. Update
+frequency still affects when eligible work is sent, and the finite bucket depth caps
+what accumulates between updates.
 
 <a id="m10"></a>
 ## m10. Channels and priorities

@@ -110,10 +110,12 @@ environment variables (`ROCKETNET_SERVER_PACKET_FILTER`,
 
 ## Installing and embedding the SDK
 
-Build and install both production libraries without examples, tests or tools:
+Build and install both production libraries without examples, tests, tools,
+or the separate development libraries:
 
     cmake -S . -B build-sdk -DCMAKE_BUILD_TYPE=Release -DROCKETNET_DEV=OFF \
-      -DROCKETNET_BUILD_TESTS=OFF -DROCKETNET_BUILD_EXAMPLES=OFF -DROCKETNET_BUILD_TOOLS=OFF
+      -DROCKETNET_BUILD_TESTS=OFF -DROCKETNET_BUILD_EXAMPLES=OFF -DROCKETNET_BUILD_TOOLS=OFF \
+      -DROCKETNET_BUILD_DEV_LIBRARIES=OFF
     cmake --build build-sdk --parallel
     cmake --install build-sdk --prefix /your/sdk/prefix
 
@@ -123,7 +125,7 @@ build and the install. The Visual Studio generator is multi-config: it ignores
 fails with `file INSTALL cannot find ".../build-sdk/Release/rocketnet.lib"`. In
 PowerShell or cmd.exe:
 
-    cmake -S . -B build-sdk -A x64 -DROCKETNET_DEV=OFF -DROCKETNET_BUILD_TESTS=OFF -DROCKETNET_BUILD_EXAMPLES=OFF -DROCKETNET_BUILD_TOOLS=OFF
+    cmake -S . -B build-sdk -A x64 -DROCKETNET_DEV=OFF -DROCKETNET_BUILD_TESTS=OFF -DROCKETNET_BUILD_EXAMPLES=OFF -DROCKETNET_BUILD_TOOLS=OFF -DROCKETNET_BUILD_DEV_LIBRARIES=OFF
     cmake --build build-sdk --config Release --parallel 4
     cmake --install build-sdk --config Release --prefix C:\your\sdk\prefix
 
@@ -301,8 +303,10 @@ libraries:
 The shared library then carries no `liburing`, `libbpf` or `libxdp` link
 (`readelf -d` shows no such `NEEDED` entry), a transport list naming `xdp`
 is refused at server start with `ROCKETNET_STATUS_TRANSPORT_NOT_BUILT` and
-a pin of an unavailable `io_uring` cannot start, and the installed CMake package requires none of the
-three: `find_package(RocketNet)`
+an unavailable `io_uring` name is skipped. A list containing only that skipped
+name uses `auto` with a warning, so check `rocketnet_server_transport_name`
+after start when a specific transport matters. The installed CMake package
+requires none of the three: `find_package(RocketNet)`
 succeeds on a machine without their development headers, and a game links
 `RocketNet::rocketnet` or `RocketNet::rocketnet_shared` as usual. CI builds
 exactly this configuration on Linux and runs a C client against both

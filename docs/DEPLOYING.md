@@ -34,9 +34,10 @@ everywhere; a list whose every name is skipped falls to that endpoint's own auto
 order, loudly, rather than bricking an endpoint the value was not addressing.
 An explicit server pin of `portable` selects only portable in either build.
 Unknown names refuse loudly at create. The granted transport is reported by
-the transport name query on each client and server, and the startup log line. Queue-count bounds are per transport, refused loudly and never
-clamped: the xdp transport takes any `num_xdp_queues` from 1, the gso transport refuses
-past its 32-queue geometry. The GSO transport still probes UDP_SEGMENT and UDP_GRO at
+the transport name query on each client and server, and the startup log line. Queue-count bounds are per transport, refused and never
+clamped: the public range is 1–1024 (zero selects a transport default),
+while gso and io_uring accept at most 32. XDP also checks its memory and host
+geometry before starting. The GSO transport still probes UDP_SEGMENT and UDP_GRO at
 create and degrades to plain sendmmsg/recvmmsg batching where a kernel lacks them —
 that degradation is internal to the transport, below the ladder; likewise the Darwin
 batch pump's live-refusal pause. Select the portable server in either
@@ -65,11 +66,13 @@ send buffers are recycled only after completion, and stop cancels and drains
 outstanding operations. IPv6 binds accept both address families. Windows clients independently select `iocp` or `portable`; a server pin does
 not change the client selection.
 
-IOCP always runs one completion worker and one send worker; `num_xdp_queues`
-does not apply to it.
-There are 128 posted receives per worker, 4096 receive staging slots per worker
-buffer, and 2048 send frames across all workers (the staging and send frames
-scale with `ROCKETNET_MAX_CLIENTS`; see [Maximum clients](MEMORY.md#maximum-clients)). These are resource bounds,
+The public IOCP adapter ignores `num_xdp_queues` and always starts one
+completion worker and one transmit worker. The completion worker owns the
+single socket's receive completions. At the default `ROCKETNET_MAX_CLIENTS`
+there are 128 posted receives, 4096 receive staging slots per worker buffer,
+and 2048 shared send frames. Its three command banks hold references to that
+frame pool; they do not multiply it. Staging and send capacities scale with
+`ROCKETNET_MAX_CLIENTS`; see [Maximum clients](MEMORY.md#maximum-clients). These are resource bounds,
 not timing or packet-rate requirements. A send frame still owned by the OS is
 unavailable to the next fill, even after an application flush.
 
@@ -78,17 +81,17 @@ builds try portable, iocp, then rio. Windows CI runs both configurations, plus
 completion-lifetime, allocation-failure and shutdown tests with IOCP selected.
 Compilation and loopback correctness do not establish NIC
 line-rate performance; that requires measurements on suitable Windows hardware.
-The current implementation shares one UDP socket between completion workers.
-Its receive-queue contention must be measured before choosing whether Windows
-needs RSS-sharded sockets or a different native backend for the line-rate tier.
+The current implementation uses one UDP socket. Its behavior under the
+intended workload must be measured before considering RSS-sharded sockets or
+another backend for higher throughput.
 
 ## Deploying the XDP transport: provision, then verify-and-bind
 
-The library never mutates machine state. `rocketnet_server_start( server )`
-with the xdp transport is verify-and-bind only: a non-mutating pre-flight checks
+The library does not perform host provisioning. `rocketnet_server_start( server )`
+with the xdp transport is verify-and-bind: a non-mutating pre-flight checks
 that the machine is provisioned and refuses by name — each unmet condition logs
 the knob, the wanted value, and the script that sets it — and the library's own
-acts stay per-socket (its BPF program built, loaded and attached, AF_XDP binds,
+acts are the runtime resources (its embedded BPF program loaded and attached, AF_XDP binds,
 the memlock rlimit). Provisioning uses `scripts/rocketnet-provision`, an operator
 step; no application using XDP reconstructs it. The
 script's header carries the authoritative
@@ -173,7 +176,8 @@ setting is changed. Installed CMake packages retain their selected provider.
 
 ### Ubuntu 22.04 build compatibility
 
-Use the stock package command above and the ordinary CMake build. Configure
+Use the [Linux dependency instructions](BUILDING.md#linux), omitting
+`libxdp-dev` on Ubuntu 22.04, and the ordinary CMake build. Configure
 must report `XDP: using legacy AF_XDP APIs from libbpf (Ubuntu 22.04)`;
 `XDP off` does not qualify an XDP build. The default build includes the embedded
 BPF object, static/shared libraries, examples and XDP test executables. Run

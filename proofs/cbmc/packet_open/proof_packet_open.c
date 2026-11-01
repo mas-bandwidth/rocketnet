@@ -26,7 +26,19 @@
 
 #define thread_local
 
+#include <stdbool.h>
+#include <stdint.h>
 #include <stdlib.h>
+
+/*
+    rocketnet_ack.h is C++ (templates, default arguments). The readers proved
+    here do not use it; rocketnet_protocol.cpp calls one function from it, the
+    ack block builder, which no harness below reaches. The guard is taken and
+    that one declaration stands in, so the C front end parses the readers.
+*/
+#define ROCKETNET_SDK_ROCKETNET_ACK_H
+struct rocketnet_replay_protection_t;
+int rocketnet_ack_block_build( uint8_t * output, int capacity, const struct rocketnet_replay_protection_t * replay );
 
 #include "rocketnet_protocol.cpp"
 

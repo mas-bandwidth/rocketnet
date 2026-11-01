@@ -11,7 +11,8 @@ The harness checks properties that also appear in the TLA+ models:
 - reliable messages arrive exactly once and ordered streams arrive in order;
 - unreliable messages arrive at most once;
 - stale packets from an earlier connection cannot enter a reused slot;
-- acknowledgements name authenticated opened packets;
+- an acknowledgement names a packet the acknowledged endpoint itself issued,
+  and names it once;
 - buffers, queues, reassembly slots and receipt rings remain within their
   configured bounds;
 - an endpoint (the server or a client) that can make fair progress does not remain wedged.
@@ -52,7 +53,7 @@ so a seed that fails on one OS replays on the others. The reference is
     ./bin/dst --seeds 1-50
     PASS seeds=1-50 runs=50 trace=510908e5051b7f68
 
-measured equal, Release, at executable source 968673ea (current main c456b6fc
+measured equal, Release, at executable source 968673ea (then-current main c456b6fc
 merged into the nightly carry) on all three OSes:
 
     Linux   (x64, gcc)     PASS seeds=1-50 runs=50 trace=510908e5051b7f68
@@ -70,9 +71,10 @@ three equal PASS lines.
 `.github/workflows/nightly-dst.yml` runs every night (and by
 `workflow_dispatch`) on the fleet's Linux, macOS and Windows runners, for each
 ref in `ROCKETNET_NIGHTLY_REFS`, with `fail-fast: false`. Each leg builds
-Release `dst` and `test`, runs the fifteen `test_dst_` unit cases by `--run`,
+Release `dst` and `test`, runs the `test_dst_` unit cases by `--run`,
 runs `--seeds 1-50` and fails unless its PASS line carries the reference trace,
-then runs one named short step per fault schedule (`clock-back`, `seq-gap`,
+requires every check to pass over the fixed range `--seeds 1-2050`, then runs
+one named short step per fault schedule (`clock-back`, `seq-gap`,
 `seq-wrap-31`, `seq-wrap-32`, `burst` and `dup-storm`, each over seeds 1-50)
 printing a `PASS schedule=<name> seeds=1-50 fired=<count>` line; a schedule
 that fires zero times fails its step. Each leg then sweeps a longer range
@@ -88,7 +90,7 @@ line or a trace mismatch fails the leg; the log holds the replay line.
 The Linux and macOS sweep lengths were refreshed in Release at executable
 source 968673ea: Linux 10950 seeds PASS in 1442.42 s and macOS 13950 seeds
 PASS in 1153.10 s. Windows (x64, MSVC, Release) was run at executable source
-809ad504 (current main 6fa04f88 merged into the same carry), holding the
+809ad504 (then-current main 6fa04f88 merged into the same carry), holding the
 Windows host exclusively: the build had 0 warnings, the fifteen cases passed,
 `--seeds 1-50` printed `trace=510908e5051b7f68` in 10.90 s, and 5950 seeds
 passed in three chunks with no FAIL line, 1273.25 s in all (0.21 s/seed):
@@ -97,8 +99,8 @@ passed in three chunks with no FAIL line, 1273.25 s in all (0.21 s/seed):
     PASS seeds=2051-4050 runs=2000 trace=a89d7fe691fe9216  421.72 s
     PASS seeds=4051-6000 runs=1950 trace=b9551ab88eec7cbd  418.88 s
 
-Each leg's `timeout-minutes: 50` is about
-twice the sweep plus the build.
+Each leg's `timeout-minutes: 50` covers the sweep, the fixed range 1-2050
+and the build with room to spare.
 
 ## Fault kinds
 
@@ -140,10 +142,12 @@ schedule; a failure prints its seed and the replay command, which carries
   `CONNECTION_REQUEST_COOKIE_EXPIRED` only on a run where a rewound clock
   was actually observed; on any other run it stays unexplained.
 - `seq-gap`: draws a side (the client's sends or the server's), a client, a
-  step and a gap of 1025 to 8192. At the first step from there on where the
-  client holds a session on both ends, that side's next session send sequence
-  jumps by the gap, past the 1024-packet replay history, so the receiver sees
-  its highest opened sequence rise by more than 1024 at once.
+  step and a gap of `ROCKETNET_HISTORY_PACKETS + 1` to
+  `2 * ROCKETNET_HISTORY_PACKETS` (4097 to 8192 by default). At the first step
+  from there on where the client holds a session on both ends, that side's
+  next session send sequence jumps by the gap, past the whole replay history,
+  so the receiver sees its highest opened sequence rise by more than
+  `ROCKETNET_HISTORY_PACKETS` at once.
 - `seq-wrap-31` and `seq-wrap-32`: draw nothing. Every session starts 256
   below 2^31 or 2^32 through `ROCKETNET_DEV_SESSION_SEQUENCE_START`
   (`sdk/rocketnet_test_seams.h`), which the library reads once per process

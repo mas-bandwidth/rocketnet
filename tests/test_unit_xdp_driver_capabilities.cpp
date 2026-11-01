@@ -234,6 +234,33 @@ static void test_xdp_transport_preflight_refuses_any_attached_mode()
     check( rocketnet_xdp_attached_any( &attached ) );
 }
 
+#if ROCKETNET_DEV
+// The frames each queue's userspace receive dropped, by reason, reach the
+// transport's ROCKETNET_COUNTER_XDP_RECEIVE_FRAME_DROPPED through the builtin dispatch the
+// counter read calls, once each queue's worker publishes them: two synthetic
+// queues, no socket, no worker (sdk/rocketnet_server_socket_linux.cpp)
+bool rocketnet_server_transport_io_receive_frames_dropped( const struct rocketnet_server_transport_io_operations_t * operations, void * transport,
+                                                           uint64_t * dropped );
+typedef bool rocketnet_server_socket_test_frames_dropped_t( const struct rocketnet_server_transport_io_operations_t * operations, void * transport,
+                                                            uint64_t * dropped );
+bool rocketnet_server_socket_test_receive_dropped( rocketnet_server_socket_test_frames_dropped_t * dispatch,
+                                                   const struct rocketnet_server_transport_io_operations_t * xdp );
+
+static void test_xdp_transport_receive_frames_dropped_counted()
+{
+    const rocketnet_transport_definition_t * xdp = rocketnet_transport_definition( ROCKETNET_TRANSPORT_XDP );
+    check( rocketnet_server_socket_test_receive_dropped( rocketnet_server_transport_io_receive_frames_dropped, xdp->backend->server ) );
+
+    // no other transport answers the dispatch
+
+    const rocketnet_transport_definition_t * gso = rocketnet_transport_definition( ROCKETNET_TRANSPORT_GSO );
+    uint64_t dropped = 0;
+    check( !rocketnet_server_transport_io_receive_frames_dropped( gso->backend->server, NULL, &dropped ) );
+}
+
+REGISTER_UNIT_TEST( test_xdp_transport_receive_frames_dropped_counted );
+#endif // #if ROCKETNET_DEV
+
 REGISTER_UNIT_TEST( test_xdp_transport_prefilter_counters_transport_reports_them );
 REGISTER_UNIT_TEST( test_xdp_transport_socket_config_requests_zero_copy_at_bind );
 REGISTER_UNIT_TEST( test_xdp_transport_umem_config_sizes_fill_and_completion_rings );

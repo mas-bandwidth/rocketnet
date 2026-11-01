@@ -1,7 +1,10 @@
 # RocketNet development notes
 
-RocketNet is a low-level client/server UDP transport and message library for up
-to 1,000 connected players. The public surface is the C API in
+RocketNet is a low-level client/server UDP transport and message library.
+The default build holds up to 1,000 connected clients; that ceiling is not a
+performance qualification. Larger builds have separate resource and staging
+limits; see [Memory and capacity](MEMORY.md#qualification-and-scale).
+The public surface is the C API in
 `sdk/rocketnet.h`; [AGENTS.md](AGENTS.md) is the integration guide and
 [STANDARD.md](STANDARD.md) points to the normative wire documents.
 A default build is a development build (`ROCKETNET_DEV` is 1); before any
@@ -14,8 +17,9 @@ state or run game simulation. Protocol packets are byte-aligned little-endian
 layouts with no schema or bit-packing dependency.
 
 The public client and server objects own connection, security, message and
-transport state. Frame work has configured bounds and does not wait for network
-delivery; client update can briefly wait for a shared I/O lock. Create, connect,
+transport state. Frame work has configured budgets and does not wait for network
+delivery; budgets are not a measured time bound, and client update can briefly
+wait for a shared I/O lock. Create, connect,
 start, and synchronous destroy have lifecycle costs outside that frame-time
 claim. See [lifecycle](USAGE.md#connection-lifecycle). All regular
 memory uses the caller allocator, including documented runtime allocation;
@@ -49,9 +53,12 @@ connection derives fresh session keys. Authenticated packet headers are
 associated data, sequence nonces are little-endian, and replay checks happen
 before packet contents are admitted. Secret lifetimes end with explicit wipe.
 
-Development helpers use published development keys only when the application
-requests the development config. Production server start requires supplied
-keys. Never weaken the production handshake to make an example convenient.
+Development token helpers use published development keys. Production servers
+require the backend's public signing key, a protocol id and a title packet
+filter. A server generates its own keypair at create unless the application
+supplies a secret key; the backend needs the resulting public key to mint a
+token for that server. See [Keys](KEYS.md) for ownership and rotation. Never
+weaken the production handshake to make an example convenient.
 
 ## Code rules
 
@@ -75,12 +82,24 @@ keys. Never weaken the production handshake to make an example convenient.
 ## Verification
 
 Use the smallest gate that exercises a change, then the required platform and
-ABI checks for its scope. Unit cases use no real time or sockets unless the
-subject is a transport boundary. Functional cases use deterministic caller
-time and explicit transport pins. TLA+ models state bounded protocol and
+ABI checks for its scope. Development unit cases use fake platform boundaries;
+real socket and wall-clock behavior belongs in the functional suite. See
+[test scaffolding](TEST-SCAFFOLDING.md) for the production-build exceptions.
+Functional cases exercise real transports and use explicit pins where needed.
+TLA+ models state bounded protocol and
 handoff invariants; `proofs/tla/RUNS.tsv` is their execution inventory.
 
 Privileged XDP verification runs only through the documented Linux VM and bench
 procedure. Long soak, large load, multi-host throughput and profiler campaigns
 have separate qualification. [TESTING.md](TESTING.md) indexes recorded runs and
 remaining gaps; earlier-head evidence is not a current-build pass.
+
+## Roadmap
+
+Planned work lives in `docs/roadmap.sexp`; `ROADMAP.md` is generated from it.
+A pull request edits only `docs/roadmap.sexp` and never edits or regenerates
+`ROADMAP.md`. On a pull request the roadmap workflow runs `make roadmap-check`
+(the file parses and every id is unique); on each push to main that changes
+the sexp it runs `make roadmap` and commits `ROADMAP.md`. Keep exactly one
+blank line between items, and remove an item by deleting its lines only, so
+pull requests that remove neighboring items merge without conflict.

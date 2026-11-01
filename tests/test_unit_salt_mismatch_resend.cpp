@@ -3,11 +3,12 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// STANDARD.md, "Processing a connection request packet": a request from an
-// address that already holds an encryption mapping is answered with the
-// mapping's stored challenge, byte-identical, whatever salt the request
-// carries. The mapping is created once and replaced never, so the challenge
-// it stored is the only one this address can ever see while it lives.
+// standard/TRANSPORT.md t12 rule 3: a request from an address that already
+// holds a half-open encryption mapping, carrying the mapping's salt or the
+// mapping's token, is answered with the mapping's stored challenge,
+// byte-identical. A request with another salt and another token is a new
+// attempt: it replaces the half-open mapping only once it passes every
+// check, its signature verified and its token bound to no address.
 
 #include "test_unit_registry.h"
 
@@ -155,12 +156,13 @@ static void test_salt_mismatch_resends_stored_challenge()
     check( response_bytes == stored_bytes );
     check( memcmp( response, stored, (size_t) stored_bytes ) == 0 );
 
-    // a request from the same address with another salt gets the same bytes:
-    // the mapping's stored challenge, not a new one and not silence
+    // a request from the same address for the same token with another salt
+    // gets the same bytes: the mapping's stored challenge, not a new one and
+    // not silence
 
     uint8_t other_request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
-    salt_mismatch_build_request( other_request, salt_mismatch_alternate_salt );
-    memcpy( other_request + ROCKETNET_PREFILTER_BYTES, request + ROCKETNET_PREFILTER_BYTES, ROCKETNET_COOKIE_FIELD_BYTES );
+    memcpy( other_request, request, sizeof( other_request ) );
+    memcpy( other_request + ROCKETNET_PREFILTER_BYTES + ROCKETNET_COOKIE_FIELD_BYTES, salt_mismatch_alternate_salt, ROCKETNET_CONNECTION_SALT_BYTES );
 
     const uint64_t resent_before = test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_CHALLENGE_RESENT];
     check( salt_mismatch_process( &test, other_request, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
@@ -182,3 +184,159 @@ static void test_salt_mismatch_resends_stored_challenge()
 }
 
 REGISTER_UNIT_TEST( test_salt_mismatch_resends_stored_challenge );
+
+// ---- a new token replaces a stale half-open mapping -------------------------
+
+// a request for a token of its own (create offset picks the token), with
+// the given salt and no cookie; forged flips one signature byte
+
+static void salt_mismatch_build_token_request( uint8_t * request, const uint8_t * salt, uint64_t create_offset, bool forged )
+{
+    struct rocketnet_signed_connect_data_t signed_fields;
+    struct rocketnet_connect_token_private_t private_fields;
+
+    memset( &signed_fields, 0, sizeof( signed_fields ) );
+    signed_fields.version = ROCKETNET_WIRE_VERSION;
+    signed_fields.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
+    signed_fields.create_timestamp = ROCKETNET_TEST_CREATE_TS - create_offset;
+    signed_fields.expire_timestamp = ROCKETNET_TEST_EXPIRE_TS;
+    signed_fields.timeout_seconds = ROCKETNET_TEST_TIMEOUT;
+    signed_fields.address_flags = ROCKETNET_ADDRESS_FLAG_IPV4;
+
+    const uint8_t server_address[6] = { 203, 0, 113, 10, 0x40, 0x9c };
+    memcpy( signed_fields.ipv4_address, server_address, 6 );
+    memcpy( signed_fields.server_public_key, rocketnet_test_server_public_key, 32 );
+
+    memset( &private_fields, 0, sizeof( private_fields ) );
+    private_fields.client_id = ROCKETNET_TEST_CLIENT_ID;
+    private_fields.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
+    private_fields.expire_timestamp = ROCKETNET_TEST_EXPIRE_TS;
+    memcpy( private_fields.client_to_server_key, rocketnet_test_token_c2s_key, 32 );
+    memcpy( private_fields.server_to_client_key, rocketnet_test_token_s2c_key, 32 );
+
+    uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
+    check( rocketnet_write_connect_token( &signed_fields, &private_fields, rocketnet_test_backend_secret_key, token_data ) );
+
+    struct rocketnet_connect_token_t token;
+    rocketnet_read_connect_token( &token, token_data );
+
+    const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
+    rocketnet_write_connection_request_packet( request, tag, NULL, salt,
+                                               rocketnet_test_client_eph_public,
+                                               token.signed_connect_data, token.signature );
+
+    if ( forged )
+        request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES - 1] ^= 1;
+}
+
+// the cookie exchange for this request, then the request with its cookie
+static int salt_mismatch_process_with_cookie( struct salt_mismatch_server_t * test, uint8_t * request,
+                                              uint8_t * response, int * response_bytes )
+{
+    if ( salt_mismatch_process( test, request, response, response_bytes ) != ROCKETNET_SERVER_PROCESS_SEND_COOKIE )
+        return -1;
+
+    memcpy( request + ROCKETNET_PREFILTER_BYTES,
+            response + ROCKETNET_PREFILTER_BYTES + ROCKETNET_CONNECTION_SALT_BYTES,
+            ROCKETNET_COOKIE_FIELD_BYTES );
+    *response_bytes = 0;
+    return salt_mismatch_process( test, request, response, response_bytes );
+}
+
+static const uint8_t salt_mismatch_new_salt[ROCKETNET_CONNECTION_SALT_BYTES] = {
+    0x53, 0x41, 0x4c, 0x54, 0x30, 0x30, 0x30, 0x33
+};
+
+static void test_new_token_replaces_stale_half_open_mapping()
+{
+    struct salt_mismatch_server_t test;
+    salt_mismatch_server_setup( &test );
+
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+
+    // the stale half-open mapping on the victim's address: a replayed request
+    // for an old token
+
+    uint8_t stale_request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    salt_mismatch_build_token_request( stale_request, rocketnet_test_salt, 1, false );
+    check( salt_mismatch_process_with_cookie( &test, stale_request, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
+
+    uint8_t stale[ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES];
+    memcpy( stale, response, sizeof( stale ) );
+
+    uint8_t stale_token[ROCKETNET_TOKEN_IDENTIFIER_BYTES];
+    {
+        const int index = rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address );
+        check( index != -1 );
+        memcpy( stale_token, rocketnet_encryption_map_entry( test.server.encryption_map, index )->token_identifier, sizeof( stale_token ) );
+    }
+
+    // a forged request for another token, with a valid cookie: refused, and
+    // the half-open mapping it would replace is untouched
+
+    uint8_t forged[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    salt_mismatch_build_token_request( forged, salt_mismatch_alternate_salt, 2, true );
+    check( salt_mismatch_process_with_cookie( &test, forged, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    check( response_bytes == 0 );
+    {
+        const int index = rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address );
+        check( index != -1 );
+        check( memcmp( rocketnet_encryption_map_entry( test.server.encryption_map, index )->challenge_packet, stale, sizeof( stale ) ) == 0 );
+    }
+
+    // a token already bound to this address (a session that connected
+    // before): refused, the mapping untouched
+
+    uint8_t bound_request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    salt_mismatch_build_token_request( bound_request, salt_mismatch_alternate_salt, 3, false );
+    {
+        uint8_t bound_token[ROCKETNET_TOKEN_IDENTIFIER_BYTES];
+        rocketnet_connect_token_identifier( bound_token, bound_request + ROCKETNET_PREFILTER_BYTES + ROCKETNET_COOKIE_FIELD_BYTES +
+                                                             ROCKETNET_CONNECTION_SALT_BYTES + ROCKETNET_KEY_BYTES );
+        rocketnet_used_token_history_record( test.server.used_token_history, bound_token, &test.client_address,
+                                             ROCKETNET_TEST_EXPIRE_TS, ROCKETNET_TEST_CREATE_TS );
+    }
+    const uint64_t used_before = test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED];
+    check( salt_mismatch_process_with_cookie( &test, bound_request, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED] == used_before + 1 );
+    {
+        const int index = rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address );
+        check( index != -1 );
+        check( memcmp( rocketnet_encryption_map_entry( test.server.encryption_map, index )->challenge_packet, stale, sizeof( stale ) ) == 0 );
+    }
+
+    // the victim reconnects with a new token and a new salt: it is not
+    // answered with the stale challenge but goes through the cookie exchange
+    // and gets a fresh challenge from a mapping that replaced the stale one
+
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    salt_mismatch_build_token_request( request, salt_mismatch_new_salt, 4, false );
+    check( salt_mismatch_process( &test, request, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
+
+    memcpy( request + ROCKETNET_PREFILTER_BYTES,
+            response + ROCKETNET_PREFILTER_BYTES + ROCKETNET_CONNECTION_SALT_BYTES,
+            ROCKETNET_COOKIE_FIELD_BYTES );
+    response_bytes = 0;
+    check( salt_mismatch_process( &test, request, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
+    check( response_bytes == ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES );
+    check( memcmp( response, stale, sizeof( stale ) ) != 0 );
+
+    check( rocketnet_encryption_map_num_mappings( test.server.encryption_map ) == 1 );
+    const int index = rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address );
+    check( index != -1 );
+    const struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( test.server.encryption_map, index );
+    check( memcmp( mapping->connection_salt, salt_mismatch_new_salt, ROCKETNET_CONNECTION_SALT_BYTES ) == 0 );
+    check( memcmp( mapping->challenge_packet, response, ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES ) == 0 );
+
+    // the replaced mapping's claim left with it: another address may now
+    // claim the stale token
+
+    struct rocketnet_address_t other;
+    check( rocketnet_address_parse( &other, "198.51.100.8:56789" ) );
+    check( rocketnet_used_token_history_claim_check( test.server.used_token_history, stale_token, &other, 1000.0 ) );
+
+    salt_mismatch_server_teardown( &test );
+}
+
+REGISTER_UNIT_TEST( test_new_token_replaces_stale_half_open_mapping );

@@ -16,12 +16,23 @@ provides the local commands and prerequisites.
 | --- | --- |
 | [CI](../.github/workflows/ci.yml) | Linux, macOS and Windows builds; unit and functional suites; live transport cases; integration examples; package and ABI checks; sanitizer and fuzz smoke runs; conformance and platform checks |
 | [Threaded TSan](../.github/workflows/nightly.yml) | Unit and functional suites with ThreadSanitizer; required on the release commit before tagging |
-| [Static analysis](../.github/workflows/static.yml) | GCC analyzer, clang-tidy and cppcheck findings for the checked source |
-| [TLC records](../.github/workflows/tlc.yml) | Model inputs match the recorded required-case outcomes; see the [case inventory](../proofs/tla/CASES.tsv) and [run ledger](../proofs/tla/RUNS.tsv) |
+| [Static analysis](../.github/workflows/static.yml) | Reported GCC analyzer, clang-tidy and cppcheck findings; see the [GCC evidence limit](#static-analysis-evidence-limit) below |
+| [TLC records](../.github/workflows/tlc.yml) | Nightly: every stale case is run with TLC and reaches its declared result, and the committed records match the required-case outcomes; see the [case inventory](../proofs/tla/CASES.tsv) and [run ledger](../proofs/tla/RUNS.tsv) |
 | [CBMC](../.github/workflows/cbmc.yml) | The bounded arithmetic properties and assumptions in the [proof harnesses](../proofs/cbmc/) |
 | [Documentation](../.github/workflows/docs.yml) | Links, compiled examples, tutorial excerpts and generated API reference |
 | [Release checks](../.github/workflows/release-check.yml) | Version consistency and declaration of unreleased wire changes |
 | [MemorySanitizer](../.github/workflows/msan.yml) | Instrumented portable unit-suite results; this workflow remains advisory under the release policy |
+
+### Static-analysis evidence limit
+
+The current GCC wrapper (`tools/run_static.py`) does not fail on every analyzer
+invocation failure. It collects `warning` diagnostics with `-Wanalyzer-*`
+options, while the default warnings-as-errors build can emit them as `error`
+diagnostics with `-Werror=analyzer-*`; it also does not check the compiler's exit
+status. A green GCC job alone therefore does not establish a completed, clean
+analysis. Check the analyzer invocations, exit statuses and diagnostics before
+crediting that result. The required workflow remains required; this limitation
+is not a waiver or a claim that the wrapper has been repaired.
 
 ## Recorded results
 
@@ -30,12 +41,13 @@ passed all 48 applicable checks at `f6f396d9748762fadbec81e24e93515a5659a8e2`
 before merging. The main [CI run](https://github.com/mas-bandwidth/rocketnet/actions/runs/40964376451)
 includes the platform, sanitizer, functional and fuzz smoke results.
 
-The current TLA ledger contains **433 required cases with PASS results** and
+The current TLA ledger contains **639 required cases with PASS results** and
 **16 non-required bench cases that exhausted their declared time budget**.
 The model-record check verifies current inputs. A timeout is not a completed
 proof; the [model guide](../proofs/tla/README.md) explains those boundaries.
 
-[Standard witnesses](WITNESSES.tsv) map each requirement to its evidence.
+[Standard witnesses](WITNESSES.tsv) map recorded requirements to their evidence;
+the inventory is partial, and rows marked `none` remain evidence gaps.
 The [witness review](audits/WITNESS-REVIEW-20261029.md) distinguishes executable
 unit tests, model checks, source review and unsupported modes. A source review
 is not an executed timing test, and an unsupported mode is not an implemented

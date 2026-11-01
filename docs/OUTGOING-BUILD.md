@@ -56,8 +56,9 @@ message layer: it does not change copies internal to individual transports.
 
 `test_unreliable_small_messages_pack_in_place` checks both directions, exact
 message delivery, final-frame pointers, and MTU bounds. For 32 messages of
-1, 4 and 64 bytes, it expects 1, 1 and 2 packets. The unmodified sender fails
-because it sends 32 packets. Unit tests additionally count message payload
+1, 4 and 64 bytes, it expects 1, 1 and 2 packets. This distinguishes aggregation
+from the earlier one-message-per-packet sender, which sends 32 packets.
+Unit tests additionally count message payload
 copies, exercise short finish/abort, receipt boundaries, packet budgets,
 interleaved server destinations and stopping with open builds.
 

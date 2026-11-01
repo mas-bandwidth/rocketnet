@@ -919,6 +919,182 @@ static void test_xdp_transport_gateway_netlink_skips_other_requests()
     check( memcmp( gateway, gateway_ipv4, 4 ) == 0 );
 }
 
+// ---------------------------------------------------------------------------
+// whole dumps over a fake kernel: the socket calls go through a table, the
+// replies are a script of datagrams read in order across dumps, and nothing
+// opens a socket
+
+struct fake_netlink_t
+{
+    std::vector<netlink_datagram_t> script;
+    size_t next = 0;
+    int sockets = 0;
+    int closes = 0;
+    socklen_t local_bytes = sizeof( struct sockaddr_nl );
+};
+
+static fake_netlink_t * fake_netlink = NULL;
+
+static int fake_netlink_socket( int, int, int )
+{
+    fake_netlink->sockets++;
+    return 100 + fake_netlink->sockets;
+}
+
+static int fake_netlink_setsockopt( int, int, int, const void *, socklen_t )
+{
+    return 0;
+}
+
+static int fake_netlink_bind( int, const struct sockaddr *, socklen_t )
+{
+    return 0;
+}
+
+static int fake_netlink_getsockname( int, struct sockaddr * address, socklen_t * address_bytes )
+{
+    struct sockaddr_nl local;
+    memset( &local, 0, sizeof( local ) );
+    local.nl_family = AF_NETLINK;
+    local.nl_pid = netlink_port_id;
+    memcpy( address, &local, sizeof( local ) );
+    *address_bytes = fake_netlink->local_bytes;
+    return 0;
+}
+
+static ssize_t fake_netlink_sendto( int, const void *, size_t bytes, int, const struct sockaddr *, socklen_t )
+{
+    return (ssize_t) bytes;
+}
+
+static ssize_t fake_netlink_recvmsg( int, struct msghdr * message, int )
+{
+    if ( fake_netlink->next >= fake_netlink->script.size() )
+    {
+        errno = EAGAIN;
+        return -1;
+    }
+
+    const netlink_datagram_t & datagram = fake_netlink->script[fake_netlink->next++];
+    memcpy( message->msg_iov[0].iov_base, datagram.bytes.data(), datagram.bytes.size() );
+    struct sockaddr_nl kernel;
+    memset( &kernel, 0, sizeof( kernel ) );
+    kernel.nl_family = AF_NETLINK;
+    memcpy( message->msg_name, &kernel, sizeof( kernel ) );
+    message->msg_namelen = sizeof( kernel );
+    message->msg_flags = 0;
+    return (ssize_t) datagram.bytes.size();
+}
+
+static int fake_netlink_close( int )
+{
+    fake_netlink->closes++;
+    return 0;
+}
+
+static const rocketnet_gateway_netlink_system_t fake_netlink_system = {
+    fake_netlink_socket, fake_netlink_setsockopt, fake_netlink_bind, fake_netlink_getsockname,
+    fake_netlink_sendto, fake_netlink_recvmsg, fake_netlink_close
+};
+
+static netlink_datagram_t interrupted_route_datagram()
+{
+    netlink_datagram_t datagram = default_route_datagram();
+    struct nlmsghdr header;
+    memcpy( &header, datagram.bytes.data(), sizeof( header ) );
+    header.nlmsg_flags = (uint16_t) ( header.nlmsg_flags | NLM_F_DUMP_INTR );
+    memcpy( datagram.bytes.data(), &header, sizeof( header ) );
+    return datagram;
+}
+
+// a dump the kernel marks interrupted is asked again on a fresh socket: two
+// interrupted dumps, then a clean one, find the gateway
+
+static void test_xdp_transport_gateway_netlink_interrupted_dump_retried()
+{
+    fake_netlink_t fake;
+    fake_netlink = &fake;
+    fake.script.push_back( interrupted_route_datagram() );
+    fake.script.push_back( interrupted_route_datagram() );
+    fake.script.push_back( default_route_datagram() );
+
+    uint8_t gateway[16];
+    memset( gateway, 0, sizeof( gateway ) );
+    int error = -1;
+    check( rocketnet_gateway_netlink_route_with( &fake_netlink_system, AF_INET, server_interface, gateway, &error ) == ROCKETNET_GATEWAY_NETLINK_FOUND );
+    check( memcmp( gateway, gateway_ipv4, 4 ) == 0 );
+    check( fake.sockets == 3 && fake.closes == 3 && fake.next == 3 );
+
+    fake_netlink = NULL;
+}
+
+// the retries are bounded: a table that changes under every dump refuses
+// with EINTR after ROCKETNET_GATEWAY_NETLINK_DUMP_ATTEMPTS dumps
+
+static void test_xdp_transport_gateway_netlink_interrupted_dump_bounded()
+{
+    fake_netlink_t fake;
+    fake_netlink = &fake;
+    for ( int i = 0; i < ROCKETNET_GATEWAY_NETLINK_DUMP_ATTEMPTS; i++ )
+        fake.script.push_back( interrupted_route_datagram() );
+    fake.script.push_back( default_route_datagram() );
+
+    uint8_t gateway[16];
+    int error = -1;
+    check( rocketnet_gateway_netlink_route_with( &fake_netlink_system, AF_INET, server_interface, gateway, &error ) == ROCKETNET_GATEWAY_NETLINK_ERROR );
+    check( error == EINTR );
+    check( fake.sockets == ROCKETNET_GATEWAY_NETLINK_DUMP_ATTEMPTS && fake.closes == fake.sockets );
+    check( fake.next == (size_t) ROCKETNET_GATEWAY_NETLINK_DUMP_ATTEMPTS );
+
+    fake_netlink = NULL;
+}
+
+// any other kernel error is the answer: it is not asked again
+
+static void test_xdp_transport_gateway_netlink_error_not_retried()
+{
+    fake_netlink_t fake;
+    fake_netlink = &fake;
+    netlink_datagram_t refused;
+    netlink_error( &refused, -EPERM );
+    fake.script.push_back( refused );
+    fake.script.push_back( default_route_datagram() );
+
+    uint8_t gateway[16];
+    int error = -1;
+    check( rocketnet_gateway_netlink_route_with( &fake_netlink_system, AF_INET, server_interface, gateway, &error ) == ROCKETNET_GATEWAY_NETLINK_ERROR );
+    check( error == EPERM );
+    check( fake.sockets == 1 && fake.closes == 1 );
+
+    fake_netlink = NULL;
+}
+
+// a local address of the wrong size after every call succeeded is SYSTEM with
+// EPROTO, never whatever errno an earlier call left behind
+
+static void test_xdp_transport_gateway_netlink_short_local_address()
+{
+    fake_netlink_t fake;
+    fake_netlink = &fake;
+    fake.local_bytes = sizeof( struct sockaddr_nl ) - 2;
+    fake.script.push_back( default_route_datagram() );
+
+    uint8_t gateway[16];
+    int error = -1;
+    errno = 0;
+    check( rocketnet_gateway_netlink_route_with( &fake_netlink_system, AF_INET, server_interface, gateway, &error ) == ROCKETNET_GATEWAY_NETLINK_SYSTEM );
+    check( error == EPROTO );
+    check( fake.sockets == 1 && fake.closes == 1 && fake.next == 0 );
+
+    uint8_t mac[6];
+    error = -1;
+    errno = 0;
+    check( rocketnet_gateway_netlink_neighbor_with( &fake_netlink_system, AF_INET, server_interface, gateway_ipv4, mac, &error ) == ROCKETNET_GATEWAY_NETLINK_SYSTEM );
+    check( error == EPROTO );
+
+    fake_netlink = NULL;
+}
+
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_ipv4_default_route_found );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_ipv4_default_route_not_on_this_interface );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_ipv4_no_default_route );
@@ -940,5 +1116,9 @@ REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_attribute_past_the_end );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_error_message );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_multipart_with_done );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_skips_other_requests );
+REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_interrupted_dump_retried );
+REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_interrupted_dump_bounded );
+REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_error_not_retried );
+REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_short_local_address );
 
 #endif // #if ROCKETNET_XDP

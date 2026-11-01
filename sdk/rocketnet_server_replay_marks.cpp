@@ -7,6 +7,7 @@
 #include "rocketnet_test_seams.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_connection_reset.h"
+#include "rocketnet_memory.h"
 
 #include <string.h>
 
@@ -36,6 +37,15 @@ struct rocketnet_server_replay_marks_t
     int max_clients;
     struct rocketnet_server_replay_slot_mark_t * slots;
 };
+
+uint64_t rocketnet_server_replay_marks_allocation_bytes( int max_clients )
+{
+    if ( max_clients < 1 )
+        return 0;
+
+    return rocketnet_memory_allocations( { sizeof( struct rocketnet_server_replay_marks_t ),
+                                           sizeof( struct rocketnet_server_replay_slot_mark_t ) * (uint64_t) max_clients } );
+}
 
 struct rocketnet_server_replay_marks_t * rocketnet_server_replay_marks_create( void * context, int max_clients )
 {

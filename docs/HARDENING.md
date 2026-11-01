@@ -32,6 +32,9 @@ See [tests](../tests/README.md), [fuzzing](../tests/fuzz/README.md),
 [OSS-Fuzz integration](../tests/oss-fuzz/README.md), and [TLA+ models](../proofs/tla/README.md)
 for the existing tools. A model result needs a correspondence review against
 its implementation; a configured fuzz job needs execution evidence.
+The current [GCC analyzer wrapper limitation](TESTING.md#static-analysis-evidence-limit)
+also means that a green static job alone is not evidence of a completed, clean
+GCC analysis. Historical triage records below retain their original scope.
 
 ## Source audits and executed verification passes
 

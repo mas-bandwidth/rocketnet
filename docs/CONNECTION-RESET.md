@@ -37,7 +37,8 @@ naming `<struct>.<member>`.
 | | geometry, arenas and delivered capacity | fixed allocation | KEEP | client object storage |
 | `rocketnet_ack_endpoint_t` | sequence heads, ack debt, sent/received records, bitmaps and aggregates | delivery and ack history | RESET | a new connection starts with no packet history |
 | | RTT, jitter, loss and bandwidth estimates | connection quality | RESET | statistics describe one session |
-| `rocketnet_client_transport_t` | payload rings, received batch and send arena contents | staged connection packets | RESET | invalid after the terminal transition |
+| `rocketnet_client_transport_t` | payload rings and send arena contents | staged connection packets | RESET | invalid after the terminal transition |
+| | `received_packets` | the last update's batch of delivered payloads | KEEP | counted `CLIENT_PAYLOAD_DELIVERED`, so the caller reads them until the next update clears the batch, also when the connection ended inside that update (`proofs/tla/RNClientDelivery.tla` `CountedImpliesHanded`); a transport runs one connection, so no later connection reads them |
 | | config, transport, I/O objects, lifetime counters and statistics rings | client-lifetime transport state | KEEP | construction state of this transport object; public session counters are the connection that is held |
 | | `time`, `raw_time`, `time_offset` | the update clock, the caller's raw time and the backwards offset | KEEP | the game's clock is client-lifetime state; a connection reset does not rewind it |
 | | `link_simulator`, `link_simulator_from` | the simulated link and its source address | KEEP | a property of the link, not of a connection; packets already on it are on the wire, sealed under the ended session |
@@ -65,8 +66,8 @@ other session state.
 | | replay windows and integrity failures | receive security history | RESET | old ciphertext cannot affect a new mapping |
 | `rocketnet_encryption_mapping_control_t` | client index, established | slot identity | RESET | identity cannot leak to reuse |
 | | timeout, handshake deadline and receive time | expiry clocks | RESET | one mapping |
-| `rocketnet_client_slots_t` | per-index identity, mapping, confirmation, user data and hash link | slot record | RESET | slot release clears the index |
-| | hash key, buckets and free-stack geometry | table owner | KEEP | server-lifetime allocation |
+| `rocketnet_client_slots_t` | per-index identity, mapping, confirmation and user data | slot record | RESET | slot release clears the record and removes its flat-index entry |
+| | hash key, flat-index allocation and free-stack geometry | table owner | KEEP | server-lifetime allocation |
 | `rocketnet_server_acks_t` | `endpoints[client_index]` | ack rings, bitfields and quality estimates | RESET | packet history is per connection |
 | | acked batch rows for this index | pending receipts | RESET | compacted out before reuse |
 | | other endpoints and rows | other clients | KEEP | reset touches only its slot |
@@ -161,33 +162,6 @@ material is overwritten in place with `sodium_memzero`:
   rings and bitmaps reset on every client connection reset and every server
   slot reset (`rocketnet_ack_endpoint_reset`). Client loss and jitter are
   derived from its ACK history; no receive-gap or arrival-gap tracker is kept.
-  Those two trackers used to live on `rocketnet_client_transport_t` and were
-  removed in `db2192c7`. Widths below are the natural layout on the supported
-  64-bit ABIs, LP64 and LLP64 (`uint64_t`
-  and `double` 8 bytes, align 8; `float` and `int` 4 bytes, align 4), with
-  no sentinel padding. `rocketnet_packet_loss_tracker_t`
-  (deleted `sdk/rocketnet_packet_loss_tracker.h`) was three `uint64_t` fields
-  (24) plus `uint64_t received_packets[1024]` (8192) = 8216; 1024 was
-  `ROCKETNET_PACKET_LOSS_TRACKER_HISTORY`. `rocketnet_jitter_tracker_t`
-  (deleted `sdk/rocketnet_jitter_tracker.h`) was one `uint64_t` and three
-  `double` fields = 32. Each of the 256 `rocketnet_client_stats_frame_t`
-  buckets (`ROCKETNET_NUM_CLIENT_STATS_FRAMES`) lost `session_packets_received`
-  and `packets_lost` (8 + 8); 256 × 16 = 4096. Stored `client_stats` changed
-  from `rocketnet_client_transport_stats_t` (`sdk/rocketnet_layers.h`: three
-  `float` and four `int` = 28, 4 bytes of padding, four `uint64_t` = 32, sizeof
-  64) to `rocketnet_client_transport_counters_t` (four `int` = 16 and four
-  `uint64_t` = 32, sizeof 48), a difference of 16. 8216 + 32 + 4096 + 16 =
-  12360 bytes less on each client transport. The alignment gap before the old
-  trackers equals the tail padding after `current_stats_index` (`int`), so it
-  is not part of the 12360. Default-off sentinels would have added three
-  `uint32_t[64]` (768) on the loss tracker and two (512) on the jitter tracker.
-  Each accepted session packet (`session_sequence != 0`) made two calls,
-  `rocketnet_packet_loss_tracker_packet_received` and
-  `rocketnet_jitter_tracker_packet_received`. Each client update made one
-  call, `rocketnet_packet_loss_tracker_update`, from
-  `rocketnet_client_update_stats`. Create and connection reset each called
-  `rocketnet_packet_loss_tracker_reset` and `rocketnet_jitter_tracker_reset`.
-  This counts removed calls. It is not a wall-time claim.
 - **Server per-client totals (`rocketnet_server_client_stats`)**: Scoped strictly
   to the currently connected occupant of `client_index`. Queries on an empty
   slot return all zeros; `rocketnet_server_wire_totals_assign` zeroes the slot's

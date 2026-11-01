@@ -41,6 +41,7 @@ static void destroy_check_handler( const char * condition, const char * function
 #define check destroy_check
 
 extern void rocketnet_functional_restore_log_function();
+extern void rocketnet_functional_restore_assert_function();
 
 // Clear the transport pins so create resolves the default threaded ladder.
 class destroy_env_guard_t
@@ -268,7 +269,7 @@ static void destroy_end_counted( destroy_allocator_t * state )
     check( state->live == 0 );
     check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
     rocketnet_functional_restore_log_function();
-    rocketnet_assert_function( NULL );
+    rocketnet_functional_restore_assert_function();
 }
 
 // --- cases -----------------------------------------------------------------

@@ -15,7 +15,7 @@
 
 // The packet size limits, each asserted against its derivation so a change
 // to the MTU in rocketnet_wire.h is one line and a failed assert names the
-// limit that no longer follows (STANDARD.md _Packet sizes_). The public
+// limit that no longer follows (standard/TRANSPORT.md t8.11). The public
 // header carries its values as written numbers, since it cannot see the
 // internal constants; these asserts hold them to the derivation.
 
@@ -44,6 +44,10 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_FRAME_SIZE >= 16 + ROCKETNET_RECEIVE_CEILING,
                          "a send frame holds the 16-byte payload alignment slack and a full receive-ceiling packet" );
 
 #define ROCKETNET_RECEIVE_PACKETS_PER_CLIENT                                16
+
+// The most message packets one connection writes in one update: the top of
+// the message config's packets_per_update range (rocketnet_internal.h).
+#define ROCKETNET_CONNECTION_MAX_PACKETS_PER_UPDATE                         1024
 
 // A portable or msgx server's send bank holds this many packets per configured
 // client (never fewer than ROCKETNET_SERVER_MAX_SEND_PACKETS), as its receive

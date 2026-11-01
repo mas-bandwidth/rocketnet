@@ -8,7 +8,6 @@ clang-tidy	sdk/rocketnet.cpp	performance-no-int-to-ptr	7fd99072c7417c25
 clang-tidy	sdk/rocketnet_abi.cpp	bugprone-macro-parentheses	fc0604c655b601f5
 clang-tidy	sdk/rocketnet_ack.cpp	bugprone-suspicious-memory-comparison,cert-exp42-c,cert-flp37-c	b28aaea8e261fc44
 clang-tidy	sdk/rocketnet_allocator.cpp	cert-dcl50-cpp	ea8860165c227751
-clang-tidy	sdk/rocketnet_api.cpp	bugprone-branch-clone	6934c2676d115b09
 clang-tidy	sdk/rocketnet_api.cpp	cert-err58-cpp	273764aff8893124
 clang-tidy	sdk/rocketnet_api.cpp	cert-err58-cpp	c8e231ed4bfb4ae1
 clang-tidy	sdk/rocketnet_channel.h	bugprone-macro-parentheses	7ef9c2d8cb1d988f
@@ -50,7 +49,6 @@ clang-tidy	sdk/rocketnet_client_transport.cpp	cert-err33-c	69d962b3ee8259c9
 clang-tidy	sdk/rocketnet_client_transport.cpp	cert-err33-c	bb4aacd838cf618d
 clang-tidy	sdk/rocketnet_client_transport.cpp	cert-err33-c	cd54a1e1a735a171
 clang-tidy	sdk/rocketnet_client_transport.cpp	cert-err33-c	fcb5d7e893b7072a
-clang-tidy	sdk/rocketnet_config.cpp	bugprone-branch-clone	b4ba630edb976065
 clang-tidy	sdk/rocketnet_config.cpp	cert-err33-c	33b8b03e6f29e7a7
 clang-tidy	sdk/rocketnet_config.cpp	cert-err33-c	448e6484af5dc54d
 clang-tidy	sdk/rocketnet_config.cpp	cert-err33-c	66825960f430523a
@@ -72,8 +70,6 @@ clang-tidy	sdk/rocketnet_counters.cpp	cert-err33-c	b3c251fa8453c356
 clang-tidy	sdk/rocketnet_driver.cpp	bugprone-macro-parentheses	904fd0c569415944
 clang-tidy	sdk/rocketnet_driver.cpp	bugprone-macro-parentheses	aad041ae2583497d
 clang-tidy	sdk/rocketnet_driver.cpp	bugprone-macro-parentheses	e81258cedddda7ca
-clang-tidy	sdk/rocketnet_driver_builtin.cpp	bugprone-branch-clone	23f9e518e7f8e749
-clang-tidy	sdk/rocketnet_driver_builtin.cpp	bugprone-branch-clone	ae4c939941791e7a
 clang-tidy	sdk/rocketnet_endpoint.h	bugprone-macro-parentheses	14a49f99ac806d63
 clang-tidy	sdk/rocketnet_endpoint.h	bugprone-macro-parentheses	7859cacd64111dd8
 clang-tidy	sdk/rocketnet_fragment.cpp	bugprone-implicit-widening-of-multiplication-result	5493de00785eb185
@@ -102,7 +98,6 @@ clang-tidy	sdk/rocketnet_platform.cpp	cert-err33-c	b6e019295a45cb0d
 clang-tidy	sdk/rocketnet_platform.cpp	concurrency-mt-unsafe	5338b9d4292643b1
 clang-tidy	sdk/rocketnet_platform.cpp	concurrency-mt-unsafe	604cf34623db7e62
 clang-tidy	sdk/rocketnet_platform.cpp	concurrency-mt-unsafe	77d63a3376ae6759
-clang-tidy	sdk/rocketnet_platform.cpp	concurrency-mt-unsafe	8af97ad9db62aab6
 clang-tidy	sdk/rocketnet_platform.cpp	concurrency-mt-unsafe	b54cadc47f2f6d73
 clang-tidy	sdk/rocketnet_platform.cpp	concurrency-mt-unsafe	ed3ab86dc3a75c5c
 clang-tidy	sdk/rocketnet_protocol.cpp	bugprone-branch-clone	2d1d77c2829d58ff
@@ -171,7 +166,6 @@ clang-tidy	sdk/rocketnet_server_socket_linux.cpp	concurrency-mt-unsafe	a98cdc643
 clang-tidy	sdk/rocketnet_server_socket_linux.cpp	concurrency-mt-unsafe	b29f747f57687262
 clang-tidy	sdk/rocketnet_server_socket_linux.cpp	concurrency-mt-unsafe	d8b29a2aa5da959b
 clang-tidy	sdk/rocketnet_server_socket_linux.cpp	concurrency-mt-unsafe	f9c395a5748ab716
-clang-tidy	sdk/rocketnet_server_transport.cpp	bugprone-branch-clone	7813d34fa70297e7
 clang-tidy	sdk/rocketnet_server_transport.cpp	bugprone-implicit-widening-of-multiplication-result	4bf01f1b42b66e33
 clang-tidy	sdk/rocketnet_server_transport.cpp	bugprone-implicit-widening-of-multiplication-result	54e39d4d2fa73023
 clang-tidy	sdk/rocketnet_server_transport.cpp	bugprone-implicit-widening-of-multiplication-result	7021525407f7473b

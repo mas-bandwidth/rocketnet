@@ -45,12 +45,21 @@ struct rocketnet_fake_client_transport_io_t
     bool wake;
     double last_wait_timeout;
     bool last_wait_readable;
+    // create by family: the calls, the family of the last bind, and which
+    // bind families it refuses; a refusal reports OUT_OF_MEMORY when
+    // open_out_of_memory is set
+    int create_calls;
+    int last_bind_family;
+    bool refuse_open_ipv4, refuse_open_ipv6;
+    bool open_out_of_memory;
     // connect: the calls, the address of the last one, the sends and
-    // receives made before it, and whether it refuses
+    // receives made before it, and whether it refuses every server or the
+    // servers of one family
     int connect_calls;
     rocketnet_address_t connected_to;
     int calls_before_connect;
     bool refuse_connect;
+    bool refuse_connect_ipv4, refuse_connect_ipv6;
     // close: the calls (the family race's losing family, closed by the
     // reading thread; its memory goes at destroy)
     int close_calls;
@@ -64,6 +73,29 @@ static void * rocketnet_fake_client_create( void * context, const rocketnet_clie
     (void) config;
     (void) bind;
     return context;
+}
+
+// create by family: counts, records the bind family, and refuses a bind
+// family the fake refuses, with OUT_OF_MEMORY in the config's status when
+// open_out_of_memory is set; otherwise as create. No table below has it: a
+// case that wants it sets operations.create on its own copy.
+
+static inline void * rocketnet_fake_client_create_by_family( void * context, const rocketnet_client_transport_io_config_t * config, rocketnet_address_t * bind )
+{
+    rocketnet_fake_client_transport_io_t * fake = (rocketnet_fake_client_transport_io_t *) context;
+    fake->create_calls++;
+    fake->last_bind_family = bind->type;
+
+    const bool refused = ( bind->type == ROCKETNET_ADDRESS_IPV4 && fake->refuse_open_ipv4 ) ||
+                         ( bind->type == ROCKETNET_ADDRESS_IPV6 && fake->refuse_open_ipv6 );
+    if ( refused )
+    {
+        if ( fake->open_out_of_memory && config->status )
+            *config->status = ROCKETNET_STATUS_OUT_OF_MEMORY;
+        return NULL;
+    }
+
+    return rocketnet_fake_client_create( context, config, bind );
 }
 
 // destroy counts.
@@ -179,8 +211,9 @@ static void rocketnet_fake_client_wake( void * transport )
 }
 
 // connect counts, records the server address and how many sends and
-// receives came before it, and answers !refuse_connect. No table below has
-// it: a case that wants it sets operations.connect on its own copy.
+// receives came before it, and refuses when refuse_connect is set or the
+// server's family is refused. No table below has it: a case that wants it
+// sets operations.connect on its own copy.
 
 static inline bool rocketnet_fake_client_connect( void * transport, const rocketnet_address_t * server_address )
 {
@@ -188,7 +221,13 @@ static inline bool rocketnet_fake_client_connect( void * transport, const rocket
     fake->connect_calls++;
     fake->connected_to = *server_address;
     fake->calls_before_connect = fake->send_calls + fake->send_batch_calls + fake->receive_calls + fake->receive_batch_calls;
-    return !fake->refuse_connect;
+    if ( fake->refuse_connect )
+        return false;
+    if ( server_address->type == ROCKETNET_ADDRESS_IPV4 && fake->refuse_connect_ipv4 )
+        return false;
+    if ( server_address->type == ROCKETNET_ADDRESS_IPV6 && fake->refuse_connect_ipv6 )
+        return false;
+    return true;
 }
 
 // close counts. No table below has it: a case that wants it sets
@@ -201,7 +240,7 @@ static inline void rocketnet_fake_client_close( void * transport )
 
 // The three tables: base (four required), io (four plus wait and wake), batch
 // (all eight), each in rocketnet_client_transport_io_operations_t member order;
-// none has send_failures, connect or close.
+// none has create by family, send_failures, connect or close.
 
 static const rocketnet_client_transport_io_operations_t rocketnet_fake_client_operations_base = {
     rocketnet_fake_client_create, rocketnet_fake_client_destroy,

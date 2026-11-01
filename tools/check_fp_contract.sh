@@ -15,9 +15,20 @@ set -u
 
 files="Makefile benchmarks/Makefile .github/workflows/ci.yml .github/workflows/fuzz-nightly.yml .github/workflows/nightly.yml .github/workflows/nightly-soak.yml .github/workflows/release-check.yml"
 
+# clang-cl, by name or through a variable that names it
+# ("$ROCKETNET_FUZZ_CLANG_CL", "$CLANG_CL").
+is_clang_cl()
+{
+    case "$1" in
+        *clang-cl*|*CLANG_CL*) return 0 ;;
+    esac
+    return 1
+}
+
 is_compiler()
 {
     local cmd="$1"
+    is_clang_cl "$cmd" && return 0
     # pull the last dash-delimited component so target-triple prefixes
     # (e.g. s390x-linux-gnu-g++) and paths (/usr/bin/clang++) still match
     local last="${cmd##*-}"
@@ -27,8 +38,16 @@ is_compiler()
     return 1
 }
 
+# $1 is the line, $2 its command word. /fp:precise is the floor for cl only:
+# clang-cl maps it to -ffp-contract=on.
 has_floor()
 {
+    if is_clang_cl "${2:-}"; then
+        case "$1" in
+            *'-Xclang -ffp-contract=off'*) return 0 ;;
+        esac
+        return 1
+    fi
     case "$1" in
         *-ffp-contract=off*|*/fp:precise*|*'$(CFLAGS)'*|*'$(CXXFLAGS)'*) return 0 ;;
     esac
@@ -68,8 +87,8 @@ for f in $files; do
                 buf=""
                 continue
             fi
-            if ! has_floor "$buf"; then
-                echo "$f:$lineno: compiler invocation missing -ffp-contract=off or /fp:precise: $buf"
+            if ! has_floor "$buf" "$cmd"; then
+                echo "$f:$lineno: compiler invocation missing -ffp-contract=off, /fp:precise (cl) or -Xclang -ffp-contract=off (clang-cl): $buf"
                 bad=1
             fi
         fi

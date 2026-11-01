@@ -7,23 +7,9 @@ without breaking a caller compiled against an older header. It is the document
 The SDK's ABI revision is its major version (`ROCKETNET_VERSION_MAJOR`), and
 the shared library's soname follows it (`CMakeLists.txt`,
 `ROCKETNET_ABI_SOVERSION`). A change this document admits is additive: it keeps
-the major version and adds exports to `tools/exports.txt`. A change it does not
+the major version; any new exports are added to `tools/exports.txt`. A change it does not
 admit (a field moved, removed, resized or retyped) is an incompatible change
 and bumps the major version.
-
-The v1.0.0-preview-1 API is provisional. It may change after feedback.
-
-### Receipt reads after preview-1
-
-`rocketnet_client_receipts` and `rocketnet_server_receipts` now return the
-number of available outcomes, rather than the number copied. Their signatures
-and receipt layout are unchanged, but callers must iterate over at most
-`min(returned_count, capacity)` entries. A NULL output with zero capacity
-queries the count. If it exceeds capacity, read again into a larger buffer
-before the next update. Reads do not consume outcomes. Ring overflow still
-drops the oldest outcome and increments `receipts_dropped`; the returned count
-includes only retained outcomes. Rebuild preview-1 callers with this contract
-before linking to the updated library.
 
 ## 1. The Rule
 
@@ -81,8 +67,8 @@ them.
    and a list naming `loopback` with a `NULL` hub is refused with
    `ROCKETNET_STATUS_LOOPBACK_HUB_MISSING`. The loopback transport no longer
    keeps a process-wide endpoint table to fall back on, so a caller compiled
-   before the field must set it to use loopback; every other transport is
-   unchanged for that caller.
+   before the field must rebuild against a header that includes it and set a
+   hub to use loopback; every other transport is unchanged for that caller.
 
 The steps for adding a field:
 
@@ -138,7 +124,7 @@ the library hands out, so its stride is part of the ABI.
 
 ## 5. The lifecycle API in ABI 1
 
-The ABI revision is 1 at v1.0.0-preview-1 (soname `librocketnet.so.1`).
+The ABI revision is 1 (soname `librocketnet.so.1`).
 Client creation returns a disconnected object and connection begins with
 `rocketnet_client_connect`. Server creation returns a stopped object;
 `rocketnet_server_start`, `rocketnet_server_stop` and

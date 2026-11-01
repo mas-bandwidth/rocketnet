@@ -251,6 +251,34 @@ static void test_server_address_environment_applies_to_every_server()
 REGISTER_UNIT_TEST( test_server_address_environment_applies_to_every_server );
 #endif // #if ROCKETNET_DEV
 
+#if ROCKETNET_DEV
+// a buffer too short for the served address is refused, never a cut copy
+static void test_server_served_address_refuses_a_short_buffer()
+{
+    both_families_identity_t identity;
+    both_families_identity( &identity );
+    rocketnet_quiet( 1 );
+
+    struct rocketnet_server_t * server = both_families_create( &identity, "127.0.0.1:40000", NULL );
+
+    char address[8];
+    memset( address, 'Z', sizeof( address ) );
+    check( !rocketnet_server_served_address( server, ROCKETNET_ADDRESS_IPV4, address, sizeof( address ) ) );
+    check( address[0] == '\0' );
+
+    char exact[sizeof( "127.0.0.1:40000" )];
+    check( rocketnet_server_served_address( server, ROCKETNET_ADDRESS_IPV4, exact, sizeof( exact ) ) );
+    check( strcmp( exact, "127.0.0.1:40000" ) == 0 );
+
+    check( !rocketnet_server_served_address( server, ROCKETNET_ADDRESS_IPV4, exact, sizeof( exact ) - 1 ) );
+    check( exact[0] == '\0' );
+
+    rn_test_server_stop_and_destroy( server );
+}
+
+REGISTER_UNIT_TEST( test_server_served_address_refuses_a_short_buffer );
+#endif // #if ROCKETNET_DEV
+
 static void test_server_create_refuses_no_address()
 {
     both_families_identity_t identity;

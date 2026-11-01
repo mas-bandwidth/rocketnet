@@ -71,8 +71,19 @@ static int rerun_with_max_clients( char * program, const char * value )
     int result = 1;
 
 #if defined( _WIN32 )
-    const intptr_t exit_code = _spawnve( _P_WAIT, program, (const char * const *) child_argv, (const char * const *) environment );
-    result = exit_code == 0 ? 0 : 1;
+    // the C runtime joins the arguments into one command line that the child
+    // splits again, so the path is quoted (a Windows path holds no quote)
+    char * quoted = (char *) malloc( strlen( program ) + 3 );
+    if ( quoted )
+    {
+        quoted[0] = '"';
+        memcpy( quoted + 1, program, strlen( program ) );
+        memcpy( quoted + 1 + strlen( program ), "\"", 2 );
+        child_argv[0] = quoted;
+        const intptr_t exit_code = _spawnve( _P_WAIT, program, (const char * const *) child_argv, (const char * const *) environment );
+        result = exit_code == 0 ? 0 : 1;
+        free( quoted );
+    }
 #else
     pid_t pid;
     if ( posix_spawnp( &pid, program, NULL, NULL, child_argv, environment ) == 0 )
@@ -186,10 +197,14 @@ int main( int argc, char ** argv )
         printf( "environment max_clients: %d\n", rocketnet_server_max_clients( server ) );
         result = rocketnet_server_max_clients( server ) == 5 ? 0 : 1;
     }
-    else if ( environment[0] != '\0' && !server )
+    else if ( strcmp( environment, "99999" ) == 0 && !server )
     {
         printf( "bad value refused: %s\n", rocketnet_status_name( status ) );
         result = 0;
+    }
+    else
+    {
+        printf( "FAIL: ROCKETNET_SERVER_MAX_CLIENTS=\"%s\": server create %s\n", environment, server ? "accepted it" : rocketnet_status_name( status ) );
     }
 
     rn_cli_server_stop_and_destroy( server );

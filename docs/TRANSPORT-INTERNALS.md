@@ -94,10 +94,20 @@ every OS; `portable` is the fallback:
 `loopback` is pin-only on the client too. A native client whose create refuses
 is logged once (`client transport gso refused. trying the next candidate`) and
 the ladder falls to `portable`, logging the grant with the refusals it passed;
-a create that fails for want of memory ends the create instead. A pin is
-honoured exactly: a pinned client that refuses fails the create with
-`ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED`, never the next client in the
-order. `tests/test_unit_client_transport_ranking.cpp` pins the order, the
+a backend allocation failure ends candidate selection with
+`ROCKETNET_STATUS_OUT_OF_MEMORY`. These backend factories run during public
+`rocketnet_client_connect`, after the token supplies the server address.
+A pin is honoured exactly: a pinned client whose backend refuses makes connect
+return `ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED`, without adding another
+candidate to the configured list. A token naming both families selects its
+IPv6 server on a host with IPv6; when a candidate's IPv6 socket is refused,
+at open or at connect (no route to the address is the common case), the same
+candidate is opened again, bound IPv4, for the token's IPv4 server before the
+ladder falls to the next candidate (`client transport portable refused the
+IPv6 server ... trying the IPv4 server ...`), and a client granted that way
+races nothing. A refusal for want of memory on either family ends the create
+with `ROCKETNET_STATUS_OUT_OF_MEMORY` (TRANSPORT.md t11 rule 3,
+`proofs/tla/RNClientLadder.tla`, `tests/test_unit_client_family_fallback.cpp`). `tests/test_unit_client_transport_ranking.cpp` pins the order, the
 fallback and the pins. `msgx` and `portable` share one client table, and the pump is
 the socket's, chosen at create from the transport name: `msgx` the Darwin
 `sendmsg_x`/`recvmsg_x` batch pump, `portable` the per-packet loop. On Linux
@@ -131,7 +141,8 @@ Two I/O shapes preserve the existing implementations:
   on its receive worker; the borrowed interface does not transfer the caller's
   buffers to either worker.
 - **Staged:** the transport supplies frame storage and a complete receive batch.
-  XDP, GSO and IOCP use this shape, with their own pools and worker arrangements.
+  XDP, GSO, io_uring, IOCP and RIO use this shape, with their own pools and
+  worker arrangements.
   The transport does not allocate, recycle or schedule those backend frames.
 
 The staged callbacks are start, finish, abort, flush and receive. Start returns
@@ -149,6 +160,7 @@ The flags express the differences the transport needs:
 | `FLUSH_ON_UPDATE` | Flush staged control traffic at the end of update. Buffered control traffic completes by the end of update; full batches may flush during the update walk. |
 | `FINISH_FINAL` | A finished frame cannot be withdrawn. Otherwise abort may withdraw it before flush. Unfinished reservations can always be aborted. |
 | `BINDS_PUBLIC_ADDRESS` | The factory binds the advertised address rather than the transport's ordinary bind address. |
+| `REFLUSHES` | Retry backend flush on `send_packets` even if no new transport commit was recorded. |
 
 A flush means submission, not necessarily completion or reusable storage. IOCP
 keeps operation buffers until completion retirement. The backend owns that
@@ -163,25 +175,71 @@ that reports it.
 
 ## Per-update send and receive budgets
 
-Every transport receives at least twice what it sends in one update:
-`receive_capacity >= 2 * send_budget`, checked by
-`test_unit_receive_budget_twice_send.cpp` and locked by a
-`ROCKETNET_STATIC_ASSERT` beside each transport’s constants. The send budget
-is what one update stages or submits; the receive capacity is the bank,
-ring, staging or completion budget the send path can fill while it waits.
+The backend constants pair send staging with receive storage, checked by
+`test_unit_receive_budget_twice_send.cpp` and static assertions beside the
+constants. The table describes storage and processing units at the default
+`ROCKETNET_MAX_CLIENTS=1000`; it is not a guaranteed packet rate or a bound
+on every syscall or worker pass. Some capacities scale with the build's
+client ceiling; see [Memory and capacity](MEMORY.md#maximum-clients).
+
 The server process batch `ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE`
-(`sdk/rocketnet_constants.h`, 16000) bounds every transport drain.
+(`sdk/rocketnet_constants.h`, 16000 by default) bounds packets exposed for
+protocol processing. It does not bound all work spent discarding datagrams
+before that batch is returned; see the limitations below.
 
 | Transport | Send budget | Receive capacity |
 | --- | --- | --- |
 | portable | 256–1000, max `ROCKETNET_SERVER_MAX_SEND_PACKETS` (1000, `sdk/rocketnet_constants.h`) | 16000 per update (`ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE`) |
 | msgx | portable batch, 256–1000 | 16000 per update |
-| loopback | portable batch, 256–1000 | 2048 per endpoint (`ROCKETNET_LOOPBACK_QUEUE_PACKETS`, `sdk/rocketnet_driver_loopback.h`) |
-| gso | 4096 (`ROCKETNET_GSO_SEND_QUEUE_SIZE`) | 8192 per queue (`ROCKETNET_GSO_RECV_QUEUE_SIZE`) |
-| io_uring | 2048 staged;10240 completion reap (`ROCKETNET_URING_SEND_QUEUE_SIZE`, `ROCKETNET_URING_SEND_BUDGET`) | 4096 receive buffers of 66 KiB per queue;16000 bank (`ROCKETNET_URING_RECV_BUFFERS`, `ROCKETNET_URING_RECEIVE_BUDGET`) |
-| xdp | 4096 (`ROCKETNET_XDP_SEND_QUEUE_SIZE`) | 16384 staging (`ROCKETNET_XDP_RECV_QUEUE_SIZE`) |
+| loopback | portable batch, 256–1000 | 2048 per client endpoint; server queue scales with hub capacity (16384 at 1000 clients), with 16000 processed per update (`sdk/rocketnet_driver_loopback.h`) |
+| gso | 4096 in the current shared producer bank (`ROCKETNET_GSO_SEND_QUEUE_SIZE`) | 8192 per queue buffer (`ROCKETNET_GSO_RECV_QUEUE_SIZE`) |
+| io_uring | 2048 shared send slots per phase, two phases; 10240 completion reaps per send call (`ROCKETNET_URING_SEND_QUEUE_SIZE`, `ROCKETNET_URING_SEND_PHASES`, `ROCKETNET_URING_SEND_BUDGET`) | 4096 receive buffers of 66 KiB per queue; 16000 in each shared receive bank (`ROCKETNET_URING_RECV_BUFFERS`, `ROCKETNET_URING_BANK_SIZE`) |
+| xdp | 4096 per queue (`ROCKETNET_XDP_SEND_QUEUE_SIZE`) | 16384 staging per queue (`ROCKETNET_XDP_RECV_QUEUE_SIZE`) |
 | iocp | 2048 (`ROCKETNET_IOCP_SEND_QUEUE_SIZE`) | 4096 queue (`ROCKETNET_IOCP_RECEIVE_QUEUE_SIZE`) |
 | rio | 2048 per phase (`ROCKETNET_RIO_SEND_QUEUE_SIZE`) | 4096 posted receives (`ROCKETNET_RIO_RECEIVES`) |
+
+### Current staging and drain limitations
+
+GSO's three send banks are shared across all sockets. Only its current
+producer bank can be filled; the transmit worker consumes published banks.
+io_uring likewise has one shared send array, and an incomplete send continues
+to occupy its slot. `num_xdp_queues` adds receive queues and changes socket
+rotation; it does not multiply the 4096-slot GSO or 2048-slot io_uring send
+capacity (`sdk/rocketnet_server_gso_linux.cpp`,
+`sdk/rocketnet_server_uring_linux.cpp`).
+
+Every built-in server transport reports the frames it takes before its next
+flush through the optional `send_room` operation (`sdk/rocketnet_driver.h`):
+the free slots of the gso producer bank, the io_uring array, the IOCP
+producer bank (at most its free send operations), the open RIO fill phase,
+the fullest XDP queue, and the portable producer bank. A frame the transport
+still holds from an earlier flush is not room.
+`rocketnet_server_transport_send_capacity_available` returns it for the
+staged transports, so the message layer's rotation stops at a full staging
+and its cursor keeps the next unserved connection. The disconnect drain seals
+no more than the room each update, a kicked client's burst is sealed at once
+only while the room holds all of it, and stop's bursts leave across stop steps
+the same way (`proofs/tla/ServerStopSpread.tla`). Stop tells the I/O to stop
+only once the optional `send_idle` operation reports every send it was handed
+finished (each built-in server transport reports it), so a stopping worker
+never retires a bank of disconnect packets unsent. A custom transport without
+`send_room` is treated as unbounded; a start it refuses ends that update's
+drain, and the bursts wait for the next.
+
+The POSIX portable receive helpers, Darwin msgx receive pump, and Linux GSO
+server receive worker count retained records rather than every discarded
+datagram. Sustained empty or otherwise rejected datagrams can keep a drain
+running, delaying publication of valid packets already read and delaying
+worker shutdown. Short batches, an empty socket, or a full retained-packet
+buffer normally end the pass. Error retries have a separate finite budget in
+the portable/msgx helpers; invalid datagrams do not consume it. The Linux GSO
+client's plain fallback also uses the affected helper; its GRO path has a
+skip budget. Treat the receive capacities above as storage limits, not a
+worst-case worker-time or shutdown-time guarantee under such traffic.
+
+These are implementation limitations in the current source, not changes to
+the intended bounded-work and fairness contracts. Runtime corrections and
+regression coverage are separate from this documentation.
 
 ## UDP coalescing
 
@@ -307,8 +365,12 @@ ENETUNREACH, EHOSTDOWN, ENETDOWN, ENOBUFS and EINTR as weather
 (`rocketnet_platform_receive_weather` in `sdk/rocketnet_platform.cpp`): the
 portable arm (`rocketnet_platform_socket_receive_packet`) and the msgx arm
 (`rocketnet_platform_socket_receive_packets`) skip the error and keep
-draining. The error is never fatal, never ends a drain, and never
-pauses the msgx pump. EAGAIN ends a drain, because the queue is empty. Any other
+draining. These errors are nonfatal and do not pause the msgx pump. Each call
+has one read budget (`max_packets` for a batch, 64 for the single-packet call),
+and every read spends one unit of it: a datagram kept, a zero-length datagram
+or refused source skipped, a weather error skipped. A spent budget ends the
+current drain so the next call can continue, so neither a repeating errno nor
+a stream of chaff holds a drain. EAGAIN ends a drain because the queue is empty. Any other
 receive errno pauses the msgx pump with one warning per pause
 (`rocketnet_msgx_pause`). The send side
 already classes the same errnos as weather. A backend's receive keeps the same
@@ -484,9 +546,12 @@ cmsg (`ROCKETNET_URING_GRO_CONTROL_BYTES`), and one provided buffer may hold
 a coalesced receive of several datagrams: `rocketnet_uring_recvmsg_parse`
 returns the stride, `rocketnet_coalesce_split` cuts the buffer, and every
 segment is size-checked and copied into the fill bank before the buffer goes
-back to the ring (`proofs/tla/RNUringDriver.tla`, `ReturnAfterLastCopy`). A fill
-bank that fills mid-split drops and counts the rest as
-`RECEIVE_DROPPED_OVERFLOW`. `GRO_BATCHES` counts buffers that held more than
+back to the ring (`proofs/tla/RNUringDriver.tla`, `ReturnAfterLastCopy`). A
+receive is copied only while the fill bank has room for a whole coalesced
+receive; otherwise it is held with its buffer, in arrival order, until a swap
+brings room, and the completions behind it, sends among them, are reaped in
+the same call (`proofs/tla/RNUringReapLayout.tla`). Destroy's drain copies
+regardless and counts what the bank cannot take as `RECEIVE_DROPPED_OVERFLOW`. `GRO_BATCHES` counts buffers that held more than
 one segment, and `GRO_CMSG_FAULTS` a truncated or malformed `UDP_GRO` cmsg,
 taken as one datagram (the GSO transport's fault). Created with
 `ROCKETNET_SERVER_URING_DISABLE_GRO`, no control area is reserved and a
@@ -597,7 +662,11 @@ header, and the from-address carries the family it read. A frame it does not
 take is dropped and counted by reason: another ethertype (`not_ip`), an IPv6
 extension header (`ipv6_extension`, never parsed at the UDP offsets), the
 family the server does not serve (`other_family`), or a frame the parse
-refuses or too short for any server packet (`malformed`). The flush builds
+refuses or too short for any server packet (`malformed`); a receive
+descriptor outside the receive region or its own frame (`descriptor`, a
+kernel or driver defect) is dropped before a byte of it is read. Each queue's
+worker publishes the sum after every receive pass, and the transport's
+counters read it, all queues summed, as `XDP_RECEIVE_FRAME_DROPPED`. The flush builds
 each reply with the server address of the destination's family as the source,
 and an IPv6 reply carries the UDP checksum computed in software. Create and
 the pre-flight find the interface carrying each address over `AF_INET` or
@@ -757,17 +826,14 @@ embeds the object's bytes in `build/generated/rocketnet_server_xdp.h` as
 with `bpf_object__open_mem` and hands the object to libxdp with
 `xdp_program__from_bpf_obj`: the server host needs no compiler, `make`, kernel
 headers, temporary directory or child process. `test_xdp_filter` loads the same
-`server_xdp.o`. The build is tolerant: XDP is built only with a clang that has
-the BPF target, libbpf and libxdp, and `-DROCKETNET_XDP=ON` (the default).
-Short of any of them the configure says why (`XDP off: no clang with the BPF
-target was found, so XDP is compiled out of this build`, `XDP off: libbpf or
-libxdp was not found, so XDP is compiled out of this build` or `XDP off:
-ROCKETNET_XDP=OFF; the xdp transport is unavailable; BPF/libxdp are not
-required`) and the whole XDP transport is
+`server_xdp.o`. The build is tolerant: XDP needs a clang with the BPF target, libbpf, an
+AF_XDP provider (libxdp or the legacy libbpf APIs), and
+`-DROCKETNET_XDP=ON` (the default). If a prerequisite is missing or XDP is
+disabled, configure names the reason and the whole XDP transport is
 compiled out (`ROCKETNET_XDP=0`): no embedded object, no XDP or netlink
 gateway code in the library, and no libbpf or libxdp link
 (`tools/check_xdp_compiled_out.py --absent` checks the built library). A
-transport list naming `xdp` refuses it at create with
+transport list naming only `xdp` refuses server start with
 `ROCKETNET_STATUS_TRANSPORT_NOT_BUILT`, and `auto` starts at the next rung.
 macOS and Windows do not build the object.
 
@@ -777,7 +843,8 @@ the checker compiles the object twice from copies of the sources at different
 paths, mtimes and umasks and requires identical bytes, requires the generated
 header to embed exactly the object, shows that a changed source changes the
 object, and fails when a build tree's embedded object differs from a fresh
-compile of the current sources (stale):
+compile of the current sources with the tree's own BPF clang, multiarch
+triple, `ROCKETNET_HISTORY_PACKETS` and `ROCKETNET_MAX_CLIENTS` (stale):
 
 ```sh
 python3 tools/check_xdp_archive.py            # checks ./build when it exists
@@ -792,12 +859,15 @@ Neither check loads a program or attaches to a network interface.
 
 Unstaged server transports reserve at least one payload slot per configured
 client, with a minimum of 256 slots. A lower test capacity exercises contention.
-The message send pass starts after the last served connection and offers one
-frame per connection per round. Full capacity leaves queued reliable work due
+For these unstaged transports, the message send pass starts after the last
+served connection and offers one frame per connection per round. Full capacity leaves queued reliable work due
 for the next update. In-place unreliable writes use only surplus capacity above
 a complete round of connected clients; otherwise they join the queue so application call order cannot
 starve another connection or that connection's reliable work. Control packets
-use the transport's separate send path.
+use the transport's separate send path. A staged transport reports its own
+send room as the capacity ([above](#current-staging-and-drain-limitations)),
+so the same rotation applies to it; a custom staged transport without
+`send_room` reports none and is not covered.
 
 ## Receive lengths and truncated datagrams
 

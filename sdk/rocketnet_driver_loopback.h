@@ -25,19 +25,23 @@
 #include <stddef.h>
 #include <stdint.h>
 
-// A client endpoint's queue: the server-wide send staging (2048 at 1000
-// clients). A server endpoint's queue is sized from the hub's clients at hub
+// A client endpoint's queue: what one server connection sends it, which does
+// not grow with the hub's clients. Two updates of one connection's message
+// packets (ROCKETNET_CONNECTION_MAX_PACKETS_PER_UPDATE), 2048, so the
+// transport's own few per-update packets for the slot (keepalive, at most
+// ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS of disconnect) fit beside a full
+// update. A server endpoint's queue is sized from the hub's clients at hub
 // create (rocketnet_loopback_server_queue_packets).
 enum
 {
-    ROCKETNET_LOOPBACK_QUEUE_PACKETS = ROCKETNET_SERVER_SEND_STAGING_PACKETS
+    ROCKETNET_LOOPBACK_QUEUE_PACKETS = 2 * ROCKETNET_CONNECTION_MAX_PACKETS_PER_UPDATE
 };
 
 ROCKETNET_STATIC_ASSERT( ( ROCKETNET_LOOPBACK_QUEUE_PACKETS & ( ROCKETNET_LOOPBACK_QUEUE_PACKETS - 1 ) ) == 0,
                          "loopback queue capacity is a power of two for free-running head and tail indices" );
 
-ROCKETNET_STATIC_ASSERT( ROCKETNET_LOOPBACK_QUEUE_PACKETS >= 2 * ROCKETNET_SERVER_MAX_SEND_PACKETS,
-                         "receive budget twice send: loopback queue holds at least twice the send batch" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_LOOPBACK_QUEUE_PACKETS >= 2 * ROCKETNET_CONNECTION_MAX_PACKETS_PER_UPDATE,
+                         "receive budget twice send: a client's loopback queue holds twice what one connection sends in an update" );
 
 #if ROCKETNET_DEV
 // A bound endpoint's count of datagrams dropped by the backend: over the

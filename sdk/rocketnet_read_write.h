@@ -12,7 +12,7 @@
 #include <string.h>
 
 // Pointer-advancing readers and writers for the byte-aligned wire format in
-// STANDARD.md. Values are written little-endian by shift and mask, so these
+// standard/TRANSPORT.md t4. Values are written little-endian by shift and mask, so these
 // are endian independent by construction and need no detection or fixup.
 // The pointer advances past what was written or read, so callers never manage
 // offsets by hand.
