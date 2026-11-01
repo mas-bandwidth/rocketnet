@@ -260,8 +260,9 @@ identity. The harness drains the endpoint-wide receive queue and checks:
 - reliable messages arrive exactly once and ordered streams stay in order;
 - every delivered unreliable message is intact and at most once;
 - receipt and drop counters reconcile with attempted sends;
-- a refused `start_message` or `finish_message` is counted and fails the
-  corresponding offered-load criterion.
+- in fixed-rate runs (`fixed_message_rate`), a refused `start_message` or
+  `finish_message` is counted and fails the `application_offers_accepted`
+  criterion.
 
 Short 10- and 100-client cases serve as integration gates. The
 1,000-client LAN case is recorded in
