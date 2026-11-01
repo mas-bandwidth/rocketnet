@@ -161,13 +161,11 @@ static void test_client_transport_create_ex_reports_every_status()
     struct rocketnet_client_transport_config_t production;
     own_filter_config( &production );
 
-    // C3: a config field out of range refuses at validation (step_driven is
-    // the revision-1 field with a range; the link simulator fields lie past
-    // the revision this create reads)
+    // C3: a config field out of range refuses at validation, in every build
     {
         struct rocketnet_client_transport_config_t config;
         own_filter_config( &config );
-        config.step_driven = 2;
+        config.simulated_loss_percent = 101;
         check_create_status( ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE, token, &config, &state, &status );
     }
 

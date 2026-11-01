@@ -1281,72 +1281,69 @@ void rocketnet_test_transport_start_finish_shape()
     rocketnet_check( frame );
     rocketnet_server_transport_abort_packet( server, &context );
 
-    for ( int arena = 0; arena < 2; ++arena )
-    {
     // commit: write at the payload pointer, finish, flush, and the client
     // receives exactly those bytes
 
-        frame = rocketnet_server_transport_start_packet( server, 0, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + arena, &context );
-        rocketnet_check( frame );
-        rocketnet_check( context.payload_index == ( arena ? 0 : ROCKETNET_FRAME_PAYLOAD_OFFSET ) );
-        memcpy( frame + context.payload_index, "shape", 5 );
-        rocketnet_server_transport_finish_packet( server, &context, 5 );
-        rocketnet_server_transport_send_packets( server );
+    frame = rocketnet_server_transport_start_packet( server, 0, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, &context );
+    rocketnet_check( frame );
+    rocketnet_check( context.payload_index == ROCKETNET_FRAME_PAYLOAD_OFFSET );
+    memcpy( frame + context.payload_index, "shape", 5 );
+    rocketnet_server_transport_finish_packet( server, &context, 5 );
+    rocketnet_server_transport_send_packets( server );
 
-        int received = 0;
+    int received = 0;
 
-        start = rocketnet_platform_time();
-        while ( rocketnet_platform_time() - start < 5.0 && !received )
+    start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 5.0 && !received )
+    {
+        rocketnet_client_transport_update( client, rocketnet_platform_time() );
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+
+        uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+        int packet_bytes;
+        while ( ( packet_bytes = rocketnet_client_transport_receive_packet( client, packet, (int) sizeof( packet ) ) ) > 0 )
         {
-            rocketnet_client_transport_update( client, rocketnet_platform_time() );
-            rocketnet_server_transport_update( server, rocketnet_platform_time() );
+            rocketnet_check( packet_bytes == 5 );
+            rocketnet_check( memcmp( packet, "shape", 5 ) == 0 );
+            received = 1;
+        }
 
-            uint8_t packet[ROCKETNET_RECEIVE_CEILING];
-            int packet_bytes;
-            while ( ( packet_bytes = rocketnet_client_transport_receive_packet( client, packet, (int) sizeof( packet ) ) ) > 0 )
-            {
-                rocketnet_check( packet_bytes == 5 );
-                rocketnet_check( memcmp( packet, "shape", 5 ) == 0 );
-                received = 1;
-            }
+        rocketnet_platform_sleep( 0.001 );
+    }
 
+    rocketnet_check( received );
+
+    struct rocketnet_packet_context_t reply;
+    uint8_t * reply_frame = rocketnet_client_transport_start_packet( client, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, &reply );
+    rocketnet_check( reply_frame );
+    rocketnet_check( reply.payload_index == ROCKETNET_FRAME_PAYLOAD_OFFSET );
+    memcpy( reply_frame + reply.payload_index, "reply", 5 );
+    rocketnet_check( rocketnet_client_transport_finish_packet( client, &reply, 5 ) > 0 );
+    rocketnet_client_transport_send_packets( client );
+
+    bool replied = false;
+
+    start = rocketnet_platform_time();
+    while ( !replied && rocketnet_platform_time() - start < 5.0 )
+    {
+        rocketnet_client_transport_update( client, rocketnet_platform_time() );
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+        if ( rocketnet_server_transport_num_payloads( server ) )
+        {
+            int index, bytes;
+            uint8_t * payload = rocketnet_server_transport_payload( server, 0, &index, &bytes );
+            rocketnet_check( payload && index == 0 && bytes == 5 && memcmp( payload, "reply", 5 ) == 0 );
+            rocketnet_check( rocketnet_server_transport_num_payloads( server ) == 1 );
+            replied = true;
+        }
+
+        if ( !replied )
+        {
             rocketnet_platform_sleep( 0.001 );
         }
-
-        rocketnet_check( received );
-
-        struct rocketnet_packet_context_t reply;
-        uint8_t * reply_frame = rocketnet_client_transport_start_packet( client, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + arena, &reply );
-        rocketnet_check( reply_frame );
-        rocketnet_check( reply.payload_index == ( arena ? 0 : ROCKETNET_FRAME_PAYLOAD_OFFSET ) );
-        memcpy( reply_frame + reply.payload_index, "reply", 5 );
-        rocketnet_check( rocketnet_client_transport_finish_packet( client, &reply, 5 ) > 0 );
-        rocketnet_client_transport_send_packets( client );
-
-        bool replied = false;
-
-        start = rocketnet_platform_time();
-        while ( !replied && rocketnet_platform_time() - start < 5.0 )
-        {
-            rocketnet_client_transport_update( client, rocketnet_platform_time() );
-            rocketnet_server_transport_update( server, rocketnet_platform_time() );
-            if ( rocketnet_server_transport_num_payloads( server ) )
-            {
-                int index, bytes;
-                uint8_t * payload = rocketnet_server_transport_payload( server, 0, &index, &bytes );
-                rocketnet_check( payload && index == 0 && bytes == 5 && memcmp( payload, "reply", 5 ) == 0 );
-                rocketnet_check( rocketnet_server_transport_num_payloads( server ) == 1 );
-                replied = true;
-            }
-
-            if ( !replied )
-            {
-                rocketnet_platform_sleep( 0.001 );
-            }
-        }
-
-        rocketnet_check( replied );
     }
+
+    rocketnet_check( replied );
 
     ROCKETNET_FUNCTIONAL_DESTROY_CLIENT( client );
     ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );

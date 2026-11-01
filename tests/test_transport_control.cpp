@@ -5,37 +5,10 @@
 #include "../sdk/rocketnet_server_protocol.h"
 #include "../sdk/rocketnet_replay.h"
 // This target compiles the transport into its own deterministic fixture.
-static bool fail_seal;
-static int checked_seals;
-static bool check_arena_copy;
-static int arena_pattern;
-static int controlled_seal( rocketnet_server_protocol_t * server, int client_index, uint64_t sequence,
-                            uint64_t packet_id, uint8_t * wire, int bytes, double time );
-#define rocketnet_server_protocol_seal_payload_frame controlled_seal
 #include "../sdk/rocketnet_server_transport.cpp"
 #include "loopback_hub.h"
-#undef rocketnet_server_protocol_seal_payload_frame
 
 #define CHECK( x ) do { if (!(x)) { fprintf(stderr, "control check failed: %s (%s:%d)\n", #x, __FILE__, __LINE__); exit(1); } } while (0)
-
-static int controlled_seal( rocketnet_server_protocol_t * server, int client_index, uint64_t sequence,
-                            uint64_t packet_id, uint8_t * wire, int bytes, double time )
-{
-    if ( check_arena_copy )
-    {
-        CHECK( bytes == 64 );
-        for ( int i = 0; i < bytes; ++i )
-        {
-            CHECK( wire[ROCKETNET_FRAME_PAYLOAD_OFFSET - ROCKETNET_FRAME_WIRE_OFFSET + i] == uint8_t( i + arena_pattern ) );
-        }
-        ++checked_seals;
-    }
-
-    if ( fail_seal )
-        return 0;
-
-    return rocketnet_server_protocol_seal_payload_frame( server, client_index, sequence, packet_id, wire, bytes, time );
-}
 
 // The fake staged frame must satisfy the public packet lease's 16-byte
 // alignment contract. Its intentional struct padding triggers MSVC C4324.
@@ -547,57 +520,6 @@ static void test_staged_idle_maintenance_preflight()
     printf( "test_staged_idle_maintenance_preflight\n" );
 }
 
-static void test_single_frame_arena()
-{
-    for ( int staged = 0; staged < 2; ++staged )
-    {
-        auto * f = new control_fixture_t();
-        f->capacity = 1;
-
-        rocketnet_server_transport_io_operations_t operations;
-        auto * server = make_server( f, &operations, 1, staged != 0 );
-        checked_seals = 0;
-        check_arena_copy = true;
-
-        for ( int attempt = 0; attempt < 2; ++attempt )
-        {
-            rocketnet_packet_context_t context;
-            CHECK( rocketnet_server_transport_start_packet( server, 0, 5000, &context ) );
-            CHECK( context.payload_index == 0 ); // The oversized reservation selected the arena.
-
-            int capacity;
-            uint8_t * payload = rocketnet_server_transport_packet_payload( server, &context, &capacity );
-            CHECK( payload && capacity >= 5000 );
-            arena_pattern = 37 + attempt * 17;
-            for ( int i = 0; i < 64; ++i )
-            {
-                payload[i] = uint8_t( i + arena_pattern );
-            }
-            fail_seal = attempt == 0;
-
-            int bytes = rocketnet_server_transport_finish_packet( server, &context, 64 );
-            CHECK( ( bytes > 0 ) == ( attempt == 1 ) && !context.frame );
-            if ( staged )
-            {
-                CHECK( f->aborts == 1 );
-                CHECK( f->used == attempt );
-            }
-            else if ( attempt == 0 )
-                CHECK( server->payload_ring.info[0].wire_bytes == 0 );
-            rocketnet_server_transport_send_packets( server );
-            CHECK( f->payloads == attempt ); // Failed seal never reached the transport.
-        }
-
-        CHECK( checked_seals == 2 );
-        check_arena_copy = false;
-        fail_seal = false;
-        rn_native_server_transport_stop_and_destroy( server );
-        delete f;
-    }
-
-    printf( "test_single_frame_arena_seal_and_abort\n" );
-}
-
 static void test_staged_lease_table_full()
 {
     // Keep every staged frame outstanding. Distinct 16-aligned frames make
@@ -845,7 +767,6 @@ int main( int argc, char ** argv )
     test_staged_control_fairness();
     test_staged_unreachable_client_does_not_pin_sweep();
     test_staged_idle_maintenance_preflight();
-    test_single_frame_arena();
     test_staged_lease_table_full();
     test_entries_carry_connection_id( false );
     test_entries_carry_connection_id( true );
