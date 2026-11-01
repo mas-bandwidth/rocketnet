@@ -1484,6 +1484,9 @@ void live_message_matrix_loopback()
     live_matrix_check( elapsed < wall_bound_seconds );
 }
 
+#if ROCKETNET_DEV
+
+// This regression requires the development link simulator.
 // The edge probes over a server-to-client latency of 400 ms, past the quarter
 // second a try waits: every copy of a server probe lands during a later try or
 // a later probe, and each is counted as its own probe's arrival, never as a
@@ -1534,3 +1537,5 @@ void live_message_matrix_late_probes()
     live_matrix_close( m );
     live_matrix_check( m->failures == 0 );
 }
+
+#endif // #if ROCKETNET_DEV
