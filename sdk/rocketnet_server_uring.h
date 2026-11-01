@@ -80,9 +80,9 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_ENTRIES >= ROCKETNET_URING_SEND_QUEUE_S
 // a call returns under sustained traffic and receive_packets spending its
 // budget never stops send_packets reaping. completions past a budget stay
 // in the completion queue for the next call, counted REAP_DEFERRED. a
-// receive completion holds its ring buffer until it is reaped, so at most
-// queues * ROCKETNET_URING_RECV_BUFFERS receive completions are ever ahead
-// of a send's.
+// receive completion the fill bank has no room for is held with its ring
+// buffer until a swap brings room, and leaves the completion queue, so no
+// send completion waits behind it.
 
 #define ROCKETNET_URING_SEND_BUDGET    ( ROCKETNET_URING_SEND_QUEUE_SIZE + ROCKETNET_URING_ENTRIES * 2 )
 
@@ -99,15 +99,18 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_SEND_QUEUE_SIZE >= 2 * ROCKETNET_DEFAUL
                          "the io_uring send array stages two packets for every client of the default configuration" );
 
 // one receive bank holds a whole process batch, so the swap never drops
-// below the process arrays; a reap stops short of the last
-// ROCKETNET_URING_MAX_SEGMENTS slots, the most datagrams one coalesced
-// receive carries (the kernel's UDP_MAX_SEGMENTS, the gso transport's bound).
+// below the process arrays; a receive is copied into it only while the last
+// ROCKETNET_URING_MAX_SEGMENTS slots are free, the most datagrams one
+// coalesced receive carries (the kernel's UDP_MAX_SEGMENTS, the gso
+// transport's bound), and held otherwise. the hold has a slot for every
+// provided buffer of the most queues: a held receive owns its buffer.
 // A bank holds one update's receive budget for the configured clients, and
 // never less than one send reap (ROCKETNET_URING_SEND_BUDGET), so a reap
 // that is all send completions still fits a bank; the receive budget a call
 // reaps is the bank size, and the process view holds a whole bank.
 
 #define ROCKETNET_URING_MAX_SEGMENTS                                        64
+#define ROCKETNET_URING_HELD_RECEIVES           ( ROCKETNET_URING_MAX_QUEUES * ROCKETNET_URING_RECV_BUFFERS )
 
 static inline int rocketnet_server_uring_bank_packets( int max_clients )
 {
@@ -128,11 +131,11 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_SEND_BUDGET > ROCKETNET_URING_MAX_SEGME
 #define ROCKETNET_SERVER_URING_COUNTER_SUBMIT_SYSCALLS                       2      // io_uring_enter calls: submits and waits
 #define ROCKETNET_SERVER_URING_COUNTER_SEND_DROPPED                          3      // a send CQE with a negative result, or a destination the socket family cannot carry
 #define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_SIZE                  4      // datagram outside [server min, receive ceiling], or truncated in its buffer
-#define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_OVERFLOW              5      // the fill bank was full during destroy's drain (a running transport leaves the CQE in the queue instead)
+#define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_OVERFLOW              5      // the fill bank was full during destroy's drain (a running transport holds the receive for the next swap instead)
 #define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_SOURCE                6      // source address the boundary could not convert
 #define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_NO_BUFFERS                    7      // the multishot ended because the buffer ring was empty (ENOBUFS)
 #define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_REARMS                        8      // multishot receives armed again after a CQE without F_MORE
-#define ROCKETNET_SERVER_URING_COUNTER_REAP_DEFERRED                         9      // a send_packets or receive_packets call that left completions in the queue for the next call: its budget spent, or the fill bank without room for a receive (deferred, not dropped)
+#define ROCKETNET_SERVER_URING_COUNTER_REAP_DEFERRED                         9      // a send_packets or receive_packets call that left completions in the queue for the next call (its budget spent) or receives held for the fill bank's room (deferred, not dropped)
 #define ROCKETNET_SERVER_URING_COUNTER_SEND_DEFERRED                        10      // a send_packets call that returned with sends not yet completed or staged slots not yet submitted, retired by a later call
 #define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_NO_BUFFER            11      // a receive CQE with res >= 0 that names no provided buffer (no IORING_CQE_F_BUFFER, or an id outside the ring)
 #define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_REARM_FAILED                 12      // a re-arm found no submission entry (queue left disarmed)

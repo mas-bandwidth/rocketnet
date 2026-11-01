@@ -226,8 +226,8 @@ static void receive_budget_fake_submitted( void * context, uint64_t user_data )
 }
 
 // One send_packets reap under full ingress never overflows the fill
-// bank: the send completion budget stays inside the receive budget, so
-// reaped receives fit the bank and RECEIVE_DROPPED_OVERFLOW stays zero.
+// bank: a receive past the bank's room is held for the next swap, so
+// RECEIVE_DROPPED_OVERFLOW stays zero.
 static void test_io_uring_transport_receive_budget_twice_send_reap_no_overflow()
 {
     struct rocketnet_server_uring_test_source_t source;
