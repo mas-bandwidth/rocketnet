@@ -7,7 +7,8 @@ comes from a separate worker action, and only then can connect synchronously
 finalize the old generation and reuse the block. The detailed two-ring and key
 wipe ownership model remains [RNClientIoShutdown](README-RNClientIoShutdown.md).
 These models are related by their completion boundary, not a proved refinement.
-No TLC measurement for this revision is claimed until its cases run on Linux.
+The current Linux measurements are recorded in `proofs/tla/RUNS.tsv`; all
+eleven declared cases have their expected outcomes for this revision.
 
 `proofs/tla/ClientSession.tla` models the client object over many connections: create (no token,
 DISCONNECTED), connect(token), the handshake abstracted to its three stages, CONNECTED, every
@@ -16,7 +17,7 @@ handshake packet by packet is `proofs/tla/ClientConnection.tla`, which this modu
 this one models what that one does not: the per-connection state one connection writes and the
 one `Reset` that clears it before the next connection. `proofs/tla/MCClientSession.tla` and its cfg
 files are the instances; their required cases are in `proofs/tla/CASES.tsv` (group
-`clientsession`). The existing `proofs/tla/RUNS.tsv` rows predate this revision.
+`clientsession`). `proofs/tla/RUNS.tsv` is the current measurement ledger.
 
 ## What the model covers
 
@@ -92,6 +93,10 @@ the new session's first sequences (`replay_window`).
 
 ## Properties
 
+The table lists configured properties. `DropLeavesNothing` is also defined,
+but no case checks it directly; `NoSendUnlessConnected` checks its shared
+send-state clause, while the drop actions constrain the drop-state ghost.
+
 | Property | Kind | The rule |
 |---|---|---|
 | `TypeOK`, `CurrentOnlyWhileLive` | invariant | types; a session is in progress exactly in the live states |
@@ -99,7 +104,6 @@ the new session's first sequences (`replay_window`).
 | `NoReuseBeforeComplete`, `PendingRefuses`, `PendingRefusalRetained`, `OwnerGeneration` | invariants | a live/stopping old owner cannot be replaced; pending refusal retains the generation; no owner has no generation |
 | `TerminalRetryEnabled`, `StuckRetainsOwner` | invariants | a terminal state permits a stop request or completed retry; a permanently stuck worker stays retained |
 | `NoSendUnlessConnected` | invariant | no message is queued outside CONNECTED, and no send-side field is written outside it |
-| `DropLeavesNothing` | invariant | a drop happens only outside CONNECTED (and with an object), and outside CONNECTED no send-side field holds anything, so nothing dropped is sent once the connection reaches CONNECTED |
 | `ResetIsInit` | invariant | outside a connection every per-connection field is Init; the lifetime counter equals the connections this object made, and the config stays |
 | `RecordIsCurrent` | invariant | the record holds only Init and the current session's writes |
 | `ReconnectObservesNothing` | invariant | no packet of session s opens in session s' # s, and no step reads a field another session wrote |
@@ -117,7 +121,9 @@ the new session's first sequences (`replay_window`).
 | `MCClientSessionQueueBeforeConnected.cfg` | `Defect = "queuebeforeconnected"`: `Send` also runs in a handshake state, a send queued before CONNECTED | `NoSendUnlessConnected`, exit 12 | 4 states: create, connect, a send in the first handshake stage: `st = "REQUESTING_COOKIE"`, `queuedIn = {"REQUESTING_COOKIE"}`, the send-side fields written with session 1's tag. In the code that is `rocketnet_client_start_message` after `rocketnet_client_connect` and before CONNECTED, which the message layer now drops (`DropSend`) instead of queueing |
 
 The following traces were read for the earlier source only; their state counts and
-invariant names are not new evidence for this revision. Every old trace was read
+invariant names are not new evidence for this revision. In particular, the old
+`ConnectOnlyFromDisconnected` property is now `ConnectOnlyFromTerminal`,
+which permits completed terminal retries. Every old trace was read
 step by step against the defect each constant names. With the Unreset
 instance and `INVARIANT ResetIsInit` instead, TLC fails `ResetIsInit` at the first reset (8
 states: a denial after a packet of session 1 opened leaves `replay_window = 1` in
@@ -172,10 +178,11 @@ cannot retry. `MCClientSessionReconnectStuck.cfg` checks retention when a
 worker never completes. The main control checks all original reset/isolation
 properties plus the new ownership invariants.
 
-The `proofs/tla/RUNS.tsv` rows for `clientsession` are stale for this changed input.
-All eleven ClientSession cases in `proofs/tla/CASES.tsv` require new exact-input Linux TLC
-shards (the eleven were run for the state callback revision on 2026-10-29 and are
-recorded in `proofs/tla/RUNS.tsv`). Do not use the recovered 2026-10-21 six-case ledger as a substitute:
-that candidate assumed atomic terminal cleanup and immediate retry. After the
-allocated Linux campaign, merge those shards over the proof validator's current
-full baseline and run the runner's stale/dependency checks on the combined head.
+The current `clientsession` rows in `proofs/tla/RUNS.tsv` record all eleven
+expected outcomes: the main control, stuck-worker control, and nine reversed
+witnesses. The main control completed in 89.382 seconds under the unchanged
+110-second budget. These records cover the completion-gated input; the
+historical tables above and the recovered 2026-10-21 six-case ledger do not
+replace them. That earlier candidate assumed atomic terminal cleanup and
+immediate retry. Future input changes require fresh exact-input shards and
+the runner's stale/dependency checks on the combined ledger.

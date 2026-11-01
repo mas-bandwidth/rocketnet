@@ -78,7 +78,9 @@ prefix of its accepted sequence, including multiplicity. `WholeMessagesOnly`
 checks completeness at delivery. `ChunksPlacedByIndex` compares every occupied
 chunk destination and delivered chunk vector with the original opaque tokens.
 `UnreliableAtMostOnce` depends on transport replay suppression; it does not add
-a message reliability protocol. `BuffersBounded`, `TypeOK`, and
+a message reliability protocol. Its one-unreliable-record abstraction does
+not independently test duplicated wire packets or replay of a processed
+unreliable prefix. `BuffersBounded`, `TypeOK`, and
 `NoSlotCollision` check the configured tables and live receiver slots.
 
 `OrderedTraceUnchangedBySequenced` is a single-run ordered-prefix and counter

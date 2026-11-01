@@ -11,10 +11,9 @@ worked example of a rotating-key machine; this module is the filter's own.
 
 Rocketnet 1.0 is unkeyed: `rocketnet_prefilter_check`
 (`sdk/rocketnet_protocol.cpp`) refuses every epoch but 0 on a comparison.
-The model is written before the code that implements the keyed form; the
-code card `rocketnet-filter-epoch-window` names its functions after the
-actions (Install, Retire, Check) and cites this module. Until then the
-`rn-filter-epochs` row of `proofs/tla/COVERAGE.tsv` is `owed`.
+This is a historical keyed-filter design, with no v1.0 implementation.
+The `owed` status of `rn-filter-epochs` in `proofs/tla/COVERAGE.tsv` records
+that absence; it is not a promise of an active implementation card.
 
 `proofs/tla/MCRNFilterEpochs.tla` and `proofs/tla/MCRNFilterEpochs.cfg` are the small
 instance. `proofs/tla/MCRNFilterEpochsBrokenAcceptZero.cfg` and

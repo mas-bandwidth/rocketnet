@@ -35,7 +35,7 @@ Functions in `sdk/rocketnet_channel_sequenced.cpp` unless stated.
 | `DrainDeliver(c)` | `rn_channels_drain_sequenced`, the hold in turn and delivered: `held_sequenced = NONE`, `used = 2` and the slot appended to the delivered list; the delivery's view points at the slot's payload |
 | `DrainRelease(c)` | `rn_channels_drain_sequenced`: a stale hold, no delivery room or a refused delivery, each returned to the free stack |
 | `EndUpdate` | `rn_channels_end_update_sequenced`: each delivered slot returned in list order, the list emptied; the update's views expire |
-| `Carve` | `rn_region_carve` (`sdk/rocketnet_allocator.cpp`): the stack full, lowest index on top, nothing used; `rn_channels_bind` leaves every `held_sequenced` NONE |
+| `Carve` | `rn_region_carve` (`sdk/rocketnet_allocator.cpp`): the stack full, lowest index on top, nothing used, and every `channel_receive[c].held_sequenced` set to NONE by the same carve |
 
 A return is `rn_sequenced_hold_return`: `used = 0` and
 `stack[free_count++] = slot`. Orderings and sequencing are left to

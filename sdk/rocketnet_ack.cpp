@@ -1143,7 +1143,8 @@ static void rocketnet_ack_stats_publish_received( struct rocketnet_ack_endpoint_
 // proofs/tla/RNSentHistory.tla Send
 // proofs/tla/SessionAcks.tla StartPayload: writes the one sequence's record with its packet id and sets its held and unacked bits
 // proofs/tla/RNServerStats.tla Send: takes the sent sequence (past the high-water mark, or a refused stale one)
-// proofs/tla/RNServerStats.tla Write: removes the overwritten record from the aggregates, writes the ring slot and adds it
+// proofs/tla/RNServerStats.tla Write: the slide already retired the overwritten record; write the ring slot and add it.
+// The abstract Rem is redundant after that slide, not another code-side retirement.
 
 enum rocketnet_ack_sent_result_t rocketnet_ack_endpoint_record_sent_classified( struct rocketnet_ack_endpoint_t * endpoint,
                                                                                 uint64_t sequence, int wire_bytes,

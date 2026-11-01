@@ -44,10 +44,16 @@ them with the invariant each names:
 |---|---|---|
 | SlotsAfterKeypair | slots at 11, keypair at 10 | BASE: crypto_box_keypair and the scalar multiplication inside rocketnet_derive_connection_keys run before rocketnet_client_slots_num_free, so a full server pays for a keypair on every denial |
 | AdmittedAfterVerify | admitted at 8, signature at 6 | BASE order with the admitted lookup behind the signature verify: a cheap refusal decided only after signature work |
-| VersionNotFirst | version at 9, behind the signature at 8 | a version refusal decided only after signature work; the version byte is a fixed-offset compare and belongs first |
+| VersionNotFirst | only version moves from 2 to 12; restart remains 1, signature 8, slots 10 and keypair 11 | a version refusal decided only after signature work; restoring version to 2 restores the healthy order, without a slots-after-keypair defect |
 | TokenManyAddresses | claim removed (ClaimAtRequest FALSE) | BASE: the token was not claimed at the request, so one token from many addresses bought many half-open mappings and full crypto until the map filled; OneLiveMappingPerToken fails |
 | WorkBudgetAtCookie | workbudget at 51, just after the cookie gate (WorkBudgetAtVerify FALSE) | BASE before 2026-10-31: the budget was charged after the cookie validated, so a request the used, failed-signature-budget, claim or capacity rungs then refused had spent budget; one source past its failed-signature budget, refused at no cost to itself, kept the default 16-per-update budget full at about 1000 requests per second and honest requests were refused as HANDSHAKE_BUDGET_EXCEEDED. WorkBudgetOnlyForVerify fails |
 | ClaimBeforeSignature | claim written at its check rung (ClaimWriteRung "claim") | BASE before the split: rocketnet_used_token_history_claim_record ran at the claim rung, ahead of rocketnet_verify_signed_connect_data, and a failed signature released it after; every unauthenticated request past the cookie wrote (and then released) a claim-table entry. ClaimOnlyAfterSignature fails |
+
+`VersionNotFirst` retains the healthy positions of every other rung and
+uses the unused position 12, so all rung positions remain unique. The earlier
+configuration also put slots after keypair and could fail independently of
+version ordering; it is preserved in Git history, not used as the isolated
+version witness. Its declared oracle remains `CheapRefusalsFirst`.
 
 Replayed by hand: in ClaimBeforeSignature a request with fault `signature`
 advances past the claim rung (position 62) with no other claim on its token,

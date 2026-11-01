@@ -35,7 +35,8 @@ Functions in `sdk/rocketnet_channel.cpp`.
 | `Free(d)` | environment: the allocator frees a numbered descriptor on its ack (`rn_region_send_free`, modelled by `RNSendStoreLayout`); it touches no queue link |
 
 The window stall (`numbers == 0`) changes nothing and is the stutter. A
-binding's reset (`rn_channels_bind`) empties every queue at once and is left
+channel initialization (`rn_channels_init`, with region heads reset by
+`rn_region_carve`) empties every queue at once and is left
 to `RNChannelQueues` (`Reset`). `WalkEmpty` is a defensive path: with the
 code's own callers no ready channel is ever empty (`NonEmptyIsReady` and
 TLC's reachable states agree), so it is kept for fidelity and is unreachable

@@ -12,22 +12,17 @@ The model was written before the code. `sdk/xdp/server_xdp.c` now holds
 the replay map, names its steps after the actions below and cites this
 module; the `xdp-replay-*` rows of `proofs/tla/COVERAGE.tsv` are `current`.
 
-`proofs/tla/MCRNXdpReplay.tla` and `proofs/tla/MCRNXdpReplay.cfg` are the small instance;
-`proofs/tla/MCRNXdpReplayReconnect.cfg` is the reconnect control and
-`proofs/tla/MCRNXdpReplayRefusedMark.cfg` the refused-mark control.
-`proofs/tla/MCRNXdpReplayBrokenKernelAdvances.cfg`,
-`proofs/tla/MCRNXdpReplayBrokenNoForget.cfg`,
-`proofs/tla/MCRNXdpReplayBrokenNarrowWindow.cfg`,
-`proofs/tla/MCRNXdpReplayBrokenUnmarkedNotForgotten.cfg`,
-`proofs/tla/MCRNXdpReplayBrokenFailedForgetDropped.cfg`,
-`proofs/tla/MCRNXdpReplayBrokenSupersededForget.cfg` and
-`proofs/tla/MCRNXdpReplayBrokenReconnectFreshness.cfg` are the reversed witnesses. The cases
-are rows of `proofs/tla/CASES.tsv` (group `rnxdpreplay`) with measured records in
-`proofs/tla/RUNS.tsv`.
+`proofs/tla/MCRNXdpReplay.tla` is the small instance. The main,
+`Reconnect`, `RefusedMark` and `HeldReply` configurations are the controls.
+The complete control and reversed-witness declaration is the `rnxdpreplay`
+group in [`CASES.tsv`](CASES.tsv); [`RUNS.tsv`](RUNS.tsv) records its measured
+outcomes. This group includes replay filtering, reconnect freshness,
+refused-operation retention, queue refusal, greeting and answered-entry rules.
 
 ## The design
 
-- The map: `ROCKETNET_XDP_REPLAY_MAX_ENTRIES` (1024) entries, keyed by the
+- The map is sized at create by `rocketnet_xdp_replay_entries(max_clients)`,
+  capped by `ROCKETNET_XDP_REPLAY_MAX_ENTRIES`, and keyed by the
   source family, port and address, valued by a 32-bit `high_water`. The same accepted forget removes the learned reply MAC, including for a seen slot that never acquired a replay mark.
 - The kernel rule, for the session packet types only (keep-alive, payload,
   disconnect, ack), after the type and size check and before the
@@ -49,8 +44,9 @@ are rows of `proofs/tla/CASES.tsv` (group `rnxdpreplay`) with measured records i
   release) or while the kernel refuses that delete. Its `highest_opened` is
   0 (it has sent nothing: a client sends no session packet before the
   server's first keep-alive), so the walk marks it at 0, as a fall below the
-  slot's old mark or as a slot first seen, and that zero entry, which drops
-  nothing, replaces the old session's entry in the commit. The server
+  slot's old mark or as a slot first seen. That zero entry drops no genuine
+  sequence in this model's bounded nonwrapping range and replaces the old
+  session's entry in the commit. The server
   publishes the first keep-alive after that commit (the replay walk and
   commit come before the update's send flush in
   `sdk/rocketnet_server_transport.cpp`), so no packet of the new session
@@ -121,7 +117,7 @@ sessions over the whole run, so a reconnect from one address is reachable),
 | `opened[a]` | `highest_opened` of `replay_session` | raised only after a packet opens |
 | `seen[a]`, `replyMac[a]` | slot identity and reply path | retained until its forget is accepted; a full pending buffer cannot let a new mapping overwrite the old identity |
 | `marked[a]` | the transport's per-slot record | what it last marked, `0` for none |
-| `kmap[a]` | `server_xdp_replay_map` entry | `hw` is `high_water`, `0` for no entry; `sess` is a ghost naming the session the mark was taken from |
+| `kmap[a]` | `server_xdp_replay_map` entry | `hw` is `high_water`; `NoEntry` has `sess = NoSession`, distinct from a live session marked at zero; `sess` is a ghost naming the session the mark was taken from |
 | `net` | packets in flight | each `[addr, seq, session, genuine, stage, copy]`; `stage` is `"wire"` before the kernel, `"user"` after it passed; `copy` lets a duplicate coexist with its original |
 | `pendingForget`, `pendingMark` | the walk's output | what the next commit applies |
 | `phase` | the update | `"run"` while packets are processed, `"flush"` between the walk and the commit |
@@ -133,13 +129,14 @@ sessions over the whole run, so a reconnect from one address is reachable),
 | `greeted[a]` | the client's connected state | the live session's first keep-alive has left: set by the `Commit` after its `Connect`, cleared by `Connect` and `Release` |
 | `nextSession` | (ghost) | the id the next connection takes |
 
-Eleven rule switches are definitions with the design's values, each
+Rule switches are definitions with the design's values, each
 overridden by one witness configuration: `KernelAdvances` (`FALSE`),
 `WalkForgets` (`TRUE`), `WalkForgetsUnmarked` (`TRUE`), `KernelWindow` (`W`),
 `KeepFailedForgets` (`TRUE`), `SupersedeStaleForgets` (`TRUE`) and
 `MarkNewSessions` (`TRUE`), `KeepRefusedMarks` (`TRUE`),
 `ForgetDropsKeptMark` (`TRUE`), `HoldGreetingUntilMarked` (`TRUE`) and
-`AdvanceOnQueueRefusal` (`FALSE`).
+`AdvanceOnQueueRefusal` (`FALSE`), `KeepAnswered` (`TRUE`),
+`ForgetLeavesAnswered` (`TRUE`) and `AnswerKeyedByAddress` (`TRUE`).
 
 Actions, each against the design sentence it models:
 

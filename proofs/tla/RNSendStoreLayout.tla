@@ -199,7 +199,9 @@ Free(d) ==
     /\ UNCHANGED <<fresh, dFresh, exhausted, takenTwice, badRefusal>>
 
 \* rn_region_carve (rn_send_store_init_counts for the class): both pools
-\* empty and both watermarks at zero, no meta and no descriptor written
+\* empty and both watermarks at zero; modeled meta/descriptor fields unchanged.
+\* SDK carve separately clears enqueue_ticket/schedule_flags below the old
+\* descriptor watermark before lowering it; these scheduling fields are omitted.
 Carve ==
     /\ freeHead' = 0
     /\ freeCount' = N

@@ -4,11 +4,11 @@
 two message endpoints, one at each end of a connection, joined by two
 instances of `proofs/tla/Link.tla` (`AB` carries a's packets to b, `BA` carries b's
 to a), with the transport's ack semantics and the CONFIG announcement of
-sections 10.3 and 13.4. It is written before the code: it is the spec the
-CONFIG card (`rocketnet-config-announcement`) and the endpoint card
-(`rocketnet-endpoint-pure`) implement, and its actions carry the names of
-the planned functions of section 10.1. No code implements it yet, so
-`proofs/tla/COVERAGE.tsv` holds its row as owed by `rocketnet-endpoint-pure`.
+sections 10.3 and 13.4. The model preceded the implementation;
+`sdk/rocketnet_endpoint.cpp` now implements the endpoint and CONFIG paths
+and cites the corresponding actions. The `rn-endpoint` row in
+`proofs/tla/COVERAGE.tsv` records that source mapping. The abstraction and
+bounded evidence below do not establish a refinement proof of the C++ code.
 
 ## What is modelled
 
@@ -59,7 +59,7 @@ An end in error does nothing more: the object disconnects it (section 11).
   held on their channel. The 24-bit wire number, `U'` inside blocks and the
   descriptor slots are not restated.
 - **The resend delay** is abstract, as in `RNWindow`: an unacked record inside the
-  window may be resent at any step. `ResendDelayAboveRtt = TRUE` (the liveness cases)
+  window may be resent at any step. `RtoAboveRtt = TRUE` (the liveness cases)
   narrows this to the real ordering of the resend delay above the RTT: a record is due
   again only once no copy of it is in flight and no ack of it is pending or in
   flight back. The timing that makes this so is `RNResendTiming`'s.
@@ -133,7 +133,7 @@ witness run Link capacity 1; the two CONFIG witnesses run capacity 2.
 | Case | Spec and terrain | Expected |
 |---|---|---|
 | `MCRNEndpoint.cfg` | `Spec`, N = 3, capacity 1, `"arbitrary"` in-order loss both ways, failed sends, ack silence, timeouts at any time, abstract resend delay; constraints `MCOneTimeout` and `MCOneWay` | pass |
-| `MCRNEndpointLive.cfg` | `LiveSpec`, N = 2, capacity 1, `"first"` loss both ways, `ResendDelayAboveRtt` | pass |
+| `MCRNEndpointLive.cfg` | `LiveSpec`, N = 2, capacity 1, `"first"` loss both ways, `RtoAboveRtt` | pass |
 | `MCRNEndpointBrokenConfigUnreliable.cfg` | as Live with `ConfigReliable = FALSE`, capacity 2 | temporal `ConfigVerifiedDespiteFirstLoss` |
 | `MCRNEndpointBrokenConfigNotCompared.cfg` | as the safety case with `ConfigCompared = FALSE`, capacity 2, no constraints | invariant `MismatchErrorsBothEnds` |
 | `MCRNEndpointTwoWay.cfg` | `Spec`, N = 2, capacity 1, both ends sending, the safety terrain; constraint `MCOneTimeout` only (bench) | pass |
@@ -209,9 +209,10 @@ loaded bench may need a quieter one.
 ## Reversed witnesses, each checked by hand
 
 The traces were read by hand against `docs/CHANNELS.md` 10.3 and 13.4.
-No code implements CONFIG or the endpoint yet (`sdk/` defines only the
-error code), so the check is against the design, which is the spec the
-two code cards implement.
+These historical trace explanations were checked against the design before
+implementation. The corresponding endpoint and CONFIG functions now live
+in `sdk/rocketnet_endpoint.cpp`; the source mapping is in `COVERAGE.tsv`.
+The trace explanations remain bounded model evidence, not native execution.
 
 **`MCRNEndpointBrokenConfigNotCompared.cfg`** (`ConfigCompared = FALSE`,
 invariant `MismatchErrorsBothEnds`, 3 states). Init picks the differing

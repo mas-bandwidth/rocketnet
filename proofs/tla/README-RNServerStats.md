@@ -25,8 +25,11 @@ none. On the sent side, a write that raises `highest` from `h0` to `h1`:
    traverse); the counted survivors crossing into the loss-eligible
    part are counted there; the present records between the old top and the
    new one, and no higher than `h0` (nothing above it is written yet), enter;
-2. retires the record it replaces, when that one is counted;
-3. writes, and counts the new record if it lands in the window.
+2. writes, and counts the new record if it lands in the window. The slide
+   already retired the replaced record; the abstract `Write` also applies
+   `Rem`, which is an identity after that slide in the non-Late instances
+   (the Late branch does not use its result). This is not another code-side
+   retirement step.
 
 The received side instead keeps 64 fixed physical-slot summaries for the
 2,048-record ring. `rocketnet_ack_stats_received_advance` clears summaries for
