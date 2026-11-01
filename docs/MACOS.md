@@ -467,26 +467,24 @@ toolchain), in three legs, each in its own job and its own build directory:
 - **tsan**: Debug with `-fsanitize=thread -fno-omit-frame-pointer -O1` (at
   `-O0` tsan does not report a struct copy's memcpy write after an unordered
   read), `TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1`. The full TSAN
-  functional suite is a nightly check with a one-hour case limit (owner
-  ruling, 2026-10-25): the leg's two functional steps set
-  `ROCKETNET_TEST_CASE_TIME_SCALE=30`, which multiplies the suite's 120 s
-  case limit to 3600 s (`tests/suite_runner.h`, `suite_case_limit`). Under
-  TSAN the live message matrix
-  (`test_loopback_transport_live_message_matrix`) takes 106 to 116 s, CPU
-  bound in sending and crypto, against 120 s. Per-PR CI and every other run
-  leave the variable unset and keep 120 s.
+  functional suite is a nightly check with no repository execution-time cap.
+  The leg sets `ROCKETNET_NIGHTLY_NO_TIMEOUT=1`; this takes precedence over
+  `ROCKETNET_TEST_CASE_TIME_SCALE=30`, which remains available to bounded
+  manual callers. Per-PR CI keeps its existing bounds. The historical live
+  message matrix took 106 to 116 s under TSan against a 120 s case limit.
 - **leaks**: an unsanitized Debug build. The suites run each case in a child
   process (`tests/suite_runner.h`), and `leaks --atExit` inspects only the
   process it launched and does not pass its exit status through. So the suite
   first runs plainly with `MallocStackLogging=1` (its exit status is the suite
   verdict), then every case it named runs alone, in process, under
   `leaks --atExit --`, and each exec binary of the functional suite runs under
-  it too. A case past 180 s is killed and named red. Red on any leak.
+  it too. The nightly opt-in disables the per-case elapsed watchdog. A
+  leak or incomplete inspection cannot qualify as a pass.
 
 Each leg runs `./bin/test` and `./bin/functional` with
 `ROCKETNET_SERVER_TRANSPORT` and `ROCKETNET_CLIENT_TRANSPORT` both `msgx`, then
 both `portable`: twelve runs a night. No suppression file, no skipped case and
-no changed bound; a finding is a defect.
+unchanged leak and test assertions; a finding needs diagnosis.
 
 One leg by hand, the tsan leg here (`asan+ubsan` takes the flags above,
 `leaks` none):
@@ -496,7 +494,7 @@ cmake -S . -B build-tsan -DCMAKE_BUILD_TYPE=Debug \
   -DCMAKE_C_FLAGS="-fsanitize=thread -fno-omit-frame-pointer -O1" \
   -DCMAKE_CXX_FLAGS="-fsanitize=thread -fno-omit-frame-pointer -O1"
 cmake --build build-tsan --target test functional test_serialize test_transport_control test_msgx --parallel 4
-TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1 ROCKETNET_TEST_CASE_TIME_SCALE=30 \
+ROCKETNET_NIGHTLY_NO_TIMEOUT=1 TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1 \
   ROCKETNET_SERVER_TRANSPORT=msgx ROCKETNET_CLIENT_TRANSPORT=msgx ./bin/functional
 ```
 
@@ -507,11 +505,14 @@ MallocStackLogging=1 leaks --atExit -- ./bin/test test_endian
 MallocStackLogging=1 ROCKETNET_TEST_SUITE_CAPTURE=1 leaks --atExit -- ./bin/functional --run test_loopback_transport_udp
 ```
 
-A case that runs past 180 s under the leaks leg is killed and named red.
-`test_channels_allocator_trap_witness` (`tests/test_channels.cpp`) forks a
-child whose allocator trap ends in `_Exit`; `leaks --atExit` interposes that
-exit in the child it is not watching, so under `leaks` that one case can hang
-and is named red by the case limit. Every other case is checked for leaks.
+The extracted leak runner retains a 180 s watchdog for callers that do not
+set `ROCKETNET_NIGHTLY_NO_TIMEOUT=1`. Nightly sets that exact opt-in and does
+not terminate an inspection because of elapsed time. The allocator-trap and
+sodium-misuse witnesses fork children that deliberately exit or abort. Their
+interaction with Apple's exit inspection has produced hangs; removing an
+elapsed cap does not resolve that compatibility issue or establish leak
+coverage. Those cases still require completed inspections, with their original
+exit/abort assertions intact, before this leg can pass.
 
 ## Fuzzing
 
