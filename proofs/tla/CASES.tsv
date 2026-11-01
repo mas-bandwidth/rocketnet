@@ -63,6 +63,7 @@ MCRNSendSpansBrokenFloorAtNewest.cfg	MCRNSendSpans.tla	invariant	LiveSpansDisjoi
 MCRNSendSpansBrokenNoPadding.cfg	MCRNSendSpans.tla	invariant	SpanInsideRing	check	rnsendspans	required	-
 MCRNSendSpansBrokenHalfSplice.cfg	MCRNSendSpans.tla	invariant	ListInAllocationOrder	check	rnsendspans	required	-
 MCRNIndexRing.cfg	MCRNIndexRing.tla	pass	-	ignore-terminal	rnindexring	required	-
+MCRNIndexRingAtCapacity.cfg	MCRNIndexRing.tla	pass	-	ignore-terminal	rnindexring	required	-
 MCRNIndexRingBrokenStaleBySlot.cfg	MCRNIndexRing.tla	invariant	LiveIsOrder	ignore-terminal	rnindexring	required	-
 MCRNIndexRingBrokenSmallRing.cfg	MCRNIndexRing.tla	invariant	Bounded	ignore-terminal	rnindexring	required	-
 MCRNIndexRingArray.cfg	MCRNIndexRingArray.tla	pass	-	ignore-terminal	rnindexringarray	required	-
