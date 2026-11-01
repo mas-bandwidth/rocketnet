@@ -224,12 +224,13 @@ jobs:
         # (OFF), so every OS runs the suite both ways and the production
         # boundary checks read a production library. runner is the label set
         # runs-on uses; the Linux functional rows select libxdp-1-4, the label
-        # of the VM-tier runner the xdp matrix cell needs.
+        # of the VM-tier runner the xdp matrix cell needs, and not fleet, so a
+        # libxdp-1-4 runner kept out of the general fleet still serves them.
         include:
           - { build_type: Debug, dev: 'ON' }
           - { build_type: Release, dev: 'OFF' }
           - { os: ubuntu-24.04, runner: '["self-hosted","Linux","X64","fleet"]' }
-          - { os: ubuntu-24.04, leg: functional, runner: '["self-hosted","Linux","X64","fleet","libxdp-1-4"]' }
+          - { os: ubuntu-24.04, leg: functional, runner: '["self-hosted","Linux","X64","libxdp-1-4"]' }
           # Per commit the Linux Release unit row also runs the builds leg's
           # steps over the same production build: one Release build and one
           # runner instead of two, on a fleet where runners, not cores, are
@@ -686,39 +687,21 @@ jobs:
           ROCKETNET_CLIENT_TRANSPORT: portable
         run: ./bin/test_lifecycle
 
-      # THE libxdp 1.4 XDP CELL, on the Linux Debug functional row, which
-      # already holds the Debug bin/functional and a libxdp-1-4 runner, so the
-      # cell needs no build or runner of its own. sdk/rocketnet_server_socket_linux.cpp
+      # THE libxdp 1.4 XDP CELL. sdk/rocketnet_server_socket_linux.cpp
       # initializes the UMEM ring sizes; libxdp 1.4 rejects zeroed ring sizes
-      # and 1.6 accepts them, so the cell is pinned to 1.4. timeout 120 on vng
-      # bounds a hung guest.
-      - name: XDP max size on IPv4 and IPv6 in the runner kernel guest (libxdp 1.4)
-        if: runner.os == 'Linux' && matrix.build_type == 'Debug' && matrix.leg == 'functional'
+      # and 1.6 accepts them, so the Linux functional rows run on libxdp-1-4
+      # runners, where the transport family matrix's xdp cell (above) runs
+      # test_xdp_transport_max_size_both_ways_ipv4 and _ipv6 in a guest of the
+      # runner's kernel. This step holds the runner to its label: the cell
+      # proves the ring sizes against 1.4 only while the host's libxdp is 1.4.
+      - name: The XDP cell ran against libxdp 1.4
+        if: runner.os == 'Linux' && matrix.leg == 'functional'
         shell: bash
         run: |
           set -euo pipefail
           version=$(pkg-config --modversion libxdp)
           echo "libxdp $version"
           case "$version" in 1.4.*) ;; *) echo "libxdp-1-4 requires libxdp 1.4.x"; exit 1 ;; esac
-          vm_kernel="$HOME/vm-kernels/vmlinuz-$(uname -r)"
-          command -v vng
-          test -r "$vm_kernel"
-          test -w /dev/kvm
-          cat > build/xdp-libxdp-1-4.sh <<'GUEST'
-          uname -r
-          failed=0
-          for case in test_xdp_transport_max_size_both_ways_ipv4 test_xdp_transport_max_size_both_ways_ipv6; do
-            log="build/libxdp-1-4.$case.log"
-            sudo ./bin/functional --run "$case" > "$log" 2>&1
-            rc=$?
-            cat "$log"
-            echo "CASE $case EXIT $rc"
-            if [ "$rc" != 0 ] || ! grep -qx "$case" "$log" || grep -q '\[SKIPPED' "$log"; then failed=1; fi
-          done
-          exit "$failed"
-          GUEST
-          timeout 120 vng --run "$vm_kernel" --memory 1536M --cpus 2 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir "$PWD" -- \
-            sh build/xdp-libxdp-1-4.sh
 
       - name: Check test scaffolding boundary (red controls)
         if: matrix.leg == 'checks' && ( runner.os == 'Linux' && matrix.dev == 'OFF' )
