@@ -1094,8 +1094,8 @@ static void test_iocp_finish_refuses_unissued_packet_id()
     rocketnet_server_iocp_abort_packet( transport, second_id, first_frame );
     CHECK( iocp_refused_asserts == 2 * ROCKETNET_ASSERTS );
     CHECK( rocketnet_server_iocp_test_packet_bytes( transport, second_id ) == FAULT_BYTES );
-    rocketnet_server_iocp_finish_packet( transport, rocketnet_server_iocp_send_queue_size( ROCKETNET_DEFAULT_MAX_CLIENTS ), first_frame, FAULT_BYTES );
-    rocketnet_server_iocp_abort_packet( transport, rocketnet_server_iocp_send_queue_size( ROCKETNET_DEFAULT_MAX_CLIENTS ), first_frame );
+    rocketnet_server_iocp_finish_packet( transport, (uint64_t) rocketnet_server_iocp_send_queue_size( ROCKETNET_DEFAULT_MAX_CLIENTS ), first_frame, FAULT_BYTES );
+    rocketnet_server_iocp_abort_packet( transport, (uint64_t) rocketnet_server_iocp_send_queue_size( ROCKETNET_DEFAULT_MAX_CLIENTS ), first_frame );
     CHECK( iocp_refused_asserts == 2 * ROCKETNET_ASSERTS );
 
     // recycle the exact physical operation, then prove its old packet handle
@@ -1127,7 +1127,7 @@ static void test_iocp_finish_refuses_unissued_packet_id()
 #if ROCKETNET_DEV
     rocketnet_server_iocp_test_queue_stats( transport, &empty );
     CHECK( empty.free_count == 0 );
-    CHECK( empty.free_pops - before.free_pops == rocketnet_server_iocp_send_queue_size( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
+    CHECK( empty.free_pops - before.free_pops == (uint64_t) rocketnet_server_iocp_send_queue_size( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
 #endif // #if ROCKETNET_DEV
     rocketnet_server_iocp_finish_packet( transport, first_id, frames[(size_t) reused], FAULT_BYTES );
     CHECK( iocp_refused_asserts == 3 * ROCKETNET_ASSERTS );
@@ -1140,8 +1140,8 @@ static void test_iocp_finish_refuses_unissued_packet_id()
 #if ROCKETNET_DEV
     rocketnet_server_iocp_test_queue_stats( transport, &after );
     CHECK( after.free_count == rocketnet_server_iocp_send_queue_size( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
-    CHECK( after.free_pushes - before.free_pushes == rocketnet_server_iocp_send_queue_size( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
-    CHECK( after.queue_probes - before.queue_probes <= 4 * rocketnet_server_iocp_send_queue_size( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
+    CHECK( after.free_pushes - before.free_pushes == (uint64_t) rocketnet_server_iocp_send_queue_size( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
+    CHECK( after.queue_probes - before.queue_probes <= 4 * (uint64_t) rocketnet_server_iocp_send_queue_size( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
     CHECK( after.live_run_refs == 0 );
 #endif // #if ROCKETNET_DEV
     wait_stopped( transport );
@@ -1396,7 +1396,7 @@ static void test_iocp_send_queue_full_recovers()
 
     // Released: every send drains, every frame is free, the exchange lives
 
-    iocp_wait_sends( transport, retired + rocketnet_server_iocp_send_queue_size( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
+    iocp_wait_sends( transport, retired + (uint64_t) rocketnet_server_iocp_send_queue_size( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
     iocp_wait_depth( transport, 1 );
     iocp_all_frames_free( transport, &client_address );
     iocp_exchange( transport, &bind, client, &client_address, 64 );
@@ -1781,8 +1781,8 @@ static void test_rio_completion_queue_full()
     CHECK( seam_guard_hit == 0 );
     CHECK( seam_packets[0] == rocketnet_server_rio_receives( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
     CHECK( seam_packets[1] == rocketnet_server_rio_receives( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
-    CHECK( seam_counters[ROCKETNET_RIO_COUNTER_PACKETS_RECEIVED] == rocketnet_server_rio_receives( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
-    CHECK( seam_counters[ROCKETNET_RIO_NUM_COUNTERS + ROCKETNET_RIO_COUNTER_PACKETS_RECEIVED] == 2 * rocketnet_server_rio_receives( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
+    CHECK( seam_counters[ROCKETNET_RIO_COUNTER_PACKETS_RECEIVED] == (uint64_t) rocketnet_server_rio_receives( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
+    CHECK( seam_counters[ROCKETNET_RIO_NUM_COUNTERS + ROCKETNET_RIO_COUNTER_PACKETS_RECEIVED] == 2 * (uint64_t) rocketnet_server_rio_receives( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
     CHECK( seam_reposts == 2 * rocketnet_server_rio_receives( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
     CHECK( seam_pending == rocketnet_server_rio_receives( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
 #endif // #if defined( _WIN32 )
@@ -1814,7 +1814,7 @@ static void test_rio_completion_queue_full()
         CHECK(n <= rocketnet_server_receive_packets_per_update( ROCKETNET_DEFAULT_MAX_CLIENTS ));
         exposed += (uint64_t) n;
         return n == 0 && exposed > 0 && exposed == rio_counter(rio, ROCKETNET_RIO_COUNTER_PACKETS_RECEIVED) - received; } );
-    CHECK( exposed >= rocketnet_server_rio_receives( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
+    CHECK( exposed >= (uint64_t) rocketnet_server_rio_receives( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
     CHECK( rio_counter( rio, ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_OVERFLOW ) == overflow );
     rio_settle( rio );
     rio_exchange( rio, &bind, client, &client_address, 64 );
