@@ -103,10 +103,15 @@
 // 12133 bytes at 1000 clients (rocketnet_server_replay_marks_allocation_bytes).
 // Re-measured 2026-10-31 on vision (Linux x86-64, Debug, ROCKETNET_DEV=ON)
 // with the disconnect ring and the xdp replay records: 3248706443.
+// Re-measured 2026-11-01 on vision (Linux x86-64, Debug, ROCKETNET_DEV=ON):
+// the message link's rtt reader (8 bytes) takes rn_message_object_t from
+// 535808 to 535816 bytes, past a 64-byte boundary, and the object's head
+// block is rounded up to 64 bytes (rn_message_align64), so the server was
+// 3248706443 and is now 3248706507.
 // The non-dev figures below were not re-measured: this file is not linked
 // when ROCKETNET_DEV=OFF.
 #if ROCKETNET_DEV
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3248706443ULL )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3248706507ULL )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22904149 )
 #else
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3226203446ULL )

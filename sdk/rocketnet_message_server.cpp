@@ -805,9 +805,10 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
         // the connection's own first RTT sample, the transport's measured round
         // trip is taken as that sample, after this update's acks, so the
         // resend delay follows the path from the first round trip the
-        // transport measures rather than waiting message_resend_delay_initial_ms
+        // transport measures rather than waiting message_resend_delay_initial_ms;
+        // rn_window_ack_seed_rtt does nothing once the connection has a sample
 
-        if ( object->link.rtt && !connection->ordered.ack.has_rtt )
+        if ( object->link.rtt )
             rn_window_ack_seed_rtt( &connection->ordered.ack, object->link.rtt( object->link.transport, i ) );
 
         rn_endpoint_tick( connection, time );          // RNEndpoint Tick: RNReceipts SweepLoss, the reliable timeout
