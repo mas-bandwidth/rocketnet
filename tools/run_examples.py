@@ -33,7 +33,9 @@ Some examples then run again in another mode (EXTRA_RUNS), each with an
 exit status and a line its output must hold: example_client_server_client
 --wrong-protocol must reach its expected refusal (the server, which no client
 reaches, is stopped once the client exits); example_config_env runs from a
-path holding a space and a $, which its child must run as it is; as its
+path holding a space and a $, which its child must run as it is; on Windows
+it also runs without hidden per-drive environment entries and with argv[0]
+lacking the .exe suffix; as its
 ROCKETNET_SERVER_MAX_CLIENTS=5 child with a server create refused for another
 reason it must exit 1 rather than pass as the bad-value child; and
 example_soak, example_game_loop and example_client_server_server refuse
@@ -60,10 +62,14 @@ SINGLE_ARGS = {"soak": ["--clients", "64"]}
 # further runs. "run" is a pair (its client gets "args") or one program;
 # "env" is added to the environment; "odd_path" runs the program through a
 # link in a directory whose name holds a space and a $; "code" is the exit
-# status and "line" the start of a line the output must hold
+# status and "line" the start of a line the output must hold; no_drive_environment
+# removes only hidden Windows drive entries for that child process;
+# suffixless_argv0 keeps the executable path but removes .exe from argv[0]
 EXTRA_RUNS = [
     {"run": "client_server", "args": ["--wrong-protocol"], "code": 0, "line": "expected refusal: "},
     {"run": "config_env", "odd_path": True, "code": 0, "line": "PASS"},
+    {"run": "config_env", "no_drive_environment": True, "code": 0, "line": "PASS"},
+    {"run": "config_env", "suffixless_argv0": True, "code": 0, "line": "PASS"},
     {"run": "config_env", "env": {"ROCKETNET_SERVER_MAX_CLIENTS": "5", "ROCKETNET_SERVER_NUM_CHANNELS": "0"},
      "code": 1, "line": "FAIL: ROCKETNET_SERVER_MAX_CLIENTS=\"5\": server create "},
     {"run": "soak", "args": ["--seconds", "35791395"], "code": 1, "line": "FAIL: --seconds takes 1 .. "},
@@ -123,7 +129,8 @@ def check_result(label, result):
     return True
 
 
-def run_single(name, binary, args=None, environment=None, odd_path=False):
+def run_single(name, binary, args=None, environment=None, odd_path=False, no_drive_environment=False,
+               suffixless_argv0=False):
     workdir = tempfile.mkdtemp(prefix=f"rocketnet_example_{name}_")
     try:
         if odd_path:
@@ -132,14 +139,22 @@ def run_single(name, binary, args=None, environment=None, odd_path=False):
             link = directory / binary.name
             link.symlink_to(binary)
             binary = link
+        child_environment = {**os.environ, **(environment or {})}
+        if no_drive_environment:
+            # WSL and other launchers can omit Windows' hidden per-drive entries.
+            child_environment = {key: value for key, value in child_environment.items() if not key.startswith("=")}
+        command = [str(binary)] + (SINGLE_ARGS.get(name, []) if args is None else args)
+        if suffixless_argv0:
+            command[0] = str(binary.with_suffix(""))
         result = subprocess.run(
-            [str(binary)] + (SINGLE_ARGS.get(name, []) if args is None else args),
+            command,
+            executable=str(binary) if suffixless_argv0 else None,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
             timeout=TIMEOUT_SECONDS,
             cwd=workdir,
-            env={**os.environ, **(environment or {})},
+            env=child_environment,
         )
     except subprocess.TimeoutExpired:
         failure(name, f"timed out after {TIMEOUT_SECONDS}s")
@@ -361,17 +376,22 @@ def main():
 
     pairs = {base: members for base, members in groups if len(members) == 2}
     for extra in EXTRA_RUNS:
+        if (extra.get("no_drive_environment") or extra.get("suffixless_argv0")) and os.name != "nt":
+            continue
         name, args, environment = extra["run"], extra.get("args", []), extra.get("env", {})
         label = " ".join([name, *args, *(f"{k}={v}" for k, v in environment.items()),
-                          *(["(from a path with a space and a $)"] if extra.get("odd_path") else [])])
+                          *(["(from a path with a space and a $)"] if extra.get("odd_path") else []),
+                          *(["(without Windows drive environment entries)"] if extra.get("no_drive_environment") else []),
+                          *(["(with argv[0] lacking .exe)"] if extra.get("suffixless_argv0") else [])])
         if name in pairs:
-            assert not environment and not extra.get("odd_path"), "a pair's further run takes client arguments only"
+            assert not environment and not extra.get("odd_path") and not extra.get("no_drive_environment") and not extra.get("suffixless_argv0"), "a pair's further run takes client arguments only"
             outcome = run_pair(name, binaries[pairs[name][0]], binaries[pairs[name][1]], args)
             if outcome is False:
                 return 1
             returncode, output = outcome
         else:
-            result = run_single(name, binaries[name], args, environment, extra.get("odd_path", False))
+            result = run_single(name, binaries[name], args, environment, extra.get("odd_path", False),
+                                extra.get("no_drive_environment", False), extra.get("suffixless_argv0", False))
             if result is None:
                 return 1
             returncode, output = result.returncode, result.stdout + result.stderr
