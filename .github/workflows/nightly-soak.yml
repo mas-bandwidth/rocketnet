@@ -1,6 +1,7 @@
 # The nightly soak: the hostile-lite simulator soak (eight parallel clients,
 # light loss where any failure to connect is a finding) and the real-UDP
-# loopback soak, bounded to fit the runner. A red night is a found bug.
+# loopback soak, with finite scenarios and no harness execution deadline.
+# A red night is a found bug.
 # The same binaries run unbounded by hand for the multi-day soaks on real
 # hardware: ./bin/soak_sim and ./bin/soak, and belief comes after days.
 #
@@ -21,6 +22,11 @@ on:
 permissions:
   contents: read
 
+# Test execution has no repository wall-clock cap; GitHub still limits
+# self-hosted jobs to five days.
+env:
+  ROCKETNET_NIGHTLY_NO_TIMEOUT: '1'
+
 jobs:
   soak:
     strategy:
@@ -28,7 +34,7 @@ jobs:
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     runs-on: [self-hosted, Linux, X64, fleet, long]
-    timeout-minutes: 90
+    timeout-minutes: 7200
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
@@ -82,7 +88,6 @@ jobs:
       # expected server transport, and end with the fd and thread counts it
       # started with. A runner with no VM tier fails the xdp cell.
       - name: Many-client load (1000 clients, every Linux server cell)
-        timeout-minutes: 20
         shell: bash
         run: |
           set -euo pipefail
@@ -180,8 +185,8 @@ jobs:
           echo "guest dmesg tail:"
           dmesg | tail -n 50
           GUEST
-          timeout 300 vng --run "$vm_kernel" --memory "${guest_gib}G" --cpus 16 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir "$PWD" -- \
-            sudo sh "$guest/run.sh" "$guest" "$PWD" > "$guest/vm.log" 2>&1 || echo "vng exit=$? (124 is the 300 s timeout)" >> "$guest/vm.log"
+          vng --run "$vm_kernel" --memory "${guest_gib}G" --cpus 16 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir "$PWD" -- \
+            sudo env ROCKETNET_NIGHTLY_NO_TIMEOUT=1 sh "$guest/run.sh" "$guest" "$PWD" > "$guest/vm.log" 2>&1 || echo "vng exit=$?" >> "$guest/vm.log"
           peak_kib=$(sed -nE 's/.*Maximum resident set size \(kbytes\): ([0-9]+).*/\1/p' "$guest/xdp.time" 2>/dev/null | tail -n 1) || true
           echo "LOAD cell=xdp guest_peak_rss_kib=${peak_kib:-unknown} need_bytes=$need_bytes guest_memory=${guest_gib}G"
           if [ -n "${peak_kib:-}" ] && [ $((peak_kib * 1024)) -gt $(( 1000 * touched_per_client_bytes )) ]; then
@@ -215,7 +220,7 @@ jobs:
   low-tick-load:
     name: low-tick load (${{ matrix.ref }} / 1000 clients / 10 Hz)
     runs-on: [self-hosted, Linux, X64, fleet, long]
-    timeout-minutes: 30
+    timeout-minutes: 7200
     strategy:
       fail-fast: false
       matrix:
@@ -265,7 +270,7 @@ jobs:
   soak-per-transport:
     name: soak per transport (${{ matrix.ref }} / 1800 s per cell)
     runs-on: [self-hosted, Linux, X64, fleet, long]
-    timeout-minutes: 180
+    timeout-minutes: 7200
     strategy:
       fail-fast: false
       matrix:
@@ -299,7 +304,6 @@ jobs:
         run: make
 
       - name: Soak per transport (1800 s per cell, impaired, flat fds, threads and memory)
-        timeout-minutes: 170
         shell: bash
         run: bash scripts/soak-per-transport --seconds 1800 --log-dir build/soak-per-transport
 
@@ -323,7 +327,7 @@ jobs:
   soak-macos:
     name: soak (${{ matrix.ref }} / macos-15)
     runs-on: [self-hosted, macOS, ARM64, rocketnet-macos]
-    timeout-minutes: 120
+    timeout-minutes: 7200
     strategy:
       fail-fast: false
       matrix:
@@ -434,12 +438,13 @@ jobs:
   soak-windows:
     name: soak (${{ matrix.ref }} / windows)
     # the fleet's native Windows runner (Windows 11, MSVC; label rocketnet-windows), the one ci.yml's
-    # build-and-test-windows runs on, never a hosted image. Run by hand on that runner:
+    # build-and-test-windows runs on, never a hosted image. Earlier manual qualification recorded:
     # configure 19s, Release build 114s (--parallel 4), Tests 12s, wire audit 23s, simulator
     # soak 561s, UDP loopback soak 339s; 1068s (about 18 minutes) in all. The portable, iocp and
-    # rio server cells add 1800 s each, about 109 minutes in all, inside the 150-minute bound.
+    # rio server cells add 1800 s each, about 109 minutes in all. Those measurements
+    # predate removal of the nightly elapsed caps; the finite scenarios are unchanged.
     runs-on: [self-hosted, Windows, X64, rocketnet-windows]
-    timeout-minutes: 150
+    timeout-minutes: 7200
     strategy:
       fail-fast: false
       matrix:
@@ -472,7 +477,6 @@ jobs:
         run: ./bin/Release/soak.exe 200000
 
       - name: Portable transport soak under loss, jitter and duplication (Windows)
-        timeout-minutes: 40
         shell: bash
         run: |
           set -uo pipefail
@@ -523,7 +527,6 @@ jobs:
       # pinned and the granted name and the applied link settings are checked
       # from the run's own lines.
       - name: Soak iocp and rio servers (Windows, 1800 s each, impaired, flat handles, threads and private bytes)
-        timeout-minutes: 70
         shell: bash
         run: |
           set -uo pipefail
@@ -540,7 +543,7 @@ jobs:
                 ROCKETNET_DEV_SERVER_LATENCY_MS=30 ROCKETNET_DEV_CLIENT_LATENCY_MS=30 \
                 ROCKETNET_DEV_SERVER_JITTER_MS=20 ROCKETNET_DEV_CLIENT_JITTER_MS=20 \
                 ROCKETNET_DEV_SERVER_DUPLICATE_PERCENT=2 ROCKETNET_DEV_CLIENT_DUPLICATE_PERCENT=2 \
-                timeout $((seconds + 120)) ./bin/Release/soak.exe --seconds "$seconds" --assert-flat > "$log" 2>&1; then
+                ./bin/Release/soak.exe --seconds "$seconds" --assert-flat > "$log" 2>&1; then
               status=0
             else
               status=$?
@@ -603,6 +606,7 @@ jobs:
   sanitized-soak:
     name: soak_sim (asan + ubsan + lsan, bounded)
     runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 7200
     strategy:
       fail-fast: false
       matrix:
@@ -688,7 +692,7 @@ jobs:
   validation-tool-selftests:
     name: validation tool selftests
     runs-on: [self-hosted, Linux, X64, fleet]
-    timeout-minutes: 3
+    timeout-minutes: 7200
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0

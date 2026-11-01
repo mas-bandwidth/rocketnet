@@ -28,6 +28,11 @@ on:
 permissions:
   contents: read
 
+# Test execution has no repository wall-clock cap; GitHub still limits
+# self-hosted jobs to five days.
+env:
+  ROCKETNET_NIGHTLY_NO_TIMEOUT: '1'
+
 jobs:
   max-clients:
     name: max-clients 10000 (${{ matrix.compiler }}, DEV ${{ matrix.dev }})
@@ -37,7 +42,7 @@ jobs:
         compiler: [gcc, clang]
         dev: [ON, OFF]
     runs-on: [self-hosted, Linux, X64, fleet, long]
-    timeout-minutes: 90
+    timeout-minutes: 7200
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0

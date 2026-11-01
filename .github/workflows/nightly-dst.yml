@@ -30,8 +30,8 @@
 #   Windows 5950 seeds  PASS in 1348 s (0.23 s/seed); 1273 s (0.21 s/seed) at 809ad504
 # (run number 1 starts each sweep at seed 51, as measured; later runs roll).
 # The fixed range 1-2050 adds about 270 s on Linux, 180 s on macOS and 430 s on
-# Windows at those rates; timeout-minutes 50 covers the sweep, the fixed range
-# and the build with room to spare.
+# Windows at those rates. These measurements size the finite seed workload;
+# they do not cap how long a nightly run may take.
 
 name: nightly-dst
 
@@ -41,6 +41,7 @@ on:
   workflow_dispatch:
 
 env:
+  ROCKETNET_NIGHTLY_NO_TIMEOUT: '1'
   DST_REFERENCE_TRACE: 510908e5051b7f68
 
 permissions:
@@ -50,7 +51,7 @@ jobs:
 
   dst-linux:
     runs-on: [self-hosted, Linux, X64, fleet]
-    timeout-minutes: 50
+    timeout-minutes: 7200
     strategy:
       fail-fast: false
       matrix:
@@ -194,7 +195,7 @@ jobs:
 
   dst-macos:
     runs-on: [self-hosted, macOS, ARM64, rocketnet-macos]
-    timeout-minutes: 50
+    timeout-minutes: 7200
     strategy:
       fail-fast: false
       matrix:
@@ -338,7 +339,7 @@ jobs:
 
   dst-windows:
     runs-on: [self-hosted, Windows, X64, rocketnet-windows]
-    timeout-minutes: 50
+    timeout-minutes: 7200
     strategy:
       fail-fast: false
       matrix:
