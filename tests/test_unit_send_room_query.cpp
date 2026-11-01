@@ -19,6 +19,7 @@
 #include "token_string.h"
 
 #include <stdio.h>
+#include <limits.h>
 #include <string.h>
 #include "loopback_hub.h"
 
@@ -215,8 +216,14 @@ static void test_send_room_query_public_api_client_and_server()
 
     check( !rocketnet_client_can_send_message( clients[0], 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 0 ) );
     check( !rocketnet_client_can_send_message( clients[0], ROCKETNET_MAX_CHANNELS, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, bytes ) );
-    // a reliability outside the enum is asked at the object (mo_room_ask_reliabilities,
-    // -1 and 99): every value of the enum type is a reliability, so C++ cannot pass one here
+    const int invalid_reliabilities[] = { INT_MIN, -1, 8, 99, INT_MAX };
+    for ( size_t i = 0; i < sizeof( invalid_reliabilities ) / sizeof( invalid_reliabilities[0] ); i++ )
+    {
+        const enum rocketnet_reliability_t invalid_rel = (enum rocketnet_reliability_t) invalid_reliabilities[i];
+        check( !rocketnet_client_can_send_message( clients[0], 0, invalid_rel, bytes ) );
+        check( !rocketnet_server_can_send_message( server, server_slot, 0, invalid_rel, bytes ) );
+    }
+    check( rocketnet_api_misuse_count() == misuses + 2 );
 
     // an open start: the next start would be refused, so no room until finish
 

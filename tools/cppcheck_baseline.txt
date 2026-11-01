@@ -20,8 +20,6 @@ cppcheck	sdk/rocketnet_client_transport.cpp	memsetClassFloat	82a8ac4915ed2aa7
 cppcheck	sdk/rocketnet_driver.cpp	uninitMemberVar	7ddaf4a3ae1553b7
 cppcheck	sdk/rocketnet_driver.cpp	uninitMemberVar	d596c6d70ef4fe41
 cppcheck	sdk/rocketnet_encryption_map.cpp	memsetClassFloat	e9a6a5d0076c54f9
-cppcheck	sdk/rocketnet_frame_sync.cpp	memsetClassFloat	6aea47a58fb7fb83
-cppcheck	sdk/rocketnet_frame_sync.cpp	memsetClassFloat	88588a7f60acf604
 cppcheck	sdk/rocketnet_message_server.cpp	returnDanglingLifetime	836086b94ddd7683
 cppcheck	sdk/rocketnet_network_simulator.cpp	memsetClassFloat	c180392cd631027b
 cppcheck	sdk/rocketnet_platform.h	invalidPointerCast	0ba34feccc9ec3a8

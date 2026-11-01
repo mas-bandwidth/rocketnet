@@ -13,6 +13,8 @@
 #include "../sdk/rocketnet.h"
 #include "../sdk/rocketnet_layers.h"
 
+#include <limits.h>
+
 #define check rocketnet_unit_check
 
 static void test_max_unfragmented_message_bytes_are_the_record_limits()
@@ -50,10 +52,11 @@ static void test_max_unfragmented_message_bytes_are_the_record_limits()
 
     // through int variables, as test_unit_contract_audit does: a constant
     // outside the enum's range is a conversion error under gcc
-    int below = -1;
-    int above = ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT + 1;
-    check( rocketnet_max_unfragmented_message_bytes( (enum rocketnet_reliability_t) below, 0 ) == 0 );
-    check( rocketnet_max_unfragmented_message_bytes( (enum rocketnet_reliability_t) above, 0 ) == 0 );
+    const int unknown_reliabilities[] = { INT_MIN, -1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT + 1, INT_MAX };
+    for ( size_t i = 0; i < sizeof( unknown_reliabilities ) / sizeof( unknown_reliabilities[0] ); i++ )
+    {
+        check( rocketnet_max_unfragmented_message_bytes( (enum rocketnet_reliability_t) unknown_reliabilities[i], 0 ) == 0 );
+    }
     check( rocketnet_max_unfragmented_message_bytes( ROCKETNET_RELIABILITY_RELIABLE, -1 ) == 0 );
     check( rocketnet_max_unfragmented_message_bytes( ROCKETNET_RELIABILITY_RELIABLE, ROCKETNET_MAX_CHANNELS ) == 0 );
 
