@@ -189,9 +189,10 @@ be committed from a bench run; the nightly run does not commit them.
 | `clientgrocarry` | 4 | The gso client's GRO receive at the code's layout, rooms 1 to 4 and messages of up to three segments (README-RNClientGroCarry.md): the control and three reversed witnesses, the tail past the room dropped and the socket read over held segments (both `Conservation`) and a delivery one slot past the room (`InRoom`) |
 | `serverstopspread` | 8 | The disconnect ring's layout and the stop spread across steps within the send room (README-ServerStopSpread.md): a safety control, a liveness control (`StopFinishes`) and six reversed witnesses, the single-shot stop (`FullBurstBeforeStopped`), a ring of `SteadyCap` entries and a steady cap off by one (both `RingHolds`), a complete entry sealed again (`SealedWithinBurst`), an unreachable start that ends the drain (`StopFinishes`) and an I/O stop with a flushed send unfinished (`NoSendCutAtStop`) |
 | `rnuringreaplayout` | 5 | The io_uring reap at the code's layout, a completion ring of four, three buffers and a hold ring of three (README-RNUringReapLayout.md): controls at one and two datagrams per receive and three reversed witnesses, the reap that stops at a receive without room (`SendsNotBehindRoom`), the push index without the modulus and a hold ring one short of the buffers (both `HeldMatches`) |
+| `rnuringsendphases` | 5 | The io_uring send staging's two phases at the code's layout, phases of two slots over four updates (README-RNUringSendPhases.md): controls with any completion late and with every completion reaped by the next receive call, and three reversed witnesses, one phase (`NeverRefusedUnderLateReap`), the slot without the phase base (`NoWriteWhileKernelOwned`) and a completion charged to its slot's remainder (`PendingMatches`) |
 
-The case plan in `CASES.tsv` covers every root configuration: 650 cases
-in 99 groups, 634 required and 16 bench cases whose `debt` column names
+The case plan in `CASES.tsv` covers every root configuration: 655 cases
+in 100 groups, 639 required and 16 bench cases whose `debt` column names
 an explicit over-budget reason. Other experiments described in the model
 READMEs remain historical; this plan does not claim fresh measurements
 for uncommitted variants or change their model semantics.
