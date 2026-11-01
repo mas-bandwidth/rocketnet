@@ -54,6 +54,19 @@ int rocketnet_server_protocol_end_reason( const struct rocketnet_server_protocol
     return server->end_reasons[client_index];
 }
 
+double rocketnet_server_protocol_client_rtt( const struct rocketnet_server_protocol_t * server, int client_index )
+{
+    if ( !server->acks || client_index < 0 || client_index >= server->acks->max_clients ||
+         !rocketnet_client_slots_connected( server->client_slots, client_index ) )
+        return 0.0;
+
+    // the slot's ack endpoint publishes its rtt, the minimum retained
+    // first-ack sample in milliseconds (0 while there is none), on every
+    // block that newly acks; the connection's end resets it
+
+    return (double) server->acks->endpoints[client_index].rtt / 1000.0;
+}
+
 static void rocketnet_server_connection_id_assigned( struct rocketnet_server_protocol_t * server, int client_index )
 {
     if ( !server->connection_ids || client_index < 0 || client_index >= rocketnet_client_slots_max_clients( server->client_slots ) )

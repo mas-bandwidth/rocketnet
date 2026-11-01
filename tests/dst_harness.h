@@ -880,6 +880,17 @@ static inline void rocketnet_dst_endpoint_disconnect( void * transport, int clie
     }
 }
 
+// the transport's reported round trip, read as the real links read it
+// (rn_message_server_link, rn_message_client_link)
+static inline double rocketnet_dst_endpoint_rtt( void * transport, int client_index )
+{
+    rocketnet_dst_endpoint_t * endpoint = (rocketnet_dst_endpoint_t *) transport;
+    rocketnet_dst_world_t * w = endpoint->world;
+    if ( endpoint->is_server )
+        return rocketnet_server_protocol_client_rtt( &w->server, client_index );
+    return rocketnet_client_protocol_rtt( &w->client[endpoint->client_index].protocol );
+}
+
 static inline void rocketnet_dst_endpoint_link( struct rn_message_link_t * link, rocketnet_dst_endpoint_t * endpoint )
 {
     memset( link, 0, sizeof( *link ) );
@@ -894,6 +905,7 @@ static inline void rocketnet_dst_endpoint_link( struct rn_message_link_t * link,
     link->connection = rocketnet_dst_endpoint_connection;
     link->disconnect = rocketnet_dst_endpoint_disconnect;
     link->state = rocketnet_dst_endpoint_state;
+    link->rtt = rocketnet_dst_endpoint_rtt;
     link->clock_from_first_update = 0;
 }
 

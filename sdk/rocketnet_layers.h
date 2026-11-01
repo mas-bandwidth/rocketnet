@@ -1355,6 +1355,13 @@ uint64_t rocketnet_server_transport_connections_assigned( struct rocketnet_serve
  */
 int rocketnet_server_transport_client_end_reason( struct rocketnet_server_transport_t * server_transport, int client_index );
 
+// the reported round-trip time of the connection in a slot (RN-1 t15.5), in
+// seconds: the minimum first-ack sample, 0 while the slot's connection has
+// none, for a free slot, or for an index out of range. The message server
+// takes it as a connection's first RTT sample (RN-2 m9.2).
+// a NULL server_transport is a counted no-op that returns 0
+double rocketnet_server_transport_client_rtt( struct rocketnet_server_transport_t * server_transport, int client_index );
+
 // a NULL server_transport is a counted no-op that returns NULL
 const struct rocketnet_counters_t * rocketnet_server_transport_counters( struct rocketnet_server_transport_t * server_transport );
 
@@ -2089,6 +2096,12 @@ void rocketnet_message_server_delivery_capture( struct rocketnet_message_server_
 void rocketnet_message_client_delivery_capture( struct rocketnet_message_client_t * client, struct rocketnet_delivery_capture_t * capture );
 
 #endif // #if ROCKETNET_DEV
+
+// the reported round-trip time of the client's connection (RN-1 t15.5), in
+// seconds: the minimum first-ack sample, 0 while it has none. The message
+// client takes it as its first RTT sample (RN-2 m9.2).
+// a NULL client_transport is a counted no-op that returns 0
+double rocketnet_client_transport_rtt( struct rocketnet_client_transport_t * client_transport );
 
 void rocketnet_client_transport_defer_payload_acks( struct rocketnet_client_transport_t * transport );
 void rocketnet_client_transport_accept_payload( struct rocketnet_client_transport_t * transport, int k );

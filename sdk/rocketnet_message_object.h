@@ -130,6 +130,16 @@ struct rn_message_link_t
     // transport names none.
     int ( *end_reason )( void * transport, int client_index );
 
+    // the transport's reported round-trip time of the slot's connection, in
+    // seconds (standard/TRANSPORT.md t15.5): the minimum first-ack sample, 0
+    // while it has none. While a connection's message layer has no RTT sample
+    // of its own, each update takes a nonzero answer as its first sample
+    // (standard/MESSAGES.md m9.2, rn_window_ack_seed_rtt). The server's link
+    // reads rocketnet_server_transport_client_rtt, the client's
+    // rocketnet_client_transport_rtt. NULL (the unit suite's fakes): the
+    // transport measures none.
+    double ( *rtt )( void * transport, int client_index );
+
     // NULL: the object does not own the transport
     void ( *stop )( void * transport );
     bool ( *stopped )( const void * transport );

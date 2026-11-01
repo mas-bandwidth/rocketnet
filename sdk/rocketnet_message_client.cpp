@@ -61,6 +61,12 @@ static void rn_client_link_disconnect( void * transport, int client_index )
     rocketnet_client_transport_disconnect( (rocketnet_client_transport_t *) transport );
 }
 
+static double rn_client_link_rtt( void * transport, int client_index )
+{
+    (void) client_index;
+    return rocketnet_client_transport_rtt( (rocketnet_client_transport_t *) transport );
+}
+
 static int rn_client_link_end_reason( void * transport, int client_index )
 {
     (void) client_index;
@@ -107,6 +113,7 @@ void rn_message_client_link( struct rn_message_link_t * link, struct rocketnet_c
     link->disconnect = rn_client_link_disconnect;
     link->state = RN_LINK_FORWARD( rocketnet_client_transport_state )::call;
     link->end_reason = rn_client_link_end_reason;
+    link->rtt = rn_client_link_rtt;
     link->stop = RN_LINK_FORWARD( rocketnet_client_transport_stop )::call;
     link->stopped = RN_LINK_FORWARD( rocketnet_client_transport_stopped )::call_const;
     link->destroy = RN_LINK_FORWARD( rocketnet_client_transport_destroy )::call;
