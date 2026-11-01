@@ -235,7 +235,7 @@ jobs:
           # runner instead of two, on a fleet where runners, not cores, are
           # what a per-commit run waits for. The nightly tier runs the builds
           # row on its own.
-          - { os: ubuntu-24.04, build_type: Release, leg: unit, with_builds: true }
+          - { os: ubuntu-24.04, build_type: Release, leg: unit, with_builds: true, runner: '["self-hosted","Linux","X64","fleet"]' }
           - { os: macos-15, runner: '["self-hosted","macOS","ARM64","rocketnet-macos"]' }
     steps:
 
