@@ -10996,6 +10996,10 @@ static void rocketnet_test_server_stop_disconnects_every_client( const char * tr
 
     rocketnet_check( connected == num_clients );
 
+    const struct rocketnet_counters_t * counters = rocketnet_server_transport_counter_block( server );
+    rocketnet_check( counters );
+    const uint64_t send_failures_before = rocketnet_counter_value( counters, ROCKETNET_COUNTER_SEND_FAILED );
+
     rocketnet_server_stop( server );
 
     // the clients' timeout is ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS; the
@@ -11018,6 +11022,16 @@ static void rocketnet_test_server_stop_disconnects_every_client( const char * tr
     for ( int i = 0; i < num_clients; i++ )
         rocketnet_check( rocketnet_client_state( clients[i] ) == ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED );
     rocketnet_check( rocketnet_server_stopped( server ) );
+
+    // A disconnect can arrive even if other copies in its burst were dropped.
+    // Refresh the retiring transport's counter before destroy releases it.
+    counters = rocketnet_server_transport_counter_block( server );
+    rocketnet_check( counters );
+    const uint64_t send_failures_after = rocketnet_counter_value( counters, ROCKETNET_COUNTER_SEND_FAILED );
+    if ( send_failures_after != send_failures_before )
+        printf( "%s stop send failures: before=%llu after=%llu\n", transport,
+                (unsigned long long) send_failures_before, (unsigned long long) send_failures_after );
+    rocketnet_check( send_failures_after == send_failures_before );
 
     for ( int i = 0; i < num_clients; i++ )
         rn_cli_client_stop_and_destroy( clients[i], 1000.0 + ( rocketnet_time() - wall_start ) );

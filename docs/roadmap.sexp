@@ -78,10 +78,6 @@
    :text "Audit 88 and 124: measure on captain, then add re-flush counters if the measurement supports it."
    :date "2026-10-31" :origin "Audit items 88, 124")
 
-  (item "stop-send-failure-assert" :group "audit-remaining" :area "tests"
-   :title "Server-stop functional case asserts no send failures"
-   :text "The Windows cut-off of a flushed bank at stop was never reproduced on captain. Asserting the send-failure counter does not move during stop gives the check a way to fail; it needs a small test accessor for a stopped server's transport stats."
-   :date "2026-10-31" :origin "Stop-spread follow-on")
 
   (item "load-md-generated" :group "audit-remaining" :area "docs"
    :title "Generate LOAD.md's byte tables"
