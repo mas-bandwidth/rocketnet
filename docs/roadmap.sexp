@@ -90,10 +90,6 @@
    :title "Keep-alive slot count compared unsigned"
    :text "rocketnet_client_validate_keep_alive casts the u32 slot count to int, so 2^31 or more is refused, against the ruling that the client accepts any count with index below it. Unit cases at 2^31 and UINT32_MAX, and a negative control."
    :date "2026-10-31" :origin "#730 follow-on")
-  (item "test-737-second-address" :group "audit-remaining" :area "tests"
-   :title "A create test that fails on second_public_address alone"
-   :text "The whole-config create test goes red under the old truncation only because loopback_hub is also cut off."
-   :date "2026-10-31" :origin "#737 follow-on")
   (item "stale-drain-text" :group "audit-remaining" :area "docs"
    :title "Drain limitation text after #740"
    :text "docs/CLIENT-IO.md and TRANSPORT-INTERNALS.md 'current staging and drain limitations' still describe the drain bound #740 fixed."
