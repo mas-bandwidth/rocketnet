@@ -67,11 +67,6 @@
    :text "The page's exact byte figures go stale with every merge. Generate them, with a CI check that the page matches the generator."
    :date "2026-10-31" :origin "#721 follow-on")
 
-  (item "release-requires-nightly" :group "audit-remaining" :area "ci"
-   :title "A release commit requires a green Nightly CI run"
-   :text "docs/RELEASING.md asks for it; nothing enforces it. Extend tools/check_release_tsan.py to require nightly-ci.yml, msan and CBMC green at the tagged commit."
-   :date "2026-10-31" :origin "CI under two minutes")
-
   (item "low-docs-standard-tests" :group "audit-remaining" :area "rocketnet"
    :title "Low-severity docs, standard, tests and CI items"
    :text "The low items under docs/, standard/, tests/, tools/, .github/, scripts/, CMakeLists.txt or sodium/ whose class is not defect: 94 95 96 108 120 127 132 138 140 141 143 144 146 147 148 149 157 158 159 160 161 167 177-185 198 200 201 202 217-227 230 231 284."
@@ -81,11 +76,6 @@
    :title "About 0.3% of client-to-server packets lost in the XDP receive path"
    :text "The loaded-host report (load 170) has not reproduced in the controlled 2026-11-01 observation at 3e8e4d17: 1000 clients for 60 seconds, 600000 sent/received, zero drops and restored descriptor/thread baselines. The existing guest was 7.0.0-34-generic; host 7.0.0-38-generic lacks its matching image. Exact-current-kernel nightly reproduction remains open. No cause or SDK fix is established by the different-kernel pass."
    :date "2026-10-31" :origin "Audit item 41")
-
-  (item "low-tick-nightly" :group "quiet-host" :area "rocketnet"
-   :title "Low-tick nightly ends at 996 of 1000 connected"
-   :text "Reproduce on an idle Linux host with the per-client state output now in the nightly."
-   :date "2026-10-31" :origin "Audit item 42")
 
 
 

@@ -8,6 +8,7 @@
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
+#include "plan_rss.h"
 
 #include "rocketnet.h"
 #include "rocketnet_internal.h"
@@ -47,7 +48,10 @@ static void * loopback_hub_malloc( void * context, size_t bytes )
     loopback_hub_allocator.allocations++;
     loopback_hub_allocator.live++;
     loopback_hub_allocator.bytes += bytes;
-    return malloc( bytes );
+    // Map large blocks through the existing test allocator: Debug CRT malloc
+    // fills every queue page before the SDK touches it. Keep counting the
+    // full request while leaving untouched queues nonresident.
+    return plan_rss_malloc( context, bytes );
 }
 
 static void loopback_hub_free( void * context, void * p )
@@ -58,7 +62,7 @@ static void loopback_hub_free( void * context, void * p )
         loopback_hub_allocator.wrong_context++;
     loopback_hub_allocator.frees++;
     loopback_hub_allocator.live--;
-    free( p );
+    plan_rss_free( context, p );
 }
 
 // the hub's registered count, read through the development seam; a

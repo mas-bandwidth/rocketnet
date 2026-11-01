@@ -12,9 +12,26 @@ waits on a level-triggered wake.
 | send | game thread (payload rings) | I/O thread | 2 | `rocketnet_client_io_hand_off`, `rocketnet_client_io_step`, `rocketnet_client_io_stop` |
 | receive | I/O thread (datagrams) | update | 1 | `rocketnet_client_io_step`, `rocketnet_client_io_expose`, `rocketnet_client_io_return` |
 
-The instance is three buffers of two items and five items. Both controls pass
-with every rule on (send 7,464 states, 3,920 distinct; receive 10,792 states,
-5,256 distinct). The records are in `RUNS.tsv` (group `rnbufferhandoff`).
+The instance is three buffers of two items and five items. Both controls enable
+every rule. Exact current state counts and outcomes are in `RUNS.tsv`
+(group `rnbufferhandoff`); these records include the receive return path.
+
+## Receive expose and return
+
+`ConsumerExchange(main, TRUE)` is expose: release a deferred consumed buffer,
+then take the oldest ready one. `ConsumerExchange(main, FALSE)` is a successful
+return: release the consumed held buffer, take nothing, read/clear owed, and
+wake after unlocking. It requires a held buffer, as `rocketnet_client_io_return`
+returns immediately when none is held. `MainTryLock` already requires the
+consumer to finish its view before either exchange.
+
+A failed return can leave the held buffer for the next expose; the existing
+take exchange represents that path. The model abstracts failed try-lock calls
+as no exchange. After a successful return, another release-only exchange is
+disabled until an expose takes a buffer, so adding return cannot create an
+infinite sequence of release-only calls that starves all takes. The original
+fairness on take exchanges, mutex acquisition, consumption and unlock is
+unchanged; no new fairness assumption forces a successful return.
 
 ## Abstractions
 
@@ -29,6 +46,10 @@ with every rule on (send 7,464 states, 3,920 distinct; receive 10,792 states,
   runs every frame. Stop is never forced.
 - The wait's guard timeout (1 ms) is not modelled: a lost wake is a liveness
   failure here, where the code would only lose a millisecond.
+
+`ExitSentAll` contributes send-direction evidence only. Its antecedent includes
+`Direction = "send"`, so its entries in receive configurations are vacuous for
+receive behavior; the receive delivery property is `ArrivedDelivered`.
 
 ## Reversed witnesses
 
@@ -90,6 +111,14 @@ including FIFO delivery, stable consumer views, exact ownership, empty free
 buffers, the budget, maximal draining and absence of a main wait state. It
 makes no fairness or bounded-latency claim about eventual successful try-locks.
 The existing threaded receive model retains its wake/liveness checks.
+
+`MCRNBufferHandoffBaseThreeBuffers.cfg` adds a matched healthy three-buffer
+instance for `BrokenDeferred` (`OneOwner`) and `BrokenSingleTake`
+(`MaximalDrain`). It differs from the four-buffer healthy configuration only
+in `N`; both keep all ten invariants and the same capacity, item count,
+packet weight and packet budget. Each of those two three-buffer witnesses
+then changes only its named defect switch. The four-buffer control remains
+part of the declared suite.
 
 The `rnbufferhandoffbase` records use the same pinned runner and TLC JAR as CI.
 Reversed controls restore one defect each: `BaseBrokenSingleTake` leaves a

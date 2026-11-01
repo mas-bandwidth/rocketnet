@@ -19,8 +19,9 @@
 (*                                                                         *)
 (* Direction "receive": the worker produces (datagrams into its buffer,   *)
 (* published when no ready buffer is waiting: the triple buffer,          *)
-(* MaxReady 1) and main consumes (update releases the buffer it held and  *)
-(* takes the ready one in one exchange).  A worker that cannot publish    *)
+(* MaxReady 1) and main consumes.  Expose returns a deferred held buffer  *)
+(* and takes the ready one; Return releases a consumed held buffer and   *)
+(* takes nothing.  A worker that cannot publish                           *)
 (* records the publish as owed under the mutex; main's next exchange      *)
 (* reads the flag under the same mutex and wakes the worker after it      *)
 (* drops the mutex.  The worker's wait returns on the wake, or on         *)
@@ -201,16 +202,20 @@ ProducerExchange(t) ==
     /\ pc' = [ pc EXCEPT ![t] = "unlock" ]
     /\ UNCHANGED << lock, cheld, content, produced, consumed, view, wake, asleep, quit, final, exited, lockedWork >>
 
-(* the consumer's exchange: release the buffer it holds (consumed and     *)
-(* cleared), take the oldest ready one, read and clear owed                *)
-ConsumerExchange(t) ==
+(* The consumer releases its consumed, cleared buffer.  With take TRUE, *)
+(* it also takes the oldest ready one (Expose, or the send worker).      *)
+(* Receive Return uses take FALSE only while a buffer is held; after it *)
+(* succeeds another Return is disabled until an Expose takes a buffer.   *)
+(* Both exchanges read/clear owed and wake only after unlocking.         *)
+ConsumerExchange(t, take) ==
     /\ t = Consumer
     /\ pc[t] = "locked"
+    /\ ( take \/ ( Direction = "receive" /\ cheld # NONE ) )
     /\ LET freed == IF cheld # NONE THEN Append( free, cheld ) ELSE free
-           taken == IF ready # << >> THEN Head( ready ) ELSE NONE
+           taken == IF take /\ ready # << >> THEN Head( ready ) ELSE NONE
        IN /\ free' = freed
           /\ cheld' = taken
-          /\ ready' = IF ready # << >> THEN Tail( ready ) ELSE ready
+          /\ ready' = IF take /\ ready # << >> THEN Tail( ready ) ELSE ready
           /\ view' = IF taken # NONE THEN content[taken] ELSE << >>
           /\ idle' = IF t = "worker" THEN taken = NONE ELSE idle
     /\ owed' = FALSE
@@ -284,7 +289,8 @@ Terminated ==
 
 Next ==
     \/ Terminated
-    \/ \E t \in Threads : Produce(t) \/ Consume(t) \/ ProducerExchange(t) \/ ConsumerExchange(t) \/ Unlock(t)
+    \/ \E t \in Threads : Produce(t) \/ Consume(t) \/ ProducerExchange(t) \/ ConsumerExchange(t, TRUE) \/ Unlock(t)
+    \/ ConsumerExchange("main", FALSE)
     \/ WriteReady
     \/ MainTryLock \/ MainLockWait \/ WorkerLock \/ WorkerWait \/ WorkerWakes
     \/ MainStop \/ WorkerExit
@@ -297,7 +303,7 @@ Spec == Init /\ [][Next]_vars
 (* forced                                                                 *)
 SpecFair ==
     /\ Spec
-    /\ \A t \in Threads : WF_vars( Consume(t) ) /\ WF_vars( ProducerExchange(t) ) /\ WF_vars( ConsumerExchange(t) ) /\ WF_vars( Unlock(t) )
+    /\ \A t \in Threads : WF_vars( Consume(t) ) /\ WF_vars( ProducerExchange(t) ) /\ WF_vars( ConsumerExchange(t, TRUE) ) /\ WF_vars( Unlock(t) )
     /\ WF_vars( Produce("worker") )
     /\ SF_vars( WorkerLock ) /\ WF_vars( WorkerWait ) /\ WF_vars( WorkerWakes ) /\ SF_vars( WorkerExit )
     /\ SF_vars( MainTryLock ) /\ WF_vars( MainLockWait )

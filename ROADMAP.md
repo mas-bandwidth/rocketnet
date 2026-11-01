@@ -7,8 +7,8 @@ Planned work for RocketNet that is not on main. Work lands on main before new wo
 ## Contents
 
 - [Started work to finish and land](#started-work-to-finish-and-land) (4)
-- [Audit items not yet fixed](#audit-items-not-yet-fixed) (6)
-- [Investigations that need a quiet host](#investigations-that-need-a-quiet-host) (3)
+- [Audit items not yet fixed](#audit-items-not-yet-fixed) (5)
+- [Investigations that need a quiet host](#investigations-that-need-a-quiet-host) (2)
 - [Older open pull requests](#older-open-pull-requests) (2)
 - [Decisions for Glenn](#decisions-for-glenn) (5)
 
@@ -68,12 +68,6 @@ The page's exact byte figures go stale with every merge. Generate them, with a C
 
 From: #721 follow-on
 
-### A release commit requires a green Nightly CI run
-
-docs/RELEASING.md asks for it; nothing enforces it. Extend tools/check_release_tsan.py to require nightly-ci.yml, msan and CBMC green at the tagged commit.
-
-From: CI under two minutes
-
 ### Low-severity docs, standard, tests and CI items
 
 The low items under docs/, standard/, tests/, tools/, .github/, scripts/, CMakeLists.txt or sodium/ whose class is not defect: 94 95 96 108 120 127 132 138 140 141 143 144 146 147 148 149 157 158 159 160 161 167 177-185 198 200 201 202 217-227 230 231 284.
@@ -89,12 +83,6 @@ Findings that only a quiet fleet host can measure or reproduce.
 Seen once the 1000-client xdp soak cell runs, with the host at load 170. Reproduce on a quiet host, then fix the cause.
 
 From: Audit item 41
-
-### Low-tick nightly ends at 996 of 1000 connected
-
-Reproduce on an idle Linux host with the per-client state output now in the nightly.
-
-From: Audit item 42
 
 ### Confirm the frame-budget fix on amd-2/amd-3
 
