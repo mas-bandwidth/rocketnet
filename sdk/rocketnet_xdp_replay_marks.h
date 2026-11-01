@@ -192,30 +192,39 @@ static inline void rocketnet_xdp_replay_marks_drop_kept( struct rocketnet_xdp_re
     marks->kept_mark_count--;
 }
 
-// Adds a forget for the source the address names. Returns false, and counts
-// the refusal, when the forget list is full. A queued forget drops a kept mark
+// Queues one forget per source key, coalescing repeats even when the list is
+// full. Returns false, and counts the refusal, when a new key cannot fit.
+// A queued forget, including a repeat, drops a kept mark
 // of the same key: that mark was taken before the slot let the address go,
 // and the commit applies forgets before marks, so kept it would rewrite the
 // released address's entry (proofs/tla/RNXdpReplay.tla, ForgetDropsKeptMark).
 
-// proofs/tla/RNXdpReplayMarksLayout.tla Forget: refused at forget_count >= MAX
-// (InBounds); the kept search stops at kept_mark_count, never reading the stale
-// cells past it (LayoutIsQueue)
+// proofs/tla/RNXdpReplayMarksLayout.tla Forget: search below forget_count before
+// refusing a new key at capacity (InBounds); the kept search stops at
+// kept_mark_count, never reading stale cells past it (LayoutIsQueue)
 static inline bool rocketnet_xdp_replay_marks_forget( struct rocketnet_xdp_replay_marks_t * marks, const struct rocketnet_address_t * address )
 {
-    if ( marks->forget_count >= marks->capacity )
-    {
-        marks->refused++;
-        return false;
-    }
+    struct rocketnet_server_xdp_replay_key_t key;
+    rocketnet_xdp_replay_key_from_address( address, &key );
 
-    struct rocketnet_server_xdp_replay_key_t * key = &marks->forgets[marks->forget_count];
-    rocketnet_xdp_replay_key_from_address( address, key );
-    marks->forget_count++;
+    bool pending = false;
+    for ( uint32_t i = 0; i < marks->forget_count && !pending; i++ )
+        pending = memcmp( &marks->forgets[i], &key, sizeof( key ) ) == 0;
+
+    if ( !pending )
+    {
+        if ( marks->forget_count >= marks->capacity )
+        {
+            marks->refused++;
+            return false;
+        }
+
+        marks->forgets[marks->forget_count++] = key;
+    }
 
     for ( uint32_t i = 0; i < marks->kept_mark_count; i++ )
     {
-        if ( memcmp( &marks->mark_keys[i], key, sizeof( *key ) ) == 0 )
+        if ( memcmp( &marks->mark_keys[i], &key, sizeof( key ) ) == 0 )
         {
             rocketnet_xdp_replay_marks_drop_kept( marks, i );
             break;
