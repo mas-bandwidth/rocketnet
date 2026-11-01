@@ -34,7 +34,6 @@
 #include "rocketnet_network_simulator.h"
 #include "rocketnet_replay.h"
 #include "rocketnet_client_slots.h"
-#include "rocketnet_frame_sync.h"
 #include "rocketnet_fragment.h"
 #include "rocketnet_config.h"
 #include "rocketnet_allocator.h"
@@ -7686,122 +7685,6 @@ void rocketnet_test_platform_inet6_round_trip()
     rocketnet_check( memcmp( address, round_trip, sizeof( address ) ) == 0 );
 }
 
-void rocketnet_test_frame_sync_advance()
-{
-    const uint64_t period = 16666666;
-
-    uint64_t deadline = 100 * period;
-    uint64_t error = 12345;
-
-    // on time: no error, one period forward
-
-    rocketnet_check( rocketnet_frame_sync_advance( &deadline, period, 100 * period, &error ) == 0 );
-    rocketnet_check( error == 0 );
-    rocketnet_check( deadline == 101 * period );
-
-    // an early wake counts as on time
-
-    rocketnet_check( rocketnet_frame_sync_advance( &deadline, period, 101 * period - 1000, &error ) == 0 );
-    rocketnet_check( error == 0 );
-    rocketnet_check( deadline == 102 * period );
-
-    // late inside the period: reported, not a drop
-
-    rocketnet_check( rocketnet_frame_sync_advance( &deadline, period, 102 * period + period / 2, &error ) == 0 );
-    rocketnet_check( error == period / 2 );
-    rocketnet_check( deadline == 103 * period );
-
-    // late exactly one period: the boundary is strict, still not a drop
-
-    rocketnet_check( rocketnet_frame_sync_advance( &deadline, period, 103 * period + period, &error ) == 0 );
-    rocketnet_check( error == period );
-    rocketnet_check( deadline == 104 * period );
-
-    // just past one period: one drop, and the deadline resynchronizes ahead
-    // of the wake instead of chasing the backlog
-
-    rocketnet_check( rocketnet_frame_sync_advance( &deadline, period, 104 * period + period + 1, &error ) == 1 );
-    rocketnet_check( error == period + 1 );
-    rocketnet_check( deadline == 106 * period );
-    rocketnet_check( deadline > 104 * period + period + 1 );
-
-    // three and a half periods late: three drops, resynchronized within one
-    // period ahead of the wake
-
-    const uint64_t base = deadline;
-    const uint64_t woke = base + 3 * period + period / 2;
-    rocketnet_check( rocketnet_frame_sync_advance( &deadline, period, woke, &error ) == 3 );
-    rocketnet_check( error == 3 * period + period / 2 );
-    rocketnet_check( deadline == base + 4 * period );
-    rocketnet_check( deadline > woke );
-    rocketnet_check( deadline - woke <= period );
-}
-
-void rocketnet_test_frame_sync_guard()
-{
-    const uint64_t cap = 16666666 / ROCKETNET_FRAME_SYNC_GUARD_CAP_DIVISOR;
-
-    // converges toward a steady oversleep
-
-    double ewma = (double) ROCKETNET_FRAME_SYNC_GUARD_EWMA_START_NS;
-    for ( int i = 0; i < 200; i++ )
-    {
-        rocketnet_frame_sync_adapt_guard( &ewma, 500000, cap );
-    }
-
-    rocketnet_check( ewma > 450000.0 );
-    rocketnet_check( ewma < 550000.0 );
-
-    // the applied guard carries the margin over the estimate
-
-    rocketnet_check( rocketnet_frame_sync_guard_ns( ewma, cap ) == (uint64_t) ewma + ROCKETNET_FRAME_SYNC_GUARD_MARGIN_NS );
-
-    // a runaway oversleep cannot push the guard past the cap: the measured
-    // unprivileged death spiral (guard chased to 37ms, thousands of drops),
-    // refused by construction
-
-    for ( int i = 0; i < 200; i++ )
-    {
-        rocketnet_frame_sync_adapt_guard( &ewma, 100000000, cap );
-    }
-
-    rocketnet_check( ewma <= (double) cap );
-    rocketnet_check( rocketnet_frame_sync_guard_ns( ewma, cap ) == cap );
-
-    // and because the cap binds the estimate too, recovery is immediate once
-    // the oversleeps return to sane
-
-    for ( int i = 0; i < 200; i++ )
-    {
-        rocketnet_frame_sync_adapt_guard( &ewma, 100000, cap );
-    }
-
-    rocketnet_check( ewma < 200000.0 );
-}
-
-// the frame-rate refusals return before any allocation or timer. A create
-// that succeeds creates the real Windows high-resolution waitable timer, so
-// the successful create, its first stats and its destroy are the functional
-// case test_frame_sync_lifecycle (tests/functional/platform_primitives.cpp).
-void rocketnet_test_frame_sync_create_refuses_invalid_rates()
-{
-    rocketnet_check( rocketnet_frame_sync_create( NULL, 0.0 ) == NULL );
-    rocketnet_check( rocketnet_frame_sync_create( NULL, -60.0 ) == NULL );
-    rocketnet_check( rocketnet_frame_sync_create( NULL, 1000000.0 ) == NULL );
-}
-
-#if ROCKETNET_DEV && ( ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS )
-extern int rocketnet_frame_sync_timebase_ready_for_testing();
-
-void rocketnet_test_frame_sync_timebase_before_create()
-{
-    // The probe reads only the OS timebase scale, never the live clock. The
-    // first frame-sync object has not been created when this runs.
-
-    rocketnet_check( rocketnet_frame_sync_timebase_ready_for_testing() );
-}
-#endif // #if ROCKETNET_DEV && ( ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS )
-
 // a counting allocator: a create that reached allocation would move it. the
 // library is uninitialized with no live allocations when it is installed, so
 // the install is accepted.
@@ -7841,9 +7724,8 @@ void rocketnet_test_create_before_init_is_refused()
 
     rocketnet_check( rocketnet_client_transport_create( NULL, connect_token, NULL, 0.0 ) == NULL );
     rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:40000", NULL ) == NULL );
-    rocketnet_check( rocketnet_frame_sync_create( NULL, 60.0 ) == NULL );
 
-    rocketnet_check( rocketnet_api_misuse_count() == before + 3 );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 2 );
     rocketnet_check( rocketnet_test_allocator_calls == 0 );
 
     // restore the default allocator, then the library, for the worker's term
@@ -8173,11 +8055,6 @@ static const char * rocketnet_test_layer_exports[] = {
     "rocketnet_server_transport_client_stats",
     "rocketnet_server_transport_acked_packets",
     "rocketnet_server_transport_acked_connection_ids",
-    "rocketnet_frame_sync_create",
-    "rocketnet_frame_sync_create_ex",
-    "rocketnet_frame_sync_destroy",
-    "rocketnet_frame_sync_wait",
-    "rocketnet_frame_sync_stats",
     "rocketnet_message_default_config",
     "rocketnet_message_default_config_sized",
     "rocketnet_message_validate_config",
@@ -8310,9 +8187,6 @@ static const char * rocketnet_test_layer_null_case_exports[] = {
     "rocketnet_server_transport_client_stats",
     "rocketnet_server_transport_acked_packets",
     "rocketnet_server_transport_acked_connection_ids",
-    "rocketnet_frame_sync_destroy",
-    "rocketnet_frame_sync_wait",
-    "rocketnet_frame_sync_stats",
     "rocketnet_message_default_config",
     "rocketnet_message_default_config_sized",
     "rocketnet_counter_value",
@@ -8378,8 +8252,6 @@ static const char * rocketnet_test_layer_null_exempt_exports[] = {
     "rocketnet_client_transport_required_memory",
     "rocketnet_server_transport_required_memory",
     "rocketnet_forbid_xdp_commit",
-    "rocketnet_frame_sync_create",
-    "rocketnet_frame_sync_create_ex",
     "rocketnet_message_validate_config",
     "rocketnet_message_validate_config_ex",
     "rocketnet_message_connection_bytes",
@@ -8621,7 +8493,6 @@ void rocketnet_test_public_api_null_is_a_counted_no_op()
     memset( &context, 0, sizeof( context ) );
     struct rocketnet_client_transport_stats_t client_stats;
     struct rocketnet_server_transport_stats_t server_stats;
-    struct rocketnet_frame_sync_stats_t frame_stats;
     int payload_bytes = 0;
     int capacity = 0;
     int client_index = 0;
@@ -9071,20 +8942,6 @@ void rocketnet_test_public_api_null_is_a_counted_no_op()
 
     rocketnet_check( rocketnet_counter_name( 0 ) != NULL );
     rocketnet_check( rocketnet_client_transport_state_name( 0 ) != NULL );
-
-    // frame sync
-
-    before = rocketnet_api_misuse_count();
-    rocketnet_frame_sync_destroy( NULL );
-    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
-
-    before = rocketnet_api_misuse_count();
-    rocketnet_frame_sync_wait( NULL );
-    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
-
-    before = rocketnet_api_misuse_count();
-    rocketnet_frame_sync_stats( NULL, &frame_stats );
-    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
 
     // the contract's debug clause: in a build with asserts on, every refused
     // NULL above fires rocketnet_assert through the installed hook; in a
@@ -15973,12 +15830,6 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] = {
     { "test_client_id_free_after_clean_disconnect", rocketnet_test_client_id_free_after_clean_disconnect },
     { "test_client_index_range_checked", rocketnet_test_client_index_range_checked },
     { "test_platform_inet6_round_trip", rocketnet_test_platform_inet6_round_trip },
-    { "test_frame_sync_advance", rocketnet_test_frame_sync_advance },
-    { "test_frame_sync_guard", rocketnet_test_frame_sync_guard },
-    { "test_frame_sync_create_refuses_invalid_rates", rocketnet_test_frame_sync_create_refuses_invalid_rates },
-#if ROCKETNET_DEV && ( ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS )
-    { "test_frame_sync_timebase_before_create", rocketnet_test_frame_sync_timebase_before_create },
-#endif // #if ROCKETNET_DEV && ( ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS )
     { "test_create_before_init_is_refused", rocketnet_test_create_before_init_is_refused },
     { "test_allocator_refusal_is_returned", rocketnet_test_allocator_refusal_is_returned },
     { "test_public_api_null_is_a_counted_no_op", rocketnet_test_public_api_null_is_a_counted_no_op },

@@ -256,13 +256,8 @@ function and nothing else), no `THREAD_TIME_CONSTRAINT_POLICY`, no pinning, and
 no App Nap call (a search of `sdk/` for `qos_class`, `NSProcessInfo` and
 `LSAppNapIsDisabled` finds nothing). `rocketnet_thread_priority( false )`
 turns the call off (`docs/CLIENT-IO.md`, Thread priority), and with it off the
-library makes no scheduling call on any thread. Apart from it, the only
-scheduling policy the SDK sets is the Mach time-constraint policy on the thread
-that waits in frame sync, put back to the standard policy afterwards
-(`rocketnet_frame_sync_elevate_priority` and
-`rocketnet_frame_sync_restore_priority` in `sdk/rocketnet_frame_sync.cpp`);
-`rocketnet_frame_sync_elevate_priority` returns before that call when
-`rocketnet_platform_thread_priority_enabled` is false.
+library makes no scheduling call on any thread. The SDK sets no other
+scheduling policy.
 
 Each msgx or portable server has two socket workers, one for
 receive and one for transmit. They use default `pthread_create` attributes and

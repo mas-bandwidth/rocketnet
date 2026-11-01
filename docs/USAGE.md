@@ -202,7 +202,8 @@ returns a pointer into the connection's region (or `NULL` when dropped or refuse
 and finish message queues the bytes written and returns the serial, nonzero, or
 `0` when the send was refused. Calling `rocketnet_client_finish_message` or
 `rocketnet_server_finish_message` without a successful outstanding start is an
-error and returns `0`. Abort message gives the room back.
+error: it asserts in a debug build and returns `0` in a release build. Abort
+message gives the room back.
 One start message is pending per object at a time. To send one message to every
 connected client, loop over the slots with `rocketnet_server_client_connected`
 and start message and finish message for each. Every server per-client call
@@ -281,7 +282,9 @@ returned pointer.
 A `false` answer can mean full message memory, a disconnected endpoint, an
 open reservation, or invalid arguments. It may also be pessimistic for a small
 unreliable message that can write directly into a transport frame. For valid
-arguments, the query changes no state and allocates nothing. It does not
+arguments, the query changes no state, counts nothing and allocates nothing; a
+message that needs a send store chunk scans that size class for a free one, so
+its worst case grows with the chunks in the class. It does not
 promise wire budget, packet capacity, or immediate transmission. Exhausting message storage by
 calling start still ends the connection with `MESSAGE_MEMORY_EXHAUSTED`;
 other causes of `false` follow their own refusal rules.
@@ -481,11 +484,16 @@ can finalize the old run and activate a new transport. Clients are identified by
 Each client and server starts with one block that create allocates through the
 allocator. `rocketnet_client_required_memory` and
 `rocketnet_server_required_memory` report the peak allocator memory over the
-whole lifecycle, including transport allocations at connect and start and the
-development link simulator in development builds. For planned built-in
-transports with unchanged configuration and environment overrides, a program
-can pass `rocketnet_init` an allocator over a region of that size, aligned to
-`ROCKETNET_ALLOCATION_ALIGNMENT`. Operating-system-owned memory and a custom
+whole lifecycle, accounting for the SDK's planned allocations and existing
+create-time overlap (including transport allocations at connect and start and
+the development link simulator in development builds), plus a fixed 1 MiB
+(1,048,576-byte) allowance for caller-allocator overhead. The number is
+conservative, not exact. For planned built-in transports with unchanged
+configuration and environment overrides, additional caller-allocator metadata
+or fragmentation beyond that 1 MiB allowance must be included in the
+application's budget, and custom arena sufficiency (with allocations aligned to
+`ROCKETNET_ALLOCATION_ALIGNMENT`) must be verified for the actual allocator and
+configuration. Operating-system-owned memory and a custom
 transport's own allocations are outside this bound. A normal client connect starts
 one background network thread. A transport with wait/wake support uses that
 thread for bounded batched I/O and hands buffers to the frame thread; the
@@ -499,9 +507,10 @@ requests transport shutdown; `rocketnet_server_stopped` remains false until
 transport I/O has exited.
 Destroy normally follows completion and synchronously joins the transport
 worker before freeing its storage. An early destroy asserts in a debug build;
-in a release build it logs and counts the misuse, requests shutdown and updates a bounded number of times without
-sleeping, then joins and frees once complete, or logs and keeps the object if
-the worker has not exited.
+in a release build it logs and counts the misuse, requests shutdown and polls
+for the worker's exit, sleeping 1 ms between polls, for at most one second,
+then joins and frees once complete, or logs and keeps the object if the worker
+has not exited.
 
 ## Connection lifecycle
 
@@ -574,8 +583,9 @@ Destroy every client and server before `rocketnet_term`. Request shutdown first,
 wait by polling completion from the event loop, then destroy. An early destroy
 is API misuse and asserts in a debug build. In a release build it logs one
 error naming the skipped completion function, records
-the misuse, then requests shutdown, updates a bounded number of times without
-sleeping and frees once complete; otherwise it logs and keeps the object. A stalled
+the misuse, then requests shutdown, polls for the worker's exit for at most one
+second (sleeping 1 ms between polls) and frees once complete; otherwise it logs
+and keeps the object. A stalled
 worker keeps completion false, so its object and contexts must remain alive.
 Destroy is synchronous after completion; allocator hooks and thread-handle
 cleanup do not have a strict wall-time guarantee.

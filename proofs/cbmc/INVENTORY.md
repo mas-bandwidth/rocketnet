@@ -64,10 +64,12 @@ after the recorded run.
   against it and fail with TOOL-MISSING on a mismatch. No container digest
   is pinned, so a run receipt still hashes the actual host binaries.
 - HOLD: `replay-near-4096` remains HOLD at the full bound (partition
-  `nw_multi_first_word` timed out; see `full-bounds-partition-results.md`).
-  It is scheduled nightly via `nightly` in nightly-proofs.yml, with its
-  unwind derived from ROCKETNET_HISTORY_PACKETS, and is not a per-commit
-  gate until that HOLD clears.
+  `nw_multi_first_word` timed out at CBMC_REPLAY_TIMEOUT=600, a third of the
+  Makefile's 1800 s; see `full-bounds-partition-results.md`). Each partition
+  is its own target (`replay-near-4096-<partition>`) and its own job in
+  nightly-proofs.yml, with its unwind derived from ROCKETNET_HISTORY_PACKETS,
+  so the partition that holds is red alone; it is not a per-commit gate until
+  that HOLD clears.
 
 ## Soundness rules
 

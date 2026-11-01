@@ -1180,14 +1180,6 @@ int main( int argc, char ** argv )
     {
         // the payload echo, exactly as before
 
-        struct rocketnet_frame_sync_t * frame_sync = rocketnet_frame_sync_create( NULL, 60.0 );
-        if ( !frame_sync )
-        {
-            rn_native_message_server_stop_and_destroy( server );
-            rocketnet_term();
-            return 1;
-        }
-
         int last_num_connected = 0;
         double last_counters = 0.0;
 
@@ -1220,10 +1212,8 @@ int main( int argc, char ** argv )
             }
 
             check_stdin_closed();
-            rocketnet_frame_sync_wait( frame_sync );
+            rocketnet_sleep( 1.0 / 60.0 );
         }
-
-        rocketnet_frame_sync_destroy( frame_sync );
     }
     else
     {
