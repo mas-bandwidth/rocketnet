@@ -20,7 +20,10 @@ class ProofTimeoutTests(unittest.TestCase):
             env["ROCKETNET_NIGHTLY_NO_TIMEOUT"] = "1"
         return subprocess.run(
             ["bash", str(wrapper), *args], env=env,
-            text=True, capture_output=True, timeout=20,
+            text=True, capture_output=True,
+            # The caller's nightly policy controls this outer watchdog; the
+            # separate child environment still exercises both wrapper modes.
+            timeout=None if os.environ.get("ROCKETNET_NIGHTLY_NO_TIMEOUT") == "1" else 20,
         )
 
     def test_default_watchdog_still_expires(self):
