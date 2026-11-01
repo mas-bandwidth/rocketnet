@@ -209,6 +209,13 @@ call in when the re-arm lands; `ReceiveLiveness` is not affected by it.
   SEND_DROPPED counter are counts only, so they are not modelled.
 - How the fill threads share the work. Their concurrency reaches the model
   only through the single fetch_add.
+- The two send phases. The code stages into one of
+  `ROCKETNET_URING_SEND_PHASES` phases of `ROCKETNET_URING_SEND_QUEUE_SIZE`
+  slots, and resets each phase on its own once it is complete; the slots
+  here are one phase, and `ResetIndex` is that phase's reset. The phases'
+  layout, the fill moving to a complete phase, and the phase a send's
+  completion is charged to are modelled in `RNUringSendPhases`
+  (`README-RNUringSendPhases.md`).
 
 ## The small instance and the runs
 
