@@ -43,7 +43,7 @@
     /// The SDK version as text. Development builds use "dev" and 255 for each
     /// numeric component.
 
-#define ROCKETNET_VERSION_FULL                    "v1.0.0-preview-5"
+#define ROCKETNET_VERSION_FULL                    "v1.0.0-preview-6"
 
     /// The major component of the SDK version.
 
@@ -234,10 +234,11 @@ enum rocketnet_status_t
     ROCKETNET_STATUS_PLATFORM_INIT_FAILED = -4,
 
     /// The crypto library failed. Init returns it when the library did not
-    /// start, and the library stays uninitialized. Server create, the key
-    /// generators and the connect token makers return it when a key or token
-    /// could not be made; nothing is created. Retrying will not help unless the
-    /// cause is corrected.
+    /// start, and the library stays uninitialized. The connect token makers
+    /// return it when a token could not be sealed; nothing is created.
+    /// Retrying will not help unless the cause is corrected. An unavailable OS
+    /// random source is not a status: the crypto library aborts the process,
+    /// after one error line once rocketnet_init has run.
 
     ROCKETNET_STATUS_CRYPTO_INIT_FAILED = -5,
 
@@ -515,8 +516,10 @@ enum rocketnet_receipt_status_t
 
     ROCKETNET_RECEIPT_STATUS_NONE = 0,
 
-    /// The receiver acknowledged the message. This does not mean its
-    /// application read it.
+    /// The connection layer acknowledged the send that carried the message.
+    /// The receiver's message layer may still have dropped the message
+    /// (counted MESSAGE_UNRELIABLE_DELIVERY_FULL or by the sequenced drop
+    /// counters), and its application may not have read it.
 
     ROCKETNET_RECEIPT_STATUS_ACKED = 1
 };
@@ -977,8 +980,11 @@ ROCKETNET_EXPORT uint32_t rocketnet_version( void );
 /// Returns ROCKETNET_STATUS_OK, ROCKETNET_STATUS_INVALID_ARGUMENT,
 /// ROCKETNET_STATUS_ALREADY_INITIALIZED,
 /// ROCKETNET_STATUS_LIVE_ALLOCATIONS when the allocator changes while
-/// allocations are live, ROCKETNET_STATUS_PLATFORM_INIT_FAILED or
-/// ROCKETNET_STATUS_CRYPTO_INIT_FAILED.
+/// allocations are live, ROCKETNET_STATUS_PLATFORM_INIT_FAILED, or
+/// ROCKETNET_STATUS_CRYPTO_INIT_FAILED when sodium_init cannot take its own
+/// lock. Init installs a sodium misuse handler that logs one error line
+/// before sodium aborts the process; sodium aborts when the OS random source
+/// is unavailable (its first read is inside init).
 ///
 /// ROCKETNET_LOG_LEVEL sets the maximum level before init logs. Values are
 /// 0 .. 5, from ROCKETNET_LOG_LEVEL_NONE to ROCKETNET_LOG_LEVEL_SPAM. Other
@@ -1109,6 +1115,9 @@ ROCKETNET_EXPORT void rocketnet_log_function( rocketnet_log_function_t function,
 /// - Connect runs from a state other than DISCONNECTED or a connection-ended
 ///   state.
 /// - Server start runs while the server is already running.
+/// - rocketnet_loopback_hub_destroy is refused: an endpoint is still
+///   registered with the hub, or another build of the library made it.
+/// - A development network simulator call is given a value outside its range.
 ///
 /// A NULL object or NULL required argument asserts first in a debug build,
 /// where the default assert handler logs and traps. In a release build, or
@@ -1133,7 +1142,8 @@ ROCKETNET_EXPORT void rocketnet_log_function( rocketnet_log_function_t function,
 /// - A setter for a disconnected client or empty server slot returns OK and
 ///   does nothing. An invalid value returns INVALID_ARGUMENT.
 
-/// Returns monotonic elapsed seconds from an unspecified origin.
+/// Returns monotonic elapsed seconds from an unspecified origin, or 0 before
+/// the first rocketnet_init has set up the clock.
 
 ROCKETNET_EXPORT double rocketnet_time( void );
 
@@ -1621,16 +1631,17 @@ struct rocketnet_server_config_t
     /// allowance for sealing redundant disconnect-notification datagrams in
     /// one update. Range is 1 .. 1024. Default is 64. A disconnect still
     /// closes its local slot immediately; a value below the 10-copy burst
-    /// spreads that burst across updates. If every deferred-burst slot is
-    /// occupied, the server keeps the older work and drops the new redundant
-    /// notification copies rather than exceeding this allowance. Stop is not
-    /// an update: rocketnet_server_stop seals every client's burst at once,
-    /// whatever this allowance.
+    /// spreads that burst across updates, as does a transport whose send
+    /// staging has no room for the whole burst. If every deferred-burst slot
+    /// is occupied, the server keeps the older work and drops the new
+    /// redundant notification copies rather than exceeding this allowance.
+    /// Stop does not use this allowance: each stop step seals as many of
+    /// every client's burst as the transport has room for.
 
     int disconnect_packets_per_update;
 
     /// ROCKETNET_SERVER_HANDSHAKES_PER_UPDATE sets the handshake work budget:
-    /// the most connection requests with a valid cookie the server processes
+    /// the most connection requests the server takes to the signature check
     /// in one update, each one signature verification and, for a valid token,
     /// the key exchange. Range is 1 .. 1024. Default is 16. A request past it
     /// is dropped unanswered and counted in handshakes_dropped_over_budget;
@@ -1748,14 +1759,16 @@ struct rocketnet_receipt_t
 /// backend_public_key takes the public key; the secret key signs tokens and
 /// stays with whatever mints them.
 ///
-/// Needs no client, server or library state. Thread: any thread; it touches
-/// only its arguments.
+/// Needs no client, server or library state: it runs before rocketnet_init
+/// too. Thread: any thread; it writes only its arguments.
 ///
 /// @param public_key Receives ROCKETNET_BACKEND_PUBLIC_KEY_BYTES.
 /// @param secret_key Receives ROCKETNET_BACKEND_SECRET_KEY_BYTES. Wipe it
 /// when done.
-/// @return ROCKETNET_STATUS_OK, ROCKETNET_STATUS_INVALID_ARGUMENT for a NULL
-/// buffer, or ROCKETNET_STATUS_CRYPTO_INIT_FAILED.
+/// An unavailable OS random source aborts the process after one error line
+/// (rocketnet_init installs the line).
+/// @return ROCKETNET_STATUS_OK, or ROCKETNET_STATUS_INVALID_ARGUMENT for a
+/// NULL buffer.
 
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_generate_backend_keypair( uint8_t * public_key, uint8_t * secret_key );
 
@@ -1763,14 +1776,16 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_generate_backend_keypair( uin
 /// itself at create. A token is sealed to the server's public key, which
 /// rocketnet_server_public_key reads from a running server.
 ///
-/// Needs no client, server or library state. Thread: any thread; it touches
-/// only its arguments.
+/// Needs no client, server or library state: it runs before rocketnet_init
+/// too. Thread: any thread; it writes only its arguments.
 ///
 /// @param public_key Receives ROCKETNET_SERVER_PUBLIC_KEY_BYTES.
 /// @param secret_key Receives ROCKETNET_SERVER_SECRET_KEY_BYTES. Wipe it
 /// when done.
-/// @return ROCKETNET_STATUS_OK, ROCKETNET_STATUS_INVALID_ARGUMENT for a NULL
-/// buffer, or ROCKETNET_STATUS_CRYPTO_INIT_FAILED.
+/// An unavailable OS random source aborts the process after one error line
+/// (rocketnet_init installs the line).
+/// @return ROCKETNET_STATUS_OK, or ROCKETNET_STATUS_INVALID_ARGUMENT for a
+/// NULL buffer.
 
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_generate_server_keypair( uint8_t * public_key, uint8_t * secret_key );
 
@@ -1894,8 +1909,8 @@ static inline enum rocketnet_status_t rocketnet_connect_token_default_config( st
 /// returns ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED. Failure leaves the
 /// output unchanged.
 ///
-/// Needs no client, server or library state. Thread: any thread; it touches
-/// only its arguments.
+/// Needs no client, server or library state: it runs before rocketnet_init
+/// too. Thread: any thread; it writes only its arguments.
 ///
 /// @param config The token's inputs, filled by
 /// rocketnet_connect_token_default_config and then set.
@@ -2668,8 +2683,9 @@ ROCKETNET_EXPORT size_t rocketnet_server_required_memory( const struct rocketnet
 /// ROCKETNET_STATUS_LOOPBACK_HUB_MISSING or
 /// ROCKETNET_STATUS_LOOPBACK_HUB_MISMATCH for a list naming loopback,
 /// ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION,
-/// ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED, ROCKETNET_STATUS_OUT_OF_MEMORY or
-/// ROCKETNET_STATUS_CRYPTO_INIT_FAILED when the server key cannot be made.
+/// ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED or ROCKETNET_STATUS_OUT_OF_MEMORY.
+/// An unavailable OS random source aborts the process after one error line
+/// while the server key is made (rocketnet_init installs the line).
 
 ROCKETNET_EXPORT struct rocketnet_server_t * rocketnet_server_create( void * context, const char * ipv4_address, const char * ipv6_address, const struct rocketnet_server_config_t * config, enum rocketnet_status_t * status );
 
@@ -2701,14 +2717,18 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_start( struct rocketne
 /// destroy. Repeated requests do nothing.
 ///
 /// Stop is the whole shutdown flush; there is no separate disconnect or send
-/// step to call first. In this one call every connected client's slot is
-/// ended, its redundant disconnect packets (a fixed number per client) are
-/// sealed and handed to the transport, and only then is the transport told
-/// to stop, so they go out before the workers exit. Messages queued
-/// and not yet sent are dropped. A client that receives one of them
-/// moves to ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED; one that loses every
-/// copy times out under its token's timeout. The work is bounded by
-/// max_clients and never waits on the network.
+/// step to call first. In this call every connected client's slot is ended
+/// and its redundant disconnect packets (a fixed number per client) wait to
+/// be sealed. This call and each rocketnet_server_stopped poll after it is a
+/// stop step: it seals and hands the transport as many of those copies as
+/// the transport's send staging has room for, one per client in turn before
+/// any client's next copy. Once every client's copies are handed over and
+/// the transport reports every send it was handed finished, its I/O is told
+/// to stop, so they go out before the workers exit.
+/// Messages queued and not yet sent are dropped. A client that receives one
+/// of them moves to ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED; one that loses
+/// every copy times out under its token's timeout. Each step's work is
+/// bounded by the transport's staging and never waits on the network.
 ///
 /// Needs a running server; stopped or stopping it does nothing. Running is
 /// false as soon as it returns. Thread: not thread-safe; the caller owns the
@@ -2719,6 +2739,8 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_start( struct rocketne
 ROCKETNET_EXPORT void rocketnet_server_stop( struct rocketnet_server_t * server );
 
 /// Returns true once the stop request has completed. Never waits or joins.
+/// While a stop still has disconnect packets to hand the transport, each
+/// call is the next stop step (rocketnet_server_stop), so keep polling.
 ///
 /// Callable running or stopped. Thread: not thread-safe; the caller owns the
 /// server one thread at a time.

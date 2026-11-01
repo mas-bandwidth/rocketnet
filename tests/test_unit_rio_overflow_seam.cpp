@@ -18,6 +18,8 @@
 bool rocketnet_server_rio_test_receive_overflow( uint64_t * counters, int * packet_counts,
                                                  int * repost_calls, int * pending_receives, int * guard_hit );
 bool rocketnet_server_rio_test_worker_handoff();
+bool rocketnet_server_rio_test_stop_drains_sends();
+bool rocketnet_server_rio_test_send_accounting();
 
 static void test_rio_transport_overflow_seam()
 {
@@ -61,5 +63,25 @@ static void test_rio_transport_worker_handoff()
 }
 
 REGISTER_UNIT_TEST( test_rio_transport_worker_handoff );
+
+// Stop keeps the socket open while committed sends are in flight
+// (proofs/tla/RNRioWorker.tla WClose), so closesocket cancels none of the stop
+// burst: a fake kernel, no socket, no worker thread, no clock.
+static void test_rio_transport_stop_drains_sends()
+{
+    check( rocketnet_server_rio_test_stop_drains_sends() );
+}
+
+REGISTER_UNIT_TEST( test_rio_transport_stop_drains_sends );
+
+// Each lost send counts SEND_FAILED once, each sent one PACKETS_SENT once: a
+// finish out of range counts its loss, and a refused commit counts nothing
+// for the deferred sends that later complete.
+static void test_rio_transport_send_accounting()
+{
+    check( rocketnet_server_rio_test_send_accounting() );
+}
+
+REGISTER_UNIT_TEST( test_rio_transport_send_accounting );
 
 #endif // #if defined( _WIN32 )

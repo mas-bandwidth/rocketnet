@@ -434,8 +434,24 @@ inline void rocketnet_client_io_stop( rocketnet_client_io_t * io, uint64_t commi
 // the Filling ring's destination to `to`; a later attempt for the same ring
 // (after a LATE) leaves it bound, so the slots leave for the address they were
 // committed with even when `to` has changed since, as the server address has
-// when disconnect has reset the protocol (RNClientIo SentToCommitted). On
-// HANDED_OFF send_fill names the next Filling ring; the caller empties it.
+// when disconnect has reset the protocol (RNClientIo SentToCommitted). The
+// one rebinding is the family race's commit (rocketnet_client_io_rebind_held).
+// On HANDED_OFF send_fill names the next Filling ring; the caller empties it.
+
+// proofs/tla/RNClientRace.tla CallerCommit; main thread. A Filling ring whose
+// destination a deferred hand-off bound to from is bound to to instead. The
+// family race calls it at its commit with the losing and the kept server:
+// the slots committed after the commit are the kept attempt's, and those
+// committed before it were for both families while both were in flight, so
+// every slot of the ring leaves for the kept server (RNClientRace
+// PostCommitSlotsKept).
+
+inline void rocketnet_client_io_rebind_held( rocketnet_client_io_t * io, const rocketnet_address_t * from, const rocketnet_address_t * to )
+{
+    const int ring = io->send_fill;
+    if ( io->to_held[ring] && rocketnet_address_equal( &io->to[ring], from ) )
+        io->to[ring] = *to;
+}
 
 inline int rocketnet_client_io_hand_off( rocketnet_client_io_t * io, uint64_t committed, const rocketnet_address_t * to )
 {

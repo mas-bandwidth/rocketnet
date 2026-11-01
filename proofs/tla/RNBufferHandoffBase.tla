@@ -7,9 +7,14 @@
 (* PacketWeight scales each model item to packets; the checked instance   *)
 (* has four 256-packet items per 1024-packet update. It is a bounded        *)
 (* quotient, not exhaustive enumeration of every possible packet count.  *)
+(* Reversed-witness switches, each FALSE in the code: TakeOnlyOne,        *)
+(* IgnoreBudget, LoseDeferred, MainBlocks (update's try-lock becomes a     *)
+(* blocking acquire that waits in take or release while the worker holds  *)
+(* the mutex) and WorkUnderLock (Expose keeps the mutex and Process reads  *)
+(* and clears the buffers before releasing it).                            *)
 EXTENDS Naturals, Sequences, FiniteSets
 CONSTANTS N, Cap, MaxItems, PacketWeight, PacketBudget,
-          TakeOnlyOne, IgnoreBudget, LoseDeferred
+          TakeOnlyOne, IgnoreBudget, LoseDeferred, MainBlocks, WorkUnderLock
 ASSUME N >= 3 /\ Cap >= 1 /\ Cap * PacketWeight <= PacketBudget
 Buffers == 0 .. N-1
 VARIABLES lock, phase, producer, ready, free, held, content, produced,
@@ -57,10 +62,19 @@ MainTry ==
             /\ phase' = IF phase = "expose" THEN "take" ELSE "release"
             /\ held' = held
        ELSE /\ lock' = lock
-            /\ phase' = "end"
-            /\ held' = IF LoseDeferred /\ phase = "return" THEN <<>> ELSE held
+            /\ phase' = IF MainBlocks
+                         THEN IF phase = "expose" THEN "take" ELSE "release"
+                         ELSE "end"
+            /\ held' = IF ~MainBlocks /\ LoseDeferred /\ phase = "return" THEN <<>> ELSE held
     /\ UNCHANGED <<producer,ready,free,content,produced,consumed,view,
                     batchPackets,incompleteDrain,lockedWork>>
+(* MainBlocks only: the blocked update takes the mutex once it is free.  *)
+MainLockWait ==
+    /\ MainBlocks
+    /\ phase \in {"take","release"} /\ lock = "none"
+    /\ lock' = "main"
+    /\ UNCHANGED <<phase,producer,ready,free,held,content,produced,consumed,
+                    view,batchPackets,incompleteDrain,lockedWork>>
 Expose ==
     /\ phase = "take" /\ lock = "main"
     /\ LET k == IF IgnoreBudget THEN Len(ready)
@@ -70,7 +84,7 @@ Expose ==
           /\ held' = taken /\ ready' = SubSeq(ready,k+1,Len(ready))
           /\ view' = Items(taken) /\ batchPackets' = Packets(taken)
           /\ incompleteDrain' = (incompleteDrain \/ k < TakeCount)
-    /\ phase' = "process" /\ lock' = "none"
+    /\ phase' = "process" /\ lock' = IF WorkUnderLock THEN "main" ELSE "none"
     /\ UNCHANGED <<producer,content,produced,consumed,lockedWork>>
 Process ==
     /\ phase = "process"
@@ -78,7 +92,8 @@ Process ==
     /\ content' = [b \in Buffers |-> IF b \in Range(held) THEN <<>> ELSE content[b]]
     /\ lockedWork' = (lockedWork \/ lock = "main")
     /\ view' = <<>> /\ phase' = "return"
-    /\ UNCHANGED <<lock,producer,ready,free,held,produced,batchPackets,incompleteDrain>>
+    /\ lock' = IF WorkUnderLock THEN "none" ELSE lock
+    /\ UNCHANGED <<producer,ready,free,held,produced,batchPackets,incompleteDrain>>
 ReleaseOnly ==
     /\ phase = "release" /\ lock = "main"
     /\ free' = free \o held /\ held' = <<>>
@@ -90,7 +105,7 @@ EndUpdate ==
     /\ phase' = "expose" /\ batchPackets' = 0
     /\ UNCHANGED <<lock,producer,ready,free,held,content,produced,consumed,
                     view,incompleteDrain,lockedWork>>
-Next == Produce \/ WorkerLock \/ Publish \/ MainTry \/ Expose \/ Process \/ ReleaseOnly \/ EndUpdate
+Next == Produce \/ WorkerLock \/ Publish \/ MainTry \/ MainLockWait \/ Expose \/ Process \/ ReleaseOnly \/ EndUpdate
 Spec == Init /\ [][Next]_vars
 TypeOK ==
     /\ lock \in {"none","main","worker"}
@@ -110,7 +125,9 @@ ViewStable == Items(held) = view
 InOrder == consumed = [i \in 1 .. Len(consumed) |-> i]
 BudgetBound == batchPackets <= PacketBudget
 MaximalDrain == ~incompleteDrain
+(* Process (the reads and clears) never runs while update holds the mutex. *)
 NoWorkUnderLock == ~lockedWork
-(* No wait state: failed try-lock always advances to end, preserving held. *)
+(* No wait state: a failed try-lock advances to end, preserving held, so   *)
+(* update is never in take or release while the worker holds the mutex.   *)
 MainNeverWaits == lock = "worker" => phase \notin {"take","release"}
 =============================================================================

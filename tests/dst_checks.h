@@ -40,11 +40,37 @@
 #define ROCKETNET_DST_CHECK_SEQ_BYTES ( ROCKETNET_DST_CHECK_SEQ_BITS / 8 )
 #define ROCKETNET_DST_CHECK_MAX_PACKETS 4096
 
+// The reliable bytes a session may have outstanding before the harness stops
+// drawing reliable sends for it (rocketnet_dst_send in dst_harness.h), and
+// the largest message it draws (rocketnet_dst_draw_size).
+#define ROCKETNET_DST_CHECK_OUTSTANDING_CAP 65536
+#define ROCKETNET_DST_CHECK_MAX_MESSAGE_BYTES 16384
+
+// acked_means_opened's ledger: the server is endpoint 0 and client i is
+// endpoint i + 1. Each endpoint numbers its packets from 1 in its own counter,
+// so the ledger is per endpoint, and it holds the newest LEDGER_PACKETS ids,
+// more than the largest sent-packet history (ROCKETNET_HISTORY_PACKETS_MAX)
+// an ack can name.
+#define ROCKETNET_DST_CHECK_ENDPOINTS ( ROCKETNET_DST_MAX_CLIENTS + 1 )
+#define ROCKETNET_DST_CHECK_LEDGER_PACKETS 65536
+
 // The steps a sequenced message of the quiet window may still be in flight at
-// the last step: the simulator's longest delay is 150 ms of latency plus half
-// of it in jitter, 225 ms, and a step is 10 ms, so 30 steps of slack cover
-// it. A type 4 sent later than that is owed.
-#define ROCKETNET_DST_CHECK_IN_FLIGHT_STEPS 30
+// the last step, at 10 ms a step. Two parts:
+//
+// - the wire: the simulator's longest delay is 150 ms of latency plus half of
+//   it in jitter, 225 ms, so 30 steps;
+// - the send budget: a reliable item that does not fit the budget waits for a
+//   later update and is never dropped (proofs/tla/RNSendBudget.tla), so a new
+//   send queues behind every reliable byte its session has outstanding. That
+//   is at most the cap plus one more message, drained at the slowest budget,
+//   the client's ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS: ( 65536 + 16384 ) x 8
+//   bits at 1000 kbps is 656 ms, 66 steps.
+//
+// A type 4 sent earlier than both together is owed.
+#define ROCKETNET_DST_CHECK_WIRE_STEPS 30
+#define ROCKETNET_DST_CHECK_BUDGET_STEPS \
+    ( ( ( ROCKETNET_DST_CHECK_OUTSTANDING_CAP + ROCKETNET_DST_CHECK_MAX_MESSAGE_BYTES ) * 8 / ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS + 9 ) / 10 )
+#define ROCKETNET_DST_CHECK_IN_FLIGHT_STEPS ( ROCKETNET_DST_CHECK_WIRE_STEPS + ROCKETNET_DST_CHECK_BUDGET_STEPS )
 
 // The ghost state one stream keeps. The checks read and update these
 // counters; the SDK objects are never touched.
@@ -56,9 +82,7 @@ struct rocketnet_dst_check_stream_t
 
     // ordered (RNChannel::OrderedExactlyOnceInOrder, RNChannelTypes::
     // OrderedExactlyOnceInOrder, RNEndpoint::OrderedInOrder, RNWindow::
-    // OrderedDeliveredInOrder): the k-th delivery has sequence k from 0.
-    unsigned ordered_seen;
-    uint32_t ordered_expect;
+    // OrderedDeliveredInOrder): the newest ordered delivery.
     uint32_t ordered_last;
     int ordered_has_last;
 
@@ -66,7 +90,6 @@ struct rocketnet_dst_check_stream_t
     // OrderedTraceUnchangedBySequenced, RNChannelTypes::
     // OrderedTraceUnchangedBySequenced): the same rule on channel 8.
     unsigned unchanged_seen;
-    uint32_t unchanged_expect;
     uint32_t unchanged_last;
 
     // sequenced (RNChannelTypes::SequencedNeverBackwards,
@@ -111,11 +134,6 @@ struct rocketnet_dst_check_stream_t
     uint32_t quiet_start_seq;
     int settled;
     int has_last_sent;
-
-    // acked_means_opened (RNReceipts::AckedMeansPacketOpened,
-    // RNChannelTypes::AckedImpliesTransportArrival, ReplayWindow::
-    // AckReportsOnlyReceived, FragmentsAndAcks::AckedMeansSurfaced).
-    uint8_t opened[ROCKETNET_DST_CHECK_SEQ_BYTES];
 
     // liveness_delivered (RNChannel::EveryOrderedMessageDelivered,
     // RNChannelTypes::EveryReliableAckedAndDelivered,
@@ -189,12 +207,12 @@ struct rocketnet_dst_check_state_t
 
     // replay_acked_delivered and liveness use the stream tables above.
 
-    // the seam's packet id to (session, channel, type, sequence) join key.
-    uint64_t issued_session[ROCKETNET_DST_CHECK_MAX_PACKETS];
-    uint32_t issued_seq[ROCKETNET_DST_CHECK_MAX_PACKETS];
-    uint16_t issued_channel[ROCKETNET_DST_CHECK_MAX_PACKETS];
-    uint16_t issued_type[ROCKETNET_DST_CHECK_MAX_PACKETS];
-    uint8_t issued_set[ROCKETNET_DST_CHECK_MAX_PACKETS];
+    // acked_means_opened (RNReceipts::AckedMeansPacketOpened): per
+    // endpoint, the newest packet id it issued, and which of the newest
+    // LEDGER_PACKETS ids it issued and has seen acked.
+    uint64_t issued_high[ROCKETNET_DST_CHECK_ENDPOINTS];
+    uint8_t issued_bits[ROCKETNET_DST_CHECK_ENDPOINTS][ROCKETNET_DST_CHECK_LEDGER_PACKETS / 8];
+    uint8_t acked_bits[ROCKETNET_DST_CHECK_ENDPOINTS][ROCKETNET_DST_CHECK_LEDGER_PACKETS / 8];
 
     unsigned allocation_balance;
 };
@@ -217,17 +235,6 @@ static inline void rocketnet_dst_check_fail( struct rocketnet_dst_check_state_t 
     snprintf( st->detail, sizeof( st->detail ), "%s", what );
 }
 
-// The core prints the line; a unit case that wants the fire stays silent.
-
-static inline void rocketnet_dst_check_report( struct rocketnet_dst_check_state_t * st )
-{
-    if ( !st->failed )
-        return;
-    printf( "FAIL seed=%llu step=%llu check=%s what=%s\n",
-            (unsigned long long) st->seed, (unsigned long long) st->step, st->check, st->detail );
-    fflush( stdout );
-}
-
 static inline int rocketnet_dst_check_stream_index( int session, int channel, int type )
 {
     if ( session < 0 || session >= ROCKETNET_DST_CHECK_MAX_SESSIONS )
@@ -244,7 +251,7 @@ static inline int rocketnet_dst_check_stream_index( int session, int channel, in
 // oldest index the table still answers for: every bit below it is resolved.
 // An index at or past base + the width would read a newer sequence's bit, so
 // the checks fail naming the table, index, base and lap instead of aliasing.
-// The tables that never resolve an entry (opened, unreliable_delivered,
+// The tables that never resolve an entry (unreliable_delivered,
 // receipt_seen) pass base 0.
 
 static inline int rocketnet_dst_check_lap( struct rocketnet_dst_check_state_t * st,
@@ -412,32 +419,6 @@ static inline void rocketnet_dst_check_sent( struct rocketnet_dst_check_state_t 
     }
 }
 
-// Mirrors RNChannel::OrderedExactlyOnceInOrder, RNChannelTypes::
-// OrderedExactlyOnceInOrder, RNEndpoint::OrderedInOrder and RNWindow::
-// OrderedDeliveredInOrder. On ordered types, the k-th delivery of the stream
-// has sequence k, counting from 0.
-static inline int rocketnet_dst_check_ordered( struct rocketnet_dst_check_state_t * st,
-                                               double time, int stream, uint32_t seq )
-{
-    (void) time;
-    struct rocketnet_dst_check_stream_t * s = &st->stream[stream];
-    if ( !s->ordered_seen )
-    {
-        s->ordered_seen = 1;
-        s->ordered_expect = 0;
-    }
-    if ( seq != s->ordered_expect )
-    {
-        char what[160];
-        snprintf( what, sizeof( what ), "stream=%d expected=%u got=%u",
-                  stream, s->ordered_expect, seq );
-        rocketnet_dst_check_fail( st, "ordered_in_order", what );
-        return 1;
-    }
-    s->ordered_expect++;
-    return 0;
-}
-
 // Mirrors RNChannelTypes::ReliableExactlyOnce, RNEndpoint::ReliableExactlyOnce
 // and FragmentsAndAcks::DeliveredOnce. No sequence of a reliable stream is
 // delivered twice, and no sequence that was never sent is delivered.
@@ -528,34 +509,6 @@ static inline int rocketnet_dst_check_unreliable_once( struct rocketnet_dst_chec
     return 0;
 }
 
-// Records a sequence the receiving session opened (the opened set of an ack
-// check).
-
-static inline void rocketnet_dst_check_opened( struct rocketnet_dst_check_state_t * st,
-                                               int stream, uint32_t seq )
-{
-    rocketnet_dst_check_set_bit( st, st->stream[stream].opened, 0, seq, "opened" );
-}
-
-// Mirrors RNReceipts::AckedMeansPacketOpened, RNChannelTypes::
-// AckedImpliesTransportArrival, ReplayWindow::AckReportsOnlyReceived and
-// FragmentsAndAcks::AckedMeansSurfaced. Every sequence a link ack names was
-// opened by the receiver.
-static inline int rocketnet_dst_check_acked( struct rocketnet_dst_check_state_t * st,
-                                             double time, int stream, uint32_t seq )
-{
-    (void) time;
-    struct rocketnet_dst_check_stream_t * s = &st->stream[stream];
-    if ( !rocketnet_dst_check_bit( st, s->opened, 0, seq, "opened" ) )
-    {
-        char what[160];
-        snprintf( what, sizeof( what ), "stream=%d seq=%u acked but not opened", stream, seq );
-        rocketnet_dst_check_fail( st, "acked_means_opened", what );
-        return 1;
-    }
-    return 0;
-}
-
 // Mirrors ServerSession::SlotReuseObservesNothing, ClientSession::
 // ReconnectObservesNothing, RNSlots::ReusedSlotStartsClean and RNSimFaults::
 // DeliverOnlyToLiveGeneration. A delivery's generation and incarnation equal
@@ -593,33 +546,6 @@ static inline int rocketnet_dst_check_stale_session_payload( struct rocketnet_ds
     return 0;
 }
 
-// Mirrors RNChannelTypes::EveryReliableAckedAndDelivered, RNChannel::
-// EveryOrderedMessageDelivered and RNReceipts::ReceiptProgress (the liveness
-// bound, section 4). Every reliable message sent on a live session is
-// delivered by the bound.
-static inline int rocketnet_dst_check_liveness_delivered( struct rocketnet_dst_check_state_t * st,
-                                                          double time, int stream )
-{
-    (void) time;
-    struct rocketnet_dst_check_stream_t * s = &st->stream[stream];
-    const uint32_t lo = s->reliable_base;
-    const uint32_t hi = lo + ROCKETNET_DST_CHECK_SEQ_BITS;
-    for ( uint32_t seq = lo; seq < hi; seq++ )
-    {
-        if ( !rocketnet_dst_check_bit( st, s->reliable_sent, s->reliable_base, seq, "reliable_sent" ) )
-            continue;
-        if ( !rocketnet_dst_check_bit( st, s->reliable_delivered, s->reliable_base, seq, "reliable_delivered" ) )
-        {
-            char what[160];
-            snprintf( what, sizeof( what ), "stream=%d seq=%u undelivered at the liveness bound",
-                      stream, seq );
-            rocketnet_dst_check_fail( st, "liveness_delivered", what );
-            return 1;
-        }
-    }
-    return 0;
-}
-
 // Mirrors RNChannel::WholeMessagesOnly and FragmentsAndAcks::DeliveredExact:
 // the delivery's length matches the size recorded when its sequence was sent.
 
@@ -645,41 +571,16 @@ static inline int rocketnet_dst_check_whole_message( struct rocketnet_dst_check_
     return 0;
 }
 
-// Mirrors RNChannel::OrderedTraceUnchangedBySequenced and RNChannelTypes::
-// OrderedTraceUnchangedBySequenced: on channel 8 the ordered deliveries alone
-// are the ordered sends, in order.
-
-static inline int rocketnet_dst_check_ordered_unchanged( struct rocketnet_dst_check_state_t * st,
-                                                         int stream, uint32_t seq )
-{
-    struct rocketnet_dst_check_stream_t * s = &st->stream[stream];
-    if ( !s->unchanged_seen )
-    {
-        s->unchanged_seen = 1;
-        s->unchanged_expect = 0;
-    }
-
-    if ( seq != s->unchanged_expect )
-    {
-        char what[160];
-        snprintf( what, sizeof( what ), "stream=%d expected=%u got=%u",
-                  stream, s->unchanged_expect, seq );
-        rocketnet_dst_check_fail( st, "ordered_unchanged_by_sequenced", what );
-        return 1;
-    }
-
-    s->unchanged_expect++;
-
-    return 0;
-}
-
 static inline int rocketnet_dst_check_receipt_one_outcome( struct rocketnet_dst_check_state_t * st,
                                                            int stream, int type, uint32_t seq );
 static inline int rocketnet_dst_check_receipt_acked_delivered( struct rocketnet_dst_check_state_t * st,
                                                                int stream, uint32_t seq );
 
-// The ordered delivery rule over the sender's recorded sequences: strictly
-// increasing, and no earlier sent sequence is still undelivered.
+// Mirrors RNChannel::OrderedExactlyOnceInOrder, RNChannelTypes::
+// OrderedExactlyOnceInOrder, RNEndpoint::OrderedInOrder and RNWindow::
+// OrderedDeliveredInOrder, over the sender's recorded sequences: an ordered
+// stream's deliveries strictly increase, and no earlier sent sequence is
+// still undelivered.
 
 static inline int rocketnet_dst_check_ordered_runtime( struct rocketnet_dst_check_state_t * st,
                                                        int stream, uint32_t seq )
@@ -712,6 +613,10 @@ static inline int rocketnet_dst_check_ordered_runtime( struct rocketnet_dst_chec
 
     return 0;
 }
+
+// Mirrors RNChannel::OrderedTraceUnchangedBySequenced and RNChannelTypes::
+// OrderedTraceUnchangedBySequenced: on channel 8 the ordered deliveries
+// strictly increase whatever the sequenced traffic beside them does.
 
 static inline int rocketnet_dst_check_unchanged_runtime( struct rocketnet_dst_check_state_t * st,
                                                          int stream, uint32_t seq )
@@ -749,7 +654,6 @@ static inline void rocketnet_dst_check_delivery( struct rocketnet_dst_check_stat
     rocketnet_dst_check_stale_session( st, time, stream, expected_generation, expected_incarnation );
     rocketnet_dst_check_stale_session_payload( st, time, stream, generation, incarnation );
     rocketnet_dst_check_whole_message( st, stream, sequence, bytes );
-    rocketnet_dst_check_opened( st, stream, sequence );
 
     if ( type == 2 || type == 3 || type == 6 || type == 7 )
     {
@@ -1099,8 +1003,10 @@ static inline void rocketnet_dst_check_settle( struct rocketnet_dst_check_state_
     }
 }
 
-// Called at the last step: every reliable message sent on a stream whose
-// session is still live is delivered. The harness passes the live flag per
+// Mirrors RNChannelTypes::EveryReliableAckedAndDelivered, RNChannel::
+// EveryOrderedMessageDelivered and RNReceipts::ReceiptProgress (the liveness
+// bound, section 4). Called at the last step: every reliable message sent on
+// a stream whose session is still live is delivered. The harness passes the live flag per
 // session (0 the server, i + 1 client i).
 
 static inline void rocketnet_dst_check_end( struct rocketnet_dst_check_state_t * st, double /* time */,
@@ -1157,9 +1063,9 @@ static inline void rocketnet_dst_check_end( struct rocketnet_dst_check_state_t *
                         &st->sequenced[session * 9 + channel];
                     const int served = c->quiet_served_set && c->quiet_served_index >= c->quiet_required_index;
 
-                    // a type 4 sent in the last steps of the run is still on
-                    // the wire: the simulator's longest delay is under the
-                    // slack above, so it is not owed yet
+                    // a type 4 sent in the last steps of the run may still be
+                    // queued behind the send budget or on the wire
+                    // (ROCKETNET_DST_CHECK_IN_FLIGHT_STEPS), so it is not owed yet
 
                     const int in_flight = c->quiet_required_set &&
                                           st->step - c->quiet_required_step < ROCKETNET_DST_CHECK_IN_FLIGHT_STEPS;
@@ -1255,41 +1161,93 @@ static inline void rocketnet_dst_check_unexplained_refusal( struct rocketnet_dst
     }
 }
 
-// No model: the harness's allocations balance across a seed.
+// acked_means_opened's ledger. Packet ids an endpoint issues strictly
+// increase (an aborted packet's id is skipped, never reused); an endpoint
+// whose counter restarts (a client's new session) clears its ledger first.
 
-static inline void rocketnet_dst_check_leak( struct rocketnet_dst_check_state_t * st )
+static inline int rocketnet_dst_check_ledger_bit( const uint8_t * bits, uint64_t packet_id )
 {
-    if ( st->allocation_balance != 0 )
-    {
-        char what[160];
-        snprintf( what, sizeof( what ), "%u harness allocations not freed", st->allocation_balance );
-        rocketnet_dst_check_fail( st, "leak", what );
-    }
+    const uint32_t at = (uint32_t) ( packet_id % ROCKETNET_DST_CHECK_LEDGER_PACKETS );
+    return ( bits[at >> 3] >> ( at & 7 ) ) & 1;
 }
 
-// The seam's ack join key: a packet id maps to the stream and sequence its
-// frame was sealed under.
-
-static inline void rocketnet_dst_check_issued( struct rocketnet_dst_check_state_t * st, uint64_t packet_id )
+static inline void rocketnet_dst_check_ledger_write( uint8_t * bits, uint64_t packet_id, int value )
 {
-    const uint32_t at = (uint32_t) ( packet_id % ROCKETNET_DST_CHECK_MAX_PACKETS );
-    st->issued_set[at] = 1;
+    const uint32_t at = (uint32_t) ( packet_id % ROCKETNET_DST_CHECK_LEDGER_PACKETS );
+    if ( value )
+        bits[at >> 3] |= (uint8_t) ( 1u << ( at & 7 ) );
+    else
+        bits[at >> 3] &= ( uint8_t ) ~( 1u << ( at & 7 ) );
 }
 
-// Mirrors RNReceipts::AckedMeansPacketOpened: a link ack names a packet this
-// endpoint issued. The join key the seam surfaces is the packet id recorded
-// when the frame was sealed.
-
-static inline void rocketnet_dst_check_ack_id( struct rocketnet_dst_check_state_t * st, uint64_t packet_id )
+static inline void rocketnet_dst_check_endpoint_reset( struct rocketnet_dst_check_state_t * st, int endpoint )
 {
-    const uint32_t at = (uint32_t) ( packet_id % ROCKETNET_DST_CHECK_MAX_PACKETS );
-    if ( packet_id != 0 && !st->issued_set[at] )
+    st->issued_high[endpoint] = 0;
+    memset( st->issued_bits[endpoint], 0, sizeof( st->issued_bits[endpoint] ) );
+    memset( st->acked_bits[endpoint], 0, sizeof( st->acked_bits[endpoint] ) );
+}
+
+// Records a packet id an endpoint sealed. Every id between the endpoint's
+// newest and this one was never issued, so its slots are cleared.
+
+static inline void rocketnet_dst_check_issued( struct rocketnet_dst_check_state_t * st, int endpoint, uint64_t packet_id )
+{
+    const uint64_t high = st->issued_high[endpoint];
+    if ( packet_id <= high )
     {
         char what[160];
-        snprintf( what, sizeof( what ), "packet_id=%llu acked but never issued",
-                  (unsigned long long) packet_id );
+        snprintf( what, sizeof( what ), "endpoint=%d packet_id=%llu issued at or below %llu",
+                  endpoint, (unsigned long long) packet_id, (unsigned long long) high );
         rocketnet_dst_check_fail( st, "acked_means_opened", what );
+        return;
     }
+
+    if ( packet_id - high > ROCKETNET_DST_CHECK_LEDGER_PACKETS )
+    {
+        memset( st->issued_bits[endpoint], 0, sizeof( st->issued_bits[endpoint] ) );
+        memset( st->acked_bits[endpoint], 0, sizeof( st->acked_bits[endpoint] ) );
+    }
+    else
+    {
+        for ( uint64_t id = high + 1; id < packet_id; id++ )
+        {
+            rocketnet_dst_check_ledger_write( st->issued_bits[endpoint], id, 0 );
+            rocketnet_dst_check_ledger_write( st->acked_bits[endpoint], id, 0 );
+        }
+    }
+
+    rocketnet_dst_check_ledger_write( st->issued_bits[endpoint], packet_id, 1 );
+    rocketnet_dst_check_ledger_write( st->acked_bits[endpoint], packet_id, 0 );
+    st->issued_high[endpoint] = packet_id;
+}
+
+// Mirrors RNReceipts::AckedMeansPacketOpened: a link ack names a packet the
+// acked endpoint itself issued, and names it once. The join key the seam
+// surfaces is the packet id recorded when the frame was sealed.
+
+static inline void rocketnet_dst_check_ack_id( struct rocketnet_dst_check_state_t * st, int endpoint, uint64_t packet_id )
+{
+    const uint64_t high = st->issued_high[endpoint];
+    const char * fault = NULL;
+    if ( packet_id == 0 || packet_id > high )
+        fault = "acked but never issued";
+    else if ( high - packet_id >= ROCKETNET_DST_CHECK_LEDGER_PACKETS )
+        fault = "acked older than the ledger";
+    else if ( !rocketnet_dst_check_ledger_bit( st->issued_bits[endpoint], packet_id ) )
+        fault = "acked but never issued";
+    else if ( rocketnet_dst_check_ledger_bit( st->acked_bits[endpoint], packet_id ) )
+        fault = "acked twice";
+
+    if ( fault )
+    {
+        char what[160];
+        snprintf( what, sizeof( what ), "endpoint=%d packet_id=%llu %s (newest issued %llu)",
+                  endpoint, (unsigned long long) packet_id, fault, (unsigned long long) high );
+        rocketnet_dst_check_fail( st, "acked_means_opened", what );
+        return;
+    }
+
+    rocketnet_dst_check_ledger_write( st->acked_bits[endpoint], packet_id, 1 );
 }
 
 #endif // ROCKETNET_TESTS_DST_CHECKS_H

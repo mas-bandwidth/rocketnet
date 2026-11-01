@@ -16,8 +16,8 @@ import tempfile
 import check_exports
 
 
-# The per-feature test switches this repository used to have. ROCKETNET_DEV is
-# the one switch now; none of these may come back.
+# Per-feature test switches that may not appear anywhere: ROCKETNET_DEV is the
+# one switch.
 RETIRED_SWITCHES = (
     "ROCKETNET_TEST_SEAMS",
     "ROCKETNET_ACK_VISIT_TEST_HOOKS",
@@ -66,15 +66,45 @@ FORBIDDEN_DEV0_SYMBOLS = (
     "rocketnet_write_connect_token_deterministic",
     "rocketnet_box_seal_with_ephemeral",
     "rocketnet_reset_inventory_matches",
-    "rocketnet_client_connection_reset_inventory_matches_for_test",
-    "rocketnet_client_transport_connection_reset_inventory_matches_for_test",
-    "rocketnet_server_connection_reset_inventory_matches_for_test",
+    "rocketnet_client_transport_inventory_matches_for_test",
+    "rocketnet_client_slots_inventory_matches_for_test",
+    "rocketnet_server_replay_marks_inventory_matches_for_test",
     "rocketnet_dev_session_sequence_start",
     "rocketnet_dev_server_secret_key",
     "rocketnet_dev_backend_secret_key",
     "g_ack_visit_count",
     "rn_message_payload_copy_count",
 )
+
+# The development-only declarations the red controls compile both ways.
+DEV_ONLY_DECLARATIONS = (
+    ("rocketnet_dev_session_sequence_start", "rocketnet_test_seams.h"),
+    ("rocketnet_write_connect_token_deterministic", "rocketnet_connect_token.h"),
+    ("rocketnet_reset_inventory_matches", "rocketnet_connection_reset.h"),
+    ("rocketnet_client_transport_inventory_matches_for_test", "rocketnet_connection_reset.h"),
+    ("rocketnet_client_slots_inventory_matches_for_test", "rocketnet_connection_reset.h"),
+    ("rocketnet_server_replay_marks_inventory_matches_for_test", "rocketnet_connection_reset.h"),
+)
+
+IDENTIFIER = re.compile(r"\b(?:rocketnet_[a-z0-9_]+|ROCKETNET_[A-Z0-9_]+|rn_[a-z0-9_]+)\b")
+
+
+def doc_identifier_problems(repo_root: Path, doc_text: str) -> list[str]:
+    """Every identifier the inventory names in backticks exists in sdk/,
+    tests/ or the CMake build, or is one of the refused switches it lists."""
+    known = set(RETIRED_SWITCHES)
+    sources = [repo_root / "CMakeLists.txt"]
+    for base in ("sdk", "tests", "cmake"):
+        sources += [path for path in (repo_root / base).rglob("*")
+                    if path.is_file() and path.suffix in (".h", ".hpp", ".c", ".cpp", ".inc", ".cmake")]
+    for path in sources:
+        known.update(IDENTIFIER.findall(path.read_text(errors="replace")))
+    problems = []
+    for span in re.findall(r"`([^`]+)`", doc_text):
+        for name in IDENTIFIER.findall(span):
+            if name not in known and not name.endswith("_"):
+                problems.append(f"docs/TEST-SCAFFOLDING.md names {name}, which is not in sdk/, tests/ or the CMake build")
+    return sorted(set(problems))
 
 
 def retired_switch_problems(repo_root: Path, path: Path) -> list[str]:
@@ -146,6 +176,7 @@ def check_sources(repo_root: Path) -> list[str]:
         ):
             if sym not in doc_text:
                 problems.append(f"docs/TEST-SCAFFOLDING.md does not document {sym}")
+        problems += doc_identifier_problems(repo_root, doc_text)
 
     return problems
 
@@ -270,25 +301,15 @@ def run_red_controls(repo_root: Path, cxx: str | None) -> list[str]:
         problems.append(f"Baseline DEV=0 header compile failed unexpectedly:\n{res.stdout}\n{res.stderr}")
         return problems
 
-    # 3. The one remaining seam with a public name is undeclared when ROCKETNET_DEV=0.
-    res = compile_snippet(
-        compiler,
-        repo_root,
-        '#include "rocketnet_test_seams.h"\nvoid * p = (void *)&rocketnet_dev_session_sequence_start;\n',
-        ["ROCKETNET_DEV=0"],
-    )
-    if res.returncode == 0:
-        problems.append("Red control failed: rocketnet_dev_session_sequence_start remained declared under ROCKETNET_DEV=0")
-
-    # 4. Deterministic token helper and reset-inventory walker must be undeclared when ROCKETNET_DEV=0.
-    for symbol, header in (
-        ("rocketnet_write_connect_token_deterministic", "rocketnet_connect_token.h"),
-        ("rocketnet_reset_inventory_matches", "rocketnet_connection_reset.h"),
-        ("rocketnet_client_connection_reset_inventory_matches_for_test", "rocketnet_connection_reset.h"),
-        ("rocketnet_client_transport_connection_reset_inventory_matches_for_test", "rocketnet_connection_reset.h"),
-        ("rocketnet_server_connection_reset_inventory_matches_for_test", "rocketnet_connection_reset.h"),
-    ):
+    # 3. The development-only seams are undeclared when ROCKETNET_DEV=0. Each is
+    # first compiled with ROCKETNET_DEV=1, where it must be declared: a name the
+    # header does not declare at all would make its DEV=0 refusal vacuous.
+    for symbol, header in DEV_ONLY_DECLARATIONS:
         snippet = f'#include "{header}"\nvoid * p = (void *)&{symbol};\n'
+        witness = compile_snippet(compiler, repo_root, snippet, ["ROCKETNET_DEV=1"])
+        if witness.returncode != 0:
+            problems.append(f"Red control is vacuous: {symbol} is not declared under ROCKETNET_DEV=1 in {header}:\n{witness.stdout}{witness.stderr}")
+            continue
         res = compile_snippet(compiler, repo_root, snippet, ["ROCKETNET_DEV=0"])
         if res.returncode == 0:
             problems.append(f"Red control failed: {symbol} remained declared under ROCKETNET_DEV=0 in {header}")
@@ -338,7 +359,7 @@ def main() -> int:
     if args.build is not None:
         summary.append(f"build dir {args.build} compiles with ROCKETNET_DEV=0 and no retired switch")
     if args.red_controls:
-        summary.append("1 seam + 5 symbol negative controls refused as expected")
+        summary.append(f"{len(DEV_ONLY_DECLARATIONS)} development-only declarations declared under ROCKETNET_DEV=1 and refused under ROCKETNET_DEV=0")
     print("; ".join(summary))
     return 0
 

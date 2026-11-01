@@ -52,15 +52,23 @@ Six constants act as rule switches and carry the reversed witnesses:
 `RunRetiredByCqe` and `ReapWithinRoom`. All are `TRUE` in the rule.
 `Room` is how many datagrams the fill bank holds between two swaps
 (`ROCKETNET_URING_BANK_SIZE`); under `ReapWithinRoom` a receive CQE is
-reaped only while the bank has room for `Segments` more
-(`rocketnet_server_uring_reap_has_room`), otherwise it waits in the cq and
-the call ends as it does on a spent budget. It is `FALSE` only in the
+copied only while the bank has room for `Segments` more
+(`rocketnet_server_uring_bank_has_room`). Otherwise, or while an earlier
+receive is held, it is held: it leaves the cq, its buffer stays `Filled`
+in `held`, and `CopyHeld` copies it once a swap brings room
+(`rocketnet_server_uring_receive_or_hold`, `rocketnet_server_uring_copy_held`).
+That is the definition `HoldWithoutRoom`; the reversed witness
+`MCRNUringDriverBrokenStopAtRoom.cfg` replaces it with `MCStopAtRoom`
+(`FALSE`), which leaves the receive in the cq and ends the call at it, as
+the code did before the hold. The cq is a set here, so the order that made
+that stop hold a send CQE behind the receive is modelled in
+`RNUringReapLayout`. `ReapWithinRoom` is `FALSE` only in the
 reversed witness `MCRNUringDriverBrokenUnboundedFill.cfg`, which reaps
 into a full bank as the code did before the rule, when the send reap and
 the receive reap between two swaps overfilled the bank and the rest was
-dropped. A sixth rule switch,
-`ReturnAfterLastCopy`, and the segment bound `Segments` (2) are
-definitions rather than constants, so the configurations that predate
+dropped. Two more rule switches, `HoldWithoutRoom` (the seventh, above)
+and `ReturnAfterLastCopy` (the eighth), and the segment bound `Segments` (2)
+are definitions rather than constants, so the configurations that predate
 them check the rule unchanged; a configuration replaces one with `<-`.
 `ReturnAfterLastCopy` says a buffer goes back to the ring only after its
 last segment is copied; the reversed witness
@@ -85,6 +93,7 @@ only in the reversed witness `MCRNUringDriverBrokenNoRearmRetry.cfg`.
 | `KernelFill(b)` | the armed multishot RECVMSG fills a provided ring buffer and posts a receive CQE; with `UDP_GRO` the buffer holds a coalesced receive of one to `Segments` datagrams, its stride in the buffer's `UDP_GRO` cmsg |
 | `KernelStop` | a CQE without IORING_CQE_F_MORE ends the multishot (ENOBUFS among the causes) |
 | `Reap(c)` | the main thread reaps one CQE inside a send or receive call, counted in `work`, and under `BoundedReap` only while `work < Budget`; or in destroy's drain. A send CQE frees nothing by itself; it only removes the run's head from `pending`. A receive CQE's buffer is split at its stride (`rocketnet_uring_recvmsg_parse`, `rocketnet_coalesce_split`) and every segment is copied into the **fill** bank in the one reap, as `rocketnet_server_uring_receive_cqe` does on the one main thread (a segment dropped by size, or by a full bank as `RECEIVE_DROPPED_OVERFLOW`, is counted in place of its copy). `Term` ends the multishot. While running, the one-shot re-arm `rocketnet_server_uring_multishot_ended` attempts either succeeds (`armed` TRUE) or finds no submission entry (`RECEIVE_REARM_FAILED`, `armed` FALSE until a receive re-arms it): the model takes both. During destroy it is never re-armed |
+| `CopyHeld(b)` | a held receive is copied into the fill bank, inside a call while the bank has room (the code copies the held receives first in every reap) or at once in destroy's drain; its buffer then goes back by `ReturnBuffer` |
 | `ReturnBuffer(b)` | after the copy of the buffer's last segment, the buffer goes back to the ring |
 | `ResetIndex` | send_packets resets the reservation index to 0 only when no slot is `Kernel` owned and every send submitted has its CQE reaped; the call returns |
 | `SendReturn` | send_packets returns with some send still without its CQE, once its budget is spent or the cq is empty after its one wait: the index and every slot stay as they are, and a later call retires the rest (`SEND_DEFERRED`). Only under `BoundedReap` |
@@ -118,6 +127,12 @@ Invariants:
 - `FillWithinRoom`: `Cardinality(fill) <= Room`, so the fill bank never
   holds more than it has room for, whichever call reaps and however many
   receives the kernel posts between two swaps.
+- `HeldStillFilled`: a held receive's buffer stays `Filled` until its copy.
+
+Action property:
+
+- `NoCallEndsBehindRoom`: no running call ends while a send CQE waits in
+  the cq and the call has budget left.
 
 Liveness, under `SpecFair`:
 
@@ -194,15 +209,25 @@ call in when the re-arm lands; `ReceiveLiveness` is not affected by it.
   SEND_DROPPED counter are counts only, so they are not modelled.
 - How the fill threads share the work. Their concurrency reaches the model
   only through the single fetch_add.
+- The two send phases. The code stages into one of
+  `ROCKETNET_URING_SEND_PHASES` phases of `ROCKETNET_URING_SEND_QUEUE_SIZE`
+  slots, and resets each phase on its own once it is complete; the slots
+  here are one phase, and `ResetIndex` is that phase's reset. The phases'
+  layout, the fill moving to a complete phase, and the phase a send's
+  completion is charged to are modelled in `RNUringSendPhases`
+  (`README-RNUringSendPhases.md`).
 
 ## The small instance and the runs
 
-`MCRNUringDriver.tla` extends the module and adds one definition,
-`MCReturnAfterFirstCopy`, the witness's replacement for
-`ReturnAfterLastCopy`. Every case uses `Slots = 2`, `Buffers = 2`,
+`MCRNUringDriver.tla` extends the module and adds two definitions,
+`MCReturnAfterFirstCopy` and `MCStopAtRoom`, the witnesses' replacements
+for `ReturnAfterLastCopy` and `HoldWithoutRoom`. Every case uses `Slots = 2`, `Buffers = 2`,
 `MaxSteps = 2` (two datagrams, two bank swaps), `Budget = 1` (a call reaps
 one CQE, so deferral is exercised at every call) and `Segments = 2`. The
-eight cases form group `rnuringdriver` in `CASES.tsv`. With two slots,
+eleven cases form group `rnuringdriver` in `CASES.tsv`. The control checks
+the invariants and the action property; `MCRNUringDriverLiveSends.cfg` and
+`MCRNUringDriverLiveReceive.cfg` check the liveness properties, each in its
+own run budget. With two slots,
 Submit can send both slots as one run or as two sends; with two segments,
 the kernel can fill both datagrams into one buffer as one coalesced receive.
 
@@ -210,9 +235,9 @@ To run them from the rocketnet checkout, with `$job`, `$jar` and `$java`
 as in `proofs/tla/README.md`:
 
 ```sh
-for i in 0 1 2 3 4 5 6 7; do
+for i in $(seq 0 10); do
   "$job/tlacheck" run --root proofs --jar "$jar" --java "$java" \
-    --group rnuringdriver --shards 8 --shard "$i" --workers 2 --timeout 110s \
+    --group rnuringdriver --shards 11 --shard "$i" --workers 2 --timeout 110s \
     --dir "$job/rnuringdriver-$i"
 done
 "$job/tlacheck" merge --root proofs --keep proofs/tla/RUNS.tsv \
@@ -222,23 +247,25 @@ done
 `$java` is an absolute path to the java binary, and `--root` is `proofs`, the
 directory that holds `tla/`; `--root .` finds no models.
 
-Outcomes measured on a 32-cpu linux-amd64 bench (Java 21.0.12.1, the pinned
-JAR, 2026-10-29, the records in `RUNS.tsv`):
+Outcomes measured on a 17-cpu linux-amd64 bench (Java 21.0.12.1, the pinned
+JAR, 2026-10-31, the records in `RUNS.tsv`):
 
 | Case | Expected | Exit | Generated | Distinct | Seconds |
 |---|---|---:|---:|---:|---:|
-| `MCRNUringDriver.cfg` | pass (6 invariants, 3 properties) | 0 | 354622 | 90725 | 59.5 |
-| `MCRNUringDriverBrokenResetBeforeReap.cfg` | `NoReuseWhileKernelOwned` | 12 | 350 | 194 | 0.8 |
-| `MCRNUringDriverBrokenOneBank.cfg` | `ExposedStable` | 12 | 154 | 91 | 0.9 |
-| `MCRNUringDriverBrokenUnboundedReap.cfg` | `ReapWithinBudget` | 12 | 1492 | 688 | 0.9 |
-| `MCRNUringDriverBrokenNoRearmRetry.cfg` | `ReceiveLiveness` | 13 | 311298 | 81053 | 12.2 |
-| `MCRNUringDriverBrokenFreeRunAtSubmit.cfg` | `NoReuseWhileKernelOwned` | 12 | 743 | 369 | 0.7 |
-| `MCRNUringDriverBrokenReturnBeforeSplit.cfg` | `BufferReturnedAfterCopy` | 12 | 561 | 283 | 0.7 |
-| `MCRNUringDriverBrokenUnboundedFill.cfg` | `FillWithinRoom` | 12 | 157 | 93 | 0.7 |
+| `MCRNUringDriver.cfg` | pass (8 invariants, 1 action property) | 0 | 479006 | 122677 | 4.4 |
+| `MCRNUringDriverLiveSends.cfg` | pass (`SubmittedEventuallyFree`) | 0 | 479006 | 122677 | 75.2 |
+| `MCRNUringDriverLiveReceive.cfg` | pass (`DestroyEventuallyFrees`, `ReceiveLiveness`) | 0 | 479006 | 122677 | 64.3 |
+| `MCRNUringDriverBrokenResetBeforeReap.cfg` | `NoReuseWhileKernelOwned` | 12 | 350 | 194 | 1.1 |
+| `MCRNUringDriverBrokenOneBank.cfg` | `ExposedStable` | 12 | 154 | 91 | 1.1 |
+| `MCRNUringDriverBrokenUnboundedReap.cfg` | `ReapWithinBudget` | 12 | 1487 | 684 | 1.2 |
+| `MCRNUringDriverBrokenNoRearmRetry.cfg` | `ReceiveLiveness` | 13 | 422554 | 109757 | 31.3 |
+| `MCRNUringDriverBrokenFreeRunAtSubmit.cfg` | `NoReuseWhileKernelOwned` | 12 | 743 | 369 | 1.2 |
+| `MCRNUringDriverBrokenReturnBeforeSplit.cfg` | `BufferReturnedAfterCopy` | 12 | 561 | 283 | 1.2 |
+| `MCRNUringDriverBrokenUnboundedFill.cfg` | `FillWithinRoom` | 12 | 157 | 93 | 1.1 |
+| `MCRNUringDriverBrokenStopAtRoom.cfg` | `NoCallEndsBehindRoom` | 13 | 36140 | 12639 | 2.1 |
 
-The control runs well inside the 110 s record budget; a loaded or slower bench
-takes longer (an earlier model took 171 s on a 64-cpu bench under load and 123 s
-on an 8-cpu one).
+The liveness cases run inside the 110 s record budget with less margin than
+the control; a loaded or slower bench takes longer.
 
 ## Counterexamples, checked by hand against THE DESIGN
 
@@ -353,6 +380,28 @@ while the rest of the old one was still to be copied out of it: the
 datagrams after the first would be read from bytes the kernel is
 rewriting. The trace is that defect.
 
+**BrokenStopAtRoom** (`HoldWithoutRoom <- MCStopAtRoom`): TLC printed the
+trace to `NoCallEndsBehindRoom`: Init; `Reserve`; `Finish(1)`; `Submit`
+(pending = {1}); `KernelComplete(1)` posts the send CQE; `KernelFill(1)`
+and `KernelFill(2)`, one datagram each; `Reap(RecvCqe(1))` copies datagram
+1 into the fill bank, which then has no room for a coalesced receive of
+two; `SendReturn` on the spent budget; a second `Submit` with nothing new
+begins a send call with `work = 0`; `SendReturn` again, by
+`RecvWaitsForRoom`, with the send CQE still in the cq: the action property
+fails (exit 13).
+
+By hand, against the code before the hold: the cq is a set here, so this
+trace posts the send CQE before the receives, an order in which the code's
+FIFO reap would have taken the send CQE first. The code's defect is the
+same end of the call with the send CQE posted behind a receive the bank
+has no room for: the reap peeked the completion queue oldest first and
+broke at that receive, so `send_packets` returned with `sends_pending`
+above 0 and the index unchanged. That ordered trace is
+`MCRNUringReapLayoutBrokenStopAtRoom.cfg` (README-RNUringReapLayout.md).
+With the hold the receive leaves the queue and the send CQE is reaped in
+the same call.
+
 Each witness fails on exactly its declared invariant or property (exit 12
-for the invariants, exit 13 for `ReceiveLiveness`), and the control passes
-every invariant and all three liveness properties.
+for the invariants, exit 13 for `ReceiveLiveness` and
+`NoCallEndsBehindRoom`), and the controls pass every invariant, the action
+property and all three liveness properties.

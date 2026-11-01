@@ -61,7 +61,7 @@ struct rn_message_object_t;
     X( KEEP, io ) X( KEEP, thread ) X( KEEP, mutex ) X( KEEP, quit ) \
     X( KEEP, stop_requested ) X( KEEP, stopped ) X( KEEP, stop_burst ) \
     X( KEEP, stop_burst_count ) X( KEEP, stop_burst_pending ) X( KEEP, stop_burst_bytes ) X( KEEP, stop_address ) \
-    X( KEEP, receive_buffer_index ) X( RESET, received_packets ) X( KEEP, receive_buffer ) \
+    X( KEEP, receive_buffer_index ) X( KEEP, received_packets ) X( KEEP, receive_buffer ) \
     X( KEEP, time ) X( KEEP, raw_time ) X( KEEP, time_offset ) X( KEEP, frame ) X( KEEP, last_state ) X( KEEP, config ) \
     X( KEEP, max_payload_bytes ) X( KEEP, send_arena ) X( KEEP, reassembly ) \
     X( RESET, payload_ring ) X( KEEP, io_thread ) X( KEEP, step_driven ) X( KEEP, step_in_update ) X( KEEP, client_io ) \

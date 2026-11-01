@@ -30,7 +30,14 @@ concurrently during the fill phase. Only the joined main thread calls `reset`.
   with its value changed. `ValidCallers` limits copies to leases of the
   current fill; without it they may be stale, which the code treats as caller
   misuse.
-- **Retired.** `StartRetired`, `TLoad` and `TCmp`.
+- **Retired.** `StartRetired`, `TLoad`, `TRead` (read the fields, the
+  code's relaxed loads) and `TValidate` (the `fetch_add( 0, release )` reread
+  of the state: under `RetiredValidates` a changed state discards the entry).
+  `AtomicFields` says the entry's fields are atomic. Without it, `TRead` of an
+  entry in phase 1 or rewritten since `TLoad` is a data race, and so is a
+  `TValidate` that finds the state changed: the insert that claimed the entry
+  since `TLoad` stores the fields unordered with the read, whether or not the
+  two overlapped in time.
 - **Reset.** `Reset` runs only when every thread is idle (the main thread is
   joined). It bumps the epoch, which stops at `EpochLimit` and then is 0, and
   zeroes `used`.
@@ -56,8 +63,10 @@ every reset is done.
   reaches it.
 - `ProbeBound`: the entries of the current epoch never exceed
   `Capacity / 2`. `InsertFindsSlot`: insert never runs out of probes.
-- `NoRacyRead`: no thread reads an entry's fields while another thread may be
-  writing them.
+- `NoRacyRead`: no thread's field read is a data race with another thread's
+  stores. `retired`'s reads count only with plain fields (`AtomicFields =
+  FALSE`); `resolve`'s reads are checked as plain: it reads only entries of the
+  current epoch, which no insert rewrites.
 - `SpinBounded` (liveness): a thread that is spinning stops spinning, when
   every thread is scheduled (vacuous for the code now that it does not spin).
 - `ResolveCompletes` and `InsertCompletes` (liveness): thread 1's call
@@ -112,13 +121,25 @@ never reread the state:
   Another thread calls `retired` with a copy of ticket 1 whose value was
   changed to 2: the frame, ticket and value now read as equal, and `retired`
   returns true for a context that is not the lease it was.
-- `MCRNPacketLeaseRetired.cfg` (rereading the state and discarding a rewritten
-  entry) passes every invariant. The code now does this in the seqlock reader
-  shape: read the fields, then reread the state with a read-don't-modify-write
-  (`fetch_add( 0, acq_rel )`), compared with the first. The field read may still
-  overlap a writer's store; the release half of the RMW keeps the field reads
-  before the reread, which makes discarding it safe (Boehm's seqlock reader,
-  supported under ThreadSanitizer where an acquire fence is not).
+- The reread alone does not remove the race. With plain fields the read and
+  a claiming insert's stores are unordered under the C++ memory model, a data
+  race and undefined behavior, even when the reread discards what was read.
+  Boehm's seqlock reader requires the data loads to be atomic.
+  `MCRNPacketLeaseBrokenRetiredPlainFields.cfg` (the reread with plain fields)
+  fails `NoRacyRead`. The trace: a lease is published in epoch 1 and reset.
+  `retired` loads its state, an insert claims the entry for epoch 2, and
+  `retired` reads the fields.
+- `MCRNPacketLeaseRetired.cfg` (atomic fields and the reread) passes every
+  invariant. The code is Boehm's seqlock reader. The entry's fields are
+  `std::atomic`, stored and loaded relaxed. `retired` reads them, then rereads
+  the state with a read-don't-modify-write (`fetch_add( 0, release )`) and
+  compares the two states.
+  - An insert that claimed the entry before the reread is seen in it.
+  - An insert that claims it after the reread reads that release with its
+    acquire compare-and-swap, so its stores follow the field reads.
+  - ThreadSanitizer sees the plain-field race when a field read and a
+    claiming insert's field stores are unordered. `test_lifecycle.cpp`
+    `check_packet_lease_retired_race` drives that overlap in the tsan leg.
 
 `retired` is reached only after `take` refused, which is caller misuse (a
 finish after a reset, or a modified context), so the old effect was a wrong
@@ -129,8 +150,9 @@ classification of a misuse, not a wrong take.
 | Config | Expected | What it shows |
 |---|---|---|
 | `MCRNPacketLease.cfg` | pass | The code's rule without `retired`, two threads (thread 1 makes two calls, thread 2 one), a four-entry table, all frames colliding, two resets, `resolve` skipping an entry being written: every invariant. |
-| `MCRNPacketLeaseRetired.cfg` | pass | The code's `retired`: the state reread after the fields (`RetiredValidates`). |
-| `MCRNPacketLeaseBrokenRetiredRace.cfg` | `NoRacyRead` | `retired` without the reread: the race above. |
+| `MCRNPacketLeaseRetired.cfg` | pass | The code's `retired`: atomic fields (`AtomicFields`) and the state reread after the fields (`RetiredValidates`). |
+| `MCRNPacketLeaseBrokenRetiredPlainFields.cfg` | `NoRacyRead` | `AtomicFields = FALSE`: the reread with plain fields, the race above. |
+| `MCRNPacketLeaseBrokenRetiredRace.cfg` | `NoRacyRead` | `retired` before both repairs, plain fields and no reread: the race above. |
 | `MCRNPacketLeaseBrokenRetiredTorn.cfg` | `NoWrongSuccess` | `retired` without the reread: the race above. |
 | `MCRNPacketLeaseBrokenSpinPausedWriter.cfg` | `ResolveCompletes` | `OnWriting = {"spin"}`, valid callers, thread 2 paused: the former code. |
 | `MCRNPacketLeaseInsertWaitFree.cfg` | pass | `insert` completes with only thread 1 scheduled. |
@@ -159,3 +181,9 @@ Each reversed witness was read against the code by hand (2026-10-29):
   insert claims it. The code stops at `UINT64_MAX >> 2`.
 - **UsedOffByOne.** Three leases fill more than half of four entries. The code
   refuses at `used >= Capacity / 2`.
+- **RetiredPlainFields** (2026-10-31). `retired` loads state active of epoch 1
+  (`packet_lease.h`, the acquire load in `retired`). An insert's
+  `compare_exchange_strong` then claims the entry for epoch 2, and `retired`
+  reads the fields. With the fields a plain `rocketnet_packet_context_t`, the
+  read and the insert's copy into it are unordered, which is a data race. The
+  code reads `std::atomic` fields relaxed (`entry_t::load`).

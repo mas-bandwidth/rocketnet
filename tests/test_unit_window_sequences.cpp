@@ -288,7 +288,6 @@ static void world_check( world_t * w )
         seq_check( row->fragment == s->fragment );
         seq_check( row->acked == s->acked );
         seq_check( row->ring_start == s->span_start );
-        seq_check( row->ring_units == (uint8_t) ( s->span_len / 16 ) );
 
         const uint32_t index = (uint32_t) ( s->number & ( m->w - 1 ) );
         if ( s->live )

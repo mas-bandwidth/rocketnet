@@ -16,7 +16,7 @@
 #include "rocketnet_encryption_map.h"
 #include "rocketnet_ack.h"
 
-// The client state machine, per STANDARD.md: the machine steps forward or
+// The client state machine, per standard/TRANSPORT.md t11: the machine steps forward or
 // fails, never sideways. A client climbs 1, 2, 3, 4 entering each state
 // exactly once per attempt; on any failure it dies to a terminal state, and
 // recovery is a fresh connect with a fresh token -- the ordinary path, run

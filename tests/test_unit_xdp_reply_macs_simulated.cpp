@@ -261,9 +261,18 @@ static void test_xdp_transport_reply_mac_answered_entries_never_displace_learned
     rocketnet_address_t many = client;
     uint8_t many_mac[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x00 };
 
+    // every answered address and MAC is distinct, and none is the client's,
+    // at any ROCKETNET_MAX_CLIENTS: the index spreads over three address bytes
+    // (10.78.0.0 upward, port 1000) and the low three MAC bytes
+
+    many.port = 1000;
+
     for ( int i = 0; i < ROCKETNET_XDP_REPLY_MAC_ENTRIES * 2; ++i )
     {
-        many.port = (uint16_t) ( 1000 + i );
+        many.data.ipv4[1] = (uint8_t) ( 78 + ( i >> 16 ) );
+        many.data.ipv4[2] = (uint8_t) ( i >> 8 );
+        many.data.ipv4[3] = (uint8_t) i;
+        many_mac[3] = (uint8_t) ( i >> 16 );
         many_mac[4] = (uint8_t) ( i >> 8 );
         many_mac[5] = (uint8_t) i;
         fake_receive( &view, &many, many_mac );

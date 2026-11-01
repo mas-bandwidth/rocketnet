@@ -28,10 +28,15 @@
 // outcome out, no socket and no allocation (test_unit_xdp_gateway_netlink.cpp
 // feeds them canned replies). The dump functions are the thin socket wrapper
 // around them: a fixed-size receive buffer, SO_RCVTIMEO, a bounded number of
-// reads, and the reply's sequence number, port id and sender checked.
+// reads, and the reply's sequence number, port id and sender checked. A dump
+// the kernel marks interrupted (NLM_F_DUMP_INTR: the table changed while it
+// was dumped) is asked again on a fresh socket, up to
+// ROCKETNET_GATEWAY_NETLINK_DUMP_ATTEMPTS dumps in all.
 
 #include <stddef.h>
 #include <stdint.h>
+#include <sys/types.h>
+#include <sys/socket.h>
 
 #define ROCKETNET_GATEWAY_NETLINK_MORE          0   // nothing found in this datagram; the dump continues
 #define ROCKETNET_GATEWAY_NETLINK_FOUND         1   // the answer is written
@@ -39,6 +44,11 @@
 #define ROCKETNET_GATEWAY_NETLINK_MALFORMED     3   // a message or attribute overruns its bounds, an answer has the wrong length, or the datagram was truncated
 #define ROCKETNET_GATEWAY_NETLINK_ERROR         4   // the kernel answered NLMSG_ERROR, or the dump was interrupted; *error holds the errno
 #define ROCKETNET_GATEWAY_NETLINK_SYSTEM        5   // the socket failed, timed out, or the read bound ran out; *error holds the errno
+
+// dumps asked for one query: the first, and a fresh one after each that
+// answers interrupted (ERROR with EINTR)
+
+#define ROCKETNET_GATEWAY_NETLINK_DUMP_ATTEMPTS 4
 
 // one received datagram of an RTM_GETROUTE dump: FOUND writes the gateway
 // (4 bytes for AF_INET, 16 for AF_INET6) of the first default route of family
@@ -56,11 +66,33 @@ int rocketnet_gateway_netlink_parse_neighbor( const uint8_t * data, size_t bytes
                                               int family, int interface_index, const uint8_t * gateway, uint8_t * mac, int * error );
 
 // the dumps themselves, over a NETLINK_ROUTE socket opened and closed inside
-// the call: the outcome of the first datagram that is not MORE, or SYSTEM
+// the call: the outcome of the first datagram that is not MORE, or SYSTEM.
+// A local address of the wrong size after bind is SYSTEM with EPROTO.
 
 int rocketnet_gateway_netlink_route( int family, int interface_index, uint8_t * gateway, int * error );
 
 int rocketnet_gateway_netlink_neighbor( int family, int interface_index, const uint8_t * gateway, uint8_t * mac, int * error );
+
+// the socket calls a dump makes. The functions above use the C library's;
+// the _with forms take a table, so a unit test drives a whole dump over a
+// fake kernel with no socket.
+
+struct rocketnet_gateway_netlink_system_t
+{
+    int ( *socket )( int domain, int type, int protocol );
+    int ( *setsockopt )( int fd, int level, int name, const void * value, socklen_t value_bytes );
+    int ( *bind )( int fd, const struct sockaddr * address, socklen_t address_bytes );
+    int ( *getsockname )( int fd, struct sockaddr * address, socklen_t * address_bytes );
+    ssize_t ( *sendto )( int fd, const void * data, size_t bytes, int flags, const struct sockaddr * address, socklen_t address_bytes );
+    ssize_t ( *recvmsg )( int fd, struct msghdr * message, int flags );
+    int ( *close )( int fd );
+};
+
+int rocketnet_gateway_netlink_route_with( const struct rocketnet_gateway_netlink_system_t * system, int family, int interface_index,
+                                          uint8_t * gateway, int * error );
+
+int rocketnet_gateway_netlink_neighbor_with( const struct rocketnet_gateway_netlink_system_t * system, int family, int interface_index,
+                                             const uint8_t * gateway, uint8_t * mac, int * error );
 
 // the outcome's name for a log line
 

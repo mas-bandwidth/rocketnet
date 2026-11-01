@@ -7,5 +7,8 @@ MULTIARCH := $(shell $(CC) -dumpmachine | sed 's/-pc-/-/;s/-unknown-/-/')
 # when they are not the defaults (make ROCKETNET_MAX_CLIENTS=10000). Unset, the
 # SDK headers' defaults apply, as they do to the library.
 XDP_LIMITS := $(if $(ROCKETNET_HISTORY_PACKETS),-DROCKETNET_HISTORY_PACKETS=$(ROCKETNET_HISTORY_PACKETS)) $(if $(ROCKETNET_MAX_CLIENTS),-DROCKETNET_MAX_CLIENTS=$(ROCKETNET_MAX_CLIENTS))
+# The compile runs from the repository root on relative paths, with the same
+# path-mapping flags, so the object is byte-identical to the embedded one.
+ROOT := $(abspath $(CURDIR)/../..)
 server_xdp.o: server_xdp.c ../rocketnet.h ../rocketnet_wire.h ../rocketnet_xdp_limits.h ../rocketnet_history.h
-	clang -D__linux__ -D__BPF__ $(XDP_LIMITS) -ffreestanding -O2 -g -I/usr/include/$(MULTIARCH) -I.. -target bpf -c server_xdp.c -o server_xdp.o
+	cd $(ROOT) && clang -D__linux__ -D__BPF__ $(XDP_LIMITS) -ffreestanding -O2 -g -I/usr/include/$(MULTIARCH) -Isdk -fdebug-compilation-dir=. -ffile-prefix-map=$(ROOT)=. -ffile-prefix-map=$(CURDIR)=. -target bpf -c sdk/xdp/server_xdp.c -o $(CURDIR)/server_xdp.o

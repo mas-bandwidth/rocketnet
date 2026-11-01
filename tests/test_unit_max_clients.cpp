@@ -64,16 +64,19 @@ static void test_max_clients_derived_limits()
     // each receive side twice that
 
     check( ROCKETNET_SERVER_SEND_STAGING_PACKETS >= 2 * clients );
-    check( ROCKETNET_LOOPBACK_QUEUE_PACKETS == ROCKETNET_SERVER_SEND_STAGING_PACKETS );
+    check( ROCKETNET_LOOPBACK_QUEUE_PACKETS == 2 * ROCKETNET_CONNECTION_MAX_PACKETS_PER_UPDATE );
     check( ROCKETNET_IOCP_SEND_QUEUE_SIZE == ROCKETNET_SERVER_SEND_STAGING_PACKETS );
     check( ROCKETNET_IOCP_RECEIVE_QUEUE_SIZE == 2 * ROCKETNET_SERVER_SEND_STAGING_PACKETS );
     check( ROCKETNET_RIO_SEND_QUEUE_SIZE == ROCKETNET_SERVER_SEND_STAGING_PACKETS );
     check( ROCKETNET_RIO_RECEIVES == 2 * ROCKETNET_SERVER_SEND_STAGING_PACKETS );
 
-    // the per-queue rings: the most queues stage two packets for every client
+    // the gso producer bank and the io_uring send array are each one
+    // server-wide staging whatever the queue count, sized for two packets per
+    // client of the default configuration; a larger build spreads its sends
+    // across updates as the transport's send room reports
 
-    check( ROCKETNET_GSO_MAX_QUEUES * ROCKETNET_GSO_SEND_QUEUE_SIZE >= 2 * clients );
-    check( ROCKETNET_URING_MAX_QUEUES * ROCKETNET_URING_SEND_QUEUE_SIZE >= 2 * clients );
+    check( ROCKETNET_GSO_SEND_QUEUE_SIZE >= 2 * ROCKETNET_DEFAULT_MAX_CLIENTS );
+    check( ROCKETNET_URING_SEND_QUEUE_SIZE >= 2 * ROCKETNET_DEFAULT_MAX_CLIENTS );
 
     // the reassembly budget scales at 512 MiB per 1000 clients
 

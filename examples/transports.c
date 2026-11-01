@@ -85,7 +85,12 @@ static int create_and_prove( const char * label, const char * transport )
 
     enum rocketnet_status_t client_status = ROCKETNET_STATUS_OK;
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, &client_status );
-    if ( !client || client_status != ROCKETNET_STATUS_OK || rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
+    if ( client && client_status == ROCKETNET_STATUS_OK )
+    {
+        client_status = rocketnet_client_connect( client, connect_token );
+    }
+
+    if ( !client || client_status != ROCKETNET_STATUS_OK )
     {
         printf( "FAIL: client create/connect: %s\n", rocketnet_status_name( client_status ) );
         rn_cli_client_stop_and_destroy( client, 1000.0 );
@@ -158,8 +163,9 @@ int main( void )
 
     ok &= create_and_prove( "pin", "portable" );
 
-    // a list, tried left to right: xdp is refused (port zero is not a port xdp
-    // can bind), so gso is granted, and the log lines show both
+    // a list, tried left to right, and the log lines show each step: on Linux
+    // xdp is refused (port zero is not a port xdp can bind) and gso is granted;
+    // elsewhere neither exists and portable is granted
 
     ok &= create_and_prove( "list", "xdp,gso,portable" );
 

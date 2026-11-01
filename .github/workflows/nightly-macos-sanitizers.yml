@@ -11,7 +11,9 @@
 #               -fno-omit-frame-pointer). Apple silicon ASan has no
 #               detect_leaks, so ASAN_OPTIONS=detect_leaks=0 and the leaks leg
 #               is the leak check here.
-#   tsan        Debug, -fsanitize=thread. The full functional suite runs here
+#   tsan        Debug, -fsanitize=thread -O1 (as ci.yml's tsan leg: at -O0 tsan
+#               does not report a struct copy's memcpy write after an
+#               unordered read). The full functional suite runs here
 #               with a one-hour case limit (ROCKETNET_TEST_CASE_TIME_SCALE=30
 #               on the two functional steps of this leg only; owner ruling
 #               2026-10-25): under TSAN the live message matrix measured 106 to
@@ -95,7 +97,7 @@ jobs:
           set -euo pipefail
           case "$LEG" in
             asan+ubsan) flags="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"; dir=build-asan-ubsan ;;
-            tsan)       flags="-fsanitize=thread -fno-omit-frame-pointer"; dir=build-tsan ;;
+            tsan)       flags="-fsanitize=thread -fno-omit-frame-pointer -O1"; dir=build-tsan ;;
             leaks)      flags=""; dir=build-leaks ;;
           esac
           echo "LEG_BUILD_DIR=$dir" >> "$GITHUB_ENV"

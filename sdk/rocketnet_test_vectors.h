@@ -10,7 +10,7 @@
 
 #include <stdint.h>
 
-// Known-answer test vectors, mirroring STANDARD.md Appendix A byte for byte.
+// Known-answer test vectors, mirroring standard/TRANSPORT.md ta byte for byte.
 // Generated from the vectors harness that produced the appendix; never edited
 // by hand. The fixed inputs are stated in the appendix; the outputs here are
 // what a conforming implementation must reproduce exactly.

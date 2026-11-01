@@ -245,16 +245,16 @@ static_assert( ROCKETNET_NUM_TRANSPORTS <= ROCKETNET_MAX_TRANSPORT_CANDIDATES, "
 bool rocketnet_transport_ladder_parse( const char * value, const int * available, int num_available, struct rocketnet_transport_ladder_t * ladder, bool server = true );
 
 // the per-platform, per-endpoint availability tables, in recommended
-// order -- the single table "auto" expands from:
+// order -- the single table "auto" expands from. The ranks in
+// sdk/rocketnet_drivers.inc decide the order:
 //
 //               production server          development server             client
-//   linux       xdp, gso, io_uring, portable  xdp, gso, io_uring, portable   portable
+//   linux       xdp, gso, io_uring, portable  xdp, gso, io_uring, portable   gso, portable
 //   macOS       msgx, portable                msgx, portable                 msgx, portable
-//   windows     iocp, rio, portable           portable, iocp, rio            portable
+//   windows     iocp, rio, portable           portable, iocp, rio            iocp, portable
 //   iOS/BSDs    portable                      portable                       portable
 //
-// (the staged linux transports are server-side machinery; the client is the
-// platform socket everywhere, with the darwin batch pump where granted)
+// (xdp, io_uring and rio are server-only; loopback is pin-only, never in auto)
 
 const int * rocketnet_server_transport_io_availability( int * num_available );
 

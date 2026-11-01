@@ -384,7 +384,7 @@ application error.
 
 | Public Entry Point | Return on Refusal |
 | :--- | :--- |
-| `rocketnet_init( context, malloc_fn, free_fn )` | the status code: `INVALID_ARGUMENT` for one allocator function without the other, `ALREADY_INITIALIZED`, `LIVE_ALLOCATIONS` for an allocator change while allocations are live, `PLATFORM_INIT_FAILED` or `CRYPTO_INIT_FAILED` |
+| `rocketnet_init( context, malloc_fn, free_fn )` | the status code: `INVALID_ARGUMENT` for one allocator function without the other, `ALREADY_INITIALIZED`, `LIVE_ALLOCATIONS` for an allocator change while allocations are live, `PLATFORM_INIT_FAILED`, or `CRYPTO_INIT_FAILED` when sodium cannot take its own lock |
 | `rocketnet_term( void )` | the status code: `NOT_INITIALIZED` or `LIVE_ALLOCATIONS`; nothing changes |
 | `rocketnet_client_default_config( config )` | `INVALID_ARGUMENT` for a NULL config, counted; `CONFIG_NOT_INITIALIZED` is never returned, because the inline call sets `config_bytes` first |
 | `rocketnet_client_required_memory( config )` | `0` for a refused config, a `config_bytes` too small included |
@@ -441,6 +441,10 @@ Lifecycle calls use `enum rocketnet_status_t`. Other operations use their
 documented handle, boolean, count, or output result:
 `rocketnet_init` reports `INVALID_ARGUMENT`, `ALREADY_INITIALIZED`,
 `LIVE_ALLOCATIONS`, `PLATFORM_INIT_FAILED` or `CRYPTO_INIT_FAILED`.
+An unavailable OS random source is not a status anywhere: sodium aborts the
+process, and the misuse handler `rocketnet_init` installs logs one `ERROR`
+line naming the cause first. The key generators and server create therefore
+never return `CRYPTO_INIT_FAILED`.
 `rocketnet_term` reports `NOT_INITIALIZED` or `LIVE_ALLOCATIONS`. The client and server create
 calls return a handle or `NULL`, write the code through the status
 out-parameter, and log one `ERROR` line with the reason: `NOT_INITIALIZED`,
@@ -484,7 +488,8 @@ server. The client stays `DISCONNECTED`, and connect logs one `ERROR` line.
 refuse a transport list that names `loopback` when the config's
 `loopback_hub` is `NULL`. `ROCKETNET_STATUS_LOOPBACK_HUB_MISMATCH` is -33:
 create and `rocketnet_loopback_hub_destroy` refuse a hub whose magic, version
-or layout id differ from this library's, one made by another build.
+or layout id differ from this library's, one made by another build; the
+destroy's refusal counts API misuse.
 `ROCKETNET_STATUS_LOOPBACK_HUB_IN_USE` is -34, the last code:
 `rocketnet_loopback_hub_destroy` refuses while a server or client endpoint is
 registered with the hub, keeps the hub, logs one `ERROR` line and counts API

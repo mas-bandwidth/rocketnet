@@ -37,7 +37,9 @@
 (*   server MUST NOT move the window of a session packet whose source      *)
 (*   address has no assigned client slot.  The code checks the slot        *)
 (*   before it advances, GateBeforeAdvance = TRUE; the witness sets        *)
-(*   GateBeforeAdvance = FALSE and TLC rejects it.                         *)
+(*   GateBeforeAdvance = FALSE and, since a gate before the open is also   *)
+(*   one before the advance, GateBeforeOpen = FALSE (the open, the         *)
+(*   advance, then the slot check), and TLC rejects it.                    *)
 (*                                                                         *)
 (* This is replay_session only.  The handshake window (replay_handshake)   *)
 (* is the same struct, but handshake packets are exempt from replay        *)
@@ -70,7 +72,9 @@ CONSTANTS
     GateBeforeAdvance, \* BOOLEAN: the server checks the slot before it
                        \* advances (the rule, and what the code does) or after
     GateBeforeOpen     \* BOOLEAN: the server checks the slot before the
-                       \* AEAD open (the rule, and what the code does) or after
+                       \* AEAD open (the rule, and what the code does) or after;
+                       \* the advance follows the open, so a gate before the
+                       \* open is a gate before the advance as well
 
 W == Words * WordBits  \* ROCKETNET_REPLAY_WINDOW_BITS (sdk/rocketnet_replay.h)
 
@@ -80,6 +84,7 @@ ASSUME /\ Words \in Nat \ {0}
        /\ MaxSeq \in Nat /\ MaxSeq >= W
        /\ GateBeforeAdvance \in BOOLEAN
        /\ GateBeforeOpen \in BOOLEAN
+       /\ GateBeforeOpen => GateBeforeAdvance
 
 VARIABLES
     highest,    \* highest_opened: the high-water mark, 0 before any open

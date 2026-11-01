@@ -15,7 +15,7 @@ This document records the complete inventory of development and test-only scaffo
 
 ## 1. The One Switch and the Seams It Guards
 
-`ROCKETNET_DEV` (sdk/rocketnet.h) is the only switch. The per-feature test macros that used to sit beside it (`ROCKETNET_TEST_SEAMS`, the `*_TEST_HOOKS` family, `ROCKETNET_IOCP_TESTS`, `ROCKETNET_RIO_TESTS`, `ROCKETNET_XDP_TESTS`, `ROCKETNET_WINDOWS_LIFECYCLE_TRACK`, `ROCKETNET_TEST_CLOCK_WRAP`) are gone, and `tools/check_test_scaffolding_boundary.py` fails if one comes back. Every seam is now plain `#if ROCKETNET_DEV`, with the platform condition beside it where the code is for one platform (the Windows lifecycle ledger is `ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS`, the POSIX send-failure registry is `ROCKETNET_DEV && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS`).
+`ROCKETNET_DEV` (sdk/rocketnet.h) is the only switch. `tools/check_test_scaffolding_boundary.py` fails if a per-feature test switch appears beside it (`ROCKETNET_TEST_SEAMS`, the `*_TEST_HOOKS` family, `ROCKETNET_IOCP_TESTS`, `ROCKETNET_RIO_TESTS`, `ROCKETNET_XDP_TESTS`, `ROCKETNET_WINDOWS_LIFECYCLE_TRACK`, `ROCKETNET_TEST_CLOCK_WRAP`). Every seam is plain `#if ROCKETNET_DEV`, with the platform condition beside it where the code is for one platform (the Windows lifecycle ledger is `ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS`, the POSIX send-failure registry is `ROCKETNET_DEV && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS`).
 
 Seams, by the files that carry them:
 
@@ -46,7 +46,7 @@ One build shape remains that is not a development switch: `ROCKETNET_CONFIG_PARS
 1. **Connect Token Minting and Deterministic Fixture Writer (`sdk/rocketnet_connect_token.h`, `sdk/rocketnet_connect_token.cpp`, `sdk/rocketnet.cpp`)**:
    - **Production (`ROCKETNET_DEV=0` and `ROCKETNET_DEV=1`)**:
      - `rocketnet_write_connect_token_sealed`: seals connect tokens using fresh ephemeral X25519 keypairs (`crypto_box_keypair`), with zero caller-supplied ephemeral secret key path in `DEV=0`.
-     - `rocketnet_read_connect_token_sealed`: unseals and validates connect tokens.
+     - `rocketnet_open_connect_token_private`: opens the sealed private block of a verified connect token.
    - **Development / Test Only (`#if ROCKETNET_DEV`)**:
      - `rocketnet_dev_server_secret_key[32]` and `rocketnet_dev_backend_secret_key[32]` (`sdk/rocketnet_connect_token.cpp`, `sdk/rocketnet.cpp`).
      - `rocketnet_box_seal_with_ephemeral` (`sdk/rocketnet_connect_token.cpp`): deterministic X25519 box seal helper with caller-supplied ephemeral secret key.
@@ -57,23 +57,23 @@ One build shape remains that is not a development switch: `ROCKETNET_CONFIG_PARS
 2. **Connection Reset and Field-Coverage Inventory Walker (`sdk/rocketnet_connection_reset.h`, `sdk/rocketnet_connection_reset.cpp`)**:
    - **Production (`ROCKETNET_DEV=0` and `ROCKETNET_DEV=1`)**:
      - `rocketnet_client_connection_reset`: resets client protocol per-session state and wipes cryptographic secrets.
-     - `rocketnet_client_protocol_wipe_secrets`: wipes client cryptographic secret material (`session_TokenData`, `rx_key`, `tx_key`) through `rocketnet_secret_wipe`.
+     - `rocketnet_client_protocol_wipe_secrets`: wipes client cryptographic secret material (`keys`, `token`, `client_ephemeral_secret_key`, `session_nonce`) with `sodium_memzero`.
      - `rocketnet_server_connection_reset`: resets server per-client slot protocol state and wipes session keys.
    - **Development / Test Only (`#if ROCKETNET_DEV`)**:
-     - `ROCKETNET_CLIENT_PROTOCOL_CONNECTION_FIELDS`, `ROCKETNET_CLIENT_TRANSPORT_CONNECTION_FIELDS`, `ROCKETNET_SERVER_TRANSPORT_CONNECTION_FIELDS` X-macros (`sdk/rocketnet_connection_reset.h`).
+     - `ROCKETNET_CLIENT_PROTOCOL_CONNECTION_FIELDS`, `ROCKETNET_CLIENT_TRANSPORT_CONNECTION_FIELDS`, `ROCKETNET_ENCRYPTION_MAPPING_CONNECTION_FIELDS`, `ROCKETNET_ENCRYPTION_MAPPING_CONTROL_CONNECTION_FIELDS`, `ROCKETNET_ENDPOINT_CONNECTION_FIELDS`, `ROCKETNET_MESSAGE_CONNECTION_FIELDS` X-macros (`sdk/rocketnet_connection_reset.h`).
      - `struct rocketnet_reset_member_t`, `ROCKETNET_RESET_MEMBER`, `rocketnet_reset_align_up`, and `rocketnet_reset_inventory_matches` (`sdk/rocketnet_connection_reset.h`, `sdk/rocketnet_connection_reset.cpp`).
-     - `rocketnet_client_connection_reset_inventory_matches_for_test`, `rocketnet_client_transport_connection_reset_inventory_matches_for_test`, `rocketnet_server_connection_reset_inventory_matches_for_test` (`sdk/rocketnet_connection_reset.h`, `sdk/rocketnet_connection_reset.cpp`, `sdk/rocketnet_client_transport.cpp`, `sdk/rocketnet_server_transport.cpp`).
+     - `rocketnet_client_transport_inventory_matches_for_test`, `rocketnet_client_slots_inventory_matches_for_test`, `rocketnet_server_replay_marks_inventory_matches_for_test`, `rocketnet_client_transport_reset_witness_for_test` (`sdk/rocketnet_connection_reset.h`, `sdk/rocketnet_client_transport.cpp`, `sdk/rocketnet_client_slots.cpp`, `sdk/rocketnet_server_replay_marks.cpp`).
 
 3. **Client and Server Transports, Link Simulator, and Session Seams (`sdk/rocketnet.cpp`, `sdk/rocketnet_client_transport.cpp`, `sdk/rocketnet_server_transport.cpp`, `sdk/rocketnet_client_slots.h`, `sdk/rocketnet_network_simulator.h`, `sdk/rocketnet_network_simulator.cpp`)**:
    - **Guard `#if ROCKETNET_DEV`**:
      - In-memory link simulator (`rocketnet_network_simulator_*` in `sdk/rocketnet_network_simulator.cpp` and `sdk/rocketnet.cpp`).
      - `rocketnet_dev_session_sequence_start` (`sdk/rocketnet_layers.h`, `sdk/rocketnet_client_transport.cpp`, `sdk/rocketnet_server_transport.cpp`).
      - `rocketnet_server_transport_dev_config` (`sdk/rocketnet_layers.h`, `sdk/rocketnet_server_transport.cpp`).
-     - Step-driven client transport (`rocketnet_client_create_step_driven_at_timestamp`, `rocketnet_client_create_testing`, `rocketnet_client_step_context_t`, `ROCKETNET_CLIENT_STEP_DRIVEN`).
+     - Step-driven client transport (`rocketnet_client_transport_create_step_driven`, `rocketnet_client_transport_create_step_driven_at_timestamp`, `sdk/rocketnet_client_io.h`; the client config's `step_driven`, `ROCKETNET_CLIENT_STEP_DRIVEN`).
      - `rocketnet_client_slot_handle_t` generation-checked slot helpers (`sdk/rocketnet_client_slots.h`).
    - **More `#if ROCKETNET_DEV` seams**:
-     - `rocketnet_client_transport_set_memory_plan_seam_for_test`, `rocketnet_client_transport_clear_memory_plan_seam_for_test` (`sdk/rocketnet_client_transport.cpp`).
-     - `rocketnet_server_transport_set_writer_fault_for_test`, `rocketnet_server_transport_force_send_batch_refusal_for_test` (`sdk/rocketnet_server_transport.cpp`).
+     - `rocketnet_client_transport_set_memory_plan_seam_for_test` (`sdk/rocketnet_client_transport.cpp`).
+     - `rocketnet_server_transport_set_create_send_capacity_for_test`, `rocketnet_server_transport_swap_io_for_test`, `rocketnet_server_transport_poison_slot_for_test` (`sdk/rocketnet_server_transport.cpp`).
      - The same guard also wraps seams in `sdk/rocketnet_api.cpp`, `sdk/rocketnet_channel_sequenced.cpp`, `sdk/rocketnet_client_protocol.cpp`, `sdk/rocketnet_client_slots.cpp`, `sdk/rocketnet_client_slots.h`, `sdk/rocketnet_encryption_map.cpp`, `sdk/rocketnet_encryption_map.h`, `sdk/rocketnet_network_simulator.cpp`, `sdk/rocketnet_network_simulator.h`, `sdk/rocketnet_packet_builder.cpp`, `sdk/rocketnet_packet_builder.h`, `sdk/rocketnet_server_protocol.cpp`, `sdk/rocketnet_server_protocol.h`, `sdk/rocketnet_server_replay_marks.cpp`, and `sdk/rocketnet_server_uring_linux.cpp`.
 
 ### 2.2 Platform-Specific Scaffolding (Linux, macOS, Windows)
@@ -121,4 +121,4 @@ What `tools/check_test_scaffolding_boundary.py` verifies:
 3. **Artifact Symbol and Byte Audit (`tools/check_exports.py`)**: `rocketnet` static archive, `rocketnet_shared` shared library, and Windows `rocketnet_import.lib` match `tools/exports.txt`, keep the static crypto namespace private, and contain zero development/test symbols, zero `_for_test` witnesses, zero deterministic token or reset-inventory symbols, and zero development secret key bytes.
 4. **Negative Controls (`--red-controls`)**:
    - A compiler negative control verifies that `rocketnet_dev_session_sequence_start` is undeclared with `ROCKETNET_DEV=0`.
-   - Symbol negative controls verify that referencing `rocketnet_write_connect_token_deterministic`, `rocketnet_reset_inventory_matches`, or `rocketnet_*_connection_reset_inventory_matches_for_test` with `ROCKETNET_DEV=0` fails compilation.
+   - Symbol negative controls verify that referencing `rocketnet_write_connect_token_deterministic`, `rocketnet_reset_inventory_matches`, or `rocketnet_*_inventory_matches_for_test` with `ROCKETNET_DEV=0` fails compilation.

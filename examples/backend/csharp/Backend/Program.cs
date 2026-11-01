@@ -70,11 +70,6 @@ if ( args.Length == 2 && args[0] == "--mint" )
     Console.WriteLine( MintToken( config, clientId ) );
     return 0;
 }
-if ( args.Length != 0 )
-{
-    Console.Error.WriteLine( "usage: rocketnet-backend [--keygen | --mint <client id>]" );
-    return 1;
-}
 
 WebApplicationBuilder builder = WebApplication.CreateSlimBuilder();
 string listenHost = config.ListenAddress.Contains( ':' ) ? $"[{config.ListenAddress}]" : config.ListenAddress;
