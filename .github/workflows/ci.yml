@@ -1220,6 +1220,66 @@ jobs:
           ./bin/Release/test.exe
           ./bin/Release/test_sodium.exe
 
+      # Leg (c): a Windows test child that fails exits at once and never waits
+      # on a window (suite_no_dialogs, tests/suite_runner.h; #201). Each
+      # tests/windows_no_dialogs.cpp case runs alone in Release and in Debug
+      # with a 30 s deadline and must exit nonzero, and the Debug assertion's
+      # report must reach stderr. The negative control puts the defaults back
+      # first: its Debug assertion must go to the dialog instead, so either it
+      # is still waiting on the box after 10 s (a runner with a desktop, where
+      # #201 took two hours) or, on this service runner with no desktop, it
+      # ends with no report on stderr. Either way the report the fix keeps
+      # would have been lost.
+      - name: A Windows test child that aborts exits instead of waiting on a dialog
+        if: matrix.leg == 'c'
+        shell: bash
+        run: |
+          set -uo pipefail
+          cmake --build build --config Debug --target windows_no_dialogs || exit 1
+          # runs one case alone; prints "exited <code> <seconds>" or "waiting <seconds>" (then kills it)
+          run_case() {
+            local config=$1 case=$2 limit=$3 log="$RUNNER_TEMP/no-dialogs-$1-$2"
+            local start=$SECONDS
+            "bin/$config/windows_no_dialogs.exe" --run "$case" > "$log.out" 2> "$log.err" &
+            local pid=$!
+            while kill -0 "$pid" 2>/dev/null && [ $(( SECONDS - start )) -lt "$limit" ]; do sleep 0.2; done
+            if kill -0 "$pid" 2>/dev/null; then
+              taskkill //F //T //PID "$(cat "/proc/$pid/winpid")" > /dev/null 2>&1 || kill -9 "$pid"
+              wait "$pid" 2>/dev/null
+              echo "waiting $(( SECONDS - start ))"
+              return
+            fi
+            local code=0
+            wait "$pid" || code=$?
+            echo "exited $code $(( SECONDS - start ))"
+          }
+          failed=0
+          for config in Release Debug; do
+            for case in test_no_dialogs_abort test_no_dialogs_assert test_no_dialogs_invalid_parameter test_no_dialogs_access_violation; do
+              read -r state code seconds <<< "$(run_case "$config" "$case" 30)"
+              stderr=$(head -n 3 "$RUNNER_TEMP/no-dialogs-$config-$case.err" 2>/dev/null | tr -d '\r' | tr '\n' '|')
+              if [ "$config/$case" = Debug/test_no_dialogs_assert ] && ! grep -q "Assertion failed" "$RUNNER_TEMP/no-dialogs-$config-$case.err"; then
+                echo "FAIL $config $case: the assertion report did not reach stderr"
+                failed=1
+              elif [ "$state" = exited ] && [ "$code" != 0 ]; then
+                echo "PASS $config $case exited $code (low byte of the status) in ${seconds} s; stderr: $stderr"
+              else
+                echo "FAIL $config $case: $state ${code} after ${seconds:-$code} s"
+                failed=1
+              fi
+            done
+          done
+          read -r state code seconds <<< "$(run_case Debug test_no_dialogs_defaults_restored 10)"
+          if [ "$state" = waiting ]; then
+            echo "PASS negative control: with the defaults back, the Debug assertion was still waiting on its dialog after $code s (killed)"
+          elif ! grep -q "Assertion failed" "$RUNNER_TEMP/no-dialogs-Debug-test_no_dialogs_defaults_restored.err"; then
+            echo "PASS negative control: with the defaults back, the Debug assertion went to a dialog this service runner cannot show (exited $code in $seconds s, no report on stderr)"
+          else
+            echo "FAIL negative control: with the defaults back, the assertion report still reached stderr, so the defaults were not restored"
+            failed=1
+          fi
+          exit $failed
+
       # Leg (c), 2026-10-29: the functional suite is back on every commit, its
       # cases in parallel (tests/functional/main.cpp), the slowest RIO and IOCP x1000
       # cycles in the nightly tier. The note below is its history.
