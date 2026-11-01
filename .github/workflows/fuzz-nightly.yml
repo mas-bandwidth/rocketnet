@@ -310,12 +310,13 @@ jobs:
           set -euo pipefail
           LLVM_PREFIX=""
           for candidate in "$HOME/sdk/llvm" "/opt/homebrew/opt/llvm" "/usr/local/opt/llvm"; do
-            if [ -x "$candidate/bin/clang" ] && [ -x "$candidate/bin/clang++" ]; then
-              fuzzer_rt="$("$candidate/bin/clang++" --print-file-name=libclang_rt.fuzzer_osx.a)"
-              if [ -n "$fuzzer_rt" ] && [ -f "$fuzzer_rt" ]; then
-                LLVM_PREFIX="$candidate"
-                break
-              fi
+            if [ -x "$candidate/bin/clang" ] && [ -x "$candidate/bin/clang++" ] && \
+               fuzzer_rt=$("$candidate/bin/clang++" --print-file-name=libclang_rt.fuzzer_osx.a 2>/dev/null) && \
+               [ -n "$fuzzer_rt" ] && \
+               [ "$fuzzer_rt" != "libclang_rt.fuzzer_osx.a" ] && \
+               [ -f "$fuzzer_rt" ]; then
+              LLVM_PREFIX="$candidate"
+              break
             fi
           done
           if [ -z "$LLVM_PREFIX" ]; then

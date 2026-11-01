@@ -83,7 +83,7 @@ void reliable_receipts_over_lossy_link()
 
         check_receipt( rocketnet_channel_harness_pump( &h, 1.0 / 60.0 ) );
 
-        rocketnet_channel_delivery_t delivery;
+        rocketnet_channel_delivery_t delivery = {};
         while ( rocketnet_channel_harness_server_collect( &h, 0, &delivery ) )
         {
             int matched = -1;
@@ -185,7 +185,7 @@ void reliable_receipts_over_lossy_link()
         check_receipt( rocketnet_message_client_receipts( h.message_client, events, 16 ) == 0 );
         check_receipt( rocketnet_message_server_receipts( h.message_server, h.client_slot, events, 16 ) == 0 );
 
-        rocketnet_channel_delivery_t delivery;
+        rocketnet_channel_delivery_t delivery = {};
         check_receipt( !rocketnet_channel_harness_server_collect( &h, 0, &delivery ) );
         check_receipt( !rocketnet_channel_harness_client_collect( &h, 0, &delivery ) );
     }

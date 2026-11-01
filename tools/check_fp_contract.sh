@@ -241,9 +241,13 @@ check_file()
             w1="${w1%\"}"
             w1="${w1%)}"
             w1="${w1%\"}"
+            local w2="${words[2]:-}"
+            w2="${w2%\"}"
+            w2="${w2%)}"
+            w2="${w2%\"}"
             case "$w1" in
                 --version|-dumpfullversion|-dumpversion|--print-file-name=*|-print-file-name=*|--print-resource-dir|-print-resource-dir)
-                    if [ "${#words[@]}" -eq 2 ]; then
+                    if [ "${#words[@]}" -eq 2 ] || { [ "${#words[@]}" -eq 3 ] && [[ "$w2" =~ ^[0-9]*\>/dev/null$ ]]; }; then
                         buf=""
                         continue
                     fi
@@ -308,10 +312,22 @@ run_selftest()
         return 1
     fi
 
-    # 7. Positive controls must pass.
+    # 7. Query flag combined with compilation arguments without floor must fail.
+    printf 'clang++ --print-file-name=libclang_rt.fuzzer_osx.a foo.cpp -o foo\n' > "$tmp/case7.sh"
+    if check_file "$tmp/case7.sh" >/dev/null 2>&1; then
+        echo "check_fp_contract self-test failed: clang++ --print-file-name with compile args passed" >&2
+        return 1
+    fi
+
+    # 8. Positive controls (including standalone query flags) must pass.
     printf 'FLAGS := -O2 -ffp-contract=off\nall:\n\t$(CXX) $(FLAGS) -c a.cpp\n\t/usr/bin/clang++-18 -ffp-contract=off -c b.cpp\n' > "$tmp/Makefile.good"
     if ! check_file "$tmp/Makefile.good" >/dev/null 2>&1; then
         echo "check_fp_contract self-test failed: valid Makefile.good failed" >&2
+        return 1
+    fi
+    printf '"$candidate/bin/clang++" --print-file-name=libclang_rt.fuzzer_osx.a\nfuzzer_rt=$("$candidate/bin/clang++" --print-file-name=libclang_rt.fuzzer_osx.a 2>/dev/null)\nclang++ --print-resource-dir\n' > "$tmp/queries.good.sh"
+    if ! check_file "$tmp/queries.good.sh" >/dev/null 2>&1; then
+        echo "check_fp_contract self-test failed: standalone query flags failed" >&2
         return 1
     fi
     if ! check_file "tools/check_fuzz_oracle.py" >/dev/null 2>&1; then
@@ -319,7 +335,7 @@ run_selftest()
         return 1
     fi
 
-    echo "check_fp_contract self-test: ok (6 negative and 2 positive cases)"
+    echo "check_fp_contract self-test: ok (7 negative and 3 positive cases)"
     return 0
 }
 
