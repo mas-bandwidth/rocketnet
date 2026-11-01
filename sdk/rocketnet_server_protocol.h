@@ -128,6 +128,14 @@ void rocketnet_server_transport_test_receive_work( const struct rocketnet_server
 uint64_t rocketnet_server_protocol_connection_id( const struct rocketnet_server_protocol_t * server, int client_index );
 int rocketnet_server_protocol_end_reason( const struct rocketnet_server_protocol_t * server, int client_index );
 
+// The reported round-trip time of the connection in client_index, in seconds
+// (standard/TRANSPORT.md t15.5): the minimum retained first-ack sample, 0
+// while it has none, for a free slot, or for an index out of range. The
+// message layer takes it as a connection's first RTT sample
+// (standard/MESSAGES.md m9.2).
+
+double rocketnet_server_protocol_client_rtt( const struct rocketnet_server_protocol_t * server, int client_index );
+
 // Processes one connection request packet, full wire bytes including the
 // prefilter header, from this source address. current_timestamp is unix
 // seconds for token and cookie checks; current_time is the server clock for
