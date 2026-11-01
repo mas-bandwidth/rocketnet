@@ -5,7 +5,7 @@
 # memory, timeout, UNKNOWN) fails the job, so a red night shows as red.
 #
 # The runner is studio's own proof runner, label rocketnet-proof, apart from
-# the rocketnet-macos and rocketnet-macos-ci pools, so a night-long proof never
+# the rocketnet-macos and rocketnet-ci-macos pools, so a night-long proof never
 # holds a macOS job.
 #
 # ESBMC is built from pinned source by tools/build_pinned_esbmc.sh, at the
