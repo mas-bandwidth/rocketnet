@@ -1141,10 +1141,30 @@ inline int suite_run_names_only( int ( *worker )( const char * ), const char * n
 
     close( pipefd[1] );
 
-    const int fl = fcntl( pipefd[0], F_GETFL, 0 );
-    if ( fl >= 0 )
+    const int fd_flags = fcntl( pipefd[0], F_GETFL, 0 );
+    if ( fd_flags < 0 || fcntl( pipefd[0], F_SETFL, fd_flags | O_NONBLOCK ) < 0 )
     {
-        fcntl( pipefd[0], F_SETFL, fl | O_NONBLOCK );
+        kill( pid, SIGKILL );
+        int status = 0;
+        for ( ;; )
+        {
+            pid_t w;
+            do
+            {
+                w = waitpid( pid, &status, WUNTRACED );
+            } while ( w < 0 && errno == EINTR );
+
+            if ( w == pid && WIFSTOPPED( status ) )
+            {
+                kill( pid, SIGCONT );
+                continue;
+            }
+            break;
+        }
+        close( pipefd[0] );
+        fprintf( stdout, "check failed: %s pipe nonblock setup\n", name );
+        fflush( stdout );
+        return 1;
     }
 
     // Under macOS leaks --atExit, libLeaksAtExit.dylib interposes _exit and
@@ -1230,19 +1250,19 @@ inline int suite_run_names_only( int ( *worker )( const char * ), const char * n
     close( pipefd[0] );
 
     int rc = 1;
-    if ( waited >= 0 && WIFEXITED( status ) )
+    if ( waited == pid && WIFEXITED( status ) )
         rc = WEXITSTATUS( status );
-    else if ( waited >= 0 && WIFSIGNALED( status ) )
+    else if ( waited == pid && WIFSIGNALED( status ) )
         rc = 1;
     suite_emit_captured( output, rc != 0 );
-    if ( rc != 0 && output.find( "check failed" ) == std::string::npos )
+    if ( rc != 0 )
     {
-        if ( waited >= 0 && WIFSIGNALED( status ) )
-            printf( "check failed: %s signal %d\n", name, WTERMSIG( status ) );
-        else if ( waited >= 0 && WIFEXITED( status ) )
-            printf( "check failed: %s exit %d\n", name, WEXITSTATUS( status ) );
+        if ( waited == pid && WIFSIGNALED( status ) )
+            fprintf( stdout, "check failed: %s signal %d\n", name, WTERMSIG( status ) );
+        else if ( waited == pid && WIFEXITED( status ) )
+            fprintf( stdout, "check failed: %s exit %d\n", name, WEXITSTATUS( status ) );
         else
-            printf( "check failed: %s wait failed\n", name );
+            fprintf( stdout, "check failed: %s wait failed\n", name );
         fflush( stdout );
     }
 

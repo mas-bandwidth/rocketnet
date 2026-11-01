@@ -11691,24 +11691,54 @@ void rocketnet_test_sodium_misuse_logs_before_abort()
     // kill(getpid(), SIGSTOP) before the real abort(), stopping the child with
     // its pipe write descriptors still open. Drain the pipe nonblockingly while
     // polling waitpid(..., WUNTRACED) and resuming SIGSTOP with SIGCONT.
-    const int flags = fcntl( pipe_fds[0], F_GETFL, 0 );
-    rocketnet_check( flags >= 0 );
-    rocketnet_check( fcntl( pipe_fds[0], F_SETFL, flags | O_NONBLOCK ) == 0 );
+    const int fd_flags = fcntl( pipe_fds[0], F_GETFL, 0 );
+    if ( fd_flags < 0 || fcntl( pipe_fds[0], F_SETFL, fd_flags | O_NONBLOCK ) < 0 )
+    {
+        kill( pid, SIGKILL );
+        int status = 0;
+        for ( ;; )
+        {
+            pid_t w;
+            do
+            {
+                w = waitpid( pid, &status, WUNTRACED );
+            } while ( w < 0 && errno == EINTR );
+
+            if ( w == pid && WIFSTOPPED( status ) )
+            {
+                kill( pid, SIGCONT );
+                continue;
+            }
+            break;
+        }
+        close( pipe_fds[0] );
+        rocketnet_check( false );
+    }
 
     char output[4096];
     size_t length = 0;
+    bool output_overflow = false;
     int child_status = 0;
     bool pipe_eof = false;
     bool child_reaped = false;
+    char chunk[512];
 
     while ( !pipe_eof || !child_reaped )
     {
-        while ( !pipe_eof && length < sizeof( output ) - 1 )
+        while ( !pipe_eof )
         {
-            const ssize_t got = read( pipe_fds[0], output + length, sizeof( output ) - 1 - length );
+            const ssize_t got = read( pipe_fds[0], chunk, sizeof( chunk ) );
             if ( got > 0 )
             {
-                length += (size_t) got;
+                const size_t avail = sizeof( output ) - 1 - length;
+                const size_t copy_bytes = (size_t) got <= avail ? (size_t) got : avail;
+                if ( copy_bytes > 0 )
+                {
+                    memcpy( output + length, chunk, copy_bytes );
+                    length += copy_bytes;
+                }
+                if ( copy_bytes < (size_t) got )
+                    output_overflow = true;
                 continue;
             }
             if ( got == 0 )
@@ -11727,8 +11757,6 @@ void rocketnet_test_sodium_misuse_logs_before_abort()
             pipe_eof = true;
             break;
         }
-        if ( length == sizeof( output ) - 1 )
-            pipe_eof = true;
 
         if ( !child_reaped )
         {
@@ -11770,11 +11798,12 @@ void rocketnet_test_sodium_misuse_logs_before_abort()
     const char * line = "sodium refused an operation it cannot complete";
     const char * first = strstr( output, line );
     const bool one_line = first != NULL && strstr( first + 1, line ) == NULL;
-    if ( !WIFSIGNALED( child_status ) || WTERMSIG( child_status ) != SIGABRT || !one_line )
-        printf( "sodium misuse child: status 0x%x, output [%s]\n", child_status, output );
+    if ( !WIFSIGNALED( child_status ) || WTERMSIG( child_status ) != SIGABRT || !one_line || output_overflow )
+        printf( "sodium misuse child: status 0x%x, overflow %d, output [%s]\n", child_status, (int) output_overflow, output );
 
     rocketnet_check( WIFSIGNALED( child_status ) && WTERMSIG( child_status ) == SIGABRT );
     rocketnet_check( one_line );
+    rocketnet_check( !output_overflow );
 }
 
 #endif // #if !defined( _WIN32 ) && ROCKETNET_DEV && !defined( ROCKETNET_USE_SYSTEM_SODIUM )

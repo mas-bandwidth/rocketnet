@@ -43,11 +43,11 @@ class NightlyTimeoutTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             leaks = root / "leaks"
-            leaks.write_text("#!/bin/sh\nsleep .15\ncase $LEAKS_CONTROL in\nclean) echo 'Process 123: 0 leaks for 0 total leaked bytes';;\ncheck_failed) echo 'check failed: test_control signal 6'; echo 'Process 123: 0 leaks for 0 total leaked bytes';;\nleak) echo 'Process 123: 1 leak for 8 total leaked bytes'; exit 1;;\nmissing) echo 'inspection failed'; exit 1;;\nesac\n")
+            leaks.write_text("#!/bin/sh\nsleep .15\ncase $LEAKS_CONTROL in\nclean) echo 'Process 123: 0 leaks for 0 total leaked bytes';;\ncheck_failed) echo 'check failed: test_control signal 6'; echo 'Process 123: 0 leaks for 0 total leaked bytes';;\nuncolon_exit) echo 'check failed without colon'; echo 'check failed: test_control exit 1'; echo 'Process 123: 0 leaks for 0 total leaked bytes';;\nleak) echo 'Process 123: 1 leak for 8 total leaked bytes'; exit 1;;\nmissing) echo 'inspection failed'; exit 1;;\nesac\n")
             leaks.chmod(0o755)
             script = root / "control.sh"
             script.write_text('set -u\nbin=fixture; logs="$1"; run=""; limit=1\nsleep() { command sleep .01; }\n' + function + '\none test_control\n')
-            for opt_in, verdict, expected in (("", "clean", 1), ("0", "clean", 1), ("true", "clean", 1), ("1", "clean", 0), ("1", "check_failed", 1), ("1", "leak", 1), ("1", "missing", 1)):
+            for opt_in, verdict, expected in (("", "clean", 1), ("0", "clean", 1), ("true", "clean", 1), ("1", "clean", 0), ("1", "check_failed", 1), ("1", "uncolon_exit", 1), ("1", "leak", 1), ("1", "missing", 1)):
                 with self.subTest(opt_in=opt_in, verdict=verdict):
                     env = dict(os.environ, PATH=str(root) + os.pathsep + os.environ["PATH"], ROCKETNET_NIGHTLY_NO_TIMEOUT=opt_in, LEAKS_CONTROL=verdict)
                     result = subprocess.run(["/bin/bash", str(script), str(root)], env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=10)
