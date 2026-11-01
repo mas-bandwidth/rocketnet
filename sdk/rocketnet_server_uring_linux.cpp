@@ -40,7 +40,7 @@
 // the index where it is and a later call retires the rest.
 //
 // Every call is bounded: receive_packets reaps at most
-// ROCKETNET_URING_RECEIVE_BUDGET completions and send_packets at most
+// one bank size of completions and send_packets at most
 // ROCKETNET_URING_SEND_BUDGET, each from its own budget; completions past a
 // budget stay in the completion queue for the next call.
 
@@ -151,12 +151,16 @@ struct rocketnet_server_uring_held_t
     uint32_t flags;
 };
 
+// a receive bank's arrays hold bank_size packets (rocketnet_server_uring_bank_packets
+// for the configured max_clients); both banks are one allocation made at
+// create (rocketnet_server_uring_buffers_create)
+
 struct rocketnet_server_uring_bank_t
 {
     int num_packets;
-    rocketnet_address_t from[ROCKETNET_URING_BANK_SIZE];
-    int packet_bytes[ROCKETNET_URING_BANK_SIZE];
-    alignas( 16 ) uint8_t packet_data[ROCKETNET_URING_BANK_SIZE][ROCKETNET_FRAME_STRIDE];
+    rocketnet_address_t * from;
+    int * packet_bytes;
+    uint8_t ( *packet_data )[ROCKETNET_FRAME_STRIDE];      // 16-aligned
 };
 
 // a queue is constructed by default-initialization (placement new with no
@@ -223,6 +227,9 @@ struct rocketnet_server_uring_t
     struct rocketnet_server_uring_send_buffer_t send;
 
     struct rocketnet_server_uring_bank_t banks[2];
+    int bank_size;                              // packets per bank, and the receive budget of one call
+    int max_clients;                            // the server's configured client count
+    void * banks_storage;                       // the one allocation both banks' arrays are carved from
 
     // the receive CQEs held for the fill bank's room, oldest first, in a ring
     // with a slot for every provided buffer of the most queues: a held
@@ -415,7 +422,7 @@ static socklen_t rocketnet_server_uring_address_to_sockaddr( const rocketnet_add
 // requested and the grant reported, the first socket discovering an
 // ephemeral port the rest join, non-blocking, don't-fragment.
 
-static int rocketnet_server_uring_open_socket( const rocketnet_address_t * bind_address, int queue_index, uint16_t * bound_port )
+static int rocketnet_server_uring_open_socket( const rocketnet_address_t * bind_address, int queue_index, int max_clients, uint16_t * bound_port )
 {
     const bool ipv6 = bind_address->type == ROCKETNET_ADDRESS_IPV6;
 
@@ -460,11 +467,10 @@ static int rocketnet_server_uring_open_socket( const rocketnet_address_t * bind_
 
     int send_buffer_size = ROCKETNET_SOCKET_SEND_BUFFER_SIZE;
 
-    // one update's inbound packets at the full client count: the uring
-    // create does not carry max_clients, so it sizes for ROCKETNET_MAX_CLIENTS
+    // one update's inbound packets at the server's configured client count
     // (rocketnet_server_transport_receive_buffer_request; a request, and the
     // kernel charges only what it holds)
-    int receive_buffer_size = rocketnet_server_transport_receive_buffer_request( "io_uring", ROCKETNET_MAX_CLIENTS );
+    int receive_buffer_size = rocketnet_server_transport_receive_buffer_request( "io_uring", max_clients );
 
     if ( setsockopt( fd, SOL_SOCKET, SO_SNDBUF, &send_buffer_size, sizeof( int ) ) != 0 )
     {
@@ -685,14 +691,93 @@ bool rocketnet_server_uring_available()
     return ok;
 }
 
-uint64_t rocketnet_server_uring_allocation_bytes( int queues )
+// the carves of the banks' one allocation, for a bank size
+struct rocketnet_server_uring_banks_layout_t
 {
-    if ( queues < 1 || queues > ROCKETNET_URING_MAX_QUEUES )
+    uint64_t from[2], packet_bytes[2], packet_data[2];
+    uint64_t bytes;
+};
+
+static bool rocketnet_server_uring_banks_layout( int bank_size, rocketnet_server_uring_banks_layout_t * layout )
+{
+    memset( layout, 0, sizeof( *layout ) );
+    if ( bank_size < 1 )
+        return false;
+    rocketnet_carve_t carve = { 0, false };
+    for ( int i = 0; i < 2; i++ )
+    {
+        layout->from[i] = rocketnet_carve( carve, (uint64_t) bank_size, sizeof( rocketnet_address_t ) );
+        layout->packet_bytes[i] = rocketnet_carve( carve, (uint64_t) bank_size, sizeof( int ) );
+        layout->packet_data[i] = rocketnet_carve( carve, (uint64_t) bank_size, (uint64_t) ROCKETNET_FRAME_STRIDE );
+    }
+    layout->bytes = carve.bytes;
+    return !carve.failed && carve.bytes <= SIZE_MAX;
+}
+
+uint64_t rocketnet_server_uring_allocation_bytes( int queues, int max_clients )
+{
+    if ( queues < 1 || queues > ROCKETNET_URING_MAX_QUEUES || max_clients < 1 || max_clients > ROCKETNET_MAX_CLIENTS )
+        return 0;
+
+    const int bank_size = rocketnet_server_uring_bank_packets( max_clients );
+    rocketnet_server_uring_banks_layout_t layout;
+    if ( !rocketnet_server_uring_banks_layout( bank_size, &layout ) )
         return 0;
 
     uint64_t bytes = rocketnet_memory_allocations( { sizeof( rocketnet_server_uring_t ),
-                                                     (uint64_t) queues * sizeof( rocketnet_server_uring_queue_t ) } );
+                                                     (uint64_t) queues * sizeof( rocketnet_server_uring_queue_t ),
+                                                     layout.bytes } );
+    const uint64_t view = rocketnet_server_process_packets_allocation_bytes( bank_size );
+    if ( !bytes || !view || !rocketnet_memory_add( bytes, 1, view ) )
+        return 0;
     return bytes <= SIZE_MAX ? bytes : 0;
+}
+
+// the banks and the process view for max_clients, each one allocation; false,
+// with nothing held, when either is refused
+static bool rocketnet_server_uring_buffers_create( struct rocketnet_server_uring_t * uring, int max_clients )
+{
+    const int bank_size = rocketnet_server_uring_bank_packets( max_clients );
+    rocketnet_server_uring_banks_layout_t layout;
+    if ( !rocketnet_server_uring_banks_layout( bank_size, &layout ) )
+        return false;
+
+    uint8_t * base = (uint8_t *) rocketnet_malloc( uring->context, (size_t) layout.bytes );
+    if ( !base )
+        return false;
+
+    if ( !rocketnet_server_process_packets_create( uring->context, &uring->process_packets, bank_size ) )
+    {
+        rocketnet_free( uring->context, base );
+        return false;
+    }
+
+    uring->banks_storage = base;
+    uring->bank_size = bank_size;
+    uring->max_clients = max_clients;
+    for ( int i = 0; i < 2; i++ )
+    {
+        uring->banks[i].num_packets = 0;
+        uring->banks[i].from = (rocketnet_address_t *) ( base + layout.from[i] );
+        uring->banks[i].packet_bytes = (int *) ( base + layout.packet_bytes[i] );
+        uring->banks[i].packet_data = ( uint8_t( * )[ROCKETNET_FRAME_STRIDE] )( base + layout.packet_data[i] );
+    }
+    return true;
+}
+
+static void rocketnet_server_uring_buffers_destroy( struct rocketnet_server_uring_t * uring, void * context )
+{
+    rocketnet_server_process_packets_destroy( context, &uring->process_packets );
+    if ( uring->banks_storage )
+        rocketnet_free( context, uring->banks_storage );
+    uring->banks_storage = NULL;
+    memset( uring->banks, 0, sizeof( uring->banks ) );
+    uring->bank_size = 0;
+}
+
+int rocketnet_server_uring_bank_size( const struct rocketnet_server_uring_t * uring )
+{
+    return uring ? uring->bank_size : 0;
 }
 
 // each queue's provided buffer ring, mapped by liburing (or by the fallback
@@ -856,7 +941,7 @@ static void rocketnet_server_uring_receive_cqe( struct rocketnet_server_uring_t 
                 if ( bytes > ROCKETNET_RECEIVE_CEILING )
                     uring->receive_dropped_too_large++;
             }
-            else if ( fill->num_packets >= ROCKETNET_URING_BANK_SIZE )
+            else if ( fill->num_packets >= uring->bank_size )
             {
                 uring->counters[ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_OVERFLOW]++;
             }
@@ -904,7 +989,7 @@ static void rocketnet_server_uring_multishot_ended( struct rocketnet_server_urin
 
 static bool rocketnet_server_uring_bank_has_room( const struct rocketnet_server_uring_t * uring )
 {
-    return uring->banks[uring->fill_bank].num_packets + ROCKETNET_URING_MAX_SEGMENTS <= ROCKETNET_URING_BANK_SIZE;
+    return uring->banks[uring->fill_bank].num_packets + ROCKETNET_URING_MAX_SEGMENTS <= uring->bank_size;
 }
 
 // a receive CQE with data: copied into the fill bank, or held. it is held
@@ -1231,6 +1316,7 @@ void rocketnet_server_uring_test_destroy_fake( struct rocketnet_server_uring_t *
         uring->queues[i].~rocketnet_server_uring_queue_t();
 
     rocketnet_free( NULL, uring->queues );
+    rocketnet_server_uring_buffers_destroy( uring, NULL );
     uring->~rocketnet_server_uring_t();
     rocketnet_free( NULL, uring );
 }
@@ -1285,9 +1371,17 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_test_create( void * con
     uring->packet_id = 1;
     uring->test_source = source;
 
+    if ( !rocketnet_server_uring_buffers_create( uring, ROCKETNET_DEFAULT_MAX_CLIENTS ) )
+    {
+        uring->~rocketnet_server_uring_t();
+        rocketnet_free( context, uring );
+        return NULL;
+    }
+
     uring->queues = (struct rocketnet_server_uring_queue_t *) rocketnet_malloc( context, sizeof( struct rocketnet_server_uring_queue_t ) * (size_t) num_queues );
     if ( !uring->queues )
     {
+        rocketnet_server_uring_buffers_destroy( uring, context );
         uring->~rocketnet_server_uring_t();
         rocketnet_free( context, uring );
         return NULL;
@@ -1355,12 +1449,12 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_test_create( void * con
 
 #endif // #if ROCKETNET_DEV
 
-struct rocketnet_server_uring_t * rocketnet_server_uring_create( void * context, struct rocketnet_address_t * bind_address, int num_queues, int * status )
+struct rocketnet_server_uring_t * rocketnet_server_uring_create( void * context, struct rocketnet_address_t * bind_address, int num_queues, int max_clients, int * status )
 {
-    return rocketnet_server_uring_create_flags( context, bind_address, num_queues, 0, status );
+    return rocketnet_server_uring_create_flags( context, bind_address, num_queues, max_clients, 0, status );
 }
 
-struct rocketnet_server_uring_t * rocketnet_server_uring_create_flags( void * context, struct rocketnet_address_t * bind_address, int num_queues, int flags, int * status )
+struct rocketnet_server_uring_t * rocketnet_server_uring_create_flags( void * context, struct rocketnet_address_t * bind_address, int num_queues, int max_clients, int flags, int * status )
 {
     rocketnet_assert( bind_address );
     rocketnet_assert( bind_address->type == ROCKETNET_ADDRESS_IPV4 || bind_address->type == ROCKETNET_ADDRESS_IPV6 );
@@ -1374,6 +1468,12 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create_flags( void * co
     if ( num_queues > ROCKETNET_URING_MAX_QUEUES )
     {
         rocketnet_error( "io_uring transport num_queues %d is out of range (1 to %d)", num_queues, ROCKETNET_URING_MAX_QUEUES );
+        return NULL;
+    }
+
+    if ( max_clients < 1 || max_clients > ROCKETNET_MAX_CLIENTS )
+    {
+        rocketnet_error( "io_uring transport max_clients %d is out of range (1 to %d)", max_clients, ROCKETNET_MAX_CLIENTS );
         return NULL;
     }
 
@@ -1397,10 +1497,19 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create_flags( void * co
     uring->ipv6 = bind_address->type == ROCKETNET_ADDRESS_IPV6;
     uring->packet_id = 1;
 
+    if ( !rocketnet_server_uring_buffers_create( uring, max_clients ) )
+    {
+        rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
+        uring->~rocketnet_server_uring_t();
+        rocketnet_free( context, uring );
+        return NULL;
+    }
+
     uring->queues = (struct rocketnet_server_uring_queue_t *) rocketnet_malloc( context, sizeof( struct rocketnet_server_uring_queue_t ) * (size_t) num_queues );
     if ( !uring->queues )
     {
         rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
+        rocketnet_server_uring_buffers_destroy( uring, context );
         uring->~rocketnet_server_uring_t();
         rocketnet_free( context, uring );
         return NULL;
@@ -1419,7 +1528,7 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create_flags( void * co
 
     for ( int i = 0; i < num_queues; i++ )
     {
-        uring->queues[i].fd = rocketnet_server_uring_open_socket( bind_address, i, &bound_port );
+        uring->queues[i].fd = rocketnet_server_uring_open_socket( bind_address, i, uring->max_clients, &bound_port );
         if ( uring->queues[i].fd < 0 )
         {
             rocketnet_server_uring_abort_create( uring );
@@ -1591,7 +1700,7 @@ bool rocketnet_server_uring_stopped( rocketnet_server_uring_t * uring )
     }
 
     rocketnet_server_uring_submit( uring );
-    rocketnet_server_uring_reap_available( uring, ROCKETNET_URING_RECEIVE_BUDGET );
+    rocketnet_server_uring_reap_available( uring, uring->bank_size );
 
 #if ROCKETNET_DEV
     if ( uring->test_stall_destroy )
@@ -1665,6 +1774,7 @@ void rocketnet_server_uring_destroy( struct rocketnet_server_uring_t * uring )
     }
 
     void * allocation_context = uring->context;
+    rocketnet_server_uring_buffers_destroy( uring, allocation_context );
     uring->~rocketnet_server_uring_t();
     rocketnet_free( allocation_context, uring );
 }
@@ -2082,7 +2192,7 @@ static void rocketnet_server_uring_rearm_unarmed( struct rocketnet_server_uring_
 }
 
 // proofs/tla/RNUringDriver.tla RecvBegin, Reap and Swap: the call begins (RecvBegin),
-// reaps at most ROCKETNET_URING_RECEIVE_BUDGET CQEs without blocking into the
+// reaps at most one bank size of CQEs without blocking into the
 // fill bank (Reap within the Budget and within Room; CQEs past the budget
 // stay in the completion queue and receives past the bank's room are held,
 // both counted REAP_DEFERRED),
@@ -2106,7 +2216,7 @@ void rocketnet_server_uring_receive_packets( struct rocketnet_server_uring_t * u
     }
 #endif // #if ROCKETNET_DEV
 
-    rocketnet_server_uring_reap_available( uring, ROCKETNET_URING_RECEIVE_BUDGET );
+    rocketnet_server_uring_reap_available( uring, uring->bank_size );
 
     if ( rocketnet_server_uring_ring_cq_ready( uring ) > 0 || uring->held_count > 0 )
         uring->counters[ROCKETNET_SERVER_URING_COUNTER_REAP_DEFERRED]++;
@@ -2156,9 +2266,15 @@ bool rocketnet_server_uring_available()
     return false;
 }
 
-uint64_t rocketnet_server_uring_allocation_bytes( int queues )
+uint64_t rocketnet_server_uring_allocation_bytes( int queues, int max_clients )
 {
     (void) queues;
+    (void) max_clients;
+    return 0;
+}
+
+int rocketnet_server_uring_bank_size( const struct rocketnet_server_uring_t * )
+{
     return 0;
 }
 
@@ -2168,20 +2284,21 @@ uint64_t rocketnet_server_uring_mapped_bytes( int queues )
     return 0;
 }
 
-struct rocketnet_server_uring_t * rocketnet_server_uring_create( void * context, struct rocketnet_address_t * bind_address, int num_queues, int * status )
+struct rocketnet_server_uring_t * rocketnet_server_uring_create( void * context, struct rocketnet_address_t * bind_address, int num_queues, int max_clients, int * status )
 {
     (void) status;
     (void) context;
     (void) bind_address;
     (void) num_queues;
+    (void) max_clients;
     rocketnet_error( "io_uring transport refused: built without liburing" );
     return NULL;
 }
 
-struct rocketnet_server_uring_t * rocketnet_server_uring_create_flags( void * context, struct rocketnet_address_t * bind_address, int num_queues, int flags, int * status )
+struct rocketnet_server_uring_t * rocketnet_server_uring_create_flags( void * context, struct rocketnet_address_t * bind_address, int num_queues, int max_clients, int flags, int * status )
 {
     (void) flags;
-    return rocketnet_server_uring_create( context, bind_address, num_queues, status );
+    return rocketnet_server_uring_create( context, bind_address, num_queues, max_clients, status );
 }
 
 int rocketnet_server_uring_features( struct rocketnet_server_uring_t * uring )

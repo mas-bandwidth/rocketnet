@@ -838,11 +838,13 @@ const char * rocketnet_platform_name( int platform_id )
 // that names the cause. Installed only on the bundled sodium, whose handler
 // slot is this library's own; a system libsodium's belongs to the application.
 
+#if defined( ROCKETNET_BUNDLED_SODIUM )
 static void rocketnet_sodium_misuse()
 {
     rocketnet_error( "sodium refused an operation it cannot complete (the OS random source is unavailable, or a sodium misuse). the process aborts" );
     (void) fflush( stdout );
 }
+#endif // #if defined( ROCKETNET_BUNDLED_SODIUM )
 
 #if ROCKETNET_DEV
 void rocketnet_sodium_misuse_for_test()

@@ -525,7 +525,7 @@ static void * secrets_wiped_containing( const void * p )
 }
 
 #if ROCKETNET_DEV
-static void secrets_wiped_watch( const void * object, int ( *spans )( size_t *, size_t *, int ) )
+static void secrets_wiped_watch( const void * object, int ( *spans )( const void *, size_t *, size_t *, int ) )
 {
     check( object != NULL );
 
@@ -535,7 +535,7 @@ static void secrets_wiped_watch( const void * object, int ( *spans )( size_t *, 
     secrets_wiped_watch_t * watch = &secrets_wiped_watches[secrets_wiped_num_watches++];
     memset( watch, 0, sizeof( *watch ) );
     watch->block = block;
-    watch->spans = spans( watch->offsets, watch->bytes, 8 );
+    watch->spans = spans( object, watch->offsets, watch->bytes, 8 );
     check( watch->spans > 0 );
 
     const size_t delta = (size_t) ( (const uint8_t *) object - (const uint8_t *) block );

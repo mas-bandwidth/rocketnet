@@ -148,7 +148,7 @@ Two I/O shapes preserve the existing implementations:
 The staged callbacks are start, finish, abort, flush and receive. Start returns
 a `ROCKETNET_FRAME_STRIDE` root; the wire starts at `ROCKETNET_FRAME_WIRE_OFFSET`.
 The caller-visible payload alignment must remain valid. Receive returns at most
-`ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE` datagrams, each within the receive
+`rocketnet_server_receive_packets_per_update( max_clients )` datagrams, each within the receive
 ceiling, with normalized source addresses. Its data remains valid until the
 next receive or destruction, including while workers accept further packets.
 
@@ -177,26 +177,27 @@ that reports it.
 
 The backend constants pair send staging with receive storage, checked by
 `test_unit_receive_budget_twice_send.cpp` and static assertions beside the
-constants. The table describes storage and processing units at the default
-`ROCKETNET_MAX_CLIENTS=1000`; it is not a guaranteed packet rate or a bound
-on every syscall or worker pass. Some capacities scale with the build's
-client ceiling; see [Memory and capacity](MEMORY.md#maximum-clients).
+constants. The table describes storage and processing units for a server of
+the default `max_clients` of 1000; it is not a guaranteed packet rate or a
+bound on every syscall or worker pass. The capacities that scale with clients
+are sized at create from the server's configured `max_clients`; see
+[Memory and capacity](MEMORY.md#maximum-clients).
 
-The server process batch `ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE`
-(`sdk/rocketnet_constants.h`, 16000 by default) bounds packets exposed for
+The server process batch `rocketnet_server_receive_packets_per_update`
+(`sdk/rocketnet_constants.h`, 16000 at 1000 clients) bounds packets exposed for
 protocol processing. Datagrams discarded before that batch is returned are
 bounded per receive call by the read budget below.
 
 | Transport | Send budget | Receive capacity |
 | --- | --- | --- |
-| portable | 256–1000, max `ROCKETNET_SERVER_MAX_SEND_PACKETS` (1000, `sdk/rocketnet_constants.h`) | 16000 per update (`ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE`) |
+| portable | 256–1000, max `rocketnet_server_send_batch_packets` (1000, `sdk/rocketnet_constants.h`) | 16000 per update (`rocketnet_server_receive_packets_per_update`) |
 | msgx | portable batch, 256–1000 | 16000 per update |
 | loopback | portable batch, 256–1000 | 2048 per client endpoint; server queue scales with hub capacity (16384 at 1000 clients), with 16000 processed per update (`sdk/rocketnet_driver_loopback.h`) |
 | gso | 4096 in the current shared producer bank (`ROCKETNET_GSO_SEND_QUEUE_SIZE`) | 8192 per queue buffer (`ROCKETNET_GSO_RECV_QUEUE_SIZE`) |
-| io_uring | 2048 shared send slots per phase, two phases; 10240 completion reaps per send call (`ROCKETNET_URING_SEND_QUEUE_SIZE`, `ROCKETNET_URING_SEND_PHASES`, `ROCKETNET_URING_SEND_BUDGET`) | 4096 receive buffers of 66 KiB per queue; 16000 in each shared receive bank (`ROCKETNET_URING_RECV_BUFFERS`, `ROCKETNET_URING_BANK_SIZE`) |
+| io_uring | 2048 shared send slots per phase, two phases; 10240 completion reaps per send call (`ROCKETNET_URING_SEND_QUEUE_SIZE`, `ROCKETNET_URING_SEND_PHASES`, `ROCKETNET_URING_SEND_BUDGET`) | 4096 receive buffers of 66 KiB per queue; 16000 in each shared receive bank (`ROCKETNET_URING_RECV_BUFFERS`, `rocketnet_server_uring_bank_packets`) |
 | xdp | 4096 per queue (`ROCKETNET_XDP_SEND_QUEUE_SIZE`) | 16384 staging per queue (`ROCKETNET_XDP_RECV_QUEUE_SIZE`) |
-| iocp | 2048 (`ROCKETNET_IOCP_SEND_QUEUE_SIZE`) | 4096 queue (`ROCKETNET_IOCP_RECEIVE_QUEUE_SIZE`) |
-| rio | 2048 per phase (`ROCKETNET_RIO_SEND_QUEUE_SIZE`) | 4096 posted receives (`ROCKETNET_RIO_RECEIVES`) |
+| iocp | 2048 (`rocketnet_server_iocp_send_queue_size`) | 4096 queue (`rocketnet_server_iocp_receive_queue_size`) |
+| rio | 2048 per phase (`rocketnet_server_rio_send_queue_size`) | 4096 posted receives (`rocketnet_server_rio_receives`) |
 
 <a id="current-staging-and-drain-limitations"></a>
 
@@ -570,8 +571,8 @@ up to 64 KiB, so a provided buffer is 66 KiB (`ROCKETNET_URING_RECV_BUFFER_BYTES
 (8 MiB of 2 KiB buffers before `UDP_GRO`), and the buffers are not written at
 create, so a page is resident only once the kernel writes it: small datagrams
 keep about one page of each buffer resident. Each `send_packets` and `receive_packets` call reaps at most a
-fixed completion budget (`ROCKETNET_URING_SEND_BUDGET`,
-`ROCKETNET_URING_RECEIVE_BUDGET`) and `send_packets` waits at most once, so an
+fixed completion budget (`ROCKETNET_URING_SEND_BUDGET`, and the receive
+bank's size, `rocketnet_server_uring_bank_size`) and `send_packets` waits at most once, so an
 update returns under sustained traffic; completions past a budget stay queued
 for the next call, and a send without its completion keeps its slot until a
 later call reaps it. A queue count past

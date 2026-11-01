@@ -61,7 +61,7 @@ code. The action mapping and runs below retain their historical scope.
 | `DequeueSend(p, s)` | send_packets dequeues the send CQ without blocking and retires each completed slot of either phase (a failed status counts SEND_FAILED) |
 | `SwitchPhase` | send_packets opens the other fill phase only when its outstanding count is zero; otherwise the switch stays owed and this call returns (SEND_WAITS) |
 | `KernelFillSlice(i)` | the kernel completes a posted RIOReceiveEx: a datagram in the slice, or a failed status |
-| `DequeueReceive(i)` | receive_packets processes at most `ROCKETNET_RIO_RECEIVES` completions per call: a failed status counts RECEIVE_FAILED; else it copies the datagram into the fill bank or counts a drop, then re-posts the slice |
+| `DequeueReceive(i)` | receive_packets processes at most `rio->receives` completions per call (`rocketnet_server_rio_receives` for the configured max_clients): a failed status counts RECEIVE_FAILED; else it copies the datagram into the fill bank or counts a drop, then re-posts the slice |
 | `RetryRepost(i)` | receive_packets, before it dequeues: one more post of each slice in the retry list (rocketnet_rio_retry_receives); a slice refused again stays in the list and counts RECEIVE_REPOST_FAILED again, and nothing is retried after Close |
 | `Swap` | after at most one receive bank is dequeued, receive_packets swaps the banks; any queued CQ tail remains for the next update |
 | `TransportReads` | process_packets returns views of the exposed bank, valid until the next receive_packets |
@@ -256,7 +256,7 @@ limit, so `Swap` waits for an empty receive queue as the old loop did.
 - **Against the code, by hand:** the old `rocketnet_server_rio_receive_packets`
   loop left only on a short dequeue, so a completion queue the NIC keeps
   full holds the main thread in that call. The bounded loop counts the
-  completions it dequeues and stops at `ROCKETNET_RIO_RECEIVES`, one bank;
+  completions it dequeues and stops at `rio->receives`, one bank;
   the queued tail is dequeued by the next call. The counterexample is real
   for that defect.
 

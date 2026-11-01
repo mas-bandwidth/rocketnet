@@ -347,8 +347,8 @@ static void test_server_reassembly_large_payload_small_geometry_fits_the_budget(
     {
         const int capacity = rocketnet_server_reassembly_delivered_capacity( 1, 8 );
         const uint64_t bytes = rocketnet_server_reassembly_delivered_bytes( 1, 8, 70000 );
-        check( capacity == ( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE + 8 ) / 2 );
-        check( bytes == (uint64_t) ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE * ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES +
+        check( capacity == ( rocketnet_server_receive_packets_per_update( 1 ) + 8 ) / 2 );
+        check( bytes == (uint64_t) rocketnet_server_receive_packets_per_update( 1 ) * ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES +
                             8ULL * 70000 + (uint64_t) capacity * ( ROCKETNET_REASSEMBLY_DELIVERED_ALIGN - 1 ) );
         check( bytes < (uint64_t) capacity * 70000 );
         check( rocketnet_reassembly_memory_allowed_delivered( 1, 8, 70000, capacity, bytes ) );

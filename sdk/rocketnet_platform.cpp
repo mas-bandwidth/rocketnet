@@ -871,11 +871,9 @@ int rocketnet_server_transport_receive_buffer_request( const char * transport, i
 {
     if ( !transport )
         return 0;
-    if ( strcmp( transport, "portable" ) == 0 || strcmp( transport, "msgx" ) == 0 )
+    if ( strcmp( transport, "portable" ) == 0 || strcmp( transport, "msgx" ) == 0 || strcmp( transport, "gso" ) == 0 ||
+         strcmp( transport, "io_uring" ) == 0 || strcmp( transport, "iocp" ) == 0 || strcmp( transport, "rio" ) == 0 )
         return rocketnet_server_receive_buffer_request( max_clients );
-    if ( strcmp( transport, "gso" ) == 0 || strcmp( transport, "io_uring" ) == 0 ||
-         strcmp( transport, "iocp" ) == 0 || strcmp( transport, "rio" ) == 0 )
-        return rocketnet_server_receive_buffer_request( ROCKETNET_MAX_CLIENTS );
     return 0;
 }
 

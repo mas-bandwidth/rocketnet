@@ -29,14 +29,24 @@
 #define ROCKETNET_IOCP_DEFAULT_WORKERS 1
 #define ROCKETNET_IOCP_MAX_WORKERS 32
 // The send frames are shared by all workers, so they are the server-wide send
-// staging (2048 at 1000 clients); each worker's receive staging is twice it.
-#define ROCKETNET_IOCP_SEND_QUEUE_SIZE ROCKETNET_SERVER_SEND_STAGING_PACKETS
+// staging for the configured max_clients (2048 at 1000 clients); each
+// worker's receive bank is twice it. Both are sized at create.
 #define ROCKETNET_IOCP_RECEIVES_PER_WORKER 128
-#define ROCKETNET_IOCP_RECEIVE_QUEUE_SIZE ( 2 * ROCKETNET_SERVER_SEND_STAGING_PACKETS )
 
-ROCKETNET_STATIC_ASSERT( ROCKETNET_IOCP_RECEIVE_QUEUE_SIZE >= 2 * ROCKETNET_IOCP_SEND_QUEUE_SIZE,
-                         "receive budget twice send: IOCP receive queue holds at least twice the send queue" );
-ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE >= 2 * ROCKETNET_IOCP_SEND_QUEUE_SIZE,
+static inline int rocketnet_server_iocp_send_queue_size( int max_clients )
+{
+    return rocketnet_server_send_staging_packets( max_clients );
+}
+
+static inline int rocketnet_server_iocp_receive_queue_size( int max_clients )
+{
+    return 2 * rocketnet_server_send_staging_packets( max_clients );
+}
+
+// The receive budget twice send, at the smallest sizing count: the send queue
+// is the staging (at most four packets per sized client) and the process
+// batch holds sixteen per sized client, so the relation holds at every count.
+ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MIN_RECEIVE_PACKETS_PER_UPDATE >= 2 * ROCKETNET_POWER_OF_TWO_AT_LEAST( 2 * ROCKETNET_SERVER_MIN_SIZED_CLIENTS ),
                          "receive budget twice send: server process batch holds at least twice the IOCP send queue" );
 
 // UDP segmentation offload (USO) on send and UDP receive offload (URO) on
@@ -64,8 +74,11 @@ struct rocketnet_server_iocp_t;
 
 // bind_address is updated with the actual port. IPv6 sockets accept both
 // families and normalize mapped IPv4 sources. Zero workers selects the default.
+// max_clients is the server's configured client count: it sizes the send
+// queue, the receive banks, the process view and the socket receive buffer
+// request.
 rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context,
-                                                        rocketnet_address_t * bind_address, int num_workers
+                                                        rocketnet_address_t * bind_address, int num_workers, int max_clients
 #if ROCKETNET_DEV
     // Development constructor controls: fail after socket, port, first worker
     // or first receive, and optionally force the per-datagram fallback paths.

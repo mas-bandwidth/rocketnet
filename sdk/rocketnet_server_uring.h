@@ -91,7 +91,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_ENTRIES >= ROCKETNET_URING_SEND_QUEUE_S
 #define ROCKETNET_URING_RECV_BUFFER_BYTES                          ( 66 * 1024 )
 
 // the per-call completion budgets: receive_packets takes at most
-// ROCKETNET_URING_RECEIVE_BUDGET completions (one receive bank's worth) and
+// one bank size of completions (rocketnet_server_uring_bank_size) and
 // send_packets at most ROCKETNET_URING_SEND_BUDGET (a whole staging of sends
 // and a completion queue of receives besides), each from its own budget, so
 // a call returns under sustained traffic and receive_packets spending its
@@ -101,16 +101,13 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_ENTRIES >= ROCKETNET_URING_SEND_QUEUE_S
 // buffer until a swap brings room, and leaves the completion queue, so no
 // send completion waits behind it.
 
-#define ROCKETNET_URING_RECEIVE_BUDGET          ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE
 #define ROCKETNET_URING_SEND_BUDGET    ( ROCKETNET_URING_SEND_QUEUE_SIZE + ROCKETNET_URING_ENTRIES * 2 )
 
 ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_RECV_BUFFERS >= 2 * ROCKETNET_URING_SEND_QUEUE_SIZE,
                          "receive budget twice send: io_uring receive ring holds at least twice the send queue" );
-ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_RECEIVE_BUDGET >= 2 * ROCKETNET_URING_SEND_QUEUE_SIZE,
-                         "receive budget twice send: io_uring receive budget holds at least twice the send queue" );
 
 // the send staging is one server-wide array whatever the queue count, and
-// does not derive from ROCKETNET_MAX_CLIENTS: it stages two packets for every
+// does not derive from the client count: it stages two packets for every
 // client of the default configuration. A server whose sends need more in one
 // update spreads them across updates, as the transport's send room reports
 // (rocketnet_server_uring_send_room; proofs/tla/ServerStopSpread.tla Room).
@@ -124,12 +121,23 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_SEND_QUEUE_SIZE >= 2 * ROCKETNET_DEFAUL
 // coalesced receive carries (the kernel's UDP_MAX_SEGMENTS, the gso
 // transport's bound), and held otherwise. the hold has a slot for every
 // provided buffer of the most queues: a held receive owns its buffer.
+// A bank holds one update's receive budget for the configured clients, and
+// never less than one send reap (ROCKETNET_URING_SEND_BUDGET), so a reap
+// that is all send completions still fits a bank; the receive budget a call
+// reaps is the bank size, and the process view holds a whole bank.
 
-#define ROCKETNET_URING_BANK_SIZE               ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE
 #define ROCKETNET_URING_MAX_SEGMENTS                                        64
 #define ROCKETNET_URING_HELD_RECEIVES           ( ROCKETNET_URING_MAX_QUEUES * ROCKETNET_URING_RECV_BUFFERS )
 
-ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_BANK_SIZE > ROCKETNET_URING_MAX_SEGMENTS,
+static inline int rocketnet_server_uring_bank_packets( int max_clients )
+{
+    const int budget = rocketnet_server_receive_packets_per_update( max_clients );
+    return budget > ROCKETNET_URING_SEND_BUDGET ? budget : ROCKETNET_URING_SEND_BUDGET;
+}
+
+ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_SEND_BUDGET >= 2 * ROCKETNET_URING_SEND_QUEUE_SIZE,
+                         "receive budget twice send: io_uring receive budget holds at least twice the send queue" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_SEND_BUDGET > ROCKETNET_URING_MAX_SEGMENTS,
                          "the receive bank holds more than one coalesced receive" );
 
 // counters, readable any time from the main thread; indexes into the array
@@ -175,18 +183,25 @@ bool rocketnet_server_uring_available();
 
 // the bytes create allocates for a queue count, 0 for a count out of range
 
-uint64_t rocketnet_server_uring_allocation_bytes( int queues );
+uint64_t rocketnet_server_uring_allocation_bytes( int queues, int max_clients );
 
 // bind_address is read for family and port and written back when the port
 // was zero, the contract of rocketnet_platform_socket_create. an ipv6 bind is
 // dual stack: ipv4 senders arrive as native ipv4 addresses. num_queues <= 0
 // selects the default; a count past ROCKETNET_URING_MAX_QUEUES refuses.
+// max_clients is the server's configured client count: it sizes the receive
+// banks, the receive view and each socket's receive buffer request.
 
-struct rocketnet_server_uring_t * rocketnet_server_uring_create( void * context, struct rocketnet_address_t * bind_address, int num_queues, int * status = NULL );
+struct rocketnet_server_uring_t * rocketnet_server_uring_create( void * context, struct rocketnet_address_t * bind_address, int num_queues, int max_clients, int * status = NULL );
 
 // create with flags, the DISABLE set above; create is create_flags with 0
 
-struct rocketnet_server_uring_t * rocketnet_server_uring_create_flags( void * context, struct rocketnet_address_t * bind_address, int num_queues, int flags, int * status = NULL );
+struct rocketnet_server_uring_t * rocketnet_server_uring_create_flags( void * context, struct rocketnet_address_t * bind_address, int num_queues, int max_clients, int flags, int * status = NULL );
+
+// the packets one receive bank holds: one update's receive budget for the
+// transport's max_clients (rocketnet_server_receive_packets_per_update)
+
+int rocketnet_server_uring_bank_size( const struct rocketnet_server_uring_t * uring );
 
 // the FEATURE bits in use now: a live refusal of a segmented send clears
 // ROCKETNET_SERVER_URING_FEATURE_SEGMENT
@@ -300,7 +315,7 @@ int rocketnet_server_uring_send_room( struct rocketnet_server_uring_t * uring );
 bool rocketnet_server_uring_send_idle( struct rocketnet_server_uring_t * uring );
 
 // receive packets: receive_packets reaps at most
-// ROCKETNET_URING_RECEIVE_BUDGET completions without blocking into the fill
+// one bank size of completions without blocking into the fill
 // bank, then swaps the banks; process_packets exposes
 // the swapped bank, valid until the next receive_packets call.
 

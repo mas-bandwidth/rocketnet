@@ -49,7 +49,7 @@ inline int rocketnet_xdp_send_claim( std::atomic<int> & num_packets, int limit, 
 // and the test suite call it directly so a refusal is named without ever
 // touching the committing path.
 
-bool rocketnet_server_socket_preflight( const char * public_address_string, int num_queues );
+bool rocketnet_server_socket_preflight( const char * public_address_string, int num_queues, int max_clients );
 
 // The commit barrier: a process that must never commit an XDP data plane
 // forbids the committing create outright -- the test suite installs this
@@ -96,11 +96,14 @@ bool rocketnet_server_socket_interrupt_line_matches_interface( const char * line
 // lives in scripts/rocketnet-provision, run deliberately by the operator;
 // create never mutates machine state.
 
-// Requested XDP component bytes (userspace queues + UMEM), excluding kernel
-// bookkeeping, thread stacks and allocator overhead; no privileged operations.
-uint64_t rocketnet_server_socket_memory_required( int num_queues );
+// Requested XDP component bytes (userspace queues, the parts sized from the
+// server's configured max_clients, and UMEM), excluding kernel bookkeeping,
+// thread stacks and allocator overhead; no privileged operations.
+uint64_t rocketnet_server_socket_memory_required( int num_queues, int max_clients );
 
-struct rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, const char * server_address, const uint8_t * packet_filter, int num_xdp_queues = 7, int num_os_cpus = 1, const char * second_server_address = NULL, int * create_status = NULL );
+// max_clients is the server's configured client count: it sizes the receive
+// view, the reply MAC table, the replay marks and the kernel replay map.
+struct rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, const char * server_address, const uint8_t * packet_filter, int max_clients, int num_xdp_queues = 7, int num_os_cpus = 1, const char * second_server_address = NULL, int * create_status = NULL );
 
 void rocketnet_server_socket_destroy( struct rocketnet_server_socket_t * server_socket );
 

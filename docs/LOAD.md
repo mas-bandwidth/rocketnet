@@ -336,12 +336,13 @@ requirements to each configuration group:
   `20,909,899,742` bytes (19.47 GiB) to `3,094,251,710` bytes (2.88 GiB) with
   unpinned `transport = NULL` (`"auto"`), or to `1,494,794,016` bytes
   (1.39 GiB) with `transport = "gso"`.
-- **Compile-time `ROCKETNET_MAX_CLIENTS`**: Fixed-size arrays inside endpoint
-  and transport headers are dimensioned by `ROCKETNET_MAX_CLIENTS` (default
-  `1000`, supported build range `512 .. 32768`). A build can lower the ceiling
-  to 512 to shrink those fixed tables; it cannot set the build ceiling to 16
-  or 64. Use runtime `max_clients` for smaller matches and rebuild every
-  consumer with the same compile-time ceiling.
+- **Compile-time `ROCKETNET_MAX_CLIENTS`**: the most clients a config may ask
+  for (default `1000`, supported build range `512 .. 32768`). Server buffers
+  that scale with clients are sized from runtime `max_clients`, so the ceiling
+  adds no memory to a smaller server; only the reassembly budget's default
+  follows it. Use runtime
+  `max_clients` for smaller matches and rebuild every consumer with the same
+  compile-time ceiling.
 - **Scale qualification boundary**: The recorded 1,000-client results in
   [`runs/lan-1000-proof.md`](runs/lan-1000-proof.md) and
   [`QUALIFICATION-v1.0.0-preview-2.md`](QUALIFICATION-v1.0.0-preview-2.md)
@@ -725,9 +726,9 @@ directions:
      the submission/completion mappings; these are not four independent
      server io_urings (`rocketnet_server_uring_mapped_bytes`).
    - **Kernel socket buffers (`SO_SNDBUF` / `SO_RCVBUF`)**: UDP send requests
-     are `1,000,000` bytes per socket. Portable receives scale with runtime
-     `max_clients`, and every GSO and io_uring queue socket with
-     `ROCKETNET_MAX_CLIENTS` (25,000,000 per socket at the default ceiling). The kernel may grant less. XDP uses UMEM and its
+     are `1,000,000` bytes per socket. Receive requests scale with runtime
+     `max_clients` on every transport, each GSO and io_uring queue socket
+     included (25,000,000 per socket at 1000 clients). The kernel may grant less. XDP uses UMEM and its
      rings instead of these UDP socket queues. See [Receive buffer sizing](MEMORY.md#receive-buffer-sizing).
 2. **Demand-paged physical RSS vs. reserved virtual arenas (why measured RSS at startup or low load can be much lower than `required_memory`)**:
    - `rocketnet_server_create` and `rocketnet_client_create` allocate the full

@@ -2308,7 +2308,7 @@ static void * posix_port_server_create( int kind, uint16_t port )
 
     if ( kind == POSIX_NATIVE_GSO )
     {
-        struct rocketnet_server_gso_t * gso = rocketnet_server_gso_create( NULL, &address, 2, 0 );
+        struct rocketnet_server_gso_t * gso = rocketnet_server_gso_create( NULL, &address, 2, ROCKETNET_DEFAULT_MAX_CLIENTS, 0 );
         if ( gso )
         {
 #if ROCKETNET_DEV
@@ -2319,7 +2319,7 @@ static void * posix_port_server_create( int kind, uint16_t port )
         return gso;
     }
 
-    struct rocketnet_server_uring_t * uring = rocketnet_server_uring_create( NULL, &address, 2 );
+    struct rocketnet_server_uring_t * uring = rocketnet_server_uring_create( NULL, &address, 2, ROCKETNET_DEFAULT_MAX_CLIENTS );
     if ( uring )
     {
         posix_check( rocketnet_server_uring_num_queues( uring ) == 2 );

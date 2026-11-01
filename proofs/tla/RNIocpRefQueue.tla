@@ -48,7 +48,7 @@
 EXTENDS Integers, FiniteSets
 
 CONSTANTS
-    Cap,         \* cells: the code's Capacity
+    Cap,         \* cells: queue->capacity, a power of two set at create
     PosMod,      \* positions and sequences wrap here (2^64 in the code)
     InitSlack,   \* 0 is the code's initialize; 1 is the off-by-one
     Producers,   \* threads that push
@@ -63,7 +63,7 @@ BitAnd(a, b) ==
     ELSE 2 * BitAnd(a \div 2, b \div 2) + (IF a % 2 = 1 /\ b % 2 = 1 THEN 1 ELSE 0)
 
 Cells == 0 .. Cap - 1
-\* queue->cells[position & ( Capacity - 1 )]
+\* queue->cells[position & ( queue->capacity - 1 )]
 Index(p) == BitAnd(p, Cap - 1)
 \* uint64_t arithmetic, wrapping at PosMod
 Wrap(x) == ((x % PosMod) + PosMod) % PosMod
