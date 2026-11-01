@@ -30,6 +30,8 @@ import sys
 import tempfile
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from nightly_timeout import execution_timeout
+
 REGIONS: Tuple[str, ...] = ("client_frame", "server_tick")
 UNPINNED_TOOLCHAIN_ID: str = "unpinned"
 DEFAULT_THRESHOLD_PCT: float = 2.0
@@ -105,7 +107,7 @@ def get_valgrind_version(valgrind: str = "valgrind") -> str:
         [valgrind, "--version"],
         capture_output=True,
         text=True,
-        timeout=30,
+        timeout=execution_timeout(30),
     )
     if proc.returncode != 0:
         raise RuntimeError(f"valgrind --version exited {proc.returncode}: {proc.stderr.strip()}")
@@ -120,7 +122,7 @@ def get_git_head_commit() -> str:
         ["git", "rev-parse", "HEAD"],
         capture_output=True,
         text=True,
-        timeout=30,
+        timeout=execution_timeout(30),
     )
     if proc.returncode != 0:
         return "unknown"
@@ -311,7 +313,7 @@ def run_cachegrind_region(binary: str, region: str, valgrind: str = "valgrind") 
             binary,
             region,
         ]
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=execution_timeout(120))
         if proc.returncode != 0:
             err = (proc.stderr or proc.stdout or "").strip()
             raise RuntimeError(f"cachegrind {region} exited {proc.returncode}: {err}")
@@ -337,7 +339,7 @@ def run_cachegrind_region(binary: str, region: str, valgrind: str = "valgrind") 
                     binary,
                     *extra_args,
                 ]
-                sub_proc = subprocess.run(sub_cmd, capture_output=True, text=True, timeout=120)
+                sub_proc = subprocess.run(sub_cmd, capture_output=True, text=True, timeout=execution_timeout(120))
                 if sub_proc.returncode != 0:
                     err = (sub_proc.stderr or sub_proc.stdout or "").strip()
                     raise RuntimeError(f"cachegrind {region} ({tag}) exited {sub_proc.returncode}: {err}")

@@ -88,6 +88,9 @@ cores=$( nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1 )
 if [ -z "$jobs" ] || [ "$jobs" -gt "$cores" ]; then jobs=$cores; fi
 case "$jobs" in *[!0-9]*|0) usage ;; esac
 
+if [ "${ROCKETNET_NIGHTLY_NO_TIMEOUT:-}" = 1 ]; then
+    timeout_seconds=0 # GNU timeout 0 disables its execution timer.
+fi
 export SWEEP_BIN="$bin" SWEEP_TIMEOUT="$timeout_seconds"
 
 # Each lane is its own short bash process; it is dispatched by xargs with the

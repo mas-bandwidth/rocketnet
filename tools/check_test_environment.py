@@ -18,6 +18,8 @@ import re
 import subprocess
 import sys
 
+from nightly_timeout import execution_timeout
+
 REPO = Path(__file__).resolve().parent.parent
 
 NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
@@ -334,7 +336,7 @@ def run_binary(binary, env, timeout):
     try:
         result = subprocess.run([str(binary)], env=env, text=True,
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                timeout=timeout)
+                                timeout=execution_timeout(timeout))
     except subprocess.TimeoutExpired:
         sys.exit("%s exceeded its %d-second deadline" % (binary, timeout))
     print(result.stdout, end="")

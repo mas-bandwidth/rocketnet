@@ -30,6 +30,8 @@ import tempfile
 
 from check_dll_consumer import msvc_environment, msvc_tool
 
+from nightly_timeout import execution_timeout
+
 ROOT = Path(__file__).resolve().parent.parent
 HEADER = ROOT / "sdk" / "rocketnet.h"
 ALLOWED_INCLUDES = {"stdint.h", "stddef.h", "stdbool.h"}
@@ -407,7 +409,7 @@ def self_contained(build, config, compiler_c, compiler_cxx):
                 continue
             report(True, "(d) %s client and server build against rocketnet.h and %s alone" % (name, library.name))
             try:
-                run = subprocess.run([str(executable)], capture_output=True, text=True, cwd=directory, timeout=60)
+                run = subprocess.run([str(executable)], capture_output=True, text=True, cwd=directory, timeout=execution_timeout(60))
                 output = (run.stdout.strip().splitlines() or [""])[-1]
                 errors = (run.stderr.strip().splitlines() or [""])[-1]
                 report(run.returncode == 0, "(d) %s run exits %d: %s" % (name, run.returncode, output if run.returncode == 0 else errors))
