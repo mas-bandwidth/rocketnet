@@ -206,12 +206,13 @@ ACK_RUN_MEMORY_KB ?= 16000000
 # Loop 0 initializes at most ACK_RUN_BOUND records. A named limit avoids
 # expanding this harness loop to the larger production-loop limit. Keep
 # ESBMC's unwinding assertions enabled so an insufficient limit stays HOLD.
-# The only RTT-tree caller passes sequence % 2048; its node starts at most
-# 2047 and halves each iteration, so 12 covers its at most 11 loop bodies.
+# The static endpoint's send times are zero, initialization only writes zero,
+# and apply_run never changes them. With time=-1, its sample>=0 RTT branch
+# is unreachable; limit that unentered loop to 1 in this harness only.
 # In the bound-eight instance, each linear segment spans at most two bitmap
 # words and a masked word contains at most eight selected bits. Keep these
 # limits off the full-window instance. Quote the names: the template has <.
-ACK_RUN_SMALL_UNWINDS = harness_ack_apply_run:0:9,rocketnet_ack.cpp@rocketnet_ack_stats_rtt_write:0:12,rocketnet_ack.cpp@rn_bitmap_range_popcount:0:3,rocketnet_ack.cpp@rn_bitmap_walk_bits_desc<:0:9,rocketnet_ack.cpp@rn_bitmap_walk_bits_desc<:1:3
+ACK_RUN_SMALL_UNWINDS = harness_ack_apply_run:0:9,rocketnet_ack.cpp@rocketnet_ack_stats_rtt_write:0:1,rocketnet_ack.cpp@rn_bitmap_range_popcount:0:3,rocketnet_ack.cpp@rn_bitmap_walk_bits_desc<:0:9,rocketnet_ack.cpp@rn_bitmap_walk_bits_desc<:1:3
 
 define run_ack_proof
 	@command -v $(ESBMC) >/dev/null || { echo "$(1): $(ESBMC) not on PATH" >&2; exit 1; }; \
