@@ -259,8 +259,11 @@ On Apple M3 Ultra (`studio`, 512 GiB, 24 P-cores + 8 E-cores) at `2cf45bc0`,
 eight `portable`/`msgx` IPv4 and IPv6 cells (240 ambient at 12 workers, plus 64
 interleaved against 64 priority-47 runs at 8 workers under 28 ordinary
 priority-31 spin processes and one active solver) passed with 0 failures for
-both 32 and 47 (wall p50 2.11 s, p99 2.37 s vs 2.35 s under contention) and 0
-SDK priority-refusal warnings (matching a direct `pthread_setschedparam` /
+both 32 and 47 (wall p50 2.11 s, p99 2.37 s vs 2.35 s under contention); a
+dedicated before/after `rocketnet_get_thread_priority_refusals()` check across
+all eight `closed_port` cells and `benchmarks/client_main_thread_cost.cpp`
+(`portable` and `msgx`, outside the timed frame window) recorded 0 refusals for
+both 32 and 47 (matching a direct `pthread_setschedparam` /
 `pthread_getschedparam` OS readback probe for 31, 32, and 47). In
 `benchmarks/client_main_thread_cost.cpp` (`P=32`, 2000 frames), both 32 and 47
 pass the quiet-host 100 us gate (`load <= cores / 4`: `portable` p99 median
