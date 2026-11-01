@@ -22,6 +22,7 @@ OTHER = "389baeef00000000000000000000000000000000"
 RUNS = f"/repos/{REPO}/actions/workflows/nightly.yml/runs?head_sha={SHA}"
 NIGHTLY_CI_RUNS = f"/repos/{REPO}/actions/workflows/nightly-ci.yml/runs?head_sha={SHA}"
 CBMC_RUNS = f"/repos/{REPO}/actions/workflows/cbmc.yml/runs?head_sha={SHA}"
+TLC_RUNS = f"/repos/{REPO}/actions/workflows/tlc.yml/runs?head_sha={SHA}"
 
 
 def run(run_id, branch="main", event="workflow_dispatch", sha=SHA, conclusion="success", status="completed"):
@@ -42,15 +43,18 @@ def job(name, conclusion, status="completed"):
 class FakeApi:
     """Answers GETs from a table keyed by path without the paging query."""
 
-    def __init__(self, runs, jobs, nightly_ci_runs=None, cbmc_runs=None):
+    def __init__(self, runs, jobs, nightly_ci_runs=None, cbmc_runs=None, tlc_runs=None):
         if nightly_ci_runs is None:
             nightly_ci_runs = [run(100)]
         if cbmc_runs is None:
             cbmc_runs = [run(200)]
+        if tlc_runs is None:
+            tlc_runs = [run(300)]
         self.answers = {
             RUNS: {"workflow_runs": runs},
             NIGHTLY_CI_RUNS: {"workflow_runs": nightly_ci_runs},
             CBMC_RUNS: {"workflow_runs": cbmc_runs},
+            TLC_RUNS: {"workflow_runs": tlc_runs},
         }
         for run_id, run_jobs in jobs.items():
             self.answers[f"/repos/{REPO}/actions/runs/{run_id}/jobs"] = {"jobs": run_jobs}
@@ -96,6 +100,7 @@ class CheckReleaseTsan(unittest.TestCase):
         self.assertIn("ok: tsan (threaded transport) (main) succeeded on " + SHA + " in run 2", text)
         self.assertIn("ok: nightly-ci.yml (Nightly CI) succeeded on " + SHA + " in run 100", text)
         self.assertIn("ok: cbmc.yml (CBMC) succeeded on " + SHA + " in run 200", text)
+        self.assertIn("ok: tlc.yml (TLC records) succeeded on " + SHA + " in run 300", text)
 
     def test_in_progress_run_fails(self):
         api = FakeApi([run(1)], {1: [job("tsan (threaded transport) (main)", None, "in_progress")]})
@@ -203,7 +208,47 @@ class CheckReleaseTsan(unittest.TestCase):
         code, _ = verdict(api)
         self.assertEqual(code, 1)
 
-    def test_all_three_workflows_succeed_after_retries(self):
+    def test_missing_tlc_run_fails(self):
+        api = FakeApi(
+            [run(1)],
+            {1: [job("tsan (threaded transport) (main)", "success")]},
+            tlc_runs=[],
+        )
+        code, text = verdict(api)
+        self.assertEqual(code, 1)
+        self.assertIn("::error::No successful 'tlc.yml' (TLC records) run exists for " + SHA, text)
+        self.assertIn("No tlc.yml run has this commit as its head.", text)
+
+    def test_failed_tlc_run_fails(self):
+        api = FakeApi(
+            [run(1)],
+            {1: [job("tsan (threaded transport) (main)", "success")]},
+            tlc_runs=[run(30, conclusion="failure")],
+        )
+        code, text = verdict(api)
+        self.assertEqual(code, 1)
+        self.assertIn("run 30 (workflow_dispatch, main): failure", text)
+
+    def test_in_progress_tlc_run_fails(self):
+        api = FakeApi(
+            [run(1)],
+            {1: [job("tsan (threaded transport) (main)", "success")]},
+            tlc_runs=[run(30, conclusion=None, status="in_progress")],
+        )
+        code, text = verdict(api)
+        self.assertEqual(code, 1)
+        self.assertIn("run 30 (workflow_dispatch, main): in_progress", text)
+
+    def test_tlc_run_for_another_commit_does_not_count(self):
+        api = FakeApi(
+            [run(1)],
+            {1: [job("tsan (threaded transport) (main)", "success")]},
+            tlc_runs=[run(30, sha=OTHER, conclusion="success")],
+        )
+        code, _ = verdict(api)
+        self.assertEqual(code, 1)
+
+    def test_all_four_workflows_succeed_after_retries(self):
         api = FakeApi(
             [run(1, conclusion="failure"), run(2, conclusion="success")],
             {
@@ -212,12 +257,14 @@ class CheckReleaseTsan(unittest.TestCase):
             },
             nightly_ci_runs=[run(10, conclusion="failure"), run(11, conclusion="success")],
             cbmc_runs=[run(20, conclusion="failure"), run(21, conclusion="success")],
+            tlc_runs=[run(30, conclusion="failure"), run(31, conclusion="success")],
         )
         code, text = verdict(api)
         self.assertEqual(code, 0)
         self.assertIn("ok: tsan (threaded transport) (main) succeeded on " + SHA + " in run 2", text)
         self.assertIn("ok: nightly-ci.yml (Nightly CI) succeeded on " + SHA + " in run 11", text)
         self.assertIn("ok: cbmc.yml (CBMC) succeeded on " + SHA + " in run 21", text)
+        self.assertIn("ok: tlc.yml (TLC records) succeeded on " + SHA + " in run 31", text)
 
     def test_api_error_propagates(self):
         api = FakeApi([run(1)], {})

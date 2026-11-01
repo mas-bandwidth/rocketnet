@@ -123,7 +123,8 @@ required runs are:
 - **TLC records** ([.github/workflows/tlc.yml](../.github/workflows/tlc.yml)):
   `Model records are current`, a nightly workflow: run it with
   workflow_dispatch on the release commit
-  (`gh workflow run tlc.yml --ref main`).
+  (`gh workflow run tlc.yml --ref main`). Release Check enforces this on the
+  tag push.
 - **docs** ([.github/workflows/docs.yml](../.github/workflows/docs.yml)):
   `docs (MrDocs HTML reference build)`.
 - **Release Check** ([.github/workflows/release-check.yml](../.github/workflows/release-check.yml)):
@@ -132,8 +133,9 @@ required runs are:
   `threaded tsan run on the release commit` asks the Actions API for green runs
   whose head is the tagged commit for `nightly.yml`
   (`tsan (threaded transport) (<that run's ref>)`), `nightly-ci.yml`
-  (`Nightly CI`), and `cbmc.yml` (`CBMC`), and fails when any of the three is
-  missing or not `success` (`tools/check_release_tsan.py`).
+  (`Nightly CI`), `cbmc.yml` (`CBMC`), and `tlc.yml` (`TLC records`), and fails
+  when any of the four is missing or not `success`
+  (`tools/check_release_tsan.py`).
 
 The [GCC analyzer evidence limit](TESTING.md#static-analysis-evidence-limit)
 also applies to release qualification: the current wrapper can return green
@@ -162,10 +164,10 @@ A pushed tag is never moved or reused.
 4. Build and test with `make && ./bin/test`, then `./bin/functional` where the
    platform permits it.
 5. Open the release pull request against `main` with the version change.
-   Merge it, dispatch `nightly.yml`, `nightly-ci.yml`, and `cbmc.yml` on `main`,
-   then wait for every required run on that merged commit to be green,
-   including the dispatched `nightly.yml` threaded TSan leg, `nightly-ci.yml`,
-   and `cbmc.yml`. Resolve the evidence limitation
+   Merge it, dispatch `nightly.yml`, `nightly-ci.yml`, `cbmc.yml`, and
+   `tlc.yml` on `main`, then wait for every required run on that merged commit
+   to be green, including the dispatched `nightly.yml` threaded TSan leg,
+   `nightly-ci.yml`, `cbmc.yml`, and `tlc.yml`. Resolve the evidence limitation
    above before treating the GCC result as a clean analyzer pass.
 6. On the merged `main` commit, create an annotated tag `vMAJOR.MINOR.PATCH`,
    or `vMAJOR.MINOR.PATCH-PRERELEASE` for a prerelease, for example
@@ -174,7 +176,7 @@ A pushed tag is never moved or reused.
    reuse a tag after pushing it. Verify its consistency with the header before
    pushing it. Release Check also performs this check on the tag push, and
    fails the tag push when `nightly.yml`'s threaded TSan leg, `nightly-ci.yml`,
-   or `cbmc.yml` is not green on that commit.
+   `cbmc.yml`, or `tlc.yml` is not green on that commit.
    Do not publish the release while that job is red; re-run it once those
    required runs are green.
 7. Publish the GitHub release for that tag.

@@ -28,9 +28,10 @@ jobs:
 
   # The release commit's required nightly gates (docs/RELEASING.md).
   # nightly.yml's `tsan (threaded transport)`, nightly-ci.yml (`Nightly CI`),
-  # and cbmc.yml (`CBMC`) are too long for the per-commit tier, so they are
-  # dispatched on the release commit before the tag; on a v* tag push this job
-  # fails unless the Actions API shows all three green for the tagged commit.
+  # cbmc.yml (`CBMC`), and tlc.yml (`TLC records`) are too long for the
+  # per-commit tier, so they are dispatched on the release commit before the
+  # tag; on a v* tag push this job fails unless the Actions API shows all four
+  # green for the tagged commit.
   # Its reader is whoever cuts the release. tools/test_check_release_tsan.py
   # drives the check with fake API answers.
 

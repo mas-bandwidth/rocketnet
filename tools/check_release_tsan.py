@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Check that a release commit has green runs for its required nightly gates.
 
-docs/RELEASING.md requires three nightly-tier gates to be green on the release
+docs/RELEASING.md requires four nightly-tier gates to be green on the release
 commit before a v* tag is pushed:
   - `tsan (threaded transport)` from .github/workflows/nightly.yml
   - `Nightly CI` (.github/workflows/nightly-ci.yml, ci.yml with full: true)
   - `CBMC` (.github/workflows/cbmc.yml, `cbmc (arithmetic leaf proofs)`)
+  - `TLC records` (.github/workflows/tlc.yml, `Model records are current`)
 (.github/workflows/msan.yml is advisory: its job is continue-on-error.)
 
 Release Check runs this script on a v* tag push. It asks the GitHub Actions API
@@ -15,8 +16,8 @@ for the workflow runs whose head commit is the tagged commit:
     run's own head branch: that leg checks out the run's head commit, so its
     verdict is about the tagged commit. A leg for another ref in the same run
     tested another commit and does not count.
-  - For nightly-ci.yml and cbmc.yml, it requires a workflow run on the tagged
-    commit concluded `success`.
+  - For nightly-ci.yml, cbmc.yml, and tlc.yml, it requires a workflow run on the
+    tagged commit concluded `success`.
 
 Environment: GITHUB_REPOSITORY (owner/name), GITHUB_SHA (the tagged commit),
 GITHUB_TOKEN (needs actions: read), GITHUB_API_URL (defaults to
@@ -38,6 +39,7 @@ JOB_NAME = "tsan (threaded transport)"
 REQUIRED_WORKFLOWS = (
     ("nightly-ci.yml", "Nightly CI"),
     ("cbmc.yml", "CBMC"),
+    ("tlc.yml", "TLC records"),
 )
 
 
