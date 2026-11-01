@@ -38,7 +38,7 @@
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468905017 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13997370 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13997378 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Debug.
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3109266437ULL )
