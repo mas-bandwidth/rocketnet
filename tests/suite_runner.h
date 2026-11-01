@@ -1512,7 +1512,7 @@ inline void suite_drain( HANDLE pipe, std::string & output )
 // crash exits with its NTSTATUS, and the report text goes to stderr, where the
 // case's captured output shows it. The error mode is inherited by every child
 // the suite spawns; each child sets all of it again in its own CRT.
-// tests/windows_no_dialogs.cpp and ci.yml's leg (b) prove it.
+// tests/windows_no_dialogs.cpp and ci.yml's Windows leg (c) prove it.
 
 inline void suite_no_dialogs()
 {
