@@ -2107,27 +2107,34 @@ static void send_failed_log( void *, rocketnet_log_level_t, const char * message
 // allocator bytes create holds stay within the plan.
 static void test_windows_transports_sized_by_max_clients()
 {
+    const int large_clients = ROCKETNET_MAX_CLIENTS < 1000 ? ROCKETNET_MAX_CLIENTS : 1000;
     const uint64_t iocp_small = rocketnet_server_iocp_allocation_bytes( 1, 4 );
-    const uint64_t iocp_1000 = rocketnet_server_iocp_allocation_bytes( 1, 1000 );
+    const uint64_t iocp_large = rocketnet_server_iocp_allocation_bytes( 1, large_clients );
     const uint64_t rio_small = rocketnet_server_rio_allocation_bytes( 4 );
-    const uint64_t rio_1000 = rocketnet_server_rio_allocation_bytes( 1000 );
-    const uint64_t region_1000 = rocketnet_server_rio_registered_region_bytes( 1000 );
-    printf( "test_windows_transports_sized_by_max_clients iocp_plan_1000=%llu rio_plan_1000=%llu rio_region_1000=%llu iocp_plan_4=%llu rio_plan_4=%llu\n",
-            (unsigned long long) iocp_1000, (unsigned long long) rio_1000, (unsigned long long) region_1000,
-            (unsigned long long) iocp_small, (unsigned long long) rio_small );
-    CHECK( iocp_small > 0 && iocp_small < iocp_1000 );
-    CHECK( rio_small > 0 && rio_small < rio_1000 && region_1000 > 0 );
-    CHECK( rocketnet_server_iocp_allocation_bytes( 1, ROCKETNET_MAX_CLIENTS ) >= iocp_1000 );
+    const uint64_t rio_large = rocketnet_server_rio_allocation_bytes( large_clients );
+    const uint64_t region_large = rocketnet_server_rio_registered_region_bytes( large_clients );
+    printf( "test_windows_transports_sized_by_max_clients iocp_plan_%d=%llu rio_plan_%d=%llu rio_region_%d=%llu iocp_plan_4=%llu rio_plan_4=%llu\n",
+            large_clients, (unsigned long long) iocp_large, large_clients, (unsigned long long) rio_large, large_clients,
+            (unsigned long long) region_large, (unsigned long long) iocp_small, (unsigned long long) rio_small );
+    CHECK( iocp_small > 0 && ( large_clients > ROCKETNET_SERVER_MIN_SIZED_CLIENTS ? iocp_small < iocp_large : iocp_small == iocp_large ) );
+    CHECK( rio_small > 0 && ( large_clients > ROCKETNET_SERVER_MIN_SIZED_CLIENTS ? rio_small < rio_large : rio_small == rio_large ) && region_large > 0 );
+    CHECK( rocketnet_server_iocp_allocation_bytes( 1, ROCKETNET_MAX_CLIENTS ) >= iocp_large );
     CHECK( rocketnet_server_iocp_allocation_bytes( 1, 0 ) == 0 && rocketnet_server_iocp_allocation_bytes( 1, ROCKETNET_MAX_CLIENTS + 1 ) == 0 );
     CHECK( rocketnet_server_rio_allocation_bytes( 0 ) == 0 && rocketnet_server_rio_allocation_bytes( ROCKETNET_MAX_CLIENTS + 1 ) == 0 );
-    CHECK( rocketnet_server_iocp_send_queue_size( 4 ) == 1024 && rocketnet_server_iocp_send_queue_size( 1000 ) == 2048 );
-    CHECK( rocketnet_server_rio_receives( 1000 ) == 4096 );
+    CHECK( rocketnet_server_iocp_send_queue_size( 4 ) == 1024 &&
+           rocketnet_server_iocp_send_queue_size( large_clients ) == rocketnet_server_send_staging_packets( large_clients ) );
+    CHECK( rocketnet_server_rio_receives( large_clients ) == 2 * rocketnet_server_send_staging_packets( large_clients ) );
+    if ( large_clients == 1000 )
+    {
+        CHECK( rocketnet_server_iocp_send_queue_size( 1000 ) == 2048 );
+        CHECK( rocketnet_server_rio_receives( 1000 ) == 4096 );
+    }
 
     rocketnet_address_t bind = address( "127.0.0.1:0" );
     CHECK( !rocketnet_server_iocp_create( NULL, &bind, 1, 0 ) );
     CHECK( !rocketnet_server_iocp_create( NULL, &bind, 1, ROCKETNET_MAX_CLIENTS + 1 ) );
 
-    for ( int max_clients : { 4, 1000 } )
+    for ( int max_clients : { 4, large_clients } )
     {
         const int64_t before = live_bytes.load();
         bind = address( "127.0.0.1:0" );
@@ -2146,7 +2153,7 @@ static void test_windows_transports_sized_by_max_clients()
     }
 
     CHECK( rocketnet_server_rio_available() );
-    for ( int max_clients : { 4, 1000 } )
+    for ( int max_clients : { 4, large_clients } )
     {
         const int64_t before = live_bytes.load();
         bind = address( "127.0.0.1:0" );
