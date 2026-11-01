@@ -586,3 +586,8 @@ passes and `BrokenRetryKeepsAttempt` exits 13 on `FreshAttemptFromFailure`, and 
 seven `Reach-*` witnesses each exit 12 on `NotReached`. The six bench debt cases
 (`LArbitrary`, `LCrash`, `SNone`, `SAlternate`, `SBurst`, `SArbitrary`) exit 124 at
 the 110 s budget.
+
+On 2026-11-01 the reconciled model was checked with the pinned native runner
+and TLC jar on Linux: all 34 required cases reached their declared outcomes.
+The six declared bench cases were remeasured at the unchanged 110-second
+budget and timed out (exit 124); their current records remain debt, not passes.
