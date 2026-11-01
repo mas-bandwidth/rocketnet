@@ -599,7 +599,7 @@ inline int suite_job_count_for( unsigned cores, uint64_t budget, int requested, 
     if ( budget > 0 )
     {
         const uint64_t fit = budget / SUITE_JOB_MEMORY_BYTES;
-        jobs = (unsigned) ( std::min )( (uint64_t) jobs, ( std::max )( fit, (uint64_t) 1 ) );
+        jobs = (unsigned) (std::min) ( (uint64_t) jobs, (std::max) ( fit, (uint64_t) 1 ) );
     }
 
     if ( requested > 0 )
@@ -1135,6 +1135,8 @@ inline int suite_run_names_only( int ( *worker )( const char * ), const char * n
         const int rc = worker( name );
         fflush( stdout );
         fflush( stderr );
+        close( STDOUT_FILENO );
+        close( STDERR_FILENO );
         _exit( rc );
     }
 
@@ -1147,10 +1149,20 @@ inline int suite_run_names_only( int ( *worker )( const char * ), const char * n
     int status = 0;
     pid_t waited;
 
-    do
+    for ( ;; )
     {
-        waited = waitpid( pid, &status, 0 );
-    } while ( waited < 0 && errno == EINTR );
+        do
+        {
+            waited = waitpid( pid, &status, WUNTRACED );
+        } while ( waited < 0 && errno == EINTR );
+
+        if ( waited == pid && WIFSTOPPED( status ) && WSTOPSIG( status ) == SIGSTOP )
+        {
+            kill( pid, SIGCONT );
+            continue;
+        }
+        break;
+    }
 
     int rc = 1;
     if ( waited >= 0 && WIFEXITED( status ) )
@@ -1221,7 +1233,7 @@ inline int suite_main( int argc, char ** argv,
     if ( !suite_collect( pending, results, count, name_at, execs, nexecs, group_of, suite_directory_of( self ), "" ) )
         return 1;
 
-    const int jobs = max_jobs > 0 ? ( std::min )( suite_job_count(), max_jobs ) : suite_job_count();
+    const int jobs = max_jobs > 0 ? (std::min) ( suite_job_count(), max_jobs ) : suite_job_count();
     double limit_s = case_limit_s;
     if ( !suite_case_limit( case_limit_s, &limit_s ) )
         return 1;
@@ -1595,7 +1607,7 @@ inline int suite_main( int argc, char ** argv,
     if ( !suite_collect( pending, results, count, name_at, execs, nexecs, group_of, suite_directory_of( self ), ".exe" ) )
         return 1;
 
-    const int jobs = max_jobs > 0 ? ( std::min )( suite_job_count(), max_jobs ) : suite_job_count();
+    const int jobs = max_jobs > 0 ? (std::min) ( suite_job_count(), max_jobs ) : suite_job_count();
     double limit_s = case_limit_s;
     if ( !suite_case_limit( case_limit_s, &limit_s ) )
         return 1;
@@ -1710,7 +1722,7 @@ inline int suite_main( int argc, char ** argv,
         {
             static_assert( SUITE_WAIT_HANDLES == MAXIMUM_WAIT_OBJECTS, "the wait set is one WaitForMultipleObjects call" );
             HANDLE handles[SUITE_WAIT_HANDLES];
-            const size_t n = ( std::min )( running.size(), (size_t) SUITE_WAIT_HANDLES );
+            const size_t n = (std::min) ( running.size(), (size_t) SUITE_WAIT_HANDLES );
             for ( size_t i = 0; i < n; i++ )
             {
                 handles[i] = running[i].process;

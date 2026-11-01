@@ -11684,6 +11684,19 @@ void rocketnet_test_sodium_misuse_logs_before_abort()
 
     close( pipe_fds[1] );
 
+    // Under macOS leaks --atExit, libLeaksAtExit.dylib interposes abort with
+    // kill(getpid(), SIGSTOP) before the real abort(), stopping the child with
+    // its pipe write descriptors still open. Reap the child first (resuming
+    // SIGSTOP with SIGCONT) so its descriptors close before draining the pipe.
+    int child_status = 0;
+    for ( ;; )
+    {
+        rocketnet_check( waitpid( pid, &child_status, WUNTRACED ) == pid );
+        if ( !( WIFSTOPPED( child_status ) && WSTOPSIG( child_status ) == SIGSTOP ) )
+            break;
+        rocketnet_check( kill( pid, SIGCONT ) == 0 );
+    }
+
     char output[4096];
     size_t length = 0;
     for ( ;; )
@@ -11697,9 +11710,6 @@ void rocketnet_test_sodium_misuse_logs_before_abort()
     }
     output[length] = '\0';
     close( pipe_fds[0] );
-
-    int child_status = 0;
-    rocketnet_check( waitpid( pid, &child_status, 0 ) == pid );
 
     const char * line = "sodium refused an operation it cannot complete";
     const char * first = strstr( output, line );

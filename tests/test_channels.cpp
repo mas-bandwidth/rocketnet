@@ -41,6 +41,7 @@
 #include <new>
 
 #if !defined( _WIN32 )
+#include <signal.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #endif // #if !defined( _WIN32 )
@@ -1880,8 +1881,19 @@ static void test_channels_allocator_trap_witness()
             _Exit( 0 );
         }
 
+        // Under macOS leaks --atExit, libLeaksAtExit.dylib interposes _exit
+        // and abort with kill(getpid(), SIGSTOP) before the real call so the
+        // leaks parent can inspect its direct child. A forked witness child
+        // inherits that interposition without being a child of leaks, so
+        // resume it on SIGSTOP until it finishes exiting.
         int status = 0;
-        check( waitpid( pid, &status, 0 ) == pid );
+        for ( ;; )
+        {
+            check( waitpid( pid, &status, WUNTRACED ) == pid );
+            if ( !( WIFSTOPPED( status ) && WSTOPSIG( status ) == SIGSTOP ) )
+                break;
+            check( kill( pid, SIGCONT ) == 0 );
+        }
         check( WIFEXITED( status ) && WEXITSTATUS( status ) == 1 );
     }
 #endif // #if !defined(_WIN32)
