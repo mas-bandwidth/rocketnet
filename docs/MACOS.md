@@ -254,6 +254,27 @@ loaded runner). The maximum, 47 (the user-interactive band), outranked the
 game's ordinary threads. In the recorded MacBook Air sample, the P=32 client frame p99
 (`benchmarks/client_main_thread_cost.cpp`, portable) went from 35 to 97 us
 when the maximum landed.
+On Apple M3 Ultra (`studio`, 512 GiB, 24 P-cores + 8 E-cores) at `2cf45bc0`,
+304 single-cell `test_posix_send_to_closed_port` runs at priority 32 across all
+eight `portable`/`msgx` IPv4 and IPv6 cells (240 ambient at 12 workers, plus 64
+interleaved against 64 priority-47 runs at 8 workers under 28 ordinary
+priority-31 spin processes and one active solver) passed with 0 failures for
+both 32 and 47 (wall p50 2.11 s, p99 2.37 s vs 2.35 s under contention); a
+dedicated before/after `rocketnet_get_thread_priority_refusals()` check across
+all eight `closed_port` cells and `benchmarks/client_main_thread_cost.cpp`
+(`portable` and `msgx`, outside the timed frame window) recorded 0 refusals for
+both 32 and 47 (matching a direct `pthread_setschedparam` /
+`pthread_getschedparam` OS readback probe for 31, 32, and 47). In
+`benchmarks/client_main_thread_cost.cpp` (`P=32`, 2000 frames), both 32 and 47
+pass the quiet-host 100 us gate (`load <= cores / 4`: `portable` p99 median
+12.46 us vs 13.62 us; `msgx` 12.92 us vs 13.04 us) and overlap as observed
+measurements across 10 alternating ambient pairs (`portable` 12.83 us vs
+13.04 us; `msgx` 13.73 us vs 13.85 us, without claiming a universal priority-32
+latency win); under the 28-hog priority-31 oversubscription workload, both
+policies show much larger observed tails (`portable` p99 median 352.38 us vs
+400.25 us, max up to 5.47 ms vs 2.39 ms; `msgx` 342.00 us vs 348.83 us, max up
+to 4.12 ms vs 2.59 ms), consistent with preemption of the benchmark's own
+priority-31 main thread by the priority-31 hogs inside the timed frame windows.
 That is the only thing the library sets on the macOS client network thread: no QoS
 class (`thread_function_shim` in `sdk/rocketnet_platform.cpp` calls the thread
 function and nothing else), no `THREAD_TIME_CONSTRAINT_POLICY`, no pinning, and
