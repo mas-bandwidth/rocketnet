@@ -1040,9 +1040,11 @@ jobs:
   # Narrowing it would buy each leg perhaps fifteen seconds and would cost
   # "everything in the tree compiles under MSVC", which is coverage, not
   # duplication -- the one thing this file's header says a gate may never
-  # trade away. Caching the object tree would buy more and is refused for the
-  # same reason it is refused everywhere else in this workflow: a stale object
-  # is a green for the wrong reason.
+  # trade away. No build directory is ever carried between jobs, because a
+  # stale object is a green for the wrong reason; the Linux and macOS jobs
+  # compile through ccache (.github/actions/ccache), which keys each object
+  # on the compiler, the flags and the preprocessed source and so never
+  # serves a stale one. The Windows runners have no ccache.
   #
   # The doctrine the row itself carries (#81's baseline): the portable driver
   # built with MSVC, the full test suite run on the runner. /fp:precise comes
