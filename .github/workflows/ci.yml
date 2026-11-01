@@ -165,6 +165,8 @@ concurrency:
 #   Windows: windows / Release legs (a), (b) and (c) whole (per commit,
 #       happy path / windows builds the whole tree under MSVC and runs the
 #       happy path).
+#   unit-case coverage (every registered unit case runs in some
+#       configuration); the wide-channel unit cases (Linux Debug builds).
 #   asan + ubsan (unit suite portable), fuzz smoke NDEBUG, big endian s390x /
 #       Release, pinned libsodium, backend example / go and csharp.
 #   The instruction count gate's toolchain build: per commit the gate only
@@ -303,6 +305,12 @@ jobs:
         run: |
           cmake -B build -DCMAKE_BUILD_TYPE=Debug -DROCKETNET_DEV=${{ matrix.dev }}
           cmake --build build --parallel
+
+      # bin/test_wide compiles the SDK again with ROCKETNET_MAX_CHANNELS=512 for
+      # the cases that need a channel index of 256 or more (CMakeLists.txt).
+      - name: Build the wide-channel unit suite
+        if: runner.os == 'Linux' && matrix.build_type == 'Debug' && matrix.leg == 'builds'
+        run: cmake --build build --target test_wide --parallel
 
       # Each job's window is everything after its build, one leg of the row
       # (Glenn 2026-10-29: "Move anything that is not under 120s limit to
@@ -469,6 +477,23 @@ jobs:
             fi
           done
           exit $failed
+
+      # The cases this configuration compiles, for the unit-case-coverage job
+      # (tools/check_unit_case_coverage.py): every registered case must run in
+      # at least one CI configuration. Nightly tier only, where every
+      # configuration runs.
+      - name: Save the registered unit cases
+        if: inputs.full && matrix.leg == 'unit'
+        shell: bash
+        run: mkdir -p unit-cases && ./bin/test --list > "unit-cases/${{ runner.os }}-${{ matrix.build_type }}.txt"
+
+      - name: Upload the registered unit cases
+        if: inputs.full && matrix.leg == 'unit'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: unit-cases-${{ runner.os }}-${{ matrix.build_type }}
+          path: unit-cases/
+          if-no-files-found: error
 
       # On Linux the strace run below is this run: one suite run, not two.
       - name: Run unit tests (RSS telemetry, deterministic verdict)
@@ -837,10 +862,24 @@ jobs:
             -DCMAKE_RUNTIME_OUTPUT_DIRECTORY="$PWD/build-no-xdp/bin" -DCMAKE_LIBRARY_OUTPUT_DIRECTORY="$PWD/build-no-xdp/bin"
           cmake --build build-no-xdp --target rocketnet rocketnet_shared test functional --parallel
           python3 tools/check_xdp_compiled_out.py --absent build-no-xdp/bin/librocketnet.so build-no-xdp/librocketnet.a
-          for case in test_xdp_compiled_out_pin_refuses_not_built test_xdp_compiled_out_list_takes_the_next_candidate test_xdp_compiled_out_has_no_memory_plan; do
+          # every case this build compiles in place of the XDP transport's
+          # (#if !ROCKETNET_XDP), listed by the binary itself
+          mkdir -p unit-cases
+          ./build-no-xdp/bin/test --list | grep -E '^test_xdp_(compiled_out|disabled)_' > no-xdp-cases.txt
+          test -s no-xdp-cases.txt
+          while read -r case; do
             ./build-no-xdp/bin/test --run "$case"
-          done
+            echo "$case" >> unit-cases/Linux-no-XDP.txt
+          done < no-xdp-cases.txt
           ROCKETNET_SERVER_TRANSPORT=portable ./build-no-xdp/bin/functional --run test_transport_env_pin_is_honoured
+
+      - name: Upload the no-XDP unit cases
+        if: inputs.full && runner.os == 'Linux' && matrix.build_type == 'Release' && matrix.leg == 'builds'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: unit-cases-Linux-no-XDP
+          path: unit-cases/
+          if-no-files-found: error
 
       # The client build: liburing, libbpf and libxdp are server-only, so a
       # Linux build with ROCKETNET_XDP=OFF and ROCKETNET_IO_URING=OFF needs
@@ -867,6 +906,29 @@ jobs:
           fi
           readelf -d build-no-server-libs/bin/librocketnet.so | grep NEEDED
           python3 tools/check_package.py build-no-server-libs --config Release --client
+
+      # The cases only the wide build compiles, and the promotion case, whose
+      # boundary channel is 300 there; each is recorded as it passes.
+      - name: Wide-channel unit cases (ROCKETNET_MAX_CHANNELS=512)
+        if: runner.os == 'Linux' && matrix.build_type == 'Debug' && matrix.leg == 'builds'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p unit-cases
+          { comm -13 <(./bin/test --list | sort) <(./bin/test_wide --list | sort); echo test_unreliable_promotion_every_mode; } > wide-cases.txt
+          test "$(wc -l < wide-cases.txt)" -ge 2
+          while read -r case; do
+            ./bin/test_wide --run "$case"
+            echo "$case" >> unit-cases/Linux-wide.txt
+          done < wide-cases.txt
+
+      - name: Upload the wide-channel unit cases
+        if: runner.os == 'Linux' && matrix.build_type == 'Debug' && matrix.leg == 'builds'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: unit-cases-Linux-wide
+          path: unit-cases/
+          if-no-files-found: error
 
       - name: Install and relocate the SDK; run C/C++ static/shared consumers
         if: (matrix.leg == 'builds' || (matrix.with_builds && !inputs.full))
@@ -1129,6 +1191,19 @@ jobs:
             if ! wait "${entry%%:*}"; then echo "fuzz replay failed: ${entry#*:}"; cat "fuzz-replay-${entry#*:}.log"; failed=1; fi
           done
           exit $failed
+
+      - name: Save the registered unit cases
+        if: matrix.leg != 'c'
+        shell: bash
+        run: mkdir -p unit-cases && ./bin/Release/test.exe --list > "unit-cases/Windows-${{ matrix.leg }}.txt"
+
+      - name: Upload the registered unit cases
+        if: matrix.leg != 'c'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: unit-cases-Windows-${{ matrix.leg }}
+          path: unit-cases/
+          if-no-files-found: error
 
       # ---- leg (a): the suite as the runner executes it ----
 
@@ -1591,6 +1666,19 @@ jobs:
         if: matrix.leg == 'unit suite' || matrix.leg == 'unit suite portable'
         shell: bash
         run: *start_unit_functional_timing
+
+      - name: Save the registered unit cases
+        if: inputs.full && matrix.leg == 'unit suite'
+        shell: bash
+        run: mkdir -p unit-cases && ./bin/test --list > "unit-cases/Linux-asan.txt"
+
+      - name: Upload the registered unit cases
+        if: inputs.full && matrix.leg == 'unit suite'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: unit-cases-Linux-asan
+          path: unit-cases/
+          if-no-files-found: error
 
       - name: Run unit tests
         if: matrix.leg == 'unit suite'
@@ -2331,6 +2419,17 @@ jobs:
         shell: bash
         run: *start_unit_functional_timing
 
+      - name: Save the registered unit cases
+        shell: bash
+        run: mkdir -p unit-cases && LD_LIBRARY_PATH="${SODIUM_PREFIX}/lib" ./bin/test --list > "unit-cases/Linux-sodium-pinned.txt"
+
+      - name: Upload the registered unit cases
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: unit-cases-Linux-sodium-pinned
+          path: unit-cases/
+          if-no-files-found: error
+
       - name: Run tests (auto ladder) against the pinned sodium
         run: LD_LIBRARY_PATH="${SODIUM_PREFIX}/lib" ./bin/test
 
@@ -2803,6 +2902,14 @@ jobs:
           printf '%s\n' "$output"
           grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
 
+      - name: Test the unit-case coverage checker's verdicts
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(python3 tools/test_check_unit_case_coverage.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
+          printf '%s\n' "$output"
+          grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
+
       - name: Test the header-guard checker's verdicts
         shell: bash
         run: |
@@ -2810,3 +2917,37 @@ jobs:
           output="$(python3 tools/check_header_guards.py --self-test -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
           printf '%s\n' "$output"
           grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
+
+  # Every registered unit case runs in at least one CI configuration. Each job
+  # that runs the unit suite uploads `bin/test --list` (or, for a leg that
+  # runs named cases, the cases it ran) as unit-cases-<configuration>; this
+  # job fails on a registered case no configuration lists, on a listed case
+  # the registration scan missed, and on a configuration with no list
+  # (tools/check_unit_case_coverage.py). Nightly tier only: every
+  # configuration runs there, the per-commit ones included, so "some CI
+  # build" is any build of either tier.
+  unit-case-coverage:
+    name: unit-case coverage
+    needs: [build-and-test, build-and-test-windows, sanitizers, sodium-pinned]
+    if: ${{ inputs.full && !cancelled() }}
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 3
+    steps:
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      - name: Download the registered unit cases
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          pattern: unit-cases-*
+          path: unit-cases
+          merge-multiple: true
+
+      - name: Every registered unit case runs in at least one configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/check_unit_case_coverage.py --repo . \
+            --expect Linux-Debug Linux-Release macOS-Debug macOS-Release Linux-no-XDP Linux-wide \
+                     Windows-a Windows-b Linux-asan Linux-sodium-pinned \
+            unit-cases/*.txt
