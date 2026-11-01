@@ -13090,7 +13090,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_server_async_delivery_with_max_clients", rocketnet_test_server_async_delivery_with_max_clients, NULL },
     { "test_server_receive_buffer_sized_from_max_clients", rocketnet_test_server_receive_buffer_sized_from_max_clients, NULL },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-    { "test_server_gso_receive_buffer_request", rocketnet_test_server_gso_receive_buffer_request, NULL },
+    { "test_server_gso_receive_buffer_request", rocketnet_test_server_gso_receive_buffer_request, rocketnet_test_server_pin_allows_gso },
     { "test_server_receive_1000_clients_256kbps_10hz", rocketnet_test_server_receive_1000_clients_256kbps_10hz, rocketnet_test_server_receive_low_tick_measurement_requested },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
