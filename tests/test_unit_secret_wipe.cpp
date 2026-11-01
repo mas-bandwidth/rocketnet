@@ -20,7 +20,7 @@
 // The client token keys and ephemeral secret are zeroed by the deliberate
 // disconnect (sdk/rocketnet_client_protocol.cpp,
 // rocketnet_client_protocol_disconnect) and by every automatic terminal
-// transition (rnfix-client-terminal-states-wipe-their-secrets).
+// transition (sdk/rocketnet_client_protocol.cpp, rocketnet_client_set_state).
 
 #include "test_unit_registry.h"
 
@@ -131,7 +131,7 @@ static void feed_cookie( struct rocketnet_client_protocol_t * client, double cur
 }
 
 // ---------------------------------------------------------------------------
-// green: the wipes that have landed
+// Deliberate disconnect wipe
 // ---------------------------------------------------------------------------
 
 // The client's parsed token keys and its ephemeral secret: the deliberate
@@ -280,8 +280,9 @@ static void test_client_ephemeral_secret_wiped_on_connection_request_timeout()
 }
 
 // The connection-response timeout (-4): feed a valid challenge from state 2;
-// the challenge path zeroes the ephemeral (sdk/rocketnet_client_protocol.cpp:509)
-// and enters state 3. Timeout from there leaves it zero (assert green).
+// the challenge path zeroes the ephemeral (sdk/rocketnet_client_protocol.cpp,
+// rocketnet_client_process_challenge) and enters state 3. Timeout from there
+// leaves it zero.
 static void test_client_ephemeral_secret_wiped_on_connection_response_timeout()
 {
     struct rocketnet_counters_t counters;
