@@ -709,6 +709,23 @@ void rn_window_ack_commit_receipt_packet( rn_window_ack_t * ack, uint64_t packet
     rn_window_ack_commit( ack, packet_id, NULL, 0, serials, count, now );
 }
 
+// proofs/tla/RNResendTiming.tla Seed: the transport's measured round trip is
+// the first sample, taken only while the estimator has none of its own.
+int rn_window_ack_seed_rtt( rn_window_ack_t * ack, double rtt )
+{
+    rocketnet_assert( ack );
+
+    if ( ack->has_rtt || !( rtt > 0.0 ) )
+        return 0;
+
+    ack->srtt = rtt;
+    ack->rttvar = rtt;
+    ack->has_rtt = 1;
+    ack->resend_delay = rn_window_ack_compute_resend_delay( ack->srtt, ack->rttvar, ack->resend_delay_min, ack->resend_delay_max );
+
+    return 1;
+}
+
 // Processes one acked transport sequence `packet_id` at time `now`
 // (standard/MESSAGES.md m9.1 and m9.2; proofs/tla/RNWindow.tla ReceiveAck,
 // proofs/tla/RNResendTiming.tla Sample).
