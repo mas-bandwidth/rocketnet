@@ -37,6 +37,7 @@
 #include "rocketnet_platform.h"
 
 #include "../live_verify.h"
+#include "../loopback_hub.h"
 #include "../portable_crt.h"
 
 #include <stdio.h>
@@ -801,7 +802,12 @@ static void live_matrix_connect( struct live_matrix_t * m )
 {
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     live_matrix_check( rocketnet_write_test_connect_token( m->server_address, rocketnet_random_uint64(), rocketnet_functional_token_timestamp( 0, live_matrix_now( m ) ), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
-    m->client = rocketnet_message_client_create_ex( NULL, token, NULL, &m->message_config, NULL, 0, LIVE_MATRIX_SEND_KBPS, NULL, 1 );
+
+    struct rocketnet_client_transport_config_t client_config;
+    rocketnet_client_transport_default_config( &client_config );
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
+
+    m->client = rocketnet_message_client_create_ex( NULL, token, &client_config, &m->message_config, NULL, 0, LIVE_MATRIX_SEND_KBPS, NULL, 1 );
     live_matrix_check( m->client );
 
     for ( int pass = 0; pass < LIVE_MATRIX_WAIT_PASSES( 5.0 ); pass++ )
@@ -1413,6 +1419,7 @@ static struct live_matrix_t * live_matrix_open()
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 1;
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
 
     m->server = rocketnet_message_server_create_ex( NULL, "127.0.0.1", &server_config, &m->message_config, NULL, 0, LIVE_MATRIX_SEND_KBPS, NULL, 1 );
     live_matrix_check( m->server );

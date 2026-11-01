@@ -16,6 +16,7 @@
 #if ROCKETNET_XDP
 #include "rocketnet_server_socket.h"
 #endif // #if ROCKETNET_XDP
+#include "../loopback_hub.h"
 #include "../portable_crt.h"
 
 #include <atomic>
@@ -82,6 +83,10 @@ void rocketnet_test_lifecycle_transport()
     check( rocketnet_init( &state, allocate, release ) == ROCKETNET_STATUS_OK );
     rocketnet_forbid_xdp_commit();
 
+    rocketnet_test_loopback_hub_context( &state );
+    struct rocketnet_loopback_hub_t * hub = rocketnet_test_loopback_hub();
+    check( hub );
+
     const int baseline = state.live;
 
 #if ROCKETNET_XDP
@@ -108,6 +113,7 @@ void rocketnet_test_lifecycle_transport()
     rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config( &client_config );
     snprintf( client_config.transport, sizeof( client_config.transport ), "%s", "portable" );
+    client_config.loopback_hub = hub;
 
     int client_success = 0;
 
@@ -136,6 +142,7 @@ void rocketnet_test_lifecycle_transport()
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 4;
     snprintf( server_config.transport, sizeof( server_config.transport ), "%s", "portable" );
+    server_config.loopback_hub = hub;
 
     int server_success = 0;
 
@@ -159,6 +166,8 @@ void rocketnet_test_lifecycle_transport()
     }
 
     check( server_success );
+    check( rocketnet_test_loopback_hub_release() );
+    check( state.live == 0 );
     rocketnet_term();
 
     char verbose[256];
