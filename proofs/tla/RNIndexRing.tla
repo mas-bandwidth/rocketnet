@@ -18,8 +18,10 @@
 (*                                                                         *)
 (* Reversed witnesses: StaleBySlot TRUE judges an entry by its slot being  *)
 (* live, not by its ticket, so an entry left by a re-insertion still looks *)
-(* live (LiveIsOrder).  RingCap = Cardinality(Slots) leaves no room after  *)
-(* a compaction of an all-live ring (Bounded).                             *)
+(* live (LiveIsOrder).  A ring smaller than the number of live slots      *)
+(* cannot hold them all (Bounded).  At exactly one entry per slot, the new *)
+(* ticket makes the replaced entry stale before compaction, leaving room *)
+(* for the append.  The code's twice-sized ring adds compaction slack.    *)
 (***************************************************************************)
 EXTENDS Integers, Sequences, FiniteSets
 
@@ -33,16 +35,17 @@ Live(s) == ticket[s] # 0
 
 \* an entry is current when its ticket is its slot's (the code); the broken
 \* witness asks only whether the slot is live
-Current(e) == IF StaleBySlot THEN Live(e[1]) ELSE ticket[e[1]] = e[2]
+Current(e, tickets) == IF StaleBySlot THEN tickets[e[1]] # 0 ELSE tickets[e[1]] = e[2]
 
-LiveEntries(r) == SelectSeq( r, Current )
+LiveEntries(r, tickets) == SelectSeq( r, LAMBDA e : Current(e, tickets) )
 
 Slotsof(r) == [ i \in 1..Len(r) |-> r[i][1] ]
 
 Remove(seq, s) == SelectSeq( seq, LAMBDA x : x # s )
 
-\* the push: compact a full ring, then append
-Pushed(r, s, t) == Append( IF Len(r) = RingCap THEN LiveEntries(r) ELSE r, <<s, t>> )
+\* rn_token_slot_insert updates the ticket before rn_token_order_push:
+\* compact against that new map, then append.
+Pushed(r, s, t, tickets) == Append( IF Len(r) = RingCap THEN LiveEntries(r, tickets) ELSE r, <<s, t>> )
 
 Init ==
     /\ ticket = [ s \in Slots |-> 0 ]
@@ -56,7 +59,7 @@ Insert(s) ==
     /\ next <= MaxTicket
     /\ ticket' = [ ticket EXCEPT ![s] = next ]
     /\ next' = next + 1
-    /\ ring' = Pushed( ring, s, next )
+    /\ ring' = Pushed( ring, s, next, [ ticket EXCEPT ![s] = next ] )
     /\ order' = Append( order, s )
 
 \* a live slot is claimed again (an expired claim of the same token, or the
@@ -66,7 +69,7 @@ Reinsert(s) ==
     /\ next <= MaxTicket
     /\ ticket' = [ ticket EXCEPT ![s] = next ]
     /\ next' = next + 1
-    /\ ring' = Pushed( ring, s, next )
+    /\ ring' = Pushed( ring, s, next, [ ticket EXCEPT ![s] = next ] )
     /\ order' = Append( Remove( order, s ), s )
 
 \* a release from anywhere in the order: the ring is not touched
@@ -79,7 +82,7 @@ Release(s) ==
 \* the head skips a tombstone
 PopStale ==
     /\ Len(ring) > 0
-    /\ ~Current( Head(ring) )
+    /\ ~Current( Head(ring), ticket )
     /\ ring' = Tail(ring)
     /\ UNCHANGED <<ticket, next, order>>
 
@@ -95,9 +98,9 @@ TypeOK ==
     /\ \A i \in 1..Len(ring) : ring[i] \in Slots \X (1..MaxTicket)
     /\ \A i \in 1..Len(order) : order[i] \in Slots
 
-LiveIsOrder == Slotsof( LiveEntries(ring) ) = order
+LiveIsOrder == Slotsof( LiveEntries(ring, ticket) ) = order
 
-HeadIsOldest == ( Len(ring) > 0 /\ Current( Head(ring) ) ) => Head(ring)[1] = Head(order)
+HeadIsOldest == ( Len(ring) > 0 /\ Current( Head(ring), ticket ) ) => Head(ring)[1] = Head(order)
 
 Bounded == Len(ring) <= RingCap
 
