@@ -1177,7 +1177,7 @@ static inline void rocketnet_dst_check_ledger_write( uint8_t * bits, uint64_t pa
     if ( value )
         bits[at >> 3] |= (uint8_t) ( 1u << ( at & 7 ) );
     else
-        bits[at >> 3] &= (uint8_t) ~( 1u << ( at & 7 ) );
+        bits[at >> 3] &= ( uint8_t ) ~( 1u << ( at & 7 ) );
 }
 
 static inline void rocketnet_dst_check_endpoint_reset( struct rocketnet_dst_check_state_t * st, int endpoint )
