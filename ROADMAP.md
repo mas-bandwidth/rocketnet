@@ -6,7 +6,7 @@ Planned work for RocketNet that is not on main. Work lands on main before new wo
 
 ## Contents
 
-- [Started work to finish and land](#started-work-to-finish-and-land) (15)
+- [Started work to finish and land](#started-work-to-finish-and-land) (14)
 - [Audit items not yet fixed](#audit-items-not-yet-fixed) (11)
 - [Investigations that need a quiet host](#investigations-that-need-a-quiet-host) (3)
 - [Older open pull requests](#older-open-pull-requests) (2)
@@ -99,12 +99,6 @@ From: Glenn, live, 2026-10-31: run as nightly
 Not started, by family. Coverage and citations: 89, 109, 233, 234 (rio row, and the check_tla_coverage.py lock-in comparing each row's lists with its cfgs and CASES.tsv), 235, 243, 251, 255, 264, 286. Session and protocol docs: 92, 254, 268, 285, 288-290. Handoff layouts: 232, 236, 237, 239, 241, 256. Rio and IndexRing: 242, 244, 248, 262. Update and ownership: 253, 257, 260, 265, 266. Channel and pools: 99, 249, 259, 263, 267, 291. Code gaps: 250 (iocp count load order), 258 and 269 (dedupe pending XDP forgets), each with a unit lock-in. Lows on models other work owns: 238, 240, 245-247, 252, 261, 293. 292 rides #729, 287 #721.
 
 From: FABLE-AUDIT.md
-
-### Rebase #794 and #795 onto main and land them
-
-Both are fleet-verified but were left out of the landing: #794 (unit tests take an injected environment source) has 21 conflicting hunks against the staged create, create_ex, the sodium misuse handler and the unit environment clearing; #795 (gate that every unit case runs in some CI build) conflicts with the CI rewrite into per-commit and nightly tiers.
-
-From: Integration, 2026-10-31
 
 ## Audit items not yet fixed
 

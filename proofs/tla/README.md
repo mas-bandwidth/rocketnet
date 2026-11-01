@@ -113,11 +113,17 @@ outcomes, copy the merged file to `proofs/tla/RUNS.tsv` and confirm
 shards without `--keep`, because the old seven-column file is not compatible.
 Use fresh output directories for every attempt and preserve earlier evidence.
 
-CI builds the same pinned runner on the existing self-hosted Linux runner
-labels and refuses a nonempty stale list. It checks records without running
-TLC or downloading the JAR. A missing, mismatched or incomplete case plan is
-also a failure. CI also checks the pinned JAR and bounded mode, and rejects
-failed records unless they are explicit `bench` debt with actual exit 124.
+The model checks run nightly, not per commit
+([tlc.yml](../../.github/workflows/tlc.yml), daily and on workflow_dispatch).
+The nightly job builds the same pinned runner on a self-hosted Linux runner,
+runs every case of every stale group with the pinned JAR from
+`/opt/tla/tla2tools.jar` (one shard per case, two workers, the runner's
+110-second per-case limit), and fails on any case that does not reach its
+declared result. A missing, mismatched or incomplete case plan is also a
+failure. It then checks the committed records: the pinned JAR and bounded
+mode, and no failed record unless it is explicit `bench` debt with actual
+exit 124. A night that passes with stale groups still leaves the records to
+be committed from a bench run; the nightly run does not commit them.
 
 ## Case inventory
 

@@ -81,11 +81,6 @@
    :title "Low-severity proofs items"
    :text "Not started, by family. Coverage and citations: 89, 109, 233, 234 (rio row, and the check_tla_coverage.py lock-in comparing each row's lists with its cfgs and CASES.tsv), 235, 243, 251, 255, 264, 286. Session and protocol docs: 92, 254, 268, 285, 288-290. Handoff layouts: 232, 236, 237, 239, 241, 256. Rio and IndexRing: 242, 244, 248, 262. Update and ownership: 253, 257, 260, 265, 266. Channel and pools: 99, 249, 259, 263, 267, 291. Code gaps: 250 (iocp count load order), 258 and 269 (dedupe pending XDP forgets), each with a unit lock-in. Lows on models other work owns: 238, 240, 245-247, 252, 261, 293. 292 rides #729, 287 #721."
    :date "2026-10-31" :origin "FABLE-AUDIT.md")
-  (item "pr-794-795-rebase" :group "finish" :area "tests"
-   :title "Rebase #794 and #795 onto main and land them"
-   :text "Both are fleet-verified but were left out of the landing: #794 (unit tests take an injected environment source) has 21 conflicting hunks against the staged create, create_ex, the sodium misuse handler and the unit environment clearing; #795 (gate that every unit case runs in some CI build) conflicts with the CI rewrite into per-commit and nightly tiers."
-   :date "2026-10-31" :origin "Integration, 2026-10-31")
-
   (item "client-keepalive-unsigned" :group "audit-remaining" :area "rocketnet"
    :title "Keep-alive slot count compared unsigned"
    :text "rocketnet_client_validate_keep_alive casts the u32 slot count to int, so 2^31 or more is refused, against the ruling that the client accepts any count with index below it. Unit cases at 2^31 and UINT32_MAX, and a negative control."
