@@ -2962,13 +2962,22 @@ jobs:
           printf '%s\n' "$output"
           grep -Eq '^[1-9][0-9]* release version fixtures passed$' <<<"$output"
 
-      - name: Test the release threaded-TSan run check
+      - name: Test the release nightly-gates check
         shell: bash
         run: |
           set -euo pipefail
           output="$(python3 tools/test_check_release_tsan.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
           printf '%s\n' "$output"
           grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
+
+      - name: Test and check the TLA+ run records
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(python3 tools/test_check_tla_records.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
+          printf '%s\n' "$output"
+          grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
+          python3 tools/check_tla_records.py
 
       - name: Test the unit-case coverage checker's verdicts
         shell: bash

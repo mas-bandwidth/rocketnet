@@ -114,19 +114,9 @@ jobs:
       - name: Check required outcomes and explicit timeout debt
         shell: bash
         run: |
-          python3 - <<'PY'
-          import csv
-          from pathlib import Path
-          plan = {r['config']: r for r in csv.DictReader(Path('proofs/tla/CASES.tsv').open(), delimiter='\t')}
-          runs = list(csv.DictReader(Path('proofs/tla/RUNS.tsv').open(), delimiter='\t'))
-          for row in runs:
-              case = plan[row['config']]
-              assert row['mode'] == 'bounded', row['config'] + ': not a bounded measurement'
-              assert row['jar_sha256'] == '936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88', row['config'] + ': different JAR'
-              if row['result'] != 'PASS':
-                  assert case['gate'] == 'bench' and case['debt'] != '-' and row['exit'] == '124', row['config'] + ': failure without declared timeout debt'
-          print('Required outcomes match; any unfinished cases are explicit timeout debt.')
-          PY
+          set -euo pipefail
+          python3 tools/test_check_tla_records.py -v
+          python3 tools/check_tla_records.py
       - name: TLA ledgers merge clean
         shell: bash
         run: |

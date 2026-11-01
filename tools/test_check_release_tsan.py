@@ -20,10 +20,19 @@ REPO = "mas-bandwidth/rocketnet"
 SHA = "77cd38b0a4f879f3ae04ee6681ac7d94bfd63151"
 OTHER = "389baeef00000000000000000000000000000000"
 RUNS = f"/repos/{REPO}/actions/workflows/nightly.yml/runs?head_sha={SHA}"
+NIGHTLY_CI_RUNS = f"/repos/{REPO}/actions/workflows/nightly-ci.yml/runs?head_sha={SHA}"
+CBMC_RUNS = f"/repos/{REPO}/actions/workflows/cbmc.yml/runs?head_sha={SHA}"
 
 
-def run(run_id, branch="main", event="workflow_dispatch", sha=SHA):
-    return {"id": run_id, "head_sha": sha, "head_branch": branch, "event": event}
+def run(run_id, branch="main", event="workflow_dispatch", sha=SHA, conclusion="success", status="completed"):
+    return {
+        "id": run_id,
+        "head_sha": sha,
+        "head_branch": branch,
+        "event": event,
+        "conclusion": conclusion,
+        "status": status,
+    }
 
 
 def job(name, conclusion, status="completed"):
@@ -33,8 +42,16 @@ def job(name, conclusion, status="completed"):
 class FakeApi:
     """Answers GETs from a table keyed by path without the paging query."""
 
-    def __init__(self, runs, jobs):
-        self.answers = {RUNS: {"workflow_runs": runs}}
+    def __init__(self, runs, jobs, nightly_ci_runs=None, cbmc_runs=None):
+        if nightly_ci_runs is None:
+            nightly_ci_runs = [run(100)]
+        if cbmc_runs is None:
+            cbmc_runs = [run(200)]
+        self.answers = {
+            RUNS: {"workflow_runs": runs},
+            NIGHTLY_CI_RUNS: {"workflow_runs": nightly_ci_runs},
+            CBMC_RUNS: {"workflow_runs": cbmc_runs},
+        }
         for run_id, run_jobs in jobs.items():
             self.answers[f"/repos/{REPO}/actions/runs/{run_id}/jobs"] = {"jobs": run_jobs}
         self.paths = []
@@ -77,6 +94,8 @@ class CheckReleaseTsan(unittest.TestCase):
         code, text = verdict(api)
         self.assertEqual(code, 0)
         self.assertIn("ok: tsan (threaded transport) (main) succeeded on " + SHA + " in run 2", text)
+        self.assertIn("ok: nightly-ci.yml (Nightly CI) succeeded on " + SHA + " in run 100", text)
+        self.assertIn("ok: cbmc.yml (CBMC) succeeded on " + SHA + " in run 200", text)
 
     def test_in_progress_run_fails(self):
         api = FakeApi([run(1)], {1: [job("tsan (threaded transport) (main)", None, "in_progress")]})
@@ -104,6 +123,102 @@ class CheckReleaseTsan(unittest.TestCase):
         code, _ = verdict(api)
         self.assertEqual(code, 0)
 
+    def test_missing_nightly_ci_run_fails(self):
+        api = FakeApi(
+            [run(1)],
+            {1: [job("tsan (threaded transport) (main)", "success")]},
+            nightly_ci_runs=[],
+        )
+        code, text = verdict(api)
+        self.assertEqual(code, 1)
+        self.assertIn("::error::No successful 'nightly-ci.yml' (Nightly CI) run exists for " + SHA, text)
+        self.assertIn("No nightly-ci.yml run has this commit as its head.", text)
+
+    def test_failed_nightly_ci_run_fails(self):
+        api = FakeApi(
+            [run(1)],
+            {1: [job("tsan (threaded transport) (main)", "success")]},
+            nightly_ci_runs=[run(10, conclusion="failure")],
+        )
+        code, text = verdict(api)
+        self.assertEqual(code, 1)
+        self.assertIn("run 10 (workflow_dispatch, main): failure", text)
+
+    def test_in_progress_nightly_ci_run_fails(self):
+        api = FakeApi(
+            [run(1)],
+            {1: [job("tsan (threaded transport) (main)", "success")]},
+            nightly_ci_runs=[run(10, conclusion=None, status="in_progress")],
+        )
+        code, text = verdict(api)
+        self.assertEqual(code, 1)
+        self.assertIn("run 10 (workflow_dispatch, main): in_progress", text)
+
+    def test_nightly_ci_run_for_another_commit_does_not_count(self):
+        api = FakeApi(
+            [run(1)],
+            {1: [job("tsan (threaded transport) (main)", "success")]},
+            nightly_ci_runs=[run(10, sha=OTHER, conclusion="success")],
+        )
+        code, _ = verdict(api)
+        self.assertEqual(code, 1)
+
+    def test_missing_cbmc_run_fails(self):
+        api = FakeApi(
+            [run(1)],
+            {1: [job("tsan (threaded transport) (main)", "success")]},
+            cbmc_runs=[],
+        )
+        code, text = verdict(api)
+        self.assertEqual(code, 1)
+        self.assertIn("::error::No successful 'cbmc.yml' (CBMC) run exists for " + SHA, text)
+        self.assertIn("No cbmc.yml run has this commit as its head.", text)
+
+    def test_failed_cbmc_run_fails(self):
+        api = FakeApi(
+            [run(1)],
+            {1: [job("tsan (threaded transport) (main)", "success")]},
+            cbmc_runs=[run(20, conclusion="failure")],
+        )
+        code, text = verdict(api)
+        self.assertEqual(code, 1)
+        self.assertIn("run 20 (workflow_dispatch, main): failure", text)
+
+    def test_in_progress_cbmc_run_fails(self):
+        api = FakeApi(
+            [run(1)],
+            {1: [job("tsan (threaded transport) (main)", "success")]},
+            cbmc_runs=[run(20, conclusion=None, status="in_progress")],
+        )
+        code, text = verdict(api)
+        self.assertEqual(code, 1)
+        self.assertIn("run 20 (workflow_dispatch, main): in_progress", text)
+
+    def test_cbmc_run_for_another_commit_does_not_count(self):
+        api = FakeApi(
+            [run(1)],
+            {1: [job("tsan (threaded transport) (main)", "success")]},
+            cbmc_runs=[run(20, sha=OTHER, conclusion="success")],
+        )
+        code, _ = verdict(api)
+        self.assertEqual(code, 1)
+
+    def test_all_three_workflows_succeed_after_retries(self):
+        api = FakeApi(
+            [run(1, conclusion="failure"), run(2, conclusion="success")],
+            {
+                1: [job("tsan (threaded transport) (main)", "failure")],
+                2: [job("tsan (threaded transport) (main)", "success")],
+            },
+            nightly_ci_runs=[run(10, conclusion="failure"), run(11, conclusion="success")],
+            cbmc_runs=[run(20, conclusion="failure"), run(21, conclusion="success")],
+        )
+        code, text = verdict(api)
+        self.assertEqual(code, 0)
+        self.assertIn("ok: tsan (threaded transport) (main) succeeded on " + SHA + " in run 2", text)
+        self.assertIn("ok: nightly-ci.yml (Nightly CI) succeeded on " + SHA + " in run 11", text)
+        self.assertIn("ok: cbmc.yml (CBMC) succeeded on " + SHA + " in run 21", text)
+
     def test_api_error_propagates(self):
         api = FakeApi([run(1)], {})
         with self.assertRaises(check_release_tsan.ApiError):
@@ -125,7 +240,7 @@ class CheckReleaseTsan(unittest.TestCase):
         pages = {1: filler, 2: [job("tsan (threaded transport) (main)", "success")]}
 
         def fetch(path):
-            if path.startswith(RUNS):
+            if "/runs?head_sha=" in path:
                 return {"workflow_runs": [run(7)] if path.endswith("page=1") else []}
             page = int(path.rsplit("page=", 1)[1])
             return {"jobs": pages.get(page, [])}
