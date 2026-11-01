@@ -1287,6 +1287,11 @@ if(ROCKETNET_BUILD_TOOLS)
     add_executable(handshake_cost benchmarks/handshake_cost.cpp)
     target_compile_features(handshake_cost PRIVATE cxx_std_11)
     rocketnet_use_sodium(handshake_cost)
+    # A connection request on the receive path, the transport's one lookup then
+    # process_received (benchmarks/request_lookup_cost.cpp).
+    add_executable(request_lookup_cost benchmarks/request_lookup_cost.cpp)
+    target_compile_features(request_lookup_cost PRIVATE cxx_std_11)
+    rocketnet_use_sodium(request_lookup_cost)
     # Benchmark-only fake-client traffic source. It is Linux/XDP-only, is not
     # installed, and reaches no shipped SDK/API surface. The required .c path
     # is compiled as C++ so it can compose the private protocol and AF_XDP
@@ -1325,7 +1330,7 @@ if(ROCKETNET_BUILD_TOOLS)
     target_compile_features(server_receive_cost PRIVATE cxx_std_11)
     rocketnet_use_sodium(server_receive_cost)
     target_link_libraries(keygen PRIVATE rocketnet)
-    foreach(tool soak load load_split soak_sim transport_memory client_main_thread_cost ack_block_build_cost handshake_cost)
+    foreach(tool soak load load_split soak_sim transport_memory client_main_thread_cost ack_block_build_cost handshake_cost request_lookup_cost)
         target_link_libraries(${tool} PRIVATE rocketnet_dev)
     endforeach()
     target_link_libraries(instruction_count PRIVATE rocketnet_dev)
