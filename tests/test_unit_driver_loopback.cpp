@@ -1605,7 +1605,6 @@ static void test_loopback_transport_io_refusals()
     rn_test_server_io_stop_and_close( &server );
     rocketnet_client_transport_io_close( &client );
     rocketnet_unit_check( rocketnet_loopback_endpoints_live( hub ) == 0 );
-    printf( "test_loopback_transport_io_refusals\n" );
 }
 
 // This fake starts with a known completed input queue. It tests the server's

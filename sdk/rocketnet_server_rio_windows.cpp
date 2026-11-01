@@ -1010,8 +1010,8 @@ int rocketnet_server_rio_send_room( rocketnet_server_rio_t * rio )
     if ( rio->stopping.load( std::memory_order_acquire ) )
         return 0;
     const int phase = rio->fill.load( std::memory_order_relaxed );
-    const int used = rio->next[phase].load( std::memory_order_relaxed );
-    return used < 0 || used >= ROCKETNET_RIO_SEND_QUEUE_SIZE ? 0 : ROCKETNET_RIO_SEND_QUEUE_SIZE - used;
+    const uint64_t used = rio->next[phase].load( std::memory_order_relaxed );
+    return used >= (uint64_t) ROCKETNET_RIO_SEND_QUEUE_SIZE ? 0 : (int) ( ROCKETNET_RIO_SEND_QUEUE_SIZE - used );
 }
 
 // proofs/tla/ServerStopSpread.tla RequestIoStop: no slot staged, handed or
@@ -2199,11 +2199,19 @@ bool rocketnet_server_rio_test_reservation_wrap()
 
     typedef decltype( rio->next[0].load() ) rocketnet_rio_test_count_t;
     const int phase = rio->fill.load( std::memory_order_relaxed );
+    bool valid = rocketnet_server_rio_send_room( rio ) == ROCKETNET_RIO_SEND_QUEUE_SIZE;
+    rio->next[phase].store( ROCKETNET_RIO_SEND_QUEUE_SIZE - 1, std::memory_order_relaxed );
+    valid &= rocketnet_server_rio_send_room( rio ) == 1;
+    rio->next[phase].store( ROCKETNET_RIO_SEND_QUEUE_SIZE, std::memory_order_relaxed );
+    valid &= rocketnet_server_rio_send_room( rio ) == 0;
     rio->next[phase].store( (rocketnet_rio_test_count_t) 0xFFFFFFFFull, std::memory_order_relaxed );
+    valid &= rocketnet_server_rio_send_room( rio ) == 0;
 
     uint64_t id = 0;
-    bool valid = rocketnet_server_rio_start_packet( rio, &to, &id ) == NULL;
     valid &= rocketnet_server_rio_start_packet( rio, &to, &id ) == NULL;
+    valid &= rocketnet_server_rio_send_room( rio ) == 0;
+    valid &= rocketnet_server_rio_start_packet( rio, &to, &id ) == NULL;
+    valid &= rocketnet_server_rio_send_room( rio ) == 0;
     valid &= rio->counters[ROCKETNET_RIO_COUNTER_SEND_FULL].load() == 2;
 
     rocketnet_rio_test_fixture_free( rio );

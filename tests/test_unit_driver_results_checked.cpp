@@ -378,8 +378,6 @@ static void test_transport_results_client_oversize_counts_at_the_fold()
 
         transport_results_close_io( &transport, buffers );
     }
-
-    printf( "test_transport_results_client_oversize_counts_at_the_fold\n" );
 }
 REGISTER_UNIT_TEST( test_transport_results_client_oversize_counts_at_the_fold );
 

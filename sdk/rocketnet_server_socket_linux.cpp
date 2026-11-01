@@ -2368,8 +2368,8 @@ int rocketnet_server_socket_send_room( struct rocketnet_server_socket_t * server
         const int flow_index = socket->send_flow_index.load( std::memory_order_acquire );
         if ( flow_index < 0 )
             return 0;
-        const int used = socket->send_buffer[flow_index].num_packets.load( std::memory_order_relaxed );
-        const int slots = used < 0 || used >= ROCKETNET_XDP_SEND_QUEUE_SIZE ? 0 : ROCKETNET_XDP_SEND_QUEUE_SIZE - used;
+        const uint64_t used = socket->send_buffer[flow_index].num_packets.load( std::memory_order_relaxed );
+        const int slots = used >= (uint64_t) ROCKETNET_XDP_SEND_QUEUE_SIZE ? 0 : (int) ( ROCKETNET_XDP_SEND_QUEUE_SIZE - used );
         if ( slots < room )
             room = slots;
     }
@@ -2779,6 +2779,17 @@ bool rocketnet_server_socket_test_buffer_exchange()
     }
 
     socket->send_flow_index.store( socket->send_handoff.producer );
+
+    // Room stays zero when a refused claim count crosses the 32-bit boundary.
+    // In particular 2^32 must not narrow to an apparently empty buffer.
+    const uint64_t claims[] = { 0, ROCKETNET_XDP_SEND_QUEUE_SIZE - 1, ROCKETNET_XDP_SEND_QUEUE_SIZE, 0xFFFFFFFFull, 0x100000000ull, UINT64_MAX };
+    const int rooms[] = { ROCKETNET_XDP_SEND_QUEUE_SIZE, 1, 0, 0, 0, 0 };
+    for ( int i = 0; i < 6; i++ )
+    {
+        socket->send_buffer[0].num_packets.store( claims[i], std::memory_order_relaxed );
+        valid &= rocketnet_server_socket_send_room( server ) == rooms[i];
+    }
+    socket->send_buffer[0].num_packets.store( 0, std::memory_order_relaxed );
 
     static const uint8_t gateway_mac[ETH_ALEN] = { 0x02, 0, 0, 0, 0, 2 };
     rocketnet_xdp_reply_macs_reset( &server->reply_macs, gateway_mac );
