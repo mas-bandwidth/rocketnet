@@ -89,10 +89,6 @@
    :title "Portable sendmmsg keeps the unsent rest of a batch"
    :text "On a full socket the portable sendmmsg path drops the rest of the batch; GSO now keeps it (audit 111). Same rule: spread across updates, never drop."
    :date "2026-10-31" :origin "Audit item 111 follow-on")
-  (item "uring-two-phase-send" :group "audit-remaining" :area "rocketnet"
-   :title "Two-phase io_uring send staging"
-   :text "When more than 10240 completions arrive ahead of its sends, the io_uring send index still ratchets and outbound runs about one update in three under a flood. Give send staging commit and complete phases as RIO has."
-   :date "2026-10-31" :origin "#738 follow-on")
   (item "message-prefix-dedupe" :group "audit-remaining" :area "rocketnet"
    :title "A duplicated deferred packet does not redeliver its code-0 prefix"
    :text "Audit 101 remainder, MESSAGES.md m1.4 rule 2. Recommended: remember the deferred packet and how many records were processed, so a duplicate skips them."
