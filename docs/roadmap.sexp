@@ -14,12 +14,13 @@
 
  :groups
  (
-  (group "finish" :title "Started work to finish and land"
-   :text "Work begun on 2026-10-31 and stopped when the landing froze. Each names its branch and exactly what is owed before it lands.")
   (group "audit-remaining" :title "Audit items not yet fixed"
    :text "Suspects from FABLE-AUDIT.md that nothing on main fixes. Each is verified at the cited line first; a confirmed defect gets a lock-in test and a negative control.")
   (group "quiet-host" :title "Investigations that need a quiet host"
    :text "Findings that only a quiet fleet host can measure or reproduce.")
+  (group "proof-debt" :title "Existing nightly proof debt"
+   :text "Incomplete proof measurements remain explicit failures under the existing nightly workflows. These are distinct from the completed audit correspondence repairs.")
+
   (group "older-prs" :title "Older open pull requests"
    :text "Pull requests not in the 2026-10-31 landing. Each is merged if it still applies, or closed naming the change that replaced it.")
   (group "decisions" :title "Decisions for Glenn"
@@ -28,23 +29,6 @@
 
  :items
  (
-  (item "landing-known-reds" :group "finish" :area "rocketnet"
-   :title "Known reds at the 2026-10-31 landing"
-   :text "Merged to main on Glenn's word with the nightly to catch the rest. Red on the fleet at ab74c810: (1) DEV=OFF unit test_message_required_memory_takes_the_create_budget, the client never reaches stopped in unit_shutdown.h:24 (from rowan/low-channel-message); (2) check_tla_coverage --actions-strict: RNGsoHandoff TxSendFull and RNOrderingWrap HoldSequenced, ReceiveUnreliable are cited nowhere in the code; (3) functional test_gso_transport_posix_server_create_destroy_1000 past its 120 s bound on loaded vision, host load not confirmed; (4) Windows Debug never finished (CreateProcessW 1455, paging file). Not run before the merge: the GitHub CI run, Linux DEV=OFF functional beyond these, Windows Debug."
-   :date "2026-10-31" :origin "Integration fleet run, ab74c810")
-
-
-
-
-
-
-
-
-
-  (item "proofs-lows" :group "finish" :area "proofs"
-   :title "Low-severity proofs items"
-   :text "Not started, by family. Coverage and citations: 89, 109, 233, 234 (rio row, and the check_tla_coverage.py lock-in comparing each row's lists with its cfgs and CASES.tsv), 235, 243, 251, 255, 264, 286. Session and protocol docs: 92, 254, 268, 285, 288-290. Handoff layouts: 232, 236, 237, 239, 241, 256. Rio and IndexRing: 242, 244, 248, 262. Update and ownership: 253, 257, 260, 265, 266. Channel and pools: 99, 249, 259, 263, 267, 291. Code gaps: 250 (iocp count load order), 258 and 269 (dedupe pending XDP forgets), each with a unit lock-in. Lows on models other work owns: 238, 240, 245-247, 252, 261, 293. 292 rides #729, 287 #721."
-   :date "2026-10-31" :origin "FABLE-AUDIT.md")
 
 
 
@@ -55,6 +39,25 @@
 
 
 
+
+
+
+
+
+
+
+
+
+
+  (item "tlc-timeout-debt" :group "proof-debt" :area "proofs"
+   :title "Ten recorded TLC benchmark timeouts"
+   :text "The committed RUNS.tsv still records FAIL/124 at the existing 110-second limit for ClientConnection LArbitrary, LCrash, SNone, SAlternate, SBurst and SArbitrary; ReplayWindowMid; RNEndpointTwoWay and RNEndpointPartial; and SessionAcksLive. The existing TLC nightly retries each declared timeout-debt case and every stale-group case, once each, without rerunning healthy siblings solely because another case timed out. Another timeout fails the nightly and is not a proof. Fresh measured records require a reviewed commit; the workflow does not commit them automatically."
+   :date "2026-11-01" :origin "proofs/tla/CASES.tsv and RUNS.tsv; existing TLC nightly; #833")
+
+  (item "ack-proof-hold" :group "proof-debt" :area "proofs"
+   :title "ACK run proof remains HOLD"
+   :text "The source-bound ACK run-eight proof and its negative control have no completed accepted result; the full retained-window proof is also not established. #797 landed with this HOLD explicitly retained. The existing Nightly ACK proof runs ack-run-bound-8 and ack-run-negative-control serially with pinned ESBMC on Studio, at 384 GiB and four hours per target. It requires VERIFICATION SUCCESSFUL and the intended EXPECTED FAILURE; memory exhaustion, timeout, UNKNOWN or an unwinding failure stays red. The full-4096 target is declared separately and is not run by that nightly. Do not infer a proof from observed loop cutoffs or make successful completion a new per-commit landing requirement."
+   :date "2026-11-01" :origin "proofs/cbmc/INVENTORY.md; .github/workflows/nightly-ack-proof.yml; #797")
 
   (item "windows-reflush" :group "audit-remaining" :area "rocketnet"
    :title "Windows iocp and rio re-flush"
@@ -73,9 +76,9 @@
    :date "2026-10-31" :origin "FABLE-AUDIT.md")
 
   (item "xdp-receive-loss" :group "quiet-host" :area "rocketnet"
-   :title "About 0.3% of client-to-server packets lost in the XDP receive path"
-   :text "The loaded-host report (load 170) has not reproduced in the controlled 2026-11-01 observation at 3e8e4d17: 1000 clients for 60 seconds, 600000 sent/received, zero drops and restored descriptor/thread baselines. The existing guest was 7.0.0-34-generic; host 7.0.0-38-generic lacks its matching image. Exact-current-kernel nightly reproduction remains open. No cause or SDK fix is established by the different-kernel pass."
-   :date "2026-10-31" :origin "Audit item 41")
+   :title "Loaded-host XDP receive loss report: not reproduced"
+   :text "The requested quiet reproduction is complete. At SDK source 3e8e4d17 on 2026-11-01, the existing 1000-client, 60-second XDP cell passed with host and guest both on 7.0.0-38-generic: 600000 sent/received, zero drops, and descriptor/thread baselines restored. The earlier 7.0.0-34 guest pass is separate evidence. The reported loss under host load 170 did not reproduce; its cause remains unknown. This controlled native observation establishes neither an SDK fix, a per-frame-budget result, nor a green GitHub workflow run."
+   :date "2026-10-31" :origin "Audit item 41; quiet/current-kernel observation 2026-11-01")
 
 
 
