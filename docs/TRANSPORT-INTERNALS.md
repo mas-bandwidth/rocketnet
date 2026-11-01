@@ -208,14 +208,23 @@ rotation; it does not multiply the 4096-slot GSO or 2048-slot io_uring send
 capacity (`sdk/rocketnet_server_gso_linux.cpp`,
 `sdk/rocketnet_server_uring_linux.cpp`).
 
-The message layer rotates its starting connection when the transport reports
-full capacity. Currently `rocketnet_server_transport_send_capacity_available`
-returns `INT_MAX` for staged backends. A refused staged start therefore does
-not stop the connection walk at that gate; a complete walk can return the
-cursor to its original start. Under sustained earlier-client backlog, later
-clients can be deferred indefinitely. Reliable work remains queued, but that
-is not a fairness or eventual-delivery guarantee. Increasing the client ceiling
-or receive queue count does not repair this limitation.
+Every built-in server transport reports the frames it takes before its next
+flush through the optional `send_room` operation (`sdk/rocketnet_driver.h`):
+the free slots of the gso producer bank, the io_uring array, the IOCP
+producer bank (at most its free send operations), the open RIO fill phase,
+the fullest XDP queue, and the portable producer bank. A frame the transport
+still holds from an earlier flush is not room.
+`rocketnet_server_transport_send_capacity_available` returns it for the
+staged transports, so the message layer's rotation stops at a full staging
+and its cursor keeps the next unserved connection. The disconnect drain seals
+no more than the room each update, a kicked client's burst is sealed at once
+only while the room holds all of it, and stop's bursts leave across stop steps
+the same way (`proofs/tla/ServerStopSpread.tla`). Stop tells the I/O to stop
+only once the optional `send_idle` operation reports every send it was handed
+finished (each built-in server transport reports it), so a stopping worker
+never retires a bank of disconnect packets unsent. A custom transport without
+`send_room` is treated as unbounded; a start it refuses ends that update's
+drain, and the bursts wait for the next.
 
 The POSIX portable receive helpers, Darwin msgx receive pump, and Linux GSO
 server receive worker count retained records rather than every discarded
@@ -356,9 +365,12 @@ ENETUNREACH, EHOSTDOWN, ENETDOWN, ENOBUFS and EINTR as weather
 (`rocketnet_platform_receive_weather` in `sdk/rocketnet_platform.cpp`): the
 portable arm (`rocketnet_platform_socket_receive_packet`) and the msgx arm
 (`rocketnet_platform_socket_receive_packets`) skip the error and keep
-draining. These errors are nonfatal and do not pause the msgx pump. Retries consume
-a finite per-call weather budget; exhausting it ends the current drain so the
-next call can continue. EAGAIN ends a drain because the queue is empty. Any other
+draining. These errors are nonfatal and do not pause the msgx pump. Each call
+has one read budget (`max_packets` for a batch, 64 for the single-packet call),
+and every read spends one unit of it: a datagram kept, a zero-length datagram
+or refused source skipped, a weather error skipped. A spent budget ends the
+current drain so the next call can continue, so neither a repeating errno nor
+a stream of chaff holds a drain. EAGAIN ends a drain because the queue is empty. Any other
 receive errno pauses the msgx pump with one warning per pause
 (`rocketnet_msgx_pause`). The send side
 already classes the same errnos as weather. A backend's receive keeps the same
@@ -647,7 +659,11 @@ header, and the from-address carries the family it read. A frame it does not
 take is dropped and counted by reason: another ethertype (`not_ip`), an IPv6
 extension header (`ipv6_extension`, never parsed at the UDP offsets), the
 family the server does not serve (`other_family`), or a frame the parse
-refuses or too short for any server packet (`malformed`). The flush builds
+refuses or too short for any server packet (`malformed`); a receive
+descriptor outside the receive region or its own frame (`descriptor`, a
+kernel or driver defect) is dropped before a byte of it is read. Each queue's
+worker publishes the sum after every receive pass, and the transport's
+counters read it, all queues summed, as `XDP_RECEIVE_FRAME_DROPPED`. The flush builds
 each reply with the server address of the destination's family as the source,
 and an IPv6 reply carries the UDP checksum computed in software. Create and
 the pre-flight find the interface carrying each address over `AF_INET` or
@@ -824,7 +840,8 @@ the checker compiles the object twice from copies of the sources at different
 paths, mtimes and umasks and requires identical bytes, requires the generated
 header to embed exactly the object, shows that a changed source changes the
 object, and fails when a build tree's embedded object differs from a fresh
-compile of the current sources (stale):
+compile of the current sources with the tree's own BPF clang, multiarch
+triple, `ROCKETNET_HISTORY_PACKETS` and `ROCKETNET_MAX_CLIENTS` (stale):
 
 ```sh
 python3 tools/check_xdp_archive.py            # checks ./build when it exists
@@ -844,9 +861,10 @@ served connection and offers one frame per connection per round. Full capacity l
 for the next update. In-place unreliable writes use only surplus capacity above
 a complete round of connected clients; otherwise they join the queue so application call order cannot
 starve another connection or that connection's reliable work. Control packets
-use the transport's separate send path. Staged backends have the
-[capacity-reporting limitation](#current-staging-and-drain-limitations)
-described above; this fairness argument does not currently cover them.
+use the transport's separate send path. A staged transport reports its own
+send room as the capacity ([above](#current-staging-and-drain-limitations)),
+so the same rotation applies to it; a custom staged transport without
+`send_room` reports none and is not covered.
 
 ## Receive lengths and truncated datagrams
 

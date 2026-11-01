@@ -1,7 +1,17 @@
 /*
-    RocketNet. Copyright 2026 Mas Bandwidth LLC.
+    RocketNet. Copyright 2026 Más Bandwidth LLC.
     Licensed under the GNU Affero General Public License v3.0
 */
+
+// A unit case's environment: an in-memory table the case owns, handed to the
+// SDK as an environment source (sdk/rocketnet_env.h) the way time is handed
+// in as an argument. A case declares one, sets the variables it means to
+// test, and passes &env.source to the reader under test
+// (rocketnet_config_apply_env, rocketnet_client_config_resolve,
+// rocketnet_client_create_with_env, rocketnet_init_ex_with_env and the rest).
+// Nothing here reads or changes the process environment, and nothing is
+// shared between tables. An empty value is stored present and empty, so a
+// case reaches the set-but-empty branch on every platform.
 
 #pragma once
 
@@ -9,116 +19,59 @@
 #define ROCKETNET_TESTS_TEST_ENV_SOURCE_H
 
 #include <stddef.h>
-#include <stdlib.h>
-#include "../sdk/rocketnet.h"
+#include <string.h>
+#include <map>
+#include <string>
+#include "../sdk/rocketnet_env.h"
 
-// Keep this helper independent of rocketnet_platform.h. On Windows that
-// header brings in the SDK's platform headers, whose RPC compatibility macros
-// collide with ordinary unit-local names such as small and medium.
-extern "C"
+struct rocketnet_test_env_t
 {
-int rocketnet_platform_getenv( const char * var, char * buffer, size_t size );
-#if ROCKETNET_DEV
-void rocketnet_platform_test_environment_install( void );
-void rocketnet_platform_test_environment_set( const char * name, const char * value );
-void rocketnet_platform_test_environment_unset( const char * name );
-void rocketnet_platform_test_environment_reset( void );
-#endif // #if ROCKETNET_DEV
-}
+    std::map<std::string, std::string> values;
+    struct rocketnet_env_source_t source;
 
-#if ROCKETNET_DEV
-// Every unit translation unit that changes configuration includes this file.
-// These initializers run before main and install the shared empty table. The
-// operation is idempotent, so initialization order cannot clear another file's
-// setup, and the runner's real process environment remains under its own control.
-struct rocketnet_test_environment_bootstrap_t
-{
-    rocketnet_test_environment_bootstrap_t()
+    rocketnet_test_env_t()
     {
-        rocketnet_platform_test_environment_install();
+        source.get = get_value;
+        source.context = this;
+    }
+
+    // source.context points here, so a table is never copied
+    rocketnet_test_env_t( const rocketnet_test_env_t & ) = delete;
+    rocketnet_test_env_t & operator=( const rocketnet_test_env_t & ) = delete;
+
+    void set( const char * name, const char * value )
+    {
+        values[name] = value;
+    }
+
+    void unset( const char * name )
+    {
+        values.erase( name );
+    }
+
+    void clear()
+    {
+        values.clear();
+    }
+
+    bool is_set( const char * name ) const
+    {
+        return values.find( name ) != values.end();
+    }
+
+    // the source's contract: 1 set and copied, 0 unset, -1 too long for size
+    static int get_value( void * context, const char * name, char * buffer, size_t size )
+    {
+        const rocketnet_test_env_t * env = (const rocketnet_test_env_t *) context;
+        buffer[0] = '\0';
+        const std::map<std::string, std::string>::const_iterator entry = env->values.find( name );
+        if ( entry == env->values.end() )
+            return 0;
+        if ( entry->second.size() >= size )
+            return -1;
+        memcpy( buffer, entry->second.c_str(), entry->second.size() + 1 );
+        return 1;
     }
 };
-
-static rocketnet_test_environment_bootstrap_t rocketnet_test_environment_bootstrap;
-
-#endif // #if ROCKETNET_DEV
-
-static inline int rocketnet_test_env_getenv( const char * name, char * buffer, size_t size )
-{
-    return rocketnet_platform_getenv( name, buffer, size );
-}
-
-#if ROCKETNET_DEV
-static inline int rocketnet_test_env_setenv( const char * name, const char * value, int overwrite )
-{
-    if ( !overwrite )
-    {
-        char probe[1];
-        if ( rocketnet_platform_getenv( name, probe, sizeof( probe ) ) != 0 )
-            return 0;
-    }
-
-    // an empty value is stored present and empty on every platform, so a
-    // case can reach the set-but-empty branch that the Windows CRT cannot
-
-    rocketnet_platform_test_environment_set( name, value );
-
-    return 0;
-}
-
-static inline int rocketnet_test_env_unsetenv( const char * name )
-{
-    rocketnet_platform_test_environment_unset( name );
-    return 0;
-}
-
-static inline void rocketnet_test_env_restore()
-{
-    rocketnet_platform_test_environment_reset();
-}
-
-#else // #if ROCKETNET_DEV
-
-// DEV=0 has no in-memory overlay: cases that exercise the real environment
-// read set the process environment directly. The runner clears every config
-// name before each case (tests/test.cpp), so cases stay isolated.
-
-static inline int rocketnet_test_env_setenv( const char * name, const char * value, int overwrite )
-{
-#if defined( _WIN32 )
-    if ( !overwrite )
-    {
-        char * existing = NULL;
-        const int query_status = _dupenv_s( &existing, NULL, name );
-        const int present = query_status == 0 && existing != NULL;
-        free( existing );
-        if ( query_status != 0 )
-            return query_status;
-        if ( present )
-            return 0;
-    }
-
-    return _putenv_s( name, value );
-#else
-    if ( !overwrite && getenv( name ) )
-        return 0;
-    return setenv( name, value, 1 );
-#endif // #if defined( _WIN32 )
-}
-
-static inline int rocketnet_test_env_unsetenv( const char * name )
-{
-#if defined( _WIN32 )
-    return _putenv_s( name, "" );
-#else
-    return unsetenv( name );
-#endif // #if defined( _WIN32 )
-}
-
-static inline void rocketnet_test_env_restore()
-{
-}
-
-#endif // #if ROCKETNET_DEV
 
 #endif // ROCKETNET_TESTS_TEST_ENV_SOURCE_H

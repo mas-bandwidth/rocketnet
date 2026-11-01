@@ -13,18 +13,16 @@
 // (the failing allocator of test_unit_driver_create_out_of_memory.cpp,
 // walking every allocation create makes). A NULL status is accepted on a
 // refusal and on a success. No socket, no thread, no real time. The
-// CONFIG_ENV_INVALID case sets one environment variable per side and restores
-// it before returning, as test_unit_status_client_transport_create_ex.cpp
-// does. The explicit budget range case temporarily clears the two budget
-// variables and restores them.
+// CONFIG_ENV_INVALID case sets one variable per side in an environment table
+// the case owns (tests/test_env_source.h) and passes it to the creates.
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
 #include "test_env_source.h"
-#include "portable_crt.h"
 
 #include "rocketnet.h"
 #include "rocketnet_internal.h"
+#include "rocketnet_config.h"
 #include "rocketnet_layers.h"
 #include "rocketnet_memory.h"
 #include "rocketnet_connect_token.h"
@@ -33,8 +31,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-#include <string>
 
 #define check rocketnet_unit_check
 
@@ -48,24 +44,6 @@ static void create_status_dev_server_config( struct rocketnet_server_config_t * 
     config->protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
     memcpy( config->backend_public_key, rocketnet_dev_backend_public_key, 32 );
 }
-
-#if ROCKETNET_DEV
-static int create_status_setenv( const char * name, const char * value ) { return rocketnet_test_env_setenv( name, value, 1 ); }
-#endif // #if ROCKETNET_DEV
-#if ROCKETNET_DEV
-static int create_status_unsetenv( const char * name ) { return rocketnet_test_env_unsetenv( name ); }
-#endif // #if ROCKETNET_DEV
-
-// Whether the variable is set; its value, or empty, in value.
-#if ROCKETNET_DEV
-static bool create_status_getenv( const char * name, std::string & value )
-{
-    char buffer[4096];
-    const bool present = rocketnet_test_env_getenv( name, buffer, sizeof( buffer ) ) != 0;
-    value = buffer;
-    return present;
-}
-#endif // #if ROCKETNET_DEV
 
 // ---- the fault-injecting allocator -----------------------------------------
 
@@ -326,6 +304,48 @@ static void test_create_refuses_sent_map_below_window()
 }
 REGISTER_UNIT_TEST( test_create_refuses_sent_map_below_window );
 
+// ---- the resend reserve past the region's 32-bit fields ---------------------
+
+// A send rate and maximum resend delay that each pass their range but whose
+// resend reserve does not fit the region's 32-bit fields is refused at create
+// with CONFIG_OUT_OF_RANGE, and the refusal is logged as one error line naming
+// the rule and its figures (sdk/rocketnet_allocator.cpp, rn_region_layout).
+// Red before the line: create refused silently.
+
+static bool g_create_status_reserve_logged = false;
+
+static void create_status_note_reserve( void * context, enum rocketnet_log_level_t level, const char * message, size_t length )
+{
+    (void) context;
+    (void) length;
+
+    if ( level == ROCKETNET_LOG_LEVEL_ERROR && strstr( message, "resend reserve" ) && strstr( message, "60000" ) )
+        g_create_status_reserve_logged = true;
+}
+
+static void test_create_refuses_resend_reserve_past_region_fields()
+{
+    const enum rocketnet_log_level_t saved_level = rocketnet_log_level_current();
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+    rocketnet_log_function( create_status_note_reserve, NULL );
+    g_create_status_reserve_logged = false;
+
+    struct rocketnet_client_config_t client_config;
+    check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
+    client_config.send_kbps = 2000000;
+    client_config.message_resend_delay_max_ms = 60000;
+
+    enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
+    check( rocketnet_client_create( NULL, &client_config, &status ) == NULL );
+    check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
+
+    rocketnet_log_function( NULL, NULL );
+    rocketnet_log_level( saved_level );
+
+    check( g_create_status_reserve_logged );
+}
+REGISTER_UNIT_TEST( test_create_refuses_resend_reserve_past_region_fields );
+
 // ---- config refusals --------------------------------------------------------
 
 static void test_create_reports_status_config_refusals()
@@ -348,17 +368,8 @@ static void test_create_reports_status_config_refusals()
     check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
 
     // A value supplied by the caller is a config-range refusal, even though
-    // create also checks environment overrides. Keep the environment absent
-    // for this distinction, then restore it for the process running the suite.
-#if ROCKETNET_DEV
-    std::string saved_client_env;
-    std::string saved_server_env;
-    const bool had_client_env = create_status_getenv( "ROCKETNET_CLIENT_SEND_KBPS", saved_client_env );
-    const bool had_server_env = create_status_getenv( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS", saved_server_env );
-    check( create_status_unsetenv( "ROCKETNET_CLIENT_SEND_KBPS" ) == 0 );
-    check( create_status_unsetenv( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS" ) == 0 );
+    // create also checks environment overrides.
 
-#endif // #if ROCKETNET_DEV
     check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
 
     // ROCKETNET_SEND_KBPS_UNLIMITED is no budget: accepted, with no ceiling
@@ -406,17 +417,6 @@ static void test_create_reports_status_config_refusals()
     check( rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &status ) == NULL );
     check( status == ROCKETNET_STATUS_INVALID_ARGUMENT );
 
-#if ROCKETNET_DEV
-    if ( had_client_env )
-        check( create_status_setenv( "ROCKETNET_CLIENT_SEND_KBPS", saved_client_env.c_str() ) == 0 );
-    else
-        check( create_status_unsetenv( "ROCKETNET_CLIENT_SEND_KBPS" ) == 0 );
-    if ( had_server_env )
-        check( create_status_setenv( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS", saved_server_env.c_str() ) == 0 );
-    else
-        check( create_status_unsetenv( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS" ) == 0 );
-#endif // #if ROCKETNET_DEV
-
     // a transport list that does not parse
 
     check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
@@ -459,36 +459,24 @@ static void test_create_reports_status_config_refusals()
     check( status == ROCKETNET_STATUS_OK );
     rn_test_client_stop_and_destroy( budget_client );
 
-#if ROCKETNET_DEV
     // a malformed environment override: CONFIG_ENV_INVALID, client and server
 
     check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
 
-    std::string prior_client;
-    const bool prior_client_present = create_status_getenv( "ROCKETNET_CLIENT_SEND_KBPS", prior_client );
-    check( create_status_setenv( "ROCKETNET_CLIENT_SEND_KBPS", "not-a-number" ) == 0 );
+    rocketnet_test_env_t client_env;
+    client_env.set( "ROCKETNET_CLIENT_SEND_KBPS", "not-a-number" );
     status = ROCKETNET_STATUS_OK;
-    check( rocketnet_client_create( NULL, &client_config, &status ) == NULL );
+    check( rocketnet_client_create_with_env( NULL, &client_config, &client_env.source, &status ) == NULL );
     check( status == ROCKETNET_STATUS_CONFIG_ENV_INVALID );
-    if ( prior_client_present )
-        check( create_status_setenv( "ROCKETNET_CLIENT_SEND_KBPS", prior_client.c_str() ) == 0 );
-    else
-        check( create_status_unsetenv( "ROCKETNET_CLIENT_SEND_KBPS" ) == 0 );
 
     create_status_dev_server_config( &server_config );
     server_config.max_clients = 4;
 
-    std::string prior_server;
-    const bool prior_server_present = create_status_getenv( "ROCKETNET_SERVER_MAX_CLIENTS", prior_server );
-    check( create_status_setenv( "ROCKETNET_SERVER_MAX_CLIENTS", "not-a-number" ) == 0 );
+    rocketnet_test_env_t server_env;
+    server_env.set( "ROCKETNET_SERVER_MAX_CLIENTS", "not-a-number" );
     status = ROCKETNET_STATUS_OK;
-    check( rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &status ) == NULL );
+    check( rocketnet_server_create_with_env( NULL, "127.0.0.1:0", NULL, &server_config, &server_env.source, &status ) == NULL );
     check( status == ROCKETNET_STATUS_CONFIG_ENV_INVALID );
-    if ( prior_server_present )
-        check( create_status_setenv( "ROCKETNET_SERVER_MAX_CLIENTS", prior_server.c_str() ) == 0 );
-    else
-        check( create_status_unsetenv( "ROCKETNET_SERVER_MAX_CLIENTS" ) == 0 );
-#endif // #if ROCKETNET_DEV
 }
 REGISTER_UNIT_TEST( test_create_reports_status_config_refusals );
 

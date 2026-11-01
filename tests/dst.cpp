@@ -107,9 +107,9 @@ static const char * dst_usage =
     "           [--max-fails n] [--verbose]\n";
 
 // seq-wrap-31 and seq-wrap-32 move every session's first sequence through
-// ROCKETNET_DEV_SESSION_SEQUENCE_START, which the library reads once per
-// process at the first create: dst sets it before rocketnet_init and before
-// any world is built, and refuses to run if the library holds another value.
+// ROCKETNET_DEV_SESSION_SEQUENCE_START, which the library reads at
+// rocketnet_init: dst sets it before init and before any world is built, and
+// refuses to run if the library holds another value after init.
 
 static int dst_set_sequence_start( uint64_t start )
 {
@@ -122,7 +122,7 @@ static int dst_set_sequence_start( uint64_t start )
     if ( setenv( "ROCKETNET_DEV_SESSION_SEQUENCE_START", text, 1 ) != 0 )
         return 0;
 #endif // #if defined( _WIN32 )
-    return rocketnet_dev_session_sequence_start() == start;
+    return 1;
 }
 
 int main( int argc, char ** argv )
@@ -259,9 +259,8 @@ int main( int argc, char ** argv )
     const uint64_t sequence_start = rocketnet_dst_schedule_sequence_start( options.schedule );
     if ( sequence_start != 0 && !dst_set_sequence_start( sequence_start ) )
     {
-        fprintf( stderr, "dst: --schedule %s needs ROCKETNET_DEV_SESSION_SEQUENCE_START=%llu and the library holds %llu\n",
-                 rocketnet_dst_schedule_name( options.schedule ), (unsigned long long) sequence_start,
-                 (unsigned long long) rocketnet_dev_session_sequence_start() );
+        fprintf( stderr, "dst: --schedule %s could not set ROCKETNET_DEV_SESSION_SEQUENCE_START=%llu\n",
+                 rocketnet_dst_schedule_name( options.schedule ), (unsigned long long) sequence_start );
         return 2;
     }
 
@@ -270,6 +269,15 @@ int main( int argc, char ** argv )
     if ( rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK )
         return 1;
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
+
+    if ( sequence_start != 0 && rocketnet_dev_session_sequence_start() != sequence_start )
+    {
+        fprintf( stderr, "dst: --schedule %s needs ROCKETNET_DEV_SESSION_SEQUENCE_START=%llu and the library holds %llu\n",
+                 rocketnet_dst_schedule_name( options.schedule ), (unsigned long long) sequence_start,
+                 (unsigned long long) rocketnet_dev_session_sequence_start() );
+        rocketnet_term();
+        return 2;
+    }
 
     uint64_t runs = 0;
     uint64_t failed = 0;

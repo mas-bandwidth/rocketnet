@@ -2,8 +2,9 @@
 # Selftest for scripts/check-fleet-runners.
 #
 # Plants a hosted label and an apt-get install in a temporary copy of a
-# workflow and requires the script to name both; and requires a clean copy to
-# pass. Exits non-zero if either assertion fails. Uses $TMPDIR only.
+# workflow and requires the script to name both; requires a clean copy to
+# pass; and requires a DISABLED row to exempt only a disabled job. Exits
+# non-zero if any assertion fails. Uses $TMPDIR only.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -71,6 +72,64 @@ fi
 if ! grep -q "apt-get install" "$tmp/dirty.out"; then
   echo "SELFTEST FAIL: apt-get install not named" >&2
   cat "$tmp/dirty.out" >&2
+  exit 1
+fi
+
+# DISABLED exceptions: a row exempts only a job that carries `if: false` and
+# a `# DISABLED:` comment. A live job listed DISABLED with an unguarded
+# install is refused (its row and its install); the disabled job's install
+# passes; a row naming no job is refused.
+mkdir -p "$tmp/disabled/wf"
+cat > "$tmp/disabled/wf/disabled.yml" <<'EOF'
+name: disabled
+on: [push]
+jobs:
+  live:
+    runs-on: [self-hosted, Linux, X64, fleet]
+    steps:
+      - name: Install
+        run: sudo apt-get install -y cbmc
+  off:
+    # DISABLED: no runner for this platform yet
+    if: false
+    runs-on: [self-hosted, Linux, X64, fleet]
+    steps:
+      - name: Install
+        run: sudo apt-get install -y cbmc
+EOF
+
+printf 'disabled.yml off DISABLED no runner\n' > "$tmp/exc-off"
+if ROCKETNET_WF_DIR="$tmp/disabled/wf" ROCKETNET_EXC_FILE="$tmp/exc-off" python3 "$check" > "$tmp/off.out" 2>&1; then
+  echo "SELFTEST FAIL: the live job's unguarded install passed" >&2
+  exit 1
+fi
+if ! grep -q "disabled.yml / live apt-get install" "$tmp/off.out" || grep -q "/ off " "$tmp/off.out"; then
+  echo "SELFTEST FAIL: the DISABLED row did not exempt exactly the disabled job" >&2
+  cat "$tmp/off.out" >&2
+  exit 1
+fi
+
+printf 'disabled.yml live DISABLED stale\ndisabled.yml off DISABLED no runner\n' > "$tmp/exc-live"
+if ROCKETNET_WF_DIR="$tmp/disabled/wf" ROCKETNET_EXC_FILE="$tmp/exc-live" python3 "$check" > "$tmp/live.out" 2>&1; then
+  echo "SELFTEST FAIL: a DISABLED row exempted a live job" >&2
+  cat "$tmp/live.out" >&2
+  exit 1
+fi
+if ! grep -q "disabled.yml / live has a DISABLED exception but is live" "$tmp/live.out" ||
+   ! grep -q "disabled.yml / live apt-get install" "$tmp/live.out"; then
+  echo "SELFTEST FAIL: the stale DISABLED row or the live job's install was not named" >&2
+  cat "$tmp/live.out" >&2
+  exit 1
+fi
+
+printf 'disabled.yml gone DISABLED removed\n' > "$tmp/exc-gone"
+if ROCKETNET_WF_DIR="$tmp/clean/wf" ROCKETNET_EXC_FILE="$tmp/exc-gone" python3 "$check" > "$tmp/gone.out" 2>&1; then
+  echo "SELFTEST FAIL: an exception row naming no job passed" >&2
+  exit 1
+fi
+if ! grep -q "names no job" "$tmp/gone.out"; then
+  echo "SELFTEST FAIL: an exception row naming no job was not named" >&2
+  cat "$tmp/gone.out" >&2
   exit 1
 fi
 

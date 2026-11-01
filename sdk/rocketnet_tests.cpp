@@ -425,7 +425,7 @@ void rocketnet_test_read_write()
 
     rocketnet_check( r - buffer == w - buffer );
 
-    // exact bytes on the wire, anchored to STANDARD.md Appendix A: the
+    // exact bytes on the wire, anchored to standard/TRANSPORT.md ta: the
     // associated data vectors begin with the version then the protocol id,
     // little-endian. these must match the published hex exactly.
 
@@ -1007,7 +1007,7 @@ void rocketnet_test_random_bytes()
 
 // Crypto expectations: call every libsodium primitive the standard uses and
 // pin its behavior, before any protocol code exists to depend on it. The
-// vector data mirrors STANDARD.md Appendix A byte for byte.
+// vector data mirrors standard/TRANSPORT.md ta byte for byte.
 
 static void rocketnet_test_sodium_ready()
 {
@@ -3378,8 +3378,7 @@ void rocketnet_test_request_path_state_refusals()
     struct rocketnet_counters_t before;
 
     // the first valid request claims the token for its address and is
-    // answered with a challenge (STANDARD.md, Processing Connection
-    // Requests; proofs/tla/ReceiveOrder.tla, Claim). the claim lives until the
+    // answered with a challenge (standard/TRANSPORT.md t12; proofs/tla/ReceiveOrder.tla, Claim). the claim lives until the
     // handshake deadline, so the same token from another address is refused
     // before any signature, seal or keypair work.
 
@@ -4195,12 +4194,22 @@ void rocketnet_test_handshake_work_budget_per_update()
     const int num_requests = 16000;
     const int budget = ROCKETNET_SERVER_MAX_HANDSHAKES_PER_UPDATE;
 
+    // room for a half-open mapping and a request claim per verified request:
+    // a full table refuses before the verify, and only a request that
+    // reaches the verify spends budget
+
+    rocketnet_encryption_map_destroy( test.server.encryption_map );
+    rocketnet_used_token_history_destroy( test.server.used_token_history );
+    test.server.encryption_map = rocketnet_encryption_map_create( NULL, 2 * budget );
+    test.server.used_token_history = rocketnet_used_token_history_create( NULL, 2 * budget );
+    rocketnet_check( test.server.encryption_map && test.server.used_token_history );
+
     uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
     int response_bytes = 0;
 
-    // 16000 cookie-valid requests in one update: the budget caps how many get
-    // past the cookie gate, and every request beyond it is dropped -- the
+    // 16000 cookie-valid requests in one update: the budget caps how many
+    // reach the signature verify, and every request beyond it is dropped -- the
     // drop count is exact, not merely "at most", and it is counted, not just
     // returned as a code.
 
@@ -4421,7 +4430,7 @@ void rocketnet_test_client_slots()
 
 void rocketnet_test_client_slots_free_list()
 {
-    // STANDARD.md's free-list rule (1598-1615): every lookup a server
+    // standard/RATIONALE.md's free-list rule: every lookup a server
     // performs per connection is constant time in the number of client
     // slots, and "a free slot is found from a free list, not a search --
     // a stack of unused indices, popped on connect and pushed on
@@ -6015,7 +6024,7 @@ void rocketnet_test_client_terminal_states_wipe_secrets()
     // Every automatic terminal transition -- connect token expired, a timed
     // out waiting state, connection denied, and the server's disconnect --
     // must release the attempt's secrets: the derived session keys, the
-    // token's keys and the ephemeral secret. STANDARD.md requires both sides
+    // token's keys and the ephemeral secret. standard/TRANSPORT.md t2.2 requires both sides
     // to zero their own ephemeral secret once it is no longer needed for a
     // handshake in progress (1095-1098) and, on a denied, to "release all
     // connection state" (2425-2426); proofs/tla/ClientConnection.tla holds the
@@ -6363,7 +6372,7 @@ void rocketnet_test_integrity_limit()
 
         // a response of any size but the wire size is WRONG_SIZE before the
         // mapping lookup, so it never reaches the open and never counts
-        // against the mapping's integrity (STANDARD.md: a connection response
+        // against the mapping's integrity (standard/TRANSPORT.md t8: a connection response
         // is 50 bytes, and "a packet below its type's floor is WRONG_SIZE,
         // never a later refusal": an exact-size check runs before the
         // lookup). two such: one too short to carry a tag, one that would
@@ -6691,6 +6700,45 @@ void rocketnet_test_network_simulator()
     rocketnet_network_simulator_send( simulator, &address_a, &address_b, packet, sizeof( packet ), 300.0 );
     rocketnet_check( rocketnet_network_simulator_receive( simulator, &address_b, 300.0, &from, received ) == (int) sizeof( packet ) );
     rocketnet_check( rocketnet_network_simulator_receive( simulator, &address_b, 300.0, &from, received ) == (int) sizeof( packet ) );
+
+    rocketnet_network_simulator_destroy( simulator );
+}
+
+void rocketnet_test_network_simulator_counts_store_refusals()
+{
+    // a packet the slot store cannot hold is counted, apart from simulated
+    // loss: four slots held by latency, a fifth send refused and counted, and
+    // a slot freed by delivery takes the next send again. Mutation that must
+    // bite: drop the count in the store-full path; the first check of 1 fails.
+
+    struct rocketnet_address_t address_a, address_b;
+    rocketnet_check( rocketnet_address_parse( &address_a, "10.0.0.1:30000" ) );
+    rocketnet_check( rocketnet_address_parse( &address_b, "10.0.0.2:30000" ) );
+
+    const uint8_t packet[16] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16 };
+    uint8_t received[ROCKETNET_RECEIVE_CEILING];
+    struct rocketnet_address_t from;
+
+    struct rocketnet_network_simulator_t * simulator = rocketnet_network_simulator_create( NULL, 4, 12345 );
+    rocketnet_check( simulator );
+    rocketnet_network_simulator_config( simulator, 1.0, 0.0, 0.0f, 0.0f );
+    rocketnet_check( rocketnet_network_simulator_store_refused( simulator ) == 0 );
+
+    for ( int i = 0; i < 4; i++ )
+        rocketnet_network_simulator_send( simulator, &address_a, &address_b, packet, sizeof( packet ), 100.0 );
+    rocketnet_check( rocketnet_network_simulator_store_refused( simulator ) == 0 );
+
+    rocketnet_network_simulator_send( simulator, &address_a, &address_b, packet, sizeof( packet ), 100.0 );
+    rocketnet_check( rocketnet_network_simulator_store_refused( simulator ) == 1 );
+
+    const uint8_t * batch[2] = { packet, packet };
+    const int bytes[2] = { (int) sizeof( packet ), (int) sizeof( packet ) };
+    rocketnet_check( rocketnet_network_simulator_deliver_packets( simulator, &address_a, &address_b, batch, bytes, 2, 101.0 ) == 0 );
+    rocketnet_check( rocketnet_network_simulator_store_refused( simulator ) == 3 );
+
+    rocketnet_check( rocketnet_network_simulator_receive( simulator, &address_b, 101.0, &from, received ) == (int) sizeof( packet ) );
+    rocketnet_network_simulator_send( simulator, &address_a, &address_b, packet, sizeof( packet ), 101.0 );
+    rocketnet_check( rocketnet_network_simulator_store_refused( simulator ) == 3 );
 
     rocketnet_network_simulator_destroy( simulator );
 }
@@ -7222,13 +7270,11 @@ void rocketnet_test_swarm()
     rocketnet_check( counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_SEALED_MISMATCH] == 0 );
     rocketnet_check( counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_SMALL_ORDER_KEY] == 0 );
     rocketnet_check( counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED] == 0 );
-    rocketnet_check( counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_CONNECTED] == 0 );
     rocketnet_check( counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_OPEN_SEALED_BLOCK] == 0 );
     rocketnet_check( counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_INTERNAL_ERROR] == 0 );
     rocketnet_check( counters[ROCKETNET_COUNTER_CONNECTION_RESPONSE_INTERNAL_ERROR] == 0 );
     rocketnet_check( counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_ADD_MAPPING] == 0 );
     rocketnet_check( counters[ROCKETNET_COUNTER_MAPPING_TABLE_FULL] == 0 );
-    rocketnet_check( counters[ROCKETNET_COUNTER_CONNECTION_RESPONSE_ADMITTED_SET_FULL] == 0 );
     rocketnet_check( counters[ROCKETNET_COUNTER_CONNECTION_RESPONSE_NO_SLOTS] == 0 );
 
 #undef ROCKETNET_SWARM_STAYS
@@ -9036,8 +9082,8 @@ void rocketnet_test_public_api_null_is_a_counted_no_op()
         // the sizing calls take NULL configs as the defaults: not a misuse
 
         before = rocketnet_api_misuse_count();
-        rocketnet_check( rocketnet_message_client_required_memory( NULL ) > 0 );
-        rocketnet_check( rocketnet_message_server_required_memory( NULL, NULL ) > 0 );
+        rocketnet_check( rocketnet_message_client_required_memory( NULL, 0 ) > 0 );
+        rocketnet_check( rocketnet_message_server_required_memory( NULL, NULL, 0 ) > 0 );
         rocketnet_check( rocketnet_api_misuse_count() == before );
     }
 
@@ -12414,7 +12460,7 @@ static void rocketnet_test_pass_cookie_gate_from( struct rocketnet_test_server_t
 }
 
 // The first address to present a valid request owns its token until the
-// handshake deadline (STANDARD.md, Processing Connection Requests;
+// handshake deadline (standard/TRANSPORT.md t12;
 // proofs/tla/ReceiveOrder.tla, Claim). An on-path attacker copies the real client's
 // cookie-bearing request off the in-memory wire, earns a cookie at its own
 // address, and replays the request from there ahead of the real one. The
@@ -13061,73 +13107,8 @@ void rocketnet_test_send_arena()
 //        the config table and the transport ladder
 // ----------------------------------------------------------------
 
-// Each case restores the in-memory table state it found, so cases remain
-// independent even when they exercise the same configuration name.
-
-#if ROCKETNET_DEV
-// the installed in-memory value of name at any length; false when name is unset
-static bool rocketnet_test_getenv_string( const char * name, std::string * value )
-{
-    std::vector<char> buffer( 256 );
-
-    for ( ;; )
-    {
-        const int found = rocketnet_platform_getenv( name, buffer.data(), buffer.size() );
-        if ( found == 0 )
-            return false;
-
-        if ( found > 0 )
-        {
-            *value = buffer.data();
-            return true;
-        }
-
-        buffer.resize( buffer.size() * 2 );
-    }
-}
-
-static bool rocketnet_test_env_is_set( const char * name )
-{
-    std::string value;
-    return rocketnet_test_getenv_string( name, &value );
-}
-
-struct rocketnet_test_env_guard_t
-{
-    const char * name;
-    bool was_set;
-    char saved[1024];
-};
-
-static void rocketnet_test_env_save( struct rocketnet_test_env_guard_t * guard, const char * name )
-{
-    guard->name = name;
-
-    std::string value;
-    guard->was_set = rocketnet_test_getenv_string( name, &value );
-
-    guard->saved[0] = '\0';
-
-    if ( guard->was_set )
-        snprintf( guard->saved, sizeof( guard->saved ), "%s", value.c_str() );
-}
-
-// save the variable, then clear it for the test; env_restore puts it back
-static void rocketnet_test_env_clear( struct rocketnet_test_env_guard_t * guard, const char * name )
-{
-    rocketnet_test_env_save( guard, name );
-    rocketnet_test_env_unsetenv( name );
-}
-
-static void rocketnet_test_env_restore( struct rocketnet_test_env_guard_t * guard )
-{
-    if ( guard->was_set )
-        rocketnet_test_env_setenv( guard->name, guard->saved, 1 );
-    else
-        rocketnet_test_env_unsetenv( guard->name );
-}
-
-#endif // #if ROCKETNET_DEV
+// Each case reads its environment from a table it owns
+// (tests/test_env_source.h), passed to the SDK reader as an argument.
 
 // the log capture sink, shared by the tests that assert a log line rather
 // than trusting it (config validation's empty-value case, and the override
@@ -13169,8 +13150,7 @@ static void rocketnet_test_config_table_round_trip( const char * transport_name,
         char env_name[128];
         rocketnet_check( rocketnet_config_env_var_name_for( transport_name, field->name, env_name, sizeof( env_name ) ) );
 
-        struct rocketnet_test_env_guard_t guard;
-        rocketnet_test_env_save( &guard, env_name );
+        rocketnet_test_env_t env;
 
         default_config( config );
 
@@ -13236,9 +13216,9 @@ static void rocketnet_test_config_table_round_trip( const char * transport_name,
             break;
         }
 
-        rocketnet_test_env_setenv( env_name, value_string, 1 );
+        env.set( env_name, value_string );
 
-        rocketnet_check( rocketnet_config_apply_env( transport_name, config, fields, num_fields ) );
+        rocketnet_check( rocketnet_config_apply_env( &env.source, transport_name, config, fields, num_fields ) );
         rocketnet_check( rocketnet_config_validate( transport_name, config, fields, num_fields ) );
 
         const uint8_t * base = (const uint8_t *) config + field->offset;
@@ -13275,8 +13255,6 @@ static void rocketnet_test_config_table_round_trip( const char * transport_name,
             }
             break;
         }
-
-        rocketnet_test_env_restore( &guard );
     }
 }
 
@@ -13493,21 +13471,7 @@ static void rocketnet_test_resolve_state_change( void * context, enum rocketnet_
 
 void rocketnet_test_public_config_resolve()
 {
-#if ROCKETNET_DEV
-    struct rocketnet_test_env_guard_t channels_guard, kbps_guard, server_channels_guard, max_clients_guard, server_kbps_guard;
-    rocketnet_test_env_save( &channels_guard, "ROCKETNET_CLIENT_NUM_CHANNELS" );
-    rocketnet_test_env_save( &kbps_guard, "ROCKETNET_CLIENT_SEND_KBPS" );
-    rocketnet_test_env_save( &server_channels_guard, "ROCKETNET_SERVER_NUM_CHANNELS" );
-    rocketnet_test_env_save( &max_clients_guard, "ROCKETNET_SERVER_MAX_CLIENTS" );
-    rocketnet_test_env_save( &server_kbps_guard, "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS" );
-
-    rocketnet_test_env_unsetenv( "ROCKETNET_CLIENT_NUM_CHANNELS" );
-    rocketnet_test_env_unsetenv( "ROCKETNET_CLIENT_SEND_KBPS" );
-    rocketnet_test_env_unsetenv( "ROCKETNET_SERVER_NUM_CHANNELS" );
-    rocketnet_test_env_unsetenv( "ROCKETNET_SERVER_MAX_CLIENTS" );
-    rocketnet_test_env_unsetenv( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS" );
-
-#endif // #if ROCKETNET_DEV
+    rocketnet_test_env_t env;
 
     struct rocketnet_client_transport_config_t client_transport;
     struct rocketnet_server_transport_config_t server_transport;
@@ -13516,10 +13480,10 @@ void rocketnet_test_public_config_resolve()
 
     // NULL is the defaults
 
-    rocketnet_check( rocketnet_client_config_resolve( NULL, true, &client_transport, &message, &kbps ) );
+    rocketnet_check( rocketnet_client_config_resolve( NULL, &env.source, &client_transport, &message, &kbps ) );
     rocketnet_check( kbps == ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS && message.num_channels == 32 && strcmp( client_transport.transport, "auto" ) == 0 );
 
-    rocketnet_check( rocketnet_server_config_resolve( NULL, true, &server_transport, &message, &kbps ) );
+    rocketnet_check( rocketnet_server_config_resolve( NULL, &env.source, &server_transport, &message, &kbps ) );
     rocketnet_check( kbps == ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS && server_transport.max_clients == 1000 && server_transport.public_address[0] == '\0' );
 
     // every client field lands
@@ -13550,7 +13514,7 @@ void rocketnet_test_public_config_resolve()
     client.message_resend_delay_max_ms = 300;
     client.reliable_message_timeout_ms = 5000;
 
-    rocketnet_check( rocketnet_client_config_resolve( &client, true, &client_transport, &message, &kbps ) );
+    rocketnet_check( rocketnet_client_config_resolve( &client, &env.source, &client_transport, &message, &kbps ) );
     rocketnet_check( memcmp( client_transport.packet_filter, filter, 4 ) == 0 );
     rocketnet_check( client_transport.max_fragmented_messages == 3 );
     rocketnet_check( strcmp( client_transport.transport, "portable" ) == 0 );
@@ -13561,37 +13525,33 @@ void rocketnet_test_public_config_resolve()
     rocketnet_check( message.unreliable_messages_per_update == 17 && message.sequenced_messages_held == 5 && message.max_message_receipts == 32 && message.message_resend_delay_initial_ms == 200 );
     rocketnet_check( message.message_resend_delay_min_ms == 20 && message.message_resend_delay_max_ms == 300 && message.reliable_message_timeout_ms == 5000 );
 
-#if ROCKETNET_DEV
     // the env displaces the struct
 
-    rocketnet_test_env_setenv( "ROCKETNET_CLIENT_NUM_CHANNELS", "9", 1 );
-    rocketnet_test_env_setenv( "ROCKETNET_CLIENT_SEND_KBPS", "777", 1 );
+    env.set( "ROCKETNET_CLIENT_NUM_CHANNELS", "9" );
+    env.set( "ROCKETNET_CLIENT_SEND_KBPS", "777" );
 
-    rocketnet_check( rocketnet_client_config_resolve( &client, true, &client_transport, &message, &kbps ) );
+    rocketnet_check( rocketnet_client_config_resolve( &client, &env.source, &client_transport, &message, &kbps ) );
     rocketnet_check( message.num_channels == 9 && kbps == 777 );
 
-    rocketnet_check( rocketnet_client_config_resolve( &client, false, &client_transport, &message, &kbps ) );
+    rocketnet_check( rocketnet_client_config_resolve( &client, NULL, &client_transport, &message, &kbps ) );
     rocketnet_check( message.num_channels == 7 && kbps == 1234 );
 
-    rocketnet_test_env_setenv( "ROCKETNET_CLIENT_SEND_KBPS", "lots", 1 );
-    rocketnet_check( !rocketnet_client_config_resolve( &client, true, &client_transport, &message, &kbps ) );
+    env.set( "ROCKETNET_CLIENT_SEND_KBPS", "lots" );
+    rocketnet_check( !rocketnet_client_config_resolve( &client, &env.source, &client_transport, &message, &kbps ) );
 
-    rocketnet_test_env_unsetenv( "ROCKETNET_CLIENT_SEND_KBPS" );
-    rocketnet_test_env_unsetenv( "ROCKETNET_CLIENT_NUM_CHANNELS" );
-
-#endif // #if ROCKETNET_DEV
+    env.clear();
 
     // 0 is the default rate, ROCKETNET_SEND_KBPS_UNLIMITED is no budget (0 to
     // the message layer, uncapped), and a negative rate is refused
 
     client.send_kbps = 0;
-    rocketnet_check( rocketnet_client_config_resolve( &client, false, &client_transport, &message, &kbps ) && kbps == ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS );
+    rocketnet_check( rocketnet_client_config_resolve( &client, NULL, &client_transport, &message, &kbps ) && kbps == ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS );
 
     client.send_kbps = ROCKETNET_SEND_KBPS_UNLIMITED;
-    rocketnet_check( rocketnet_client_config_resolve( &client, false, &client_transport, &message, &kbps ) && kbps == 0 && message.client_send_kbps == 0 );
+    rocketnet_check( rocketnet_client_config_resolve( &client, NULL, &client_transport, &message, &kbps ) && kbps == 0 && message.client_send_kbps == 0 );
 
     client.send_kbps = -5;
-    rocketnet_check( !rocketnet_client_config_resolve( &client, false, &client_transport, &message, &kbps ) );
+    rocketnet_check( !rocketnet_client_config_resolve( &client, NULL, &client_transport, &message, &kbps ) );
 
     client.send_kbps = 1234;
 
@@ -13602,10 +13562,10 @@ void rocketnet_test_public_config_resolve()
     long_list[sizeof( long_list ) - 1] = '\0';
 
     client.transport = long_list;
-    rocketnet_check( !rocketnet_client_config_resolve( &client, false, &client_transport, &message, &kbps ) );
+    rocketnet_check( !rocketnet_client_config_resolve( &client, NULL, &client_transport, &message, &kbps ) );
 
     client.transport = NULL;
-    rocketnet_check( rocketnet_client_config_resolve( &client, false, &client_transport, &message, &kbps ) && strcmp( client_transport.transport, "auto" ) == 0 );
+    rocketnet_check( rocketnet_client_config_resolve( &client, NULL, &client_transport, &message, &kbps ) && strcmp( client_transport.transport, "auto" ) == 0 );
 
     // every server field lands
 
@@ -13630,7 +13590,7 @@ void rocketnet_test_public_config_resolve()
 
     struct rocketnet_server_config_t dev;
     rocketnet_test_server_dev_keys_config( &dev );
-    rocketnet_check( rocketnet_server_config_resolve( &server, true, &server_transport, &message, &kbps ) );
+    rocketnet_check( rocketnet_server_config_resolve( &server, &env.source, &server_transport, &message, &kbps ) );
     rocketnet_check( server_transport.protocol_id == 0x1122334455667788ULL && server_transport.max_clients == 5 );
     rocketnet_check( memcmp( server_transport.packet_filter, filter, 4 ) == 0 );
     rocketnet_check( memcmp( server_transport.backend_public_key, dev.backend_public_key, 32 ) == 0 );
@@ -13639,32 +13599,21 @@ void rocketnet_test_public_config_resolve()
     rocketnet_check( strcmp( server_transport.transport, "gso,portable" ) == 0 );
     rocketnet_check( kbps == 4321 && message.num_channels == 6 && message.reliable_message_timeout_ms == 6000 );
 
-#if ROCKETNET_DEV
     // max_clients sizes both layers, so its override applies in the split
 
-    rocketnet_test_env_setenv( "ROCKETNET_SERVER_MAX_CLIENTS", "3", 1 );
-    rocketnet_test_env_setenv( "ROCKETNET_SERVER_NUM_CHANNELS", "4", 1 );
-    rocketnet_test_env_setenv( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS", "0", 1 );
+    env.set( "ROCKETNET_SERVER_MAX_CLIENTS", "3" );
+    env.set( "ROCKETNET_SERVER_NUM_CHANNELS", "4" );
+    env.set( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS", "0" );
 
-    rocketnet_check( rocketnet_server_config_resolve( &server, true, &server_transport, &message, &kbps ) );
+    rocketnet_check( rocketnet_server_config_resolve( &server, &env.source, &server_transport, &message, &kbps ) );
     rocketnet_check( server_transport.max_clients == 3 && message.num_channels == 4 && kbps == ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS );
-
-#endif // #if ROCKETNET_DEV
 
     char long_transport[300];
     memset( long_transport, 'p', sizeof( long_transport ) - 1 );
     long_transport[sizeof( long_transport ) - 1] = '\0';
 
     server.transport = long_transport;
-    rocketnet_check( !rocketnet_server_config_resolve( &server, false, &server_transport, &message, &kbps ) );
-
-#if ROCKETNET_DEV
-    rocketnet_test_env_restore( &server_kbps_guard );
-    rocketnet_test_env_restore( &max_clients_guard );
-    rocketnet_test_env_restore( &server_channels_guard );
-    rocketnet_test_env_restore( &kbps_guard );
-    rocketnet_test_env_restore( &channels_guard );
-#endif // #if ROCKETNET_DEV
+    rocketnet_check( !rocketnet_server_config_resolve( &server, NULL, &server_transport, &message, &kbps ) );
 }
 
 #if ROCKETNET_DEV
@@ -13980,17 +13929,12 @@ void rocketnet_test_public_client_index_not_connected()
 // INVALID_ARGUMENT and a rate past the ceiling CONFIG_OUT_OF_RANGE even on a
 // client or slot that is not CONNECTED, and a valid rate there is
 // INVALID_ARGUMENT (no connection to set it on). This file has no CONNECTED
-// public client fixture, so the order is what is tested. The environment's
-// rate overrides are cleared for the test.
+// public client fixture, so the order is what is tested. The resolves read
+// an empty table the case owns.
 
 void rocketnet_test_public_send_kbps_default_and_negative()
 {
-#if ROCKETNET_DEV
-    struct rocketnet_test_env_guard_t client_kbps_guard, server_kbps_guard;
-    rocketnet_test_env_clear( &client_kbps_guard, "ROCKETNET_CLIENT_SEND_KBPS" );
-    rocketnet_test_env_clear( &server_kbps_guard, "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS" );
-
-#endif // #if ROCKETNET_DEV
+    rocketnet_test_env_t env;
 
     struct rocketnet_client_transport_config_t client_transport;
     struct rocketnet_server_transport_config_t server_transport;
@@ -14004,7 +13948,7 @@ void rocketnet_test_public_send_kbps_default_and_negative()
     rocketnet_check( client_config.send_kbps == ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS );
 
     client_config.send_kbps = 0;
-    rocketnet_check( rocketnet_client_config_resolve( &client_config, true, &client_transport, &message, &kbps ) );
+    rocketnet_check( rocketnet_client_config_resolve( &client_config, &env.source, &client_transport, &message, &kbps ) );
     rocketnet_check( kbps == ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS && message.client_send_kbps == ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS );
 
     enum rocketnet_status_t status = ROCKETNET_STATUS_INVALID_ARGUMENT;
@@ -14026,7 +13970,7 @@ void rocketnet_test_public_send_kbps_default_and_negative()
     // client: a negative rate is refused at create
 
     client_config.send_kbps = -1;
-    rocketnet_check( !rocketnet_client_config_resolve( &client_config, true, &client_transport, &message, &kbps ) );
+    rocketnet_check( !rocketnet_client_config_resolve( &client_config, &env.source, &client_transport, &message, &kbps ) );
 
     status = ROCKETNET_STATUS_OK;
     rocketnet_check( rocketnet_client_create( NULL, &client_config, &status ) == NULL );
@@ -14041,7 +13985,7 @@ void rocketnet_test_public_send_kbps_default_and_negative()
     server_config.max_clients = 4;
     server_config.per_client_send_kbps = 0;
 
-    rocketnet_check( rocketnet_server_config_resolve( &server_config, true, &server_transport, &message, &kbps ) );
+    rocketnet_check( rocketnet_server_config_resolve( &server_config, &env.source, &server_transport, &message, &kbps ) );
     rocketnet_check( kbps == ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS && message.server_send_kbps == ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS );
 
     status = ROCKETNET_STATUS_INVALID_ARGUMENT;
@@ -14055,16 +13999,11 @@ void rocketnet_test_public_send_kbps_default_and_negative()
     rn_test_server_shutdown( server );
 
     server_config.per_client_send_kbps = -1;
-    rocketnet_check( !rocketnet_server_config_resolve( &server_config, true, &server_transport, &message, &kbps ) );
+    rocketnet_check( !rocketnet_server_config_resolve( &server_config, &env.source, &server_transport, &message, &kbps ) );
 
     status = ROCKETNET_STATUS_OK;
     rocketnet_check( rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &status ) == NULL );
     rocketnet_check( status == ROCKETNET_STATUS_INVALID_ARGUMENT );
-
-#if ROCKETNET_DEV
-    rocketnet_test_env_restore( &server_kbps_guard );
-    rocketnet_test_env_restore( &client_kbps_guard );
-#endif // #if ROCKETNET_DEV
 }
 
 // A refused finish aborts the pending start (rn_message_object_finish, the
@@ -14172,14 +14111,7 @@ void rocketnet_test_config_env_round_trip()
 
 void rocketnet_test_config_env_names_are_per_endpoint()
 {
-    struct rocketnet_test_env_guard_t server_guard;
-    rocketnet_test_env_save( &server_guard, "ROCKETNET_SERVER_MAX_FRAGMENTED_MESSAGES" );
-
-    struct rocketnet_test_env_guard_t client_guard;
-    rocketnet_test_env_save( &client_guard, "ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES" );
-
-    rocketnet_test_env_unsetenv( "ROCKETNET_SERVER_MAX_FRAGMENTED_MESSAGES" );
-    rocketnet_test_env_unsetenv( "ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES" );
+    rocketnet_test_env_t env;
 
     int num_server_fields = 0;
     const struct rocketnet_config_field_t * server_fields = rocketnet_server_transport_config_fields( &num_server_fields );
@@ -14194,27 +14126,27 @@ void rocketnet_test_config_env_names_are_per_endpoint()
 
     rocketnet_server_transport_default_config( &server_config );
     rocketnet_client_transport_default_config( &client_config );
-    rocketnet_test_env_setenv( "ROCKETNET_SERVER_MAX_FRAGMENTED_MESSAGES", "19", 1 );
+    env.set( "ROCKETNET_SERVER_MAX_FRAGMENTED_MESSAGES", "19" );
 
-    rocketnet_check( rocketnet_config_apply_env( "server", &server_config, server_fields, num_server_fields ) );
-    rocketnet_check( rocketnet_config_apply_env( "client", &client_config, client_fields, num_client_fields ) );
+    rocketnet_check( rocketnet_config_apply_env( &env.source, "server", &server_config, server_fields, num_server_fields ) );
+    rocketnet_check( rocketnet_config_apply_env( &env.source, "client", &client_config, client_fields, num_client_fields ) );
     rocketnet_check( server_config.max_fragmented_messages == 19 );
     rocketnet_check( client_config.max_fragmented_messages == 0 );
 
-    rocketnet_test_env_unsetenv( "ROCKETNET_SERVER_MAX_FRAGMENTED_MESSAGES" );
+    env.unset( "ROCKETNET_SERVER_MAX_FRAGMENTED_MESSAGES" );
 
     // the client name moves only the client config
 
     rocketnet_server_transport_default_config( &server_config );
     rocketnet_client_transport_default_config( &client_config );
-    rocketnet_test_env_setenv( "ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES", "17", 1 );
+    env.set( "ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES", "17" );
 
-    rocketnet_check( rocketnet_config_apply_env( "server", &server_config, server_fields, num_server_fields ) );
-    rocketnet_check( rocketnet_config_apply_env( "client", &client_config, client_fields, num_client_fields ) );
+    rocketnet_check( rocketnet_config_apply_env( &env.source, "server", &server_config, server_fields, num_server_fields ) );
+    rocketnet_check( rocketnet_config_apply_env( &env.source, "client", &client_config, client_fields, num_client_fields ) );
     rocketnet_check( client_config.max_fragmented_messages == 17 );
     rocketnet_check( server_config.max_fragmented_messages == 0 );
 
-    rocketnet_test_env_unsetenv( "ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES" );
+    env.unset( "ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES" );
 
     // a hand-built config gets no state-change callback it did not set: the
     // default-config function zeroes the struct and the table carries no
@@ -14227,9 +14159,6 @@ void rocketnet_test_config_env_names_are_per_endpoint()
 
     rocketnet_client_transport_default_config( &client_config );
     rocketnet_check( client_config.state_change_callback == NULL );
-
-    rocketnet_test_env_restore( &server_guard );
-    rocketnet_test_env_restore( &client_guard );
 }
 
 #endif // #if ROCKETNET_DEV
@@ -14309,37 +14238,35 @@ void rocketnet_test_config_validation()
 #if ROCKETNET_DEV
     // env parses are strict: the whole value or a loud failure
 
-    struct rocketnet_test_env_guard_t guard;
-
-    rocketnet_test_env_save( &guard, "ROCKETNET_SERVER_MAX_CLIENTS" );
+    rocketnet_test_env_t env;
 
     rocketnet_server_transport_default_config_current( &config );
-    rocketnet_test_env_setenv( "ROCKETNET_SERVER_MAX_CLIENTS", "abc", 1 );
-    rocketnet_check( !rocketnet_config_apply_env( "server", &config, fields, num_fields ) );
+    env.set( "ROCKETNET_SERVER_MAX_CLIENTS", "abc" );
+    rocketnet_check( !rocketnet_config_apply_env( &env.source, "server", &config, fields, num_fields ) );
 
-    rocketnet_test_env_setenv( "ROCKETNET_SERVER_MAX_CLIENTS", "12x", 1 );
-    rocketnet_check( !rocketnet_config_apply_env( "server", &config, fields, num_fields ) );
+    env.set( "ROCKETNET_SERVER_MAX_CLIENTS", "12x" );
+    rocketnet_check( !rocketnet_config_apply_env( &env.source, "server", &config, fields, num_fields ) );
 
     // strtoll's lenient spellings are refused before it ever runs: no
     // leading whitespace, no '+', digits only
 
-    rocketnet_test_env_setenv( "ROCKETNET_SERVER_MAX_CLIENTS", "+5", 1 );
-    rocketnet_check( !rocketnet_config_apply_env( "server", &config, fields, num_fields ) );
+    env.set( "ROCKETNET_SERVER_MAX_CLIENTS", "+5" );
+    rocketnet_check( !rocketnet_config_apply_env( &env.source, "server", &config, fields, num_fields ) );
 
-    rocketnet_test_env_setenv( "ROCKETNET_SERVER_MAX_CLIENTS", " 5", 1 );
-    rocketnet_check( !rocketnet_config_apply_env( "server", &config, fields, num_fields ) );
+    env.set( "ROCKETNET_SERVER_MAX_CLIENTS", " 5" );
+    rocketnet_check( !rocketnet_config_apply_env( &env.source, "server", &config, fields, num_fields ) );
 
-    rocketnet_test_env_setenv( "ROCKETNET_SERVER_MAX_CLIENTS", "99999999999999999999", 1 );
-    rocketnet_check( !rocketnet_config_apply_env( "server", &config, fields, num_fields ) );
+    env.set( "ROCKETNET_SERVER_MAX_CLIENTS", "99999999999999999999" );
+    rocketnet_check( !rocketnet_config_apply_env( &env.source, "server", &config, fields, num_fields ) );
 
     // the empty value is ignored as unset, with a log line, leaving the
     // field untouched -- and the LOG LINE is asserted, not assumed: the
     // return value and the field alone cannot tell "set to empty" from
     // "not set at all", so without the capture this case would still pass
-    // if the empty branch vanished entirely. the unit environment table
-    // stores the empty value present on every platform, windows included
+    // if the empty branch vanished entirely. the case's table stores the
+    // empty value present on every platform, windows included
 
-    rocketnet_test_env_setenv( "ROCKETNET_SERVER_MAX_CLIENTS", "", 1 );
+    env.set( "ROCKETNET_SERVER_MAX_CLIENTS", "" );
     rocketnet_server_transport_default_config_current( &config );
 
     rocketnet_test_captured_log[0] = '\0';
@@ -14347,7 +14274,7 @@ void rocketnet_test_config_validation()
     rocketnet_log_function( rocketnet_test_capture_log, NULL );
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
 
-    rocketnet_check( rocketnet_config_apply_env( "server", &config, fields, num_fields ) );
+    rocketnet_check( rocketnet_config_apply_env( &env.source, "server", &config, fields, num_fields ) );
 
     rocketnet_log_level( empty_saved_level );
     rocketnet_log_function( rocketnet_test_suite_log_function, NULL );
@@ -14355,32 +14282,27 @@ void rocketnet_test_config_validation()
     rocketnet_check( config.max_clients == 1000 );
     rocketnet_check( strstr( rocketnet_test_captured_log, "config ignores empty ROCKETNET_SERVER_MAX_CLIENTS" ) != NULL );
 
-    rocketnet_test_env_restore( &guard );
-
-    rocketnet_test_env_save( &guard, "ROCKETNET_SERVER_PROTOCOL_ID" );
+    env.clear();
     rocketnet_server_transport_default_config_current( &config );
-    rocketnet_test_env_setenv( "ROCKETNET_SERVER_PROTOCOL_ID", "-5", 1 );
+    env.set( "ROCKETNET_SERVER_PROTOCOL_ID", "-5" );
 
-    rocketnet_check( !rocketnet_config_apply_env( "server", &config, fields, num_fields ) );
+    rocketnet_check( !rocketnet_config_apply_env( &env.source, "server", &config, fields, num_fields ) );
 
-    rocketnet_test_env_restore( &guard );
+    env.clear();
 
     // byte fields demand base64 of exactly the field's length
 
-    rocketnet_test_env_save( &guard, "ROCKETNET_SERVER_PACKET_FILTER" );
     rocketnet_server_transport_default_config_current( &config );
-    rocketnet_test_env_setenv( "ROCKETNET_SERVER_PACKET_FILTER", "zzzz", 1 );                  // decodes to 3 bytes, not 4
+    env.set( "ROCKETNET_SERVER_PACKET_FILTER", "zzzz" );                  // decodes to 3 bytes, not 4
 
-    rocketnet_check( !rocketnet_config_apply_env( "server", &config, fields, num_fields ) );
+    rocketnet_check( !rocketnet_config_apply_env( &env.source, "server", &config, fields, num_fields ) );
 
-    rocketnet_test_env_setenv( "ROCKETNET_SERVER_PACKET_FILTER", "AAECAw==", 1 );              // 4 bytes: 00 01 02 03
+    env.set( "ROCKETNET_SERVER_PACKET_FILTER", "AAECAw==" );              // 4 bytes: 00 01 02 03
     rocketnet_server_transport_default_config_current( &config );
-    rocketnet_check( rocketnet_config_apply_env( "server", &config, fields, num_fields ) );
+    rocketnet_check( rocketnet_config_apply_env( &env.source, "server", &config, fields, num_fields ) );
 
     const uint8_t expected_filter[4] = { 0x00, 0x01, 0x02, 0x03 };
     rocketnet_check( memcmp( config.packet_filter, expected_filter, 4 ) == 0 );
-
-    rocketnet_test_env_restore( &guard );
 #endif // #if ROCKETNET_DEV
 }
 
@@ -14613,8 +14535,7 @@ static void rocketnet_test_config_bytes_exact_fields( const char * name, void * 
         char env_name[256];
         rocketnet_check( rocketnet_config_env_var_name_for( name, field->name, env_name, sizeof( env_name ) ) );
 
-        rocketnet_test_env_guard_t guard;
-        rocketnet_test_env_save( &guard, env_name );
+        rocketnet_test_env_t env;
 
         for ( int delta = field->size == 1 ? 0 : -1; delta <= 1; ++delta )
         {
@@ -14624,19 +14545,17 @@ static void rocketnet_test_config_bytes_exact_fields( const char * name, void * 
 
             char encoded[512];
             rocketnet_check( rocketnet_base64_encode_data( bytes, (size_t) ( field->size + delta ), encoded, sizeof( encoded ) ) > 0 );
-            rocketnet_test_env_setenv( env_name, encoded, 1 );
+            env.set( env_name, encoded );
 
             uint8_t * destination = (uint8_t *) config + field->offset;
             uint8_t before[256];
             memset( before, 0xA5, (size_t) field->size );
             memcpy( destination, before, (size_t) field->size );
 
-            const bool accepted = rocketnet_config_apply_env( name, config, field, 1 );
+            const bool accepted = rocketnet_config_apply_env( &env.source, name, config, field, 1 );
             rocketnet_check( accepted == ( delta == 0 ) );
             rocketnet_check( memcmp( destination, accepted ? bytes : before, (size_t) field->size ) == 0 );
         }
-
-        rocketnet_test_env_restore( &guard );
     }
 }
 
@@ -14661,11 +14580,7 @@ void rocketnet_test_config_bytes_exact()
 // material out of both success and refusal diagnostics.
 void rocketnet_test_config_override_logging()
 {
-    struct rocketnet_test_env_guard_t clients_guard;
-    rocketnet_test_env_save( &clients_guard, "ROCKETNET_SERVER_MAX_CLIENTS" );
-
-    struct rocketnet_test_env_guard_t secret_guard;
-    rocketnet_test_env_save( &secret_guard, "ROCKETNET_SERVER_SERVER_SECRET_KEY" );
+    rocketnet_test_env_t env;
 
     uint8_t secret_bytes[32];
     for ( int i = 0; i < 32; i++ )
@@ -14674,8 +14589,8 @@ void rocketnet_test_config_override_logging()
     char secret_base64[64];
     rocketnet_check( rocketnet_base64_encode_data( secret_bytes, 32, secret_base64, sizeof( secret_base64 ) ) > 0 );
 
-    rocketnet_test_env_setenv( "ROCKETNET_SERVER_MAX_CLIENTS", "77", 1 );
-    rocketnet_test_env_setenv( "ROCKETNET_SERVER_SERVER_SECRET_KEY", secret_base64, 1 );
+    env.set( "ROCKETNET_SERVER_MAX_CLIENTS", "77" );
+    env.set( "ROCKETNET_SERVER_SERVER_SECRET_KEY", secret_base64 );
 
     int num_fields = 0;
     const struct rocketnet_config_field_t * fields = rocketnet_server_transport_config_fields( &num_fields );
@@ -14688,7 +14603,7 @@ void rocketnet_test_config_override_logging()
     rocketnet_log_function( rocketnet_test_capture_log, NULL );
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
 
-    rocketnet_check( rocketnet_config_apply_env( "server", &config, fields, num_fields ) );
+    rocketnet_check( rocketnet_config_apply_env( &env.source, "server", &config, fields, num_fields ) );
 
     rocketnet_log_level( saved_level );
     rocketnet_log_function( rocketnet_test_suite_log_function, NULL );
@@ -14705,9 +14620,6 @@ void rocketnet_test_config_override_logging()
     rocketnet_check( memcmp( config.server_secret_key, secret_bytes, 32 ) != 0 );
     rocketnet_check( strstr( rocketnet_test_captured_log, "ROCKETNET_SERVER_SERVER_SECRET_KEY" ) == NULL );
     rocketnet_check( strstr( rocketnet_test_captured_log, secret_base64 ) == NULL );
-
-    rocketnet_test_env_restore( &clients_guard );
-    rocketnet_test_env_restore( &secret_guard );
 }
 
 #endif // #if ROCKETNET_DEV
@@ -14787,114 +14699,62 @@ void rocketnet_test_log_level_refuses_out_of_range()
 }
 
 #if ROCKETNET_DEV
-// The suite isolates config overrides, while preserving the transport's
-// deliberate CI pin and the optional verbose-output switch. Names come
-// from both descriptor tables; duplicate fields are saved only once.
-class rocketnet_test_environment_t
-{
-    struct entry_t
-    {
-        std::string name, value;
-        bool present;
-    };
-    std::vector<entry_t> entries;
-    void clear( const char * name )
-    {
-        if ( strcmp( name, "ROCKETNET_SERVER_TRANSPORT" ) == 0 )
-            return;
-        if ( strcmp( name, "ROCKETNET_CLIENT_TRANSPORT" ) == 0 )
-            return;
-
-        for ( const auto & entry : entries )
-            if ( entry.name == name )
-                return;
-
-        std::string value;
-        const bool present = rocketnet_test_getenv_string( name, &value );
-        entries.push_back( { name, value, present } );
-
-        rocketnet_check( rocketnet_test_env_unsetenv( name ) == 0 );
-    }
-
-public:
-    rocketnet_test_environment_t()
-    {
-        for ( int side = 0; side < 2; ++side )
-        {
-            int count = 0;
-            const auto * fields = side ? rocketnet_server_transport_config_fields( &count )
-                                       : rocketnet_client_transport_config_fields( &count );
-
-            for ( int i = 0; i < count; ++i )
-            {
-                char name[128];
-                rocketnet_check( rocketnet_config_env_var_name_for( side ? "server" : "client", fields[i].name, name, sizeof( name ) ) );
-                clear( name );
-            }
-        }
-
-        clear( "ROCKETNET_SERVER_IPV4_ADDRESS" );
-        clear( "ROCKETNET_SERVER_IPV6_ADDRESS" );
-        clear( "ROCKETNET_SERVER_NUM_OS_CPUS" );
-        clear( "ROCKETNET_GATEWAY_ETHERNET_ADDRESS" );
-    }
-    ~rocketnet_test_environment_t()
-    {
-        for ( const auto & entry : entries )
-            rocketnet_check( ( entry.present ? rocketnet_test_env_setenv( entry.name.c_str(), entry.value.c_str(), 1 )
-                                             : rocketnet_test_env_unsetenv( entry.name.c_str() ) ) == 0 );
-    }
-};
+// A case's environment table (tests/test_env_source.h) keeps the source
+// contract every SDK reader relies on: 1 set and copied, 0 unset, -1 for a
+// value that does not fit, an empty value present and empty, and the buffer
+// left empty unless the answer is 1. Two tables share nothing. The readers
+// refuse a value too long for their buffer.
 
 void rocketnet_test_suite_environment()
 {
-    std::string original_server;
-    const bool server_present = rocketnet_test_getenv_string( "ROCKETNET_SERVER_TRANSPORT", &original_server );
+    rocketnet_test_env_t env;
+    rocketnet_test_env_t other;
 
-    std::string original_client;
-    const bool client_present = rocketnet_test_getenv_string( "ROCKETNET_CLIENT_TRANSPORT", &original_client );
+    const std::string long_value( ROCKETNET_PLATFORM_GETENV_MAX_BYTES, 'x' );
+    env.set( "ROCKETNET_SERVER_MAX_CLIENTS", long_value.c_str() );
 
-    rocketnet_check( rocketnet_test_env_unsetenv( "ROCKETNET_SERVER_IPV4_ADDRESS" ) == 0 );
-
-    const std::string long_value( 4096, 'x' );
-    rocketnet_check( rocketnet_test_env_setenv( "ROCKETNET_SERVER_MAX_CLIENTS", long_value.c_str(), 1 ) == 0 );
-
-    {
-        rocketnet_test_environment_t isolated;
-        rocketnet_check( !rocketnet_test_env_is_set( "ROCKETNET_SERVER_MAX_CLIENTS" ) );
-
-        rocketnet_check( rocketnet_test_env_setenv( "ROCKETNET_SERVER_IPV4_ADDRESS", "127.0.0.1:1234", 1 ) == 0 );
-
-        std::string server_now;
-        rocketnet_check( rocketnet_test_getenv_string( "ROCKETNET_SERVER_TRANSPORT", &server_now ) == server_present );
-        if ( server_present )
-            rocketnet_check( original_server == server_now );
-
-        std::string client_now;
-        rocketnet_check( rocketnet_test_getenv_string( "ROCKETNET_CLIENT_TRANSPORT", &client_now ) == client_present );
-        if ( client_present )
-            rocketnet_check( original_client == client_now );
-    }
-
-    rocketnet_check( !rocketnet_test_env_is_set( "ROCKETNET_SERVER_IPV4_ADDRESS" ) );
-
-    std::string max_clients_now;
-    rocketnet_check( rocketnet_test_getenv_string( "ROCKETNET_SERVER_MAX_CLIENTS", &max_clients_now ) );
-    rocketnet_check( long_value == max_clients_now );
+    rocketnet_check( env.is_set( "ROCKETNET_SERVER_MAX_CLIENTS" ) );
+    rocketnet_check( !other.is_set( "ROCKETNET_SERVER_MAX_CLIENTS" ) );
 
     char raw[ROCKETNET_PLATFORM_GETENV_MAX_BYTES];
     raw[0] = 'x';
-    rocketnet_check( rocketnet_test_env_getenv( "ROCKETNET_SERVER_MAX_CLIENTS", raw, sizeof( raw ) ) == -1 );
+    rocketnet_check( rocketnet_env_get( &env.source, "ROCKETNET_SERVER_MAX_CLIENTS", raw, sizeof( raw ) ) == -1 );
     rocketnet_check( raw[0] == '\0' );
 
-    rocketnet_check( rocketnet_test_env_setenv( "ROCKETNET_SERVER_MAX_CLIENTS", "", 1 ) == 0 );
     raw[0] = 'x';
-    rocketnet_check( rocketnet_test_env_getenv( "ROCKETNET_SERVER_MAX_CLIENTS", raw, sizeof( raw ) ) == 1 );
+    rocketnet_check( rocketnet_env_get( &other.source, "ROCKETNET_SERVER_MAX_CLIENTS", raw, sizeof( raw ) ) == 0 );
     rocketnet_check( raw[0] == '\0' );
 
-    rocketnet_check( rocketnet_test_env_unsetenv( "ROCKETNET_SERVER_MAX_CLIENTS" ) == 0 );
+    // the readers refuse the value that does not fit, loudly
+
+    int num_fields = 0;
+    const struct rocketnet_config_field_t * fields = rocketnet_server_transport_config_fields( &num_fields );
+    struct rocketnet_server_transport_config_t config;
+    rocketnet_server_transport_default_config_current( &config );
+    rocketnet_check( !rocketnet_config_apply_env( &env.source, "server", &config, fields, num_fields ) );
+    rocketnet_check( config.max_clients == 1000 );
+
+    env.set( "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES", long_value.c_str() );
+    uint64_t budget = 7;
+    rocketnet_check( !rocketnet_config_apply_env_uint64( &env.source, "server", "memory_budget_bytes", &budget ) );
+    rocketnet_check( budget == 7 );
+
+    // a value that fits is copied
+
+    env.set( "ROCKETNET_SERVER_MAX_CLIENTS", "12" );
+    rocketnet_check( rocketnet_env_get( &env.source, "ROCKETNET_SERVER_MAX_CLIENTS", raw, sizeof( raw ) ) == 1 );
+    rocketnet_check( strcmp( raw, "12" ) == 0 );
+
+    // the empty value is present and empty
+
+    env.set( "ROCKETNET_SERVER_MAX_CLIENTS", "" );
     raw[0] = 'x';
-    rocketnet_check( rocketnet_test_env_getenv( "ROCKETNET_SERVER_MAX_CLIENTS", raw, sizeof( raw ) ) == 0 );
+    rocketnet_check( rocketnet_env_get( &env.source, "ROCKETNET_SERVER_MAX_CLIENTS", raw, sizeof( raw ) ) == 1 );
+    rocketnet_check( raw[0] == '\0' );
+
+    env.unset( "ROCKETNET_SERVER_MAX_CLIENTS" );
+    raw[0] = 'x';
+    rocketnet_check( rocketnet_env_get( &env.source, "ROCKETNET_SERVER_MAX_CLIENTS", raw, sizeof( raw ) ) == 0 );
     rocketnet_check( raw[0] == '\0' );
 }
 
@@ -15777,7 +15637,8 @@ void rocketnet_test_server_host_memory_estimate_bounds_the_plan()
         {
             rocketnet_check( estimate.umem_bytes == 0 && estimate.xdp_ring_bytes == 0 );
             rocketnet_check( estimate.socket_send_buffer_bytes == (uint64_t) estimate.sockets * ROCKETNET_SOCKET_SEND_BUFFER_SIZE );
-            rocketnet_check( estimate.socket_receive_buffer_bytes == (uint64_t) estimate.sockets * ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
+            rocketnet_check( estimate.socket_receive_buffer_bytes ==
+                             (uint64_t) estimate.sockets * (uint64_t) rocketnet_server_transport_receive_buffer_request( transport, ROCKETNET_DEFAULT_MAX_CLIENTS ) );
         }
 
         // portable: its RX and TX workers
@@ -15810,6 +15671,7 @@ void rocketnet_test_server_host_memory_estimate_bounds_the_plan()
 
         rocketnet_check( estimate.sockets == 8 && estimate.worker_threads == 9 );
         rocketnet_check( estimate.socket_send_buffer_bytes == 8ull * ROCKETNET_SOCKET_SEND_BUFFER_SIZE );
+        rocketnet_check( estimate.socket_receive_buffer_bytes == (uint64_t) 8 * (uint64_t) rocketnet_server_receive_buffer_request( ROCKETNET_MAX_CLIENTS ) );
         rocketnet_check( estimate.thread_stack_bytes == 9ull * estimate.thread_stack_bytes_per_thread );
         rocketnet_check( estimate.total_bytes == rocketnet_test_host_memory_sum( estimate ) );
     }
@@ -15928,6 +15790,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] = {
     { "test_client_protocol_refuses_a_small_capacity", rocketnet_test_client_protocol_refuses_a_small_capacity },
     { "test_integrity_limit", rocketnet_test_integrity_limit },
     { "test_network_simulator", rocketnet_test_network_simulator },
+    { "test_network_simulator_counts_store_refusals", rocketnet_test_network_simulator_counts_store_refusals },
     { "test_network_simulator_refuses_overflowing_capacity", rocketnet_test_network_simulator_refuses_overflowing_capacity },
     { "test_client_server_harsh_wire", rocketnet_test_client_server_harsh_wire },
     { "test_client_server_lossy_wire", rocketnet_test_client_server_lossy_wire },
@@ -16042,39 +15905,20 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] = {
     { "test_log_level_refuses_out_of_range", rocketnet_test_log_level_refuses_out_of_range },
 };
 
-#if ROCKETNET_DEV
-static rocketnet_test_environment_t * rocketnet_unit_environment = NULL;
-#endif // #if ROCKETNET_DEV
-
-void rocketnet_unit_prepare()
+void rocketnet_unit_prepare( bool verbose )
 {
     // Passing runs print test names. The library log stays in the ring unless
-    // ROCKETNET_TEST_VERBOSE is set. The commit barrier is installed once
-    // per process, so no test here can commit an XDP data plane.
+    // the runner asks for it live (ROCKETNET_TEST_VERBOSE, read by tests/test.cpp).
+    // The commit barrier is installed once per process, so no test here can
+    // commit an XDP data plane.
 
-    char verbose[ROCKETNET_PLATFORM_GETENV_MAX_BYTES];
-    if ( !rocketnet_test_getenv( "ROCKETNET_TEST_VERBOSE", verbose, sizeof( verbose ) ) )
+    if ( !verbose )
     {
         rocketnet_test_suite_log_function = rocketnet_test_log_capture;
         rocketnet_log_function( rocketnet_test_suite_log_function, NULL );
     }
 
     rocketnet_forbid_xdp_commit();
-
-#if ROCKETNET_DEV
-    // the unit suite runs over the loopback transport with no sockets, so a
-    // transport pin in the environment must not reach it: the pin replaces
-    // the candidate list at create and the ladder falls through to a real
-    // transport. Both pins are cleared for the run, as posix_pair_create does
-    // around its creates (tests/functional/posix_socket_errors.cpp). A case that
-    // tests pin handling itself sets and reads its own pins after this.
-
-    rocketnet_test_env_unsetenv( "ROCKETNET_SERVER_TRANSPORT" );
-    rocketnet_test_env_unsetenv( "ROCKETNET_CLIENT_TRANSPORT" );
-
-    if ( rocketnet_unit_environment == NULL )
-        rocketnet_unit_environment = new rocketnet_test_environment_t();
-#endif // #if ROCKETNET_DEV
 }
 
 int rocketnet_unit_test_count()

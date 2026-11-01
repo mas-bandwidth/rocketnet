@@ -73,6 +73,14 @@ extern "C"
 // returns true on success; writes the status when status is not NULL
 bool rocketnet_init_ex( void * context, void * ( *malloc_function )( void * context, size_t bytes ), void ( *free_function )( void * context, void * p ), int * status );
 
+// init with the environment source as an argument: ROCKETNET_LOG_LEVEL, and
+// in a development library ROCKETNET_DEV_SESSION_SEQUENCE_START, are read
+// from env here and nowhere else. rocketnet_init_ex is this with
+// rocketnet_env_process; a unit case passes a table it owns. env is not kept.
+struct rocketnet_env_source_t;
+bool rocketnet_init_ex_with_env( void * context, void * ( *malloc_function )( void * context, size_t bytes ), void ( *free_function )( void * context, void * p ),
+                                 const struct rocketnet_env_source_t * env, int * status );
+
 int rocketnet_term_ex( void );
 
 // replaces the allocator without init, for tests. both functions are required
@@ -85,9 +93,19 @@ struct rocketnet_message_client_t * rocketnet_client_message_client( struct rock
 struct rocketnet_message_server_t * rocketnet_server_message_server( struct rocketnet_server_t * server );
 
 #if ROCKETNET_DEV
+// the label the default log sink prints for a level: "???" for a level
+// outside ERROR .. SPAM
+const char * rocketnet_log_level_word_for_test( int level );
+
+// calls sodium's misuse path, as an unavailable OS random source does: the
+// handler rocketnet_init installed runs, then sodium aborts the process. For
+// the functional case that runs it in a child process
+void rocketnet_sodium_misuse_for_test( void );
+
 // the address a created server serves for one family, after the
-// environment overrides. Writes it and returns true, or returns false when
-// the server does not serve that family. Reads no socket
+// environment overrides. Writes it and returns true, or leaves address empty
+// and returns false when the server does not serve that family or the address
+// does not fit in address_bytes (logged). Reads no socket
 bool rocketnet_server_served_address( const struct rocketnet_server_t * server, int family, char * address, size_t address_bytes );
 #endif // #if ROCKETNET_DEV
 
@@ -255,6 +273,13 @@ uint64_t rocketnet_lifecycle_locks_for_test( void );
 // a function install calls between reading a zero live count and publishing
 // the new pair (sdk/rocketnet.cpp); NULL for none
 void rocketnet_allocator_set_install_hook_for_test( void ( *hook )( void ) );
+
+// a function rocketnet_malloc calls at each step of its wait for a pair
+// (sdk/rocketnet.cpp): counted, before the pair read, and after meeting the
+// installing sentinel and uncounting; NULL for none
+#define ROCKETNET_ALLOCATOR_STEP_COUNTED 1
+#define ROCKETNET_ALLOCATOR_STEP_WAITED 2
+void rocketnet_allocator_set_call_hook_for_test( void ( *hook )( int step ) );
 #endif // #if ROCKETNET_DEV
 
 void rocketnet_api_misuse_record( void );
@@ -390,7 +415,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_RECEIVE_PAYLOAD_BYTES == ROCKETNET_MAX_PACKET
 #define ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT     (1<<0)
 /** @brief Config-field flag that redacts its value in override logs. */
 #define ROCKETNET_CONFIG_SECRET                 (1<<1)
-/** @brief Config-field flag for a field no environment variable sets: the public server's own keypair, which create generates. */
+/** @brief Config-field flag for a field no environment variable sets: the server's keypair, which create generates; the public addresses, which create takes as arguments; and the simulated_* link fields, which the development network simulator sets. */
 #define ROCKETNET_CONFIG_NO_ENV                 (1<<2)
 
 /** @brief Zero initializer for fixed-size byte-array configuration fields. */
@@ -438,7 +463,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_RECEIVE_PAYLOAD_BYTES == ROCKETNET_MAX_PACKET
 // that revision's alignment (ROCKETNET_CONFIG_REVISION_BYTES). A known size
 // reads the caller's prefix and defaults the rest; an unknown size, larger or
 // smaller, is refused with a log line and nothing is read or written. The
-// unsized entry points stay, and read and write exactly revision 1
+// unsized entry points read and write the whole struct of this header
 
 // internal to the SDK: the one read and the one write every sized entry point
 // makes (docs/ABI-EVOLUTION.md 3). write copies the first config_bytes of
@@ -473,10 +498,14 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
 // (-DROCKETNET_MAX_CLIENTS=10000) still defaults to 1000; the config field
 // asks for more
 
-#define ROCKETNET_DEFAULT_MAX_CLIENTS          ( ROCKETNET_MAX_CLIENTS < 1000 ? ROCKETNET_MAX_CLIENTS : 1000 )
+#if ROCKETNET_MAX_CLIENTS < 1000
+#define ROCKETNET_DEFAULT_MAX_CLIENTS          ROCKETNET_MAX_CLIENTS
+#else // #if ROCKETNET_MAX_CLIENTS < 1000
+#define ROCKETNET_DEFAULT_MAX_CLIENTS          1000
+#endif // #if ROCKETNET_MAX_CLIENTS < 1000
 
-// the handshake work budget (handshakes_per_update): the most post-cookie
-// connection requests one server update processes, each one Ed25519 verify
+// the handshake work budget (handshakes_per_update): the most connection
+// requests one server update takes to the signature verify, each one Ed25519 verify
 // and, when it verifies, the sealed-block open, a keypair and the key
 // exchange. A request past it is dropped before any asymmetric work and
 // counted; the client's next request, at its send rate, is processed in a
@@ -534,9 +563,13 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
 /** @brief Known server transport config sizes, in bytes. */
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_KNOWN_BYTES ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1_ORIGINAL, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2_PRE_PATTERNS, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_3, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_4, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_5
 
-#if ROCKETNET_MAX_CHANNELS < 1 || ROCKETNET_MAX_CHANNELS > 65536
-#error ROCKETNET_MAX_CHANNELS must be between 1 and 65536
-#endif // #if ROCKETNET_MAX_CHANNELS < 1 || ROCKETNET_MAX_CHANNELS > 65536
+// the largest build-specific channel count: a WIDE record carries a u16 channel
+
+#define ROCKETNET_MAX_CHANNELS_LIMIT 65536
+
+#if ROCKETNET_MAX_CHANNELS < 1 || ROCKETNET_MAX_CHANNELS > ROCKETNET_MAX_CHANNELS_LIMIT
+#error ROCKETNET_MAX_CHANNELS must be between 1 and ROCKETNET_MAX_CHANNELS_LIMIT (65536)
+#endif // #if ROCKETNET_MAX_CHANNELS < 1 || ROCKETNET_MAX_CHANNELS > ROCKETNET_MAX_CHANNELS_LIMIT
 
 ROCKETNET_STATIC_ASSERT( ROCKETNET_MESSAGE_SINGLE_BYTES >= 1400, "a 1400-byte game packet is one SINGLE message, zero copy, unfragmented" );
 
@@ -558,15 +591,19 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MESSAGE_SINGLE_BYTES >= 1400, "a 1400-byte ga
 #define ROCKETNET_DEFAULT_NUM_CHANNELS         32
 #endif // #if ROCKETNET_MAX_CHANNELS < 32
 
+// the largest reliable window W, the maximum of reliable_messages_in_flight
+
+#define ROCKETNET_MESSAGE_WINDOW_MAX           ( 1 << 20 )         // 1048576
+
 #define ROCKETNET_MESSAGE_CONFIG_TABLE( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                       \
     INT_FIELD( num_channels, ROCKETNET_DEFAULT_NUM_CHANNELS, 1, ROCKETNET_MAX_CHANNELS, 0 ) /* WIRE */                            \
-    INT_FIELD( reliable_messages_in_flight,          1024,     64, 1 << 20,                0 ) /* WIRE, power of two */              \
+    INT_FIELD( reliable_messages_in_flight,          1024,     64, ROCKETNET_MESSAGE_WINDOW_MAX, 0 ) /* WIRE, power of two */         \
     INT_FIELD( receive_message_buffer_bytes,    1048576,   4096, 1 << 20,                0 ) /* WIRE, multiple of 16 */            \
     INT_FIELD( max_message_bytes,     1048576,   ROCKETNET_MESSAGE_SINGLE_BYTES, ROCKETNET_MAX_MESSAGE_BYTES, 0 ) /* WIRE, <= receive_message_buffer_bytes */     \
     INT_FIELD( send_message_buffer_bytes,     4194304,  12288, 1 << 28,                0 )                                         \
     INT_FIELD( send_queue_messages,      1024,     16, 1 << 20,                0 )                                         \
     INT_FIELD( packets_in_flight,        1024,     64, 1 << 20,                0 ) /* >= reliable_messages_in_flight */  \
-    INT_FIELD( packets_per_update,    256,      1, 1024,                   0 )                                         \
+    INT_FIELD( packets_per_update,    256,      1, ROCKETNET_CONNECTION_MAX_PACKETS_PER_UPDATE, 0 )                   \
     INT_FIELD( unreliable_messages_per_update,    1024,      1, 1 << 16,                0 )   /* per connection per update */       \
     INT_FIELD( sequenced_messages_held,            16,      0, 4096,                   0 )                                         \
     INT_FIELD( max_message_receipts,              256,     16, 1 << 16,                0 )                                         \
@@ -595,6 +632,13 @@ struct rocketnet_platform_network_lookups_t
 
 void rocketnet_platform_set_network_lookups_for_testing( const struct rocketnet_platform_network_lookups_t * lookups );
 
+// the wall clock the connect token checks read when token_epoch_unix_seconds
+// is zero (rocketnet_platform_token_epoch). With a function set, they read it
+// instead of the real clock; NULL, the default, reads the real clock. The unit
+// suite sets a fixed clock before rocketnet_init (tests/test.cpp) so no unit
+// case reads the real time. Not exported
+void rocketnet_platform_set_wall_clock_for_testing( uint64_t ( *wall_clock )( void ) );
+
 #endif // #if ROCKETNET_DEV
 
 // the public config structs in rocketnet.h are written out field by field;
@@ -618,12 +662,23 @@ void rocketnet_sleep_set_platform_dispatch_for_test( void ( *dispatch )( double 
 // ceil( max_clients x receive_kbps_per_client x 125 x
 // ROCKETNET_SERVER_RECEIVE_BUFFER_MARGIN / update_hz ) bytes, at least
 // ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE and at most INT_MAX; arguments below 1
-// count as 1. rocketnet_server_receive_buffer_request is the request every
-// server socket makes: max_clients at the default client send budget
+// count as 1. rocketnet_server_receive_buffer_request is that size at
+// max_clients, the default client send budget
 // (ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS) and the slowest supported update
-// rate (ROCKETNET_SERVER_RECEIVE_MIN_UPDATE_HZ)
+// rate (ROCKETNET_SERVER_RECEIVE_MIN_UPDATE_HZ).
+//
+// rocketnet_server_transport_receive_buffer_request is the SO_RCVBUF every
+// server socket of a built-in transport asks for, and the size the host memory
+// estimate charges per socket. Each socket is sized for the full client count:
+// the portable and msgx socket at the config's max_clients, and every gso and
+// io_uring queue socket and the iocp and rio socket at ROCKETNET_MAX_CLIENTS,
+// because those creates do not carry max_clients. A queue socket is not sized
+// for a share of the clients: SO_REUSEPORT hashes flows to sockets, so any
+// one socket may carry any number of them. xdp opens no UDP socket and returns
+// 0, as does a name that is not a built-in transport.
 int rocketnet_server_receive_buffer_bytes( int max_clients, int receive_kbps_per_client, int update_hz );
 int rocketnet_server_receive_buffer_request( int max_clients );
+int rocketnet_server_transport_receive_buffer_request( const char * transport, int max_clients );
 
 // logs one line per server socket with what the kernel granted and what was
 // requested. A grant below the request is a warning naming the limit to
@@ -642,10 +697,11 @@ void rocketnet_server_receive_buffer_warning_grant_override_for_testing( int gra
 struct rocketnet_platform_socket_t;
 int rocketnet_platform_socket_receive_buffer_bytes( struct rocketnet_platform_socket_t * socket );
 
-// internal final-burst operations for public server_stop. They preserve the
-// normal transport API while selecting a nonwaiting backend send on shutdown
+// internal final-burst operation for public server_stop: the slot ends now
+// and its burst always waits in the disconnect ring, which holds one for
+// every client beside the bursts a running server keeps, for the stop steps
+// to send (proofs/tla/ServerStopSpread.tla Stop)
 void rocketnet_server_transport_disconnect_client_shutdown( struct rocketnet_server_transport_t * transport, int client_index );
-void rocketnet_server_transport_send_packets_shutdown( struct rocketnet_server_transport_t * transport );
 
 // A create's reason for failing, written through its caller's status (NULL:
 // not asked). OUT_OF_MEMORY, once written, is never replaced: a create that
@@ -656,5 +712,28 @@ static inline void rocketnet_create_status( int * status, int value )
     if ( status && *status != ROCKETNET_STATUS_OUT_OF_MEMORY )
         *status = value;
 }
+
+#if ROCKETNET_DEV
+// the server config staging seam (sdk/rocketnet_server_transport.cpp): each
+// stack copy of a server config is wiped on every exit of the function that
+// holds it, then its server_secret_key is handed to the hook with the stage
+// that held it. NULL by default; set only by unit cases.
+enum
+{
+    ROCKETNET_SERVER_TRANSPORT_CONFIG_STAGING_RESOLVE = 0,      // the resolve's layered config
+    ROCKETNET_SERVER_TRANSPORT_CONFIG_STAGING_CREATE = 1,       // the create's resolved inputs
+    ROCKETNET_SERVER_TRANSPORT_CONFIG_STAGING_COUNT = 2
+};
+
+extern void ( *rocketnet_server_transport_config_staging_hook )( const uint8_t * secret_key, int stage );
+#endif // #if ROCKETNET_DEV
+
+// held across the draws of every caller that may run before rocketnet_init
+// or beside rocketnet_term (the key and token generators): opens sodium and
+// its random source on first use, and keeps term from closing the source
+// until the matching release (sdk/rocketnet.cpp). Returns false, holding
+// nothing, when sodium cannot initialize.
+bool rocketnet_crypto_acquire( void );
+void rocketnet_crypto_release( void );
 
 #endif // ROCKETNET_SDK_ROCKETNET_INTERNAL_H

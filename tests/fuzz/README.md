@@ -105,7 +105,7 @@ cmake -B build-fuzz -T ClangCL -A x64 -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIB
     "-DCMAKE_CXX_FLAGS=-DWIN32 -D_WINDOWS -D_DISABLE_STRING_ANNOTATION -D_DISABLE_VECTOR_ANNOTATION -EHsc -fsanitize=address -fsanitize=fuzzer-no-link"
 cmake --build build-fuzz --config Debug --target rocketnet_dev --parallel 4
 CLANG_CL="$(cygpath "$(vswhere -latest -property installationPath)")/VC/Tools/Llvm/x64/bin/clang-cl.exe"
-"$CLANG_CL" -nologo -Zi -O1 -MT -std:c++17 -EHsc -utf-8 -fp:precise \
+"$CLANG_CL" -nologo -Zi -O1 -MT -std:c++17 -EHsc -utf-8 -fp:precise -Xclang -ffp-contract=off \
     -W4 -WX -Wshadow -Wconversion -Wsign-conversion -Wcast-qual -Wformat=2 -Wundef -Wdouble-promotion \
     -DWIN32 -D_WINDOWS -D_DISABLE_STRING_ANNOTATION -D_DISABLE_VECTOR_ANNOTATION -DROCKETNET_DEV=1 \
     -fsanitize=fuzzer,address \
@@ -246,7 +246,13 @@ for the session target, unless every reliability type is delivered in both
 directions). A type with no seed would be a parser the fuzzer never enters,
 because random mutation cannot produce a valid AEAD tag. Seeds are
 deterministic, so a regenerated corpus differs only when the code under it
-changed.
+changed. The generator exits the process itself, from
+`LLVMFuzzerInitialize`, in the libFuzzer build and the replay driver alike:
+libFuzzer ignores that function's return value, and so does the replay
+driver. ci.yml's macOS checks leg runs all ten generators on every push
+and requires each to exit 0, and requires `rocketnet_fuzz_connect_token` and
+`rocketnet_fuzz_receive_structured` to exit 1 with `INCOMPLETE` when a seed
+is withheld (`ROCKETNET_FUZZ_WITHHOLD`).
 
 ## Coverage
 

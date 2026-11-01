@@ -91,10 +91,19 @@ latency or receive-gap thresholds. Unit tests use deterministic inputs and
 simulated time for protocol deadlines, never host scheduling speed. See
 [BUILDING.md](../docs/BUILDING.md) for the 60-second target and 120-second cap.
 
-Unit cases do not read or change the process environment. SDK environment
-parsing and validation use the in-memory table in `test_env_source.h`, which
-is available only in the unit hook library. The functional environment-wiring
-cases change and restore real process variables and observe each SDK reader.
+Unit cases do not read or change the process environment. Every SDK reader
+takes an environment source as an argument (`sdk/rocketnet_env.h`), the way it
+takes time: the public entry points pass the process environment, and a unit
+case that tests environment parsing, validation or precedence declares the
+in-memory table in `test_env_source.h`, which it owns, and passes it to the
+reader or to a `_with_env` create. The runner (`tests/test.cpp`), not a case,
+clears every name the SDK reads before each case, so a public create in a
+unit case reads none of them; `tools/check_test_environment.py` runs the suite
+with hostile values set, transport pins included, and
+`tools/check_unit_purity.py` refuses any process-environment read or change in
+the unit sources, their `tests/*.h` helpers and the DEV fixtures they call.
+The functional environment-wiring cases change and restore real process
+variables and observe each SDK reader.
 
 The process thread-count cases `test_server_stats_creates_no_thread` and
 `test_public_step_driven_client_connects_without_a_thread` read the process's

@@ -5,14 +5,18 @@
 
 // Connect-token create and expire checks can read the game clock: with a
 // configured token_epoch_unix_seconds the token timestamp is epoch plus the caller's
-// time, floored to whole seconds, and no wall clock is read; with the field
-// zero the check reads the wall clock as before. Time is an argument starting
-// at 1000.0; client refusals and the in-memory server protocol need no socket.
+// time, floored to whole seconds, and no wall clock is read. With the field
+// zero the check reads the wall clock: here the suite's fixed clock
+// (ROCKETNET_UNIT_WALL_CLOCK); the real clock is the functional tier's case
+// test_token_time_game_clock_off_reads_the_wall_clock. Time is an argument
+// starting at 1000.0; client refusals and the in-memory server protocol need
+// no socket.
 
 #include "test_unit_registry.h"
 #include "native_shutdown.h"
 
 #include "rocketnet_internal.h"
+#include "rocketnet_platform.h"
 #include "rocketnet_protocol.h"
 #include "rocketnet_counters.h"
 #include "rocketnet_connect_token.h"
@@ -85,6 +89,9 @@ static int token_time_game_client_create( uint64_t create, uint64_t expire, uint
     config.loopback_hub = rocketnet_test_loopback_hub();
     memset( config.packet_filter, 0x5A, sizeof( config.packet_filter ) );
     config.token_epoch_unix_seconds = epoch;
+#if ROCKETNET_DEV
+    config.step_driven = 1;     // a granted create starts no thread
+#endif // #if ROCKETNET_DEV
 
     int status = 0;
     struct rocketnet_client_transport_t * transport = rocketnet_client_transport_create_current_ex( NULL, token_data, &config, time, &status );
@@ -187,8 +194,6 @@ static void test_token_time_game_clock_admits_a_fixed_token()
     check( token_time_game_server_request( &t, create, expire, TOKEN_EPOCH_UNIX_SECONDS + 1000 ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
 
     token_time_game_server_teardown( &t );
-
-    printf( "test_token_time_game_clock_admits_a_fixed_token\n" );
 }
 
 // the same token is refused once epoch + time reaches expire, on both ends
@@ -206,27 +211,22 @@ static void test_token_time_game_clock_refuses_after_expire()
     check( t.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED] == 1 );
 
     token_time_game_server_teardown( &t );
-
-    printf( "test_token_time_game_clock_refuses_after_expire\n" );
 }
 
-// with the field zero a token stamped from a fixed past epoch is refused as
-// expired, as before: the wall clock is the clock
-
-static void test_token_time_game_clock_off_reads_the_wall_clock()
+#if ROCKETNET_DEV
+// with the field zero the token epoch is the suite's fixed wall clock less the
+// caller's time: a token stamped from that clock is admitted, and one stamped
+// in 1970 is refused as expired
+static void test_token_time_game_clock_off_reads_the_suite_clock()
 {
+    check( rocketnet_platform_token_epoch( 0, GAME_CLOCK_NOW ) == ROCKETNET_UNIT_WALL_CLOCK - (uint64_t) GAME_CLOCK_NOW );
+
+    check( token_time_game_client_create( ROCKETNET_UNIT_WALL_CLOCK, ROCKETNET_UNIT_WALL_CLOCK + TOKEN_LIFETIME, 0, GAME_CLOCK_NOW ) == ROCKETNET_STATUS_OK );
     check( token_time_game_client_create( 1000, 1010, 0, GAME_CLOCK_NOW ) == ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED );
-
-    struct token_time_game_server_t t;
-    token_time_game_server_setup( &t );
-    check( token_time_game_server_request( &t, 1000, 1010, TOKEN_EPOCH_UNIX_SECONDS + 2000000000ULL ) == ROCKETNET_SERVER_PROCESS_IGNORED );
-    check( t.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED] == 1 );
-
-    token_time_game_server_teardown( &t );
-
-    printf( "test_token_time_game_clock_off_reads_the_wall_clock\n" );
 }
+
+REGISTER_UNIT_TEST( test_token_time_game_clock_off_reads_the_suite_clock );
+#endif // #if ROCKETNET_DEV
 
 REGISTER_UNIT_TEST( test_token_time_game_clock_admits_a_fixed_token );
 REGISTER_UNIT_TEST( test_token_time_game_clock_refuses_after_expire );
-REGISTER_UNIT_TEST( test_token_time_game_clock_off_reads_the_wall_clock );

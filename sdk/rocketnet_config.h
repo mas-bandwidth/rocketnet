@@ -11,6 +11,7 @@
 #include "rocketnet_internal.h"
 #include "rocketnet_driver.h"
 #include "rocketnet_test_seams.h"
+#include "rocketnet_env.h"
 
 // The config engine: the machinery behind the per-transport config
 // tables declared in rocketnet.h. Each table declares every field once;
@@ -20,7 +21,8 @@
 // metadata the completeness test uses. Precedence is DEFAULT < STRUCT <
 // ENV; every env override logs loudly with the variable and the displaced
 // value; validation refuses loudly and never clamps. Env reads go through
-// rocketnet_platform_getenv.
+// the environment source the caller passes (sdk/rocketnet_env.h): the public
+// entry points pass rocketnet_env_process, a unit case its own table.
 
 #define ROCKETNET_CONFIG_KIND_INT       0
 #define ROCKETNET_CONFIG_KIND_UINT64    1
@@ -66,10 +68,11 @@ const struct rocketnet_config_field_t * rocketnet_server_budget_config_fields( i
 
 // the split create makes (sdk/rocketnet_api.cpp): a public config, NULL for
 // the defaults, into the transport config, the message config and the send
-// budget the layers take. read_env applies every environment override, the
-// transport table's, the message fields', the budget's and the development
-// simulator's, as create does: the result is the endpoint's one resolved
-// config, which start and connect use without reading the environment again.
+// budget the layers take. A non-NULL env applies every environment override
+// read from it, the transport table's, the message fields', the budget's and
+// the development simulator's, as create does: the result is the endpoint's
+// one resolved config, which start and connect use without reading the
+// environment again. NULL env takes the struct as given.
 // false, with a log line, for a string too long for its layer field, a
 // variable that does not parse or a budget out of range.
 
@@ -80,12 +83,21 @@ struct rocketnet_client_config_t;
 struct rocketnet_server_config_t;
 
 #if ROCKETNET_DEV
-bool rocketnet_client_config_resolve( const struct rocketnet_client_config_t * config, bool read_env,
+bool rocketnet_client_config_resolve( const struct rocketnet_client_config_t * config, const struct rocketnet_env_source_t * env,
                                       struct rocketnet_client_transport_config_t * transport, struct rocketnet_message_config_t * message, uint32_t * kbps );
 
-bool rocketnet_server_config_resolve( const struct rocketnet_server_config_t * config, bool read_env,
+bool rocketnet_server_config_resolve( const struct rocketnet_server_config_t * config, const struct rocketnet_env_source_t * env,
                                       struct rocketnet_server_transport_config_t * transport, struct rocketnet_message_config_t * message, uint32_t * kbps );
 #endif // #if ROCKETNET_DEV
+
+// the public creates with the environment source as an argument:
+// rocketnet_client_create and rocketnet_server_create are these with
+// rocketnet_env_process; a unit case passes a table it owns.
+
+struct rocketnet_client_t * rocketnet_client_create_with_env( void * context, const struct rocketnet_client_config_t * config, const struct rocketnet_env_source_t * env, enum rocketnet_status_t * status );
+
+struct rocketnet_server_t * rocketnet_server_create_with_env( void * context, const char * ipv4_address, const char * ipv6_address, const struct rocketnet_server_config_t * config,
+                                                              const struct rocketnet_env_source_t * env, enum rocketnet_status_t * status );
 
 // the per-endpoint derivation (ruling 11): "server" + "max_fragmented_messages" ->
 // "ROCKETNET_SERVER_MAX_FRAGMENTED_MESSAGES" and "client" + "max_fragmented_messages" ->
@@ -100,16 +112,16 @@ bool rocketnet_config_env_var_name_for( const char * transport_name, const char 
 
 bool rocketnet_config_parse_int_value( const char * value, int * out );
 
-// strictly apply one per-endpoint uint64 env overlay -- the operator memory
+// strictly apply one per-endpoint uint64 overlay read from env -- the operator memory
 // budget reads ROCKETNET_<TRANSPORT>_<FIELD> with the table parser, so an
 // unset or empty variable leaves *out unchanged, a non-number refuses loudly
 // exactly as the table overlays refuse, and a parseable number assigns.
 // returns false on a value that does not parse.
 
-bool rocketnet_config_apply_env_uint64( const char * transport_name, const char * field_name, uint64_t * out );
+bool rocketnet_config_apply_env_uint64( const struct rocketnet_env_source_t * env, const char * transport_name, const char * field_name, uint64_t * out );
 
-// overlay the environment onto a config struct, field by field from the
-// descriptors: unset vars leave the struct value; set vars parse under the
+// overlay the environment read from env onto a config struct, field by
+// field from the descriptors: unset vars leave the struct value; set vars parse under the
 // field's kind, log the override loudly with the displaced value (secret
 // fields redacted), and assign. each field is read under its PER-ENDPOINT
 // name, ROCKETNET_<TRANSPORT>_<FIELD> (ruling 11); an old process-wide
@@ -119,7 +131,7 @@ bool rocketnet_config_apply_env_uint64( const char * transport_name, const char 
 // transport_name flavors the log lines and the derived names ("client",
 // "server").
 
-bool rocketnet_config_apply_env( const char * transport_name, void * config, const struct rocketnet_config_field_t * fields, int num_fields );
+bool rocketnet_config_apply_env( const struct rocketnet_env_source_t * env, const char * transport_name, void * config, const struct rocketnet_config_field_t * fields, int num_fields );
 
 void rocketnet_client_transport_default_config_current( struct rocketnet_client_transport_config_t * config );
 struct rocketnet_client_transport_t * rocketnet_client_transport_create_current( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time );
@@ -128,6 +140,12 @@ struct rocketnet_client_transport_t * rocketnet_client_transport_create_current(
 struct rocketnet_client_transport_t * rocketnet_client_transport_create_current_ex( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, int * status );
 struct rocketnet_server_transport_t * rocketnet_server_transport_create_current_ex( void * context, const char * address, const struct rocketnet_server_transport_config_t * config, double time, int * status );
 #if ROCKETNET_DEV
+// the current-size _ex creates with the environment source as an argument
+// (the layered creates above pass rocketnet_env_process)
+struct rocketnet_client_transport_t * rocketnet_client_transport_create_current_with_env( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time,
+                                                                                          const struct rocketnet_env_source_t * env, int * status );
+struct rocketnet_server_transport_t * rocketnet_server_transport_create_current_with_env( void * context, const char * address, const struct rocketnet_server_transport_config_t * config, double time,
+                                                                                          const struct rocketnet_env_source_t * env, int * status );
 struct rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven_current( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, const rocketnet_client_transport_io_operations_t * operations, void * transport_context );
 #endif // #if ROCKETNET_DEV
 struct rocketnet_server_transport_t * rocketnet_server_transport_create_current( void * context, const char * address, const struct rocketnet_server_transport_config_t * config );
@@ -245,16 +263,16 @@ static_assert( ROCKETNET_NUM_TRANSPORTS <= ROCKETNET_MAX_TRANSPORT_CANDIDATES, "
 bool rocketnet_transport_ladder_parse( const char * value, const int * available, int num_available, struct rocketnet_transport_ladder_t * ladder, bool server = true );
 
 // the per-platform, per-endpoint availability tables, in recommended
-// order -- the single table "auto" expands from:
+// order -- the single table "auto" expands from. The ranks in
+// sdk/rocketnet_drivers.inc decide the order:
 //
 //               production server          development server             client
-//   linux       xdp, gso, io_uring, portable  xdp, gso, io_uring, portable   portable
+//   linux       xdp, gso, io_uring, portable  xdp, gso, io_uring, portable   gso, portable
 //   macOS       msgx, portable                msgx, portable                 msgx, portable
-//   windows     iocp, rio, portable           portable, iocp, rio            portable
+//   windows     iocp, rio, portable           portable, iocp, rio            iocp, portable
 //   iOS/BSDs    portable                      portable                       portable
 //
-// (the staged linux transports are server-side machinery; the client is the
-// platform socket everywhere, with the darwin batch pump where granted)
+// (xdp, io_uring and rio are server-only; loopback is pin-only, never in auto)
 
 const int * rocketnet_server_transport_io_availability( int * num_available );
 

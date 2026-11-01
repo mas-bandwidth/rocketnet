@@ -3,7 +3,6 @@
 #if ROCKETNET_DEV
 #include "test_env_source.h"
 #endif // #if ROCKETNET_DEV
-#include "portable_crt.h"
 #include "unit_shutdown.h"
 #include "token_string.h"
 #include "../sdk/rocketnet_internal.h"
@@ -89,7 +88,7 @@ static void test_public_message_limit_does_not_expand_transport_memory()
     rocketnet_server_transport_config_t transport;
     rocketnet_message_config_t message;
     uint32_t kbps = 0;
-    check( rocketnet_server_config_resolve( &config, false, &transport, &message, &kbps ) );
+    check( rocketnet_server_config_resolve( &config, NULL, &transport, &message, &kbps ) );
 
     rocketnet_server_memory_plan_t before, after;
     check( rocketnet_server_transport_memory_plan( &transport, "portable", before ) );
@@ -98,7 +97,7 @@ static void test_public_message_limit_does_not_expand_transport_memory()
     config.max_message_bytes = ROCKETNET_MAX_MESSAGE_BYTES;
     config.receive_message_buffer_bytes = ROCKETNET_MAX_MESSAGE_BYTES;
     config.send_message_buffer_bytes = 8 * ROCKETNET_MAX_MESSAGE_BYTES;
-    check( rocketnet_server_config_resolve( &config, false, &transport, &message, &kbps ) );
+    check( rocketnet_server_config_resolve( &config, NULL, &transport, &message, &kbps ) );
     check( rocketnet_message_validate_config( &message ) );
     check( message.max_message_bytes == ROCKETNET_MAX_MESSAGE_BYTES );
     check( rocketnet_server_transport_memory_plan( &transport, "portable", after ) );
@@ -123,30 +122,11 @@ static void test_public_message_limit_does_not_expand_transport_memory()
 
 REGISTER_UNIT_TEST( test_public_message_limit_does_not_expand_transport_memory );
 
-struct message_limit_env_t
-{
-    const char * name;
-    bool present;
-    std::string previous;
-    explicit message_limit_env_t( const char * key ) : name( key ), present( false )
-    {
-        char buffer[4096];
-        present = rocketnet_test_env_getenv( key, buffer, sizeof( buffer ) ) != 0;
-        previous = buffer;
-    }
-    void set( const char * value )
-    {
-        check( value ? rocketnet_test_env_setenv( name, value, 1 ) == 0 : rocketnet_test_env_unsetenv( name ) == 0 );
-    }
-    ~message_limit_env_t() { set( present ? previous.c_str() : NULL ); }
-};
-
 static void test_public_message_limit_env_is_endpoint_scoped()
 {
-    message_limit_env_t client_env( "ROCKETNET_CLIENT_MAX_MESSAGE_BYTES" );
-    message_limit_env_t server_env( "ROCKETNET_SERVER_MAX_MESSAGE_BYTES" );
-    client_env.set( "131072" );
-    server_env.set( "65536" );
+    rocketnet_test_env_t env;
+    env.set( "ROCKETNET_CLIENT_MAX_MESSAGE_BYTES", "131072" );
+    env.set( "ROCKETNET_SERVER_MAX_MESSAGE_BYTES", "65536" );
 
     rocketnet_client_config_t client;
     rocketnet_server_config_t server;
@@ -157,17 +137,17 @@ static void test_public_message_limit_env_is_endpoint_scoped()
     rocketnet_server_transport_config_t server_transport;
     rocketnet_message_config_t message;
     uint32_t kbps = 0;
-    check( rocketnet_client_config_resolve( &client, true, &client_transport, &message, &kbps ) );
+    check( rocketnet_client_config_resolve( &client, &env.source, &client_transport, &message, &kbps ) );
     check( message.max_message_bytes == 131072 );
     check( !client_transport.max_fragmented_messages || client_transport.max_fragmented_messages == ROCKETNET_DEFAULT_REASSEMBLY_SLOTS );
-    check( rocketnet_server_config_resolve( &server, true, &server_transport, &message, &kbps ) );
+    check( rocketnet_server_config_resolve( &server, &env.source, &server_transport, &message, &kbps ) );
     check( message.max_message_bytes == 65536 );
     check( !server_transport.max_fragmented_messages || server_transport.max_fragmented_messages == ROCKETNET_DEFAULT_REASSEMBLY_SLOTS );
 
-    client_env.set( "131072junk" );
+    env.set( "ROCKETNET_CLIENT_MAX_MESSAGE_BYTES", "131072junk" );
 
-    check( !rocketnet_client_config_resolve( &client, true, &client_transport, &message, &kbps ) );
-    check( rocketnet_server_config_resolve( &server, true, &server_transport, &message, &kbps ) );
+    check( !rocketnet_client_config_resolve( &client, &env.source, &client_transport, &message, &kbps ) );
+    check( rocketnet_server_config_resolve( &server, &env.source, &server_transport, &message, &kbps ) );
     check( message.max_message_bytes == 65536 );
 }
 

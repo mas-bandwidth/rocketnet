@@ -24,9 +24,6 @@
 #include <vector>
 
 #include "test_unit_registry.h"
-#if ROCKETNET_DEV
-#include "test_env_source.h"
-#endif // #if ROCKETNET_DEV
 #include "../sdk/rocketnet_connect_token.h"
 #include "../sdk/rocketnet_base64.h"
 
@@ -2487,7 +2484,7 @@ static void test_message_objects_no_allocation_after_create()
         // caller memory: none at all
 
         mo_net_t * net = mo_net_new();
-        const uint64_t bytes = rocketnet_message_client_required_memory( &config );
+        const uint64_t bytes = rocketnet_message_client_required_memory( &config, 0 );
         check( bytes > 0 );
 
         const size_t alignment = ROCKETNET_ALLOCATION_ALIGNMENT;
@@ -3686,15 +3683,12 @@ REGISTER_UNIT_TEST( test_start_finish_pointer_reaches_the_frame );
 REGISTER_UNIT_TEST( test_receive_view_is_the_record );
 REGISTER_UNIT_TEST( test_release_returns_room );
 
-// the message object reads no environment (sdk/rocketnet_message_server.cpp:146):
-// the public budget variables are
-// ROCKETNET_CLIENT_SEND_KBPS and ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS, read by
-// the public creates (sdk/rocketnet_api.cpp:135 and :173).
-// A ROCKETNET_MESSAGE_* budget variable changes nothing and refuses nothing.
-// The helpers set and unset the unit environment table on every platform.
-
-static void mo_setenv( const char * name, const char * value ) { rocketnet_test_env_setenv( name, value, 1 ); }
-static void mo_unsetenv( const char * name ) { rocketnet_test_env_unsetenv( name ); }
+// the message object takes no environment source: its budgets are its
+// config's. The public budget variables are ROCKETNET_CLIENT_SEND_KBPS and
+// ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS, read by the public creates
+// (rn_client_split and rn_server_split, sdk/rocketnet_api.cpp); that a
+// ROCKETNET_MESSAGE_* budget variable changes nothing there is
+// test_config_env_per_client_send_kbps_is_the_server_budget.
 
 static void test_send_budget_message_env_is_not_read()
 {
@@ -3702,9 +3696,6 @@ static void test_send_budget_message_env_is_not_read()
     mo_config( &config );
     config.client_send_kbps = 250;
     config.server_send_kbps = 4000;
-
-    mo_setenv( "ROCKETNET_MESSAGE_CLIENT_SEND_KBPS", "fast" );
-    mo_setenv( "ROCKETNET_MESSAGE_SERVER_SEND_KBPS", "-1" );
 
     {
         mo_pair_t pair;
@@ -3714,9 +3705,6 @@ static void test_send_budget_message_env_is_not_read()
         check( mo_server_slot( &pair, 0 )->send_budget_enabled == 1 );
         mo_pair_teardown( &pair );
     }
-
-    mo_unsetenv( "ROCKETNET_MESSAGE_CLIENT_SEND_KBPS" );
-    mo_unsetenv( "ROCKETNET_MESSAGE_SERVER_SEND_KBPS" );
 }
 
 // ---------------------------------------------------------------------------
@@ -4878,3 +4866,84 @@ static void test_region_reset_keeps_payload_bytes()
     check( (uint64_t) small_ring + small_store < (uint64_t) large_ring + large_store );
 }
 REGISTER_UNIT_TEST( test_region_reset_keeps_payload_bytes );
+
+#if ROCKETNET_DEV
+// ---------------------------------------------------------------------------
+// destroy before the owned transport has stopped: an error line and one
+// counted misuse, then destroy stops the transport itself, steps it until it
+// reports stopped, destroys it, and frees the object's block. Nothing leaks:
+// the counting allocator's frees match its mallocs. Mutation that must bite:
+// return from destroy while the transport runs; the link is never destroyed
+// and the block is never freed.
+// ---------------------------------------------------------------------------
+
+static int mo_early_stops = 0;
+static int mo_early_updates_after_stop = 0;
+static int mo_early_destroys = 0;
+
+static void mo_early_update( void * transport, double time )
+{
+    if ( mo_early_stops > 0 )
+        mo_early_updates_after_stop++;
+    mo_update( transport, time );
+}
+static void mo_early_stop( void * ) { mo_early_stops++; }
+static bool mo_early_stopped( const void * ) { return mo_early_updates_after_stop >= 1; }
+static void mo_early_destroy( void * ) { mo_early_destroys++; }
+
+static void test_message_object_destroy_before_stop_finishes_the_shutdown()
+{
+    check( rocketnet_test_loopback_hub_release() );
+    rocketnet_term();
+    check( rocketnet_init( NULL, mo_malloc, mo_free ) == ROCKETNET_STATUS_OK );
+
+    {
+        rocketnet_message_config_t config;
+        mo_config( &config );
+
+        mo_net_t * net = mo_net_new();
+        rn_message_link_t link = mo_link( mo_net_client( net, 0 ) );
+        link.update = mo_early_update;
+        link.stop = mo_early_stop;
+        link.stopped = mo_early_stopped;
+        link.destroy = mo_early_destroy;
+
+        mo_early_stops = 0;
+        mo_early_updates_after_stop = 0;
+        mo_early_destroys = 0;
+
+        const uint64_t mallocs = mo_mallocs;
+        const uint64_t frees = mo_frees;
+        rn_message_object_t * object = rn_message_object_create( NULL, &link, 0, 1, &config, NULL, 0, ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, MO_T0 );
+        check( object != NULL );
+        check( mo_mallocs > mallocs );
+
+        const uint64_t misuse = rocketnet_api_misuse_count();
+        rn_message_object_destroy( object );
+
+        check( rocketnet_api_misuse_count() == misuse + 1 );
+        check( mo_early_stops == 1 );
+        check( mo_early_updates_after_stop == 1 );
+        check( mo_early_destroys == 1 );
+        check( mo_mallocs - mallocs == mo_frees - frees );
+
+        // a destroy after the stop completed is no misuse
+
+        mo_early_stops = 0;
+        mo_early_destroys = 0;
+        object = rn_message_object_create( NULL, &link, 0, 1, &config, NULL, 0, ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, MO_T0 );
+        check( object != NULL );
+        rn_message_object_destroy( object );
+        check( rocketnet_api_misuse_count() == misuse + 1 );
+        check( mo_early_stops == 0 );
+        check( mo_early_destroys == 1 );
+
+        mo_net_free( net );
+    }
+
+    check( rocketnet_test_loopback_hub_release() );
+    rocketnet_term();
+    check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
+}
+REGISTER_UNIT_TEST( test_message_object_destroy_before_stop_finishes_the_shutdown );
+#endif // #if ROCKETNET_DEV

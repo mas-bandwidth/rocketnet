@@ -181,7 +181,12 @@ int main( void )
         rocketnet_client_network_simulator( client, 20, 35, 0, 0 );
     }
 
-    if ( !client || client_status != ROCKETNET_STATUS_OK || rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
+    if ( client && client_status == ROCKETNET_STATUS_OK )
+    {
+        client_status = rocketnet_client_connect( client, connect_token );
+    }
+
+    if ( !client || client_status != ROCKETNET_STATUS_OK )
     {
         printf( "FAIL: client create/connect: %s\n", rocketnet_status_name( client_status ) );
         rn_cli_client_stop_and_destroy( client, 1000.0 );

@@ -38,35 +38,6 @@ struct rocketnet_encryption_map_t
 };
 
 #if ROCKETNET_DEV
-static uint64_t rocketnet_dev_session_sequence_start_from_env( void )
-{
-    char text[64];
-    const int found = rocketnet_platform_getenv( "ROCKETNET_DEV_SESSION_SEQUENCE_START", text, sizeof( text ) );
-    if ( found == 0 || ( found == 1 && text[0] == '\0' ) )
-        return 1;
-
-    char * end = NULL;
-    errno = 0;
-    const unsigned long long parsed = found == 1 ? strtoull( text, &end, 0 ) : 0;
-    if ( found != 1 || end == text || *end != '\0' || errno != 0 || text[0] == '-' ||
-         parsed == 0 || parsed > ROCKETNET_DEV_SESSION_SEQUENCE_START_MAX )
-    {
-        rocketnet_error( "ROCKETNET_DEV_SESSION_SEQUENCE_START=\"%s\" refused: expected 1 .. 2^62; using 1", text );
-        return 1;
-    }
-
-    return (uint64_t) parsed;
-}
-
-uint64_t rocketnet_dev_session_sequence_start( void )
-{
-    // one read per process, at the first caller; a function-local static is
-    // initialized once even when two threads create at once
-
-    static const uint64_t start = rocketnet_dev_session_sequence_start_from_env();
-    return start;
-}
-
 // the sequence-taken seam (sdk/rocketnet_test_seams.h): per thread, so a
 // case that installs it touches no other thread's sends
 

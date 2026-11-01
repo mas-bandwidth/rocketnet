@@ -222,8 +222,9 @@ static rocketnet_loopback_endpoint_t * loopback_find_destination( rocketnet_loop
     // the endpoint a datagram reaches: one bound to this address, or to the
     // wildcard of this family, on this port. an IPv4 datagram also reaches a
     // dual-stack endpoint bound to the IPv6 wildcard on that port. Create refuses
-    // a second endpoint of one family on one port, so each is one lookup in
-    // hub->bound.
+    // a second endpoint of one family on one port, and any IPv4 endpoint on a
+    // dual-stack endpoint's port, so each is one lookup in hub->bound and an
+    // IPv4 datagram has one destination.
 
     if ( to.type != ROCKETNET_ADDRESS_IPV4 && to.type != ROCKETNET_ADDRESS_IPV6 )
         return NULL;
@@ -476,11 +477,24 @@ static void * loopback_create( rocketnet_loopback_hub_t * hub, rocketnet_address
 
     const int num_endpoints = loopback_num_endpoints( hub );
 
+    // one endpoint per family and port, and an endpoint bound to the IPv6
+    // wildcard is dual stack (loopback_find_destination), so it shares its port
+    // with no IPv4 endpoint: a bind either way round is refused, as a dual-stack
+    // socket's bind fails with EADDRINUSE
+
     for ( int i = 0; i < num_endpoints; ++i )
     {
         rocketnet_loopback_endpoint_t & e = hub->endpoints[i];
-        if ( e.live && e.bind.port == bind->port && e.bind.type == bind->type )
+        if ( !e.live || e.bind.port != bind->port )
+            continue;
+        if ( e.bind.type == bind->type )
             return NULL;
+        const rocketnet_address_t & ipv6 = e.bind.type == ROCKETNET_ADDRESS_IPV6 ? e.bind : *bind;
+        if ( loopback_is_wildcard( ipv6 ) )
+        {
+            rocketnet_warn( "loopback transport refused a bind: port %d is held by a dual-stack endpoint or by an IPv4 endpoint a dual-stack bind would shadow", (int) bind->port );
+            return NULL;
+        }
     }
 
     int slot = -1;
@@ -730,7 +744,7 @@ static int loopback_client_receive( void * transport, rocketnet_address_t * from
 static const rocketnet_server_transport_io_operations_t loopback_server_operations = {
     ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE, loopback_server_create, loopback_destroy, loopback_stop, loopback_stopped,
     NULL, NULL, NULL, NULL, NULL, loopback_server_send_batch, loopback_server_receive_batch,
-    NULL, NULL, NULL, NULL, NULL, loopback_send_failures, loopback_server_send_batch_shutdown
+    NULL, NULL, NULL, NULL, NULL, loopback_send_failures, loopback_server_send_batch_shutdown, NULL, NULL
 };
 
 // no connect: the loopback router is the hub shared by every endpoint, with

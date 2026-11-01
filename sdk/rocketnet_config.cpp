@@ -49,11 +49,7 @@ void rocketnet_client_transport_default_config( struct rocketnet_client_transpor
     if ( !rocketnet_api_null_guard( config ) )
         return;
 
-    struct rocketnet_client_transport_config_t defaults;
-    rocketnet_client_transport_default_config_current( &defaults );
-
-    memset( config, 0, sizeof( *config ) );
-    memcpy( config, &defaults, ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_PRE_SIMULATOR );
+    rocketnet_client_transport_default_config_current( config );
 }
 
 void rocketnet_server_transport_default_config_current( struct rocketnet_server_transport_config_t * config )
@@ -67,11 +63,7 @@ void rocketnet_server_transport_default_config( struct rocketnet_server_transpor
     if ( !rocketnet_api_null_guard( config ) )
         return;
 
-    struct rocketnet_server_transport_config_t defaults;
-    rocketnet_server_transport_default_config_current( &defaults );
-
-    memset( config, 0, sizeof( *config ) );
-    memcpy( config, &defaults, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1 );
+    rocketnet_server_transport_default_config_current( config );
 }
 
 void rocketnet_message_default_config( struct rocketnet_message_config_t * config )
@@ -328,6 +320,18 @@ int rocketnet_message_validate_config_ex( const struct rocketnet_message_config_
         return 0;
     }
 
+    // the resend reserve the region sizes for the send rate and the longest
+    // resend delay: past 32-bit descriptor, chunk or span sizes, the region
+    // layout refuses it, so validation refuses it too
+
+    rn_region_reserve_sizes_t reserve_sizes;
+    if ( !rn_region_reserve_sizes( config, &reserve_sizes ) )
+    {
+        if ( status )
+            *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
+        return 0;
+    }
+
     if ( status )
         *status = ROCKETNET_STATUS_OK;
 
@@ -527,8 +531,9 @@ static void rocketnet_config_field_to_string( const void * config, const struct 
     }
 }
 
-bool rocketnet_config_apply_env_uint64( const char * transport_name, const char * field_name, uint64_t * out )
+bool rocketnet_config_apply_env_uint64( const struct rocketnet_env_source_t * env, const char * transport_name, const char * field_name, uint64_t * out )
 {
+    rocketnet_assert( env );
     rocketnet_assert( transport_name );
     rocketnet_assert( field_name );
     rocketnet_assert( out );
@@ -541,7 +546,7 @@ bool rocketnet_config_apply_env_uint64( const char * transport_name, const char 
     }
 
     char value[ROCKETNET_PLATFORM_GETENV_MAX_BYTES];
-    const int found = rocketnet_platform_getenv( env_name, value, sizeof( value ) );
+    const int found = rocketnet_env_get( env, env_name, value, sizeof( value ) );
     if ( found < 0 )
     {
         rocketnet_error( "%s config could not parse %s as an unsigned 64 bit integer: longer than %d characters", transport_name, env_name, (int) sizeof( value ) - 1 );
@@ -696,8 +701,9 @@ static bool rocketnet_config_apply_env_value( const char * transport_name, void 
     return true;
 }
 
-bool rocketnet_config_apply_env( const char * transport_name, void * config, const struct rocketnet_config_field_t * fields, int num_fields )
+bool rocketnet_config_apply_env( const struct rocketnet_env_source_t * env, const char * transport_name, void * config, const struct rocketnet_config_field_t * fields, int num_fields )
 {
+    rocketnet_assert( env );
     rocketnet_assert( transport_name );
     rocketnet_assert( config );
     rocketnet_assert( fields );
@@ -716,7 +722,7 @@ bool rocketnet_config_apply_env( const char * transport_name, void * config, con
         }
 
         char value[ROCKETNET_PLATFORM_GETENV_MAX_BYTES];
-        const int found = rocketnet_platform_getenv( env_name, value, sizeof( value ) );
+        const int found = rocketnet_env_get( env, env_name, value, sizeof( value ) );
         if ( found == 0 )
             continue;
 

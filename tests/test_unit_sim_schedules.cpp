@@ -1013,6 +1013,42 @@ static void test_simulator_bitmap_membership_generation_and_bounds()
 
 // ---------------------------------------------------------------------------
 
+// A pattern change on a live link: the packets the reverse window holds leave
+// reversed at the call, as a full window's do, never vanish.
+static void test_simulator_patterns_change_releases_the_held_window()
+{
+    struct rocketnet_network_simulator_t * sim = rocketnet_network_simulator_create( NULL, 16, 1 );
+    rocketnet_unit_check( sim != NULL );
+    rocketnet_unit_check( rocketnet_network_simulator_patterns( sim, 0, 4 ) );
+
+    struct rocketnet_address_t from;
+    struct rocketnet_address_t to;
+    rocketnet_unit_check( rocketnet_address_parse( &from, "198.51.100.10:10000" ) );
+    rocketnet_unit_check( rocketnet_address_parse( &to, "198.51.100.20:10000" ) );
+
+    for ( int i = 0; i < 3; i++ )
+    {
+        const uint8_t byte = (uint8_t) ( 0x40 + i );
+        rocketnet_network_simulator_send( sim, &from, &to, &byte, 1, 1.0 );
+    }
+
+    uint8_t received[ROCKETNET_RECEIVE_CEILING];
+    struct rocketnet_address_t received_from;
+    rocketnet_unit_check( rocketnet_network_simulator_receive( sim, &to, 100.0, &received_from, received ) == 0 );
+
+    rocketnet_unit_check( rocketnet_network_simulator_patterns( sim, 0, 0 ) );
+
+    for ( int i = 2; i >= 0; i-- )
+    {
+        rocketnet_unit_check( rocketnet_network_simulator_receive( sim, &to, 100.0, &received_from, received ) == 1 );
+        rocketnet_unit_check( received[0] == (uint8_t) ( 0x40 + i ) );
+    }
+    rocketnet_unit_check( rocketnet_network_simulator_receive( sim, &to, 100.0, &received_from, received ) == 0 );
+
+    rocketnet_network_simulator_destroy( sim );
+}
+
+REGISTER_UNIT_TEST( test_simulator_patterns_change_releases_the_held_window );
 REGISTER_UNIT_TEST( test_sim_schedule_final_fragment_first );
 REGISTER_UNIT_TEST( test_sim_schedule_batch_cap );
 REGISTER_UNIT_TEST( test_sim_schedule_same_tick_slot_reuse );

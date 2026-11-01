@@ -1,18 +1,8 @@
 # fleet-runner lint exceptions. Format: <workflow> <job> <TYPE> <reason>
-#   DISABLED   the job/rows carry `if: false` + a `# DISABLED:` comment
+#   DISABLED   the job/rows carry `if: false` + a `# DISABLED:` comment; a row
+#              for a live job, or for a job that does not exist, is refused
 #   GUEST      an install inside a VM the job boots
 # `<job> *` covers every job in the workflow.
 
-ci.yml build-and-test DISABLED darwin runner not registered for this repository; owed: a darwin runner registered for this repository
-ci.yml happy-path DISABLED darwin runner not registered for this repository; owed: a darwin runner registered for this repository
-ci.yml platform-selftests DISABLED darwin runner not registered for this repository; owed: a darwin runner registered for this repository
-ci.yml build-and-test-windows DISABLED owed: the Windows fleet machine
-nightly.yml build-and-test-windows-debug DISABLED no Windows fleet runner registered for this repository; owed: the Windows fleet machine
-nightly.yml windows-transport-extension DISABLED no Windows fleet runner registered for this repository; owed: the Windows fleet machine
-nightly-frame-budget.yml macos-frame-budget DISABLED no darwin fleet runner registered for this repository; owed: a darwin runner registered for this repository
-nightly-frame-budget.yml windows-frame-budget DISABLED no Windows fleet runner registered for this repository; owed: the Windows fleet machine
-nightly-examples.yml examples-macos DISABLED no darwin fleet runner registered for this repository; owed: a darwin runner registered for this repository
 nightly-examples.yml examples-windows DISABLED no Windows fleet runner registered for this repository; owed: the Windows fleet machine
-nightly-soak.yml soak-macos DISABLED no darwin fleet runner registered for this repository; owed: a darwin runner registered for this repository
-nightly-soak.yml soak-windows DISABLED no Windows fleet runner registered for this repository; owed: the Windows fleet machine
 nightly-bigendian-system.yml bigendian-system GUEST apt install inside the s390x guest the job boots

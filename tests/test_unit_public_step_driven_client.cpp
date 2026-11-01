@@ -18,7 +18,6 @@
 #include "../sdk/rocketnet_connect_token.h"
 #include "../sdk/rocketnet_base64.h"
 #include "fake_client_driver.h"
-#include "portable_crt.h"
 #include "../sdk/rocketnet.h"
 #include "../sdk/rocketnet_config.h"
 #include "rocketnet_client_io.h"       // refusal fixture for a transport with no non-blocking step
@@ -221,38 +220,23 @@ static void test_public_step_driven_client_refused_on_a_threaded_only_transport(
 
 REGISTER_UNIT_TEST( test_public_step_driven_client_refused_on_a_threaded_only_transport );
 
-static int public_step_setenv( const char * name, const char * value )
-{
-    return rocketnet_test_env_setenv( name, value, 1 );
-}
-
-static int public_step_unsetenv( const char * name )
-{
-    return rocketnet_test_env_unsetenv( name );
-}
-
 static void test_public_step_driven_client_env_selects_the_mode()
 {
-    char saved[64] = {};
-    const bool present = rocketnet_test_env_getenv( "ROCKETNET_CLIENT_STEP_DRIVEN", saved, sizeof( saved ) ) && saved[0] != '\0';
+    rocketnet_test_env_t env;
 
     rocketnet_client_transport_config_t config;
     int num_fields = 0;
     const struct rocketnet_config_field_t * fields = rocketnet_client_transport_config_fields( &num_fields );
-    check( public_step_setenv( "ROCKETNET_CLIENT_STEP_DRIVEN", "1" ) == 0 );
+    env.set( "ROCKETNET_CLIENT_STEP_DRIVEN", "1" );
 
     rocketnet_client_transport_default_config( &config );
-    check( rocketnet_config_apply_env( "client", &config, fields, num_fields ) );
+    check( rocketnet_config_apply_env( &env.source, "client", &config, fields, num_fields ) );
     check( config.step_driven == 1 );
-    check( public_step_setenv( "ROCKETNET_CLIENT_STEP_DRIVEN", "0" ) == 0 );
+    env.set( "ROCKETNET_CLIENT_STEP_DRIVEN", "0" );
 
     rocketnet_client_transport_default_config( &config );
-    check( rocketnet_config_apply_env( "client", &config, fields, num_fields ) );
+    check( rocketnet_config_apply_env( &env.source, "client", &config, fields, num_fields ) );
     check( config.step_driven == 0 );
-    if ( present )
-        check( public_step_setenv( "ROCKETNET_CLIENT_STEP_DRIVEN", saved ) == 0 );
-    else
-        check( public_step_unsetenv( "ROCKETNET_CLIENT_STEP_DRIVEN" ) == 0 );
 }
 
 REGISTER_UNIT_TEST( test_public_step_driven_client_env_selects_the_mode );

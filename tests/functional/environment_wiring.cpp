@@ -101,7 +101,19 @@ void rocketnet_test_real_environment_dev_session_sequence_start()
 {
     rocketnet_real_environment_guard_t environment( "ROCKETNET_DEV_SESSION_SEQUENCE_START" );
     environment.set( "4294967294" );
+
+    // read at init: the value the library holds changes only across an init
+
+    rocketnet_check( rocketnet_term() == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
     rocketnet_check( rocketnet_dev_session_sequence_start() == UINT64_C( 4294967294 ) );
+
+    environment.clear();
+    rocketnet_check( rocketnet_dev_session_sequence_start() == UINT64_C( 4294967294 ) );
+    rocketnet_check( rocketnet_term() == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_dev_session_sequence_start() == 1 );
+    rocketnet_functional_restore_log_function();
 }
 
 void rocketnet_test_real_environment_log_level_before_init()
@@ -204,5 +216,36 @@ void rocketnet_test_real_environment_server_ipv4_address()
     char address[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
     rocketnet_check( rocketnet_server_ipv4_address( server, address, sizeof( address ) ) );
     rocketnet_check( strncmp( address, "192.0.2.55:", strlen( "192.0.2.55:" ) ) == 0 );
+    rn_cli_server_stop_and_destroy( server );
+}
+
+// The public create resolves the process environment once: a variable changed
+// between create and start has no effect. The pin set after create names no
+// transport, so a start that read the environment again would refuse.
+
+void rocketnet_test_real_environment_changed_after_create_has_no_effect()
+{
+    rocketnet_real_environment_guard_t max_clients( "ROCKETNET_SERVER_MAX_CLIENTS" );
+    rocketnet_real_environment_guard_t transport( "ROCKETNET_SERVER_TRANSPORT" );
+    max_clients.clear();
+    transport.set( "portable" );
+
+    rocketnet_server_config_t config;
+    rocketnet_check( rocketnet_server_default_config( &config ) == ROCKETNET_STATUS_OK );
+    config.protocol_id = 1;
+    config.max_clients = 1;
+    memset( config.backend_public_key, 0x42, sizeof( config.backend_public_key ) );
+
+    enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
+    rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &config, &status );
+    rocketnet_check( server != NULL );
+    rocketnet_check( status == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_server_max_clients( server ) == 1 );
+
+    max_clients.set( "2" );
+    transport.set( "no-such-transport" );
+
+    rocketnet_check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_server_max_clients( server ) == 1 );
     rn_cli_server_stop_and_destroy( server );
 }

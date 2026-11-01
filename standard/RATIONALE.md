@@ -362,7 +362,9 @@ is that they cannot both be on the same server.*
 fresh salt and ephemeral keypair for each attempt. The server chooses a fresh session
 nonce and ephemeral keypair when it creates a mapping. A repeated request for an
 existing mapping gets the stored challenge; it does not recreate the mapping or reset
-its sending sequence.
+its sending sequence. Only a request for another token, under another salt, that passes
+every check including the signature replaces a half-open mapping, and the replacement
+draws a fresh nonce and keypair like any new mapping.
 
 [RN-1 t7 Key schedule](TRANSPORT.md#t7)
 **Fresh randomness is a probabilistic safeguard, not proof that a collision is
@@ -757,10 +759,13 @@ carrying a passing filter value and a zero type byte, making the server a packet
 reflector for garbage and spending a hash and a system call on every piece of it.
 Everything below it is expensive — the used-token lookup hashes 576 bytes, and the three
 asymmetric operations follow — so nothing below may run for an address that has not
-answered. * **A server should bound the post-cookie handshake work it performs in one
-update: at most 16 connection requests whose cookie validated, per server, per update by
-default.** This check sits after the cookie validates and before the used-token lookup
-and the signature verify, so a request past the budget spends no asymmetric work. A
+answered. * **A server should bound the handshake work it performs in one update: at
+most 16 connection requests reaching the signature verify, per server, per update by
+default.** This check sits after the cheap rungs (the used-token lookup, the
+failed-signature budget, the claim and the two capacities) and immediately before the
+signature verify, so a request past the budget spends no asymmetric work, and a request
+the cheap rungs refuse spends no budget: a source past its failed-signature budget,
+refused at no cost to itself, cannot keep the budget full and starve honest requests. A
 refused request sees no answer, and the server increments
 `CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED`; the client sends its request again at
 its send rate, so a burst larger than the budget is spread across updates rather than
@@ -814,6 +819,18 @@ are generated at the send rate for as long as the client is connected, so the an
 repeats anyway. Silence is reserved for invalid traffic. When adding any new exchange,
 this invariant is part of its design: the response must be repeatable, and the state
 that repeats it must live somewhere.
+
+[RN-1 t12 Handshake: server](TRANSPORT.md#t12)
+**A new token replaces a stale half-open mapping; nothing less does.** An attacker on
+the path can capture a client's request and, within the cookie's life, replay it from
+the client's own address after that client's session has ended. The replay plants a
+half-open mapping, and if the stored challenge answered every later request from that
+address, the client's reconnect with a fresh token would get a challenge it cannot open
+until the handshake deadline removed the mapping. So a request for another token under
+another salt is treated as a new attempt and goes down the whole ladder. It replaces the
+mapping only once its signature has verified and its token is bound to no address, so a
+forged request cannot evict a handshake in flight, and neither can the replay of a token
+that has already connected. It pays the handshake work budget like any other verify.
 
 [RN-1 t12 Handshake: server](TRANSPORT.md#t12)
 **Half-open state, and the two deadlines that bound it.** A handshake that is started

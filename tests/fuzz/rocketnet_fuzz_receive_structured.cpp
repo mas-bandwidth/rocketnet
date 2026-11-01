@@ -144,9 +144,7 @@ extern "C" int LLVMFuzzerInitialize( int * argc, char *** argv )
     char seed_dir[1024];
     if ( rocketnet_test_getenv( "ROCKETNET_FUZZ_SEED_DIR", seed_dir, sizeof( seed_dir ) ) && seed_dir[0] != '\0' )
     {
-        if ( !rocketnet_fuzz_receive_generate_seed_dir( seed_dir ) )
-            return 1;
-        exit( 0 );
+        exit( rocketnet_fuzz_receive_generate_seed_dir( seed_dir ) ? 0 : 1 );
     }
 
     return 0;

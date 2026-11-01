@@ -30,7 +30,6 @@
 #include "test_unit_registry.h"
 #include "../sdk/rocketnet_connect_token.h"
 #include "../sdk/rocketnet_base64.h"
-#include "portable_crt.h"
 
 #include "rocketnet_ack.h"
 #include "rocketnet_internal.h"
@@ -527,9 +526,7 @@ static void sequence_burn_run( int side, int kind, bool burn, const int * contro
 
 static void sequence_burn_print( const char * name, const struct sequence_burn_measures_t * m )
 {
-    char burn_print[256];
-    if ( !rocketnet_test_getenv( "ROCKETNET_SEQUENCE_BURN_PRINT", burn_print, sizeof( burn_print ) ) )
-        return;
+#if defined( ROCKETNET_SEQUENCE_BURN_PRINT )
     printf( "BURN %-22s sent=%d refused=%d acked=%d delivered=%d refusal_ctr=%llu lease_full=%llu ack_unknown=%llu "
             "batch_full=%llu history_lost=%llu rx_already=%llu rx_did_not_open=%llu rx_delivered=%llu "
             "client_rtt=%.3f server_rtt=%.3f client_loss=%.4f server_loss=%.4f\n",
@@ -539,6 +536,10 @@ static void sequence_burn_print( const char * name, const struct sequence_burn_m
             (unsigned long long) m->receiver_already, (unsigned long long) m->receiver_did_not_open,
             (unsigned long long) m->receiver_delivered,
             (double) m->client_rtt, (double) m->server_rtt, (double) m->client_loss, (double) m->server_loss );
+#else
+    (void) name;
+    (void) m;
+#endif // #if defined( ROCKETNET_SEQUENCE_BURN_PRINT )
 }
 
 static void sequence_burn_compare( int side, int kind, const char * name )
@@ -1019,14 +1020,16 @@ static void sequence_burn_message_run( int side, bool burn, struct sequence_burn
 
 static void sequence_burn_message_print( const char * name, const struct sequence_burn_message_measures_t * m )
 {
-    char burn_print[256];
-    if ( !rocketnet_test_getenv( "ROCKETNET_SEQUENCE_BURN_PRINT", burn_print, sizeof( burn_print ) ) )
-        return;
+#if defined( ROCKETNET_SEQUENCE_BURN_PRINT )
     printf( "BURN %-22s reliable_sent=%d reliable_received=%d large_sent=%d large_received=%d in_order=%d layer_refused=%d "
             "ring_full=%llu resent=%llu duplicate=%llu srtt=%.6f rttvar=%.6f resend_delay=%.6f\n",
             name, m->reliable_sent, m->reliable_received, m->large_sent, m->large_received, m->reliable_in_order,
             m->layer_refused, (unsigned long long) m->ring_full, (unsigned long long) m->resent,
             (unsigned long long) m->duplicate, m->srtt, m->rttvar, m->resend_delay );
+#else
+    (void) name;
+    (void) m;
+#endif // #if defined( ROCKETNET_SEQUENCE_BURN_PRINT )
 }
 
 static void sequence_burn_message_compare( int side, const char * name )

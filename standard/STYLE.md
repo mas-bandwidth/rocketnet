@@ -261,7 +261,8 @@ constant expression over the real sdk headers (or libsodium's), and the value
 as the document writes it. A configuration default is pinned through the
 checker's names for the sdk's configuration tables:
 `rn_pin_server_default_<field>`, `rn_pin_client_default_<field>` and
-`rn_pin_message_default_<field>`. An `#include` comment line adds a header to
+`rn_pin_message_default_<field>`, and an integer field's valid range through
+`rn_pin_<tag>_min_<field>` and `rn_pin_<tag>_max_<field>`. An `#include` comment line adds a header to
 the translation unit the checker generates. The checker compiles one
 translation unit that prints every pin's expression, and fails when the
 compiler's value, the pin file's value and the document's cell are not all
@@ -269,7 +270,8 @@ equal, when a pinned row is missing from its document, and when a document
 row with a value has no pin.
 
 A number with no sdk expression is a finding, never a pinned literal and
-never a declaration: the writer reports it, names the sdk constant it needs,
+never a declaration (the checker fails a pin expression that names no
+`ROCKETNET_`, `rn_pin_`, `crypto_`, `sodium_` or `randombytes_` identifier): the writer reports it, names the sdk constant it needs,
 and leaves the section pending until the sdk names the value. There is no
 unpinned row; the checker fails every `#unpinned` line in a pin file.
 

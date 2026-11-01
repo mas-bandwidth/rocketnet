@@ -10,9 +10,7 @@
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
-#include "test_env_source.h"
 #include "fake_client_driver.h"
-#include "portable_crt.h"
 
 #include "rocketnet_address.h"
 
@@ -216,41 +214,8 @@ static void fake_disconnect_wake( void * transport )
     (void) transport;
 }
 
-#if ROCKETNET_DEV
-static int fake_disconnect_setenv( const char * name, const char * value )
-{
-    return value[0] ? rocketnet_test_env_setenv( name, value, 1 ) : rocketnet_test_env_unsetenv( name );
-}
-#endif // #if ROCKETNET_DEV
-
-// the environment overlays the config's transport name at create; each pin is
-// cleared for the case and restored at its end
-#if ROCKETNET_DEV
-struct fake_disconnect_env_guard_t
-{
-    const char * names[2] = { "ROCKETNET_SERVER_TRANSPORT", "ROCKETNET_CLIENT_TRANSPORT" };
-    char saved[2][256] = {};
-    fake_disconnect_env_guard_t()
-    {
-        for ( int i = 0; i < 2; i++ )
-        {
-            rocketnet_test_env_getenv( names[i], saved[i], sizeof( saved[i] ) );
-            rocketnet_unit_check( fake_disconnect_setenv( names[i], "" ) == 0 );
-        }
-    }
-    ~fake_disconnect_env_guard_t() noexcept( false ) // check() throws under the expected-fail harness
-    {
-        for ( int i = 0; i < 2; i++ )
-            rocketnet_unit_check( fake_disconnect_setenv( names[i], saved[i] ) == 0 );
-    }
-};
-#endif // #if ROCKETNET_DEV
-
 static void test_fake_client_disconnect_burst_keeps_server_address()
 {
-#if ROCKETNET_DEV
-    fake_disconnect_env_guard_t env_guard;
-#endif // #if ROCKETNET_DEV
     rocketnet_quiet( 1 );
     fake_disconnect_record.count = 0;
 

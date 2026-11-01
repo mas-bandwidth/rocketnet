@@ -81,9 +81,9 @@
 #define ROCKETNET_DST_CLOCK_BACK_MAX_MS      5000
 #define ROCKETNET_DST_SKEW_BOUND_SECONDS     0.45
 
-// seq-gap: the send sequence skips past the replay history (1024 packets).
-#define ROCKETNET_DST_SEQ_GAP_MIN            1025
-#define ROCKETNET_DST_SEQ_GAP_MAX            8192
+// seq-gap: the send sequence skips past the replay history (ROCKETNET_HISTORY_PACKETS).
+#define ROCKETNET_DST_SEQ_GAP_MIN            ( ROCKETNET_HISTORY_PACKETS + 1 )
+#define ROCKETNET_DST_SEQ_GAP_MAX            ( 2 * ROCKETNET_HISTORY_PACKETS )
 
 // seq-wrap-31 and seq-wrap-32: every session starts this far below 2^31 or
 // 2^32, so each session's send sequence crosses the boundary early in it.
@@ -279,6 +279,7 @@ struct rocketnet_dst_result_t
     uint64_t schedule_fired;        // times the schedule's fault was applied
     uint64_t clock_back_seen;       // endpoint updates given a time below the one before
     uint64_t max_sequence_jump;     // largest one-step rise of a receiver's highest opened sequence
+    uint64_t sequence_gap;          // seq-gap: the gap applied to the send sequence, 0 if it never fired
     uint64_t burst_sent;            // packets the burst endpoint put on the wire in its one update
     uint64_t burst_received;        // packets the burst endpoint took in its one release step
     uint64_t duplicate_payloads;    // payloads a receiver took twice (the library's duplicate refusals)
@@ -966,7 +967,7 @@ static inline int rocketnet_dst_draw_size( struct rocketnet_dst_substream_t * tr
     else
     {
         lo = 4001;
-        hi = 16384;
+        hi = ROCKETNET_DST_CHECK_MAX_MESSAGE_BYTES;
     }
 
     if ( type == 0 || type == 1 || type == 5 )
@@ -1111,7 +1112,7 @@ static inline void rocketnet_dst_send_one( rocketnet_dst_world_t * w, int index,
     }
 
     const int reliable = ( type == 2 || type == 3 || type == 4 || type == 6 || type == 7 );
-    if ( reliable && rocketnet_dst_check_outstanding( &w->check, session ) > 65536 )
+    if ( reliable && rocketnet_dst_check_outstanding( &w->check, session ) > ROCKETNET_DST_CHECK_OUTSTANDING_CAP )
         return;
 
     uint32_t epoch = 0;
@@ -2012,6 +2013,7 @@ static inline int rocketnet_dst_run_seed_with_options( uint64_t seed,
     result->schedule_fired = w->schedule.fired;
     result->clock_back_seen = w->schedule.clock_back_seen;
     result->max_sequence_jump = w->schedule.max_sequence_jump;
+    result->sequence_gap = ( w->schedule.kind == ROCKETNET_DST_SCHEDULE_SEQ_GAP && w->schedule.fired ) ? w->schedule.amount : 0;
     result->burst_sent = w->schedule.burst_sent;
     result->burst_received = w->schedule.burst_received;
     // what the receivers took twice: the library's duplicate refusals, which

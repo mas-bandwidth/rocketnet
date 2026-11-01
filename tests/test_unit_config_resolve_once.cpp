@@ -6,7 +6,9 @@
 // Each endpoint resolves its configuration once, at create: the defaults, the
 // caller's struct, then the environment, every field, before validation and
 // before memory is sized. Start and connect use that one resolved config and
-// never read the environment again.
+// never read the environment again. Each case owns the environment table its
+// creates read (tests/test_env_source.h); the process environment is the
+// functional tier's (tests/functional/environment_wiring.cpp).
 //
 //   - a variable changed between create and start or connect has no effect on
 //     the started endpoint: a 1-client server started after
@@ -28,7 +30,6 @@
 #if ROCKETNET_DEV
 #include "test_env_source.h"
 #endif // #if ROCKETNET_DEV
-#include "portable_crt.h"
 #include "../sdk/rocketnet.h"
 #include "../sdk/rocketnet_base64.h"
 #include "../sdk/rocketnet_config.h"
@@ -42,9 +43,6 @@
 #define check rocketnet_unit_check
 #if ROCKETNET_DEV
 #define RESOLVE_ONCE_PROTOCOL 0x2E50C0FFEE0A11CEULL
-
-static void resolve_once_setenv( const char * name, const char * value ) { check( rocketnet_test_env_setenv( name, value, 1 ) == 0 ); }
-static void resolve_once_unsetenv( const char * name ) { check( rocketnet_test_env_unsetenv( name ) == 0 ); }
 
 static const uint8_t resolve_once_filter_a[ROCKETNET_PACKET_FILTER_BYTES] = { 0x5A, 0x5A, 0x5A, 0x5A };
 static const uint8_t resolve_once_filter_b[ROCKETNET_PACKET_FILTER_BYTES] = { 0x6B, 0x6B, 0x6B, 0x6B };
@@ -126,8 +124,8 @@ static void resolve_once_pump( rocketnet_server_t * server, rocketnet_client_t *
     }
 }
 
-// A 1-client server is created; ROCKETNET_SERVER_MAX_CLIENTS=2 is set before
-// start. The started server is the one create sized: one slot, so the second
+// A 1-client server is created; ROCKETNET_SERVER_MAX_CLIENTS=2 is then set in
+// the table its create read, before start. The started server is the one create sized: one slot, so the second
 // client is denied and never connects.
 
 static void test_config_server_env_changed_after_create_has_no_effect()
@@ -136,16 +134,16 @@ static void test_config_server_env_changed_after_create_has_no_effect()
 
     resolve_once_identity_t identity;
     resolve_once_identity( &identity );
-    resolve_once_unsetenv( "ROCKETNET_SERVER_MAX_CLIENTS" );
+    rocketnet_test_env_t env;
 
     rocketnet_server_config_t server_config;
     resolve_once_server_config( &server_config, &identity, 1 );
 
-    rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL );
+    rocketnet_server_t * server = rocketnet_server_create_with_env( NULL, "127.0.0.1:0", NULL, &server_config, &env.source, NULL );
     check( server != NULL );
     check( rocketnet_server_max_clients( server ) == 1 );
 
-    resolve_once_setenv( "ROCKETNET_SERVER_MAX_CLIENTS", "2" );
+    env.set( "ROCKETNET_SERVER_MAX_CLIENTS", "2" );
     check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
     check( rocketnet_server_max_clients( server ) == 1 );
 
@@ -158,7 +156,7 @@ static void test_config_server_env_changed_after_create_has_no_effect()
 
         rocketnet_client_config_t client_config;
         resolve_once_client_config( &client_config );
-        clients[i] = rocketnet_client_create( NULL, &client_config, NULL );
+        clients[i] = rocketnet_client_create_with_env( NULL, &client_config, &env.source, NULL );
         check( clients[i] != NULL );
         check( rocketnet_client_connect( clients[i], token ) == ROCKETNET_STATUS_OK );
 
@@ -183,7 +181,6 @@ static void test_config_server_env_changed_after_create_has_no_effect()
     check( stats.connections_accepted == 1 );
     check( stats.connections_denied_full >= 1 );
 
-    resolve_once_unsetenv( "ROCKETNET_SERVER_MAX_CLIENTS" );
     for ( int i = 0; i < 2; i++ )
     {
         rn_test_client_stop_and_destroy( clients[i] );
@@ -208,23 +205,24 @@ static void test_config_client_env_changed_after_create_has_no_effect()
     char filter_b[16];
     resolve_once_filter_text( resolve_once_filter_a, filter_a, sizeof( filter_a ) );
     resolve_once_filter_text( resolve_once_filter_b, filter_b, sizeof( filter_b ) );
-    resolve_once_setenv( "ROCKETNET_SERVER_PACKET_FILTER", filter_a );
-    resolve_once_setenv( "ROCKETNET_CLIENT_PACKET_FILTER", filter_a );
+    rocketnet_test_env_t env;
+    env.set( "ROCKETNET_SERVER_PACKET_FILTER", filter_a );
+    env.set( "ROCKETNET_CLIENT_PACKET_FILTER", filter_a );
 
     rocketnet_server_config_t server_config;
     resolve_once_server_config( &server_config, &identity, 1 );
 
-    rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL );
+    rocketnet_server_t * server = rocketnet_server_create_with_env( NULL, "127.0.0.1:0", NULL, &server_config, &env.source, NULL );
     check( server != NULL );
     check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
 
     rocketnet_client_config_t client_config;
     resolve_once_client_config( &client_config );
 
-    rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL );
+    rocketnet_client_t * client = rocketnet_client_create_with_env( NULL, &client_config, &env.source, NULL );
     check( client != NULL );
 
-    resolve_once_setenv( "ROCKETNET_CLIENT_PACKET_FILTER", filter_b );
+    env.set( "ROCKETNET_CLIENT_PACKET_FILTER", filter_b );
 
     char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
     resolve_once_token( server, &identity, 0x2000, token );
@@ -236,8 +234,6 @@ static void test_config_client_env_changed_after_create_has_no_effect()
     check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
     check( rocketnet_server_client_connected( server, 0 ) != 0 );
 
-    resolve_once_unsetenv( "ROCKETNET_SERVER_PACKET_FILTER" );
-    resolve_once_unsetenv( "ROCKETNET_CLIENT_PACKET_FILTER" );
     rn_test_client_stop_and_destroy( client );
     rn_test_server_stop_and_destroy( server );
     rocketnet_quiet( 0 );
@@ -250,7 +246,8 @@ REGISTER_UNIT_TEST( test_config_client_env_changed_after_create_has_no_effect );
 static void test_config_client_env_transport_refused_at_create()
 {
     rocketnet_quiet( 1 );
-    resolve_once_setenv( "ROCKETNET_CLIENT_TRANSPORT", "no-such-transport" );
+    rocketnet_test_env_t env;
+    env.set( "ROCKETNET_CLIENT_TRANSPORT", "no-such-transport" );
 
     rocketnet_client_config_t config;
     check( rocketnet_client_default_config( &config ) == ROCKETNET_STATUS_OK );
@@ -258,14 +255,13 @@ static void test_config_client_env_transport_refused_at_create()
     config.loopback_hub = rocketnet_test_loopback_hub();
 
     enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
-    rocketnet_client_t * client = rocketnet_client_create( NULL, &config, &status );
+    rocketnet_client_t * client = rocketnet_client_create_with_env( NULL, &config, &env.source, &status );
     check( client == NULL );
     check( status == ROCKETNET_STATUS_INVALID_TRANSPORT_LIST );
     if ( client )
     {
         rocketnet_client_destroy( client );
     }
-    resolve_once_unsetenv( "ROCKETNET_CLIENT_TRANSPORT" );
     rocketnet_quiet( 0 );
 }
 REGISTER_UNIT_TEST( test_config_client_env_transport_refused_at_create );

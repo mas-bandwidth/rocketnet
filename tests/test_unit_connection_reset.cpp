@@ -5,10 +5,6 @@
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
-#if ROCKETNET_DEV
-#include "test_env_source.h"
-#endif // #if ROCKETNET_DEV
-#include "portable_crt.h"
 
 #include "../sdk/rocketnet.h"
 #include "../sdk/rocketnet_connection_reset.h"
@@ -30,37 +26,6 @@
 #include <stdlib.h>
 #include "rocketnet_config.h"
 #include "loopback_hub.h"
-
-// The loopback pair names the in-memory loopback transport in its transport configs;
-// a caller's ROCKETNET_SERVER_TRANSPORT / ROCKETNET_CLIENT_TRANSPORT pin wins over
-// the struct by design, so a CI leg pinned to a real transport would replace it. Each
-// create sets its pin aside and puts it back, as test_unit_status_server_transport_create_ex.cpp does.
-#if ROCKETNET_DEV
-struct reset_env_pin_t
-{
-    const char * name;
-    bool was_set;
-    char value[256];
-};
-#endif // #if ROCKETNET_DEV
-
-#if ROCKETNET_DEV
-static void reset_env_pin_set_aside( reset_env_pin_t * pin, const char * name )
-{
-    pin->name = name;
-    pin->was_set = rocketnet_test_env_getenv( name, pin->value, sizeof( pin->value ) ) != 0;
-    rocketnet_test_env_unsetenv( name );
-}
-#endif // #if ROCKETNET_DEV
-
-#if ROCKETNET_DEV
-static void reset_env_pin_put_back( const reset_env_pin_t * pin )
-{
-    if ( !pin->was_set )
-        return;
-    rocketnet_test_env_setenv( pin->name, pin->value, 1 );
-}
-#endif // #if ROCKETNET_DEV
 
 #define check rocketnet_unit_check
 
@@ -606,14 +571,7 @@ static rocketnet_message_server_t * reset_loopback_server_create( double now, co
     config.loopback_hub = rocketnet_test_loopback_hub();
 
     int status = -1;
-#if ROCKETNET_DEV
-    reset_env_pin_t pin;
-    reset_env_pin_set_aside( &pin, "ROCKETNET_SERVER_TRANSPORT" );
-#endif // #if ROCKETNET_DEV
     rocketnet_server_transport_t * transport = rocketnet_server_transport_create_current_ex( NULL, "127.0.0.1:0", &config, now, &status );
-#if ROCKETNET_DEV
-    reset_env_pin_put_back( &pin );
-#endif // #if ROCKETNET_DEV
     check( transport && status == ROCKETNET_STATUS_OK );
     rocketnet_server_transport_set_test_timestamp( transport, 1000 );
 
@@ -645,15 +603,8 @@ static rocketnet_message_client_t * reset_loopback_client_create( rocketnet_mess
     snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
     config.loopback_hub = rocketnet_test_loopback_hub();
     config.step_driven = 1;
-#if ROCKETNET_DEV
-    reset_env_pin_t pin;
-    reset_env_pin_set_aside( &pin, "ROCKETNET_CLIENT_TRANSPORT" );
-#endif // #if ROCKETNET_DEV
     rocketnet_client_transport_t * transport = rocketnet_client_transport_create_step_driven_at_timestamp(
         NULL, token, &config, 0.0, 1000, rocketnet_loopback_transport.client, NULL );
-#if ROCKETNET_DEV
-    reset_env_pin_put_back( &pin );
-#endif // #if ROCKETNET_DEV
     check( transport );
 
     rn_message_link_t link;
@@ -918,14 +869,7 @@ static void test_connection_reset_deferred_disconnect_does_not_charge_reused_slo
     server_config.loopback_hub = rocketnet_test_loopback_hub();
 
     int status = -1;
-#if ROCKETNET_DEV
-    reset_env_pin_t pin;
-    reset_env_pin_set_aside( &pin, "ROCKETNET_SERVER_TRANSPORT" );
-#endif // #if ROCKETNET_DEV
     rocketnet_server_transport_t * transport = rocketnet_server_transport_create_current_ex( NULL, "127.0.0.1:0", &server_config, now, &status );
-#if ROCKETNET_DEV
-    reset_env_pin_put_back( &pin );
-#endif // #if ROCKETNET_DEV
     check( transport && status == ROCKETNET_STATUS_OK );
     rocketnet_server_transport_set_test_timestamp( transport, 1000 );
 

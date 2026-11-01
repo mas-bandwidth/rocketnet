@@ -155,7 +155,7 @@ static bool rn_copy_config_string( char * dest, size_t dest_size, const char * s
 // ROCKETNET_CLIENT_SEND_KBPS or ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS, which
 // rn_client_split and rn_server_split resolve for the create
 
-static enum rocketnet_status_t rn_apply_message_and_budget_env( const char * endpoint, struct rocketnet_message_config_t * message, int * kbps, const struct rocketnet_config_field_t * budget_fields )
+static enum rocketnet_status_t rn_apply_message_and_budget_env( const struct rocketnet_env_source_t * env, const char * endpoint, struct rocketnet_message_config_t * message, int * kbps, const struct rocketnet_config_field_t * budget_fields )
 {
     int num_message_fields = 0;
     const struct rocketnet_config_field_t * message_fields = rocketnet_message_config_fields( &num_message_fields );
@@ -164,11 +164,11 @@ static enum rocketnet_status_t rn_apply_message_and_budget_env( const char * end
     {
         if ( strcmp( message_fields[i].name, "client_send_kbps" ) == 0 || strcmp( message_fields[i].name, "server_send_kbps" ) == 0 )
             continue;
-        if ( !rocketnet_config_apply_env( endpoint, message, &message_fields[i], 1 ) )
+        if ( !rocketnet_config_apply_env( env, endpoint, message, &message_fields[i], 1 ) )
             return ROCKETNET_STATUS_CONFIG_ENV_INVALID;
     }
 
-    if ( !rocketnet_config_apply_env( endpoint, kbps, budget_fields, 1 ) )
+    if ( !rocketnet_config_apply_env( env, endpoint, kbps, budget_fields, 1 ) )
         return ROCKETNET_STATUS_CONFIG_ENV_INVALID;
 
     return rocketnet_config_validate( endpoint, kbps, budget_fields, 1 ) ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
@@ -181,7 +181,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_FILTER_VALUE_BYTES == ROCKETNET_PACKET_FILTER
 // development library only: ROCKETNET_DEV_CLIENT_LATENCY_MS and the rest; an
 // unset or empty variable leaves the field, a bad value refuses the create.
 #if ROCKETNET_DEV
-// one variable: found is rocketnet_platform_getenv's answer (1 set, 0 unset,
+// one variable: found is rocketnet_env_get's answer (1 set, 0 unset,
 // -1 too long) and text its value
 
 static bool rn_dev_env_int( const char * name, int found, const char * text, int min_value, int max_value, int * value )
@@ -212,22 +212,24 @@ static bool rn_dev_env_int( const char * name, int found, const char * text, int
 }
 #endif // ROCKETNET_DEV
 
-template <typename transport_config_t> static bool rn_dev_simulator_env( const char * side, transport_config_t * transport )
+template <typename transport_config_t> static bool rn_dev_simulator_env( const struct rocketnet_env_source_t * env, const char * side, transport_config_t * transport )
 {
 #if ROCKETNET_DEV
     char text[64];
 
     if ( side[0] == 'c' )
-        return rn_dev_env_int( "ROCKETNET_DEV_CLIENT_LATENCY_MS", rocketnet_platform_getenv( "ROCKETNET_DEV_CLIENT_LATENCY_MS", text, sizeof( text ) ), text, 0, 60000, &transport->simulated_latency_ms ) &&
-               rn_dev_env_int( "ROCKETNET_DEV_CLIENT_JITTER_MS", rocketnet_platform_getenv( "ROCKETNET_DEV_CLIENT_JITTER_MS", text, sizeof( text ) ), text, 0, 60000, &transport->simulated_jitter_ms ) &&
-               rn_dev_env_int( "ROCKETNET_DEV_CLIENT_PACKET_LOSS_PERCENT", rocketnet_platform_getenv( "ROCKETNET_DEV_CLIENT_PACKET_LOSS_PERCENT", text, sizeof( text ) ), text, 0, 100, &transport->simulated_loss_percent ) &&
-               rn_dev_env_int( "ROCKETNET_DEV_CLIENT_DUPLICATE_PERCENT", rocketnet_platform_getenv( "ROCKETNET_DEV_CLIENT_DUPLICATE_PERCENT", text, sizeof( text ) ), text, 0, 100, &transport->simulated_duplicate_percent );
+        return rn_dev_env_int( "ROCKETNET_DEV_CLIENT_LATENCY_MS", rocketnet_env_get( env, "ROCKETNET_DEV_CLIENT_LATENCY_MS", text, sizeof( text ) ), text, 0, 60000, &transport->simulated_latency_ms ) &&
+               rn_dev_env_int( "ROCKETNET_DEV_CLIENT_JITTER_MS", rocketnet_env_get( env, "ROCKETNET_DEV_CLIENT_JITTER_MS", text, sizeof( text ) ), text, 0, 60000, &transport->simulated_jitter_ms ) &&
+               rn_dev_env_int( "ROCKETNET_DEV_CLIENT_PACKET_LOSS_PERCENT", rocketnet_env_get( env, "ROCKETNET_DEV_CLIENT_PACKET_LOSS_PERCENT", text, sizeof( text ) ), text, 0, 100, &transport->simulated_loss_percent ) &&
+               rn_dev_env_int( "ROCKETNET_DEV_CLIENT_DUPLICATE_PERCENT", rocketnet_env_get( env, "ROCKETNET_DEV_CLIENT_DUPLICATE_PERCENT", text, sizeof( text ) ), text, 0, 100, &transport->simulated_duplicate_percent );
 
-    return rn_dev_env_int( "ROCKETNET_DEV_SERVER_LATENCY_MS", rocketnet_platform_getenv( "ROCKETNET_DEV_SERVER_LATENCY_MS", text, sizeof( text ) ), text, 0, 60000, &transport->simulated_latency_ms ) &&
-           rn_dev_env_int( "ROCKETNET_DEV_SERVER_JITTER_MS", rocketnet_platform_getenv( "ROCKETNET_DEV_SERVER_JITTER_MS", text, sizeof( text ) ), text, 0, 60000, &transport->simulated_jitter_ms ) &&
-           rn_dev_env_int( "ROCKETNET_DEV_SERVER_PACKET_LOSS_PERCENT", rocketnet_platform_getenv( "ROCKETNET_DEV_SERVER_PACKET_LOSS_PERCENT", text, sizeof( text ) ), text, 0, 100, &transport->simulated_loss_percent ) &&
-           rn_dev_env_int( "ROCKETNET_DEV_SERVER_DUPLICATE_PERCENT", rocketnet_platform_getenv( "ROCKETNET_DEV_SERVER_DUPLICATE_PERCENT", text, sizeof( text ) ), text, 0, 100, &transport->simulated_duplicate_percent );
+    return rn_dev_env_int( "ROCKETNET_DEV_SERVER_LATENCY_MS", rocketnet_env_get( env, "ROCKETNET_DEV_SERVER_LATENCY_MS", text, sizeof( text ) ), text, 0, 60000, &transport->simulated_latency_ms ) &&
+           rn_dev_env_int( "ROCKETNET_DEV_SERVER_JITTER_MS", rocketnet_env_get( env, "ROCKETNET_DEV_SERVER_JITTER_MS", text, sizeof( text ) ), text, 0, 60000, &transport->simulated_jitter_ms ) &&
+           rn_dev_env_int( "ROCKETNET_DEV_SERVER_PACKET_LOSS_PERCENT", rocketnet_env_get( env, "ROCKETNET_DEV_SERVER_PACKET_LOSS_PERCENT", text, sizeof( text ) ), text, 0, 100, &transport->simulated_loss_percent ) &&
+           rn_dev_env_int( "ROCKETNET_DEV_SERVER_DUPLICATE_PERCENT", rocketnet_env_get( env, "ROCKETNET_DEV_SERVER_DUPLICATE_PERCENT", text, sizeof( text ) ), text, 0, 100, &transport->simulated_duplicate_percent );
 #else
+    (void) env;
+
     (void) side;
 
     (void) transport;
@@ -246,12 +248,12 @@ static void rn_server_default_config_current( struct rocketnet_server_config_t *
 // connect use, and neither reads the environment again
 // (rocketnet_*_transport_create_resolved).
 
-static bool rn_transport_env( const char * side, void * transport, const struct rocketnet_config_field_t * fields, int num_fields,
+static bool rn_transport_env( const struct rocketnet_env_source_t * env, const char * side, void * transport, const struct rocketnet_config_field_t * fields, int num_fields,
                               uint64_t * memory_budget, enum rocketnet_status_t * failure )
 {
     uint64_t budget = 0;
-    if ( !rocketnet_config_apply_env( side, transport, fields, num_fields ) ||
-         !rocketnet_config_apply_env_uint64( side, "memory_budget_bytes", &budget ) )
+    if ( !rocketnet_config_apply_env( env, side, transport, fields, num_fields ) ||
+         !rocketnet_config_apply_env_uint64( env, side, "memory_budget_bytes", &budget ) )
     {
         if ( failure )
             *failure = ROCKETNET_STATUS_CONFIG_ENV_INVALID;
@@ -265,10 +267,13 @@ static bool rn_transport_env( const char * side, void * transport, const struct 
     return true;
 }
 
-static bool rn_client_split( const struct rocketnet_client_config_t * config, bool read_env,
+static bool rn_client_split( const struct rocketnet_client_config_t * config, const struct rocketnet_env_source_t * env,
                              struct rocketnet_client_transport_config_t * transport, struct rocketnet_message_config_t * message, uint32_t * kbps, enum rocketnet_status_t * failure = NULL,
                              uint64_t * memory_budget = NULL )
 {
+    // env NULL: no environment pass, the struct as given
+    const bool read_env = env != NULL;
+
     struct rocketnet_client_config_t defaults;
 
     if ( !config )
@@ -319,11 +324,11 @@ static bool rn_client_split( const struct rocketnet_client_config_t * config, bo
     {
         int num_fields = 0;
         const struct rocketnet_config_field_t * fields = rocketnet_client_transport_config_fields( &num_fields );
-        if ( !rn_transport_env( "client", transport, fields, num_fields, memory_budget, failure ) )
+        if ( !rn_transport_env( env, "client", transport, fields, num_fields, memory_budget, failure ) )
             return false;
     }
 
-    if ( read_env && !rn_dev_simulator_env( "client", transport ) )
+    if ( read_env && !rn_dev_simulator_env( env, "client", transport ) )
     {
         if ( failure )
             *failure = ROCKETNET_STATUS_CONFIG_ENV_INVALID;
@@ -337,7 +342,7 @@ static bool rn_client_split( const struct rocketnet_client_config_t * config, bo
 #undef RN_COPY
 
     int send_kbps = config->send_kbps;
-    const enum rocketnet_status_t env_status = read_env ? rn_apply_message_and_budget_env( "client", message, &send_kbps, rn_client_budget_fields ) : ROCKETNET_STATUS_OK;
+    const enum rocketnet_status_t env_status = read_env ? rn_apply_message_and_budget_env( env, "client", message, &send_kbps, rn_client_budget_fields ) : ROCKETNET_STATUS_OK;
     if ( env_status != ROCKETNET_STATUS_OK )
     {
         if ( failure )
@@ -364,10 +369,13 @@ static bool rn_client_split( const struct rocketnet_client_config_t * config, bo
     return true;
 }
 
-static bool rn_server_split( const struct rocketnet_server_config_t * config, bool read_env,
+static bool rn_server_split( const struct rocketnet_server_config_t * config, const struct rocketnet_env_source_t * env,
                              struct rocketnet_server_transport_config_t * transport, struct rocketnet_message_config_t * message, uint32_t * kbps, enum rocketnet_status_t * failure = NULL,
                              uint64_t * memory_budget = NULL )
 {
+    // env NULL: no environment pass, the struct as given
+    const bool read_env = env != NULL;
+
     struct rocketnet_server_config_t defaults;
 
     if ( !config )
@@ -393,7 +401,7 @@ static bool rn_server_split( const struct rocketnet_server_config_t * config, bo
     transport->handshakes_per_update = config->handshakes_per_update;
     transport->loopback_hub = config->loopback_hub;
     transport->token_epoch_unix_seconds = config->token_epoch_unix_seconds;
-    if ( read_env && !rn_dev_simulator_env( "server", transport ) )
+    if ( read_env && !rn_dev_simulator_env( env, "server", transport ) )
     {
         if ( failure )
             *failure = ROCKETNET_STATUS_CONFIG_ENV_INVALID;
@@ -432,12 +440,12 @@ static bool rn_server_split( const struct rocketnet_server_config_t * config, bo
     {
         int num_fields = 0;
         const struct rocketnet_config_field_t * fields = rocketnet_server_transport_config_fields( &num_fields );
-        if ( !rn_transport_env( "server", transport, fields, num_fields, memory_budget, failure ) )
+        if ( !rn_transport_env( env, "server", transport, fields, num_fields, memory_budget, failure ) )
             return false;
     }
 
     int send_kbps = config->per_client_send_kbps;
-    const enum rocketnet_status_t env_status = read_env ? rn_apply_message_and_budget_env( "server", message, &send_kbps, rn_server_budget_fields ) : ROCKETNET_STATUS_OK;
+    const enum rocketnet_status_t env_status = read_env ? rn_apply_message_and_budget_env( env, "server", message, &send_kbps, rn_server_budget_fields ) : ROCKETNET_STATUS_OK;
     if ( env_status != ROCKETNET_STATUS_OK )
     {
         if ( failure )
@@ -465,16 +473,16 @@ static bool rn_server_split( const struct rocketnet_server_config_t * config, bo
 }
 
 #if ROCKETNET_DEV
-bool rocketnet_client_config_resolve( const struct rocketnet_client_config_t * config, bool read_env,
+bool rocketnet_client_config_resolve( const struct rocketnet_client_config_t * config, const struct rocketnet_env_source_t * env,
                                       struct rocketnet_client_transport_config_t * transport, struct rocketnet_message_config_t * message, uint32_t * kbps )
 {
-    return rn_client_split( config, read_env, transport, message, kbps );
+    return rn_client_split( config, env, transport, message, kbps );
 }
 
-bool rocketnet_server_config_resolve( const struct rocketnet_server_config_t * config, bool read_env,
+bool rocketnet_server_config_resolve( const struct rocketnet_server_config_t * config, const struct rocketnet_env_source_t * env,
                                       struct rocketnet_server_transport_config_t * transport, struct rocketnet_message_config_t * message, uint32_t * kbps )
 {
-    return rn_server_split( config, read_env, transport, message, kbps );
+    return rn_server_split( config, env, transport, message, kbps );
 }
 #endif // #if ROCKETNET_DEV
 
@@ -1056,18 +1064,18 @@ static enum rocketnet_status_t rn_client_config_valid( const struct rocketnet_cl
     return rocketnet_message_validate_config( message ) != 0 ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
 }
 
-static size_t rn_client_required_memory_current( const struct rocketnet_client_config_t * config )
+static size_t rn_client_required_memory_current( const struct rocketnet_client_config_t * config, const struct rocketnet_env_source_t * env )
 
 {
     struct rocketnet_client_transport_config_t transport;
     struct rocketnet_message_config_t message;
     uint32_t kbps = 0;
-    if ( !rn_client_split( config, true, &transport, &message, &kbps ) )
+    if ( !rn_client_split( config, env, &transport, &message, &kbps ) )
         return 0;
     if ( rn_client_config_valid( &transport, &message ) != ROCKETNET_STATUS_OK )
         return 0;
 
-    const uint64_t connection_bytes = rocketnet_message_client_required_memory( &message );
+    const uint64_t connection_bytes = rocketnet_message_client_required_memory( &message, 0 );
     if ( connection_bytes == 0 )
         return 0;
 
@@ -1091,13 +1099,13 @@ size_t rocketnet_client_required_memory( const struct rocketnet_client_config_t 
     if ( rn_client_config_read( &current, config, &read ) != ROCKETNET_STATUS_OK )
         return 0;
 
-    return rn_client_required_memory_current( read );
+    return rn_client_required_memory_current( read, rocketnet_env_process() );
 }
 
 // proofs/tla/ClientSession.tla Create: a fresh object, DISCONNECTED, with no token
 // and no connection, its resolved config and one memory block.
 
-static struct rocketnet_client_t * rn_client_create_current( void * context, const struct rocketnet_client_config_t * config, void * memory, size_t memory_bytes, enum rocketnet_status_t * status )
+static struct rocketnet_client_t * rn_client_create_current( void * context, const struct rocketnet_client_config_t * config, const struct rocketnet_env_source_t * env, void * memory, size_t memory_bytes, enum rocketnet_status_t * status )
 {
     if ( status )
         *status = ROCKETNET_STATUS_OK;
@@ -1123,7 +1131,7 @@ static struct rocketnet_client_t * rn_client_create_current( void * context, con
     uint32_t kbps = 0;
     uint64_t memory_budget = 0;
     enum rocketnet_status_t failure = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
-    if ( !rn_client_split( config, true, &transport, &message, &kbps, &failure, &memory_budget ) )
+    if ( !rn_client_split( config, env, &transport, &message, &kbps, &failure, &memory_budget ) )
     {
         if ( status )
             *status = failure;
@@ -1140,7 +1148,7 @@ static struct rocketnet_client_t * rn_client_create_current( void * context, con
         return NULL;
     }
 
-    const uint64_t connection_bytes = rocketnet_message_client_required_memory( &message );
+    const uint64_t connection_bytes = rocketnet_message_client_required_memory( &message, 0 );
     if ( connection_bytes == 0 )
     {
         if ( status )
@@ -1203,6 +1211,13 @@ static struct rocketnet_client_t * rn_client_create_current( void * context, con
 
 struct rocketnet_client_t * rocketnet_client_create( void * context, const struct rocketnet_client_config_t * config, enum rocketnet_status_t * status )
 {
+    return rocketnet_client_create_with_env( context, config, rocketnet_env_process(), status );
+}
+
+struct rocketnet_client_t * rocketnet_client_create_with_env( void * context, const struct rocketnet_client_config_t * config, const struct rocketnet_env_source_t * env, enum rocketnet_status_t * status )
+{
+    rocketnet_assert( env );
+
     if ( status )
         *status = ROCKETNET_STATUS_OK;
 
@@ -1217,7 +1232,7 @@ struct rocketnet_client_t * rocketnet_client_create( void * context, const struc
         return NULL;
     }
 
-    return rn_client_create_current( context, read, NULL, 0, status );
+    return rn_client_create_current( context, read, env, NULL, 0, status );
 }
 
 static void rn_client_connection_counts( struct rocketnet_message_client_t * message_client, uint64_t counts[RN_CLIENT_COUNT], struct rocketnet_client_transport_stats_t * transport_stats );
@@ -1740,7 +1755,15 @@ int rocketnet_max_unfragmented_message_bytes( enum rocketnet_reliability_t relia
     memset( &shape, 0, sizeof( shape ) );
     shape.channel = (uint32_t) channel;
 
-    switch ( reliability )
+    // a C caller can pass any int here; the value is read as an int, never as
+    // the enum, so one outside the enumerators is refused below and not
+    // undefined behavior in this C++ translation unit
+
+    static_assert( sizeof( reliability ) == sizeof( int ), "rocketnet_reliability_t is int-sized" );
+    int value = 0;
+    memcpy( &value, &reliability, sizeof( value ) );
+
+    switch ( value )
     {
         case ROCKETNET_RELIABILITY_UNRELIABLE:
         case ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT:
@@ -1997,6 +2020,7 @@ bool rocketnet_server_served_address( const struct rocketnet_server_t * server, 
 {
     if ( !rocketnet_api_null_guard( server ) || !rocketnet_api_null_guard( address ) || address_bytes == 0 )
         return false;
+    address[0] = '\0';
 
     const char * served[2] = { server->address, server->transport.second_public_address };
 
@@ -2005,7 +2029,14 @@ bool rocketnet_server_served_address( const struct rocketnet_server_t * server, 
         struct rocketnet_address_t parsed;
         if ( served[i][0] != '\0' && rocketnet_address_parse( &parsed, served[i] ) && parsed.type == family )
         {
-            rocketnet_copy_string( address, served[i], address_bytes );
+            const size_t length = strlen( served[i] );
+            if ( length + 1 > address_bytes )
+            {
+                rocketnet_error( "served address refused: the buffer is %d bytes, the address needs %d", (int) address_bytes, (int) ( length + 1 ) );
+                return false;
+            }
+
+            memcpy( address, served[i], length + 1 );
             return true;
         }
     }
@@ -2234,13 +2265,13 @@ static enum rocketnet_status_t rn_server_config_valid( const struct rocketnet_se
     return rocketnet_message_validate_config( message ) != 0 ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
 }
 
-static size_t rn_server_required_memory_current( const struct rocketnet_server_config_t * config )
+static size_t rn_server_required_memory_current( const struct rocketnet_server_config_t * config, const struct rocketnet_env_source_t * env )
 
 {
     struct rocketnet_server_transport_config_t transport;
     struct rocketnet_message_config_t message;
     uint32_t kbps = 0;
-    if ( !rn_server_split( config, true, &transport, &message, &kbps ) )
+    if ( !rn_server_split( config, env, &transport, &message, &kbps ) )
     {
         sodium_memzero( &transport, sizeof( transport ) );
         return 0;
@@ -2252,7 +2283,7 @@ static size_t rn_server_required_memory_current( const struct rocketnet_server_c
         return 0;
     }
 
-    const uint64_t running_bytes = rocketnet_message_server_required_memory( &transport, &message );
+    const uint64_t running_bytes = rocketnet_message_server_required_memory( &transport, &message, 0 );
 
     // the peak over the lifecycle: create's one block as the allocator sees
     // it, plus the transport start creates for the candidate it grants; stop
@@ -2280,7 +2311,7 @@ size_t rocketnet_server_required_memory( const struct rocketnet_server_config_t 
     size_t result = 0;
 
     if ( rn_server_config_read( &current, config, &read ) == ROCKETNET_STATUS_OK )
-        result = rn_server_required_memory_current( read );
+        result = rn_server_required_memory_current( read, rocketnet_env_process() );
 
     sodium_memzero( &current, sizeof( current ) );
 
@@ -2294,13 +2325,13 @@ size_t rocketnet_server_required_memory( const struct rocketnet_server_config_t 
 // transport binds; with both, the IPv6 one is the second family on the same
 // port.
 
-static enum rocketnet_status_t rn_server_addresses( const char * ipv4_address, const char * ipv6_address,
+static enum rocketnet_status_t rn_server_addresses( const struct rocketnet_env_source_t * env, const char * ipv4_address, const char * ipv6_address,
                                                     char * primary, size_t primary_bytes, char * second, size_t second_bytes )
 {
     char ipv4_env[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
     char ipv6_env[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
-    const int ipv4_found = rocketnet_platform_getenv( "ROCKETNET_SERVER_IPV4_ADDRESS", ipv4_env, sizeof( ipv4_env ) );
-    const int ipv6_found = rocketnet_platform_getenv( "ROCKETNET_SERVER_IPV6_ADDRESS", ipv6_env, sizeof( ipv6_env ) );
+    const int ipv4_found = rocketnet_env_get( env, "ROCKETNET_SERVER_IPV4_ADDRESS", ipv4_env, sizeof( ipv4_env ) );
+    const int ipv6_found = rocketnet_env_get( env, "ROCKETNET_SERVER_IPV6_ADDRESS", ipv6_env, sizeof( ipv6_env ) );
     if ( ipv4_found < 0 || ipv6_found < 0 )
     {
         rocketnet_error( "server create refused: ROCKETNET_SERVER_IPV%s_ADDRESS is too long", ipv4_found < 0 ? "4" : "6" );
@@ -2361,7 +2392,7 @@ static enum rocketnet_status_t rn_server_addresses( const char * ipv4_address, c
 // proofs/tla/ServerSession.tla Create: STOPPED, no transport bound, the one memory
 // block made.
 
-static struct rocketnet_server_t * rn_server_create_current( void * context, const char * ipv4_address, const char * ipv6_address, const struct rocketnet_server_config_t * config, void * memory, size_t memory_bytes, enum rocketnet_status_t * status )
+static struct rocketnet_server_t * rn_server_create_current( void * context, const char * ipv4_address, const char * ipv6_address, const struct rocketnet_server_config_t * config, const struct rocketnet_env_source_t * env, void * memory, size_t memory_bytes, enum rocketnet_status_t * status )
 {
     if ( status )
         *status = ROCKETNET_STATUS_OK;
@@ -2384,7 +2415,7 @@ static struct rocketnet_server_t * rn_server_create_current( void * context, con
 
     char address[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
     char second_address[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
-    const enum rocketnet_status_t address_status = rn_server_addresses( ipv4_address, ipv6_address, address, sizeof( address ), second_address, sizeof( second_address ) );
+    const enum rocketnet_status_t address_status = rn_server_addresses( env, ipv4_address, ipv6_address, address, sizeof( address ), second_address, sizeof( second_address ) );
     if ( address_status != ROCKETNET_STATUS_OK )
     {
         if ( status )
@@ -2398,7 +2429,7 @@ static struct rocketnet_server_t * rn_server_create_current( void * context, con
     uint32_t kbps = 0;
     uint64_t memory_budget = 0;
     enum rocketnet_status_t failure = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
-    if ( !rn_server_split( config, true, &transport, &message, &kbps, &failure, &memory_budget ) )
+    if ( !rn_server_split( config, env, &transport, &message, &kbps, &failure, &memory_budget ) )
     {
         sodium_memzero( &transport, sizeof( transport ) );
 
@@ -2421,7 +2452,7 @@ static struct rocketnet_server_t * rn_server_create_current( void * context, con
         return NULL;
     }
 
-    const uint64_t running_bytes = rocketnet_message_server_required_memory( &transport, &message );
+    const uint64_t running_bytes = rocketnet_message_server_required_memory( &transport, &message, 0 );
     if ( running_bytes == 0 )
     {
         sodium_memzero( &transport, sizeof( transport ) );
@@ -2469,20 +2500,21 @@ static struct rocketnet_server_t * rn_server_create_current( void * context, con
     // pair for this object. The game reads the public key
     // (rocketnet_server_public_key) and registers it with its backend; start
     // refuses the published development key in a production build; destroy
-    // wipes the secret
+    // wipes the secret. Neither can fail: sodium's keypair and base
+    // multiplication return 0, and an unavailable OS random source aborts
+    // the process inside sodium after rocketnet_init's misuse handler logs it
 
-    if ( sodium_is_zero( transport.server_secret_key, sizeof( transport.server_secret_key ) )
-             ? rocketnet_generate_server_keypair( transport.server_public_key, transport.server_secret_key ) != ROCKETNET_STATUS_OK
-             : crypto_scalarmult_base( transport.server_public_key, transport.server_secret_key ) != 0 )
+    if ( sodium_is_zero( transport.server_secret_key, sizeof( transport.server_secret_key ) ) )
     {
-        sodium_memzero( &transport, sizeof( transport ) );
-
-        if ( !memory )
-            rocketnet_free( context, base );
-        if ( status )
-            *status = ROCKETNET_STATUS_CRYPTO_INIT_FAILED;
-
-        return NULL;
+        const enum rocketnet_status_t generated = rocketnet_generate_server_keypair( transport.server_public_key, transport.server_secret_key );
+        rocketnet_assert( generated == ROCKETNET_STATUS_OK );
+        (void) generated;
+    }
+    else
+    {
+        const int derived = crypto_scalarmult_base( transport.server_public_key, transport.server_secret_key );
+        rocketnet_assert( derived == 0 );
+        (void) derived;
     }
 
     struct rocketnet_server_t * server = (struct rocketnet_server_t *) base;
@@ -2513,6 +2545,14 @@ static struct rocketnet_server_t * rn_server_create_current( void * context, con
 
 struct rocketnet_server_t * rocketnet_server_create( void * context, const char * ipv4_address, const char * ipv6_address, const struct rocketnet_server_config_t * config, enum rocketnet_status_t * status )
 {
+    return rocketnet_server_create_with_env( context, ipv4_address, ipv6_address, config, rocketnet_env_process(), status );
+}
+
+struct rocketnet_server_t * rocketnet_server_create_with_env( void * context, const char * ipv4_address, const char * ipv6_address, const struct rocketnet_server_config_t * config,
+                                                              const struct rocketnet_env_source_t * env, enum rocketnet_status_t * status )
+{
+    rocketnet_assert( env );
+
     if ( status )
         *status = ROCKETNET_STATUS_OK;
 
@@ -2529,7 +2569,7 @@ struct rocketnet_server_t * rocketnet_server_create( void * context, const char 
         return NULL;
     }
 
-    struct rocketnet_server_t * result = rn_server_create_current( context, ipv4_address, ipv6_address, read, NULL, 0, status );
+    struct rocketnet_server_t * result = rn_server_create_current( context, ipv4_address, ipv6_address, read, env, NULL, 0, status );
 
     sodium_memzero( &current, sizeof( current ) );
 
@@ -2603,9 +2643,12 @@ void rocketnet_server_disconnect_all_clients( struct rocketnet_server_t * server
     }
 }
 
-// proofs/tla/ServerSession.tla Stop: one call, every connected slot disconnected at
-// the transport and kicked, the bursts flushed, the transport stopped, and
-// the server no longer running on return.
+// proofs/tla/ServerSession.tla Stop and proofs/tla/ServerStopSpread.tla Stop:
+// one call, every connected slot disconnected at the transport and kicked,
+// its burst waiting in the disconnect ring, the transport STOPPING, and the
+// server no longer running on return. The bursts leave across the stop
+// steps, as much as the transport has room for each step, before its I/O
+// stops; rocketnet_server_stopped is each later step.
 
 void rocketnet_server_stop( struct rocketnet_server_t * server )
 {
@@ -2617,15 +2660,14 @@ void rocketnet_server_stop( struct rocketnet_server_t * server )
     {
         for ( int i = 0; i < server->max_clients; i++ )
         {
-            // Disconnect the transport first on the shutdown-only batch path.
-            // The message kick's regular link callback then finds a free slot.
+            // Disconnect the transport first, its burst appended to the
+            // disconnect ring. The message kick's regular link callback then
+            // finds a free slot.
             if ( rocketnet_server_transport_is_client_connected( transport, i ) )
                 rocketnet_server_transport_disconnect_client_shutdown( transport, i );
 
             rn_message_object_kick( &server->running->object, i, ROCKETNET_DISCONNECT_REASON_NONE );
         }
-
-        rocketnet_server_transport_send_packets_shutdown( transport );
     }
     else
     {
@@ -2643,6 +2685,8 @@ void rocketnet_server_stop( struct rocketnet_server_t * server )
 
 // proofs/tla/ServerSession.tla StopCompletes: a stopping server reports stopped only
 // once its retiring transport's workers have exited and it stores STOPPED.
+// While disconnect bursts wait, the transport's stopped is the next stop step
+// (proofs/tla/ServerStopSpread.tla SealOne, Flush and RequestIoStop).
 
 bool rocketnet_server_stopped( const struct rocketnet_server_t * server )
 {
@@ -3311,27 +3355,19 @@ void rocketnet_server_client_stats( const struct rocketnet_server_t * server, in
 }
 
 // ---------------------------------------------------------------------------
-// The development network simulator: a development library's calls, and a
-// unit-test build's (the test hooks switch the development posture on).
+// The development network simulator: these calls exist only in a
+// development library (ROCKETNET_DEV).
 //
 // The setting applies at once to a live connection and to a running server:
 // the call hands it to the thread that owns the simulator as a config record
 // under a tiny mutex, and that thread takes it before its next send. The
-// connection's threads do not move, and a production library refuses the
-// simulator and carries none of its memory.
+// connection's threads do not move. A production library has neither these
+// calls nor the simulator's memory.
 
 #if ROCKETNET_DEV
 
 static bool rn_network_simulator_valid( const char * who, int latency_ms, int jitter_ms, int packet_loss_percent, int duplicate_percent )
 {
-    if ( !rocketnet_public_link_simulator_development() )
-    {
-        rocketnet_api_misuse_record();
-
-        rocketnet_error( "%s network simulator refused: a production library has no network simulator", who );
-        return false;
-    }
-
     if ( latency_ms < 0 || latency_ms > 60000 || jitter_ms < 0 || jitter_ms > 60000 ||
          packet_loss_percent < 0 || packet_loss_percent > 100 || duplicate_percent < 0 || duplicate_percent > 100 )
     {

@@ -11,20 +11,6 @@ the major version; any new exports are added to `tools/exports.txt`. A change it
 admit (a field moved, removed, resized or retyped) is an incompatible change
 and bumps the major version.
 
-The v1.0.0-preview-1 API is provisional. It may change after feedback.
-
-### Receipt reads after preview-1
-
-`rocketnet_client_receipts` and `rocketnet_server_receipts` now return the
-number of available outcomes, rather than the number copied. Their signatures
-and receipt layout are unchanged, but callers must iterate over at most
-`min(returned_count, capacity)` entries. A NULL output with zero capacity
-queries the count. If it exceeds capacity, read again into a larger buffer
-before the next update. Reads do not consume outcomes. Ring overflow still
-drops the oldest outcome and increments `receipts_dropped`; the returned count
-includes only retained outcomes. Rebuild preview-1 callers with this contract
-before linking to the updated library.
-
 ## 1. The Rule
 
 1. **Each public config struct carries its own size.** The first field of
@@ -138,7 +124,7 @@ the library hands out, so its stride is part of the ABI.
 
 ## 5. The lifecycle API in ABI 1
 
-The ABI revision is 1 at v1.0.0-preview-1 (soname `librocketnet.so.1`).
+The ABI revision is 1 (soname `librocketnet.so.1`).
 Client creation returns a disconnected object and connection begins with
 `rocketnet_client_connect`. Server creation returns a stopped object;
 `rocketnet_server_start`, `rocketnet_server_stop` and

@@ -237,15 +237,12 @@ static void test_token_created_at_the_skew_limit_is_accepted()
     token_time_teardown( &t );
 }
 
-// no maximum token lifetime: a token valid for 2^40 seconds is answered, and
-// the retired CONNECTION_REQUEST_TOKEN_LIFETIME_TOO_LONG stays zero
+// no maximum token lifetime: a token valid for 2^40 seconds is answered
 static void test_token_with_a_long_lifetime_is_accepted()
 {
     struct token_time_server_t t;
     token_time_setup( &t );
     token_time_accept( &t, TOKEN_TIME_NOW, TOKEN_TIME_NOW + ( 1ULL << 40 ) );
-    check( t.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_LIFETIME_TOO_LONG] == 0 );
-
     token_time_teardown( &t );
 }
 

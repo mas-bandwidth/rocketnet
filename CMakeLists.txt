@@ -40,7 +40,7 @@ if(CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
     set(ROCKETNET_TOP_LEVEL ON)
 endif()
 option(ROCKETNET_USE_SYSTEM_SODIUM "Use an external libsodium instead of the pinned two-file vendor" OFF)
-option(ROCKETNET_HARDEN "Enable hardening flags for release builds" ON)
+option(ROCKETNET_HARDEN "Enable hardening flags for optimized builds (Release, RelWithDebInfo, MinSizeRel)" ON)
 option(ROCKETNET_BUILD_SHARED "Build the shared libraries (rocketnet_shared and rocketnet_shared_dev)" ON)
 option(ROCKETNET_BUILD_DEV_LIBRARIES "Build the build-tree development libraries (rocketnet_dev and rocketnet_shared_dev)" ON)
 option(ROCKETNET_BUILD_TESTS "Build the native tests and ABI fixtures" ${ROCKETNET_TOP_LEVEL})
@@ -185,11 +185,22 @@ endforeach()
 # nor a parent project that adds this directory receives them: the strict
 # floating-point floor (docs/BUILDING.md, "Floating point") and the memory budgets
 # the internal headers read (sdk/rocketnet_history.h:13, sdk/rocketnet_memory.h:7-11).
-if(MSVC)
-    add_compile_options(/fp:precise)
+# clang-cl (Clang with the MSVC command line) maps /fp:precise to
+# -ffp-contract=on, which fuses a*b+c within an expression wherever the target
+# has FMA (the aarch64 baseline, or x64 with /arch:AVX2), so it also takes
+# -ffp-contract=off through -Xclang. /clang:-ffp-contract=off is not used: the
+# driver warns that it overrides the precise model /fp:precise selects (and the
+# Visual Studio toolset passes /fp:precise by default), and /WX fails on that
+# warning. rocketnet_check_fp_floor at the end of this file fails the configure
+# when any target lacks its family's floor.
+if(MSVC AND CMAKE_C_COMPILER_ID STREQUAL "Clang")
+    set(ROCKETNET_FP_FLOOR /fp:precise "SHELL:-Xclang -ffp-contract=off")
+elseif(MSVC)
+    set(ROCKETNET_FP_FLOOR /fp:precise)
 else()
-    add_compile_options(-ffp-contract=off)
+    set(ROCKETNET_FP_FLOOR -ffp-contract=off)
 endif()
+add_compile_options(${ROCKETNET_FP_FLOOR})
 # The warning floor, at the same directory scope so every target this tree
 # builds carries it, the vendored sodium source included (sodium/NOTES.md):
 # a customer compiles these sources inside their game with their own warning
@@ -322,6 +333,10 @@ set(ROCKETNET_SOURCE
     ${ROCKETNET_SDK_SOURCES}
     ${ROCKETNET_TRANSPORT_SOURCES}
 )
+
+# Hardening applies to every optimized configuration: _FORTIFY_SOURCE needs
+# optimization, and Debug and an empty build type have none.
+set(ROCKETNET_HARDEN_CONFIGS "$<CONFIG:Release,RelWithDebInfo,MinSizeRel>")
 
 if(ROCKETNET_HARDEN)
     foreach(language C CXX)
@@ -478,20 +493,18 @@ foreach(target IN LISTS rocketnet_static_targets rocketnet_shared_targets)
         # Static compiler symbols must not race the shared library linker PDB
         # when both targets use the rocketnet output name in an embedded build.
         set_target_properties(${target} PROPERTIES COMPILE_PDB_NAME "${target}_compile")
-        target_compile_options(${target} PRIVATE /fp:precise)
-    else()
-        target_compile_options(${target} PRIVATE -ffp-contract=off)
     endif()
+    target_compile_options(${target} PRIVATE ${ROCKETNET_FP_FLOOR})
     if(ROCKETNET_HARDEN)
-        target_compile_definitions(${target} PRIVATE "$<$<CONFIG:Release>:_FORTIFY_SOURCE=2>")
+        target_compile_definitions(${target} PRIVATE "$<${ROCKETNET_HARDEN_CONFIGS}:_FORTIFY_SOURCE=2>")
         foreach(language C CXX)
             if(ROCKETNET_${language}_STACK_PROTECTOR)
                 target_compile_options(${target} PRIVATE
-                    "$<$<AND:$<CONFIG:Release>,$<COMPILE_LANGUAGE:${language}>>:-fstack-protector-strong>")
+                    "$<$<AND:${ROCKETNET_HARDEN_CONFIGS},$<COMPILE_LANGUAGE:${language}>>:-fstack-protector-strong>")
             endif()
             if(ROCKETNET_${language}_CF_PROTECTION)
                 target_compile_options(${target} PRIVATE
-                    "$<$<AND:$<CONFIG:Release>,$<COMPILE_LANGUAGE:${language}>>:-fcf-protection>")
+                    "$<$<AND:${ROCKETNET_HARDEN_CONFIGS},$<COMPILE_LANGUAGE:${language}>>:-fcf-protection>")
             endif()
         endforeach()
     endif()
@@ -514,7 +527,7 @@ endforeach()
 include_directories("${CMAKE_CURRENT_SOURCE_DIR}/sdk")
 
 if(ROCKETNET_HARDEN AND ROCKETNET_LINK_RELRO_NOW AND TARGET rocketnet_shared)
-    target_link_options(rocketnet_shared PRIVATE "$<$<CONFIG:Release>:-Wl,-z,relro,-z,now>")
+    target_link_options(rocketnet_shared PRIVATE "$<${ROCKETNET_HARDEN_CONFIGS}:-Wl,-z,relro,-z,now>")
 endif()
 
 # The public header at the strictest level each compiler has, in the default
@@ -595,7 +608,7 @@ if(ROCKETNET_BUILD_TESTS)
 #include \"rocketnet.h\"
 int rocketnet_unit_test_count() { return 0; }
 const char * rocketnet_unit_test_name( int index ) { (void)index; return 0; }
-void rocketnet_unit_prepare() {}
+void rocketnet_unit_prepare( bool verbose ) { (void) verbose; }
 int rocketnet_unit_run_named( const char * name ) { fprintf( stderr, \"unknown unit test %s\\n\", name ); return 2; }
 int rocketnet_channels_test_count() { return 0; }
 const char * rocketnet_channels_test_name( int index ) { (void)index; return 0; }
@@ -631,7 +644,6 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
             tests/test_unit_send_room_query.cpp
             tests/test_unit_server_mass_disconnect.cpp
             tests/test_unit_server_receive_work.cpp
-            tests/test_unit_transport_pins_ignored.cpp
             tests/test_unit_unreliable_send_memory_exhausted.cpp)
         list(TRANSFORM ROCKETNET_DEV_ONLY_CLIENT_STEP_TEST_SOURCES PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
         list(REMOVE_ITEM ROCKETNET_UNIT_TEST_SOURCES ${ROCKETNET_DEV_ONLY_CLIENT_STEP_TEST_SOURCES})
@@ -680,9 +692,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
             tests/test_unit_shutdown_request_completion.cpp
             tests/test_unit_sim_schedules.cpp
             tests/test_unit_sized_config.cpp
-            tests/test_unit_status_client_transport_create_ex.cpp
             tests/test_unit_status_codes_reached.cpp
-            tests/test_unit_status_server_transport_create_ex.cpp
             tests/test_unit_table_churn_probe_bound.cpp
             tests/test_unit_unreliable_in_place.cpp
             tests/test_unit_uring_reap_budget.cpp
@@ -704,6 +714,10 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     # receive_batch. Not a second translation unit.
     set(ROCKETNET_UNIT_TRANSPORT_RESULTS_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_unit_driver_results_checked.cpp")
     list(REMOVE_ITEM ROCKETNET_UNIT_TEST_SOURCES "${ROCKETNET_UNIT_TRANSPORT_RESULTS_SOURCE}")
+    # Included by the same translation unit, so the stop-spread cases can
+    # swap in a fake staged transport with a fixed staging.
+    set(ROCKETNET_UNIT_TRANSPORT_STOP_SPREAD_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_unit_server_stop_spread.cpp")
+    list(REMOVE_ITEM ROCKETNET_UNIT_TEST_SOURCES "${ROCKETNET_UNIT_TRANSPORT_STOP_SPREAD_SOURCE}")
     # The RIO fake-kernel overflow fixture is development instrumentation, not
     # a production-behavior unit case. A DEV=0 suite keeps every real unit case
     # and does not compile or link this seam.
@@ -718,6 +732,33 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         # directly against rocketnet with no test hook library.
         set(ROCKETNET_UNIT_TRANSPORT_SOURCE)
         set(ROCKETNET_TEST_CHANNELS_SOURCE)
+    endif()
+    # The floor canary with FMA code generation: x86-64 has no FMA in its
+    # baseline, so the unit suite's canary passes there with or without the
+    # floor. This build of it fuses a*b+c unless the floor holds, and runs as
+    # soon as it links, so a build whose floor does not hold fails to build.
+    # It runs where the build machine runs the target (not when cross
+    # compiling) and needs a CPU with FMA (every fleet host has it).
+    add_executable(test_fp_contract_fma tests/fp_contract_fma.cpp)
+    if(MSVC)
+        if(CMAKE_CXX_COMPILER_ARCHITECTURE_ID STREQUAL "x64")
+            target_compile_options(test_fp_contract_fma PRIVATE /arch:AVX2)
+        endif()
+    elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$"
+           AND (NOT APPLE OR NOT CMAKE_OSX_ARCHITECTURES OR CMAKE_OSX_ARCHITECTURES STREQUAL "x86_64"))
+        target_compile_options(test_fp_contract_fma PRIVATE -mfma)
+    endif()
+    # GCC contracts only when optimizing (Clang and clang-cl contract at -O0
+    # as well), so without -O2 a GCC Debug build would pass with no floor.
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+        target_compile_options(test_fp_contract_fma PRIVATE -O2)
+    endif()
+    string(TOLOWER "${CMAKE_HOST_SYSTEM_PROCESSOR}" rocketnet_host_processor)
+    string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" rocketnet_target_processor)
+    if(NOT CMAKE_CROSSCOMPILING AND rocketnet_host_processor STREQUAL rocketnet_target_processor)
+        add_custom_command(TARGET test_fp_contract_fma POST_BUILD
+            COMMAND test_fp_contract_fma
+            VERBATIM)
     endif()
     add_executable(test ${ROCKETNET_UNIT_TRANSPORT_SOURCE} tests/test.cpp ${ROCKETNET_TEST_CHANNELS_SOURCE} ${ROCKETNET_UNIT_TEST_SOURCES})
     if(TARGET RocketNet::Uring)
@@ -1363,3 +1404,69 @@ install(EXPORT RocketNetTargets NAMESPACE RocketNet:: DESTINATION ${ROCKETNET_PA
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/RocketNetConfig.cmake"
     "${CMAKE_CURRENT_BINARY_DIR}/RocketNetConfigVersion.cmake"
     cmake/RocketNetDependencies.cmake DESTINATION ${ROCKETNET_PACKAGE_DIR})
+
+# The floating-point floor gate. Every target this tree compiles (the
+# libraries, tests, examples and tools, in this directory and below) must carry
+# its compiler family's floor: -ffp-contract=off for GCC, Clang and AppleClang;
+# /fp:precise for MSVC; /fp:precise and -Xclang -ffp-contract=off for clang-cl.
+# The family is read from the compiler ID and its command-line variant, and the
+# floor is spelled here apart from ROCKETNET_FP_FLOOR, so a floor that drops a
+# family's flag, or a target that replaces its options, fails the configure.
+# A contracting flag (-ffp-contract=on or fast, -ffast-math, /fp:fast,
+# /fp:contract) on any target fails it too.
+function(rocketnet_collect_targets dir out)
+    get_property(targets DIRECTORY "${dir}" PROPERTY BUILDSYSTEM_TARGETS)
+    get_property(subdirs DIRECTORY "${dir}" PROPERTY SUBDIRECTORIES)
+    foreach(subdir IN LISTS subdirs)
+        rocketnet_collect_targets("${subdir}" subdir_targets)
+        list(APPEND targets ${subdir_targets})
+    endforeach()
+    set(${out} ${targets} PARENT_SCOPE)
+endfunction()
+
+function(rocketnet_check_fp_floor)
+    if(CMAKE_C_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC" AND CMAKE_C_COMPILER_ID STREQUAL "Clang")
+        set(family "clang-cl")
+        set(required "/fp:precise" "SHELL:-Xclang -ffp-contract=off")
+    elseif(CMAKE_C_COMPILER_ID STREQUAL "MSVC")
+        set(family "MSVC")
+        set(required "/fp:precise")
+    elseif(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+        set(family "${CMAKE_C_COMPILER_ID}")
+        set(required "-ffp-contract=off")
+    else()
+        message(FATAL_ERROR "No floating-point floor is defined for C compiler ${CMAKE_C_COMPILER_ID}; add its family to rocketnet_check_fp_floor")
+    endif()
+    rocketnet_collect_targets("${CMAKE_CURRENT_SOURCE_DIR}" targets)
+    set(checked 0)
+    set(failures "")
+    foreach(target IN LISTS targets)
+        get_target_property(type ${target} TYPE)
+        if(NOT type MATCHES "^(STATIC_LIBRARY|SHARED_LIBRARY|MODULE_LIBRARY|OBJECT_LIBRARY|EXECUTABLE)$")
+            continue()
+        endif()
+        get_target_property(options ${target} COMPILE_OPTIONS)
+        if(NOT options)
+            set(options "")
+        endif()
+        foreach(flag IN LISTS required)
+            if(NOT flag IN_LIST options)
+                list(APPEND failures "${target} lacks ${flag}")
+            endif()
+        endforeach()
+        foreach(option IN LISTS options)
+            if(option MATCHES "-ffp-contract=(on|fast)|-ffast-math|^[/-]fp:(fast|contract)$")
+                list(APPEND failures "${target} carries the contracting flag ${option}")
+            endif()
+        endforeach()
+        math(EXPR checked "${checked} + 1")
+    endforeach()
+    if(failures)
+        foreach(failure IN LISTS failures)
+            message(SEND_ERROR "floating-point floor (${family}): ${failure}")
+        endforeach()
+        message(FATAL_ERROR "The ${family} floating-point floor does not hold on the targets above (docs/BUILD-REFERENCE.md, \"Floating point\")")
+    endif()
+    message(STATUS "Floating-point floor (${family}) on all ${checked} compiled targets")
+endfunction()
+rocketnet_check_fp_floor()

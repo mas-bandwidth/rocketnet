@@ -24,6 +24,7 @@
 
 #include "rocketnet_driver.h"
 #include "rocketnet_driver_loopback.h"
+#include "rocketnet_server_protocol.h"
 #include "rocketnet_client_io.h"
 #include "loopback_hub.h"
 
@@ -329,6 +330,10 @@ struct staged_fake_t
     int finishes;
     int aborts;
     int batches;
+    int capacity;                                       // frames a flush takes, 0: unbounded
+    int used;                                           // frames finished since the last flush
+    int refused;                                        // starts refused for room
+    int payload_finishes;                               // payload packets the staging took
     struct rocketnet_server_socket_process_packets_t view;
 };
 
@@ -336,12 +341,29 @@ static uint8_t * staged_fake_start( void * instance, const rocketnet_address_t *
 {
     struct staged_fake_t * fake = (struct staged_fake_t *) instance;
     fake->starts++;
+    if ( fake->capacity > 0 && fake->used >= fake->capacity )
+    {
+        fake->refused++;
+        return NULL;
+    }
     *id = ++fake->next_id;
     return fake->frame;
 }
-static void staged_fake_finish( void * instance, uint64_t, uint8_t *, int ) { ( (struct staged_fake_t *) instance )->finishes++; }
+static void staged_fake_finish( void * instance, uint64_t, uint8_t * frame, int )
+{
+    struct staged_fake_t * fake = (struct staged_fake_t *) instance;
+    fake->finishes++;
+    fake->used++;
+    if ( frame[ROCKETNET_FRAME_WIRE_OFFSET] == ROCKETNET_CONNECTION_PAYLOAD_PACKET )
+        fake->payload_finishes++;
+}
 static void staged_fake_abort( void * instance, uint64_t, uint8_t * ) { ( (struct staged_fake_t *) instance )->aborts++; }
-static void staged_fake_flush( void * ) {}
+static void staged_fake_flush( void * instance ) { ( (struct staged_fake_t *) instance )->used = 0; }
+static int staged_fake_send_room( void * instance )
+{
+    struct staged_fake_t * fake = (struct staged_fake_t *) instance;
+    return fake->capacity - fake->used;
+}
 static struct rocketnet_server_socket_process_packets_t * staged_fake_receive( void * instance )
 {
     return &( (struct staged_fake_t *) instance )->view;
@@ -431,6 +453,62 @@ static void test_public_link_simulator_staged_commit_arms()
     staged_sites_run( 0, 0, 0, &aborts, &finishes, &charged );
     check( finishes >= 3 && aborts == 0 && charged == finishes );
 }
+
+// The held packets come due into a staged transport whose staging takes three
+// frames a flush: ten payloads held together come due together, and each
+// update's drain moves only what the room takes and leaves the rest held, so
+// all ten reach the transport and none is refused and lost. The clock is an
+// argument.
+static void test_public_link_simulator_drain_spreads_within_room()
+{
+    struct live_link_pair_t pair;
+    check( live_link_pair_setup( &pair ) );
+    check( live_link_pair_connect( &pair ) );
+
+    struct staged_fake_t * fake = (struct staged_fake_t *) calloc( 1, sizeof( *fake ) );
+    check( fake != NULL );
+    fake->capacity = 3;
+    struct rocketnet_server_transport_io_operations_t operations = {};
+    operations.flags = ROCKETNET_TRANSPORT_STAGED;
+    operations.start_packet = staged_fake_start;
+    operations.finish_packet = staged_fake_finish;
+    operations.abort_packet = staged_fake_abort;
+    operations.flush = staged_fake_flush;
+    operations.receive = staged_fake_receive;
+    operations.send_batch = staged_fake_send_batch;
+    operations.send_room = staged_fake_send_room;
+
+    const struct rocketnet_server_transport_io_operations_t * swapped_operations = &operations;
+    void * swapped_instance = fake;
+    rocketnet_server_transport_swap_io_for_test( pair.server, &swapped_operations, &swapped_instance );
+
+    check( rocketnet_server_transport_network_simulator( pair.server, 50, 0, 0, 0 ) );
+
+    // each payload is taken by the simulator, its staging slot given back,
+    // and all ten are held for the same 50 ms
+
+    const int payloads = 10;
+    uint8_t payload[8] = { 1, 2, 3, 4, 5, 6, 7, 8 };
+    for ( int i = 0; i < payloads; i++ )
+        rocketnet_server_transport_send_packet( pair.server, 0, payload, sizeof( payload ) );
+    check( fake->finishes == 0 && fake->aborts == payloads );
+
+    double time = pair.time;
+    for ( int update = 0; update < 8; update++ )
+    {
+        const int before = fake->finishes;
+        time += 0.1;
+        rocketnet_server_transport_update( pair.server, time );
+        check( fake->finishes - before <= fake->capacity );
+    }
+
+    check( fake->payload_finishes == payloads );
+    check( fake->batches == 0 );
+
+    rocketnet_server_transport_swap_io_for_test( pair.server, &swapped_operations, &swapped_instance );
+    live_link_pair_teardown( &pair );
+    free( fake );
+}
 #endif // #if ROCKETNET_DEV
 
 static void public_link_simulator_check_fields( const struct rocketnet_config_field_t * fields, int num_fields )
@@ -519,8 +597,6 @@ static void test_public_link_simulator_production_refusal()
     check( !rocketnet_config_validate( "client", &client_config, client_table, client_fields ) );
 
     client_config.simulated_latency_ms = 0;
-
-    printf( "test_public_link_simulator_production_refusal\n" );
 }
 
 REGISTER_UNIT_TEST( test_public_link_simulator_production_refusal );
@@ -843,6 +919,7 @@ REGISTER_UNIT_TEST( test_public_link_simulator_server_applies_to_live_start );
 REGISTER_UNIT_TEST( test_public_link_simulator_server_switch_off_delivers_held );
 REGISTER_UNIT_TEST( test_public_link_simulator_server_lock_miss_not_counted_sent );
 REGISTER_UNIT_TEST( test_public_link_simulator_staged_commit_arms );
+REGISTER_UNIT_TEST( test_public_link_simulator_drain_spreads_within_room );
 #endif // #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_public_link_simulator_jitter );
 REGISTER_UNIT_TEST( test_public_link_simulator_same_seed_same_schedule );
@@ -870,6 +947,9 @@ static void test_public_link_simulator_revision_1_prefixes()
     rocketnet_client_transport_default_config_current( &client_current );
     snprintf( client_current.transport, sizeof( client_current.transport ), "%s", "loopback" );
     client_current.loopback_hub = rocketnet_test_loopback_hub();
+#if ROCKETNET_DEV
+    client_current.step_driven = 1;     // a create that were granted would start no thread
+#endif // #if ROCKETNET_DEV
     memcpy( client.bytes, &client_current, sizeof( client.bytes ) );
 #if ROCKETNET_DEV
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];

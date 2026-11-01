@@ -246,6 +246,68 @@ static void test_newest_delivered_under_loss_and_reorder()
 
 REGISTER_UNIT_TEST( test_newest_delivered_under_loss_and_reorder );
 
+// The delivery reservation counts the channel's sequenced hold only when its
+// release can take a table slot: a code-1 hold is refused once the update's
+// unreliable deliveries reach the allowance Du, so it reserves nothing then.
+// With Du spent and room for exactly the in-turn ordered record and the held
+// ordered record it releases, the packet is accepted, not deferred
+// (proofs/tla/RNOrderingWrap.tla NeverDeferWithRoom). Mutation that must
+// bite: count any sequenced hold; the receive returns DEFERRED.
+
+static void test_reservation_skips_a_code_1_hold_past_du()
+{
+    rs_node_t sender;
+    rs_node_t receiver;
+    rs_init( &sender );
+    rs_init( &receiver );
+
+    const uint8_t state = 7, later = 2, first = 1;
+    rn_delivery_t out;
+    uint32_t slot;
+
+    // a code-1 state for the ordered epoch after ordering 0: held
+
+    rocketnet_message_record_t record = rs_record( ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, 1, 0, &state );
+    check( rn_channels_dispatch( &receiver.ordered.channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_HELD );
+    const uint32_t hold = receiver.region->channel_receive[0].held_sequenced;
+    check( hold != RN_DESCRIPTOR_NONE && ( hold & RN_SEQUENCED_RELIABLE_HOLD ) == 0 );
+
+    // ordered record 1 arrives before 0: held complete
+
+    record = rs_record( ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 1, 1, 0, &later );
+    check( rn_window_receive_accept( &receiver.ordered.receive, &record, &slot ) == RN_WINDOW_RECEIVE_ACCEPT );
+    check( rn_channels_dispatch( &receiver.ordered.channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_HELD );
+    rn_ordered_end_update( &receiver.ordered );
+
+    // the update has spent Du, and the table has room for two
+
+    rn_channels_t * channels = &receiver.ordered.channels;
+    channels->unreliable_delivered = receiver.region->delivery_entries - receiver.region->window;
+    channels->deliveries = channels->delivery_capacity - 2;
+
+    rs_send( &sender, ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED, &first, 1 );
+    rs_packet_t packet;
+    check( rs_write( &sender, 1.0, &packet, 1, 1 ) == 1 );
+
+    const uint64_t full = receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_DELIVERY_FULL];
+    check( rn_ordered_receive( &receiver.ordered, packet.data, packet.bytes ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
+    check( !rn_region_exhausted( receiver.region ) );
+    check( receiver.region->channel_receive[0].ordered_read == 2 );
+    check( channels->deliveries == channels->delivery_capacity );
+    check( receiver.region->deliveries[channels->deliveries - 2].data[0] == first );
+    check( receiver.region->deliveries[channels->deliveries - 1].data[0] == later );
+
+    // the drain released the code-1 hold into a spent allowance: refused, counted
+
+    check( receiver.region->channel_receive[0].held_sequenced == RN_DESCRIPTOR_NONE );
+    check( receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_DELIVERY_FULL] == full + 1 );
+
+    rn_arena_destroy( sender.arena );
+    rn_arena_destroy( receiver.arena );
+}
+
+REGISTER_UNIT_TEST( test_reservation_skips_a_code_1_hold_past_du );
+
 static void test_resent_until_packet_acked()
 {
     rs_node_t sender;

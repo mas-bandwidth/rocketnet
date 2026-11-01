@@ -185,9 +185,10 @@ static void rocketnet_decide_replay( struct rocketnet_server_protocol_t * server
     }
 
     d->accept = 0;
-    if ( counters->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED] ||
-         counters->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_CONNECTED] )
+    if ( counters->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED] )
+    {
         strcpy( d->reason, "replay" );
+    }
     else
     {
         strcpy( d->reason, "refused" );
@@ -239,10 +240,6 @@ static void rocketnet_classify( const struct rocketnet_counters_t * counters, st
     {
         strcpy( d->reason, "future" );
     }
-    else if ( counters->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_LIFETIME_TOO_LONG] )
-    {
-        strcpy( d->reason, "lifetime" );
-    }
     else if ( counters->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TIMEOUT_INVALID] )
     {
         strcpy( d->reason, "timeout" );
@@ -275,9 +272,10 @@ static void rocketnet_classify( const struct rocketnet_counters_t * counters, st
     {
         strcpy( d->reason, "mismatch" );
     }
-    else if ( counters->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED] ||
-              counters->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_CONNECTED] )
+    else if ( counters->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED] )
+    {
         strcpy( d->reason, "replay" );
+    }
     else if ( counters->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_SLOTS] )
     {
         strcpy( d->reason, "full" );

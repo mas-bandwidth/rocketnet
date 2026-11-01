@@ -381,14 +381,22 @@ static void env_names_add_literal_reads( std::vector<std::string> & reads )
         "sdk/rocketnet_platform.cpp",
         "sdk/rocketnet_server_socket_linux.cpp"
     };
-    const std::string marker = "rocketnet_platform_getenv( \"ROCKETNET_";
+    // every literal read is rocketnet_env_get( <source>, "ROCKETNET_..." ):
+    // the name is the first literal in the call's arguments
+
+    const std::string marker = "rocketnet_env_get( ";
+    const std::string literal = "\"ROCKETNET_";
 
     for ( size_t f = 0; f < sizeof( sources ) / sizeof( sources[0] ); f++ )
     {
         const std::string text = env_names_read_file( sources[f] );
         for ( size_t at = text.find( marker ); at != std::string::npos; at = text.find( marker, at + marker.size() ) )
         {
-            const size_t begin = at + marker.size() - strlen( "ROCKETNET_" );
+            const size_t name_at = text.find( literal, at );
+            const size_t call_end = text.find( ';', at );
+            if ( name_at == std::string::npos || call_end == std::string::npos || name_at > call_end )
+                continue;
+            const size_t begin = name_at + 1;
             size_t end = begin;
             while ( end < text.size() && ( ( text[end] >= 'A' && text[end] <= 'Z' ) || ( text[end] >= '0' && text[end] <= '9' ) || text[end] == '_' ) )
             {
@@ -520,8 +528,8 @@ static void test_config_env_every_name_read_is_documented()
     struct rocketnet_message_config_t message;
     uint32_t client_kbps = 0;
     uint32_t server_kbps = 0;
-    const bool client_resolved = rocketnet_client_config_resolve( NULL, true, &client_transport, &message, &client_kbps );
-    const bool server_resolved = rocketnet_server_config_resolve( NULL, true, &server_transport, &message, &server_kbps );
+    const bool client_resolved = rocketnet_client_config_resolve( NULL, rocketnet_env_process(), &client_transport, &message, &client_kbps );
+    const bool server_resolved = rocketnet_server_config_resolve( NULL, rocketnet_env_process(), &server_transport, &message, &server_kbps );
     struct rn_message_object_t * server = env_names_object_create( 1, 0 );
     struct rn_message_object_t * client = env_names_object_create( 0, 0 );
 
@@ -532,14 +540,14 @@ static void test_config_env_every_name_read_is_documented()
     struct rocketnet_client_transport_config_t client_transport_apply;
     rocketnet_client_transport_default_config_current( &client_transport_apply );
 
-    const bool client_transport_applied = rocketnet_config_apply_env( "client", &client_transport_apply, client_fields, num_client_fields );
+    const bool client_transport_applied = rocketnet_config_apply_env( rocketnet_env_process(), "client", &client_transport_apply, client_fields, num_client_fields );
 
     int num_server_fields = 0;
     const struct rocketnet_config_field_t * server_fields = rocketnet_server_transport_config_fields( &num_server_fields );
     struct rocketnet_server_transport_config_t server_transport_apply;
     rocketnet_server_transport_default_config_current( &server_transport_apply );
 
-    const bool server_transport_applied = rocketnet_config_apply_env( "server", &server_transport_apply, server_fields, num_server_fields );
+    const bool server_transport_applied = rocketnet_config_apply_env( rocketnet_env_process(), "server", &server_transport_apply, server_fields, num_server_fields );
 
     env_names_capture_end( &capture );
     if ( server )

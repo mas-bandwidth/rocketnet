@@ -210,7 +210,7 @@ static void fuzz_overlay( int table_index, int field_index, uint8_t mode, const 
 
     fuzz_setenv( name, value );
 
-    const bool applied = rocketnet_config_apply_env( table->endpoint, &config, table->fields, table->num_fields );
+    const bool applied = rocketnet_config_apply_env( rocketnet_env_process(), table->endpoint, &config, table->fields, table->num_fields );
 
     // the uint64 overlay, the same variable through its own entry point
 
@@ -219,7 +219,7 @@ static void fuzz_overlay( int table_index, int field_index, uint8_t mode, const 
 
     if ( !retired && field->kind == ROCKETNET_CONFIG_KIND_UINT64 )
     {
-        overlay_applied = rocketnet_config_apply_env_uint64( table->endpoint, field->name, &overlay_value );
+        overlay_applied = rocketnet_config_apply_env_uint64( rocketnet_env_process(), table->endpoint, field->name, &overlay_value );
     }
 
     fuzz_unsetenv( name );

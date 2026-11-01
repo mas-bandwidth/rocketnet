@@ -9,9 +9,9 @@
 #include "rocketnet_allocator.h"
 #include "portable_crt.h"
 #include "suite_runner.h"
-#include "test_env_source.h"
 #include "test_unit_registry.h"
 #include "loopback_hub.h"
+#include "fp_contract_canary.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -27,7 +27,7 @@
 
 int rocketnet_unit_test_count();
 const char * rocketnet_unit_test_name( int index );
-void rocketnet_unit_prepare();
+void rocketnet_unit_prepare( bool verbose );
 int rocketnet_unit_run_named( const char * name );
 
 // the message layer's tests, in test_channels.cpp
@@ -72,6 +72,15 @@ static bool rocketnet_unit_fake_ipv6_available()
 static const rocketnet_platform_network_lookups_t rocketnet_unit_fake_network_lookups = {
     rocketnet_unit_fake_ipv6_available,
 };
+
+// the DEV unit suite reads no real clock: a connect token check with
+// token_epoch_unix_seconds zero reads this fixed Unix time
+// (rocketnet_platform_set_wall_clock_for_testing, rocketnet_internal.h)
+
+static uint64_t rocketnet_unit_fake_wall_clock()
+{
+    return ROCKETNET_UNIT_WALL_CLOCK;
+}
 
 // The unit tier starts no OS network stack: the platform start (WSAStartup on
 // Windows) is answered by this fake, and every other platform call in the
@@ -214,6 +223,7 @@ static int rocketnet_unit_worker( const char * name )
 
 #if ROCKETNET_DEV
     rocketnet_platform_set_network_lookups_for_testing( &rocketnet_unit_fake_network_lookups );
+    rocketnet_platform_set_wall_clock_for_testing( rocketnet_unit_fake_wall_clock );
     rocketnet_unit_platform_calls = *rocketnet_platform_priority_calls_real();
     rocketnet_unit_platform_calls.platform_start = rocketnet_unit_fake_platform_start;
     rocketnet_platform_set_priority_calls_for_testing( &rocketnet_unit_platform_calls );
@@ -225,20 +235,10 @@ static int rocketnet_unit_worker( const char * name )
         return 1;
     }
 
-    rocketnet_unit_prepare();
+    // the runner, not a case, reads the process environment
 
-    // the suite's config isolation clears every transport variable above. Two
-    // cases create a client transport through the public API before stepping
-    // it themselves; run those step-driven, after the isolation, so the unit
-    // suite starts no client I/O thread.
-
-    const bool step_driven_case = strcmp( name, "test_token_time_game_clock_admits_a_fixed_token" ) == 0 ||
-                                  strcmp( name, "test_public_link_simulator_revision_1_prefixes" ) == 0;
-    if ( step_driven_case )
-    {
-        if ( rocketnet_test_env_setenv( "ROCKETNET_CLIENT_STEP_DRIVEN", "1", 1 ) != 0 )
-            return 1;
-    }
+    char verbose[256];
+    rocketnet_unit_prepare( rocketnet_test_getenv( "ROCKETNET_TEST_VERBOSE", verbose, sizeof( verbose ) ) != 0 );
 
     rocketnet_channels_prepare_log( name );
 
@@ -251,10 +251,6 @@ static int rocketnet_unit_worker( const char * name )
     {
         result = rocketnet_unit_run_named( name );
     }
-    if ( step_driven_case && rocketnet_test_env_unsetenv( "ROCKETNET_CLIENT_STEP_DRIVEN" ) != 0 )
-    {
-        result = 1;
-    }
     if ( !rocketnet_test_loopback_hub_release() )
     {
         result = 1;
@@ -265,106 +261,19 @@ static int rocketnet_unit_worker( const char * name )
     return result;
 }
 
-#if defined( _MSC_VER )
-#define ROCKETNET_TEST_FP_NOINLINE __declspec(noinline)
-#elif defined( __GNUC__ ) || defined( __clang__ )
-#define ROCKETNET_TEST_FP_NOINLINE __attribute__((noinline))
-#else
-#define ROCKETNET_TEST_FP_NOINLINE
-#endif // #if defined( _MSC_VER )
-
-// Canary: the estate's strict floating-point floor is -ffp-contract=off
-// (GCC/Clang) or /fp:precise (MSVC). Compiled with contraction enabled, a*b+c
-// here rounds once into an FMA and changes the result; under the floor it takes
-// two roundings. The inputs ride through volatile so nothing folds at compile
-// time, and the arithmetics live in out-of-line helpers so the backend is free
-// to contract (and the probe is about the setting, not common-subexpression
-// folding). One rounding yields 0x33800000 (float) / 0x3C90000000000000
-// (double); the floor yields 0x00000000 / 0x0000000000000000.
-
-ROCKETNET_TEST_FP_NOINLINE static int rocketnet_fp_check_float( float a, float b, float c )
-{
-    const float r = a * b + c;
-    uint32_t bits;
-    memcpy( &bits, &r, sizeof( bits ) );
-
-    if ( bits != UINT32_C( 0x00000000 ) )
-    {
-        printf( "FAIL test_fp_contract_off: float a*b+c bits 0x%08X, expected 0x00000000\n", (unsigned) bits );
-        return 1;
-    }
-
-    return 0;
-}
-
-ROCKETNET_TEST_FP_NOINLINE static int rocketnet_fp_check_double( double a, double b, double c )
-{
-    const double r = a * b + c;
-    uint64_t bits;
-    memcpy( &bits, &r, sizeof( bits ) );
-
-    if ( bits != UINT64_C( 0x0000000000000000 ) )
-    {
-        printf( "FAIL test_fp_contract_off: double a*b+c bits 0x%016llX, expected 0x0000000000000000\n", (unsigned long long) bits );
-        return 1;
-    }
-
-    return 0;
-}
-
-static int test_fp_contract_off()
-{
-    const uint32_t ab_bits = UINT32_C( 0x3F800800 );
-    const uint32_t c_bits = UINT32_C( 0xBF801000 );
-    volatile float av, bv, cv;
-    float a, b, c;
-    memcpy( &a, &ab_bits, sizeof( a ) );
-    memcpy( &b, &ab_bits, sizeof( b ) );
-    memcpy( &c, &c_bits, sizeof( c ) );
-    av = a;
-    bv = b;
-    cv = c;
-
-    const uint64_t dab_bits = UINT64_C( 0x3FF0000002000000 );
-    const uint64_t dc_bits = UINT64_C( 0xBFF0000004000000 );
-    volatile double dav, dbv, dcv;
-    double da, db, dc;
-    memcpy( &da, &dab_bits, sizeof( da ) );
-    memcpy( &db, &dab_bits, sizeof( db ) );
-    memcpy( &dc, &dc_bits, sizeof( dc ) );
-    dav = da;
-    dbv = db;
-    dcv = dc;
-
-    int rc = rocketnet_fp_check_float( av, bv, cv );
-    rc |= rocketnet_fp_check_double( dav, dbv, dcv );
-    return rc;
-}
-
 int main( int argc, char ** argv )
 {
     if ( test_fp_contract_off() )
         return 1;
 
-    // The unit suite runs over the loopback transport with no sockets, so a
-    // transport pin in the environment must not reach it: both pins are
-    // cleared for the whole run and restored on exit, the way
-    // posix_pair_create lifts them around its creates
-    // (tests/functional/posix_socket_errors.cpp). Worker processes inherit the
-    // cleared environment; a case that tests pin handling itself sets and
-    // reads its own pins.
+    // No unit case reads the process environment, and the public creates a
+    // case calls read only names this clears: every name the SDK reads is
+    // cleared here, before the registry's memory bounds are planned and before
+    // any worker starts, and again in each worker (rocketnet_unit_worker).
+    // Workers inherit the cleared environment.
 
-    char saved_server_transport[256] = "";
-    char saved_client_transport[256] = "";
-    const bool server_pinned = rocketnet_test_getenv( "ROCKETNET_SERVER_TRANSPORT", saved_server_transport, sizeof( saved_server_transport ) ) != 0;
-    const bool client_pinned = rocketnet_test_getenv( "ROCKETNET_CLIENT_TRANSPORT", saved_client_transport, sizeof( saved_client_transport ) ) != 0;
-#if defined( _WIN32 )
-    _putenv_s( "ROCKETNET_SERVER_TRANSPORT", "" );
-    _putenv_s( "ROCKETNET_CLIENT_TRANSPORT", "" );
-#else
-    unsetenv( "ROCKETNET_SERVER_TRANSPORT" );
-    unsetenv( "ROCKETNET_CLIENT_TRANSPORT" );
-#endif // #if defined( _WIN32 )
+    if ( rocketnet_unit_clear_environment() != 0 )
+        return 1;
 
     int result;
 
@@ -385,24 +294,5 @@ int main( int argc, char ** argv )
                              NULL, 0, NULL, 120.0 * ROCKETNET_TEST_CASE_TIME_SCALE, 0, false, false );
     }
 
-#if defined( _WIN32 )
-    if ( server_pinned )
-    {
-        _putenv_s( "ROCKETNET_SERVER_TRANSPORT", saved_server_transport );
-    }
-    if ( client_pinned )
-    {
-        _putenv_s( "ROCKETNET_CLIENT_TRANSPORT", saved_client_transport );
-    }
-#else
-    if ( server_pinned )
-    {
-        setenv( "ROCKETNET_SERVER_TRANSPORT", saved_server_transport, 1 );
-    }
-    if ( client_pinned )
-    {
-        setenv( "ROCKETNET_CLIENT_TRANSPORT", saved_client_transport, 1 );
-    }
-#endif // #if defined( _WIN32 )
     return result;
 }

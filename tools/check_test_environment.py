@@ -189,13 +189,14 @@ def _guards_exclusive(a, b):
 
 # Unit sources a production (ROCKETNET_DEV=OFF) test binary does not compile
 # (CMakeLists.txt): the two registry tables, the loopback transport unit and
-# the results file it includes, the Windows RIO overflow seam, and every file
+# the results and stop-spread files it includes, the Windows RIO overflow seam, and every file
 # in CMakeLists.txt's ROCKETNET_DEV_ONLY_*_TEST_SOURCES lists, read from there.
 PRODUCTION_ABSENT_FIXED = {
     "rocketnet_tests.cpp",
     "test_channels.cpp",
     "test_unit_driver_loopback.cpp",
     "test_unit_driver_results_checked.cpp",
+    "test_unit_server_stop_spread.cpp",
     "test_unit_rio_overflow_seam.cpp",
 }
 DEV_ONLY_LIST_RE = re.compile(r"set\(\s*ROCKETNET_DEV_ONLY_\w+_TEST_SOURCES\s+([^)]*)\)")
@@ -278,14 +279,42 @@ def exec_functional_names():
     return re.compile("(?:" + "|".join(patterns) + ")")
 
 
-def check_shape(lines, label):
-    # every line a test name, then a blank line, the passed line and a blank line
+def check_shape(lines, label, once=False):
+    # every line a test name, then a blank line, the passed line and a blank line;
+    # with once, each name on one line only (the unit registry prints each case once)
     if len(lines) < 4 or lines[-3:] != ["", PASSED_LINE, ""]:
         sys.exit("%s: the run does not end with a blank line, %r and a blank line" % (label, PASSED_LINE))
     bad = [line for line in lines[:-3] if not TEST_NAME_RE.fullmatch(line)]
     if bad:
         sys.exit("%s: lines that are not test_ snake_case names: %s" % (label, "; ".join(bad[:10])))
+    if once:
+        seen = set()
+        repeated = sorted({line for line in lines[:-3] if line in seen or seen.add(line)})
+        if repeated:
+            sys.exit("%s: names printed more than once: %s" % (label, ", ".join(repeated[:10])))
     return lines[:-3]
+
+
+# A registered unit case's name is printed by the registry before the case runs
+# (tests/test_unit_registry.h); a case that prints its own name again shows it
+# twice in a single-case run (./bin/test <name>).
+SELF_NAME_PRINT_RE = re.compile(r'printf\(\s*"(test_[a-z0-9_]+)\\n"\s*\)')
+
+
+def unit_sources_printing_names(paths=None):
+    if paths is None:
+        paths = sorted((REPO / "tests").glob("test_unit_*.cpp")) + [REPO / "sdk" / "rocketnet_tests.cpp"]
+    found = []
+    for path in paths:
+        try:
+            text = Path(path).read_text()
+        except OSError:
+            continue
+        for number, line in enumerate(text.splitlines(), 1):
+            m = SELF_NAME_PRINT_RE.search(line)
+            if m:
+                found.append("%s:%d prints %s" % (Path(path).name, number, m.group(1)))
+    return found
 
 
 def assert_name_set(printed, registered, always, label, exec_names=None):
@@ -315,7 +344,7 @@ def run_binary(binary, env, timeout):
 def main():
     args = [arg for arg in sys.argv[1:] if arg != "--production"]
     # --production: the binary links the production library (ROCKETNET_DEV=OFF),
-    # which compiles no in-memory environment table and so no restoration test
+    # whose unit suite does not compile the DEV environment-table case
     production = "--production" in sys.argv[1:]
     binary = Path(args[0] if args else "bin/test").resolve()
     functional = "functional" in binary.name
@@ -336,11 +365,18 @@ def main():
         assert_name_set(printed, reg_all, reg_always, "functional", exec_functional_names())
         return
 
-    # Preserve any caller's explicit ROCKETNET_SERVER_TRANSPORT and
-    # ROCKETNET_CLIENT_TRANSPORT pins. Other values exercise
-    # exact names, older aliases, an invalid key and a long value without ever
-    # printing their contents. The suite derives its cleanup list from the tables.
+    printing = unit_sources_printing_names()
+    if printing:
+        sys.exit("unit cases print their own name, which the registry already prints: %s" % "; ".join(printing[:10]))
+
+    # The values exercise exact names, older aliases, an invalid key and a
+    # long value without ever printing their contents, and the transport pins
+    # name a socket transport: no unit case reads the process environment, and
+    # the runner clears every name the SDK reads before each case (its cleanup
+    # list is derived from the tables), so none of them reaches a create.
     env.update({
+        "ROCKETNET_SERVER_TRANSPORT": "io_uring",
+        "ROCKETNET_CLIENT_TRANSPORT": "io_uring",
         "ROCKETNET_LOG_LEVEL": "4",
         "ROCKETNET_MAX_CLIENTS": "77",
         "ROCKETNET_NUM_REASSEMBLY_SLOTS": "3",
@@ -355,9 +391,9 @@ def main():
     result = run_binary(binary, env, timeout=180)
     if result.returncode:
         sys.exit("SDK suite failed with ambient config overrides: %s" % result.returncode)
-    names = check_shape(result.stdout.splitlines(), "SDK suite")
+    names = check_shape(result.stdout.splitlines(), "SDK suite", once=True)
     if not production and "test_suite_environment" not in names:
-        sys.exit("SDK suite did not execute its environment restoration test")
+        sys.exit("SDK suite did not execute its environment table test")
 
     reg_all, reg_always = registered_unit_names(production)
     assert_name_set(set(names), reg_all, reg_always, "SDK suite")

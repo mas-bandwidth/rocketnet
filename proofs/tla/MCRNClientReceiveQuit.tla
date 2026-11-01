@@ -1,7 +1,7 @@
 ------------------------ MODULE MCRNClientReceiveQuit ------------------------
 (***************************************************************************)
 (* The instances of RNClientReceiveQuit.  The model is finite as written: *)
-(* one thread, one destroy, one wake.  MCRNClientReceiveQuit.cfg (linux), *)
+(* one thread, one stop, one wake.  MCRNClientReceiveQuit.cfg (linux),     *)
 (* MCRNClientReceiveQuitMac.cfg and MCRNClientReceiveQuitWindows.cfg are  *)
 (* the committed runs with every rule on, one per platform variant;       *)
 (* MCRNClientReceiveQuitBrokenWakeBeforeQuit.cfg and                      *)

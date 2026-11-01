@@ -29,7 +29,7 @@ docs-undocumented:
 	@if [ ! -f build/docs/mrdocs.log ]; then sh tools/docs/mrdocs.sh >/dev/null; fi
 	@sh tools/docs/undocumented.sh build/docs/mrdocs.log
 
-# clang-format check over tracked sources; the CI format-check job runs it.
+# clang-format check over tracked sources; the CI lint job runs it.
 .PHONY: format-check
 format-check:
 	@sh tools/format/check_format.sh
@@ -38,3 +38,9 @@ format-check:
 clean:
 	rm -rf build
 	rm -rf bin/*
+
+# ROADMAP.md is generated from docs/roadmap.sexp by nova-sprint's roadmap tool
+# (a go tool dependency there); NOVA_SPRINT names a nova-sprint checkout.
+NOVA_SPRINT ?= ../nova-sprint
+roadmap:
+	cd $(NOVA_SPRINT) && go tool roadmap --file $(CURDIR)/docs/roadmap.sexp --out $(CURDIR)/ROADMAP.md

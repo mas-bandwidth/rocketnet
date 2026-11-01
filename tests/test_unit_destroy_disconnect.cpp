@@ -5,9 +5,7 @@
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
-#include "test_env_source.h"
 #include "fake_client_driver.h"
-#include "portable_crt.h"
 #include "../sdk/rocketnet.h"
 #include "../sdk/rocketnet_internal.h"
 #include "../sdk/rocketnet_client_io.h"
@@ -33,67 +31,6 @@ extern const rocketnet_transport_backend_t rocketnet_loopback_transport;
 
 static const uint64_t DESTROY_DISCONNECT_PROTOCOL_ID = 0x44455354524F5901ULL;
 static const int DESTROY_DISCONNECT_MAX_CLIENTS = 4;
-
-// the cases build both endpoints over the loopback transport their config
-// structs name (destroy_disconnect_server_create and
-// destroy_disconnect_client_create below). the environment overlays the
-// struct (sdk/rocketnet_server_transport.cpp:955 and
-// sdk/rocketnet_client_transport.cpp:586), so a ROCKETNET_SERVER_TRANSPORT
-// or ROCKETNET_CLIENT_TRANSPORT pin replaces "loopback": the server binds a
-// portable socket, and the step-driven client create is refused at
-// sdk/rocketnet_client_transport.cpp:968 because portable has no
-// non-blocking step. each case clears both names for its run and restores
-// them at its end.
-#if ROCKETNET_DEV
-static int destroy_disconnect_setenv( const char * name, const char * value )
-{
-    return rocketnet_test_env_setenv( name, value, 1 );
-}
-#endif // #if ROCKETNET_DEV
-
-#if ROCKETNET_DEV
-static int destroy_disconnect_unsetenv( const char * name )
-{
-    return rocketnet_test_env_unsetenv( name );
-}
-#endif // #if ROCKETNET_DEV
-
-#if ROCKETNET_DEV
-struct destroy_disconnect_env_guard_t
-{
-    static const int NUM_NAMES = 2;
-    const char * names[NUM_NAMES] = { "ROCKETNET_SERVER_TRANSPORT", "ROCKETNET_CLIENT_TRANSPORT" };
-    char saved[NUM_NAMES][256] = {};
-    bool present[NUM_NAMES] = {};
-
-    destroy_disconnect_env_guard_t()
-    {
-        for ( int i = 0; i < NUM_NAMES; i++ )
-        {
-            char prior[4096];
-            present[i] = rocketnet_test_env_getenv( names[i], prior, sizeof( prior ) ) && prior[0] != '\0';
-            if ( present[i] )
-            {
-                check( strlen( prior ) < sizeof( saved[i] ) );
-                memcpy( saved[i], prior, strlen( prior ) + 1 );
-            }
-
-            check( destroy_disconnect_unsetenv( names[i] ) == 0 );
-        }
-    }
-
-    ~destroy_disconnect_env_guard_t() noexcept( false ) // check() throws under the expected-fail harness
-    {
-        for ( int i = 0; i < NUM_NAMES; i++ )
-        {
-            if ( present[i] )
-                check( destroy_disconnect_setenv( names[i], saved[i] ) == 0 );
-            else
-                check( destroy_disconnect_unsetenv( names[i] ) == 0 );
-        }
-    }
-};
-#endif // #if ROCKETNET_DEV
 
 struct destroy_disconnect_keys_t
 {
@@ -332,9 +269,6 @@ static uint64_t destroy_disconnect_drain( void * endpoint, uint64_t * dropped )
 
 static void test_disconnect_then_destroy_connected_client_sends_disconnect()
 {
-#if ROCKETNET_DEV
-    destroy_disconnect_env_guard_t env_guard;
-#endif // #if ROCKETNET_DEV
     rocketnet_quiet( 1 );
 
     destroy_disconnect_keys_t keys;
@@ -417,9 +351,6 @@ REGISTER_UNIT_TEST( test_disconnect_then_destroy_connected_client_sends_disconne
 
 static void test_stop_then_destroy_server_sends_disconnect_to_every_connected_client()
 {
-#if ROCKETNET_DEV
-    destroy_disconnect_env_guard_t env_guard;
-#endif // #if ROCKETNET_DEV
     rocketnet_quiet( 1 );
 
     destroy_disconnect_keys_t keys;
@@ -548,9 +479,6 @@ static void destroy_disconnect_public_client_destroy_sends_nothing( const destro
 
 static void test_shutdown_without_live_connection_sends_nothing()
 {
-#if ROCKETNET_DEV
-    destroy_disconnect_env_guard_t env_guard;
-#endif // #if ROCKETNET_DEV
     rocketnet_quiet( 1 );
 
     destroy_disconnect_keys_t keys;
@@ -741,9 +669,6 @@ REGISTER_UNIT_TEST( test_shutdown_without_live_connection_sends_nothing );
 
 static void test_transport_disconnect_twice_delivers_original_burst()
 {
-#if ROCKETNET_DEV
-    destroy_disconnect_env_guard_t env_guard;
-#endif // #if ROCKETNET_DEV
     destroy_disconnect_keys_t keys;
     destroy_disconnect_make_keys( &keys );
 
@@ -776,9 +701,6 @@ REGISTER_UNIT_TEST( test_transport_disconnect_twice_delivers_original_burst );
 
 static void test_transport_disconnect_preserves_simulator_loss()
 {
-#if ROCKETNET_DEV
-    destroy_disconnect_env_guard_t env_guard;
-#endif // #if ROCKETNET_DEV
 
     destroy_disconnect_keys_t keys;
     destroy_disconnect_make_keys( &keys );
@@ -813,9 +735,6 @@ REGISTER_UNIT_TEST( test_transport_disconnect_preserves_simulator_loss );
 
 static void test_client_disconnect_sends_burst_staged_in_link_simulator()
 {
-#if ROCKETNET_DEV
-    destroy_disconnect_env_guard_t env_guard;
-#endif // #if ROCKETNET_DEV
     rocketnet_quiet( 1 );
 
     destroy_disconnect_keys_t keys;

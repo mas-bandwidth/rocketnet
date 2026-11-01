@@ -1,6 +1,7 @@
 # The rows of RN-2 m10 (MESSAGES.md): document name, sdk expression, value.
 # Format and rules: standard/STYLE.md section 10.
 #include "rocketnet.h"
-channel wide boundary	UINT8_MAX + 1	256
+#include "rocketnet_message.h"
+channel wide boundary	ROCKETNET_MESSAGE_WIDE_CHANNEL	256
 default maximum channel count	ROCKETNET_MAX_CHANNELS	32
-maximum allowed build-specific channel count	UINT16_MAX + 1	65536
+maximum allowed build-specific channel count	ROCKETNET_MAX_CHANNELS_LIMIT	65536

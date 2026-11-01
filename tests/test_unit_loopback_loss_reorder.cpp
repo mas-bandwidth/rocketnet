@@ -17,7 +17,6 @@
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
-#include "portable_crt.h"
 
 #include "../sdk/rocketnet.h"
 #include "rocketnet_internal.h"
@@ -238,15 +237,17 @@ static void loopback_run_fixed_trace( int latency_ms, struct loopback_trace_t * 
 
 static void loopback_print_trace( const char * name, const struct loopback_trace_t * t )
 {
-    char print_trace[256];
-    if ( !rocketnet_test_getenv( "ROCKETNET_LOOPBACK_PRINT_TRACE", print_trace, sizeof( print_trace ) ) )
-        return;
+#if defined( ROCKETNET_LOOPBACK_PRINT_TRACE )
     printf( "TRACE %s { %llu, %llu, %llu, %llu, %llu, %llu, %llu, %llu, UINT64_C( 0x%016llx ), UINT64_C( 0x%016llx ), %d }\n", name,
             (unsigned long long) t->client_packets_sent, (unsigned long long) t->client_packets_received,
             (unsigned long long) t->client_bytes_sent, (unsigned long long) t->client_bytes_received,
             (unsigned long long) t->server_packets_sent, (unsigned long long) t->server_packets_received,
             (unsigned long long) t->server_bytes_sent, (unsigned long long) t->server_bytes_received,
             (unsigned long long) t->client_counters_hash, (unsigned long long) t->server_counters_hash, t->connected_step );
+#else
+    (void) name;
+    (void) t;
+#endif // #if defined( ROCKETNET_LOOPBACK_PRINT_TRACE )
 }
 
 static void loopback_check_trace( const struct loopback_trace_t * got, const struct loopback_trace_t * want )
@@ -266,11 +267,10 @@ static void loopback_check_trace( const struct loopback_trace_t * got, const str
 
 // Repinned because every eliciting packet now gets a standalone ACK on the next update;
 // simulator latency adds two connected steps (24 without it, 26 with it).
-// Hashes include the appended, zero-valued XDP_KERNEL_DROPPED_NO_SOCKET, CLIENT_RECEIVE_FOREIGN_SOURCE,
-// XDP_KERNEL_DROPPED_IP_OPTIONS_OR_EXTENSION, MESSAGE_NOT_RECEIVED, CONNECTION_RESPONSE_PADDING_NOT_ZERO
-// and CONNECTION_REQUEST_CLAIM_TABLE_FULL counters.
-static const struct loopback_trace_t loopback_base_trace_simulator_off = { 67, 66, 5954, 4320, 67, 66, 4389, 5889, UINT64_C( 0x0fba63931b14c9e7 ), UINT64_C( 0x2f0d46e7331070c5 ), 24 };
-static const struct loopback_trace_t loopback_base_trace_simulator_on = { 68, 66, 5775, 4328, 67, 66, 4389, 5653, UINT64_C( 0x8e0796e56833fa27 ), UINT64_C( 0x2f0d46e7331070c5 ), 26 };
+// The counter hashes cover every counter in index order, zeros included, so they
+// move when a counter is added or removed.
+static const struct loopback_trace_t loopback_base_trace_simulator_off = { 67, 66, 5954, 4320, 67, 66, 4389, 5889, UINT64_C( 0x9fce012a0b2fb307 ), UINT64_C( 0x15d44be8780d1a65 ), 24 };
+static const struct loopback_trace_t loopback_base_trace_simulator_on = { 68, 66, 5775, 4328, 67, 66, 4389, 5653, UINT64_C( 0xec8b13518be76b47 ), UINT64_C( 0x15d44be8780d1a65 ), 26 };
 
 static void test_loopback_transport_patterns_off_same_trace()
 {
@@ -283,8 +283,6 @@ static void test_loopback_transport_patterns_off_same_trace()
 
     loopback_check_trace( &off, &loopback_base_trace_simulator_off );
     loopback_check_trace( &on, &loopback_base_trace_simulator_on );
-
-    printf( "test_loopback_transport_patterns_off_same_trace\n" );
 }
 
 REGISTER_UNIT_TEST( test_loopback_transport_patterns_off_same_trace );
@@ -357,7 +355,6 @@ static void test_loopback_transport_drop_every_nth()
     check( cstats.packets_received == sstats.packets_sent - sstats.packets_sent / 5 );
 
     loopback_transport_pair_teardown( &pair );
-    printf( "test_loopback_transport_drop_every_nth\n" );
 }
 
 REGISTER_UNIT_TEST( test_loopback_transport_drop_every_nth );
@@ -438,10 +435,75 @@ static void test_loopback_transport_reverse_window()
     }
 
     loopback_transport_pair_teardown( &pair );
-    printf( "test_loopback_transport_reverse_window\n" );
 }
 
 REGISTER_UNIT_TEST( test_loopback_transport_reverse_window );
+
+// A payload that opens when the server's payload batch is full is counted
+// PAYLOAD_BATCH_FULL. The batch holds one entry per packet the update takes,
+// so the unit seam lowers its capacity to two and three payloads arrive in
+// one update: the first two are delivered in order and the third is counted.
+// The client's slot always exists (ROCKETNET_CLIENT_UPDATE_PACKET_BUDGET), so
+// the three payloads sent the other way in the same update all arrive.
+
+extern void rocketnet_server_transport_set_payload_batch_capacity_for_test( int payloads );
+
+static void test_loopback_transport_payload_batch_full_is_counted()
+{
+    struct loopback_pattern_t pattern = { 0, 0, 0 };
+    struct loopback_transport_pair_t pair;
+    check( loopback_transport_pair_setup( &pair, pattern, pattern ) );
+    check( loopback_transport_pair_connect( &pair ) );
+    loopback_transport_pair_step( &pair, 0.01 );
+
+    const uint64_t server_full_before = rocketnet_server_transport_counters( pair.server )->values[ROCKETNET_COUNTER_PAYLOAD_BATCH_FULL];
+    check( server_full_before == 0 );
+
+    rocketnet_server_transport_set_payload_batch_capacity_for_test( 2 );
+
+    for ( uint8_t i = 1; i <= 3; i++ )
+    {
+        rocketnet_client_transport_send_packet( pair.client, &i, 1 );
+        rocketnet_server_transport_send_packet( pair.server, 0, &i, 1 );
+    }
+    rocketnet_client_transport_send_packets( pair.client );
+    rocketnet_server_transport_send_packets( pair.server );
+
+    pair.time += 0.01;
+    loopback_loss_reorder_clock = pair.time;
+    rocketnet_server_transport_update( pair.server, pair.time );
+    rocketnet_client_transport_update( pair.client, pair.time );
+
+    const int * client_indices = NULL;
+    uint8_t * const * server_payloads = NULL;
+    const int * server_payload_bytes = NULL;
+    const int server_count = rocketnet_server_transport_payloads( pair.server, &client_indices, &server_payloads, &server_payload_bytes );
+
+    uint8_t * const * client_payloads = NULL;
+    const int * client_payload_bytes = NULL;
+    const int client_count = rocketnet_client_transport_payloads( pair.client, &client_payloads, &client_payload_bytes );
+
+    const uint64_t server_full = rocketnet_server_transport_counters( pair.server )->values[ROCKETNET_COUNTER_PAYLOAD_BATCH_FULL];
+
+    rocketnet_server_transport_set_payload_batch_capacity_for_test( 0 );
+
+    if ( server_count != 2 || client_count != 3 || server_full != 1 )
+        printf( "test_loopback_transport_payload_batch_full_is_counted: server %d payloads, PAYLOAD_BATCH_FULL %llu; client %d payloads\n",
+                server_count, (unsigned long long) server_full, client_count );
+
+    check( server_count == 2 && client_count == 3 );
+    check( server_full == 1 );
+
+    for ( int i = 0; i < 2 && i < server_count; i++ )
+        check( server_payload_bytes[i] == 1 && server_payloads[i][0] == (uint8_t) ( i + 1 ) );
+
+    for ( int i = 0; i < 3 && i < client_count; i++ )
+        check( client_payload_bytes[i] == 1 && client_payloads[i][0] == (uint8_t) ( i + 1 ) );
+
+    loopback_transport_pair_teardown( &pair );
+}
+
+REGISTER_UNIT_TEST( test_loopback_transport_payload_batch_full_is_counted );
 
 static void test_loopback_transport_reliable_ordered_survives_loss_and_reorder()
 {
@@ -560,8 +622,6 @@ static void test_loopback_transport_reliable_ordered_survives_loss_and_reorder()
     check( rocketnet_server_transport_stopped( pair.server ) );
     rn_message_object_destroy( client );
     rn_message_object_destroy( server );
-
-    printf( "test_loopback_transport_reliable_ordered_survives_loss_and_reorder\n" );
 }
 
 REGISTER_UNIT_TEST( test_loopback_transport_reliable_ordered_survives_loss_and_reorder );
@@ -748,8 +808,6 @@ static void test_loopback_transport_loss_reorder_production_refusal()
 
     check( loopback_error_lines >= 12 );
     loopback_error_end();
-
-    printf( "test_loopback_transport_loss_reorder_production_refusal\n" );
 }
 
 REGISTER_UNIT_TEST( test_loopback_transport_loss_reorder_production_refusal );

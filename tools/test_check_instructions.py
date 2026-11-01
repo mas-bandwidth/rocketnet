@@ -5,8 +5,9 @@ Unit tests for tools/check_instructions.py covering DONE-WHEN (5):
 2. PASS when every region is at or within +2.0% of baseline.
 3. FAIL (exit 1) when any region is more than +2.0% over baseline.
 4. Under-baseline NOTE (still PASS, exit 0) when a region is more than 2.0% under baseline.
-5. Toolchain mismatch (compiler_id, valgrind_version, or build_type) fails naming the mismatch.
-6. Repin (--repin --reason <text>) rewrites baseline JSON with counts, toolchain metadata, commit, and reason, and refuses missing --reason.
+5. Toolchain mismatch (toolchain_id, compiler_id, valgrind_version, or build_type) fails naming the mismatch;
+   a distro or host build reporting the same compiler_id is not comparable to a pinned baseline.
+6. Repin (--repin --reason <text>) rewrites baseline JSON with counts, toolchain metadata, commit, and reason, and refuses missing --reason or an unpinned toolchain.
 """
 
 import json
@@ -17,6 +18,8 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import check_instructions as ci
+
+PINNED = "pinned-gcc-13.3.0-valgrind-3.26.0-script-0123456789ab"
 
 
 def make_cachegrind_out(ir: int, events: str = "Ir") -> str:
@@ -39,8 +42,10 @@ def make_baseline(
     compiler_id: str = "GNU-13.3.0",
     valgrind_version: str = "valgrind-3.26.0",
     build_type: str = "Release",
+    toolchain_id: str = PINNED,
 ) -> dict:
     return {
+        "toolchain_id": toolchain_id,
         "compiler_id": compiler_id,
         "valgrind_version": valgrind_version,
         "build_type": build_type,
@@ -96,6 +101,7 @@ class TestCheckInstructions(unittest.TestCase):
             compiler_id="GNU-13.3.0",
             valgrind_version="valgrind-3.26.0",
             build_type="Release",
+            toolchain_id=PINNED,
         )
         self.assertEqual(code, 0, msg=report)
         self.assertIn(
@@ -120,6 +126,7 @@ class TestCheckInstructions(unittest.TestCase):
             compiler_id="GNU-13.3.0",
             valgrind_version="valgrind-3.26.0",
             build_type="Release",
+            toolchain_id=PINNED,
         )
         self.assertEqual(code, 1, msg=report)
         self.assertIn("region=client_frame", report)
@@ -137,6 +144,7 @@ class TestCheckInstructions(unittest.TestCase):
             compiler_id="GNU-13.3.0",
             valgrind_version="valgrind-3.26.0",
             build_type="Release",
+            toolchain_id=PINNED,
         )
         self.assertEqual(code, 0, msg=report)
         self.assertIn("NOTE", report)
@@ -151,9 +159,10 @@ class TestCheckInstructions(unittest.TestCase):
             "server_tick": {"ir": 2000000, "units": 100},
         }
         for field, kwargs in [
-            ("compiler_id", {"compiler_id": "GNU-14.1.0", "valgrind_version": "valgrind-3.26.0", "build_type": "Release"}),
-            ("valgrind_version", {"compiler_id": "GNU-13.3.0", "valgrind_version": "valgrind-3.22.0", "build_type": "Release"}),
-            ("build_type", {"compiler_id": "GNU-13.3.0", "valgrind_version": "valgrind-3.26.0", "build_type": "Debug"}),
+            ("toolchain_id", {"compiler_id": "GNU-13.3.0", "valgrind_version": "valgrind-3.26.0", "build_type": "Release", "toolchain_id": ci.UNPINNED_TOOLCHAIN_ID}),
+            ("compiler_id", {"compiler_id": "GNU-14.1.0", "valgrind_version": "valgrind-3.26.0", "build_type": "Release", "toolchain_id": PINNED}),
+            ("valgrind_version", {"compiler_id": "GNU-13.3.0", "valgrind_version": "valgrind-3.22.0", "build_type": "Release", "toolchain_id": PINNED}),
+            ("build_type", {"compiler_id": "GNU-13.3.0", "valgrind_version": "valgrind-3.26.0", "build_type": "Debug", "toolchain_id": PINNED}),
         ]:
             code, report = ci.evaluate_instructions(
                 baseline=baseline,
@@ -163,6 +172,19 @@ class TestCheckInstructions(unittest.TestCase):
             self.assertEqual(code, 1, msg=report)
             self.assertIn(field, report)
             self.assertIn("verdict=FAIL", report)
+
+    def test_same_compiler_id_without_the_pinned_toolchain_is_not_comparable(self) -> None:
+        baseline = make_baseline()
+        self.assertIsNone(ci.check_toolchain_comparable(baseline, "GNU-13.3.0", "valgrind-3.26.0", PINNED))
+        msg = ci.check_toolchain_comparable(baseline, "GNU-13.3.0", "valgrind-3.26.0", ci.UNPINNED_TOOLCHAIN_ID)
+        self.assertIsNotNone(msg)
+        self.assertIn(PINNED, msg or "")
+        other = PINNED[:-12] + "ba9876543210"
+        self.assertIsNotNone(ci.check_toolchain_comparable(baseline, "GNU-13.3.0", "valgrind-3.26.0", other))
+        legacy = make_baseline()
+        del legacy["toolchain_id"]
+        self.assertIsNotNone(ci.check_toolchain_comparable(legacy, "GNU-13.3.0", "valgrind-3.26.0", PINNED))
+        self.assertIsNotNone(ci.check_toolchain_comparable(legacy, "GNU-13.3.0", "valgrind-3.26.0", ""))
 
     def test_repin_writes_baseline_and_requires_reason(self) -> None:
         measured = {
@@ -178,8 +200,20 @@ class TestCheckInstructions(unittest.TestCase):
                     compiler_id="GNU-13.3.0",
                     valgrind_version="valgrind-3.26.0",
                     build_type="Release",
+                    toolchain_id=PINNED,
                     commit="abcdef0123456789abcdef0123456789abcdef01",
                     reason="   ",
+                )
+            with self.assertRaises(ValueError):
+                ci.write_repin_baseline(
+                    baseline_path=path,
+                    measured=measured,
+                    compiler_id="GNU-13.3.0",
+                    valgrind_version="valgrind-3.26.0",
+                    build_type="Release",
+                    toolchain_id=ci.UNPINNED_TOOLCHAIN_ID,
+                    commit="abcdef0123456789abcdef0123456789abcdef01",
+                    reason="pin after loopback batch change",
                 )
             ci.write_repin_baseline(
                 baseline_path=path,
@@ -187,11 +221,13 @@ class TestCheckInstructions(unittest.TestCase):
                 compiler_id="GNU-13.3.0",
                 valgrind_version="valgrind-3.26.0",
                 build_type="Release",
+                toolchain_id=PINNED,
                 commit="abcdef0123456789abcdef0123456789abcdef01",
                 reason="pin after loopback batch change",
             )
             with open(path, "r", encoding="utf-8") as f:
                 saved = json.load(f)
+            self.assertEqual(saved["toolchain_id"], PINNED)
             self.assertEqual(saved["compiler_id"], "GNU-13.3.0")
             self.assertEqual(saved["valgrind_version"], "valgrind-3.26.0")
             self.assertEqual(saved["build_type"], "Release")
