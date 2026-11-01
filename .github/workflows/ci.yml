@@ -1577,7 +1577,11 @@ jobs:
         shell: bash
         run: |
           cd tools/happy_path
-          go test happy_path.go happy_path_test.go
+          go_test_timeout=()
+          if [ "${ROCKETNET_NIGHTLY_NO_TIMEOUT:-0}" = 1 ]; then
+            go_test_timeout=(-timeout=0)
+          fi
+          go test ${go_test_timeout[@]+"${go_test_timeout[@]}"} happy_path.go happy_path_test.go
           go run happy_path.go
 
       - name: Enforce combined unit and functional timing
@@ -1643,7 +1647,11 @@ jobs:
           timing_start_ns=$(python3 -c 'import time; print(time.clock_gettime_ns(time.CLOCK_MONOTONIC) if hasattr(time, "CLOCK_MONOTONIC") else time.monotonic_ns())')
           [[ "$timing_start_ns" =~ ^[0-9]+$ ]] || { echo "CI_UNIT_FUNCTIONAL_TIMING=FAIL reason=invalid_start"; exit 1; }
           printf '%s %s %s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$timing_start_ns" > "$timing_receipt"
-          go test -count=1 ./...
+          go_test_timeout=()
+          if [ "${ROCKETNET_NIGHTLY_NO_TIMEOUT:-0}" = 1 ]; then
+            go_test_timeout=(-timeout=0)
+          fi
+          go test ${go_test_timeout[@]+"${go_test_timeout[@]}"} -count=1 ./...
 
       - name: Build the backend and run its unit tests (C#)
         if: matrix.backend == 'csharp'

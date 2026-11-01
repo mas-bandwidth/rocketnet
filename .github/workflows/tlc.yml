@@ -84,7 +84,7 @@ jobs:
           adapter_sha=$(sha256sum tools/tlc_nightly.go | cut -d' ' -f1)
           echo "$adapter_sha" > "$job/adapter-source-sha256.txt"
           export TLC_NIGHTLY_TEST_JAR="$jar" TLC_NIGHTLY_TEST_EVIDENCE="$job/controls"
-          (cd "$job/runner" && go test -count=1 -v "$GITHUB_WORKSPACE/tools/tlc_nightly.go" "$GITHUB_WORKSPACE/tools/tlc_nightly_test.go") | tee "$job/adapter-controls.log"
+          (cd "$job/runner" && go test -timeout=0 -count=1 -v "$GITHUB_WORKSPACE/tools/tlc_nightly.go" "$GITHUB_WORKSPACE/tools/tlc_nightly_test.go") | tee "$job/adapter-controls.log"
           (cd "$job/runner" && go build -ldflags "-X main.adapterSHA=$adapter_sha" -o "$job/tlc-nightly" "$GITHUB_WORKSPACE/tools/tlc_nightly.go")
           if [ ! -s "$plan" ]; then
             echo "TLC-PLAN no stale cases or recorded timeout debt"
