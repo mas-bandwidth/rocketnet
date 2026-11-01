@@ -94,10 +94,6 @@
    :title "A create test that fails on second_public_address alone"
    :text "The whole-config create test goes red under the old truncation only because loopback_hub is also cut off."
    :date "2026-10-31" :origin "#737 follow-on")
-  (item "stale-drain-text" :group "audit-remaining" :area "docs"
-   :title "Drain limitation text after #740"
-   :text "docs/CLIENT-IO.md and TRANSPORT-INTERNALS.md 'current staging and drain limitations' still describe the drain bound #740 fixed."
-   :date "2026-10-31" :origin "#740 follow-on")
   (item "max-channels-cmake" :group "audit-remaining" :area "build"
    :title "ROCKETNET_MAX_CHANNELS CMake option"
    :text "Pass it through as ROCKETNET_MAX_CLIENTS is, document it, and give it a CI build."

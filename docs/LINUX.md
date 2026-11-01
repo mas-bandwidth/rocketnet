@@ -190,7 +190,7 @@ Each socket has its own receive worker thread, and the server has one
 transmit worker. Three server-wide send banks hold 4096 slots each, with
 only the current producer bank available to a fill. Adding sockets does not
 increase this fill capacity; sends past it spread across updates as the
-transport's send room reports. See [staging and drain limitations](TRANSPORT-INTERNALS.md#current-staging-and-drain-limitations)
+transport's send room reports. See [staging and drain bounds](TRANSPORT-INTERNALS.md#staging-and-drain-bounds)
 (`sdk/rocketnet_server_gso_linux.cpp`).
 
 **The plain tier.** Create probes `UDP_SEGMENT` and `UDP_GRO` on the bound
@@ -215,7 +215,7 @@ threads (`sdk/rocketnet_server_uring_linux.cpp`). It binds the same
 `sdk/rocketnet_server_uring_linux.cpp`,
 `sdk/rocketnet_driver_builtin.cpp`). All sockets share one 2048-slot send
 array; pending completions keep their slots occupied. More queues do not
-increase that capacity. See [staging limitations](TRANSPORT-INTERNALS.md#current-staging-and-drain-limitations)
+increase that capacity. See [staging and drain bounds](TRANSPORT-INTERNALS.md#staging-and-drain-bounds)
 before sizing a large server.
 
 **Receive.** Each socket has a provided buffer ring of 4096 buffers of 66 KiB
@@ -567,9 +567,9 @@ What each path does with the errors it can see:
 
 `tests/functional/posix_hard_killed_client.cpp` and `tests/functional/posix_socket_errors.cpp`
 cover a hard-killed client and the socket error paths per transport cell.
-Repeated empty or rejected datagrams are a separate case: some current
-POSIX receive loops can continue draining them without a per-pass bound,
-delaying publication and shutdown. See [current drain limitations](TRANSPORT-INTERNALS.md#current-staging-and-drain-limitations).
+Empty or rejected datagrams spend a read of the drain's budget as kept ones
+do, so they never hold a receive loop past it. See
+[staging and drain bounds](TRANSPORT-INTERNALS.md#staging-and-drain-bounds).
 
 ## 8. Limits for 1000 clients
 
