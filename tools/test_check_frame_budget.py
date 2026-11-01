@@ -161,6 +161,62 @@ class TestCheckFrameBudget(unittest.TestCase):
         self.assertIn("load=unavailable", report_win)
         self.assertIn("verdict=PASS", report_win)
 
+    def test_run_benchmark_with_load_checks_delegates_to_evaluate_gate(self) -> None:
+        outputs = [make_stdout(45.0), make_stdout(55.0), make_stdout(50.0)]
+        calls = []
+
+        def fake_run(binary: str, transport: str):
+            idx = len(calls)
+            calls.append((binary, transport))
+            return 0, outputs[idx], ""
+
+        code, report = cfb.run_benchmark_with_load_checks(
+            binary="/fake/client_main_thread_cost",
+            transport="portable",
+            load_fn=lambda: (1.0, 16),
+            run_fn=fake_run,
+        )
+        self.assertEqual(code, 0, msg=report)
+        self.assertEqual(len(calls), 3)
+        self.assertIn("total_us_p99_median=50.00", report)
+        self.assertIn("verdict=PASS", report)
+
+        # Load spike before run 2 stops early without invoking run 2 or 3:
+        loads = iter([(1.0, 16), (6.0, 16), (1.0, 16)])
+        spike_calls = []
+
+        def fake_run_spike(binary: str, transport: str):
+            spike_calls.append((binary, transport))
+            return 0, make_stdout(45.0), ""
+
+        code_void, report_void = cfb.run_benchmark_with_load_checks(
+            binary="/fake/client_main_thread_cost",
+            transport="portable",
+            load_fn=lambda: next(loads),
+            run_fn=fake_run_spike,
+        )
+        self.assertEqual(code_void, 3, msg=report_void)
+        self.assertEqual(len(spike_calls), 1)
+        self.assertIn("VOID load=6.00 cores=16", report_void)
+        self.assertIn("verdict=VOID", report_void)
+
+        # Non-zero exit from binary fails immediately and names the exit status:
+        err_calls = []
+
+        def fake_run_err(binary: str, transport: str):
+            err_calls.append((binary, transport))
+            return 2, "", "bind failed"
+
+        code_err, report_err = cfb.run_benchmark_with_load_checks(
+            binary="/fake/client_main_thread_cost",
+            transport="portable",
+            load_fn=lambda: (1.0, 16),
+            run_fn=fake_run_err,
+        )
+        self.assertEqual(code_err, 1, msg=report_err)
+        self.assertEqual(len(err_calls), 1)
+        self.assertIn("run 1/3 exited 2: bind failed", report_err)
+
 
 if __name__ == "__main__":
     unittest.main()

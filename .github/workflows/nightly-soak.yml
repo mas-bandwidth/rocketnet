@@ -27,9 +27,6 @@ jobs:
       fail-fast: false
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
-        os:
-          # the fleet's org runners (ci.yml build-and-test's note)
-          - ubuntu-latest
     runs-on: [self-hosted, Linux, X64, fleet, long]
     timeout-minutes: 90
     steps:
@@ -58,25 +55,10 @@ jobs:
           exit "$missing"
 
       - name: Build
-        if: runner.os != 'Windows'
         run: make
 
-      - name: Configure (Windows)
-        if: runner.os == 'Windows'
-        run: cmake -B build -A x64
-
-      - name: Build (Windows)
-        if: runner.os == 'Windows'
-        run: cmake --build build --config Release --parallel
-
       - name: Tests
-        if: runner.os != 'Windows'
         run: ./bin/test
-
-      - name: Tests (Windows)
-        if: runner.os == 'Windows'
-        shell: bash
-        run: ./bin/Release/test.exe
 
       # the wire's audit under the real soak, bounded: every receive
       # cross-checked against the reference full-array scan. Slow by
@@ -84,31 +66,13 @@ jobs:
       # than the shape the long soak runs in.
 
       - name: Simulator wire audit (bounded, every receive cross-checked)
-        if: runner.os != 'Windows'
         run: ROCKETNET_SOAK_SIM_AUDIT=1 ./bin/soak_sim 100000
 
-      - name: Simulator wire audit (Windows)
-        if: runner.os == 'Windows'
-        shell: bash
-        run: ROCKETNET_SOAK_SIM_AUDIT=1 ./bin/Release/soak_sim.exe 100000
-
       - name: Simulator soak (eight clients, light loss, any failure is a finding)
-        if: runner.os != 'Windows'
         run: ./bin/soak_sim 10000000
 
-      - name: Simulator soak (Windows)
-        if: runner.os == 'Windows'
-        shell: bash
-        run: ./bin/Release/soak_sim.exe 10000000
-
       - name: UDP loopback soak
-        if: runner.os != 'Windows'
         run: ./bin/soak 200000
-
-      - name: UDP loopback soak (Windows)
-        if: runner.os == 'Windows'
-        shell: bash
-        run: ./bin/Release/soak.exe 200000
 
       # One 1000-client run per Linux server cell (load.c's header names each
       # pin): portable, gso, gso plain and io_uring on loopback, and xdp as
@@ -118,7 +82,6 @@ jobs:
       # expected server transport, and end with the fd and thread counts it
       # started with. A runner with no VM tier fails the xdp cell.
       - name: Many-client load (1000 clients, every Linux server cell)
-        if: runner.os == 'Linux'
         timeout-minutes: 20
         shell: bash
         run: |

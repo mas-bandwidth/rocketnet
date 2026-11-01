@@ -80,9 +80,10 @@ void state_stream_never_goes_backwards_over_lossy_link()
     sequenced_functional_check( last >= 100, "latest state did not arrive" );
     sequenced_functional_check( rocketnet_channel_harness_overflows( &h ) == 0, "delivery ring overflow" );
     sequenced_functional_check( rocketnet_channel_allocator_calls == h.allocations_after_create, "allocation after create" );
-    printf( "test_state_stream_never_goes_backwards_over_lossy_link: accepted=%u delivered=%u last=%u resends=%llu wire_to_server=%lld wire_to_client=%lld seed=0x5EED5EED5EED5EED\n",
+    printf( "test_state_stream_never_goes_backwards_over_lossy_link: accepted=%u delivered=%u last=%u resends=%llu wire_to_server=%lld wire_to_client=%lld seed=0x%016llx\n",
             accepted, delivered, last, (unsigned long long) h.resends,
-            (long long) h.wire_bytes_to_server, (long long) h.wire_bytes_to_client );
+            (long long) h.wire_bytes_to_server, (long long) h.wire_bytes_to_client,
+            (unsigned long long) h.seed );
     rocketnet_channel_harness_destroy( &h );
 }
 

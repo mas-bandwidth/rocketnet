@@ -126,13 +126,6 @@ static void no_worker_clients_create( no_worker_world_t * world, int num_clients
 static void no_worker_server_stop_and_wait( no_worker_world_t * world )
 {
     rocketnet_server_stop( world->server );
-
-    // poll the completion query within a fixed budget; do not sleep
-
-    for ( int step = 0; step < 32 && !rocketnet_server_stopped( world->server ); step++ )
-    {
-    }
-
     check( rocketnet_server_stopped( world->server ) );
 }
 

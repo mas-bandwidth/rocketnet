@@ -84,6 +84,7 @@ def evaluate_gate(
     gate_us: float = GATE_US,
     report_only: bool = False,
     load_samples: Optional[List[Tuple[Optional[float], int]]] = None,
+    run_errors: Optional[List[Optional[str]]] = None,
 ) -> Tuple[int, str]:
     """
     Evaluate the frame-budget gate from pre-collected or synthetic inputs.
@@ -111,6 +112,14 @@ def evaluate_gate(
                 f"runs=- gate={gate_us:g} verdict=VOID"
             )
             return (0 if report_only else 3), "\n".join(lines_out)
+
+        if run_errors is not None and idx < len(run_errors) and run_errors[idx] is not None:
+            lines_out.extend(raw_lines)
+            lines_out.append(
+                f"frame_budget transport={transport} P=32 total_us_p99_median=FAIL "
+                f"runs=- gate={gate_us:g} verdict=FAIL ({run_errors[idx]})"
+            )
+            return 1, "\n".join(lines_out)
 
         if idx >= len(run_outputs):
             lines_out.append(
@@ -172,57 +181,40 @@ def run_benchmark_with_load_checks(
         return proc.returncode, proc.stdout, proc.stderr
 
     runner = run_fn or default_runner
-    lines_out: List[str] = []
-    raw_lines: List[str] = []
-    samples: List[float] = []
+    load_samples: List[Tuple[Optional[float], int]] = []
+    run_outputs: List[str] = []
+    run_errors: List[Optional[str]] = []
 
     for i in range(runs):
         load1, cores = load_fn()
-        if load1 is None:
-            lines_out.append("load=unavailable")
-        elif not is_quiet_host(load1, cores):
-            lines_out.append(f"VOID load={load1:.2f} cores={cores}")
-            lines_out.append(
-                f"frame_budget transport={transport} P=32 total_us_p99_median=VOID "
-                f"runs=- gate={gate_us:g} verdict=VOID"
-            )
-            return (0 if report_only else 3), "\n".join(lines_out)
+        load_samples.append((load1, cores))
+        if load1 is not None and not is_quiet_host(load1, cores):
+            break
 
         rc, stdout, stderr = runner(binary, transport)
         if rc != 0:
-            lines_out.extend(raw_lines)
             err_msg = (stderr or stdout or "").strip()
-            lines_out.append(
-                f"frame_budget transport={transport} P=32 total_us_p99_median=FAIL "
-                f"runs=- gate={gate_us:g} verdict=FAIL (run {i + 1}/{runs} exited {rc}: {err_msg})"
-            )
-            return 1, "\n".join(lines_out)
+            run_outputs.append(stdout)
+            run_errors.append(f"run {i + 1}/{runs} exited {rc}: {err_msg}")
+            break
 
+        run_outputs.append(stdout)
+        run_errors.append(None)
         try:
-            val, raw_line = parse_p32_total_p99(stdout)
-        except ValueError as exc:
-            lines_out.extend(raw_lines)
-            lines_out.append(
-                f"frame_budget transport={transport} P=32 total_us_p99_median=FAIL "
-                f"runs=- gate={gate_us:g} verdict=FAIL ({exc})"
-            )
-            return 1, "\n".join(lines_out)
+            parse_p32_total_p99(stdout)
+        except ValueError:
+            break
 
-        raw_lines.append(raw_line)
-        samples.append(val)
-
-    lines_out.extend(raw_lines)
-    median_us = float(statistics.median(samples))
-    runs_str = ",".join(f"{v:.2f}" for v in samples)
-    passed = median_us <= gate_us
-    verdict = "PASS" if passed else "FAIL"
-    lines_out.append(
-        f"frame_budget transport={transport} P=32 total_us_p99_median={median_us:.2f} "
-        f"runs={runs_str} gate={gate_us:g} verdict={verdict}"
+    return evaluate_gate(
+        transport=transport,
+        run_outputs=run_outputs,
+        load1=load_samples[0][0] if load_samples else None,
+        cores=load_samples[0][1] if load_samples else 1,
+        gate_us=gate_us,
+        report_only=report_only,
+        load_samples=load_samples,
+        run_errors=run_errors,
     )
-    if passed or report_only:
-        return 0, "\n".join(lines_out)
-    return 1, "\n".join(lines_out)
 
 
 def main(argv: Optional[List[str]] = None) -> int:

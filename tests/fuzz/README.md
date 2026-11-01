@@ -109,7 +109,7 @@ CLANG_CL="$(cygpath "$(vswhere -latest -property installationPath)")/VC/Tools/Ll
     -W4 -WX -Wshadow -Wconversion -Wsign-conversion -Wcast-qual -Wformat=2 -Wundef -Wdouble-promotion \
     -DWIN32 -D_WINDOWS -D_DISABLE_STRING_ANNOTATION -D_DISABLE_VECTOR_ANNOTATION -DROCKETNET_DEV=1 \
     -fsanitize=fuzzer,address \
-    -Isodium -Isdk -Itest tests/fuzz/rocketnet_fuzz_session.cpp build-fuzz/Debug/rocketnet_dev.lib \
+    -Isodium -Isdk -Itests tests/fuzz/rocketnet_fuzz_session.cpp build-fuzz/Debug/rocketnet_dev.lib \
     -fuse-ld=lld -Fe:bin/rocketnet_fuzz_session.exe
 cp "$("$CLANG_CL" -print-resource-dir)/lib/windows/clang_rt.asan_dynamic-x86_64.dll" bin/
 mkdir -p corpus_session

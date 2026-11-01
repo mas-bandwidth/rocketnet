@@ -20,7 +20,7 @@
 // The client token keys and ephemeral secret are zeroed by the deliberate
 // disconnect (sdk/rocketnet_client_protocol.cpp,
 // rocketnet_client_protocol_disconnect) and by every automatic terminal
-// transition (rnfix-client-terminal-states-wipe-their-secrets).
+// transition (sdk/rocketnet_client_protocol.cpp, rocketnet_client_set_state).
 
 #include "test_unit_registry.h"
 
@@ -131,7 +131,7 @@ static void feed_cookie( struct rocketnet_client_protocol_t * client, double cur
 }
 
 // ---------------------------------------------------------------------------
-// green: the wipes that have landed
+// Deliberate disconnect wipe
 // ---------------------------------------------------------------------------
 
 // The client's parsed token keys and its ephemeral secret: the deliberate
@@ -164,8 +164,8 @@ static void test_client_token_keys_are_wiped_on_disconnect()
 }
 
 // ---------------------------------------------------------------------------
-// expected-fail: the automatic terminal paths that still leak the ephemeral
-// secret (model finding F4, fix card rnfix-client-terminal-states-wipe-their-secrets)
+// Automatic terminal-state transitions that must wipe the client handshake
+// ephemeral secret before entering the terminal state.
 // ---------------------------------------------------------------------------
 
 // The cookie-request timeout (-2): an attempt that never hears back from the
@@ -257,7 +257,7 @@ static void test_client_ephemeral_secret_wiped_on_denied()
 
 // The connection-request timeout (-3): reach sending-connection-request via
 // cookie, plant canary in the still-live ephemeral, let the per-state timeout
-// fire. This path still leaks (F4) so expected-fail names the fix card.
+// fire and verify the ephemeral secret is wiped.
 static void test_client_ephemeral_secret_wiped_on_connection_request_timeout()
 {
     struct rocketnet_counters_t counters;
@@ -280,8 +280,9 @@ static void test_client_ephemeral_secret_wiped_on_connection_request_timeout()
 }
 
 // The connection-response timeout (-4): feed a valid challenge from state 2;
-// the challenge path zeroes the ephemeral (sdk/rocketnet_client_protocol.cpp:509)
-// and enters state 3. Timeout from there leaves it zero (assert green).
+// the challenge path zeroes the ephemeral (sdk/rocketnet_client_protocol.cpp,
+// rocketnet_client_process_challenge) and enters state 3. Timeout from there
+// leaves it zero.
 static void test_client_ephemeral_secret_wiped_on_connection_response_timeout()
 {
     struct rocketnet_counters_t counters;
