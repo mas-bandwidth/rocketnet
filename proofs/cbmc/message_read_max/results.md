@@ -78,3 +78,30 @@ With check 8's block span test removed from `rocketnet_message.cpp`
 harness_message_reader VERIFICATION FAILED
   unwind 7 --bitwuzla -DW_PARTITION=1; ** 1 of 211 properties failed, 133 passed, 77 not checked; 17 s
 ```
+
+## 2026-11-01 continuation rerun
+
+At `ffe88b3db18ba2b3650925980d609cf49826b526`, the real
+`proofs-message_read_max` target passed on intel (Linux x86_64), serially,
+with the unchanged 1800-second limit per harness and an additional 48-GiB
+process address-space cap. ESBMC was 8.5.0; its executable SHA-256 was
+`d314db72d213859d6cd1cf9045c227489a817cb133dc14d390a5e2663c31ca0a`.
+The bounds, partitions, solvers and unwinds above are unchanged.
+
+| Harness | Properties passed / total | Time |
+| --- | ---: | ---: |
+| `harness_message_reader`, W 1..4096 | 216 / 216 | 21 s |
+| `harness_message_reader`, W 4097..`1 << 20` | 217 / 217 | 21 s |
+| `harness_message_reader_single_max` | 205 / 205 | 3 s |
+| `harness_message_read_config_body` | 71 / 71 | 1 s |
+
+All four processes exited zero with `VERIFICATION SUCCESSFUL`: 709 checked
+properties, zero failures. This does not extend the 24-byte multi-record
+payload bound or prove the unproved range described above.
+
+The same invocation also ran `proofs-esbmc_r_ok`: in C and C++17 the valid
+slices verified (`0 of 9` failed), and the planted overrun alone failed
+(`1 of 5`, expected). The pinned Darwin ESBMC build passed the same four
+controls. A first unguarded `using std::isnan` import caused a real glibc
+C++ parsing conflict; the final shim imports it only on Darwin, whose verifier
+math header exposes it in `std`. The failed parsing attempt is not a proof.
