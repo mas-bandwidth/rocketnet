@@ -168,25 +168,31 @@ define run_replay_near_path
 	fi
 endef
 
-replay-near-4096: proof_replay_advance.c
+# The thirteen path partitions, each its own target so the nightly runs them
+# side by side (nightly-proofs.yml); replay-near-4096 runs them all in turn.
+REPLAY_NEAR_PARTITIONS = nw_empty_clear nw_single_partial_cleared_set nw_single_partial_cleared_only \
+                         nw_single_partial_set_only nw_single_partial_untouched nw_multi_first_word \
+                         nw_multi_interior_word nw_multi_last_word nw_multi_outside_word \
+                         wrap_coincident_word wrap_high_span_only wrap_low_span_only wrap_outside_spans
+
+.PHONY: replay-near-4096-completeness $(addprefix replay-near-4096-,$(REPLAY_NEAR_PARTITIONS)) \
+        print-nightly-readers print-replay-near-partitions
+
+replay-near-4096: replay-near-4096-completeness $(addprefix replay-near-4096-,$(REPLAY_NEAR_PARTITIONS))
+
+replay-near-4096-completeness: proof_replay_advance.c
 	@echo "replay-near-4096 bound delta 1..$(shell expr $(REPLAY_WINDOW_BITS) - 1) deployed ROCKETNET_REPLAY_WINDOW_BITS=$(REPLAY_WINDOW_BITS)"
 	$(CBMC) $(CBMC_FLAGS) --unwind 1 -I$(SDK) \
 	    -DREPLAY_DELTA_BOUND=$(REPLAY_WINDOW_BITS) \
 	    --function harness_replay_near_partition_completeness proof_replay_advance.c
-	@echo "replay-near-4096-partition-completeness VERIFICATION SUCCESSFUL full-domain=1..$(shell expr $(REPLAY_WINDOW_BITS) - 1) partitions=13"
-	$(call run_replay_near_path,nw_empty_clear,harness_replay_near_nw_empty_clear)
-	$(call run_replay_near_path,nw_single_partial_cleared_set,harness_replay_near_nw_single_partial_cleared_set)
-	$(call run_replay_near_path,nw_single_partial_cleared_only,harness_replay_near_nw_single_partial_cleared_only)
-	$(call run_replay_near_path,nw_single_partial_set_only,harness_replay_near_nw_single_partial_set_only)
-	$(call run_replay_near_path,nw_single_partial_untouched,harness_replay_near_nw_single_partial_untouched)
-	$(call run_replay_near_path,nw_multi_first_word,harness_replay_near_nw_multi_first_word)
-	$(call run_replay_near_path,nw_multi_interior_word,harness_replay_near_nw_multi_interior_word)
-	$(call run_replay_near_path,nw_multi_last_word,harness_replay_near_nw_multi_last_word)
-	$(call run_replay_near_path,nw_multi_outside_word,harness_replay_near_nw_multi_outside_word)
-	$(call run_replay_near_path,wrap_coincident_word,harness_replay_near_wrap_coincident_word)
-	$(call run_replay_near_path,wrap_high_span_only,harness_replay_near_wrap_high_span_only)
-	$(call run_replay_near_path,wrap_low_span_only,harness_replay_near_wrap_low_span_only)
-	$(call run_replay_near_path,wrap_outside_spans,harness_replay_near_wrap_outside_spans)
+	@echo "replay-near-4096-partition-completeness VERIFICATION SUCCESSFUL full-domain=1..$(shell expr $(REPLAY_WINDOW_BITS) - 1) partitions=$(words $(REPLAY_NEAR_PARTITIONS))"
+
+define replay_near_partition_target
+replay-near-4096-$(1): proof_replay_advance.c
+	$$(call run_replay_near_path,$(1),harness_replay_near_$(1))
+endef
+
+$(foreach partition,$(REPLAY_NEAR_PARTITIONS),$(eval $(call replay_near_partition_target,$(partition))))
 
 replay-far: proof_replay_advance.c
 	@echo "replay-far bound delta >= $(REPLAY_WINDOW_BITS) deployed ROCKETNET_REPLAY_WINDOW_BITS=$(REPLAY_WINDOW_BITS)"
@@ -346,3 +352,12 @@ NIGHTLY += replay-near-4096
 .PHONY: nightly
 
 nightly: $(NIGHTLY)
+
+# The nightly workflow's job lists: the readers (every NIGHTLY entry but the
+# near-window proof) and the near-window targets, one per line.
+print-nightly-readers:
+	@for target in $(filter-out replay-near-4096,$(NIGHTLY)); do echo "$$target"; done
+
+print-replay-near-partitions:
+	@echo replay-near-4096-completeness
+	@for partition in $(REPLAY_NEAR_PARTITIONS); do echo "replay-near-4096-$$partition"; done
