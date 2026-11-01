@@ -23,7 +23,8 @@
 #   4  fault is silent  -- the SAME corruption without the audit must NOT be
 #                          caught. This is the leg that says why the audit
 #                          exists: the soak quietly loses a packet and still
-#                          reports success.
+#                          reports success. Wire receives expose a lost control
+#                          packet even when application totals are unchanged.
 #   5  profile clean    -- the wall-clock attribution must complete and its
 #                          parts must not exceed the whole.
 #   6  profile fault    -- with the accounting deliberately double-charging, the
@@ -55,13 +56,13 @@ fail()
     failures=$(( failures + 1 ))
 }
 
-# the soak's RESULT: the finished line and any complaint it made along the way.
+# the soak's RESULT: actual wire receives, the finished line and any complaint.
 # Everything else in the output is startup chatter, progress lines and whatever
 # instrument was switched on, none of which is the thing under comparison.
 
 soak_summary()
 {
-    grep -E '^(soak_sim finished:|CLIENT [0-9]+ FAILED|HANG:|PAYLOAD VERIFY|FRAGMENTED PAYLOAD VERIFY|MUST-STAY-ZERO)' "$1"
+    grep -E '^(soak_sim wire:|soak_sim finished:|CLIENT [0-9]+ FAILED|HANG:|PAYLOAD VERIFY|FRAGMENTED PAYLOAD VERIFY|MUST-STAY-ZERO)' "$1"
 }
 
 # ---------------------------------------------------------------------------
@@ -107,8 +108,9 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 4. the same corruption unaudited must pass, silently losing a packet. This is
-#    the leg that justifies the audit's existence rather than the audit's code.
+# 4. the same corruption unaudited must pass, silently losing a wire packet.
+#    A lost ACK can leave application totals unchanged, so the receive count
+#    is part of the result. The audit catches this loss before it feeds the soak.
 
 ROCKETNET_SOAK_SIM_FAULT_INDEX=5000 ROCKETNET_SOAK_SIM_SEED=$SEED \
     "$SOAK_SIM" $SHORT > "$WORK/fault_silent.txt" 2>&1
@@ -116,9 +118,9 @@ status=$?
 if [ "$status" -ne 0 ]; then
     fail "the unaudited corrupted run exited $status -- expected it to pass silently; if this became loud on its own, this leg needs rewriting, not deleting"
 elif soak_summary "$WORK/fault_silent.txt" | diff -q - <( soak_summary "$WORK/det_a.txt" ) > /dev/null; then
-    fail "the corrupted run produced identical results to the clean one -- the fault is not injecting anything, so leg 3 proves nothing"
+    fail "the corrupted run produced identical wire and application results -- the injected loss has no observable witness"
 else
-    echo "leg 4  same corruption, no audit: passes silently with a packet quietly missing -- which is why the audit exists"
+    echo "leg 4  same corruption, no audit: passes with a wire packet missing; application totals may be unchanged"
 fi
 
 # ---------------------------------------------------------------------------
