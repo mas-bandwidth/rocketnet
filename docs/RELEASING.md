@@ -87,8 +87,8 @@ required runs are:
   one without it. The per-commit jobs:
   - `build-and-test`, named `<os> / <build_type> / <leg>`: Ubuntu 24.04
     Debug `unit` and `functional` (which carries the libxdp 1.4 XDP cell in
-    the runner kernel guest), Release `unit`, `functional`, `checks` and
-    `builds`; macOS 27 on arm64 (rows named `macos-15`) Debug `unit` and
+    the runner kernel guest), Release `unit` (which also runs the `builds`
+    leg's steps), `functional` and `checks`; macOS 27 on arm64 (rows named `macos-15`) Debug `unit` and
     Release `functional`;
   - `happy path / <os>` (ubuntu-24.04,
     windows; the Windows row is the per-commit MSVC whole-tree build);
