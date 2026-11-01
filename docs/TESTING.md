@@ -17,7 +17,7 @@ provides the local commands and prerequisites.
 | [CI](../.github/workflows/ci.yml) | Linux, macOS and Windows builds; unit and functional suites; live transport cases; integration examples; package and ABI checks; sanitizer and fuzz smoke runs; conformance and platform checks |
 | [Threaded TSan](../.github/workflows/nightly.yml) | Unit and functional suites with ThreadSanitizer; required on the release commit before tagging |
 | [Static analysis](../.github/workflows/static.yml) | Reported GCC analyzer, clang-tidy and cppcheck findings; see the [GCC evidence limit](#static-analysis-evidence-limit) below |
-| [TLC records](../.github/workflows/tlc.yml) | Model inputs match the recorded required-case outcomes; see the [case inventory](../proofs/tla/CASES.tsv) and [run ledger](../proofs/tla/RUNS.tsv) |
+| [TLC records](../.github/workflows/tlc.yml) | Nightly: every stale case is run with TLC and reaches its declared result, and the committed records match the required-case outcomes; see the [case inventory](../proofs/tla/CASES.tsv) and [run ledger](../proofs/tla/RUNS.tsv) |
 | [CBMC](../.github/workflows/cbmc.yml) | The bounded arithmetic properties and assumptions in the [proof harnesses](../proofs/cbmc/) |
 | [Documentation](../.github/workflows/docs.yml) | Links, compiled examples, tutorial excerpts and generated API reference |
 | [Release checks](../.github/workflows/release-check.yml) | Version consistency and declaration of unreleased wire changes |
