@@ -171,10 +171,10 @@ static void dup_leg( float loss_percent, const char * label )
     }
 
     printf( "test_unreliable_at_most_once_over_duplicating_link %s: dup_to_server=%llu dup_to_client=%llu"
-            " code0=%u/%u code1=%u/%u reliable=%u/%u seed=0x5EED5EED5EED5EED\n",
+            " code0=%u/%u code1=%u/%u reliable=%u/%u seed=0x%016llx\n",
             label, (unsigned long long) dup_to_server, (unsigned long long) dup_to_client,
             s.delivered[0][0], s.delivered[1][0], s.delivered[0][1], s.delivered[1][1],
-            s.delivered[0][2], s.delivered[1][2] );
+            s.delivered[0][2], s.delivered[1][2], (unsigned long long) h.seed );
     rocketnet_channel_harness_destroy( &h );
 }
 

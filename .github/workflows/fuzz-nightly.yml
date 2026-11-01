@@ -518,7 +518,7 @@ jobs:
             -W4 -WX -Wshadow -Wconversion -Wsign-conversion -Wcast-qual -Wformat=2 -Wundef -Wdouble-promotion \
             -DWIN32 -D_WINDOWS -D_DISABLE_STRING_ANNOTATION -D_DISABLE_VECTOR_ANNOTATION -DROCKETNET_DEV=1 \
             -fsanitize=fuzzer,address \
-            -Isodium -Isdk -Itest "${{ fromJSON(matrix.leg).source }}" build-fuzz/Debug/rocketnet_dev.lib \
+            -Isodium -Isdk -Itests "${{ fromJSON(matrix.leg).source }}" build-fuzz/Debug/rocketnet_dev.lib \
             -fuse-ld=lld "-Fe:bin/${{ fromJSON(matrix.leg).target }}.exe"
           cp "$ROCKETNET_FUZZ_RUNTIME_DIR/clang_rt.asan_dynamic-x86_64.dll" bin/
 
@@ -730,7 +730,7 @@ jobs:
             -DROCKETNET_DEV=1 \
             -fsanitize=fuzzer-no-link,memory -fsanitize-memory-track-origins=2 -fno-omit-frame-pointer \
             -nostdinc++ -isystem "${{ env.MSAN_LIBCXX }}/include/c++/v1" \
-            -Isodium -Isdk -Itest "${{ fromJSON(matrix.leg).source }}" build-fuzz-msan/librocketnet_dev.a \
+            -Isodium -Isdk -Itests "${{ fromJSON(matrix.leg).source }}" build-fuzz-msan/librocketnet_dev.a \
             .msan-libfuzzer/libFuzzer.a \
             -stdlib=libc++ -L"${{ env.MSAN_LIBCXX }}/lib" -Wl,-rpath,"${{ env.MSAN_LIBCXX }}/lib" \
             -lbpf -lxdp -luring -lpthread -lm \

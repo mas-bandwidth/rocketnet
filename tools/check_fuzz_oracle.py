@@ -12,7 +12,7 @@ BUILD = Path(sys.argv[1] if len(sys.argv) > 1 else 'build-fuzz').resolve()
 cache = (BUILD / 'CMakeCache.txt').read_text()
 compiler = next(line.split('=', 1)[1] for line in cache.splitlines()
                 if line.startswith('CMAKE_CXX_COMPILER:'))
-flags = [compiler, '-g', '-O1', '-std=c++17',
+flags = [compiler, '-g', '-O1', '-std=c++17', '-ffp-contract=off',
          '-fsanitize=fuzzer-no-link,address,undefined',
          '-fno-sanitize-recover=all', '-fno-omit-frame-pointer', '-I' + str(ROOT / 'sdk')]
 libs = (shlex.split(subprocess.check_output(['pkg-config', '--libs', 'libsodium'], text=True))
