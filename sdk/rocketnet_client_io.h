@@ -572,6 +572,57 @@ inline bool rocketnet_client_io_send_ring( rocketnet_client_io_t * io, int ring,
 {
     const rocketnet_client_io_ring_view_t * view = &io->ring_view[ring];
     const uint64_t committed = io->committed[ring];
+
+    // Synchronous backends and terminal attempts consume the whole suffix.
+    // They do not need a compacted-batch-to-ring slot map for a later retry.
+    if ( terminal || !io->transport->operations->send_batch_progress )
+    {
+        if ( io->transport->operations->send_batch )
+        {
+            rocketnet_platform_send_t sends[ROCKETNET_CLIENT_IO_BATCH];
+            int num_sends = 0;
+
+            for ( uint64_t slot = io->send_slot; slot < committed; slot++ )
+            {
+                int bytes = 0;
+                memcpy( &bytes, view->wire_bytes + (size_t) slot * view->wire_bytes_stride, sizeof( bytes ) );
+
+                if ( bytes == 0 )
+                    continue;
+
+                sends[num_sends].to = &io->to[ring];
+                sends[num_sends].packet_data = view->data + (size_t) slot * view->frame_stride + view->wire_offset;
+                sends[num_sends].packet_bytes = bytes;
+                num_sends++;
+                if ( num_sends == ROCKETNET_CLIENT_IO_BATCH )
+                {
+                    io->transport->operations->send_batch( io->transport->instance, sends, num_sends );
+
+                    num_sends = 0;
+                }
+            }
+
+            if ( num_sends > 0 )
+                io->transport->operations->send_batch( io->transport->instance, sends, num_sends );
+        }
+        else
+        {
+            for ( uint64_t slot = io->send_slot; slot < committed; slot++ )
+            {
+                int bytes = 0;
+                memcpy( &bytes, view->wire_bytes + (size_t) slot * view->wire_bytes_stride, sizeof( bytes ) );
+
+                if ( bytes == 0 )
+                    continue;
+
+                const uint8_t * packet_data = view->data + (size_t) slot * view->frame_stride + view->wire_offset;
+                io->transport->operations->send( io->transport->instance, &io->to[ring], packet_data, bytes );
+            }
+        }
+        io->send_slot = committed;
+        return true;
+    }
+
     while ( io->send_slot < committed )
     {
         rocketnet_platform_send_t sends[ROCKETNET_CLIENT_IO_BATCH];
@@ -596,20 +647,12 @@ inline bool rocketnet_client_io_send_ring( rocketnet_client_io_t * io, int ring,
         int consumed = num_sends;
         if ( num_sends > 0 )
         {
-            if ( !terminal && io->transport->operations->send_batch_progress )
+            consumed = io->transport->operations->send_batch_progress( io->transport->instance, sends, num_sends );
+            if ( consumed < 0 || consumed > num_sends )
             {
-                consumed = io->transport->operations->send_batch_progress( io->transport->instance, sends, num_sends );
-                if ( consumed < 0 || consumed > num_sends )
-                {
-                    io->transport_faults++;
-                    return false;
-                }
+                io->transport_faults++;
+                return false;
             }
-            else if ( io->transport->operations->send_batch )
-                io->transport->operations->send_batch( io->transport->instance, sends, num_sends );
-            else
-                for ( int i = 0; i < num_sends; i++ )
-                    io->transport->operations->send( io->transport->instance, sends[i].to, sends[i].packet_data, sends[i].packet_bytes );
         }
 
         // Batch entries omit aborted slots; the cursor remains in the
