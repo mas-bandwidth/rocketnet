@@ -95,10 +95,6 @@
 
 
 
-  (item "test-737-second-address" :group "audit-remaining" :area "tests"
-   :title "A create test that fails on second_public_address alone"
-   :text "The whole-config create test goes red under the old truncation only because loopback_hub is also cut off."
-   :date "2026-10-31" :origin "#737 follow-on")
 
 
   (item "max-channels-cmake" :group "audit-remaining" :area "build"
