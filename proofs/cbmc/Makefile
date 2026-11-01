@@ -197,6 +197,16 @@ ACK_RUN_FLAGS = --std c++17 --z3 --overflow-check --ub-shift-check \
 ACK_RUN_TIMEOUT ?= 1800
 ACK_RUN_MEMORY_KB ?= 16000000
 
+# Loop 0 initializes at most ACK_RUN_BOUND records. A named limit avoids
+# expanding this harness loop to the larger production-loop limit. Keep
+# ESBMC's unwinding assertions enabled so an insufficient limit stays HOLD.
+# The only RTT-tree caller passes sequence % 2048; its node starts at most
+# 2047 and halves each iteration, so 12 covers its at most 11 loop bodies.
+# In the bound-eight instance, each linear segment spans at most two bitmap
+# words and a masked word contains at most eight selected bits. Keep these
+# limits off the full-window instance. Quote the names: the template has <.
+ACK_RUN_SMALL_UNWINDS = harness_ack_apply_run:0:9,rocketnet_ack.cpp@rocketnet_ack_stats_rtt_write:0:12,rocketnet_ack.cpp@rn_bitmap_range_popcount:0:3,rocketnet_ack.cpp@rn_bitmap_walk_bits_desc<:0:9,rocketnet_ack.cpp@rn_bitmap_walk_bits_desc<:1:3
+
 define run_ack_proof
 	@command -v $(ESBMC) >/dev/null || { echo "$(1): $(ESBMC) not on PATH" >&2; exit 1; }; \
 	work=$$(mktemp -d); \
@@ -205,6 +215,7 @@ define run_ack_proof
 	status=0; \
 	$(CURDIR)/run_bounded.sh $(ACK_RUN_MEMORY_KB) $(ACK_RUN_TIMEOUT) \
 	  $(ESBMC) $(ACK_RUN_FLAGS) --unwind $(3) \
+	    --unwindsetname '$(4)' \
 	    -DACK_RUN_BOUND=$(2) --function harness_ack_apply_run \
 	    "$$work/proof.cpp" > "$$work/output.log" 2>&1 || status=$$?; \
 	cat "$$work/output.log"; \
@@ -213,17 +224,17 @@ define run_ack_proof
 	if grep -q 'UNKNOWN' "$$work/output.log"; then echo "$(1) HOLD UNKNOWN"; exit 1; fi; \
 	if grep -A3 '^Violated property' "$$work/output.log" | grep -q 'unwinding assertion'; then echo "$(1) HOLD unwinding assertion failed"; exit 1; fi; \
 	if [ $$status -eq 0 ] && grep -q '^VERIFICATION SUCCESSFUL' "$$work/output.log"; then \
-	  echo "$(1) VERIFICATION SUCCESSFUL bound=$(2) unwind=$(3)"; \
+	  echo "$(1) VERIFICATION SUCCESSFUL bound=$(2) unwind=$(3) named-unwinds=$(4)"; \
 	else \
-	  echo "$(1) HOLD exit=$$status bound=$(2) unwind=$(3)"; exit 1; \
+	  echo "$(1) HOLD exit=$$status bound=$(2) unwind=$(3) named-unwinds=$(4)"; exit 1; \
 	fi
 endef
 
 ack-run-bound-8: proof_ack_apply_run.c esbmc_shim.h
-	$(call run_ack_proof,ack-run-bound-8,8,65)
+	$(call run_ack_proof,ack-run-bound-8,8,65,$(ACK_RUN_SMALL_UNWINDS))
 
 ack-run-full-4096: proof_ack_apply_run.c esbmc_shim.h
-	$(call run_ack_proof,ack-run-full-4096,$(REPLAY_WINDOW_BITS),4097)
+	$(call run_ack_proof,ack-run-full-4096,$(REPLAY_WINDOW_BITS),4097,harness_ack_apply_run:0:4097)
 
 ack-run-negative-control: proof_ack_apply_run.c esbmc_shim.h
 	@command -v $(ESBMC) >/dev/null || { echo "ack-run-negative-control: $(ESBMC) not on PATH" >&2; exit 1; }; \
@@ -233,6 +244,7 @@ ack-run-negative-control: proof_ack_apply_run.c esbmc_shim.h
 	status=0; \
 	$(CURDIR)/run_bounded.sh $(ACK_RUN_MEMORY_KB) $(ACK_RUN_TIMEOUT) \
 	  $(ESBMC) $(ACK_RUN_FLAGS) --unwind 65 \
+	    --unwindsetname '$(ACK_RUN_SMALL_UNWINDS)' \
 	    -DACK_RUN_BOUND=8 -DACK_NEGATIVE_CONTROL=1 \
 	    --function harness_ack_apply_run "$$work/proof.cpp" \
 	    > "$$work/output.log" 2>&1 || status=$$?; \
@@ -245,7 +257,7 @@ ack-run-negative-control: proof_ack_apply_run.c esbmc_shim.h
 	   grep -q '^VERIFICATION FAILED' "$$work/output.log" && \
 	   grep -q 'negative control reaches the production ACK operation' "$$work/output.log" && \
 	   grep -Eq '\*\* 1 of [0-9]+ properties failed' "$$work/output.log"; then \
-	  echo "ack-run-negative-control EXPECTED FAILURE"; \
+	  echo "ack-run-negative-control EXPECTED FAILURE bound=8 unwind=65 named-unwinds=$(ACK_RUN_SMALL_UNWINDS)"; \
 	else \
 	  echo "ack-run-negative-control HOLD: expected assertion did not fail (exit=$$status)"; exit 1; \
 	fi
