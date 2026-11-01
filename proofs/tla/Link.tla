@@ -15,9 +15,9 @@
 (* them.  What the real path may do to a datagram, and the simulator in    *)
 (* sdk/rocketnet_network_simulator.cpp injects (loss, latency, jitter,      *)
 (* duplication), is here as one action each: Drop, Delay (with Age),       *)
-(* Reorder, Duplicate.  The transport never resends and a lost fragment    *)
-(* loses its payload (USAGE.md); nothing here reassembles, resends or      *)
-(* acknowledges.  That is the models' business.                            *)
+(* Reorder, Duplicate.  The transport never resends and a lost packet      *)
+(* loses its payload (USAGE.md); nothing here resends or acknowledges.     *)
+(* That is the models' business.                                           *)
 (*                                                                         *)
 (* Loss patterns.  Pattern selects which sends the link loses, so TLC can  *)
 (* explore one deterministic terrain at a time ("first packet dropped,     *)
@@ -216,8 +216,8 @@ TypeOK ==
 InFlightBounded == InFlight <= Capacity
 
 (***************************************************************************)
-(* Fairness.  The one assumption the connection, security and fragment     *)
-(* models rely on for liveness, never for safety.                          *)
+(* Fairness.  The one assumption the connection, security and ack models   *)
+(* rely on for liveness, never for safety.                                 *)
 (*                                                                         *)
 (* WireFair: a copy that is at the head and due infinitely often is        *)
 (* delivered infinitely often, and time passes.  This is the wire being a  *)
