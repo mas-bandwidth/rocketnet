@@ -415,7 +415,12 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: transport-cells-repeat-${{ strategy.job-index }}-${{ github.run_attempt }}
-          path: build/transport-cells-repeat
+          path: |
+            build/transport-cells-repeat
+            build-asan/configure.log
+            build-asan/build.log
+            build-asan.configure.log
+            build-asan.build.log
           if-no-files-found: ignore
 
   # THE MACOS TRANSPORT CELLS, FIFTY TIMES IN A ROW. The same script as the
@@ -459,7 +464,12 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: macos-transport-cells-repeat-${{ strategy.job-index }}-${{ github.run_attempt }}
-          path: build/transport-cells-repeat
+          path: |
+            build/transport-cells-repeat
+            build-asan/configure.log
+            build-asan/build.log
+            build-asan.configure.log
+            build-asan.build.log
           if-no-files-found: ignore
 
   # THE WINDOWS TRANSPORT CELLS, FIFTY TIMES IN A ROW.
@@ -504,7 +514,12 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: windows-transport-cells-repeat-${{ strategy.job-index }}-${{ github.run_attempt }}
-          path: build/transport-cells-repeat
+          path: |
+            build/transport-cells-repeat
+            build-asan/configure.log
+            build-asan/build.log
+            build-asan.configure.log
+            build-asan.build.log
           if-no-files-found: ignore
 
 

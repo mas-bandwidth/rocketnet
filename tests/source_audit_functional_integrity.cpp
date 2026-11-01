@@ -12,7 +12,6 @@
 #include "portable_crt.h"
 
 #include <stdio.h>
-#include <regex>
 #include <set>
 #include <string>
 
@@ -61,6 +60,38 @@ static std::string functional_integrity_without_comments( const std::string & te
     return code;
 }
 
+static bool functional_integrity_word_char( char c )
+{
+    return ( c >= 'a' && c <= 'z' ) || ( c >= 'A' && c <= 'Z' ) || ( c >= '0' && c <= '9' ) || c == '_';
+}
+
+static void functional_integrity_skip_space( const std::string & text, size_t & pos )
+{
+    while ( pos < text.size() && ( text[pos] == ' ' || text[pos] == '\t' || text[pos] == '\n' ||
+                                   text[pos] == '\r' || text[pos] == '\f' || text[pos] == '\v' ) )
+        pos++;
+}
+
+static bool functional_integrity_take( const std::string & text, size_t & pos, char c )
+{
+    functional_integrity_skip_space( text, pos );
+    if ( pos == text.size() || text[pos] != c )
+        return false;
+    pos++;
+    return true;
+}
+
+static bool functional_integrity_identifier( const std::string & text, size_t & pos, std::string & name )
+{
+    if ( pos == text.size() || !functional_integrity_word_char( text[pos] ) || ( text[pos] >= '0' && text[pos] <= '9' ) )
+        return false;
+    const size_t first = pos++;
+    while ( pos < text.size() && functional_integrity_word_char( text[pos] ) )
+        pos++;
+    name = text.substr( first, pos - first );
+    return true;
+}
+
 static std::set<std::string> functional_integrity_empty_cases( std::string generated, const std::string & registry )
 {
     // CMake's quoted CONTENT carries escaped newlines. Decode those before
@@ -69,15 +100,46 @@ static std::set<std::string> functional_integrity_empty_cases( std::string gener
         generated.replace( pos, 2, "\n" );
     generated = functional_integrity_without_comments( generated );
     const std::string rows = functional_integrity_without_comments( registry );
-    const std::regex empty_body( "\\bvoid\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*\\(\\s*(?:void\\s*)?\\)\\s*\\{\\s*\\}" );
-    const std::regex registration( "\\{\\s*\"(test_[A-Za-z0-9_]+)\"\\s*,\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*," );
+    // Scan the two small source forms directly. Besides avoiding regex
+    // recursion, this keeps GCC's instrumented libstdc++ regex implementation
+    // out of a strict-warning sanitizer build of the source audit itself.
     std::set<std::string> empty_functions;
-    for ( std::sregex_iterator it( generated.begin(), generated.end(), empty_body ), end; it != end; ++it )
-        empty_functions.insert( ( *it )[1].str() );
+    for ( size_t start = 0; start < generated.size(); start++ )
+    {
+        if ( start != 0 && functional_integrity_word_char( generated[start - 1] ) )
+            continue;
+        size_t pos = start;
+        std::string result, name;
+        if ( !functional_integrity_identifier( generated, pos, result ) || result != "void" )
+            continue;
+        const size_t before_space = pos;
+        functional_integrity_skip_space( generated, pos );
+        if ( pos == before_space || !functional_integrity_identifier( generated, pos, name ) ||
+             !functional_integrity_take( generated, pos, '(' ) )
+            continue;
+        functional_integrity_skip_space( generated, pos );
+        if ( generated.compare( pos, 4, "void" ) == 0 )
+            pos += 4;
+        if ( functional_integrity_take( generated, pos, ')' ) && functional_integrity_take( generated, pos, '{' ) &&
+             functional_integrity_take( generated, pos, '}' ) )
+            empty_functions.insert( name );
+    }
     std::set<std::string> failures;
-    for ( std::sregex_iterator it( rows.begin(), rows.end(), registration ), end; it != end; ++it )
-        if ( empty_functions.count( ( *it )[2].str() ) != 0 )
-            failures.insert( ( *it )[1].str() );
+    for ( size_t start = 0; ( start = rows.find( '{', start ) ) != std::string::npos; start++ )
+    {
+        size_t pos = start + 1;
+        std::string test, function;
+        if ( !functional_integrity_take( rows, pos, '"' ) || !functional_integrity_identifier( rows, pos, test ) ||
+             test.size() <= 5 || test.compare( 0, 5, "test_" ) != 0 || pos == rows.size() || rows[pos] != '"' )
+            continue;
+        pos++;
+        if ( !functional_integrity_take( rows, pos, ',' ) )
+            continue;
+        functional_integrity_skip_space( rows, pos );
+        if ( functional_integrity_identifier( rows, pos, function ) && functional_integrity_take( rows, pos, ',' ) &&
+             empty_functions.count( function ) != 0 )
+            failures.insert( test );
+    }
     return failures;
 }
 
@@ -86,6 +148,10 @@ static void test_functional_cases_have_no_generated_empty_bodies()
     const std::string row = "{ \"test_windows_delivery\", windows_delivery, NULL },\n";
     const std::set<std::string> expected = { "test_windows_delivery" };
     rocketnet_unit_check( functional_integrity_empty_cases( "inline void windows_delivery() {}", row ) == expected );
+    rocketnet_unit_check( functional_integrity_empty_cases( "void\twindows_delivery ( void ) { }", row ) == expected );
+    rocketnet_unit_check( functional_integrity_empty_cases( "avoid windows_delivery() {}", row ).empty() );
+    rocketnet_unit_check( functional_integrity_empty_cases( "void windows_delivery(voidish) {}", row ).empty() );
+    rocketnet_unit_check( functional_integrity_empty_cases( "void windows_delivery() {}", "{ \"test_\", windows_delivery, NULL }," ).empty() );
     rocketnet_unit_check( functional_integrity_empty_cases( "void windows_delivery(void) {\\n/* no checks */\\n}", row ) == expected );
     rocketnet_unit_check( functional_integrity_empty_cases( "void windows_delivery() { check(delivered); }", row ).empty() );
     rocketnet_unit_check( functional_integrity_empty_cases( "void unrelated_callback() {}", row ).empty() );

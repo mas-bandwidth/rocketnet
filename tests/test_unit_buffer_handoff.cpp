@@ -15,7 +15,17 @@
 #include "rocketnet_internal.h"
 #include "rocketnet_buffer_handoff.h"
 
+#include <string.h>
+
 #define BUFFER_HANDOFF_TEST_N 3
+
+// Poison unused slots so the strict sanitizer build has no indeterminate
+// storage, while init must still establish every live count and index.
+static void buffer_handoff_test_init( rocketnet_buffer_handoff_t<BUFFER_HANDOFF_TEST_N> * handoff, int producer )
+{
+    memset( handoff, 0xA5, sizeof( *handoff ) );
+    rocketnet_buffer_handoff_init( handoff, producer );
+}
 
 // each index appears exactly once across producer, consumer, ready and free
 static bool buffer_handoff_one_owner( const rocketnet_buffer_handoff_t<BUFFER_HANDOFF_TEST_N> * handoff, int producer, int consumer )
@@ -40,7 +50,7 @@ static bool buffer_handoff_one_owner( const rocketnet_buffer_handoff_t<BUFFER_HA
 static void test_buffer_handoff_init_gives_producer_one()
 {
     rocketnet_buffer_handoff_t<BUFFER_HANDOFF_TEST_N> handoff;
-    rocketnet_buffer_handoff_init( &handoff, 1 );
+    buffer_handoff_test_init( &handoff, 1 );
     rocketnet_unit_check( handoff.free_count == BUFFER_HANDOFF_TEST_N - 1 );
     rocketnet_unit_check( handoff.ready_count == 0 );
     rocketnet_unit_check( !handoff.owed );
@@ -54,7 +64,7 @@ REGISTER_UNIT_TEST( test_buffer_handoff_init_gives_producer_one );
 static void test_buffer_handoff_send_queue_in_order()
 {
     rocketnet_buffer_handoff_t<BUFFER_HANDOFF_TEST_N> handoff;
-    rocketnet_buffer_handoff_init( &handoff, 0 );
+    buffer_handoff_test_init( &handoff, 0 );
     int producer = 0;
     int consumer = -1;
 
@@ -99,7 +109,7 @@ REGISTER_UNIT_TEST( test_buffer_handoff_send_queue_in_order );
 static void test_buffer_handoff_receive_triple_buffer()
 {
     rocketnet_buffer_handoff_t<BUFFER_HANDOFF_TEST_N> handoff;
-    rocketnet_buffer_handoff_init( &handoff, 0 );
+    buffer_handoff_test_init( &handoff, 0 );
     int producer = 0;
     int consumer = -1;
 
@@ -141,7 +151,7 @@ static void test_buffer_handoff_long_run_one_owner()
     for ( int max_ready = 1; max_ready < BUFFER_HANDOFF_TEST_N; max_ready++ )
     {
         rocketnet_buffer_handoff_t<BUFFER_HANDOFF_TEST_N> handoff;
-        rocketnet_buffer_handoff_init( &handoff, 0 );
+        buffer_handoff_test_init( &handoff, 0 );
         int producer = 0;
         int consumer = -1;
         int published[64];
