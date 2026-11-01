@@ -98,6 +98,7 @@ jobs:
           parallel=$(( $(nproc) / 2 ))
           [ "$parallel" -ge 1 ] || parallel=1
           export TLACHECK="$job/tlacheck" TLC_JAR="$jar" TLC_JOB="$job"
+          # shellcheck disable=SC2016  # the shard's own shell expands these
           xargs -P "$parallel" -L 1 bash -c '
             dir="$TLC_JOB/run-$0-$2"
             "$TLACHECK" run --root proofs --jar "$TLC_JAR" --group "$0" --shards "$1" --shard "$2" --workers 2 --dir "$dir" > "$dir.log" 2>&1 \
