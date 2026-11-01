@@ -21,11 +21,14 @@ exactly that many bytes for its whole lifecycle.
    the peak each reached. Start and connect return
    `ROCKETNET_STATUS_OUT_OF_MEMORY`, and nothing is left allocated.
 
-The required size is conservative, not exact: it includes 1 MiB of slack for
-the heap a game puts over the region (its block headers, alignment and
-fragmentation). A game puts its own heap, such as tlsf, over one region of
-exactly that size per object and adds no margin. The example does not
-implement a heap; it charges a 16-byte header per block to stand in for one.
+The required size is conservative, not exact: it includes a 1 MiB allowance
+for caller allocator overhead inside a region of that size. That allowance is
+sufficient for an allocator charging up to 64 bytes of overhead per allocation
+or a packed chunk arena whose chunk table metadata sits outside the region;
+allocator metadata or fragmentation beyond that 1 MiB allowance remains the
+caller's responsibility. The example does not implement a general-purpose
+heap; it charges a 16-byte header per block to stand in for per-allocation
+header overhead.
 Its client is step-driven, so every allocator call comes from one thread; a
 game's heap must be thread-safe, because network threads also call the
 allocator. See [MEMORY.md](../MEMORY.md) for what the size counts and what it

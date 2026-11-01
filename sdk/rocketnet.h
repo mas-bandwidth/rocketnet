@@ -464,7 +464,15 @@ enum rocketnet_address_type_t
 /// Ordered and sequenced types require the send's channel below num_channels.
 /// Other types accept any channel value, ignore it and use channel 0.
 
+#if defined( __cplusplus ) && __cplusplus >= 201103L
+#if defined( __clang__ )
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wc++98-compat"
+#endif // #if defined( __clang__ )
+enum rocketnet_reliability_t : int
+#else // #if defined( __cplusplus ) && __cplusplus >= 201103L
 enum rocketnet_reliability_t
+#endif // #if defined( __cplusplus ) && __cplusplus >= 201103L
 {
     /// Sent once without a delivery guarantee, order, or receipt.
     /// Delivered at most once; a lost packet loses the message.
@@ -504,6 +512,9 @@ enum rocketnet_reliability_t
 
     ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT = 7
 };
+#if defined( __cplusplus ) && __cplusplus >= 201103L && defined( __clang__ )
+#pragma clang diagnostic pop
+#endif // #if defined( __cplusplus ) && __cplusplus >= 201103L && defined( __clang__ )
 
 /// A receipt's outcome, the status field of struct rocketnet_receipt_t.
 /// LOSS is negative, like every failure.
@@ -1703,12 +1714,15 @@ struct rocketnet_server_config_t
 /// create, connect or start, disconnect or stop, reconnect or restart, and
 /// destroy, each allocation with its alignment header, for whichever
 /// transport of the config's list is granted (the largest of them). The
-/// slack is for a heap the caller puts over one region of that size (tlsf or
-/// similar): its block headers, alignment and fragmentation. The number is
-/// deliberately conservative, not exact. For the planned built-in
-/// transports, with unchanged configuration and environment overrides, a
-/// heap over a region of that size never runs out. The development link simulator is
-/// included in development builds.
+/// slack is a 1 MiB allowance for caller allocator overhead inside a region of
+/// that size. The number is deliberately conservative, not exact. For the
+/// planned built-in transports, with unchanged configuration and environment
+/// overrides, a region of that size is sufficient for an allocator charging up
+/// to 64 bytes of overhead per allocation or the fixed_memory example's packed
+/// chunk arena (whose chunk table metadata sits outside the region); allocator
+/// metadata or fragmentation beyond that 1 MiB allowance remains the caller's
+/// responsibility. The development link simulator is included in development
+/// builds.
 ///
 /// Not counted, because the operating system owns it: each worker thread's
 /// stack (the platform default: pthread's default attribute, or the

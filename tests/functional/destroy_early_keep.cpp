@@ -274,8 +274,8 @@ static void destroy_end_counted( destroy_allocator_t * state )
 
 // --- cases -----------------------------------------------------------------
 
-// disconnect or stop, then destroy at once with no completion poll: the
-// destroy waits out the worker inside its budget, frees, and term is clean
+// destroy while connected or running: the destroy drives the stop, waits out
+// the worker inside its budget, frees, and term is clean
 
 void test_client_destroy_early_threaded_frees()
 {
@@ -291,7 +291,6 @@ void test_client_destroy_early_threaded_frees()
     destroy_pair_create( &pair, &state );
     const uint64_t misuse = rocketnet_api_misuse_count();
     destroy_error_lines = 0;
-    rocketnet_client_disconnect( pair.client );
     rocketnet_client_destroy( pair.client );
     check( destroy_error_lines == 1 );
     check( strstr( destroy_last_error, "rocketnet_client_destroy" ) != NULL );
@@ -317,7 +316,6 @@ void test_server_destroy_early_threaded_frees()
     destroy_pair_create( &pair, &state );
     const uint64_t misuse = rocketnet_api_misuse_count();
     destroy_error_lines = 0;
-    rocketnet_server_stop( pair.server );
     rocketnet_server_destroy( pair.server );
     check( destroy_error_lines == 1 );
     check( strstr( destroy_last_error, "rocketnet_server_destroy" ) != NULL );

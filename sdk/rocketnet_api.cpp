@@ -1712,7 +1712,11 @@ uint8_t * rocketnet_client_start_message( struct rocketnet_client_t * client, in
         return NULL;
     }
 
-    uint8_t * pointer = rocketnet_message_client_start( client->connection, channel, (int) reliability, max_bytes );
+    static_assert( sizeof( reliability ) == sizeof( int ), "rocketnet_reliability_t is int-sized" );
+    int reliability_value = 0;
+    memcpy( &reliability_value, &reliability, sizeof( reliability_value ) );
+
+    uint8_t * pointer = rocketnet_message_client_start( client->connection, channel, reliability_value, max_bytes );
 
     // a start the connection's message memory cannot hold ends the connection (MESSAGE_MEMORY_EXHAUSTED)
 
@@ -1811,7 +1815,11 @@ bool rocketnet_client_can_send_message( const struct rocketnet_client_t * client
     if ( !client->connection )
         return false;
 
-    return rn_message_object_send_room( &client->connection->object, 0, channel, (int) reliability, max_bytes );
+    static_assert( sizeof( reliability ) == sizeof( int ), "rocketnet_reliability_t is int-sized" );
+    int reliability_value = 0;
+    memcpy( &reliability_value, &reliability, sizeof( reliability_value ) );
+
+    return rn_message_object_send_room( &client->connection->object, 0, channel, reliability_value, max_bytes );
 }
 
 const struct rocketnet_message_batch_t * rocketnet_client_receive_messages( struct rocketnet_client_t * client )
@@ -3060,7 +3068,11 @@ uint8_t * rocketnet_server_start_message( struct rocketnet_server_t * server, ui
         return NULL;
     }
 
-    return rocketnet_message_server_start( rn_server( server ), (int) destination_id, channel, reliability, max_bytes );
+    static_assert( sizeof( reliability ) == sizeof( int ), "rocketnet_reliability_t is int-sized" );
+    int reliability_value = 0;
+    memcpy( &reliability_value, &reliability, sizeof( reliability_value ) );
+
+    return rocketnet_message_server_start( rn_server( server ), (int) destination_id, channel, reliability_value, max_bytes );
 }
 
 // finish and abort act on the one pending start (rn_message_object_t
@@ -3110,7 +3122,11 @@ bool rocketnet_server_can_send_message( const struct rocketnet_server_t * server
     if ( !server->running )
         return false;
 
-    return rn_message_object_send_room( &rn_server( server )->object, client_index, channel, (int) reliability, max_bytes );
+    static_assert( sizeof( reliability ) == sizeof( int ), "rocketnet_reliability_t is int-sized" );
+    int reliability_value = 0;
+    memcpy( &reliability_value, &reliability, sizeof( reliability_value ) );
+
+    return rn_message_object_send_room( &rn_server( server )->object, client_index, channel, reliability_value, max_bytes );
 }
 
 void rocketnet_server_abort_message( struct rocketnet_server_t * server )
