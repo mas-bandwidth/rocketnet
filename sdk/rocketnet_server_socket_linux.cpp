@@ -2369,7 +2369,7 @@ int rocketnet_server_socket_send_room( struct rocketnet_server_socket_t * server
         if ( flow_index < 0 )
             return 0;
         const uint64_t used = socket->send_buffer[flow_index].num_packets.load( std::memory_order_relaxed );
-        const int slots = used >= (uint64_t) ROCKETNET_XDP_SEND_QUEUE_SIZE ? 0 : (int) ( ROCKETNET_XDP_SEND_QUEUE_SIZE - used );
+        const int slots = used >= (uint64_t) ROCKETNET_XDP_SEND_QUEUE_SIZE ? 0 : (int) ( (uint64_t) ROCKETNET_XDP_SEND_QUEUE_SIZE - used );
         if ( slots < room )
             room = slots;
     }
@@ -2782,7 +2782,7 @@ bool rocketnet_server_socket_test_buffer_exchange()
 
     // Room stays zero when a refused claim count crosses the 32-bit boundary.
     // In particular 2^32 must not narrow to an apparently empty buffer.
-    const uint64_t claims[] = { 0, ROCKETNET_XDP_SEND_QUEUE_SIZE - 1, ROCKETNET_XDP_SEND_QUEUE_SIZE, 0xFFFFFFFFull, 0x100000000ull, UINT64_MAX };
+    const uint64_t claims[] = { 0, (uint64_t) ROCKETNET_XDP_SEND_QUEUE_SIZE - 1, (uint64_t) ROCKETNET_XDP_SEND_QUEUE_SIZE, 0xFFFFFFFFull, 0x100000000ull, UINT64_MAX };
     const int rooms[] = { ROCKETNET_XDP_SEND_QUEUE_SIZE, 1, 0, 0, 0, 0 };
     for ( int i = 0; i < 6; i++ )
     {
