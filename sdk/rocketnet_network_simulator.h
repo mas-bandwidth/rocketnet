@@ -15,22 +15,18 @@
 
 // An in-memory wire for tests: latency, jitter, packet loss and duplicates
 // under mocked time, so connection logic is tested with no sockets and no
-// real clocks anywhere. A debug and test instrument, deliberately in its
-// simplest correct form -- it is not a production network emulator, and the
-// perf baselines measure the protocol on a direct wire, never through this.
+// real clocks anywhere. A debug and test instrument, not a production network
+// emulator; the perf baselines measure the protocol on a direct wire, never
+// through this.
 //
 // Deterministic: all randomness comes from a seed given at create, so a
 // failing run replays exactly.
 //
-// The delivery rule, stated because it is the instrument's behaviour rather
-// than an implementation detail: receive() delivers the packet in the LOWEST
-// OCCUPIED SLOT INDEX that is due and addressed to the caller, and send()
-// takes the LOWEST FREE SLOT INDEX. That is not delivery-time order and not
-// FIFO; it is what the array walk this file was built around produced, and
-// every soak and functional test has run against it. The walk was later replaced
-// with an index over the same slots in the same order -- the cost changed,
-// the delivered sequence did not -- and the audit below is what holds that
-// claim up.
+// The delivery rule is the instrument's behavior: receive() delivers the
+// packet in the lowest occupied slot index that is due and addressed to the
+// caller, and send() takes the lowest free slot index. That is neither
+// delivery-time order nor FIFO. An index over the slots finds that packet,
+// and the audit below checks it against the full scan.
 
 struct rocketnet_network_simulator_t;
 
@@ -119,7 +115,7 @@ int rocketnet_network_simulator_receive_any( struct rocketnet_network_simulator_
                                              uint8_t * out_packet );
 
 // The audit: the instrument's failure state. With it on, every receive() also
-// runs the original full-array scan as a reference and compares which slot the
+// runs the full-array scan as a reference and compares which slot the
 // two selections chose, then checks the whole index against the packet arrays.
 // Any divergence prints what diverged and ABORTS -- it does not log, warn or
 // return an error, because a simulator that has caught itself delivering a

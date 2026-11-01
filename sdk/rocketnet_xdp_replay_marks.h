@@ -28,7 +28,10 @@
 // newer mark of its key replaces it, or a forget of its key drops it
 // (MarkOwedUntilApplied, KeepRefusedMarks, ForgetDropsKeptMark): the walk's
 // per-slot cache has already advanced and will not take that mark again.
-// This is pure data: no syscall, no allocation, no kernel program.
+// This is pure data: no syscall, no allocation, no kernel program. Its arrays
+// are its owner's, bound at create, capacity entries each: one per client of
+// the server's configured max_clients, rounded up to a multiple of 1024
+// (rocketnet_xdp_replay_entries).
 
 // The key layout for one source address and port, in network order.
 
@@ -60,16 +63,49 @@ static inline void rocketnet_xdp_replay_key_from_address( const struct rocketnet
     port_bytes[1] = (uint8_t) ( address->port & 0xff );
 }
 
+// the entries of a server's pending buffer and of its kernel replay map: one
+// per client of its configured max_clients, rounded up to a multiple of 1024
+// (1024 at 1000 clients), never more than the embedded program's
+// ROCKETNET_XDP_REPLAY_MAX_ENTRIES
+static inline uint32_t rocketnet_xdp_replay_entries( int max_clients )
+{
+    if ( max_clients < 1 || max_clients > ROCKETNET_MAX_CLIENTS )
+        return 0;
+    return (uint32_t) ( max_clients + 1023 ) / 1024 * 1024;
+}
+
+// the entries at the default configuration, for storage a test declares statically
+#define ROCKETNET_XDP_REPLAY_DEFAULT_ENTRIES ( ( ROCKETNET_DEFAULT_MAX_CLIENTS + 1023 ) / 1024 * 1024 )
+
 struct rocketnet_xdp_replay_marks_t
 {
-    struct rocketnet_server_xdp_replay_key_t forgets[ROCKETNET_XDP_REPLAY_MAX_ENTRIES];
-    struct rocketnet_server_xdp_replay_key_t mark_keys[ROCKETNET_XDP_REPLAY_MAX_ENTRIES];
-    struct rocketnet_server_xdp_replay_value_t mark_values[ROCKETNET_XDP_REPLAY_MAX_ENTRIES];
+    struct rocketnet_server_xdp_replay_key_t * forgets;            // capacity entries each
+    struct rocketnet_server_xdp_replay_key_t * mark_keys;
+    struct rocketnet_server_xdp_replay_value_t * mark_values;
+    uint32_t capacity;
     uint32_t forget_count;
     uint32_t mark_count;
     uint32_t kept_mark_count;           // marks [0, kept_mark_count) were refused by the last commit
     uint32_t refused;
 };
+
+// Binds the buffer to its owner's arrays of capacity entries, empty.
+
+static inline void rocketnet_xdp_replay_marks_reset( struct rocketnet_xdp_replay_marks_t * marks );
+
+static inline void rocketnet_xdp_replay_marks_bind( struct rocketnet_xdp_replay_marks_t * marks,
+                                                    struct rocketnet_server_xdp_replay_key_t * forgets,
+                                                    struct rocketnet_server_xdp_replay_key_t * mark_keys,
+                                                    struct rocketnet_server_xdp_replay_value_t * mark_values,
+                                                    uint32_t capacity )
+{
+    memset( marks, 0, sizeof( *marks ) );
+    marks->forgets = forgets;
+    marks->mark_keys = mark_keys;
+    marks->mark_values = mark_values;
+    marks->capacity = forgets && mark_keys && mark_values ? capacity : 0;
+    rocketnet_xdp_replay_marks_reset( marks );
+}
 
 static inline void rocketnet_xdp_replay_marks_reset( struct rocketnet_xdp_replay_marks_t * marks )
 {
@@ -92,6 +128,9 @@ static inline void rocketnet_xdp_replay_marks_reset( struct rocketnet_xdp_replay
 // counted since the last reset and zeroes them, so the caller adds them to
 // its own count.
 
+// proofs/tla/RNXdpReplayMarksLayout.tla Commit, CompactForgetStep and
+// CompactMarkStep: each loop writes at kept, never above the index it reads, so
+// no entry is overwritten before it is read (LayoutIsQueue)
 static inline uint32_t rocketnet_xdp_replay_marks_reset_keeping( struct rocketnet_xdp_replay_marks_t * marks, const bool * forget_failed, const bool * mark_applied )
 {
     uint32_t kept = 0;
@@ -140,6 +179,7 @@ static inline uint32_t rocketnet_xdp_replay_marks_reset_keeping( struct rocketne
 
 // Drops the kept mark at index i, keeping the order of the rest.
 
+// proofs/tla/RNXdpReplayMarksLayout.tla Forget: the shift down over [i + 1, mark_count)
 static inline void rocketnet_xdp_replay_marks_drop_kept( struct rocketnet_xdp_replay_marks_t * marks, uint32_t i )
 {
     for ( uint32_t j = i + 1; j < marks->mark_count; j++ )
@@ -158,9 +198,12 @@ static inline void rocketnet_xdp_replay_marks_drop_kept( struct rocketnet_xdp_re
 // and the commit applies forgets before marks, so kept it would rewrite the
 // released address's entry (proofs/tla/RNXdpReplay.tla, ForgetDropsKeptMark).
 
+// proofs/tla/RNXdpReplayMarksLayout.tla Forget: refused at forget_count >= MAX
+// (InBounds); the kept search stops at kept_mark_count, never reading the stale
+// cells past it (LayoutIsQueue)
 static inline bool rocketnet_xdp_replay_marks_forget( struct rocketnet_xdp_replay_marks_t * marks, const struct rocketnet_address_t * address )
 {
-    if ( marks->forget_count >= ROCKETNET_XDP_REPLAY_MAX_ENTRIES )
+    if ( marks->forget_count >= marks->capacity )
     {
         marks->refused++;
         return false;
@@ -188,6 +231,8 @@ static inline bool rocketnet_xdp_replay_marks_forget( struct rocketnet_xdp_repla
 // the kept prefix is searched; the walk marks each key once per update.
 // Returns false, and counts the refusal, when the mark list is full.
 
+// proofs/tla/RNXdpReplayMarksLayout.tla Mark: replaced in place in the kept
+// prefix, else appended below MAX
 static inline bool rocketnet_xdp_replay_marks_mark( struct rocketnet_xdp_replay_marks_t * marks, const struct rocketnet_address_t * address, uint32_t high_water )
 {
     struct rocketnet_server_xdp_replay_key_t key;
@@ -203,7 +248,7 @@ static inline bool rocketnet_xdp_replay_marks_mark( struct rocketnet_xdp_replay_
         }
     }
 
-    if ( marks->mark_count >= ROCKETNET_XDP_REPLAY_MAX_ENTRIES )
+    if ( marks->mark_count >= marks->capacity )
     {
         marks->refused++;
         return false;

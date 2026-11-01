@@ -50,7 +50,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_FRAME_SIZE >= 16 + ROCKETNET_RECEIVE_CEILING,
 #define ROCKETNET_CONNECTION_MAX_PACKETS_PER_UPDATE                         1024
 
 // A portable or msgx server's send bank holds this many packets per configured
-// client (never fewer than ROCKETNET_SERVER_MAX_SEND_PACKETS), as its receive
+// client (never fewer than rocketnet_server_send_batch_packets), as its receive
 // banks hold ROCKETNET_RECEIVE_PACKETS_PER_CLIENT. One worker drains a bank
 // with one socket call per packet batch, measured at about 18 us per packet on
 // macOS at 1000 clients: about 80% of that worker at 45,000 packets a second,
@@ -119,23 +119,74 @@ ROCKETNET_STATIC_ASSERT( (long long) ROCKETNET_XDP_UMEM_FRAMES * ROCKETNET_XDP_F
 
 #endif // #if ROCKETNET_XDP
 
-// one update reads at most ROCKETNET_RECEIVE_PACKETS_PER_CLIENT * ROCKETNET_MAX_CLIENTS packets (16 * 1000 = 16000), bounding its work. Every receive batch in one update (socket process batch, per-update receive budget and payload batch) shares this one bound and one storage cap
-#define ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE   ( ROCKETNET_RECEIVE_PACKETS_PER_CLIENT * ROCKETNET_MAX_CLIENTS )
+// Per-server sizing. Every server buffer that scales with clients is sized at
+// create from the configured max_clients, never from the build's
+// ROCKETNET_MAX_CLIENTS, which is only the most a config may ask for: a
+// 1000-client server holds the same memory in the default build and in a
+// -DROCKETNET_MAX_CLIENTS=10000 build. Each owner allocates its buffers once,
+// at create, and its memory plan counts the same bytes from the same
+// functions.
+//
+// The sizing count is max_clients raised to ROCKETNET_SERVER_MIN_SIZED_CLIENTS,
+// 512, the smallest ROCKETNET_MAX_CLIENTS a build allows: every relation the
+// static asserts below and beside each transport prove at that count holds at
+// every count above it, since each side grows with the count at least as fast
+// as the side it is held against.
+
+#define ROCKETNET_SERVER_MIN_SIZED_CLIENTS                                 512
+
+ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MIN_SIZED_CLIENTS <= ROCKETNET_MAX_CLIENTS,
+                         "every build holds the smallest sizing count" );
+
+static inline int rocketnet_server_sized_clients( int max_clients )
+{
+    if ( max_clients > ROCKETNET_MAX_CLIENTS )
+        return ROCKETNET_MAX_CLIENTS;
+    return max_clients > ROCKETNET_SERVER_MIN_SIZED_CLIENTS ? max_clients : ROCKETNET_SERVER_MIN_SIZED_CLIENTS;
+}
+
+// the smallest power of two at least n, for 1 <= n <= 1 << 30
+static inline int rocketnet_power_of_two_at_least( int n )
+{
+    int p = 1;
+    while ( p < n )
+        p <<= 1;
+    return p;
+}
+
+// One update reads at most ROCKETNET_RECEIVE_PACKETS_PER_CLIENT packets per
+// sized client (16 * 1000 = 16000 at the default), bounding its work. Every
+// receive batch in one update (the socket process batch, the per-update
+// receive budget and the payload batch) shares this one bound and one storage
+// cap.
+static inline int rocketnet_server_receive_packets_per_update( int max_clients )
+{
+    return ROCKETNET_RECEIVE_PACKETS_PER_CLIENT * rocketnet_server_sized_clients( max_clients );
+}
+
+#define ROCKETNET_SERVER_MIN_RECEIVE_PACKETS_PER_UPDATE   ( ROCKETNET_RECEIVE_PACKETS_PER_CLIENT * ROCKETNET_SERVER_MIN_SIZED_CLIENTS )
 
 #if ROCKETNET_XDP
-ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE >= 2 * ROCKETNET_XDP_SEND_QUEUE_SIZE,
+ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MIN_RECEIVE_PACKETS_PER_UPDATE >= 2 * ROCKETNET_XDP_SEND_QUEUE_SIZE,
                          "receive budget twice send: server process batch holds at least twice the XDP send queue" );
 #endif // #if ROCKETNET_XDP
 
-// Portable and msgx buffered batch sizes. The per-update receive budget
-// holds at least twice the send batch. The transport uses max_clients with
-// the historical 256-slot floor, bounded by the shared maximum below.
+// Portable and msgx buffered batch sizes: one packet per sized client. The
+// transport's send capacity uses max_clients with the historical 256-slot
+// floor, bounded by this batch. The per-update receive budget holds at least
+// twice the send batch (16 per client against 1).
 #define ROCKETNET_SERVER_MIN_SEND_PACKETS                                  256
-#define ROCKETNET_SERVER_MAX_SEND_PACKETS                       ROCKETNET_MAX_CLIENTS
 #define ROCKETNET_SERVER_MAX_RECEIVE_PACKETS                               256
 
-ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE >= 2 * ROCKETNET_SERVER_MAX_SEND_PACKETS,
+static inline int rocketnet_server_send_batch_packets( int max_clients )
+{
+    return rocketnet_server_sized_clients( max_clients );
+}
+
+ROCKETNET_STATIC_ASSERT( ROCKETNET_RECEIVE_PACKETS_PER_CLIENT >= 2,
                          "receive budget twice send: per-update receive budget holds at least twice the portable send batch" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MIN_SEND_PACKETS <= ROCKETNET_SERVER_MIN_SIZED_CLIENTS,
+                         "the send capacity floor fits the smallest send batch" );
 
 // The disconnect packets one server update may seal (proofs/tla/ServerSession.tla
 // SealWaiting, sdk/rocketnet_server_transport.cpp): a disconnect
@@ -146,17 +197,19 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE >= 2 * 
 #define ROCKETNET_DEFAULT_SERVER_DISCONNECT_PACKETS_PER_UPDATE              64
 
 // The send staging of a transport whose one staging serves every client of
-// the server (loopback, IOCP, RIO): two packets for each client the build
-// holds, rounded up to a power of two -- 2048 at the default 1000 clients.
-// The per-queue rings of the multi-queue transports (xdp, gso, io_uring) do
-// not derive from it: a server's clients spread over its queues, and a build
-// for more clients runs more queues (BUILDING.md, "Maximum clients").
+// the server (loopback, IOCP, RIO): two packets for each sized client,
+// rounded up to a power of two -- 2048 at 1000 clients. The per-queue rings of
+// the multi-queue transports (xdp, gso, io_uring) do not derive from it: a
+// server's clients spread over its queues, and a server for more clients runs
+// more queues (BUILDING.md, "Maximum clients"). The receive budget holds at
+// least twice it: 16 per client against at most 4.
 
-#define ROCKETNET_SERVER_SEND_STAGING_PACKETS             ROCKETNET_POWER_OF_TWO_AT_LEAST( 2 * ROCKETNET_MAX_CLIENTS )
+static inline int rocketnet_server_send_staging_packets( int max_clients )
+{
+    return rocketnet_power_of_two_at_least( 2 * rocketnet_server_sized_clients( max_clients ) );
+}
 
-ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_SEND_STAGING_PACKETS >= 2 * ROCKETNET_MAX_CLIENTS,
-                         "the server-wide send staging holds two packets for every client" );
-ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE >= 2 * ROCKETNET_SERVER_SEND_STAGING_PACKETS,
+ROCKETNET_STATIC_ASSERT( ROCKETNET_RECEIVE_PACKETS_PER_CLIENT >= 2 * 4,
                          "receive budget twice send: per-update receive budget holds at least twice the server-wide send staging" );
 
 // The server's packet lease table. Insert refuses past half the table, so
@@ -168,8 +221,8 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE >= 2 * 
 
 ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_PACKET_LEASES / 2 >= 2 * ROCKETNET_MAX_CLIENTS,
                          "one update leases at least two packets for every client" );
-ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_PACKET_LEASES / 2 >= ROCKETNET_SERVER_SEND_STAGING_PACKETS,
-                         "one update leases every packet the server-wide send staging holds" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_PACKET_LEASES / 2 >= ROCKETNET_POWER_OF_TWO_AT_LEAST( 2 * ROCKETNET_MAX_CLIENTS ),
+                         "one update leases every packet the largest server-wide send staging holds" );
 
 // the send frame layout. every slot a transport hands out is a 16-aligned
 // root; the wire packet begins at the wire offset inside it and the payload
@@ -200,20 +253,19 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_FRAME_STRIDE <= ROCKETNET_FRAME_SIZE, "a fram
 // never sees a capacity.
 
 // NOTE the relationship between these two. The process_packets arrays are
-// sized by ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE (16 * 1000 = 16000), but the XDP path fills
-// them while draining a queue whose staging buffer holds
-// ROCKETNET_XDP_RECV_QUEUE_SIZE entries (4096 * 4 = 16384). They are
-// independent numbers, and the drain guard MUST bound by
-// ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE — the arrays it protects — never the queue size, or
-// the tail of a full queue writes past the arrays.
+// sized by rocketnet_server_receive_packets_per_update (16 * 1000 = 16000 at
+// 1000 clients), but the XDP path fills them while draining a queue whose
+// staging buffer holds ROCKETNET_XDP_RECV_QUEUE_SIZE entries (4096 * 4 =
+// 16384). They are independent numbers, and the drain guard MUST bound by the
+// process batch's capacity -- the arrays it protects -- never the queue size,
+// or the tail of a full queue writes past the arrays.
 //
 // The consequence of the correct guard is capacity, not safety: because the
 // queue can stage more than the arrays hold, a single tick that delivers
-// more than 16000 packets to one server DROPS the excess. That is correct
-// behaviour under flood, and at the design load (1000 clients * 16 packets)
-// it is exactly the budget. If you would rather never drop, raise
-// MAX_CLIENTS or RECEIVE_PACKETS_PER_CLIENT so the arrays cover a full
-// queue drain.
+// more than the budget to one server DROPS the excess. That is correct
+// behaviour under flood, and at the design load (16 packets per client) it
+// is exactly the budget. If you would rather never drop, raise max_clients or
+// RECEIVE_PACKETS_PER_CLIENT so the arrays cover a full queue drain.
 
 #define ROCKETNET_NUM_CLIENT_PACKETS                                      1024
 

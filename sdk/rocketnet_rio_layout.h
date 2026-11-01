@@ -107,6 +107,12 @@ static inline bool rocketnet_rio_layout_plan(
         return false;
     end = receive_addresses_offset + receive_addresses_bytes;
 
+    // the end is refused past UINT32_MAX before it is rounded, so the
+    // rounding cannot pass UINT64_MAX and wrap to a small total
+
+    if ( end > UINT32_MAX )
+        return false;
+
     uint64_t total = rocketnet_rio_round_up64( end, page_bytes );
     if ( total > UINT32_MAX )
         return false;

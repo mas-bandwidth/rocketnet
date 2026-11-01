@@ -86,10 +86,10 @@ void rocketnet_test_lifecycle_transport()
 
 #if ROCKETNET_XDP
     const int before = state.calls;
-    const uint64_t xdp_huge = rocketnet_server_socket_memory_required( 1024 );
+    const uint64_t xdp_huge = rocketnet_server_socket_memory_required( 1024, ROCKETNET_DEFAULT_MAX_CLIENTS );
     if ( xdp_huge > (uint64_t) ROCKETNET_XDP_MEMORY_MIB * 1024 * 1024 )
     {
-        check( !rocketnet_server_socket_preflight( "127.0.0.1", 1024 ) );
+        check( !rocketnet_server_socket_preflight( "127.0.0.1", 1024, ROCKETNET_DEFAULT_MAX_CLIENTS ) );
     }
 
     check( state.calls == before );

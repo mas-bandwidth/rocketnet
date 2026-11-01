@@ -18,6 +18,7 @@
 bool rocketnet_server_rio_test_receive_overflow( uint64_t * counters, int * packet_counts,
                                                  int * repost_calls, int * pending_receives, int * guard_hit );
 bool rocketnet_server_rio_test_worker_handoff();
+bool rocketnet_server_rio_test_reservation_wrap();
 bool rocketnet_server_rio_test_stop_drains_sends();
 bool rocketnet_server_rio_test_send_accounting();
 
@@ -31,19 +32,19 @@ static void test_rio_transport_overflow_seam()
     check( rocketnet_server_rio_test_receive_overflow( counters, packet_counts, &repost_calls, &pending_receives, &guard_hit ) );
     check( guard_hit == 0 );
 
-    check( packet_counts[0] == ROCKETNET_RIO_RECEIVES );
-    check( counters[ROCKETNET_RIO_COUNTER_PACKETS_RECEIVED] == ROCKETNET_RIO_RECEIVES );
+    check( packet_counts[0] == rocketnet_server_rio_receives( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
+    check( counters[ROCKETNET_RIO_COUNTER_PACKETS_RECEIVED] == rocketnet_server_rio_receives( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
     check( counters[ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_OVERFLOW] == 0 );
     check( counters[ROCKETNET_RIO_COUNTER_RECEIVE_REPOST_FAILED] == 0 );
-    check( pending_receives == ROCKETNET_RIO_RECEIVES );
+    check( pending_receives == rocketnet_server_rio_receives( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
 
     // The queued tail is delivered by the next update. The seam contains two
     // full banks, so both calls stay within the per-call receive bound.
 
-    check( packet_counts[1] == ROCKETNET_RIO_RECEIVES );
+    check( packet_counts[1] == rocketnet_server_rio_receives( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
     check( counters[ROCKETNET_RIO_NUM_COUNTERS + ROCKETNET_RIO_COUNTER_PACKETS_RECEIVED] ==
-           2 * ROCKETNET_RIO_RECEIVES );
-    check( repost_calls == 2 * ROCKETNET_RIO_RECEIVES );
+           2 * rocketnet_server_rio_receives( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
+    check( repost_calls == 2 * rocketnet_server_rio_receives( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
 
     for ( int i = 0; i < ROCKETNET_RIO_NUM_COUNTERS; ++i )
     {
@@ -64,6 +65,14 @@ static void test_rio_transport_worker_handoff()
 
 REGISTER_UNIT_TEST( test_rio_transport_worker_handoff );
 
+// A fill phase past 2^32 reservations without a flush refuses the next slot as
+// full, and never hands out a slot it handed out before.
+static void test_rio_transport_reservation_does_not_wrap()
+{
+    check( rocketnet_server_rio_test_reservation_wrap() );
+}
+
+REGISTER_UNIT_TEST( test_rio_transport_reservation_does_not_wrap );
 // Stop keeps the socket open while committed sends are in flight
 // (proofs/tla/RNRioWorker.tla WClose), so closesocket cancels none of the stop
 // burst: a fake kernel, no socket, no worker thread, no clock.

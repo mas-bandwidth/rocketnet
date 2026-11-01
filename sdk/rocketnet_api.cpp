@@ -2727,8 +2727,9 @@ bool rocketnet_server_running( const struct rocketnet_server_t * server )
 }
 
 #if ROCKETNET_DEV
-int rocketnet_server_secret_spans_for_test( size_t * offsets, size_t * bytes, int max )
+int rocketnet_server_secret_spans_for_test( const void * object, size_t * offsets, size_t * bytes, int max )
 {
+    (void) object;
     if ( max < 1 )
         return 0;
 

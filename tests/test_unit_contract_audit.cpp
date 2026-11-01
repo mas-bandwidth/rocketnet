@@ -526,7 +526,7 @@ static void test_contract_update_time_without_connection()
 
     rocketnet_client_update( client, time + 0.01 );
     check( rocketnet_api_misuse_count() == before + 2 );
-    check( contract_asserts == ( ROCKETNET_ASSERTS ? 2 : 0 ) );
+    check( contract_asserts == 0 );
 
     contract_capture_end( &capture );
 

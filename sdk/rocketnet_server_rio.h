@@ -24,7 +24,7 @@
 // main thread makes no RIO call and never waits: it exchanges bank indices
 // and phase states with the worker under one try of a short mutex.
 //
-// Send: three staging phases of ROCKETNET_RIO_SEND_QUEUE_SIZE frame slots.
+// Send: three staging phases of rocketnet_server_rio_send_queue_size frame slots.
 // start_packet reserves the next slot of the fill phase with one atomic
 // fetch_add; send_packets (fill threads joined) hands the fill phase to the
 // worker and opens the next phase only when the worker has returned that
@@ -45,22 +45,34 @@
 // rocketnet_server_rio_available() is defined, and it is false.
 
 // One socket serves every client: each send phase is the server-wide send
-// staging (2048 at 1000 clients) and the posted receives are twice it.
-#define ROCKETNET_RIO_SEND_QUEUE_SIZE ROCKETNET_SERVER_SEND_STAGING_PACKETS
-#define ROCKETNET_RIO_RECEIVES ( 2 * ROCKETNET_SERVER_SEND_STAGING_PACKETS )
+// staging for the configured max_clients (2048 at 1000 clients) and the
+// posted receives are twice it. Both are sized at create.
+static inline int rocketnet_server_rio_send_queue_size( int max_clients )
+{
+    return rocketnet_server_send_staging_packets( max_clients );
+}
 
-ROCKETNET_STATIC_ASSERT( ROCKETNET_RIO_RECEIVES >= 2 * ROCKETNET_RIO_SEND_QUEUE_SIZE,
-                         "receive budget twice send: RIO receives hold at least twice the send queue" );
-ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE >= 2 * ROCKETNET_RIO_SEND_QUEUE_SIZE,
+static inline int rocketnet_server_rio_receives( int max_clients )
+{
+    return 2 * rocketnet_server_send_staging_packets( max_clients );
+}
+
+// The receive budget twice send, at the smallest sizing count: a phase is the
+// staging (at most four packets per sized client) and the process batch holds
+// sixteen per sized client, so the relation holds at every count.
+ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MIN_RECEIVE_PACKETS_PER_UPDATE >= 2 * ROCKETNET_POWER_OF_TWO_AT_LEAST( 2 * ROCKETNET_SERVER_MIN_SIZED_CLIENTS ),
                          "receive budget twice send: server process batch holds at least twice the RIO send queue" );
 #define ROCKETNET_RIO_RECEIVE_SLICE_BYTES 2048
 
 struct rocketnet_server_rio_t;
 
 // bind_address is updated with the actual port. IPv6 binds are dual stack
-// and normalize mapped IPv4 sources to IPv4.
+// and normalize mapped IPv4 sources to IPv4. max_clients is the server's
+// configured client count: it sizes the send phases, the receive slices and
+// banks, the process view, the registered region and the socket receive
+// buffer request.
 rocketnet_server_rio_t * rocketnet_server_rio_create( void * context,
-                                                      rocketnet_address_t * bind_address
+                                                      rocketnet_address_t * bind_address, int max_clients
 #if ROCKETNET_DEV
     // Development constructor control: fail after the socket, RIO table,
     // region, completion queues, request queue or first posted receive.
@@ -110,7 +122,7 @@ void rocketnet_server_rio_counters( rocketnet_server_rio_t * rio, uint64_t * cou
 // posted sends and receives the kernel has not completed or the transport has
 // not yet dequeued
 int rocketnet_server_rio_pending( rocketnet_server_rio_t * rio );
-uint64_t rocketnet_server_rio_allocation_bytes();
+uint64_t rocketnet_server_rio_allocation_bytes( int max_clients );
 
 #if ROCKETNET_DEV
 uintptr_t rocketnet_server_rio_test_socket( rocketnet_server_rio_t * rio );

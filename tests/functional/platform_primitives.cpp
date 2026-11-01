@@ -453,6 +453,8 @@ void rocketnet_test_ack_endpoints_independent_across_threads()
     rocketnet_check( results[1].acked == rounds * 16 );
 }
 
+
+
 #if defined( ROCKETNET_PLATFORM_PRIMITIVES_STANDALONE )
 
 static const char * const rocketnet_platform_environment_probe = "ROCKETNET_PLATFORM_ENVIRONMENT_PROBE";

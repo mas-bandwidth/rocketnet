@@ -192,6 +192,7 @@ struct rocketnet_server_gso_t
     // next update wakes the worker to send the rest
     std::atomic<bool> send_full{ false };
     int send_producer = 0; // game fill threads joined before main publishes
+    // proofs/tla/RNBankFifoLayout.tla Init: this literal is right for three banks only.
     int send_free[ROCKETNET_GSO_TX_BANKS] = { 1, 2, 0 };
     int send_free_head = 0;
     int send_free_count = ROCKETNET_GSO_TX_BANKS - 1;
@@ -225,6 +226,7 @@ struct rocketnet_server_gso_t
     uint64_t counter_gro_cmsg_faults;           // folded from the receive buffers; not a public counter
 
     struct rocketnet_server_socket_process_packets_t process_packets;
+    int max_clients;                    // the server's configured client count: sizes the view and the socket receive buffers
 
 #if ROCKETNET_DEV
     // the test seam: the next recvmmsg calls on any worker, and the next
@@ -316,6 +318,7 @@ bool rocketnet_server_gso_test_receive_ready( struct rocketnet_server_gso_t * gs
 // is the only acquire on main's path, so a held mutex defers the publish
 // to the next frame instead of blocking.
 // The releases that end each exchange are RNGsoHandoff.tla Unlock.
+// proofs/tla/RNBankFifoLayout.tla Publish: the free head and the ready tail, each % ROCKETNET_GSO_TX_BANKS.
 static bool rocketnet_server_gso_publish_send( rocketnet_server_gso_t * gso )
 {
     if ( gso->stopping || gso->send_producer < 0 )
@@ -351,6 +354,7 @@ static bool rocketnet_server_gso_publish_send( rocketnet_server_gso_t * gso )
 // observed with ready emptiness under the handoff lock, so an earlier empty
 // observation cannot strand a later publication. Stop's release transfers the
 // last producer only after main has stopped filling or publishing it.
+// proofs/tla/RNBankFifoLayout.tla Take: the ready head advances % ROCKETNET_GSO_TX_BANKS.
 static int rocketnet_server_gso_take_send( rocketnet_server_gso_t * gso, bool * final )
 {
     *final = false;
@@ -378,6 +382,7 @@ static int rocketnet_server_gso_take_send( rocketnet_server_gso_t * gso, bool * 
 
 // proofs/tla/RNGsoHandoff.tla TxReturn: a bank rejoins the free FIFO only after
 // its synchronous sends finished (the worker cleared it first).
+// proofs/tla/RNBankFifoLayout.tla Release: the free tail ( free_head + free_count ) % ROCKETNET_GSO_TX_BANKS.
 static void rocketnet_server_gso_return_send( rocketnet_server_gso_t * gso, int index )
 {
     gso->send_banks[index].num_packets.store( 0, std::memory_order_relaxed );
@@ -532,7 +537,7 @@ static bool rocketnet_server_gso_sockaddr_to_address( const struct sockaddr_stor
 // default rmem/wmem sysctls are tiny, so never assume the request was
 // honored.
 
-static int rocketnet_server_gso_open_socket( const rocketnet_address_t * bind_address, int queue_index, uint16_t * bound_port )
+static int rocketnet_server_gso_open_socket( const rocketnet_address_t * bind_address, int queue_index, int max_clients, uint16_t * bound_port )
 {
     const bool ipv6 = bind_address->type == ROCKETNET_ADDRESS_IPV6;
 
@@ -586,7 +591,7 @@ static int rocketnet_server_gso_open_socket( const rocketnet_address_t * bind_ad
     // any share of the clients to this one socket
 
     int send_buffer_size = ROCKETNET_SOCKET_SEND_BUFFER_SIZE;
-    int receive_buffer_size = rocketnet_server_transport_receive_buffer_request( "gso", ROCKETNET_MAX_CLIENTS );
+    int receive_buffer_size = rocketnet_server_transport_receive_buffer_request( "gso", max_clients );
 
     if ( setsockopt( fd, SOL_SOCKET, SO_SNDBUF, &send_buffer_size, sizeof( int ) ) != 0 )
     {
@@ -971,13 +976,15 @@ static void rocketnet_server_gso_worker( rocketnet_platform_thread_t *, void * d
 
 // ---------------------------------------------------------------------------
 
-uint64_t rocketnet_server_gso_allocation_bytes( int queues )
+uint64_t rocketnet_server_gso_allocation_bytes( int queues, int max_clients )
 {
     if ( queues < 1 || queues > ROCKETNET_GSO_MAX_QUEUES )
         return 0;
     uint64_t bytes = rocketnet_memory_allocations( { sizeof( rocketnet_server_gso_t ),
                                                      (uint64_t) queues * sizeof( rocketnet_server_gso_queue_t ) } );
-    if ( !bytes || !rocketnet_memory_add( bytes, (uint64_t) queues + 1, rocketnet_platform_thread_allocation_bytes() ) ||
+    const uint64_t view = rocketnet_server_process_packets_allocation_bytes( rocketnet_server_receive_packets_per_update( max_clients ) );
+    if ( !bytes || !view || !rocketnet_memory_add( bytes, 1, view ) ||
+         !rocketnet_memory_add( bytes, (uint64_t) queues + 1, rocketnet_platform_thread_allocation_bytes() ) ||
          !rocketnet_memory_add( bytes, 1, rocketnet_platform_wake_allocation_bytes() ) )
         return 0;
     return bytes <= SIZE_MAX ? bytes : 0;
@@ -992,7 +999,7 @@ static void rocketnet_server_gso_abort_create( rocketnet_server_gso_t * gso )
     rocketnet_server_gso_destroy( gso );
 }
 
-struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, struct rocketnet_address_t * bind_address, int num_queues, int flags, int * status )
+struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, struct rocketnet_address_t * bind_address, int num_queues, int max_clients, int flags, int * status )
 {
 #if ROCKETNET_DEV
     flags |= rocketnet_server_gso_test_create_flags.load();
@@ -1022,6 +1029,12 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
         return NULL;
     }
 
+    if ( max_clients < 1 || max_clients > ROCKETNET_MAX_CLIENTS )
+    {
+        rocketnet_error( "gso transport max_clients %d is out of range (1 to %d)", max_clients, ROCKETNET_MAX_CLIENTS );
+        return NULL;
+    }
+
     struct rocketnet_server_gso_t * gso = (struct rocketnet_server_gso_t *) rocketnet_malloc( context, sizeof( struct rocketnet_server_gso_t ) );
     if ( !gso )
     {
@@ -1037,10 +1050,13 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
     gso->ipv6 = bind_address->type == ROCKETNET_ADDRESS_IPV6;
     gso->packet_id = 1;
 
+    gso->max_clients = max_clients;
     gso->queues = (struct rocketnet_server_gso_queue_t *) rocketnet_malloc( context, sizeof( struct rocketnet_server_gso_queue_t ) * (size_t) num_queues );
-    if ( !gso->queues )
+    if ( !gso->queues || !rocketnet_server_process_packets_create( context, &gso->process_packets, rocketnet_server_receive_packets_per_update( max_clients ) ) )
     {
         rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
+        if ( gso->queues )
+            rocketnet_free( context, gso->queues );
         gso->~rocketnet_server_gso_t();
         rocketnet_free( context, gso );
         return NULL;
@@ -1069,7 +1085,7 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
         queue->ipv6 = gso->ipv6;
         queue->gso = gso;
 
-        queue->fd = rocketnet_server_gso_open_socket( bind_address, i, &bound_port );
+        queue->fd = rocketnet_server_gso_open_socket( bind_address, i, max_clients, &bound_port );
         if ( queue->fd < 0 )
         {
             rocketnet_server_gso_abort_create( gso );
@@ -1280,6 +1296,7 @@ void rocketnet_server_gso_destroy( struct rocketnet_server_gso_t * gso )
     }
 
     void * allocation_context = gso->context;
+    rocketnet_server_process_packets_destroy( allocation_context, &gso->process_packets );
     gso->~rocketnet_server_gso_t();
     rocketnet_free( allocation_context, gso );
 }
@@ -1318,9 +1335,9 @@ void rocketnet_server_gso_counters( struct rocketnet_server_gso_t * gso, uint64_
     counters[ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_ERRORS] = gso->counter_receive_errors;
 }
 
-// the builtin transport's receive_drops hook: the size
-// pass's drops (sdk/rocketnet_server_gso_linux.cpp:532-586), split at the receive
-// ceiling; main thread, as the fold into these totals is (:1209-1210)
+// the builtin transport's receive_drops hook: the size pass's drops
+// (rocketnet_server_gso_worker), split at the receive ceiling; main thread,
+// as the fold into these totals is (rocketnet_server_gso_receive_from_queue)
 
 void rocketnet_server_gso_receive_drops( struct rocketnet_server_gso_t * gso, uint64_t * too_short, uint64_t * too_large )
 {
@@ -1745,7 +1762,7 @@ static void rocketnet_server_gso_receive_from_queue( rocketnet_server_gso_t * gs
 
     rocketnet_server_gso_recv_buffer_t * buffer = queue->main_buffer;
     while ( queue->main_cursor < buffer->num_packets && budget-- > 0 &&
-            gso->process_packets.num_packets < ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE )
+            gso->process_packets.num_packets < gso->process_packets.capacity )
     {
         const uint32_t source = queue->main_cursor++;
         const int index = gso->process_packets.num_packets++;
@@ -1766,7 +1783,7 @@ void rocketnet_server_gso_receive_packets( struct rocketnet_server_gso_t * gso )
         rocketnet_server_gso_queue_t * queue = &gso->queues[queue_index];
         gso->counter_receive_syscalls += queue->receive_syscalls.exchange( 0, std::memory_order_relaxed );
         rocketnet_server_gso_receive_from_queue( gso, queue,
-                                                 ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE - gso->process_packets.num_packets );
+                                                 gso->process_packets.capacity - gso->process_packets.num_packets );
     }
 }
 
@@ -1822,9 +1839,12 @@ static struct rocketnet_server_gso_t * rocketnet_server_gso_test_create()
     struct rocketnet_server_gso_t * gso = new ( storage ) rocketnet_server_gso_t();
     gso->context = NULL;
     gso->num_queues = 1;
+    gso->max_clients = ROCKETNET_DEFAULT_MAX_CLIENTS;
     gso->queues = (struct rocketnet_server_gso_queue_t *) rocketnet_malloc( NULL, sizeof( struct rocketnet_server_gso_queue_t ) );
-    if ( !gso->queues )
+    if ( !gso->queues || !rocketnet_server_process_packets_create( NULL, &gso->process_packets, rocketnet_server_receive_packets_per_update( gso->max_clients ) ) )
     {
+        if ( gso->queues )
+            rocketnet_free( NULL, gso->queues );
         gso->~rocketnet_server_gso_t();
         rocketnet_free( NULL, storage );
         return NULL;
@@ -1849,6 +1869,7 @@ static struct rocketnet_server_gso_t * rocketnet_server_gso_test_create()
             rocketnet_platform_mutex_destroy( &gso->send_mutex );
         queue->~rocketnet_server_gso_queue_t();
         rocketnet_free( NULL, gso->queues );
+        rocketnet_server_process_packets_destroy( NULL, &gso->process_packets );
         gso->~rocketnet_server_gso_t();
         rocketnet_free( NULL, storage );
         return NULL;

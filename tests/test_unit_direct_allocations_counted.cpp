@@ -144,9 +144,10 @@ REGISTER_UNIT_TEST( test_io_uring_fake_create_destroy_counted );
 bool rocketnet_server_rio_test_receive_overflow( uint64_t * counters, int * packet_counts,
                                                  int * repost_calls, int * pending_receives, int * guard_hit );
 
-// red first: the fixture took its transport, region, banks and slot bytes
-// with calloc, so the allocator saw none of them. Now each is the
-// allocator's, and the fixture's free returns every byte.
+// red first: the fixture took its transport, region and sized allocation
+// (banks, slot bytes, retry list and process view) with calloc, so the
+// allocator saw none of them. Now each is the allocator's, and the
+// fixture's free returns every byte.
 
 static void test_rio_fixture_create_destroy_counted()
 {
@@ -162,7 +163,7 @@ static void test_rio_fixture_create_destroy_counted()
     int pending_receives = 0;
     int guard_hit = 0;
     check( rocketnet_server_rio_test_receive_overflow( counters, packet_counts, &repost_calls, &pending_receives, &guard_hit ) );
-    check( g_direct_allocation_calls >= calls_before + 4 );
+    check( g_direct_allocation_calls >= calls_before + 3 );
     check( g_direct_live_bytes == live_before );
     check( rocketnet_direct_allocation_bytes() == direct_before );
 

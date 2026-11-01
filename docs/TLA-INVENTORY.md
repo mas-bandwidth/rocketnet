@@ -43,6 +43,17 @@ revision under review.
 | rtt minimum tree layout | `RNRttTreeLayout` | every tree node the minimum of its children, the root the minimum positive sample |
 | protocol tables' free stacks | `RNOpenAddress`, `RNFreeStackLayout` | each stack holds exactly the slots not live, each once; a map generation never reissued and never 0 |
 | wire sequence reconstruction | `AckBlockWrap`, `RNReconstructLayout` | the three-candidate arithmetic chooses the nearest candidate, the larger on a tie |
+| transport bank queues | `RNPortableRx`, `RNPortableTx`, `RNGsoHandoff`, `RNBufferHandoff`, `RNRioWorker`, `RNClientIocp`, `RNBankFifoLayout` | every bank in exactly one place read through the free and ready arrays, the ready ring in publish order, no position outside an array, for FIFO and stack free queues, both initializers and the iocp client's ring of num_receives |
+| RIO send slots | `RNRioDriver`, `RNRioWorker`, `RNRioSendSlotLayout` | a reservation returns only a free slot at the counter's own width, the send_ready ring the handed phases in order |
+| client I/O compaction | `RNClientIoDecrypt`, `RNClientIoCompactLayout` | every record names the slot holding its datagram after the in-place compaction, records dense from slot 0 |
+| kernel replay pending buffer | `RNXdpReplay`, `RNXdpReplayMarksLayout` | no write past the buffer, the arrays' prefixes exactly the pending forgets and marks in order across each in-place compaction, the kept prefix naming each key once |
+| reply MAC table | `RNXdpReplay`, `RNXdpReplyMacsLayout` | every lookup returns the address's learned MAC, else its answered one, one slot per address within the probe window with no empty slot before it, evictions of the oldest entry only |
+| deferred disconnect bursts | `ServerSession`, `RNDisconnectBurstRing` | no waiting burst overwritten, seals only for waiting bursts, one packet per waiting burst per pass, each burst leaving with exactly its packets sealed |
+| replay walk slot records | `RNXdpReplay`, `RNServerReplaySlots` | a forget owed for a slot's old address never lost across slot reuse; a forget the sink refused can delete a later session's kernel entry (a recorded finding) |
+| loopback bind table | `LoopbackHub`, `RNLoopbackBindLayout` | one endpoint per family and port, the one-lookup destination equal to a walk of the live records, ephemeral ports in range and free in both families |
+| client slots free stack | `ServerConnection`, `RNOpenAddress`, `RNClientSlotsLayout` | each free slot on the stack exactly once, no slot taken while held, a handle releases only its own tenure, a slot never holds an owner generation twice |
+| link simulator store | `Link`, `RNSimulatorStoreLayout` | the bitmap walk chooses the slot the full scan chooses, a send takes the lowest free slot, every slot below the free hint occupied, summary bits exactly the nonempty words, the shard bound below every delivery time, a stale handle never retires a live packet |
+| server payload ring | `RNDriverSendStaging`, `RNServerPayloadRingLayout` | no slot at or past the send capacity handed out or read, each flush sends exactly the slots finished since the last, a slot held by one thread at its own frame |
 
 Model constants must stay small enough for exhaustive checking while retaining
 the production relationship being proved. A model-check result is evidence for

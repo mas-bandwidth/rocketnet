@@ -259,16 +259,17 @@ void rocketnet_test_server_receive_buffer_sized_from_max_clients()
 #if defined( __linux__ )
 
 // A gso server's queue sockets ask for the documented request
-// (rocketnet_server_transport_receive_buffer_request): the full client count
-// on every SO_REUSEPORT socket, and the grant line compares against it.
+// (rocketnet_server_transport_receive_buffer_request): the server's full
+// configured client count on every SO_REUSEPORT socket, and the grant line
+// compares against it.
 void rocketnet_test_server_gso_receive_buffer_request()
 {
     server_receive_low_tick_clear_log();
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
     rocketnet_log_function( server_receive_low_tick_capture, NULL );
 
-    const int request = rocketnet_server_transport_receive_buffer_request( "gso", ROCKETNET_MAX_CLIENTS );
-    server_receive_low_tick_require( request == rocketnet_server_receive_buffer_request( ROCKETNET_MAX_CLIENTS ) );
+    const int request = rocketnet_server_transport_receive_buffer_request( "gso", server_receive_low_tick_server_clients );
+    server_receive_low_tick_require( request == rocketnet_server_receive_buffer_request( server_receive_low_tick_server_clients ) );
 
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );

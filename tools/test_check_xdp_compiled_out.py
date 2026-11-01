@@ -24,7 +24,7 @@ COMPILED_OUT = [
 
 COMPILED_IN = [
     "rocketnet_server_socket_linux.cpp.o:",
-    "0000000000001000 T rocketnet_server_socket_create(void*, char const*, unsigned char const*, int, int, char const*, int*)",
+    "0000000000001000 T rocketnet_server_socket_create(void*, char const*, unsigned char const*, int, int, int, char const*, int*)",
     "0000000000000000 r rocketnet_server_xdp_o",
     "0000000000000b00 T rocketnet_gateway_netlink_route(int, int, unsigned char*, int*)",
     "                 U bpf_object__open_mem",

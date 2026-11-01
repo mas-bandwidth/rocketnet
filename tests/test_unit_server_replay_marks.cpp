@@ -45,6 +45,7 @@ struct server_replay_marks_call_t
     int kind;
     struct rocketnet_address_t address;
     uint32_t high_water;
+    bool queued;
 };
 
 struct server_replay_marks_recording_t
@@ -110,7 +111,8 @@ static bool server_replay_marks_record_forget( void * context, const struct rock
     call->kind = SERVER_REPLAY_MARKS_FORGET;
     call->address = *address;
     call->high_water = 0;
-    if ( recording->forget_refusals == 0 )
+    call->queued = recording->forget_refusals == 0;
+    if ( call->queued )
         return true;
     recording->forget_refusals--;
 
@@ -126,7 +128,8 @@ static bool server_replay_marks_record_mark( void * context, const struct rocket
     call->kind = SERVER_REPLAY_MARKS_MARK;
     call->address = *address;
     call->high_water = high_water;
-    if ( recording->mark_refusals == 0 )
+    call->queued = recording->mark_refusals == 0;
+    if ( call->queued )
         return true;
     recording->mark_refusals--;
 
@@ -519,6 +522,238 @@ static void test_server_replay_marks_refused_mark_is_owed()
     server_replay_marks_fixture_destroy( &fixture );
 }
 
+// The kernel replay map as the transport's commit leaves it: every queued
+// forget, then every queued mark (proofs/tla/RNServerReplaySlots.tla Walk).
+
+struct server_replay_marks_kernel_t
+{
+    int count;
+    struct rocketnet_address_t address[ROCKETNET_REPLAY_MARKS_TEST_MAX_CALLS];
+    uint32_t high_water[ROCKETNET_REPLAY_MARKS_TEST_MAX_CALLS];
+};
+
+static int server_replay_marks_kernel_find( const struct server_replay_marks_kernel_t * kernel,
+                                            const struct rocketnet_address_t * address )
+{
+    for ( int i = 0; i < kernel->count; i++ )
+    {
+        if ( rocketnet_address_equal( &kernel->address[i], address ) )
+            return i;
+    }
+    return -1;
+}
+
+static void server_replay_marks_kernel_commit( struct server_replay_marks_kernel_t * kernel,
+                                               const struct server_replay_marks_recording_t * recording )
+{
+    for ( int i = 0; i < recording->count; i++ )
+    {
+        const struct server_replay_marks_call_t * call = &recording->calls[i];
+        if ( call->kind != SERVER_REPLAY_MARKS_FORGET || !call->queued )
+            continue;
+        const int entry = server_replay_marks_kernel_find( kernel, &call->address );
+        if ( entry < 0 )
+            continue;
+        kernel->count--;
+        kernel->address[entry] = kernel->address[kernel->count];
+        kernel->high_water[entry] = kernel->high_water[kernel->count];
+    }
+
+    for ( int i = 0; i < recording->count; i++ )
+    {
+        const struct server_replay_marks_call_t * call = &recording->calls[i];
+        if ( call->kind != SERVER_REPLAY_MARKS_MARK || !call->queued )
+            continue;
+        int entry = server_replay_marks_kernel_find( kernel, &call->address );
+        if ( entry < 0 )
+        {
+            rocketnet_unit_check( kernel->count < ROCKETNET_REPLAY_MARKS_TEST_MAX_CALLS );
+            entry = kernel->count++;
+            kernel->address[entry] = call->address;
+        }
+        kernel->high_water[entry] = call->high_water;
+    }
+}
+
+static void server_replay_marks_walk_and_commit( struct server_replay_marks_fixture_t * fixture,
+                                                 struct server_replay_marks_recording_t * recording,
+                                                 struct server_replay_marks_kernel_t * kernel )
+{
+    server_replay_marks_walk( fixture, recording );
+    server_replay_marks_kernel_commit( kernel, recording );
+}
+
+static void server_replay_marks_check_kernel( const struct server_replay_marks_kernel_t * kernel,
+                                              const struct rocketnet_address_t * address,
+                                              uint32_t high_water )
+{
+    const int entry = server_replay_marks_kernel_find( kernel, address );
+    rocketnet_unit_check( entry >= 0 );
+    if ( entry >= 0 )
+        rocketnet_unit_check( kernel->high_water[entry] == high_water );
+}
+
+// proofs/tla/RNServerReplaySlots.tla Walk, MarkSupersedes: slot 0 is seen at A
+// and released, and slot 1 connects at A. The walk's forget of A for slot 0 is
+// refused and slot 1's mark of A is queued: the queued mark supersedes the owed
+// forget, so no later walk forgets A and deletes slot 1's entry, which slot 1's
+// record says is in place. Back at A after slot 1 leaves, slot 0 is first seen
+// and marks again, even at the value its old record held, and that mark
+// supersedes slot 1's refused forget of A in turn.
+
+static void test_server_replay_marks_queued_mark_supersedes_an_owed_forget()
+{
+    struct server_replay_marks_fixture_t fixture;
+    server_replay_marks_fixture_init( &fixture, 2 );
+
+    const struct rocketnet_address_t a = server_replay_marks_address( "198.51.100.7:50000" );
+    const struct rocketnet_address_t c = server_replay_marks_address( "198.51.100.9:50000" );
+
+    struct server_replay_marks_kernel_t kernel;
+    memset( &kernel, 0, sizeof( kernel ) );
+
+    const struct server_replay_marks_client_t first = server_replay_marks_add_client( &fixture, &a, 100, 5 );
+    const struct server_replay_marks_client_t other = server_replay_marks_add_client( &fixture, &c, 200, 0 );
+    rocketnet_unit_check( first.slot == 0 && other.slot == 1 );
+
+    struct server_replay_marks_recording_t recording;
+    memset( &recording, 0, sizeof( recording ) );
+    server_replay_marks_walk_and_commit( &fixture, &recording, &kernel );
+    server_replay_marks_check_kernel( &kernel, &a, 5 );
+
+    // slot 0 leaves A, then slot 1 leaves C, so slot 1 is the next one assigned
+
+    rocketnet_client_slots_release( fixture.slots, first.slot );
+    rocketnet_encryption_map_remove_current( fixture.map, first.mapping );
+    rocketnet_client_slots_release( fixture.slots, other.slot );
+    rocketnet_encryption_map_remove_current( fixture.map, other.mapping );
+
+    const struct server_replay_marks_client_t second = server_replay_marks_add_client( &fixture, &a, 300, 0 );
+    rocketnet_unit_check( second.slot == 1 );
+
+    // slot 0's forget of A is refused, slot 1's forget of C and its mark of A
+    // are queued
+
+    memset( &recording, 0, sizeof( recording ) );
+    recording.forget_refusals = 1;
+    server_replay_marks_walk_and_commit( &fixture, &recording, &kernel );
+    rocketnet_unit_check( recording.count == 3 );
+
+    server_replay_marks_check_forget( &recording.calls[0], &a );
+    server_replay_marks_check_forget( &recording.calls[1], &c );
+    server_replay_marks_check_mark( &recording.calls[2], &a, 0 );
+    server_replay_marks_check_kernel( &kernel, &a, 0 );
+
+    // nothing changed: no forget of A, and slot 1's entry stays
+
+    memset( &recording, 0, sizeof( recording ) );
+    server_replay_marks_walk_and_commit( &fixture, &recording, &kernel );
+    rocketnet_unit_check( recording.count == 0 );
+    server_replay_marks_check_kernel( &kernel, &a, 0 );
+
+    // slot 1 moves from A to C and its forget of A is refused; slot 0 comes
+    // back to A at 5, the value its old record held, and is marked. That mark
+    // supersedes slot 1's owed forget, and slot 1 is first seen at C.
+
+    rocketnet_client_slots_release( fixture.slots, second.slot );
+    rocketnet_encryption_map_remove_current( fixture.map, second.mapping );
+    const struct server_replay_marks_client_t moved = server_replay_marks_add_client( &fixture, &c, 400, 0 );
+    rocketnet_unit_check( moved.slot == 1 );
+    const struct server_replay_marks_client_t back = server_replay_marks_add_client( &fixture, &a, 500, 5 );
+    rocketnet_unit_check( back.slot == 0 );
+
+    memset( &recording, 0, sizeof( recording ) );
+    recording.forget_refusals = 1;
+    server_replay_marks_walk_and_commit( &fixture, &recording, &kernel );
+    rocketnet_unit_check( recording.count == 3 );
+
+    server_replay_marks_check_forget( &recording.calls[0], &a );
+    server_replay_marks_check_mark( &recording.calls[1], &a, 5 );
+    server_replay_marks_check_mark( &recording.calls[2], &c, 0 );
+    server_replay_marks_check_kernel( &kernel, &a, 5 );
+    server_replay_marks_check_kernel( &kernel, &c, 0 );
+
+    memset( &recording, 0, sizeof( recording ) );
+    server_replay_marks_walk_and_commit( &fixture, &recording, &kernel );
+    rocketnet_unit_check( recording.count == 0 );
+    server_replay_marks_check_kernel( &kernel, &a, 5 );
+
+    server_replay_marks_fixture_destroy( &fixture );
+}
+
+// proofs/tla/RNServerReplaySlots.tla Walk, ForgetSupersedes: slot 0 is marked at
+// A and released; slot 1 connects at A, slot 0's forget is refused and slot
+// 1's mark of A refused too, so slot 0's record still names its mark of A.
+// Slot 1 leaves and slot 0 comes back to A; slot 1's queued forget of A
+// deletes the entry, and slot 0, whose record held that mark, is marked again
+// in the same walk.
+
+static void test_server_replay_marks_queued_forget_supersedes_a_held_mark()
+{
+    struct server_replay_marks_fixture_t fixture;
+    server_replay_marks_fixture_init( &fixture, 2 );
+
+    const struct rocketnet_address_t a = server_replay_marks_address( "198.51.100.7:50000" );
+    const struct rocketnet_address_t c = server_replay_marks_address( "198.51.100.9:50000" );
+    const struct rocketnet_address_t d = server_replay_marks_address( "198.51.100.10:50000" );
+
+    struct server_replay_marks_kernel_t kernel;
+    memset( &kernel, 0, sizeof( kernel ) );
+
+    const struct server_replay_marks_client_t first = server_replay_marks_add_client( &fixture, &a, 100, 0 );
+    const struct server_replay_marks_client_t other = server_replay_marks_add_client( &fixture, &c, 200, 0 );
+    rocketnet_unit_check( first.slot == 0 && other.slot == 1 );
+
+    struct server_replay_marks_recording_t recording;
+    memset( &recording, 0, sizeof( recording ) );
+    server_replay_marks_walk_and_commit( &fixture, &recording, &kernel );
+    server_replay_marks_check_kernel( &kernel, &a, 0 );
+
+    rocketnet_client_slots_release( fixture.slots, first.slot );
+    rocketnet_encryption_map_remove_current( fixture.map, first.mapping );
+    rocketnet_client_slots_release( fixture.slots, other.slot );
+    rocketnet_encryption_map_remove_current( fixture.map, other.mapping );
+
+    const struct server_replay_marks_client_t second = server_replay_marks_add_client( &fixture, &a, 300, 0 );
+    rocketnet_unit_check( second.slot == 1 );
+
+    // slot 0's forget of A refused, slot 1's forget of C queued, slot 1's mark
+    // of A refused
+
+    memset( &recording, 0, sizeof( recording ) );
+    recording.forget_refusals = 1;
+    recording.mark_refusals = 1;
+    server_replay_marks_walk_and_commit( &fixture, &recording, &kernel );
+    rocketnet_unit_check( recording.count == 3 );
+
+    server_replay_marks_check_forget( &recording.calls[0], &a );
+    server_replay_marks_check_forget( &recording.calls[1], &c );
+    server_replay_marks_check_mark( &recording.calls[2], &a, 0 );
+
+    // slot 1 leaves A for D and slot 0 comes back to A before the next walk
+
+    rocketnet_client_slots_release( fixture.slots, second.slot );
+    rocketnet_encryption_map_remove_current( fixture.map, second.mapping );
+    const struct server_replay_marks_client_t moved = server_replay_marks_add_client( &fixture, &d, 400, 0 );
+    rocketnet_unit_check( moved.slot == 1 );
+    const struct server_replay_marks_client_t back = server_replay_marks_add_client( &fixture, &a, 500, 0 );
+    rocketnet_unit_check( back.slot == 0 );
+
+    // slot 1's forget of A is queued: the commit deletes A, and slot 0 marks it
+
+    memset( &recording, 0, sizeof( recording ) );
+    server_replay_marks_walk_and_commit( &fixture, &recording, &kernel );
+    rocketnet_unit_check( recording.count == 3 );
+
+    server_replay_marks_check_forget( &recording.calls[0], &a );
+    server_replay_marks_check_mark( &recording.calls[1], &a, 0 );
+    server_replay_marks_check_mark( &recording.calls[2], &d, 0 );
+    server_replay_marks_check_kernel( &kernel, &a, 0 );
+    server_replay_marks_check_kernel( &kernel, &d, 0 );
+
+    server_replay_marks_fixture_destroy( &fixture );
+}
+
 REGISTER_UNIT_TEST( test_server_replay_marks_mark_connected_slots_once );
 REGISTER_UNIT_TEST( test_server_replay_marks_refused_mark_is_owed );
 REGISTER_UNIT_TEST( test_server_replay_marks_forget_released_slots_first );
@@ -526,3 +761,5 @@ REGISTER_UNIT_TEST( test_server_replay_marks_follow_an_address_change );
 REGISTER_UNIT_TEST( test_server_replay_marks_refused_forget_keeps_the_slot );
 REGISTER_UNIT_TEST( test_server_replay_marks_forget_a_connected_slot_without_a_mapping );
 REGISTER_UNIT_TEST( test_server_replay_marks_forget_a_released_slot_without_a_mark );
+REGISTER_UNIT_TEST( test_server_replay_marks_queued_mark_supersedes_an_owed_forget );
+REGISTER_UNIT_TEST( test_server_replay_marks_queued_forget_supersedes_a_held_mark );

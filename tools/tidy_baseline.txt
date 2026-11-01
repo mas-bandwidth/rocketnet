@@ -120,7 +120,6 @@ clang-tidy	sdk/rocketnet_server_replay_marks.cpp	bugprone-suspicious-memory-comp
 clang-tidy	sdk/rocketnet_server_socket_linux.cpp	bugprone-implicit-widening-of-multiplication-result	805d0176603bcfba
 clang-tidy	sdk/rocketnet_server_socket_linux.cpp	bugprone-implicit-widening-of-multiplication-result	8f5180985f8bf307
 clang-tidy	sdk/rocketnet_server_socket_linux.cpp	bugprone-implicit-widening-of-multiplication-result	939749dd796825e7
-clang-tidy	sdk/rocketnet_server_socket_linux.cpp	bugprone-implicit-widening-of-multiplication-result	ab69aca5a5a9fd5d
 clang-tidy	sdk/rocketnet_server_socket_linux.cpp	bugprone-misplaced-widening-cast	263172fb574c430e
 clang-tidy	sdk/rocketnet_server_socket_linux.cpp	bugprone-misplaced-widening-cast	919eade58c639c53
 clang-tidy	sdk/rocketnet_server_socket_linux.cpp	bugprone-misplaced-widening-cast	a6b7ea31381603d3

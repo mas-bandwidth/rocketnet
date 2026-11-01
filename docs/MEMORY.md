@@ -41,8 +41,8 @@ results is a measurement of your current build. See [Testing](TESTING.md).
 
 The 2026-11-01 Linux x86-64 Release planner query described in
 [LOAD.md](LOAD.md#platform-build-and-allocator-assumptions) reports
-21,025,323,013 bytes (about 21.0 GB) for the default 1000-client server.
-The difference from one to two slots is 19,171,098 bytes (about 19.2 MB).
+21,025,383,757 bytes (about 21.0 GB) for the default 1000-client server.
+The difference from one to two slots is 19,173,338 bytes (about 19.2 MB).
 These are source-specific sizing examples, not portable constants:
 build options, platform, transport availability, and configuration affect the
 result. Query your own build with `rocketnet_server_required_memory` before
@@ -91,8 +91,8 @@ cc -I sdk measure_server_memory.c build/librocketnet.a -lbpf -lxdp -luring -lstd
 ```
 
 On the same Linux x86-64 build with io_uring and XDP enabled and
-`ROCKETNET_DEV=ON`, it prints `1000 clients: 21025323013`,
-`1 client: 1873364239`, `2 clients: 1892535337` and `delta: 19171098`.
+`ROCKETNET_DEV=ON`, it prints `1000 clients: 21025383757`,
+`1 client: 1845916823`, `2 clients: 1865090161` and `delta: 19173338`.
 These queries include the 1 MiB allowance. The figures differ by platform,
 configuration, and source revision because each counts the largest transport
 that platform's ladder can grant. Use the planner from the exact library you
@@ -110,15 +110,15 @@ bytes, the send buffer is 141,500 bytes, the send queue is 128 messages,
 packets in flight are 256, each update may send 4 packets and 4 unreliable
 messages, 100 sequenced messages are held, 128 receipts are kept, and there
 are eight channels. At `max_clients` 1000, the same Linux development build
-reports 3,109,291,013 bytes (about 3.1 GB) from
+reports 3,109,351,757 bytes (about 3.1 GB) from
 `rocketnet_server_required_memory`. The matching `rocketnet_client_light_config`
-makes `rocketnet_client_required_memory` report 15,194,522 bytes.
+makes `rocketnet_client_required_memory` report 15,185,738 bytes.
 
 Both figures are the planned lifecycle peak (create, connect or start, stop or
 disconnect, the next cycle, and destroy) plus the 1 MiB allowance. They exclude
 memory owned by the operating system (worker thread stacks, XDP UMEM, io_uring
 rings, kernel socket buffers) and process overhead. The same source built with
-`ROCKETNET_DEV=OFF` reports 3,102,909,849 and 14,409,654 bytes, using an accepted
+`ROCKETNET_DEV=OFF` reports 3,102,970,529 and 14,400,870 bytes, using an accepted
 non-test packet filter. Other platforms have different transport candidates and
 layouts; the older Windows and macOS examples predate this query and are not
 current measurements. The default profile remains the stock acceptance.
@@ -208,12 +208,11 @@ the slowest supported update interval (0.1 s at 10 Hz), times 2 for the
 kernel's per-packet accounting, which charges more than the packet bytes. At
 1000 clients that is 25,000,000 bytes; at 64 clients, 1,600,000. Servers
 updating faster than 10 Hz need proportionally less; the request stays sized
-for 10 Hz. Portable and msgx use the server's `max_clients`; GSO, io_uring,
-iocp and rio use the build's `ROCKETNET_MAX_CLIENTS`, because their creates do
-not carry `max_clients`. Each GSO and io_uring queue socket asks for the full
-client count, not a share of it: `SO_REUSEPORT` hashes flows to sockets, so
-any one queue's socket may receive any number of the clients. Four queues at
-the default ceiling ask for 4 x 25,000,000 bytes. The request is an upper
+for 10 Hz. Every transport uses the server's `max_clients`. Each GSO and
+io_uring queue socket asks for the full client count, not a share of it:
+`SO_REUSEPORT` hashes flows to sockets, so any one queue's socket may receive
+any number of the clients. Four queues at 1000 clients ask for
+4 x 25,000,000 bytes. The request is an upper
 bound: the kernel charges only for what it holds.
 
 The kernel may grant less. Linux clamps the request to `net.core.rmem_max`
@@ -271,19 +270,25 @@ not a performance or general workload qualification above 1000 clients.
 
 The value raises the ceiling, not the default: `max_clients` still defaults
 to 1000 (or the build's maximum when that is smaller), and a server asks for
-more in its config or with `ROCKETNET_SERVER_MAX_CLIENTS`. The following limits
-scale with it at compile time. Backend staging also has fixed limits, described
-below; raising the client ceiling does not make every transport buffer larger.
+more in its config or with `ROCKETNET_SERVER_MAX_CLIENTS`. The ceiling sizes
+nothing a server allocates: every server buffer that scales with clients is
+sized at create from the server's configured `max_clients` (raised to 512, the
+smallest ceiling a build allows), and `rocketnet_server_required_memory`
+counts the same bytes, so a 1000-client server plans and holds the same
+memory in the default build and in a 10000 build. The following limits follow
+the configured count. Backend staging also has fixed limits, described below;
+a larger server does not make every transport buffer larger.
 
 | Limit | Rule | 1000 | 10000 |
 |---|---|---|---|
 | client slots, loopback endpoints | one per client (endpoints: plus the server) | 1000, 1001 | 10000, 10001 |
-| per-update receive budget, payload batch | 16 packets per client | 16000 | 160000 |
+| per-update receive budget, payload batch, io_uring receive bank | 16 packets per client | 16000 | 160000 |
 | portable send batch | one per client | 1000 | 10000 |
-| server-wide send staging (loopback queue, IOCP send frames, RIO send phase) | two packets per client, rounded up to a power of two | 2048 | 32768 |
+| server-wide send staging (IOCP send frames, RIO send phase) | two packets per client, rounded up to a power of two | 2048 | 32768 |
 | IOCP receive staging per worker, RIO posted receives | twice the send staging | 4096 | 65536 |
-| XDP kernel replay map, userspace replay marks | one entry per client, rounded up to a multiple of 1024 | 1024 | 10240 |
+| XDP kernel replay map (set at load) and userspace replay marks | one entry per client, rounded up to a multiple of 1024 | 1024 | 10240 |
 | XDP reply MAC table | four slots per client, rounded up to a power of two | 4096 | 65536 |
+| socket receive buffer request | see [Receive buffer sizing](#receive-buffer-sizing) | 25,000,000 | 250,000,000 |
 
 The server packet lease table is fixed at 131072 entries and 65536 leases per
 update, enough for two packets per client up to the 32768 build ceiling.
@@ -291,9 +296,9 @@ XDP has 4096 send slots per queue and fixed UMEM geometry; increasing its
 queue count adds staging, subject to memory and host limits.
 
 GSO and io_uring differ: GSO has three shared send banks of 4096 slots, with
-one bank available to producers at a time; io_uring has one shared 2048-slot
-send array, including slots still held by pending completions. These are
-server-wide capacities. Adding receive queues does not multiply either
+one bank available to producers at a time. io_uring has two 2048-slot send
+phases, with one phase available to producers at a time; the other can
+remain held by pending completions. These are server-wide capacities. Adding receive queues does not multiply either
 producer's capacity. Each staged transport reports its remaining room
 (`rocketnet_server_transport_send_capacity_available`), so the message
 layer's send pass stops where the next unserved client waits and resumes
@@ -315,9 +320,9 @@ peak before create, including the largest planned built-in transport in the
 configured ladder. Query the exact build and configuration for its requirement;
 a 10000-client server can set lighter per-client limits (send and receive
 buffers, queues, windows and receipts) for its game.
-A build for more clients also carries larger fixed per-server tables (the
-receive arrays and payload batches above), about 0.6 GB more at 10000 whatever
-the server's `max_clients`.
+A build for more clients adds nothing to a smaller server: the receive arrays
+and payload batches above are sized from the server's own `max_clients`, with
+an allocation floor of 512 clients.
 
 ## History memory budget
 

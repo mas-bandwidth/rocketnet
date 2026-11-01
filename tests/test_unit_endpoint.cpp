@@ -26,6 +26,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <atomic>
 #include <deque>
 #include <vector>
 
@@ -516,19 +517,18 @@ static uint64_t ep_frees = 0;
 // The clock intercept. Where the build links the test with
 // -Wl,--wrap=rocketnet_platform_time (CMakeLists.txt, GNU-style linkers),
 // every call to the library's one clock, from any object file of the
-// library, lands here first and is counted, then answered by the real clock.
+// library, lands here first and receives the next synthetic tick. Native
+// shutdown helpers and transport threads may read it concurrently, so one
+// atomic counter both counts reads and assigns distinct ticks.
 // Elsewhere the intercept is absent, and the determinism check below stands
 // alone.
 
 #if defined( __linux__ ) && ROCKETNET_DEV
-static uint64_t ep_clock_reads = 0;
-static double ep_fake_clock = 1000.0;
-extern "C" double __real_rocketnet_platform_time();
+static std::atomic<uint64_t> ep_clock_reads( 0 );
 extern "C" double __wrap_rocketnet_platform_time()
 {
-    ep_clock_reads++;
-    ep_fake_clock += ( 1.0 / 60.0 );
-    return ep_fake_clock;
+    const uint64_t tick = ep_clock_reads.fetch_add( 1, std::memory_order_relaxed ) + 1;
+    return 1000.0 + (double) tick * ( 1.0 / 60.0 );
 }
 #endif // #if defined( __linux__ ) && ROCKETNET_DEV
 
@@ -557,9 +557,9 @@ static void test_endpoint_never_allocates_or_reads_a_clock()
 #if defined( __linux__ ) && ROCKETNET_DEV
     // the intercept works: a read of the library's clock is counted
     {
-        const uint64_t before = ep_clock_reads;
+        const uint64_t before = ep_clock_reads.load( std::memory_order_relaxed );
         rocketnet_time();
-        check( ep_clock_reads == before + 1 );
+        check( ep_clock_reads.load( std::memory_order_relaxed ) == before + 1 );
     }
 #endif // #if defined( __linux__ ) && ROCKETNET_DEV
 
@@ -580,7 +580,7 @@ static void test_endpoint_never_allocates_or_reads_a_clock()
         const uint64_t mallocs = ep_mallocs;
         const uint64_t frees = ep_frees;
 #if defined( __linux__ ) && ROCKETNET_DEV
-        const uint64_t clock_reads = ep_clock_reads;
+        const uint64_t clock_reads = ep_clock_reads.load( std::memory_order_relaxed );
 #endif // #if defined( __linux__ ) && ROCKETNET_DEV
 
         ep_stats_t stats;
@@ -595,7 +595,7 @@ static void test_endpoint_never_allocates_or_reads_a_clock()
         check( ep_mallocs == mallocs );
         check( ep_frees == frees );
 #if defined( __linux__ ) && ROCKETNET_DEV
-        check( ep_clock_reads == clock_reads );                 // not one clock read from the endpoint
+        check( ep_clock_reads.load( std::memory_order_relaxed ) == clock_reads );                 // not one clock read from the endpoint
 #endif // #if defined( __linux__ ) && ROCKETNET_DEV
         traces[run] = stats.trace;
 

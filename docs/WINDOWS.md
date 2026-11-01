@@ -162,7 +162,7 @@ client object can be reused, is the separate inventory in
 A server is one socket on every Windows transport, so there is no descriptor
 limit to raise. The limit that matters is memory: per-client state grows with
 `max_clients`, the send staging and receive buffers of each transport are sized
-from the compile-time `ROCKETNET_MAX_CLIENTS` (1000), and `rio` commits its
+from the same configured `max_clients` (1000 by default), and `rio` commits its
 whole registered region at create. Threads are two for
 `portable` and `iocp` and one for `rio`, each with the executable's default
 stack reserve (1 MiB unless the game links with another). Ask for the numbers

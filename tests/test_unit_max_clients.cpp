@@ -4,11 +4,13 @@
 */
 
 // ROCKETNET_MAX_CLIENTS is a build setting (-DROCKETNET_MAX_CLIENTS=10000,
-// BUILDING.md "Maximum clients"). These cases hold every limit that serves all
-// of a server's clients to the value the build was compiled with, pin the
-// default build's limits to the values they had before the setting existed,
-// and create a server of ROCKETNET_MAX_CLIENTS slots through the public API.
-// They run in every build; the 10000 build runs them at 10000.
+// MEMORY.md "Maximum clients"): the most clients a config may ask for. Every
+// server buffer that scales with clients is sized from the configured
+// max_clients, so these cases hold each sizing to the configured count in
+// every build, pin the sizes at 1000 clients to the values they had when the
+// build ceiling was a fixed 1000, show a server's plan follows its config and
+// not the ceiling, and create a server of ROCKETNET_MAX_CLIENTS slots through
+// the public API. They run in every build; the 10000 build runs them at 10000.
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
@@ -30,6 +32,7 @@
 #include "rocketnet_slots.h"
 #include "rocketnet_client_slots.h"
 
+#include <limits.h>
 #include <stdint.h>
 #include <string.h>
 #include "loopback_hub.h"
@@ -47,50 +50,78 @@ static void test_max_clients_derived_limits()
     check( config.max_clients == ( clients < 1000 ? clients : 1000 ) );
     check( ROCKETNET_DEFAULT_MAX_CLIENTS == config.max_clients );
 
-    // the server-wide tables hold every client
+    // the build-wide tables hold every client the build allows: the loopback
+    // hub's records, the embedded XDP program's replay map and the packet
+    // lease table
 
-    check( (int) ( sizeof( ( (rn_slots_t *) 0 )->connection_id ) / sizeof( uint64_t ) ) == clients );
     check( rocketnet_loopback_hub_bytes( clients ) > 0 && rocketnet_loopback_hub_bytes( clients + 1 ) == 0 );
     check( ROCKETNET_XDP_REPLAY_MAX_ENTRIES >= clients );
-    check( (int) ( sizeof( ( (rocketnet_xdp_replay_marks_t *) 0 )->mark_keys ) / sizeof( rocketnet_server_xdp_replay_key_t ) ) == ROCKETNET_XDP_REPLAY_MAX_ENTRIES );
-    check( ROCKETNET_XDP_REPLY_MAC_ENTRIES >= 4 * clients );
-    check( ( ROCKETNET_XDP_REPLY_MAC_ENTRIES & ( ROCKETNET_XDP_REPLY_MAC_ENTRIES - 1 ) ) == 0 );
+    check( rocketnet_xdp_replay_entries( clients ) <= ROCKETNET_XDP_REPLAY_MAX_ENTRIES );
+    check( rocketnet_xdp_replay_entries( clients + 1 ) == 0 );
     check( ROCKETNET_SERVER_PACKET_LEASES / 2 >= 2 * clients );
-    check( ROCKETNET_SERVER_PACKET_LEASES / 2 >= ROCKETNET_SERVER_SEND_STAGING_PACKETS );
-    check( ROCKETNET_SERVER_MAX_SEND_PACKETS == clients );
-    check( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE == ROCKETNET_RECEIVE_PACKETS_PER_CLIENT * clients );
+    check( ROCKETNET_SERVER_PACKET_LEASES / 2 >= rocketnet_server_send_staging_packets( clients ) );
 
-    // the server-wide send staging holds two packets for every client, and
-    // each receive side twice that
+    // each server-wide sizing follows the configured count, raised to the
+    // smallest sizing count and never past the build's
 
-    check( ROCKETNET_SERVER_SEND_STAGING_PACKETS >= 2 * clients );
+    const int counts[] = { 1, ROCKETNET_SERVER_MIN_SIZED_CLIENTS, ROCKETNET_DEFAULT_MAX_CLIENTS, clients };
+    for ( const int n : counts )
+    {
+        const int sized = n > ROCKETNET_SERVER_MIN_SIZED_CLIENTS ? n : ROCKETNET_SERVER_MIN_SIZED_CLIENTS;
+        check( rocketnet_server_sized_clients( n ) == sized );
+        check( rocketnet_server_receive_packets_per_update( n ) == ROCKETNET_RECEIVE_PACKETS_PER_CLIENT * sized );
+        check( rocketnet_server_send_batch_packets( n ) == sized );
+
+        // the server-wide send staging holds two packets for every client,
+        // and each receive side twice that
+
+        const int staging = rocketnet_server_send_staging_packets( n );
+        check( staging >= 2 * sized && staging < 4 * sized && ( staging & ( staging - 1 ) ) == 0 );
+        check( rocketnet_server_iocp_send_queue_size( n ) == staging );
+        check( rocketnet_server_iocp_receive_queue_size( n ) == 2 * staging );
+        check( rocketnet_server_rio_send_queue_size( n ) == staging );
+        check( rocketnet_server_rio_receives( n ) == 2 * staging );
+
+        const int macs = rocketnet_xdp_reply_mac_entries( n );
+        check( macs >= 4 * sized && ( macs & ( macs - 1 ) ) == 0 );
+        check( rocketnet_xdp_replay_entries( n ) >= (uint32_t) n );
+        check( rocketnet_server_uring_bank_packets( n ) >= rocketnet_server_receive_packets_per_update( n ) );
+    }
+    check( rocketnet_server_sized_clients( clients + 1 ) == clients );
     check( ROCKETNET_LOOPBACK_QUEUE_PACKETS == 2 * ROCKETNET_CONNECTION_MAX_PACKETS_PER_UPDATE );
-    check( ROCKETNET_IOCP_SEND_QUEUE_SIZE == ROCKETNET_SERVER_SEND_STAGING_PACKETS );
-    check( ROCKETNET_IOCP_RECEIVE_QUEUE_SIZE == 2 * ROCKETNET_SERVER_SEND_STAGING_PACKETS );
-    check( ROCKETNET_RIO_SEND_QUEUE_SIZE == ROCKETNET_SERVER_SEND_STAGING_PACKETS );
-    check( ROCKETNET_RIO_RECEIVES == 2 * ROCKETNET_SERVER_SEND_STAGING_PACKETS );
 
     // the gso producer bank and the io_uring send array are each one
     // server-wide staging whatever the queue count, sized for two packets per
-    // client of the default configuration; a larger build spreads its sends
+    // client of the default configuration; a larger server spreads its sends
     // across updates as the transport's send room reports
 
     check( ROCKETNET_GSO_SEND_QUEUE_SIZE >= 2 * ROCKETNET_DEFAULT_MAX_CLIENTS );
     check( ROCKETNET_URING_SEND_QUEUE_SIZE >= 2 * ROCKETNET_DEFAULT_MAX_CLIENTS );
 
-    // the default build is unchanged: these are the values every limit had
-    // when ROCKETNET_MAX_CLIENTS was a fixed 1000
+    // a server of 1000 clients is sized as it was when ROCKETNET_MAX_CLIENTS
+    // was a fixed 1000, in every build that holds 1000
+
+    if ( clients >= 1000 )
+    {
+        check( rocketnet_server_receive_packets_per_update( 1000 ) == 16000 );
+        check( rocketnet_server_send_batch_packets( 1000 ) == 1000 );
+        check( rocketnet_server_send_staging_packets( 1000 ) == 2048 );
+        check( rocketnet_server_iocp_send_queue_size( 1000 ) == 2048 );
+        check( rocketnet_server_iocp_receive_queue_size( 1000 ) == 4096 );
+        check( rocketnet_server_rio_send_queue_size( 1000 ) == 2048 );
+        check( rocketnet_server_rio_receives( 1000 ) == 4096 );
+        check( rocketnet_xdp_replay_entries( 1000 ) == 1024 );
+        check( rocketnet_xdp_reply_mac_entries( 1000 ) == 4096 );
+        check( rocketnet_server_uring_bank_packets( 1000 ) == 16000 );
+        check( rocketnet_loopback_server_queue_packets( 1000 ) == 16384 );
+    }
+
+    // the default build's fixed tables are unchanged
 
     if ( clients == 1000 )
     {
-        check( ROCKETNET_SERVER_SEND_STAGING_PACKETS == 2048 );
         check( ROCKETNET_LOOPBACK_QUEUE_PACKETS == 2048 );
-        check( ROCKETNET_IOCP_SEND_QUEUE_SIZE == 2048 );
-        check( ROCKETNET_IOCP_RECEIVE_QUEUE_SIZE == 4096 );
-        check( ROCKETNET_RIO_SEND_QUEUE_SIZE == 2048 );
-        check( ROCKETNET_RIO_RECEIVES == 4096 );
         check( ROCKETNET_XDP_REPLAY_MAX_ENTRIES == 1024 );
-        check( ROCKETNET_XDP_REPLY_MAC_ENTRIES == 4096 );
         check( ROCKETNET_SERVER_PACKET_LEASES == 131072 );
         check( ROCKETNET_GSO_SEND_QUEUE_SIZE == 4096 );
         check( ROCKETNET_URING_SEND_QUEUE_SIZE == 2048 );
@@ -123,6 +154,38 @@ static void max_clients_server_config( rocketnet_server_config_t * config )
     config->max_message_receipts = 16;
     config->message_resend_delay_initial_ms = 100;
 }
+
+// A server's memory is its config's choice: its plan follows the configured
+// max_clients, not the build's ROCKETNET_MAX_CLIENTS. The portable plan at
+// the light config is nearly all buffers that scale with clients (it has no
+// fixed transport memory such as XDP's UMEM), so a 1000-client server plans
+// close to 1000 / ROCKETNET_MAX_CLIENTS of a full one (1.02 GB against
+// 10.07 GB in a 10000 build, the same 1.02 GB as in the default build), and
+// the check allows a quarter more. Sizing even the receive and send buffers
+// alone from the build ceiling plans 1.69 GB, two thirds more than its share.
+// In the default build the two plans are the same server.
+
+static void test_server_plan_follows_configured_max_clients()
+{
+    if ( ROCKETNET_MAX_CLIENTS < 1000 )
+        return;
+
+    rocketnet_server_config_t config;
+    max_clients_server_config( &config );
+    config.transport = "portable";
+
+    const uint64_t at_max = (uint64_t) rocketnet_server_required_memory( &config );
+    config.max_clients = 1000;
+    const uint64_t at_1000 = (uint64_t) rocketnet_server_required_memory( &config );
+    config.max_clients = 999;
+    const uint64_t at_999 = (uint64_t) rocketnet_server_required_memory( &config );
+
+    check( at_max > 0 && at_1000 > 0 && at_999 > 0 );
+    check( at_999 <= at_1000 && at_1000 <= at_max );
+    check( 4 * at_1000 * (uint64_t) ROCKETNET_MAX_CLIENTS <= 5 * 1000 * at_max );
+}
+
+REGISTER_UNIT_TEST( test_server_plan_follows_configured_max_clients );
 
 // the suite reads the bound before any case runs, with no library and no
 // hub, so it plans the portable transport (a superset of loopback's plan,
@@ -319,3 +382,174 @@ static void test_client_slots_full_capacity_reuse_and_full_width_ids()
 }
 
 REGISTER_UNIT_TEST( test_client_slots_full_capacity_reuse_and_full_width_ids );
+
+// a counting allocator for the client slots: live bytes and calls, and one
+// call it refuses (refuse_call, -1 for none). A header in front of each block
+// keeps its size.
+
+enum
+{
+    SLOTS_COUNT_HEADER = 16
+};
+
+struct slots_allocator_t
+{
+    uint64_t live_bytes;
+    int calls;
+    int refuse_call;
+};
+
+static slots_allocator_t slots_allocator;
+
+static void * slots_count_malloc( void * context, size_t bytes )
+{
+    const int call = slots_allocator.calls++;
+    if ( call == slots_allocator.refuse_call )
+        return NULL;
+
+    uint8_t * block = (uint8_t *) rocketnet_default_malloc_function( context, bytes + SLOTS_COUNT_HEADER );
+    if ( !block )
+        return NULL;
+
+    memcpy( block, &bytes, sizeof( bytes ) );
+    slots_allocator.live_bytes += bytes;
+
+    return block + SLOTS_COUNT_HEADER;
+}
+
+static void slots_count_free( void * context, void * memory )
+{
+    if ( !memory )
+        return;
+
+    uint8_t * block = (uint8_t *) memory - SLOTS_COUNT_HEADER;
+    size_t bytes;
+    memcpy( &bytes, block, sizeof( bytes ) );
+    slots_allocator.live_bytes -= bytes;
+    rocketnet_default_free_function( context, block );
+}
+
+static void slots_allocator_install()
+{
+    memset( &slots_allocator, 0, sizeof( slots_allocator ) );
+    slots_allocator.refuse_call = -1;
+
+    check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL, slots_count_malloc, slots_count_free ) == ROCKETNET_STATUS_OK );
+}
+
+static void slots_allocator_remove()
+{
+    check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
+}
+
+static void slots_quiet_assert( const char *, const char *, const char *, int ) {}
+
+// create takes exactly rocketnet_client_slots_allocation_bytes, refuses a
+// count outside 1 .. INT_MAX / 2 before any allocation, and frees what it
+// took when any one allocation is refused
+
+static void test_client_slots_create_allocates_its_plan()
+{
+    slots_allocator_install();
+
+    const int counts[] = { 1, 2, 7, ROCKETNET_MAX_CLIENTS };
+    for ( int i = 0; i < (int) ( sizeof( counts ) / sizeof( counts[0] ) ); i++ )
+    {
+        struct rocketnet_client_slots_t * slots = rocketnet_client_slots_create( NULL, counts[i] );
+        check( slots != NULL );
+        check( slots_allocator.live_bytes == rocketnet_client_slots_allocation_bytes( counts[i] ) );
+
+        rocketnet_client_slots_destroy( slots );
+        check( slots_allocator.live_bytes == 0 );
+    }
+
+    const int allocations = slots_allocator.calls / (int) ( sizeof( counts ) / sizeof( counts[0] ) );
+    check( allocations > 1 );
+
+    for ( int refuse = 0; refuse < allocations; refuse++ )
+    {
+        slots_allocator.calls = 0;
+        slots_allocator.refuse_call = refuse;
+        check( rocketnet_client_slots_create( NULL, 7 ) == NULL );
+        check( slots_allocator.live_bytes == 0 );
+    }
+
+    slots_allocator.calls = 0;
+    slots_allocator.refuse_call = -1;
+    rocketnet_assert_function( slots_quiet_assert );
+
+    const int refused[] = { 0, -1, INT_MAX / 2 + 1, INT_MAX };
+    for ( int i = 0; i < (int) ( sizeof( refused ) / sizeof( refused[0] ) ); i++ )
+    {
+        check( rocketnet_client_slots_create( NULL, refused[i] ) == NULL );
+        check( slots_allocator.calls == 0 );
+    }
+
+    rocketnet_assert_function( NULL );
+    check( rocketnet_client_slots_allocation_bytes( 0 ) == 0 );
+
+    slots_allocator_remove();
+}
+
+REGISTER_UNIT_TEST( test_client_slots_create_allocates_its_plan );
+
+// assign refuses, with nothing changed, a zero owner generation, a client id
+// already connected, and the generation the free list's next slot last held;
+// the index checks refuse an index outside the table, and release refuses
+// one, with asserts quiet
+
+static void test_client_slots_refusals()
+{
+    struct rocketnet_client_slots_t * slots = rocketnet_client_slots_create( NULL, 2 );
+    check( slots != NULL );
+
+    uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
+    memset( user_data, 0x6B, sizeof( user_data ) );
+
+    // slot 1 is released holding generation 5, so the free list's next slot
+    // last held a nonzero generation
+
+    check( rocketnet_client_slots_assign( slots, 100, 0, 7, user_data ) == 0 );
+    check( rocketnet_client_slots_assign( slots, 150, 1, 5, user_data ) == 1 );
+    rocketnet_client_slots_release( slots, 1 );
+
+    rocketnet_assert_function( slots_quiet_assert );
+
+    check( rocketnet_client_slots_assign( slots, 200, 1, 0, user_data ) == -1 );
+    check( rocketnet_client_slots_assign( slots, 100, 1, 8, user_data ) == -1 );
+    check( rocketnet_client_slots_assign( slots, 300, 1, 5, user_data ) == -1 );
+    check( rocketnet_client_slots_num_connected( slots ) == 1 );
+    check( rocketnet_client_slots_num_free( slots ) == 1 );
+    check( rocketnet_client_slots_find( slots, 200 ) == -1 );
+    check( rocketnet_client_slots_find( slots, 300 ) == -1 );
+    check( rocketnet_client_slots_find( slots, 100 ) == 0 );
+
+    check( rocketnet_client_slots_assign( slots, 300, 1, 9, user_data ) == 1 );
+
+    // indices outside the table, and a slot no longer connected
+
+    const int outside[] = { -1, 2, INT_MAX, INT_MIN };
+    for ( int i = 0; i < 4; i++ )
+    {
+        check( rocketnet_client_slots_connected( slots, outside[i] ) == 0 );
+        check( rocketnet_client_slots_client_id( slots, outside[i] ) == 0 );
+        rocketnet_client_slots_release( slots, outside[i] );
+    }
+
+    rocketnet_client_slots_release( slots, 0 );
+    check( rocketnet_client_slots_connected( slots, 0 ) == 0 );
+    check( rocketnet_client_slots_client_id( slots, 0 ) == 0 );
+    rocketnet_client_slots_release( slots, 0 );
+
+    check( rocketnet_client_slots_num_connected( slots ) == 1 );
+    check( rocketnet_client_slots_num_free( slots ) == 1 );
+    check( rocketnet_client_slots_find( slots, 300 ) == 1 );
+
+    rocketnet_assert_function( NULL );
+
+    rocketnet_client_slots_destroy( slots );
+}
+
+REGISTER_UNIT_TEST( test_client_slots_refusals );

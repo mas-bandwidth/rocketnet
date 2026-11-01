@@ -130,7 +130,7 @@ performs shared protocol work. The workers use the selected msgx or portable
 socket pump; the client path is separate.
 
 Each TX bank holds `ROCKETNET_SEND_PACKETS_PER_CLIENT` (16) packets per
-configured client, and never fewer than `ROCKETNET_SERVER_MAX_SEND_PACKETS`;
+configured client, and never fewer than `rocketnet_server_send_batch_packets`;
 the three banks are one allocation made at create. A packet sent while all
 three banks are in flight is dropped and counted in `SEND_FAILED`. Measured on
 a 1000-client msgx LAN cell, the transmit worker spends about 18 us per

@@ -458,6 +458,59 @@ static void test_message_boundary_sizes_every_mode_every_channel()
 }
 REGISTER_UNIT_TEST( test_message_boundary_sizes_every_mode_every_channel );
 
+// A code 1 message whose single record fills the packet payload exactly (1405
+// bytes on a channel below 256: a 1416-byte RECORDS payload) is written whole
+// by the large sequenced path (rn_endpoint_large_sequenced). The sizes test
+// above sends each message into an otherwise empty packet; here the 1405 is
+// queued in the same update as a 16-byte message of each mode and is followed
+// by a small code 1 message, so the packet that would carry it already holds
+// other bytes. Both code 1 messages arrive, and nothing waits behind them.
+static void test_message_boundary_code1_full_record_beside_other_traffic()
+{
+    for ( int companion = 0; companion < ROCKETNET_CHANNEL_NUM_TYPES; ++companion )
+    {
+        boundary_pair_t pair;
+        boundary_setup( &pair );
+
+        std::vector<boundary_received_t> got;
+        boundary_step( &pair, &got );
+
+        const std::vector<uint8_t> beside = boundary_data( 1, 16 );
+        const std::vector<uint8_t> full = boundary_data( 2, 1405 );
+        const std::vector<uint8_t> after = boundary_data( 3, 16 );
+
+        check( rocketnet_message_client_send( pair.client, 0, companion, beside.data(), (int) beside.size() ) != 0 );
+        check( rocketnet_message_client_send( pair.client, 0, ROCKETNET_CHANNEL_TYPE_UNRELIABLE_SEQUENCED, full.data(), (int) full.size() ) != 0 );
+        check( rocketnet_message_client_send( pair.client, 0, ROCKETNET_CHANNEL_TYPE_UNRELIABLE_SEQUENCED, after.data(), (int) after.size() ) != 0 );
+
+        for ( int step = 0; step < 64; ++step )
+        {
+            boundary_step( &pair, &got );
+        }
+
+        bool full_seen = false;
+        bool after_seen = false;
+        for ( size_t k = 0; k < got.size(); ++k )
+        {
+            full_seen |= got[k].data == full;
+            after_seen |= got[k].data == after;
+        }
+
+        if ( !full_seen || !after_seen )
+        {
+            fprintf( stderr, "code 1 full record beside mode %d: 1405 %s, following 16 %s\n", companion, full_seen ? "arrived" : "missing",
+                     after_seen ? "arrived" : "missing" );
+        }
+
+        check( full_seen );
+        check( after_seen );
+        check( got.size() == 3 );
+        check( pair.net->client->disconnects == 0 && pair.net->server->disconnects == 0 );
+        boundary_teardown( &pair );
+    }
+}
+REGISTER_UNIT_TEST( test_message_boundary_code1_full_record_beside_other_traffic );
+
 static void test_message_boundary_oversize_unreliable_counts_failed_not_refused()
 {
     boundary_pair_t pair;
