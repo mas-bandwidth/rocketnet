@@ -510,7 +510,11 @@ static void standard_receive_processing_counters()
         }
     }
 
-    // the type gates before decryption, at the server and at the client
+    // the type gates before decryption, at the server and at the client.
+    // Mutation that must bite: > for >= on the reserved-type check in
+    // rocketnet_server_protocol_process_packet or
+    // rocketnet_client_protocol_process_packet; type 9 then passes the gate
+    // and RESERVED_TYPE stays 0.
     {
         static struct standard_server_t server;
         standard_server_setup( &server, false, false );
