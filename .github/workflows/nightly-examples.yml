@@ -158,8 +158,6 @@ jobs:
 
   examples-windows:
     name: windows-2025
-    # DISABLED: no Windows fleet runner registered for this repository; owed: the Windows fleet machine
-    if: false
     runs-on: [self-hosted, Windows, X64, rocketnet-windows]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0

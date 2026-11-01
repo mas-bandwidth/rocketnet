@@ -106,7 +106,7 @@ export UBSAN_OPTIONS=${UBSAN_OPTIONS:-halt_on_error=1:print_stacktrace=1}
 
 BUILD="$ROOT/build-fuzz-ndebug"
 BIN="$BUILD/bin"
-SAN_LIB="-fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
+SAN_LIB="-fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -U_FORTIFY_SOURCE"
 SAN_BIN=("-fsanitize=fuzzer,address,undefined" -fno-sanitize-recover=all -fno-omit-frame-pointer)
 
 if [ "$(uname -s)" = "Darwin" ]; then

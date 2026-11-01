@@ -375,7 +375,7 @@ The internal transport plan, allocated at start, includes the transport, protoco
 plus the SDK allocator's ownership/alignment overhead. XDP UMEM is counted
 separately and included in the total. Worker startup shims are included even if
 some have already been freed by the time create returns. OS thread stacks, kernel
-socket/ring storage, libbpf/libxdp allocations, libc bookkeeping, loader and
+socket/ring storage (`plan.mapped_ring_bytes` and `plan.os_bytes` in `rocketnet_server_memory_plan_t` count the `io_uring` provided buffer rings separately from `plan.allocator_bytes` and `plan.total_bytes`), libbpf/libxdp allocations, libc bookkeeping, loader and
 application memory are outside this count. Provision room for those costs; a
 plan is not an available-RAM check or a whole-host peak estimate. Existing
 component budgets, queue defaults and history limits are unchanged.
@@ -399,7 +399,7 @@ rings (the server asks for `ROCKETNET_XDP_FILL_RING_SIZE`, 32768 fill entries,
 twice the receive frames it keeps on the ring, and for
 `XSK_RING_CONS__DEFAULT_NUM_DESCS`, 2048 completion entries, in
 `rocketnet_xdp_umem_config`, sdk/rocketnet_xdp_socket_config.h), libbpf/libxdp and the XDP program's maps, the io_uring
-submission, completion and provided buffer rings, thread guard pages
+submission, completion and provided buffer rings (`plan.mapped_ring_bytes` in `rocketnet_server_memory_plan_t` counts the provided buffer rings; the submission and completion rings are not counted in either plan), thread guard pages
 and TLS, kernel page tables, loader memory, libc bookkeeping outside the SDK
 allocator, and application memory. Stacks count reserved address space, not
 resident pages. Statistics run on the ack path and add no thread. The current

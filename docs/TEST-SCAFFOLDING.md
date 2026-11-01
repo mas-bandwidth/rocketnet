@@ -33,7 +33,7 @@ Seams, by the files that carry them:
 | Windows lifecycle ledger | `sdk/rocketnet_platform.cpp`, `sdk/rocketnet_platform.h` |
 | Client and server transport seams, session sequence start, packet-builder and encryption-map probes | `sdk/rocketnet_client_transport.cpp`, `sdk/rocketnet_server_transport.cpp`, `sdk/rocketnet_client_protocol.cpp`, `sdk/rocketnet_client_slots.cpp`, `sdk/rocketnet_encryption_map.cpp`, `sdk/rocketnet_packet_builder.cpp`, `sdk/rocketnet_channel_sequenced.cpp`, `sdk/rocketnet_test_seams.h` |
 
-Seams armed by the environment rather than by a test call, each inert unless its variable is set, and present in every `ROCKETNET_DEV=1` library: `ROCKETNET_DEV_SESSION_SEQUENCE_START` (`sdk/rocketnet_test_seams.h`), `ROCKETNET_TEST_GSO_PLAIN` and `ROCKETNET_TEST_XDP_FAIL_AT_QUEUE` (Linux).
+Seams armed by the environment rather than by a test call, each inert unless its variable is set, and present in every `ROCKETNET_DEV=1` library: `ROCKETNET_DEV_SESSION_SEQUENCE_START` (`sdk/rocketnet_test_seams.h`), `ROCKETNET_CLIENT_STEP_DRIVEN` (`sdk/rocketnet_config.cpp`, `sdk/rocketnet_client_transport.cpp`), `ROCKETNET_DEV_{CLIENT,SERVER}_{LATENCY_MS,JITTER_MS,PACKET_LOSS_PERCENT,DUPLICATE_PERCENT}` (`sdk/rocketnet_api.cpp`), `ROCKETNET_TEST_GSO_PLAIN` and `ROCKETNET_TEST_XDP_FAIL_AT_QUEUE` (Linux).
 
 One build shape remains that is not a development switch: `ROCKETNET_CONFIG_PARSE_ONLY`, defined by `test_xdp` and `test_iocp`, which compile `sdk/rocketnet_config.cpp` for `rocketnet_config_parse_int_value` alone. It removes code; it enables nothing.
 

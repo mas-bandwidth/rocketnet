@@ -339,6 +339,7 @@ jobs:
       - name: Check the floating-point floor on every compiler invocation
         if: matrix.leg == 'checks' && ( runner.os == 'Linux' )
         run: |
+          bash tools/check_fp_contract.sh --self-test
           bash tools/check_fp_contract.sh
           cmake -DROCKETNET_OSS_FUZZ_BUILD_SCRIPT=tests/oss-fuzz/build.sh -P tools/check_oss_fuzz_fp_contract.cmake
 
@@ -2033,7 +2034,7 @@ jobs:
               -ffp-contract=off \
               -DROCKETNET_DEV=1 -DNDEBUG \
               -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
-              -Isodium -Isdk -Itest "tests/fuzz/${src}.cpp" build-fuzz/librocketnet_dev.a \
+              -Isodium -Isdk -Itests "tests/fuzz/${src}.cpp" build-fuzz/librocketnet_dev.a \
               -lbpf -lxdp -luring -lpthread \
               -o "bin/${src}_ndebug"
           done
@@ -2986,6 +2987,11 @@ jobs:
           printf '%s\n' "$output"
           grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
           python3 tools/check_tla_records.py
+
+      - name: Test and check the fuzz regression corpus
+        run: |
+          python3 tools/check_fuzz_regressions.py --selftest
+          python3 tools/check_fuzz_regressions.py
 
       - name: Test the unit-case coverage checker's verdicts
         shell: bash
