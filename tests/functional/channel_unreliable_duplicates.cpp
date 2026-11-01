@@ -132,7 +132,7 @@ static void dup_leg( float loss_percent, const char * label )
 
         rocketnet_channel_harness_pump( &h, 1.0 / 60.0 );
 
-        rocketnet_channel_delivery_t d;
+        rocketnet_channel_delivery_t d = {};
         while ( rocketnet_channel_harness_server_collect( &h, 0, &d ) )
         {
             dup_receive( &s, 0, &d );

@@ -482,6 +482,7 @@ static inline int rocketnet_channel_delivery_ring_remove_index( rocketnet_channe
                                                                 int offset,
                                                                 rocketnet_channel_delivery_t * out )
 {
+    memset( out, 0, sizeof( *out ) );
     if ( offset < 0 || offset >= ring->count || index.slot < 0 ||
          index.slot >= ROCKETNET_CHANNEL_HARNESS_MAX_DELIVERIES ||
          !ring->occupied[index.slot] || ring->generation[index.slot] != index.generation ||
@@ -505,6 +506,7 @@ static inline int rocketnet_channel_delivery_ring_remove_index( rocketnet_channe
 
 static inline int rocketnet_channel_delivery_ring_pop_channel( rocketnet_channel_harness_t * h, rocketnet_channel_delivery_ring_t * ring, int channel, rocketnet_channel_delivery_t * out )
 {
+    memset( out, 0, sizeof( *out ) );
     int offset = 0;
     while ( offset < ring->count && ring->channel[ring->order[offset].slot] != channel )
     {
@@ -526,7 +528,7 @@ static inline int rocketnet_channel_delivery_ring_self_test()
 {
     rocketnet_channel_harness_t harness = {};
     rocketnet_channel_delivery_ring_t ring;
-    rocketnet_channel_delivery_t delivery;
+    rocketnet_channel_delivery_t delivery = {};
     rocketnet_channel_delivery_index_t stale = {};
     rocketnet_channel_delivery_index_t current = {};
     const uint8_t refused = 255;

@@ -57,7 +57,7 @@ void harness_one_message_each_way_lossless()
     {
         rocketnet_channel_harness_pump( &h, 1.0 / 60.0 );
 
-        rocketnet_channel_delivery_t d;
+        rocketnet_channel_delivery_t d = {};
         if ( server_got == 0 && rocketnet_channel_harness_server_collect( &h, 0, &d ) )
         {
             rocketnet_check( d.channel == 0 );
@@ -154,7 +154,7 @@ void harness_one_message_each_way_lossy()
 
         rocketnet_channel_harness_pump( &h, 1.0 / 60.0 );
 
-        rocketnet_channel_delivery_t d;
+        rocketnet_channel_delivery_t d = {};
         while ( rocketnet_channel_harness_server_collect( &h, 0, &d ) )
         {
             rocketnet_check( d.channel == 0 );
@@ -248,7 +248,7 @@ void harness_lossy_100_percent_negative_control()
     {
         rocketnet_channel_harness_pump( &h, 1.0 / 60.0 );
 
-        rocketnet_channel_delivery_t d;
+        rocketnet_channel_delivery_t d = {};
         if ( rocketnet_channel_harness_server_collect( &h, 0, &d ) )
         {
             server_got++;
@@ -303,7 +303,7 @@ void harness_no_allocation_after_create()
     {
         rocketnet_channel_harness_pump( &h, 1.0 / 60.0 );
 
-        rocketnet_channel_delivery_t d;
+        rocketnet_channel_delivery_t d = {};
         if ( rocketnet_channel_harness_server_collect( &h, 0, &d ) )
         {
             got++;
@@ -349,7 +349,7 @@ void harness_collect_preserves_other_channels()
     rocketnet_check( rocketnet_channel_delivery_ring_push( &h, &h.to_server, 0, channel_zero, sizeof( channel_zero ) ) );
     rocketnet_check( rocketnet_channel_delivery_ring_push( &h, &h.to_server, 2, large_payload, sizeof( large_payload ) ) );
 
-    rocketnet_channel_delivery_t d;
+    rocketnet_channel_delivery_t d = {};
     rocketnet_check( rocketnet_channel_harness_server_collect( &h, 0, &d ) );
     rocketnet_check( d.bytes == (int) sizeof( channel_zero ) );
     rocketnet_check( memcmp( d.data, channel_zero, sizeof( channel_zero ) ) == 0 );

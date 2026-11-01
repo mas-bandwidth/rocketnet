@@ -44,7 +44,7 @@ void reliable_mixed_sizes_over_lossy_link()
     {
         rocketnet_channel_harness_pump( &h, 1.0 / 60.0 );
 
-        rocketnet_channel_delivery_t delivery;
+        rocketnet_channel_delivery_t delivery = {};
         while ( rocketnet_channel_harness_server_collect( &h, 0, &delivery ) )
         {
             int match = -1;
@@ -152,7 +152,7 @@ void reliable_duplicate_after_gap_delivered_once()
     rocketnet_channel_harness_clear_held( &h );
 
     int a_seen = 0, b_seen = 0;
-    rocketnet_channel_delivery_t delivery;
+    rocketnet_channel_delivery_t delivery = {};
 
     // Wait for the client's resends: A's fills a packet of its own and B's
     // rides a small one. The resends are paced, so wait for both.
@@ -290,7 +290,7 @@ static void reliable_receive_full_recovers_direction( int to_server, int reliabi
     reliable_check( tx->ordered.send.U != tx->ordered.send.next );
     reliable_check( rx->ordered.receive.R == receive_floor );
 
-    rocketnet_channel_delivery_t delivery;
+    rocketnet_channel_delivery_t delivery = {};
     reliable_check( !( to_server ? rocketnet_channel_harness_server_collect( &h, 0, &delivery ) : rocketnet_channel_harness_client_collect( &h, 0, &delivery ) ) );
     rx->ordered.channels.delivery_capacity = capacity;
 
@@ -364,7 +364,7 @@ void reliable_receive_full_partial_packet_recovers()
         }
 
         int first = 0, second = 0;
-        rocketnet_channel_delivery_t delivery;
+        rocketnet_channel_delivery_t delivery = {};
         for ( int i = 0; i < 20 && first == 0; ++i )
         {
             reliable_check( rocketnet_channel_harness_pump( &h, 1.0 / 60.0 ) );
@@ -444,7 +444,7 @@ void reliable_receive_full_ordered_gap_recovers()
     reliable_check( rocketnet_channel_harness_pump( &h, 1.0 / 60.0 ) );
     reliable_check( rx->ordered.receive.R == floor );
 
-    rocketnet_channel_delivery_t delivery;
+    rocketnet_channel_delivery_t delivery = {};
     reliable_check( !rocketnet_channel_harness_server_collect( &h, 0, &delivery ) );
     rx->ordered.channels.delivery_capacity = capacity;
     rocketnet_channel_harness_clear_held( &h );
@@ -496,7 +496,7 @@ void default_one_mib_messages_all_modes()
         {
             reliable_check( rocketnet_channel_harness_pump( &h, 1.0 / 60.0 ) );
 
-            rocketnet_channel_delivery_t delivery;
+            rocketnet_channel_delivery_t delivery = {};
             while ( rocketnet_channel_harness_client_collect( &h, 0, &delivery ) )
             {
                 reliable_check( ++client_seen == 1 && delivery.bytes == bytes );

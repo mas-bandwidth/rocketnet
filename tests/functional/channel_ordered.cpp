@@ -225,7 +225,7 @@ static int rocketnet_ordered_run( const char * name, int client_to_server )
         rocketnet_channel_harness_pump( &h, rocketnet_ordered_step );
         updates++;
 
-        rocketnet_channel_delivery_t delivery;
+        rocketnet_channel_delivery_t delivery = {};
         while ( rocketnet_ordered_collect( &h, client_to_server, &delivery ) )
         {
             const int expected_index = measurement.delivered;

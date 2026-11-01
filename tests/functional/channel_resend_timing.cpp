@@ -249,7 +249,7 @@ static void resend_timing_run( const char * schedule, int fixed_100ms, int rtt_m
             sends_at[i][sends[i]++] = h.now;
         }
 
-        rocketnet_channel_delivery_t delivery;
+        rocketnet_channel_delivery_t delivery = {};
         while ( rocketnet_channel_harness_server_collect( &h, 0, &delivery ) )
         {
             resend_timing_check( delivery.bytes == RESEND_TIMING_BYTES );
@@ -551,7 +551,7 @@ static void block_cost_run( const char * schedule, int cap100, int burst, int wi
         // the small messages share channel 0 with the block; they are told
         // apart by size
 
-        rocketnet_channel_delivery_t delivery;
+        rocketnet_channel_delivery_t delivery = {};
         while ( rocketnet_channel_harness_server_collect( &h, 0, &delivery ) )
         {
             if ( delivery.bytes == RESEND_TIMING_BYTES )

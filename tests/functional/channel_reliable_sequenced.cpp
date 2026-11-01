@@ -63,7 +63,7 @@ void reliable_state_stream_over_lossy_link()
 
         rocketnet_channel_harness_pump( &h, 1.0 / 60.0 );
 
-        rocketnet_channel_delivery_t d;
+        rocketnet_channel_delivery_t d = {};
         while ( rocketnet_channel_harness_server_collect( &h, 0, &d ) )
         {
             rs_functional_check( d.bytes == 4, "payload length" );
@@ -147,7 +147,7 @@ void reliable_sequenced_long_run_across_epochs()
             rs_functional_check( false, "connection lost" );
         }
 
-        rocketnet_channel_delivery_t d;
+        rocketnet_channel_delivery_t d = {};
         while ( rocketnet_channel_harness_server_collect( &h, 0, &d ) )
         {
             rs_functional_check( d.bytes == 4, "payload length" );
@@ -234,7 +234,7 @@ void reliable_sequenced_held_record_released()
     rs_functional_check( rocketnet_channel_harness_deliver_held( &h, order, count ) == count, "deliver the state" );
     rocketnet_channel_harness_pump( &h, 1.0 / 60.0 );
 
-    rocketnet_channel_delivery_t d;
+    rocketnet_channel_delivery_t d = {};
     rs_functional_check( !rocketnet_channel_harness_server_collect( &h, 0, &d ), "a state ahead of its epoch was delivered" );
 
     count = 0;

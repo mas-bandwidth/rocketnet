@@ -78,7 +78,7 @@ void unreliable_receipts_over_lossy_link()
 
         receipt_check( rocketnet_channel_harness_pump( &h, 1.0 / 60.0 ) );
 
-        rocketnet_channel_delivery_t delivery;
+        rocketnet_channel_delivery_t delivery = {};
         while ( rocketnet_channel_harness_server_collect( &h, 0, &delivery ) )
         {
             receipt_check( delivery.bytes == 3 && delivery.data[0] == 0xC1 && delivery.data[2] == 0x5A );
@@ -212,7 +212,7 @@ void promoted_receipts_over_lossy_reliable_blocks()
     {
         receipt_check( rocketnet_channel_harness_pump( &h, 1.0 / 60.0 ) );
 
-        rocketnet_channel_delivery_t delivery;
+        rocketnet_channel_delivery_t delivery = {};
         while ( rocketnet_channel_harness_server_collect( &h, 0, &delivery ) )
         {
             int matched = -1;

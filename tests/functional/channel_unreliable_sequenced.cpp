@@ -63,7 +63,7 @@ void state_stream_never_goes_backwards_over_lossy_link()
 
         rocketnet_channel_harness_pump( &h, 1.0 / 60.0 );
 
-        rocketnet_channel_delivery_t d;
+        rocketnet_channel_delivery_t d = {};
         while ( rocketnet_channel_harness_server_collect( &h, 0, &d ) )
         {
             sequenced_functional_check( d.bytes == 4, "payload length" );
@@ -131,7 +131,7 @@ void large_unreliable_sequenced_promotes_to_reliable()
     {
         sequenced_functional_check( rocketnet_channel_harness_pump( &h, 1.0 / 60.0 ) != 0, "large progress" );
 
-        rocketnet_channel_delivery_t d;
+        rocketnet_channel_delivery_t d = {};
         while ( rocketnet_channel_harness_server_collect( &h, 0, &d ) )
         {
             sequenced_functional_check( d.bytes == message_bytes, "large delivered length" );
