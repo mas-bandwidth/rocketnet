@@ -29,7 +29,7 @@ Functions in `sdk/rocketnet_window_receive.cpp` unless stated.
 | Action | Code |
 |---|---|
 | `Accept(w, n)` | `rn_window_receive_accept`: the sticky violation, the reconstruction, behind is a duplicate, at or past `W` is `NUMBER_OUTSIDE_WINDOW`, index, word and bit, a set bit is a duplicate, a live descriptor of another number is `SLOT_COLLISION`, the claim, the advance clearing each floor bit |
-| `Release(s)` | `descriptor->live = 0`: `rn_window_receive_release`, and the library's releases `rn_channels_release` (`sdk/rocketnet_channel.cpp`), `rn_sequenced_release_slot` and `rn_sequenced_release_number` (`sdk/rocketnet_channel_sequenced.cpp`) |
+| `Release(s)` | `descriptor->live = 0`: production release through `rn_channels_release` (`sdk/rocketnet_channel.cpp`), `rn_sequenced_release_slot` and `rn_sequenced_release_number` (`sdk/rocketnet_channel_sequenced.cpp`); `rn_window_receive_release` is the DEV-only test seam |
 
 `Accept` takes two kinds of arrival. An honest one carries the number `n` the
 sender meant: `n` lies in `R - 8 .. R + W - 1` (a duplicate as old as the half

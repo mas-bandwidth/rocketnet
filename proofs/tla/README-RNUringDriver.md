@@ -44,8 +44,11 @@ contents:
   reaped, and `Budget` is how many one call may reap
   (`ROCKETNET_URING_SEND_BUDGET` and the bank size,
   `rocketnet_server_uring_bank_size`, in the code, one constant here). While running, the main thread reaps only
-  inside a call; destroy's drain reaps outside the budget, and its rounds
-  are bounded in the code (`ROCKETNET_URING_DESTROY_MAX_ROUNDS`), not here.
+  inside a call. The model abstracts shutdown draining separately. In the
+  implementation, `rocketnet_server_uring_stopped` submits cancels and reaps
+  at most the configured `bank_size` CQEs per poll; the caller polls again
+  until completion. `rocketnet_server_uring_destroy` requires that completed
+  state. There is no overall destroy-round cap in the SDK.
 
 Six constants act as rule switches and carry the reversed witnesses:
 `ResetWaitsForReap`, `ReapIntoFill`, `BoundedReap`, `RearmOnReceive`,

@@ -30,7 +30,7 @@
 (*                 is returned, in list order, and the list emptied; the   *)
 (*                 views expire;                                           *)
 (*   Carve         rn_region_carve: the stack full, lowest index on top,   *)
-(*                 no slot used, and (rn_channels_bind) no channel holding.*)
+(*                 no slot used and no channel holding, all in carve.    *)
 (* A return (rn_sequenced_hold_return) is used = 0 and                     *)
 (* stack[free_count++] = slot.                                             *)
 (*                                                                         *)
@@ -167,7 +167,7 @@ EndUpdate ==
     /\ views' = {}
     /\ UNCHANGED <<held, overwrote>>
 
-\* rn_region_carve, and rn_channels_bind's empty channels
+\* rn_region_carve initializes both the hold pool and channel hold indices
 Carve ==
     /\ P' = Carved
     /\ held' = [c \in Chans |-> NONE]

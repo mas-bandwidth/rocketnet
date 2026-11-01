@@ -99,9 +99,10 @@ the control and one for each witness:
   the server is still starting, BeginTeardown, then Finish with XDP
   attached. In the code, the detach runs only in
   `rocketnet_server_socket_destroy`
-  (`sdk/rocketnet_server_socket_linux.cpp:1627-1641`), and a crashed server
-  never reaches it. The native attach
-  (`sdk/rocketnet_server_socket_linux.cpp:1337`) stays on the NIC after the
+  through `rocketnet_xdp_program_detach` in
+  `sdk/rocketnet_server_socket_linux.cpp`, and a crashed server never
+  reaches it. The native attach by `rocketnet_xdp_program_attach` in the
+  same file stays on the NIC after the
   process dies. A teardown that only stops the server leaves the uplink
   filtered by a program no process serves. That is why `docs/LIVE-XDP.md`
   section 9 step 7 runs `ip link set dev <nic> xdp off` on every path. With
