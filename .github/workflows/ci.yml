@@ -299,6 +299,10 @@ jobs:
       # Each job's window is everything after its build, one leg of the row
       # (Glenn 2026-10-29: "Move anything that is not under 120s limit to
       # nightly and/or release checks"; the legs run in parallel).
+      - name: ccache statistics (probe)
+        if: runner.os == 'Linux'
+        run: ccache -s -v || true; grep -m3 -i launcher build/CMakeCache.txt || true
+
       - name: Start the job's timing (everything after the build)
         shell: bash
         run: &start_unit_functional_timing |
