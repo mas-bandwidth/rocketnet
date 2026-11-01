@@ -7,7 +7,7 @@ Planned work for RocketNet that is not on main. Work lands on main before new wo
 ## Contents
 
 - [Started work to finish and land](#started-work-to-finish-and-land) (13)
-- [Audit items not yet fixed](#audit-items-not-yet-fixed) (10)
+- [Audit items not yet fixed](#audit-items-not-yet-fixed) (8)
 - [Investigations that need a quiet host](#investigations-that-need-a-quiet-host) (3)
 - [Older open pull requests](#older-open-pull-requests) (2)
 - [Decisions for Glenn](#decisions-for-glenn) (5)
@@ -97,18 +97,6 @@ From: FABLE-AUDIT.md
 ## Audit items not yet fixed
 
 Suspects from FABLE-AUDIT.md that nothing on main fixes. Each is verified at the cited line first; a confirmed defect gets a lock-in test and a negative control.
-
-### A create test that fails on second_public_address alone
-
-The whole-config create test goes red under the old truncation only because loopback_hub is also cut off.
-
-From: #737 follow-on
-
-### Drain limitation text after #740
-
-docs/CLIENT-IO.md and TRANSPORT-INTERNALS.md 'current staging and drain limitations' still describe the drain bound #740 fixed.
-
-From: #740 follow-on
 
 ### ROCKETNET_MAX_CHANNELS CMake option
 
