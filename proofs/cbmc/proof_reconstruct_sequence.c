@@ -69,8 +69,9 @@ unsigned char nondet_uchar( void );
    half-range delta. */
 static uint64_t reconstruct_u24( uint32_t wire, uint64_t reference )
 {
-    const int32_t delta = rocketnet_message_u24_delta( wire, reference );
-    return delta < 0 ? reference - (uint64_t) -(int64_t) delta : reference + (uint64_t) delta;
+    const int64_t delta = rocketnet_message_u24_delta( wire, reference );
+    const uint64_t magnitude = (uint64_t) ( delta < 0 ? 0 - delta : delta );
+    return delta < 0 ? reference - magnitude : reference + magnitude;
 }
 
 static uint64_t abs_diff( uint64_t a, uint64_t b )
