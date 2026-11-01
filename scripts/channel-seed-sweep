@@ -4,6 +4,7 @@
 #
 #   scripts/channel-seed-sweep --cases a,b --seeds 1-1000 [--timeout 120] [--jobs N] [--bin ./bin/functional]
 #   scripts/channel-seed-sweep --all --seeds 1-2000
+#   scripts/channel-seed-sweep --regressions tests/functional/channel_seed_regressions.tsv
 #
 # Each run is one process: ROCKETNET_CHANNEL_SEED=<seed> <bin> --run test_<case>
 # (tests/functional/channel_harness.h reads the variable once at create). Lanes run
@@ -15,6 +16,9 @@
 # zero failures. A failing seed replays with
 #   ROCKETNET_CHANNEL_SEED=<n> ./bin/functional --run test_<case>
 # --all takes every case defined in tests/functional/channel_*.cpp.
+# --regressions takes the named (case, seed) pairs of a file instead of a
+# product of cases and seeds: one pair per line, tab-separated case and seed
+# and then a note; blank lines and lines starting with # are skipped.
 
 set -u
 
@@ -24,13 +28,14 @@ root=$( cd "$here/.." && pwd )
 cases=""
 all=0
 seeds=""
+regressions=""
 timeout_seconds=120
 jobs=""
 bin="$root/bin/functional"
 
 usage()
 {
-    echo "usage: channel-seed-sweep (--cases a,b | --all) --seeds FIRST-LAST [--timeout SECONDS] [--jobs N] [--bin PATH]" >&2
+    echo "usage: channel-seed-sweep ((--cases a,b | --all) --seeds FIRST-LAST | --regressions FILE) [--timeout SECONDS] [--jobs N] [--bin PATH]" >&2
     exit 2
 }
 
@@ -39,6 +44,7 @@ while [ $# -gt 0 ]; do
         --cases)   [ $# -ge 2 ] || usage; cases="$2"; shift 2 ;;
         --all)     all=1; shift ;;
         --seeds)   [ $# -ge 2 ] || usage; seeds="$2"; shift 2 ;;
+        --regressions) [ $# -ge 2 ] || usage; regressions="$2"; shift 2 ;;
         --timeout) [ $# -ge 2 ] || usage; timeout_seconds="$2"; shift 2 ;;
         --jobs)    [ $# -ge 2 ] || usage; jobs="$2"; shift 2 ;;
         --bin)     [ $# -ge 2 ] || usage; bin="$2"; shift 2 ;;
@@ -56,14 +62,26 @@ if [ "$all" = 1 ]; then
                  echo "${name:-test_$function}"
              done | paste -sd, - )
 fi
-[ -n "$cases" ] || usage
-[ -n "$seeds" ] || usage
-case "$seeds" in
-    *-*) first=${seeds%-*}; last=${seeds#*-} ;;
-    *)   first=$seeds; last=$seeds ;;
-esac
-case "$first$last$timeout_seconds" in *[!0-9]*|"") usage ;; esac
-[ "$first" -le "$last" ] || usage
+if [ -n "$regressions" ]; then
+    [ -z "$cases" ] && [ -z "$seeds" ] || usage
+    [ -r "$regressions" ] || { echo "channel-seed-sweep: $regressions is not readable" >&2; exit 2; }
+    pairs=$( grep -v -E '^[[:space:]]*(#|$)' "$regressions" | cut -f 1,2 | tr '\t' ' ' )
+    [ -n "$pairs" ] || { echo "channel-seed-sweep: $regressions names no (case, seed) pair" >&2; exit 2; }
+    if printf '%s\n' "$pairs" | grep -q -v -E '^test_[A-Za-z0-9_]+ [0-9]+$'; then
+        echo "channel-seed-sweep: $regressions has a line that is not <case><tab><seed>" >&2
+        exit 2
+    fi
+else
+    [ -n "$cases" ] || usage
+    [ -n "$seeds" ] || usage
+    case "$seeds" in
+        *-*) first=${seeds%-*}; last=${seeds#*-} ;;
+        *)   first=$seeds; last=$seeds ;;
+    esac
+    case "$first$last" in *[!0-9]*|"") usage ;; esac
+    [ "$first" -le "$last" ] || usage
+fi
+case "$timeout_seconds" in *[!0-9]*|"") usage ;; esac
 [ -x "$bin" ] || { echo "channel-seed-sweep: $bin is not built" >&2; exit 2; }
 
 cores=$( nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1 )
@@ -83,14 +101,18 @@ export RUNS_FILE="$runs_file"
 trap 'rm -f "$report" "$runs_file"' EXIT
 
 {
-    IFS=, read -r -a case_list <<< "$cases"
-    for c in "${case_list[@]}"; do
-        seed=$first
-        while [ "$seed" -le "$last" ]; do
-            printf '%s %s\n' "$c" "$seed"
-            seed=$(( seed + 1 ))
+    if [ -n "$regressions" ]; then
+        printf '%s\n' "$pairs"
+    else
+        IFS=, read -r -a case_list <<< "$cases"
+        for c in "${case_list[@]}"; do
+            seed=$first
+            while [ "$seed" -le "$last" ]; do
+                printf '%s %s\n' "$c" "$seed"
+                seed=$(( seed + 1 ))
+            done
         done
-    done
+    fi
 } | xargs -P "$jobs" -L 1 bash -c '
 set -u
 bin="$SWEEP_BIN"; timeout="$SWEEP_TIMEOUT"; runs_file="$RUNS_FILE"

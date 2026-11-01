@@ -107,7 +107,9 @@
 // with the disconnect ring and the xdp replay records: 3248706443.
 // The server's client-scaled buffers are carved at create from layouts sized
 // by its configured max_clients, each carve 64-byte aligned and the receive
-// views their own allocations: 3248767123 by the ubuntu-24.04 Debug CI leg.
+// views their own allocations (rn_message_object_t is 526832 bytes with the
+// message link's 8-byte rtt reader, within the same 526848-byte 64-aligned
+// head block): 3248767123 by the ubuntu-24.04 Debug CI leg.
 // The non-dev figures below were not re-measured: this file is not linked
 // when ROCKETNET_DEV=OFF.
 #if ROCKETNET_DEV

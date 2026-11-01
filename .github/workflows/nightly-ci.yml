@@ -13,6 +13,8 @@
 #   Windows: windows / Release legs (a), (b) and (c) (the unit suite, the
 #       functional suites, the consumer checks); per commit only happy
 #       path / windows runs there
+#   unit-case coverage (every registered unit case runs in some
+#       configuration); the wide-channel unit cases (Linux Debug builds).
 #   asan + ubsan (unit suite portable), fuzz smoke NDEBUG, big endian s390x /
 #       Release, pinned libsodium, backend example / go and csharp
 #   the instruction count gate's pinned toolchain build, saved to the cache

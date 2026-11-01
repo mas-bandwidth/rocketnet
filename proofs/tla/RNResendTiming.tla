@@ -55,6 +55,17 @@
 (* delay is the same for every resend); 8 is the first version's           *)
 (* doubling per resend, 1, 2, 4, 8.                                        *)
 (*                                                                         *)
+(* The seed (MESSAGES m9.2): until the estimator has a sample of its own,  *)
+(* the transport's measured round trip (RN-1 t15.5) is taken as its first  *)
+(* sample in the first update the transport reports one, after that        *)
+(* update's acks and before its resend walk.  SeedAt is the tick the       *)
+(* transport first reports a round trip (a keep-alive's ack, 200 ms into   *)
+(* the connection in the seeded instances) and SeedRto the resend delay    *)
+(* it gives (2 * rtt + 4 * rtt + 30 ms, clamped).  SeedRule = FALSE is the *)
+(* code before the seed: the transport's measurement ignored, the record   *)
+(* waiting RtoInitial (2 s) until its own ack is sampled (the reversed     *)
+(* witness MCRNResendTimingBrokenUnseeded.cfg).                            *)
+(*                                                                         *)
 (* AttemptsBeforeTimeout: a record still unacked at the timeout was sent   *)
 (* at least MinAttempts times (ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS).     *)
 (* attempts saturates at MinAttempts to keep the state space small.        *)
@@ -97,6 +108,19 @@ BlockClock == FALSE
 ChunkFirstLate == Timeout - 2
 BlockClockOn == TRUE
 
+\*   SeedAt:  the tick the transport first reports a round trip; past the
+\*            horizon (never) by default.
+\*   SeedRto: the resend delay the seed gives, in ticks.
+\*   SeedRule: TRUE takes the seed (the rule); FALSE ignores it (the
+\*            reversed witness).
+\* (SeedAt <- SeedAtEarly, SeedRto <- SeedRtoMeasured, SeedRule <- SeedRuleOff)
+SeedAt == ChunkFirst + Timeout + 1
+SeedRto == RtoInitial
+SeedRule == TRUE
+SeedAtEarly == 2
+SeedRtoMeasured == 3
+SeedRuleOff == FALSE
+
 Min(a, b) == IF a < b THEN a ELSE b
 Max(a, b) == IF a > b THEN a ELSE b
 
@@ -118,9 +142,11 @@ VARIABLES
     attempts,   \* [Records -> sends so far, saturating at MinAttempts]
     acked,      \* [Records -> the record's ack has arrived]
     head,       \* OneFifo: the record at the head of the one FIFO
-    phase       \* "walk": acks, then the resend walk; "tick": time moves
+    phase,      \* "walk": acks, then the resend walk; "tick": time moves
+    sampled,    \* an ack of this layer's own has given an RTT sample
+    seeded      \* the transport's round trip was taken as the first sample
 
-vars == <<t, lastSend, rto, backoff, attempts, acked, head, phase>>
+vars == <<t, lastSend, rto, backoff, attempts, acked, head, phase, sampled, seeded>>
 
 \* A small record waits the resend delay alone; a chunk waits it capped.
 Cap(r) == IF r = "s" THEN RtoMax ELSE ChunkCap
@@ -141,6 +167,10 @@ Due(r) == ~acked[r] /\ ~TimedOut /\ Started(r) /\ (attempts[r] = 0 \/ t >= lastS
 
 Live == ~TimedOut /\ \E r \in Records : ~acked[r]
 
+\* rn_window_ack_seed_rtt is owed this update: the transport has a round
+\* trip and the estimator no sample (has_rtt = 0).
+SeedOwed == SeedRule /\ ~sampled /\ ~seeded /\ t >= SeedAt
+
 TypeOK ==
     /\ t \in 0..Horizon
     /\ lastSend \in [Records -> 0..Horizon]
@@ -151,6 +181,8 @@ TypeOK ==
     /\ acked \in [Records -> BOOLEAN]
     /\ head \in Records
     /\ phase \in {"walk", "tick"}
+    /\ sampled \in BOOLEAN
+    /\ seeded \in BOOLEAN
 
 Init ==
     /\ t = 0
@@ -161,6 +193,8 @@ Init ==
     /\ acked = [r \in Records |-> IF r = "c" THEN ~Chunk ELSE FALSE]
     /\ head \in (IF Chunk THEN Records ELSE {"s"})
     /\ phase = "walk"
+    /\ sampled = FALSE
+    /\ seeded = FALSE
 
 \* The one FIFO's walk: from the head while due, stopping at the first live
 \* record that is not.
@@ -185,12 +219,13 @@ NextHead ==
 Walk ==
     /\ phase = "walk"
     /\ Live
+    /\ ~SeedOwed
     /\ lastSend' = [r \in Records |-> IF Sent(r) THEN t ELSE lastSend[r]]
     /\ attempts' = [r \in Records |-> IF Sent(r) THEN Min(attempts[r] + 1, MinAttempts) ELSE attempts[r]]
     /\ backoff' = [r \in Records |-> IF Sent(r) THEN Min(backoff[r] * 2, MaxBackoff) ELSE backoff[r]]
     /\ head' = NextHead
     /\ phase' = "tick"
-    /\ UNCHANGED <<t, rto, acked>>
+    /\ UNCHANGED <<t, rto, acked, sampled, seeded>>
 
 \* rn_window_ack_on_ack of another packet: one RTT sample.
 Sample(x) ==
@@ -198,7 +233,20 @@ Sample(x) ==
     /\ Live
     /\ rto' = x
     /\ backoff' = [r \in Records |-> 1]
-    /\ UNCHANGED <<t, lastSend, attempts, acked, head, phase>>
+    /\ sampled' = TRUE
+    /\ UNCHANGED <<t, lastSend, attempts, acked, head, phase, seeded>>
+
+\* rn_window_ack_seed_rtt from the message object's update: the transport's
+\* round trip taken as the first sample, after the update's acks and before
+\* its walk.
+Seed ==
+    /\ phase = "walk"
+    /\ Live
+    /\ SeedOwed
+    /\ rto' = SeedRto
+    /\ backoff' = [r \in Records |-> 1]
+    /\ seeded' = TRUE
+    /\ UNCHANGED <<t, lastSend, attempts, acked, head, phase, sampled>>
 
 \* rn_window_ack_on_ack of a packet carrying record r.
 Ack(r) ==
@@ -207,7 +255,7 @@ Ack(r) ==
     /\ ~TimedOut
     /\ attempts[r] > 0
     /\ acked' = [acked EXCEPT ![r] = TRUE]
-    /\ UNCHANGED <<t, lastSend, rto, backoff, attempts, head, phase>>
+    /\ UNCHANGED <<t, lastSend, rto, backoff, attempts, head, phase, sampled, seeded>>
 
 \* The update ends and time moves on one tick.
 Tick ==
@@ -215,7 +263,7 @@ Tick ==
     /\ Live
     /\ t' = t + 1
     /\ phase' = "walk"
-    /\ UNCHANGED <<lastSend, rto, backoff, attempts, acked, head>>
+    /\ UNCHANGED <<lastSend, rto, backoff, attempts, acked, head, sampled, seeded>>
 
 \* Every record acked, or the timeout fired: nothing more happens.
 Done ==
@@ -225,6 +273,7 @@ Done ==
 Next ==
     \/ Walk
     \/ \E x \in RtoMin..RtoMax : Sample(x)
+    \/ Seed
     \/ \E r \in Records : Ack(r)
     \/ Tick
     \/ Done
@@ -246,5 +295,14 @@ ResendGapBounded ==
 \* record of either class still due, whatever the other class does.
 NoDueRecordHeld ==
     phase = "tick" => \A r \in Records : ~Due(r)
+
+\* From the update the transport first reports a round trip until this
+\* layer's own first sample, no unacked record waits longer than the
+\* seeded delay for its next send: a record last sent before SeedAt is
+\* resent by SeedAt + its delay, not by its last send + RtoInitial.
+SeededGapBounded ==
+    \A r \in Records :
+        (~acked[r] /\ ~TimedOut /\ attempts[r] > 0 /\ ~sampled /\ t >= SeedAt) =>
+            t - Max(lastSend[r], SeedAt) <= Min(SeedRto, Cap(r)) * MaxBackoff
 
 =============================================================================

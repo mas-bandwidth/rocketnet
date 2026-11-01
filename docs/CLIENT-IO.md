@@ -87,11 +87,11 @@ must preserve these invariants:
 - internal client and server transports use the same stop, stopped, destroy
   order. Their stop requests and completion checks never wait for workers.
 
-The receive budget limits admitted packets, not every datagram inspected by
-the backend. The current POSIX portable/msgx helpers and Linux GSO plain
-fallback can remain in a drain under sustained discarded datagrams. That can
-delay receive publication and worker completion after stop; see
-[current drain limitations](TRANSPORT-INTERNALS.md#current-staging-and-drain-limitations).
+The receive budget limits admitted packets. The backend also bounds work
+spent inspecting discarded datagrams, so sustained discarded traffic cannot
+keep a drain running indefinitely before receive publication or the worker's
+next stop check. These work limits are not wall-clock completion bounds; see
+[staging and drain bounds](TRANSPORT-INTERNALS.md#staging-and-drain-bounds).
 
 The optional `time_callback` in the client config (development builds only)
 supplies receive-stamp time;

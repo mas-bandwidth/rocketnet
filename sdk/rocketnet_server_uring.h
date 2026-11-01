@@ -49,9 +49,26 @@ struct rocketnet_server_uring_t;
 #define ROCKETNET_URING_ENTRIES                                           4096
 
 // send staging: one phase's worth of frame-stride slots, the gso transport's
-// budget
+// budget. the staging has two phases: start_packet fills one while the
+// kernel completes the sends of the other, so a send whose completion is
+// reaped one call late never holds the next update's staging. a phase is
+// committed to the kernel by send_packets and complete once every slot of it
+// is submitted and every send of it has its completion; only a complete
+// phase is reset, and send_packets moves the fill to the other phase when
+// that one is complete (proofs/tla/RNUringSendPhases.tla). RIO's send
+// handoff has a third phase for its worker thread; io_uring submits on the
+// main thread, so fill and committed are the two it needs.
 
 #define ROCKETNET_URING_SEND_QUEUE_SIZE                                   2048
+#define ROCKETNET_URING_SEND_PHASES                                          2
+#define ROCKETNET_URING_SEND_SLOTS    ( ROCKETNET_URING_SEND_PHASES * ROCKETNET_URING_SEND_QUEUE_SIZE )
+
+// a send holds at least one staged slot from its submit to its completion,
+// so the sends in flight, both phases', fit the submission queue and leave
+// the completion queue (twice the ring) room for receive completions
+
+ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_ENTRIES >= ROCKETNET_URING_SEND_SLOTS,
+                         "the io_uring sends in flight, both phases', fit the ring" );
 
 // the submission queue holds the whole send staging beside one re-arm and
 // one cancel per queue, so one send_packets prepares an SQE for every staged
@@ -136,7 +153,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_SEND_BUDGET > ROCKETNET_URING_MAX_SEGME
 #define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_NO_BUFFERS                    7      // the multishot ended because the buffer ring was empty (ENOBUFS)
 #define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_REARMS                        8      // multishot receives armed again after a CQE without F_MORE
 #define ROCKETNET_SERVER_URING_COUNTER_REAP_DEFERRED                         9      // a send_packets or receive_packets call that left completions in the queue for the next call (its budget spent) or receives held for the fill bank's room (deferred, not dropped)
-#define ROCKETNET_SERVER_URING_COUNTER_SEND_DEFERRED                        10      // a send_packets call that returned with sends not yet completed or staged slots not yet submitted, retired by a later call
+#define ROCKETNET_SERVER_URING_COUNTER_SEND_DEFERRED                        10      // a send_packets call that returned with sends not yet completed or staged slots not yet submitted, in either phase, retired by a later call
 #define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_NO_BUFFER            11      // a receive CQE with res >= 0 that names no provided buffer (no IORING_CQE_F_BUFFER, or an id outside the ring)
 #define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_REARM_FAILED                 12      // a re-arm found no submission entry (queue left disarmed)
 #define ROCKETNET_SERVER_URING_COUNTER_GSO_SENDS                            13      // segmented SENDMSGs submitted: a run of more than one packet with a UDP_SEGMENT cmsg
@@ -274,8 +291,9 @@ void rocketnet_server_uring_counters( struct rocketnet_server_uring_t * uring, u
 // send_packets call and the next; send_packets runs on the main thread,
 // submits the staged slots, reaps at most ROCKETNET_URING_SEND_BUDGET
 // currently available completions without waiting, and returns. a send
-// without its completion keeps its slot, and the reservation index, until a
-// later call reaps it (SEND_DEFERRED counts each call that returns so).
+// without its completion keeps its slot, and its phase is not reset, until a
+// later call reaps it (SEND_DEFERRED counts each call that returns so);
+// start_packet then fills the other phase once that one is complete.
 // the frame handed back is a ROCKETNET_FRAME_STRIDE slot: wire
 // bytes begin at ROCKETNET_FRAME_WIRE_OFFSET, exactly as the other transports.
 
@@ -287,13 +305,13 @@ void rocketnet_server_uring_abort_packet( struct rocketnet_server_uring_t * urin
 
 void rocketnet_server_uring_send_packets( struct rocketnet_server_uring_t * uring );
 
-// the slots start_packet may still take before the reservation index goes
-// back to 0: one server-wide array, whatever the queue count, and a slot the
-// kernel holds until its completion is not room. Main thread.
+// the slots start_packet may still take in the phase it fills: one
+// server-wide phase, whatever the queue count, and a slot the kernel holds
+// until its completion is not room. Main thread.
 int rocketnet_server_uring_send_room( struct rocketnet_server_uring_t * uring );
 
 // true once every staged slot is submitted and every send has its
-// completion reaped: the reservation index is back at 0. Main thread.
+// completion reaped: both phases are reset. Main thread.
 bool rocketnet_server_uring_send_idle( struct rocketnet_server_uring_t * uring );
 
 // receive packets: receive_packets reaps at most
