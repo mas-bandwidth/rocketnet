@@ -103,10 +103,13 @@
 // 12133 bytes at 1000 clients (rocketnet_server_replay_marks_allocation_bytes).
 // Re-measured 2026-10-31 on vision (Linux x86-64, Debug, ROCKETNET_DEV=ON)
 // with the disconnect ring and the xdp replay records: 3248706443.
+// The server's client-scaled buffers are carved at create from layouts sized
+// by its configured max_clients, each carve 64-byte aligned and the receive
+// views their own allocations: 3248767123 by the ubuntu-24.04 Debug CI leg.
 // The non-dev figures below were not re-measured: this file is not linked
 // when ROCKETNET_DEV=OFF.
 #if ROCKETNET_DEV
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3248706443ULL )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3248767123ULL )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22904149 )
 #else
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3226203446ULL )
