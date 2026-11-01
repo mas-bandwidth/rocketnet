@@ -52,7 +52,9 @@
                                   survives, the audit proves nothing. Without
                                   the audit it does NOT die, which is the whole
                                   reason the audit exists -- the soak simply
-                                  loses a packet and reports success.
+                                  loses a packet and reports success. A lost
+                                  control packet can leave application totals
+                                  unchanged; the wire receive count exposes it.
                                   scripts/soak-sim-selftest runs both.
 */
 
@@ -75,6 +77,7 @@
 #include <sodium.h>
 
 static volatile int quit;
+static uint64_t wire_datagrams_received;
 
 // ---------------------------------------------------------------------------
 // where the soak's wall clock goes
@@ -251,6 +254,8 @@ static int wire_receive( struct rocketnet_network_simulator_t * simulator,
 {
     const double start = soak_profile_now();
     const int bytes = rocketnet_network_simulator_receive( simulator, to, current_time, out_from, out_packet );
+    if ( bytes > 0 )
+        wire_datagrams_received++;
     soak_profile_charge( SOAK_PROFILE_WIRE, start );
     return bytes;
 }
@@ -891,6 +896,8 @@ int main( int argc, char ** argv )
             failures++;
         }
     }
+
+    printf( "soak_sim wire: %llu datagrams received\n", (unsigned long long) wire_datagrams_received );
 
     printf( "\nsoak_sim finished: %llu iterations, %.0f sim seconds, %llu attempts, %llu connects, %llu terminals, %llu payloads verified, %llu failures, %llu hangs\n",
             (unsigned long long) iteration, time - 100.0, (unsigned long long) attempts,
