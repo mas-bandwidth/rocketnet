@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import shlex
 import sys
 import tempfile
 import unittest
@@ -72,6 +73,30 @@ class CoverageTest(unittest.TestCase):
         self.assertEqual(coverage.check(self.repo, [development, production], ["Linux-Debug", "Linux-Release"]), [])
         self.assertEqual(coverage.main(["--repo", str(self.repo), str(development), str(production)]), 0)
 
+    def test_workflow_command_separates_expected_names_from_list_files(self) -> None:
+        # Run the real workflow command against a complete fixture inventory.
+        # Without the -- delimiter, --expect consumes the expanded file paths.
+        workflow = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "ci.yml"
+        lines = iter(workflow.read_text().splitlines())
+        line = next(line for line in lines if "python3 tools/check_unit_case_coverage.py --repo ." in line)
+        command = []
+        while True:
+            continued = line.rstrip().endswith('\\')
+            command.append(line.strip().removesuffix('\\'))
+            if not continued:
+                break
+            line = next(lines)
+        args = shlex.split(" ".join(command))[2:]
+        args[args.index("--repo") + 1] = str(self.repo)
+        expected = [name for name in args[args.index("--expect") + 1:] if name not in ("--", "unit-cases/*.txt")]
+        paths = [str(self.write_list(name, ALL_CASES)) for name in expected]
+        pattern = args.index("unit-cases/*.txt")
+        args[pattern:pattern + 1] = paths
+        self.assertEqual(coverage.main(args), 0)
+
+    def test_cli_without_list_files_fails(self) -> None:
+        self.assertEqual(coverage.main(["--repo", str(self.repo), "--expect", "Linux-Debug", "--"]), 1)
+
     def test_a_case_in_no_configuration_fails(self) -> None:
         # the development-only configuration never compiles the production cases
         development = self.write_list("Linux-Debug", ["test_sdk_a", "test_channels_a", "test_file_a"])
@@ -91,6 +116,7 @@ class CoverageTest(unittest.TestCase):
         full = self.write_list("Linux-Debug", ALL_CASES)
         errors = coverage.check(self.repo, [full], ["Linux-Debug", "Windows-a"])
         self.assertEqual(errors, ["no list file for expected configuration Windows-a"])
+        self.assertEqual(coverage.main(["--repo", str(self.repo), "--expect", "Linux-Debug", "Windows-a", "--", str(full)]), 1)
 
     def test_an_empty_list_fails(self) -> None:
         full = self.write_list("Linux-Debug", ALL_CASES)
