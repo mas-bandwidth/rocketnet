@@ -2520,11 +2520,12 @@ jobs:
   # cache restores the prefix and builds nothing.
   instruction-gate:
     name: instruction count gate
-    # Any of the three hetzner2 runners: cachegrind counts instructions, not
-    # time, so the gate needs the host the pinned toolchain's cache key names
-    # (distro, arch, C library), not a quiet runner, and three runners pick it
-    # up sooner than one.
-    runs-on: [self-hosted, Linux, X64, fleet, hetzner2]
+    # Any fleet runner: cachegrind counts instructions, not time, so the gate
+    # needs a host the pinned toolchain's cache key names (distro, arch, C
+    # library: every Linux fleet runner is ubuntu-24.04 x86_64 glibc-2.39),
+    # not a quiet one, and it leaves the libxdp-1-4 runners to the functional
+    # rows that need them.
+    runs-on: [self-hosted, Linux, X64, fleet]
     # Per commit the gate restores the pinned toolchain and never builds it
     # (396s cold); the nightly tier builds it on a miss and saves it from
     # main, where every branch and pull request can restore it.
