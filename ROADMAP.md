@@ -6,7 +6,7 @@ Planned work for RocketNet that is not on main. Work lands on main before new wo
 
 ## Contents
 
-- [Started work to finish and land](#started-work-to-finish-and-land) (13)
+- [Started work to finish and land](#started-work-to-finish-and-land) (12)
 - [Audit items not yet fixed](#audit-items-not-yet-fixed) (8)
 - [Investigations that need a quiet host](#investigations-that-need-a-quiet-host) (3)
 - [Older open pull requests](#older-open-pull-requests) (2)
@@ -27,12 +27,6 @@ From: Integration fleet run, ab74c810
 Glenn ruled remove (audit 13). Branch rowan/remove-type9-fragmentation at 0689412d: unreachability confirmed; the code, config field, status code, 41 counters, standard sections and the model's fragment half are gone; server required_memory at 1000 clients drops 379 MB and the client's from 29.3 MB to 20.3 MB. Owed: a full fleet run at the head; five one-line negative controls; timing the split lock-in sweep under the sanitizers; a Windows light-profile ceiling measurement; the fragment text left in proofs/tla/Link.tla (editing it pushes MCRNChannel past the 110 s TLC budget). Rebase onto main (conflicts with the counter renumbering).
 
 From: Audit item 13; Glenn, 2026-10-31
-
-### Seed the message resend delay from the measured RTT
-
-The two channels nightly seeds that fail every run (4879047, 4879943) time out because the message layer waits its 2000 ms default while the transport has already measured RTT. Branch rowan/resend-seeded-rtt at 511ead80: works on macOS, TLC and standard m9.2 updated. Owed: diagnose the Linux test_light_profile_server_1000_required_memory failure; the full nightly seed range; re-measure the ordered stream's completion multiple; squash the WIP commits.
-
-From: Red channels nightly
 
 ### Size per-server arrays from the configured max_clients
 
