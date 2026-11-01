@@ -1157,7 +1157,7 @@ static void test_message_config_reserve_past_32_bits_refused_by_validate_and_cre
     check( rocketnet_message_validate_config_ex( &config, &status ) == 0 );
     check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
     check( rocketnet_message_connection_bytes( &config ) == 0 );
-    check( rocketnet_message_client_required_memory( &config ) == 0 );
+    check( rocketnet_message_client_required_memory( &config, 0 ) == 0 );
 
     // the public client at the same rate: create refuses with the status the
     // validate reported, and required_memory gives no size

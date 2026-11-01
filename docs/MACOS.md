@@ -243,14 +243,15 @@ thread is a plain `pthread_create` with default attributes
 thread makes one call on it: `pthread_setschedparam( thread, SCHED_RR, { 32 } )`
 (`rocketnet_platform_client_thread_priority` in `sdk/rocketnet_platform.cpp`,
 through `rocketnet_platform_network_thread_priority`). The priority is
-`rocketnet_platform_network_thread_rr_priority`: one above a thread with
-default attributes, clamped to the SCHED_RR range. On macOS that is 32, one
-above the default 31 of every ordinary thread, which is what Linux's SCHED_RR
-minimum gives there. The macOS minimum, 15, demoted the client I/O thread:
+`rocketnet_platform_network_thread_rr_priority`: 32 clamped to the SCHED_RR
+range, one above the ordinary-thread default of 31. The macOS request does not
+depend on querying thread attributes, so a failed query cannot demote it.
+Other POSIX platforms retain their previous selection; on Linux that remains
+the SCHED_RR minimum, 1. The macOS minimum, 15, demoted the client I/O thread:
 under CPU contention its sends and receives stalled for hundreds of
 milliseconds while the game thread ran (`test_posix_send_to_closed_port` on a
 loaded runner). The maximum, 47 (the user-interactive band), outranked the
-game's own threads: on a MacBook Air the P=32 client frame p99
+game's ordinary threads. In the recorded MacBook Air sample, the P=32 client frame p99
 (`benchmarks/client_main_thread_cost.cpp`, portable) went from 35 to 97 us
 when the maximum landed.
 That is the only thing the library sets on the macOS client network thread: no QoS
@@ -259,13 +260,8 @@ function and nothing else), no `THREAD_TIME_CONSTRAINT_POLICY`, no pinning, and
 no App Nap call (a search of `sdk/` for `qos_class`, `NSProcessInfo` and
 `LSAppNapIsDisabled` finds nothing). `rocketnet_thread_priority( false )`
 turns the call off (`docs/CLIENT-IO.md`, Thread priority), and with it off the
-library makes no scheduling call on any thread. Apart from it, the only
-scheduling policy the SDK sets is the Mach time-constraint policy on the thread
-that waits in frame sync, put back to the standard policy afterwards
-(`rocketnet_frame_sync_elevate_priority` and
-`rocketnet_frame_sync_restore_priority` in `sdk/rocketnet_frame_sync.cpp`);
-`rocketnet_frame_sync_elevate_priority` returns before that call when
-`rocketnet_platform_thread_priority_enabled` is false.
+library makes no scheduling call on any thread. The SDK sets no other
+scheduling policy.
 
 Each msgx or portable server has two socket workers, one for
 receive and one for transmit. They use default `pthread_create` attributes and
@@ -334,10 +330,10 @@ refused destination in the middle delivers every other packet
 
 The hard-killed-client cases in `tests/functional/posix_hard_killed_client.cpp`
 exercise ICMP handling for portable and msgx combinations; see
-[ICMP errors](TRANSPORT-INTERNALS.md#icmp-errors). This error-retry budget does
-not cover all discarded datagrams. Sustained empty or rejected traffic can
-keep the current portable/msgx drain running and delay receive publication or
-shutdown; see [current drain limitations](TRANSPORT-INTERNALS.md#current-staging-and-drain-limitations).
+[ICMP errors](TRANSPORT-INTERNALS.md#icmp-errors). Discarded datagrams spend
+the same read budget as errors and kept datagrams, so empty or rejected
+traffic ends a portable or msgx drain like any other; see
+[staging and drain bounds](TRANSPORT-INTERNALS.md#staging-and-drain-bounds).
 
 ## The file-descriptor limit
 

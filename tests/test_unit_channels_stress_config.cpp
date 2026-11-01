@@ -17,6 +17,7 @@ static void test_channels_stress_config_is_valid()
     rocketnet_client_config_t client;
     rocketnet_unit_check( rocketnet_client_default_config( &client ) == ROCKETNET_STATUS_OK );
     client.send_kbps = ROCKETNET_SEND_KBPS_UNLIMITED;
+    memset( client.packet_filter, 0x5A, sizeof( client.packet_filter ) );    // not the published test filter, which a production build refuses first
     channels_stress_message_config( &client.num_channels, &client.reliable_messages_in_flight, &client.send_message_buffer_bytes,
                                     &client.send_queue_messages, &client.packets_in_flight, &client.packets_per_update,
                                     &client.unreliable_messages_per_update, &client.max_message_receipts, ROCKETNET_MAX_CHANNELS );
@@ -27,6 +28,7 @@ static void test_channels_stress_config_is_valid()
     server.max_clients = 1;
     memset( server.backend_public_key, 0x11, sizeof( server.backend_public_key ) );
     server.per_client_send_kbps = ROCKETNET_SEND_KBPS_UNLIMITED;
+    memset( server.packet_filter, 0x5A, sizeof( server.packet_filter ) );
     channels_stress_message_config( &server.num_channels, &server.reliable_messages_in_flight, &server.send_message_buffer_bytes,
                                     &server.send_queue_messages, &server.packets_in_flight, &server.packets_per_update,
                                     &server.unreliable_messages_per_update, &server.max_message_receipts, ROCKETNET_MAX_CHANNELS );

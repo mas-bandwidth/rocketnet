@@ -47,6 +47,10 @@
 // rocketnet_allocator.cpp, so the formula and the code cannot drift.
 
 #define RN_DESCRIPTOR_NONE      0xFFFFFFFFu
+
+// rn_channel_receive_t held_sequenced: the high bit marks a code-4 hold (its
+// receive descriptor index below it), clear for a code-1 hold
+#define RN_SEQUENCED_RELIABLE_HOLD 0x80000000u
 #define RN_CHUNK_NONE           0xFFFFFFFFu
 #define RN_HANDLE_INDEX         0x3FFFFFFFu     // a chunk handle's index bits; its class is the top two
 #define RN_RESEND_NONE          0xFFFFFFFFu
@@ -213,11 +217,10 @@ struct rn_unreliable_entry_t            // 8 bytes: one unreliable queue entry (
     uint32_t ticket;                    // its enqueue ticket when pushed; a tombstone once the descriptor's ticket differs
 };
 
-struct rn_resend_link_t                 // 12 bytes: resend sequence entry, indexed number % W (6.4)
+struct rn_resend_link_t                 // 8 bytes: resend sequence entry, indexed number % W (6.4)
 {
     uint32_t prev;                      // previous slot in its sequence in bits 0..30 (0x7FFFFFFF: the head), linked flag in bit 31; 0 when not in a sequence
     uint32_t next;                      // next slot in its sequence in bits 0..30 (0x7FFFFFFF: the tail), chunk-class flag in bit 31
-    uint32_t generation;                // descriptor generation named by this entry; 0 is never a live name
 };
 
 // Queue scheduling (proofs/tla/RNChannelQueues.tla). A descriptor's enqueue ticket is
@@ -252,7 +255,7 @@ enum
     RN_PART_DELIVERIES,                 // 24 (W + Du)
     RN_PART_SEQUENCED_HOLDS,            // 1440 Ru (16 hot + 1416 payload + 4 free-stack + 4 delivered list per hold)
     RN_PART_RECEIPTS,                   // 16 Rq
-    RN_PART_RESEND_FIFO,                // 12 W
+    RN_PART_RESEND_FIFO,                // 8 W
     RN_PART_UNRELIABLE_RING,            // 8 * 2Q
     RN_PART_SEND_SPANS,                 // B
     RN_NUM_PARTS

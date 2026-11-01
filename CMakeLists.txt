@@ -693,7 +693,6 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
             tests/test_unit_shutdown_request_completion.cpp
             tests/test_unit_sim_schedules.cpp
             tests/test_unit_sized_config.cpp
-            tests/test_unit_status_client_transport_create_ex.cpp
             tests/test_unit_status_codes_reached.cpp
             tests/test_unit_table_churn_probe_bound.cpp
             tests/test_unit_unreliable_in_place.cpp
@@ -1087,6 +1086,11 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         rocketnet_use_sodium(test_iocp)
         target_link_libraries(test_iocp PRIVATE Threads::Threads)
         rocketnet_warning_floor(test_iocp)
+        # Every case fails on purpose, so it never runs as a suite: ci.yml's
+        # Windows leg (c) runs each case under a deadline (suite_no_dialogs).
+        add_executable(windows_no_dialogs tests/windows_no_dialogs.cpp)
+        target_include_directories(windows_no_dialogs PRIVATE tests sdk)
+        rocketnet_warning_floor(windows_no_dialogs)
         if(NOT ROCKETNET_DEV)
             # The same source has a DEV=0-only main that uses ordinary IOCP and
             # RIO constructors, real loopback datagrams and bounded shutdown.
@@ -1222,6 +1226,8 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     # test_posix_client_server_gone_xdp_ipv4_client_portable and
     # test_posix_client_server_gone_xdp_ipv6_client_portable (their body is
     # tests/functional/posix_hard_killed_client.cpp), and
+    # test_loopback_transport_live_message_matrix_late_probes (the development
+    # link simulator; the ordinary live matrix remains in production), and
     # test_client_destroy_early_threaded_keeps_then_frees and
     # test_server_destroy_early_threaded_keeps_then_frees (their body is
     # tests/functional/destroy_early_keep.cpp, which this executable does not
@@ -1283,6 +1289,11 @@ if(ROCKETNET_BUILD_TOOLS)
     add_executable(handshake_cost benchmarks/handshake_cost.cpp)
     target_compile_features(handshake_cost PRIVATE cxx_std_11)
     rocketnet_use_sodium(handshake_cost)
+    # A connection request on the receive path, the transport's one lookup then
+    # process_received (benchmarks/request_lookup_cost.cpp).
+    add_executable(request_lookup_cost benchmarks/request_lookup_cost.cpp)
+    target_compile_features(request_lookup_cost PRIVATE cxx_std_11)
+    rocketnet_use_sodium(request_lookup_cost)
     # Benchmark-only fake-client traffic source. It is Linux/XDP-only, is not
     # installed, and reaches no shipped SDK/API surface. The required .c path
     # is compiled as C++ so it can compose the private protocol and AF_XDP
@@ -1321,7 +1332,7 @@ if(ROCKETNET_BUILD_TOOLS)
     target_compile_features(server_receive_cost PRIVATE cxx_std_11)
     rocketnet_use_sodium(server_receive_cost)
     target_link_libraries(keygen PRIVATE rocketnet)
-    foreach(tool soak load load_split soak_sim transport_memory client_main_thread_cost ack_block_build_cost handshake_cost)
+    foreach(tool soak load load_split soak_sim transport_memory client_main_thread_cost ack_block_build_cost handshake_cost request_lookup_cost)
         target_link_libraries(${tool} PRIVATE rocketnet_dev)
     endforeach()
     target_link_libraries(instruction_count PRIVATE rocketnet_dev)

@@ -130,6 +130,16 @@ struct rn_message_link_t
     // transport names none.
     int ( *end_reason )( void * transport, int client_index );
 
+    // the transport's reported round-trip time of the slot's connection, in
+    // seconds (standard/TRANSPORT.md t15.5): the minimum first-ack sample, 0
+    // while it has none. While a connection's message layer has no RTT sample
+    // of its own, each update takes a nonzero answer as its first sample
+    // (standard/MESSAGES.md m9.2, rn_window_ack_seed_rtt). The server's link
+    // reads rocketnet_server_transport_client_rtt, the client's
+    // rocketnet_client_transport_rtt. NULL (the unit suite's fakes): the
+    // transport measures none.
+    double ( *rtt )( void * transport, int client_index );
+
     // NULL: the object does not own the transport
     void ( *stop )( void * transport );
     bool ( *stopped )( const void * transport );
@@ -268,10 +278,14 @@ struct rocketnet_message_server_t
     struct rn_message_object_t object;
 };
 
-// the block an object of num_connections connections needs at config: the
-// object, its connections, their receive bookkeeping and the arena. 0 for a
-// refused config or count.
-uint64_t rn_message_object_required_bytes( const struct rocketnet_message_config_t * config, int num_connections, int is_server );
+// the block an object of num_connections connections needs at config and
+// send budget kbps (0: the config's field for this direction; reserve_unlimited:
+// the public unlimited ceiling, which reserves nothing), exactly the block
+// rn_message_object_create sizes with the same arguments: the object, its
+// connections, their receive bookkeeping and the arena. 0 for a refused config
+// or count.
+uint64_t rn_message_object_required_bytes( const struct rocketnet_message_config_t * config, int num_connections, int is_server,
+                                           int32_t kbps = 0, bool reserve_unlimited = false );
 
 // builds the object on a link, in `memory` (NULL: one rocketnet_malloc). The
 // object owns the link's transport when link->destroy is set. NULL, with the

@@ -1011,6 +1011,26 @@ int rocketnet_server_rio_send_room( rocketnet_server_rio_t * rio )
     return used < 0 || used >= ROCKETNET_RIO_SEND_QUEUE_SIZE ? 0 : ROCKETNET_RIO_SEND_QUEUE_SIZE - used;
 }
 
+// proofs/tla/ServerStopSpread.tla RequestIoStop: no slot staged, handed or
+// posted without its completion
+bool rocketnet_server_rio_send_idle( rocketnet_server_rio_t * rio )
+{
+    const int fill = rio->fill.load( std::memory_order_relaxed );
+    if ( rio->next[fill].load( std::memory_order_relaxed ) != 0 || rocketnet_rio_outstanding_sends( rio ) != 0 )
+        return false;
+    if ( !rocketnet_platform_mutex_try_acquire( &rio->mutex ) )
+        return false;
+    bool idle = rio->send_ready_count == 0;
+    for ( int phase = 0; phase < ROCKETNET_RIO_SEND_PHASES; phase++ )
+    {
+        if ( phase != fill && rio->phase_state[phase] != ROCKETNET_RIO_PHASE_IDLE )
+            idle = false;
+    }
+    rocketnet_platform_mutex_release( &rio->mutex );
+
+    return idle;
+}
+
 // proofs/tla/RNRioDriver.tla Reserve: one fetch_add reserves the next slot of the fill
 // phase; past the last slot it returns NULL and counts SEND_FULL.
 // proofs/tla/RNRioWorker.tla Stage, first half: a fill thread takes a slot of the
@@ -2071,7 +2091,7 @@ bool rocketnet_server_rio_test_send_accounting()
     valid &= rio->counters[ROCKETNET_RIO_COUNTER_COMMITS].load() == 1;
     valid &= rio->counters[ROCKETNET_RIO_COUNTER_PACKETS_SENT].load() == 3;
     valid &= rio->counters[ROCKETNET_RIO_COUNTER_SEND_FAILED].load() == 2;
-    valid &= rocketnet_rio_accounting_test_asserts == 2;
+    valid &= rocketnet_rio_accounting_test_asserts == ( ROCKETNET_ASSERTS ? 2 : 0 );    // each refused finish asserts where asserts are compiled in
 
     rocketnet_rio_handoff_test_state = NULL;
     rocketnet_rio_test_fixture_free( rio );

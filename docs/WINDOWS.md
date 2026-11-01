@@ -12,11 +12,14 @@ does not widen them.
 ## What is supported
 
 The supported row is Windows 11 on x86_64 with MSVC, transports `portable`,
-`iocp` and `rio` ([PLATFORMS.md](PLATFORMS.md), the table). CI builds and runs
-it on every commit as two Release legs: a development library
-(`ROCKETNET_DEV=ON`) running the unit suite and the per-commit functional subset, and a production
-library (`ROCKETNET_DEV=OFF`) checked as a consumer sees it, with the transport
-matrix below (`.github/workflows/ci.yml`, `build-and-test-windows`). clang-cl
+`iocp` and `rio` ([PLATFORMS.md](PLATFORMS.md), the table). CI builds the whole
+tree in Release and runs the happy path on every commit (`happy path /
+windows`). Each night it runs three Release legs: a development library
+(`ROCKETNET_DEV=ON`) running the unit suite and the lifecycle binary, a
+production library (`ROCKETNET_DEV=OFF`) checked as a consumer sees it, with
+the transport matrix below, and the functional suite
+(`.github/workflows/ci.yml`, `build-and-test-windows`, run by
+`nightly-ci.yml`). clang-cl
 on x86_64 is a nightly row; Windows on arm64 is build-checked only and
 unsupported.
 
@@ -122,11 +125,6 @@ refusal of a name no build knows.
 - **Every transport:** the process's own memory budget, if one is set with
   `ROCKETNET_SERVER_MEMORY_BUDGET_BYTES`; a transport whose memory plan does
   not fit is refused before anything is allocated.
-- **Frame pacing (`rocketnet_frame_sync_create` / `rocketnet_frame_sync_create_ex`):**
-  a high-resolution waitable timer (`CreateWaitableTimerExW` with
-  `CREATE_WAITABLE_TIMER_HIGH_RESOLUTION`). When unavailable, creation refuses
-  with `ROCKETNET_STATUS_TIMER_CREATE_FAILED` rather than falling back to a
-  coarse standard waitable timer.
 
 No transport needs an elevated process. The library changes no system
 setting. `rocketnet_init` asks Windows for a 1 ms timer period until

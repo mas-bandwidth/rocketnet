@@ -168,12 +168,6 @@ struct rocketnet_client_transport_t;
 struct rocketnet_server_transport_t;
 struct rocketnet_message_client_t;
 struct rocketnet_message_server_t;
-/** @brief Holds state for one frame synchronizer.
- *
- * The type is opaque. Create it with rocketnet_frame_sync_create, use it from
- * its owning loop thread, and release it with rocketnet_frame_sync_destroy.
- */
-struct rocketnet_frame_sync_t;
 struct rocketnet_counters_t;            // read through rocketnet_counter_value
 struct rocketnet_packet_context_t;      // defined below, with the send surface
 
@@ -954,7 +948,8 @@ void rocketnet_server_transport_destroy( struct rocketnet_server_transport_t * s
  * waiting leave first, as many each step as the transport has room for: this
  * call is the first step, and each later stopped, state or update call while
  * any is waiting is the next. The transport's I/O is told to stop once the
- * last of them is flushed (proofs/tla/ServerStopSpread.tla).
+ * last of them is flushed and the transport reports every flushed send
+ * finished (proofs/tla/ServerStopSpread.tla).
  */
 void rocketnet_server_transport_stop( struct rocketnet_server_transport_t * server_transport );
 /** @brief True once a stop has completed: every waiting disconnect burst
@@ -1354,6 +1349,13 @@ uint64_t rocketnet_server_transport_connections_assigned( struct rocketnet_serve
  */
 int rocketnet_server_transport_client_end_reason( struct rocketnet_server_transport_t * server_transport, int client_index );
 
+// the reported round-trip time of the connection in a slot (RN-1 t15.5), in
+// seconds: the minimum first-ack sample, 0 while the slot's connection has
+// none, for a free slot, or for an index out of range. The message server
+// takes it as a connection's first RTT sample (RN-2 m9.2).
+// a NULL server_transport is a counted no-op that returns 0
+double rocketnet_server_transport_client_rtt( struct rocketnet_server_transport_t * server_transport, int client_index );
+
 // a NULL server_transport is a counted no-op that returns NULL
 const struct rocketnet_counters_t * rocketnet_server_transport_counters( struct rocketnet_server_transport_t * server_transport );
 
@@ -1481,67 +1483,6 @@ int rocketnet_server_transport_send_capacity_available( const struct rocketnet_s
 // the platform sleep that honors it, thread priority so the wakeups are
 // sharp, and a capped adaptive spin guard for the last microseconds.
 // Optional -- examples may still just sleep. Create at a frame rate, then
-// call wait once per loop iteration; it returns at the frame boundary.
-// Dropped frames are detected, counted and resynchronized, never chased.
-// Priority is taken on the waiting thread at the first wait; where the
-// platform refuses it the primitive degrades to plain absolute sleep --
-// never an unprivileged spin -- and the stats say so
-
-/**
- * @brief Creates a real-time frame synchronizer.
- *
- * @param context Allocator context; NULL uses the default context.
- * @param frame_rate Finite frames per second, greater than zero and no more than 1000.
- * @return Caller-owned synchronizer, or NULL if RocketNet is not initialized, the rate is invalid, allocation fails, or the platform timer cannot be created.
- */
-struct rocketnet_frame_sync_t * rocketnet_frame_sync_create( void * context, double frame_rate );
-
-// as rocketnet_frame_sync_create, with the section-2.1 code written to *status
-// on every return path when status is not NULL (F1 INVALID_ARGUMENT,
-// F2 OUT_OF_MEMORY, F3 TIMER_CREATE_FAILED). A failure logs one error line
-/**
- * @brief Creates a frame synchronizer and reports its error status.
- *
- * @param context Allocator context; NULL uses the default context.
- * @param frame_rate Finite frames per second, greater than zero and no more than 1000.
- * @param status Receives ROCKETNET_STATUS_OK or the specific refusal code; NULL omits status reporting.
- * @return Caller-owned synchronizer, or NULL on refusal. Status receives ROCKETNET_STATUS_OK, NOT_INITIALIZED, INVALID_ARGUMENT, OUT_OF_MEMORY, or TIMER_CREATE_FAILED if the platform timer cannot be created.
- */
-struct rocketnet_frame_sync_t * rocketnet_frame_sync_create_ex( void * context, double frame_rate, int * status );
-
-// a NULL frame_sync is a counted no-op
-/**
- * @brief Releases a frame synchronizer.
- *
- * @param frame_sync Synchronizer to release; NULL is a counted no-op.
- * @return No value. Stop using the object before destruction.
- */
-void rocketnet_frame_sync_destroy( struct rocketnet_frame_sync_t * frame_sync );
-
-// a NULL frame_sync is a counted no-op
-/**
- * @brief Waits until the next frame deadline.
- *
- * @param frame_sync Synchronizer; NULL is a counted no-op.
- * @return No value. Call once per loop iteration from its owning thread.
- */
-void rocketnet_frame_sync_wait( struct rocketnet_frame_sync_t * frame_sync );
-
-struct rocketnet_frame_sync_stats_t
-{
-    uint64_t frame;                                 // frames completed
-    uint64_t dropped_frames;                        // frames lost to overruns, total
-    int priority_held;                              // platform thread priority obtained
-    int spinning;                                   // spin guard active (requires priority)
-    double guard_seconds;                           // the current adaptive guard
-    double wakeup_error_seconds;                    // the last wake's lateness past its deadline
-};
-
-#if ROCKETNET_DEV
-// a NULL frame_sync or stats is a counted no-op
-void rocketnet_frame_sync_stats( struct rocketnet_frame_sync_t * frame_sync, struct rocketnet_frame_sync_stats_t * stats );
-#endif // #if ROCKETNET_DEV
-
 // -----------------------------------------
 //                           messages
 // -----------------------------------------
@@ -1725,13 +1666,15 @@ uint64_t rocketnet_message_print_connection_sizing( const struct rocketnet_messa
 
 // ---- client ----
 
-// the bytes a caller block for a client object needs; 0 for a refused config
+// the bytes a caller block for a client object needs at the send budget create
+// is given; 0 for a refused config or budget
 /** @brief Measure caller-provided memory for one message client.
  * @param[in] message_config Message settings, or NULL for defaults.
- * @return Required bytes for one client object, or 0 for a refused config or arithmetic overflow.
- * @details This query is allocation-free. The create call requires at least this many bytes in caller-provided memory aligned to 64 bytes; the caller retains ownership of that region.
+ * @param[in] send_kbps The send budget the create is given: 0 takes client_send_kbps from the message config, a positive value overrides it, as rocketnet_message_client_create reads it.
+ * @return Required bytes for one client object, or 0 for a refused config, a budget above ROCKETNET_SEND_BUDGET_MAX_KBPS or arithmetic overflow.
+ * @details This query is allocation-free. A create with the same message config and send_kbps requires at least this many bytes in caller-provided memory aligned to 64 bytes, and refuses a shorter block before its transport opens; the caller retains ownership of that region.
  */
-uint64_t rocketnet_message_client_required_memory( const struct rocketnet_message_config_t * message_config );
+uint64_t rocketnet_message_client_required_memory( const struct rocketnet_message_config_t * message_config, uint32_t send_kbps );
 
 // a NULL connect_token is a counted no-op that returns NULL. NULL configs are the defaults.
 // create reads no clock: the connect attempt starts at the first update, at whatever time the game passes it, and every time comes in through update
@@ -1774,7 +1717,9 @@ struct rocketnet_message_client_t * rocketnet_message_client_create_sized( void 
                                                                            const struct rocketnet_message_config_t * message_config, size_t message_config_bytes,
                                                                            void * memory, uint64_t memory_bytes, uint32_t send_kbps );
 
-// a NULL client is a counted no-op
+// a NULL client is a counted no-op. Stop the client's transport and poll it
+// stopped first; a destroy before then logs an error, counts a misuse, and
+// stops the transport itself, waiting for it, before it frees everything
 void rocketnet_message_client_destroy( struct rocketnet_message_client_t * client );
 
 // the client's transport, for its stats and state; never its batches. a NULL client is a counted no-op that returns NULL
@@ -1844,14 +1789,18 @@ const struct rocketnet_counters_t * rocketnet_message_client_counters( struct ro
 
 // ---- server ----
 
-// the bytes a caller block for a server object needs, at the transport config's max_clients; 0 for a refused config
+// the bytes a caller block for a server object needs, at the transport config's
+// max_clients and the per-client send budget create is given; 0 for a refused
+// config or budget
 /** @brief Measure caller-provided memory for a message server and its client slots.
  * @param[in] transport_config Server transport settings, or NULL for defaults.
  * @param[in] message_config Message settings, or NULL for defaults.
- * @return Required bytes for the server object and configured client slots, or 0 for refused settings or arithmetic overflow.
- * @details This query is allocation-free. Create requires at least this many bytes in caller-provided memory aligned to 64 bytes; the caller retains ownership of that region.
+ * @param[in] per_client_send_kbps The per-client send budget the create is given: 0 takes server_send_kbps from the message config, a positive value overrides it, as rocketnet_message_server_create reads it.
+ * @return Required bytes for the server object and configured client slots, or 0 for refused settings, a budget above ROCKETNET_SEND_BUDGET_MAX_KBPS or arithmetic overflow.
+ * @details This query is allocation-free. A create with the same configs and per_client_send_kbps requires at least this many bytes in caller-provided memory aligned to 64 bytes, and refuses a shorter block before its transport opens; the caller retains ownership of that region.
  */
-uint64_t rocketnet_message_server_required_memory( const struct rocketnet_server_transport_config_t * transport_config, const struct rocketnet_message_config_t * message_config );
+uint64_t rocketnet_message_server_required_memory( const struct rocketnet_server_transport_config_t * transport_config, const struct rocketnet_message_config_t * message_config,
+                                                   uint32_t per_client_send_kbps );
 
 // a NULL address is a counted no-op that returns NULL. NULL configs are the defaults
 struct rocketnet_message_server_t * rocketnet_message_server_create( void * context, const char * address,
@@ -1893,7 +1842,9 @@ struct rocketnet_message_server_t * rocketnet_message_server_create_sized( void 
                                                                            const struct rocketnet_message_config_t * message_config, size_t message_config_bytes,
                                                                            void * memory, uint64_t memory_bytes, uint32_t per_client_send_kbps );
 
-// a NULL server is a counted no-op
+// a NULL server is a counted no-op. Stop the server's transport and poll it
+// stopped first; a destroy before then logs an error, counts a misuse, and
+// stops the transport itself, waiting for it, before it frees everything
 void rocketnet_message_server_destroy( struct rocketnet_message_server_t * server );
 
 // the server's transport, for its port, stats and stop; never its batches. a NULL server is a counted no-op that returns NULL
@@ -2078,6 +2029,12 @@ void rocketnet_message_server_delivery_capture( struct rocketnet_message_server_
 void rocketnet_message_client_delivery_capture( struct rocketnet_message_client_t * client, struct rocketnet_delivery_capture_t * capture );
 
 #endif // #if ROCKETNET_DEV
+
+// the reported round-trip time of the client's connection (RN-1 t15.5), in
+// seconds: the minimum first-ack sample, 0 while it has none. The message
+// client takes it as its first RTT sample (RN-2 m9.2).
+// a NULL client_transport is a counted no-op that returns 0
+double rocketnet_client_transport_rtt( struct rocketnet_client_transport_t * client_transport );
 
 void rocketnet_client_transport_defer_payload_acks( struct rocketnet_client_transport_t * transport );
 void rocketnet_client_transport_accept_payload( struct rocketnet_client_transport_t * transport, int k );

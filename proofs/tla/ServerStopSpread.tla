@@ -39,12 +39,13 @@
 (* room, a refused start dropping that packet, and the I/O told to stop    *)
 (* at once (FullBurstBeforeStopped).  "steadycapoffbyone" lets a running   *)
 (* server defer one burst past SteadyCap, so the stop's appends overrun    *)
-(* the ring (RingHolds).  "noskip" seals an entry the drain should pass    *)
-(* over (SealedWithinBurst).  "unreachablestalls" ends the drain at an      *)
-(* unreachable start as at a full one, so the stop never finishes          *)
-(* (StopFinishes).  A ring of SteadyCap entries, the size before this      *)
-(* model, is the configuration witness MCServerStopSpreadBrokenRingSmall   *)
-(* (RingHolds).                                                            *)
+(* the ring (RingHolds).  "stopinflight" tells the I/O to stop while a     *)
+(* flushed send is unfinished (NoSendCutAtStop).  "noskip" seals an entry  *)
+(* the drain should pass over (SealedWithinBurst).  "unreachablestalls"    *)
+(* ends the drain at an unreachable start as at a full one, so the stop    *)
+(* never finishes (StopFinishes).  A ring of SteadyCap entries, the size  *)
+(* before this model, is the configuration witness                         *)
+(* MCServerStopSpreadBrokenRingSmall (RingHolds).                          *)
 (***************************************************************************)
 EXTENDS Naturals, FiniteSets
 
@@ -57,7 +58,7 @@ CONSTANTS
     SteadyCap,      \* bursts a running server keeps waiting (ROCKETNET_MAX_CLIENTS)
     Defect
 
-ASSUME Defect \in {"none", "singleshot", "steadycapoffbyone", "noskip", "unreachablestalls"}
+ASSUME Defect \in {"none", "singleshot", "steadycapoffbyone", "noskip", "unreachablestalls", "stopinflight"}
 ASSUME SlotCount \in Nat \ {0} /\ MaxSessions \in Nat \ {0} /\ Burst \in Nat \ {0}
 ASSUME BankSize \in Nat \ {0} /\ RingSize \in Nat \ {0} /\ SteadyCap \in Nat \ {0}
 
@@ -82,10 +83,11 @@ VARIABLES
     unreachable,    \* environment: sessions with no link-layer destination
     abandoned,      \* ghost: bursts given up at an unreachable start
     refused,        \* ghost: a start was called with no room
-    overflow        \* ghost: an append found the ring full
+    overflow,       \* ghost: an append found the ring full
+    cut             \* ghost: the I/O was told to stop with a flushed send unfinished
 
 vars == <<phase, slot, nextSess, ring, head, count, cursor, staged, inflight,
-          sent, owed, unreachable, abandoned, refused, overflow>>
+          sent, owed, unreachable, abandoned, refused, overflow, cut>>
 
 Room == BankSize - staged - inflight
 
@@ -100,7 +102,7 @@ Init ==
     /\ staged = 0 /\ inflight = 0
     /\ sent = [s \in Sessions |-> 0]
     /\ owed = {} /\ unreachable = {} /\ abandoned = {}
-    /\ refused = FALSE /\ overflow = FALSE
+    /\ refused = FALSE /\ overflow = FALSE /\ cut = FALSE
 
 \* A client connects into a free slot.
 Connect(i) ==
@@ -110,7 +112,7 @@ Connect(i) ==
     /\ slot' = [slot EXCEPT ![i] = nextSess]
     /\ nextSess' = nextSess + 1
     /\ UNCHANGED <<phase, ring, head, count, cursor, staged, inflight, sent,
-                   owed, unreachable, abandoned, refused, overflow>>
+                   owed, unreachable, abandoned, refused, overflow, cut>>
 
 \* rocketnet_server_transport_disconnect_client on a running server: the slot
 \* ends now; its burst is appended at (head + count) % RingSize while fewer
@@ -130,7 +132,7 @@ Kick(i) ==
                /\ overflow' = (overflow \/ count + 1 > RingSize)
           ELSE UNCHANGED <<ring, count, owed, overflow>>
     /\ UNCHANGED <<phase, nextSess, head, cursor, staged, inflight, sent,
-                   unreachable, abandoned, refused>>
+                   unreachable, abandoned, refused, cut>>
 
 \* rocketnet_server_stop: every connected slot, in slot order, ends and its
 \* burst is appended (rocketnet_server_transport_disconnect_client_shutdown);
@@ -152,7 +154,7 @@ Stop ==
     /\ slot' = [i \in Slots |-> 0]
     /\ phase' = "STOPPING"
     /\ UNCHANGED <<nextSess, head, cursor, staged, inflight, sent, unreachable,
-                   abandoned, refused>>
+                   abandoned, refused, cut>>
 
 \* The head leaves while its burst is complete; the cursor is an offset from
 \* the head, so it moves back with it. The entry is cleared as its key is
@@ -198,7 +200,7 @@ SealOne ==
                    /\ UNCHANGED <<staged, sent>>
              /\ PopAfter([ring EXCEPT ![idx].sealed = @ + 1], c + 1)
              /\ UNCHANGED abandoned
-    /\ UNCHANGED <<phase, slot, nextSess, inflight, owed, unreachable, overflow>>
+    /\ UNCHANGED <<phase, slot, nextSess, inflight, owed, unreachable, overflow, cut>>
 
 \* The step's flush hands the staged frames to the transport.
 Flush ==
@@ -206,7 +208,7 @@ Flush ==
     /\ inflight' = inflight + staged
     /\ staged' = 0
     /\ UNCHANGED <<phase, slot, nextSess, ring, head, count, cursor, sent, owed,
-                   unreachable, abandoned, refused, overflow>>
+                   unreachable, abandoned, refused, overflow, cut>>
 
 \* Environment: the kernel or the transport's worker finishes a flushed
 \* frame, and its staging comes back.
@@ -214,14 +216,14 @@ Complete ==
     /\ inflight > 0
     /\ inflight' = inflight - 1
     /\ UNCHANGED <<phase, slot, nextSess, ring, head, count, cursor, staged, sent,
-                   owed, unreachable, abandoned, refused, overflow>>
+                   owed, unreachable, abandoned, refused, overflow, cut>>
 
 \* Environment: a waiting burst's destination has no link-layer address.
 LoseRoute(s) ==
     /\ s \in owed /\ s \notin unreachable
     /\ unreachable' = unreachable \cup {s}
     /\ UNCHANGED <<phase, slot, nextSess, ring, head, count, cursor, staged,
-                   inflight, sent, owed, abandoned, refused, overflow>>
+                   inflight, sent, owed, abandoned, refused, overflow, cut>>
 
 \* Environment: the destination is learned again (a reply MAC refreshed).
 \* A burst already abandoned stays abandoned: its entry is complete and the
@@ -230,16 +232,21 @@ FindRoute(s) ==
     /\ s \in unreachable
     /\ unreachable' = unreachable \ {s}
     /\ UNCHANGED <<phase, slot, nextSess, ring, head, count, cursor, staged,
-                   inflight, sent, owed, abandoned, refused, overflow>>
+                   inflight, sent, owed, abandoned, refused, overflow, cut>>
 
-\* The stop step that finds the ring empty, its seals flushed, tells the
-\* I/O to stop (rocketnet_server_transport_io_stop). The single-shot stop
-\* told it at once.
+\* The stop step that finds the ring empty, its seals flushed and every
+\* flushed send finished (the transport's send_idle) tells the I/O to stop
+\* (rocketnet_server_transport_io_stop). The single-shot stop told it at
+\* once; "stopinflight" tells it with a flushed send unfinished, which the
+\* stopping I/O cuts off (the IOCP and RIO send workers retire a bank they
+\* find stopping).
 RequestIoStop ==
     /\ phase = "STOPPING"
     /\ staged = 0
     /\ count = 0 \/ Defect = "singleshot"
+    /\ inflight = 0 \/ Defect \in {"singleshot", "stopinflight"}
     /\ phase' = "IOSTOP"
+    /\ cut' = (cut \/ inflight > 0)
     /\ UNCHANGED <<slot, nextSess, ring, head, count, cursor, staged, inflight,
                    sent, owed, unreachable, abandoned, refused, overflow>>
 
@@ -248,7 +255,7 @@ IoStopped ==
     /\ phase = "IOSTOP"
     /\ phase' = "STOPPED"
     /\ UNCHANGED <<slot, nextSess, ring, head, count, cursor, staged, inflight,
-                   sent, owed, unreachable, abandoned, refused, overflow>>
+                   sent, owed, unreachable, abandoned, refused, overflow, cut>>
 
 \* STOPPED is the end of the run, a stutter here (a later start builds a new
 \* transport and a new ring).
@@ -284,7 +291,7 @@ TypeOK ==
     /\ staged \in 0..BankSize /\ inflight \in 0..BankSize
     /\ sent \in [Sessions -> 0..Burst]
     /\ owed \subseteq Sessions /\ unreachable \subseteq Sessions /\ abandoned \subseteq Sessions
-    /\ refused \in BOOLEAN /\ overflow \in BOOLEAN
+    /\ refused \in BOOLEAN /\ overflow \in BOOLEAN /\ cut \in BOOLEAN
 
 \* The ring never holds more than its entries: an append always finds a free one.
 RingHolds == ~overflow /\ count <= RingSize
@@ -317,6 +324,10 @@ HeadNeverDone == count > 0 => ring[head].sealed < Burst
 \* transport cannot reach.
 FullBurstBeforeStopped ==
     phase \in {"IOSTOP", "STOPPED"} => \A s \in owed : sent[s] = Burst \/ s \in abandoned
+
+\* The I/O is told to stop only once every send it was handed has finished:
+\* no flushed disconnect packet is cut off by the stop.
+NoSendCutAtStop == ~cut
 
 \* A stop finishes.
 StopFinishes == phase = "STOPPING" ~> phase = "STOPPED"

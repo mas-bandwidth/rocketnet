@@ -106,6 +106,12 @@ static inline int rocketnet_server_gso_recv_vlen( int num_packets, bool gro )
 #define ROCKETNET_GSO_MAX_SEGMENTS                                          64
 #define ROCKETNET_GSO_MAX_SUPER_BYTES                                    65000
 
+// a full socket keeps the TX worker's bank for the next update; this is how
+// long the worker waits for main's wake before it tries the socket again
+// anyway (a stopping server publishes no more updates)
+
+#define ROCKETNET_GSO_SEND_RETRY_SECONDS                                 0.001
+
 // feature bits reported by rocketnet_server_gso_features: what the runtime
 // probe found and the transport is actually using
 
@@ -127,7 +133,7 @@ static inline int rocketnet_server_gso_recv_vlen( int num_packets, bool gro )
 #define ROCKETNET_SERVER_GSO_COUNTER_PACKETS_RECEIVED               1
 #define ROCKETNET_SERVER_GSO_COUNTER_SEND_SYSCALLS                  2
 #define ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_SYSCALLS               3
-#define ROCKETNET_SERVER_GSO_COUNTER_SEND_DROPPED                   4       // sendmmsg refused and the packets were dropped, counted never resent
+#define ROCKETNET_SERVER_GSO_COUNTER_SEND_DROPPED                   4       // sendmmsg refused a message for its destination (a full socket drops nothing), counted never resent
 #define ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_SIZE           5       // segment outside [server min, receive ceiling]
 #define ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_OVERFLOW       6       // staging full: the queue could not keep up
 #define ROCKETNET_SERVER_GSO_COUNTER_GSO_SENDS                      7       // sendmmsg messages that carried a UDP_SEGMENT cmsg
@@ -181,6 +187,11 @@ void rocketnet_server_gso_send_packets( struct rocketnet_server_gso_t * gso );
 // producers fill, whatever the queue count. Main thread.
 int rocketnet_server_gso_send_room( struct rocketnet_server_gso_t * gso );
 
+// true once the producer is empty, no bank waits for the transmit worker and
+// the worker has returned every bank it took, its sends finished. Main
+// thread; a send mutex held by the worker reads as not idle.
+bool rocketnet_server_gso_send_idle( struct rocketnet_server_gso_t * gso );
+
 // Receive workers stage into per-queue producer/ready/main banks off main.
 // receive_packets try-swaps ownership and gathers within the caller budget;
 // unconsumed tails stay main-owned until a later receive call. process_packets
@@ -195,6 +206,7 @@ struct rocketnet_server_socket_process_packets_t * rocketnet_server_gso_process_
 // into every following create. fail_receives makes the next count recvmmsg
 // calls on any worker answer -1 with error without reaching the kernel;
 // fail_sends does the same for the next count sendmmsg calls of a flush.
+// The send seams below run on a fixture with no socket and no thread.
 void rocketnet_server_gso_test_force_create_flags( int flags );
 void rocketnet_server_gso_test_fail_receives( struct rocketnet_server_gso_t * gso, int count, int error );
 void rocketnet_server_gso_test_fail_sends( struct rocketnet_server_gso_t * gso, int count, int error );
@@ -204,10 +216,13 @@ bool rocketnet_server_gso_test_receive_ready( struct rocketnet_server_gso_t * gs
 bool rocketnet_server_gso_test_send_idle( struct rocketnet_server_gso_t * gso );
 // Deterministic ownership/full/contended/stop and retained-RX-tail regression.
 bool rocketnet_server_gso_test_worker_handoff();
-// A refused sendmmsg: a full socket drops the rest of that batch (at most
-// ROCKETNET_GSO_SEND_BATCH messages) and the next batch is tried; any other
-// errno drops the one refused message and sends the rest.
+// A refused sendmmsg: an errno other than a full socket's drops the one
+// refused message and sends the rest.
 bool rocketnet_server_gso_test_send_refusals();
+// A full socket mid-flush, on a fake socket: the flush stops at the first
+// unsent message, drops nothing, and the next attempt sends the rest in
+// order without counting an earlier dropped run twice.
+bool rocketnet_server_gso_test_send_full_keeps_rest();
 // One receive drain fed endless discards returns within its read budget.
 bool rocketnet_server_gso_test_drain_budget();
 bool rocketnet_server_gso_test_drain_room();

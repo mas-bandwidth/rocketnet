@@ -27,7 +27,7 @@ operation as `send_capacity_available` returns it.
 | `Stop` | `rocketnet_server_stop`: every connected slot's burst appended (`rocketnet_server_transport_disconnect_client_shutdown`), then STOPPING |
 | `SealOne` | one position of the drain's pass: a complete entry passed over, an unreachable start abandoning its burst, or one packet sealed while `Room > 0`; a completed head leaves with the cursor |
 | `Flush` | the stop step's or the update's flush |
-| `RequestIoStop` | the stop step that finds the ring empty and its seals flushed calls `rocketnet_server_transport_io_stop` |
+| `RequestIoStop` | the stop step that finds the ring empty, its seals flushed and the transport's `send_idle` true (every flushed send finished) calls `rocketnet_server_transport_io_stop` |
 | `IoStopped` | the workers exit; `rocketnet_server_stopped` is true |
 | `Connect(i)` | environment: a client takes a free slot |
 | `Complete` | environment: the kernel or worker finishes a flushed frame |
@@ -48,6 +48,8 @@ operation as `send_capacity_available` returns it.
   (every client connected at the stop, every burst still waiting from a
   kick) has been handed whole to the transport, but for a destination the
   transport cannot reach.
+- `NoSendCutAtStop`: the I/O is told to stop only once every send it was
+  handed has finished, so a stopping I/O cuts off no flushed disconnect packet.
 - `StopFinishes` (liveness): STOPPING leads to STOPPED, under weak fairness of
   the drain, the flush, the transport's completions and the I/O stop.
 
@@ -68,6 +70,7 @@ control) against a staging of three, so it spreads across steps.
 | `MCServerStopSpreadBrokenSteadyCapOffByOne.cfg` | `RingHolds` violated |
 | `MCServerStopSpreadBrokenNoSkip.cfg` | `SealedWithinBurst` violated |
 | `MCServerStopSpreadBrokenUnreachableStalls.cfg` | `StopFinishes` violated (deadlock check off: the stall is a stuck state) |
+| `MCServerStopSpreadBrokenStopInFlight.cfg` | `NoSendCutAtStop` violated |
 
 ## The reversed witnesses
 
@@ -95,6 +98,14 @@ complete), client 1's second packet is sealed, the destination is found
 again, and the pass seals client 2's entry to four. In the code the skip is
 the `burst->sealed == ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS` test at the top
 of the drain's loop.
+
+`Defect = "stopinflight"` tells the I/O to stop once the ring is empty and
+its seals flushed, without waiting for the transport to finish them: TLC's
+trace stops one client, seals and flushes its burst, and requests the I/O
+stop with those frames in flight. On IOCP and RIO the send worker that wakes
+to a stopping transport retires the bank it finds
+(docs/audits/2026-10-24-area-transports-windows.md); the stop step now waits
+for `send_idle` (`rocketnet_server_transport_stop_step`).
 
 `Defect = "unreachablestalls"` ends the drain at an unreachable start as at a
 full staging: the abandoned burst waits forever and STOPPING never reaches

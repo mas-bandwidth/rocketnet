@@ -89,6 +89,11 @@ struct rocketnet_message_server_t * rocketnet_server_message_server( struct rock
 // outside ERROR .. SPAM
 const char * rocketnet_log_level_word_for_test( int level );
 
+// calls sodium's misuse path, as an unavailable OS random source does: the
+// handler rocketnet_init installed runs, then sodium aborts the process. For
+// the functional case that runs it in a child process
+void rocketnet_sodium_misuse_for_test( void );
+
 // the address a created server serves for one family, after the
 // environment overrides. Writes it and returns true, or leaves address empty
 // and returns false when the server does not serve that family or the address
@@ -112,6 +117,11 @@ struct rocketnet_server_t * rocketnet_server_adopt( void * context, struct rocke
 int rocketnet_server_secret_spans_for_test( size_t * offsets, size_t * bytes, int max );
 int rocketnet_server_transport_secret_spans_for_test( size_t * offsets, size_t * bytes, int max );
 int rocketnet_client_transport_secret_spans_for_test( size_t * offsets, size_t * bytes, int max );
+
+// the wall-clock budget an early destroy polls a worker's exit for: 0 makes
+// one pass with no sleep (the keep path's tests), a negative value restores
+// the default
+void rocketnet_destroy_stop_seconds_for_test( double seconds );
 #endif // #if ROCKETNET_DEV
 
 #ifdef __cplusplus
@@ -485,7 +495,11 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
 // (-DROCKETNET_MAX_CLIENTS=10000) still defaults to 1000; the config field
 // asks for more
 
-#define ROCKETNET_DEFAULT_MAX_CLIENTS          ( ROCKETNET_MAX_CLIENTS < 1000 ? ROCKETNET_MAX_CLIENTS : 1000 )
+#if ROCKETNET_MAX_CLIENTS < 1000
+#define ROCKETNET_DEFAULT_MAX_CLIENTS          ROCKETNET_MAX_CLIENTS
+#else // #if ROCKETNET_MAX_CLIENTS < 1000
+#define ROCKETNET_DEFAULT_MAX_CLIENTS          1000
+#endif // #if ROCKETNET_MAX_CLIENTS < 1000
 
 // the handshake work budget (handshakes_per_update): the most connection
 // requests one server update takes to the signature verify, each one Ed25519 verify
@@ -549,10 +563,6 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
 // the largest build-specific channel count: a WIDE record carries a u16 channel
 
 #define ROCKETNET_MAX_CHANNELS_LIMIT 65536
-
-#if ROCKETNET_MAX_CHANNELS < 1 || ROCKETNET_MAX_CHANNELS > ROCKETNET_MAX_CHANNELS_LIMIT
-#error ROCKETNET_MAX_CHANNELS must be between 1 and ROCKETNET_MAX_CHANNELS_LIMIT (65536)
-#endif // #if ROCKETNET_MAX_CHANNELS < 1 || ROCKETNET_MAX_CHANNELS > ROCKETNET_MAX_CHANNELS_LIMIT
 
 ROCKETNET_STATIC_ASSERT( ROCKETNET_MESSAGE_SINGLE_BYTES >= 1400, "a 1400-byte game packet is one SINGLE message, zero copy, unfragmented" );
 

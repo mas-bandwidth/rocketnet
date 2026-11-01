@@ -80,22 +80,34 @@ the tagged commit, found from the commit itself, and the release notes do not
 mention it. There is no separate per-release qualification record. The
 required runs are:
 
-- **CI** ([.github/workflows/ci.yml](../.github/workflows/ci.yml)), every job:
-  - `build-and-test`, named `<os> / <build_type> / <leg>`: Ubuntu 24.04 and
-    macOS 27 on arm64 (its rows are named `macos-15`), Debug and Release, four
-    legs per row (`unit`, `functional`, `checks`, `builds`);
-  - `windows / Release (<leg>)` (legs a, b and c);
-  - `XDP / libxdp 1.4 / Debug`, `happy path / <os>` and
-    `backend example / <backend>`;
-  - `asan + ubsan (<leg>)` (`unit suite`, `unit suite portable`,
-    `functional suite`) and `tsan (loopback soak)`;
-  - `fuzz smoke (libFuzzer, corpus replay)` and
-    `fuzz smoke NDEBUG (every fuzzer, corpus replay)`;
-  - `big endian s390x / <build_type>`, `standard conformance`,
-    `pinned libsodium (built from source)` and
-    `platform selftests / <os>`;
-  - `instruction count gate`, `validation tool selftests`,
-    `format check (clang-format 18)` and `runs-on-lint`.
+- **CI** ([.github/workflows/ci.yml](../.github/workflows/ci.yml)), the
+  per-commit tier, every job. A per-commit run finishes within two minutes of
+  the push: every per-commit job in every workflow carries a two-minute
+  `timeout-minutes`, and `tools/check_ci_budget.py` (in the lint job) refuses
+  one without it. The per-commit jobs:
+  - `build-and-test`, named `<os> / <build_type> / <leg>`: Ubuntu 24.04
+    Debug `unit` and `functional` (which carries the libxdp 1.4 XDP cell in
+    the runner kernel guest), Release `unit` (which also runs the `builds`
+    leg's steps), `functional` and `checks`; macOS 27 on arm64 (rows named `macos-15`) Debug `unit` and
+    Release `functional`;
+  - `happy path / <os>` (ubuntu-24.04,
+    windows; the Windows row is the per-commit MSVC whole-tree build);
+  - `asan + ubsan (<leg>)` (`unit suite`, `functional suite`) and
+    `tsan (loopback soak)`;
+  - `fuzz smoke (libFuzzer, corpus replay)`, `big endian s390x / Debug`,
+    `instruction count gate` (restores the pinned toolchain the nightly tier
+    caches; red on a cold cache) and
+    `lint (workflows, format, standard, tool selftests)`.
+- **Nightly CI** ([.github/workflows/nightly-ci.yml](../.github/workflows/nightly-ci.yml)):
+  ci.yml with `full: true`, every job and step with no time bound, including
+  everything the per-commit tier leaves out (listed in nightly-ci.yml's
+  header). Run it on the release commit with
+  `gh workflow run nightly-ci.yml --ref main` once that commit is `main`'s
+  head, and require it green.
+- **msan** ([.github/workflows/msan.yml](../.github/workflows/msan.yml)) and
+  **CBMC** ([.github/workflows/cbmc.yml](../.github/workflows/cbmc.yml)),
+  nightly: `MemorySanitizer` and `cbmc (arithmetic leaf proofs)`, dispatched
+  on the release commit the same way.
 - **nightly** ([.github/workflows/nightly.yml](../.github/workflows/nightly.yml)):
   `tsan (threaded transport) (main)` on the release commit. Run it with
   workflow_dispatch on `main` (`gh workflow run nightly.yml --ref main`) once
@@ -108,10 +120,9 @@ required runs are:
   `static analysis (gcc -fanalyzer)` and
   `static analysis (clang-tidy, cppcheck)`.
 - **TLC records** ([.github/workflows/tlc.yml](../.github/workflows/tlc.yml)):
-  `Model records are current`.
-- **CBMC** ([.github/workflows/cbmc.yml](../.github/workflows/cbmc.yml)):
-  `cbmc (arithmetic leaf proofs)`, when the change touches `sdk/**` or
-  `proofs/cbmc/**`.
+  `Model records are current`, a nightly workflow: run it with
+  workflow_dispatch on the release commit
+  (`gh workflow run tlc.yml --ref main`).
 - **docs** ([.github/workflows/docs.yml](../.github/workflows/docs.yml)):
   `docs (MrDocs HTML reference build)`.
 - **Release Check** ([.github/workflows/release-check.yml](../.github/workflows/release-check.yml)):

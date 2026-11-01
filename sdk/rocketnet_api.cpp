@@ -55,6 +55,9 @@ static_assert( sizeof( struct rocketnet_receipt_t ) == sizeof( struct rocketnet_
                "the public receipt is the message receipt" );
 
 static_assert( ROCKETNET_SEND_BUDGET_MAX_KBPS == ROCKETNET_SEND_KBPS_UNLIMITED - 1, "every budget below the unlimited sentinel is a budget" );
+#if ROCKETNET_XDP
+static_assert( (uint64_t) ROCKETNET_XDP_UMEM_FRAMES * ROCKETNET_XDP_FRAME_SIZE == 192ULL * 1024 * 1024 && ROCKETNET_XDP_UMEM_FRAMES == 49152, "rocketnet.h states the xdp UMEM as 49152 frames, 192 MiB, per queue" );
+#endif // #if ROCKETNET_XDP
 static_assert( ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS <= ROCKETNET_SEND_BUDGET_MAX_KBPS && ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS <= ROCKETNET_SEND_BUDGET_MAX_KBPS, "the default budgets are valid budgets" );
 
 uint32_t rocketnet_version( void )
@@ -580,6 +583,14 @@ static inline uint64_t rn_round_up_alignment( uint64_t bytes )
 
 static const uint64_t rn_client_header_bytes = rn_round_up_alignment( sizeof( struct rocketnet_client_t ) );
 
+// The required_memory calls size a region the caller puts its own heap over
+// (tlsf or similar), so they are conservative, not exact: the planned peak
+// plus this fixed slack for that heap's block headers, alignment and
+// fragmentation. tests/test_unit_memory_plan_lifecycle.cpp holds the slack to
+// 64 bytes for each allocation a lifecycle makes.
+
+static const uint64_t rn_required_memory_slack_bytes = (uint64_t) 1024 * 1024;
+
 struct rocketnet_message_client_t * rocketnet_client_message_client( struct rocketnet_client_t * client )
 {
     return client ? ( client->connection ? client->connection : client->retiring ) : NULL;
@@ -1067,18 +1078,19 @@ static size_t rn_client_required_memory_current( const struct rocketnet_client_c
     if ( rn_client_config_valid( &transport, &message ) != ROCKETNET_STATUS_OK )
         return 0;
 
-    const uint64_t connection_bytes = rocketnet_message_client_required_memory( &message );
+    const uint64_t connection_bytes = rocketnet_message_client_required_memory( &message, 0 );
     if ( connection_bytes == 0 )
         return 0;
 
     // the peak over the lifecycle: create's one block as the allocator sees
     // it, plus the transport connect creates for the candidate it grants;
     // disconnect retires it and the next connect frees it before it creates
-    // the next, so a reconnect takes the same bytes again
+    // the next, so a reconnect takes the same bytes again; then the slack
 
     uint64_t total = rn_client_header_bytes + connection_bytes;
     if ( !rocketnet_memory_add( total, 1, rocketnet_allocation_overhead() ) ||
-         !rocketnet_memory_add( total, 1, rocketnet_client_transport_ladder_allocator_bytes( &transport ) ) )
+         !rocketnet_memory_add( total, 1, rocketnet_client_transport_ladder_allocator_bytes( &transport ) ) ||
+         !rocketnet_memory_add( total, 1, rn_required_memory_slack_bytes ) )
         return 0;
 
     return total > (uint64_t) SIZE_MAX ? 0 : (size_t) total;
@@ -1140,7 +1152,7 @@ static struct rocketnet_client_t * rn_client_create_current( void * context, con
         return NULL;
     }
 
-    const uint64_t connection_bytes = rocketnet_message_client_required_memory( &message );
+    const uint64_t connection_bytes = rocketnet_message_client_required_memory( &message, 0 );
     if ( connection_bytes == 0 )
     {
         if ( status )
@@ -1222,10 +1234,22 @@ struct rocketnet_client_t * rocketnet_client_create( void * context, const struc
 
 static void rn_client_connection_counts( struct rocketnet_message_client_t * message_client, uint64_t counts[RN_CLIENT_COUNT], struct rocketnet_client_transport_stats_t * transport_stats );
 
-// An early destroy drives a caller-stepped transport through its stop with
-// at most this many updates; a threaded worker that has not exited by then is
-// left owning its memory rather than freed under it.
-static const int RN_DESTROY_STOP_UPDATES = 32;
+// An early destroy steps the retiring transport and polls its stop, sleeping
+// a millisecond between polls, for at most this long: a threaded worker
+// needs wall-clock time to see its stop and exit. One that has not exited by
+// then is left owning its memory rather than freed under it.
+static const double RN_DESTROY_STOP_SECONDS = 1.0;
+
+#if ROCKETNET_DEV
+static double rn_destroy_stop_seconds = RN_DESTROY_STOP_SECONDS;
+
+void rocketnet_destroy_stop_seconds_for_test( double seconds )
+{
+    rn_destroy_stop_seconds = seconds < 0.0 ? RN_DESTROY_STOP_SECONDS : seconds;
+}
+#else
+static const double rn_destroy_stop_seconds = RN_DESTROY_STOP_SECONDS;
+#endif // #if ROCKETNET_DEV
 
 // The retiring connection is destroyed. Its packet, byte and message totals
 // belong to that connection and are not kept. Not-connected drops have no
@@ -1402,19 +1426,24 @@ void rocketnet_client_destroy( struct rocketnet_client_t * client )
     if ( !rocketnet_client_disconnected( client ) )
     {
         // Release has no assert: say what was skipped, count it, then do the
-        // shutdown the caller skipped. Updates are bounded and never sleep: a
-        // worker that has not exited still owns the memory, so it is kept.
+        // shutdown the caller skipped, polling for at most
+        // RN_DESTROY_STOP_SECONDS: a worker that has not exited by then still
+        // owns the memory, so it is kept.
         rocketnet_api_misuse_record();
 
         rocketnet_error( "rocketnet_client_destroy: the client is not disconnected; call rocketnet_client_disconnect and poll rocketnet_client_disconnected before destroy" );
 
         rocketnet_client_disconnect( client );
 
-        for ( int update = 0; update < RN_DESTROY_STOP_UPDATES && !rocketnet_client_disconnected( client ); update++ )
+        const double deadline = rocketnet_platform_time() + rn_destroy_stop_seconds;
+        for ( ;; )
         {
             struct rocketnet_client_transport_t * transport = client->retiring ? rocketnet_message_client_transport( client->retiring ) : NULL;
             if ( transport )
                 rocketnet_client_transport_update( transport, 0.0 );
+            if ( rocketnet_client_disconnected( client ) || rocketnet_platform_time() >= deadline )
+                break;
+            rocketnet_platform_sleep( 0.001 );
         }
 
         if ( !rocketnet_client_disconnected( client ) )
@@ -1683,7 +1712,11 @@ uint8_t * rocketnet_client_start_message( struct rocketnet_client_t * client, in
         return NULL;
     }
 
-    uint8_t * pointer = rocketnet_message_client_start( client->connection, channel, (int) reliability, max_bytes );
+    static_assert( sizeof( reliability ) == sizeof( int ), "rocketnet_reliability_t is int-sized" );
+    int reliability_value = 0;
+    memcpy( &reliability_value, &reliability, sizeof( reliability_value ) );
+
+    uint8_t * pointer = rocketnet_message_client_start( client->connection, channel, reliability_value, max_bytes );
 
     // a start the connection's message memory cannot hold ends the connection (MESSAGE_MEMORY_EXHAUSTED)
 
@@ -1782,7 +1815,11 @@ bool rocketnet_client_can_send_message( const struct rocketnet_client_t * client
     if ( !client->connection )
         return false;
 
-    return rn_message_object_send_room( &client->connection->object, 0, channel, (int) reliability, max_bytes );
+    static_assert( sizeof( reliability ) == sizeof( int ), "rocketnet_reliability_t is int-sized" );
+    int reliability_value = 0;
+    memcpy( &reliability_value, &reliability, sizeof( reliability_value ) );
+
+    return rn_message_object_send_room( &client->connection->object, 0, channel, reliability_value, max_bytes );
 }
 
 const struct rocketnet_message_batch_t * rocketnet_client_receive_messages( struct rocketnet_client_t * client )
@@ -1803,6 +1840,11 @@ const struct rocketnet_message_batch_t * rocketnet_client_receive_messages( stru
 int rocketnet_client_receipts( struct rocketnet_client_t * client, struct rocketnet_receipt_t * out, int capacity )
 {
     if ( !rocketnet_api_null_guard( client ) )
+        return 0;
+
+    // a NULL out with room to fill is misuse in every state, as the connection's own read counts it
+
+    if ( capacity > 0 && !rocketnet_api_null_guard( out ) )
         return 0;
 
     struct rocketnet_message_client_t * connection = client->connection ? client->connection : ( client->receipts_retained ? client->retiring : NULL );
@@ -2268,12 +2310,12 @@ static size_t rn_server_required_memory_current( const struct rocketnet_server_c
         return 0;
     }
 
-    const uint64_t running_bytes = rocketnet_message_server_required_memory( &transport, &message );
+    const uint64_t running_bytes = rocketnet_message_server_required_memory( &transport, &message, 0 );
 
     // the peak over the lifecycle: create's one block as the allocator sees
     // it, plus the transport start creates for the candidate it grants; stop
     // retires it and the next start frees it before it creates the next, so
-    // a restart takes the same bytes again
+    // a restart takes the same bytes again; then the slack
 
     const uint64_t transport_bytes = rocketnet_server_transport_ladder_allocator_bytes( &transport );
 
@@ -2283,7 +2325,8 @@ static size_t rn_server_required_memory_current( const struct rocketnet_server_c
         return 0;
 
     uint64_t total = rn_server_header_bytes + running_bytes;
-    if ( !rocketnet_memory_add( total, 1, rocketnet_allocation_overhead() ) || !rocketnet_memory_add( total, 1, transport_bytes ) )
+    if ( !rocketnet_memory_add( total, 1, rocketnet_allocation_overhead() ) || !rocketnet_memory_add( total, 1, transport_bytes ) ||
+         !rocketnet_memory_add( total, 1, rn_required_memory_slack_bytes ) )
         return 0;
 
     return total > (uint64_t) SIZE_MAX ? 0 : (size_t) total;
@@ -2437,7 +2480,7 @@ static struct rocketnet_server_t * rn_server_create_current( void * context, con
         return NULL;
     }
 
-    const uint64_t running_bytes = rocketnet_message_server_required_memory( &transport, &message );
+    const uint64_t running_bytes = rocketnet_message_server_required_memory( &transport, &message, 0 );
     if ( running_bytes == 0 )
     {
         sodium_memzero( &transport, sizeof( transport ) );
@@ -2485,20 +2528,21 @@ static struct rocketnet_server_t * rn_server_create_current( void * context, con
     // pair for this object. The game reads the public key
     // (rocketnet_server_public_key) and registers it with its backend; start
     // refuses the published development key in a production build; destroy
-    // wipes the secret
+    // wipes the secret. Neither can fail: sodium's keypair and base
+    // multiplication return 0, and an unavailable OS random source aborts
+    // the process inside sodium after rocketnet_init's misuse handler logs it
 
-    if ( sodium_is_zero( transport.server_secret_key, sizeof( transport.server_secret_key ) )
-             ? rocketnet_generate_server_keypair( transport.server_public_key, transport.server_secret_key ) != ROCKETNET_STATUS_OK
-             : crypto_scalarmult_base( transport.server_public_key, transport.server_secret_key ) != 0 )
+    if ( sodium_is_zero( transport.server_secret_key, sizeof( transport.server_secret_key ) ) )
     {
-        sodium_memzero( &transport, sizeof( transport ) );
-
-        if ( !memory )
-            rocketnet_free( context, base );
-        if ( status )
-            *status = ROCKETNET_STATUS_CRYPTO_INIT_FAILED;
-
-        return NULL;
+        const enum rocketnet_status_t generated = rocketnet_generate_server_keypair( transport.server_public_key, transport.server_secret_key );
+        rocketnet_assert( generated == ROCKETNET_STATUS_OK );
+        (void) generated;
+    }
+    else
+    {
+        const int derived = crypto_scalarmult_base( transport.server_public_key, transport.server_secret_key );
+        rocketnet_assert( derived == 0 );
+        (void) derived;
     }
 
     struct rocketnet_server_t * server = (struct rocketnet_server_t *) base;
@@ -2631,32 +2675,27 @@ void rocketnet_server_stop( struct rocketnet_server_t * server )
     if ( !rocketnet_api_null_guard( server ) || !server->running )
         return;
 
+    // a running server always holds a server transport: start creates the
+    // message server over one, and so does every development adopter
+
     struct rocketnet_server_transport_t * transport = rn_server_transport( server );
-    if ( transport )
-    {
-        for ( int i = 0; i < server->max_clients; i++ )
-        {
-            // Disconnect the transport first, its burst appended to the
-            // disconnect ring. The message kick's regular link callback then
-            // finds a free slot.
-            if ( rocketnet_server_transport_is_client_connected( transport, i ) )
-                rocketnet_server_transport_disconnect_client_shutdown( transport, i );
+    rocketnet_assert( transport );
 
-            rn_message_object_kick( &server->running->object, i, ROCKETNET_DISCONNECT_REASON_NONE );
-        }
-    }
-    else
+    for ( int i = 0; i < server->max_clients; i++ )
     {
-        rocketnet_server_disconnect_all_clients( server );
+        // Disconnect the transport first, its burst appended to the
+        // disconnect ring. The message kick's regular link callback then
+        // finds a free slot.
+        if ( rocketnet_server_transport_is_client_connected( transport, i ) )
+            rocketnet_server_transport_disconnect_client_shutdown( transport, i );
 
-        rocketnet_message_server_send_packets( server->running );
+        rn_message_object_kick( &server->running->object, i, ROCKETNET_DISCONNECT_REASON_NONE );
     }
 
     server->retiring = server->running;
     server->running = NULL;
 
-    if ( transport )
-        rocketnet_server_transport_stop( transport );
+    rocketnet_server_transport_stop( transport );
 }
 
 // proofs/tla/ServerSession.tla StopCompletes: a stopping server reports stopped only
@@ -2735,19 +2774,24 @@ void rocketnet_server_destroy( struct rocketnet_server_t * server )
     if ( !rocketnet_server_stopped( server ) )
     {
         // Release has no assert: say what was skipped, count it, then do the
-        // shutdown the caller skipped. Updates are bounded and never sleep: a
-        // worker that has not exited still owns the memory, so it is kept.
+        // shutdown the caller skipped, polling for at most
+        // RN_DESTROY_STOP_SECONDS: a worker that has not exited by then still
+        // owns the memory, so it is kept.
         rocketnet_api_misuse_record();
 
         rocketnet_error( "rocketnet_server_destroy: the server is not stopped; call rocketnet_server_stop and poll rocketnet_server_stopped before destroy" );
 
         rocketnet_server_stop( server );
 
-        for ( int update = 0; update < RN_DESTROY_STOP_UPDATES && !rocketnet_server_stopped( server ); update++ )
+        const double deadline = rocketnet_platform_time() + rn_destroy_stop_seconds;
+        for ( ;; )
         {
             struct rocketnet_server_transport_t * transport = server->retiring ? rocketnet_message_server_transport( server->retiring ) : NULL;
             if ( transport )
                 rocketnet_server_transport_update( transport, 0.0 );
+            if ( rocketnet_server_stopped( server ) || rocketnet_platform_time() >= deadline )
+                break;
+            rocketnet_platform_sleep( 0.001 );
         }
 
         if ( !rocketnet_server_stopped( server ) )
@@ -3024,7 +3068,11 @@ uint8_t * rocketnet_server_start_message( struct rocketnet_server_t * server, ui
         return NULL;
     }
 
-    return rocketnet_message_server_start( rn_server( server ), (int) destination_id, channel, reliability, max_bytes );
+    static_assert( sizeof( reliability ) == sizeof( int ), "rocketnet_reliability_t is int-sized" );
+    int reliability_value = 0;
+    memcpy( &reliability_value, &reliability, sizeof( reliability_value ) );
+
+    return rocketnet_message_server_start( rn_server( server ), (int) destination_id, channel, reliability_value, max_bytes );
 }
 
 // finish and abort act on the one pending start (rn_message_object_t
@@ -3074,7 +3122,11 @@ bool rocketnet_server_can_send_message( const struct rocketnet_server_t * server
     if ( !server->running )
         return false;
 
-    return rn_message_object_send_room( &rn_server( server )->object, client_index, channel, (int) reliability, max_bytes );
+    static_assert( sizeof( reliability ) == sizeof( int ), "rocketnet_reliability_t is int-sized" );
+    int reliability_value = 0;
+    memcpy( &reliability_value, &reliability, sizeof( reliability_value ) );
+
+    return rn_message_object_send_room( &rn_server( server )->object, client_index, channel, reliability_value, max_bytes );
 }
 
 void rocketnet_server_abort_message( struct rocketnet_server_t * server )
@@ -3106,6 +3158,11 @@ int rocketnet_server_receipts( struct rocketnet_server_t * server, int client_in
     if ( !rocketnet_api_null_guard( server ) )
         return 0;
 
+    // a NULL out with room to fill is misuse in every state, as the slot's own read counts it
+
+    if ( capacity > 0 && !rocketnet_api_null_guard( out ) )
+        return 0;
+
     int slot;
     if ( !rn_server_slot( server, client_index, &slot ) )
         return 0;
@@ -3118,17 +3175,22 @@ enum rocketnet_status_t rocketnet_server_set_send_kbps( struct rocketnet_server_
     if ( !rocketnet_api_null_guard( server ) )
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
 
+    // an index outside 0 .. max_clients - 1 is misuse, counted before the rate is read
+
+    int slot;
+    const bool live = rn_server_slot( server, client_index, &slot );
+    if ( !live && ( client_index < 0 || client_index >= server->max_clients ) )
+        return ROCKETNET_STATUS_INVALID_ARGUMENT;
+
     int32_t resolved = 0;
     const enum rocketnet_status_t range = rn_send_kbps_runtime( "server", kbps, ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS, &resolved );
     if ( range != ROCKETNET_STATUS_OK )
         return range;
 
-    int slot;
-    if ( !rn_server_slot( server, client_index, &slot ) )
-    {
-        // an index outside 0 .. max_clients - 1 is misuse; a stopped server has nothing to set, a plain no-op
-        return ( client_index < 0 || client_index >= server->max_clients ) ? ROCKETNET_STATUS_INVALID_ARGUMENT : ROCKETNET_STATUS_OK;
-    }
+    // a stopped server has nothing to set, a plain no-op
+
+    if ( !live )
+        return ROCKETNET_STATUS_OK;
 
     // a slot with no CONNECTED client has no budget to set, a plain no-op:
     // the slot's reset starts each connection at the config's rate

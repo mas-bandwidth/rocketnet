@@ -109,7 +109,7 @@ in this local example is reachable only from the same host.
 
 The create/start failure branch below is an excerpt, with `config`, `address`,
 and the example shutdown helper already defined. From
-[examples/backend_server.c](../examples/backend_server.c), lines 101 to 120:
+[examples/backend_server.c](../examples/backend_server.c), lines 109 to 128:
 
 ```c
     enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
@@ -176,8 +176,8 @@ endpoint authenticates the player's platform or account session first, derives
 the authoritative `uint64_t` `client_id` on the backend, and selects a server by
 region, available capacity, or match assignment before minting the token.
 
-The minted 768-byte connect token (`ROCKETNET_CONNECT_TOKEN_BYTES`, encoded as
-1024 base64 characters) binds:
+The minted 768-byte connect token (encoded as 1024 base64 characters, the
+`ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES` string with its NUL) binds:
 
 - `protocol_id`: 64-bit game protocol ID (`0x52434b544e455431` default via
   `ROCKETNET_BACKEND_PROTOCOL_ID`), which must be nonzero and match

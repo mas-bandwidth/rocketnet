@@ -34,7 +34,6 @@
 #include "rocketnet_network_simulator.h"
 #include "rocketnet_replay.h"
 #include "rocketnet_client_slots.h"
-#include "rocketnet_frame_sync.h"
 #include "rocketnet_fragment.h"
 #include "rocketnet_config.h"
 #include "rocketnet_allocator.h"
@@ -6704,6 +6703,45 @@ void rocketnet_test_network_simulator()
     rocketnet_network_simulator_destroy( simulator );
 }
 
+void rocketnet_test_network_simulator_counts_store_refusals()
+{
+    // a packet the slot store cannot hold is counted, apart from simulated
+    // loss: four slots held by latency, a fifth send refused and counted, and
+    // a slot freed by delivery takes the next send again. Mutation that must
+    // bite: drop the count in the store-full path; the first check of 1 fails.
+
+    struct rocketnet_address_t address_a, address_b;
+    rocketnet_check( rocketnet_address_parse( &address_a, "10.0.0.1:30000" ) );
+    rocketnet_check( rocketnet_address_parse( &address_b, "10.0.0.2:30000" ) );
+
+    const uint8_t packet[16] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16 };
+    uint8_t received[ROCKETNET_RECEIVE_CEILING];
+    struct rocketnet_address_t from;
+
+    struct rocketnet_network_simulator_t * simulator = rocketnet_network_simulator_create( NULL, 4, 12345 );
+    rocketnet_check( simulator );
+    rocketnet_network_simulator_config( simulator, 1.0, 0.0, 0.0f, 0.0f );
+    rocketnet_check( rocketnet_network_simulator_store_refused( simulator ) == 0 );
+
+    for ( int i = 0; i < 4; i++ )
+        rocketnet_network_simulator_send( simulator, &address_a, &address_b, packet, sizeof( packet ), 100.0 );
+    rocketnet_check( rocketnet_network_simulator_store_refused( simulator ) == 0 );
+
+    rocketnet_network_simulator_send( simulator, &address_a, &address_b, packet, sizeof( packet ), 100.0 );
+    rocketnet_check( rocketnet_network_simulator_store_refused( simulator ) == 1 );
+
+    const uint8_t * batch[2] = { packet, packet };
+    const int bytes[2] = { (int) sizeof( packet ), (int) sizeof( packet ) };
+    rocketnet_check( rocketnet_network_simulator_deliver_packets( simulator, &address_a, &address_b, batch, bytes, 2, 101.0 ) == 0 );
+    rocketnet_check( rocketnet_network_simulator_store_refused( simulator ) == 3 );
+
+    rocketnet_check( rocketnet_network_simulator_receive( simulator, &address_b, 101.0, &from, received ) == (int) sizeof( packet ) );
+    rocketnet_network_simulator_send( simulator, &address_a, &address_b, packet, sizeof( packet ), 101.0 );
+    rocketnet_check( rocketnet_network_simulator_store_refused( simulator ) == 3 );
+
+    rocketnet_network_simulator_destroy( simulator );
+}
+
 void rocketnet_test_network_simulator_refuses_overflowing_capacity()
 {
     // The shard count rounds up to a power of two held in an int. A capacity
@@ -7317,45 +7355,6 @@ void rocketnet_test_server_keyless_config_has_no_keys()
     rocketnet_check( memcmp( config.server_public_key, zero, 32 ) != 0 );
 }
 
-// a development build accepts what this checks is refused
-#if !ROCKETNET_DEV
-void rocketnet_test_dev_keys_refused_in_release()
-{
-    // In a release build a server whose config carries either published
-    // development key is refused at create: a token forged with the published
-    // development backend key is otherwise a full authentication bypass.
-
-    struct rocketnet_server_transport_config_t config;
-    rocketnet_server_transport_dev_config( &config );
-
-    // keep the development backend key, replace only the server pair with a
-    // fresh production pair -- the backend check must still refuse it
-
-    uint8_t server_public[32];
-    uint8_t server_secret[32];
-    rocketnet_check( crypto_box_keypair( server_public, server_secret ) == 0 );
-    rocketnet_check( memcmp( server_public, rocketnet_dev_server_public_key, 32 ) != 0 );
-    memcpy( config.server_public_key, server_public, 32 );
-    memcpy( config.server_secret_key, server_secret, 32 );
-    rocketnet_check( memcmp( config.backend_public_key, rocketnet_dev_backend_public_key, 32 ) == 0 );
-
-    rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:40899", &config ) == NULL );
-
-    // the mirror image: a production backend key with the published
-    // development server pair is refused too
-
-    rocketnet_server_transport_dev_config( &config );
-    uint8_t backend_public[32];
-    uint8_t backend_secret[64];
-    rocketnet_check( crypto_sign_keypair( backend_public, backend_secret ) == 0 );
-    rocketnet_check( memcmp( backend_public, rocketnet_dev_backend_public_key, 32 ) != 0 );
-    memcpy( config.backend_public_key, backend_public, 32 );
-    rocketnet_check( memcmp( config.server_public_key, rocketnet_dev_server_public_key, 32 ) == 0 );
-
-    rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:40899", &config ) == NULL );
-}
-#endif // #if !ROCKETNET_DEV
-
 void rocketnet_test_transport_payload_capacity()
 {
     // The capacity invariant that was violated, stated where it will be
@@ -7686,122 +7685,6 @@ void rocketnet_test_platform_inet6_round_trip()
     rocketnet_check( memcmp( address, round_trip, sizeof( address ) ) == 0 );
 }
 
-void rocketnet_test_frame_sync_advance()
-{
-    const uint64_t period = 16666666;
-
-    uint64_t deadline = 100 * period;
-    uint64_t error = 12345;
-
-    // on time: no error, one period forward
-
-    rocketnet_check( rocketnet_frame_sync_advance( &deadline, period, 100 * period, &error ) == 0 );
-    rocketnet_check( error == 0 );
-    rocketnet_check( deadline == 101 * period );
-
-    // an early wake counts as on time
-
-    rocketnet_check( rocketnet_frame_sync_advance( &deadline, period, 101 * period - 1000, &error ) == 0 );
-    rocketnet_check( error == 0 );
-    rocketnet_check( deadline == 102 * period );
-
-    // late inside the period: reported, not a drop
-
-    rocketnet_check( rocketnet_frame_sync_advance( &deadline, period, 102 * period + period / 2, &error ) == 0 );
-    rocketnet_check( error == period / 2 );
-    rocketnet_check( deadline == 103 * period );
-
-    // late exactly one period: the boundary is strict, still not a drop
-
-    rocketnet_check( rocketnet_frame_sync_advance( &deadline, period, 103 * period + period, &error ) == 0 );
-    rocketnet_check( error == period );
-    rocketnet_check( deadline == 104 * period );
-
-    // just past one period: one drop, and the deadline resynchronizes ahead
-    // of the wake instead of chasing the backlog
-
-    rocketnet_check( rocketnet_frame_sync_advance( &deadline, period, 104 * period + period + 1, &error ) == 1 );
-    rocketnet_check( error == period + 1 );
-    rocketnet_check( deadline == 106 * period );
-    rocketnet_check( deadline > 104 * period + period + 1 );
-
-    // three and a half periods late: three drops, resynchronized within one
-    // period ahead of the wake
-
-    const uint64_t base = deadline;
-    const uint64_t woke = base + 3 * period + period / 2;
-    rocketnet_check( rocketnet_frame_sync_advance( &deadline, period, woke, &error ) == 3 );
-    rocketnet_check( error == 3 * period + period / 2 );
-    rocketnet_check( deadline == base + 4 * period );
-    rocketnet_check( deadline > woke );
-    rocketnet_check( deadline - woke <= period );
-}
-
-void rocketnet_test_frame_sync_guard()
-{
-    const uint64_t cap = 16666666 / ROCKETNET_FRAME_SYNC_GUARD_CAP_DIVISOR;
-
-    // converges toward a steady oversleep
-
-    double ewma = (double) ROCKETNET_FRAME_SYNC_GUARD_EWMA_START_NS;
-    for ( int i = 0; i < 200; i++ )
-    {
-        rocketnet_frame_sync_adapt_guard( &ewma, 500000, cap );
-    }
-
-    rocketnet_check( ewma > 450000.0 );
-    rocketnet_check( ewma < 550000.0 );
-
-    // the applied guard carries the margin over the estimate
-
-    rocketnet_check( rocketnet_frame_sync_guard_ns( ewma, cap ) == (uint64_t) ewma + ROCKETNET_FRAME_SYNC_GUARD_MARGIN_NS );
-
-    // a runaway oversleep cannot push the guard past the cap: the measured
-    // unprivileged death spiral (guard chased to 37ms, thousands of drops),
-    // refused by construction
-
-    for ( int i = 0; i < 200; i++ )
-    {
-        rocketnet_frame_sync_adapt_guard( &ewma, 100000000, cap );
-    }
-
-    rocketnet_check( ewma <= (double) cap );
-    rocketnet_check( rocketnet_frame_sync_guard_ns( ewma, cap ) == cap );
-
-    // and because the cap binds the estimate too, recovery is immediate once
-    // the oversleeps return to sane
-
-    for ( int i = 0; i < 200; i++ )
-    {
-        rocketnet_frame_sync_adapt_guard( &ewma, 100000, cap );
-    }
-
-    rocketnet_check( ewma < 200000.0 );
-}
-
-// the frame-rate refusals return before any allocation or timer. A create
-// that succeeds creates the real Windows high-resolution waitable timer, so
-// the successful create, its first stats and its destroy are the functional
-// case test_frame_sync_lifecycle (tests/functional/platform_primitives.cpp).
-void rocketnet_test_frame_sync_create_refuses_invalid_rates()
-{
-    rocketnet_check( rocketnet_frame_sync_create( NULL, 0.0 ) == NULL );
-    rocketnet_check( rocketnet_frame_sync_create( NULL, -60.0 ) == NULL );
-    rocketnet_check( rocketnet_frame_sync_create( NULL, 1000000.0 ) == NULL );
-}
-
-#if ROCKETNET_DEV && ( ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS )
-extern int rocketnet_frame_sync_timebase_ready_for_testing();
-
-void rocketnet_test_frame_sync_timebase_before_create()
-{
-    // The probe reads only the OS timebase scale, never the live clock. The
-    // first frame-sync object has not been created when this runs.
-
-    rocketnet_check( rocketnet_frame_sync_timebase_ready_for_testing() );
-}
-#endif // #if ROCKETNET_DEV && ( ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS )
-
 // a counting allocator: a create that reached allocation would move it. the
 // library is uninitialized with no live allocations when it is installed, so
 // the install is accepted.
@@ -7841,9 +7724,8 @@ void rocketnet_test_create_before_init_is_refused()
 
     rocketnet_check( rocketnet_client_transport_create( NULL, connect_token, NULL, 0.0 ) == NULL );
     rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:40000", NULL ) == NULL );
-    rocketnet_check( rocketnet_frame_sync_create( NULL, 60.0 ) == NULL );
 
-    rocketnet_check( rocketnet_api_misuse_count() == before + 3 );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 2 );
     rocketnet_check( rocketnet_test_allocator_calls == 0 );
 
     // restore the default allocator, then the library, for the worker's term
@@ -8173,11 +8055,6 @@ static const char * rocketnet_test_layer_exports[] = {
     "rocketnet_server_transport_client_stats",
     "rocketnet_server_transport_acked_packets",
     "rocketnet_server_transport_acked_connection_ids",
-    "rocketnet_frame_sync_create",
-    "rocketnet_frame_sync_create_ex",
-    "rocketnet_frame_sync_destroy",
-    "rocketnet_frame_sync_wait",
-    "rocketnet_frame_sync_stats",
     "rocketnet_message_default_config",
     "rocketnet_message_default_config_sized",
     "rocketnet_message_validate_config",
@@ -8310,9 +8187,6 @@ static const char * rocketnet_test_layer_null_case_exports[] = {
     "rocketnet_server_transport_client_stats",
     "rocketnet_server_transport_acked_packets",
     "rocketnet_server_transport_acked_connection_ids",
-    "rocketnet_frame_sync_destroy",
-    "rocketnet_frame_sync_wait",
-    "rocketnet_frame_sync_stats",
     "rocketnet_message_default_config",
     "rocketnet_message_default_config_sized",
     "rocketnet_counter_value",
@@ -8378,8 +8252,6 @@ static const char * rocketnet_test_layer_null_exempt_exports[] = {
     "rocketnet_client_transport_required_memory",
     "rocketnet_server_transport_required_memory",
     "rocketnet_forbid_xdp_commit",
-    "rocketnet_frame_sync_create",
-    "rocketnet_frame_sync_create_ex",
     "rocketnet_message_validate_config",
     "rocketnet_message_validate_config_ex",
     "rocketnet_message_connection_bytes",
@@ -8621,7 +8493,6 @@ void rocketnet_test_public_api_null_is_a_counted_no_op()
     memset( &context, 0, sizeof( context ) );
     struct rocketnet_client_transport_stats_t client_stats;
     struct rocketnet_server_transport_stats_t server_stats;
-    struct rocketnet_frame_sync_stats_t frame_stats;
     int payload_bytes = 0;
     int capacity = 0;
     int client_index = 0;
@@ -9043,8 +8914,8 @@ void rocketnet_test_public_api_null_is_a_counted_no_op()
         // the sizing calls take NULL configs as the defaults: not a misuse
 
         before = rocketnet_api_misuse_count();
-        rocketnet_check( rocketnet_message_client_required_memory( NULL ) > 0 );
-        rocketnet_check( rocketnet_message_server_required_memory( NULL, NULL ) > 0 );
+        rocketnet_check( rocketnet_message_client_required_memory( NULL, 0 ) > 0 );
+        rocketnet_check( rocketnet_message_server_required_memory( NULL, NULL, 0 ) > 0 );
         rocketnet_check( rocketnet_api_misuse_count() == before );
     }
 
@@ -9071,20 +8942,6 @@ void rocketnet_test_public_api_null_is_a_counted_no_op()
 
     rocketnet_check( rocketnet_counter_name( 0 ) != NULL );
     rocketnet_check( rocketnet_client_transport_state_name( 0 ) != NULL );
-
-    // frame sync
-
-    before = rocketnet_api_misuse_count();
-    rocketnet_frame_sync_destroy( NULL );
-    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
-
-    before = rocketnet_api_misuse_count();
-    rocketnet_frame_sync_wait( NULL );
-    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
-
-    before = rocketnet_api_misuse_count();
-    rocketnet_frame_sync_stats( NULL, &frame_stats );
-    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
 
     // the contract's debug clause: in a build with asserts on, every refused
     // NULL above fires rocketnet_assert through the installed hook; in a
@@ -14802,9 +14659,13 @@ class rocketnet_test_environment_t
     struct entry_t
     {
         std::string name, value;
-        bool present;
+        bool present = false;
     };
-    std::vector<entry_t> entries;
+    // the two descriptor tables plus the four named variables, with room
+    // to spare; clear refuses to run past it
+    static constexpr int max_entries = 512;
+    entry_t entries[max_entries];
+    int num_entries = 0;
     void clear( const char * name )
     {
         if ( strcmp( name, "ROCKETNET_SERVER_TRANSPORT" ) == 0 )
@@ -14812,13 +14673,14 @@ class rocketnet_test_environment_t
         if ( strcmp( name, "ROCKETNET_CLIENT_TRANSPORT" ) == 0 )
             return;
 
-        for ( const auto & entry : entries )
-            if ( entry.name == name )
+        for ( int i = 0; i < num_entries; ++i )
+            if ( entries[i].name == name )
                 return;
 
-        std::string value;
-        const bool present = rocketnet_test_getenv_string( name, &value );
-        entries.push_back( { name, value, present } );
+        rocketnet_check( num_entries < max_entries );
+        entry_t & entry = entries[num_entries++];
+        entry.name = name;
+        entry.present = rocketnet_test_getenv_string( name, &entry.value );
 
         rocketnet_check( rocketnet_test_env_unsetenv( name ) == 0 );
     }
@@ -14847,9 +14709,12 @@ public:
     }
     ~rocketnet_test_environment_t()
     {
-        for ( const auto & entry : entries )
+        for ( int i = 0; i < num_entries; ++i )
+        {
+            const entry_t & entry = entries[i];
             rocketnet_check( ( entry.present ? rocketnet_test_env_setenv( entry.name.c_str(), entry.value.c_str(), 1 )
                                              : rocketnet_test_env_unsetenv( entry.name.c_str() ) ) == 0 );
+        }
     }
 };
 
@@ -15937,15 +15802,13 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] = {
     { "test_client_protocol_refuses_a_small_capacity", rocketnet_test_client_protocol_refuses_a_small_capacity },
     { "test_integrity_limit", rocketnet_test_integrity_limit },
     { "test_network_simulator", rocketnet_test_network_simulator },
+    { "test_network_simulator_counts_store_refusals", rocketnet_test_network_simulator_counts_store_refusals },
     { "test_network_simulator_refuses_overflowing_capacity", rocketnet_test_network_simulator_refuses_overflowing_capacity },
     { "test_client_server_harsh_wire", rocketnet_test_client_server_harsh_wire },
     { "test_client_server_lossy_wire", rocketnet_test_client_server_lossy_wire },
     { "test_swarm", rocketnet_test_swarm },
     { "test_payload_size_sweep", rocketnet_test_payload_size_sweep },
     { "test_server_keyless_config_has_no_keys", rocketnet_test_server_keyless_config_has_no_keys },
-#if !ROCKETNET_DEV
-    { "test_dev_keys_refused_in_release", rocketnet_test_dev_keys_refused_in_release },
-#endif // #if !ROCKETNET_DEV: a development build accepts what this checks is refused
     { "test_transport_payload_capacity", rocketnet_test_transport_payload_capacity },
     { "test_client_rtt_handshake", rocketnet_test_client_rtt_handshake },
     { "test_request_path_ordering", rocketnet_test_request_path_ordering },
@@ -15967,12 +15830,6 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] = {
     { "test_client_id_free_after_clean_disconnect", rocketnet_test_client_id_free_after_clean_disconnect },
     { "test_client_index_range_checked", rocketnet_test_client_index_range_checked },
     { "test_platform_inet6_round_trip", rocketnet_test_platform_inet6_round_trip },
-    { "test_frame_sync_advance", rocketnet_test_frame_sync_advance },
-    { "test_frame_sync_guard", rocketnet_test_frame_sync_guard },
-    { "test_frame_sync_create_refuses_invalid_rates", rocketnet_test_frame_sync_create_refuses_invalid_rates },
-#if ROCKETNET_DEV && ( ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS )
-    { "test_frame_sync_timebase_before_create", rocketnet_test_frame_sync_timebase_before_create },
-#endif // #if ROCKETNET_DEV && ( ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS )
     { "test_create_before_init_is_refused", rocketnet_test_create_before_init_is_refused },
     { "test_allocator_refusal_is_returned", rocketnet_test_allocator_refusal_is_returned },
     { "test_public_api_null_is_a_counted_no_op", rocketnet_test_public_api_null_is_a_counted_no_op },

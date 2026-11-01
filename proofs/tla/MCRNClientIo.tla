@@ -13,8 +13,8 @@
 (* MCRNClientIoBrokenReceiveStall.cfg,                                    *)
 (* MCRNClientIoBrokenHandOffWaits.cfg and                                 *)
 (* MCRNClientIoBrokenFullWaitReadable.cfg each restore one defect and     *)
-(* must fail.  MCRNClientIoBrokenDestroyWaitsForever.cfg removes the      *)
-(* guaranteed deadline and must fail DestroyCompletes.                    *)
+(* must fail.  MCRNClientIoBrokenExitDropsFinal.cfg lets the I/O thread  *)
+(* exit without sending the final ring and must fail StopSendsAll.        *)
 (* MCRNClientIoBrokenDestinationOverwrite.cfg restores destination        *)
 (* overwrite and must fail SentToCommitted.                                *)
 (* MCRNClientIoStepDriven.cfg is the step-driven mode with every rule on  *)
@@ -29,4 +29,9 @@ EXTENDS RNClientIo
 \* the unconditional io->to[io->rings.fill] = *to restored, for
 \* MCRNClientIoBrokenDestinationOverwrite.cfg (DestinationOverwrite <- DestinationOverwriteOn)
 DestinationOverwriteOn == TRUE
+
+\* the I/O thread that exits without sending the final ring, for
+\* MCRNClientIoBrokenExitDropsFinal.cfg (ExitDropsFinal <- ExitDropsFinalOn)
+ExitDropsFinalOn == TRUE
+
 =============================================================================

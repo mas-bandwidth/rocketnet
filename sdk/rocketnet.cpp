@@ -66,8 +66,8 @@ static std::atomic<int> log_level{ ROCKETNET_LOG_LEVEL_INFO };
 
 void rocketnet_log_level( enum rocketnet_log_level_t level )
 {
-    // a value outside NONE .. SPAM is ignored. read as an int: a C caller may
-    // pass any int, and loading an out-of-range enum is undefined in C++
+    // A value outside NONE .. SPAM is ignored. Read the int-sized C ABI
+    // representation without relying on the C caller's enum signedness.
 
     int value;
     memcpy( &value, &level, sizeof( value ) );
@@ -185,7 +185,6 @@ const char * rocketnet_status_name( enum rocketnet_status_t status )
         case ROCKETNET_STATUS_OUT_OF_MEMORY:                    return "OUT_OF_MEMORY";
         case ROCKETNET_STATUS_MUTEX_CREATE_FAILED:              return "MUTEX_CREATE_FAILED";
         case ROCKETNET_STATUS_THREAD_CREATE_FAILED:             return "THREAD_CREATE_FAILED";
-        case ROCKETNET_STATUS_TIMER_CREATE_FAILED:              return "TIMER_CREATE_FAILED";
         case ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED:          return "CLIENT_NOT_DISCONNECTED";
         case ROCKETNET_STATUS_SERVER_NOT_STOPPED:               return "SERVER_NOT_STOPPED";
         case ROCKETNET_STATUS_FLOW_ID_RESERVED:                 return "FLOW_ID_RESERVED";
@@ -755,7 +754,8 @@ static bool rocketnet_crypto_open_source()
 bool rocketnet_crypto_acquire()
 {
     std::unique_lock<std::mutex> lock( rocketnet_crypto_mutex );
-    rocketnet_crypto_changed.wait( lock, []() { return !rocketnet_crypto_closing; } );
+    rocketnet_crypto_changed.wait( lock, []()
+                                   { return !rocketnet_crypto_closing; } );
     if ( !rocketnet_crypto_open_locked() )
         return false;
     rocketnet_crypto_holders++;
@@ -780,7 +780,8 @@ static void rocketnet_crypto_close()
 #if defined( ROCKETNET_BUNDLED_SODIUM ) && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     std::unique_lock<std::mutex> lock( rocketnet_crypto_mutex );
     rocketnet_crypto_closing = true;
-    rocketnet_crypto_changed.wait( lock, []() { return rocketnet_crypto_holders == 0; } );
+    rocketnet_crypto_changed.wait( lock, []()
+                                   { return rocketnet_crypto_holders == 0; } );
     (void) randombytes_close();
     rocketnet_crypto_open = false;
     rocketnet_crypto_closing = false;
@@ -830,6 +831,25 @@ const char * rocketnet_platform_name( int platform_id )
 
     return "unknown";
 }
+
+// sodium aborts the process on a misuse it cannot return from, an
+// unavailable OS random source above all (randombytes_stir, randombytes_buf).
+// The handler runs before that abort: the process ends with one error line
+// that names the cause. Installed only on the bundled sodium, whose handler
+// slot is this library's own; a system libsodium's belongs to the application.
+
+static void rocketnet_sodium_misuse()
+{
+    rocketnet_error( "sodium refused an operation it cannot complete (the OS random source is unavailable, or a sodium misuse). the process aborts" );
+    (void) fflush( stdout );
+}
+
+#if ROCKETNET_DEV
+void rocketnet_sodium_misuse_for_test()
+{
+    sodium_misuse();
+}
+#endif // #if ROCKETNET_DEV
 
 enum rocketnet_status_t rocketnet_init( void * context, void * ( *malloc_function )( void * context, size_t bytes ), void ( *free_function )( void * context, void * p ) )
 {
@@ -887,6 +907,15 @@ bool rocketnet_init_ex( void * context, void * ( *malloc_function )( void * cont
     (void) context;
 
     const bool platform_ready = rocketnet_platform_init();
+
+    // before rocketnet_crypto_open_source, whose sodium_init and stir are the
+    // first read of the OS random source; it stays installed after term, for
+    // the key generators that need no init
+#if defined( ROCKETNET_BUNDLED_SODIUM )
+    if ( platform_ready )
+        (void) sodium_set_misuse_handler( rocketnet_sodium_misuse );
+#endif // #if defined( ROCKETNET_BUNDLED_SODIUM )
+
     const bool sodium_ready = platform_ready && rocketnet_crypto_open_source();
     if ( !sodium_ready )
     {

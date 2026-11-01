@@ -1,0 +1,105 @@
+# Roadmap page: validate docs/roadmap.sexp per commit, regenerate ROADMAP.md on main.
+#
+# Pull requests edit only docs/roadmap.sexp. ROADMAP.md is one generated page, so
+# regenerating it in every pull request made each landing conflict with every other
+# open pull request. Instead:
+#
+#   - a pull request that changes docs/roadmap.sexp runs `make roadmap-check`: the sexp
+#     parses and every id is unique. ROADMAP.md is not compared, and need not be current.
+#   - a push to main that changes docs/roadmap.sexp runs `make roadmap` on the tip of
+#     main and, when ROADMAP.md changed, commits it as one commit from
+#     github-actions[bot] and pushes it. A stale page is fixed here, never failed.
+#
+# No loop: the regeneration commit touches only ROADMAP.md, which is outside this
+# workflow's paths filter, and a push made with the workflow's GITHUB_TOKEN starts no
+# workflow runs in any case.
+#
+# The generator is nova-sprint's roadmap go tool, checked out at NOVA_SPRINT_REF; it
+# builds with the fleet's Go (the fleet pins 1.26 on Linux).
+
+name: roadmap
+
+on:
+  push:
+    branches: [ main ]
+    paths: [ docs/roadmap.sexp, .github/workflows/roadmap.yml ]
+  pull_request:
+    paths: [ docs/roadmap.sexp, .github/workflows/roadmap.yml, Makefile ]
+  workflow_dispatch:
+
+concurrency:
+  # each main commit runs in its own group and is never cancelled; pull requests cancel
+  # a superseded run. Two regenerations racing on main are safe: each checks out the
+  # newest main, a run that finds the page current commits nothing, and a push refused
+  # because main moved starts again from the new tip.
+  group: roadmap-${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+env:
+  NOVA_SPRINT_REF: 78df5862bb63044e9c8bcf73f8d2c4796dd14b13
+
+jobs:
+  check:
+    name: roadmap (sexp parses, ids unique)
+    if: github.event_name == 'pull_request'
+    runs-on: [self-hosted, Linux, X64, fleet]
+    # per-commit: bounded to two minutes (tools/check_ci_budget.py)
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          repository: mas-bandwidth/nova-sprint
+          ref: ${{ env.NOVA_SPRINT_REF }}
+          path: build/nova-sprint
+
+      - name: Validate docs/roadmap.sexp
+        run: make roadmap-check NOVA_SPRINT="$GITHUB_WORKSPACE/build/nova-sprint"
+
+  regenerate:
+    name: roadmap (regenerate ROADMAP.md on main)
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, Linux, X64, fleet]
+    # per-commit: bounded to two minutes (tools/check_ci_budget.py)
+    timeout-minutes: 2
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          ref: main
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          repository: mas-bandwidth/nova-sprint
+          ref: ${{ env.NOVA_SPRINT_REF }}
+          path: build/nova-sprint
+
+      - name: Regenerate and commit ROADMAP.md
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Another landing can move main between checkout and push: then start again
+          # from the new tip, at most three times.
+          for attempt in 1 2 3; do
+            make roadmap NOVA_SPRINT="$GITHUB_WORKSPACE/build/nova-sprint"
+            if git diff --quiet -- ROADMAP.md; then
+              echo "ROADMAP.md is current at $(git rev-parse --short HEAD)"
+              exit 0
+            fi
+            git add ROADMAP.md
+            git commit -m "Regenerate ROADMAP.md from docs/roadmap.sexp at $(git rev-parse --short HEAD)" -- ROADMAP.md
+            if git push origin HEAD:main; then
+              exit 0
+            fi
+            git fetch origin main
+            git reset --hard origin/main
+          done
+          echo "main moved during each of three attempts; the next push to docs/roadmap.sexp regenerates ROADMAP.md"
+          exit 1

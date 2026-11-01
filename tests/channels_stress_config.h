@@ -33,4 +33,4 @@ static inline void channels_stress_message_config( int * num_channels, int * rel
     *max_message_receipts = CHANNELS_STRESS_RECEIPTS_PER_UPDATE;
 }
 
-#endif // #ifndef ROCKETNET_TESTS_CHANNELS_STRESS_CONFIG_H
+#endif // ROCKETNET_TESTS_CHANNELS_STRESS_CONFIG_H

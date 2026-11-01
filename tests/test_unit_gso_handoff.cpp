@@ -23,14 +23,24 @@ static void test_server_gso_worker_handoff()
 
 REGISTER_UNIT_TEST( test_server_gso_worker_handoff );
 
-// A refused sendmmsg through the send-failure seam: a full socket drops the
-// rest of the batch, any other errno drops one message and sends the rest.
+// A refused sendmmsg through the send-failure seam: an errno other than a
+// full socket's drops one message and sends the rest.
 static void test_server_gso_send_refusals()
 {
     check( rocketnet_server_gso_test_send_refusals() );
 }
 
 REGISTER_UNIT_TEST( test_server_gso_send_refusals );
+
+// A full socket mid-flush on a fake socket (proofs/tla/RNGsoHandoff.tla
+// SentOrHeld): the bank keeps its unsent tail, nothing is dropped, and the
+// next attempt sends the rest in order.
+static void test_server_gso_send_full_keeps_rest()
+{
+    check( rocketnet_server_gso_test_send_full_keeps_rest() );
+}
+
+REGISTER_UNIT_TEST( test_server_gso_send_full_keeps_rest );
 
 // The receive drain's read budget: full batches of zero-length, refused-source
 // and undersized datagrams, far more than the budget, through the receive

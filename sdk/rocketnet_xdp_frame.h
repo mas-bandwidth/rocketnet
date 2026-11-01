@@ -396,6 +396,13 @@ struct rocketnet_xdp_receive_drops_t
     uint64_t descriptor;
 };
 
+// every frame the receive dropped, whatever the reason: the transport's
+// XDP_RECEIVE_FRAME_DROPPED
+static inline uint64_t rocketnet_xdp_receive_drops_total( const struct rocketnet_xdp_receive_drops_t * drops )
+{
+    return drops->not_ip + drops->ipv6_extension + drops->other_family + drops->malformed + drops->descriptor;
+}
+
 static inline bool rocketnet_xdp_frame_ipv6_is_extension( uint8_t next_header )
 {
     return next_header == 0 ||     // hop-by-hop options
@@ -713,9 +720,9 @@ static inline bool rocketnet_xdp_stats_cpus_fit( int num_cpus )
 }
 
 // STATS PUBLISH: a read that succeeded sums the per-cpu values into counters
-// and keeps the sum as the last good snapshot. A read that failed (the map
+// and keeps the sum as the last good read. A read that failed (the map
 // lookup refused, or a cpu count that does not fit) publishes the last good
-// snapshot, never zeros, since a count the kernel could not report is not a
+// read, never zeros, since a count the kernel could not report is not a
 // count of nothing. The return is true when this read starts a run of
 // failures, so the caller logs once per run.
 

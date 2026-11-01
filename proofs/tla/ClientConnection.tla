@@ -474,22 +474,31 @@ ClientRecvDeniedKeepsKeys(p) ==
 \* client (rocketnet_client_session_state_accepts): the server's first
 \* payloads can reach the client ahead of the keep-alive that connects it,
 \* by loss or reorder of that keep-alive, and one delivered in 3 let the
-\* application reply on a connection that could not yet send. This action
-\* leaves the keys; set_state zeroes them, which KeysErasedWhenDown records
+\* application reply on a connection that could not yet send. An accepted
+\* disconnect is rocketnet_client_set_state(DISCONNECTED), which zeroes the
+\* keys (rocketnet_client_connection_reset; KeysErasedWhenDown). Erase FALSE
+\* is the pre-fix rule that leaves them, only in SpecDownKeepsKeys.
 SessionStateAccepts(t) == cstate = 4 \/ (cstate = 3 /\ t # "payload")
 
-ClientRecvSession(p) ==
+ClientRecvSessionRule(p, Erase) ==
     /\ p.type \in SessionTypes
     /\ S2C!Deliver(p)
     /\ IF SessionStateAccepts(p.type) /\ KeysOf(p) = cKeys /\ p.id \notin cSeen
          THEN /\ cSeen' = cSeen \cup {p.id} /\ cSinceRecv' = 0
               /\ cReasm' = IF p.type = "disconnect" THEN FALSE ELSE cReasm
+              /\ cKeys' = IF Erase /\ p.type = "disconnect" THEN NoKeys ELSE cKeys
               /\ CASE p.type = "keepalive"  -> cIndex' = TRUE /\ cstate' = 4
                    [] p.type = "payload"    -> UNCHANGED <<cIndex, cstate>>
                    [] p.type = "disconnect" -> cstate' = 0 /\ UNCHANGED cIndex
-         ELSE UNCHANGED <<cSeen, cSinceRecv, cIndex, cstate, cReasm>>
-    /\ UNCHANGED <<cookieVars, cKeys, cEph>>
+         ELSE UNCHANGED <<cSeen, cSinceRecv, cIndex, cstate, cReasm, cKeys>>
+    /\ UNCHANGED <<cookieVars, cEph>>
     /\ UNCHANGED <<cFam, clientRecvUnchanged>>
+
+ClientRecvSession(p) == ClientRecvSessionRule(p, TRUE)
+
+\* the pre-fix session disconnect, only in SpecDownKeepsKeys: state 0 and
+\* the keys stay. Not a disjunct of Next.
+ClientRecvSessionKeepsKeys(p) == ClientRecvSessionRule(p, FALSE)
 
 \* the reachability witness's step, not a disjunct of Next: the payload
 \* acceptance ClientRecvSession makes in connected, recorded in the ghost
@@ -705,12 +714,14 @@ OtherLeaves ==
 (***************************************************************************)
 (* Time passes on both ends and on both wires.                             *)
 (* rocketnet_client_check_deadlines: in 1..3 the total deadline first, then *)
-(* in 1..4 the idle timeout to -(state+1). A deadline or a timeout zeroes   *)
-(* the ephemeral; the session keys stay (KeysErasedWhenDown).               *)
+(* in 1..4 the idle timeout to -(state+1). A deadline or a timeout is      *)
+(* rocketnet_client_set_state to a state below 0, which zeroes the keys and *)
+(* the ephemeral (KeysErasedWhenDown); Erase FALSE is the pre-fix rule that *)
+(* leaves the keys, only in SpecDownKeepsKeys.                              *)
 (* rocketnet_server_protocol_update: a half-open mapping dies at its        *)
 (* handshake deadline, an established one at the idle timeout.              *)
 (***************************************************************************)
-Tick ==
+TickRule(Erase) ==
     /\ C2S!Age /\ S2C!Age
     /\ LET age1  == Sat(cAge, Deadline)
            recv1 == Sat(cSinceRecv, Timeout)
@@ -718,6 +729,7 @@ Tick ==
            timed == cstate \in 1..4 /\ Timeout > 0 /\ recv1 = Timeout
        IN /\ cReasm' = IF dead \/ timed THEN FALSE ELSE cReasm
           /\ cEph' = IF dead \/ timed THEN FALSE ELSE cEph
+          /\ cKeys' = IF Erase /\ (dead \/ timed) THEN NoKeys ELSE cKeys
           /\ cAge' = age1 /\ cSinceRecv' = recv1
           /\ cSinceSend' = Sat(cSinceSend, SendInterval)
           /\ cstate' = IF dead THEN -7 ELSE IF timed THEN -(cstate + 1) ELSE cstate
@@ -741,9 +753,15 @@ Tick ==
                                            !.sinceSend = ssend1]
                  /\ sReasm' = IF expired \/ stimed THEN FALSE ELSE sReasm
          ELSE UNCHANGED <<sMap, sReasm>>
-    /\ UNCHANGED <<cAttempt, cookieVars, cKeys, cIndex, cSeen, cPayloadDelivered,
+    /\ UNCHANGED <<cAttempt, cookieVars, cIndex, cSeen, cPayloadDelivered,
                    cDiscPending, cDiscKeys, cLostKinds, raceVars, sOthers, sDiscPending,
                    sDiscKeys, sDiscId, sLostKinds>>
+
+Tick == TickRule(TRUE)
+
+\* the pre-fix timeout, only in SpecDownKeepsKeys: the deadline or the idle
+\* timeout ends the attempt and the keys stay. Not a disjunct of Next.
+TickKeepsKeys == TickRule(FALSE)
 
 \* the observer of the request (Forgery): a cookie echoing this attempt's
 \* salt, on a family in flight, with a mac the client cannot check
@@ -853,6 +871,12 @@ SpecEarlyPayload ==
 \* the reversed witness's spec: Next plus the pre-fix denial that keeps keys
 SpecDeniedKeepsKeys ==
     Init /\ [][Next \/ (\E p \in ServerPackets : ClientRecvDeniedKeepsKeys(p))]_vars /\ Fairness
+
+\* the reversed witness's spec: Next plus the pre-fix timeout and session
+\* disconnect that keep the keys
+SpecDownKeepsKeys ==
+    Init /\ [][Next \/ TickKeepsKeys
+                   \/ (\E p \in ServerPackets : ClientRecvSessionKeepsKeys(p))]_vars /\ Fairness
 
 \* the reversed witness's spec: Next plus the pre-fix cookie that restarts
 \* the receive clock
@@ -1006,9 +1030,10 @@ NoSendOnArrival ==
 \* deadline or timeout zero it, as rocketnet_client_set_state does.
 EphemeralErasedOutsideHandshake == cstate \notin {1, 2} => ~cEph
 
-\* the session keys are gone once the attempt is over. A denial zeroes
-\* them. A timeout and a received disconnect leave them in this model; that
-\* is the observation, see README-ClientConnection.md
+\* the session keys are gone once the attempt is over: every transition to
+\* a state at or below 0 zeroes them, as rocketnet_client_set_state does
+\* (the application disconnect, a denial, a deadline or timeout, a received
+\* disconnect)
 KeysErasedWhenDown == cstate <= 0 => cKeys = NoKeys
 
 \* the family race: a request carrying a cookie goes to one family only,

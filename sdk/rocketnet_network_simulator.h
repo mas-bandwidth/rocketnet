@@ -191,6 +191,7 @@ void rocketnet_network_simulator_reconfigure( struct rocketnet_network_simulator
 bool rocketnet_network_simulator_created_active( const struct rocketnet_network_simulator_t * simulator );
 uint64_t rocketnet_network_simulator_memory_bytes( int capacity, int reverse_window );
 bool rocketnet_network_simulator_holds_any( struct rocketnet_network_simulator_t * simulator );
+uint64_t rocketnet_network_simulator_store_refused( struct rocketnet_network_simulator_t * simulator );
 
 #else // #if ROCKETNET_DEV
 
@@ -211,6 +212,7 @@ static inline bool rocketnet_network_simulator_take_setting( struct rocketnet_ne
 static inline bool rocketnet_network_simulator_created_active( const struct rocketnet_network_simulator_t * ) { return false; }
 static inline uint64_t rocketnet_network_simulator_memory_bytes( int, int ) { return 0; }
 static inline bool rocketnet_network_simulator_holds_any( struct rocketnet_network_simulator_t * ) { return false; }
+static inline uint64_t rocketnet_network_simulator_store_refused( struct rocketnet_network_simulator_t * ) { return 0; }
 
 #endif // #if ROCKETNET_DEV
 

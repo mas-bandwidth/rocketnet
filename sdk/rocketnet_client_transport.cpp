@@ -1137,6 +1137,14 @@ void rocketnet_client_transport_set_memory_plan_seam_for_test( bool enable )
 {
     rocketnet_client_memory_plan_seam_enabled = enable;
 }
+
+// Stop's wakes of the legacy receive thread, counted before the seam returns.
+static uint64_t rocketnet_client_legacy_wakes = 0;
+
+uint64_t rocketnet_client_transport_legacy_wakes_for_test()
+{
+    return rocketnet_client_legacy_wakes;
+}
 #endif // #if ROCKETNET_DEV
 
 // The client network thread's create and release. The memory plan seam stands in
@@ -1156,6 +1164,27 @@ static rocketnet_platform_thread_t * rocketnet_client_thread_create( void * cont
 
     return rocketnet_platform_thread_create( context, function, argument, status );
 }
+
+// The legacy receive thread's wake, after stop stores quit. The seam's record is a
+// bare allocation with no wake to signal.
+// proofs/tla/RNClientReceiveQuit.tla StopWake: the wake ends the thread's wait, so stop
+// never depends on the wait's timeout firing.
+// proofs/tla/RNClientReceiveQuit.tla StopQuitLate: the reversed witness's quit store after
+// the wake; the code stores quit first.
+
+static void rocketnet_client_thread_wake( rocketnet_platform_thread_t * thread )
+{
+#if ROCKETNET_DEV
+    rocketnet_client_legacy_wakes++;
+    if ( rocketnet_client_memory_plan_seam_enabled )
+        return;
+#endif // #if ROCKETNET_DEV
+
+    rocketnet_platform_thread_wake( thread );
+}
+
+// proofs/tla/RNClientReceiveQuit.tla JoinBegin, JoinReturns and DestroyFree: the join
+// returns once the legacy receive thread has returned; the handle is freed after it.
 
 static void rocketnet_client_thread_release( void * context, rocketnet_platform_thread_t * thread )
 {
@@ -2561,7 +2590,13 @@ void rocketnet_client_transport_stop( rocketnet_client_transport_t * client_tran
     }
     else
     {
+        // proofs/tla/RNClientReceiveQuit.tla StopQuit, then StopWake: quit is stored with
+        // release before the wake, so the wait the wake ends is followed by a check
+        // that reads it. The wake takes only the thread's own wake mutex, which the
+        // thread holds only while it enters or leaves its wait.
         client_transport->quit.store( true, std::memory_order_release );
+        if ( client_transport->thread )
+            rocketnet_client_thread_wake( client_transport->thread );
 
         bool stopped_now = !client_transport->thread && !client_transport->link_simulator && !client_transport->stop_burst_pending.load( std::memory_order_acquire );
 #if ROCKETNET_DEV
@@ -2639,10 +2674,9 @@ int rocketnet_client_transport_secret_spans_for_test( size_t * offsets, size_t *
 
 // proofs/tla/RNClientIoShutdown.tla DestroyBegin, Join and Free: destroy refuses a
 // transport not yet stopped, joins the worker thread, then frees.
-// proofs/tla/RNClientIo.tla DestroyBegin, DestroyWait, DestroyWaitDone, Timeout and
-// Done: destroy makes its last hand-off, waits at the deadline for the other
-// ring to reach Sent, drops the committed slots it cannot hand off, joins,
-// frees and ends.
+// proofs/tla/RNClientIo.tla Done: destroy of a stopped transport joins and frees;
+// stop already handed the Filling ring over as the final ring, so destroy waits
+// on no ring and drops nothing.
 // proofs/tla/RNClientIoShutdown.tla BeginRestart: a restart joins the prior worker
 // generation before the next one runs, as the synchronous destroy and the
 // next connect do here.
@@ -3937,6 +3971,14 @@ int rocketnet_client_transport_acked_packets( rocketnet_client_transport_t * cli
     return client_transport->protocol.num_acked;
 }
 
+double rocketnet_client_transport_rtt( rocketnet_client_transport_t * client_transport )
+{
+    if ( !rocketnet_api_null_guard( client_transport ) )
+        return 0.0;
+    rocketnet_assert( client_transport );
+    return rocketnet_client_protocol_rtt( &client_transport->protocol );
+}
+
 void rocketnet_client_transport_stats( rocketnet_client_transport_t * client_transport, struct rocketnet_client_transport_stats_t * stats )
 {
     if ( !rocketnet_api_null_guard( client_transport ) )
@@ -4201,12 +4243,15 @@ void rocketnet_client_transport_legacy_receive_state_for_test(
 // behaviour ends with both threads done.
 // proofs/tla/RNClientIoShutdown.tla WorkerExit: the legacy worker returns after its
 // stop is complete.
+// proofs/tla/RNClientReceiveQuit.tla Check, WaitBegin, WaitWoken and WaitTimesOut: quit
+// is checked at the top of every pass, then the drain, then the timed wait, which
+// returns on stop's wake or its 1 ms timeout.
 
 static void rocketnet_client_thread_function( rocketnet_platform_thread_t * thread, void * data )
 {
     rocketnet_client_transport_t * client_transport = (rocketnet_client_transport_t *) data;
 
-    // quit is read with acquire on every iteration; the wait between polls is bounded at 1 ms. Stop does not acquire the platform wake mutex.
+    // quit is read with acquire on every iteration; the wait between polls is bounded at 1 ms, and stop's wake ends it early.
 
     while ( !client_transport->quit.load( std::memory_order_acquire ) )
     {

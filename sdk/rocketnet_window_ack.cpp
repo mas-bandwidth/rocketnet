@@ -22,8 +22,8 @@ rn_ack_cost_t rn_window_ack_cost_read() { return rn_ack_cost; }
 // RTT estimation, resend delay, failed-send recovery, and reliable timeout (standard/MESSAGES.md
 // m9; TLA+ actions Init, WritePacket, WriteOldest, ReceiveAck and
 // invariants TablesBounded and EveryReliableAckedAndDelivered in
-// proofs/tla/RNWindow.tla). A resend link names its message number's slot and
-// the descriptor generation it was stamped with (proofs/tla/RNResendGenerations.tla).
+// proofs/tla/RNWindow.tla). A resend link is its message number's slot; an ack
+// reaches it only through the number the packet carried (proofs/tla/RNResendGenerations.tla).
 // An ack unlinks its number from the resend sequence before it marks it
 // acked, so a walk visits only unacked numbers and walk_visits counts no hole.
 
@@ -92,11 +92,6 @@ bool rn_window_ack_slot_is_chunk( const rn_window_ack_t * ack, uint32_t slot_ind
     return descriptor->in_use && descriptor->fragments > 1;
 }
 
-static bool rn_resend_fifo_is_linked( const rn_window_ack_t * ack, uint32_t slot )
-{
-    return rn_resend_entry_linked( &ack->region->resend_fifo[slot] );
-}
-
 uint32_t rn_window_ack_resend_first( const rn_window_ack_t * ack, bool chunk )
 {
     return chunk ? ack->chunk_head : ack->resend_head;
@@ -158,55 +153,9 @@ static bool rn_resend_fifo_unlink( rn_window_ack_t * ack, uint32_t slot )
 
     entry->prev = 0;
     entry->next = 0;
-    entry->generation = 0;
 
     rocketnet_assert( ack->resend_count > 0 );
     ack->resend_count--;
-    return true;
-}
-
-// proofs/tla/RNResendGenerations.tla Write and Send: names the link with the live descriptor's
-// generation on every link, park and requeue alike. Generation 0 is never a live name.
-static void rn_resend_fifo_stamp( rn_window_ack_t * ack, uint32_t slot )
-{
-    rn_region_t * region = ack->region;
-    rn_resend_link_t * link = &region->resend_fifo[slot];
-    link->generation = 0;
-
-    const rn_send_number_t * number = &region->send_numbers[slot];
-    if ( number->descriptor == RN_DESCRIPTOR_NONE || number->descriptor >= region->queue )
-        return;
-
-    const rn_send_descriptor_t * descriptor = &region->send_descriptors[number->descriptor];
-    if ( descriptor->in_use && descriptor->generation != 0 )
-        link->generation = descriptor->generation;
-}
-
-// Unlinks only the named generation of this number. A stale generation leaves
-// the FIFO as it is; reset clears every link, so no earlier connection's entry
-// is ever linked. proofs/tla/RNResendGenerations.tla Ack: a linked entry's stamp is
-// always its live descriptor's generation (StampNamesOwner), so the refusal
-// never fires on a reachable state (MCRNResendGenerationsNoCompare.cfg); a
-// stale packet's number is refused by the caller's number comparison.
-static bool rn_resend_fifo_unlink_named( rn_window_ack_t * ack, uint32_t slot, uint64_t number, uint32_t generation )
-{
-    if ( generation == 0 || !rn_resend_fifo_is_linked( ack, slot ) )
-        return false;
-
-    rn_region_t * region = ack->region;
-    const rn_send_number_t * slot_number = &region->send_numbers[slot];
-    const rn_resend_link_t * link = &region->resend_fifo[slot];
-    if ( slot_number->number != number || link->generation != generation )
-        return false;
-
-    if ( slot_number->descriptor != RN_DESCRIPTOR_NONE && slot_number->descriptor < region->queue )
-    {
-        const rn_send_descriptor_t * descriptor = &region->send_descriptors[slot_number->descriptor];
-        if ( descriptor->in_use && descriptor->generation != generation )
-            return false;
-    }
-
-    rn_resend_fifo_unlink( ack, slot );
     return true;
 }
 
@@ -244,11 +193,10 @@ static void rn_resend_fifo_insert_after( rn_window_ack_t * ack, uint32_t after, 
         *tail = slot;
 
     ack->resend_count++;
-    rn_resend_fifo_stamp( ack, slot );
 }
 
 // proofs/tla/RNResendFifoLayout.tla PushTail: a slot that is already the tail links after its prev.
-// proofs/tla/RNResendGenerations.tla Send: the relink stamps the live generation again.
+// proofs/tla/RNResendGenerations.tla Send
 static void rn_resend_fifo_push_tail( rn_window_ack_t * ack, uint32_t slot )
 {
     const bool chunk = rn_window_ack_slot_is_chunk( ack, slot );
@@ -270,7 +218,7 @@ void rn_window_ack_park( rn_window_ack_t * ack, uint32_t after, uint32_t slot_in
     rocketnet_assert( ack );
     rocketnet_assert( after == RN_RESEND_NONE || rn_window_ack_slot_is_chunk( ack, after ) == rn_window_ack_slot_is_chunk( ack, slot_index ) );
     rocketnet_assert( after != slot_index );
-    rocketnet_assert( after == RN_RESEND_NONE || rn_resend_fifo_is_linked( ack, after ) );
+    rocketnet_assert( after == RN_RESEND_NONE || rn_resend_entry_linked( &ack->region->resend_fifo[after] ) );
 
     rn_resend_fifo_insert_after( ack, after, slot_index );
 }
@@ -482,7 +430,7 @@ void rn_window_ack_init( rn_window_ack_t * ack, rn_window_send_t * send, rn_regi
     ack->resend_delay_max = (double) config->message_resend_delay_max_ms / 1000.0;
     ack->reliable_timeout = (double) config->reliable_message_timeout_ms / 1000.0;
 
-    ack->resend_delay = ack->resend_delay_initial;                // proofs/tla/RNResendTiming.tla Init: resend_delay = ResendDelayInitial
+    ack->resend_delay = ack->resend_delay_initial;                // proofs/tla/RNResendTiming.tla Init: rto = RtoInitial
 
     ack->resend_head = RN_RESEND_NONE;
     ack->resend_tail = RN_RESEND_NONE;
@@ -709,6 +657,23 @@ void rn_window_ack_commit_receipt_packet( rn_window_ack_t * ack, uint64_t packet
     rn_window_ack_commit( ack, packet_id, NULL, 0, serials, count, now );
 }
 
+// proofs/tla/RNResendTiming.tla Seed: the transport's measured round trip is
+// the first sample, taken only while the estimator has none of its own.
+int rn_window_ack_seed_rtt( rn_window_ack_t * ack, double rtt )
+{
+    rocketnet_assert( ack );
+
+    if ( ack->has_rtt || !( rtt > 0.0 ) )
+        return 0;
+
+    ack->srtt = rtt;
+    ack->rttvar = rtt;
+    ack->has_rtt = 1;
+    ack->resend_delay = rn_window_ack_compute_resend_delay( ack->srtt, ack->rttvar, ack->resend_delay_min, ack->resend_delay_max );
+
+    return 1;
+}
+
 // Processes one acked transport sequence `packet_id` at time `now`
 // (standard/MESSAGES.md m9.1 and m9.2; proofs/tla/RNWindow.tla ReceiveAck,
 // proofs/tla/RNResendTiming.tla Sample).
@@ -771,33 +736,16 @@ int rn_window_ack_on_ack( rn_window_ack_t * ack, uint64_t packet_id, double now 
 
         // proofs/tla/RNResendGenerations.tla Ack: a packet can reference a number
         // whose slot now holds a later one, possibly of the same descriptor at a
-        // later generation; the number comparison skips it (NamedGenerationOnly).
+        // later generation; the number comparison skips it (NamedGenerationOnly),
+        // and it is the only test between a stale packet and the later number.
 
         if ( slot->acked || slot->number < send->U || slot->number >= send->next || (uint32_t) slot->number != ref_u32 )
             continue;
 
-        if ( rn_resend_fifo_is_linked( ack, slot_index ) )
-        {
-            const rn_resend_link_t * link = &region->resend_fifo[slot_index];
+        // a number that passed the skips is the one the packet carried: it
+        // leaves its resend sequence before it is marked acked
 
-            // A named generation unlinks only that generation. Generation 0 means
-            // the link was stamped with no in-use descriptor (proofs/tla/RNResendGenerations.tla
-            // Ack). That link still leaves on this ack while no descriptor has been
-            // attached since the stamp.
-
-            if ( link->generation == 0 )
-            {
-                const bool descriptor_live = slot->descriptor != RN_DESCRIPTOR_NONE &&
-                                             slot->descriptor < region->queue &&
-                                             region->send_descriptors[slot->descriptor].in_use;
-                if ( descriptor_live )
-                    continue;
-
-                rn_resend_fifo_unlink( ack, slot_index );
-            }
-            else if ( !rn_resend_fifo_unlink_named( ack, slot_index, slot->number, link->generation ) )
-                continue;
-        }
+        rn_resend_fifo_unlink( ack, slot_index );
 
 #if ROCKETNET_DEV
         rn_ack_cost.completed_numbers++;
