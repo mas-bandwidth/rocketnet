@@ -140,7 +140,8 @@ struct rocketnet_client_io_t
 
     rocketnet_buffer_handoff_t<ROCKETNET_CLIENT_IO_NUM_RINGS> send;
     int send_fill;                              // main thread only: the ring game threads fill
-    int send_ring;                              // I/O thread only: the ring it holds (sent), or -1
+    int send_ring;                              // I/O thread only: the ring it holds, or -1
+    uint64_t send_slot;                         // I/O thread only: first unconsumed slot of that ring
     int send_final;                             // the ring stop hands the I/O thread with quit, or -1
     uint64_t committed[ROCKETNET_CLIENT_IO_NUM_RINGS];
     rocketnet_address_t to[ROCKETNET_CLIENT_IO_NUM_RINGS];   // each ring's destination, bound at its first hand-off attempt
@@ -190,6 +191,7 @@ inline void rocketnet_client_io_init( rocketnet_client_io_t * io, const rocketne
 
     io->send_fill = 0;
     io->send_ring = -1;
+    io->send_slot = 0;
     io->send_final = -1;
     rocketnet_buffer_handoff_init( &io->receive, 0 );
 
@@ -566,53 +568,57 @@ inline void rocketnet_client_io_return( rocketnet_client_io_t * io )
 // Slot i is at data + i * frame_stride +
 // wire_offset; a zero int byte count is an aborted slot and stays unsent.
 
-inline void rocketnet_client_io_send_ring( rocketnet_client_io_t * io, int ring )
+inline bool rocketnet_client_io_send_ring( rocketnet_client_io_t * io, int ring, bool terminal )
 {
     const rocketnet_client_io_ring_view_t * view = &io->ring_view[ring];
     const uint64_t committed = io->committed[ring];
-
-    if ( io->transport->operations->send_batch )
+    while ( io->send_slot < committed )
     {
         rocketnet_platform_send_t sends[ROCKETNET_CLIENT_IO_BATCH];
+        uint64_t slots[ROCKETNET_CLIENT_IO_BATCH];
         int num_sends = 0;
-
-        for ( uint64_t slot = 0; slot < committed; slot++ )
+        uint64_t next = io->send_slot;
+        while ( next < committed && num_sends < ROCKETNET_CLIENT_IO_BATCH )
         {
             int bytes = 0;
-            memcpy( &bytes, view->wire_bytes + (size_t) slot * view->wire_bytes_stride, sizeof( bytes ) );
-
-            if ( bytes == 0 )
-                continue;
-
-            sends[num_sends].to = &io->to[ring];
-            sends[num_sends].packet_data = view->data + (size_t) slot * view->frame_stride + view->wire_offset;
-            sends[num_sends].packet_bytes = bytes;
-            num_sends++;
-            if ( num_sends == ROCKETNET_CLIENT_IO_BATCH )
+            memcpy( &bytes, view->wire_bytes + (size_t) next * view->wire_bytes_stride, sizeof( bytes ) );
+            if ( bytes != 0 )
             {
-                io->transport->operations->send_batch( io->transport->instance, sends, num_sends );
-
-                num_sends = 0;
+                slots[num_sends] = next;
+                sends[num_sends].to = &io->to[ring];
+                sends[num_sends].packet_data = view->data + (size_t) next * view->frame_stride + view->wire_offset;
+                sends[num_sends].packet_bytes = bytes;
+                num_sends++;
             }
+            next++;
         }
 
+        int consumed = num_sends;
         if ( num_sends > 0 )
-            io->transport->operations->send_batch( io->transport->instance, sends, num_sends );
-    }
-    else
-    {
-        for ( uint64_t slot = 0; slot < committed; slot++ )
         {
-            int bytes = 0;
-            memcpy( &bytes, view->wire_bytes + (size_t) slot * view->wire_bytes_stride, sizeof( bytes ) );
-
-            if ( bytes == 0 )
-                continue;
-
-            const uint8_t * packet_data = view->data + (size_t) slot * view->frame_stride + view->wire_offset;
-            io->transport->operations->send( io->transport->instance, &io->to[ring], packet_data, bytes );
+            if ( !terminal && io->transport->operations->send_batch_progress )
+            {
+                consumed = io->transport->operations->send_batch_progress( io->transport->instance, sends, num_sends );
+                if ( consumed < 0 || consumed > num_sends )
+                {
+                    io->transport_faults++;
+                    return false;
+                }
+            }
+            else if ( io->transport->operations->send_batch )
+                io->transport->operations->send_batch( io->transport->instance, sends, num_sends );
+            else
+                for ( int i = 0; i < num_sends; i++ )
+                    io->transport->operations->send( io->transport->instance, sends[i].to, sends[i].packet_data, sends[i].packet_bytes );
         }
+
+        // Batch entries omit aborted slots; the cursor remains in the
+        // original ring, so a retry never repeats a consumed live slot.
+        io->send_slot = consumed < num_sends ? slots[consumed] : next;
+        if ( consumed < num_sends )
+            return false;
     }
+    return true;
 }
 
 // proofs/tla/RNClientIo.tla IoSend: sends every committed slot of the ring in hand.
@@ -657,19 +663,21 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
 
     do
     {
-        rocketnet_platform_mutex_acquire( io->mutex );
-
-        if ( io->send_ring >= 0 )
-            rocketnet_buffer_handoff_release( &io->send, io->send_ring );
-
-        io->send_ring = rocketnet_buffer_handoff_take( &io->send );
-        rocketnet_platform_mutex_release( io->mutex );
+        if ( io->send_ring < 0 || io->send_slot == io->committed[io->send_ring] )
+        {
+            rocketnet_platform_mutex_acquire( io->mutex );
+            if ( io->send_ring >= 0 )
+                rocketnet_buffer_handoff_release( &io->send, io->send_ring );
+            io->send_ring = rocketnet_buffer_handoff_take( &io->send );
+            io->send_slot = 0;
+            rocketnet_platform_mutex_release( io->mutex );
+        }
 
         if ( io->send_ring >= 0 )
         {
-            rocketnet_client_io_send_ring( io, io->send_ring );
-
-            worked = true;
+            const uint64_t before = io->send_slot;
+            rocketnet_client_io_send_ring( io, io->send_ring, quitting );
+            worked = io->send_slot > before || worked;
         }
     } while ( quitting && io->send_ring >= 0 );
 
@@ -679,7 +687,10 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
         // proofs/tla/RNBufferHandoff.tla WorkerExit: the worker sends the final ring and does not wait again.
         // proofs/tla/RNClientIoShutdown.tla WorkerExit: the same exit after the last ring.
         if ( io->send_final >= 0 )
-            rocketnet_client_io_send_ring( io, io->send_final );
+        {
+            io->send_slot = 0;
+            rocketnet_client_io_send_ring( io, io->send_final, true );
+        }
 
         rocketnet_client_io_drop_keys( io );
 

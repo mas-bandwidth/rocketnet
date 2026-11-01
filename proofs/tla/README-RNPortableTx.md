@@ -60,7 +60,13 @@ arithmetic, so it can see an index or a slot that the abstract queue cannot.
   the mutex: take the oldest ready bank, or observe empty and, in the code,
   `quit` in the same critical section. `WEmpty` exits or waits. `WWait` is the
   wait on the wake, with a timeout only when `Timeout` is TRUE. `WSend` sends
-  one packet of the bank in flight. `WSendDone` zeroes the count, and
+  one packet of the bank in flight. The Linux worker's retained
+  `tx_consumer`/`tx_cursor` map to `inflight`/`sendpos` in this
+  ownership projection: a transient
+  refusal leaves the same bank and prefix in hand between attempts.
+  A socket refusal without progress leaves that ownership projection
+  unchanged. This is source correspondence, not a machine-checked refinement
+  of socket outcomes or the runtime's retry-wake scheduling. `WSendDone` zeroes the count, and
   `WRetLock` and `WRetSwap` return the bank to the free queue.
 - **Not modelled.** The packet bytes and addresses, the invalid-packet drop,
   the drop counters and `publish_refusal`, the socket's own failures, and the
@@ -100,6 +106,15 @@ The fairness assumptions are:
 - strong fairness on main's try, and on main's calls to `portable_receive`.
 
 Stop is not forced; `StopCompletes` is conditional on stop starting.
+
+The runtime announces shutdown to the portable backend before waiting for
+`send_idle`. This separate terminal-drain flag leaves disconnect-batch
+admission open, while switching a retained socket suffix to its final
+counted send attempt. It prevents persistent socket refusal from trapping
+the outer stop before `portable_stop` can publish quit. The model's
+`WSend` abstracts consumption by the socket layer; it does not prove UDP
+delivery or model that layer's terminal refusal counters. Runtime controls
+cover partial-prefix retention and persistent-refusal shutdown separately.
 
 ## Cases and the checks against the code
 

@@ -376,3 +376,30 @@ static void test_fake_client_disconnect_burst_keeps_server_address()
 
 REGISTER_UNIT_TEST( test_fake_client_disconnect_burst_keeps_server_address );
 #endif // #if ROCKETNET_DEV
+
+static int fake_client_progress_for_contract( void *, const rocketnet_platform_send_t *, int count )
+{
+    return count;
+}
+
+static void test_client_progress_requires_terminal_batch_before_create()
+{
+    rocketnet_fake_client_transport_io_t fake = {};
+    rocketnet_client_transport_io_operations_t operations = rocketnet_fake_client_operations_io;
+    operations.create = rocketnet_fake_client_create_by_family;
+    operations.send_batch_progress = fake_client_progress_for_contract;
+    rocketnet_client_transport_io_config_t config = { "fake", NULL, NULL };
+    rocketnet_address_t bind = {};
+    bind.type = ROCKETNET_ADDRESS_IPV4;
+    rocketnet_client_transport_io_t transport = {};
+    rocketnet_unit_check( operations.send_batch == NULL );
+    rocketnet_unit_check( !rocketnet_client_transport_io_open( &operations, &fake, &config, &bind, &transport ) );
+    rocketnet_unit_check( fake.create_calls == 0 && fake.destroy_calls == 0 );
+    rocketnet_unit_check( transport.instance == NULL && transport.operations == NULL );
+    operations.send_batch = rocketnet_fake_client_send_batch;
+    rocketnet_unit_check( rocketnet_client_transport_io_open( &operations, &fake, &config, &bind, &transport ) );
+    rocketnet_unit_check( fake.create_calls == 1 );
+    rocketnet_client_transport_io_close( &transport );
+    rocketnet_unit_check( fake.destroy_calls == 1 );
+}
+REGISTER_UNIT_TEST( test_client_progress_requires_terminal_batch_before_create );

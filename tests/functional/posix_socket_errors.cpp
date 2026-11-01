@@ -1120,11 +1120,21 @@ static void posix_send_seam_socket( int ipv6, const char * pump )
     rocketnet_platform_socket_destroy( socket );
 }
 
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+static void test_mmsg_progress_retries_original_suffix( int ipv6, int error, int prefix, bool holes );
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+
 void rocketnet_test_posix_platform_send_seam()
 {
     for ( int ipv6 = 0; ipv6 < 2; ipv6++ )
     {
         posix_send_seam_socket( ipv6, "portable" );
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+        test_mmsg_progress_retries_original_suffix( ipv6, EAGAIN, 2, true );
+        test_mmsg_progress_retries_original_suffix( ipv6, ENOBUFS, 65, false );
+        test_mmsg_progress_retries_original_suffix( ipv6, EHOSTUNREACH, 2, true );
+        test_mmsg_progress_retries_original_suffix( ipv6, EINTR, 2, false );
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
         posix_create_keeps_queued_datagram( ipv6 );
         posix_send_seam_socket( ipv6, "msgx" );
@@ -1134,8 +1144,8 @@ void rocketnet_test_posix_platform_send_seam()
 
 // ---------------------------------------------------
 // the send seam under a live transport: a server whose sends fail with
-// ENOBUFS, then EAGAIN, keeps its pump and its connection, counts what it
-// dropped, and its traffic resumes on the next update
+// ENOBUFS, then EAGAIN, keeps its pump and its connection. Linux portable
+// retains its bank; the other pumps count their drops. Traffic resumes.
 
 // the portable and msgx servers' send calls happen on their TX worker after
 // send_packets returns, so an injected failure covers an update only if it
@@ -1159,12 +1169,25 @@ static void posix_server_sends_drained( struct posix_pair_t * pair )
     posix_check( drained );
 }
 
+static void posix_wait_for_send_refusal( rocketnet_platform_socket_t * socket, int armed )
+{
+    const double deadline = rocketnet_platform_time() + 5.0;
+    while ( rocketnet_platform_socket_send_failures_remaining_for_testing( socket ) == armed && rocketnet_platform_time() < deadline )
+        rocketnet_platform_sleep( 0.0005 );
+    posix_check( rocketnet_platform_socket_send_failures_remaining_for_testing( socket ) < armed );
+}
+
 static void posix_transport_send_seam_cell( int ipv6, const char * server_transport_io, const char * server_pump )
 {
     struct posix_pair_t pair;
     posix_pair_create( &pair, ipv6, server_transport_io, "portable", server_pump, "portable" );
 
     const int errors[2] = { ENOBUFS, EAGAIN };
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    const bool retains = strcmp( server_pump, "portable" ) == 0;
+#else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    const bool retains = false;
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     int tag = 0;
 
     for ( int e = 0; e < 2; e++ )
@@ -1177,8 +1200,8 @@ static void posix_transport_send_seam_cell( int ipv6, const char * server_transp
         const uint64_t replay_failures_before = rocketnet_platform_socket_send_replay_failures( pair.server_socket );
         const uint64_t transport_failed_before = rocketnet_server_transport_counters( pair.server )->values[ROCKETNET_COUNTER_SEND_FAILED];
 
-        // every send call of this update fails: eight payloads and anything
-        // else the update sends are dropped, each one counted
+        // Every send call initially fails. Linux portable retains these
+        // eight records; the other pumps keep their existing drop contract.
 
         for ( int i = 0; i < 8; i++ )
         {
@@ -1186,13 +1209,24 @@ static void posix_transport_send_seam_cell( int ipv6, const char * server_transp
             uint8_t * frame = rocketnet_server_transport_start_packet( pair.server, pair.client_index, 16, &context );
             posix_check( frame != NULL );
             memset( frame + context.payload_index, 0xdd, 16 );
+            frame[context.payload_index + 1] = (uint8_t) i;
             posix_check( rocketnet_server_transport_finish_packet( pair.server, &context, 16 ) > 0 );
         }
 
-        rocketnet_platform_socket_fail_next_sends( pair.server_socket, 1000, errors[e] );
+        const int armed = retains ? 1000000 : 1000;
+        rocketnet_platform_socket_fail_next_sends( pair.server_socket, armed, errors[e] );
         rocketnet_server_transport_send_packets( pair.server );
-        posix_server_sends_drained( &pair );
+        if ( retains )
+        {
+            posix_wait_for_send_refusal( pair.server_socket, armed );
+            void * transport = rocketnet_server_transport_io_name_for_testing( pair.server );
+            posix_check( !rocketnet_portable_tx_test_drained( transport ) );
+            posix_check( rocketnet_platform_socket_send_failures( pair.server_socket ) == failures_before );
+        }
+        else
+            posix_server_sends_drained( &pair );
         rocketnet_platform_socket_fail_next_sends( pair.server_socket, 0, 0 );
+        posix_server_sends_drained( &pair );
 
         // portable counts each refused send; msgx counts each refused chunk
         // once and the refused sends of its replay apart, so the replay
@@ -1201,7 +1235,12 @@ static void posix_transport_send_seam_cell( int ipv6, const char * server_transp
         const uint64_t dropped = rocketnet_platform_socket_send_failures( pair.server_socket ) - failures_before;
         const uint64_t replay_dropped = rocketnet_platform_socket_send_replay_failures( pair.server_socket ) - replay_failures_before;
 
-        if ( strcmp( server_pump, "msgx" ) == 0 )
+        if ( retains )
+        {
+            posix_check( dropped == 0 );
+            posix_check( replay_dropped == 0 );
+        }
+        else if ( strcmp( server_pump, "msgx" ) == 0 )
         {
             posix_check( dropped >= 1 );
             posix_check( replay_dropped >= 8 );
@@ -1217,21 +1256,50 @@ static void posix_transport_send_seam_cell( int ipv6, const char * server_transp
         posix_check( transport_failed - transport_failed_before == dropped );
         posix_check( strcmp( rocketnet_platform_socket_pump( pair.server_socket ), server_pump ) == 0 );
 
-        // none of the dropped payloads arrives
-
-        for ( int i = 0; i < 20; i++ )
+        if ( retains )
         {
-            rocketnet_client_transport_update( pair.client, rocketnet_platform_time() );
-
-            const int num_payloads = rocketnet_client_transport_num_payloads( pair.client );
-            for ( int k = 0; k < num_payloads; k++ )
+            // Clearing the refusal sends each held record once, without a
+            // fresh producer submission or a drop charged to SEND_FAILED.
+            bool seen[8] = {};
+            int arrived = 0;
+            const double deadline = rocketnet_platform_time() + 5.0;
+            while ( arrived < 8 && rocketnet_platform_time() < deadline )
             {
-                int payload_bytes = 0;
-                uint8_t * payload = rocketnet_client_transport_payload( pair.client, k, &payload_bytes );
-                posix_check( !( payload_bytes == 16 && payload[0] == 0xdd ) );
+                posix_pair_update( &pair );
+                const int num_payloads = rocketnet_client_transport_num_payloads( pair.client );
+                for ( int k = 0; k < num_payloads; k++ )
+                {
+                    int payload_bytes = 0;
+                    uint8_t * payload = rocketnet_client_transport_payload( pair.client, k, &payload_bytes );
+                    posix_check( payload_bytes == 16 && payload[0] == 0xdd );
+                    const int index = payload[1];
+                    posix_check( index < 8 && !seen[index] );
+                    for ( int j = 2; j < 16; j++ )
+                        posix_check( payload[j] == 0xdd );
+                    seen[index] = true;
+                    arrived++;
+                }
+                rocketnet_platform_sleep( 0.001 );
             }
+            posix_check( arrived == 8 );
+        }
+        else
+        {
+            // None of the terminally dropped payloads arrives.
+            for ( int i = 0; i < 20; i++ )
+            {
+                rocketnet_client_transport_update( pair.client, rocketnet_platform_time() );
 
-            rocketnet_platform_sleep( 0.001 );
+                const int num_payloads = rocketnet_client_transport_num_payloads( pair.client );
+                for ( int k = 0; k < num_payloads; k++ )
+                {
+                    int payload_bytes = 0;
+                    uint8_t * payload = rocketnet_client_transport_payload( pair.client, k, &payload_bytes );
+                    posix_check( !( payload_bytes == 16 && payload[0] == 0xdd ) );
+                }
+
+                rocketnet_platform_sleep( 0.001 );
+            }
         }
 
         // the next update's traffic goes: eight tagged payloads arrive whole
@@ -1274,8 +1342,9 @@ static void posix_transport_send_seam_cell( int ipv6, const char * server_transp
         tag += 8;
         posix_pair_check_connected( &pair );
 
-        printf( "  seam %s %s server=%s: dropped and counted %llu, replay refusals %llu, transport SEND_FAILED +%llu, pump %s, resumed 8/8\n",
+        printf( "  seam %s %s server=%s: %s, dropped and counted %llu, replay refusals %llu, transport SEND_FAILED +%llu, pump %s, resumed 8/8\n",
                 errors[e] == ENOBUFS ? "ENOBUFS" : "EAGAIN", ipv6 ? "ipv6" : "ipv4", server_transport_io,
+                retains ? "held 8/8 delivered once" : "terminal refusal",
                 (unsigned long long) dropped, (unsigned long long) replay_dropped, (unsigned long long) ( transport_failed - transport_failed_before ),
                 rocketnet_platform_socket_pump( pair.server_socket ) );
         fflush( stdout );
@@ -1283,6 +1352,52 @@ static void posix_transport_send_seam_cell( int ipv6, const char * server_transp
 
     posix_pair_destroy( &pair );
 }
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+
+static void posix_transport_stop_drains_refused_bank( int ipv6, int error )
+{
+    struct posix_pair_t pair;
+    posix_pair_create( &pair, ipv6, "portable", "portable", "portable", "portable" );
+    posix_server_sends_drained( &pair );
+    const uint64_t before = rocketnet_platform_socket_send_failures( pair.server_socket );
+    const uint64_t counter_before = rocketnet_server_transport_counters( pair.server )->values[ROCKETNET_COUNTER_SEND_FAILED];
+
+    for ( int i = 0; i < 8; i++ )
+    {
+        struct rocketnet_packet_context_t context;
+        uint8_t * frame = rocketnet_server_transport_start_packet( pair.server, pair.client_index, 16, &context );
+        posix_check( frame != NULL );
+        memset( frame + context.payload_index, 0xdd, 16 );
+        posix_check( rocketnet_server_transport_finish_packet( pair.server, &context, 16 ) > 0 );
+    }
+
+    const int armed = 1000000;
+    rocketnet_platform_socket_fail_next_sends( pair.server_socket, armed, error );
+    rocketnet_server_transport_send_packets( pair.server );
+    posix_wait_for_send_refusal( pair.server_socket, armed );
+    void * transport = rocketnet_server_transport_io_name_for_testing( pair.server );
+    posix_check( !rocketnet_portable_tx_test_drained( transport ) );
+    posix_check( rocketnet_platform_socket_send_failures( pair.server_socket ) == before );
+
+    // The fault remains armed through stop. Its early shutdown notification
+    // must terminally drain the retained eight before send_idle can complete.
+    rocketnet_server_transport_stop( pair.server );
+    rn_native_server_transport_wait_stopped( pair.server );
+    posix_check( rocketnet_portable_tx_test_drained( transport ) );
+    const uint64_t dropped = rocketnet_platform_socket_send_failures( pair.server_socket ) - before;
+    const uint64_t counter = rocketnet_server_transport_counters( pair.server )->values[ROCKETNET_COUNTER_SEND_FAILED] - counter_before;
+    printf( "  ipv%d portable stop errno=%d: dropped=%llu counter=%llu, stopped with refusal still armed\n",
+            ipv6 ? 6 : 4, error, (unsigned long long) dropped, (unsigned long long) counter );
+    fflush( stdout );
+    posix_check( rocketnet_platform_socket_send_failures_remaining_for_testing( pair.server_socket ) > 0 );
+    posix_check( dropped == 8 );
+    posix_check( counter == dropped );
+    rocketnet_platform_socket_fail_next_sends( pair.server_socket, 0, 0 );
+    posix_pair_destroy( &pair );
+}
+
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 
@@ -1454,6 +1569,162 @@ static void test_mmsg_full_socket_logs_its_errno( int ipv6 )
     rocketnet_platform_socket_destroy( socket );
 }
 
+// The progress caller retries only the suffix its consumed count names.
+// Every accepted prefix goes through the kernel; injected refusal cannot
+// manufacture delivery. Invalid holes test that retries log each just once.
+
+struct posix_mmsg_progress_log_t
+{
+    std::atomic<int> failures;
+    std::atomic<int> matching_errno;
+    std::atomic<int> invalid;
+    int error;
+};
+
+static void posix_mmsg_progress_log( void * context, enum rocketnet_log_level_t level, const char * message, size_t length )
+{
+    (void) level;
+    (void) length;
+    posix_mmsg_progress_log_t * log = (posix_mmsg_progress_log_t *) context;
+    if ( strstr( message, "sendmmsg (" ) != NULL )
+    {
+        log->failures++;
+        if ( strstr( message, strerror( log->error ) ) != NULL )
+            log->matching_errno++;
+    }
+    if ( strstr( message, "invalid address. could not send packet" ) != NULL )
+        log->invalid++;
+    errno = EBADF;
+}
+
+static void test_mmsg_progress_retries_original_suffix( int ipv6, int error, int prefix, bool holes )
+{
+    const int max_packets = 70;
+    const int num_packets = prefix > 64 ? max_packets : 8;
+    const bool transient = error == EAGAIN || error == EWOULDBLOCK || error == ENOBUFS;
+    const bool terminal = !transient && error != EINTR;
+
+    rocketnet_address_t bind_address;
+    posix_check( rocketnet_address_parse( &bind_address, ipv6 ? "::1" : "127.0.0.1" ) );
+    rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0,
+                                                                             ROCKETNET_SOCKET_SEND_BUFFER_SIZE, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
+    posix_check( socket != NULL );
+
+    rocketnet_address_t to;
+    posix_check( rocketnet_address_parse( &to, ipv6 ? "::1" : "127.0.0.1" ) );
+    to.port = bind_address.port;
+    rocketnet_address_t invalid = {};
+    uint8_t packets[max_packets][64];
+    struct rocketnet_platform_send_t sends[max_packets];
+    bool refused_address[max_packets] = {};
+    int invalid_count = 0;
+    int accepted_before = 0;
+    int refusal_index = -1;
+    for ( int i = 0; i < num_packets; i++ )
+    {
+        refused_address[i] = holes && ( i == 0 || i == 3 || i == 6 );
+        invalid_count += refused_address[i];
+        if ( !refused_address[i] )
+        {
+            if ( accepted_before == prefix )
+                refusal_index = i;
+            accepted_before++;
+        }
+        memset( packets[i], i + 1, sizeof( packets[i] ) );
+        sends[i].to = refused_address[i] ? &invalid : &to;
+        sends[i].packet_data = packets[i];
+        sends[i].packet_bytes = (int) sizeof( packets[i] );
+    }
+    posix_check( refusal_index >= 0 );
+
+    posix_mmsg_progress_log_t log;
+    log.failures = 0;
+    log.matching_errno = 0;
+    log.invalid = 0;
+    log.error = error;
+    const enum rocketnet_log_level_t level = rocketnet_log_level_current();
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_DEBUG );
+    rocketnet_log_function( posix_mmsg_progress_log, &log );
+    const uint64_t failures_before = rocketnet_platform_socket_send_failures( socket );
+
+    rocketnet_platform_socket_fail_mmsg_after_packets( socket, prefix, error );
+    const int first = rocketnet_platform_socket_send_packets_mmsg_progress( socket, sends, num_packets );
+    const int invalid_after_first = log.invalid;
+    int consumed = first;
+    int second = 0;
+    int invalid_after_second = invalid_after_first;
+    if ( transient )
+    {
+        // A second full-socket result makes no progress and must not consume
+        // or log any invalid entry still behind the first valid unsent one.
+        rocketnet_platform_socket_fail_next_sends( socket, 1, error );
+        second = rocketnet_platform_socket_send_packets_mmsg_progress( socket, sends + consumed, num_packets - consumed );
+        consumed += second;
+        invalid_after_second = log.invalid;
+        rocketnet_platform_socket_fail_next_sends( socket, 0, 0 );
+        consumed += rocketnet_platform_socket_send_packets_mmsg_progress( socket, sends + consumed, num_packets - consumed );
+    }
+    rocketnet_platform_socket_fail_next_sends( socket, 0, 0 );
+    const uint64_t failures = rocketnet_platform_socket_send_failures( socket ) - failures_before;
+    rocketnet_log_function( NULL, NULL );
+    rocketnet_log_level( level );
+
+    const int expected = num_packets - invalid_count - ( terminal ? 1 : 0 );
+    bool seen[max_packets] = {};
+    int received = 0;
+    const double deadline = rocketnet_platform_time() + 5.0;
+    while ( received < expected && rocketnet_platform_time() < deadline )
+    {
+        rocketnet_address_t from;
+        uint8_t data[64];
+        const int bytes = rocketnet_platform_socket_receive_packet( socket, &from, data, sizeof( data ) );
+        if ( bytes == 0 )
+        {
+            rocketnet_platform_sleep( 0.0005 );
+            continue;
+        }
+        posix_check( bytes == (int) sizeof( data ) );
+        const int index = data[0] - 1;
+        posix_check( index >= 0 && index < num_packets );
+        posix_check( !refused_address[index] && !( terminal && index == refusal_index ) );
+        posix_check( !seen[index] );
+        posix_check( memcmp( data, packets[index], sizeof( data ) ) == 0 );
+        seen[index] = true;
+        received++;
+    }
+
+    printf( "  ipv%d mmsg progress errno=%d prefix=%d holes=%d: received=%d/%d consumed=%d first=%d second=%d failures=%llu invalid=%d\n",
+            ipv6 ? 6 : 4, error, prefix, holes ? 1 : 0, received, expected, consumed, first, second,
+            (unsigned long long) failures, log.invalid.load() );
+    fflush( stdout );
+    // Delivery is checked before progress bookkeeping: dropping the suffix
+    // while reporting it consumed must fail the actual receive oracle.
+    posix_check( received == expected );
+    for ( int i = 0; i < num_packets; i++ )
+        posix_check( seen[i] == ( !refused_address[i] && !( terminal && i == refusal_index ) ) );
+    rocketnet_platform_sleep( 0.01 );
+    rocketnet_address_t from;
+    uint8_t extra[64];
+    posix_check( rocketnet_platform_socket_receive_packet( socket, &from, extra, sizeof( extra ) ) == 0 );
+
+    posix_check( consumed == num_packets );
+    posix_check( failures == ( terminal ? 1u : 0u ) );
+    posix_check( log.failures == ( terminal ? 1 : 0 ) );
+    posix_check( log.matching_errno == ( terminal ? 1 : 0 ) );
+    posix_check( log.invalid == invalid_count );
+    if ( transient )
+    {
+        posix_check( first == refusal_index );
+        posix_check( second == 0 );
+        int preceding_invalid = 0;
+        for ( int i = 0; i < refusal_index; i++ )
+            preceding_invalid += refused_address[i];
+        posix_check( invalid_after_first == preceding_invalid );
+        posix_check( invalid_after_second == preceding_invalid );
+    }
+    rocketnet_platform_socket_destroy( socket );
+}
+
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
 void rocketnet_test_posix_transport_send_seam()
@@ -1467,6 +1738,8 @@ void rocketnet_test_posix_transport_send_seam()
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
         test_mmsg_full_socket_logs_its_errno( ipv6 );
+        posix_transport_stop_drains_refused_bank( ipv6, EAGAIN );
+        posix_transport_stop_drains_refused_bank( ipv6, ENOBUFS );
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     }
 }

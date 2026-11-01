@@ -633,6 +633,12 @@ struct rocketnet_client_race_t
     rocketnet_address_t server_address[2];                  // the server of each family, from the token
     std::atomic<int> committed;                             // -1 while both are in flight, else the family kept
     bool closed;                                            // the losing family's socket is closed (the reading thread)
+    bool send_pending;                                     // I/O thread only: one partially consumed fanout head
+    const uint8_t * send_pending_data;
+    int send_pending_bytes;
+    rocketnet_address_t send_pending_to;
+    unsigned int send_required_families;
+    unsigned int send_consumed_families;
     std::atomic<uint64_t> closed_send_failures;             // the losing socket's send failures, kept at the commit and again at its close
     void * context;
 };
@@ -724,9 +730,102 @@ static void rocketnet_client_race_send( void * instance, const rocketnet_address
         race->family[1].operations->send( race->family[1].instance, &race->server_address[1], packet_data, packet_bytes );
 }
 
+// The I/O thread retains the input ring. Before a family is chosen, a
+// packet's physical-family copies may finish on different attempts. Only
+// their shared original prefix is returned to the ring owner. The same I/O
+// thread closes the loser in receive, so it cannot close a socket during
+// this callback; a caller-thread commit is observed on the next attempt.
+static int rocketnet_client_race_send_progress( void * instance, const rocketnet_platform_send_t * sends, int num_packets, bool terminal )
+{
+    rocketnet_client_race_t * race = (rocketnet_client_race_t *) instance;
+    const int committed = race->committed.load( std::memory_order_acquire );
+    if ( committed >= 0 && !race->send_pending )
+    {
+        bool all_kept = true;
+        for ( int i = 0; i < num_packets; i++ )
+            all_kept = all_kept && rocketnet_client_race_family_of( race, sends[i].to ) == committed;
+        if ( all_kept )
+        {
+            rocketnet_client_transport_io_t * kept = &race->family[committed];
+            if ( !terminal && kept->operations->send_batch_progress )
+                return kept->operations->send_batch_progress( kept->instance, sends, num_packets );
+            kept->operations->send_batch( kept->instance, sends, num_packets );
+            return num_packets;
+        }
+    }
+
+    for ( int i = 0; i < num_packets; i++ )
+    {
+        const rocketnet_platform_send_t * send = &sends[i];
+        if ( !race->send_pending )
+        {
+            const int family = rocketnet_client_race_family_of( race, send->to );
+            if ( committed >= 0 && family != committed )
+                continue; // the existing policy for an unstarted losing-family packet
+            race->send_pending = true;
+            race->send_pending_data = send->packet_data;
+            race->send_pending_bytes = send->packet_bytes;
+            race->send_pending_to = *send->to;
+            race->send_required_families = 1u << family;
+            if ( committed < 0 && family == 0 && rocketnet_address_equal( send->to, &race->server_address[0] ) )
+                race->send_required_families |= 2u;
+            race->send_consumed_families = 0;
+        }
+        rocketnet_assert( race->send_pending_data == send->packet_data &&
+                          race->send_pending_bytes == send->packet_bytes &&
+                          rocketnet_address_equal( &race->send_pending_to, send->to ) );
+
+        unsigned int required = race->send_required_families;
+        if ( committed >= 0 )
+            required &= 1u << committed;
+        for ( int family = 0; family < 2; family++ )
+        {
+            const unsigned int bit = 1u << family;
+            if ( !( required & bit ) || ( race->send_consumed_families & bit ) )
+                continue;
+
+            rocketnet_client_transport_io_t * physical = &race->family[family];
+            rocketnet_platform_send_t copy = *send;
+            copy.to = &race->server_address[family];
+            if ( !terminal && physical->operations->send_batch_progress )
+            {
+                const int consumed = physical->operations->send_batch_progress( physical->instance, &copy, 1 );
+                rocketnet_assert( consumed >= 0 && consumed <= 1 );
+                if ( consumed != 1 )
+                    continue; // a full family must not prevent its twin's attempt
+            }
+            else
+                physical->operations->send_batch( physical->instance, &copy, 1 );
+            race->send_consumed_families |= bit;
+        }
+        if ( ( race->send_consumed_families & required ) != required )
+            return i;
+        race->send_pending = false;
+        race->send_pending_data = NULL;
+        race->send_required_families = 0;
+        race->send_consumed_families = 0;
+    }
+    return num_packets;
+}
+
+static int rocketnet_client_race_send_batch_progress( void * instance, const rocketnet_platform_send_t * sends, int num_packets )
+{
+    return rocketnet_client_race_send_progress( instance, sends, num_packets, false );
+}
+
 static void rocketnet_client_race_send_batch( void * instance, const rocketnet_platform_send_t * sends, int num_packets )
 {
     rocketnet_client_race_t * race = (rocketnet_client_race_t *) instance;
+    if ( race->send_pending && num_packets > 0 )
+    {
+        // The quit path settles only the missing physical copy of this head.
+        // A copy already consumed before quit must not be sent twice.
+        rocketnet_client_race_send_progress( instance, sends, 1, true );
+        sends++;
+        num_packets--;
+        if ( num_packets == 0 )
+            return;
+    }
     const int committed = race->committed.load( std::memory_order_acquire );
     if ( committed >= 0 )
     {
@@ -1479,6 +1578,17 @@ rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven_ex(
 }
 #endif // #if ROCKETNET_DEV
 
+#if ROCKETNET_DEV
+bool rocketnet_client_transport_commit_race_for_test( rocketnet_client_transport_t * transport, int family )
+{
+    rocketnet_client_race_t * race = rocketnet_client_race_of( transport );
+    if ( !race || family < 0 || family > 1 )
+        return false;
+    rocketnet_client_race_commit( transport, race, family );
+    return true;
+}
+#endif // #if ROCKETNET_DEV
+
 rocketnet_client_io_t * rocketnet_client_transport_client_io( rocketnet_client_transport_t * client_transport )
 {
 #if ROCKETNET_DEV
@@ -2068,7 +2178,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
                 []( void * ) -> uint64_t
                 { return 0; },
                 NULL,
-                NULL
+                NULL, NULL
             };
             client_transport->io.operations = &seam_transport_ops;
             client_transport->io.instance = seam_client;
@@ -2252,6 +2362,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
             race->operations.send = rocketnet_client_race_send;
             race->operations.receive = rocketnet_client_race_receive;
             race->operations.send_batch = inner->send_batch ? rocketnet_client_race_send_batch : NULL;
+            race->operations.send_batch_progress = inner->send_batch_progress ? rocketnet_client_race_send_batch_progress : NULL;
             race->operations.receive_batch = inner->receive_batch ? rocketnet_client_race_receive_batch : NULL;
             race->operations.wait = inner->wait ? rocketnet_client_race_wait : NULL;
             race->operations.wake = inner->wake ? rocketnet_client_race_wake : NULL;

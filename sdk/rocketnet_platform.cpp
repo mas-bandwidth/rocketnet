@@ -637,7 +637,7 @@ int rocketnet_platform_nonblocking_flags( int flags )
 // The next N sendto and sendmsg_x calls on one socket report the chosen errno
 // without reaching the kernel, so a functional case can drive the send error
 // arms. A registry of live sockets lets a case find a transport's socket. The
-// send path pays one relaxed load while nothing is armed.
+// unarmed send seam avoids taking the registry lock.
 
 #if ROCKETNET_DEV && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
@@ -648,6 +648,9 @@ struct rocketnet_platform_test_socket_t
     rocketnet_platform_socket_t * socket;
     int fail_remaining;
     int fail_error;
+#if defined( __linux__ )
+    int mmsg_before_failure;
+#endif // #if defined( __linux__ )
 };
 
 static rocketnet_platform_test_socket_t rocketnet_platform_test_sockets[ROCKETNET_PLATFORM_TEST_SOCKETS];
@@ -685,6 +688,9 @@ static void rocketnet_platform_test_register( rocketnet_platform_socket_t * sock
         entry->socket = socket;
         entry->fail_remaining = 0;
         entry->fail_error = 0;
+#if defined( __linux__ )
+        entry->mmsg_before_failure = 0;
+#endif // #if defined( __linux__ )
     }
 
     rocketnet_platform_test_release();
@@ -730,11 +736,85 @@ void rocketnet_platform_socket_fail_next_sends( rocketnet_platform_socket_t * so
             continue;
         rocketnet_platform_test_sockets[i].fail_remaining = count > 0 ? count : 0;
         rocketnet_platform_test_sockets[i].fail_error = error;
+#if defined( __linux__ )
+        rocketnet_platform_test_sockets[i].mmsg_before_failure = 0;
+#endif // #if defined( __linux__ )
     }
 
     rocketnet_platform_test_recount_armed();
     rocketnet_platform_test_release();
 }
+
+int rocketnet_platform_socket_send_failures_remaining_for_testing( rocketnet_platform_socket_t * socket )
+{
+    rocketnet_platform_test_acquire();
+    int remaining = 0;
+    for ( int i = 0; i < rocketnet_platform_test_num_sockets; i++ )
+        if ( rocketnet_platform_test_sockets[i].socket == socket )
+            remaining = rocketnet_platform_test_sockets[i].fail_remaining;
+    rocketnet_platform_test_release();
+    return remaining;
+}
+
+#if defined( __linux__ )
+
+void rocketnet_platform_socket_fail_mmsg_after_packets( rocketnet_platform_socket_t * socket, int accepted_packets, int error )
+{
+    rocketnet_assert( accepted_packets >= 0 );
+    rocketnet_platform_test_acquire();
+
+    for ( int i = 0; i < rocketnet_platform_test_num_sockets; i++ )
+    {
+        rocketnet_platform_test_socket_t * entry = &rocketnet_platform_test_sockets[i];
+        if ( entry->socket != socket )
+            continue;
+        entry->fail_remaining = 1;
+        entry->fail_error = error;
+        entry->mmsg_before_failure = accepted_packets;
+    }
+
+    rocketnet_platform_test_recount_armed();
+    rocketnet_platform_test_release();
+}
+
+// Cap the real syscall at the accepted prefix. Only a positive kernel
+// result spends it; neither a refused call nor an invalid address does.
+
+static int rocketnet_platform_test_mmsg_count( rocketnet_platform_socket_t * socket, int count )
+{
+    if ( __atomic_load_n( &rocketnet_platform_test_armed, __ATOMIC_RELAXED ) == 0 )
+        return count;
+    rocketnet_platform_test_acquire();
+
+    for ( int i = 0; i < rocketnet_platform_test_num_sockets; i++ )
+    {
+        const rocketnet_platform_test_socket_t * entry = &rocketnet_platform_test_sockets[i];
+        if ( entry->socket == socket && entry->fail_remaining > 0 && entry->mmsg_before_failure > 0 && entry->mmsg_before_failure < count )
+            count = entry->mmsg_before_failure;
+    }
+
+    rocketnet_platform_test_release();
+    return count;
+}
+
+static void rocketnet_platform_test_mmsg_accepted( rocketnet_platform_socket_t * socket, int accepted )
+{
+    if ( __atomic_load_n( &rocketnet_platform_test_armed, __ATOMIC_RELAXED ) == 0 )
+        return;
+    rocketnet_platform_test_acquire();
+
+    for ( int i = 0; i < rocketnet_platform_test_num_sockets; i++ )
+    {
+        rocketnet_platform_test_socket_t * entry = &rocketnet_platform_test_sockets[i];
+        if ( entry->socket != socket || entry->mmsg_before_failure <= 0 )
+            continue;
+        entry->mmsg_before_failure = accepted < entry->mmsg_before_failure ? entry->mmsg_before_failure - accepted : 0;
+    }
+
+    rocketnet_platform_test_release();
+}
+
+#endif // #if defined( __linux__ )
 
 // Test-only create seam: a callback between the bind and the first batch
 // decision, so a functional case can put a datagram on a fixed-port bind
@@ -761,6 +841,10 @@ static bool rocketnet_platform_send_failure_should_inject( rocketnet_platform_so
         rocketnet_platform_test_socket_t * entry = &rocketnet_platform_test_sockets[i];
         if ( entry->socket != socket || entry->fail_remaining <= 0 )
             continue;
+#if defined( __linux__ )
+        if ( entry->mmsg_before_failure > 0 )
+            continue;
+#endif // #if defined( __linux__ )
         entry->fail_remaining--;
         *error = entry->fail_error;
         inject = true;
@@ -1798,6 +1882,26 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
 
 #define ROCKETNET_MSS_BATCH 64
 
+static int rocketnet_platform_sendmmsg( rocketnet_platform_socket_t * socket, struct mmsghdr * msg, int count )
+{
+#if ROCKETNET_DEV
+    count = rocketnet_platform_test_mmsg_count( socket, count );
+    int error = 0;
+    if ( rocketnet_platform_send_failure_should_inject( socket, &error ) )
+    {
+        errno = error;
+        return -1;
+    }
+#endif // #if ROCKETNET_DEV
+
+    const int result = sendmmsg( socket->handle, msg, (unsigned int) count, 0 );
+#if ROCKETNET_DEV
+    if ( result > 0 )
+        rocketnet_platform_test_mmsg_accepted( socket, result );
+#endif // #if ROCKETNET_DEV
+    return result;
+}
+
 void rocketnet_platform_socket_send_packets_mmsg( rocketnet_platform_socket_t * socket, const rocketnet_platform_send_t * sends, int num_packets )
 {
     rocketnet_assert( socket );
@@ -1849,15 +1953,7 @@ void rocketnet_platform_socket_send_packets_mmsg( rocketnet_platform_socket_t * 
         {
             errno = 0;
 
-            int result = -1;
-            int injected_error = 0;
-#if ROCKETNET_DEV
-            if ( rocketnet_platform_send_failure_should_inject( socket, &injected_error ) )
-                errno = injected_error;
-            else
-#endif // #if ROCKETNET_DEV
-                result = sendmmsg( socket->handle, msg + sent, (unsigned int) ( count - sent ), 0 );
-            (void) injected_error;
+            const int result = rocketnet_platform_sendmmsg( socket, msg + sent, count - sent );
 
             if ( result > 0 )
             {
@@ -1900,6 +1996,85 @@ void rocketnet_platform_socket_send_packets_mmsg( rocketnet_platform_socket_t * 
 
         base += scanned;
     }
+}
+
+// A caller retaining its batch advances by this ORIGINAL input prefix:
+// successful sends and terminal refusals are consumed; a full socket leaves
+// its suffix untouched. Invalid addresses are consumed only after every
+// earlier entry, so retrying the suffix never logs an invalid entry twice.
+
+int rocketnet_platform_socket_send_packets_mmsg_progress( rocketnet_platform_socket_t * socket, const rocketnet_platform_send_t * sends, int num_packets )
+{
+    rocketnet_assert( socket );
+    rocketnet_assert( sends || num_packets == 0 );
+    rocketnet_assert( num_packets >= 0 );
+
+    int base = 0;
+    while ( base < num_packets )
+    {
+        sockaddr_storage addresses[ROCKETNET_MSS_BATCH];
+        struct iovec iov[ROCKETNET_MSS_BATCH];
+        struct mmsghdr msg[ROCKETNET_MSS_BATCH];
+
+        // Stop at the first invalid entry instead of gathering across a hole.
+        // Its logging and consumption wait until this valid run completes.
+
+        int count = 0;
+        while ( base + count < num_packets && count < ROCKETNET_MSS_BATCH )
+        {
+            const rocketnet_platform_send_t * send = &sends[base + count];
+            rocketnet_assert( send->to );
+            rocketnet_assert( send->packet_data );
+            rocketnet_assert( send->packet_bytes > 0 );
+            const socklen_t sockaddr_bytes = (socklen_t) rocketnet_platform_sockaddr_for( socket->ipv6, send->to, &addresses[count] );
+            if ( sockaddr_bytes == 0 )
+                break;
+
+            memset( &msg[count], 0, sizeof( msg[count] ) );
+            iov[count].iov_base = const_cast<uint8_t *>( send->packet_data );
+            iov[count].iov_len = (size_t) send->packet_bytes;
+            msg[count].msg_hdr.msg_name = socket->connected ? NULL : &addresses[count];
+            msg[count].msg_hdr.msg_namelen = socket->connected ? 0 : sockaddr_bytes;
+            msg[count].msg_hdr.msg_iov = &iov[count];
+            msg[count].msg_hdr.msg_iovlen = 1;
+            count++;
+        }
+
+        if ( count == 0 )
+        {
+            rocketnet_error( "invalid address. could not send packet" );
+            base++;
+            continue;
+        }
+
+        int sent = 0;
+        while ( sent < count )
+        {
+            errno = 0;
+            const int result = rocketnet_platform_sendmmsg( socket, msg + sent, count - sent );
+            if ( result > 0 )
+            {
+                sent += result;
+                continue;
+            }
+
+            const int error = errno;
+            if ( error == EINTR )
+                continue;
+            if ( error == EAGAIN || error == EWOULDBLOCK || error == ENOBUFS )
+                return base + sent;
+
+            char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+            rocketnet_address_to_string( sends[base + sent].to, address_string );
+            rocketnet_debug( "sendmmsg (%s) failed: %s", address_string, strerror( error ) );
+            rocketnet_platform_send_failed( socket, &socket->send_failures, ROCKETNET_PLATFORM_SEND_CALL_SENDTO, error );
+            sent++;
+        }
+
+        base += count;
+    }
+
+    return base;
 }
 
 int rocketnet_platform_socket_receive_packets_mmsg( rocketnet_platform_socket_t * socket, rocketnet_address_t * from, uint8_t * packet_data, int packet_stride, int * packet_bytes, int max_packets )

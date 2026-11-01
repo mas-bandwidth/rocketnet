@@ -229,6 +229,11 @@ bool rocketnet_client_transport_io_open( const rocketnet_client_transport_io_ope
     if ( ( ops->wait != NULL ) != ( ops->wake != NULL ) )
         return false;
 
+    // Progress retains caller storage; shutdown needs the paired terminal
+    // callback to consume its remaining suffix without waiting.
+    if ( ops->send_batch_progress && !ops->send_batch )
+        return false;
+
     rocketnet_address_t attempt = *bind;
     void * instance = ops->create( context, config, &attempt );
     if ( !instance )

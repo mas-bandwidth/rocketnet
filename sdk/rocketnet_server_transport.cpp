@@ -2367,6 +2367,11 @@ void rocketnet_server_transport_stop( struct rocketnet_server_transport_t * serv
         return;
     server_transport->state = ROCKETNET_SERVER_TRANSPORT_STOPPING;
 
+    // Retained buffered sends must learn of shutdown before send_idle can
+    // become true. Admission of the remaining disconnect batches stays open.
+    if ( server_transport->io.operations->begin_shutdown )
+        server_transport->io.operations->begin_shutdown( server_transport->io.instance );
+
     // proofs/tla/RNDriverSendStaging.tla ResetLeases: stop bumps the lease epoch.
     // A finish of a packet started before this reset is caller misuse.
 

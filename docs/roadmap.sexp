@@ -62,10 +62,6 @@
    :text "Pass it through as ROCKETNET_MAX_CLIENTS is, document it, and give it a CI build."
    :date "2026-10-31" :origin "Audit item 171 follow-on")
 
-  (item "portable-sendmmsg-carry" :group "audit-remaining" :area "rocketnet"
-   :title "Portable sendmmsg keeps the unsent rest of a batch"
-   :text "On a full socket the portable sendmmsg path drops the rest of the batch; GSO now keeps it (audit 111). Same rule: spread across updates, never drop."
-   :date "2026-10-31" :origin "Audit item 111 follow-on")
 
 
   (item "message-prefix-dedupe" :group "audit-remaining" :area "rocketnet"
