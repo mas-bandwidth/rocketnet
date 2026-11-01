@@ -164,8 +164,8 @@ static uint64_t request_one_hash_receive( struct request_one_hash_server_t * tes
     int payload_bytes = 0;
     int payload_client_index = -1;
     *result = rocketnet_server_protocol_process_received( &test->server, address, known, request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,
-                                                         ROCKETNET_TEST_CREATE_TS, 1000.0, response, &response_bytes, opened,
-                                                         ROCKETNET_RECEIVE_CEILING, &payload, &payload_bytes, &payload_client_index );
+                                                          ROCKETNET_TEST_CREATE_TS, 1000.0, response, &response_bytes, opened,
+                                                          ROCKETNET_RECEIVE_CEILING, &payload, &payload_bytes, &payload_client_index );
 
     return rocketnet_encryption_map_test_hashes( map ) - before;
 }
@@ -216,8 +216,6 @@ static void test_server_request_one_hash()
     }
 
     request_one_hash_teardown( &test );
-
-    printf( "test_server_request_one_hash\n" );
 }
 
 REGISTER_UNIT_TEST( test_server_request_one_hash );
