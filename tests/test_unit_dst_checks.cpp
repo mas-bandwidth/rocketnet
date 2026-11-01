@@ -21,15 +21,42 @@ static void rec_send( struct rocketnet_dst_check_state_t * st, int stream, uint3
     rocketnet_dst_check_sent( st, 1000.0, session, channel, type, seq, 1, 1, 0, 64 );
 }
 
+// One delivery of stream ( session, channel, type ) in the live harness's
+// form: generation 1, identity 1, the session's expected generation and
+// incarnation 1.
+
+static void rec_sent( struct rocketnet_dst_check_state_t * st, int session, int channel, int type, uint32_t seq )
+{
+    rocketnet_dst_check_sent( st, 1000.0, session, channel, type, seq, 1, 1, 0, 64 );
+}
+
+static void rec_deliver( struct rocketnet_dst_check_state_t * st, int session, int channel, int type, uint32_t seq )
+{
+    rocketnet_dst_check_delivery( st, 1000.0, session, channel, type, seq, 1, 1, 1, 0, 64, 1, 1 );
+}
+
+static void rec_end( struct rocketnet_dst_check_state_t * st, int session )
+{
+    int live[ROCKETNET_DST_CHECK_MAX_SESSIONS];
+    uint64_t identity[ROCKETNET_DST_CHECK_MAX_SESSIONS];
+    memset( live, 0, sizeof( live ) );
+    memset( identity, 0, sizeof( identity ) );
+    live[session] = 1;
+    identity[session] = 1;
+    rocketnet_dst_check_end( st, 1040.0, live, identity );
+}
+
 static void test_dst_check_ordered_out_of_order_fails()
 {
     static struct rocketnet_dst_check_state_t st;
     rocketnet_dst_check_init( &st, 1, 42 );
 
-    double time = 1000.0;
-    rocketnet_dst_check_ordered( &st, time, 3, 0 );
+    rec_sent( &st, 0, 0, 3, 0 );
+    rec_sent( &st, 0, 0, 3, 1 );
+    rec_sent( &st, 0, 0, 3, 2 );
+    rec_deliver( &st, 0, 0, 3, 0 );
     rocketnet_unit_check( st.failed == 0 );
-    rocketnet_dst_check_ordered( &st, time, 3, 2 );
+    rec_deliver( &st, 0, 0, 3, 2 );
     rocketnet_unit_check( st.failed == 1 );
     rocketnet_unit_check( strcmp( st.check, "ordered_in_order" ) == 0 );
 }
@@ -48,18 +75,22 @@ static void test_dst_check_reliable_duplicate_fails()
     rocketnet_unit_check( strcmp( st.check, "reliable_once" ) == 0 );
 }
 
+// The end-of-run liveness row: a reliable message sent after the quiet start,
+// more than the in-flight slack before the last send, is owed.
+
 static void test_dst_check_reliable_missing_fails()
 {
     static struct rocketnet_dst_check_state_t st;
     rocketnet_dst_check_init( &st, 1, 44 );
 
-    double time = 1000.0;
-    rec_send( &st, 2, 0 );
-    rec_send( &st, 2, 1 );
-    rec_send( &st, 2, 2 );
-    rocketnet_dst_check_reliable_once( &st, time, 2, 0 );
-    rocketnet_dst_check_reliable_once( &st, time, 2, 1 );
-    rocketnet_dst_check_liveness_delivered( &st, time, 2 );
+    for ( uint32_t seq = 0; seq <= 30; seq++ )
+    {
+        rec_sent( &st, 0, 0, 2, seq );
+        if ( seq != 3 )
+            rec_deliver( &st, 0, 0, 2, seq );
+    }
+    rocketnet_unit_check( st.failed == 0 );
+    rec_end( &st, 0 );
     rocketnet_unit_check( st.failed == 1 );
     rocketnet_unit_check( strcmp( st.check, "liveness_delivered" ) == 0 );
 }
@@ -90,20 +121,113 @@ static void test_dst_check_unreliable_duplicate_fails()
     rocketnet_unit_check( strcmp( st.check, "unreliable_once" ) == 0 );
 }
 
-static void test_dst_check_ack_undelivered_fails()
+// acked_means_opened: an ack names a packet id the acked endpoint issued
+// (the server is endpoint 0, client i endpoint i + 1), and names it once.
+
+static void test_dst_check_ack_never_issued_fails()
 {
     static struct rocketnet_dst_check_state_t st;
     rocketnet_dst_check_init( &st, 1, 47 );
 
-    double time = 1000.0;
-    rocketnet_dst_check_opened( &st, 2, 0 );
-    rocketnet_dst_check_opened( &st, 2, 1 );
-    rocketnet_dst_check_opened( &st, 2, 2 );
-    rocketnet_dst_check_acked( &st, time, 2, 2 );
+    rocketnet_dst_check_issued( &st, 1, 1 );
+    rocketnet_dst_check_issued( &st, 1, 2 );
+    rocketnet_dst_check_ack_id( &st, 1, 2 );
     rocketnet_unit_check( st.failed == 0 );
-    rocketnet_dst_check_acked( &st, time, 2, 3 );
+    rocketnet_dst_check_ack_id( &st, 1, 3 );
     rocketnet_unit_check( st.failed == 1 );
     rocketnet_unit_check( strcmp( st.check, "acked_means_opened" ) == 0 );
+}
+
+// Every endpoint numbers its packets from 1: id 1 issued by the server is not
+// a packet client 0 issued.
+
+static void test_dst_check_ack_of_another_endpoints_id_fails()
+{
+    static struct rocketnet_dst_check_state_t st;
+    rocketnet_dst_check_init( &st, 1, 50 );
+
+    rocketnet_dst_check_issued( &st, 0, 1 );
+    rocketnet_dst_check_ack_id( &st, 1, 1 );
+    rocketnet_unit_check( st.failed == 1 );
+    rocketnet_unit_check( strcmp( st.check, "acked_means_opened" ) == 0 );
+}
+
+static void test_dst_check_ack_twice_fails()
+{
+    static struct rocketnet_dst_check_state_t st;
+    rocketnet_dst_check_init( &st, 1, 51 );
+
+    rocketnet_dst_check_issued( &st, 0, 1 );
+    rocketnet_dst_check_ack_id( &st, 0, 1 );
+    rocketnet_unit_check( st.failed == 0 );
+    rocketnet_dst_check_ack_id( &st, 0, 1 );
+    rocketnet_unit_check( st.failed == 1 );
+    rocketnet_unit_check( strcmp( st.check, "acked_means_opened" ) == 0 );
+}
+
+// An aborted packet's id is skipped: it was never issued.
+
+static void test_dst_check_ack_of_a_skipped_id_fails()
+{
+    static struct rocketnet_dst_check_state_t st;
+    rocketnet_dst_check_init( &st, 1, 52 );
+
+    rocketnet_dst_check_issued( &st, 0, 1 );
+    rocketnet_dst_check_issued( &st, 0, 3 );
+    rocketnet_dst_check_ack_id( &st, 0, 3 );
+    rocketnet_unit_check( st.failed == 0 );
+    rocketnet_dst_check_ack_id( &st, 0, 2 );
+    rocketnet_unit_check( st.failed == 1 );
+    rocketnet_unit_check( strcmp( st.check, "acked_means_opened" ) == 0 );
+}
+
+// A client's new session restarts its packet ids: the old session's ids are
+// not the new one's.
+
+static void test_dst_check_ack_after_endpoint_reset()
+{
+    static struct rocketnet_dst_check_state_t st;
+    rocketnet_dst_check_init( &st, 1, 53 );
+
+    for ( uint64_t id = 1; id <= 5; id++ )
+        rocketnet_dst_check_issued( &st, 2, id );
+    rocketnet_dst_check_endpoint_reset( &st, 2 );
+    rocketnet_dst_check_issued( &st, 2, 1 );
+    rocketnet_dst_check_ack_id( &st, 2, 1 );
+    rocketnet_unit_check( st.failed == 0 );
+    rocketnet_dst_check_ack_id( &st, 2, 5 );
+    rocketnet_unit_check( st.failed == 1 );
+    rocketnet_unit_check( strcmp( st.check, "acked_means_opened" ) == 0 );
+}
+
+// The ledger holds LEDGER_PACKETS ids. Odd ids are issued, so last is odd:
+// an issued id inside the ledger is answered, an even id inside it was never
+// issued, and an issued id LEDGER_PACKETS older than the newest, which shares
+// its slot, is refused rather than aliased.
+
+static void test_dst_check_ack_ledger_wraps()
+{
+    static struct rocketnet_dst_check_state_t st;
+    rocketnet_dst_check_init( &st, 1, 54 );
+
+    const uint64_t last = 3 * ROCKETNET_DST_CHECK_LEDGER_PACKETS + 1;
+    for ( uint64_t id = 1; id <= last; id += 2 )
+        rocketnet_dst_check_issued( &st, 0, id );
+    rocketnet_dst_check_ack_id( &st, 0, last );
+    rocketnet_dst_check_ack_id( &st, 0, last - ROCKETNET_DST_CHECK_LEDGER_PACKETS + 2 );
+    rocketnet_unit_check( st.failed == 0 );
+    rocketnet_dst_check_ack_id( &st, 0, last - 1 );
+    rocketnet_unit_check( st.failed == 1 );
+    rocketnet_unit_check( strcmp( st.check, "acked_means_opened" ) == 0 );
+
+    static struct rocketnet_dst_check_state_t old;
+    rocketnet_dst_check_init( &old, 1, 55 );
+    for ( uint64_t id = 1; id <= last; id += 2 )
+        rocketnet_dst_check_issued( &old, 0, id );
+    rocketnet_dst_check_ack_id( &old, 0, last - ROCKETNET_DST_CHECK_LEDGER_PACKETS );
+    rocketnet_unit_check( old.failed == 1 );
+    rocketnet_unit_check( strcmp( old.check, "acked_means_opened" ) == 0 );
+    rocketnet_unit_check( strstr( old.detail, "older than the ledger" ) != NULL );
 }
 
 static void test_dst_check_stale_session_payload_fails()
@@ -127,28 +251,28 @@ static void test_dst_check_clean_sequence_passes()
 
     double time = 1000.0;
 
-    rocketnet_dst_check_ordered( &st, time, 3, 0 );
-    rocketnet_dst_check_ordered( &st, time, 3, 1 );
-    rocketnet_dst_check_ordered( &st, time, 3, 2 );
+    for ( uint32_t seq = 0; seq <= 30; seq++ )
+    {
+        rec_sent( &st, 0, 0, 3, seq );
+        rec_deliver( &st, 0, 0, 3, seq );
+        rec_sent( &st, 0, 0, 2, seq );
+        rec_deliver( &st, 0, 0, 2, seq );
+    }
 
     rocketnet_dst_check_sequenced( &st, time, 1, 10 );
     rocketnet_dst_check_sequenced( &st, time, 1, 11 );
 
-    rec_send( &st, 2, 5 );
-    rec_send( &st, 2, 6 );
-    rocketnet_dst_check_reliable_once( &st, time, 2, 5 );
-    rocketnet_dst_check_reliable_once( &st, time, 2, 6 );
-
     rocketnet_dst_check_unreliable_once( &st, time, 0, 7 );
 
-    rocketnet_dst_check_opened( &st, 2, 5 );
-    rocketnet_dst_check_opened( &st, 2, 6 );
-    rocketnet_dst_check_acked( &st, time, 2, 6 );
+    rocketnet_dst_check_issued( &st, 0, 1 );
+    rocketnet_dst_check_issued( &st, 1, 1 );
+    rocketnet_dst_check_ack_id( &st, 0, 1 );
+    rocketnet_dst_check_ack_id( &st, 1, 1 );
 
     rocketnet_dst_check_stale_session( &st, time, 5, 3, 1 );
     rocketnet_dst_check_stale_session_payload( &st, time, 5, 3, 1 );
 
-    rocketnet_dst_check_liveness_delivered( &st, time, 2 );
+    rec_end( &st, 0 );
 
     rocketnet_unit_check( st.failed == 0 );
 }
@@ -158,7 +282,12 @@ REGISTER_UNIT_TEST( test_dst_check_reliable_duplicate_fails );
 REGISTER_UNIT_TEST( test_dst_check_reliable_missing_fails );
 REGISTER_UNIT_TEST( test_dst_check_sequenced_backwards_fails );
 REGISTER_UNIT_TEST( test_dst_check_unreliable_duplicate_fails );
-REGISTER_UNIT_TEST( test_dst_check_ack_undelivered_fails );
+REGISTER_UNIT_TEST( test_dst_check_ack_never_issued_fails );
+REGISTER_UNIT_TEST( test_dst_check_ack_of_another_endpoints_id_fails );
+REGISTER_UNIT_TEST( test_dst_check_ack_twice_fails );
+REGISTER_UNIT_TEST( test_dst_check_ack_of_a_skipped_id_fails );
+REGISTER_UNIT_TEST( test_dst_check_ack_after_endpoint_reset );
+REGISTER_UNIT_TEST( test_dst_check_ack_ledger_wraps );
 REGISTER_UNIT_TEST( test_dst_check_stale_session_payload_fails );
 REGISTER_UNIT_TEST( test_dst_check_clean_sequence_passes );
 

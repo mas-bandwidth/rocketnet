@@ -3,11 +3,12 @@
 # One seed fixes a whole dst run: the wire's loss, duplication, delay, jitter and
 # reordering, the keys, and the mocked clock. The same seeds and options must
 # print the same trace on every OS, or a failing seed found on one OS cannot be
-# replayed on another. Each leg builds Release dst and test, runs the nineteen
+# replayed on another. Each leg builds Release dst and test, runs the
 # test_dst_ unit cases by --run, runs `dst --seeds 1-50` and fails unless its
-# PASS line carries DST_REFERENCE_TRACE below, then runs one named short step
-# per fault schedule (seeds 1-50; a schedule that fires zero times fails its
-# step), then sweeps a longer seed range sized from a measurement on that OS
+# PASS line carries DST_REFERENCE_TRACE below, then requires every check to
+# pass over the fixed range 1-2050, then runs one named short step per fault
+# schedule (seeds 1-50; a schedule that fires zero times fails its step), then
+# sweeps a longer seed range sized from a measurement on that OS
 # to about twenty minutes. The reference range 1-50 stays fixed; only the
 # sweep start rolls, derived from the run number, so consecutive nights cover
 # different ranges of the same length, printed in the log with the replay line.
@@ -28,7 +29,9 @@
 #   macOS   13950 seeds PASS in 1218 s (0.087 s/seed)
 #   Windows 5950 seeds  PASS in 1348 s (0.23 s/seed); 1273 s (0.21 s/seed) at 809ad504
 # (run number 1 starts each sweep at seed 51, as measured; later runs roll).
-# timeout-minutes 50 is about twice the sweep plus the build.
+# The fixed range 1-2050 adds about 270 s on Linux, 180 s on macOS and 430 s on
+# Windows at those rates; timeout-minutes 50 covers the sweep, the fixed range
+# and the build with room to spare.
 
 name: nightly-dst
 
@@ -66,7 +69,7 @@ jobs:
       - name: Build (Release)
         run: make
 
-      - name: The nineteen test_dst_ unit cases
+      - name: The test_dst_ unit cases
         shell: bash
         run: |
           set -euo pipefail
@@ -75,10 +78,13 @@ jobs:
             test_dst_duplicate_server_ack_explained test_dst_check_ordered_out_of_order_fails \
             test_dst_check_reliable_duplicate_fails test_dst_check_reliable_missing_fails \
             test_dst_check_sequenced_backwards_fails test_dst_check_unreliable_duplicate_fails \
-            test_dst_check_ack_undelivered_fails test_dst_check_stale_session_payload_fails \
-            test_dst_check_clean_sequence_passes test_dst_budget_queued_sequenced_seed_69363 \
-            test_dst_budget_queued_sequenced_seed_71434 test_dst_budget_queued_sequenced_seed_84959 \
-            test_dst_budget_queued_sequenced_seed_93289; do
+            test_dst_check_ack_never_issued_fails test_dst_check_ack_of_another_endpoints_id_fails \
+            test_dst_check_ack_twice_fails test_dst_check_ack_of_a_skipped_id_fails \
+            test_dst_check_ack_after_endpoint_reset test_dst_check_ack_ledger_wraps \
+            test_dst_check_stale_session_payload_fails test_dst_check_clean_sequence_passes \
+            test_dst_witness_ordered_swap_fails test_dst_witness_foreign_ack_fails \
+            test_dst_budget_queued_sequenced_seed_69363 test_dst_budget_queued_sequenced_seed_71434 \
+            test_dst_budget_queued_sequenced_seed_84959 test_dst_budget_queued_sequenced_seed_93289; do
             "$DST_BIN/test$DST_EXE" --run "$c"
           done
 
@@ -94,6 +100,16 @@ jobs:
             echo "TRACE-MISMATCH on $RUNNER_OS: want '$want' got '$got'"
             exit 1
           fi
+
+      - name: Seeds 1-2050 pass every check
+        shell: bash
+        run: |
+          set -euo pipefail
+          start=$(date +%s)
+          "$DST_BIN/dst$DST_EXE" --seeds 1-2050 | tr -d '\r' | tee dst-fixed.log
+          echo "seeds=1-2050 took $(( $(date +%s) - start ))s on $RUNNER_OS"
+          if grep -q '^FAIL' dst-fixed.log; then echo "dst printed a FAIL line on $RUNNER_OS"; exit 1; fi
+          tail -n 1 dst-fixed.log | grep -q '^PASS seeds=1-2050 runs=2050 '
 
       - name: Schedule clock-back seeds 1-50
         shell: bash
@@ -197,7 +213,7 @@ jobs:
       - name: Build (Release)
         run: make
 
-      - name: The nineteen test_dst_ unit cases
+      - name: The test_dst_ unit cases
         shell: bash
         run: |
           set -euo pipefail
@@ -206,10 +222,13 @@ jobs:
             test_dst_duplicate_server_ack_explained test_dst_check_ordered_out_of_order_fails \
             test_dst_check_reliable_duplicate_fails test_dst_check_reliable_missing_fails \
             test_dst_check_sequenced_backwards_fails test_dst_check_unreliable_duplicate_fails \
-            test_dst_check_ack_undelivered_fails test_dst_check_stale_session_payload_fails \
-            test_dst_check_clean_sequence_passes test_dst_budget_queued_sequenced_seed_69363 \
-            test_dst_budget_queued_sequenced_seed_71434 test_dst_budget_queued_sequenced_seed_84959 \
-            test_dst_budget_queued_sequenced_seed_93289; do
+            test_dst_check_ack_never_issued_fails test_dst_check_ack_of_another_endpoints_id_fails \
+            test_dst_check_ack_twice_fails test_dst_check_ack_of_a_skipped_id_fails \
+            test_dst_check_ack_after_endpoint_reset test_dst_check_ack_ledger_wraps \
+            test_dst_check_stale_session_payload_fails test_dst_check_clean_sequence_passes \
+            test_dst_witness_ordered_swap_fails test_dst_witness_foreign_ack_fails \
+            test_dst_budget_queued_sequenced_seed_69363 test_dst_budget_queued_sequenced_seed_71434 \
+            test_dst_budget_queued_sequenced_seed_84959 test_dst_budget_queued_sequenced_seed_93289; do
             "$DST_BIN/test$DST_EXE" --run "$c"
           done
 
@@ -225,6 +244,16 @@ jobs:
             echo "TRACE-MISMATCH on $RUNNER_OS: want '$want' got '$got'"
             exit 1
           fi
+
+      - name: Seeds 1-2050 pass every check
+        shell: bash
+        run: |
+          set -euo pipefail
+          start=$(date +%s)
+          "$DST_BIN/dst$DST_EXE" --seeds 1-2050 | tr -d '\r' | tee dst-fixed.log
+          echo "seeds=1-2050 took $(( $(date +%s) - start ))s on $RUNNER_OS"
+          if grep -q '^FAIL' dst-fixed.log; then echo "dst printed a FAIL line on $RUNNER_OS"; exit 1; fi
+          tail -n 1 dst-fixed.log | grep -q '^PASS seeds=1-2050 runs=2050 '
 
       - name: Schedule clock-back seeds 1-50
         shell: bash
@@ -331,7 +360,7 @@ jobs:
       - name: Build (Release)
         run: cmake --build build --config Release --target dst test --parallel
 
-      - name: The nineteen test_dst_ unit cases
+      - name: The test_dst_ unit cases
         shell: bash
         run: |
           set -euo pipefail
@@ -340,10 +369,13 @@ jobs:
             test_dst_duplicate_server_ack_explained test_dst_check_ordered_out_of_order_fails \
             test_dst_check_reliable_duplicate_fails test_dst_check_reliable_missing_fails \
             test_dst_check_sequenced_backwards_fails test_dst_check_unreliable_duplicate_fails \
-            test_dst_check_ack_undelivered_fails test_dst_check_stale_session_payload_fails \
-            test_dst_check_clean_sequence_passes test_dst_budget_queued_sequenced_seed_69363 \
-            test_dst_budget_queued_sequenced_seed_71434 test_dst_budget_queued_sequenced_seed_84959 \
-            test_dst_budget_queued_sequenced_seed_93289; do
+            test_dst_check_ack_never_issued_fails test_dst_check_ack_of_another_endpoints_id_fails \
+            test_dst_check_ack_twice_fails test_dst_check_ack_of_a_skipped_id_fails \
+            test_dst_check_ack_after_endpoint_reset test_dst_check_ack_ledger_wraps \
+            test_dst_check_stale_session_payload_fails test_dst_check_clean_sequence_passes \
+            test_dst_witness_ordered_swap_fails test_dst_witness_foreign_ack_fails \
+            test_dst_budget_queued_sequenced_seed_69363 test_dst_budget_queued_sequenced_seed_71434 \
+            test_dst_budget_queued_sequenced_seed_84959 test_dst_budget_queued_sequenced_seed_93289; do
             "$DST_BIN/test$DST_EXE" --run "$c"
           done
 
@@ -359,6 +391,16 @@ jobs:
             echo "TRACE-MISMATCH on $RUNNER_OS: want '$want' got '$got'"
             exit 1
           fi
+
+      - name: Seeds 1-2050 pass every check
+        shell: bash
+        run: |
+          set -euo pipefail
+          start=$(date +%s)
+          "$DST_BIN/dst$DST_EXE" --seeds 1-2050 | tr -d '\r' | tee dst-fixed.log
+          echo "seeds=1-2050 took $(( $(date +%s) - start ))s on $RUNNER_OS"
+          if grep -q '^FAIL' dst-fixed.log; then echo "dst printed a FAIL line on $RUNNER_OS"; exit 1; fi
+          tail -n 1 dst-fixed.log | grep -q '^PASS seeds=1-2050 runs=2050 '
 
       - name: Schedule clock-back seeds 1-50
         shell: bash
