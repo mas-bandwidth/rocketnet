@@ -31,7 +31,7 @@ proofs-message_read_max:
 	    unwind=$${rest%%:*}; extra=$$(echo "$${rest#*:}" | tr ',' ' '); \
 	    output="$$work/$$harness.log"; \
 	    start=$$(date +%s); status=0; \
-	    timeout $(MESSAGE_READ_MAX_TIMEOUT) $(ESBMC) $(MESSAGE_READ_MAX_FLAGS) --unwind $$unwind $$extra \
+	    $(CURDIR)/run_with_timeout.sh $(MESSAGE_READ_MAX_TIMEOUT) $(ESBMC) $(MESSAGE_READ_MAX_FLAGS) --unwind $$unwind $$extra \
 	        --function $$harness "$$work/proof.cpp" > "$$output" 2>&1 || status=$$?; \
 	    seconds=$$(( $$(date +%s) - start )); \
 	    if [ $$status -eq 124 ]; then \

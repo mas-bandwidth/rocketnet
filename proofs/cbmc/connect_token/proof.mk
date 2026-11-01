@@ -32,7 +32,7 @@ proofs-connect_token:
 	      output=$$(mktemp); \
 	    fi; \
 	    status=0; \
-	    timeout $(CONNECT_TOKEN_TIMEOUT) prlimit --as=$(CONNECT_TOKEN_AS_LIMIT) -- \
+	    $(CURDIR)/run_with_timeout.sh $(CONNECT_TOKEN_TIMEOUT) prlimit --as=$(CONNECT_TOKEN_AS_LIMIT) -- \
 	      $(ESBMC) $(CONNECT_TOKEN_FLAGS) --unwind $$unwind --function $$harness \
 	      $(CONNECT_TOKEN_SOURCE) > "$$output" 2>&1 || status=$$?; \
 	    if [ $$status -eq 0 ] && grep -q "VERIFICATION SUCCESSFUL" "$$output"; then \

@@ -122,7 +122,7 @@ define run_replay_near_path
 	trap 'rm -rf "$$work"' EXIT HUP INT TERM; \
 	status=0; \
 	( ulimit -v $(CBMC_REPLAY_MEMORY_KB); \
-	  timeout $(CBMC_REPLAY_TIMEOUT) $(CBMC) $(CBMC_FLAGS) --unwind $(REPLAY_UNWIND) -I$(SDK) \
+	  $(CURDIR)/run_with_timeout.sh $(CBMC_REPLAY_TIMEOUT) $(CBMC) $(CBMC_FLAGS) --unwind $(REPLAY_UNWIND) -I$(SDK) \
 	    --external-sat-solver $(CBMC_REPLAY_SOLVER) \
 	    -DREPLAY_DELTA_BOUND=$(REPLAY_WINDOW_BITS) \
 	    --function $(2) proof_replay_advance.c ) \
@@ -136,7 +136,7 @@ define run_replay_near_path
 	echo "replay-near-4096-$(1) VERIFICATION SUCCESSFUL full-domain=1..$$(expr $(REPLAY_WINDOW_BITS) - 1) partition=$(1) unwind=$(REPLAY_UNWIND)"; \
 	status=0; \
 	( ulimit -v $(CBMC_REPLAY_MEMORY_KB); \
-	  timeout $(CBMC_REPLAY_TIMEOUT) $(CBMC) $(CBMC_FLAGS) --unwind $(REPLAY_UNWIND) -I$(SDK) \
+	  $(CURDIR)/run_with_timeout.sh $(CBMC_REPLAY_TIMEOUT) $(CBMC) $(CBMC_FLAGS) --unwind $(REPLAY_UNWIND) -I$(SDK) \
 	    --external-sat-solver $(CBMC_REPLAY_SOLVER) \
 	    -DREPLAY_DELTA_BOUND=$(REPLAY_WINDOW_BITS) -DREPLAY_REACHABILITY_WITNESS=1 \
 	    --function $(2) proof_replay_advance.c ) \
