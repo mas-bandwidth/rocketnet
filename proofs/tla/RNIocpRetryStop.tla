@@ -311,7 +311,7 @@ PendingIsPosted ==
     pending = Cardinality({ o \in Ops : state[o] = "posted" })
 
 (* Single-state occupancy is bounded. This does not constrain queue_count's *)
-(* separate atomic snapshots: their sampled difference can need clamping.  *)
+(* separate atomic reads: their sampled difference can need clamping.  *)
 (* It does not prove the clamp or RETIRED fallback unreachable in the code. *)
 WithinCapacity == absEnq - absDeq \in 0 .. Cap
 
