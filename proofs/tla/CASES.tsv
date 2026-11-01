@@ -649,3 +649,8 @@ MCRNUringReapLayoutCoalesced.cfg	MCRNUringReapLayout.tla	pass	-	check	rnuringrea
 MCRNUringReapLayoutBrokenStopAtRoom.cfg	MCRNUringReapLayout.tla	action	SendsNotBehindRoom	check	rnuringreaplayout	required	-
 MCRNUringReapLayoutBrokenNoHeldMod.cfg	MCRNUringReapLayout.tla	invariant	HeldMatches	check	rnuringreaplayout	required	-
 MCRNUringReapLayoutBrokenHeldCapShort.cfg	MCRNUringReapLayout.tla	invariant	HeldMatches	check	rnuringreaplayout	required	-
+MCRNUringSendPhases.cfg	MCRNUringSendPhases.tla	pass	-	check	rnuringsendphases	required	-
+MCRNUringSendPhasesLateReap.cfg	MCRNUringSendPhases.tla	pass	-	check	rnuringsendphases	required	-
+MCRNUringSendPhasesBrokenOnePhase.cfg	MCRNUringSendPhases.tla	invariant	NeverRefusedUnderLateReap	check	rnuringsendphases	required	-
+MCRNUringSendPhasesBrokenNoBase.cfg	MCRNUringSendPhases.tla	invariant	NoWriteWhileKernelOwned	check	rnuringsendphases	required	-
+MCRNUringSendPhasesBrokenRemainder.cfg	MCRNUringSendPhases.tla	invariant	PendingMatches	check	rnuringsendphases	required	-

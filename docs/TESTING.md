@@ -41,7 +41,7 @@ passed all 48 applicable checks at `f6f396d9748762fadbec81e24e93515a5659a8e2`
 before merging. The main [CI run](https://github.com/mas-bandwidth/rocketnet/actions/runs/40964376451)
 includes the platform, sanitizer, functional and fuzz smoke results.
 
-The current TLA ledger contains **634 required cases with PASS results** and
+The current TLA ledger contains **639 required cases with PASS results** and
 **16 non-required bench cases that exhausted their declared time budget**.
 The model-record check verifies current inputs. A timeout is not a completed
 proof; the [model guide](../proofs/tla/README.md) explains those boundaries.
