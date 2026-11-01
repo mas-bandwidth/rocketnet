@@ -14841,9 +14841,13 @@ class rocketnet_test_environment_t
     struct entry_t
     {
         std::string name, value;
-        bool present;
+        bool present = false;
     };
-    std::vector<entry_t> entries;
+    // the two descriptor tables plus the four named variables, with room
+    // to spare; clear refuses to run past it
+    static constexpr int max_entries = 512;
+    entry_t entries[max_entries];
+    int num_entries = 0;
     void clear( const char * name )
     {
         if ( strcmp( name, "ROCKETNET_SERVER_TRANSPORT" ) == 0 )
@@ -14851,13 +14855,14 @@ class rocketnet_test_environment_t
         if ( strcmp( name, "ROCKETNET_CLIENT_TRANSPORT" ) == 0 )
             return;
 
-        for ( const auto & entry : entries )
-            if ( entry.name == name )
+        for ( int i = 0; i < num_entries; ++i )
+            if ( entries[i].name == name )
                 return;
 
-        std::string value;
-        const bool present = rocketnet_test_getenv_string( name, &value );
-        entries.push_back( { name, value, present } );
+        rocketnet_check( num_entries < max_entries );
+        entry_t & entry = entries[num_entries++];
+        entry.name = name;
+        entry.present = rocketnet_test_getenv_string( name, &entry.value );
 
         rocketnet_check( rocketnet_test_env_unsetenv( name ) == 0 );
     }
@@ -14886,9 +14891,12 @@ public:
     }
     ~rocketnet_test_environment_t()
     {
-        for ( const auto & entry : entries )
+        for ( int i = 0; i < num_entries; ++i )
+        {
+            const entry_t & entry = entries[i];
             rocketnet_check( ( entry.present ? rocketnet_test_env_setenv( entry.name.c_str(), entry.value.c_str(), 1 )
                                              : rocketnet_test_env_unsetenv( entry.name.c_str() ) ) == 0 );
+        }
     }
 };
 

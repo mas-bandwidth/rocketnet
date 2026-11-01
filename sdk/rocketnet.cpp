@@ -842,7 +842,7 @@ const char * rocketnet_platform_name( int platform_id )
 static void rocketnet_sodium_misuse()
 {
     rocketnet_error( "sodium refused an operation it cannot complete (the OS random source is unavailable, or a sodium misuse). the process aborts" );
-    fflush( stdout );
+    (void) fflush( stdout );
 }
 
 #if ROCKETNET_DEV

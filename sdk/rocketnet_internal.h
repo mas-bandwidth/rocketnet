@@ -490,7 +490,11 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
 // (-DROCKETNET_MAX_CLIENTS=10000) still defaults to 1000; the config field
 // asks for more
 
-#define ROCKETNET_DEFAULT_MAX_CLIENTS          ( ROCKETNET_MAX_CLIENTS < 1000 ? ROCKETNET_MAX_CLIENTS : 1000 )
+#if ROCKETNET_MAX_CLIENTS < 1000
+#define ROCKETNET_DEFAULT_MAX_CLIENTS          ROCKETNET_MAX_CLIENTS
+#else // #if ROCKETNET_MAX_CLIENTS < 1000
+#define ROCKETNET_DEFAULT_MAX_CLIENTS          1000
+#endif // #if ROCKETNET_MAX_CLIENTS < 1000
 
 // the handshake work budget (handshakes_per_update): the most connection
 // requests one server update takes to the signature verify, each one Ed25519 verify

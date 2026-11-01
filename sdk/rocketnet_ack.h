@@ -374,7 +374,7 @@ struct rocketnet_ack_endpoint_t
 #if ROCKETNET_HISTORY_PACKETS == 4096
 static_assert( sizeof( ( (struct rocketnet_ack_endpoint_t *) 0 )->sent ) + sizeof( ( (struct rocketnet_ack_endpoint_t *) 0 )->received ) +
                        sizeof( ( (struct rocketnet_ack_endpoint_t *) 0 )->aggregates ) ==
-                   256 * 1024,
+                   (size_t) 256 * 1024,
                "the three record rings are 256 KiB at the default history" );
 #endif // #if ROCKETNET_HISTORY_PACKETS == 4096
 

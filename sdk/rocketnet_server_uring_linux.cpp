@@ -2083,6 +2083,18 @@ void rocketnet_server_uring_send_packets( struct rocketnet_server_uring_t * urin
     (void) uring;
 }
 
+int rocketnet_server_uring_send_room( struct rocketnet_server_uring_t * uring )
+{
+    (void) uring;
+    return 0;
+}
+
+bool rocketnet_server_uring_send_idle( struct rocketnet_server_uring_t * uring )
+{
+    (void) uring;
+    return true;
+}
+
 void rocketnet_server_uring_receive_packets( struct rocketnet_server_uring_t * uring )
 {
     (void) uring;

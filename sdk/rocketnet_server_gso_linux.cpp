@@ -391,9 +391,10 @@ static int rocketnet_server_gso_flush( rocketnet_server_gso_t * gso,
                                        rocketnet_server_gso_send_buffer_t * bank, int first_slot, int num_slots, bool * disable_gso, bool * full );
 
 // proofs/tla/RNGsoHandoff.tla TxSend: send a held bank from *slot. A live GSO
-// refusal turns segmentation off and resends from the refused message; a full
-// socket stops the bank at its first unsent slot and returns false, the rest
-// kept in order for the next attempt.
+// refusal turns segmentation off and resends from the refused message.
+// proofs/tla/RNGsoHandoff.tla TxSendFull: a full socket stops the bank at its
+// first unsent slot and returns false, the rest kept in order in the held bank
+// for the next attempt.
 static bool rocketnet_server_gso_send_bank( rocketnet_server_gso_t * gso, rocketnet_server_gso_send_buffer_t * bank, int * slot, int count )
 {
     while ( *slot < count )

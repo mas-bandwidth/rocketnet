@@ -546,6 +546,8 @@ int rn_channels_dispatch( struct rn_channels_t * channels, const struct rocketne
             // dies with it, so nothing is copied (THE COPIES (b)).
             // the unreliable budget Du: the rest are dropped and counted (6.3
             // step 4). Unreliable semantics allow it, so it is not a violation.
+            // proofs/tla/RNOrderingWrap.tla ReceiveUnreliable: delivered while
+            // unreliable_delivered is below Du and the table has room.
             if ( channels->unreliable_delivered >= channels->region->delivery_entries - channels->region->window ||
                  channels->deliveries >= channels->delivery_capacity )
             {
@@ -579,6 +581,9 @@ int rn_channels_dispatch( struct rn_channels_t * channels, const struct rocketne
         case ROCKETNET_MESSAGE_CODE_RELIABLE:
             return rn_channels_dispatch_reliable( channels, record, out );
 
+        // proofs/tla/RNOrderingWrap.tla HoldSequenced: a future code-1 or
+        // code-4 record is taken into the channel's one sequenced hold by
+        // rn_channels_dispatch_sequenced (sdk/rocketnet_channel_sequenced.cpp)
         case ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED:
         case ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED:
             return rn_channels_dispatch_sequenced( channels, record, out );
