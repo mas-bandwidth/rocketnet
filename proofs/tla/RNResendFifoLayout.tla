@@ -27,9 +27,9 @@
 (* each operation's contract.  ListsMatch says the array, the heads, the   *)
 (* tails, the flag bits and the count are exactly those two sequences.     *)
 (*                                                                         *)
-(* Generations are not modelled: rn_resend_fifo_unlink_named either        *)
-(* unlinks (Unlink) or changes nothing, so Unlink of any slot at any time  *)
-(* covers it; the generations are RNResendGenerations.tla's.               *)
+(* An entry is prev and next only (rn_resend_link_t, 8 bytes); which      *)
+(* number an ack may unlink is RNResendGenerations.tla's, and Unlink of    *)
+(* any slot at any time covers it.                                         *)
 (*                                                                         *)
 (* Reversed witnesses (each flag FALSE is a bug class):                    *)
 (*   SelfTailFix       push_tail without "if ( tail == slot ) tail = prev" *)
@@ -167,8 +167,8 @@ Park(after, s) ==
                           IN IF after = NONE THEN << s >> \o q ELSE InsertAt(q, Pos(q, after), s) ]
        /\ UNCHANGED isChunk
 
-\* rn_resend_fifo_unlink, from rn_window_ack_on_ack directly (generation 0)
-\* or through rn_resend_fifo_unlink_named: the acked number leaves its class
+\* rn_resend_fifo_unlink, from rn_window_ack_on_ack: the acked number leaves
+\* its class
 Unlink(s) ==
     /\ SetL(UnlinkL(L, s))
     /\ seq' = [ k \in Classes |-> Remove(seq[k], s) ]

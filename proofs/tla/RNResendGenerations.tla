@@ -6,15 +6,13 @@
 (* are freed and taken again with the next generation, and packets that   *)
 (* still carry a number after its slot holds a later one.                  *)
 (*                                                                         *)
-(* A link is stamped with its descriptor's generation when it is linked:   *)
-(* on park and again on every requeue (rn_resend_fifo_stamp from           *)
-(* rn_resend_fifo_insert_after); the unlink clears the stamp.  An ack of a *)
-(* packet visits each number the packet referenced: it skips a slot that   *)
-(* is acked, outside [U, next) or holds another number, then removes the   *)
-(* link only when the slot's live descriptor still has the stamped         *)
-(* generation (rn_resend_fifo_unlink_named, and the generation-0 branch in *)
-(* rn_window_ack_on_ack), frees the descriptor's fragment and marks the     *)
-(* number acked.                                                           *)
+(* A link is the slot's prev/next pair and carries no name of its own:    *)
+(* rn_resend_link_t is 8 bytes, prev and next.  An ack of a packet visits  *)
+(* each number the packet referenced: it skips a slot that is acked,       *)
+(* outside [U, next) or holds another number, then unlinks the slot,       *)
+(* frees the descriptor's fragment and marks the number acked              *)
+(* (rn_window_ack_on_ack).  The number comparison is the only test that    *)
+(* keeps a stale packet off a later number in the same slot.              *)
 (*                                                                         *)
 (* Each message here is one fragment, so its descriptor is freed by the    *)
 (* ack of its one number; a block's descriptor waits for its last          *)
@@ -22,11 +20,11 @@
 (* to 1 as the allocator does at UINT32_MAX; RNSendStoreLayout checks the  *)
 (* wrap itself.                                                            *)
 (*                                                                         *)
-(* Flags (TRUE is the code):                                               *)
-(*   CheckNumber        the ack skips a slot that holds another number     *)
-(*   Restamp            a requeue stamps the link again after its unlink   *)
-(*   CompareGeneration  the ack refuses a link whose stamp is not the live *)
-(*                      descriptor's generation                            *)
+(* Parameters (the code's values first):                                   *)
+(*   CheckNumber   TRUE: the ack skips a slot that holds another number    *)
+(*   WindowSlack   0: a number is written only while nxt < U + W, so a     *)
+(*                 slot is reused only after its number is acked; 1 is    *)
+(*                 the off-by-one at capacity                              *)
 (***************************************************************************)
 EXTENDS Integers, FiniteSets
 
@@ -36,11 +34,10 @@ CONSTANTS
     D,                  \* send descriptors 1 .. D
     GenMax,             \* the generation after GenMax is 1
     CheckNumber,
-    Restamp,
-    CompareGeneration
+    WindowSlack
 
 ASSUME W \in Nat \ {0} /\ N \in Nat /\ D \in Nat \ {0} /\ GenMax \in Nat \ {0}
-ASSUME \A f \in {CheckNumber, Restamp, CompareGeneration} : f \in BOOLEAN
+ASSUME CheckNumber \in BOOLEAN /\ WindowSlack \in {0, 1}
 
 Slots == 0..(W - 1)
 Nums == 0..(N - 1)
@@ -55,7 +52,6 @@ VARIABLES
     nxt,        \* send->next: the next number to write
     sn,         \* sn[s]: send_numbers[s], [n, d, acked]
     lk,         \* lk[s]: resend_fifo[s] is linked (bit 31 of prev)
-    st,         \* st[s]: resend_fifo[s].generation, the stamp
     dIn,        \* dIn[d]: send_descriptors[d].in_use
     dGen,       \* dGen[d]: send_descriptors[d].generation (0: never taken)
     fly,        \* fly[n]: packets in the sent map that reference n
@@ -63,11 +59,7 @@ VARIABLES
     got,        \* ghost: numbers carried by a packet the receiver acked
     freed       \* ghost: [d, g] for each fragment an ack returned
 
-vars == << U, nxt, sn, lk, st, dIn, dGen, fly, wrote, got, freed >>
-
-\* rn_resend_fifo_stamp: the live descriptor's generation, or 0
-Stamp(snS, dInS, dGenS) ==
-    IF snS.d \in Descs /\ dInS[snS.d] /\ dGenS[snS.d] # 0 THEN dGenS[snS.d] ELSE 0
+vars == << U, nxt, sn, lk, dIn, dGen, fly, wrote, got, freed >>
 
 \* rn_window_send_mark_acked: U moves over the acked numbers in order
 AdvanceU(u, snS) ==
@@ -82,7 +74,6 @@ Init ==
     /\ nxt = 0
     /\ sn = [ s \in Slots |-> [ n |-> -1, d |-> NoDesc, acked |-> FALSE ] ]
     /\ lk = [ s \in Slots |-> FALSE ]
-    /\ st = [ s \in Slots |-> 0 ]
     /\ dIn = [ d \in Descs |-> FALSE ]
     /\ dGen = [ d \in Descs |-> 0 ]
     /\ fly = [ n \in Nums |-> 0 ]
@@ -93,10 +84,12 @@ Init ==
 \* rn_region_send_alloc takes a free descriptor with the next generation
 \* (rocketnet_allocator.cpp), rn_window_send_first_write numbers it at
 \* slot nxt % W, and rn_window_ack_park links that slot (insert_after:
-\* unlink, link, stamp).
+\* unlink, link).  rn_window_send_admit numbers one record only while
+\* next - U' <= W - 1, and U' <= U, so the guard nxt < U + W here admits
+\* every write the code does.
 Write(d) ==
     /\ nxt < N
-    /\ nxt < U + W
+    /\ nxt < U + W + WindowSlack
     /\ ~dIn[d]
     /\ LET g == IF dGen[d] = 0 \/ dGen[d] = GenMax THEN 1 ELSE dGen[d] + 1
            s == SlotOf(nxt)
@@ -104,15 +97,13 @@ Write(d) ==
           /\ dGen' = [ dGen EXCEPT ![d] = g ]
           /\ sn' = [ sn EXCEPT ![s] = [ n |-> nxt, d |-> d, acked |-> FALSE ] ]
           /\ lk' = [ lk EXCEPT ![s] = TRUE ]
-          /\ st' = [ st EXCEPT ![s] = g ]
           /\ wrote' = wrote \cup { [ n |-> nxt, d |-> d, g |-> g ] }
     /\ nxt' = nxt + 1
     /\ UNCHANGED << U, fly, got, freed >>
 
 \* rn_window_ack_commit_packet: a packet referencing n enters the sent map
 \* and n moves to its class's tail (push_tail -> insert_after: unlink,
-\* which clears the stamp, link, stamp).  rn_window_ack_packet_failed's
-\* push_head relinks the same way.
+\* link).  rn_window_ack_packet_failed's push_head relinks the same way.
 Send(n) ==
     LET s == SlotOf(n) IN
     /\ U <= n /\ n < nxt
@@ -121,17 +112,16 @@ Send(n) ==
     /\ fly[n] < 2
     /\ fly' = [ fly EXCEPT ![n] = fly[n] + 1 ]
     /\ lk' = [ lk EXCEPT ![s] = TRUE ]
-    /\ st' = [ st EXCEPT ![s] = IF Restamp THEN Stamp(sn[s], dIn, dGen) ELSE 0 ]
     /\ UNCHANGED << U, nxt, sn, dIn, dGen, wrote, got, freed >>
 
 \* the environment: a packet is lost, or its sent-map entry is evicted
 Lose(n) ==
     /\ fly[n] > 0
     /\ fly' = [ fly EXCEPT ![n] = fly[n] - 1 ]
-    /\ UNCHANGED << U, nxt, sn, lk, st, dIn, dGen, wrote, got, freed >>
+    /\ UNCHANGED << U, nxt, sn, lk, dIn, dGen, wrote, got, freed >>
 
 \* rn_window_ack_on_ack, step 2, for a packet that referenced n: the
-\* number's slot, the skips, the named unlink, the fragment and the mark.
+\* number's slot, the skips, the unlink, the fragment and the mark.
 Ack(n) ==
     LET s == SlotOf(n)
         e == sn[s]
@@ -140,18 +130,14 @@ Ack(n) ==
                 \/ e.n >= nxt
                 \/ (CheckNumber /\ e.n # n)
         live == e.d \in Descs /\ dIn[e.d]
-        refused == /\ lk[s]
-                   /\ CompareGeneration
-                   /\ IF st[s] = 0 THEN live ELSE live /\ dGen[e.d] # st[s]
         sn1 == [ sn EXCEPT ![s].acked = TRUE ]
     IN
     /\ fly[n] > 0
     /\ fly' = [ fly EXCEPT ![n] = fly[n] - 1 ]
     /\ got' = got \cup {n}
-    /\ IF skip \/ refused
-       THEN UNCHANGED << U, sn, lk, st, dIn, freed >>
+    /\ IF skip
+       THEN UNCHANGED << U, sn, lk, dIn, freed >>
        ELSE /\ lk' = [ lk EXCEPT ![s] = FALSE ]
-            /\ st' = [ st EXCEPT ![s] = 0 ]
             /\ sn' = sn1
             /\ dIn' = IF live THEN [ dIn EXCEPT ![e.d] = FALSE ] ELSE dIn
             /\ freed' = IF live THEN freed \cup { [ d |-> e.d, g |-> dGen[e.d] ] } ELSE freed
@@ -167,10 +153,9 @@ Spec == Init /\ [][Next]_vars
 -----------------------------------------------------------------------------
 
 TypeOK ==
-    /\ U \in 0..N /\ nxt \in 0..N /\ U <= nxt /\ nxt <= U + W
+    /\ U \in 0..N /\ nxt \in 0..N /\ U <= nxt /\ nxt <= U + W + WindowSlack
     /\ \A s \in Slots : sn[s].n \in -1..(N - 1) /\ sn[s].d \in {NoDesc} \cup Descs /\ sn[s].acked \in BOOLEAN
     /\ lk \in [ Slots -> BOOLEAN ]
-    /\ st \in [ Slots -> Gens ]
     /\ dIn \in [ Descs -> BOOLEAN ]
     /\ dGen \in [ Descs -> Gens ]
     /\ fly \in [ Nums -> 0..2 ]
@@ -184,15 +169,19 @@ NamedGenerationOnly ==
 AckedOnlyDelivered ==
     \A s \in Slots : sn[s].acked => sn[s].n \in got
 
-\* A linked entry is an unacked number whose descriptor is live, and its
-\* stamp is the generation that wrote it.
-StampNamesOwner ==
+\* A linked entry is an unacked number whose descriptor is live at the
+\* generation that wrote it: the slot alone names its owner.
+LinkNamesOwner ==
     \A s \in Slots : lk[s] =>
         /\ ~sn[s].acked
         /\ sn[s].d \in Descs
         /\ dIn[sn[s].d]
-        /\ st[s] = dGen[sn[s].d]
-        /\ \E w \in wrote : w.n = sn[s].n /\ w.d = sn[s].d /\ w.g = st[s]
+        /\ \E w \in wrote : w.n = sn[s].n /\ w.d = sn[s].d /\ w.g = dGen[sn[s].d]
+
+\* Every number in [U, nxt) that is not acked still owns its slot: no
+\* write has reused the slot of an unacked number.
+WindowOwnsSlots ==
+    \A n \in Nums : (U <= n /\ n < nxt) => (sn[SlotOf(n)].n = n \/ sn[SlotOf(n)].acked)
 
 \* Reachability, violated by MCRNResendGenerationsReachStale.cfg: a packet
 \* still references a number whose slot now holds a later number written by
