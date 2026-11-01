@@ -41,12 +41,14 @@ do                                                                              
 
 #define ROCKETNET_COUNTERS_CHECK rocketnet_check
 #include "../counters_expect.h"
+#include "../loopback_hub.h"
 
 void rocketnet_test_cpp_transports_connect_over_loopback()
 {
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 16;
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
 
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config );
     rocketnet_check( server );
@@ -57,7 +59,11 @@ void rocketnet_test_cpp_transports_connect_over_loopback()
     uint8_t loopback_connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
     rocketnet_check( rocketnet_write_test_connect_token( server_address, rocketnet_random_uint64(), rocketnet_functional_token_timestamp( server_config.token_epoch_unix_seconds, rocketnet_platform_time() ), loopback_connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
-    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, loopback_connect_token, NULL, rocketnet_platform_time() );
+    struct rocketnet_client_transport_config_t client_config;
+    rocketnet_client_transport_default_config( &client_config );
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
+
+    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, loopback_connect_token, &client_config, rocketnet_platform_time() );
     rocketnet_check( client );
 
     // pump both until connected, bounded by the wall clock
