@@ -7,7 +7,7 @@ Planned work for RocketNet that is not on main. Work lands on main before new wo
 ## Contents
 
 - [Started work to finish and land](#started-work-to-finish-and-land) (13)
-- [Audit items not yet fixed](#audit-items-not-yet-fixed) (11)
+- [Audit items not yet fixed](#audit-items-not-yet-fixed) (10)
 - [Investigations that need a quiet host](#investigations-that-need-a-quiet-host) (3)
 - [Older open pull requests](#older-open-pull-requests) (2)
 - [Decisions for Glenn](#decisions-for-glenn) (5)
@@ -121,12 +121,6 @@ From: Audit item 171 follow-on
 On a full socket the portable sendmmsg path drops the rest of the batch; GSO now keeps it (audit 111). Same rule: spread across updates, never drop.
 
 From: Audit item 111 follow-on
-
-### Two-phase io_uring send staging
-
-When more than 10240 completions arrive ahead of its sends, the io_uring send index still ratchets and outbound runs about one update in three under a flood. Give send staging commit and complete phases as RIO has.
-
-From: #738 follow-on
 
 ### A duplicated deferred packet does not redeliver its code-0 prefix
 
