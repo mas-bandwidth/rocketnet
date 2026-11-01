@@ -27,7 +27,7 @@ The transport and XDP submodels interleave independently; this is a bounded
 abstraction of generation ownership, not a proof of the C++ memory model.
 
 The control uses `PublishWith(TRUE)` and checks both new invariants and the
-publication liveness property. All three cases run through `tlacheck run --group rndriversendstaging`; `tlacheck merge --keep proofs/tla/RUNS.tsv` writes the
+publication liveness property. The declared cases run through `tlacheck run --group rndriversendstaging`; `tlacheck merge --keep proofs/tla/RUNS.tsv` writes the
 measured records. The frame and burst instance sizes remain unchanged.
 
 ### Reversed no-refusal witness
@@ -38,7 +38,7 @@ when no replacement is free. TLC must reject exactly `NoRefusedSend`: start and
 publish repeat until every buffer is queued, the last publish leaves
 `xdpFilling = FALSE`, and the next start sets `xdpRefused = TRUE`. No worker
 retirement occurs in that trace. (With two buffers the trace was depth 6; the
-three-buffer records and trace are owed: see RUNS.tsv.)
+current three-buffer expected outcomes are recorded in RUNS.tsv.)
 
 Checked against the code by hand: restoring unconditional publication in
 `rocketnet_xdp_buffer_exchange_t::publish` permits all buffers to be queued;
@@ -51,16 +51,17 @@ by another flush publishes the retained generation. The unit test
 `test_xdp_transport_send_staging_reflushes_without_commit` separately exercises the actual
 transport flush path twice with equal counters and a fake staged backend.
 
-The refreshed control generates 109,743 states, with 13,178 distinct states;
-the no-refusal witness generates 20,895 states, with 4,113 distinct states.
-The existing disconnect witness still rejects `StagedDisconnectFlushed`.
+The current `rndriversendstaging` records in `RUNS.tsv` contain the control
+and the expected `NoRefusedSend`, `StagedDisconnectFlushed` and
+`FinishAfterResetRecorded` violations. Use that ledger for the exact input
+fingerprints and measurements; the older witness trace below is historical.
 
 ### Equal-counter retry proof
 
 The earlier exploratory no-retry TLC trace was removed from the committed
 case set. The production retry remains checked directly against the code:
 removing the
-`driver == ROCKETNET_DRIVER_XDP` disjunct in
+`ROCKETNET_TRANSPORT_REFLUSHES` capability check in
 `rocketnet_server_transport_send_packets` leaves the retained generation
 unpublished once `send_flushed` catches up to `send_staged`, until an
 unrelated commit advances the staged counter. The unit check
@@ -84,8 +85,10 @@ counter test at line 1745), and
   fails and the frame is dropped; XDP generation ownership is modelled separately.
 - **The publish rule.** On a staged driver a sealed frame leaves only at a
   driver flush, and `send_packets` flushes exactly when the staged counter
-  differs from the flushed counter. The model states the rule the path
-  needs: every commit through the seam advances the staged counter.
+  differs from the flushed counter, during shutdown, or when the transport
+  declares `ROCKETNET_TRANSPORT_REFLUSHES` (including retained XDP work). The model's
+  `Commit` combines sealing through the helper with the caller's staged-count
+  bookkeeping; the helper alone does not increment the counter.
 - **The disconnect burst.** `disconnect_client` runs out of band, between
   `update` calls. It seals its burst through the same seam. With the rule,
   the burst advances the staged counter, so the next `send_packets` flushes
@@ -142,7 +145,7 @@ The small instance:
 | `MaxBurst` | 2 |
 | `DisconnectAdvancesStaged` | `TRUE` (`FALSE` in the witness) |
 
-The committed run generates 7,037 states and finds 1,198 distinct states,
+The historical transport-only run generated 7,037 states and found 1,198 distinct states,
 with no error: the invariants hold and `StagedFramesEventuallySent` holds
 under weak fairness of `send_packets`.
 
@@ -181,9 +184,9 @@ or flushing the send buffer. TLC must reject it, and does:
     which is what `StagedDisconnectFlushed` forbids. The check by hand holds:
     the counterexample is real at the base, and the rule the invariant names
     is the missing advance.
-  - **The citation is owed, not made here.** No sdk file is edited by this
-    change. The next change of `rocketnet_server_transport_disconnect_client`
-    cites this model from that function.
+  - **Current citation:** `rocketnet_server_transport_disconnect_client`
+    in `sdk/rocketnet_server_transport.cpp` now cites this model. The source
+    locations and measurements in this historical trace describe its old base.
 
 ## Runs
 

@@ -55,7 +55,9 @@ the model does not require the application to destroy an object.
 Positive controls check type consistency, true completion implies quiescence
 and key wipe, no free before joins, retained context, no premature reuse,
 exactly-once terminal callback, never-started completion, and immediate enabled
-request/poll returns. Negative controls separately restore:
+request/poll returns. `NeverStartedComplete` and `PollNeverWaits` describe
+modeled definitions/guards; they are bookkeeping checks, not independently
+reversed guarantees. Negative controls separately restore:
 
 1. Waiting for quiescence inside request.
 2. Treating the request flag as completion.
