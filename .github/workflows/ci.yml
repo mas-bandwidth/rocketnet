@@ -3016,4 +3016,4 @@ jobs:
           python3 tools/check_unit_case_coverage.py --repo . \
             --expect Linux-Debug Linux-Release macOS-Debug macOS-Release Linux-no-XDP Linux-wide \
                      Windows-a Windows-b Linux-asan Linux-sodium-pinned \
-            unit-cases/*.txt
+            -- unit-cases/*.txt

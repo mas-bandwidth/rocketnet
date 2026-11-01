@@ -22,7 +22,7 @@ fails on:
   * an expected configuration with no list file, or an empty list.
 
 Usage:
-  check_unit_case_coverage.py --repo . --expect NAME... LIST...
+  check_unit_case_coverage.py --repo . --expect NAME... -- LIST...
 
 A list file's configuration name is its file name without the extension.
 """
