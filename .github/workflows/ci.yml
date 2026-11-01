@@ -920,6 +920,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Give sort and comm the same byte ordering on every runner.
+          export LC_ALL=C
           mkdir -p unit-cases
           { comm -13 <(./bin/test --list | sort) <(./bin/test_wide --list | sort); echo test_unreliable_promotion_every_mode; } > wide-cases.txt
           test "$(wc -l < wide-cases.txt)" -ge 2
@@ -1224,13 +1226,13 @@ jobs:
       # on a window (suite_no_dialogs, tests/suite_runner.h; #201). Each
       # tests/windows_no_dialogs.cpp case runs alone in Release and in Debug
       # with a 30 s deadline and must exit nonzero, and the Debug assertion's
-      # report must reach stderr. The negative control puts the defaults back
-      # first: its Debug assertion must go to the dialog instead, so either it
+      # report must reach stderr. The negative control explicitly restores dialog
+      # routing first: its Debug assertion must go to the dialog, so either it
       # is still waiting on the box after 10 s (a runner with a desktop, where
       # #201 took two hours) or, on this service runner with no desktop, it
-      # ends with no report on stderr. Either way the report the fix keeps
+      # exits nonzero with no report on stderr. Either way the report the fix keeps
       # would have been lost.
-      - name: A Windows test child that aborts exits instead of waiting on a dialog
+      - name: Windows failures exit without dialogs, with an explicit dialog control
         if: matrix.leg == 'c'
         shell: bash
         run: |
@@ -1269,13 +1271,13 @@ jobs:
               fi
             done
           done
-          read -r state code seconds <<< "$(run_case Debug test_no_dialogs_defaults_restored 10)"
+          read -r state code seconds <<< "$(run_case Debug test_no_dialogs_dialog_routing_restored 10)"
           if [ "$state" = waiting ]; then
-            echo "PASS negative control: with the defaults back, the Debug assertion was still waiting on its dialog after $code s (killed)"
-          elif ! grep -q "Assertion failed" "$RUNNER_TEMP/no-dialogs-Debug-test_no_dialogs_defaults_restored.err"; then
-            echo "PASS negative control: with the defaults back, the Debug assertion went to a dialog this service runner cannot show (exited $code in $seconds s, no report on stderr)"
+            echo "PASS negative control: with dialog routing restored, the Debug assertion was still waiting on its dialog after $code s (killed)"
+          elif [ "$state" = exited ] && [ "$code" != 0 ] && ! grep -q "Assertion failed" "$RUNNER_TEMP/no-dialogs-Debug-test_no_dialogs_dialog_routing_restored.err"; then
+            echo "PASS negative control: with dialog routing restored, the Debug assertion went to a dialog this service runner cannot show (exited $code in $seconds s, no report on stderr)"
           else
-            echo "FAIL negative control: with the defaults back, the assertion report still reached stderr, so the defaults were not restored"
+            echo "FAIL negative control: with dialog routing restored, expected a waiting dialog or a nonzero exit without the assertion report on stderr; got $state $code after ${seconds:-$code} s"
             failed=1
           fi
           exit $failed

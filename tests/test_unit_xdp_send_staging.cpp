@@ -3,9 +3,6 @@
 #include "../sdk/rocketnet_server_socket.h"
 #include "test_unit_registry.h"
 
-// the AF_XDP code is Linux only, so its tests are built there only
-#if defined( __linux__ )
-
 #if ROCKETNET_DEV
 
 // The fixture calls the actual transport send_packets twice with a fake
@@ -51,6 +48,12 @@ static void test_windows_staged_transports_flush_once_per_commit()
 REGISTER_UNIT_TEST( test_windows_staged_transports_flush_once_per_commit );
 #endif // #if defined( _WIN32 )
 
+#endif // #if ROCKETNET_DEV
+
+// the AF_XDP code is Linux only, so its tests are built there only
+#if defined( __linux__ )
+
+#if ROCKETNET_DEV
 
 int rocketnet_server_transport_test_staged_simulator_flush();
 static void test_xdp_transport_send_packets_flushes_simulator_window()

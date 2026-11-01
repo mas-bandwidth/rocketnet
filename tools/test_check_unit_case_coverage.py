@@ -3,9 +3,12 @@
 
 from __future__ import annotations
 
+import os
 import shlex
+import subprocess
 import sys
 import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -138,6 +141,65 @@ class CoverageTest(unittest.TestCase):
         errors = coverage.check(self.repo, [full], [])
         self.assertEqual(len(errors), 1, errors)
         self.assertIn("table opener 'channels_tests[] = {' not found", errors[0])
+
+
+class WideCasesWorkflowTest(unittest.TestCase):
+    """Exercise the actual wide-case step with executable fixture lists."""
+
+    def run_step(self, extra_cases: list[str], failing_case: str = "") -> tuple[subprocess.CompletedProcess[str], list[str], list[str]]:
+        workflow = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "ci.yml"
+        step = workflow.read_text().split("      - name: Wide-channel unit cases (ROCKETNET_MAX_CHANNELS=512)\n", 1)[1]
+        step = step.split("\n      - name:", 1)[0]
+        script = textwrap.dedent(step.split("        run: |\n", 1)[1])
+        common = ["test_shared", "test_unreliable_promotion_every_mode"]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "bin").mkdir()
+            for binary, cases in (("test", common), ("test_wide", common + extra_cases)):
+                executable = root / "bin" / binary
+                executable.write_text(
+                    "#!/usr/bin/env python3\n"
+                    "import sys\n"
+                    "from pathlib import Path\n"
+                    f"cases = {cases!r}\n"
+                    "if sys.argv[1:] == ['--list']:\n"
+                    "    print('\\n'.join(cases))\n"
+                    "elif len(sys.argv) == 3 and sys.argv[1] == '--run':\n"
+                    "    case = sys.argv[2]\n"
+                    "    with Path('executed.txt').open('a') as output:\n"
+                    "        output.write(case + '\\n')\n"
+                    f"    sys.exit(7 if case == {failing_case!r} else 0 if case in cases else 8)\n"
+                    "else:\n"
+                    "    sys.exit(9)\n"
+                )
+                executable.chmod(0o755)
+            env = dict(os.environ, LANG="en_US.UTF-8", LC_ALL="en_US.UTF-8")
+            result = subprocess.run(["bash", "-c", script], cwd=root, env=env, text=True, capture_output=True)
+            executed = root / "executed.txt"
+            receipt = root / "unit-cases" / "Linux-wide.txt"
+            return (result, executed.read_text().splitlines() if executed.exists() else [],
+                    receipt.read_text().splitlines() if receipt.exists() else [])
+
+    def test_wide_cases_use_byte_order_and_keep_promotion(self) -> None:
+        # These names expose sort/comm's locale disagreement on uutils 0.8:
+        # en_US sort puts iocp first while comm expects io_uring first.
+        result, executed, receipt = self.run_step(["test_iocp_fixture", "test_io_uring_fixture"])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        expected = ["test_io_uring_fixture", "test_iocp_fixture", "test_unreliable_promotion_every_mode"]
+        self.assertEqual(executed, expected)
+        self.assertEqual(receipt, expected)
+
+    def test_missing_wide_only_cases_fails_without_a_receipt(self) -> None:
+        result, executed, receipt = self.run_step([])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(executed, [])
+        self.assertEqual(receipt, [])
+
+    def test_failed_wide_case_is_not_recorded_as_covered(self) -> None:
+        result, executed, receipt = self.run_step(["test_z_failure", "test_a_pass"], "test_z_failure")
+        self.assertEqual(result.returncode, 7, result.stderr)
+        self.assertEqual(executed, ["test_a_pass", "test_z_failure"])
+        self.assertEqual(receipt, ["test_a_pass"])
 
 
 if __name__ == "__main__":
