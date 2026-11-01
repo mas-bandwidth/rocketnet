@@ -11,8 +11,8 @@
 // The values are the flow library's (flow_platform.cpp), with one change:
 //   POSIX client and server thread: pthread_setschedparam( thread, SCHED_RR,
 //     sched_get_priority_min( SCHED_RR ) ), one call, on Linux as before; on
-//     macOS sched_get_priority_max( SCHED_RR ) (47), since its minimum (15)
-//     demoted the thread below every ordinary one (31).
+//     macOS 32, one above an ordinary thread (31), since its minimum (15)
+//     demoted the thread and its maximum (47) put it above the game's threads.
 //   Windows client and server thread: SetThreadPriority( thread,
 //     THREAD_PRIORITY_TIME_CRITICAL ), one call.
 //   Windows platform init: timeBeginPeriod( 1 ) before the timer frequency
@@ -183,9 +183,9 @@ static void priority_check_one_thread_call( struct rocketnet_platform_thread_t *
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 }
 
-// the requested SCHED_RR priority is above every ordinary thread: flow's
-// minimum on Linux, the maximum (47) on macOS, where the minimum is 15 and an
-// ordinary thread 31
+// the requested SCHED_RR priority is one above an ordinary thread: flow's
+// minimum on Linux, 32 on macOS, where the range is 15 to 47 and an ordinary
+// thread 31; never the maximum there, which outranks the game's threads
 
 static void test_thread_priority_rr_above_ordinary_threads()
 {
@@ -193,7 +193,8 @@ static void test_thread_priority_rr_above_ordinary_threads()
     rocketnet_unit_check( rocketnet_platform_network_thread_rr_priority() == sched_get_priority_min( SCHED_RR ) );
 #elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     rocketnet_unit_check( sched_get_priority_min( SCHED_RR ) == 15 );
-    rocketnet_unit_check( rocketnet_platform_network_thread_rr_priority() == 47 );
+    rocketnet_unit_check( sched_get_priority_max( SCHED_RR ) == 47 );
+    rocketnet_unit_check( rocketnet_platform_network_thread_rr_priority() == 32 );
 #elif ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
     rocketnet_unit_check( rocketnet_platform_network_thread_rr_priority() >= sched_get_priority_min( SCHED_RR ) );
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
