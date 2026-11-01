@@ -1,8 +1,8 @@
 # CBMC proofs of the arithmetic leaves that finish, each night and on
 # demand. NIGHTLY TIER (2026-10-31): 614-705s on the fleet, over the
 # per-commit tier's two minutes. This workflow runs the default target only.
-# It does not run slow-unproved; replay-near-4096 runs nightly too
-# (nightly-proofs.yml).
+# It does not run slow-unproved; replay-near-4096 runs nightly too, one job
+# per partition (nightly-proofs.yml).
 #
 # Budget: `make -C proofs/cbmc all` measured 685.59s (11:25.59) on the
 # fleet Linux runner (vision, self-hosted Linux X64 fleet) at d5dd954f in

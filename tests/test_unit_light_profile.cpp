@@ -34,6 +34,10 @@
 // beside the bursts a running server keeps waiting (proofs/tla/ServerStopSpread.tla
 // RingSize); measured +1088048 bytes on the macOS DEV server, 1088 bytes a
 // ring entry, so every server figure below is raised by 1088048.
+// The figures are the planned peak; required_memory adds a fixed 1 MiB of
+// slack on top for the caller's heap (sdk/rocketnet_api.cpp
+// rn_required_memory_slack_bytes), so each check adds it back.
+#define LIGHT_REQUIRED_MEMORY_SLACK_BYTES ( (size_t) 1024 * 1024 )
 #if defined( _WIN32 )
 // Windows adds, on the server, over the figures before them: the TX banks
 // sized at 16 packets per client (3 banks x 15,000 more packets x 1500 bytes
@@ -177,11 +181,11 @@ static void test_light_profile_server_1000_required_memory()
 
     const size_t bytes = rocketnet_server_required_memory( &config );
     check( bytes > 0 );
-    if ( bytes != LIGHT_SERVER_1000_MAX_BYTES )
+    if ( bytes != LIGHT_SERVER_1000_MAX_BYTES + LIGHT_REQUIRED_MEMORY_SLACK_BYTES )
     {
-        printf( "light server lifecycle bytes: actual=%zu expected=%zu\n", bytes, LIGHT_SERVER_1000_MAX_BYTES );
+        printf( "light server lifecycle bytes: actual=%zu expected=%zu\n", bytes, LIGHT_SERVER_1000_MAX_BYTES + LIGHT_REQUIRED_MEMORY_SLACK_BYTES );
     }
-    check( bytes <= LIGHT_SERVER_1000_MAX_BYTES );
+    check( bytes <= LIGHT_SERVER_1000_MAX_BYTES + LIGHT_REQUIRED_MEMORY_SLACK_BYTES );
 }
 
 REGISTER_UNIT_TEST( test_light_profile_server_1000_required_memory );
@@ -195,11 +199,11 @@ static void test_light_profile_client_required_memory()
 
     const size_t bytes = rocketnet_client_required_memory( &config );
     check( bytes > 0 );
-    if ( bytes != LIGHT_CLIENT_MAX_BYTES )
+    if ( bytes != LIGHT_CLIENT_MAX_BYTES + LIGHT_REQUIRED_MEMORY_SLACK_BYTES )
     {
-        printf( "light client lifecycle bytes: actual=%zu expected=%zu\n", bytes, LIGHT_CLIENT_MAX_BYTES );
+        printf( "light client lifecycle bytes: actual=%zu expected=%zu\n", bytes, LIGHT_CLIENT_MAX_BYTES + LIGHT_REQUIRED_MEMORY_SLACK_BYTES );
     }
-    check( bytes <= LIGHT_CLIENT_MAX_BYTES );
+    check( bytes <= LIGHT_CLIENT_MAX_BYTES + LIGHT_REQUIRED_MEMORY_SLACK_BYTES );
 }
 
 REGISTER_UNIT_TEST( test_light_profile_client_required_memory );

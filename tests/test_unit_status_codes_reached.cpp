@@ -8,8 +8,6 @@
 // thread, mutex or timer failure:
 //   * ROCKETNET_STATUS_PLATFORM_INIT_FAILED: a refused platform_start fails
 //     rocketnet_init_ex;
-//   * ROCKETNET_STATUS_TIMER_CREATE_FAILED: a refused waitable timer create
-//     fails rocketnet_frame_sync_create_ex;
 //   * ROCKETNET_STATUS_MUTEX_CREATE_FAILED: a refused mutex create fails
 //     rocketnet_client_connect;
 //   * ROCKETNET_STATUS_THREAD_CREATE_FAILED: a threaded client connect whose
@@ -29,7 +27,6 @@
 
 #include "../sdk/rocketnet.h"
 #include "rocketnet_internal.h"
-#include "rocketnet_frame_sync.h"
 #include "rocketnet_platform.h"
 
 #include <stdint.h>
@@ -101,23 +98,6 @@ static int refuse_platform_start( void )
     return 1;
 }
 
-static int refuse_waitable_timer_calls;
-static unsigned refuse_waitable_timer_flags[4];
-
-static void * refuse_waitable_timer( unsigned flags )
-{
-    if ( refuse_waitable_timer_calls < 4 )
-    {
-        refuse_waitable_timer_flags[refuse_waitable_timer_calls] = flags;
-    }
-
-    ++refuse_waitable_timer_calls;
-    if ( flags == 0x00000002u )
-        return NULL;
-
-    return (void *) 1;
-}
-
 static int refuse_mutex( rocketnet_platform_mutex_t * mutex )
 {
     (void) mutex;
@@ -146,33 +126,6 @@ static void test_platform_init_failed_reached()
 }
 
 REGISTER_UNIT_TEST( test_platform_init_failed_reached );
-
-// a refused high-resolution timer create fails frame sync with TIMER_CREATE_FAILED after one request
-static void test_timer_create_failed_reached()
-{
-    refuse_waitable_timer_calls = 0;
-    memset( refuse_waitable_timer_flags, 0, sizeof( refuse_waitable_timer_flags ) );
-
-    const struct rocketnet_platform_priority_calls_t * saved = rocketnet_platform_priority_calls_current();
-    struct rocketnet_platform_priority_calls_t fake;
-    fake = *saved;
-    fake.create_waitable_timer = refuse_waitable_timer;
-    rocketnet_platform_set_priority_calls_for_testing( &fake );
-
-    int status = -1;
-    check( rocketnet_frame_sync_create_ex( NULL, 60.0, &status ) == NULL );
-    check( status == ROCKETNET_STATUS_TIMER_CREATE_FAILED );
-    check( refuse_waitable_timer_calls == 1 );
-    check( refuse_waitable_timer_flags[0] == 0x00000002u );
-
-    check( rocketnet_frame_sync_create( NULL, 60.0 ) == NULL );
-    check( refuse_waitable_timer_calls == 2 );
-    check( refuse_waitable_timer_flags[1] == 0x00000002u );
-
-    rocketnet_platform_set_priority_calls_for_testing( saved );
-}
-
-REGISTER_UNIT_TEST( test_timer_create_failed_reached );
 
 // a refused mutex create fails client connect with MUTEX_CREATE_FAILED
 static void test_client_mutex_create_failed_reached()

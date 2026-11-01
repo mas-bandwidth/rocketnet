@@ -2990,12 +2990,17 @@ static void test_server_set_send_kbps_limit_budget_slot_isolation_and_reset_rule
     check( lifecycle_send_kbps_assertions == ( ROCKETNET_ASSERTS ? 1 : 0 ) );
     rocketnet_assert_function( saved_assert );
 
+    // a negative rate for a valid index is a refused value, not misuse; an
+    // index outside 0 .. max_clients - 1 is misuse whatever the rate
+
     misuse = rocketnet_api_misuse_count();
     check( rocketnet_server_set_send_kbps( server, 0, -1 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
     check( rocketnet_server_set_send_kbps( server, 0, INT_MIN ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+    check( rocketnet_api_misuse_count() == misuse );
     check( rocketnet_server_set_send_kbps( server, -1, -1 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
     check( rocketnet_server_set_send_kbps( server, 2, INT_MIN ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
-    check( rocketnet_api_misuse_count() == misuse );
+    check( rocketnet_api_misuse_count() == misuse + 2 );
+    misuse = rocketnet_api_misuse_count();
 
     check( rocketnet_server_set_send_kbps( server, -1, 1000 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
     check( rocketnet_server_set_send_kbps( server, 2, 1000 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );

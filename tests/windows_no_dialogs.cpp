@@ -6,11 +6,11 @@
     abort, a failed assertion, the CRT's invalid parameter handler (#201's
     setvbuf) and an access violation. Under suite_main each must exit with a
     nonzero code at once and never wait on a window (suite_no_dialogs,
-    tests/suite_runner.h). test_no_dialogs_defaults_restored puts the CRT and
-    error mode back to their defaults first and then fails an assertion: in a
-    Debug build that one waits on the assertion box, which is what every case
-    did before suite_no_dialogs. ci.yml's Windows leg (b) runs each case with
-    `--run <case>` under a deadline. Every case fails by design, so this binary
+    tests/suite_runner.h). test_no_dialogs_dialog_routing_restored explicitly
+    routes CRT errors to a message box before failing an assertion. In Debug
+    it waits on that box, or exits without the assertion report on stderr
+    when a service runner cannot show it. ci.yml's Windows leg (c) runs each
+    case with `--run <case>` under a deadline. Every case fails by design, so this binary
     is never run as a suite.
 */
 
@@ -45,11 +45,12 @@ static int no_dialogs_access_violation()
     return 2;
 }
 
-static int no_dialogs_defaults_restored()
+static int no_dialogs_dialog_routing_restored()
 {
     SetErrorMode( 0 );
 #if defined( _MSC_VER )
-    _set_error_mode( _OUT_TO_DEFAULT );
+    // _OUT_TO_DEFAULT follows the application type; a console may use stderr.
+    _set_error_mode( _OUT_TO_MSGBOX );
     _set_abort_behavior( _WRITE_ABORT_MSG | _CALL_REPORTFAULT, _WRITE_ABORT_MSG | _CALL_REPORTFAULT );
 #if defined( _DEBUG )
     _CrtSetReportMode( _CRT_ASSERT, _CRTDBG_MODE_WNDW );
@@ -70,7 +71,7 @@ static const no_dialogs_case no_dialogs_cases[] = {
     { "test_no_dialogs_assert", no_dialogs_assert },
     { "test_no_dialogs_invalid_parameter", no_dialogs_invalid_parameter },
     { "test_no_dialogs_access_violation", no_dialogs_access_violation },
-    { "test_no_dialogs_defaults_restored", no_dialogs_defaults_restored },
+    { "test_no_dialogs_dialog_routing_restored", no_dialogs_dialog_routing_restored },
 };
 
 static int no_dialogs_count()
