@@ -1,9 +1,10 @@
 ------------------------------ MODULE RNRing ------------------------------
 (***************************************************************************)
-(* rocketnet: the receive ring's placement rule (docs/CHANNELS.md 6.2, the *)
-(* byte bound; 6.3 step 3; 8, a block's span; 15, the RNRing row).         *)
+(* rocketnet: the receive ring's placement rule. Current normative rules   *)
+(* are standard/MESSAGES.md m5.1 (placement), m4 (receiver checks), and m8 *)
+(* (blocks). The finite instance and recorded checks are in README-RNRing. *)
 (*                                                                         *)
-(* The receiver's ring of B bytes has no allocator (section 4, item 3).    *)
+(* The receiver's ring of B bytes is preallocated.                         *)
 (* The sender places every holdable record (code 3, code 4, any BLOCK) by  *)
 (* giving it an absolute byte span [p, p + len16) when it is numbered, and *)
 (* the receiver only checks that the span, taken modulo B, is 16-aligned   *)
@@ -11,10 +12,10 @@
 (* rn_region_ring_span_valid).  The sender's rule is                       *)
 (* sdk/rocketnet_window_send.cpp (rn_window_send_position and              *)
 (* rn_window_send_admit).  This module is the sender's rule and the        *)
-(* receiver's live spans, so that TLC can check section 3's layer 3        *)
-(* guarantee: "Its slot and ring writes never touch a live message."       *)
+(* receiver's live spans, so that TLC can check the model's                *)
+(* guarantee that no ring write touches another live message.              *)
 (*                                                                         *)
-(* The rule (6.2).  len16 is the record's length rounded up to 16.         *)
+(* The placement rule (m5.1). len16 is the record's length rounded up to 16. *)
 (* p = ring_next unless [ring_next, ring_next + len16) crosses a multiple  *)
 (* of B; then p is the next multiple of B and the skipped bytes are        *)
 (* padding.  The span is admitted only if p + len16 - floor <= B, where    *)
@@ -23,19 +24,19 @@
 (* U lies inside a block that is not fully acked, when U' is that block's  *)
 (* first number.  A block of k fragments at stride F takes k consecutive   *)
 (* numbers and one contiguous span of k * F bytes, fragment i at p + i*F,  *)
-(* both bounds checked once for the whole block (section 8).               *)
+(* both bounds checked once for the whole block (m5.1 and m8).             *)
 (*                                                                         *)
-(* The receiver (6.3 step 1).  A number is live from the moment its        *)
+(* The modeled receiver.  A number is live from the moment its             *)
 (* record is opened (its bytes are written into the ring) until it is      *)
 (* released: delivered, and the update that delivered it ended.  A block   *)
 (* is released whole, once every fragment has been opened.  A record       *)
-(* arriving again is a duplicate and writes nothing (6.5).                 *)
+(* arriving again is a duplicate and writes nothing (m5.2).                *)
 (*                                                                         *)
 (* Acks are abstracted, and one assumption is stated here rather than      *)
 (* proved: U' advances only past numbers whose records the receiver has    *)
-(* opened and released.  That is what 6.3 step 2 argues from P2, P6 and    *)
-(* the scheduler's first-write order, and it is RNWindow's to check.  In   *)
-(* this module Ack(n) needs n opened (P2: acked means opened), and the ack  *)
+(* opened and released. This is a precondition of this model's Ack, not    *)
+(* an end-to-end proof of release timing or the scheduler. In this module  *)
+(* Ack(n) needs n opened (acked means opened), and the ack                 *)
 (* that completes a block, or acks a single record, needs the record       *)
 (* released.  A fragment of an incomplete block may be acked while it is   *)
 (* still held, which is exactly why U' exists.  The transport's link is    *)
@@ -48,7 +49,7 @@
 (*   FloorAtUPrime = FALSE   floor = ring_start(U): LiveSpansDisjoint      *)
 (*   PadAtBoundary = FALSE   no padding: SpanInsideRing                    *)
 (*   IdleFloorAtP  = FALSE   floor = ring_start(next-1) when idle:         *)
-(*                           EveryAdmissibleMessagePlaced                  *)
+(*                           IdleAdmitsAnyMessage                          *)
 (*   Round16       = FALSE   len16 = len: Aligned                          *)
 (***************************************************************************)
 EXTENDS Naturals, FiniteSets
@@ -60,10 +61,10 @@ CONSTANTS
     BlockFragments, \* k, fragments per block, >= 2; k * F <= B
     MaxBlocks,      \* how many blocks a behaviour may number (a size knob)
     MaxNumbers,     \* numbers 0 .. MaxNumbers-1 may be given (a size knob)
-    FloorAtUPrime,  \* 6.2: the floor is ring_start(U'), not ring_start(U)
-    PadAtBoundary,  \* 6.2: a span that would cross a multiple of B is moved up
-    IdleFloorAtP,   \* 6.2: the floor is p when nothing is outstanding
-    Round16         \* 6.2: len16 is the length rounded up to 16
+    FloorAtUPrime,  \* the floor is ring_start(U'), not ring_start(U)
+    PadAtBoundary,  \* a span that would cross a multiple of B is moved up
+    IdleFloorAtP,   \* the floor is p when nothing is outstanding
+    Round16         \* len16 is the length rounded up to 16
 
 ASSUME /\ B \in Nat \ {0} /\ B % 16 = 0
        /\ Lengths \subseteq 1..B /\ Lengths # {}
@@ -95,7 +96,7 @@ Block(n)    == { m \in Numbered : first[m] = first[n] }
 
 Min(S) == CHOOSE x \in S : \A y \in S : x <= y
 
-\* U, the lowest unacked number, and U' (6.2); both are next when idle
+\* U, the lowest unacked number, and U' (m5.1); both are next when idle
 U      == IF Outstanding = {} THEN next ELSE Min(Outstanding)
 UPrime == IF U = next THEN next ELSE first[U]
 
@@ -143,7 +144,7 @@ WantBlock ==
     /\ pending' = [kind |-> "block", len |-> 0]
     /\ UNCHANGED <<next, ringNext, span, first, acked, opened, live, blocks>>
 
-\* The waiting single record is numbered and placed (6.2).
+\* The waiting single record is numbered and placed (m5.1).
 PlaceSingle ==
     /\ pending.kind = "single"
     /\ LET l == Len16(pending.len)
@@ -157,7 +158,7 @@ PlaceSingle ==
     /\ UNCHANGED <<acked, opened, live, blocks>>
 
 \* The waiting block is numbered: k consecutive numbers, one contiguous
-\* span, fragment i at p + i*F, both bounds checked once (section 8).
+\* span, fragment i at p + i*F, both bounds checked once (m5.1 and m8).
 PlaceBlock ==
     /\ pending.kind = "block"
     /\ LET l == BlockBytes
@@ -179,7 +180,7 @@ PlaceBlock ==
 (* The outside events: the receiver and the acks, in any order.            *)
 (***************************************************************************)
 \* The receiver opens record n: its bytes are written into the ring at its
-\* span and n is live from here.  A second arrival is a duplicate (6.5).
+\* span and n is live from here.  A second arrival is a duplicate (m5.2).
 Open(n) ==
     /\ n \in Numbered \ opened
     /\ opened' = opened \cup {n}
@@ -188,15 +189,15 @@ Open(n) ==
 
 \* The receiver delivered n's message and the update ended: its span, and
 \* for a block every fragment's span, stops being live.  A block is
-\* delivered only once every fragment has been opened (section 8).
+\* delivered only once every fragment has been opened (m8).
 Release(n) ==
     /\ n \in live
     /\ Block(n) \subseteq opened
     /\ live' = live \ Block(n)
     /\ UNCHANGED <<next, ringNext, span, first, acked, opened, pending, blocks>>
 
-\* The sender learns n was acked.  P2: acked means opened.  The assumption
-\* of 6.3 step 2, stated in the header: the ack that moves U' past a record
+\* The sender learns n was acked; acked means opened. The assumption
+\* stated in the header: the ack that moves U' past a record
 \* (a single, or the last fragment of a block) was built after the record
 \* was released.
 Ack(n) ==
@@ -248,7 +249,7 @@ TypeOK ==
 \* the bytes of the ring a span occupies
 RingBytes(n) == { x % B : x \in span[n].s .. span[n].e - 1 }
 
-\* 6.3 step 3 and the layer 3 guarantee: no two live spans share a ring byte
+\* No two live spans share a ring byte.
 LiveSpansDisjoint ==
     \A m, n \in live : m # n => RingBytes(m) \cap RingBytes(n) = {}
 
@@ -257,11 +258,11 @@ LiveSpansDisjoint ==
 SpanInsideRing ==
     \A n \in Numbered : (span[n].s % B) + (span[n].e - span[n].s) <= B
 
-\* every placement is a multiple of 16 (section 4: the ring base is
-\* 16-aligned, so every placement is 16-aligned too)
+\* Every placement is a multiple of 16, the ring unit in
+\* standard/MESSAGES.md m5.4; the receiver's ring base is 16-aligned.
 Aligned == \A n \in Numbered : span[n].s % 16 = 0
 
-\* 6.2's last paragraph as a state predicate: with nothing outstanding the
+\* The idle placement rule as a state predicate: with nothing outstanding the
 \* ring admits any single record and a block, wherever ring_next is
 IdleAdmitsAnyMessage ==
     Outstanding = {} =>
@@ -273,11 +274,11 @@ IdleAdmitsAnyMessage ==
 (***************************************************************************)
 Waiting == pending.kind # "none"
 
-\* 6.2: when nothing is outstanding, any message of at most
+\* when nothing is outstanding, any message of at most
 \* max_message_bytes <= B is placed
 EveryAdmissibleMessagePlaced == (Outstanding = {} /\ Waiting) ~> ~Waiting
 
-\* 6.2: "No record waits forever", given the receiver and the acks are fair
+\* No record waits forever, given the receiver and the acks are fair
 NoRecordWaitsForever == Waiting ~> ~Waiting
 
 =============================================================================
