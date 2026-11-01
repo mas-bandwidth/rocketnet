@@ -40,7 +40,19 @@ clean:
 	rm -rf bin/*
 
 # ROADMAP.md is generated from docs/roadmap.sexp by nova-sprint's roadmap tool
-# (a go tool dependency there); NOVA_SPRINT names a nova-sprint checkout.
+# (a go tool dependency there, at the version its go.mod pins); NOVA_SPRINT names
+# a nova-sprint checkout. The tool is built into build/ and run from this
+# directory so the page names docs/roadmap.sexp, not a checkout's absolute path.
+# Pull requests edit only docs/roadmap.sexp: the roadmap workflow
+# (.github/workflows/roadmap.yml) runs `make roadmap` on main and commits
+# ROADMAP.md. `make roadmap-check` validates the sexp without writing the page.
 NOVA_SPRINT ?= ../nova-sprint
-roadmap:
-	cd $(NOVA_SPRINT) && go tool roadmap --file $(CURDIR)/docs/roadmap.sexp --out $(CURDIR)/ROADMAP.md
+ROADMAP_TOOL := build/roadmap-tool/roadmap
+.PHONY: roadmap roadmap-check roadmap-tool
+roadmap-tool:
+	@mkdir -p build/roadmap-tool
+	cd $(NOVA_SPRINT) && go build -o $(CURDIR)/$(ROADMAP_TOOL) github.com/mas-bandwidth/nova-tools/tools/roadmap
+roadmap: roadmap-tool
+	$(ROADMAP_TOOL) --file docs/roadmap.sexp --out ROADMAP.md
+roadmap-check: roadmap-tool
+	$(ROADMAP_TOOL) --file docs/roadmap.sexp --out build/roadmap-tool/ROADMAP.md

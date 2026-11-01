@@ -193,7 +193,7 @@ before that batch is returned; see the limitations below.
 | msgx | portable batch, 256–1000 | 16000 per update |
 | loopback | portable batch, 256–1000 | 2048 per client endpoint; server queue scales with hub capacity (16384 at 1000 clients), with 16000 processed per update (`sdk/rocketnet_driver_loopback.h`) |
 | gso | 4096 in the current shared producer bank (`ROCKETNET_GSO_SEND_QUEUE_SIZE`) | 8192 per queue buffer (`ROCKETNET_GSO_RECV_QUEUE_SIZE`) |
-| io_uring | 2048 shared send slots; 10240 completion reaps per send call (`ROCKETNET_URING_SEND_QUEUE_SIZE`, `ROCKETNET_URING_SEND_BUDGET`) | 4096 receive buffers of 66 KiB per queue; 16000 in each shared receive bank (`ROCKETNET_URING_RECV_BUFFERS`, `ROCKETNET_URING_BANK_SIZE`) |
+| io_uring | 2048 shared send slots per phase, two phases; 10240 completion reaps per send call (`ROCKETNET_URING_SEND_QUEUE_SIZE`, `ROCKETNET_URING_SEND_PHASES`, `ROCKETNET_URING_SEND_BUDGET`) | 4096 receive buffers of 66 KiB per queue; 16000 in each shared receive bank (`ROCKETNET_URING_RECV_BUFFERS`, `ROCKETNET_URING_BANK_SIZE`) |
 | xdp | 4096 per queue (`ROCKETNET_XDP_SEND_QUEUE_SIZE`) | 16384 staging per queue (`ROCKETNET_XDP_RECV_QUEUE_SIZE`) |
 | iocp | 2048 (`ROCKETNET_IOCP_SEND_QUEUE_SIZE`) | 4096 queue (`ROCKETNET_IOCP_RECEIVE_QUEUE_SIZE`) |
 | rio | 2048 per phase (`ROCKETNET_RIO_SEND_QUEUE_SIZE`) | 4096 posted receives (`ROCKETNET_RIO_RECEIVES`) |
@@ -546,9 +546,12 @@ cmsg (`ROCKETNET_URING_GRO_CONTROL_BYTES`), and one provided buffer may hold
 a coalesced receive of several datagrams: `rocketnet_uring_recvmsg_parse`
 returns the stride, `rocketnet_coalesce_split` cuts the buffer, and every
 segment is size-checked and copied into the fill bank before the buffer goes
-back to the ring (`proofs/tla/RNUringDriver.tla`, `ReturnAfterLastCopy`). A fill
-bank that fills mid-split drops and counts the rest as
-`RECEIVE_DROPPED_OVERFLOW`. `GRO_BATCHES` counts buffers that held more than
+back to the ring (`proofs/tla/RNUringDriver.tla`, `ReturnAfterLastCopy`). A
+receive is copied only while the fill bank has room for a whole coalesced
+receive; otherwise it is held with its buffer, in arrival order, until a swap
+brings room, and the completions behind it, sends among them, are reaped in
+the same call (`proofs/tla/RNUringReapLayout.tla`). Destroy's drain copies
+regardless and counts what the bank cannot take as `RECEIVE_DROPPED_OVERFLOW`. `GRO_BATCHES` counts buffers that held more than
 one segment, and `GRO_CMSG_FAULTS` a truncated or malformed `UDP_GRO` cmsg,
 taken as one datagram (the GSO transport's fault). Created with
 `ROCKETNET_SERVER_URING_DISABLE_GRO`, no control area is reserved and a

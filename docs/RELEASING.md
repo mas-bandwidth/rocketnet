@@ -120,7 +120,9 @@ required runs are:
   `static analysis (gcc -fanalyzer)` and
   `static analysis (clang-tidy, cppcheck)`.
 - **TLC records** ([.github/workflows/tlc.yml](../.github/workflows/tlc.yml)):
-  `Model records are current`.
+  `Model records are current`, a nightly workflow: run it with
+  workflow_dispatch on the release commit
+  (`gh workflow run tlc.yml --ref main`).
 - **docs** ([.github/workflows/docs.yml](../.github/workflows/docs.yml)):
   `docs (MrDocs HTML reference build)`.
 - **Release Check** ([.github/workflows/release-check.yml](../.github/workflows/release-check.yml)):
