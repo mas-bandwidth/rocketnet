@@ -135,6 +135,15 @@ struct rocketnet_server_uring_send_buffer_t
     uint8_t padding_3[4096];
 };
 
+// a receive CQE held for the fill bank's room: what the copy reads of it
+
+struct rocketnet_server_uring_held_t
+{
+    int queue_index;
+    int32_t res;
+    uint32_t flags;
+};
+
 struct rocketnet_server_uring_bank_t
 {
     int num_packets;
@@ -206,6 +215,15 @@ struct rocketnet_server_uring_t
     struct rocketnet_server_uring_send_buffer_t send;
 
     struct rocketnet_server_uring_bank_t banks[2];
+
+    // the receive CQEs held for the fill bank's room, oldest first, in a ring
+    // with a slot for every provided buffer of the most queues: a held
+    // receive owns its buffer, so the ring is never full
+    // (proofs/tla/RNUringReapLayout.tla Reap and CopyHeld)
+
+    struct rocketnet_server_uring_held_t held[ROCKETNET_URING_HELD_RECEIVES];
+    int held_head;
+    int held_count;
 
     struct rocketnet_server_socket_process_packets_t process_packets;
 
@@ -745,11 +763,11 @@ static bool rocketnet_server_uring_arm( struct rocketnet_server_uring_t * uring,
 // copied, or counted dropped, before the buffer goes back. a fill bank that
 // fills mid-split drops and counts the rest as RECEIVE_DROPPED_OVERFLOW.
 
-static void rocketnet_server_uring_receive_cqe( struct rocketnet_server_uring_t * uring, int queue_index, const struct io_uring_cqe * cqe )
+static void rocketnet_server_uring_receive_cqe( struct rocketnet_server_uring_t * uring, int queue_index, int32_t res, uint32_t flags )
 {
     struct rocketnet_server_uring_queue_t * queue = &uring->queues[queue_index];
 
-    const int buffer_id = rocketnet_uring_buffer_id( cqe->flags );
+    const int buffer_id = rocketnet_uring_buffer_id( flags );
     if ( buffer_id < 0 || buffer_id >= ROCKETNET_URING_RECV_BUFFERS )
     {
         uring->counters[ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_NO_BUFFER]++;
@@ -764,7 +782,7 @@ static void rocketnet_server_uring_receive_cqe( struct rocketnet_server_uring_t 
     int payload_bytes = 0;
     int segment_bytes = 0;
 
-    const int verdict = rocketnet_uring_recvmsg_parse( buffer, cqe->res, (int) queue->receive_message.msg_namelen, (int) queue->receive_message.msg_controllen,
+    const int verdict = rocketnet_uring_recvmsg_parse( buffer, res, (int) queue->receive_message.msg_namelen, (int) queue->receive_message.msg_controllen,
                                                        &name, &name_bytes, &payload, &payload_bytes,
                                                        &segment_bytes, &uring->counters[ROCKETNET_SERVER_URING_COUNTER_GRO_CMSG_FAULTS] );
 
@@ -873,6 +891,61 @@ static void rocketnet_server_uring_multishot_ended( struct rocketnet_server_urin
     }
 }
 
+// the fill bank has room for a whole coalesced receive, the most datagrams
+// one receive CQE carries (proofs/tla/RNUringDriver.tla HasRoom)
+
+static bool rocketnet_server_uring_bank_has_room( const struct rocketnet_server_uring_t * uring )
+{
+    return uring->banks[uring->fill_bank].num_packets + ROCKETNET_URING_MAX_SEGMENTS <= ROCKETNET_URING_BANK_SIZE;
+}
+
+// a receive CQE with data: copied into the fill bank, or held. it is held
+// while the bank has no room for a whole coalesced receive, and while an
+// earlier receive is held, so receives are copied in the order the kernel
+// posted them (proofs/tla/RNUringReapLayout.tla Reap, the receive held). a held receive keeps
+// its ring buffer until its copy and leaves the completion queue, so the
+// CQEs behind it are reaped in the same call (proofs/tla/RNUringDriver.tla
+// Reap, the "recv" case under HoldWithoutRoom). destroy's drain copies at
+// once: the bank is never read again, and a full bank counts the overflow.
+// a CQE that names no provided buffer owns none and is never held. a held
+// receive owns its buffer, so the ring has room for every one; a receive
+// that found the ring full would be copied at once, its segments past the
+// bank's room counted RECEIVE_DROPPED_OVERFLOW.
+
+static void rocketnet_server_uring_receive_or_hold( struct rocketnet_server_uring_t * uring, int queue_index, const struct io_uring_cqe * cqe )
+{
+    const int buffer_id = rocketnet_uring_buffer_id( cqe->flags );
+
+    if ( !uring->destroying && buffer_id >= 0 && buffer_id < ROCKETNET_URING_RECV_BUFFERS &&
+         uring->held_count < ROCKETNET_URING_HELD_RECEIVES &&
+         ( uring->held_count > 0 || !rocketnet_server_uring_bank_has_room( uring ) ) )
+    {
+        struct rocketnet_server_uring_held_t * held = &uring->held[( uring->held_head + uring->held_count ) % ROCKETNET_URING_HELD_RECEIVES];
+        held->queue_index = queue_index;
+        held->res = cqe->res;
+        held->flags = cqe->flags;
+        uring->held_count++;
+        return;
+    }
+
+    rocketnet_server_uring_receive_cqe( uring, queue_index, cqe->res, cqe->flags );
+}
+
+// the held receives, oldest first, into the fill bank while it has room, or
+// all of them in destroy's drain (proofs/tla/RNUringDriver.tla CopyHeld,
+// proofs/tla/RNUringReapLayout.tla CopyHeld)
+
+static void rocketnet_server_uring_copy_held( struct rocketnet_server_uring_t * uring )
+{
+    while ( uring->held_count > 0 && ( uring->destroying || rocketnet_server_uring_bank_has_room( uring ) ) )
+    {
+        const struct rocketnet_server_uring_held_t held = uring->held[uring->held_head];
+        uring->held_head = ( uring->held_head + 1 ) % ROCKETNET_URING_HELD_RECEIVES;
+        uring->held_count--;
+        rocketnet_server_uring_receive_cqe( uring, held.queue_index, held.res, held.flags );
+    }
+}
+
 // proofs/tla/RNUringDriver.tla Reap(c): one CQE, by the kind in its tag
 
 static void rocketnet_server_uring_reap_cqe( struct rocketnet_server_uring_t * uring, const struct io_uring_cqe * cqe )
@@ -940,7 +1013,7 @@ static void rocketnet_server_uring_reap_cqe( struct rocketnet_server_uring_t * u
 #endif // #if ROCKETNET_DEV
 
         if ( cqe->res >= 0 )
-            rocketnet_server_uring_receive_cqe( uring, queue_index, cqe );
+            rocketnet_server_uring_receive_or_hold( uring, queue_index, cqe );
 
         if ( ( cqe->flags & IORING_CQE_F_MORE ) == 0 )
         {
@@ -966,30 +1039,19 @@ static void rocketnet_server_uring_reap_cqe( struct rocketnet_server_uring_t * u
     }
 }
 
-// a receive CQE the fill bank has room for: a coalesced receive carries up
-// to ROCKETNET_URING_MAX_SEGMENTS datagrams, and the bank takes what the
-// send reaps and the receive reap put in it between two swaps, so the reap
-// stops short of the last ROCKETNET_URING_MAX_SEGMENTS slots and the CQE
-// (and its ring buffer) waits for the next call (proofs/tla/RNUringDriver.tla
-// Reap within Room). destroy's drain reaps regardless: the bank is never
-// read again, and a full bank counts the overflow
-
-static bool rocketnet_server_uring_reap_has_room( struct rocketnet_server_uring_t * uring, const struct io_uring_cqe * cqe )
-{
-    if ( uring->destroying )
-        return true;
-    if ( rocketnet_uring_tag_kind( cqe->user_data ) != ROCKETNET_URING_TAG_RECV || cqe->res < 0 )
-        return true;
-    return uring->banks[uring->fill_bank].num_packets + ROCKETNET_URING_MAX_SEGMENTS <= ROCKETNET_URING_BANK_SIZE;
-}
-
 // reap the CQEs available now, oldest first, without blocking and at most
-// budget of them (proofs/tla/RNUringDriver.tla Reap within a call's Budget); returns how
-// many. CQEs past the budget, and a receive CQE the fill bank has no room
-// for, stay in the completion queue for a later call.
+// budget of them (proofs/tla/RNUringDriver.tla Reap within a call's Budget);
+// returns how many. the held receives are copied first, while the fill bank
+// has room (proofs/tla/RNUringDriver.tla CopyHeld). CQEs past the budget stay
+// in the completion queue for a later call. a receive CQE the fill bank has
+// no room for is held, not left in the queue, so no CQE behind it waits for
+// a swap: a send's CQE is reaped whatever the receive side holds
+// (proofs/tla/RNUringReapLayout.tla Reap).
 
 static int rocketnet_server_uring_reap_available( struct rocketnet_server_uring_t * uring, int budget )
 {
+    rocketnet_server_uring_copy_held( uring );
+
     int total = 0;
     while ( total < budget )
     {
@@ -1002,18 +1064,11 @@ static int rocketnet_server_uring_reap_available( struct rocketnet_server_uring_
         if ( count == 0 )
             break;
 
-        unsigned reaped = 0;
-        while ( reaped < count && rocketnet_server_uring_reap_has_room( uring, cqes[reaped] ) )
-        {
-            rocketnet_server_uring_reap_cqe( uring, cqes[reaped] );
-            reaped++;
-        }
+        for ( unsigned i = 0; i < count; i++ )
+            rocketnet_server_uring_reap_cqe( uring, cqes[i] );
 
-        rocketnet_server_uring_ring_advance( uring, reaped );
-        total += (int) reaped;
-
-        if ( reaped < count )
-            break;
+        rocketnet_server_uring_ring_advance( uring, count );
+        total += (int) count;
     }
 
     return total;
@@ -1519,7 +1574,7 @@ bool rocketnet_server_uring_stopped( rocketnet_server_uring_t * uring )
         return false;
 #endif // #if ROCKETNET_DEV
 
-    if ( uring->sends_pending ||
+    if ( uring->sends_pending || uring->held_count > 0 ||
          rocketnet_server_uring_ring_sq_ready( uring ) || rocketnet_server_uring_ring_cq_ready( uring ) )
         return false;
 
@@ -1728,12 +1783,14 @@ void rocketnet_server_uring_abort_packet( struct rocketnet_server_uring_t * urin
 // one slot without UDP_SEGMENT), in chunks no larger than the free
 // submission queue space, rotated across the group's sockets; then
 // reap, at most ROCKETNET_URING_SEND_BUDGET CQEs in the whole call and after
-// no waits (receive CQEs met on the way go to the fill bank). The reservation index goes back to 0 only
+// no waits (receive CQEs met on the way go to the fill bank, or are held for
+// its room). The reservation index goes back to 0 only
 // when no send is without its CQE and every staged slot is submitted
 // (ResetIndex); otherwise the call returns with the index unchanged, counted
 // SEND_DEFERRED, and a later call submits and retires the rest (SendReturn).
 // The kernel owns a slot from its submit to its CQE, and no return frees or
-// reuses one.
+// reuses one. At the code's layout the call is proofs/tla/RNUringReapLayout.tla
+// SendBegin, then Reap and CopyHeld, then CallEnd.
 
 void rocketnet_server_uring_send_packets( struct rocketnet_server_uring_t * uring )
 {
@@ -1867,7 +1924,7 @@ void rocketnet_server_uring_send_packets( struct rocketnet_server_uring_t * urin
         (void) rocketnet_server_uring_reap_available( uring, budget );
     }
 
-    if ( reaping && rocketnet_server_uring_ring_cq_ready( uring ) > 0 )
+    if ( reaping && ( rocketnet_server_uring_ring_cq_ready( uring ) > 0 || uring->held_count > 0 ) )
         uring->counters[ROCKETNET_SERVER_URING_COUNTER_REAP_DEFERRED]++;
 
     // re-arms queued while reaping
@@ -1916,11 +1973,14 @@ static void rocketnet_server_uring_rearm_unarmed( struct rocketnet_server_uring_
 
 // proofs/tla/RNUringDriver.tla RecvBegin, Reap and Swap: the call begins (RecvBegin),
 // reaps at most ROCKETNET_URING_RECEIVE_BUDGET CQEs without blocking into the
-// fill bank (Reap within the Budget and within Room; CQEs past the budget or
-// past the bank's room stay in the completion queue, counted REAP_DEFERRED),
+// fill bank (Reap within the Budget and within Room; CQEs past the budget
+// stay in the completion queue and receives past the bank's room are held,
+// both counted REAP_DEFERRED),
 // submits any re-arm, then Swap:
 // the fill bank becomes the exposed bank the transport reads until the next
-// call, and the other bank is emptied as the new fill bank
+// call, and the other bank is emptied as the new fill bank. At the code's
+// layout the call is proofs/tla/RNUringReapLayout.tla RecvBegin, then Reap
+// and CopyHeld, then CallEnd, which swaps.
 
 void rocketnet_server_uring_receive_packets( struct rocketnet_server_uring_t * uring )
 {
@@ -1936,7 +1996,7 @@ void rocketnet_server_uring_receive_packets( struct rocketnet_server_uring_t * u
 
     rocketnet_server_uring_reap_available( uring, ROCKETNET_URING_RECEIVE_BUDGET );
 
-    if ( rocketnet_server_uring_ring_cq_ready( uring ) > 0 )
+    if ( rocketnet_server_uring_ring_cq_ready( uring ) > 0 || uring->held_count > 0 )
         uring->counters[ROCKETNET_SERVER_URING_COUNTER_REAP_DEFERRED]++;
 
     rocketnet_server_uring_rearm_unarmed( uring );

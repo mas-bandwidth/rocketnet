@@ -30,7 +30,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 WF_DIR = os.environ.get("ROCKETNET_WF_DIR") or os.path.normpath(os.path.join(HERE, "..", ".github", "workflows"))
 EXC_FILE = os.environ.get("ROCKETNET_EXC_FILE") or os.path.join(HERE, "fleet-runners-exceptions.txt")
 
-HOSTED = re.compile(r"^(ubuntu|macos|windows)-")
+# ubuntu-2404 and ubuntu-2604 are the fleet's own distro labels; no hosted
+# ubuntu label is four bare digits (ubuntu-24.04, ubuntu-latest, ubuntu-slim).
+HOSTED = re.compile(r"^(?:macos-|windows-|ubuntu-(?![0-9]{4}$))")
 
 INSTALL_CHECKS = [
     (re.compile(r"\bsudo\s+apt-get\s+install\b"), "apt-get install"),
