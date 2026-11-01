@@ -7,8 +7,11 @@ cleared by `rocketnet_ack_endpoint_reset`, instead of zeroed records.
 
 A reset used to zero the whole endpoint, 271 KB, at every client create,
 connect and disconnect and at every server slot's create and reuse. It now
-writes about 9 KB: the bits, the counters and the rtt history's empty marks.
-The rings' pages are touched only by records.
+clears the bits, counters and rtt history's empty marks. It also initializes
+64 generation tags and a cached base in reclaimed received-record summary
+words (520 bytes), so reset does touch those parts of the ring's pages.
+The written-bit abstraction below concerns the sequence/time/byte fields,
+which reset leaves unchanged; it does not model those summary words.
 
 - **Write** (`record_sent`, `record_received`) writes the
   record and sets its bit.
@@ -16,8 +19,8 @@ The rings' pages are touched only by records.
   `mark_keep_alive`, the reconcile, the stats windows)
   takes a record's bytes only when its bit is set; a clear bit reads as the
   empty record (sequence 0) without reading the bytes.
-- **Reset** clears the bits and leaves the records' bytes as the previous
-  connection left them.
+- **Reset** clears the bits and leaves the modeled record fields as the
+  previous connection left them; summary initialization is separate.
 
 Sequences restart at every reset, so a stale record can hold exactly the
 sequence the next connection's reader asks for: only the bit tells it

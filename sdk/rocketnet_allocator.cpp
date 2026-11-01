@@ -582,7 +582,7 @@ void rn_region_carve( rn_region_t * region )
 
     // the send descriptor pool: a LIFO free stack in the descriptors'
     // free_slot array, lazy (proofs/tla/RNLazyPool.tla Reset):
-    // nothing taken, no descriptor written. A take initializes its descriptor
+    // nothing taken; modeled pool fields are unchanged. A take initializes its descriptor
     // whole, preserving its generation tag and any live stack slot it holds.
     // Clear schedule tickets on the descriptors this connection took before
     // the fresh range is forgotten. A later take off the free stack still
@@ -739,7 +739,8 @@ static uint32_t rn_region_descriptor_take( rn_region_t * region )
     region->descriptors_free--;
 
     rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
-    // 0 is never a live name (proofs/tla/RNLazyPool.tla HeldGenerationPositive).
+    // 0 is never a live name: proofs/tla/RNSendStoreLayout.tla DescSkipZero
+    // checks wrap; RNLazyPool.tla HeldGenerationPositive checks initialization.
     // Each take names the next generation (proofs/tla/RNResendGenerations.tla Write).
 
     const uint32_t generation = fresh_take || descriptor->generation == UINT32_MAX ? 1 : descriptor->generation + 1;

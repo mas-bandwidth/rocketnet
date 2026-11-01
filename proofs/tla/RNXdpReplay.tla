@@ -2,7 +2,7 @@
 (***************************************************************************)
 (* rocketnet: kernel replay protection with a read-only high-water map.    *)
 (*                                                                         *)
-(* The XDP program (server_xdp/server_xdp.c) holds a BPF hash map,         *)
+(* The XDP program (sdk/xdp/server_xdp.c) holds a BPF hash map,         *)
 (* server_xdp_replay_map, keyed by the source address and port.  For the   *)
 (* session packet types (keep-alive, payload, disconnect, ack)            *)
 (* it looks the source up and, with an entry, drops a packet whose         *)
@@ -155,8 +155,9 @@ NoSession == 0
 SessionIds == 1..Sessions
 Seqs == 1..MaxSeq
 
-(* A kernel map entry; high_water 0 is no entry: userspace marks only a    *)
-(* nonzero highest_opened, and the kernel rule treats it as absent.        *)
+(* NoEntry is distinct from a real zero mark, whose sess names a session. *)
+(* Both admit genuine sequences in this bounded nonwrapping model; this   *)
+(* is not a claim about arbitrary uint32 wire wrap in the kernel rule.     *)
 NoEntry == [hw |-> 0, sess |-> NoSession]
 Entries == [hw : 0..MaxSeq, sess : 0..Sessions]
 

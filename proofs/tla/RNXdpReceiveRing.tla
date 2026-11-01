@@ -10,8 +10,10 @@
 (* (rocketnet_xdp_receive_ring_finish), and returns their frames to the    *)
 (* fill ring through its pending return (rocketnet_pending_frames_t, an    *)
 (* all-or-zero flush).  The staging buffer holds a copy of each packet's   *)
-(* bytes, never a frame, and the application drains it under the receive  *)
-(* mutex, which the worker holds for the whole pass.                       *)
+(* bytes, never a frame. This single-buffer frame-lifecycle abstraction   *)
+(* serializes fill and drain; it does not model the exact bank handoff.    *)
+(* In the SDK the mutex protects publication/claim/recycle, and the main  *)
+(* thread drains its owned bank outside that mutex.                       *)
 (*                                                                         *)
 (* The fill ring is the kernel's too: fq is its entries from the consumer  *)
 (* index the kernel has published to the producer index.  The kernel       *)
@@ -91,7 +93,7 @@ VARIABLES
     kused,     \* the entries of that batch the kernel has taken
     ring,      \* the RX ring's descriptors, consumer to producer (kernel view)
     ahead,     \* cached consumer - consumer (user)
-    phase,     \* "idle" or "taking" (the worker holds the receive mutex)
+    phase,     \* "idle" or "taking" in the single-buffer abstraction
     start,     \* the ring offset the current peek began at
     peeked,    \* the descriptors the current peek returned
     taken,     \* the descriptors the current pass took
@@ -177,7 +179,7 @@ KernelRefresh ==
     /\ UNCHANGED <<ring, ahead, phase, start, peeked, taken, pending, staged, took, defect>>
 
 (* Peek: xsk_ring_cons__peek from the cached consumer, at most PeekMax;    *)
-(* the worker takes the receive mutex.  A peek of zero is no step.         *)
+(* begin the modeled fill pass. A peek of zero is no step.                 *)
 Peek ==
     LET n == Min(Len(ring) - ahead, PeekMax) IN
     /\ phase = "idle"
@@ -206,7 +208,7 @@ Take ==
     /\ UNCHANGED <<fq, kcache, kused, ring, ahead, phase, start, peeked, defect>>
 
 (* Finish: every peeked descriptor taken, or the staging buffer full.      *)
-(* Cancel the rest (CancelUnconsumed), release the mutex, release the      *)
+(* Cancel the rest (CancelUnconsumed), end the fill pass, release the      *)
 (* taken count: the consumer advances over the first taken descriptors.    *)
 (* Then the pass flushes its pending return into the fill ring, all of it  *)
 (* if it fits, else none (a zero reservation keeps every frame).           *)
@@ -237,7 +239,7 @@ Refill ==
     /\ pending' = {}
     /\ UNCHANGED <<kcache, kused, ring, ahead, phase, start, peeked, taken, staged, took, defect>>
 
-(* Drain: the application takes the staging buffer, under the mutex.       *)
+(* Drain: consume the staged bytes in the single-buffer abstraction.      *)
 Drain ==
     /\ phase = "idle"
     /\ staged > 0
