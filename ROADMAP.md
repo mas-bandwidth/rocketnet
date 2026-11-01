@@ -8,7 +8,7 @@ Planned work for RocketNet that is not on main. Work lands on main before new wo
 
 - [Started work to finish and land](#started-work-to-finish-and-land) (4)
 - [Audit items not yet fixed](#audit-items-not-yet-fixed) (5)
-- [Investigations that need a quiet host](#investigations-that-need-a-quiet-host) (3)
+- [Investigations that need a quiet host](#investigations-that-need-a-quiet-host) (2)
 - [Older open pull requests](#older-open-pull-requests) (2)
 - [Decisions for Glenn](#decisions-for-glenn) (5)
 
@@ -83,12 +83,6 @@ Findings that only a quiet fleet host can measure or reproduce.
 Seen once the 1000-client xdp soak cell runs, with the host at load 170. Reproduce on a quiet host, then fix the cause.
 
 From: Audit item 41
-
-### Low-tick nightly ends at 996 of 1000 connected
-
-Reproduce on an idle Linux host with the per-client state output now in the nightly.
-
-From: Audit item 42
 
 ### Confirm the frame-budget fix on amd-2/amd-3
 
