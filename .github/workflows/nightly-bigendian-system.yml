@@ -25,8 +25,8 @@
 # Reader: whoever takes the run the next morning.
 #
 # Schedule: 15 11 * * * UTC. fuzz-nightly.yml is 07:17 UTC, nightly.yml is
-# 08:40 UTC, and nightly-soak.yml is 09:00 UTC with a 90 minute cap, so that
-# window is closed by 10:30 UTC. This job starts after it.
+# 08:40 UTC, and nightly-soak.yml is 09:00 UTC. Runs have no repository
+# execution-time cap, so these workflows can overlap.
 
 name: nightly big-endian system
 
@@ -189,7 +189,9 @@ jobs:
           # TCG gives each case a fraction of a native CPU. Keep the Release
           # workloads unchanged, but opt their completion bounds into the
           # suites' stated 5x emulation scale.
-          "${SSH[@]}" 'cd ~/src && cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS=-ffp-contract=off -DCMAKE_CXX_FLAGS="-ffp-contract=off -DROCKETNET_TEST_EMULATED=1" && cmake --build build --target test functional --parallel'
+          # This guest has 4 GiB. Bare --parallel lets Make launch every
+          # translation unit at once; bound compiler concurrency, not run time.
+          "${SSH[@]}" 'cd ~/src && cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS=-ffp-contract=off -DCMAKE_CXX_FLAGS="-ffp-contract=off -DROCKETNET_TEST_EMULATED=1" && cmake --build build --target test functional --parallel 2' 2>&1 | tee "$WORK/build.log"
           "${SSH[@]}" 'cd ~/src && readelf -h bin/test && readelf -h bin/functional && readelf -h bin/test | grep -F -q "big endian" && readelf -h bin/test | grep -F -q "IBM S/390"'
 
           "${SSH[@]}" bash -s << 'GUEST'
@@ -263,3 +265,14 @@ jobs:
           replay func_port ./bin/functional func_port.out "ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable" 0
           exit $rc
           GUEST
+
+      - name: Preserve guest diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: bigendian-system-diagnostics-${{ strategy.job-index }}
+          path: |
+            ${{ runner.temp }}/bigendian-system/serial.log
+            ${{ runner.temp }}/bigendian-system/qemu.log
+            ${{ runner.temp }}/bigendian-system/build.log
+          if-no-files-found: ignore

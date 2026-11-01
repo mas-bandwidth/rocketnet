@@ -1011,14 +1011,14 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
 
     // both completion queues notify the worker's one event after RIONotify
 
-    rio->send_cq = rio->rio.RIOCreateCompletionQueue( rio->send_frames, &notification );
+    rio->send_cq = rio->rio.RIOCreateCompletionQueue( (DWORD) rio->send_frames, &notification );
 #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( rio->send_cq != RIO_INVALID_CQ )
         rio->send_cq_generation = rocketnet_lifecycle_track_open( ROCKETNET_LIFECYCLE_RIO_CQ, (uintptr_t) rio->send_cq, "rio send completion queue" );
 #endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( rio->send_cq == RIO_INVALID_CQ )
         goto failed;
-    rio->receive_cq = rio->rio.RIOCreateCompletionQueue( rio->receives, &notification );
+    rio->receive_cq = rio->rio.RIOCreateCompletionQueue( (DWORD) rio->receives, &notification );
 #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( rio->receive_cq != RIO_INVALID_CQ )
         rio->receive_cq_generation = rocketnet_lifecycle_track_open( ROCKETNET_LIFECYCLE_RIO_CQ, (uintptr_t) rio->receive_cq, "rio receive completion queue" );
@@ -1032,7 +1032,7 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
 
     // the request queue holds every send of every phase plus every receive
 
-    rio->request_queue = rio->rio.RIOCreateRequestQueue( rio->socket, rio->receives, 1, rio->send_frames, 1,
+    rio->request_queue = rio->rio.RIOCreateRequestQueue( rio->socket, (ULONG) rio->receives, 1, (ULONG) rio->send_frames, 1,
                                                          rio->receive_cq, rio->send_cq, NULL );
 #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( rio->request_queue != RIO_INVALID_RQ )
@@ -1918,7 +1918,7 @@ bool rocketnet_server_rio_test_worker_handoff()
     rocketnet_server_rio_receive_packets( rio );
     valid &= rio->ready_count == 0 && rio->exposed_count == 0 && rio->process.num_packets == 0;
     valid &= rio->counters[ROCKETNET_RIO_COUNTER_PACKETS_RECEIVED].load() ==
-             (uint64_t) ( ROCKETNET_RIO_RECEIVE_BANKS + 1 ) * rio->receives;
+             (uint64_t) ( ROCKETNET_RIO_RECEIVE_BANKS + 1 ) * (uint64_t) rio->receives;
 
     // Send: each flush hands the fill phase and opens the next, idle phase.
 

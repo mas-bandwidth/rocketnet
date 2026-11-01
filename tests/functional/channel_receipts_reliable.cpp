@@ -74,6 +74,13 @@ void reliable_receipts_over_lossy_link()
 
     for ( int step = 0; step < 60 * 30; step++ )
     {
+        // Random loss can discard every retry until the real reliable timeout.
+        // This receipt-completion case needs a recovery phase: preserve latency,
+        // jitter and duplicates, but stop dropping after five simulated seconds.
+        // The default ten-second protocol timeout remains unchanged.
+        if ( step == 60 * 5 )
+            rocketnet_channel_harness_set_link( &h, 0.02, 0.05, 0.0f, 5.0f );
+
         check_receipt( rocketnet_channel_harness_pump( &h, 1.0 / 60.0 ) );
 
         rocketnet_channel_delivery_t delivery;
