@@ -4880,7 +4880,7 @@ void rocketnet_test_server_rio_wire_ipv4()
             uint64_t packet_id = 0;
             uint8_t * frame = rocketnet_test_server_rio_start( rio, &client_address, &packet_id, &refused );
             rocketnet_check( frame );
-            used_phase[packet_id / rocketnet_server_rio_send_queue_size( ROCKETNET_DEFAULT_MAX_CLIENTS )] = true;
+            used_phase[packet_id / (uint64_t) rocketnet_server_rio_send_queue_size( ROCKETNET_DEFAULT_MAX_CLIENTS )] = true;
 
             const int packet_bytes = ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES + i;
             uint8_t * wire = frame + ROCKETNET_FRAME_WIRE_OFFSET;
