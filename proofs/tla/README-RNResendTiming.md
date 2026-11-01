@@ -14,7 +14,8 @@ the schedule alone. The code is `rn_window_ack_resend_delay`,
 the module.
 
 `proofs/tla/MCRNResendTiming.tla` and `proofs/tla/MCRNResendTiming.cfg` are the small
-instance. `proofs/tla/MCRNResendTimingBroken*.cfg` are the reversed witnesses.
+instance; `proofs/tla/MCRNResendTimingSeeded.cfg` is the seeded start at the
+current defaults. `proofs/tla/MCRNResendTimingBroken*.cfg` are the reversed witnesses.
 The cases are rows of `proofs/tla/CASES.tsv` (group `rnresendtiming`) with measured
 records in `proofs/tla/RUNS.tsv`.
 
@@ -24,6 +25,11 @@ records in `proofs/tla/RUNS.tsv`.
   over this layer's own RTT samples (`rn_window_ack_compute_resend_delay`);
   `resend_delay_initial` before the first sample. Defaults: initial 2000 ms,
   minimum 0, maximum 2000 ms (`sdk/rocketnet_internal.h`).
+- **The seed.** While the layer has no sample of its own, the first update in which
+  the transport reports a measured round trip for the connection takes it as the
+  first sample (`rn_window_ack_seed_rtt`, after that update's acks and before its
+  resend walk); a later own sample moves the estimate as any later sample does.
+  A transport with no measurement leaves `resend_delay_initial` in force.
 - **The delay.** Every resend of a single-packet record waits `resend_delay`
   (`rn_window_ack_resend_delay`). Every resend of a chunk of a block (a record
   whose send descriptor has more than one fragment) waits
@@ -43,7 +49,9 @@ Two records, `"s"` (single-packet) and `"c"` (a chunk), both first sent at
 tick 0 in either order. Variables: `t` (ticks since the first send), and per
 record `lastSend`, `backoff`, `attempts` (saturating at `MinAttempts`) and
 `acked`; `resend_delay`; `head`, the record at the head of the one FIFO of the broken
-shape; and `phase`, the step of the update.
+shape; `phase`, the step of the update; and `sampled` and `seeded`, whether
+an own ack or the transport's round trip has given the estimator a sample
+(the code's `has_rtt` is their disjunction).
 
 Two switches are definitions with the one-record defaults, overridden in a
 configuration (`Chunk <- ChunkInFlight`, `OneFifo <- OneFifoTwoDelays`):
@@ -56,6 +64,10 @@ Actions:
 - `Sample(x)`: in the update's first step, the ack of any other packet, one
   RTT sample, moves `rto` (the resend delay) to any `x` in `RtoMin..RtoMax` and resets the
   back-off to 1.
+- `Seed`: in the update's first step, owed once `t >= SeedAt` while neither
+  `sampled` nor `seeded` holds (and `SeedRule`), the transport's round trip
+  taken as the first sample: `resend_delay` becomes `SeedRto`. `Walk` is not
+  enabled while the seed is owed, as the code takes it before the walk.
 - `Ack(r)`: in the update's first step, record `r`'s own ack arrives (or
   never does: every send may be lost).
 - `Walk`: the resend walk. Record `r` is due when
@@ -78,6 +90,11 @@ Invariants:
   most `Min(RtoMax, Cap(r)) · MaxBackoff` ticks between sends.
 - `NoDueRecordHeld`: no update ends with a record of either class due; a due
   record is sent in the update it falls due, whatever the other class does.
+- `SeededGapBounded`: from `SeedAt` until the layer's own first sample, an
+  unacked record waits at most `Min(SeedRto, Cap(r))` ticks past the later of
+  its last send and `SeedAt`: a record lost before the transport measured the
+  path is resent by `SeedAt + SeedRto`, not by its last send plus
+  `resend_delay_initial`.
 
 ## Abstractions
 
@@ -105,6 +122,18 @@ Invariants:
 ticks), the chunk in flight and one FIFO per class; every invariant holds.
 `RUNS.tsv` has the measured state counts.
 
+`MCRNResendTimingSeeded.cfg` is the seeded start at the current defaults in
+100 ms ticks: `RtoInitial = RtoMax = 20` (2 s), `RtoMin = 1`, `Timeout = 100`,
+and the transport's round trip first reported at tick 2 (200 ms, a keep-alive's
+ack) giving a 300 ms delay (`SeedRto = 3`). One record: the seed sets the one
+estimate both classes read, and a chunk beside it at a 2 s `RtoMax` runs past
+the 110-second budget. Every invariant holds, `SeededGapBounded` among them.
+The unit test `test_resend_seeded_from_transport_rtt`
+(`test_unit_resend_seed.cpp`) replays it against the code on both ends: the
+CONFIG record sent at 0 and never acked, the transport reporting 50 ms from
+200 ms, the record resent at the first update past 330 ms and every 330 ms
+after; built without the seed it waits the 2 s initial delay.
+
 ## Reversed witnesses
 
 | Configuration | Rule removed | Expected failure |
@@ -112,6 +141,7 @@ ticks), the chunk in flight and one FIFO per class; every invariant holds.
 | `MCRNResendTimingBrokenOneFifo.cfg` | one FIFO per class: both classes in one FIFO ordered by last send, walked from its head and stopped at the first record not due; `RtoMax = 8` (4 s), so the resend delay can exceed the chunk cap of 5 (2.5 s) | `NoDueRecordHeld`, exit 12: the small record is sent first, then the chunk, both at 0; a sample moves `rto` above 5; at tick 5 the chunk is due (its capped delay) and the small record at the head is not, so the walk stops and the update ends with the chunk unsent. |
 | `MCRNResendTimingBrokenOneFifoGap.cfg` | the same | `ResendGapBounded`, exit 12: the held chunk waits past `Min(RtoMax, ChunkCap)`. |
 | `MCRNResendTimingBrokenBackoff.cfg` | the first version's schedule (100 ms ticks): `RtoInitial = 10` (1000 ms), `RtoMax = 20` (2000 ms), back-off doubling to 8 | `AttemptsBeforeTimeout`, exit 12: a sample at the first tick sets `rto` to 1.5 s, the record is sent at 0, 1.5 and 4.5 s, and the next send is due at 10.5 s, after the timeout: three sends where four are owed. |
+| `MCRNResendTimingBrokenUnseeded.cfg` | the seed: `MCRNResendTimingSeeded.cfg` with the transport's round trip ignored (`SeedRule = FALSE`) | `SeededGapBounded`, exit 12: the record sent at 0 is lost and no ack is sampled; the transport reports a round trip at 200 ms, but the resend delay stays the 2 s initial delay, and at 600 ms the record has waited 400 ms past the report where the seeded delay owes its resend by 500 ms. Any seed below the initial delay does the same. |
 
 The back-off witness passes `ConfigAccepted` (`10 s >= 4 × 1 s`), so
 validation alone does not keep the property; the delay without back-off does. The unit

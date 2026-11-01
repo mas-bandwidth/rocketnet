@@ -326,10 +326,10 @@ refused destination in the middle delivers every other packet
 
 The hard-killed-client cases in `tests/functional/posix_hard_killed_client.cpp`
 exercise ICMP handling for portable and msgx combinations; see
-[ICMP errors](TRANSPORT-INTERNALS.md#icmp-errors). This error-retry budget does
-not cover all discarded datagrams. Sustained empty or rejected traffic can
-keep the current portable/msgx drain running and delay receive publication or
-shutdown; see [current drain limitations](TRANSPORT-INTERNALS.md#current-staging-and-drain-limitations).
+[ICMP errors](TRANSPORT-INTERNALS.md#icmp-errors). Discarded datagrams spend
+the same read budget as errors and kept datagrams, so empty or rejected
+traffic ends a portable or msgx drain like any other; see
+[staging and drain bounds](TRANSPORT-INTERNALS.md#staging-and-drain-bounds).
 
 ## The file-descriptor limit
 

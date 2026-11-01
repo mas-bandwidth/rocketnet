@@ -298,7 +298,7 @@ producer's capacity. Each staged transport reports its remaining room
 layer's send pass stops where the next unserved client waits and resumes
 there on the next update, and the disconnect bursts of a kick or a stop leave
 across as many updates as the room needs. See
-[Current staging and drain limitations](TRANSPORT-INTERNALS.md#current-staging-and-drain-limitations).
+[Staging and drain bounds](TRANSPORT-INTERNALS.md#staging-and-drain-bounds).
 The replay-history depth remains a separate setting (below).
 
 Memory is the caller's choice, made through the config. The library sizes

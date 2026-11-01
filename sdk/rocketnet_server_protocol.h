@@ -128,13 +128,22 @@ void rocketnet_server_transport_test_receive_work( const struct rocketnet_server
 uint64_t rocketnet_server_protocol_connection_id( const struct rocketnet_server_protocol_t * server, int client_index );
 int rocketnet_server_protocol_end_reason( const struct rocketnet_server_protocol_t * server, int client_index );
 
+// The reported round-trip time of the connection in client_index, in seconds
+// (standard/TRANSPORT.md t15.5): the minimum retained first-ack sample, 0
+// while it has none, for a free slot, or for an index out of range. The
+// message layer takes it as a connection's first RTT sample
+// (standard/MESSAGES.md m9.2).
+
+double rocketnet_server_protocol_client_rtt( const struct rocketnet_server_protocol_t * server, int client_index );
+
 // Processes one connection request packet, full wire bytes including the
 // prefilter header, from this source address. current_timestamp is unix
 // seconds for token and cookie checks; current_time is the server clock for
 // deadlines. On SEND_*, the response packet is in response_packet -- sized at
 // least ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES (66), the largest response
 // -- with its length in response_bytes; on IGNORED nothing is sent, ever.
-// The exact reason is counted, always, along with the arrival.
+// The exact reason is counted, always, along with the arrival. It looks the
+// source up itself; process_received takes the caller's lookup instead.
 
 int rocketnet_server_protocol_process_connection_request( struct rocketnet_server_protocol_t * server,
                                                           const struct rocketnet_address_t * from,
@@ -172,8 +181,8 @@ int rocketnet_server_protocol_process_packet( struct rocketnet_server_protocol_t
 // known_mapping_index is the caller's encryption-map lookup for from (-1 for
 // none), made with nothing changing the map since, or
 // ROCKETNET_SERVER_MAPPING_NOT_LOOKED_UP and the protocol looks it up: a
-// sealed packet pays one keyed hash. (A connection request's ladder still
-// looks its address up on its own rung.) The packet opens into opened, the caller's
+// sealed packet and a connection request each pay one keyed hash, the
+// request's existing-mapping rung taking the same answer. The packet opens into opened, the caller's
 // ROCKETNET_RECEIVE_CEILING bytes; an accepted payload is delivered where it
 // opened, *out_payload pointing at its bytes inside opened (NULL otherwise),
 // and one above out_payload_capacity is refused whole as

@@ -4020,6 +4020,14 @@ int rocketnet_server_transport_client_end_reason( struct rocketnet_server_transp
     return rocketnet_server_protocol_end_reason( &server_transport->protocol, client_index );
 }
 
+double rocketnet_server_transport_client_rtt( struct rocketnet_server_transport_t * server_transport, int client_index )
+{
+    if ( !rocketnet_api_null_guard( server_transport ) )
+        return 0.0;
+    rocketnet_assert( server_transport );
+    return rocketnet_server_protocol_client_rtt( &server_transport->protocol, client_index );
+}
+
 #if ROCKETNET_DEV
 // development library only: the transport instance behind the transport, for a
 // functional case that drives a native transport's test seam

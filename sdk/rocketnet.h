@@ -1373,7 +1373,8 @@ struct rocketnet_client_config_t
     int max_message_receipts;
 
     /// ROCKETNET_CLIENT_MESSAGE_RESEND_DELAY_INITIAL_MS sets the resend delay
-    /// before the first RTT sample. Units are milliseconds. Range is 10 ..
+    /// before the first RTT sample; the transport's measured round trip, once
+    /// it has one, is that sample. Units are milliseconds. Range is 10 ..
     /// 60000, and from message_resend_delay_min_ms to
     /// message_resend_delay_max_ms. Default is 2000.
 
@@ -1607,7 +1608,8 @@ struct rocketnet_server_config_t
     int max_message_receipts;
 
     /// ROCKETNET_SERVER_MESSAGE_RESEND_DELAY_INITIAL_MS sets the resend delay
-    /// before the first RTT sample. Units are milliseconds. Range is 10 ..
+    /// before the first RTT sample; the transport's measured round trip, once
+    /// it has one, is that sample. Units are milliseconds. Range is 10 ..
     /// 60000, and from message_resend_delay_min_ms to
     /// message_resend_delay_max_ms. Default is 2000.
 
