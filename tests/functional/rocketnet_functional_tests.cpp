@@ -2069,9 +2069,8 @@ void rocketnet_test_client_ack_stats_computed_on_read()
     ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
 }
 
-// the NaN update below is loud in a debug build: the clamp asserts. the hook
-// is non-aborting so the assert is observed rather than trapping the suite,
-// the same pattern the unit tier uses for the clamp.
+// The NaN update is clamped and counted without asserting. A returning hook
+// observes any regression without trapping before the count can be checked.
 
 static int rocketnet_test_update_time_clamped_asserts = 0;
 
@@ -2129,8 +2128,7 @@ void rocketnet_test_transport_update_time_clamped()
 
     const uint64_t misuse_before = rocketnet_api_misuse_count();
 
-    // one NaN update, clamped and counted; loud in a debug build, observed
-    // through a non-aborting hook so the suite goes on
+    // one NaN update, clamped and counted without an assert in any build
 
     rocketnet_test_update_time_clamped_asserts = 0;
     rocketnet_assert_function( rocketnet_test_update_time_clamped_assert_hook );
@@ -2141,9 +2139,7 @@ void rocketnet_test_transport_update_time_clamped()
 
     rocketnet_check( rocketnet_api_misuse_count() == misuse_before + 1 );
 
-#if ROCKETNET_ASSERTS
-    rocketnet_check( rocketnet_test_update_time_clamped_asserts == 1 );
-#endif // #if ROCKETNET_ASSERTS
+    rocketnet_check( rocketnet_test_update_time_clamped_asserts == 0 );
 
     // the client now goes silent: only the server is updated, and its clock
     // advances past the token's ten second timeout
