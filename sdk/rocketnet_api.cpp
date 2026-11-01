@@ -2549,7 +2549,7 @@ struct rocketnet_server_t * rocketnet_server_create( void * context, const char 
 }
 
 struct rocketnet_server_t * rocketnet_server_create_with_env( void * context, const char * ipv4_address, const char * ipv6_address, const struct rocketnet_server_config_t * config,
-                                                             const struct rocketnet_env_source_t * env, enum rocketnet_status_t * status )
+                                                              const struct rocketnet_env_source_t * env, enum rocketnet_status_t * status )
 {
     rocketnet_assert( env );
 

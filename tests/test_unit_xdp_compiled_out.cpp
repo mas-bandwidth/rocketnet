@@ -60,7 +60,6 @@ static void test_xdp_compiled_out_pin_refuses_not_built()
     status = -1;
     check( rocketnet_server_transport_create_current_ex( NULL, "127.0.0.1:40000", &config, 1000.0, &status ) == NULL );
     check( status == ROCKETNET_STATUS_TRANSPORT_NOT_BUILT );
-
 }
 
 REGISTER_UNIT_TEST( test_xdp_compiled_out_pin_refuses_not_built );
@@ -83,7 +82,6 @@ static void test_xdp_compiled_out_list_takes_the_next_candidate()
 
         rn_test_server_transport_stop_and_destroy( server );
     }
-
 }
 
 REGISTER_UNIT_TEST( test_xdp_compiled_out_list_takes_the_next_candidate );

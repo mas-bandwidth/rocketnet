@@ -254,7 +254,8 @@ static void test_server_served_address_refuses_a_short_buffer()
     both_families_identity( &identity );
     rocketnet_quiet( 1 );
 
-    struct rocketnet_server_t * server = both_families_create( &identity, "127.0.0.1:40000", NULL );
+    rocketnet_test_env_t env;
+    struct rocketnet_server_t * server = both_families_create( &identity, &env.source, "127.0.0.1:40000", NULL );
 
     char address[8];
     memset( address, 'Z', sizeof( address ) );

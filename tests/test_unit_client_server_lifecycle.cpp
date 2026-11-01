@@ -1663,14 +1663,30 @@ static void test_config_packets_per_update_range()
     // Old public spellings are not aliases. Values outside the valid range
     // make accidental reads visible: both creates must ignore these names.
 
-    env.set( "ROCKETNET_CLIENT_MAX_PACKETS_" "PER_UPDATE", "1025" );
-    env.set( "ROCKETNET_CLIENT_RTO_" "INITIAL_MS", "60001" );
-    env.set( "ROCKETNET_CLIENT_RTO_" "MIN_MS", "-1" );
-    env.set( "ROCKETNET_CLIENT_RTO_" "MAX_MS", "60001" );
-    env.set( "ROCKETNET_SERVER_MAX_PACKETS_" "PER_UPDATE", "1025" );
-    env.set( "ROCKETNET_SERVER_RTO_" "INITIAL_MS", "60001" );
-    env.set( "ROCKETNET_SERVER_RTO_" "MIN_MS", "-1" );
-    env.set( "ROCKETNET_SERVER_RTO_" "MAX_MS", "60001" );
+    env.set( "ROCKETNET_CLIENT_MAX_PACKETS_"
+             "PER_UPDATE",
+             "1025" );
+    env.set( "ROCKETNET_CLIENT_RTO_"
+             "INITIAL_MS",
+             "60001" );
+    env.set( "ROCKETNET_CLIENT_RTO_"
+             "MIN_MS",
+             "-1" );
+    env.set( "ROCKETNET_CLIENT_RTO_"
+             "MAX_MS",
+             "60001" );
+    env.set( "ROCKETNET_SERVER_MAX_PACKETS_"
+             "PER_UPDATE",
+             "1025" );
+    env.set( "ROCKETNET_SERVER_RTO_"
+             "INITIAL_MS",
+             "60001" );
+    env.set( "ROCKETNET_SERVER_RTO_"
+             "MIN_MS",
+             "-1" );
+    env.set( "ROCKETNET_SERVER_RTO_"
+             "MAX_MS",
+             "60001" );
     client = rocketnet_client_create_with_env( NULL, &client_config, &env.source, NULL );
     check( client != NULL );
     if ( client )
@@ -1683,14 +1699,22 @@ static void test_config_packets_per_update_range()
     {
         rn_test_server_stop_and_destroy( server );
     }
-    env.unset( "ROCKETNET_CLIENT_MAX_PACKETS_" "PER_UPDATE" );
-    env.unset( "ROCKETNET_CLIENT_RTO_" "INITIAL_MS" );
-    env.unset( "ROCKETNET_CLIENT_RTO_" "MIN_MS" );
-    env.unset( "ROCKETNET_CLIENT_RTO_" "MAX_MS" );
-    env.unset( "ROCKETNET_SERVER_MAX_PACKETS_" "PER_UPDATE" );
-    env.unset( "ROCKETNET_SERVER_RTO_" "INITIAL_MS" );
-    env.unset( "ROCKETNET_SERVER_RTO_" "MIN_MS" );
-    env.unset( "ROCKETNET_SERVER_RTO_" "MAX_MS" );
+    env.unset( "ROCKETNET_CLIENT_MAX_PACKETS_"
+               "PER_UPDATE" );
+    env.unset( "ROCKETNET_CLIENT_RTO_"
+               "INITIAL_MS" );
+    env.unset( "ROCKETNET_CLIENT_RTO_"
+               "MIN_MS" );
+    env.unset( "ROCKETNET_CLIENT_RTO_"
+               "MAX_MS" );
+    env.unset( "ROCKETNET_SERVER_MAX_PACKETS_"
+               "PER_UPDATE" );
+    env.unset( "ROCKETNET_SERVER_RTO_"
+               "INITIAL_MS" );
+    env.unset( "ROCKETNET_SERVER_RTO_"
+               "MIN_MS" );
+    env.unset( "ROCKETNET_SERVER_RTO_"
+               "MAX_MS" );
 
     // the new resend-delay names are read for both endpoint configs
 

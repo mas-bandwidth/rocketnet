@@ -30,7 +30,8 @@ struct rocketnet_env_source_t
 };
 
 #ifdef __cplusplus
-extern "C" {
+extern "C"
+{
 #endif // #ifdef __cplusplus
 
 // the process environment, read through rocketnet_platform_getenv

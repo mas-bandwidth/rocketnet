@@ -295,7 +295,6 @@ clang-tidy	sdk/rocketnet_tests.cpp	cert-err33-c	e18542f25fea4d97
 clang-tidy	sdk/rocketnet_tests.cpp	cert-err33-c	e6fa3d7cd6df2b22
 clang-tidy	sdk/rocketnet_tests.cpp	cert-err33-c	ec1cf42dca477d7f
 clang-tidy	sdk/rocketnet_tests.cpp	cert-err33-c	f112e36b24864e9b
-clang-tidy	sdk/rocketnet_tests.cpp	cert-err33-c	f3a69817196f64c5
 clang-tidy	sdk/rocketnet_tests.cpp	cert-err33-c	f95ef499d47b64ce
 clang-tidy	sdk/rocketnet_tests.cpp	cert-flp30-c	051a6ba35a2add08
 clang-tidy	sdk/rocketnet_tests.cpp	cert-flp30-c	1248d73d29c76d86

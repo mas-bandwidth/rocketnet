@@ -97,7 +97,7 @@ bool rocketnet_server_config_resolve( const struct rocketnet_server_config_t * c
 struct rocketnet_client_t * rocketnet_client_create_with_env( void * context, const struct rocketnet_client_config_t * config, const struct rocketnet_env_source_t * env, enum rocketnet_status_t * status );
 
 struct rocketnet_server_t * rocketnet_server_create_with_env( void * context, const char * ipv4_address, const char * ipv6_address, const struct rocketnet_server_config_t * config,
-                                                             const struct rocketnet_env_source_t * env, enum rocketnet_status_t * status );
+                                                              const struct rocketnet_env_source_t * env, enum rocketnet_status_t * status );
 
 // the per-endpoint derivation (ruling 11): "server" + "max_fragmented_messages" ->
 // "ROCKETNET_SERVER_MAX_FRAGMENTED_MESSAGES" and "client" + "max_fragmented_messages" ->
@@ -143,9 +143,9 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create_current_
 // the current-size _ex creates with the environment source as an argument
 // (the layered creates above pass rocketnet_env_process)
 struct rocketnet_client_transport_t * rocketnet_client_transport_create_current_with_env( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time,
-                                                                                         const struct rocketnet_env_source_t * env, int * status );
+                                                                                          const struct rocketnet_env_source_t * env, int * status );
 struct rocketnet_server_transport_t * rocketnet_server_transport_create_current_with_env( void * context, const char * address, const struct rocketnet_server_transport_config_t * config, double time,
-                                                                                         const struct rocketnet_env_source_t * env, int * status );
+                                                                                          const struct rocketnet_env_source_t * env, int * status );
 struct rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven_current( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, const rocketnet_client_transport_io_operations_t * operations, void * transport_context );
 #endif // #if ROCKETNET_DEV
 struct rocketnet_server_transport_t * rocketnet_server_transport_create_current( void * context, const char * address, const struct rocketnet_server_transport_config_t * config );
