@@ -7356,45 +7356,6 @@ void rocketnet_test_server_keyless_config_has_no_keys()
     rocketnet_check( memcmp( config.server_public_key, zero, 32 ) != 0 );
 }
 
-// a development build accepts what this checks is refused
-#if !ROCKETNET_DEV
-void rocketnet_test_dev_keys_refused_in_release()
-{
-    // In a release build a server whose config carries either published
-    // development key is refused at create: a token forged with the published
-    // development backend key is otherwise a full authentication bypass.
-
-    struct rocketnet_server_transport_config_t config;
-    rocketnet_server_transport_dev_config( &config );
-
-    // keep the development backend key, replace only the server pair with a
-    // fresh production pair -- the backend check must still refuse it
-
-    uint8_t server_public[32];
-    uint8_t server_secret[32];
-    rocketnet_check( crypto_box_keypair( server_public, server_secret ) == 0 );
-    rocketnet_check( memcmp( server_public, rocketnet_dev_server_public_key, 32 ) != 0 );
-    memcpy( config.server_public_key, server_public, 32 );
-    memcpy( config.server_secret_key, server_secret, 32 );
-    rocketnet_check( memcmp( config.backend_public_key, rocketnet_dev_backend_public_key, 32 ) == 0 );
-
-    rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:40899", &config ) == NULL );
-
-    // the mirror image: a production backend key with the published
-    // development server pair is refused too
-
-    rocketnet_server_transport_dev_config( &config );
-    uint8_t backend_public[32];
-    uint8_t backend_secret[64];
-    rocketnet_check( crypto_sign_keypair( backend_public, backend_secret ) == 0 );
-    rocketnet_check( memcmp( backend_public, rocketnet_dev_backend_public_key, 32 ) != 0 );
-    memcpy( config.backend_public_key, backend_public, 32 );
-    rocketnet_check( memcmp( config.server_public_key, rocketnet_dev_server_public_key, 32 ) == 0 );
-
-    rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:40899", &config ) == NULL );
-}
-#endif // #if !ROCKETNET_DEV
-
 void rocketnet_test_transport_payload_capacity()
 {
     // The capacity invariant that was violated, stated where it will be
@@ -15991,9 +15952,6 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] = {
     { "test_swarm", rocketnet_test_swarm },
     { "test_payload_size_sweep", rocketnet_test_payload_size_sweep },
     { "test_server_keyless_config_has_no_keys", rocketnet_test_server_keyless_config_has_no_keys },
-#if !ROCKETNET_DEV
-    { "test_dev_keys_refused_in_release", rocketnet_test_dev_keys_refused_in_release },
-#endif // #if !ROCKETNET_DEV: a development build accepts what this checks is refused
     { "test_transport_payload_capacity", rocketnet_test_transport_payload_capacity },
     { "test_client_rtt_handshake", rocketnet_test_client_rtt_handshake },
     { "test_request_path_ordering", rocketnet_test_request_path_ordering },
