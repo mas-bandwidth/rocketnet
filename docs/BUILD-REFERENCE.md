@@ -208,7 +208,7 @@ variables and pins the SDK wiring, precedence, and refusal paths.
 | Binary | Tier | Why | Where it runs |
 | --- | --- | --- | --- |
 | `test` | unit | state machines and the in-memory simulator | CI `Run unit tests` |
-| `test_wide` | unit | `test.cpp` built with 512 channels (the `test_wide` target in CMakeLists.txt; `EXCLUDE_FROM_ALL`, built by name with `cmake --build build --target test_wide`) | by hand |
+| `test_wide` | unit | `test.cpp` built with 512 channels (the `test_wide` target in CMakeLists.txt; `EXCLUDE_FROM_ALL`, built by name with `cmake --build build --target test_wide`) | CI nightly tier `Wide-channel unit cases (ROCKETNET_MAX_CHANNELS=512)`: the cases only it compiles, and the promotion case |
 | `test_sodium` | unit | known-answer vectors | CI `Sodium known answers` |
 | `fuzz_replay_*` | unit | corpus replay, no init (the `fuzz_replay_${harness}` targets in CMakeLists.txt) | CI `Replay the fuzz corpora without libFuzzer` |
 | `functional` | functional | real sockets, transports and shared-library exports | CI `Run functional suite` |
@@ -223,6 +223,12 @@ variables and pins the SDK wiring, precedence, and refusal paths.
 | `test_transport` | functional | netlink route reads, and the portable transport on loopback sockets with sleep-wait loops (`test_driver.cpp`) | CI `Functional: native driver contract and external backend` |
 | `test_server_stats_creates_no_thread` | functional | reads the process thread count from `/proc/self/task` and checks a loopback server create/update adds none (process_thread_counts.cpp) | `./bin/functional` |
 | `test_public_step_driven_client_connects_without_a_thread` | functional | reads the process thread count from `/proc/self/task` and checks a step-driven loopback client create adds none (process_thread_counts.cpp) | `./bin/functional` |
+
+Every registered unit case runs in at least one CI configuration of either
+tier. In the nightly tier, which runs every configuration the per-commit tier
+runs and the rest, each job that runs the unit suite uploads its `--list`, and
+the `unit-case coverage` job fails on a registered case no configuration lists
+(`tools/check_unit_case_coverage.py`).
 
 The shared-library export cases are functional because they load the built
 libraries through the OS loader: `test_api_polish_dev_token_string`,
