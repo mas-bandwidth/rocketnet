@@ -5,8 +5,8 @@
 (* descriptors taken again and again, and a packet count of two per      *)
 (* number.  GenMax = 6 is above the six takes, so no generation wraps.    *)
 (* MCRNResendGenerations.cfg is the passing control; each                 *)
-(* MCRNResendGenerationsBroken*.cfg turns one line of the code off and    *)
-(* must violate the invariant it names (README-RNResendGenerations.md).   *)
+(* MCRNResendGenerationsBroken*.cfg breaks one line of the code and must  *)
+(* violate the invariant it names (README-RNResendGenerations.md).         *)
 (***************************************************************************)
 EXTENDS RNResendGenerations
 

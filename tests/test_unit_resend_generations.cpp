@@ -7,7 +7,8 @@
 // packet can still reference a number after the window has moved a whole
 // turn and the slot holds a later number, written by the same descriptor
 // taken again at a later generation. That stale ack must leave the later
-// number linked, unacked and holding its descriptor
+// number linked, unacked and holding its descriptor: the number comparison
+// is the only test between them, as a resend link carries no generation
 // (proofs/tla/RNResendGenerations.tla Ack, NamedGenerationOnly).
 //
 // Time is an argument; nothing here reads a clock, opens a socket or sleeps.
@@ -108,7 +109,6 @@ static void test_resend_stale_ack_leaves_the_later_generation()
     check( later_generation != first_generation );
     check( f.region->send_numbers[0].number == W );
     check( f.region->resend_fifo[0].prev & resend_generations_linked );
-    check( f.region->resend_fifo[0].generation == later_generation );
     const uint32_t resend_count = f.ordered.ack.resend_count;
 
     // the stale ack of packet 1 names number 0: the later number stays
@@ -118,7 +118,6 @@ static void test_resend_stale_ack_leaves_the_later_generation()
     check( !f.region->send_numbers[0].acked );
     check( f.ordered.send.U == W );
     check( f.region->resend_fifo[0].prev & resend_generations_linked );
-    check( f.region->resend_fifo[0].generation == later_generation );
     check( f.ordered.ack.resend_count == resend_count );
     check( f.region->send_descriptors[later_descriptor].in_use );
     check( f.region->send_descriptors[later_descriptor].generation == later_generation );
@@ -137,10 +136,10 @@ static void test_resend_stale_ack_leaves_the_later_generation()
 
 REGISTER_UNIT_TEST( test_resend_stale_ack_leaves_the_later_generation );
 
-// A resend relinks the number at its class's tail; the unlink inside clears
-// the stamp, and the link is stamped again with the live descriptor's
-// generation (proofs/tla/RNResendGenerations.tla Send, StampNamesOwner).
-static void test_resend_requeue_stamps_the_live_generation()
+// A resend relinks the number at its class's tail and a failed send at its
+// head; the number stays linked through both until its own ack unlinks it
+// (proofs/tla/RNResendGenerations.tla Send, LinkNamesOwner).
+static void test_resend_requeue_keeps_the_number_linked()
 {
     resend_generations_fixture_t f;
     memset( &f.config, 0, sizeof( f.config ) );
@@ -155,18 +154,14 @@ static void test_resend_requeue_stamps_the_live_generation()
     uint32_t d = RN_DESCRIPTOR_NONE;
     const uint64_t number = resend_generations_write( &f, 1, 1000.0, &d );
     const uint32_t slot = (uint32_t) ( number % f.region->window );
-    const uint32_t generation = f.region->send_descriptors[d].generation;
-    check( generation != 0 );
-    check( f.region->resend_fifo[slot].generation == generation );
+    check( f.region->resend_fifo[slot].prev & resend_generations_linked );
 
     uint64_t n = number;
     rn_window_ack_commit_packet( &f.ordered.ack, 2, &n, 1, 1000.5 );
     check( f.region->resend_fifo[slot].prev & resend_generations_linked );
-    check( f.region->resend_fifo[slot].generation == generation );
 
     rn_window_ack_packet_failed( &f.ordered.ack, &n, 1, 1000.6 );
     check( f.region->resend_fifo[slot].prev & resend_generations_linked );
-    check( f.region->resend_fifo[slot].generation == generation );
 
     check( rn_window_ack_on_ack( &f.ordered.ack, 2, 1000.7 ) == 1 );
     check( f.region->send_numbers[slot].acked );
@@ -175,4 +170,4 @@ static void test_resend_requeue_stamps_the_live_generation()
     rn_arena_destroy( f.arena );
 }
 
-REGISTER_UNIT_TEST( test_resend_requeue_stamps_the_live_generation );
+REGISTER_UNIT_TEST( test_resend_requeue_keeps_the_number_linked );
