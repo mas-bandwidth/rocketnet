@@ -6,7 +6,7 @@ Planned work for RocketNet that is not on main. Work lands on main before new wo
 
 ## Contents
 
-- [Started work to finish and land](#started-work-to-finish-and-land) (7)
+- [Started work to finish and land](#started-work-to-finish-and-land) (5)
 - [Audit items not yet fixed](#audit-items-not-yet-fixed) (8)
 - [Investigations that need a quiet host](#investigations-that-need-a-quiet-host) (3)
 - [Older open pull requests](#older-open-pull-requests) (2)
@@ -39,18 +39,6 @@ From: Audit item 33
 Audit 59. Branch rowan/low-matrix-flake at a1693544, never built. Owed: functional build and repeated runs on Linux and macOS, a negative control, and a reproduction on main with injected latency.
 
 From: Audit item 59
-
-### Land #797: CBMC low items
-
-Audit 150-156, fleet-verified on vision (CBMC 6.6.0, ESBMC 8.5.0): esbmc_r_ok runs nightly; the message-reader harnesses cover every accepted limit; the 24-bit window arithmetic moves into rocketnet_message_u24_delta and is proved; the fragment-bounds proof and dead fallbacks are deleted. 150 is refuted: ack-run-bound-8 runs out of memory at 48 GB, so a working ACK proof needs the harness redesigned. Stacked on #782 and #754; left out of the 2026-10-31 landing so the fleet run did not restart.
-
-From: FABLE-AUDIT.md low proofs items
-
-### Run the ack-run-bound-8 CBMC proof nightly on studio
-
-Audit 150. The proof and its negative control exhaust 48 GB on vision; studio has 512 GB. Make it a nightly job on studio (pinned CBMC built from source under the project, no system binary), not a per-commit gate. It lands with #797.
-
-From: Glenn, live, 2026-10-31: run as nightly
 
 ### Low-severity proofs items
 
