@@ -580,6 +580,17 @@ static void rocketnet_client_gso_send_batch_operation( void * transport, const r
     rocketnet_client_gso_send_batch( &client->gso, sends, num_packets );
 }
 
+static int rocketnet_client_gso_send_batch_progress( void * transport, const rocketnet_platform_send_t * sends, int num_packets )
+{
+    rocketnet_client_gso_io_t * client = (rocketnet_client_gso_io_t *) transport;
+    if ( !client->socket->connected )
+        return rocketnet_platform_socket_send_packets_mmsg_progress( client->socket, sends, num_packets );
+
+    // The connected GSO path retains its existing synchronous contract.
+    rocketnet_client_gso_send_batch( &client->gso, sends, num_packets );
+    return num_packets;
+}
+
 // RNClientIo IoReceive (docs/CLIENT-IO.md The I/O step): recvmmsg through the
 // coalesce buffer, split at the GRO stride, when UDP_GRO is on (connected or
 // not: a GRO socket's message may be coalesced, which the platform's slot
@@ -631,7 +642,7 @@ static bool rocketnet_client_gso_connect( void * transport, const rocketnet_addr
 const rocketnet_client_transport_io_operations_t rocketnet_client_gso_operations = {
     rocketnet_client_gso_create, rocketnet_client_gso_destroy, rocketnet_client_gso_send, rocketnet_client_gso_receive,
     rocketnet_client_gso_send_batch_operation, rocketnet_client_gso_receive_batch_operation, rocketnet_client_gso_wait, rocketnet_client_gso_wake,
-    rocketnet_client_gso_send_failures, rocketnet_client_gso_connect, rocketnet_client_gso_close
+    rocketnet_client_gso_send_failures, rocketnet_client_gso_connect, rocketnet_client_gso_close, rocketnet_client_gso_send_batch_progress
 };
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX

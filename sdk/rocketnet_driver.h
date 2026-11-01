@@ -161,6 +161,12 @@ struct rocketnet_server_transport_io_operations_t
     // idle as soon as its flush returns (proofs/tla/ServerStopSpread.tla
     // RequestIoStop).
     bool ( *send_idle )( void * transport );
+
+    // optional; main thread, once when shutdown begins, before the last
+    // disconnect batches are staged. Does not stop admission or wait. A
+    // buffered backend may switch retained sends to its terminal attempt.
+    // stop still follows the final flush and send_idle.
+    void ( *begin_shutdown )( void * transport );
 };
 
 // the start_packet id of a refusal for want of a link-layer destination
@@ -225,6 +231,13 @@ struct rocketnet_client_transport_io_operations_t
     // (sdk/rocketnet_client_transport.cpp, proofs/tla/RNClientRace.tla). NULL for a
     // transport with nothing to close before destroy.
     void ( *close )( void * transport );
+
+    // optional, with send_batch; I/O thread only, instead of it while running.
+    // Consumes an original input prefix (sent or terminally refused), in
+    // [0,num_packets]. A transient refusal leaves the suffix caller-owned.
+    // Borrows bytes only for this call; the core retains the ring for retry.
+    // Shutdown uses send_batch for one final bounded attempt of the suffix.
+    int ( *send_batch_progress )( void * transport, const rocketnet_platform_send_t * sends, int num_packets );
 };
 
 struct rocketnet_transport_backend_t
