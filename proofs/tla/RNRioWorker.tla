@@ -74,6 +74,7 @@ VARIABLES
     accepted,    \* datagrams a posted slice took, in completion order
     posted,      \* slices posted to the kernel
     retry,       \* slices whose re-post was refused
+    retired,     \* completed slices deliberately not re-posted after stop
     rcq,         \* the receive completion queue: ids, 0 a cancelled slice
     data,        \* per bank, its datagrams
     fill,        \* the worker's fill bank
@@ -102,7 +103,7 @@ VARIABLES
     stopping, closed, exited, freed,
     wpc, progress
 
-rvars == <<arrived, accepted, posted, retry, rcq, data, fill, free, ready, exposed, view, consumed>>
+rvars == <<arrived, accepted, posted, retry, retired, rcq, data, fill, free, ready, exposed, view, consumed>>
 svars == <<sent, staged, state, phase, sready, inhand, pend, infl, scq, done, dropped, cancelled>>
 cvars == <<wake, evt, armed, stopping, closed, exited, freed, wpc, progress>>
 vars == <<rvars, svars, cvars>>
@@ -119,7 +120,7 @@ KernelOwnsSend == \E p \in Phases : pend[p] # <<>> \/ infl[p] # <<>>
 Uncommitted == \E p \in Phases : pend[p] # <<>>
 
 Init ==
-    /\ arrived = 0 /\ accepted = <<>> /\ posted = Slices /\ retry = 0 /\ rcq = <<>>
+    /\ arrived = 0 /\ accepted = <<>> /\ posted = Slices /\ retry = 0 /\ retired = 0 /\ rcq = <<>>
     /\ data = [b \in Banks |-> <<>>] /\ fill = 1
     /\ free = [i \in 1..(NumBanks - 1) |-> i + 1] /\ ready = <<>>
     /\ exposed = <<>> /\ view = <<>> /\ consumed = <<>>
@@ -146,7 +147,7 @@ Arrive ==
     /\ rcq' = Append(rcq, arrived + 1)
     /\ evt' = (evt \/ armed)
     /\ armed' = FALSE
-    /\ UNCHANGED <<retry, data, fill, free, ready, exposed, view, consumed>>
+    /\ UNCHANGED <<retry, retired, data, fill, free, ready, exposed, view, consumed>>
     /\ UNCHANGED svars
     /\ UNCHANGED <<wake, stopping, closed, exited, freed, wpc, progress>>
 
@@ -155,7 +156,7 @@ ArriveDropped ==
     /\ arrived < MaxDatagrams
     /\ posted = 0
     /\ arrived' = arrived + 1
-    /\ UNCHANGED <<accepted, posted, retry, rcq, data, fill, free, ready, exposed, view, consumed>>
+    /\ UNCHANGED <<accepted, posted, retry, retired, rcq, data, fill, free, ready, exposed, view, consumed>>
     /\ UNCHANGED svars /\ UNCHANGED cvars
 
 \* a committed send completes.  Send completions do not arm the event in
@@ -219,7 +220,7 @@ ReceivePackets ==
           /\ view' = Concat(taken)
           /\ consumed' = consumed \o Concat(taken)
           /\ wake' = (wake \/ (WakeOnReturn /\ free = <<>> /\ exposed # <<>>))
-    /\ UNCHANGED <<arrived, accepted, posted, retry, rcq, data, fill>>
+    /\ UNCHANGED <<arrived, accepted, posted, retry, retired, rcq, data, fill>>
     /\ UNCHANGED svars
     /\ UNCHANGED <<evt, armed, stopping, closed, exited, freed, wpc, progress>>
 
@@ -314,28 +315,37 @@ WRetire ==
     /\ UNCHANGED <<sent, staged, state, phase, sready, inhand, dropped, cancelled>>
     /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed>>
 
-\* retry refused re-posts, then dequeue receive completions into the fill
-\* bank: every available completion up to its free room under the rule,
-\* every available completion otherwise (the overflow is dropped).  Each dequeued slice is re-posted; a re-post
-\* may be refused and wait in the retry list.
+\* Retry uses one stopping read before its whole loop. Each completion
+\* checks stopping separately after copying; a Stop during this aggregate
+\* pass can therefore leave a re-posted prefix and a retired suffix.
+\* stopDuring summarizes that one Stop interleaving, including its wake.
+\* It does not introduce a second worker or a new fairness assumption.
 WDequeue ==
     /\ wpc = "dequeue"
     /\ LET room == IF BoundedDequeue THEN Cap - Len(data[fill]) ELSE Len(rcq)
            k == IF Len(rcq) < room THEN Len(rcq) ELSE room
-       IN \E refused \in 0..Slices :
-             /\ refused <= k + retry
-             /\ LET got == NonZero(SubSeq(rcq, 1, k))
+       IN \E stopDuring \in BOOLEAN, attemptRetry \in BOOLEAN, repost \in 0..k :
+             /\ stopDuring => ~stopping
+             /\ stopping => (~attemptRetry /\ repost = 0)
+             /\ (~stopping /\ ~stopDuring) => (attemptRetry /\ repost = k)
+             /\ ~attemptRetry => repost = 0
+             /\ LET attempted == IF attemptRetry THEN retry ELSE 0
+                    got == NonZero(SubSeq(rcq, 1, k))
                     keep == IF Len(data[fill]) + Len(got) <= Cap THEN got
                             ELSE SubSeq(got, 1, Cap - Len(data[fill]))
-                IN /\ data' = [data EXCEPT ![fill] = data[fill] \o keep]
-                   /\ rcq' = SubSeq(rcq, k + 1, Len(rcq))
-                   /\ posted' = posted + k + retry - refused
-                   /\ retry' = refused
-                   /\ progress' = (progress \/ k > 0)
+                IN \E refused \in 0..(attempted + repost) :
+                     /\ data' = [data EXCEPT ![fill] = data[fill] \o keep]
+                     /\ rcq' = SubSeq(rcq, k + 1, Len(rcq))
+                     /\ posted' = posted + attempted + repost - refused
+                     /\ retry' = retry - attempted + refused
+                     /\ retired' = retired + k - repost
+                     /\ progress' = (progress \/ k > 0)
+             /\ stopping' = (stopping \/ stopDuring)
+             /\ wake' = (wake \/ stopDuring)
     /\ wpc' = "publish"
     /\ UNCHANGED <<arrived, accepted, fill, free, ready, exposed, view, consumed>>
     /\ UNCHANGED svars
-    /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed>>
+    /\ UNCHANGED <<evt, armed, closed, exited, freed>>
 
 \* under the mutex: publish a non-empty fill bank for a free one, and return
 \* every drained posted phase to main as idle
@@ -349,7 +359,7 @@ WPublish ==
        ELSE UNCHANGED <<ready, fill, free, data>>
     /\ state' = [p \in Phases |-> IF state[p] = "posted" /\ ~Outstanding(p) THEN "idle" ELSE state[p]]
     /\ wpc' = IF progress THEN "top" ELSE "arm"
-    /\ UNCHANGED <<arrived, accepted, posted, retry, rcq, exposed, view, consumed>>
+    /\ UNCHANGED <<arrived, accepted, posted, retry, retired, rcq, exposed, view, consumed>>
     /\ UNCHANGED <<sent, staged, phase, sready, inhand, pend, infl, scq, done, dropped, cancelled>>
     /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed, progress>>
 
@@ -437,7 +447,7 @@ WClose ==
             /\ closed' = TRUE
             /\ wpc' = "drain"
             /\ UNCHANGED <<scq, done>>
-    /\ UNCHANGED <<arrived, accepted, retry, data, fill, free, ready, exposed, view, consumed>>
+    /\ UNCHANGED <<arrived, accepted, retry, retired, data, fill, free, ready, exposed, view, consumed>>
     /\ UNCHANGED <<sent, staged, state, phase, sready, inhand, pend, infl, dropped, cancelled>>
     /\ UNCHANGED <<wake, evt, armed, stopping, exited, freed, progress>>
 
@@ -448,8 +458,9 @@ WDrain ==
     /\ wpc = "drain"
     /\ IF ~DrainBeforeExit
        THEN /\ exited' = TRUE /\ wpc' = "exited"
-            /\ UNCHANGED <<rcq, scq, done>>
+            /\ UNCHANGED <<rcq, scq, done, retired>>
        ELSE /\ rcq' = <<>>
+            /\ retired' = retired + Len(rcq)
             /\ done' = done \o [i \in 1..Len(scq) |-> scq[i][2]]
             /\ scq' = <<>>
             /\ IF posted = 0 /\ ~KernelOwnsSend
@@ -488,7 +499,7 @@ SpecFair ==
 
 TypeOK ==
     /\ arrived \in 0..MaxDatagrams
-    /\ posted \in 0..Slices /\ retry \in 0..Slices
+    /\ posted \in 0..Slices /\ retry \in 0..Slices /\ retired \in 0..Slices
     /\ data \in [Banks -> Seq(Ids)]
     /\ \A b \in Banks : Len(data[b]) <= Cap
     /\ fill \in Banks
@@ -497,9 +508,12 @@ TypeOK ==
     /\ inhand \in Phases \cup {NoPhase}
     /\ cancelled \subseteq SendIds
 
-\* Slice accounting until the socket closes: every slice is posted,
-\* completed in the queue, or waiting for a re-post.
-SlicesAccounted == closed \/ posted + Len(rcq) + retry = Slices
+\* Every slice stays accounted through stop, close and drain. A retry
+\* entry is unposted and remains accounted even when stop skips its retry.
+\* While running, none is retired: refusal cannot shrink receive depth.
+SlicesAccounted ==
+    /\ posted + Len(rcq) + retry + retired = Slices
+    /\ (~stopping => retired = 0)
 
 \* Every bank has exactly one owner: the worker's fill bank, the ready FIFO,
 \* main's exposed banks or the free FIFO.
