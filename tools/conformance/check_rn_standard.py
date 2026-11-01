@@ -20,7 +20,10 @@ checks, and fails with one line per fault naming the section id:
               headers in one generated translation unit, equals the pin
               file's value and the value cell of the document row it names;
               every document row with a value has a pin, and an
-              #unpinned line fails; every pin lies in a section its file owns
+              #unpinned line fails; every pin lies in a section its file owns;
+              every pin expression names an sdk or libsodium identifier
+              (ROCKETNET_, rn_pin_, crypto_, sodium_, randombytes_), so a
+              literal the compiler reproduces is never a pin
   vectors     every 'vector <id>' block is well formed, sits in the section
               its id names, and equals the RN_STANDARD_VECTOR twin of that id
               in a test file; every twin has a block; a twin counts only
@@ -84,19 +87,22 @@ BASE_INCLUDES = """
 #include "sodium/sodium.h"
 
 // the configuration tables' defaults, by field name: rn_pin_server_default_<field>,
-// rn_pin_client_default_<field>, rn_pin_message_default_<field>. A bytes field
-// has no scalar default and no name here.
+// rn_pin_client_default_<field>, rn_pin_message_default_<field>; an int field's
+// valid range as rn_pin_<tag>_min_<field> and rn_pin_<tag>_max_<field>. A bytes
+// field has no scalar default and no name here.
 #define RN_PIN_INT_( tag, name, def ) static const long long rn_pin_##tag##_default_##name = (long long) ( def );
+#define RN_PIN_RANGE_( tag, name, min, max ) static const long long rn_pin_##tag##_min_##name = (long long) ( min ); \
+                                             static const long long rn_pin_##tag##_max_##name = (long long) ( max );
 #define RN_PIN_STR_( tag, name, def ) static const char * const rn_pin_##tag##_default_##name = def;
-#define RN_PIN_S_INT( name, def, min, max, flags )          RN_PIN_INT_( server, name, def )
+#define RN_PIN_S_INT( name, def, min, max, flags )          RN_PIN_INT_( server, name, def ) RN_PIN_RANGE_( server, name, min, max )
 #define RN_PIN_S_UINT64( name, def, flags )                 RN_PIN_INT_( server, name, def )
 #define RN_PIN_S_BYTES( name, size, def, flags )
 #define RN_PIN_S_STRING( name, capacity, def, flags )       RN_PIN_STR_( server, name, def )
-#define RN_PIN_C_INT( name, def, min, max, flags )          RN_PIN_INT_( client, name, def )
+#define RN_PIN_C_INT( name, def, min, max, flags )          RN_PIN_INT_( client, name, def ) RN_PIN_RANGE_( client, name, min, max )
 #define RN_PIN_C_UINT64( name, def, flags )                 RN_PIN_INT_( client, name, def )
 #define RN_PIN_C_BYTES( name, size, def, flags )
 #define RN_PIN_C_STRING( name, capacity, def, flags )       RN_PIN_STR_( client, name, def )
-#define RN_PIN_M_INT( name, def, min, max, flags )          RN_PIN_INT_( message, name, def )
+#define RN_PIN_M_INT( name, def, min, max, flags )          RN_PIN_INT_( message, name, def ) RN_PIN_RANGE_( message, name, min, max )
 #define RN_PIN_M_UINT64( name, def, flags )                 RN_PIN_INT_( message, name, def )
 #define RN_PIN_M_BYTES( name, size, def, flags )
 #define RN_PIN_M_STRING( name, capacity, def, flags )       RN_PIN_STR_( message, name, def )
@@ -414,6 +420,19 @@ def pin_document(path):
     return None
 
 
+SDK_IDENTIFIER = re.compile(r"\b(?:ROCKETNET_|rn_pin_|crypto_|sodium_|randombytes_)\w*")
+
+
+def pin_names_sdk(expr):
+    """True when a pin expression names an sdk or libsodium identifier.
+
+    STYLE.md section 10: a number with no sdk expression is a finding, never a
+    pinned literal. An expression over literals and standard-library macros
+    alone (24, 1 << 20, UINT8_MAX + 1) compiles to the document's value
+    whatever the sdk holds, so the pin could never fail."""
+    return SDK_IDENTIFIER.search(expr) is not None
+
+
 def read_pins(faults):
     pins = []
     includes = []
@@ -444,6 +463,9 @@ def read_pins(faults):
             if len(fields) != 3 or not all(f.strip() for f in fields):
                 faults.append((None, "pins/%s:%d: a pin row is three tab-separated fields" % (name, number)))
                 continue
+            if not pin_names_sdk(fields[1]):
+                faults.append((None, "pins/%s:%d %r: the expression %r names no sdk identifier; a literal is "
+                               "never a pin (STYLE.md section 10)" % (name, number, fields[0].strip(), fields[1].strip())))
             pins.append({"file": name, "line": number, "doc": tag,
                          "name": fields[0].strip(), "expr": fields[1].strip(),
                          "value": fields[2].strip()})

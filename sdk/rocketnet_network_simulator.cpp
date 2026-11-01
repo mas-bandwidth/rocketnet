@@ -113,6 +113,11 @@ struct rocketnet_network_simulator_t
     // simulator's lock and read without it, so a drain of an empty simulator
     // takes no lock.
     volatile uint64_t held_count;
+    // The packets the slot store refused (no free slot, or a free slot whose
+    // generation is exhausted), counted by the thread that holds the lock and
+    // read without it. A store refusal is not simulated loss: a run reads this
+    // to tell the two apart.
+    volatile uint64_t store_refused;
     // Whether any config call has set a nonzero setting.  It latches on the
     // first active config and is never cleared, not even by a later all-zero
     // config.  Production configures once, at create, so there it records the
@@ -483,6 +488,10 @@ bool rocketnet_network_simulator_patterns( struct rocketnet_network_simulator_t 
     rocketnet_assert( drop_every_nth == 0 || ( drop_every_nth >= 2 && drop_every_nth <= 1000000 ) );
     rocketnet_assert( reverse_window == 0 || ( reverse_window >= 2 && reverse_window <= ROCKETNET_SIMULATOR_MAX_REVERSE_WINDOW ) );
 
+    // the packets the old window holds leave reversed, as a full window's do,
+    // before the window goes
+    rocketnet_network_simulator_flush_window( simulator );
+
     rocketnet_free( simulator->context, simulator->window );
     simulator->window = NULL;
     simulator->window_count = 0;
@@ -512,6 +521,14 @@ bool rocketnet_network_simulator_holds_any( struct rocketnet_network_simulator_t
 
     rocketnet_assert( simulator );
     return rocketnet_platform_atomic_load_u64( &simulator->held_count ) != 0;
+}
+
+uint64_t rocketnet_network_simulator_store_refused( struct rocketnet_network_simulator_t * simulator )
+{
+    // the packets the slot store has refused since create, read without the lock
+
+    rocketnet_assert( simulator );
+    return rocketnet_platform_atomic_load_u64( &simulator->store_refused );
 }
 
 bool rocketnet_network_simulator_patterns_active( const struct rocketnet_network_simulator_t * simulator )
@@ -898,7 +915,19 @@ void rocketnet_network_simulator_inject_index_fault( struct rocketnet_network_si
 
 // --------------------------------------------------------------------------
 
-// proofs/tla/RNSimulatorStoreLayout.tla Send: the lowest free slot from free_hint, its generation bumped
+// A packet the slot store cannot hold. The simulator stands in for the network,
+// whose queues drop when full, and it is handed the datagram after the sender
+// has committed it, so there is nothing to carry it back to: it is counted, and
+// the first refusal of a simulator's life is a warning, so a run that outgrows
+// its capacity says so once rather than per packet.
+static void rocketnet_simulator_store_refused( struct rocketnet_network_simulator_t * simulator, const char * reason )
+{
+    if ( rocketnet_platform_atomic_add_u64( &simulator->store_refused, 1 ) == 0 )
+        rocketnet_warn( "%s (capacity %d); later refusals are counted only", reason, simulator->capacity );
+    else
+        rocketnet_spam( "%s", reason );
+}
+
 static int rocketnet_simulator_insert( struct rocketnet_network_simulator_t * simulator,
                                        const struct rocketnet_address_t * from,
                                        const struct rocketnet_address_t * to,
@@ -917,7 +946,7 @@ static int rocketnet_simulator_insert( struct rocketnet_network_simulator_t * si
 
         if ( simulator->generation[i] == UINT64_MAX )
         {
-            rocketnet_spam( "network simulator slot generation exhausted. packet dropped" );
+            rocketnet_simulator_store_refused( simulator, "network simulator slot generation exhausted. packet dropped" );
             return 0;
         }
 
@@ -937,7 +966,7 @@ static int rocketnet_simulator_insert( struct rocketnet_network_simulator_t * si
     }
 
     simulator->free_hint = simulator->capacity;
-    rocketnet_spam( "network simulator queue full. packet dropped" );
+    rocketnet_simulator_store_refused( simulator, "network simulator slot store full. packet dropped" );
     return 0;
 }
 

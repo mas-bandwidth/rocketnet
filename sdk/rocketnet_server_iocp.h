@@ -85,6 +85,13 @@ void rocketnet_server_iocp_finish_packet( rocketnet_server_iocp_t * iocp,
 void rocketnet_server_iocp_abort_packet( rocketnet_server_iocp_t * iocp,
                                          uint64_t packet_id, uint8_t * frame );
 void rocketnet_server_iocp_send_packets( rocketnet_server_iocp_t * iocp );
+// the frames start_packet may still take before the next flush: the free
+// send operations, at most the producer bank's free slots. Main thread.
+int rocketnet_server_iocp_send_room( rocketnet_server_iocp_t * iocp );
+// true once nothing is staged and every send operation is back in the free
+// queue: no bank waits for the send worker and no posted send waits for its
+// completion. Main thread.
+bool rocketnet_server_iocp_send_idle( rocketnet_server_iocp_t * iocp );
 void rocketnet_server_iocp_receive_packets( rocketnet_server_iocp_t * iocp );
 rocketnet_server_socket_process_packets_t * rocketnet_server_iocp_process_packets( rocketnet_server_iocp_t * iocp );
 

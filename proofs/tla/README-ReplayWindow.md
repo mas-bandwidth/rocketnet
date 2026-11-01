@@ -69,7 +69,12 @@ is built from it, and nothing here speaks for it.
 | `Words`, `WordBits` | `ROCKETNET_HISTORY_PACKETS / 64` words of 64 bits | 6 words of 2 bits, `W = 12` | same |
 | `ClearedWords` | the words the long-skip branch clears | `6` (all: the rule, and the code) | `4` (`window[0..3]`: the defective variant) |
 | `MaxSeq` | the highest sequence explored | `36`, three windows | same |
-| `GateBeforeAdvance` | the server checks the slot before advancing | `TRUE` (the rule, and the code) | `FALSE` (the reversed witness) |
+| `GateBeforeAdvance` | the server checks the slot before advancing | `TRUE` (the rule, and the code) | `FALSE` (the reversed witness, with `GateBeforeOpen = FALSE`) |
+| `GateBeforeOpen` | the server checks the slot before the AEAD open | `TRUE` (the rule, and the code) | `FALSE` (the reversed witnesses) |
+
+The advance follows the open, so a gate before the open is a gate before the
+advance: the module assumes `GateBeforeOpen => GateBeforeAdvance`, and the
+advance-before-gate witness turns both off.
 
 ## The rules
 
@@ -132,8 +137,8 @@ order the code no longer uses and `INVARIANTS` cut to the one rule under test, s
 | w-longskip-window | `ClearedWords = 4` | `WindowIsTruth` | **fails**: the 5-state trace below |
 | w-longskip-genuine | `ClearedWords = 4` | `GenuineIsAccepted` | **fails**: 6 states, same shape |
 | w-longskip-ack | `ClearedWords = 4` | `AckReportsOnlyReceived` | **fails**: 5 states, same shape |
-| w-gate | `GateBeforeAdvance = FALSE` | `NoAdvanceBeforeConnect` | **fails**: 2-state trace below |
-| w-gate-processed | `GateBeforeAdvance = FALSE` | `AckReportsOnlyProcessed` | **fails**: the same 2 states |
+| w-gate (`MCReplayWindowBrokenGate.cfg`) | `GateBeforeAdvance = FALSE`, `GateBeforeOpen = FALSE` | `NoAdvanceBeforeConnect` | **fails**: 2-state trace below |
+| w-gate-processed | `GateBeforeAdvance = FALSE`, `GateBeforeOpen = FALSE` | `AckReportsOnlyProcessed` | **fails**: the same 2 states |
 | open-before-gate (`MCReplayWindowBrokenOpenBeforeGate.cfg`) | `GateBeforeOpen = FALSE` | `NoOpenBeforeConnect` | **fails**: 2 states, below |
 
 The open-before-gate witness is the order before 2026-10-21: the slot check
@@ -219,7 +224,8 @@ in the long-skip branch — which is `ClearedWords = Words` in the model, the co
 
 ### 2. OV-34: the server advances the session window before the slot check (reversed witness, `rocketnet_server_process_sealed_packet` in `sdk/rocketnet_server_protocol.cpp`)
 
-`w-gate`, `GateBeforeAdvance = FALSE`. TLC's trace is two states: from `Init`
+`w-gate` (`MCReplayWindowBrokenGate.cfg`), `GateBeforeAdvance = FALSE` and
+`GateBeforeOpen = FALSE`. TLC's trace is two states: from `Init`
 (`connected = FALSE`), `Receive(1)` advances the window to `highest = 1`,
 `received = {1}`, and `NoAdvanceBeforeConnect` is violated.
 
@@ -297,12 +303,11 @@ covered at deployed size is the 64-bit sequence and ack-range width
 (`uint64` marks, `u16` ack run caps); those are wire-representation
 obligations, not ring-size behaviour.
 
-The mid run exceeds the 110-second runner budget, so it is a bench case, and
-a manual exploration under the same two workers completes: 34,603,033
-generated / 3,145,729 distinct states in 445.380 s, exit 0, with every
-invariant and `Monotone` passing. The record carries `mode = manual` and the
-bench row names the measured time. This checks a full lap at `W = 21` rather
-than extrapolating it from the formula.
+The mid run exceeds the 110-second runner budget, so it is a bench case:
+`RUNS.tsv` records its bounded run (`mode = bounded`), which ends at the budget
+with exit 124, as the bench debt row in `CASES.tsv` declares. That record is
+not a completed check. The complete explorations described above were manual
+runs outside the ledger.
 
 What the mid instance does not cover is the deployed ring's width: 64 words of
 64 bits (4096 bits) and a 64-bit sequence space. Going from 21 to 4096 bits

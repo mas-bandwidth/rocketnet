@@ -1092,3 +1092,107 @@ static void test_ack_record_sent_refuses_stale_and_nonfinite()
 }
 
 REGISTER_UNIT_TEST( test_ack_record_sent_refuses_stale_and_nonfinite );
+
+// Steady in-order traffic is the hot path: every receive moves the older half
+// by one sequence. A receive that keeps base and top in their generations
+// merges its record into one summary, appends one record to the right piece
+// and reads one suffix aggregate; the receive that moves base into a new
+// generation rebuilds the left piece and the middle. Rebuilding or rescanning
+// the older half on every receive costs over a hundred visits each and fails
+// both checks.
+
+static void test_ack_received_stats_steady_receive_is_constant_work()
+{
+    const uint64_t N = ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE;
+    auto * endpoint = stats_endpoint();
+
+    uint64_t total = 0;
+    uint64_t receives = 0;
+    uint32_t inside_max = 0;
+    for ( uint64_t sequence = 1; sequence <= 4 * N; ++sequence )
+    {
+        rocketnet_ack_endpoint_record_received( endpoint, sequence, 100, (double) sequence );
+        if ( sequence <= N )
+            continue;
+
+        const uint32_t operations = endpoint->stats_received_operations;
+        total += operations;
+        ++receives;
+        const uint64_t base = sequence - N + 1;
+        if ( base % 32 != 0 && operations > inside_max )
+            inside_max = operations;
+    }
+
+    printf( "received ACK stats steady cost: inside_generation_max=%u mean_x100=%llu\n", inside_max,
+            (unsigned long long) ( total * 100 / receives ) );
+    fflush( stdout );
+    rocketnet_unit_check( inside_max <= 3 );
+    rocketnet_unit_check( total <= receives * 6 );
+    rocketnet_unit_check( stats_received_live_matches_history( endpoint ) );
+    rocketnet_free( NULL, endpoint );
+}
+REGISTER_UNIT_TEST( test_ack_received_stats_steady_receive_is_constant_work );
+
+// Every receive shape against the scan oracle: in order, short reorders,
+// duplicates, arrivals late by more than the older half, refused stale
+// sequences, jumps inside and past the ring, equal and decreasing times and
+// NaN times, with the visit bound checked on each step. A fixed seed keeps
+// the sequence of operations the same on every run.
+
+static uint64_t stats_received_random( uint64_t * state )
+{
+    uint64_t x = *state;
+    x ^= x << 13;
+    x ^= x >> 7;
+    x ^= x << 17;
+    *state = x;
+    return x;
+}
+
+static void test_ack_received_stats_random_receives_match_scan()
+{
+    const uint64_t N = ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE;
+    auto * endpoint = stats_endpoint();
+    uint64_t state = 0x9E3779B97F4A7C15ull;
+    double time = 100.0;
+
+    for ( int step = 0; step < 60000; ++step )
+    {
+        if ( step % 20000 == 0 )
+            rocketnet_ack_endpoint_reset( endpoint );
+
+        const uint64_t highest = endpoint->highest_received_sequence;
+        const uint64_t roll = stats_received_random( &state ) % 100;
+        const uint64_t r = stats_received_random( &state );
+        uint64_t sequence;
+        if ( roll < 55 || highest == 0 )
+            sequence = highest + 1;                                     // in order
+        else if ( roll < 70 )
+            sequence = highest > 40 ? highest - r % 40 : highest + 1;   // short reorder or duplicate
+        else if ( roll < 80 )
+            sequence = highest + 1 + r % 64;                            // a gap
+        else if ( roll < 88 )
+            sequence = highest > N ? highest - N / 2 - r % ( N / 2 ) : highest + 1;    // late past the older half's top
+        else if ( roll < 92 )
+            sequence = highest > N ? highest - N - r % 8 : highest + 1;                // refused, or the oldest kept
+        else if ( roll < 97 )
+            sequence = highest + N / 2 + r % N;                         // a jump inside or past the ring
+        else
+            sequence = highest + 1 + r % ( 4 * N );                     // a far jump
+
+        if ( sequence == 0 )
+            sequence = 1;
+
+        const uint64_t kind = r % 16;
+        if ( kind == 0 )
+            time -= 3.0;
+        else if ( kind != 1 )
+            time += 0.25;
+        const double at = kind == 2 ? (double) NAN : time;
+
+        stats_received_step( endpoint, sequence, (int) ( 40 + r % 1200 ), at );
+    }
+
+    rocketnet_free( NULL, endpoint );
+}
+REGISTER_UNIT_TEST( test_ack_received_stats_random_receives_match_scan );

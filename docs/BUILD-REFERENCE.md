@@ -18,9 +18,9 @@ compatibility, separately from the wire version; see [ABI compatibility](BUILDIN
 
 Deploying a server on Linux: [docs/LINUX.md](LINUX.md) covers the build, the production `xdp -> gso -> io_uring -> portable` transport ladder and pinning, what `gso`, `io_uring` and `xdp` need from the host, socket errors and ICMP, the fd and memlock limits for 1000 clients, containers, and how to verify a host. Both builds offer portable as the final Linux fallback.
 
-rocketnet builds on Linux and macOS with CMake 3.20 or later, and on Windows with
-CMake 4.2 or later (the Windows block below says why). On Linux the build is
-tested with gcc 13.3.0 and 15.2.0 and with clang 18.1.3 and 21.1.8, in Debug and
+RocketNet requires CMake 3.20 or later. The Windows instructions below use
+Visual Studio 18, whose generator requires CMake 4.2 or later. Recorded Linux
+checks used gcc 13.3.0 and 15.2.0 and clang 18.1.3 and 21.1.8, in Debug and
 Release: with each compiler the static and shared libraries, `./bin/test` and
 `./bin/functional` build, and the unit suite passes. Functional results are
 recorded per compiler and configuration: the matrix also exposes outstanding
@@ -74,8 +74,10 @@ file: the known-answer fixtures it checks (`standard/vectors/connect_token_v1.js
 and `tests/wycheproof/*_test.json`) are compiled into it at build time by
 `cmake/EmbedTestFixtures.cmake`, so editing one rebuilds it. The vectors file is
 regenerated only by the tool `./bin/connect_token_vectors <path>`
-(tools/connect_token_vectors/main.cpp), which writes the path it is given. Tests run in parallel
-(at most eight, or `ROCKETNET_TEST_JOBS` when that is smaller). In a Release
+(tools/connect_token_vectors/main.cpp), which writes the path it is given. Tests run in parallel:
+one job per core, as many as the 1.6 GiB-per-job memory budget allows
+(`SUITE_JOB_MEMORY_BYTES` in `tests/suite_runner.h`; at most 64 on Windows).
+`ROCKETNET_TEST_JOBS` sets the count outright. In a Release
 build a test over 120 seconds is killed and the suite fails. Debug and
 sanitizer builds scale the limit by 5. A passing run prints each test's
 name and then `*** ALL TESTS PASSED ***`; `ROCKETNET_TEST_REPORT=1` adds the
@@ -206,7 +208,7 @@ variables and pins the SDK wiring, precedence, and refusal paths.
 | Binary | Tier | Why | Where it runs |
 | --- | --- | --- | --- |
 | `test` | unit | state machines and the in-memory simulator | CI `Run unit tests` |
-| `test_wide` | unit | `test.cpp` built with 512 channels (the `test_wide` target in CMakeLists.txt; `EXCLUDE_FROM_ALL`, built by name with `cmake --build build --target test_wide`) | by hand |
+| `test_wide` | unit | `test.cpp` built with 512 channels (the `test_wide` target in CMakeLists.txt; `EXCLUDE_FROM_ALL`, built by name with `cmake --build build --target test_wide`) | CI nightly tier `Wide-channel unit cases (ROCKETNET_MAX_CHANNELS=512)`: the cases only it compiles, and the promotion case |
 | `test_sodium` | unit | known-answer vectors | CI `Sodium known answers` |
 | `fuzz_replay_*` | unit | corpus replay, no init (the `fuzz_replay_${harness}` targets in CMakeLists.txt) | CI `Replay the fuzz corpora without libFuzzer` |
 | `functional` | functional | real sockets, transports and shared-library exports | CI `Run functional suite` |
@@ -221,6 +223,12 @@ variables and pins the SDK wiring, precedence, and refusal paths.
 | `test_transport` | functional | netlink route reads, and the portable transport on loopback sockets with sleep-wait loops (`test_driver.cpp`) | CI `Functional: native driver contract and external backend` |
 | `test_server_stats_creates_no_thread` | functional | reads the process thread count from `/proc/self/task` and checks a loopback server create/update adds none (process_thread_counts.cpp) | `./bin/functional` |
 | `test_public_step_driven_client_connects_without_a_thread` | functional | reads the process thread count from `/proc/self/task` and checks a step-driven loopback client create adds none (process_thread_counts.cpp) | `./bin/functional` |
+
+Every registered unit case runs in at least one CI configuration of either
+tier. In the nightly tier, which runs every configuration the per-commit tier
+runs and the rest, each job that runs the unit suite uploads its `--list`, and
+the `unit-case coverage` job fails on a registered case no configuration lists
+(`tools/check_unit_case_coverage.py`).
 
 The shared-library export cases are functional because they load the built
 libraries through the OS loader: `test_api_polish_dev_token_string`,
@@ -310,11 +318,10 @@ for one command without changing `xcode-select`:
 `CMakeLists.txt` sets the output directories to `bin/` with no
 configuration in the path, and a multi-config generator such as Xcode appends
 the configuration to them, so its executables and libraries land in
-`bin/Release/`. The unit suite opens the development library by its absolute
-build path (`CMakeLists.txt`), and the release library by
-`bin/librocketnet.dylib`, then by the bare name
-(`sdk/rocketnet_tests.cpp`), which the executable's run path
-resolves in `bin/Release/` (`CMakeLists.txt`).
+`bin/Release/`. The functional shared-library token cases
+(`tests/functional/shared_library_tokens.cpp`) open the development and
+production libraries through their generated absolute build paths. These
+OS-loader checks are functional tests, not unit tests.
 
 Windows has no Makefile path; CMake is driven directly, and the binaries land
 under `bin\<config>\`. It needs, installed once:
@@ -408,6 +415,32 @@ server pinned to `xdp` refuses start with `ROCKETNET_STATUS_TRANSPORT_NOT_BUILT`
 configurations do not rewrite the checkout. macOS and Windows do not build the
 object.
 
+## Building the API reference
+
+`make docs` generates the public API reference at
+`build/docs/html/index.html`. It needs CMake, a C/C++ toolchain, Python 3 with
+PyYAML, and the MrDocs version pinned in `tools/docs/mrdocs.sh`. On Linux and
+macOS that script can download the pinned MrDocs archive with `curl`, verify
+its SHA-256 digest, and unpack it with `tar`. Set `MRDOCS` to a matching local
+binary to use an existing installation.
+
+Install Python dependencies in a local virtual environment when PyYAML is not
+already available to `python3`:
+
+```sh
+python3 -m venv build/docs-venv
+. build/docs-venv/bin/activate
+python3 -m pip install PyYAML
+make docs
+make docs-undocumented
+```
+
+The script uses `python3` from `PATH`, so keep the virtual environment active
+for both commands. `ModuleNotFoundError: No module named 'yaml'` means that
+interpreter lacks PyYAML. The HTML build and the undocumented-symbol check
+are separate from the compiled documentation examples and link checks in
+[the documentation workflow](../.github/workflows/docs.yml).
+
 ## Floating point: rocketnet builds with -ffp-contract=off
 
 Estate policy for mas-bandwidth network libraries: builds are strict about floating point
@@ -417,7 +450,11 @@ build rocketnet itself:
   - GCC/Clang: `-ffp-contract=off`. Not merely the absence of `-ffast-math` — GCC's default
     is `-ffp-contract=fast`, which contracts across statement boundaries, and clang's default
     `=on` still fuses within a single expression.
-  - MSVC: `/fp:precise`.
+  - MSVC: `/fp:precise`, which does not contract.
+  - clang-cl: `/fp:precise -Xclang -ffp-contract=off`. clang-cl maps `/fp:precise` to
+    `-ffp-contract=on`, which fuses `a*b+c` wherever the target has FMA (ARM64, or x64 with
+    `/arch:AVX2`). `/clang:-ffp-contract=off` sets the same mode, but the driver warns that it
+    overrides `/fp:precise`, and `/WX` makes that warning an error.
 
 rocketnet's float wire encoding is a bit copy (no arithmetic), so no flag is required of consumers
 for correct wire bytes today. The strict build is the family floor: contraction is
@@ -427,10 +464,15 @@ compile rocketnet's sources into your own build rather than linking the library,
 flag. The flag is private to rocketnet's own targets: neither the installed
 package nor `add_subdirectory` passes it to your targets, whose floating-point
 flags stay your own.
-The canary `test_fp_contract_off` in `test.cpp` asserts the floor holds on every platform
-(one rounding of `a*b+c` would change `0x00000000` to `0x33800000` / `0x3C90000000000000`),
-and `tools/check_fp_contract.sh` (run in CI) fails any compiler invocation outside CMake that
-omits `-ffp-contract=off` or `/fp:precise`.
+The canary `test_fp_contract_off` (`tests/fp_contract_canary.h`, run by `test.cpp`) asserts
+the floor holds on every platform (one rounding of `a*b+c` would change `0x00000000` to
+`0x33800000` / `0x3C90000000000000`). x86-64 has no FMA in its baseline, so
+`test_fp_contract_fma` builds the same canary with `-mfma` (GCC/Clang) or `/arch:AVX2` (MSVC,
+clang-cl) and runs it as soon as it links: a build whose floor does not hold fails to build.
+Configuring the tree fails when any target it compiles lacks its compiler family's flag above
+or carries a contracting one (`rocketnet_check_fp_floor` in `CMakeLists.txt`), and
+`tools/check_fp_contract.sh` (run in CI) fails any compiler invocation outside CMake that
+omits the flag for its compiler.
 
 ### XDP transmit staging pressure
 
@@ -467,9 +509,9 @@ cmake --build build --target rocketnet_dev --parallel 4
 make -C tests/fuzz ROCKETNET_FUZZ_CXX="$ROCKETNET_FUZZ_CXX"
 ```
 
-That builds `rocketnet_fuzz`, `rocketnet_fuzz_message`,
-`rocketnet_fuzz_connect_token` and `rocketnet_fuzz_receive_structured` in
-`tests/fuzz/`, each linked with `-fsanitize=fuzzer,address,undefined` and the same
+That builds the ten harnesses in `tests/fuzz/Makefile`'s `TARGETS` (the table
+in [tests/fuzz/README.md](../tests/fuzz/README.md) names each one, its seed
+corpus and its dictionary) in `tests/fuzz/`, each linked with `-fsanitize=fuzzer,address,undefined` and the same
 `-ffp-contract=off` floor as the library. On macOS the link adds
 `-framework CoreFoundation -framework SystemConfiguration`, which the platform
 layer's interface lookup uses, as `CMakeLists.txt` does. Run one for fifteen
@@ -484,10 +526,9 @@ ASAN_OPTIONS=detect_leaks=0 ./tests/fuzz/rocketnet_fuzz corpus/rocketnet_fuzz te
   -dict=tests/fuzz/rocketnet.dict -max_total_time=900 -print_final_stats=1
 ```
 
-The other three take `corpus/rocketnet_fuzz_message` with
-`tests/fuzz/corpus_message`, `corpus/rocketnet_fuzz_connect_token` with
-`tests/fuzz/corpus_connect_token`, and `corpus/rocketnet_fuzz_receive_structured`
-with `tests/fuzz/corpus_receive_structured`. A reproducer libFuzzer writes
+The others run the same way: harness `rocketnet_fuzz_<name>` takes
+`corpus/rocketnet_fuzz_<name>` with its seed corpus `tests/fuzz/corpus_<name>`.
+A reproducer libFuzzer writes
 (`crash-*`, `oom-*`, `timeout-*`, `leak-*`) names the bug; a minimized input
 belongs in the target's seed corpus as `regress_<name>` together with its
 pcapng capture, which `tools/check_fuzz_regressions.py` enforces. The nightly
@@ -495,14 +536,12 @@ workflow's `fuzz-macos` job runs this same build for each target; it fails fast
 with `TOOL-MISSING LLVM clang with libclang_rt.fuzzer_osx.a` when
 `$HOME/sdk/llvm` carries no libFuzzer runtime, before any build runs.
 `ci.yml`'s
-`Replay the fuzz corpora without libFuzzer` step stays the gate for the four
-committed corpora: build `fuzz_replay_rocketnet_fuzz`,
-`fuzz_replay_rocketnet_fuzz_message`,
-`fuzz_replay_rocketnet_fuzz_connect_token` and
-`fuzz_replay_rocketnet_fuzz_receive_structured` and run each against its
-`tests/fuzz/corpus*` inputs, which executes every committed file exactly once. The
+`Replay the fuzz corpora without libFuzzer` step stays the gate for the
+committed corpora: it builds `fuzz_replay_<harness>` for each of the ten
+harnesses and runs each against its `tests/fuzz/corpus*` inputs, which executes
+every committed file exactly once. The
 `ROCKETNET_FUZZ_CC`/`ROCKETNET_FUZZ_CXX` variable mechanism is not Apple
 silicon specific: building the instrumented library with LLVM clang and
-running `make -C tests/fuzz ROCKETNET_FUZZ_CXX=...` produces the four harnesses with
+running `make -C tests/fuzz ROCKETNET_FUZZ_CXX=...` produces the ten harnesses with
 `-fsanitize=fuzzer,address,undefined` on any host that carries a libFuzzer
 runtime.

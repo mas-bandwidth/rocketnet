@@ -157,6 +157,16 @@ void rocketnet_server_socket_abort_packet( struct rocketnet_server_socket_t * se
 
 void rocketnet_server_socket_send_packets( struct rocketnet_server_socket_t * server_socket );
 
+// the frames start_packet takes for any destination before the next flush:
+// the fewest free slots of any queue's producer buffer, since a destination
+// hashes to one queue. Main thread.
+int rocketnet_server_socket_send_room( struct rocketnet_server_socket_t * server_socket );
+
+// true once every queue's producer buffer is empty and its worker has
+// written and recycled every buffer it was handed. Main thread; a send
+// mutex held by a worker reads as not idle.
+bool rocketnet_server_socket_send_idle( struct rocketnet_server_socket_t * server_socket );
+
 // receive packets (staged, one copy each way)
 
 void rocketnet_server_socket_receive_packets( struct rocketnet_server_socket_t * server_socket );
@@ -167,7 +177,14 @@ bool rocketnet_server_socket_test_buffer_exchange();
 bool rocketnet_server_socket_test_inactive_flow();
 bool rocketnet_server_socket_test_replay_marks();
 bool rocketnet_server_socket_test_send_failures_without_mutex();
+// the unit suite's case: dispatch is rocketnet_server_transport_io_receive_frames_dropped
+// and xdp the xdp operations table, as the transport's counter read uses them
+typedef bool rocketnet_server_socket_test_frames_dropped_t( const struct rocketnet_server_transport_io_operations_t * operations, void * transport,
+                                                            uint64_t * dropped );
+bool rocketnet_server_socket_test_receive_dropped( rocketnet_server_socket_test_frames_dropped_t * dispatch,
+                                                   const struct rocketnet_server_transport_io_operations_t * xdp );
 bool rocketnet_server_socket_test_reply_mac_refreshed_at_finish();
+bool rocketnet_server_socket_test_gateway_refresh();
 #endif // #if ROCKETNET_DEV
 
 struct rocketnet_server_socket_process_packets_t * rocketnet_server_socket_process_packets( struct rocketnet_server_socket_t * server_socket );

@@ -577,22 +577,43 @@ static void channels_check_records_inside( const uint8_t * payload, int bytes, c
     }
 }
 
+// A heap buffer of exactly the bytes asked for, filled with one memcpy or
+// memset. The property test below makes several for every parse, prefix and
+// mutation; a std::vector<uint8_t> constructs and destroys its bytes one call at
+// a time in a Debug build, and a sanitizer instruments every one of those calls.
+
+struct channels_buffer_t
+{
+    explicit channels_buffer_t( size_t bytes )
+        : data( new uint8_t[bytes] )
+    {
+    }
+
+    ~channels_buffer_t() { delete[] data; }
+
+    channels_buffer_t( const channels_buffer_t & ) = delete;
+    channels_buffer_t & operator=( const channels_buffer_t & ) = delete;
+
+    uint8_t * const data;
+};
+
 static void channels_check_repack( const uint8_t * payload, int bytes, const std::vector<rocketnet_message_record_t> & records, int form )
 {
     // a parse that succeeds packs back to the same bytes: the codec is a bijection on valid payloads
 
-    std::vector<uint8_t> repacked( (size_t) bytes + 64, 0xEE );
+    channels_buffer_t repacked( (size_t) bytes + 64 );
+    memset( repacked.data, 0xEE, (size_t) bytes + 64 );
 
     if ( form == ROCKETNET_MESSAGE_FORM_SINGLE )
     {
         channels_check( records.size() == 1 );
-        memcpy( repacked.data(), records[0].data, (size_t) records[0].bytes );
-        channels_check( rocketnet_message_single_finish( repacked.data(), bytes, records[0].bytes ) == bytes );
+        memcpy( repacked.data, records[0].data, (size_t) records[0].bytes );
+        channels_check( rocketnet_message_single_finish( repacked.data, bytes, records[0].bytes ) == bytes );
     }
     else
     {
         struct rocketnet_message_writer_t writer;
-        rocketnet_message_writer_begin( &writer, repacked.data(), bytes );
+        rocketnet_message_writer_begin( &writer, repacked.data, bytes );
 
         for ( size_t i = 0; i < records.size(); i++ )
         {
@@ -603,7 +624,7 @@ static void channels_check_repack( const uint8_t * payload, int bytes, const std
         channels_check( rocketnet_message_writer_finish( &writer ) == bytes );
     }
 
-    channels_check( memcmp( repacked.data(), payload, (size_t) bytes ) == 0 );
+    channels_check( memcmp( repacked.data, payload, (size_t) bytes ) == 0 );
 }
 
 // parse the same L bytes followed by different tails: a reader that never
@@ -614,28 +635,35 @@ static int channels_parse_with_tails( const uint8_t * bytes, int length, const s
 {
     // exact size first, so a sanitizer build sees any overread as a heap overflow
 
-    std::vector<uint8_t> exact( bytes, bytes + length );
+    channels_buffer_t exact( (size_t) length );
+    if ( length > 0 )
+    {
+        memcpy( exact.data, bytes, (size_t) length );
+    }
 
-    const int violation = channels_parse_all( exact.data(), length, limits, records );
-    channels_check( rocketnet_message_check_payload( exact.data(), length, limits ) == violation );
+    const int violation = channels_parse_all( exact.data, length, limits, records );
+    channels_check( rocketnet_message_check_payload( exact.data, length, limits ) == violation );
 
     static const uint8_t tails[3] = { 0x00, 0xFF, 0x01 };
 
+    channels_buffer_t padded( (size_t) length + 64 );
+    if ( length > 0 )
+    {
+        memcpy( padded.data, bytes, (size_t) length );
+    }
+
+    std::vector<rocketnet_message_record_t> again;
+
     for ( int t = 0; t < 3; t++ )
     {
-        std::vector<uint8_t> padded( (size_t) length + 64, tails[t] );
-        if ( length > 0 )
-        {
-            memcpy( padded.data(), bytes, (size_t) length );
-        }
+        memset( padded.data + length, tails[t], 64 );
 
-        std::vector<rocketnet_message_record_t> again;
-        channels_check( channels_parse_all( padded.data(), length, limits, again ) == violation );
+        channels_check( channels_parse_all( padded.data, length, limits, again ) == violation );
         channels_check( again.size() == records.size() );
 
         for ( size_t i = 0; i < again.size(); i++ )
         {
-            channels_check( again[i].data - padded.data() == records[i].data - exact.data() );
+            channels_check( again[i].data - padded.data == records[i].data - exact.data );
             channels_check( channels_record_equal( again[i], records[i] ) );
         }
     }
@@ -644,7 +672,7 @@ static int channels_parse_with_tails( const uint8_t * bytes, int length, const s
 
     for ( size_t i = 0; i < records.size(); i++ )
     {
-        records[i].data = bytes + ( records[i].data - exact.data() );
+        records[i].data = bytes + ( records[i].data - exact.data );
     }
 
     return violation;
@@ -704,12 +732,13 @@ static void channels_test_round_trip_and_never_overreads()
 
             // at most the receiver's max_message_bytes (check 9)
 
-            std::vector<uint8_t> big( (size_t) channels_random_range( &random, 1200, limits.max_message_bytes ) );
-            for ( size_t i = 0; i < big.size(); i++ )
+            const int big_bytes = channels_random_range( &random, 1200, limits.max_message_bytes );
+            channels_buffer_t big( (size_t) big_bytes );
+            for ( size_t i = 0; i < (size_t) big_bytes; i++ )
             {
-                big[i] = pool[( i * 13 + (size_t) iteration ) & 4095];
+                big.data[i] = pool[( i * 13 + (size_t) iteration ) & 4095];
             }
-            record = channels_record( ROCKETNET_MESSAGE_CODE_UNRELIABLE, big.data(), (int) big.size() );
+            record = channels_record( ROCKETNET_MESSAGE_CODE_UNRELIABLE, big.data, big_bytes );
 
             if ( channels_random_range( &random, 0, 1 ) )
             {
@@ -799,38 +828,39 @@ static void channels_test_round_trip_and_never_overreads()
 
         // one-byte mutations: refused with one violation, or a payload that packs back to itself
 
-        std::vector<uint8_t> mutated( payload, payload + length );
+        channels_buffer_t mutated( (size_t) length );
+        memcpy( mutated.data, payload, (size_t) length );
 
         const int mutations = length < 48 ? length : 48;
         for ( int m = 0; m < mutations; m++ )
         {
             const int position = length <= 48 ? m : channels_random_range( &random, 0, length - 1 );
-            const uint8_t original = mutated[(size_t) position];
-            mutated[(size_t) position] = (uint8_t) ( original ^ (uint8_t) channels_random_range( &random, 1, 255 ) );
+            const uint8_t original = mutated.data[(size_t) position];
+            mutated.data[(size_t) position] = (uint8_t) ( original ^ (uint8_t) channels_random_range( &random, 1, 255 ) );
 
             std::vector<rocketnet_message_record_t> result;
-            const int violation = channels_parse_with_tails( mutated.data(), length, &limits, result );
+            const int violation = channels_parse_with_tails( mutated.data, length, &limits, result );
             channels_check( violation >= ROCKETNET_MESSAGE_VIOLATION_NONE && violation < ROCKETNET_MESSAGE_NUM_VIOLATIONS );
             violations_seen[violation]++;
 
             // and under the first version's limits: codes 0 and 3, 32 channels
 
             std::vector<rocketnet_message_record_t> first_version;
-            const int narrow = channels_parse_with_tails( mutated.data(), length, &first_version_limits, first_version );
+            const int narrow = channels_parse_with_tails( mutated.data, length, &first_version_limits, first_version );
             violations_seen[narrow]++;
             if ( narrow == ROCKETNET_MESSAGE_VIOLATION_NONE )
             {
-                channels_check_records_inside( mutated.data(), length, first_version );
+                channels_check_records_inside( mutated.data, length, first_version );
             }
 
             if ( violation == ROCKETNET_MESSAGE_VIOLATION_NONE )
             {
-                channels_check_records_inside( mutated.data(), length, result );
-                channels_check_repack( mutated.data(), length, result, mutated[(size_t) ( length - 1 )] );
+                channels_check_records_inside( mutated.data, length, result );
+                channels_check_repack( mutated.data, length, result, mutated.data[(size_t) ( length - 1 )] );
                 mutations_parsed++;
             }
 
-            mutated[(size_t) position] = original;
+            mutated.data[(size_t) position] = original;
         }
     }
 
@@ -2113,7 +2143,6 @@ static void rn_soak_write_and_receive( rn_soak_side_t * side, uint64_t tick )
                 slot->descriptor = d;
                 slot->fragment = (uint16_t) f;
                 slot->ring_start = ring + (uint64_t) f * RN_STORE_LARGE_BYTES;
-                slot->ring_units = RN_STORE_LARGE_BYTES / 16;
                 slot->last_send = (double) tick;
                 slot->acked = 0;
 
@@ -2691,7 +2720,6 @@ static void test_channels_window_send_block_takes_consecutive_numbers_and_one_sp
     check( n == 0 && p == 0 && rig.send.next == 2 );
     check( rig.numbers[0].fragment == 0 && rig.numbers[1].fragment == 1 );
     check( rig.numbers[0].ring_start == 0 && rig.numbers[1].ring_start == F );
-    check( rig.numbers[0].ring_units == F / 16 && rig.numbers[1].ring_units == 2 );
     check( rig.send.ring_next == F + 32 );
     check( rn_window_send_mark_acked( &rig.send, 1 ) == 1 );
     check( rig.send.U == 0 );
@@ -3202,7 +3230,7 @@ static void test_channels_window_send_and_receive_over_the_lossy_simulator_leg( 
             const rn_send_number_t * entry = &source->send_numbers[n % W];
             check( entry->number == n );
 
-            const uint32_t span = (uint32_t) entry->ring_units * 16;
+            const uint32_t span = ( records[n].bytes + 15 ) / 16 * 16;
             const uint32_t start = (uint32_t) ( entry->ring_start % B );
             check( rn_region_ring_span_valid( source, start, span ) );
 

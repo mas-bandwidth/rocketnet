@@ -1025,6 +1025,77 @@ REGISTER_UNIT_TEST( test_secrets_wiped_config_staging_on_parse );
 REGISTER_UNIT_TEST( test_secrets_wiped_config_staging_on_refused_parse );
 
 // ---------------------------------------------------------------------------
+// the server transport create's config copies (sdk/rocketnet_server_transport.cpp)
+// ---------------------------------------------------------------------------
+
+#if ROCKETNET_DEV
+
+static uint8_t secrets_wiped_transport_staging[ROCKETNET_SERVER_TRANSPORT_CONFIG_STAGING_COUNT][32];
+static int secrets_wiped_transport_staging_seen[ROCKETNET_SERVER_TRANSPORT_CONFIG_STAGING_COUNT];
+
+static void secrets_wiped_transport_staging_hook( const uint8_t * secret_key, int stage )
+{
+    check( stage >= 0 && stage < ROCKETNET_SERVER_TRANSPORT_CONFIG_STAGING_COUNT );
+
+    memcpy( secrets_wiped_transport_staging[stage], secret_key, 32 );
+    secrets_wiped_transport_staging_seen[stage]++;
+}
+
+// a create with a planted secret key; every stack copy the hook sees on its
+// exit is all zero. create_ex and create_current_ex both pass the caller's
+// struct straight to the create, so the resolve's and the create's copies are
+// the only ones.
+static struct rocketnet_server_transport_t * secrets_wiped_transport_create( const char * address, bool through_create_ex, int * status )
+{
+    struct rocketnet_server_transport_config_t config;
+    rocketnet_server_transport_dev_config( &config );
+    snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
+    config.loopback_hub = rocketnet_test_loopback_hub();
+    config.max_clients = 1;
+    memset( config.server_secret_key, 0x5C, sizeof( config.server_secret_key ) );
+
+    memset( secrets_wiped_transport_staging, 0xA5, sizeof( secrets_wiped_transport_staging ) );
+    memset( secrets_wiped_transport_staging_seen, 0, sizeof( secrets_wiped_transport_staging_seen ) );
+    rocketnet_server_transport_config_staging_hook = secrets_wiped_transport_staging_hook;
+
+    struct rocketnet_server_transport_t * server = through_create_ex ? rocketnet_server_transport_create_ex( NULL, address, &config, 1000.0, status ) : rocketnet_server_transport_create_current_ex( NULL, address, &config, 1000.0, status );
+    rocketnet_server_transport_config_staging_hook = NULL;
+
+    for ( int stage = 0; stage < ROCKETNET_SERVER_TRANSPORT_CONFIG_STAGING_COUNT; stage++ )
+    {
+        check( secrets_wiped_transport_staging_seen[stage] == 1 );
+        check( secrets_wiped_all_zero( secrets_wiped_transport_staging[stage], 32 ) );
+    }
+
+    sodium_memzero( &config, sizeof( config ) );
+    return server;
+}
+
+static void test_secrets_wiped_server_transport_config_on_create()
+{
+    int status = -1;
+    struct rocketnet_server_transport_t * server = secrets_wiped_transport_create( "127.0.0.1:12345", false, &status );
+    check( server != NULL );
+    check( status == ROCKETNET_STATUS_OK );
+    rn_test_server_transport_stop_and_destroy( server );
+}
+
+static void test_secrets_wiped_server_transport_config_on_refused_create()
+{
+    rocketnet_quiet( 1 );
+    int status = -1;
+    check( secrets_wiped_transport_create( "not-an-address", true, &status ) == NULL );
+    check( status != ROCKETNET_STATUS_OK );
+    check( secrets_wiped_transport_create( "not-an-address", false, &status ) == NULL );
+    check( status != ROCKETNET_STATUS_OK );
+}
+
+REGISTER_UNIT_TEST( test_secrets_wiped_server_transport_config_on_create );
+REGISTER_UNIT_TEST( test_secrets_wiped_server_transport_config_on_refused_create );
+
+#endif // #if ROCKETNET_DEV
+
+// ---------------------------------------------------------------------------
 // the private block staging of a token open (sdk/rocketnet_connect_token.cpp)
 // ---------------------------------------------------------------------------
 

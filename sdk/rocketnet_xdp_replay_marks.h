@@ -16,9 +16,10 @@
 #include "rocketnet_xdp_limits.h"
 
 // The userspace pending-marks buffer for the kernel replay map. The transport
-// fills it once per server update -- a FORGET per slot that held a mark and
-// is no longer connected or whose address changed, then a MARK per connected
-// slot whose replay high-water mark advanced -- and the transport applies every
+// fills it once per server update -- a FORGET per slot seen connected that is
+// no longer connected or whose address changed, whether or not it held a mark,
+// then a MARK per connected slot first seen (zero included) or whose
+// highest_opened differs from its last mark -- and the transport applies every
 // forget, then every mark, in one commit, then resets keeping every forget the
 // kernel refused that no applied mark for the same key superseded, so it is
 // tried again first in the next commit (proofs/tla/RNXdpReplay.tla, Commit,

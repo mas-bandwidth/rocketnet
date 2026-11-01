@@ -21,7 +21,8 @@
 #
 # The fleet runs this on every Linux runner host through the fleet's
 # provisioning; run_msan.sh prints TOOL-MISSING naming this script
-# when the prefix for the active clang is absent.
+# when the prefix for the active clang is absent, and the fuzz-nightly MSan
+# job builds into a cached prefix of its own on a runner that lacks it.
 set -euo pipefail
 
 version=$(clang++ -dumpversion)
@@ -49,7 +50,9 @@ tar -xJf "$work/$tarball" -C "$work"
 # shared libraries (a static libc++ cannot go into the SDK's shared
 # libraries: its exception globals are local-exec TLS), and the system
 # unwinder (libgcc_s) as every other binary on the host uses
-cmake -G Ninja -S "$work/llvm-project-$version.src/runtimes" -B "$work/build" \
+generator="Unix Makefiles"
+command -v ninja >/dev/null 2>&1 && generator=Ninja
+cmake -G "$generator" -S "$work/llvm-project-$version.src/runtimes" -B "$work/build" \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_C_COMPILER=clang \
     -DCMAKE_CXX_COMPILER=clang++ \

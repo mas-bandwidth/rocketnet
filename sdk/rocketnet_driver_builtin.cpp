@@ -74,7 +74,7 @@ static uint64_t portable_rx_storage_bytes( int capacity )
 // the transport logs each path's count when it closes.
 static const int PORTABLE_TX_DROP_NO_FREE_BANK = 0;  // the producer bank is full and every other bank is in flight
 static const int PORTABLE_TX_DROP_HANDOFF_BUSY = 1;  // the producer bank is full and the handoff lock was held
-static const int PORTABLE_TX_DROP_STOPPING = 2;      // sent after stop, or unpublished at stop
+static const int PORTABLE_TX_DROP_STOPPING = 2;      // sent after stop
 static const int PORTABLE_TX_DROP_INVALID = 3;       // no address, no data, or a size outside the datagram ceiling
 static const int PORTABLE_TX_DROP_PATHS = 4;
 static const char * const portable_tx_drop_path_name[PORTABLE_TX_DROP_PATHS] = { "no-free-bank", "handoff-busy", "stopping", "invalid-packet" };
@@ -114,6 +114,7 @@ struct portable_server_t
     std::atomic<uint64_t> dropped{ 0 };
     std::atomic<uint64_t> dropped_by_path[PORTABLE_TX_DROP_PATHS] = {}; // the paths of dropped, by PORTABLE_TX_DROP_*
     int publish_refusal = PORTABLE_TX_DROP_HANDOFF_BUSY; // main only: why the last publish try failed
+    bool stop_publish_owed = false; // main only: stop's last producer waits for its publish
 
 #if ROCKETNET_DEV
     bool stop_publish_saw_quit = false;
@@ -314,79 +315,100 @@ static bool portable_tx_publish( portable_server_t * server )
     return true;
 }
 
+enum portable_tx_step_t
+{
+    PORTABLE_TX_EXIT,
+    PORTABLE_TX_SENT,
+    PORTABLE_TX_WAIT,
+};
+
 #if defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
+static portable_tx_step_t portable_tx_step( portable_server_t * server )
+{
+    // one pass of the TX worker loop, without its wait (proofs/tla/RNPortableTx.tla
+    // WTop through WRetSwap): send the oldest ready bank and return it, or
+    // observe empty, and exit only when empty and quit were seen together.
+
+    // proofs/tla/RNPortableTx.tla WTop: the worker's acquire blocks; main's never does.
+
+    rocketnet_platform_mutex_acquire( &server->mutex );
+
+    // proofs/tla/RNPortableTx.tla WTake: under the mutex the oldest ready bank is
+    // taken, or empty is observed together with quit. A quit read after the
+    // release is the race MCRNPortableTxBrokenQuitAfterUnlock.cfg reproduces.
+
+    int index = -1;
+    bool exit_empty = false;
+    if ( server->ready_count > 0 )
+    {
+        index = server->ready_index[server->ready_head];
+        // proofs/tla/RNBankFifoLayout.tla Take: the ready head advances modulo the bank count.
+        server->ready_head = ( server->ready_head + 1 ) % PORTABLE_TX_BANKS;
+        server->ready_count--;
+    }
+    else
+        exit_empty = server->quit.load( std::memory_order_acquire );
+
+    rocketnet_platform_mutex_release( &server->mutex );
+
+    if ( index < 0 )
+    {
+#if ROCKETNET_DEV
+        if ( server->after_worker_empty )
+            server->after_worker_empty( server );
+#endif // #if ROCKETNET_DEV
+
+        // empty and quit were observed together under the handoff lock.
+        // A stop publication after an earlier empty observation must win.
+        // proofs/tla/RNPortableTx.tla WEmpty: exit on empty and quit, else WWait.
+
+        return exit_empty ? PORTABLE_TX_EXIT : PORTABLE_TX_WAIT;
+    }
+
+    portable_tx_bank_t * bank = &server->bank[index];
+
+#if ROCKETNET_DEV
+    if ( server->skip_socket_send )
+        server->test_sent_banks.fetch_add( 1, std::memory_order_relaxed );
+    else
+#endif // #if ROCKETNET_DEV
+    {
+        // proofs/tla/RNPortableTx.tla WSend: the bank in flight is read outside the mutex.
+
+        for ( int i = 0; i < bank->count; ++i )
+            bank->sends[i] = { &bank->to[i], bank->data[i], bank->bytes[i] };
+
+        rocketnet_platform_socket_send_packets( server->socket, bank->sends, bank->count );
+    }
+
+    // proofs/tla/RNPortableTx.tla WSendDone, WRetLock and WRetSwap: the count is
+    // zeroed before the bank rejoins the free queue at
+    // ( free_head + free_count ) % PORTABLE_TX_BANKS under the mutex.
+
+    bank->count = 0;
+    rocketnet_platform_mutex_acquire( &server->mutex );
+    // proofs/tla/RNBankFifoLayout.tla Release: the bank returns at the free tail.
+    server->free_index[( server->free_head + server->free_count ) % PORTABLE_TX_BANKS] = index;
+    server->free_count++;
+    rocketnet_platform_mutex_release( &server->mutex );
+
+    return PORTABLE_TX_SENT;
+}
+
 static void portable_tx_worker( rocketnet_platform_thread_t *, void * arg )
 {
+    // proofs/tla/RNPortableTx.tla WWait: on empty without quit the worker
+    // waits on the wake, which a publish signals.
+
     portable_server_t * server = (portable_server_t *) arg;
     for ( ;; )
     {
-        // proofs/tla/RNPortableTx.tla WTop: the worker's acquire blocks; main's never does.
+        const portable_tx_step_t step = portable_tx_step( server );
+        if ( step == PORTABLE_TX_EXIT )
+            break;
 
-        rocketnet_platform_mutex_acquire( &server->mutex );
-
-        // proofs/tla/RNPortableTx.tla WTake: under the mutex the oldest ready bank is
-        // taken, or empty is observed together with quit. A quit read after the
-        // release is the race MCRNPortableTxBrokenQuitAfterUnlock.cfg reproduces.
-        // proofs/tla/RNBankFifoLayout.tla Take: the ready head advances % PORTABLE_TX_BANKS.
-
-        int index = -1;
-        bool exit_empty = false;
-        if ( server->ready_count > 0 )
-        {
-            index = server->ready_index[server->ready_head];
-            server->ready_head = ( server->ready_head + 1 ) % PORTABLE_TX_BANKS;
-            server->ready_count--;
-        }
-        else
-            exit_empty = server->quit.load( std::memory_order_acquire );
-
-        rocketnet_platform_mutex_release( &server->mutex );
-
-        if ( index < 0 )
-        {
-#if ROCKETNET_DEV
-            if ( server->after_worker_empty )
-                server->after_worker_empty( server );
-#endif // #if ROCKETNET_DEV
-
-            // empty and quit were observed together under the handoff lock.
-            // A stop publication after an earlier empty observation must win.
-            // proofs/tla/RNPortableTx.tla WEmpty: exit on empty and quit, else WWait:
-            // wait on the wake, which a publish signals.
-
-            if ( exit_empty )
-                break;
-
+        if ( step == PORTABLE_TX_WAIT )
             rocketnet_platform_wake_wait( server->wake, false, 0.1 );
-            continue;
-        }
-
-        portable_tx_bank_t * bank = &server->bank[index];
-
-#if ROCKETNET_DEV
-        if ( server->skip_socket_send )
-            server->test_sent_banks.fetch_add( 1, std::memory_order_relaxed );
-        else
-#endif // #if ROCKETNET_DEV
-        {
-            // proofs/tla/RNPortableTx.tla WSend: the bank in flight is read outside the mutex.
-
-            for ( int i = 0; i < bank->count; ++i )
-                bank->sends[i] = { &bank->to[i], bank->data[i], bank->bytes[i] };
-
-            rocketnet_platform_socket_send_packets( server->socket, bank->sends, bank->count );
-        }
-
-        // proofs/tla/RNPortableTx.tla WSendDone, WRetLock and WRetSwap: the count is
-        // zeroed before the bank rejoins the free queue at
-        // ( free_head + free_count ) % PORTABLE_TX_BANKS under the mutex.
-        // proofs/tla/RNBankFifoLayout.tla Release: the free tail at that position.
-
-        bank->count = 0;
-        rocketnet_platform_mutex_acquire( &server->mutex );
-        server->free_index[( server->free_head + server->free_count ) % PORTABLE_TX_BANKS] = index;
-        server->free_count++;
-        rocketnet_platform_mutex_release( &server->mutex );
     }
 
     server->exited.store( true, std::memory_order_release );
@@ -502,6 +524,10 @@ static portable_rx_step_t portable_rx_step( portable_server_t * server )
 #endif // #if ROCKETNET_DEV
         return PORTABLE_RX_WAIT_FULL;
     }
+
+    // proofs/tla/RNPortableRx.tla WRead, WReadOne and WReadEnd: one call reads
+    // at most rx_capacity datagrams, kept or discarded (BoundedRead), so the
+    // next pass tests quit after a bounded read whatever the socket holds.
 
     portable_rx_bank_t * bank = &server->rx_bank[server->rx_producer];
     bank->count = rocketnet_platform_socket_receive_packets( server->socket,
@@ -658,7 +684,7 @@ static void * portable_create( void * context, const rocketnet_server_transport_
     // the kernel holds whatever arrives until the next update
 
     const int max_clients = config->transport && config->transport->max_clients > 0 ? config->transport->max_clients : ROCKETNET_DEFAULT_MAX_CLIENTS;
-    const int receive_buffer_bytes = rocketnet_server_receive_buffer_request( max_clients );
+    const int receive_buffer_bytes = rocketnet_server_transport_receive_buffer_request( "portable", max_clients );
     server->socket = (rocketnet_platform_socket_t *) portable_socket_create( context, config->name, bind, receive_buffer_bytes, config->status );
     if ( !server->socket )
     {
@@ -817,30 +843,13 @@ static int portable_receive( void * transport, rocketnet_address_t * from, uint8
     return received;
 }
 
-static void portable_stop( void * transport )
+// proofs/tla/RNPortableRx.tla MStop1 and MStop2: quit, then the RX wake
+// (QuitBeforeWake). proofs/tla/RNPortableTx.tla MStopQuit then MStopWake: the
+// last producer is published before quit, since an empty-ready worker exits
+// on quit and would never take a bank published after it
+// (MCRNPortableTxBrokenQuitFirst.cfg for the reverse order).
+static void portable_stop_quit( portable_server_t * server )
 {
-    // proofs/tla/RNPortableRx.tla MStop, MStop1 and MStop2: stopping, then quit, then
-    // the RX wake (QuitBeforeWake).
-
-    portable_server_t * server = (portable_server_t *) transport;
-    if ( server->stopping.exchange( true, std::memory_order_acq_rel ) )
-        return;
-
-    // the worker never reads the main-owned unpublished producer. If the
-    // final try cannot publish it, account and drop it before completion.
-    // proofs/tla/RNPortableTx.tla MStop and MReturn: stopping, then the final publish or drop.
-
-    if ( !portable_tx_publish( server ) )
-    {
-        portable_tx_drop( server, PORTABLE_TX_DROP_STOPPING, (uint64_t) server->bank[server->producer].count );
-        server->bank[server->producer].count = 0;
-    }
-
-    // publish or drop the main-owned bank before allowing an empty-ready
-    // worker to exit. Releasing quit before publication would lose this batch
-    // (proofs/tla/RNPortableTx.tla MStopQuit then MStopWake, and
-    // MCRNPortableTxBrokenQuitFirst.cfg for the reverse order).
-
     server->quit.store( true, std::memory_order_release );
     rocketnet_platform_wake_set( server->wake );
 
@@ -848,12 +857,44 @@ static void portable_stop( void * transport )
         rocketnet_platform_wake_set( server->rx_wake );
 }
 
-static bool portable_stopped( void * transport )
+static void portable_stop( void * transport )
 {
-    // proofs/tla/RNPortableRx.tla MPollStopped and proofs/tla/RNPortableTx.tla MPollStopped:
-    // main polls between frames, and nothing changes until the workers have exited.
+    // proofs/tla/RNPortableRx.tla MStop: stopping first.
 
     portable_server_t * server = (portable_server_t *) transport;
+    if ( server->stopping.exchange( true, std::memory_order_acq_rel ) )
+        return;
+
+    // proofs/tla/RNPortableTx.tla MStop and MReturn: the worker never reads
+    // the main-owned unpublished producer, so stop publishes it. A refused try
+    // (the worker on the handoff lock, or no free bank while it sends) keeps
+    // the producer, and each portable_stopped poll tries again (MStopRetry)
+    // until it is published; nothing is dropped and stop never waits.
+
+    if ( !portable_tx_publish( server ) )
+    {
+        server->stop_publish_owed = true;
+        return;
+    }
+
+    portable_stop_quit( server );
+}
+
+static bool portable_stopped( void * transport )
+{
+    // proofs/tla/RNPortableRx.tla MPollStopped and proofs/tla/RNPortableTx.tla
+    // MPollStopped and MStopRetry: main polls between frames; while stop's last
+    // producer waits, each poll is one more publish try, and quit follows it.
+
+    portable_server_t * server = (portable_server_t *) transport;
+    if ( server->stop_publish_owed )
+    {
+        if ( !portable_tx_publish( server ) )
+            return false;
+        server->stop_publish_owed = false;
+        portable_stop_quit( server );
+    }
+
     return server->exited.load( std::memory_order_acquire ) && server->rx_exited.load( std::memory_order_acquire );
 }
 
@@ -902,7 +943,8 @@ rocketnet_platform_socket_t * rocketnet_portable_server_test_socket( void * tran
 
 bool rocketnet_portable_tx_test_handoff()
 {
-    // no socket or worker: each path is forced at an exact ownership transition
+    // no socket, thread or timed wait: each path is forced at an exact
+    // ownership transition, and the worker's passes run on this thread
 
 #if !defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
     return true;
@@ -989,15 +1031,31 @@ bool rocketnet_portable_tx_test_handoff()
     portable_send( server, &send, 1 ); // full producer and no free bank: one drop
     valid &= server->bank[2].count == server->tx_capacity && server->dropped.load() == 1;
 
+    // no free bank: stop keeps the full producer and holds quit back; the
+    // poll after the worker returns a bank publishes it, then sets quit
+
     portable_stop( server );
-    valid &= !server->stop_publish_saw_quit && server->quit.load() &&
-             server->ready_count == 2 && server->bank[2].count == 0 &&
-             server->dropped.load() == (uint64_t) server->tx_capacity + 1;
+    valid &= server->stop_publish_owed && !server->quit.load() &&
+             server->ready_count == 2 && server->bank[2].count == server->tx_capacity &&
+             server->dropped.load() == 1;
+
+    const int returned = server->ready_index[server->ready_head];
+    server->ready_head = ( server->ready_head + 1 ) % PORTABLE_TX_BANKS;
+    server->ready_count--;
+    server->bank[returned].count = 0;
+    server->free_index[( server->free_head + server->free_count ) % PORTABLE_TX_BANKS] = returned;
+    server->free_count++;
+
+    (void) portable_stopped( server );
+    valid &= !server->stop_publish_owed && !server->stop_publish_saw_quit && server->quit.load() &&
+             server->ready_count == 2 && server->producer == returned &&
+             server->dropped.load() == 1;
     portable_server_cleanup( server );
 
     // the exit race: worker observes empty, pauses after releasing the
     // handoff mutex, stop publishes the last bank and sets quit, then worker
     // resumes its exit decision. A post-unlock quit read would strand bank 0.
+    // No thread: each worker pass runs here, in order.
 
     void * race_storage = rocketnet_malloc( NULL, sizeof( portable_server_t ) );
     if ( !race_storage )
@@ -1017,6 +1075,10 @@ bool rocketnet_portable_tx_test_handoff()
         return false;
     }
 
+    // the test thread plays the worker one pass at a time (portable_tx_step):
+    // the first pass observes empty without quit, and its paused point runs
+    // stop; that pass must wait, not exit, and the next sends bank 0.
+
     race->bank[0].count = 1;
     race->skip_socket_send = true;
     race->after_worker_empty = []( portable_server_t * owner )
@@ -1024,18 +1086,12 @@ bool rocketnet_portable_tx_test_handoff()
         owner->after_worker_empty = NULL;
         portable_stop( owner );
     };
-    race->thread = rocketnet_platform_thread_create( NULL, portable_tx_worker, race );
-    if ( !race->thread )
-    {
-        portable_server_cleanup( race );
-        return false;
-    }
 
-    rocketnet_platform_thread_join( race->thread );
-    valid &= race->exited.load( std::memory_order_acquire ) && race->test_sent_banks.load() == 1 &&
-             !race->stop_publish_saw_quit && race->dropped.load() == 0;
-    rocketnet_platform_thread_destroy( race->thread );
-    race->thread = NULL;
+    valid &= portable_tx_step( race ) == PORTABLE_TX_WAIT;
+    valid &= race->quit.load() && rocketnet_platform_wake_wait( race->wake, false, 0.0 );
+    valid &= portable_tx_step( race ) == PORTABLE_TX_SENT;
+    valid &= portable_tx_step( race ) == PORTABLE_TX_EXIT;
+    valid &= race->test_sent_banks.load() == 1 && !race->stop_publish_saw_quit && race->dropped.load() == 0;
     portable_server_cleanup( race );
 
     return valid;
@@ -1101,8 +1157,9 @@ bool rocketnet_portable_tx_test_sizing()
     // sizing: one bank holds ROCKETNET_SEND_PACKETS_PER_CLIENT per configured
     // client, never fewer than ROCKETNET_SERVER_MAX_SEND_PACKETS, and the memory
     // plan counts the allocation. A burst of three updates of 1100 packets behind
-    // a busy worker drops at banks of ROCKETNET_SERVER_MAX_SEND_PACKETS and drops
-    // nothing at the banks sized for 1000 clients.
+    // a busy worker drops at banks of 1000 packets (one per client at 1000
+    // clients, whatever ROCKETNET_MAX_CLIENTS is) and drops nothing at the banks
+    // sized for 1000 clients.
 
 #if !defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
     return true;
@@ -1122,7 +1179,7 @@ bool rocketnet_portable_tx_test_sizing()
                                                        ( sizeof( rocketnet_address_t ) + sizeof( int ) + ROCKETNET_RECEIVE_CEILING + sizeof( rocketnet_platform_send_t ) );
     valid &= portable_tx_storage_bytes( 0 ) == 0;
 
-    portable_server_t * fixed = portable_tx_test_owner( ROCKETNET_SERVER_MAX_SEND_PACKETS );
+    portable_server_t * fixed = portable_tx_test_owner( 1000 );
     if ( !fixed )
         return false;
 
@@ -1142,6 +1199,64 @@ bool rocketnet_portable_tx_test_sizing()
         queued += server->bank[i].count;
 
     valid &= queued == 1 + 3 * 1100;
+    portable_server_cleanup( server );
+
+    return valid;
+#endif // #if !defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
+}
+
+// Stop meets no free bank (one in flight, one ready, a full producer): the
+// producer is kept, not dropped, quit waits, and the poll after the worker
+// returns a bank publishes it and then sets quit. No worker: the test plays it.
+bool rocketnet_portable_tx_test_stop_publishes_across_polls()
+{
+#if !defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
+    return true;
+#else
+    portable_server_t * server = portable_tx_test_owner( 4 );
+    if ( !server )
+        return false;
+
+    rocketnet_address_t to = {};
+    to.type = ROCKETNET_ADDRESS_IPV4;
+    to.port = 1234;
+
+    uint8_t bytes[4] = { 1, 2, 3, 4 };
+    const rocketnet_platform_send_t send = { &to, bytes, 4 };
+
+    // each send ends with a publish try: the first bank is published and
+    // taken into flight, the second published and left ready, and the third,
+    // the producer, keeps two packets no free bank can take
+
+    portable_send( server, &send, 1 );
+    const int in_flight = server->ready_index[server->ready_head];
+    server->ready_head = ( server->ready_head + 1 ) % PORTABLE_TX_BANKS;
+    server->ready_count--;
+    portable_send( server, &send, 1 );
+    portable_send( server, &send, 1 );
+    portable_send( server, &send, 1 );
+
+    bool valid = server->free_count == 0 && server->ready_count == 1 && server->bank[server->producer].count == 2;
+
+    portable_stop( server );
+    valid &= server->stop_publish_owed && !server->quit.load() && server->bank[server->producer].count == 2;
+    valid &= server->dropped_by_path[PORTABLE_TX_DROP_STOPPING].load() == 0;
+
+    // a poll with still no free bank changes nothing
+
+    valid &= !portable_stopped( server );
+    valid &= server->stop_publish_owed && !server->quit.load() && server->bank[server->producer].count == 2;
+
+    // the worker finishes its bank and returns it: the next poll publishes
+    // the producer, then quit
+
+    server->bank[in_flight].count = 0;
+    server->free_index[( server->free_head + server->free_count ) % PORTABLE_TX_BANKS] = in_flight;
+    server->free_count++;
+    (void) portable_stopped( server );
+    valid &= !server->stop_publish_owed && server->quit.load() && server->ready_count == 2;
+    valid &= server->bank[server->producer].count == 0 && server->dropped.load() == 0;
+
     portable_server_cleanup( server );
 
     return valid;
@@ -1407,12 +1522,84 @@ bool rocketnet_portable_rx_test_worker_steps()
     return valid;
 #endif // #if !defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
 }
+
+#if defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
+static int portable_rx_test_empty_receive( void * user, void *, int, struct sockaddr_storage * )
+{
+    // a zero-length datagram on every read, for far longer than any budget
+    int * reads = (int *) user;
+    return ++*reads > 1000000 ? -1 : 0;
+}
+#endif // #if defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
+
+bool rocketnet_portable_rx_test_chaff_drain()
+{
+    // the worker pass against a socket that answers only zero-length
+    // datagrams, through the platform receive seam (no descriptor, nothing
+    // opened): the pass returns idle after rx_capacity reads with nothing
+    // kept (proofs/tla/RNPortableRx.tla WReadOne and WReadEnd, BoundedRead),
+    // and a quit set then ends the next pass before any read.
+
+#if !defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
+    return true;
+#else
+    portable_server_t * server = portable_rx_test_owner();
+    if ( !server )
+        return false;
+
+    rocketnet_platform_socket_t socket;
+    memset( &socket, 0, sizeof( socket ) );
+    int reads = 0;
+    rocketnet_platform_socket_set_receive_hook( &socket, portable_rx_test_empty_receive, &reads );
+    server->socket = &socket;
+
+    bool valid = portable_rx_step( server ) == PORTABLE_RX_WAIT_IDLE && reads == server->rx_capacity &&
+                 server->rx_bank[server->rx_producer].count == 0;
+
+    server->quit.store( true, std::memory_order_release );
+    valid &= portable_rx_step( server ) == PORTABLE_RX_EXIT && reads == server->rx_capacity;
+
+    rocketnet_platform_socket_set_receive_hook( &socket, NULL, NULL );
+    server->socket = NULL;
+    portable_server_cleanup( server );
+
+    return valid;
+#endif // #if !defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
+}
 #endif // #if ROCKETNET_DEV
+
+// proofs/tla/ServerStopSpread.tla Room: the packets the producer bank takes
+// with no publish, so a send of at most this many never meets a refused
+// publish; a stopping server takes none
+static int portable_send_room( void * transport )
+{
+    portable_server_t * server = (portable_server_t *) transport;
+    if ( server->stopping.load( std::memory_order_acquire ) )
+        return 0;
+    const int used = server->bank[server->producer].count;
+    return used >= server->tx_capacity ? 0 : server->tx_capacity - used;
+}
+
+// proofs/tla/ServerStopSpread.tla RequestIoStop: the producer published (a
+// deferred publish is retried here) and every bank back in the free queue,
+// the worker's sends finished
+static bool portable_send_idle( void * transport )
+{
+    portable_server_t * server = (portable_server_t *) transport;
+    if ( !portable_tx_publish( server ) )
+        return false;
+    if ( !rocketnet_platform_mutex_try_acquire( &server->mutex ) )
+        return false;
+    const bool idle = server->ready_count == 0 && server->free_count == PORTABLE_TX_BANKS - 1;
+    rocketnet_platform_mutex_release( &server->mutex );
+
+    return idle;
+}
 
 static const rocketnet_server_transport_io_operations_t portable_server_operations = {
     ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE, portable_create, portable_destroy, portable_stop, portable_stopped,
     NULL, NULL, NULL, NULL, NULL, portable_send, portable_receive,
-    NULL, NULL, NULL, NULL, NULL, portable_send_failures, portable_send
+    NULL, NULL, NULL, NULL, NULL, portable_send_failures, portable_send, portable_send_room, portable_send_idle
 };
 
 #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
@@ -1624,7 +1811,9 @@ extern const rocketnet_transport_backend_t rocketnet_msgx_transport = { &portabl
     { prefix##_abort_packet( (type*) transport, id, frame ); } \
     static void name##_flush( void * transport ) { prefix##_send_packets( (type*) transport ); } \
     static rocketnet_server_socket_process_packets_t * name##_receive( void * transport ) \
-    { prefix##_receive_packets( (type*) transport ); return prefix##_process_packets( (type*) transport ); }
+    { prefix##_receive_packets( (type*) transport ); return prefix##_process_packets( (type*) transport ); } \
+    static int name##_send_room( void * transport ) { return prefix##_send_room( (type*) transport ); } \
+    static bool name##_send_idle( void * transport ) { return prefix##_send_idle( (type*) transport ); }
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 #include "rocketnet_server_gso.h"
@@ -1640,6 +1829,7 @@ void rocketnet_server_gso_receive_drops( struct rocketnet_server_gso_t * gso, ui
 
 #if ROCKETNET_XDP
 uint64_t rocketnet_server_socket_send_failures( struct rocketnet_server_socket_t * server_socket );
+uint64_t rocketnet_server_socket_receive_dropped( struct rocketnet_server_socket_t * server_socket );
 #endif // #if ROCKETNET_XDP
 
 static void * gso_create( void * context, const rocketnet_server_transport_io_config_t * config, rocketnet_address_t * bind )
@@ -1680,7 +1870,7 @@ static const rocketnet_server_transport_io_operations_t gso_operations = {
     ROCKETNET_TRANSPORT_STAGED | ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE | ROCKETNET_TRANSPORT_REFLUSHES,
     gso_create, gso_destroy, gso_stop, gso_stopped,
     gso_start, gso_finish, gso_abort, gso_flush, gso_receive, NULL, NULL,
-    NULL, NULL, NULL, NULL, NULL, gso_send_failures, NULL
+    NULL, NULL, NULL, NULL, NULL, gso_send_failures, NULL, gso_send_room, gso_send_idle
 };
 
 // the client side: sendmmsg with UDP_SEGMENT, recvmmsg (sdk/rocketnet_client_gso_linux.cpp)
@@ -1728,7 +1918,7 @@ static const rocketnet_server_transport_io_operations_t io_uring_operations = {
     ROCKETNET_TRANSPORT_STAGED | ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE | ROCKETNET_TRANSPORT_REFLUSHES,
     io_uring_create, io_uring_destroy, io_uring_stop, io_uring_stopped,
     io_uring_start, io_uring_finish, io_uring_abort, io_uring_flush, io_uring_receive, NULL, NULL,
-    NULL, NULL, NULL, NULL, NULL, io_uring_send_failures, NULL
+    NULL, NULL, NULL, NULL, NULL, io_uring_send_failures, NULL, io_uring_send_room, io_uring_send_idle
 };
 
 extern const rocketnet_transport_backend_t rocketnet_io_uring_transport = { &io_uring_operations, NULL };
@@ -1800,7 +1990,7 @@ static const rocketnet_server_transport_io_operations_t xdp_operations = {
     ROCKETNET_TRANSPORT_STAGED | ROCKETNET_TRANSPORT_FINISH_FINAL | ROCKETNET_TRANSPORT_BINDS_PUBLIC_ADDRESS | ROCKETNET_TRANSPORT_REFLUSHES,
     xdp_create, xdp_destroy, xdp_stop, xdp_stopped,
     xdp_start, xdp_finish, xdp_abort, xdp_flush, xdp_receive, NULL, NULL, xdp_prefilter_counters,
-    xdp_replay_forget, xdp_replay_mark, xdp_replay_commit, xdp_client_accepted, xdp_send_failures, NULL
+    xdp_replay_forget, xdp_replay_mark, xdp_replay_commit, xdp_client_accepted, xdp_send_failures, NULL, xdp_send_room, xdp_send_idle
 };
 #else
 static void * xdp_disabled_create( void *, const rocketnet_server_transport_io_config_t * config, rocketnet_address_t * )
@@ -1827,7 +2017,7 @@ static int xdp_disabled_receive( void *, rocketnet_address_t *, uint8_t *, int, 
 static const rocketnet_server_transport_io_operations_t xdp_operations = {
     0, xdp_disabled_create, xdp_disabled_destroy, synchronous_stop, synchronous_stopped,
     NULL, NULL, NULL, NULL, NULL, xdp_disabled_send, xdp_disabled_receive,
-    NULL, NULL, NULL, NULL, NULL, NULL, NULL
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
 };
 #endif // #if ROCKETNET_XDP
 
@@ -1885,7 +2075,7 @@ static const rocketnet_server_transport_io_operations_t iocp_operations = {
     ROCKETNET_TRANSPORT_STAGED | ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE,
     iocp_create, iocp_destroy, iocp_stop, iocp_stopped,
     iocp_start, iocp_finish, iocp_abort, iocp_flush, iocp_receive, NULL, NULL,
-    NULL, NULL, NULL, NULL, NULL, iocp_send_failures, NULL
+    NULL, NULL, NULL, NULL, NULL, iocp_send_failures, NULL, iocp_send_room, iocp_send_idle
 };
 
 // the client column is the iocp client (sdk/rocketnet_client_iocp_windows.cpp):
@@ -1939,7 +2129,7 @@ static const rocketnet_server_transport_io_operations_t rio_operations = {
     ROCKETNET_TRANSPORT_STAGED | ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE,
     rio_create, rio_destroy, rio_stop, rio_stopped,
     rio_start, rio_finish, rio_abort, rio_flush, rio_receive, NULL, NULL,
-    NULL, NULL, NULL, NULL, NULL, rio_send_failures, NULL
+    NULL, NULL, NULL, NULL, NULL, rio_send_failures, NULL, rio_send_room, rio_send_idle
 };
 
 extern const rocketnet_transport_backend_t rocketnet_rio_transport = { &rio_operations, NULL };
@@ -2091,4 +2281,25 @@ bool rocketnet_server_transport_io_receive_drops( const rocketnet_server_transpo
 
     return false;
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+}
+
+bool rocketnet_server_transport_io_receive_frames_dropped( const rocketnet_server_transport_io_operations_t * operations, void * transport,
+                                                           uint64_t * dropped )
+{
+    // builtin-only, matched on the operations table as receive_drops is: the
+    // xdp transport's frames its userspace receive dropped before reading a
+    // UDP datagram from them (XDP_RECEIVE_FRAME_DROPPED)
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
+    if ( operations == &xdp_operations )
+    {
+        *dropped = rocketnet_server_socket_receive_dropped( (rocketnet_server_socket_t *) transport );
+        return true;
+    }
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
+    (void) operations;
+    (void) transport;
+    (void) dropped;
+
+    return false;
 }

@@ -49,11 +49,7 @@ void rocketnet_client_transport_default_config( struct rocketnet_client_transpor
     if ( !rocketnet_api_null_guard( config ) )
         return;
 
-    struct rocketnet_client_transport_config_t defaults;
-    rocketnet_client_transport_default_config_current( &defaults );
-
-    memset( config, 0, sizeof( *config ) );
-    memcpy( config, &defaults, ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_PRE_SIMULATOR );
+    rocketnet_client_transport_default_config_current( config );
 }
 
 void rocketnet_server_transport_default_config_current( struct rocketnet_server_transport_config_t * config )
@@ -67,11 +63,7 @@ void rocketnet_server_transport_default_config( struct rocketnet_server_transpor
     if ( !rocketnet_api_null_guard( config ) )
         return;
 
-    struct rocketnet_server_transport_config_t defaults;
-    rocketnet_server_transport_default_config_current( &defaults );
-
-    memset( config, 0, sizeof( *config ) );
-    memcpy( config, &defaults, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1 );
+    rocketnet_server_transport_default_config_current( config );
 }
 
 void rocketnet_message_default_config( struct rocketnet_message_config_t * config )
@@ -323,6 +315,18 @@ int rocketnet_message_validate_config_ex( const struct rocketnet_message_config_
     {
         rocketnet_error( "message config reliable_message_timeout_ms %d fits fewer than %d sends of message_resend_delay_initial_ms %d",
                          config->reliable_message_timeout_ms, ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS, config->message_resend_delay_initial_ms );
+        if ( status )
+            *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
+        return 0;
+    }
+
+    // the resend reserve the region sizes for the send rate and the longest
+    // resend delay: past 32-bit descriptor, chunk or span sizes, the region
+    // layout refuses it, so validation refuses it too
+
+    rn_region_reserve_sizes_t reserve_sizes;
+    if ( !rn_region_reserve_sizes( config, &reserve_sizes ) )
+    {
         if ( status )
             *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
         return 0;

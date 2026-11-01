@@ -39,6 +39,51 @@ do                                                                              
         loopback_hub_shared_objects_check_handler( #condition, (const char*) __FUNCTION__, (const char*) __FILE__, __LINE__ ); \
 } while(0)
 
+// The transport pins (ROCKETNET_SERVER_TRANSPORT, ROCKETNET_CLIENT_TRANSPORT)
+// override a config's transport, so a pinned suite would run both modules on
+// sockets and leave the hub with no endpoint. This case is about the hub, so
+// it clears both pins while it runs and puts them back after.
+
+struct loopback_hub_env_pin_t
+{
+    const char * name;
+    bool was_set;
+    char saved[256];
+};
+
+static void loopback_hub_env_pin_clear( loopback_hub_env_pin_t * pin, const char * name )
+{
+    pin->name = name;
+    pin->was_set = false;
+    pin->saved[0] = '\0';
+#if defined( _WIN32 )
+    size_t required = 0;
+    if ( getenv_s( &required, pin->saved, sizeof( pin->saved ), name ) == 0 && required > 0 )
+        pin->was_set = true;
+    _putenv_s( name, "" );
+#else // #if defined( _WIN32 )
+    const char * value = getenv( name );
+    if ( value )
+    {
+        snprintf( pin->saved, sizeof( pin->saved ), "%s", value );
+        pin->was_set = true;
+    }
+    unsetenv( name );
+#endif // #if defined( _WIN32 )
+}
+
+static void loopback_hub_env_pin_restore( const loopback_hub_env_pin_t * pin )
+{
+#if defined( _WIN32 )
+    _putenv_s( pin->name, pin->was_set ? pin->saved : "" );
+#else // #if defined( _WIN32 )
+    if ( pin->was_set )
+        setenv( pin->name, pin->saved, 1 );
+    else
+        unsetenv( pin->name );
+#endif // #if defined( _WIN32 )
+}
+
 // the operating system loader: open a module, look up a name, close it
 
 static void * loopback_hub_module_open( const char * path )
@@ -86,6 +131,10 @@ static void * loopback_hub_module_symbol( void * module, const char * name )
 
 void test_loopback_hub_two_shared_objects()
 {
+    loopback_hub_env_pin_t server_pin, client_pin;
+    loopback_hub_env_pin_clear( &server_pin, "ROCKETNET_SERVER_TRANSPORT" );
+    loopback_hub_env_pin_clear( &client_pin, "ROCKETNET_CLIENT_TRANSPORT" );
+
     void * server_module = loopback_hub_module_open( ROCKETNET_LOOPBACK_HUB_SERVER_MODULE_PATH );
     rocketnet_check( server_module != NULL );
 
@@ -146,4 +195,7 @@ void test_loopback_hub_two_shared_objects()
 
     rocketnet_check( loopback_hub_module_close( client_module ) );
     rocketnet_check( loopback_hub_module_close( server_module ) );
+
+    loopback_hub_env_pin_restore( &client_pin );
+    loopback_hub_env_pin_restore( &server_pin );
 }

@@ -71,8 +71,8 @@ On an Apple-silicon Mac `lipo` prints `arm64` and `vtool` prints `minos 12.0`.
 
 ### Universal binaries, the Xcode generator, the deployment target
 
-See [BUILDING.md](BUILDING.md) for the universal build, the Xcode generator
-and the deployment target.
+See [the contributor build reference](BUILD-REFERENCE.md) for the universal
+build, the Xcode generator and the deployment target.
 
 ## The macOS transports
 
@@ -100,8 +100,9 @@ cannot peek at queued traffic. The first real batch call is the functional
 probe: a `recvmsg_x` there delivers what it reads, so a fixed-port bind that
 already has a datagram queued keeps it. A result of zero or more, or
 `EAGAIN`/`EWOULDBLOCK`, keeps the pump;
-any other errno pauses it and that same call finishes on the portable
-per-packet loop, losing nothing (`rocketnet_msgx_pause`, the receive block in
+ordinary receive-weather errors are skipped within the call's read budget.
+An error outside that set pauses it and that same call finishes on the
+portable per-packet loop (`rocketnet_msgx_pause`, the receive block in
 `rocketnet_platform_socket_receive_packets`). The functional case
 `test_posix_platform_send_seam` queues one datagram on the bound socket between
 bind and that first batch call, checks that create left it queued, and requires
@@ -214,10 +215,10 @@ queued datagram read before the caller does
 `./bin/example_transports` prints the transport chosen by the automatic ladder
 and verifies an explicit portable pin.
 
-Every other config field has an overlay named
-`ROCKETNET_<ENDPOINT>_<FIELD>` with `<ENDPOINT>` `CLIENT` or `SERVER`, built by
-`rocketnet_config_env_var_name_for` (`sdk/rocketnet_config.cpp`); the comment
-beside each field in `sdk/rocketnet.h` names its variable.
+Deployment fields have overlays named `ROCKETNET_<ENDPOINT>_<FIELD>` with
+`<ENDPOINT>` `CLIENT` or `SERVER`. The comment beside each field in
+`sdk/rocketnet.h` names its variable. Callback/context fields, `loopback_hub`,
+`server_secret_key`, and `config_bytes` have no environment form.
 
 The test suites clear every config overlay before they
 run, and keep only `ROCKETNET_SERVER_TRANSPORT` and
@@ -308,10 +309,14 @@ name no destination, and an ICMP error for the server reaches its receive,
 which skips it as weather. A server socket is never connected, and every send
 names its destination. A failed `sendto`
 is logged at debug level and the packet is dropped
-(`rocketnet_platform_socket_send_packet`). A failed `recvmsg` returns 0, which
-ends that drain; an error other than `EAGAIN` or `EINTR` is logged at debug
-level, and the next update reads again. A zero-length datagram is skipped
-rather than read as "drained", and a datagram longer than the caller's slot
+(`rocketnet_platform_socket_send_packet`). Receive-weather errors such as
+`ECONNREFUSED`, `EHOSTUNREACH`, `ENETUNREACH`, `ENOBUFS`, and `EINTR` are
+skipped. EAGAIN, a spent read budget, or another receive error ends the
+drain; unexpected errors are logged at debug level. A zero-length datagram or
+a refused source is skipped rather than read as "drained". Every read spends
+one unit of the call's read budget (`max_packets` for a batch, 64 for the
+single-packet call), kept or skipped, so a call returns after a bounded number
+of reads whatever the socket holds. A datagram longer than the caller's slot
 keeps its true length so the transport drops it as oversize
 (`rocketnet_platform_socket_receive_packet`). The msgx pump applies the
 weather and pause rules above to the same errnos.
@@ -324,8 +329,12 @@ refused destination in the middle delivers every other packet
 ./bin/functional --run test_platform_batch_pump_refused_destination
 ```
 
-What a receive does after a client is hard-killed and the kernel answers with
-ICMP: **pending.**
+The hard-killed-client cases in `tests/functional/posix_hard_killed_client.cpp`
+exercise ICMP handling for portable and msgx combinations; see
+[ICMP errors](TRANSPORT-INTERNALS.md#icmp-errors). This error-retry budget does
+not cover all discarded datagrams. Sustained empty or rejected traffic can
+keep the current portable/msgx drain running and delay receive publication or
+shutdown; see [current drain limitations](TRANSPORT-INTERNALS.md#current-staging-and-drain-limitations).
 
 ## The file-descriptor limit
 
@@ -334,8 +343,10 @@ A socket transport owns one UDP socket: the memory plan for `portable` and for
 `rocketnet_builtin_server_memory_plan`). A server keeps that one socket for all
 of its clients (up to `ROCKETNET_MAX_CLIENTS`, 1000, `sdk/rocketnet.h`), so
 the descriptor limit is not a limit on how many clients one server accepts. It
-does bound how many client transports one process holds open: each live client
-is one descriptor. A tool or test that runs many clients in one process checks
+does bound how many client transports one process holds open: each normal
+socket client needs one UDP descriptor and one kqueue descriptor for its I/O
+wake. Budget roughly two descriptors per client, plus the process's other
+open files. A tool or test that runs many clients in one process checks
 the limits first:
 
 ```sh
@@ -433,8 +444,9 @@ toolchain), in three legs, each in its own job and its own build directory:
 - **asan+ubsan**: Debug with `-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer`, the flags of ci.yml's
   Linux sanitizers job. Apple silicon AddressSanitizer has no `detect_leaks`,
   so `ASAN_OPTIONS=detect_leaks=0` and the leaks leg is the leak check.
-- **tsan**: Debug with `-fsanitize=thread`,
-  `TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1`. The full TSAN
+- **tsan**: Debug with `-fsanitize=thread -fno-omit-frame-pointer -O1` (at
+  `-O0` tsan does not report a struct copy's memcpy write after an unordered
+  read), `TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1`. The full TSAN
   functional suite is a nightly check with a one-hour case limit (owner
   ruling, 2026-10-25): the leg's two functional steps set
   `ROCKETNET_TEST_CASE_TIME_SCALE=30`, which multiplies the suite's 120 s
@@ -461,8 +473,8 @@ One leg by hand, the tsan leg here (`asan+ubsan` takes the flags above,
 
 ```sh
 cmake -S . -B build-tsan -DCMAKE_BUILD_TYPE=Debug \
-  -DCMAKE_C_FLAGS="-fsanitize=thread -fno-omit-frame-pointer" \
-  -DCMAKE_CXX_FLAGS="-fsanitize=thread -fno-omit-frame-pointer"
+  -DCMAKE_C_FLAGS="-fsanitize=thread -fno-omit-frame-pointer -O1" \
+  -DCMAKE_CXX_FLAGS="-fsanitize=thread -fno-omit-frame-pointer -O1"
 cmake --build build-tsan --target test functional test_serialize test_transport_control test_msgx --parallel 4
 TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1 ROCKETNET_TEST_CASE_TIME_SCALE=30 \
   ROCKETNET_SERVER_TRANSPORT=msgx ROCKETNET_CLIENT_TRANSPORT=msgx ./bin/functional
@@ -485,13 +497,16 @@ and is named red by the case limit. Every other case is checked for leaks.
 
 The fuzz corpora replay on macOS without libFuzzer, as CI does on its macOS
 rows (`.github/workflows/ci.yml`, "Replay the fuzz corpora without
-libFuzzer"); `make` builds the four replay binaries:
+libFuzzer"); `make` builds a replay binary for each of the ten harnesses in
+[tests/fuzz/README.md](../tests/fuzz/README.md). Replay every corpus:
 
 ```sh
-./bin/fuzz_replay_rocketnet_fuzz tests/fuzz/corpus/*
-./bin/fuzz_replay_rocketnet_fuzz_message tests/fuzz/corpus_message/*
-./bin/fuzz_replay_rocketnet_fuzz_connect_token tests/fuzz/corpus_connect_token/*
-./bin/fuzz_replay_rocketnet_fuzz_receive_structured tests/fuzz/corpus_receive_structured/*
+for harness in rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token \
+    rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip \
+    rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport \
+    rocketnet_fuzz_session; do
+  ./bin/fuzz_replay_$harness tests/fuzz/corpus${harness#rocketnet_fuzz}/* || echo "FAIL $harness"
+done
 ```
 
 Each prints `replayed <n> inputs` and exits 0.
@@ -555,13 +570,15 @@ ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable ./bin/fu
 ./bin/test_transport
 ./bin/example_transports
 
-for pair in portable:portable portable:msgx msgx:portable msgx:msgx loopback:loopback; do
-  for name in test_loopback_transport_udp test_loopback_transport_ipv6 \
-              test_transport_dual_stack_ipv4_client test_transport_env_pin_is_honoured; do
-    ROCKETNET_SERVER_TRANSPORT=${pair%%:*} ROCKETNET_CLIENT_TRANSPORT=${pair##*:} \
-      ./bin/functional --run $name > /dev/null || echo "FAILED $pair $name"
+(
+  for pair in portable:portable portable:msgx msgx:portable msgx:msgx loopback:loopback; do
+    for name in test_loopback_transport_udp test_loopback_transport_ipv6 \
+                test_transport_dual_stack_ipv4_client test_transport_env_pin_is_honoured; do
+      ROCKETNET_SERVER_TRANSPORT=${pair%%:*} ROCKETNET_CLIENT_TRANSPORT=${pair##*:} \
+        ./bin/functional --run "$name" || exit 1
+    done
   done
-done
+)
 
 make clean
 cmake -B build-debug -DCMAKE_BUILD_TYPE=Debug
@@ -579,8 +596,9 @@ How to read them:
   it prints `test_transport_env_pin_is_honoured`, which is what CI greps for
   (`.github/workflows/ci.yml`, "Run functional suite (portable rung pinned by
   env)").
-- The loop is CI's macOS transport matrix, case by case; it prints nothing
-  when every cell passes.
+- The loop covers the explicitly pinned macOS transport pairs, case by case,
+  and returns nonzero on the first failure. CI also includes `portable/auto`
+  to exercise automatic client selection.
 - `./bin/functional` under a pin other than `portable` runs cases CI does not
   run under that pin; the four matrix cases are the per-pin claim.
 - The functional suite has timing bounds. On a heavily loaded Mac a timed case

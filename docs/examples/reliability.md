@@ -10,7 +10,14 @@ needs.
 | `UNRELIABLE_SEQUENCED` | At most once (latest only) | Strictly increasing (drops older) | High-rate position or aim updates where stale packets are useless |
 | `RELIABLE` (`_WITH_ACK_RECEIPT`) | Every message, once | Arrival order (no head-of-line wait) | Independent events that must arrive but do not depend on each other |
 | `RELIABLE_ORDERED` (`_WITH_ACK_RECEIPT`) | Every message, once | Exact send order per channel | Chat, RPCs, inventory, and state transitions that require strict order |
-| `RELIABLE_SEQUENCED` | Latest message guaranteed | Strictly increasing (supersedes older) | Infrequent state updates where only the newest state matters |
+| `RELIABLE_SEQUENCED` | Retransmits the newest state; older state may be superseded | Strictly increasing (supersedes older) | Infrequent state updates where only the newest state matters |
+
+These delivery rules require the connection to survive; there is no automatic
+replay across reconnect. Unreliable modes apply only below their one-packet
+limit; larger sends are promoted to their reliable twins. Use
+`rocketnet_max_unfragmented_message_bytes` when state must never retransmit.
+Receipt modes can lose outcomes to a full receipt ring or a disconnect. See
+[Channels and receipts](../CHANNELS.md) for those boundaries.
 
 ## What it shows
 
@@ -27,7 +34,7 @@ needs.
 
 Each frame runs in standard order: `update`, drain the receive queue (plus
 `receipts`), simulation, `start_message` and `finish_message`, and
-`send_packets` last so queued messages leave in the same frame.
+`send_packets` last so queued work becomes available to the transport.
 
 ## Run it
 
@@ -63,23 +70,8 @@ final message `8`.
 stalls, while `reliable_ordered` and `reliable_ordered_receipt` deliver `1..8`
 in exact sequence.
 
-## Public calls it uses
+<a id="public-calls-it-uses"></a>
 
-- `rocketnet_init`, `rocketnet_term`
-- `rocketnet_server_default_config`, `rocketnet_server_create`,
-  `rocketnet_server_start`, `rocketnet_server_destroy`,
-  `rocketnet_server_update`, `rocketnet_server_send_packets`,
-  `rocketnet_server_ipv4_address`,
-  `rocketnet_server_public_key`, `rocketnet_server_client_connected`,
-  `rocketnet_server_can_send_message`, `rocketnet_server_start_message`, `rocketnet_server_finish_message`,
-  `rocketnet_server_receive_messages`, `rocketnet_server_receipts`
-- `rocketnet_client_default_config`, `rocketnet_client_create`,
-  `rocketnet_client_connect`, `rocketnet_client_destroy`,
-  `rocketnet_client_update`, `rocketnet_client_send_packets`,
-  `rocketnet_client_state`, `rocketnet_client_index`,
-  `rocketnet_client_can_send_message`, `rocketnet_client_start_message`, `rocketnet_client_finish_message`,
-  `rocketnet_client_receive_messages`
-- `rocketnet_client_network_simulator`, `rocketnet_server_network_simulator`
-- `rocketnet_create_dev_connect_token` and
-  `ROCKETNET_DEV_BACKEND_PUBLIC_KEY` (development library only)
-- `rocketnet_status_name`, `rocketnet_time`, `rocketnet_sleep`
+Source: [`examples/reliability.c`](../../examples/reliability.c). See the
+[integration guide](../USAGE.md) for shared lifecycle, threading, and message
+ownership rules.

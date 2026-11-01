@@ -49,7 +49,7 @@ open across a flush is RNDriverSendStaging's.
   `rocketnet_server_transport_abort_packet_unchecked` (the slot from the frame
   pointer) and `rocketnet_server_abort_fill_frame`: `wire_bytes` cleared.
 - **`Flush`**: the portable flush of
-  `rocketnet_server_transport_send_packets_impl`: `num_packets` clamped to
+  `rocketnet_server_transport_flush`: `num_packets` clamped to
   `send_capacity`, every slot below it with `wire_bytes > 0` handed to the
   link, `num_packets = 0`.
 

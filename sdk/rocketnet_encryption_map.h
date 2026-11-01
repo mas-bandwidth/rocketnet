@@ -158,8 +158,10 @@ int rocketnet_encryption_map_next( const struct rocketnet_encryption_map_t * map
 int rocketnet_encryption_map_num_mappings( const struct rocketnet_encryption_map_t * map );
 
 #if ROCKETNET_DEV
-// The keyed hashes this map has computed since create: one per find, add and
-// remove. The unit suite pins the receive path's cost per packet with it.
+// The keyed hashes this map's lookups have computed since create: one per
+// find, add and remove. A remove's backward-shift erase rehashes each entry it
+// scans and is not counted. The unit suite pins the receive path's cost per
+// packet with it.
 uint64_t rocketnet_encryption_map_test_hashes( const struct rocketnet_encryption_map_t * map );
 
 // A slot index with the generation it was handed out under.

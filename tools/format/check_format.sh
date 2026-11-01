@@ -30,15 +30,20 @@ if [ $# -eq 0 ]; then
     unset IFS
 fi
 
+# one clang-format per processor at once; the unformatted names come back
+# sorted, so the report does not depend on which finished first
+total=$#
 bad=0
-total=0
-for f in "$@"; do
-    total=$(( total + 1 ))
-    if ! "$CLANG_FORMAT" --dry-run -Werror --style=file "$f" >/dev/null 2>&1; then
-        echo "$f: not formatted"
-        bad=$(( bad + 1 ))
+if [ "$total" -gt 0 ]; then
+    jobs=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
+    unformatted="$(printf '%s\n' "$@" \
+        | xargs -P "$jobs" -I {} sh -c '"$0" --dry-run -Werror --style=file "$1" >/dev/null 2>&1 || echo "$1"' "$CLANG_FORMAT" {} \
+        | LC_ALL=C sort)"
+    if [ -n "$unformatted" ]; then
+        printf '%s\n' "$unformatted" | sed 's/$/: not formatted/'
+        bad=$(printf '%s\n' "$unformatted" | wc -l | tr -d ' ')
     fi
-done
+fi
 
 if [ "$bad" -eq 0 ]; then
     echo "ok: $total files formatted"

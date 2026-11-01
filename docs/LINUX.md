@@ -19,7 +19,8 @@ or the AF_XDP APIs in stock libbpf 0.5 on Ubuntu 22.04. On 22.04 omit
 `libxdp-dev` from the package command; configure reports
 `XDP: using legacy AF_XDP APIs from libbpf (Ubuntu 22.04)`.
 The installed package retains the provider used for its build.
-liburing is optional; without it the io_uring transport is built to refuse.
+liburing is optional; without suitable headers and the library, io_uring is
+omitted from the available transports and its name is skipped in a list.
 Jammy's liburing 2.1 also lacks the multishot receive headers needed by that
 transport. Neither case prevents building XDP. See BUILDING.md, "Ubuntu
 22.04 build compatibility", for build checks and the separate kernel/NIC
@@ -38,7 +39,7 @@ compiled out of this build` (or `XDP off: libbpf or AF_XDP headers/library were 
 XDP is compiled out of this build`) and compiles the whole XDP
 transport out, with no embedded object, no XDP or netlink gateway code in the
 library and no libbpf or libxdp link. `-DROCKETNET_XDP=OFF` compiles it out on
-purpose. In that build a transport list naming `xdp` refuses it at create with
+purpose. In that build a transport list naming only `xdp` refuses server start with
 `ROCKETNET_STATUS_TRANSPORT_NOT_BUILT`, and `auto` falls to the next rung. The
 server host needs no compiler, no `make`, no kernel headers and no temporary
 directory to start `xdp`.
@@ -108,8 +109,8 @@ batches with `sendmmsg`/`recvmmsg` and waits on an eventfd beside its socket
 Because `gso` ranks ahead of `io_uring`, `auto` grants `io_uring` only on a
 host where `gso` refuses. To run `io_uring`, pin it (section 3).
 
-**How create walks it.** Candidates are tried left to right and the first
-grant wins (`sdk/rocketnet_server_transport.cpp`). Each refusal logs a warning,
+**How start walks it.** Public create parses the list; server start tries
+candidates left to right and the first grant wins (`sdk/rocketnet_server_transport.cpp`). Each refusal logs a warning,
 `server transport <name> refused. trying the next candidate`
 (`sdk/rocketnet_server_transport.cpp`), and the transport logs why
 before it (for example the `xdp pre-flight: ...` lines in section 6). A port-0
@@ -152,17 +153,29 @@ endpoint: `ROCKETNET_SERVER_TRANSPORT` and `ROCKETNET_CLIENT_TRANSPORT`
 - An unknown name, an empty element, or `auto` inside a list fails create
   (`sdk/rocketnet_config.cpp`).
 
-Every other server config field has the overlay `ROCKETNET_SERVER_<FIELD>`
-(`sdk/rocketnet_config.cpp`), for example
+The public header lists each field's environment overlay; callback and
+context fields, `loopback_hub`, `server_secret_key`, and `config_bytes` have
+none. Deployment controls include
 `ROCKETNET_SERVER_NUM_XDP_QUEUES` and `ROCKETNET_SERVER_NUM_OS_CPUS`
 (`sdk/rocketnet.h`, `sdk/rocketnet_internal.h`).
 
 CI's development-build transport matrix pins each Linux server transport against the portable
 client on four cases, `test_transport_env_pin_is_honoured` among them, which proves
-the pinned transport is the one granted (`.github/workflows/ci.yml`). The same matrix, `xdp` aside (section 6):
+the pinned transport is the one granted (`.github/workflows/ci.yml`). A local
+server matrix, excluding privileged XDP (section 6), is below. Run the io_uring
+cell only when that backend was built and its runtime probe can succeed; a
+skipped unavailable name must not count as a successful pin.
 
 ```sh
-for pair in "portable portable" "gso portable" "io_uring portable" "loopback loopback"; do set -- $pair; for c in test_loopback_transport_udp test_loopback_transport_ipv6 test_transport_dual_stack_ipv4_client test_transport_env_pin_is_honoured; do ROCKETNET_SERVER_TRANSPORT=$1 ROCKETNET_CLIENT_TRANSPORT=$2 ./bin/functional --run $c >/dev/null || { echo "FAIL $1/$2 $c"; break 2; }; echo "ok $1/$2 $c"; done; done
+(
+  for pair in portable:portable gso:portable io_uring:portable loopback:loopback; do
+    for c in test_loopback_transport_udp test_loopback_transport_ipv6 \
+             test_transport_dual_stack_ipv4_client test_transport_env_pin_is_honoured; do
+      ROCKETNET_SERVER_TRANSPORT=${pair%%:*} ROCKETNET_CLIENT_TRANSPORT=${pair##*:} \
+        ./bin/functional --run "$c" || exit 1
+    done
+  done
+)
 ```
 
 ## 4. gso
@@ -173,7 +186,11 @@ binds an `SO_REUSEPORT` group of `num_xdp_queues` sockets, default 4
 (`sdk/rocketnet_server_gso.h`, `sdk/rocketnet_server_gso_linux.cpp`),
 at most 32: a larger count refuses the rung, never clamps
 (`sdk/rocketnet_server_gso.h`, `sdk/rocketnet_driver_builtin.cpp`).
-Each socket has its own receive worker thread
+Each socket has its own receive worker thread, and the server has one
+transmit worker. Three server-wide send banks hold 4096 slots each, with
+only the current producer bank available to a fill. Adding sockets does not
+increase this fill capacity; sends past it spread across updates as the
+transport's send room reports. See [staging and drain limitations](TRANSPORT-INTERNALS.md#current-staging-and-drain-limitations)
 (`sdk/rocketnet_server_gso_linux.cpp`).
 
 **The plain tier.** Create probes `UDP_SEGMENT` and `UDP_GRO` on the bound
@@ -196,14 +213,18 @@ threads (`sdk/rocketnet_server_uring_linux.cpp`). It binds the same
 `SO_REUSEPORT` group as `gso`: `num_xdp_queues` sockets, default 4, at most
 32 (`sdk/rocketnet_server_uring.h`,
 `sdk/rocketnet_server_uring_linux.cpp`,
-`sdk/rocketnet_driver_builtin.cpp`).
+`sdk/rocketnet_driver_builtin.cpp`). All sockets share one 2048-slot send
+array; pending completions keep their slots occupied. More queues do not
+increase that capacity. See [staging limitations](TRANSPORT-INTERNALS.md#current-staging-and-drain-limitations)
+before sizing a large server.
 
 **Receive.** Each socket has a provided buffer ring of 4096 buffers of 66 KiB
 (`ROCKETNET_URING_RECV_BUFFER_BYTES`: one buffer holds a `UDP_GRO`-coalesced
 receive of up to 64 KiB plus its headers, 264 MiB per queue, allocated at create)
 and one multishot `RECVMSG` over it; the kernel fills ring buffers and
-posts one completion per datagram with no syscall per datagram, and the main
-thread copies each datagram out and returns the buffer to the ring
+posts one completion per receive buffer with no syscall per datagram.
+With GRO, that buffer can contain several datagrams; the main thread splits
+and copies them before returning the buffer to the ring
 (`sdk/rocketnet_server_uring.h`,
 `sdk/rocketnet_server_uring_linux.cpp`). A multishot
 that ends (for example `ENOBUFS` when the ring ran dry) is counted and armed
@@ -230,13 +251,14 @@ stay in the completion queue for a later call and are counted
   and the ladder falls (`sdk/rocketnet_server_uring_linux.cpp`).
   Multishot receive must be in the liburing headers the build used
   (`sdk/rocketnet_server_uring_linux.cpp`).
-- `/proc/sys/kernel/io_uring_disabled` at 0. The kernel's own documentation
-  defines 0 as enabled for all, 1 as limited to privileged processes and the
-  `io_uring_group`, 2 as disabled (Linux
-  `Documentation/admin-guide/sysctl/kernel.rst`, `io_uring_disabled`). CI
-  offers the `io_uring` cell only when the value is 0
-  (`.github/workflows/ci.yml`). The transport does not read the sysctl;
-  a refusing kernel shows up as the probe refusal above.
+- Kernel policy that permits this process to create rings. Where
+  `/proc/sys/kernel/io_uring_disabled` exists, 0 permits all users, 1 permits
+  processes with `CAP_SYS_ADMIN` or membership in `io_uring_group`, and 2
+  disables new rings. See the [kernel sysctl reference](https://docs.kernel.org/admin-guide/sysctl/kernel.html#io-uring-disabled).
+  CI offers the io_uring cell only when the value is 0
+  (`.github/workflows/ci.yml`); that CI filter is stricter than the general
+  runtime permission rule. The transport does not read the sysctl; a refusing
+  kernel shows up as the probe refusal above.
 - Enough `RLIMIT_MEMLOCK` for the ring and the provided buffer rings, which
   depends on the kernel. The transport never raises the limit (no `setrlimit` in
   `sdk/rocketnet_server_uring_linux.cpp`) and refuses at create when the kernel
@@ -266,7 +288,7 @@ completions on overflow would lose receives and sends without a count.
 ## 6. xdp and the provisioning script
 
 `xdp` (AF_XDP, `sdk/rocketnet_server_socket_linux.cpp`) is verify-and-bind
-only: the library never changes machine state, and a read-only pre-flight
+only: the library does not provision host settings, and a read-only pre-flight
 refuses by name on any unmet condition (`BUILDING.md`,
 `sdk/rocketnet_server_socket_linux.cpp`). Provisioning is
 `scripts/rocketnet-provision`, whose header is the authoritative condition list
@@ -437,8 +459,8 @@ bash scripts/rocketnet-provision selftest
 python3 tools/check_xdp_archive.py
 ```
 
-Live AF_XDP runs as root only inside a virtme-ng guest of the host's own
-kernel, never on the host (`.github/workflows/ci.yml`;
+CI's live AF_XDP tests run as root inside a virtme-ng guest of the host's own
+kernel, without attaching to the runner's host NIC (`.github/workflows/ci.yml`;
 `TRANSPORTS.md`). The guest needs `vng`, a readable
 `~/vm-kernels/vmlinuz-$(uname -r)` and a writable `/dev/kvm`
 (`.github/workflows/ci.yml`). The command is one quoted string so
@@ -520,14 +542,22 @@ What each path does with the errors it can see:
   logged at debug and the packet is dropped; a `sendmmsg` refused
   with `EAGAIN`, `EWOULDBLOCK` or `ENOBUFS` drops the rest of the batch, and
   any other errno drops the one refused entry and continues with the next.
-- **gso**: a receive worker's `recvmmsg` returning nothing or an error ends
-  that drain (`sdk/rocketnet_server_gso_linux.cpp`); a `sendmmsg` refused
-  with `EAGAIN`, `EWOULDBLOCK`, `ENOBUFS`, `ENOMEM` or `EINTR` drops the
-  rest of the flush, and any other errno drops the one refused message and
+- **gso**: a receive worker's `recvmmsg` returning nothing or a non-`EINTR`
+  error ends that drain; `EINTR` retries after checking the stop request
+  (`sdk/rocketnet_server_gso_linux.cpp`). Every message a drain reads,
+  accepted or dropped, and every interrupted call spends one unit of a read
+  budget of `ROCKETNET_GSO_RECV_QUEUE_SIZE`; a spent budget ends the drain, so
+  the worker publishes and tests its stop request however much the socket
+  holds. A `sendmmsg` refused
+  with `EAGAIN`, `EWOULDBLOCK`, `ENOBUFS`, `ENOMEM` or `EINTR` (a full
+  socket) drops nothing: the TX worker keeps the bank's unsent rest, in
+  order and ahead of every later bank, and sends it when main's next update
+  wakes it (`ROCKETNET_GSO_SEND_RETRY_SECONDS` once main stops updating).
+  Any other errno drops the one refused message and
   continues with the next, as the portable batch does; dropped packets
   count in `ROCKETNET_SERVER_GSO_COUNTER_SEND_DROPPED`, never resent
   (`sdk/rocketnet_server_gso_linux.cpp`,
-  `sdk/rocketnet_server_gso.h`).
+  `sdk/rocketnet_server_gso.h`, `proofs/tla/RNGsoHandoff.tla` SentOrHeld).
 - **io_uring**: a send completion with a negative result counts in
   `ROCKETNET_SERVER_URING_COUNTER_SEND_DROPPED`
   (`sdk/rocketnet_server_uring_linux.cpp`,
@@ -537,11 +567,16 @@ What each path does with the errors it can see:
 
 `tests/functional/posix_hard_killed_client.cpp` and `tests/functional/posix_socket_errors.cpp`
 cover a hard-killed client and the socket error paths per transport cell.
+Repeated empty or rejected datagrams are a separate case: some current
+POSIX receive loops can continue draining them without a per-pass bound,
+delaying publication and shutdown. See [current drain limitations](TRANSPORT-INTERNALS.md#current-staging-and-drain-limitations).
 
 ## 8. Limits for 1000 clients
 
-`ROCKETNET_MAX_CLIENTS` is 1000 (`sdk/rocketnet.h`), and the server's
-`max_clients` defaults to it (`sdk/rocketnet_internal.h`).
+`ROCKETNET_MAX_CLIENTS` defaults to 1000 (`sdk/rocketnet.h`), and the server's
+runtime `max_clients` defaults to the smaller of 1000 and the build ceiling
+(`sdk/rocketnet_internal.h`). [Memory and capacity](MEMORY.md#maximum-clients)
+describes larger builds and their qualification limits.
 
 **File descriptors.** A server opens a fixed set of sockets, independent of
 `max_clients`: the plan's `sockets` field (`benchmarks/transport_memory.cpp`).
@@ -632,8 +667,8 @@ What each transport needs, from the requirements above:
 - **portable** and **gso**: nothing beyond a UDP socket; no capability
   (`sdk/rocketnet_server_gso.h`). An unprivileged container's `auto`
   grants `gso`, since `xdp` refuses for want of root (section 6).
-- **io_uring**: a kernel with `io_uring_disabled` at 0 and a seccomp profile
-  that allows the `io_uring_setup`, `io_uring_enter` and `io_uring_register`
+- **io_uring**: kernel policy that permits the process to create rings
+  (section 5), and a seccomp profile that allows the `io_uring_setup`, `io_uring_enter` and `io_uring_register`
   calls liburing makes. A refusing profile makes the probe fail and the
   ladder falls (section 5). Pin it, since `auto` grants `gso` first.
 - **xdp**: euid 0 in the container (R1), the kernel's grant of an AF_XDP

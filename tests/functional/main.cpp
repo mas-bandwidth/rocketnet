@@ -84,6 +84,7 @@ static int rocketnet_functional_worker( const char * name )
 
 int rocketnet_posix_hard_killed_child_main( int argc, char ** argv );
 suite_exec rocketnet_unit_case_memory_exec();
+bool rocketnet_unit_case_memory_runs_here();
 
 #if defined( _WIN32 ) || defined( __APPLE__ ) || defined( __linux__ )
 
@@ -208,7 +209,9 @@ int main( int argc, char ** argv )
         { "test_transport_control", "test_transport_control", NULL, true },
         { "test_iocp", "test_iocp", NULL, true },
     };
-    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, 4, rocketnet_functional_test_group, ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS );
+    // test_unit_case_memory is execs[0]; the rows passed start after it when it does not run here
+    const int first_exec = rocketnet_unit_case_memory_runs_here() ? 0 : 1;
+    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs + first_exec, 4 - first_exec, rocketnet_functional_test_group, ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS );
 #elif defined( __APPLE__ )
     const suite_exec execs[] = {
         rocketnet_unit_case_memory_exec(),
@@ -216,7 +219,9 @@ int main( int argc, char ** argv )
         { "test_transport_control", "test_transport_control", NULL, true },
         { "test_msgx", "test_msgx", NULL, true },
     };
-    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, 4, rocketnet_functional_test_group, ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS );
+    // test_unit_case_memory is execs[0]; the rows passed start after it when it does not run here
+    const int first_exec = rocketnet_unit_case_memory_runs_here() ? 0 : 1;
+    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs + first_exec, 4 - first_exec, rocketnet_functional_test_group, ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS );
 #elif defined( __linux__ )
     const suite_exec execs[] = {
         rocketnet_unit_case_memory_exec(),
@@ -226,18 +231,22 @@ int main( int argc, char ** argv )
         { "test_xdp", "test_xdp", NULL, true },
 #endif // #if ROCKETNET_XDP
     };
+    // test_unit_case_memory is execs[0]; the rows passed start after it when it does not run here
+    const int first_exec = rocketnet_unit_case_memory_runs_here() ? 0 : 1;
 
     // io_uring cases are bounded by RLIMIT_MEMLOCK as well as by the one job:
     // a limit under one case's need fails the suite before it starts, naming
     // the limit (tests/suite_runner.h, tools/check_memlock.sh)
 
-    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, sizeof( execs ) / sizeof( execs[0] ), rocketnet_functional_test_group, ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS, 0, true );
+    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs + first_exec, (int) ( sizeof( execs ) / sizeof( execs[0] ) ) - first_exec, rocketnet_functional_test_group, ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS, 0, true );
 #else
     const suite_exec execs[] = {
         rocketnet_unit_case_memory_exec(),
         { "test_serialize", "test_serialize", NULL, true },
         { "test_transport_control", "test_transport_control", NULL, true },
     };
-    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, sizeof( execs ) / sizeof( execs[0] ), NULL, ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS );
+    // test_unit_case_memory is execs[0]; the rows passed start after it when it does not run here
+    const int first_exec = rocketnet_unit_case_memory_runs_here() ? 0 : 1;
+    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs + first_exec, (int) ( sizeof( execs ) / sizeof( execs[0] ) ) - first_exec, NULL, ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS );
 #endif // #if !ROCKETNET_DEV
 }

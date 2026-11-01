@@ -18,7 +18,9 @@ Commands and C examples here run from the repository root.
 
 ## Qualification and scale
 
-`max_clients = 1000` is the default capacity ceiling. Recorded 1000-client
+The default build supports a runtime `max_clients` of up to 1000. The
+compile-time ceiling can be raised as described under [Maximum clients](#maximum-clients).
+Recorded 1000-client
 correctness and LAN runs do not qualify every workload or establish the
 100-microsecond main-call target. Above 1000 clients, users must research,
 stabilize, and qualify their own configuration. Large configurations can also
@@ -76,8 +78,14 @@ cc -I sdk measure_server_memory.c build/librocketnet.a -lbpf -lxdp -luring -lstd
 
 On Linux x86-64 with io_uring and XDP built (the default development build) it
 prints `1000 clients: 20908851166`, `1 client: 1894073074`, `2 clients: 1913106854`
-and `delta: 19033780` on this SDK revision. The figures differ by platform and
+and `delta: 19033780` in the build used for this recorded example. The figures
+differ by platform and
 build, because each counts the largest transport that platform's ladder can grant.
+
+The byte counts in this section are recorded sizing examples, not a fresh
+measurement of the current source. Some predate the figures in
+[LOAD.md](LOAD.md#deterministic-memory-planning-and-regenerated-sizing-examples).
+Use the planner from the exact library you will deploy.
 
 A light-client server uses `rocketnet_server_light_config`, which fills the
 defaults and then sizes for one 1,500-byte MTU packet per 100 ms to each
@@ -118,8 +126,9 @@ struct rocketnet_client_t * start_client( const char * token, const struct rocke
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, config, &status );
     if ( !client )
         printf( "create refused: %s\n", rocketnet_status_name( status ) );
-    if ( client && rocketnet_client_connect( client, token ) != ROCKETNET_STATUS_OK )
+    if ( client && ( status = rocketnet_client_connect( client, token ) ) != ROCKETNET_STATUS_OK )
     {
+        printf( "connect refused: %s\n", rocketnet_status_name( status ) );
         rocketnet_client_destroy( client );
         return NULL;
     }
@@ -132,8 +141,9 @@ struct rocketnet_server_t * start_server( const struct rocketnet_server_config_t
     struct rocketnet_server_t * server = rocketnet_server_create( NULL, "0.0.0.0:40000", NULL, config, &status );
     if ( !server )
         printf( "create refused: %s\n", rocketnet_status_name( status ) );
-    if ( server && rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
+    if ( server && ( status = rocketnet_server_start( server ) ) != ROCKETNET_STATUS_OK )
     {
+        printf( "start refused: %s\n", rocketnet_status_name( status ) );
         rocketnet_server_destroy( server );
         return NULL;
     }
@@ -159,14 +169,13 @@ bool finish_stop( struct rocketnet_client_t * client, struct rocketnet_server_t 
 
 To check a config, create with it and read the status out-parameter, then
 destroy the result if it was never connected or started. For an active object,
-request shutdown and poll completion before destroy. Destroy asserts completion;
-called early, it logs one error naming the skipped completion function, records
-the misuse, then requests shutdown itself and updates a bounded number of
-times without sleeping. Once complete it joins any remaining thread handle and
-wipes/frees resources synchronously; if the worker has not exited it logs a
-second error and keeps the object rather than free memory the worker owns. Keep
-allocator/callback contexts and all borrowed storage alive until destroy
-returns. A completion query does not free the object or promise receipt by the other side of the connection.
+request shutdown and poll completion before destroy. Destroy requires completed
+shutdown and then joins and frees resources synchronously. Its diagnostic
+fallback for an early destroy can retain the object while a worker owns memory;
+do not use that misuse path as a cleanup strategy. Keep allocator/callback
+contexts and all borrowed storage alive through completion and the subsequent
+destroy. A completion query neither frees the object nor promises receipt by
+the other side of the connection.
 
 ## Receive buffer sizing
 
@@ -176,7 +185,8 @@ banks and publishes a bank after every read. While main holds the other
 banks the worker has no free bank, stops reading the socket and waits
 (`PORTABLE_RX_WAIT_FULL`), so the traffic that arrives in that time waits in
 the kernel's receive buffer, and a buffer too small for it drops datagrams
-before the server sees them. Each server socket therefore asks for:
+before the server sees them. The GSO receive worker stops reading the same
+way once its buffer is full. Every UDP server socket therefore asks for:
 
 ```
 receive buffer bytes = ceil( max_clients x 1000 kbps x 125 x 2 / 10 Hz )
@@ -189,8 +199,13 @@ the slowest supported update interval (0.1 s at 10 Hz), times 2 for the
 kernel's per-packet accounting, which charges more than the packet bytes. At
 1000 clients that is 25,000,000 bytes; at 64 clients, 1,600,000. Servers
 updating faster than 10 Hz need proportionally less; the request stays sized
-for 10 Hz. The io_uring and iocp transports size for `ROCKETNET_MAX_CLIENTS`.
-The request is an upper bound: the kernel charges only for what it holds.
+for 10 Hz. Portable and msgx use the server's `max_clients`; GSO, io_uring,
+iocp and rio use the build's `ROCKETNET_MAX_CLIENTS`, because their creates do
+not carry `max_clients`. Each GSO and io_uring queue socket asks for the full
+client count, not a share of it: `SO_REUSEPORT` hashes flows to sockets, so
+any one queue's socket may receive any number of the clients. Four queues at
+the default ceiling ask for 4 x 25,000,000 bytes. The request is an upper
+bound: the kernel charges only for what it holds.
 
 The kernel may grant less. Linux clamps the request to `net.core.rmem_max`
 (about 208 KB by default) without an error; macOS and the BSDs refuse a
@@ -231,23 +246,25 @@ another value; the generated `rocketnet_server_xdp.h` refuses to compile into a
 library whose `ROCKETNET_MAX_CLIENTS` or `ROCKETNET_HISTORY_PACKETS` differs
 from the program's.
 
-A 10000-client build is qualified by
-[docs/QUALIFICATION-max-clients-10000.md](QUALIFICATION-max-clients-10000.md)
-and re-proven nightly on the Linux fleet runner by
-[`.github/workflows/nightly-max-clients.yml`](../.github/workflows/nightly-max-clients.yml):
+An earlier 10000-client build has a bounded correctness record in
+[QUALIFICATION-max-clients-10000.md](QUALIFICATION-max-clients-10000.md).
+[`.github/workflows/nightly-max-clients.yml`](../.github/workflows/nightly-max-clients.yml)
+is configured to repeat that build/load tier on the Linux fleet runner:
 zero-warning builds with gcc and clang at DEV ON and OFF, the unit suite, and
 a bounded loopback load of all 10000 clients for 30 seconds
 (`LOAD_PROFILE=light ./bin/load 10000 30`). The load uses the light
 per-client config, about 25 GB planned for the server and its 10000
 in-process clients, because the default per-client config plans about
 183 GB for the server alone (below); the runner checks host room against the
-plan before the load runs.
+plan before the load runs. Those byte figures belong to the recorded build;
+query the current binary. This is a same-process loopback correctness tier,
+not a performance or general workload qualification above 1000 clients.
 
 The value raises the ceiling, not the default: `max_clients` still defaults
 to 1000 (or the build's maximum when that is smaller), and a server asks for
-more in its config or with `ROCKETNET_SERVER_MAX_CLIENTS`. Every limit that
-serves all of a server's clients derives from it at compile time, with a
-static assert holding each to its rule:
+more in its config or with `ROCKETNET_SERVER_MAX_CLIENTS`. The following limits
+scale with it at compile time. Backend staging also has fixed limits, described
+below; raising the client ceiling does not make every transport buffer larger.
 
 | Limit | Rule | 1000 | 10000 |
 |---|---|---|---|
@@ -260,16 +277,29 @@ static assert holding each to its rule:
 | XDP reply MAC table | four slots per client, rounded up to a power of two | 4096 | 65536 |
 | reassembly memory budget (`ROCKETNET_REASSEMBLY_MEMORY_MIB` left empty) | 512 MiB per 1000 clients | 512 MiB | 5120 MiB |
 
-Two limits are fixed and asserted instead. The server packet lease table
-(131072 entries, 65536 leases per update) holds two packets per client up to
-the 32768 bound. The per-queue rings of the multi-queue transports (xdp, gso
-and io_uring send staging of 4096, 4096 and 2048 per queue, and the XDP UMEM
-geometry) do not grow with the client count: a destination hash spreads a
-server's clients over its queues, so a build for more clients runs more
-queues (`num_xdp_queues`, or `ROCKETNET_GSO_DEFAULT_QUEUES` and
-`ROCKETNET_URING_DEFAULT_QUEUES` at build time) to keep two packets of
-staging per client; the asserts check that the most queues can. The XDP
-replay window (16 packets per client) is unchanged.
+The server packet lease table is fixed at 131072 entries and 65536 leases per
+update, enough for two packets per client up to the 32768 build ceiling.
+XDP has 4096 send slots per queue and fixed UMEM geometry; increasing its
+queue count adds staging, subject to memory and host limits.
+
+GSO and io_uring differ: GSO has three shared send banks of 4096 slots, with
+one bank available to producers at a time. io_uring has two 2048-slot send
+phases, with one phase available to producers at a time; the other can
+remain held by pending completions. These are server-wide capacities. Adding receive queues does not multiply either
+producer's capacity. Each staged transport reports its remaining room
+(`rocketnet_server_transport_send_capacity_available`), so the message
+layer's send pass stops where the next unserved client waits and resumes
+there on the next update, and the disconnect bursts of a kick or a stop leave
+across as many updates as the room needs. See
+[Current staging and drain limitations](TRANSPORT-INTERNALS.md#current-staging-and-drain-limitations).
+The replay-history depth remains a separate setting (below).
+
+Memory is the caller's choice, made through the config. The library sizes
+what the config asks for and sets no budget on the total: every field is held
+to its own range (and to what its layout can represent), and a config whose
+fields are all in range is accepted however much memory they add up to. The
+only limits on the total are ones the caller sets or can raise: the CMake
+component budgets and the operator memory budgets below.
 
 Memory grows with the clients a server asks for, at the per-client depth the
 config sets: `rocketnet_server_required_memory` gives the lifecycle allocator
@@ -301,8 +331,10 @@ arena and delivered mirror; XDP includes userspace queue structs and UMEM.
 Oversized geometry is refused with required and permitted byte counts before
 allocation. These bounds are not an available-RAM check: reserve additional
 memory for ACK history, other transport objects, allocator overhead, stacks,
-kernel buffers and your application. The default seven-queue XDP geometry alone
-still requires roughly 4.2 GiB; select fewer queues or provision that explicitly.
+kernel buffers and your application. Each default-geometry XDP queue has
+192 MiB of raw UMEM, in addition to
+its allocator storage and other host resources. Query the exact build and
+queue count rather than using older total-memory figures.
 
 ## Pre-allocation server resource plans
 
@@ -314,8 +346,9 @@ configuration and environment overrides; OS-owned memory and custom-transport
 allocations are excluded. It works before
 `rocketnet_init`, opens no sockets, starts no workers and allocates no memory.
 Pass `NULL` config for defaults. The query reads the supplied configuration and
-applies environment overrides (matching create), but does not check keys, probe
-hardware or approve a configuration against the component budgets. `rocketnet_client_required_memory` is
+applies environment overrides (matching create), and performs the create-time configuration checks, including the reassembly
+component budget. It does not validate start-time keys, probe hardware, or
+promise that a transport will pass its own resource checks at start. `rocketnet_client_required_memory` is
 the client form. The detailed per-transport plan and the kernel-facing host memory
 estimate are internal to the transport layer (`sdk/rocketnet_layers.h`), not part
 of the public client and server API.
@@ -345,7 +378,8 @@ rules, with no allocation, socket or thread. Each field is a
 request, never what the kernel grants: `allocator_bytes` (the plan without
 UMEM), `umem_bytes` (XDP frame memory, the plan's UMEM), `socket_send_buffer_bytes`
 and `socket_receive_buffer_bytes` (the `SO_SNDBUF` and `SO_RCVBUF` sizes asked of
-every socket the transport opens), `xdp_ring_bytes` (the AF_XDP RX and TX
+every socket the transport opens, the receive size from
+[Receive buffer sizing](#receive-buffer-sizing)), `xdp_ring_bytes` (the AF_XDP RX and TX
 descriptor rings of every queue) and `thread_stack_bytes` (`worker_threads` x
 `thread_stack_bytes_per_thread`; transports create threads with the platform
 default stack, so on POSIX this is the default thread attribute's stack size,
@@ -395,8 +429,11 @@ Build tools normally, then use the resource probe:
 python3 tools/check_memory.py
 ```
 
-Arguments are clients, maximum payload bytes, reassembly slots, concrete transport
-and queue/worker count (zero selects that transport's default). `--plan-only` emits
+Arguments are clients, a legacy payload-size placeholder, reassembly slots,
+concrete transport and queue count (zero selects that transport's default).
+The payload argument is retained for command compatibility; the plan uses
+`ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES`. IOCP and RIO ignore the queue count.
+`--plan-only` emits
 a component breakdown, worker/socket counts and an explicit unknown OS/application
 cost, then exits before initialization. `--session-plan-only` reports the public
 server block plus its active transport's SDK allocations and host requests,
@@ -416,9 +453,9 @@ the requirement that destruction frees every SDK allocation. Large legal numeric
 reassembly geometries can be planned without allocating them, while component
 budgets can still refuse creation.
 
-`test_transport_control` exercises one complete 20-slot stats modulo cycle plus
-a publication update over 1000 mixed ACK/keepalive clients: 51 updates and 50
-manual worker steps at that client count. The buffered transport accepts only
-256 controls per send batch, and the test retains per-update control assertions.
-Its elapsed time is a diagnostic for that synthetic workload, not a packet rate
+`test_transport_control`'s control-pressure case runs 300 and then 1000
+clients through four updates each, with `ROCKETNET_SERVER_MAX_RECEIVE_PACKETS`
+receives offered per update. Half the clients owe a standalone ACK and half a
+keep-alive on every update; the response and ACK/keep-alive checks run on each
+update, and every slot's RTT is checked after them. Its elapsed time is a diagnostic for that synthetic workload, not a packet rate
 or a frame/send/ACK cadence requirement.

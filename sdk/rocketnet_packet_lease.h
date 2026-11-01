@@ -19,15 +19,52 @@ template <size_t Capacity> struct rocketnet_packet_leases_t
 {
     static_assert( ( Capacity & ( Capacity - 1 ) ) == 0, "lease table must be a power of two" );
 
+    // The context fields are atomic and accessed relaxed. The state word's
+    // release store and acquire load order insert's stores before resolve's
+    // loads, but retired() also reads an entry of an earlier epoch that a
+    // concurrent insert may claim and rewrite, and only atomic fields keep that
+    // overlap free of a data race (Boehm's seqlock reader). Relaxed loads and
+    // stores compile to the plain instructions. backend_id stays plain: only
+    // resolve reads it, from an entry of the current epoch, which no insert
+    // rewrites.
     struct alignas( 64 ) entry_t
     {
         std::atomic<uint64_t> state{ 0 };
-        rocketnet_packet_context_t context;
-        uint64_t backend_id;
-        // the rest of the cache line, explicit so the compiler adds no tail padding
-        uint8_t padding[64 - sizeof( std::atomic<uint64_t> ) - sizeof( rocketnet_packet_context_t ) - sizeof( uint64_t )];
+        std::atomic<uint8_t *> frame{ NULL };
+        std::atomic<uint64_t> packet_id{ 0 };
+        std::atomic<uint64_t> sequence{ 0 };
+        uint64_t backend_id = 0;
+        std::atomic<int> payload_index{ 0 };
+        std::atomic<int> payload_capacity{ 0 };
+        std::atomic<int> client_index{ 0 };
+        // the rest of the cache line, explicit so the compiler adds no padding
+        uint8_t padding[64 - 4 * sizeof( std::atomic<uint64_t> ) - sizeof( uint64_t ) - 3 * sizeof( std::atomic<int> )];
+
+        void store( const rocketnet_packet_context_t & context )
+        {
+            frame.store( context.frame, std::memory_order_relaxed );
+            packet_id.store( context.packet_id, std::memory_order_relaxed );
+            sequence.store( context.sequence, std::memory_order_relaxed );
+            payload_index.store( context.payload_index, std::memory_order_relaxed );
+            payload_capacity.store( context.payload_capacity, std::memory_order_relaxed );
+            client_index.store( context.client_index, std::memory_order_relaxed );
+        }
+
+        rocketnet_packet_context_t load() const
+        {
+            rocketnet_packet_context_t context{};
+            context.frame = frame.load( std::memory_order_relaxed );
+            context.packet_id = packet_id.load( std::memory_order_relaxed );
+            context.sequence = sequence.load( std::memory_order_relaxed );
+            context.payload_index = payload_index.load( std::memory_order_relaxed );
+            context.payload_capacity = payload_capacity.load( std::memory_order_relaxed );
+            context.client_index = client_index.load( std::memory_order_relaxed );
+            return context;
+        }
     };
 
+    static_assert( sizeof( std::atomic<uint8_t *> ) == sizeof( std::atomic<uint64_t> ), "the padding counts the frame as eight bytes" );
+    static_assert( offsetof( entry_t, padding ) + sizeof( entry_t::padding ) == 64, "the entry's members leave no implicit padding" );
     static_assert( sizeof( entry_t ) == 64 && alignof( entry_t ) == 64, "one lease entry per cache line" );
 
     entry_t entries[Capacity];
@@ -86,7 +123,7 @@ template <size_t Capacity> struct rocketnet_packet_leases_t
 
             entry.backend_id = context.packet_id;
             context.packet_id = ticket;
-            entry.context = context;
+            entry.store( context );
             entry.state.store( ( epoch << 2 ) | 2, std::memory_order_release );
 
             return true;
@@ -127,9 +164,11 @@ template <size_t Capacity> struct rocketnet_packet_leases_t
             // proofs/tla/RNPacketLease.tla RCmp: a frame or ticket mismatch continues the
             // probe; any other field mismatch refuses.
 
-            const auto & owned = entry.context;
-            if ( owned.frame != supplied.frame || owned.packet_id != supplied.packet_id )
+            if ( entry.frame.load( std::memory_order_relaxed ) != supplied.frame ||
+                 entry.packet_id.load( std::memory_order_relaxed ) != supplied.packet_id )
                 continue;
+
+            const rocketnet_packet_context_t owned = entry.load();
 
             if ( owned.sequence != supplied.sequence ||
                  owned.client_index != supplied.client_index || owned.payload_index != supplied.payload_index ||
@@ -164,19 +203,20 @@ template <size_t Capacity> struct rocketnet_packet_leases_t
     bool retired( const rocketnet_packet_context_t & supplied )
     {
         // proofs/tla/RNPacketLease.tla StartRetired and TLoad: scan from the frame's hash for
-        // an entry of an earlier epoch still active. TCmp reads that entry's fields, and a
+        // an entry of an earlier epoch still active. TRead reads that entry's fields, and a
         // concurrent insert may claim and rewrite the same entry (it is of an earlier
-        // epoch): the read can overlap that writer's stores. The seqlock reader shape makes
-        // the overlap safe to discard: read the fields, then read the state again with a
-        // read-don't-modify-write (fetch_add of 0, acq_rel), whose release half keeps the
-        // field reads before it; this is Boehm's seqlock reader, which unlike an acquire
-        // fence plus a relaxed reload is supported under -fsanitize=thread. A changed state
-        // (TCmp's rewritten, st # seen) means the entry was rewritten, so the fields are
-        // dropped and the probe continues. Without it a rewritten entry could be
-        // read as torn and accepted for a changed copy (MCRNPacketLeaseBrokenRetiredRace.cfg and
-        // MCRNPacketLeaseBrokenRetiredTorn.cfg); with it MCRNPacketLeaseRetired.cfg holds every
-        // invariant. This path is reached only after take refused, which is caller misuse,
-        // so a torn read could only misclassify a misuse, never make a take wrong.
+        // epoch): the read can overlap that writer's stores. This is Boehm's seqlock
+        // reader: the fields are atomic, read relaxed, so the overlap is no data race
+        // (MCRNPacketLeaseBrokenRetiredPlainFields.cfg is the plain-field read), and
+        // TValidate reads the state again with a read-don't-modify-write (fetch_add of 0,
+        // release), whose release keeps the field reads before it: a writer that claimed
+        // the entry before the reread is seen in it, and one that claims it after reads
+        // this reader's release and so follows the field reads. A changed state (st #
+        // seen) means the entry was rewritten, so the fields are dropped and the probe
+        // continues. Without the reread a rewritten entry could be read as torn and
+        // accepted for a changed copy (MCRNPacketLeaseBrokenRetiredTorn.cfg); with both,
+        // MCRNPacketLeaseRetired.cfg holds every invariant. This path is reached only
+        // after take refused, which is caller misuse.
 
         if ( !epoch || !supplied.frame || !supplied.packet_id )
             return false;
@@ -193,12 +233,12 @@ template <size_t Capacity> struct rocketnet_packet_leases_t
             if ( entry_epoch == epoch || ( state & 3 ) != 2 )
                 continue;
 
-            const auto & owned = entry.context;
+            const rocketnet_packet_context_t owned = entry.load();
             const bool match = owned.frame == supplied.frame && owned.packet_id == supplied.packet_id &&
                                owned.sequence == supplied.sequence && owned.client_index == supplied.client_index &&
                                owned.payload_index == supplied.payload_index && owned.payload_capacity == supplied.payload_capacity;
 
-            if ( entry.state.fetch_add( 0, std::memory_order_acq_rel ) != state )
+            if ( entry.state.fetch_add( 0, std::memory_order_release ) != state )
                 continue;
 
             if ( match )

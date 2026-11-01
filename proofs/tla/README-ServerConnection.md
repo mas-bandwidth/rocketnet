@@ -179,158 +179,90 @@ java -cp /path/to/tla2tools.jar tlc2.TLC -workers 4 -cleanup -deadlock -lncheck 
      -config MCServerConnection.cfg MCServerConnection
 ```
 
-`MCServerConnection.cfg` is the committed run: the slot-and-mapping safety instance, two
-clients each with its own token contending for one slot and reusing it after a disconnect
-or a timeout from either side, a two-entry map, every deadline on, a FIFO link with no
-loss, checking every safety property. The other runs are the same file with the lines
-below changed; the TSV has one row per run.
+The committed cases are the rows of group `serverconnection` in `CASES.tsv`; `RUNS.tsv`
+holds each one's measured result. Every case is on a FIFO link without duplication
+(`C2SPattern = S2CPattern = "none"`), as the fairness section requires for liveness.
 
-| Run | Lines changed from the committed cfg | Spec | Checks beyond the safety set | Distinct states | Result |
-|---|---|---|---|---|---|
-| `S-reuse` | committed | Spec | PacketsReachOwnSlotOnly, SessionNeverAnswered | 2779489 | pass |
-| `S-move` | NumClients 1, TokenChoice "any", MaxAttempts 2, MaxMoves 1 | Spec | the same | 2358368 | pass |
-| `S-share-kept` | NumTokens 1, TokenChoice "any" | Spec | the same | 677845 | pass |
-| `S-share-none` | NumTokens 1, TokenChoice "any", History "none" | Spec | the same | 148959 | **fails: OneConnectionPerToken, the finding** |
-| `S-share-fix` | as S-share-none, RefuseAdmittedAtResponse TRUE | Spec | the same | 1637413 | pass: the fix |
-| `S-sameid` | SameId TRUE, MaxSlots 2 | Spec | the same | 2088713 | pass |
-| `S-first` | C2SPattern "first", S2CPattern "first" | Spec | the same | 2774906 | pass |
-| `S-alternate` | C2SPattern "alternate", S2CPattern "alternate" | Spec | the same | 4644754 | pass |
-| `S-burst` | C2SPattern "burst", S2CPattern "burst" | Spec | the same | 2774632 | pass |
-| `S-firstkind` | KindLoss "firstkind" | Spec | the same | 6790752 | pass |
-| `S-arbitrary` | C2SPattern "arbitrary", S2CPattern "arbitrary" | Spec | the same | 12837009 | not finished (stopped at the card's time bound, 24 minutes): no violation in the states explored |
-| `S-move-env` | as S-move, Duplication TRUE, Reordering TRUE | Spec | the same | 15380262 | TLC owed: stopped at the bench bound after 12 minutes with 4.4 M states on the queue, no violation |
-| `S-reuse-dup` | Duplication TRUE | Spec | the same | not run | TLC owed: queued behind S-move-env; narrowed from duplication and reordering to duplication alone because the two-client instance with both on passed 31 M distinct states unfinished, and duplication alone is what the replayed packet needs |
+| Case | Instance | Checks | Expected |
+|---|---|---|---|
+| `MCServerConnection.cfg` | two clients, two addresses, any token, one slot, disconnects | `SafetyInvariants`, `ChurnNeverDenied`, `ExpiredTokenNeverMapped`, `PacketsReachOwnSlotOnly`, `SessionNeverAnswered` | pass |
+| `MCServerConnectionTwoSlots.cfg` | the same with two slots | the same | pass |
+| `MCServerConnectionLive.cfg` | one client, one slot, `KindLoss = "firstkind"`, every deadline off | `SafetyInvariants`, `Connects`, `ServerNotStranded` | pass |
+| `MCServerConnectionBrokenOnceKeepAlive.cfg` | `Live` with `RepeatKeepAlive = FALSE` | `ServerNotStranded` | fails (temporal) |
+| `MCServerConnectionTimers.cfg` | one client that may disconnect or vanish, `Timeout = 2`, `HandshakeDeadline = 2` | `SafetyInvariants` (the timer invariants live), `TimedOutSlotFreed`, `AbandonedMappingDies`, `ServerNotStranded` | pass |
+| `MCServerConnectionBrokenNoTimeout.cfg` | `Timers` with `Timeout = 0` | `TimedOutSlotFreed` | fails (temporal) |
+| `MCServerConnectionBrokenNoDeadline.cfg` | `Timers` with `Timeout = 0`, `HandshakeDeadline = 0` | `AbandonedMappingDies` | fails (temporal) |
+| `MCServerConnectionBrokenSweepKeepsMapping.cfg` | `Timers` with `SweepRemovesMapping = FALSE` | `SlotMappingBijection` | fails (invariant) |
+| `MCServerConnectionMove.cfg` | one client, any token, two attempts, one address change | `SafetyInvariants`, `PacketsReachOwnSlotOnly`, `SessionNeverAnswered` | pass |
+| `MCServerConnectionBrokenAddressNotIdentity.cfg` | `Move` with `AddressIsIdentity = FALSE` | `PacketsReachOwnSlotOnly` | fails (action) |
+| `MCServerConnectionSameId.cfg` | `SameId = TRUE`, two slots, two nonces, no disconnects | `SafetyInvariants` | pass |
+| `MCServerConnectionBrokenClientIdNoCheck.cfg` | `SameId` with both client-id checks off | `OneSlotPerClientId` | fails (invariant) |
+| `MCServerConnectionHistoryNone.cfg` | one token shared by two clients, two slots, `History = "none"` | `SafetyInvariants` | pass |
+| `MCServerConnectionClientIdNoCheck.cfg` | one token, two clients, the response-time id check off | `OneTokenOneLiveConnection` | fails (invariant) |
+| `MCServerConnectionHoldUntilExpire.cfg` | three clients, one slot, `HoldUntilExpire = TRUE` | `ChurnNeverDenied` | fails (invariant) |
+| `MCServerConnectionExpiredToken.cfg` | one client with an expired token | `ExpiredTokenNeverMapped` | pass |
+| `MCServerConnectionResponseReplay.cfg`, `...ResponseReplayBroken.cfg` | one client, timers on, duplication | `ResponseNeverRefreshesConnected` | pass; fails (action) |
+| `MCServerConnectionDualFamily.cfg`, `...BrokenIpv6OnlyMatch.cfg`, `...ServesBothFamilies.cfg`, `...BrokenOneFamilyServed.cfg`, `...Race.cfg`, `...RaceIpv6.cfg`, `...BrokenCommitEarly.cfg` | the address-family runs | `OneFamilyHostConnects`, `BothFamiliesConnect`, `Connects`, `CommitsOnAnswer` | as `CASES.tsv` declares |
 
-| `W-leak` | SweepRemovesMapping FALSE; INVARIANTS SlotMappingBijection | Spec | | 5861 | fail as expected |
-| `W-token` | as S-move, AdmittedHeld FALSE; INVARIANTS OneConnectionPerToken | Spec | | 674687 | fail as expected |
-| `W-clientid` | ClientIdCheck FALSE, SameId TRUE, MaxSlots 2; INVARIANTS OneSlotPerClientId | Spec | | 112643 | fail as expected |
-| `W-addr` | as S-move, AddressIsIdentity FALSE; INVARIANTS OneClientPerSlot | Spec | PacketsReachOwnSlotOnly | 21679 | fail as expected |
-| `L-firstkind` | NumClients 1, NumAddrs 1, NumTokens 1, MaxNonces 1, Timeout 0, HandshakeDeadline 0, Disconnects FALSE, KindLoss "firstkind" | Spec | Connects, ServerNotStranded | 1173 | pass |
-| `L-none` | the L lines, KindLoss "none" | Spec | Connects, ServerNotStranded | 773 | pass |
-| `L-first` | the L lines, C2SPattern "first", S2CPattern "first" | Spec | Connects, ServerNotStranded | 751 | pass |
-| `L-alternate` | the L lines, C2SPattern "alternate", S2CPattern "alternate" | Spec | Connects, ServerNotStranded | 1989 | pass |
-| `L-burst` | the L lines, C2SPattern "burst", S2CPattern "burst" | Spec | Connects, ServerNotStranded | 749 | pass |
-| `L-arbitrary-typed` | the L lines, C2SPattern "arbitrary", S2CPattern "arbitrary" | SpecTyped | Connects, ServerNotStranded | 3771 | pass |
-| `W-once-firstkind` | as L-firstkind, RepeatKeepAlive FALSE | Spec | Connects, ServerNotStranded | 465 | fail as expected |
-| `W-once-alternate` | as L-alternate, RepeatKeepAlive FALSE | Spec | Connects, ServerNotStranded | 1199 | fail as expected |
-| `L-timeout` | NumClients 1, NumAddrs 1, NumTokens 1, MaxNonces 1 | Spec | TimedOutSlotFreed, AbandonedMappingDies | 4767 | pass |
-| `L-timeout-first` | as L-timeout, C2SPattern "first", S2CPattern "first" | Spec | TimedOutSlotFreed, AbandonedMappingDies | 4592 | pass |
-
-The two owed runs, from `proofs/tla/` on a Linux bench with the jar at `$JAR`:
-
-```sh
-sed -e 's/NumClients          = 2/NumClients          = 1/' -e 's/TokenChoice         = "own"/TokenChoice         = "any"/' \
-    -e 's/MaxAttempts         = 1/MaxAttempts         = 2/' -e 's/MaxMoves            = 0/MaxMoves            = 1/' \
-    -e 's/Duplication         = FALSE/Duplication         = TRUE/' -e 's/Reordering          = FALSE/Reordering          = TRUE/' \
-    MCServerConnection.cfg > /tmp/S-move-env.cfg
-java -Xmx6g -cp $JAR tlc2.TLC -workers 4 -cleanup -deadlock -lncheck final -config /tmp/S-move-env.cfg MCServerConnection
-sed -e 's/Duplication         = FALSE/Duplication         = TRUE/' MCServerConnection.cfg > /tmp/S-reuse-dup.cfg
-java -Xmx6g -cp $JAR tlc2.TLC -workers 4 -cleanup -deadlock -lncheck final -config /tmp/S-reuse-dup.cfg MCServerConnection
-```
-
-"The L lines" are `L-firstkind`'s first seven changes with `KindLoss` left at `"none"`.
-Every finished run above took under six minutes on hetzner2 with `-workers 4`; `S-reuse` took
-187 s, `S-first` 160 s and `S-firstkind` 341 s. Two earlier instances were stopped unfinished and are not in
-the table: the committed instance with three addresses, one move per client, any token and
-duplication and reordering on (31,072,359 distinct states at 50 minutes, no violation),
-and the same with a FIFO link (19,205,425 distinct states at 35 minutes, no violation).
-
-The small instance: `SendInterval = 1`, `DisconnectCopies = 1`, `Capacity = 2`,
-`MaxNonces = 2`, `MapCap = AdmittedCap = 2`, `Timeout = 2`, `HandshakeDeadline = 2`,
-`BurstStart = 1`, `BurstLen = 2`. The slot runs (`S-reuse`, `S-share-*`, `S-sameid`, the
-patterns): two clients, two addresses, one slot (two for `S-sameid`), disconnects from
-either side. The address-change runs (`S-move`, `W-addr`): one client, two addresses, two
-tokens, two attempts, one move, so the client that moves reconnects from its new address
-while its old slot lives. Liveness runs (`L-*`, `W-once-*`): one client, one address, one
-token, every deadline off unless the property needs it. Every run is on a FIFO link
-without duplication (the fairness section says why for liveness; for safety it is the
-state space: with duplication and reordering on, the two-client instance passed 31
-million distinct states in 50 minutes without finishing and without a violation, and the
-`-env` runs are the same instances with both on, and are owed: see the table).
-
-### Loss patterns explored
-
-Each run names its patterns in the TSV. Across the runs TLC explored: nothing lost
-(`"none"`); the first send on each link lost (`"first"`); every other send lost
-(`"alternate"`: "the first packet dropped, the second through", forever); sends 1 and 2
-lost (`"burst"`); any copy dropped at any time (`"arbitrary"`); and the first packet of
-every kind lost at each sender (`KindLoss = "firstkind"`, applied before the link). The
-`-env` runs add duplication and reordering on both links, so an old packet arriving late
-(a duplicated challenge or keep-alive delivered after the client moved, a disconnect copy
-behind a keep-alive) and a replayed packet (the byte-identical response that refreshes an
-established slot, F7) belong to those runs and are owed with them; the byte-identical retransmitted response is in
-every run, because the client in state 3 re-sends it on its timer.
+Every rule switch is off in some case: `RepeatKeepAlive`, `SweepRemovesMapping`,
+`AddressIsIdentity`, both client-id checks and `HoldUntilExpire` in a reversed witness;
+`SameId`, `MaxMoves`, `KindLoss` and `History` in a passing case. Other loss patterns
+(`"first"`, `"alternate"`, `"burst"`, `"arbitrary"`) and duplication with reordering are not
+committed cases; nothing here claims them.
 
 ## What TLC found
 
 Every counterexample below was replayed by hand through the functions it names before it was
-written down. One finding in the code came out of this model (item 8, F9 of the inventory
-made concrete: a shared token admits a second connection once the used-token history has
-been flushed); every other invariant the card named holds on the code's behaviour under
-every pattern run, and every reversed witness fails as it must. One model error was found
-and fixed on the way.
+written down. Every reversed witness fails as it must, and the code's behaviour passes every
+committed case. One model error was found and fixed on the way.
 
 ### The hang, reproduced (reversed witnesses)
 
-1. **`RepeatKeepAlive = FALSE` under `"firstkind"`** (`W-once-firstkind`): `Connects` and
-   `ServerNotStranded` fail with a 28-state lasso. The client's first request is lost
-   before the link; the second reaches the server, whose first cookie is lost; the third
-   provokes the cookie that arrives (state 11, the client at 2). The request with the
-   cookie makes the mapping, and the first challenge is lost; the retransmitted request is
-   answered with the stored challenge, byte-identical, which arrives (state 18, the client
-   at 3). The response assigns the slot (state 22) and the establishing keep-alive, the
-   first of its kind, is lost. From there the lasso is `Tick`, `ClientSend` (the stored
-   response), `ServerRecvResponse` (already connected: the idle clock refreshed, nothing
-   sent). The server never sends another keep-alive; the client waits in 3 for a packet
-   nobody will send again, and the slot is never acknowledged. Replayed:
-   `rocketnet_server_process_connection_response` ignores the retransmission
-   (`sdk/rocketnet_server_protocol.cpp:657`) after `:952` refreshed `last_receive_time`;
-   what the witness removes is `rocketnet_server_protocol_write_keep_alive_if_due`
-   (`:1414-1492`), which the code runs every update off `last_keep_alive_send_time`
-   (`:1487`) until the client's block acknowledges one.
-2. **`RepeatKeepAlive = FALSE` under `"alternate"`** (`W-once-alternate`): the same hang
-   with the loss coming from the link on both directions (38 states, lasso from 29). The
-   client's odd sends are lost: requests 1, 3, 5, 7 and 9, so the cookie is provoked by
-   send 2 and is the server's first send, lost; send 4 provokes the server's second, the
-   cookie, which arrives; send 6 makes the mapping and the challenge is the server's third
-   send, lost; send 8 draws the stored challenge, the fourth, which arrives; send 10 is the
-   response, and the keep-alive is the server's fifth send, lost. The lasso is two ticks and
-   two responses, every other one lost, each arriving one ignored as already connected.
-3. The code's behaviour passes under every pattern (`L-*` in the table): the stored
+1. **`RepeatKeepAlive = FALSE` under `"firstkind"`**
+   (`MCServerConnectionBrokenOnceKeepAlive.cfg`): `ServerNotStranded` fails with a lasso.
+   The first packet of each kind is lost on the way: a request, the first cookie, the
+   first challenge. The retransmitted request draws the stored challenge, the response
+   assigns the slot, and the establishing keep-alive, the first of its kind, is lost. From
+   there the lasso is `Tick`, `ClientSend` (the stored response), `ServerRecvResponse`
+   (already connected: the idle clock refreshed, nothing sent). The server never sends
+   another keep-alive, and the slot is never acknowledged. Replayed:
+   `rocketnet_server_process_connection_response` ignores the retransmission once
+   connected; what the witness removes is `rocketnet_server_protocol_write_keep_alive_if_due`,
+   which the code runs every update off the keep-alive clock until the client's block
+   acknowledges one.
+2. The code's behaviour passes (`MCServerConnectionLive.cfg`): the stored
    challenge answers every retransmitted request (`:211`), the cookie and the request-time
    denied are recomputed on every arrival (`:364`, `:574`), and the keep-alive is the one
-   packet the server re-sends on its own timer. Under `"arbitrary"` the one-client instance
-   finishes under `SpecTyped` in two minutes (`L-arbitrary-typed`), where ClientConnection's
-   instance did not; the state space is a fifth of that one's.
+   packet the server re-sends on its own timer.
+3. **The timers** (`MCServerConnectionTimers.cfg` passes `TimedOutSlotFreed` and
+   `AbandonedMappingDies`). `MCServerConnectionBrokenNoTimeout.cfg` turns the idle timeout
+   off: the client connects and vanishes, the server keeps sending keep-alives into the
+   void, and the slot is never freed. `MCServerConnectionBrokenNoDeadline.cfg` turns off the
+   handshake deadline and the half-open idle timeout: the client disconnects with the
+   mapping half open, and the mapping lives forever. Replayed: the code's
+   `rocketnet_server_protocol_update` removes a half-open mapping at the earlier of its
+   handshake deadline and `ROCKETNET_HALF_OPEN_IDLE_TIMEOUT_SECONDS`, and an established one
+   at `timeout_seconds` with its slot (`rocketnet_server_connection_reset`); each witness
+   removes those removals.
 
 ### The slot and mapping witnesses (reversed, each expected to fail)
 
-4. **`SweepRemovesMapping = FALSE`** (`W-leak`, `SlotMappingBijection`, 14 states): one
+4. **`SweepRemovesMapping = FALSE`** (`MCServerConnectionBrokenSweepKeepsMapping.cfg`,
+   `SlotMappingBijection`, 14 states): one
    client connects (request, challenge, response, slot 1 assigned), then two ticks with
    nothing heard; at `Timeout = 2` the sweep releases the slot and leaves the mapping live,
    established and naming slot 1, which is free. That is the leak the audits suspected at
    the 2x table, and the stale reference F11 reads through. Replayed: the code's sweep does
    both at `rocketnet_server_protocol_update` (`:1228` releases, `:1229` removes); the
-   witness drops `:1229`. With the code's behaviour (`S-*`) the bijection holds in every
-   state of every run, and `MappingsBounded` with it.
-5. **`AdmittedHeld = FALSE` on the address-change instance** (`W-token`,
-   `OneConnectionPerToken`, 26 states): one client, two attempts, any token.
-   The client connects, disconnects, and connects again with the same token from its bound
-   address, so the history passes it and no client id is connected; only the admitted set
-   stands between it and a second seat. The witness drops the token from the set with the
-   connection, and the second attempt is seated. Replayed: the code's admitted set loses an
-   entry only by expiry (`sdk/rocketnet_token_tables.cpp:130`, `:174`); nothing on the
-   disconnect paths (`sdk/rocketnet_server_protocol.cpp:1112-1113`, `:1228-1229`,
-   `:1852-1853`) touches it, and the request-time check at `:516` refuses the reconnect. The
-   same instance with the code's behaviour is `S-move`, which passes. (A first version of
-   this witness sat on the shared-token, flushed-history instance, where the code's own
-   behaviour already fails the invariant, item 8, so it witnessed nothing.)
-6. **`ClientIdCheck = FALSE` with `SameId = TRUE`** (`W-clientid`, `OneSlotPerClientId`,
-   21 states, two slots): two clients present two tokens carrying one client id; both get
+   witness drops `:1229`. With the code's behaviour the bijection holds in every state of
+   every passing case, and `MappingsBounded` with it.
+5. **Both client-id checks off with `SameId = TRUE`**
+   (`MCServerConnectionBrokenClientIdNoCheck.cfg`, `OneSlotPerClientId`, two slots): two clients present two tokens carrying one client id; both get
    mappings and both responses are seated. Replayed: the code refuses the second at the
    request (`rocketnet_client_slots_find`, `sdk/rocketnet_server_protocol.cpp:511`) and
    again at the response (`:664`); the witness removes both.
-7. **`AddressIsIdentity = FALSE`** (`W-addr`, `PacketsReachOwnSlotOnly`, 16 states): a
+6. **`AddressIsIdentity = FALSE`** (`MCServerConnectionBrokenAddressNotIdentity.cfg`,
+   `PacketsReachOwnSlotOnly`, 16 states): a
    client gets its challenge at address 1, moves to address 2, and sends its response and
    then a disconnect from there. The witness server opens each under whichever live mapping
    its keys fit: the response seats the client with the mapping at address 1, and the
@@ -339,55 +271,21 @@ and fixed on the way.
    (`rocketnet_encryption_map_find(server->encryption_map, from)`,
    `sdk/rocketnet_server_protocol.cpp:873`); a response from address 2 finds no mapping and
    is `NO_MAPPING`, and the slot at address 1 is left to its idle timeout. With the code's
-   behaviour the property holds in every safety run, with an address change in each.
+   behaviour the property holds (`MCServerConnectionMove.cfg`).
 
-### A finding in the code (a line in the report, not a code change here)
+### One token, one live connection
 
-8. **A shared token admits a second connection after a history flush** (`S-share-none`,
-   `OneConnectionPerToken`, 22 states, the code's behaviour with `History = "none"`). Two
-   clients at two addresses present one token. With the used-token history flushed between
-   the two requests (the eviction S:2782-2786 documents: an attacker holding
-   `8 x max_clients` tokens pushes the first binding out), both requests pass the history
-   (`sdk/rocketnet_server_protocol.cpp:437`) and the
-   admitted-token check (`:516`, nobody has connected yet), and both get a mapping. The
-   first client's response is seated and the token enters the admitted set (`:685`,
-   `rocketnet_admitted_token_set_add` inserts). The server application disconnects it
-   (`:1801-1853`; a timeout at `:1226-1229` does the same) and the admitted set keeps the
-   entry, as it must. The second client's retransmitted response then arrives within its
-   mapping's handshake deadline: `:657` (not connected), `:664` (no slot holds the client
-   id any more), a slot is free, and `:685` calls `rocketnet_admitted_token_set_add` with a
-   token that is already present, which returns success without inserting
-   (`sdk/rocketnet_token_tables.cpp:277-278`); the slot is assigned at `:710`. The token
-   admitted two connections. S:2647-2648 ("a token admits one connection") and
-   S:2788-2791 (the admitted set "is what makes 'a token admits one connection' true
-   rather than probabilistic") say it must not. The inventory's F9 named this shape and
-   asked the handshake model to settle whether it is reachable; it is, under the history
-   flush, within one handshake deadline of the first connection. The same instance with
-   the history binding (`S-share-kept`) passes: the second client never gets a mapping.
-   **The fix, model-checked.** `RefuseAdmittedAtResponse = TRUE` adds the missing rung to
-   the response ladder: a response whose token the admitted set already holds is refused
-   (ignored, as the request-time rung at `:516` ignores). `S-share-fix` is `S-share-none`
-   with the knob on: 8,160,820 states, 1,637,413 distinct, depth 43, 151 s, pass. The code's behaviour (`FALSE`) stays the red case. For
-   the fix card, and not for this PR: an explicit
-   `rocketnet_admitted_token_set_contains` check at the response, before the slot check at
-   `:678`, with its own counter (not a change to `add()`: `sdk/rocketnet_tests.cpp:2007-2008`
-   asserts that `add` is idempotent, and a refusal from `add` would be counted under
-   `ADMITTED_SET_FULL` at `:688`, which it is not); and the rung added to STANDARD.md's
-   response ladder, between the client-id bullet (S:2817) and the slot bullet (S:2818): "If
-   this token's identifier is in the admitted-token set, ignore it."
-
-   **Superseded 2026-10-18.** The admitted-token set is removed from the code
-   (`docs/SESSION.md` 1.6): the rule is now one token, one live connection, and a
-   token whose connection has closed may connect again inside its short expiry, by the
-   owner's ruling. This module still models the set; the code now matches
-   `AdmittedHeld = FALSE` with the set never full, under which `OneConnectionPerToken`
-   (a lifetime count) is no longer the code's rule. `proofs/tla/RNSecurityTables.tla` carries
-   the rule as `OneTokenOneLiveConnection` and `ChurnNeverDenied`; re-stating this
-   module's invariant to match is owed to a later card.
+7. **The used-token history flushed** (`MCServerConnectionHistoryNone.cfg`, pass). The code
+   has no admitted-token set (`docs/SESSION.md` 1.6): the rule is one token, one live
+   connection, and a token whose connection has closed may connect again inside its expiry.
+   `OneConnectionPerToken` is `OneTokenOneLiveConnection`. With one token shared by two
+   clients and no history binding, the client-id checks at the request and the response
+   keep the token to one live slot. `MCServerConnectionClientIdNoCheck.cfg` turns the
+   response-time check off and fails it.
 
 ### Model errors, fixed
 
-9. **The salt keyed on the attempt number.** The first draft's key pair was
+8. **The salt keyed on the attempt number.** The first draft's key pair was
    `[att, nonce]` with `att` each client's own attempt counter, as ClientConnection has it
    for its one client. TLC's first full run (19 states, `OneClientPerSlot`) had two clients
    present the same token with attempt number 1 each: the first got a mapping and its
@@ -402,40 +300,6 @@ and fixed on the way.
    keys, and nothing else, so the second client cannot open the first's challenge. The
    model's salt was too small, not the code. The salt is now the pair
    `<<client, attempt>>`, which no two clients share, and the same instance passes.
-
-## The RUNS.tsv rows
-
-Six models land in parallel, so this card does not edit `proofs/tla/RUNS.tsv`; the rows it would add
-are these (module, config, states, distinct, result, bench, date):
-
-```
-MCServerConnection	MCServerConnection.cfg; checks PacketsReachOwnSlotOnly, SessionNeverAnswered	14097280	2779489	pass	hetzner2	2026-10-13
-MCServerConnection	MCServerConnection.cfg with NumClients 1, TokenChoice "any", MaxAttempts 2, MaxMoves 1 (the address change)	10351237	2358368	pass	hetzner2	2026-10-13
-MCServerConnection	MCServerConnection.cfg with NumTokens 1, TokenChoice "any" (one token shared, history kept)	3465812	677845	pass	hetzner2	2026-10-13
-MCServerConnection	MCServerConnection.cfg with NumTokens 1, TokenChoice "any", History "none" (one token shared, history flushed)	504378	148959	fail: Invariant OneConnectionPerToken is violated (F9 made concrete, README-ServerConnection.md item 8), 22-state trace	hetzner2	2026-10-13
-MCServerConnection	MCServerConnection.cfg with SameId TRUE, MaxSlots 2	10412272	2088713	pass	hetzner2	2026-10-13
-MCServerConnection	MCServerConnection.cfg with C2SPattern "first", S2CPattern "first"	14078123	2774906	pass	hetzner2	2026-10-13
-MCServerConnection	MCServerConnection.cfg with C2SPattern "alternate", S2CPattern "alternate"	24564007	4644754	pass	hetzner2	2026-10-13
-MCServerConnection	MCServerConnection.cfg with C2SPattern "burst", S2CPattern "burst"	14076977	2774632	pass	hetzner2	2026-10-13
-MCServerConnection	MCServerConnection.cfg with KindLoss "firstkind"	32588361	6790752	pass	hetzner2	2026-10-13
-MCServerConnection	MCServerConnection.cfg with C2SPattern "arbitrary", S2CPattern "arbitrary"	86207063	12837009	not finished (stopped at the card's time bound): no violation in the states explored	hetzner2	2026-10-13
-MCServerConnection	MCServerConnection.cfg with NumClients 1, TokenChoice "any", MaxAttempts 2, MaxMoves 1, Duplication TRUE, Reordering TRUE	63888899	15380262	not finished (stopped at the bench bound, TLC owed): no violation in the states explored	hetzner2	2026-10-13
-MCServerConnection	MCServerConnection.cfg with SweepRemovesMapping FALSE; checks SlotMappingBijection (reversed witness)	16948	5861	fail as expected: Invariant SlotMappingBijection is violated, 14-state trace	hetzner2	2026-10-13
-MCServerConnection	MCServerConnection.cfg with NumTokens 1, TokenChoice "any", History "none", RefuseAdmittedAtResponse TRUE (the fix)	8160820	1637413	pass	hetzner2	2026-10-13
-MCServerConnection	MCServerConnection.cfg with NumClients 1, TokenChoice "any", MaxAttempts 2, MaxMoves 1, AdmittedHeld FALSE; checks OneConnectionPerToken (reversed witness)	2509746	674687	fail as expected: Invariant OneConnectionPerToken is violated, 26-state trace	hetzner2	2026-10-13
-MCServerConnection	MCServerConnection.cfg with ClientIdCheck FALSE, SameId TRUE, MaxSlots 2; checks OneSlotPerClientId (reversed witness)	374129	112643	fail as expected: Invariant OneSlotPerClientId is violated, 21-state trace	hetzner2	2026-10-13
-MCServerConnection	MCServerConnection.cfg with NumClients 1, TokenChoice "any", MaxAttempts 2, MaxMoves 1, AddressIsIdentity FALSE; checks OneClientPerSlot, PacketsReachOwnSlotOnly (reversed witness)	55678	21679	fail as expected: Action property PacketsReachOwnSlotOnly is violated, 16-state trace	hetzner2	2026-10-13
-MCServerConnection	MCServerConnection.cfg with NumClients 1, NumAddrs 1, NumTokens 1, MaxNonces 1, Timeout 0, HandshakeDeadline 0, Disconnects FALSE, KindLoss "firstkind"; checks Connects, ServerNotStranded	3478	1173	pass	hetzner2	2026-10-13
-MCServerConnection	MCServerConnection.cfg with NumClients 1, NumAddrs 1, NumTokens 1, MaxNonces 1, Timeout 0, HandshakeDeadline 0, Disconnects FALSE; checks Connects, ServerNotStranded	2299	773	pass	hetzner2	2026-10-13
-MCServerConnection	MCServerConnection.cfg with NumClients 1, NumAddrs 1, NumTokens 1, MaxNonces 1, Timeout 0, HandshakeDeadline 0, Disconnects FALSE, C2SPattern "first", S2CPattern "first"; checks Connects, ServerNotStranded	2241	751	pass	hetzner2	2026-10-13
-MCServerConnection	MCServerConnection.cfg with NumClients 1, NumAddrs 1, NumTokens 1, MaxNonces 1, Timeout 0, HandshakeDeadline 0, Disconnects FALSE, C2SPattern "alternate", S2CPattern "alternate"; checks Connects, ServerNotStranded	6084	1989	pass	hetzner2	2026-10-13
-MCServerConnection	MCServerConnection.cfg with NumClients 1, NumAddrs 1, NumTokens 1, MaxNonces 1, Timeout 0, HandshakeDeadline 0, Disconnects FALSE, C2SPattern "burst", S2CPattern "burst"; checks Connects, ServerNotStranded	2235	749	pass	hetzner2	2026-10-13
-MCServerConnection	MCServerConnection.cfg with NumClients 1, NumAddrs 1, NumTokens 1, MaxNonces 1, Timeout 0, HandshakeDeadline 0, Disconnects FALSE, C2SPattern "arbitrary", S2CPattern "arbitrary", SpecTyped; checks Connects, ServerNotStranded	19164	3771	pass	hetzner2	2026-10-13
-MCServerConnection	MCServerConnection.cfg with NumClients 1, NumAddrs 1, NumTokens 1, MaxNonces 1, Timeout 0, HandshakeDeadline 0, Disconnects FALSE, KindLoss "firstkind", RepeatKeepAlive FALSE; checks Connects, ServerNotStranded (reversed witness)	1170	465	fail as expected: Temporal properties were violated, 28-state lasso	hetzner2	2026-10-13
-MCServerConnection	MCServerConnection.cfg with NumClients 1, NumAddrs 1, NumTokens 1, MaxNonces 1, Timeout 0, HandshakeDeadline 0, Disconnects FALSE, C2SPattern "alternate", S2CPattern "alternate", RepeatKeepAlive FALSE; checks Connects, ServerNotStranded (reversed witness)	3210	1199	fail as expected: Temporal properties were violated, 38-state lasso	hetzner2	2026-10-13
-MCServerConnection	MCServerConnection.cfg with NumClients 1, NumAddrs 1, NumTokens 1, MaxNonces 1; checks TimedOutSlotFreed, AbandonedMappingDies	18960	4767	pass	hetzner2	2026-10-13
-MCServerConnection	MCServerConnection.cfg with NumClients 1, NumAddrs 1, NumTokens 1, MaxNonces 1, C2SPattern "first", S2CPattern "first"; checks TimedOutSlotFreed, AbandonedMappingDies	18480	4592	pass	hetzner2	2026-10-13
-```
 
 ## Two-slot instance
 

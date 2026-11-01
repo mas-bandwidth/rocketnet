@@ -4,9 +4,9 @@
 #ifndef ROCKETNET_SDK_ROCKETNET_HISTORY_H
 #define ROCKETNET_SDK_ROCKETNET_HISTORY_H
 
-// the published depth bounds (STANDARD.md _Replay window sizing_): the message
+// the published depth bounds (standard/TRANSPORT.md t14): the message
 // tier's half-range reconstruction relies on a depth no larger than 32768 and
-// transport sequences that rise in packet write order (STANDARD.md _Numbers_).
+// transport sequences that rise in packet write order (standard/MESSAGES.md m1 rule 8).
 #define ROCKETNET_HISTORY_PACKETS_MIN 4096
 #define ROCKETNET_HISTORY_PACKETS_MAX 32768
 

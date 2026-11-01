@@ -95,11 +95,10 @@ of at most `ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES`, which it passes to
 `rocketnet_client_connect`. The token carries the two token keys for that one
 connection, which the backend draws fresh for each token; they are not
 long-lived and they identify nothing outside that connection. Fetch a token
-just before connecting: a token expires (30 seconds is the recommended
-lifetime; the development token's lifetime is
-`ROCKETNET_DEV_CONNECT_TOKEN_EXPIRE_SECONDS`, defined in
-[sdk/rocketnet_connect_token.h](../sdk/rocketnet_connect_token.h), an internal
-header, not in the public [sdk/rocketnet.h](../sdk/rocketnet.h)).
+just before connecting: a token expires. 30 seconds is the recommended
+lifetime and the `expire_seconds` that `rocketnet_connect_token_default_config`
+fills in; a development token lives for the `expire_seconds` passed to
+`rocketnet_create_dev_connect_token`.
 
 ## Development keys and production keys
 
@@ -136,7 +135,7 @@ A production build (`ROCKETNET_DEV=0`, CMake `-DROCKETNET_DEV=OFF`;
 
 - compiles out the four `ROCKETNET_DEV_*_KEY` macros and
   `rocketnet_create_dev_connect_token`;
-- refuses the published development backend key at start, with
+- refuses the published development backend or server key at start, with
   `ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION`;
 - refuses at connect a token sealed to the published development server key,
   with `ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION`.
@@ -166,9 +165,9 @@ own production minter, legal in a production build (`ROCKETNET_DEV=0`):
   refuses the published development keys with
   `ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION`.
 
-They are for in-process minting with ephemeral keys: singleplayer and listen
-servers, debug tools and build tools, and a title's own backend written in C or
-C++. **Never compile a real backend secret key into a shipped client**: anyone
+Use them on a title's backend written in C or C++, in build/debug tools, or
+for in-process minting with ephemeral keys in singleplayer and listen servers.
+**Never compile a real backend secret key into a shipped client**: anyone
 who extracts it mints tokens every server of the title accepts. A shipped
 client receives its token from the backend.
 
@@ -180,11 +179,12 @@ to the server key, signs the signed connect data with the backend key, and
 wipes its copy of the private fields. `rocketnet_create_dev_connect_token` is
 the same call over the published development backend key.
 
-[examples/backend](../examples/backend/README.md) has two backends that write the
-same token byte for byte: Go ([go/main.go](../examples/backend/go/main.go),
+[examples/backend](../examples/backend/README.md) has two backends that implement the same
+token format: Go ([go/main.go](../examples/backend/go/main.go),
 `generateConnectToken`) and C#
 ([csharp/Backend/ConnectToken.cs](../examples/backend/csharp/Backend/ConnectToken.cs),
-`ConnectToken.Generate`). Both are checked against the known answers in
+`ConnectToken.Generate`). Their fixed-input writers are checked byte for byte
+against the known answers in
 [standard/vectors/connect_token_v1.json](../standard/vectors/connect_token_v1.json). That file
 is written only by `./bin/connect_token_vectors standard/vectors/connect_token_v1.json`
 ([tools/connect_token_vectors/main.cpp](../tools/connect_token_vectors/main.cpp)),
@@ -192,6 +192,15 @@ from the fixed test keys and inputs; the unit suite compiles the committed copy
 into `./bin/test` and checks it byte for byte against the same generator
 (`test_vectors_regenerate_byte_identical`). A real backend authenticates the
 player before it writes them a token.
+
+The backend must also rate-limit token issuance per account. A server bounds
+half-open handshakes per token and per source address, not per client id: its
+encryption mapping table holds `2 * max_clients` mappings, and each token buys
+at most one half-open mapping. One account that is issued tokens freely and
+presents each from its own source address (an IPv6 prefix supplies many) can
+fill that table, and the server refuses everyone else's handshakes until those
+mappings reach their handshake deadline. Issue an account only the tokens a
+player needs to connect and retry.
 
 ## Rotation
 

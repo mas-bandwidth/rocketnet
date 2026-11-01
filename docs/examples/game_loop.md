@@ -12,7 +12,8 @@ budget, the server's tick, and message latency in frames.
    what arrived; (2) `*_receive_messages` drains every message batch until `NULL`; (3) simulate;
    (4) queue this frame's messages with guarded `*_start_message` (checking the non-`NULL` pointer)
    and `*_finish_message` inside that branch; (5)
-   `*_send_packets` last, so this frame's messages leave this frame.
+   `*_send_packets` last, making this frame's queued work available to the
+   transport.
 3. Each client sends its position every frame (`ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED`,
    channel 0) and an event twice a second (`ROCKETNET_RELIABILITY_RELIABLE_ORDERED`, channel
    1); the server sends each client a state update every frame. Each message
@@ -32,12 +33,11 @@ From the repository root, after the normal build:
 ./bin/example_game_loop --clients 1000 --seconds 30
 ```
 
-The full-scale run holds 1000 clients in one process, all in memory over the
-loopback transport. RocketNet's demonstrated server configuration is up to
-1000 clients under its stated workload, topology, and deployment conditions
-(above 1000 clients, users must research, stabilize, and qualify their own
-configuration). `--clients` outside 1..1000 prints a usage line and exits
-1. On Windows the binary is `bin\Release\example_game_loop.exe`. The default
+The 1000-client command holds all clients in one process over loopback and
+can require substantial memory. It is a profiling example, not qualification
+of 1000 clients under every workload; see [Testing](../TESTING.md) and
+[Memory](../MEMORY.md). `--clients` accepts `1..ROCKETNET_MAX_CLIENTS` (1000
+in the default build); values outside that range are refused. On Windows the binary is `bin\Release\example_game_loop.exe`. The default
 run prints `PASS` last; a failure prints one `FAIL: ...` line and exits 1.
 
 ## What the output means
@@ -57,38 +57,21 @@ is one client's update, receive, queue and send calls in one frame: p50 is the
 typical frame, p99 the slow one in a hundred. The budget verdict never fails
 the run, because a shared machine's noise is not the library's cost. `server tick` is the server's frame over all clients.
 
-The two `latency ... frames` lines give each direction's min, mean and max.
-Clients run their frames before the server's, so the server reads a message in
-the frame it was sent (0) and a client reads its state update no earlier than
-the next frame (1): that is the delay of running in one process, and
-`extra frame(s)` is what the frame order adds on top, read from client->server.
-That direction has no receive handoff, so every message must read 0 in the correct order and 1 with
-`--wrong-order`. Server->client passes through a background receive handoff;
-moving that receive work off the frame thread lets data processing scale, with
-extra frames under load as the chosen cost. Its min, mean and max expose that
-cost, but worker scheduling has no fixed frame-count maximum. The causal
-minimum is still fixed by the loop order: at least 1 frame in the correct order
-and 2 in the wrong order. `PASS` means every client stayed connected, every
-reliable event arrived, the client->server order had no unnecessary extra
-frame, and no state update arrived before its causal minimum.
+The two `latency ... frames` lines give each direction's min, mean, and max.
+Clients run their frames before the server. The causal minimum is therefore
+0 frames client-to-server and 1 server-to-client; `--wrong-order` adds one to
+each minimum. Both directions pass through background handoffs, which can add
+more frames. Neither direction has a fixed delivery frame count.
 
-## Public calls it uses
+The printed `extra frame(s)` is the rounded mean client-to-server latency. It
+includes worker scheduling, so it does not isolate the cost of call order.
+`PASS` means every client stayed connected, all reliable events arrived, and
+no measured delivery preceded its causal minimum. Timing percentiles and
+additional handoff latency are informational, not pass thresholds. The sample
+numbers above illustrate the output format; measure on the intended host.
 
-- `rocketnet_init`, `rocketnet_term`
-- `rocketnet_server_default_config`, `rocketnet_server_create`,
-  `rocketnet_server_start`, `rocketnet_server_stop`, `rocketnet_server_stopped`,
-  `rocketnet_server_destroy`,
-  `rocketnet_server_update`, `rocketnet_server_send_packets`,
-  `rocketnet_server_ipv4_address`,
-  `rocketnet_server_public_key`, `rocketnet_server_transport_name`,
-  `rocketnet_server_can_send_message`, `rocketnet_server_start_message`, `rocketnet_server_finish_message`,
-  `rocketnet_server_receive_messages`
-- `rocketnet_client_default_config`, `rocketnet_client_create`,
-  `rocketnet_client_connect`, `rocketnet_client_disconnect`,
-  `rocketnet_client_disconnected`, `rocketnet_client_destroy`,
-  `rocketnet_client_update`, `rocketnet_client_send_packets`,
-  `rocketnet_client_state`, `rocketnet_client_can_send_message`, `rocketnet_client_start_message`,
-  `rocketnet_client_finish_message`, `rocketnet_client_receive_messages`
-- `rocketnet_create_dev_connect_token` and
-  `ROCKETNET_DEV_BACKEND_PUBLIC_KEY` (development library only)
-- `rocketnet_status_name`, `rocketnet_time`, `rocketnet_sleep`
+<a id="public-calls-it-uses"></a>
+
+Source: [`examples/game_loop.c`](../../examples/game_loop.c). See the
+[integration guide](../USAGE.md) for shared lifecycle, threading, and message
+ownership rules.

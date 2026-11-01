@@ -40,7 +40,8 @@
 // the server transport config; the caller's ROCKETNET_SERVER_TRANSPORT pin wins
 // over the struct by design, so a CI leg pinned to a real transport would open a
 // socket the step-driven loopback client never reaches. The pin is set aside
-// for the create and put back after, as test_unit_status_server_transport_create_ex.cpp does.
+// for the create and put back after; the unit runner (tests/test.cpp) also clears
+// both pins for the whole run.
 #if ROCKETNET_DEV
 static int public_not_released_setenv( const char * name, const char * value ) { return rocketnet_test_env_setenv( name, value, 1 ); }
 #endif // #if ROCKETNET_DEV

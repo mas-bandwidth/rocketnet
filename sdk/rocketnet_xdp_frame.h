@@ -391,6 +391,13 @@ struct rocketnet_xdp_receive_drops_t
     uint64_t descriptor;
 };
 
+// every frame the receive dropped, whatever the reason: the transport's
+// XDP_RECEIVE_FRAME_DROPPED
+static inline uint64_t rocketnet_xdp_receive_drops_total( const struct rocketnet_xdp_receive_drops_t * drops )
+{
+    return drops->not_ip + drops->ipv6_extension + drops->other_family + drops->malformed + drops->descriptor;
+}
+
 static inline bool rocketnet_xdp_frame_ipv6_is_extension( uint8_t next_header )
 {
     return next_header == 0 ||     // hop-by-hop options
@@ -707,6 +714,36 @@ static inline bool rocketnet_xdp_stats_cpus_fit( int num_cpus )
     return num_cpus > 0 && num_cpus <= ROCKETNET_XDP_STATS_MAX_CPUS;
 }
 
+// STATS PUBLISH: a read that succeeded sums the per-cpu values into counters
+// and keeps the sum as the last good read. A read that failed (the map
+// lookup refused, or a cpu count that does not fit) publishes the last good
+// read, never zeros, since a count the kernel could not report is not a
+// count of nothing. The return is true when this read starts a run of
+// failures, so the caller logs once per run.
+
+static inline bool rocketnet_xdp_stats_publish( bool read, const struct rocketnet_server_xdp_stats_t * values, int num_cpus,
+                                                uint64_t * last, bool * failing, uint64_t * counters )
+{
+    if ( read && rocketnet_xdp_stats_cpus_fit( num_cpus ) )
+    {
+        memset( last, 0, ROCKETNET_SERVER_XDP_NUM_COUNTERS * sizeof( uint64_t ) );
+        for ( int cpu = 0; cpu < num_cpus; cpu++ )
+        {
+            for ( int i = 0; i < ROCKETNET_SERVER_XDP_NUM_COUNTERS; i++ )
+                last[i] += values[cpu].counters[i];
+        }
+
+        *failing = false;
+        memcpy( counters, last, ROCKETNET_SERVER_XDP_NUM_COUNTERS * sizeof( uint64_t ) );
+        return false;
+    }
+
+    memcpy( counters, last, ROCKETNET_SERVER_XDP_NUM_COUNTERS * sizeof( uint64_t ) );
+    const bool starts = !*failing;
+    *failing = true;
+    return starts;
+}
+
 // REPLY MAC: the destination MAC address of a reply frame. A client's MAC is learned
 // from the source MAC of a packet the transport accepted for a connection
 // (it opened under the connection's keys), never from a packet it dropped or
@@ -988,6 +1025,107 @@ static inline const uint8_t * rocketnet_xdp_reply_mac( struct rocketnet_xdp_repl
     if ( refused )
         ( *refused )++;
     return NULL;
+}
+
+// GATEWAY REFRESH: the table's gateway MACs are resolved again every
+// ROCKETNET_XDP_GATEWAY_REFRESH_SECONDS, so when the gateway's MAC changes
+// while the server runs (a router replaced, a failover that moves the
+// gateway address to another box) replies to unlearned addresses follow it
+// within one period. The refresh runs on the main thread inside the receive
+// call, where the table's other writes run: the fill threads that read the
+// table through start and finish are joined before each receive and start
+// again after it, so plain stores and that join publish the new MAC whole,
+// as they publish every learned entry. The xdp threads never read the
+// table; they send the copies start and finish wrote into each staged
+// packet. A resolve that fails, finds no default route or yields an
+// unusable MAC keeps what the table has: a refresh replaces a gateway or
+// adds one, never removes one. proofs/tla/RNXdpGatewayRefresh.tla.
+
+#define ROCKETNET_XDP_GATEWAY_REFRESH_SECONDS   5.0
+
+// one family's gateway MAC: false is a failed resolve, true with *found
+// false is no default route for the family
+
+typedef bool ( *rocketnet_xdp_gateway_resolve_t )( void * context, int address_type, uint8_t * mac, bool * found );
+
+struct rocketnet_xdp_gateway_change_t
+{
+    int address_type;
+    bool was_known;
+    uint8_t was[6];
+    uint8_t mac[6];
+};
+
+// serves_both: the per-family gateways, IPv4 and IPv6; else gateway_mac,
+// resolved for address_type. Disabled while ROCKETNET_GATEWAY_ETHERNET_ADDRESS
+// names the gateway.
+
+struct rocketnet_xdp_gateway_refresh_t
+{
+    bool enabled;
+    bool scheduled;
+    bool serves_both;
+    int address_type;
+    double next_time;
+};
+
+// proofs/tla/RNXdpGatewayRefresh.tla Refresh and WriteLow: at or past the
+// deadline, resolves each served family and writes every changed gateway
+// MAC into the table, whole before the call returns, recording each change
+// in changes (room for two). The first call only schedules: create has just
+// resolved. Returns the number of changes.
+
+static inline int rocketnet_xdp_gateway_refresh( struct rocketnet_xdp_gateway_refresh_t * refresh, struct rocketnet_xdp_reply_macs_t * table, double now,
+                                                 rocketnet_xdp_gateway_resolve_t resolve, void * context, struct rocketnet_xdp_gateway_change_t * changes )
+{
+    if ( !refresh->enabled )
+        return 0;
+
+    if ( !refresh->scheduled )
+    {
+        refresh->scheduled = true;
+        refresh->next_time = now + ROCKETNET_XDP_GATEWAY_REFRESH_SECONDS;
+        return 0;
+    }
+
+    if ( now < refresh->next_time )
+        return 0;
+
+    refresh->next_time = now + ROCKETNET_XDP_GATEWAY_REFRESH_SECONDS;
+
+    int num_changes = 0;
+    const int num_families = refresh->serves_both ? 2 : 1;
+    for ( int i = 0; i < num_families; ++i )
+    {
+        int address_type = refresh->address_type;
+        uint8_t * slot = table->gateway_mac;
+        bool * known = &table->gateway_known;
+        if ( refresh->serves_both )
+        {
+            address_type = ( i == 0 ) ? ROCKETNET_ADDRESS_IPV4 : ROCKETNET_ADDRESS_IPV6;
+            slot = ( i == 0 ) ? table->gateway_ipv4 : table->gateway_ipv6;
+            known = ( i == 0 ) ? &table->gateway_ipv4_known : &table->gateway_ipv6_known;
+        }
+
+        uint8_t mac[6];
+        bool found = false;
+        if ( !resolve( context, address_type, mac, &found ) || !found || !rocketnet_xdp_reply_mac_usable( mac ) )
+            continue;
+
+        if ( *known && memcmp( slot, mac, 6 ) == 0 )
+            continue;
+
+        struct rocketnet_xdp_gateway_change_t * change = &changes[num_changes++];
+        change->address_type = address_type;
+        change->was_known = *known;
+        memcpy( change->was, slot, 6 );
+        memcpy( change->mac, mac, 6 );
+
+        memcpy( slot, mac, 6 );
+        *known = true;
+    }
+
+    return num_changes;
 }
 
 #endif // ROCKETNET_SDK_ROCKETNET_XDP_FRAME_H

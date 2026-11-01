@@ -36,11 +36,17 @@ static void test_io_uring_transport_reservation_does_not_wrap()
     to.data.ipv4[3] = 1;
     to.port = 40001;
 
-    rocketnet_server_uring_test_set_reserved( uring, 0xFFFFFFFFull );
+    for ( int phase = 0; phase < ROCKETNET_URING_SEND_PHASES; ++phase )
+    {
+        rocketnet_server_uring_test_set_reserved( uring, phase, 0xFFFFFFFFull );
 
-    uint64_t packet_id = 0;
-    rocketnet_unit_check( rocketnet_server_uring_start_packet( uring, &to, &packet_id ) == NULL );
-    rocketnet_unit_check( rocketnet_server_uring_start_packet( uring, &to, &packet_id ) == NULL );
+        uint64_t packet_id = 0;
+        rocketnet_unit_check( rocketnet_server_uring_start_packet( uring, &to, &packet_id ) == NULL );
+        rocketnet_unit_check( rocketnet_server_uring_start_packet( uring, &to, &packet_id ) == NULL );
+        rocketnet_unit_check( rocketnet_server_uring_send_room( uring ) == 0 );
+        rocketnet_unit_check( !rocketnet_server_uring_send_idle( uring ) );
+        rocketnet_server_uring_test_set_reserved( uring, phase, 0 );
+    }
 
     rocketnet_server_uring_test_destroy_fake( uring );
 }

@@ -1658,23 +1658,6 @@ const char * rocketnet_posix_hard_killed_client_test_name( int index )
     return posix_hk_names[index];
 }
 
-// the suite group (tests/suite_runner.h, group_of) of a case name: the cell
-// cases measure receive gaps and handshake times against the wall clock, so
-// they run as group 1, after every other case and the sibling executables
-// (group 0) have finished, never beside the loopback load those make; they
-// run in parallel with each other. the seam cases measure no time. a kind
-// name that contains "_xdp_" returns 2: those cells share one veth pair, so
-// they run alone, one at a time. names outside the kind prefixes stay 0,
-// including the other xdp cases.
-//
-// the 1000-cycle connect/disconnect cases (tests/functional/posix_lifecycle_stress.cpp)
-// hold 1024 IPv4 loopback ports while they cycle, and Darwin gives a
-// dual-stack IPv6 socket in another process a port one of them holds: that
-// socket then never hears IPv4 datagrams to it. Beside them,
-// test_transport_dual_stack_ipv4_client and test_server_serves_both_families
-// failed to connect. On macOS they run as group 2, alone, after group 1.
-
-
 void rocketnet_posix_hard_killed_client_test_run( int index )
 {
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC

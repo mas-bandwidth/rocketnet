@@ -55,8 +55,16 @@ int main( int argc, char ** argv )
             port = argv[i + 1];
         }
 
+    char * end = NULL;
+    const long port_number = port ? strtol( port, &end, 10 ) : 40000;
+    if ( port && ( port[0] < '0' || port[0] > '9' || *end != '\0' || port_number < 1 || port_number > 65535 ) )
+    {
+        printf( "FAIL: the port takes 1 .. 65535, not \"%s\"\n", port );
+        return 1;
+    }
+
     char address[32];
-    snprintf( address, sizeof( address ), "127.0.0.1:%d", port ? atoi( port ) : 40000 );
+    snprintf( address, sizeof( address ), "127.0.0.1:%ld", port_number );
 
     // a file left by an earlier run names a key this server does not use
 

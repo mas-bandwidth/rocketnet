@@ -206,8 +206,10 @@ struct rocketnet_server_xdp_socket_t
     uint8_t padding_4[4096];
 
     // frames the receive loop dropped, by reason (rocketnet_xdp_frame_receive);
-    // written only by this queue's xdp thread
+    // written only by this queue's xdp thread, which publishes their sum in
+    // receive_dropped after each receive pass for main to read
     struct rocketnet_xdp_receive_drops_t receive_drops;
+    std::atomic<uint64_t> receive_dropped{ 0 };
 
     // frames the flush did not send because the codec refused to build them
     // (a destination of the family this server does not serve); written by
@@ -277,6 +279,16 @@ struct rocketnet_server_socket_t
     struct rocketnet_xdp_reply_macs_t reply_macs;
     uint8_t process_eth[ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE][ETH_ALEN];
 
+    // the gateway refresh (rocketnet_xdp_frame.h GATEWAY REFRESH): main
+    // thread only, in the receive call. resolve is rtnetlink unless a test
+    // replaces it; failing holds, per family, whether the last resolve failed,
+    // so a failing resolve warns once rather than every period
+    struct rocketnet_xdp_gateway_refresh_t gateway_refresh;
+    rocketnet_xdp_gateway_resolve_t gateway_resolve;
+    void * gateway_resolve_context;
+    bool gateway_resolve_failing[2];
+    char interface_name[IF_NAMESIZE];
+
     int interface_index;
     struct bpf_object * program_object;  // opened from the embedded server_xdp.o; libxdp does not own it, so destroy closes it after the program
     rocketnet_xdp_program_t * program;
@@ -307,6 +319,8 @@ struct rocketnet_server_socket_t
     // the per-cpu stats map read buffer (rocketnet_xdp_stats_cpus_fit), inside
     // the create-time allocation; written only by rocketnet_server_socket_xdp_counters
     struct rocketnet_server_xdp_stats_t stats_values[ROCKETNET_XDP_STATS_MAX_CPUS];
+    uint64_t stats_last[ROCKETNET_SERVER_XDP_NUM_COUNTERS];   // the last good read (rocketnet_xdp_stats_publish)
+    bool stats_failing;                                         // the last read failed; logged once per run
 
     int serves_both;
     rocketnet_address_t ipv4_address;
@@ -371,9 +385,10 @@ static bool get_interface_mac_address( const char * interface_name, uint8_t * ma
 // on the interface, then that next hop's neighbour entry. No default route
 // on the interface returns true with *found_route false, the one case the
 // server starts without a gateway; a gateway with no usable neighbour entry
-// carrying a link-layer address refuses, and nothing resolves it.
+// carrying a link-layer address refuses, and nothing resolves it. loud logs
+// each failure; the periodic refresh passes false and warns once itself.
 
-static bool get_gateway_mac_address_netlink( const char * interface_name, int interface_index, int address_type, uint8_t * mac_address, bool * found_route )
+static bool get_gateway_mac_address_netlink( const char * interface_name, int interface_index, int address_type, uint8_t * mac_address, bool * found_route, bool loud )
 {
     *found_route = false;
 
@@ -390,8 +405,9 @@ static bool get_gateway_mac_address_netlink( const char * interface_name, int in
         return true;
     if ( route != ROCKETNET_GATEWAY_NETLINK_FOUND )
     {
-        rocketnet_error( "%s gateway discovery: route query on %s failed: %s (%s)", family_name, interface_name,
-                         rocketnet_gateway_netlink_result_name( route ), strerror( error ) );
+        if ( loud )
+            rocketnet_error( "%s gateway discovery: route query on %s failed: %s (%s)", family_name, interface_name,
+                             rocketnet_gateway_netlink_result_name( route ), strerror( error ) );
         return false;
     }
 
@@ -404,6 +420,8 @@ static bool get_gateway_mac_address_netlink( const char * interface_name, int in
     const int neighbor = rocketnet_gateway_netlink_neighbor( family, interface_index, gateway, mac_address, &error );
     if ( neighbor == ROCKETNET_GATEWAY_NETLINK_FOUND )
         return true;
+    if ( !loud )
+        return false;
     if ( neighbor == ROCKETNET_GATEWAY_NETLINK_DONE )
     {
         rocketnet_error( "%s gateway discovery: no neighbor entry with a link-layer address for %s on %s", family_name, gateway_ip_string, interface_name );
@@ -452,7 +470,7 @@ static bool get_gateway_mac_address( const char * interface_name, int interface_
     else
     {
         bool found_route = false;
-        if ( !get_gateway_mac_address_netlink( interface_name, interface_index, address_type, mac_address, &found_route ) )
+        if ( !get_gateway_mac_address_netlink( interface_name, interface_index, address_type, mac_address, &found_route, true ) )
             return false;
         if ( !found_route )
             return true;
@@ -472,6 +490,56 @@ static bool get_gateway_mac_address( const char * interface_name, int interface_
 }
 
 #define INVALID_FRAME UINT64_MAX
+
+// the refresh's resolve: rtnetlink, quiet. A failure warns once per failing
+// streak, and the table keeps the gateway it has.
+
+static bool rocketnet_server_socket_resolve_gateway( void * context, int address_type, uint8_t * mac, bool * found )
+{
+    rocketnet_server_socket_t * server_socket = (rocketnet_server_socket_t *) context;
+    const int family_index = ( address_type == ROCKETNET_ADDRESS_IPV6 ) ? 1 : 0;
+
+    const bool resolved = get_gateway_mac_address_netlink( server_socket->interface_name, server_socket->interface_index, address_type, mac, found, false );
+    if ( !resolved && !server_socket->gateway_resolve_failing[family_index] )
+        rocketnet_warn( "%s gateway refresh on %s failed: replies keep the gateway mac address they have",
+                        family_index ? "ipv6" : "ipv4", server_socket->interface_name );
+    server_socket->gateway_resolve_failing[family_index] = !resolved;
+    return resolved;
+}
+
+// proofs/tla/RNXdpGatewayRefresh.tla Refresh: main thread, from the receive
+// call (fills joined); now is the caller's clock, an argument so a unit
+// case drives it. One line logged for each gateway MAC that changed.
+
+static void rocketnet_server_socket_refresh_gateway( struct rocketnet_server_socket_t * server_socket, double now )
+{
+    struct rocketnet_xdp_gateway_change_t changes[2];
+    const int num_changes = rocketnet_xdp_gateway_refresh( &server_socket->gateway_refresh, &server_socket->reply_macs, now,
+                                                           server_socket->gateway_resolve, server_socket->gateway_resolve_context, changes );
+    for ( int i = 0; i < num_changes; ++i )
+    {
+        const struct rocketnet_xdp_gateway_change_t * change = &changes[i];
+        const char * family_name = change->address_type == ROCKETNET_ADDRESS_IPV6 ? "ipv6" : "ipv4";
+        if ( change->was_known )
+            rocketnet_info( "%s gateway ethernet address changed from %02x.%02x.%02x.%02x.%02x.%02x to %02x.%02x.%02x.%02x.%02x.%02x on %s",
+                            family_name,
+                            change->was[0], change->was[1], change->was[2], change->was[3], change->was[4], change->was[5],
+                            change->mac[0], change->mac[1], change->mac[2], change->mac[3], change->mac[4], change->mac[5],
+                            server_socket->interface_name );
+        else
+            rocketnet_info( "%s gateway ethernet address is now %02x.%02x.%02x.%02x.%02x.%02x on %s",
+                            family_name,
+                            change->mac[0], change->mac[1], change->mac[2], change->mac[3], change->mac[4], change->mac[5],
+                            server_socket->interface_name );
+    }
+}
+
+// the queue's xdp thread publishes its receive drops, every reason summed,
+// after each receive pass: rocketnet_server_socket_receive_dropped reads them
+static void rocketnet_server_socket_publish_receive_dropped( rocketnet_server_xdp_socket_t * socket )
+{
+    socket->receive_dropped.store( rocketnet_xdp_receive_drops_total( &socket->receive_drops ), std::memory_order_relaxed );
+}
 
 static uint64_t alloc_send_frame( rocketnet_server_xdp_socket_t * socket )
 {
@@ -1570,6 +1638,20 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
     if ( !serves_both )
         rocketnet_xdp_reply_macs_reset( &server_socket->reply_macs, server_socket->gateway_known ? server_socket->gateway_ethernet_address : NULL );
 
+    // the gateway refresh resolves the served families again on its period;
+    // ROCKETNET_GATEWAY_ETHERNET_ADDRESS names the gateway for the server's life
+
+    char gateway_override[64];
+    const int gateway_override_found = rocketnet_platform_getenv( "ROCKETNET_GATEWAY_ETHERNET_ADDRESS", gateway_override, sizeof( gateway_override ) );
+    server_socket->gateway_refresh.enabled = !( gateway_override_found < 0 || ( gateway_override_found > 0 && gateway_override[0] != '\0' ) );
+    server_socket->gateway_refresh.serves_both = serves_both != 0;
+    server_socket->gateway_refresh.address_type = public_address.type;
+    server_socket->gateway_resolve = rocketnet_server_socket_resolve_gateway;
+    server_socket->gateway_resolve_context = server_socket;
+    const size_t interface_name_bytes = strnlen( interface_name, sizeof( server_socket->interface_name ) - 1 );
+    memcpy( server_socket->interface_name, interface_name, interface_name_bytes );
+    server_socket->interface_name[interface_name_bytes] = '\0';
+
     // STATE IDENTITY (re-derived twice at review): the identity
     // input contains NOTHING process-derived -- a random 64-bit token
     // names the root, because pid+sequence fails deterministically in
@@ -1776,8 +1858,8 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
 
     // configure the kernel prefilter: the destination it accepts and the
     // per-title filter value and epoch. until this write the program passes
-    // untouched, so a server that fails before this point never black-holed
-    // the box's other traffic.
+    // every frame but undeliverable runt IP frames, so a server that fails
+    // before this point never black-holed the box's other traffic.
 
     {
         struct rocketnet_server_xdp_config_t config;
@@ -2258,6 +2340,10 @@ uint8_t * rocketnet_server_socket_start_packet_internal( struct rocketnet_server
     if ( packet_index < 0 )
         return NULL;
 
+    // proofs/tla/RNXdpGatewayRefresh.tla ReadHigh and ReadLow: a fill copies
+    // the reply MAC, the gateway's for an unlearned address, into the staged
+    // packet; the xdp thread sends this copy and never reads the table
+
     send_buffer->packet_info[packet_index].to = *to;
     send_buffer->packet_info[packet_index].packet_bytes = 0;
     memcpy( send_buffer->packet_info[packet_index].destination_mac, destination_mac, ETH_ALEN );
@@ -2267,6 +2353,52 @@ uint8_t * rocketnet_server_socket_start_packet_internal( struct rocketnet_server
     send_buffer->packet_info[packet_index].mac_learned = (uintptr_t) destination_mac >= learned_begin && (uintptr_t) destination_mac < learned_end;
 
     return send_buffer->packet_data[packet_index];
+}
+
+// proofs/tla/ServerStopSpread.tla Room: the fewest free slots of any queue
+
+int rocketnet_server_socket_send_room( struct rocketnet_server_socket_t * server_socket )
+{
+    rocketnet_assert( server_socket );
+
+    int room = ROCKETNET_XDP_SEND_QUEUE_SIZE;
+    for ( int queue = 0; queue < server_socket->num_queues; queue++ )
+    {
+        rocketnet_server_xdp_socket_t * socket = &server_socket->socket[queue];
+        const int flow_index = socket->send_flow_index.load( std::memory_order_acquire );
+        if ( flow_index < 0 )
+            return 0;
+        const int used = socket->send_buffer[flow_index].num_packets.load( std::memory_order_relaxed );
+        const int slots = used < 0 || used >= ROCKETNET_XDP_SEND_QUEUE_SIZE ? 0 : ROCKETNET_XDP_SEND_QUEUE_SIZE - used;
+        if ( slots < room )
+            room = slots;
+    }
+
+    return room;
+}
+
+// proofs/tla/ServerStopSpread.tla RequestIoStop: every queue's buffers back
+// with its producer, the producer empty
+
+bool rocketnet_server_socket_send_idle( struct rocketnet_server_socket_t * server_socket )
+{
+    rocketnet_assert( server_socket );
+
+    for ( int queue = 0; queue < server_socket->num_queues; queue++ )
+    {
+        rocketnet_server_xdp_socket_t * socket = &server_socket->socket[queue];
+        const int flow_index = socket->send_flow_index.load( std::memory_order_acquire );
+        if ( flow_index >= 0 && socket->send_buffer[flow_index].num_packets.load( std::memory_order_relaxed ) != 0 )
+            return false;
+        if ( !rocketnet_platform_mutex_try_acquire( &socket->send_mutex ) )
+            return false;
+        const bool idle = socket->send_handoff.ready_count == 0 && socket->send_handoff.free_count == ROCKETNET_XDP_NUM_BUFFERS - 1;
+        rocketnet_platform_mutex_release( &socket->send_mutex );
+        if ( !idle )
+            return false;
+    }
+
+    return true;
 }
 
 uint8_t * rocketnet_server_socket_start_packet( struct rocketnet_server_socket_t * server_socket, const rocketnet_address_t * to, uint64_t * packet_id )
@@ -2471,8 +2603,13 @@ bool rocketnet_server_socket_replay_forget( struct rocketnet_server_socket_t * s
     rocketnet_assert( address );
     rocketnet_assert( server_socket->replay_marks );
 
+    // proofs/tla/RNXdpReplay.tla Walk (pendingMacForget' = accepted): only a
+    // queued forget drops the learned reply MAC; a refused one leaves it with
+    // the slot that still owes the forget
+
     const bool queued = rocketnet_xdp_replay_marks_forget( server_socket->replay_marks, address );
-    rocketnet_xdp_reply_macs_forget( &server_socket->reply_macs, address );
+    if ( queued )
+        rocketnet_xdp_reply_macs_forget( &server_socket->reply_macs, address );
 
     return queued;
 }
@@ -2845,6 +2982,141 @@ bool rocketnet_server_socket_test_reply_mac_refreshed_at_finish()
     return valid;
 }
 
+// the gateway refresh through the staging entry points, with a fake resolve
+// and the clock as an argument: no netlink, no socket. A gateway MAC that
+// changes reaches the packets fills stage for unlearned addresses once the
+// period has passed; a learned client keeps its MAC; a failed resolve, no
+// route and an unusable MAC keep the gateway; the env override's disabled
+// refresh resolves nothing.
+
+struct rocketnet_server_socket_test_gateway_t
+{
+    bool resolved;
+    bool found;
+    uint8_t mac[ETH_ALEN];
+    int calls;
+};
+
+static bool rocketnet_server_socket_test_resolve_gateway( void * context, int, uint8_t * mac, bool * found )
+{
+    rocketnet_server_socket_test_gateway_t * gateway = (rocketnet_server_socket_test_gateway_t *) context;
+    gateway->calls++;
+    memcpy( mac, gateway->mac, ETH_ALEN );
+    *found = gateway->found;
+    return gateway->resolved;
+}
+
+// stages and finishes a packet to the address as a fill does; the MAC the xdp thread will send it to
+static bool rocketnet_server_socket_test_staged_mac( rocketnet_server_socket_t * server, rocketnet_server_xdp_socket_t * socket, const rocketnet_address_t * to, uint8_t * mac )
+{
+    uint64_t packet_id = 0;
+    uint8_t * packet = rocketnet_server_socket_start_packet( server, to, &packet_id );
+    if ( !packet )
+        return false;
+    rocketnet_server_socket_finish_packet( server, packet_id, packet, 40 );
+    rocketnet_server_socket_send_buffer_t * send_buffer = &socket->send_buffer[socket->send_flow_index.load()];
+    const int packet_index = rocketnet_server_socket_send_slot( packet - send_buffer->packet_data[0] );
+    memcpy( mac, send_buffer->packet_info[packet_index].destination_mac, ETH_ALEN );
+    return true;
+}
+
+bool rocketnet_server_socket_test_gateway_refresh()
+{
+    void * server_storage = rocketnet_malloc( NULL, sizeof( rocketnet_server_socket_t ) );
+    void * socket_storage = rocketnet_malloc( NULL, sizeof( rocketnet_server_xdp_socket_t ) );
+    if ( !server_storage || !socket_storage )
+    {
+        rocketnet_free( NULL, socket_storage );
+        rocketnet_free( NULL, server_storage );
+        return false;
+    }
+
+    auto * server = new ( server_storage ) rocketnet_server_socket_t();
+    auto * socket = new ( socket_storage ) rocketnet_server_xdp_socket_t();
+    server->num_queues = 1;
+    server->socket = socket;
+    socket->send_flow_index.store( socket->send_handoff.producer );
+
+    static const uint8_t old_gateway[ETH_ALEN] = { 0x02, 0, 0, 0, 0, 0x01 };
+    static const uint8_t new_gateway[ETH_ALEN] = { 0x02, 0, 0, 0, 0, 0x02 };
+    static const uint8_t client_mac[ETH_ALEN] = { 0x02, 0, 0, 0, 0, 0x4e };
+    static const uint8_t multicast_mac[ETH_ALEN] = { 0x01, 0, 0x5e, 0, 0, 0x01 };
+    rocketnet_xdp_reply_macs_reset( &server->reply_macs, old_gateway );
+
+    rocketnet_server_socket_test_gateway_t gateway = {};
+    gateway.resolved = true;
+    gateway.found = true;
+    memcpy( gateway.mac, old_gateway, ETH_ALEN );
+
+    server->gateway_refresh.enabled = true;
+    server->gateway_refresh.address_type = ROCKETNET_ADDRESS_IPV4;
+    server->gateway_resolve = rocketnet_server_socket_test_resolve_gateway;
+    server->gateway_resolve_context = &gateway;
+    memcpy( server->interface_name, "test0", sizeof( "test0" ) );
+
+    rocketnet_address_t client = {};
+    client.type = ROCKETNET_ADDRESS_IPV4;
+    client.data.ipv4[0] = 192;
+    client.data.ipv4[1] = 168;
+    client.data.ipv4[2] = 1;
+    client.data.ipv4[3] = 78;
+    client.port = 36800;
+    rocketnet_xdp_reply_macs_learn( &server->reply_macs, &client, client_mac );
+
+    rocketnet_address_t stranger = client;
+    stranger.port = 36801;
+
+    bool valid = true;
+    uint8_t mac[ETH_ALEN];
+
+    // the first refresh schedules: create has just resolved
+
+    rocketnet_server_socket_refresh_gateway( server, 100.0 );
+    valid &= gateway.calls == 0;
+
+    // the router is replaced; before the period ends replies still take the old MAC
+
+    memcpy( gateway.mac, new_gateway, ETH_ALEN );
+    rocketnet_server_socket_refresh_gateway( server, 104.9 );
+    valid &= gateway.calls == 0;
+    valid &= rocketnet_server_socket_test_staged_mac( server, socket, &stranger, mac ) && memcmp( mac, old_gateway, ETH_ALEN ) == 0;
+
+    // at the period the refresh resolves, and the fills that follow use the new MAC
+
+    rocketnet_server_socket_refresh_gateway( server, 105.0 );
+    valid &= gateway.calls == 1;
+    valid &= rocketnet_server_socket_test_staged_mac( server, socket, &stranger, mac ) && memcmp( mac, new_gateway, ETH_ALEN ) == 0;
+    valid &= rocketnet_server_socket_test_staged_mac( server, socket, &client, mac ) && memcmp( mac, client_mac, ETH_ALEN ) == 0;
+
+    // a failed resolve, no default route and a multicast MAC keep the gateway
+
+    gateway.resolved = false;
+    rocketnet_server_socket_refresh_gateway( server, 110.0 );
+    gateway.resolved = true;
+    gateway.found = false;
+    rocketnet_server_socket_refresh_gateway( server, 115.0 );
+    gateway.found = true;
+    memcpy( gateway.mac, multicast_mac, ETH_ALEN );
+    rocketnet_server_socket_refresh_gateway( server, 120.0 );
+    valid &= gateway.calls == 4;
+    valid &= rocketnet_server_socket_test_staged_mac( server, socket, &stranger, mac ) && memcmp( mac, new_gateway, ETH_ALEN ) == 0;
+
+    // with the override the refresh is disabled and resolves nothing
+
+    server->gateway_refresh.enabled = false;
+    memcpy( gateway.mac, old_gateway, ETH_ALEN );
+    rocketnet_server_socket_refresh_gateway( server, 200.0 );
+    valid &= gateway.calls == 4;
+    valid &= rocketnet_server_socket_test_staged_mac( server, socket, &stranger, mac ) && memcmp( mac, new_gateway, ETH_ALEN ) == 0;
+
+    socket->~rocketnet_server_xdp_socket_t();
+    server->~rocketnet_server_socket_t();
+    rocketnet_free( NULL, socket_storage );
+    rocketnet_free( NULL, server_storage );
+
+    return valid;
+}
+
 // Exercise the replay writer's pending buffer and its commit failure path
 // without a map or a kernel resource: replay_map_fd -1 refuses every syscall.
 bool rocketnet_server_socket_test_replay_marks()
@@ -2862,6 +3134,7 @@ bool rocketnet_server_socket_test_replay_marks()
     }
 
     rocketnet_xdp_replay_marks_reset( server->replay_marks );
+    rocketnet_xdp_reply_macs_reset( &server->reply_macs, NULL );
     server->replay_map_fd = -1;
 
     rocketnet_address_t a = {};
@@ -2875,11 +3148,18 @@ bool rocketnet_server_socket_test_replay_marks()
     rocketnet_address_t b = a;
     b.port = 50001;
 
+    // a queued forget drops the address's learned reply MAC
+
+    const uint8_t learned_mac[6] = { 0x02, 0, 0, 0, 0, 0x0b };
+    rocketnet_xdp_reply_macs_learn( &server->reply_macs, &a, learned_mac );
+    rocketnet_xdp_reply_macs_learn( &server->reply_macs, &b, learned_mac );
+
     rocketnet_server_socket_replay_forget( server, &a );
     rocketnet_server_socket_replay_mark( server, &a, 41 );
     rocketnet_server_socket_replay_mark( server, &b, 7 );
 
-    bool valid = server->replay_marks->forget_count == 1;
+    bool valid = rocketnet_xdp_reply_macs_find( &server->reply_macs, &a ) == NULL;
+    valid &= server->replay_marks->forget_count == 1;
     valid &= server->replay_marks->mark_count == 2;
 
     const uint64_t failures_before = rocketnet_server_socket_replay_commit_failures( server );
@@ -2903,9 +3183,12 @@ bool rocketnet_server_socket_test_replay_marks()
         rocketnet_server_socket_replay_forget( server, &c );
     }
 
+    // a refused forget leaves b's learned reply MAC with the slot that owes it
+
     rocketnet_server_socket_replay_forget( server, &b );
     valid &= server->replay_marks->forget_count == ROCKETNET_XDP_REPLAY_MAX_ENTRIES;
     valid &= server->replay_marks->refused == 1;
+    valid &= rocketnet_xdp_reply_macs_find( &server->reply_macs, &b ) != NULL;
 
     const uint64_t failures_full = rocketnet_server_socket_replay_commit_failures( server );
     rocketnet_server_socket_replay_commit( server );
@@ -3091,7 +3374,69 @@ uint64_t rocketnet_server_socket_send_failures( struct rocketnet_server_socket_t
     return failures;
 }
 
+// The transport's XDP_RECEIVE_FRAME_DROPPED: the frames every queue's receive
+// dropped before reading a UDP datagram from them, as each worker last
+// published them. Main thread; never waits on a worker.
+
+uint64_t rocketnet_server_socket_receive_dropped( struct rocketnet_server_socket_t * server_socket )
+{
+    rocketnet_assert( server_socket );
+
+    uint64_t dropped = 0;
+    for ( int queue = 0; queue < server_socket->num_queues; queue++ )
+        dropped += server_socket->socket[queue].receive_dropped.load( std::memory_order_relaxed );
+
+    return dropped;
+}
+
 #if ROCKETNET_DEV
+bool rocketnet_server_socket_test_receive_dropped( rocketnet_server_socket_test_frames_dropped_t * dispatch,
+                                                   const rocketnet_server_transport_io_operations_t * xdp )
+{
+    // two synthetic queues, no worker: each queue's receive drops by reason
+    // reach the transport's XDP_RECEIVE_FRAME_DROPPED through dispatch (the
+    // builtin one the transport's counter read calls, given the xdp table)
+    // only once the queue publishes them, summed over reasons and queues
+    void * server_storage = rocketnet_malloc( NULL, sizeof( rocketnet_server_socket_t ) );
+    void * queue_storage = rocketnet_malloc( NULL, 2 * sizeof( rocketnet_server_xdp_socket_t ) );
+    if ( !server_storage || !queue_storage )
+    {
+        rocketnet_free( NULL, queue_storage );
+        rocketnet_free( NULL, server_storage );
+        return false;
+    }
+
+    auto * server = new ( server_storage ) rocketnet_server_socket_t();
+    auto * queues = (rocketnet_server_xdp_socket_t *) queue_storage;
+    new ( &queues[0] ) rocketnet_server_xdp_socket_t();
+    new ( &queues[1] ) rocketnet_server_xdp_socket_t();
+    server->num_queues = 2;
+    server->socket = queues;
+
+    uint64_t dropped = 99;
+    bool valid = dispatch( xdp, server, &dropped ) && dropped == 0;
+
+    queues[0].receive_drops.not_ip = 1;
+    queues[0].receive_drops.ipv6_extension = 2;
+    queues[0].receive_drops.other_family = 4;
+    queues[1].receive_drops.malformed = 8;
+    queues[1].receive_drops.descriptor = 16;
+
+    valid = valid && dispatch( xdp, server, &dropped ) && dropped == 0;
+
+    rocketnet_server_socket_publish_receive_dropped( &queues[0] );
+    rocketnet_server_socket_publish_receive_dropped( &queues[1] );
+    valid = valid && dispatch( xdp, server, &dropped ) && dropped == 31;
+
+    queues[1].~rocketnet_server_xdp_socket_t();
+    queues[0].~rocketnet_server_xdp_socket_t();
+    server->~rocketnet_server_socket_t();
+    rocketnet_free( NULL, queue_storage );
+    rocketnet_free( NULL, server_storage );
+
+    return valid;
+}
+
 bool rocketnet_server_socket_test_send_failures_without_mutex()
 {
     // A query must be valid even while the worker owns the send mutex. These
@@ -3128,29 +3473,31 @@ void rocketnet_server_socket_xdp_counters( struct rocketnet_server_socket_t * se
     rocketnet_assert( server_socket );
     rocketnet_assert( counters );
 
-    memset( counters, 0, ROCKETNET_SERVER_XDP_NUM_COUNTERS * sizeof( uint64_t ) );
-
-    // the stats map is per-CPU: one value struct per possible CPU, summed here
+    // the stats map is per-CPU: one value struct per possible CPU, summed by
+    // rocketnet_xdp_stats_publish; a failed read publishes the last good one
 
     const int num_cpus = libbpf_num_possible_cpus();
-    if ( !rocketnet_xdp_stats_cpus_fit( num_cpus ) )
+    const bool fit = rocketnet_xdp_stats_cpus_fit( num_cpus );
+
+    bool read = false;
+    int read_error = 0;
+    if ( fit )
     {
-        if ( num_cpus > 0 )
-            rocketnet_error( "xdp stats not read: %d possible cpus is past %d", num_cpus, ROCKETNET_XDP_STATS_MAX_CPUS );
-        return;
+        __u32 key = 0;
+        read = bpf_map_lookup_elem( server_socket->stats_map_fd, &key, server_socket->stats_values ) == 0;
+        if ( !read )
+            read_error = errno;
     }
 
-    struct rocketnet_server_xdp_stats_t * values = server_socket->stats_values;
-
-    __u32 key = 0;
-    if ( bpf_map_lookup_elem( server_socket->stats_map_fd, &key, values ) != 0 )
-        return;
-
-    for ( int cpu = 0; cpu < num_cpus; cpu++ )
+    if ( rocketnet_xdp_stats_publish( read, server_socket->stats_values, num_cpus, server_socket->stats_last,
+                                      &server_socket->stats_failing, counters ) )
     {
-        for ( int i = 0; i < ROCKETNET_SERVER_XDP_NUM_COUNTERS; i++ )
+        if ( !fit )
+            rocketnet_error( "xdp stats not read: %d possible cpus is outside 1 .. %d; the last read stands", num_cpus, ROCKETNET_XDP_STATS_MAX_CPUS );
+        else
         {
-            counters[i] += values[cpu].counters[i];
+            char reason[128];
+            rocketnet_error( "xdp stats not read: map lookup failed: %s; the last read stands", strerror_r( read_error, reason, sizeof( reason ) ) );
         }
     }
 }
@@ -3163,6 +3510,12 @@ void rocketnet_server_socket_receive_packets( rocketnet_server_socket_t * server
     rocketnet_assert( server_socket );
 
     server_socket->process_packets.num_packets = 0;
+
+    // proofs/tla/RNXdpGatewayRefresh.tla Join and Refresh: the fills are
+    // joined before receive (rocketnet_driver.h), so the refresh's stores
+    // land before the next fill copies a gateway MAC
+
+    rocketnet_server_socket_refresh_gateway( server_socket, rocketnet_platform_time() );
 
     const int num_queues = server_socket->num_queues;
     int filled_queue = -1;
@@ -3410,6 +3763,8 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
                                                { xsk_ring_cons__cancel( (struct xsk_ring_cons *) r, n ); }, []( void * r, uint32_t n )
                                                { xsk_ring_cons__release( (struct xsk_ring_cons *) r, n ); }, &socket->receive_queue );
 
+            rocketnet_server_socket_publish_receive_dropped( socket );
+
             // The peek was bounded by available pending storage, so every
             // returned frame remains owned until a full fill reservation. The
             // fill credit is the returned count, not num_consumed: a refused
@@ -3586,7 +3941,7 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
         {
             // reserve entries in the send queue
 
-            uint32_t send_queue_index;
+            uint32_t send_queue_index = 0;
             int send_packets = (int) xsk_ring_prod__reserve( &socket->send_queue, (uint32_t) num_batch_packets, &send_queue_index );
 
             // All-or-zero: zero keeps the batch intact for retry.

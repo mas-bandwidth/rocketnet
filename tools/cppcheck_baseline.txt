@@ -26,7 +26,6 @@ cppcheck	sdk/rocketnet_message_server.cpp	returnDanglingLifetime	836086b94ddd768
 cppcheck	sdk/rocketnet_network_simulator.cpp	memsetClassFloat	c180392cd631027b
 cppcheck	sdk/rocketnet_platform.h	invalidPointerCast	0ba34feccc9ec3a8
 cppcheck	sdk/rocketnet_send_budget.h	memsetClassFloat	87bb1792f79b498b
-cppcheck	sdk/rocketnet_server_transport.cpp	invalidLifetime	b5631b02f439748e
 cppcheck	sdk/rocketnet_server_transport.cpp	memsetClassFloat	04bd9e39fba3f117
 cppcheck	sdk/rocketnet_server_transport.cpp	memsetClassFloat	75897d09e37dafdb
 cppcheck	sdk/rocketnet_tests.cpp	incorrectStringBooleanError	17af8ccfa68d434b
