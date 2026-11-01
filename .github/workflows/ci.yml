@@ -850,8 +850,8 @@ jobs:
       - name: Memory plans echo the allocator observation on macOS
         if: runner.os == 'macOS' && matrix.leg == 'checks'
         run: |
-          ./bin/transport_memory 1 1416 1 portable 1 || true
-          ./bin/transport_memory 1 1416 1 msgx 1 || true
+          ./bin/transport_memory 1 1416 portable 1 || true
+          ./bin/transport_memory 1 1416 msgx 1 || true
 
       - name: Memory plans against allocator observations
         if: matrix.leg == 'checks'
@@ -1691,7 +1691,7 @@ jobs:
   # parsers under asan+ubsan, seconds, no randomness anywhere in it. Each
   # file in tests/fuzz/corpus is a shape the wire can carry or a shape a defect
   # once had, and the harness carries oracles beyond memory safety (base64
-  # round-trip, the fragment plan's arithmetic, the ladder's output range),
+  # round-trip, the ladder's output range),
   # so a wrong ANSWER fails it too, not only a wrong access.
   #
   # The second step is a small fixed-seed mutation pass on top. It is bounded
@@ -1981,7 +1981,7 @@ jobs:
   # literally how #112 first went red -- and it runs the byte-order surface
   # with NO SOCKETS instead: tools/bigendian's wire check, which drives the
   # endian helpers, the wire read/write, address parsing, the prefilter, a
-  # sealed packet's construction and opening, the fragment header, base64 and
+  # sealed packet's construction and opening, base64 and
   # the config parses, all in memory.
   #
   # SO THE BIG-ENDIAN ASSERTIONS THAT GATE ARE THE WIRE CHECK'S. The matching

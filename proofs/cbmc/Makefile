@@ -1,8 +1,6 @@
 # CBMC proofs. `make -C proofs/cbmc` runs the proofs that finish:
 # the arithmetic leaves below, then the bounded readers, the message reader,
-# and the XDP free list. fragment-bounds stays a target but leaves `all`:
-# proofs/cbmc/fragment_reassembly proves the real reassembly code on ESBMC
-# and supersedes the copy that target checks.
+# and the XDP free list.
 #
 # Every target prints the bound it proves beside the deployed constant the
 # bound is measured against, so a bounded proof cannot read as the whole
@@ -62,9 +60,6 @@ REPLAY_WINDOW_BITS := $(call deployed_literal,ROCKETNET_HISTORY_PACKETS,rocketne
 # ROCKETNET_REPLAY_WINDOW_BITS): one iteration per history word plus one.
 REPLAY_UNWIND := $(shell expr $(REPLAY_WINDOW_BITS) / 64 + 1)
 MAX_PAYLOAD_BYTES := $(call deployed_literal,ROCKETNET_MAX_PACKET_PAYLOAD_BYTES,rocketnet.h)
-MAX_FRAGMENT_BYTES := $(call deployed_comment,ROCKETNET_MAX_FRAGMENT_BYTES,rocketnet_fragment.h)
-MAX_FRAGMENTS := $(call deployed_literal,ROCKETNET_MAX_FRAGMENTS,rocketnet_fragment.h)
-MAX_FRAGMENTED_PAYLOAD_BYTES := $(shell expr $(MAX_FRAGMENTS) \* $(MAX_FRAGMENT_BYTES))
 XDP_NUM_FRAMES := $(call deployed_literal,ROCKETNET_XDP_NUM_FRAMES,rocketnet_constants.h)
 XDP_FRAME_SIZE := $(call deployed_literal,ROCKETNET_XDP_FRAME_SIZE,rocketnet_constants.h)
 
@@ -77,20 +72,6 @@ XDP_FRAME_SIZE := $(call deployed_literal,ROCKETNET_XDP_FRAME_SIZE,rocketnet_con
 #                      dest_size 0 writes nothing and returns 0; a positive
 #                      dest_size up to 8 keeps the copy inside the buffer
 #                      and terminates it.
-#   fragment-bounds    superseded: proof_fragment_bounds.c copies the
-#                      reassembly function, and fragment_reassembly/ proves
-#                      the real one on ESBMC. It is no longer in `all`.
-#                      Its bounds: unwind 64, one connection and one slot.
-#                      Fragment payloads are symbolic up to 8 bytes, or
-#                      outside the legal size window (refused, no read).
-#                      max_payload_bytes is symbolic from 1 to 16, below
-#                      every deployed maximum. A reconstructed total above
-#                      that maximum is refused with no eviction and no
-#                      payload write. A final that arrives while the stride
-#                      is 0 is staged, and the payload region is untouched.
-#                      Counts above 8-byte fragments, payload maxima above
-#                      16, and the uint32 id-rollover half of the stale
-#                      check, are not proved.
 #   message-read       proved: proof_message_read.c, unwind 8, payloads of
 #                      24 bytes. rocketnet_message_reader_begin / next read
 #                      no byte past the given length. An accepted holdable
@@ -107,7 +88,7 @@ XDP_FRAME_SIZE := $(call deployed_literal,ROCKETNET_XDP_FRAME_SIZE,rocketnet_con
 #                      popped.
 
 .PHONY: all replay-delta-1-3 replay-near-4096 replay-far reconstruct \
-        read-write fragment-bounds message-read xdp-free-list \
+        read-write message-read xdp-free-list \
         ack-run-bound-8 ack-run-full-4096 ack-run-negative-control clean
 
 all: replay-delta-1-3 replay-far reconstruct \
@@ -259,13 +240,8 @@ ack-run-negative-control: proof_ack_apply_run.c esbmc_shim.h
 	fi
 
 read-write: proof_read_write.c
-	@echo "read-write bound buffers 8 bytes deployed ROCKETNET_MAX_FRAGMENT_BYTES=$(MAX_FRAGMENT_BYTES)"
+	@echo "read-write bound buffers 8 bytes deployed ROCKETNET_MAX_PACKET_PAYLOAD_BYTES=$(MAX_PAYLOAD_BYTES)"
 	$(CBMC) $(CBMC_FLAGS) --unwind 9 -I$(SDK) proof_read_write.c
-
-# Superseded by fragment_reassembly/. Not part of `all`.
-fragment-bounds: proof_fragment_bounds.c
-	@echo "fragment-bounds bound payload max 16 bytes, fragment 8 bytes deployed ROCKETNET_MAX_PACKET_PAYLOAD_BYTES=$(MAX_PAYLOAD_BYTES) ROCKETNET_MAX_FRAGMENT_BYTES=$(MAX_FRAGMENT_BYTES) ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES=$(MAX_FRAGMENTED_PAYLOAD_BYTES); not proved above 16"
-	$(CBMC) $(CBMC_FLAGS) --unwind 64 -I$(SDK) proof_fragment_bounds.c
 
 message-read: proof_message_read.c
 	@echo "message-read bound payload 24 bytes deployed ROCKETNET_MAX_PACKET_PAYLOAD_BYTES=$(MAX_PAYLOAD_BYTES)"

@@ -18,7 +18,6 @@
 #include "rocketnet_message_object.h"
 #include "rocketnet_send_budget.h"
 #include "rocketnet_connection_reset.h"
-#include "rocketnet_fragment.h"
 #include "rocketnet_base64.h"
 #include "rocketnet_address.h"
 #include "rocketnet_connect_token.h"
@@ -281,7 +280,6 @@ static bool rn_client_split( const struct rocketnet_client_config_t * config, bo
     rocketnet_client_transport_default_config_current( transport );
 
     memcpy( transport->packet_filter, config->packet_filter, sizeof( transport->packet_filter ) );
-    transport->max_fragmented_messages = config->max_fragmented_messages;
     if ( !rn_copy_config_string( transport->transport, sizeof( transport->transport ), config->transport, "auto", "client", "transport" ) )
     {
         if ( failure )
@@ -386,7 +384,6 @@ static bool rn_server_split( const struct rocketnet_server_config_t * config, bo
     memcpy( transport->server_secret_key, config->server_secret_key, sizeof( transport->server_secret_key ) );
     transport->num_xdp_queues = config->num_xdp_queues;
     transport->num_os_cpus = config->num_os_cpus;
-    transport->max_fragmented_messages = config->max_fragmented_messages;
     transport->max_timeout_seconds = config->max_timeout_seconds;
     transport->handshake_deadline_seconds = config->handshake_deadline_seconds;
     transport->disconnect_packets_per_update = config->disconnect_packets_per_update;
@@ -620,7 +617,6 @@ static void rn_client_default_config_current( struct rocketnet_client_config_t *
     rocketnet_client_transport_default_config_current( &transport );
 
     memcpy( config->packet_filter, transport.packet_filter, sizeof( config->packet_filter ) );
-    config->max_fragmented_messages = transport.max_fragmented_messages;
     config->transport = NULL;
     config->state_change_callback = transport.state_change_callback;
     config->token_epoch_unix_seconds = transport.token_epoch_unix_seconds;
@@ -647,7 +643,6 @@ static constexpr size_t rn_client_config_field_ends[] = {
     RN_PUBLIC_FIELD_END( rocketnet_client_config_t, transport ),
     RN_PUBLIC_FIELD_END( rocketnet_client_config_t, state_change_callback ),
     RN_PUBLIC_FIELD_END( rocketnet_client_config_t, packet_filter ),
-    RN_PUBLIC_FIELD_END( rocketnet_client_config_t, max_fragmented_messages ),
     RN_PUBLIC_FIELD_END( rocketnet_client_config_t, send_kbps ),
     RN_PUBLIC_FIELD_END( rocketnet_client_config_t, num_channels ),
     RN_PUBLIC_FIELD_END( rocketnet_client_config_t, reliable_messages_in_flight ),
@@ -681,7 +676,6 @@ static constexpr size_t rn_server_config_field_ends[] = {
     RN_PUBLIC_FIELD_END( rocketnet_server_config_t, backend_public_key ),
     RN_PUBLIC_FIELD_END( rocketnet_server_config_t, num_xdp_queues ),
     RN_PUBLIC_FIELD_END( rocketnet_server_config_t, num_os_cpus ),
-    RN_PUBLIC_FIELD_END( rocketnet_server_config_t, max_fragmented_messages ),
     RN_PUBLIC_FIELD_END( rocketnet_server_config_t, max_timeout_seconds ),
     RN_PUBLIC_FIELD_END( rocketnet_server_config_t, handshake_deadline_seconds ),
     RN_PUBLIC_FIELD_END( rocketnet_server_config_t, transport ),
@@ -955,7 +949,6 @@ enum rocketnet_status_t rocketnet_client_light_config_internal( struct rocketnet
     // window numbers, so 200 numbers. Validation refuses values below its
     // minimums; it never clamps. These assignments stay inside those ranges.
 
-    RN_LIGHT_SET( max_fragmented_messages, 1 );                                  // one reassembly slot: a message stays whole
     RN_LIGHT_SET( send_kbps, 256 );                                              // 256 / 120 = 2.13, at least 2x the 120 kbps wire rate
     RN_LIGHT_SET( num_channels, 8 );                                             // one channel per reliability mode; one 10 Hz update uses one mode
     RN_LIGHT_SET( reliable_messages_in_flight, 256 );                            // 200 numbers, next power of two; minimum is 64
@@ -1037,11 +1030,6 @@ static enum rocketnet_status_t rn_client_config_valid( const struct rocketnet_cl
         return ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
     if ( rocketnet_config_packet_filter_refused( "client", transport->packet_filter ) )
         return ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION;
-
-    const int requested_payload = ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES;
-    const int requested_slots = transport->max_fragmented_messages > 0 ? transport->max_fragmented_messages : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
-    if ( !rocketnet_reassembly_memory_allowed( 1, requested_slots, requested_payload, rocketnet_client_reassembly_delivered_capacity( requested_slots ) ) )
-        return ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED;
 
     int num_available = 0;
     const int * available = rocketnet_client_transport_io_availability( &num_available );
@@ -2099,7 +2087,6 @@ static void rn_server_config_from_transport_current( struct rocketnet_server_con
     memcpy( config->backend_public_key, transport->backend_public_key, sizeof( config->backend_public_key ) );
     config->num_xdp_queues = transport->num_xdp_queues;
     config->num_os_cpus = transport->num_os_cpus;
-    config->max_fragmented_messages = transport->max_fragmented_messages;
     config->max_timeout_seconds = transport->max_timeout_seconds;
     config->handshake_deadline_seconds = transport->handshake_deadline_seconds;
     config->disconnect_packets_per_update = transport->disconnect_packets_per_update;
@@ -2169,7 +2156,6 @@ enum rocketnet_status_t rocketnet_server_light_config_internal( struct rocketnet
     // window numbers, so 200 numbers. Validation refuses values below its
     // minimums; it never clamps. These assignments stay inside those ranges.
 
-    RN_LIGHT_SET( max_fragmented_messages, 1 );                                  // one reassembly slot: a message stays whole
     RN_LIGHT_SET( per_client_send_kbps, 256 );                                   // 256 / 120 = 2.13, at least 2x the 120 kbps wire rate
     RN_LIGHT_SET( num_channels, 8 );                                             // one channel per reliability mode; one 10 Hz update uses one mode
     RN_LIGHT_SET( reliable_messages_in_flight, 256 );                            // 200 numbers, next power of two; minimum is 64
@@ -2226,14 +2212,6 @@ static enum rocketnet_status_t rn_server_config_valid( const struct rocketnet_se
         return ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
     if ( rocketnet_config_packet_filter_refused( "server", transport->packet_filter ) )
         return ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION;
-
-    const int requested_payload = ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES;
-    const int requested_slots = transport->max_fragmented_messages > 0 ? transport->max_fragmented_messages : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
-    const int requested_clients = transport->max_clients > 0 ? transport->max_clients : ROCKETNET_DEFAULT_MAX_CLIENTS;
-    if ( !rocketnet_reassembly_memory_allowed_delivered( requested_clients, requested_slots, requested_payload,
-                                                         rocketnet_server_reassembly_delivered_capacity( requested_clients, requested_slots ),
-                                                         rocketnet_server_reassembly_delivered_bytes( requested_clients, requested_slots, requested_payload ) ) )
-        return ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED;
 
     // the list is the resolved one (rn_server_split applied its override), the one start tries
 

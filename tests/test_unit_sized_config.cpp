@@ -30,7 +30,6 @@
 #include "rocketnet_internal.h"
 #include "rocketnet_config.h"
 #include "rocketnet_connect_token.h"
-#include "rocketnet_fragment.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -138,13 +137,13 @@ static void test_sized_config_accepts_every_known_size()
         struct rocketnet_client_transport_config_t old_caller;
         memset( &old_caller, 0xEE, sizeof( old_caller ) );      // past the old prefix is not the caller's memory
         memcpy( &old_caller, &defaults, older );
-        old_caller.max_fragmented_messages = 3;
+        old_caller.packet_filter[0] = (uint8_t) ( defaults.packet_filter[0] ^ 0x5A );
 
         struct rocketnet_client_transport_config_t read;
         memset( &read, 0, sizeof( read ) );
         check( rocketnet_config_read_sized( "rocketnet_client_transport_config_t", &read, &defaults, sizeof( defaults ), &old_caller, older, simulated_known, COUNT( simulated_known ) ) == 1 );
-        check( read.max_fragmented_messages == 3 );
-        check( memcmp( read.packet_filter, defaults.packet_filter, sizeof( read.packet_filter ) ) == 0 );
+        check( read.packet_filter[0] == (uint8_t) ( defaults.packet_filter[0] ^ 0x5A ) );
+        check( memcmp( read.packet_filter + 1, defaults.packet_filter + 1, sizeof( read.packet_filter ) - 1 ) == 0 );
         check( strcmp( read.transport, defaults.transport ) == 0 );
         check( read.state_change_callback == NULL );
         check( read.time_callback == NULL );
@@ -154,7 +153,7 @@ static void test_sized_config_accepts_every_known_size()
 
     {
         struct rocketnet_client_transport_config_t caller = defaults;
-        caller.max_fragmented_messages = 7;
+        caller.token_epoch_unix_seconds = 7;
 
         struct rocketnet_client_transport_config_t read;
         memset( &read, 0, sizeof( read ) );
@@ -299,7 +298,7 @@ static void test_sized_config_refuses_unknown_size()
     const size_t simulated_known[] = { older, client_current };
     {
         struct rocketnet_client_transport_config_t caller = defaults;
-        caller.max_fragmented_messages = 9;
+        caller.token_epoch_unix_seconds = 9;
 
         const size_t refused[] = { older - 1, older + 1, client_current + 8 };
 
@@ -471,12 +470,11 @@ static void test_sized_config_client_create_checks_the_config()
 
     SIZED_CONFIG_CLIENT_CREATE( (void) 0, true );
     SIZED_CONFIG_CLIENT_CREATE( c.transport = "portable", true );
-    SIZED_CONFIG_CLIENT_CREATE( c.max_fragmented_messages = ROCKETNET_MAX_FRAGMENTS, true );
 
-    // transport fields out of range: refused
+    // fields out of range: refused
 
-    SIZED_CONFIG_CLIENT_CREATE( c.max_fragmented_messages = -1, false );
-    SIZED_CONFIG_CLIENT_CREATE( c.max_fragmented_messages = ROCKETNET_MAX_FRAGMENTS + 1, false );
+    SIZED_CONFIG_CLIENT_CREATE( c.send_kbps = -1, false );
+    SIZED_CONFIG_CLIENT_CREATE( c.max_message_bytes = ROCKETNET_MAX_MESSAGE_BYTES + 1, false );
 
     // a transport list that does not parse: refused
 
@@ -513,8 +511,6 @@ static void test_sized_config_server_create_checks_the_config()
     SIZED_CONFIG_SERVER_CREATE( c.num_xdp_queues = 1025, false );
     SIZED_CONFIG_SERVER_CREATE( c.num_os_cpus = -1, false );
     SIZED_CONFIG_SERVER_CREATE( c.num_os_cpus = 257, false );
-    SIZED_CONFIG_SERVER_CREATE( c.max_fragmented_messages = -1, false );
-    SIZED_CONFIG_SERVER_CREATE( c.max_fragmented_messages = ROCKETNET_MAX_FRAGMENTS + 1, false );
     SIZED_CONFIG_SERVER_CREATE( c.max_timeout_seconds = 0, false );
     SIZED_CONFIG_SERVER_CREATE( c.max_timeout_seconds = 3601, false );
     SIZED_CONFIG_SERVER_CREATE( c.handshake_deadline_seconds = 0, false );
@@ -637,10 +633,10 @@ static void test_public_config_bytes_older_smaller_reads_the_prefix()
 
     // a prefix value is read: an out-of-range one in it is refused
 
-    client_config.max_fragmented_messages = -1;
+    client_config.send_kbps = -1;
     status = ROCKETNET_STATUS_OK;
     check( rocketnet_client_create( NULL, &client_config, &status ) == NULL );
-    check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
+    check( status == ROCKETNET_STATUS_INVALID_ARGUMENT );
 
     struct rocketnet_server_config_t server_config;
     memset( &server_config, 0xCD, sizeof( server_config ) );

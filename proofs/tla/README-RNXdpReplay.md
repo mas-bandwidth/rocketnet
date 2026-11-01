@@ -30,7 +30,7 @@ are rows of `proofs/tla/CASES.tsv` (group `rnxdpreplay`) with measured records i
 - The map: `ROCKETNET_XDP_REPLAY_MAX_ENTRIES` (1024) entries, keyed by the
   source family, port and address, valued by a 32-bit `high_water`. The same accepted forget removes the learned reply MAC, including for a seen slot that never acquired a replay mark.
 - The kernel rule, for the session packet types only (keep-alive, payload,
-  disconnect, ack, fragment), after the type and size check and before the
+  disconnect, ack), after the type and size check and before the
   redirect: look the source up; with an entry, drop when
   `(int32_t)(high_water - sequence) >= ROCKETNET_XDP_REPLAY_WINDOW`,
   counting `ROCKETNET_SERVER_XDP_COUNTER_DROPPED_REPLAYED`; otherwise go on.

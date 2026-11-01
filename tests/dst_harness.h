@@ -28,7 +28,6 @@
 #include "rocketnet_connect_token.h"
 #include "rocketnet_test_vectors.h"
 #include "rocketnet_wire.h"
-#include "rocketnet_fragment.h"
 #if defined( ROCKETNET_USE_SYSTEM_SODIUM )
 #include <sodium.h>
 #else
@@ -1636,12 +1635,9 @@ static inline int rocketnet_dst_world_create( rocketnet_dst_world_t * w, uint64_
     w->server.used_token_history = rocketnet_used_token_history_create( NULL, 256 );
     w->server.client_slots = rocketnet_client_slots_create( NULL, ROCKETNET_DST_MAX_CLIENTS );
     w->server.acks = rocketnet_server_acks_create( NULL, ROCKETNET_DST_MAX_CLIENTS );
-    w->server.reassembly = rocketnet_reassembly_set_create( NULL, ROCKETNET_DST_MAX_CLIENTS, 8, 16384,
-                                                            ROCKETNET_DST_MAX_CLIENTS * 8 );
     if ( !w->server.encryption_map || !w->server.used_token_history || !w->server.client_slots ||
-         !w->server.acks || !w->server.reassembly )
+         !w->server.acks )
         return 0;
-    rocketnet_reassembly_set_begin_update( w->server.reassembly );
     rocketnet_server_protocol_update( &w->server, w->now );
 
     w->server_endpoint.world = w;
@@ -1723,10 +1719,6 @@ static inline int rocketnet_dst_world_destroy( rocketnet_dst_world_t * w )
     if ( w->server.acks )
     {
         rocketnet_server_acks_destroy( w->server.acks );
-    }
-    if ( w->server.reassembly )
-    {
-        rocketnet_reassembly_set_destroy( w->server.reassembly );
     }
     if ( w->sim )
     {

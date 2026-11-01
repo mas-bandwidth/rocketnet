@@ -2,10 +2,9 @@
 
 `proofs/tla/Link.tla` is one direction of a UDP path between client and server, carrying typed packets.
 It is the module every other rocketnet model drives its state transitions through, so
-that the connection, security and fragment machines are checked under packet loss,
+that the connection, security and ack machines are checked under packet loss,
 latency, jitter, duplication and reordering rather than over a perfect wire. The
-transport itself never resends and a lost fragment loses its payload (USAGE.md,
-"The transport never resends"); the link models the path, not the transport's answer
+transport itself never resends (USAGE.md, "The transport never resends"); the link models the path, not the transport's answer
 to it.
 
 `proofs/tla/MCLink.tla` and `proofs/tla/MCLink.cfg` are the small instance that proves the module
@@ -129,8 +128,8 @@ with `Spec` and `SpecWireFair`: `ResentIsDelivered` and `LinkDelivers` hold.
 ## What the module abstracts away
 
 - Packet contents, sizes, addresses, sealing. `Packets` is whatever the model says.
-- The transport's answer to loss: acks, the replay window, fragment reassembly, the
-  "never resends" rule. Those are the models above this one.
+- The transport's answer to loss: acks, the replay window, the "never resends"
+  rule. Those are the models above this one.
 - Real time. `due` and `Age` are ticks; the model owns the clock.
 - An attacker. Replay of a captured packet is `Duplicate` at a later time. Forging is a
   model's own action because it is about what the attacker can construct, not about

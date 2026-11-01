@@ -85,30 +85,12 @@ struct rocketnet_sent_packet_record_t
 {
     uint64_t sequence;
     uint64_t packet_id;
-    uint64_t aggregate_id;                  // nonzero: a fragment of an aggregated payload
     double send_time;
     uint32_t wire_bytes;
     uint8_t acked;
     uint8_t has_packet_id;
     uint8_t was_keep_alive;                 // a keep-alive's ack is the client's claim to hold its client index
     uint8_t pad[1];
-};
-
-// A fragmented payload carries ONE application packet id, surfaced
-// acknowledged only when every fragment's wire packet is acknowledged --
-// sender-internal aggregation, nothing on the wire. A payload is surfaced once
-// all its recorded fragments acknowledge. Aggregate and sequence history are
-// finite: a lapped aggregate is recognized by its id, never misattributed to a
-// newer payload. Fill writers serialize reservation and publication.
-
-#define ROCKETNET_PACKET_AGGREGATE_BUFFER_SIZE      ( ROCKETNET_SENT_PACKET_BUFFER_SIZE / 2 )
-
-struct rocketnet_packet_aggregate_t
-{
-    uint64_t id;                            // monotonic, 0 = empty
-    uint64_t packet_id;
-    uint32_t remaining;
-    uint32_t pad;
 };
 
 struct rocketnet_received_packet_record_t
@@ -146,7 +128,6 @@ static_assert( sizeof( rocketnet_received_packet_record_t ) == 24,
 
 #define ROCKETNET_SENT_BITMAP_WORDS ( ROCKETNET_SENT_PACKET_BUFFER_SIZE / 64 )
 #define ROCKETNET_RECEIVED_WRITTEN_WORDS ( ( ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE + 63 ) / 64 )
-#define ROCKETNET_AGGREGATES_WRITTEN_WORDS ( ( ROCKETNET_PACKET_AGGREGATE_BUFFER_SIZE + 63 ) / 64 )
 static_assert( ROCKETNET_SENT_PACKET_BUFFER_SIZE % 64 == 0,
                "the sent ring must be a multiple of 64 for the bitmaps" );
 
@@ -344,16 +325,12 @@ struct rocketnet_ack_endpoint_t
     uint32_t stats_rtt_count;
     uint32_t stats_pad;
 
-    volatile uint64_t num_aggregates;           // monotonic; the next aggregate's id is this plus one
-
-    // bit (slot) set: the record at slot was written since the reset. The three
-    // record rings are never zeroed (256 KiB a connection at the default
-    // history): a record is read only when its written bit is set, and an
-    // unwritten one reads as the empty record (sequence 0, id 0), so the reset
-    // clears only these bits
+    // bit (slot) set: the record at slot was written since the reset. The two
+    // record rings are never zeroed: a record is read only when its written
+    // bit is set, and an unwritten one reads as the empty record (sequence 0,
+    // id 0), so the reset clears only these bits
     uint64_t sent_written[ROCKETNET_SENT_BITMAP_WORDS];
     uint64_t received_written[ROCKETNET_RECEIVED_WRITTEN_WORDS];
-    uint64_t aggregates_written[ROCKETNET_AGGREGATES_WRITTEN_WORDS];
 
     uint64_t sent_held[ROCKETNET_SENT_BITMAP_WORDS];     // bit (slot) set: the record at slot was written; fill under sent_lock
     uint64_t sent_unacked[ROCKETNET_SENT_BITMAP_WORDS];  // bit (slot) set: written and not yet acknowledged
@@ -361,7 +338,6 @@ struct rocketnet_ack_endpoint_t
 
     struct rocketnet_sent_packet_record_t sent[ROCKETNET_SENT_PACKET_BUFFER_SIZE];
     struct rocketnet_received_packet_record_t received[ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE];
-    struct rocketnet_packet_aggregate_t aggregates[ROCKETNET_PACKET_AGGREGATE_BUFFER_SIZE];
     float rtt_history[ROCKETNET_RTT_HISTORY_SIZE];      // milliseconds; negative = empty
 
     // the minimum positive rtt sample: a min tree over rtt_history, node k
@@ -392,9 +368,7 @@ bool rocketnet_ack_endpoint_state_equal( const struct rocketnet_ack_endpoint_t *
 
 // records one sent session packet. packet_id is surfaced on ack only when
 // has_packet_id is nonzero -- keep-alive, disconnect and standalone ack
-// sequences have none and surface nothing. aggregate_id names the
-// fragmented payload the packet belongs to, or zero; a fragment record
-// carries no packet id of its own. Concurrent aliases are serialized, with the
+// sequences have none and surface nothing. Concurrent aliases are serialized, with the
 // newer sequence winning even if writers finish out of order. False reports
 // history overflow (an unacknowledged record was evicted, or this writer fell
 // behind the retained sequence). It is advisory: callers count it and still
@@ -432,26 +406,18 @@ enum rocketnet_ack_sent_result_t
 enum rocketnet_ack_sent_result_t rocketnet_ack_endpoint_record_sent_classified( struct rocketnet_ack_endpoint_t * endpoint,
                                                                                 uint64_t sequence, int wire_bytes,
                                                                                 uint64_t packet_id, int has_packet_id,
-                                                                                uint64_t aggregate_id, double time );
+                                                                                double time );
 
 bool rocketnet_ack_endpoint_record_sent( struct rocketnet_ack_endpoint_t * endpoint,
                                          uint64_t sequence, int wire_bytes,
                                          uint64_t packet_id, int has_packet_id,
-                                         uint64_t aggregate_id, double time );
+                                         double time );
 
 // counts a record_sent_classified outcome on the two history counters:
 // EVICTED_LOST on lost, EVICTED_UNKNOWN and REFUSED_STALE on overflow,
 // RECORDED on neither
 
 void rocketnet_ack_count_sent_result( enum rocketnet_ack_sent_result_t result, uint64_t * lost_counter, uint64_t * overflow_counter );
-
-// opens one aggregate for a fragmented payload: fragment_count wire
-// packets stand between the payload's packet id and its acknowledgment.
-// returns the aggregate id the fragments' sent records carry. safe from
-// fill-phase threads: reservation and publication share the endpoint lock.
-
-uint64_t rocketnet_ack_endpoint_open_aggregate( struct rocketnet_ack_endpoint_t * endpoint,
-                                                uint64_t packet_id, int fragment_count );
 
 // Marks an already-recorded sent sequence as having been a keep-alive, so
 // its acknowledgment latches keep_alive_acked. Called immediately after the

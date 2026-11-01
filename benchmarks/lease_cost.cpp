@@ -120,7 +120,7 @@ int main( int argc, char ** argv )
 
     const int payload_bytes = atoi( argv[3] ), threads = atoi( argv[4] ), batches = atoi( argv[5] );
     const bool plant = argc > 6 && strcmp( argv[6], "plant" ) == 0;
-    CHECK( payload_bytes > 0 && payload_bytes <= 4096 && ( threads == 1 || threads == 4 ) && batches > 0 );
+    CHECK( payload_bytes > 0 && payload_bytes <= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES && ( threads == 1 || threads == 4 ) && batches > 0 );
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
     CHECK( rocketnet_init( NULL, allocate, release ) == ROCKETNET_STATUS_OK );
     rocketnet_forbid_xdp_commit();
@@ -189,7 +189,7 @@ int main( int argc, char ** argv )
         return 1;
     }
 
-    const int batch_size = payload_bytes <= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ? 64 : 16;
+    const int batch_size = 64;
     std::atomic<uint64_t> committed{ 0 }, accessed{ 0 };
     double elapsed_ns = 0;
     uint64_t received = 0;

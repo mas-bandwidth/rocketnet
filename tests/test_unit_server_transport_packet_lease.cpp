@@ -17,7 +17,6 @@
 #include "rocketnet_client_protocol.h"
 #include "rocketnet_counters.h"
 #include "rocketnet_driver.h"
-#include "rocketnet_fragment.h"
 #include "rocketnet_layers.h"
 #include "rocketnet_packet_lease.h"
 #include <atomic>
@@ -67,7 +66,6 @@ struct lease_world_t
     rocketnet_client_transport_io_t client_io;
     rocketnet_client_protocol_t client;
     rocketnet_counters_t client_counters;
-    rocketnet_reassembly_set_t * client_reassembly;
     uint8_t last_rx_payload[ROCKETNET_RECEIVE_PAYLOAD_BYTES];
     int last_rx_payload_bytes;
     double time;
@@ -153,10 +151,7 @@ static int lease_world_create( lease_world_t * world, uint8_t seed_tag )
     check( rocketnet_address_parse( &client_bind, "127.0.0.1:0" ) );
     check( rocketnet_client_transport_io_open( loopback_def->backend->client, NULL, &io_config, &client_bind, &world->client_io ) );
 
-    world->client_reassembly = rocketnet_reassembly_set_create( NULL, 1, 4, 16384, 4 );
-    check( world->client_reassembly != NULL );
     rocketnet_client_protocol_init( &world->client, &world->client_counters );
-    world->client.reassembly = world->client_reassembly;
     memcpy( world->client.packet_filter, server_config.packet_filter, ROCKETNET_FILTER_VALUE_BYTES );
 
     check( rocketnet_client_protocol_connect( &world->client, token, world->time, now_ts ) != 0 );
@@ -179,7 +174,6 @@ static int lease_world_create( lease_world_t * world, uint8_t seed_tag )
 static void lease_world_destroy( lease_world_t * world )
 {
     rocketnet_client_transport_io_close( &world->client_io );
-    rocketnet_reassembly_set_destroy( world->client_reassembly );
     rn_native_server_transport_stop_and_destroy( world->server );
 }
 

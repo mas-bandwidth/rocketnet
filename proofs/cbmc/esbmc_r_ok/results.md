@@ -2,7 +2,7 @@
 
 ## Root Cause
 
-All RocketNet ESBMC harnesses that include SDK `.cpp` translation units (`fragment_reassembly`, `message_read_max`, `client_packets`, `server_packets`) run ESBMC 8.5.0 in C++17 mode (`--std c++17` via a `.cpp` wrapper).
+All RocketNet ESBMC harnesses that include SDK `.cpp` translation units (`message_read_max`, `client_packets`, `server_packets`) run ESBMC 8.5.0 in C++17 mode (`--std c++17` via a `.cpp` wrapper).
 
 In ESBMC 8.5.0 (`64-bit x86_64 linux`, Z3 v4.13.3):
 
@@ -108,8 +108,6 @@ VERIFICATION FAILED
 | `message_read_max` / `harness_message_reader` | `VERIFICATION SUCCESSFUL` | 211 / 211 | 33 s | `__CPROVER_r_ok(record.data, (size_t)record.bytes + 2)` | `VERIFICATION FAILED` |
 | `message_read_max` / `harness_message_reader_single_max` | `VERIFICATION SUCCESSFUL` | 199 / 199 | 9 s | `__CPROVER_r_ok(record.data, (size_t)record.bytes + 2)` | `VERIFICATION FAILED` (`1 of 199 failed`) |
 | `message_read_max` / `harness_message_read_config_body` | `VERIFICATION SUCCESSFUL` | 70 / 70 | 1 s | `buf[CONFIG_BOUND - 1]` | `VERIFICATION FAILED` |
-| `fragment_reassembly` / `harness_header_and_plan` | `VERIFICATION SUCCESSFUL` | 87 / 87 | 80 s | `data[ROCKETNET_FRAGMENT_HEADER_BYTES - 1]` | `VERIFICATION FAILED` (`2 of 43 failed`) |
-| `fragment_reassembly` / `harness_memory_sizing` | `VERIFICATION SUCCESSFUL` | 56 / 56 | 18 s | `required - 1` | `VERIFICATION FAILED` |
 | `packet_open` (all 6 harnesses, CBMC 6.6.0) | `VERIFICATION SUCCESSFUL` | 8553 / 8553 | 3 s | `malloc((size_t)(packet_bytes - 1))` | `VERIFICATION FAILED` |
 | `connect_token` / `harness_verify_signed_connect_data` | `VERIFICATION SUCCESSFUL` | 12 / 12 | 2 s | `PROOF_R_OK(m, mlen + 1)` | `VERIFICATION FAILED` (`1 of 12 failed`) |
 | `connect_token` / `harness_private_consistent` | `VERIFICATION SUCCESSFUL` | 36 / 36 | 2 s | `private_data[ROCKETNET_PRIVATE_BLOCK_BYTES - 1]` | `VERIFICATION FAILED` |

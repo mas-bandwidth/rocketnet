@@ -263,7 +263,7 @@ stay in the completion queue for a later call and are counted
   depends on the kernel. The transport never raises the limit (no `setrlimit` in
   `sdk/rocketnet_server_uring_linux.cpp`) and refuses at create when the kernel
   will not grant the memory. Measured with
-  `bash -c 'ulimit -l <KiB> && ./bin/transport_memory 4 1416 16 io_uring 0'`:
+  `bash -c 'ulimit -l <KiB> && ./bin/transport_memory 4 1416 io_uring 0'`:
   on kernel 7.0 the default 4 queues refuse at 512 KiB and create at 768 KiB
   (in 16 KiB steps, 656 KiB on 7.0.0-38: 464 KiB for 1 queue, 528 for 2, 912
   for 8); on kernel 6.8 they create at 64 KiB (16 KiB on 6.8.0-139). These are
@@ -646,17 +646,14 @@ user's other services too. Preserve an existing higher limit.
 `sdk/rocketnet_server_socket_linux.cpp`); as root on a host that
 succeeds.
 
-**Memory.** `./bin/transport_memory <clients> <payload> <slots> <transport> <queues> --plan-only`
+**Memory.** `./bin/transport_memory <clients> <payload> <transport> <queues> --plan-only`
 prints the plan without opening a socket; without `--plan-only` it creates a
 loopback server and checks the allocator against the plan
-(`benchmarks/transport_memory.cpp`, `BUILDING.md`). At 1000 clients,
-1416-byte payloads and 16 reassembly slots the plans are 483,668,499 bytes
-(`portable`), 625,876,730 (`gso`), 594,710,098 (`io_uring`) and 4,269,352,940
-(`xdp`, 7 queues, of which 1,879,048,192 UMEM). This entire numeric set is
-historical: it predates the ACK-stats delta/history allocations, and the
-portable figure also predates the portable TX worker and its banks. Preserve
-these values as historical measurements only; use the exact-build probe below
-for current capacity planning. The plan excludes OS stacks,
+(`benchmarks/transport_memory.cpp`, `BUILDING.md`). At 1000 clients and
+1416-byte payloads the plans are 495,178,594 bytes (`portable`), 536,022,330
+(`gso`), 1,511,867,072 (`io_uring`) and 3,544,766,128 (`xdp`, 7 queues, of which
+1,409,286,144 UMEM). Use the exact-build probe below for current capacity
+planning. The plan excludes OS stacks,
 kernel queues, loader and application memory
 (`sdk/rocketnet_server_transport.cpp`, `BUILDING.md`).
 
@@ -700,12 +697,12 @@ make JOBS=4
 ./bin/test_lifecycle
 ./bin/functional
 python3 tools/check_memory.py ./bin/transport_memory
-./bin/transport_memory 1000 1416 1 portable 0 --plan-only
-./bin/transport_memory 1000 1416 1 gso 0 --plan-only
-./bin/transport_memory 1000 1416 1 io_uring 4 --plan-only
-./bin/transport_memory 1000 1416 1 xdp 7 --plan-only
-bash -c 'ulimit -n 64 && ulimit -l 64 && ./bin/transport_memory 1000 1416 1 gso 0'
-bash -c 'ulimit -n 64 && ./bin/transport_memory 1000 1416 1 io_uring 4'
+./bin/transport_memory 1000 1416 portable 0 --plan-only
+./bin/transport_memory 1000 1416 gso 0 --plan-only
+./bin/transport_memory 1000 1416 io_uring 4 --plan-only
+./bin/transport_memory 1000 1416 xdp 7 --plan-only
+bash -c 'ulimit -n 64 && ulimit -l 64 && ./bin/transport_memory 1000 1416 gso 0'
+bash -c 'ulimit -n 64 && ./bin/transport_memory 1000 1416 io_uring 4'
 ```
 
 `./bin/functional` with no pin runs over the `auto` ladder, which on an

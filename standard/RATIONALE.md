@@ -464,11 +464,11 @@ checked, an off-path attacker must guess an eight-byte random value it has never
 ## t9. Packet protection
 
 [RN-1 t9 Packet protection](TRANSPORT.md#t9)
-**The session types — keep-alive (4), payload (5), disconnect (6), ack (8) and payload
-fragment (9) — share one sealed framing: the sealed plaintext begins with the ack block
+**The session types — keep-alive (4), payload (5), disconnect (6) and ack (8) — share one
+sealed framing: the sealed plaintext begins with the ack block
 of _Acks_, and the per-packet type data follows it.** One framing for every session
 packet means the ack path is exercised by every session packet ever sent — there is no
-rare ack codepath — and a receiver validates one geometry, not five. The handshake types
+rare ack codepath — and a receiver validates one geometry, not four. The handshake types
 1, 2 and 3 carry no ack block: their delivery is proven by the handshake's own progress,
 and their layouts do not move. Types 8 and 9 are session-phase packets: they seal under
 the session keys and spend the session sequence spaces, and are never valid under
@@ -971,7 +971,7 @@ identifier so the server need not trial-decrypt against every connected client, 
 followed by the same cookie round trip to the new address that the connection made at
 connect time — which is the anti-redirection protection QUIC's path validation provides.
 Cost on ordinary packets: nothing. Cost when it fires: one round trip, rarely. **Packet
-types 10 through 255 are reserved and must be ignored by a conforming receiver**, so a
+types 9 through 255 are reserved and must be ignored by a conforming receiver**, so a
 later implementation adding migration degrades gracefully against an earlier one: the
 packet is ignored and the client reconnects, which is exactly today's behavior.
 
@@ -986,7 +986,7 @@ byte bounded against a constant, never a length parsed out of the data being val
 [RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13)
 **The confirmed flag.** A slot is marked unconfirmed when it is assigned. It becomes
 confirmed the first time the server receives any sealed packet from that client on that
-slot — a keep-alive, a payload, a fragment, an ack or a disconnect. The flag exists
+slot — a keep-alive, a payload, an ack or a disconnect. The flag exists
 because until such a packet arrives the server has heard nothing at all from this slot,
 and so has no basis on which to treat the client as reachable. It says nothing about
 whether the client received its keep-alive; the paragraph below states why it cannot.
@@ -1007,7 +1007,7 @@ open a payload, and an earlier revision delivered it. That let the application r
 message and reply before the client held its index and could send: on the XDP server the
 first payloads (a configuration and an arm message) reached the client ahead of the
 keep-alive that connects it in four runs of five, and every reply was refused as not
-connected and lost. A payload or fragment in _sending connection response_ is therefore
+connected and lost. A payload in _sending connection response_ is therefore
 ignored, counted `WRONG_STATE`, and the server's resend carries a reliable message again
 after the keep-alive. The keep-alive still carries the client index and the slot count,
 and receiving the first one is still what moves the client to _connected_.
@@ -1107,8 +1107,8 @@ own configuration.
 
 [RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13)
 **What matters for the stranding is that "anything" is not just payloads.** The
-suppression clock is stamped by every session send to that slot: payloads, payload
-fragments, the keep-alives themselves, **and the transport's own standalone acks**,
+suppression clock is stamped by every session send to that slot: payloads, the
+keep-alives themselves, **and the transport's own standalone acks**,
 which a client eliciting enough ack debt will provoke with no application traffic
 whatever. A server whose application is sending that slot nothing at all can still
 suppress every keep-alive to it, purely from answering that client's own inbound stream.
@@ -1294,10 +1294,8 @@ same bytes:
 **Build rule.** A sender fills the block from its current receive state: _largest
 received_, then ranges descending, newest first, as many as exist and fit. Two caps
 bound it: _range count_ is at most 255, and the block never takes space the packet does
-not have — in a payload or fragment packet the application's bytes come first and the
-block truncates to the remaining room, oldest entries dropped first. *(In a fragment
-packet the stride is chosen against the minimum block, so a current block with ranges
-always truncates there; the stride never shrinks to make room.)* Truncation loses only
+not have — in a payload packet the application's bytes come first and the block
+truncates to the remaining room, oldest entries dropped first. Truncation loses only
 the oldest information, which the next block or a standalone ack restates. **The 7-byte
 minimum always fits: every session packet carries at least _largest received_ and its
 first range.**
@@ -1330,66 +1328,6 @@ precedent this family has always shipped, and the standalone ack keeps the error
 exactly where rates are high enough for it to matter. The block deliberately carries no
 delay-compensation field; if a future revision needs tighter RTT it adds one, and
 nothing in this encoding forecloses it.
-
-<a id="t16"></a>
-## t16. Fragmentation and reassembly
-
-[RN-1 t16 Fragmentation and reassembly](TRANSPORT.md#t16)
-**A payload larger than one packet's capacity is split into fragments, each riding an
-ordinary sealed session packet, and reassembled per connection on the far side.**
-Fragmentation is this layer's own self-contained mechanism: it consumes nothing from the
-ack system, keeps its own bookkeeping, and delivers to the application exactly what a
-payload packet delivers — bytes, once, or nothing. **Unreliable semantics stand: a lost
-fragment loses the whole payload**, the counters make it visible, and anything smarter
-is a policy for the tier above, built on the delivery notifications the transport
-already provides.
-
-[RN-1 t16 Fragmentation and reassembly](TRANSPORT.md#t16)
-**Handshake and control packets are never fragmented, and fragmentation of large
-payloads is allowed only once the connection is fully established and verified.** A
-fragment (type 9) is accepted only on a connected slot: at the server, a fragment for a
-mapping without a slot is dropped and counted (`FRAGMENT_NOT_CONNECTED`) before it
-touches any reassembly state; at the client, a fragment in any state other than
-connected is refused (`CLIENT_FRAGMENT_WRONG_STATE`) before the open and before any
-reassembly call. Only the payload send path reaches the fragment splitter, every control
-type is written by its fixed-size writer, and a reassembled payload is delivered only as
-payload bytes, never dispatched by its first byte.
-
-[RN-1 t16 Fragmentation and reassembly](TRANSPORT.md#t16)
-**Sending.** The sender assigns the payload the next **payload id** — a uint32 counter
-per direction, starting at 1, incrementing per fragmented payload — and splits it into
-equal-size fragments, the last carrying the remainder. The fragment size is the sender's
-choice up to its payload capacity for a type 9 packet (budget − 26 − block minimum − 6),
-and in practice is exactly that capacity, since fewer fragments is the whole game; each
-fragment goes out as its own sealed packet with its own sequence, and nothing is
-retained for resending: fire and forget, exactly as for any other packet.
-
-[RN-1 t16 Fragmentation and reassembly](TRANSPORT.md#t16)
-**Loss multiplies.** The probability a fragmented payload survives is the per-packet
-delivery rate to the power of the fragment count: at 1% loss, a two-fragment payload
-dies 2% of the time and a 256-fragment payload 92.4% of the time. The mechanism is
-priced for payloads of a few fragments carrying state that tolerates loss; a deployment
-moving large blocks that must arrive builds that above the transport, on the
-notifications.
-
-[RN-1 t16 Fragmentation and reassembly](TRANSPORT.md#t16)
-**Receiving.** Reassembly is per connection, keyed by payload id in a fixed-size
-sequence buffer of **reassembly slots**, the modulo-indexed structure this protocol
-already uses for replay state. The receiver's checks, in order, each with its own
-counter:
-
-[RN-1 t16 Fragmentation and reassembly](TRANSPORT.md#t16)
-**Storage is allocated once, at create, to the maximum.** A reassembly slot owns
-capacity for the configured maximum payload size plus its one staging buffer at the
-1,413-byte maximum fragment size (1452 − 26 − 7 − 6), and the slot count is
-configuration; the arena is slots × (maximum payload + staging), allocated at create
-time and never grown, resized or shared. At the moment of delivery the reassembled
-payload is copied out once — the one copy fragmentation inherently costs — and
-wire-shaped packets everywhere else keep their zero-copy batch views. A receiver under
-fragment flood can therefore allocate nothing, fragment no heap, and lose nothing but
-the slots' bounded memory, which was spent at create. This is the answer to every
-resource-exhaustion attack reassembly invites, and it is the same answer this protocol
-gives everywhere: fixed tables, spent up front, no surprises at the 999th client.
 
 <a id="t17"></a>
 ## t17. Timing and defaults
@@ -1545,10 +1483,8 @@ the matchmaker never authorized, by a signature they cannot produce. Zombie clie
 never answer, which never reach a slot. Amplification, structurally, since no response
 may exceed the packet that provoked it. Tampering with any packet or any token field, by
 construction. Forged delivery reports, because ack blocks live inside the seal — an
-off-path attacker cannot tell a sender its packets arrived when they did not. And
-reassembly resource exhaustion, because fragment storage is a fixed arena spent at
-create: a fragment flood can waste slots, never memory the deployment did not already
-budget.
+off-path attacker cannot tell a sender its packets arrived when they did not. The
+connection layer keeps no reassembly state to exhaust: each payload rides one packet.
 
 [RN-1 t19 Security considerations](TRANSPORT.md#t19)
 **This layer cannot handle, and does not pretend to:** a volumetric flood large enough

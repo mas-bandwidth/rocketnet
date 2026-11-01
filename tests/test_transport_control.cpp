@@ -4,7 +4,6 @@
 #include "native_shutdown.h"
 #include "../sdk/rocketnet_server_protocol.h"
 #include "../sdk/rocketnet_replay.h"
-#include "../sdk/rocketnet_fragment.h"
 // This target compiles the transport into its own deterministic fixture.
 static bool fail_seal;
 static int checked_seals;
@@ -222,7 +221,6 @@ static rocketnet_server_transport_t * make_server( control_fixture_t * f, rocket
     rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config( &config );
     config.max_clients = clients;
-    config.max_fragmented_messages = 1;
 
     // the real adapter is closed immediately below; all behavior under test
     // runs through the deterministic buffered or staged fixture operations
@@ -324,7 +322,7 @@ static void seed_stats_rtt_samples( rocketnet_server_transport_t * server, int c
         block.largest = sequence;
 
         auto * endpoint = &server->protocol.acks->endpoints[i];
-        CHECK( rocketnet_ack_endpoint_record_sent_classified( endpoint, sequence, 100, 0, 0, 0, 0.0 ) == ROCKETNET_ACK_SENT_RECORDED );
+        CHECK( rocketnet_ack_endpoint_record_sent_classified( endpoint, sequence, 100, 0, 0, 0.0 ) == ROCKETNET_ACK_SENT_RECORDED );
 
         uint64_t acked_ids[1] = {};
         uint64_t unknown = 0, batch_full = 0;
@@ -681,7 +679,7 @@ static void test_entries_carry_connection_id( bool staged )
             memset( payload, 0x50 + k, 8 );
 
             // the server assigns the sequence when finish accepts the payload
-            // (test_unit_sequence_burn.cpp; proofs/tla/FragmentsAndAcks.tla
+            // (test_unit_sequence_burn.cpp; proofs/tla/SessionAcks.tla
             // BurnedNeverNamed), so it is read after finish, never at start
 
             CHECK( rocketnet_server_transport_finish_packet( server, &context, 8 ) > 0 );
@@ -750,58 +748,6 @@ static void test_entries_carry_connection_id( bool staged )
     }
 
     CHECK( acked_per_client[0] == 3 && acked_per_client[1] == 3 );
-
-    // the fragment-completion path on its own: client 1 sends one payload
-    // as two fragments in the next update, so the only batch entry is the
-    // reassembled payload, and its tag comes from the transport's
-    // fragment-completion append site (buffered or staged). Mutation that
-    // must bite: drop the tag copy there; this id check goes red.
-    {
-        const int c = 1;
-        auto * mapping = rocketnet_encryption_map_entry( protocol->encryption_map,
-                                                         rocketnet_client_slots_mapping_index( protocol->client_slots, c ) );
-        rocketnet_replay_protection_t replay;
-        memset( &replay, 0, sizeof( replay ) );
-        for ( int k = 0; k < 3; ++k )
-        {
-            rocketnet_replay_advance( &replay, sequences[c][k] );
-        }
-
-        uint8_t fragmented[24];
-        for ( int b = 0; b < 24; ++b )
-        {
-            fragmented[b] = (uint8_t) ( 0xC0 + b );
-        }
-
-        const int stride = 16;
-
-        for ( int k = 0; k < 2; ++k )
-        {
-            uint8_t plaintext[ROCKETNET_ACK_BLOCK_MAX_BYTES + ROCKETNET_FRAGMENT_HEADER_BYTES + 24];
-            const int block = rocketnet_ack_block_build( plaintext, ROCKETNET_ACK_BLOCK_MAX_BYTES, &replay );
-            CHECK( block > 0 );
-            rocketnet_write_fragment_header( plaintext + block, 1, k, 2 );
-
-            const int fragment_bytes = k == 0 ? stride : 24 - stride;
-            memcpy( plaintext + block + ROCKETNET_FRAGMENT_HEADER_BYTES, fragmented + k * stride, (size_t) fragment_bytes );
-            f->feed_from[k] = f->feed_from[c];
-            f->feed_bytes[k] = rocketnet_write_sealed_packet( f->feed_data[k], ROCKETNET_CONNECTION_FRAGMENT_PACKET,
-                                                              protocol->packet_filter, 2 + (uint64_t) k, NULL, plaintext, block + ROCKETNET_FRAGMENT_HEADER_BYTES + fragment_bytes,
-                                                              protocol->protocol_id, mapping->connection_salt, NULL, mapping->keys.session_client_to_server );
-            CHECK( f->feed_bytes[k] > 0 );
-        }
-
-        f->feed_count = 2;
-        rocketnet_server_transport_update( server, time + 0.002 );
-
-        const int num_fragmented = rocketnet_server_transport_payloads( server, &client_index, &payload_data, &payload_bytes );
-        CHECK( num_fragmented == 1 );
-        CHECK( rocketnet_server_transport_payload_connection_ids( server, &connection_id ) == num_fragmented );
-        CHECK( client_index[0] == c );
-        CHECK( payload_bytes[0] == 24 && memcmp( payload_data[0], fragmented, 24 ) == 0 );
-        CHECK( connection_id[0] == 2 );
-        CHECK( connection_id[0] == rocketnet_server_transport_client_connection_id( server, c ) );
-    }
 
     rn_native_server_transport_stop_and_destroy( server );
     delete f;

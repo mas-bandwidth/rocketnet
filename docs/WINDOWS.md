@@ -174,7 +174,7 @@ stack reserve (1 MiB unless the game links with another). Ask for the numbers
 for a given config before deploying:
 
 - `rocketnet_server_required_memory( &config )` in code, and
-- `bin\Release\transport_memory.exe 1000 1416 16 iocp 0 --plan-only` (or
+- `bin\Release\transport_memory.exe 1000 1416 iocp 0 --plan-only` (or
   `rio`) for the per-transport breakdown, including the registered region,
   workers and sockets. The arguments are explained in
   [Memory and capacity](MEMORY.md#pre-allocation-server-resource-plans).
@@ -194,8 +194,8 @@ bin\Release\functional.exe
 bin\Release\test_iocp.exe
 bin\Release\test_transport.exe
 bin\Release\example_transports.exe
-bin\Release\transport_memory.exe 1000 1416 16 iocp 0 --plan-only
-bin\Release\transport_memory.exe 1000 1416 16 rio 0 --plan-only
+bin\Release\transport_memory.exe 1000 1416 iocp 0 --plan-only
+bin\Release\transport_memory.exe 1000 1416 rio 0 --plan-only
 set ROCKETNET_CLIENT_TRANSPORT=portable
 set ROCKETNET_SERVER_TRANSPORT=iocp
 bin\Release\functional.exe --run test_transport_env_pin_is_honoured

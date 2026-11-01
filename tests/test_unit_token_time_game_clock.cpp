@@ -24,7 +24,6 @@
 #include "rocketnet_client_slots.h"
 #include "rocketnet_token_tables.h"
 #include "rocketnet_ack.h"
-#include "rocketnet_fragment.h"
 #include "rocketnet_keys.h"
 #include "rocketnet_read_write.h"
 #include "rocketnet_server_protocol.h"
@@ -120,12 +119,10 @@ static void token_time_game_server_setup( struct token_time_game_server_t * t )
     server->used_token_history = rocketnet_used_token_history_create( NULL, 8 );
     server->client_slots = rocketnet_client_slots_create( NULL, 1 );
     server->acks = rocketnet_server_acks_create( NULL, 1 );
-    server->reassembly = rocketnet_reassembly_set_create( NULL, 1, 4, 16384, 4 );
     server->counters = &t->counters;
     check( server->encryption_map && server->used_token_history && server->client_slots &&
-           server->acks && server->reassembly );
+           server->acks );
 
-    rocketnet_reassembly_set_begin_update( server->reassembly );
     rocketnet_server_protocol_update( server, 1 );
 }
 
@@ -135,7 +132,6 @@ static void token_time_game_server_teardown( struct token_time_game_server_t * t
     rocketnet_used_token_history_destroy( t->server.used_token_history );
     rocketnet_client_slots_destroy( t->server.client_slots );
     rocketnet_server_acks_destroy( t->server.acks );
-    rocketnet_reassembly_set_destroy( t->server.reassembly );
 }
 
 static int token_time_game_server_request( struct token_time_game_server_t * t, uint64_t create, uint64_t expire, uint64_t timestamp )
@@ -178,10 +174,10 @@ static void test_token_time_game_clock_admits_a_fixed_token()
         rocketnet_client_transport_default_config( &defaults );
         memset( &old_caller, 0xEE, sizeof( old_caller ) );
         memcpy( &old_caller, &defaults, ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_ORIGINAL );
-        old_caller.max_fragmented_messages = 5;
+        old_caller.packet_filter[0] = (uint8_t) ( defaults.packet_filter[0] ^ 0x5A );
         memset( &read, 0xAB, sizeof( read ) );
         check( rocketnet_config_read_sized( "rocketnet_client_transport_config_t", &read, &defaults, sizeof( defaults ), &old_caller, ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_ORIGINAL, known, 2 ) == 1 );
-        check( read.max_fragmented_messages == 5 );
+        check( read.packet_filter[0] == (uint8_t) ( defaults.packet_filter[0] ^ 0x5A ) );
         check( read.state_change_callback == NULL );
         check( read.time_callback == NULL );
         check( read.token_epoch_unix_seconds == 0 );

@@ -1077,8 +1077,7 @@ static bool replay_is_session_type( uint8_t type )
     return type == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET ||
            type == ROCKETNET_CONNECTION_PAYLOAD_PACKET ||
            type == ROCKETNET_CONNECTION_DISCONNECT_PACKET ||
-           type == ROCKETNET_CONNECTION_ACK_PACKET ||
-           type == ROCKETNET_CONNECTION_FRAGMENT_PACKET;
+           type == ROCKETNET_CONNECTION_ACK_PACKET;
 }
 
 struct replay_row_t
@@ -1136,7 +1135,6 @@ static void replay_rows( bool ipv6, std::vector<replay_row_t> & rows )
     rows.push_back( replay_row( "keep-alive a window behind the high-water", ipv6, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, replay_behind( window ), high_water, true ) );
     rows.push_back( replay_row( "ack a window behind the high-water", ipv6, ROCKETNET_CONNECTION_ACK_PACKET, replay_behind( window ), high_water, true ) );
     rows.push_back( replay_row( "disconnect a window behind the high-water", ipv6, ROCKETNET_CONNECTION_DISCONNECT_PACKET, replay_behind( window ), high_water, true ) );
-    rows.push_back( replay_row( "fragment a window behind the high-water", ipv6, ROCKETNET_CONNECTION_FRAGMENT_PACKET, replay_behind( window ), high_water, true ) );
 
     // the handshake types are not checked
 

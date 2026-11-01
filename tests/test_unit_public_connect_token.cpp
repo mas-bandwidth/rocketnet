@@ -18,7 +18,6 @@
 #include "rocketnet_connect_token.h"
 #include "rocketnet_encryption_map.h"
 #include "rocketnet_client_slots.h"
-#include "rocketnet_fragment.h"
 #include "rocketnet_token_tables.h"
 #include "rocketnet_server_protocol.h"
 #include "rocketnet_client_protocol.h"
@@ -116,15 +115,11 @@ static int public_token_connection_request( const uint8_t * token, uint8_t * pac
     struct rocketnet_client_protocol_t client;
     struct rocketnet_counters_t counters;
     rocketnet_client_protocol_init( &client, &counters );
-    client.reassembly = rocketnet_reassembly_set_create( NULL, 1, 4, 16384, 8 );
-    rocketnet_unit_check( client.reassembly );
 
-    rocketnet_reassembly_set_begin_update( client.reassembly );
     rocketnet_unit_check( rocketnet_client_protocol_connect( &client, token, 1000.0,
                                                              public_token_create_timestamp ) == 1 );
 
     rocketnet_client_protocol_update( &client, 1000.0, packet, packet_bytes );
-    rocketnet_reassembly_set_destroy( client.reassembly );
 
     return *packet_bytes;
 }

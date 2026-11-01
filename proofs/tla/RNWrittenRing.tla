@@ -1,8 +1,8 @@
 ---------------------------- MODULE RNWrittenRing ----------------------------
 (***************************************************************************)
 (* A ring of N records whose emptiness is a written bit, not zeroed bytes  *)
-(* (sdk/rocketnet_ack.cpp: the ack endpoint's sent, received and          *)
-(* aggregate rings, rocketnet_ack_endpoint_reset and every reader;         *)
+(* (sdk/rocketnet_ack.cpp: the ack endpoint's sent and received rings,    *)
+(* rocketnet_ack_endpoint_reset and every reader;                         *)
 (* rocketnet_ack_endpoint_state_equal).                                    *)
 (*                                                                         *)
 (* The reference ring zeroes every record at reset, so a record is empty   *)
@@ -52,7 +52,7 @@ Init ==
     /\ lastRead = [ slot |-> 0, got |-> EMPTY, want |-> EMPTY ]
     /\ rawRead = FALSE
 
-\* record_sent / record_received / open_aggregate: the record, then its bit
+\* record_sent / record_received: the record, then its bit
 Write ==
     /\ next <= MaxSeq
     /\ LET s == next % N

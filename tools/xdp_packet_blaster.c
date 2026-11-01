@@ -15,7 +15,6 @@
 #include "rocketnet_constants.h"
 #include "rocketnet_counters.h"
 #include "rocketnet_endpoint.h"
-#include "rocketnet_fragment.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_message.h"
 #include "rocketnet_protocol.h"
@@ -1115,7 +1114,6 @@ struct rn_blaster_session_t
 {
     rocketnet_client_protocol_t protocol;
     rocketnet_counters_t counters;
-    rocketnet_reassembly_set_t * reassembly;
     rn_endpoint_t endpoint;
     rocketnet_address_t source;
     bool endpoint_announced;
@@ -1844,8 +1842,6 @@ static int rn_blaster_execute( const rn_blaster_options_t & options, const rn_bl
         ++initialized_sessions;
         memcpy( session.protocol.packet_filter, packet_filter, ROCKETNET_FILTER_VALUE_BYTES );
         session.protocol.defer_payload_acks = 1;
-        session.reassembly = rocketnet_reassembly_set_create( NULL, 1, 1, RN_BLASTER_MAX_PAYLOAD_BYTES, 1 );
-        session.protocol.reassembly = session.reassembly;
         session.source = source;
         session.source.port = (uint16_t) ( options.plan.source_port + i );
         session.next_packet_id = 1;
@@ -1855,7 +1851,7 @@ static int rn_blaster_execute( const rn_blaster_options_t & options, const rn_bl
         endpoint_config.max_payload_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
         rn_endpoint_init( &session.endpoint, rn_arena_region( message_arena, (int) i ), &endpoint_config );
         rn_endpoint_reset( &session.endpoint, 0.0 );
-        if ( !session.reassembly || !rocketnet_client_protocol_connect( &session.protocol, tokens[i].bytes.data(), 0.0, unix_time ) ||
+        if ( !rocketnet_client_protocol_connect( &session.protocol, tokens[i].bytes.data(), 0.0, unix_time ) ||
              !rocketnet_address_equal( &session.protocol.server_address, &server ) )
         {
             sessions_ok = false;
@@ -1898,10 +1894,7 @@ static int rn_blaster_execute( const rn_blaster_options_t & options, const rn_bl
         }
         const double now = (double) ( now_ns - start_ns ) / 1000000000.0;
         for ( rn_blaster_session_t & session : sessions )
-        {
             (void) rn_endpoint_begin_update( &session.endpoint );
-            rocketnet_reassembly_set_begin_update( session.reassembly );
-        }
         rn_blaster_receive( &xsk, &sessions, server, options.plan.source_port, options.plan.payload_bytes, now, &results );
         if ( now_ns - last_handshake_step_ns >= UINT64_C( 1000000 ) )
         {
@@ -2106,8 +2099,6 @@ static int rn_blaster_execute( const rn_blaster_options_t & options, const rn_bl
             (void) rn_blaster_send( &xsk, burst + packet * ROCKETNET_SEND_BUDGET, burst_bytes,
                                     session.source, server, source_mac, next_hop_mac, &disconnect_results );
         sodium_memzero( burst, sizeof( burst ) );
-        if ( session.reassembly )
-            rocketnet_reassembly_set_destroy( session.reassembly );
     }
     sodium_memzero( scratch_packet.data(), scratch_packet.size() );
     sodium_memzero( case_valid.data(), case_valid.size() );

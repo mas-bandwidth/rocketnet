@@ -89,8 +89,8 @@ must represent Unix time at that clock's zero, not Unix time at the current
 update.
 
 The following are in scope for a report: packet parsing and generation, the
-connect handshake and token handling, replay and acknowledgement state, fragment
-reassembly, the public C API and ABI boundary, and the SDK's build and
+connect handshake and token handling, replay and acknowledgement state, message
+block reassembly, the public C API and ABI boundary, and the SDK's build and
 configuration surface. The following are out of scope by design: volumetric
 denial of service, the backend's identity and token-issuance policy, application
 payloads above the transport, and deployment choices in the operating system or

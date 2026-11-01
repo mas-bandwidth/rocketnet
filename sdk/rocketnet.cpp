@@ -172,7 +172,6 @@ const char * rocketnet_status_name( enum rocketnet_status_t status )
         case ROCKETNET_STATUS_INVALID_ARGUMENT:                 return "INVALID_ARGUMENT";
         case ROCKETNET_STATUS_CONFIG_ENV_INVALID:               return "CONFIG_ENV_INVALID";
         case ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE:              return "CONFIG_OUT_OF_RANGE";
-        case ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED:           return "MEMORY_BUDGET_EXCEEDED";
         case ROCKETNET_STATUS_MISSING_KEYS:                     return "MISSING_KEYS";
         case ROCKETNET_STATUS_INVALID_PROTOCOL_ID:              return "INVALID_PROTOCOL_ID";
         case ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION:           return "DEV_KEYS_IN_PRODUCTION";

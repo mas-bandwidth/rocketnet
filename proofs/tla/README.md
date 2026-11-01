@@ -137,7 +137,7 @@ failed records unless they are explicit `bench` debt with actual exit 124.
 | `rnuringdriver` | 3 | io_uring transport control (invariants and liveness) and two invariant witnesses |
 | `rnclientio` | 24 | Client I/O thread design: the full threaded instance split by obligation (one safety case and 13 liveness cases, each one property or one conjunct of one), the step-driven mode at one slot (invariants and liveness) and its nine invariants at the full instance, six invariant witnesses, one temporal witness and the step-mode witness |
 | `rnclientiodecrypt` | 5 | Decrypt on the client I/O thread: control (invariants and liveness) and four invariant witnesses |
-| `fragmentsandacks` | 24 | Fragments and the ack window: controls, findings and witnesses, and the sent-ring bitmaps control with its two invariant witnesses, including seven debt cases |
+| `sessionacks` | 14 | The session ack window: the gate and liveness controls, the four loss patterns, the sent-ring bitmaps control, and five reversed witnesses |
 | `rnxdpreplay` | 4 | Kernel replay high-water map control and three invariant witnesses |
 | `rnxdpgatewayrefresh` | 3 | The XDP server's gateway refresh and the handoff of the gateway MAC to the fill threads, a MAC in two halves (RNXdpGatewayRefresh.tla): the control and two reversed witnesses, the refresh run during the fill phase (`NoTornMac`) and the gateway resolved at create only (`FreshAfterPeriod`) |
 | `rnriodriver` | 3 | Windows RIO server transport design: control with two liveness properties and two invariant witnesses |

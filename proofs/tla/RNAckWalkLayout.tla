@@ -10,7 +10,7 @@
 (* slot >> 6, bit slot & 63.  sent_held has a slot's bit set while the     *)
 (* slot holds its in-window sequence, sent_unacked while that sequence is  *)
 (* also unacknowledged (the reconcile at the top of process_block keeps    *)
-(* them so; FragmentsAndAcks.tla checks that, slot by slot).               *)
+(* them so; SessionAcks.tla checks that, slot by slot).                   *)
 (*                                                                         *)
 (* Part = "run" checks apply_run's arithmetic for any run [low, high] the  *)
 (* block names: the part above the highest sent counted unknown            *)

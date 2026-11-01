@@ -324,7 +324,7 @@ MemoryExhausted ==
                     opened,lost,acked,orderedInputs,referenceTrace,missed>>
 
 \* A block fragment reaches the receiver. Fragments are reliable numbers whose
-\* transport (WritePacket, ReceiveAck) is RNBlocks' and FragmentsAndAcks'
+\* transport (WritePacket, ReceiveAck) is RNBlocks' and SessionAcks'
 \* concern; here only their arrival order matters. missed records a block
 \* whose fragments all arrived in its turn, that was Deliverable when the last
 \* one came, and that was not delivered.

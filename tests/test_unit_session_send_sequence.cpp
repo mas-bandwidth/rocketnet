@@ -29,7 +29,6 @@
 #include "rocketnet_encryption_map.h"
 #include "rocketnet_client_slots.h"
 #include "rocketnet_ack.h"
-#include "rocketnet_fragment.h"
 #include "rocketnet_message.h"
 #include "rocketnet_server_protocol.h"
 #include "rocketnet_client_protocol.h"
@@ -106,18 +105,13 @@ static void send_sequence_pair_setup_rounds( struct send_sequence_pair_t * pair,
     server->used_token_history = rocketnet_used_token_history_create( NULL, 64 );
     server->client_slots = rocketnet_client_slots_create( NULL, 4 );
     server->acks = rocketnet_server_acks_create( NULL, 4 );
-    server->reassembly = rocketnet_reassembly_set_create( NULL, 4, 4, 16384, 4 * 4 );
     server->counters = &pair->server_counters;
     check( server->encryption_map && server->used_token_history &&
-           server->client_slots && server->acks && server->reassembly );
-    rocketnet_reassembly_set_begin_update( server->reassembly );
+           server->client_slots && server->acks );
     rocketnet_server_protocol_update( server, ROCKETNET_TEST_CREATE_TS );
     check( rocketnet_address_parse( &pair->client_address, "198.51.100.7:56789" ) );
 
     rocketnet_client_protocol_init( &pair->client, &pair->client_counters );
-    pair->client.reassembly = rocketnet_reassembly_set_create( NULL, 1, 4, 16384, ROCKETNET_NUM_CLIENT_PACKETS / 2 );
-    check( pair->client.reassembly );
-    rocketnet_reassembly_set_begin_update( pair->client.reassembly );
 
     uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
     send_sequence_mint_token( token_data );
@@ -158,12 +152,10 @@ static void send_sequence_pair_teardown( struct send_sequence_pair_t * pair )
     rocketnet_dev_set_sequence_taken_hook( NULL, NULL );
     rocketnet_counters_assert_conserved( &pair->server_counters );
     rocketnet_counters_assert_conserved( &pair->client_counters );
-    rocketnet_reassembly_set_destroy( pair->client.reassembly );
     rocketnet_encryption_map_destroy( pair->server.encryption_map );
     rocketnet_used_token_history_destroy( pair->server.used_token_history );
     rocketnet_client_slots_destroy( pair->server.client_slots );
     rocketnet_server_acks_destroy( pair->server.acks );
-    rocketnet_reassembly_set_destroy( pair->server.reassembly );
 }
 
 static struct rocketnet_encryption_mapping_t * send_sequence_server_mapping( struct send_sequence_pair_t * pair )

@@ -11,7 +11,6 @@
 #include "test_unit_standard.h"
 
 #include "rocketnet_protocol.h"
-#include "rocketnet_fragment.h"
 #include "rocketnet_connect_token.h"
 #include "rocketnet_read_write.h"
 
@@ -65,9 +64,6 @@ static const rn_standard_vector_t standard_packet_formats_table[] = {
     RN_STANDARD_VECTOR( "t8.cookie",
                         "0700b759010030313233343536370807060504030201d0d1d2d3d4d5d6d7d8d9"
                         "dadbdcdddedf" ),
-    RN_STANDARD_VECTOR( "t8.fragment",
-                        "0900b759010006000000c29e5206dad5b3e8aba8f14ccb3588293a742f39e400"
-                        "adc5bddfc78faa2a94fb2b78" ),
 };
 
 static const uint8_t standard_packet_formats_filter[ROCKETNET_FILTER_VALUE_BYTES] = { 0xb7, 0x59, 0x01, 0x00 };
@@ -187,23 +183,13 @@ static int standard_packet_formats_generate( const char * id, uint8_t * out, int
         return ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES;
     }
 
-    if ( strcmp( id, "t8.fragment" ) == 0 )
-    {
-        rocketnet_write_fragment_header( plaintext + ROCKETNET_ACK_BLOCK_MIN_BYTES, 1, 0, 2 );
-        memcpy( plaintext + ROCKETNET_ACK_BLOCK_MIN_BYTES + ROCKETNET_FRAGMENT_HEADER_BYTES, "hello", 5 );
-        return rocketnet_write_sealed_packet( out, ROCKETNET_CONNECTION_FRAGMENT_PACKET, standard_packet_formats_filter,
-                                              6, NULL, plaintext,
-                                              ROCKETNET_ACK_BLOCK_MIN_BYTES + ROCKETNET_FRAGMENT_HEADER_BYTES + 5,
-                                              protocol_id, salt, NULL, session_c2s );
-    }
-
     return -1;
 }
 
 static void test_standard_packet_formats_vectors()
 {
     const int count = (int) ( sizeof( standard_packet_formats_table ) / sizeof( standard_packet_formats_table[0] ) );
-    rocketnet_unit_check( count == 10 );
+    rocketnet_unit_check( count == 9 );
     rocketnet_unit_check( rn_standard_vectors_walk( standard_packet_formats_table, count,
                                                     standard_packet_formats_generate ) == count );
 

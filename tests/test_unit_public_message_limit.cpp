@@ -8,7 +8,6 @@
 #include "token_string.h"
 #include "../sdk/rocketnet_internal.h"
 #include "../sdk/rocketnet_config.h"
-#include "../sdk/rocketnet_fragment.h"
 #include "../sdk/rocketnet_memory.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -93,7 +92,6 @@ static void test_public_message_limit_does_not_expand_transport_memory()
 
     rocketnet_server_memory_plan_t before, after;
     check( rocketnet_server_transport_memory_plan( &transport, "portable", before ) );
-    check( before.reassembly_bytes < 512ULL * 1024 * 1024 );
 
     config.max_message_bytes = ROCKETNET_MAX_MESSAGE_BYTES;
     config.receive_message_buffer_bytes = ROCKETNET_MAX_MESSAGE_BYTES;
@@ -102,23 +100,9 @@ static void test_public_message_limit_does_not_expand_transport_memory()
     check( rocketnet_message_validate_config( &message ) );
     check( message.max_message_bytes == ROCKETNET_MAX_MESSAGE_BYTES );
     check( rocketnet_server_transport_memory_plan( &transport, "portable", after ) );
-    check( after.reassembly_bytes == before.reassembly_bytes );
-    check( after.send_arena_bytes == before.send_arena_bytes );
+    check( after.protocol_bytes == before.protocol_bytes );
+    check( after.allocator_bytes == before.allocator_bytes );
     check( after.total_bytes == before.total_bytes );
-
-    const int payload = ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES;
-    check( payload == 16384 );
-
-    // at the build's most clients, since the budget scales with them (512 MiB per 1000)
-
-    check( rocketnet_reassembly_memory_allowed_delivered( ROCKETNET_MAX_CLIENTS, 8, payload,
-                                                          rocketnet_server_reassembly_delivered_capacity( ROCKETNET_MAX_CLIENTS, 8 ), rocketnet_server_reassembly_delivered_bytes( ROCKETNET_MAX_CLIENTS, 8, payload ) ) );
-
-    // A naive assignment of the application default to the transport cap
-    // exceeds its budget before any allocation. Exercise the actual planner.
-
-    check( !rocketnet_reassembly_memory_allowed_delivered( ROCKETNET_MAX_CLIENTS, 8, 262144,
-                                                           rocketnet_server_reassembly_delivered_capacity( ROCKETNET_MAX_CLIENTS, 8 ), rocketnet_server_reassembly_delivered_bytes( ROCKETNET_MAX_CLIENTS, 8, 262144 ) ) );
 }
 
 REGISTER_UNIT_TEST( test_public_message_limit_does_not_expand_transport_memory );
@@ -159,10 +143,8 @@ static void test_public_message_limit_env_is_endpoint_scoped()
     uint32_t kbps = 0;
     check( rocketnet_client_config_resolve( &client, true, &client_transport, &message, &kbps ) );
     check( message.max_message_bytes == 131072 );
-    check( !client_transport.max_fragmented_messages || client_transport.max_fragmented_messages == ROCKETNET_DEFAULT_REASSEMBLY_SLOTS );
     check( rocketnet_server_config_resolve( &server, true, &server_transport, &message, &kbps ) );
     check( message.max_message_bytes == 65536 );
-    check( !server_transport.max_fragmented_messages || server_transport.max_fragmented_messages == ROCKETNET_DEFAULT_REASSEMBLY_SLOTS );
 
     client_env.set( "131072junk" );
 
@@ -240,16 +222,7 @@ static void test_public_message_limit_unreliable_up_to_max_message_bytes()
     message_limit_now = 1000.0;
 
     // one size field: neither public config carries a second payload limit,
-    // and the transport's reassembled payload maximum is a named constant,
-    // within the fragment limits and at the size the 1000-client plan budgets
-
-#ifdef ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES
-    check( ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES == 16384 );
-    check( ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES >= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
-    check( ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES <= ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES );
-#else
-    check( false );                              // the transport's payload maximum is a define
-#endif // #ifdef ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES
+    // and the transport's payload maximum is one packet
     int num_client_fields = 0;
     const struct rocketnet_config_field_t * client_fields = rocketnet_client_transport_config_fields( &num_client_fields );
     check( num_client_fields > 0 );
