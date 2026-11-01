@@ -1,9 +1,12 @@
 # RNRing: the receive ring's placement rule
 
 `proofs/tla/RNRing.tla` is the sender's placement rule for the receive ring and the
-receiver's live spans: docs/CHANNELS.md section 6.2 (the byte bound), 6.3 step 3
-(why the receiver never runs out of room), section 8 (a block's span) and section
-15's `RNRing` row. The sender's rule is `sdk/rocketnet_window_send.cpp`:
+receiver's live spans. The current normative rules are
+[RN-2 sender numbering](../../standard/MESSAGES.md#m5.1), including the byte
+bound and padding, [receiver checks](../../standard/MESSAGES.md#m4), and
+[blocks](../../standard/MESSAGES.md#m8). These replace the numbered sections
+of the former CHANNELS design; the current `docs/CHANNELS.md` is a user guide.
+The sender's rule is `sdk/rocketnet_window_send.cpp`:
 `rn_window_send_round16` (`Len16`), `rn_window_send_position` (`Pos`),
 `rn_window_send_admit` (`Admits`, with the floor at `ring_start(U')`),
 `rn_window_send_first_write` (`PlaceSingle`) and
@@ -12,13 +15,15 @@ receiver's live spans: docs/CHANNELS.md section 6.2 (the byte bound), 6.3 step 3
 16-aligned and inside `B`), which is what the module's `SpanInsideRing` and
 `Aligned` say a correct sender never trips.
 
-`proofs/tla/MCRNRing.tla` and `proofs/tla/MCRNRing.cfg` are section 15's small instance. The four
-`proofs/tla/MCRNRingBroken*.cfg` files are the reversed witnesses. Every TLC run is a row
-for `proofs/tla/RUNS.tsv` (listed below; this change does not edit that file).
+`proofs/tla/MCRNRing.tla` and `proofs/tla/MCRNRing.cfg` define the small instance.
+The four
+`proofs/tla/MCRNRingBroken*.cfg` files are the reversed witnesses.
+Registered case results are recorded in
+`proofs/tla/RUNS.tsv`; the historical manual runs below are labeled separately.
 
 ## What the module covers
 
-State the sender owns (6.1):
+State the sender owns:
 
 - `next`: the next message number.
 - `ringNext`: `ring_next`, an absolute byte position, never reduced modulo `B`.
@@ -32,10 +37,10 @@ State the sender owns (6.1):
 - `pending`: the one record waiting to be numbered, so that liveness can be stated.
 - `blocks`: how many blocks have been numbered (a size knob).
 
-State the receiver owns (6.3 step 1):
+State the receiver owns:
 
 - `opened`: the numbers whose records the receiver has opened, which is when their
-  bytes are written into the ring. A second arrival is a duplicate (6.5) and writes
+  bytes are written into the ring. A second arrival is a duplicate (RN-2 m5.2) and writes
   nothing.
 - `live`: the numbers whose spans are live: opened, and not yet released.
 
@@ -44,8 +49,8 @@ Actions, one per operation and per outside event:
 | Action | Who | What |
 |---|---|---|
 | `WantSingle(len)`, `WantBlock` | the game | a record arrives and waits for its number; one at a time, and only one the numbering budget can still give |
-| `PlaceSingle` | the sender | 6.2: `len16` is the length rounded up to 16; `p = ring_next` unless `[ring_next, ring_next + len16)` crosses a multiple of `B`, then the next multiple of `B` with the skipped bytes as padding; admitted only if `p + len16 - floor <= B` |
-| `PlaceBlock` | the sender | section 8: `k` consecutive numbers, one contiguous span of `k * F`, fragment `i` at `p + i * F`, both bounds checked once for the whole block |
+| `PlaceSingle` | the sender | RN-2 m5.1: `len16` is the length rounded up to 16; `p = ring_next` unless `[ring_next, ring_next + len16)` crosses a multiple of `B`, then the next multiple of `B` with the skipped bytes as padding; admitted only if `p + len16 - floor <= B` |
+| `PlaceBlock` | the sender | RN-2 m5.1 and m8: `k` consecutive numbers, one contiguous span of `k * F`, fragment `i` at `p + i * F`, both bounds checked once for the whole block |
 | `Open(n)` | the receiver | record `n` arrives and its bytes are written at its span; `n` is live from here |
 | `Release(n)` | the receiver | `n` was delivered and the update ended; a block is released whole, once every fragment has been opened |
 | `Ack(n)` | the receiver's ack | the sender learns `n` was acked (see the assumption below) |
@@ -54,8 +59,7 @@ The floor is `ring_start(U')` while something is outstanding (`U' < next`) and `
 when nothing is. `U' = U` except when `U` lies inside a block that is not fully
 acked, when `U'` is that block's first number.
 
-Invariants, from section 15 and section 3's layer 3 guarantee ("Its slot and ring
-writes never touch a live message"):
+Invariants for placement and the receiver's live spans:
 
 - `LiveSpansDisjoint`: no two live spans share a ring byte (every span taken modulo
   `B`).
@@ -63,7 +67,7 @@ writes never touch a live message"):
   wrapping. This is `rn_region_ring_span_valid`'s test, as a property of the
   sender.
 - `Aligned`: every placement is a multiple of 16.
-- `IdleAdmitsAnyMessage`: 6.2's last paragraph as a state predicate: with nothing
+- `IdleAdmitsAnyMessage`: the idle placement rule as a state predicate: with nothing
   outstanding the ring admits any single record and a block, wherever `ring_next`
   is.
 - `TypeOK`.
@@ -72,18 +76,15 @@ Liveness, under weak fairness on place, open, release and ack (`Fairness` in the
 module; no safety property depends on it):
 
 - `EveryAdmissibleMessagePlaced`: when nothing is outstanding and a message of at
-  most `max_message_bytes <= B` waits, it is placed (6.2).
+  most `max_message_bytes <= B` waits, it is placed.
 - `NoRecordWaitsForever`: a waiting message is placed, whatever is outstanding
-  when it arrives ("No record waits forever", 6.2).
+  when it arrives.
 
 ## What the module abstracts away, and the one assumption
 
 - **Acks are abstracted, and `U'` is assumed to move only past released
-  records.** 6.3 step 2 argues from P2, P6 and the scheduler's first-write order
-  that when the ack that moves `U'` past `n` was built, `n` had been released.
-  That argument is `RNWindow`'s to check (the sibling card
-  `rnwindow-model-checks-every-reliable-number-delivered-once`). Here it is a
-  precondition of `Ack(n)`: `n` must be opened (P2: acked means opened), and the
+  records.** This is a precondition of `Ack(n)`, not an end-to-end proof
+  of release timing or the scheduler. `n` must be opened (acked means opened), and the
   ack that completes a block, or acks a single record, needs the record released.
   A fragment of an incomplete block may be acked while it is still held; that is
   the case `U'` exists for, and the first witness needs it.
@@ -100,7 +101,7 @@ module; no safety property depends on it):
   time between `Open` and `Release`, which the model already allows.
 - **The send store, the sent-packet map, the resend delay.**
 
-A code 2 record that is not a block "takes a number but no ring bytes" (6.2), so
+A code 2 record that is not a block "takes a number and no ring bytes" (RN-2 m5.1), so
 if `U'` lands on one, `ring_start(U')` must still be defined. The code gives it the
 empty span `[p, p)` at the position it was numbered (`rn_window_send_first_write`
 records `ring_start = p` with a zero span). This module does not number such
@@ -115,22 +116,24 @@ On a Linux bench with the TLA+ tools (`tla2tools.jar`, TLC 2.19 or later), from
 java -cp /path/to/tla2tools.jar tlc2.TLC -workers 4 -cleanup -config MCRNRing.cfg MCRNRing
 ```
 
-`MCRNRing.cfg` is the committed run, every rule on. The small instance is section
-15's: `B = 64` (4 units of 16), `Lengths = {1, 32, 48}` (1 to 3 units once rounded;
+`MCRNRing.cfg` is the committed run, every rule on. The small instance is
+`B = 64` (4 units of 16), `Lengths = {1, 32, 48}` (1 to 3 units once rounded;
 the 1 is there so that rounding has something to do), one block (`MaxBlocks = 1`)
 of two 16-byte fragments (`BlockFragments = 2`, `FragBytes = 16`), and six numbers
 (`MaxNumbers = 6`).
 
-The witnesses are the same file with one `CONSTANTS` line changed (two lines for
-the third, which also leaves out the invariant that would stop TLC before the
-temporal check):
+The committed witnesses keep the control's invariant and property lists and
+change one `CONSTANTS` line each. In particular, the idle-floor witness keeps
+`IdleAdmitsAnyMessage`, which stops TLC before a temporal check. The separate
+historical manual variant without that invariant is recorded below; it is not
+the committed configuration:
 
 | Run | Rule removed | Expected |
 |---|---|---|
 | `MCRNRing.cfg` | none | passes |
 | `MCRNRingBrokenFloorAtU.cfg` | `FloorAtUPrime = FALSE`: the floor is `ring_start(U)` | **fails** `LiveSpansDisjoint` |
 | `MCRNRingBrokenNoPadding.cfg` | `PadAtBoundary = FALSE`: no padding at the boundary | **fails** `SpanInsideRing` |
-| `MCRNRingBrokenIdleFloor.cfg` | `IdleFloorAtP = FALSE`: the idle floor is the last record's start | **fails** `EveryAdmissibleMessagePlaced` (and `IdleAdmitsAnyMessage` when it is checked) |
+| `MCRNRingBrokenIdleFloor.cfg` | `IdleFloorAtP = FALSE`: the idle floor is the last record's start | **fails** `IdleAdmitsAnyMessage` |
 | `MCRNRingBrokenNoRounding.cfg` | `Round16 = FALSE`: `len16` is the raw length | **fails** `Aligned` |
 
 ## Runs
@@ -153,12 +156,13 @@ draft of the module (before the `Done` self-loop, below) with the same result.
 
 ## The counterexamples, replayed by hand
 
-Each trace was replayed through the module's actions and through the rule as
-section 6.2 states it. None is a defect in rocketnet code: each witness turns off
+Each historical trace was replayed through the module's actions and the
+placement rule, now specified in RN-2 m5.1. None is a defect in rocketnet code:
+each witness turns off
 a rule `sdk/rocketnet_window_send.cpp` keeps (the floor at `U'`, the boundary
 padding, the idle floor at `p`, the rounding to 16), and the receiver's check
 (`rn_region_ring_span_valid`) would refuse the spans the second witness produces,
-as 6.3 says ("a violation, never memory corruption").
+under RN-2 m4's receiver checks.
 
 1. **`MCRNRingBrokenFloorAtU.cfg`: `Invariant LiveSpansDisjoint is violated`, at
    depth 10** (3,544 states generated, 1,544 distinct).
@@ -171,10 +175,10 @@ as 6.3 says ("a violation, never memory corruption").
      at `[64,80)`. The receiver opens 3: `[64,80)` modulo 64 is `[0,16)`, fragment
      0's bytes, still held.
    - **Against the rule, by hand:** with the floor at `ring_start(U') = 0` the test
-     is `64 + 16 - 0 = 80 > 64` and the record waits. 6.2's "`U' = U`, except when
-     `U` falls inside a block that is not fully acked" is exactly the rule the
-     witness removes, and section 8's "That slot cannot be reused while the block
-     is incomplete, because `U'` stops at `b`" is what it buys.
+     is `64 + 16 - 0 = 80 > 64` and the record waits. RN-2 m5.1 keeps
+     `U'` at the first number of the unacknowledged block containing `U`;
+     that is the rule the witness removes, and it protects the incomplete
+     block's ring span.
 2. **`MCRNRingBrokenNoPadding.cfg`: `Invariant SpanInsideRing is violated`, at
    depth 8** (809 states generated, 456 distinct).
    - **The trace:** a 32-byte record is numbered 0 at `[0,32)`, opened, released
@@ -197,7 +201,7 @@ as 6.3 says ("a violation, never memory corruption").
      whether a 48-byte record would be admitted: `[32,80)` crosses 64 so `p = 64`;
      with the idle floor at the last record's start, `64 + 48 - 0 = 112 > 64`. An
      idle ring refuses a record that fits in it.
-   - **The same run with `IdleAdmitsAnyMessage` left out and TLC's `-deadlock`
+   - **Historical manual variant with `IdleAdmitsAnyMessage` left out and TLC's `-deadlock`
      flag: `Temporal properties were violated`** (64,946 states generated, 20,769
      distinct), a stuttering lasso at depth 8. A 48-byte record is numbered 0 at
      `[0,48)`, opened, released and acked; the block then asks for 32 bytes from
@@ -207,8 +211,8 @@ as 6.3 says ("a violation, never memory corruption").
      the flag TLC reports the same state as `Deadlock reached`, which it is: a
      waiting record with no step enabled.
    - **Against the rule, by hand:** the floor is `p` when nothing is outstanding
-     (6.2), so `64 + 32 - 64 = 32 <= 64` and the block is placed at `[64,96)`.
-     This is 6.2's last paragraph: with nothing outstanding any message of at most
+     (RN-2 m5.1), so `64 + 32 - 64 = 32 <= 64` and the block is placed at `[64,96)`.
+     With nothing outstanding any message of at most
      `max_message_bytes <= B` fits.
 4. **`MCRNRingBrokenNoRounding.cfg`: `Invariant Aligned is violated`, at depth 5**
    (30 states generated, 30 distinct).
