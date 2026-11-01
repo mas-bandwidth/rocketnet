@@ -8,6 +8,10 @@
 # seeds so a seed-fragile case shows at night and not in a landing. It lives
 # here, not in ci.yml, because the per-push tier stays at or under two minutes.
 #
+# The pinned regressions of tests/functional/channel_seed_regressions.tsv,
+# (case, seed) pairs an earlier night found red, run first, and the range
+# sweep runs whether or not they pass.
+#
 # A red night prints one line per failure, `FAIL seed=<n> case=<name>
 # reason=<what>`, and replays with
 #   ROCKETNET_CHANNEL_SEED=<n> ./bin/functional --run <name>
@@ -57,9 +61,17 @@ jobs:
           exit "$missing"
 
       - name: Build
+        id: build
         run: make
 
+      - name: Replay the pinned regression seeds
+        run: |
+          set -o pipefail
+          echo "channel seed regressions replay: scripts/channel-seed-sweep --regressions tests/functional/channel_seed_regressions.tsv --timeout 120"
+          scripts/channel-seed-sweep --regressions tests/functional/channel_seed_regressions.tsv --timeout 120 | tee channel-seed-regressions.log
+
       - name: Sweep every channel case over a rolling seed range
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         env:
           CHANNEL_RUN_NUMBER: ${{ github.run_number }}
         run: |
@@ -84,5 +96,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: channel-seed-sweep-log-${{ steps.refslug.outputs.slug }}
-          path: channel-seed-sweep.log
+          path: |
+            channel-seed-regressions.log
+            channel-seed-sweep.log
           if-no-files-found: ignore

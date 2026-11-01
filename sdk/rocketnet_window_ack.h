@@ -212,6 +212,16 @@ void rn_window_ack_receipt_emit_loss( rn_window_ack_t * ack, uint32_t serial );
 // with zero capacity is a count query; invalid arguments return zero.
 int rn_window_ack_receipts( const rn_window_ack_t * ack, rocketnet_message_receipt_t * out, int capacity );
 
+// Takes the transport's reported round-trip time of the connection, in
+// seconds, as the first RTT sample while the estimator has none of its own
+// (standard/MESSAGES.md m9.2; proofs/tla/RNResendTiming.tla Seed): srtt and
+// rttvar become `rtt` and resend_delay is recomputed by the sample rule. A
+// later ack's sample then moves the estimate 5% as any later sample does.
+// Does nothing and returns 0 once the estimator has a sample, or when `rtt`
+// is not positive (the transport has no measurement yet). Returns 1 when it
+// seeded.
+int rn_window_ack_seed_rtt( rn_window_ack_t * ack, double rtt );
+
 // Processes one acked transport sequence `packet_id` at time `now`
 // (standard/MESSAGES.md m9.1 and m9.2; proofs/tla/RNWindow.tla ReceiveAck,
 // proofs/tla/RNResendTiming.tla Sample).
