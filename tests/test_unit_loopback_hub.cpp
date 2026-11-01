@@ -97,13 +97,23 @@ static void test_loopback_hub_create_and_destroy()
         check( rocketnet_loopback_hub_check( hub ) == ROCKETNET_STATUS_OK );
         loopback_hub_check_live( hub, 0 );
 
-        // a NULL status is allowed
+        // a NULL status is allowed. Below the largest size the two hubs are
+        // live together and distinct; at ROCKETNET_MAX_CLIENTS the first goes
+        // before the second is made, so the case holds one large hub at a
+        // time (two at once passed 10 GB of RSS under MemorySanitizer)
+
+        if ( sizes[i] == ROCKETNET_MAX_CLIENTS )
+        {
+            check( rocketnet_loopback_hub_destroy( hub ) == ROCKETNET_STATUS_OK );
+            hub = NULL;
+        }
 
         rocketnet_loopback_hub_t * second = rocketnet_loopback_hub_create( &loopback_hub_allocator, sizes[i], NULL );
         check( second != NULL && second != hub );
 
         check( rocketnet_loopback_hub_destroy( second ) == ROCKETNET_STATUS_OK );
-        check( rocketnet_loopback_hub_destroy( hub ) == ROCKETNET_STATUS_OK );
+        if ( hub )
+            check( rocketnet_loopback_hub_destroy( hub ) == ROCKETNET_STATUS_OK );
         check( loopback_hub_allocator.live == 0 );
     }
 

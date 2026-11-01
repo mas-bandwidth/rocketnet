@@ -16,6 +16,7 @@ feature page lives in `docs/examples/`.
 | [channels](channels.c) | multi-channel message multiplexing and independent channel stream delivery | [channels.md](../docs/examples/channels.md) |
 | [client_server_server](client_server_server.c) / [client_server_client](client_server_client.c) | two-process client and server architecture communicating over UDP sockets | [client_server.md](../docs/examples/client_server.md) |
 | [config_env](config_env.c) | configuration precedence (default < struct < environment) and environment variable overrides | [config_env.md](../docs/examples/config_env.md) |
+| [fixed_memory](fixed_memory.c) | sizing a server and a client with `rocketnet_server_required_memory` and `rocketnet_client_required_memory`, an allocator that holds each to that budget over the whole lifecycle, and the OUT_OF_MEMORY a smaller budget gets | [fixed_memory.md](../docs/examples/fixed_memory.md) |
 | [game_loop](game_loop.c) | integrating RocketNet into a game tick loop with update, dispatch, and send_packets cadence | [game_loop.md](../docs/examples/game_loop.md) |
 | [reliability](reliability.c) | message reliability modes: unreliable, sequenced, reliable unordered, and reliable ordered | [reliability.md](../docs/examples/reliability.md) |
 | [soak](soak.c) | concurrent multi-client soak and stress load test against a single server | [soak.md](../docs/examples/soak.md) |

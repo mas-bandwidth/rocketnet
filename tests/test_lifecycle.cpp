@@ -19,7 +19,6 @@
 #include "rocketnet_network_simulator.h"
 #include "rocketnet_allocator.h"
 #include "rocketnet_counters.h"
-#include "rocketnet_frame_sync.h"
 #if ROCKETNET_XDP
 #include "rocketnet_server_socket.h"
 #include "rocketnet_constants.h"
@@ -701,22 +700,6 @@ static void check_component_create_sweeps( allocator_state & state )
                    check( state.calls == before );
                    rn_arena_destroy( a );
                } ) == 1 );
-
-    // 10. rocketnet_frame_sync_create: 1 allocation (fail N=1, succeed N=2).
-    {
-        const int before = state.calls;
-        check( !rocketnet_frame_sync_create( &state, 0.0 ) );
-        check( !rocketnet_frame_sync_create( &state, -60.0 ) );
-        check( !rocketnet_frame_sync_create( &state, ROCKETNET_FRAME_SYNC_MAX_FRAME_RATE + 1.0 ) );
-        check( state.calls == before && state.live == baseline );
-    }
-
-    check( sweep_component_create<rocketnet_frame_sync_t>(
-               state,
-               [&]()
-               { return rocketnet_frame_sync_create( &state, 60.0 ); },
-               []( rocketnet_frame_sync_t * f )
-               { rocketnet_frame_sync_destroy( f ); } ) == 1 );
 
     // 11. The platform thread and its shim share an allocator-backed record.
 

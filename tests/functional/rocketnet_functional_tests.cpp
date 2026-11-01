@@ -10829,6 +10829,8 @@ struct rocketnet_functional_test_t
 };
 
 #if ROCKETNET_DEV
+extern void test_client_destroy_early_threaded_frees();
+extern void test_server_destroy_early_threaded_frees();
 extern void test_client_destroy_early_threaded_keeps_then_frees();
 extern void test_server_destroy_early_threaded_keeps_then_frees();
 #endif // bodies live in destroy_early_keep.cpp, not in the production executable
@@ -10925,6 +10927,9 @@ extern void resend_timing_table_over_lossy_links();
 extern void block_resend_cost_over_long_path();
 extern void rocketnet_test_cpp_transports_connect_over_loopback();
 extern void live_message_matrix_loopback();
+#if ROCKETNET_DEV
+extern void live_message_matrix_late_probes();
+#endif // #if ROCKETNET_DEV
 extern void rocketnet_test_server_async_delivery_with_max_clients();
 
 // the receive buffer sizing cases (tests/functional/server_receive_low_tick.cpp):
@@ -12849,19 +12854,10 @@ static void rocketnet_test_hostname_resolve_localhost()
 #endif // #if ROCKETNET_DEV
 
 extern void rocketnet_test_platform_thread();
-extern void rocketnet_test_frame_sync_wait();
-#if ROCKETNET_DEV
-extern void rocketnet_test_frame_sync_dropped_stats();
-#endif // #if ROCKETNET_DEV
-extern void rocketnet_test_frame_sync_lifecycle();
-extern void rocketnet_test_frame_sync_create_ex_success_status();
 #if defined( __APPLE__ ) && !defined( ROCKETNET_USE_SYSTEM_SODIUM )
 extern void rocketnet_test_bundled_rng_closes_and_reopens_on_mac();
 extern void rocketnet_test_bundled_rng_opens_once_under_concurrent_keygen_on_mac();
 #endif // #if defined(__APPLE__) && !defined(ROCKETNET_USE_SYSTEM_SODIUM)
-#if ROCKETNET_DEV
-extern void rocketnet_test_frame_sync_high_resolution_timer_required();
-#endif // #if ROCKETNET_DEV
 extern void rocketnet_test_connect_token_mint_concurrent();
 extern void rocketnet_test_ack_endpoints_independent_across_threads();
 extern void test_api_polish_dev_token_string();
@@ -12885,6 +12881,11 @@ static bool rocketnet_test_server_pin_allows_portable() { return rocketnet_test_
 static bool rocketnet_test_server_pin_allows_auto() { return rocketnet_test_transport_pin_allows( "ROCKETNET_SERVER_TRANSPORT", NULL ); }
 static bool rocketnet_test_client_pin_allows_auto() { return rocketnet_test_transport_pin_allows( "ROCKETNET_CLIENT_TRANSPORT", NULL ); }
 static bool rocketnet_test_a_transport_pin_is_set() { return !rocketnet_test_server_pin_allows_auto() || !rocketnet_test_client_pin_allows_auto(); }
+
+// the loopback hub case pins loopback in its configs: a whole-suite pin
+// overrides that, the pair connects over another transport, and nothing
+// registers on the hub, so the case is taken out of the suite under a pin
+static bool rocketnet_test_no_transport_pin_is_set() { return !rocketnet_test_a_transport_pin_is_set(); }
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 static bool rocketnet_test_server_pin_allows_iocp() { return rocketnet_test_transport_pin_allows( "ROCKETNET_SERVER_TRANSPORT", "iocp" ); }
 static bool rocketnet_test_server_pin_allows_rio() { return rocketnet_test_transport_pin_allows( "ROCKETNET_SERVER_TRANSPORT", "rio" ); }
@@ -13041,6 +13042,8 @@ static void rocketnet_test_message_client_create_takes_the_create_budget()
 
 static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
 #if ROCKETNET_DEV
+    { "test_client_destroy_early_threaded_frees", test_client_destroy_early_threaded_frees, NULL },
+    { "test_server_destroy_early_threaded_frees", test_server_destroy_early_threaded_frees, NULL },
     { "test_client_destroy_early_threaded_keeps_then_frees", test_client_destroy_early_threaded_keeps_then_frees, NULL },
     { "test_server_destroy_early_threaded_keeps_then_frees", test_server_destroy_early_threaded_keeps_then_frees, NULL },
     { "test_real_environment_dev_session_sequence_start", rocketnet_test_real_environment_dev_session_sequence_start, NULL },
@@ -13055,22 +13058,12 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
 #endif // #if ROCKETNET_DEV
     { "test_platform_thread", rocketnet_test_platform_thread, NULL },
     { "test_message_client_create_takes_the_create_budget", rocketnet_test_message_client_create_takes_the_create_budget, NULL },
-    { "test_frame_sync_wait", rocketnet_test_frame_sync_wait, NULL },
-#if ROCKETNET_DEV
-    { "test_frame_sync_dropped_stats", rocketnet_test_frame_sync_dropped_stats, NULL },
-#endif // #if ROCKETNET_DEV
-    // moved from the unit suite: each creates or reads a real OS resource
-    // (the Windows high-resolution waitable timer; the macOS descriptor table)
-    { "test_frame_sync_lifecycle", rocketnet_test_frame_sync_lifecycle, NULL },
     { "test_token_time_game_clock_off_reads_the_wall_clock", rocketnet_test_token_time_game_clock_off_reads_the_wall_clock, NULL },
-    { "test_frame_sync_create_ex_success_status", rocketnet_test_frame_sync_create_ex_success_status, NULL },
 #if defined( __APPLE__ ) && !defined( ROCKETNET_USE_SYSTEM_SODIUM )
+    // moved from the unit suite: reads a real OS resource (the macOS descriptor table)
     { "test_bundled_rng_closes_and_reopens_on_mac", rocketnet_test_bundled_rng_closes_and_reopens_on_mac, NULL },
     { "test_bundled_rng_opens_once_under_concurrent_keygen_on_mac", rocketnet_test_bundled_rng_opens_once_under_concurrent_keygen_on_mac, NULL },
 #endif // #if defined(__APPLE__) && !defined(ROCKETNET_USE_SYSTEM_SODIUM)
-#if ROCKETNET_DEV
-    { "test_frame_sync_high_resolution_timer_required", rocketnet_test_frame_sync_high_resolution_timer_required, NULL },
-#endif // #if ROCKETNET_DEV
     { "test_pcapng_corpus_replay", test_pcapng_corpus_replay, NULL },
     { "test_pcapng_corpus_witness_unread_packet_goes_red", test_pcapng_corpus_witness_unread_packet_goes_red, NULL },
     { "test_pcapng_corpus_covers_control_packet_types", test_pcapng_corpus_covers_control_packet_types, NULL },
@@ -13083,7 +13076,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_public_dev_connect_token_round_trip", rocketnet_test_public_dev_connect_token_round_trip, NULL },
 #endif // #if ROCKETNET_DEV
 #if ROCKETNET_DEV
-    { "test_loopback_hub_two_shared_objects", test_loopback_hub_two_shared_objects, NULL },
+    { "test_loopback_hub_two_shared_objects", test_loopback_hub_two_shared_objects, rocketnet_test_no_transport_pin_is_set },
 #endif // #if ROCKETNET_DEV
     { "test_ack_endpoints_independent_across_threads", rocketnet_test_ack_endpoints_independent_across_threads, NULL },
     { "test_server_refuses_keyless_config", rocketnet_test_server_refuses_keyless_config, NULL },
@@ -13374,6 +13367,9 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_wire_totals_reset_per_connection_not_per_server", wire_totals_reset_per_connection_not_per_server, NULL },
     { "test_transport_wire_bytes_per_family", test_transport_wire_bytes_per_family, NULL },
     { "test_loopback_transport_live_message_matrix", live_message_matrix_loopback, NULL },
+#if ROCKETNET_DEV
+    { "test_loopback_transport_live_message_matrix_late_probes", live_message_matrix_late_probes, NULL },
+#endif // #if ROCKETNET_DEV
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 #if ROCKETNET_DEV
     // These files use development-only socket seams and the resource ledger.
@@ -13570,6 +13566,8 @@ static const char * rocketnet_functional_predicate_name( bool ( *predicate )() )
         return "rocketnet_test_client_pin_allows_auto";
     if ( predicate == rocketnet_test_a_transport_pin_is_set )
         return "rocketnet_test_a_transport_pin_is_set";
+    if ( predicate == rocketnet_test_no_transport_pin_is_set )
+        return "rocketnet_test_no_transport_pin_is_set";
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( predicate == rocketnet_test_server_pin_allows_iocp )
         return "rocketnet_test_server_pin_allows_iocp";

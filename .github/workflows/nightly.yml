@@ -150,6 +150,14 @@ jobs:
       - name: Build (Release, through the Makefile)
         run: make -j8
 
+      # functional_production links the production library, which only a
+      # ROCKETNET_DEV=OFF configure builds (CMakeLists.txt); it builds in its
+      # own directory, so the development binaries in bin/ stay as they are
+      - name: Build the production functional suite (Release, ROCKETNET_DEV=OFF)
+        run: |
+          cmake -S . -B build-production -DCMAKE_BUILD_TYPE=Release -DROCKETNET_DEV=OFF -DCMAKE_RUNTIME_OUTPUT_DIRECTORY="$PWD/build-production/bin" -DCMAKE_LIBRARY_OUTPUT_DIRECTORY="$PWD/build-production/bin"
+          cmake --build build-production --target functional_production --parallel 8
+
       - name: Functional suite, nightly tier
         timeout-minutes: 20
         env:
@@ -171,7 +179,7 @@ jobs:
           ROCKETNET_TEST_NIGHTLY: "1"
           ROCKETNET_SERVER_TRANSPORT: portable
           ROCKETNET_CLIENT_TRANSPORT: portable
-        run: ./bin/functional_production
+        run: ./build-production/bin/functional_production
 
   # THE LINUX AND WINDOWS FUNCTIONAL NIGHTLY TIERS: the same tier on the other
   # two operating systems (Glenn 2026-10-29: "If anything doesn't fit into
@@ -198,6 +206,14 @@ jobs:
       - name: Build (Release, through the Makefile)
         run: make -j8
 
+      # functional_production links the production library, which only a
+      # ROCKETNET_DEV=OFF configure builds (CMakeLists.txt); it builds in its
+      # own directory, so the development binaries in bin/ stay as they are
+      - name: Build the production functional suite (Release, ROCKETNET_DEV=OFF)
+        run: |
+          cmake -S . -B build-production -DCMAKE_BUILD_TYPE=Release -DROCKETNET_DEV=OFF -DCMAKE_RUNTIME_OUTPUT_DIRECTORY="$PWD/build-production/bin" -DCMAKE_LIBRARY_OUTPUT_DIRECTORY="$PWD/build-production/bin"
+          cmake --build build-production --target functional_production --parallel 8
+
       # serial: the Linux tier holds the XDP cases, which share the host's XDP
       # state and cannot run beside other cases
       - name: Functional suite, nightly tier (serial)
@@ -222,7 +238,7 @@ jobs:
           ROCKETNET_TEST_NIGHTLY: "1"
           ROCKETNET_SERVER_TRANSPORT: portable
           ROCKETNET_CLIENT_TRANSPORT: portable
-        run: ./bin/functional_production
+        run: ./build-production/bin/functional_production
 
   windows-functional-nightly:
     name: windows / Release functional nightly tier
@@ -243,8 +259,17 @@ jobs:
       - name: Configure
         run: cmake -B build -A x64
 
+      # functional_production links the production library, which only a
+      # ROCKETNET_DEV=OFF configure builds (CMakeLists.txt); it builds in its
+      # own directory, so the development binaries in bin/ stay as they are
+      - name: Configure the production library (ROCKETNET_DEV=OFF)
+        run: cmake -B build-production -A x64 -DROCKETNET_DEV=OFF "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=$PWD/build-production/bin" "-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=$PWD/build-production/bin"
+
       - name: Build (Release)
-        run: cmake --build build --config Release --target functional functional_production --parallel
+        run: cmake --build build --config Release --target functional --parallel
+
+      - name: Build the production functional suite (Release)
+        run: cmake --build build-production --config Release --target functional_production --parallel
 
       - name: Functional suite, nightly tier
         timeout-minutes: 30
@@ -261,7 +286,7 @@ jobs:
           ROCKETNET_TEST_NIGHTLY: "1"
           ROCKETNET_SERVER_TRANSPORT: portable
           ROCKETNET_CLIENT_TRANSPORT: portable
-        run: ./bin/Release/functional_production.exe
+        run: ./build-production/bin/Release/functional_production.exe
 
   # THE THREADED TRANSPORTS UNDER TSAN, lifted from ci.yml's tsan job on
   # 2026-10-22 step for step (its comment there is the doctrine: a real race
@@ -395,7 +420,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
-          name: transport-cells-repeat-${{ matrix.ref }}
+          name: transport-cells-repeat-${{ strategy.job-index }}-${{ github.run_attempt }}
           path: build/transport-cells-repeat
           if-no-files-found: ignore
 
@@ -440,7 +465,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
-          name: macos-transport-cells-repeat-${{ matrix.ref }}
+          name: macos-transport-cells-repeat-${{ strategy.job-index }}-${{ github.run_attempt }}
           path: build/transport-cells-repeat
           if-no-files-found: ignore
 
@@ -486,7 +511,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
-          name: windows-transport-cells-repeat-${{ matrix.ref }}
+          name: windows-transport-cells-repeat-${{ strategy.job-index }}-${{ github.run_attempt }}
           path: build/transport-cells-repeat
           if-no-files-found: ignore
 
