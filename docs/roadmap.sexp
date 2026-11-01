@@ -80,11 +80,6 @@
    :text "The page's exact byte figures go stale with every merge. Generate them, with a CI check that the page matches the generator."
    :date "2026-10-31" :origin "#721 follow-on")
 
-  (item "release-requires-nightly" :group "audit-remaining" :area "ci"
-   :title "A release commit requires a green Nightly CI run"
-   :text "docs/RELEASING.md asks for it; nothing enforces it. Extend tools/check_release_tsan.py to require nightly-ci.yml, msan and CBMC green at the tagged commit."
-   :date "2026-10-31" :origin "CI under two minutes")
-
   (item "low-docs-standard-tests" :group "audit-remaining" :area "rocketnet"
    :title "Low-severity docs, standard, tests and CI items"
    :text "The low items under docs/, standard/, tests/, tools/, .github/, scripts/, CMakeLists.txt or sodium/ whose class is not defect: 94 95 96 108 120 127 132 138 140 141 143 144 146 147 148 149 157 158 159 160 161 167 177-185 198 200 201 202 217-227 230 231 284."
