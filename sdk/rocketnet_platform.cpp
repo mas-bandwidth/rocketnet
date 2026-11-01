@@ -2066,7 +2066,7 @@ int rocketnet_platform_socket_send_packets_mmsg_progress( rocketnet_platform_soc
 
             char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
             rocketnet_address_to_string( sends[base + sent].to, address_string );
-            rocketnet_debug( "sendmmsg (%s) failed: %s", address_string, strerror( error ) );
+            rocketnet_debug( "sendmmsg (%s) failed: errno %d", address_string, error );
             rocketnet_platform_send_failed( socket, &socket->send_failures, ROCKETNET_PLATFORM_SEND_CALL_SENDTO, error );
             sent++;
         }
