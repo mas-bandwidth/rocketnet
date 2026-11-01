@@ -33,6 +33,7 @@
 #ifdef __cplusplus
 #include <cmath>
 using std::isfinite;
+using std::isnan;
 extern "C"
 {
 #endif // #ifdef __cplusplus
