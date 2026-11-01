@@ -111,6 +111,7 @@ struct portable_server_t
 
     std::atomic<bool> stopping{ false };
     std::atomic<bool> quit{ false };
+    std::atomic<bool> terminal_drain{ false }; // stop intent precedes the final disconnect batches
     std::atomic<bool> exited{ false };
     std::atomic<bool> rx_exited{ false };
     std::atomic<uint64_t> dropped{ 0 };
@@ -124,6 +125,8 @@ struct portable_server_t
     bool force_rx_acquire_busy = false;
     void ( *after_worker_empty )( portable_server_t * ) = NULL;
     bool skip_socket_send = false;
+    int ( *send_progress_for_test )( portable_server_t *, const rocketnet_platform_send_t *, int ) = NULL;
+    void ( *send_terminal_for_test )( portable_server_t *, const rocketnet_platform_send_t *, int ) = NULL;
     std::atomic<int> test_sent_banks{ 0 };
     std::atomic<int> test_rx_full_waits{ 0 };
 #endif // #if ROCKETNET_DEV
@@ -137,6 +140,8 @@ struct portable_server_t
     int ready_index[PORTABLE_TX_BANKS] = {};
     int ready_head = 0;
     int ready_count = 0;
+    int tx_consumer = -1; // TX worker only: retained until its complete prefix is consumed
+    int tx_cursor = 0;   // TX worker only: first unconsumed entry of that bank
     portable_tx_bank_t bank[PORTABLE_TX_BANKS];
     int tx_capacity = 0;
     uint8_t * tx_storage = NULL; // the three TX banks' arrays, one allocation
@@ -333,25 +338,27 @@ static portable_tx_step_t portable_tx_step( portable_server_t * server )
 
     // proofs/tla/RNPortableTx.tla WTop: the worker's acquire blocks; main's never does.
 
-    rocketnet_platform_mutex_acquire( &server->mutex );
-
-    // proofs/tla/RNPortableTx.tla WTake: under the mutex the oldest ready bank is
-    // taken, or empty is observed together with quit. A quit read after the
-    // release is the race MCRNPortableTxBrokenQuitAfterUnlock.cfg reproduces.
-
-    int index = -1;
+    int index = server->tx_consumer;
     bool exit_empty = false;
-    if ( server->ready_count > 0 )
+    if ( index < 0 )
     {
-        index = server->ready_index[server->ready_head];
-        // proofs/tla/RNBankFifoLayout.tla Take: the ready head advances modulo the bank count.
-        server->ready_head = ( server->ready_head + 1 ) % PORTABLE_TX_BANKS;
-        server->ready_count--;
+        rocketnet_platform_mutex_acquire( &server->mutex );
+        // proofs/tla/RNPortableTx.tla WTake: take the oldest ready bank, or
+        // observe empty and quit together under the mutex. A retained bank
+        // never re-enters this exchange until its suffix is consumed.
+        if ( server->ready_count > 0 )
+        {
+            index = server->ready_index[server->ready_head];
+            // proofs/tla/RNBankFifoLayout.tla Take: advance the ready head modulo the bank count.
+            server->ready_head = ( server->ready_head + 1 ) % PORTABLE_TX_BANKS;
+            server->ready_count--;
+            server->tx_consumer = index;
+            server->tx_cursor = 0;
+        }
+        else
+            exit_empty = server->quit.load( std::memory_order_acquire );
+        rocketnet_platform_mutex_release( &server->mutex );
     }
-    else
-        exit_empty = server->quit.load( std::memory_order_acquire );
-
-    rocketnet_platform_mutex_release( &server->mutex );
 
     if ( index < 0 )
     {
@@ -377,10 +384,35 @@ static portable_tx_step_t portable_tx_step( portable_server_t * server )
     {
         // proofs/tla/RNPortableTx.tla WSend: the bank in flight is read outside the mutex.
 
-        for ( int i = 0; i < bank->count; ++i )
+        for ( int i = server->tx_cursor; i < bank->count; ++i )
             bank->sends[i] = { &bank->to[i], bank->data[i], bank->bytes[i] };
 
-        rocketnet_platform_socket_send_packets( server->socket, bank->sends, bank->count );
+#if defined( __linux__ )
+        if ( !server->terminal_drain.load( std::memory_order_acquire ) && !server->quit.load( std::memory_order_acquire ) )
+        {
+            const int remaining = bank->count - server->tx_cursor;
+            int consumed;
+#if ROCKETNET_DEV
+            if ( server->send_progress_for_test )
+                consumed = server->send_progress_for_test( server, bank->sends + server->tx_cursor, remaining );
+            else
+#endif // #if ROCKETNET_DEV
+                consumed = rocketnet_platform_socket_send_packets_mmsg_progress( server->socket, bank->sends + server->tx_cursor, remaining );
+            rocketnet_assert( consumed >= 0 && consumed <= remaining );
+            server->tx_cursor += consumed;
+            if ( server->tx_cursor < bank->count )
+                return PORTABLE_TX_WAIT;
+        }
+        else
+#endif // #if defined( __linux__ )
+        {
+#if ROCKETNET_DEV
+            if ( server->send_terminal_for_test )
+                server->send_terminal_for_test( server, bank->sends + server->tx_cursor, bank->count - server->tx_cursor );
+            else
+#endif // #if ROCKETNET_DEV
+                rocketnet_platform_socket_send_packets( server->socket, bank->sends + server->tx_cursor, bank->count - server->tx_cursor );
+        }
     }
 
     // proofs/tla/RNPortableTx.tla WSendDone, WRetLock and WRetSwap: the count is
@@ -388,6 +420,8 @@ static portable_tx_step_t portable_tx_step( portable_server_t * server )
     // ( free_head + free_count ) % PORTABLE_TX_BANKS under the mutex.
 
     bank->count = 0;
+    server->tx_consumer = -1;
+    server->tx_cursor = 0;
     rocketnet_platform_mutex_acquire( &server->mutex );
     // proofs/tla/RNBankFifoLayout.tla Release: the bank returns at the free tail.
     server->free_index[( server->free_head + server->free_count ) % PORTABLE_TX_BANKS] = index;
@@ -857,6 +891,15 @@ static void portable_stop_quit( portable_server_t * server )
 
     if ( server->rx_wake )
         rocketnet_platform_wake_set( server->rx_wake );
+}
+
+static void portable_begin_shutdown( void * transport )
+{
+    // The outer stop waits for send_idle before stop/quit. Publish terminal
+    // drain intent now, while disconnect batches may still be admitted.
+    portable_server_t * server = (portable_server_t *) transport;
+    server->terminal_drain.store( true, std::memory_order_release );
+    rocketnet_platform_wake_set( server->wake );
 }
 
 static void portable_stop( void * transport )
@@ -1598,10 +1641,92 @@ static bool portable_send_idle( void * transport )
     return idle;
 }
 
+#if ROCKETNET_DEV && defined( __linux__ )
+// Fake only socket outcomes; the real publish/take/release/stop code owns
+// the banks. A zero-progress result models a persistent EAGAIN.
+static int portable_carry_allow;
+static int portable_carry_sent[8];
+static int portable_carry_count;
+static int portable_carry_terminal_count;
+static int portable_carry_progress_calls;
+
+static int portable_carry_progress( portable_server_t *, const rocketnet_platform_send_t * sends, int count )
+{
+    portable_carry_progress_calls++;
+    const int consumed = count < portable_carry_allow ? count : portable_carry_allow;
+    for ( int i = 0; i < consumed; i++ )
+        portable_carry_sent[portable_carry_count++] = sends[i].packet_data[0];
+    return consumed;
+}
+
+static void portable_carry_terminal( portable_server_t *, const rocketnet_platform_send_t * sends, int count )
+{
+    for ( int i = 0; i < count; i++ )
+        portable_carry_sent[portable_carry_count++] = sends[i].packet_data[0];
+    portable_carry_terminal_count += count;
+}
+
+bool rocketnet_portable_tx_test_carry()
+{
+    void * storage = rocketnet_malloc( NULL, sizeof( portable_server_t ) );
+    if ( !storage )
+        return false;
+    portable_server_t * server = new ( storage ) portable_server_t();
+    if ( !portable_tx_storage_create( server, 4 ) || !rocketnet_platform_mutex_create( &server->mutex ) )
+    {
+        portable_server_cleanup( server );
+        return false;
+    }
+    server->wake = rocketnet_platform_wake_create( NULL, NULL );
+    if ( !server->wake )
+    {
+        portable_server_cleanup( server );
+        return false;
+    }
+    server->send_progress_for_test = portable_carry_progress;
+    server->send_terminal_for_test = portable_carry_terminal;
+    portable_carry_count = portable_carry_terminal_count = portable_carry_progress_calls = 0;
+    portable_carry_allow = 1;
+    rocketnet_address_t to = {};
+    to.type = ROCKETNET_ADDRESS_IPV4;
+    to.port = 1234;
+    uint8_t data[] = { 10, 20, 30, 40 };
+    rocketnet_platform_send_t sends[4];
+    for ( int i = 0; i < 4; i++ )
+        sends[i] = { &to, &data[i], 1 };
+    portable_send( server, sends, 3 );
+    portable_send( server, sends + 3, 1 );
+    bool valid = server->ready_count == 2 && server->free_count == 0;
+    valid &= portable_tx_step( server ) == PORTABLE_TX_WAIT;
+    valid &= server->tx_consumer == 0 && server->tx_cursor == 1 && server->free_count == 0;
+    valid &= portable_carry_count == 1 && portable_carry_sent[0] == 10;
+    portable_carry_allow = 0;
+    valid &= portable_tx_step( server ) == PORTABLE_TX_WAIT;
+    valid &= !portable_send_idle( server ) && portable_carry_progress_calls == 2;
+    valid &= server->tx_consumer == 0 && server->tx_cursor == 1 && portable_carry_count == 1;
+    portable_begin_shutdown( server );
+    valid &= !server->stopping.load( std::memory_order_acquire ) && !server->quit.load( std::memory_order_acquire );
+    valid &= portable_tx_step( server ) == PORTABLE_TX_SENT;
+    valid &= server->free_count == 1 && portable_carry_terminal_count == 2;
+    valid &= portable_carry_sent[1] == 20 && portable_carry_sent[2] == 30;
+    valid &= portable_tx_step( server ) == PORTABLE_TX_SENT;
+    valid &= portable_carry_count == 4 && portable_carry_sent[3] == 40 && portable_send_idle( server );
+    // Terminal intent still admits a final disconnect batch before stop.
+    portable_send( server, sends + 3, 1 );
+    valid &= portable_tx_step( server ) == PORTABLE_TX_SENT && portable_carry_count == 5;
+    valid &= portable_carry_sent[4] == 40 && portable_carry_terminal_count == 4;
+    portable_stop( server );
+    valid &= portable_tx_step( server ) == PORTABLE_TX_EXIT;
+    valid &= portable_carry_progress_calls == 2;
+    portable_server_cleanup( server );
+    return valid;
+}
+#endif // #if ROCKETNET_DEV && defined( __linux__ )
+
 static const rocketnet_server_transport_io_operations_t portable_server_operations = {
     ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE, portable_create, portable_destroy, portable_stop, portable_stopped,
     NULL, NULL, NULL, NULL, NULL, portable_send, portable_receive,
-    NULL, NULL, NULL, NULL, NULL, portable_send_failures, portable_send, portable_send_room, portable_send_idle
+    NULL, NULL, NULL, NULL, NULL, portable_send_failures, portable_send, portable_send_room, portable_send_idle, portable_begin_shutdown
 };
 
 #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
@@ -1701,6 +1826,17 @@ static void portable_io_client_send_batch( void * transport, const rocketnet_pla
 #endif // #if defined( __linux__ )
 }
 
+static int portable_io_client_send_batch_progress( void * transport, const rocketnet_platform_send_t * sends, int num_packets )
+{
+#if defined( __linux__ )
+    portable_io_client_t * client = (portable_io_client_t *) transport;
+    return rocketnet_platform_socket_send_packets_mmsg_progress( client->socket, sends, num_packets );
+#else
+    portable_io_client_send_batch( transport, sends, num_packets );
+    return num_packets;
+#endif // #if defined( __linux__ )
+}
+
 static int portable_io_client_receive_batch( void * transport, rocketnet_address_t * from, uint8_t * packet_data, int packet_stride, int * packet_bytes, int max_packets )
 {
     struct portable_io_client_t * client = (struct portable_io_client_t *) transport;
@@ -1745,7 +1881,7 @@ static bool portable_io_client_connect( void * transport, const rocketnet_addres
 static const rocketnet_client_transport_io_operations_t portable_client_operations = {
     portable_io_client_create, portable_io_client_destroy, portable_io_client_send, portable_io_client_receive,
     portable_io_client_send_batch, portable_io_client_receive_batch, portable_io_client_wait, portable_io_client_wake,
-    portable_io_client_send_failures, portable_io_client_connect, portable_io_client_close
+    portable_io_client_send_failures, portable_io_client_connect, portable_io_client_close, portable_io_client_send_batch_progress
 };
 #else // #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
 static void * portable_client_create( void * context, const rocketnet_client_transport_io_config_t * config, rocketnet_address_t * bind )
@@ -1798,7 +1934,7 @@ static const rocketnet_client_transport_io_operations_t portable_client_operatio
 #else
                                                                                        NULL, NULL,
 #endif // #if defined( __linux__ )
-                                                                                       NULL, NULL, portable_socket_send_failures, portable_client_connect, portable_client_close };
+                                                                                       NULL, NULL, portable_socket_send_failures, portable_client_connect, portable_client_close, NULL };
 #endif // #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
 
 extern const rocketnet_transport_backend_t rocketnet_portable_transport = { &portable_server_operations, &portable_client_operations };
@@ -1872,7 +2008,7 @@ static const rocketnet_server_transport_io_operations_t gso_operations = {
     ROCKETNET_TRANSPORT_STAGED | ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE | ROCKETNET_TRANSPORT_REFLUSHES,
     gso_create, gso_destroy, gso_stop, gso_stopped,
     gso_start, gso_finish, gso_abort, gso_flush, gso_receive, NULL, NULL,
-    NULL, NULL, NULL, NULL, NULL, gso_send_failures, NULL, gso_send_room, gso_send_idle
+    NULL, NULL, NULL, NULL, NULL, gso_send_failures, NULL, gso_send_room, gso_send_idle, NULL
 };
 
 // the client side: sendmmsg with UDP_SEGMENT, recvmmsg (sdk/rocketnet_client_gso_linux.cpp)
@@ -1920,7 +2056,7 @@ static const rocketnet_server_transport_io_operations_t io_uring_operations = {
     ROCKETNET_TRANSPORT_STAGED | ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE | ROCKETNET_TRANSPORT_REFLUSHES,
     io_uring_create, io_uring_destroy, io_uring_stop, io_uring_stopped,
     io_uring_start, io_uring_finish, io_uring_abort, io_uring_flush, io_uring_receive, NULL, NULL,
-    NULL, NULL, NULL, NULL, NULL, io_uring_send_failures, NULL, io_uring_send_room, io_uring_send_idle
+    NULL, NULL, NULL, NULL, NULL, io_uring_send_failures, NULL, io_uring_send_room, io_uring_send_idle, NULL
 };
 
 extern const rocketnet_transport_backend_t rocketnet_io_uring_transport = { &io_uring_operations, NULL };
@@ -1992,7 +2128,7 @@ static const rocketnet_server_transport_io_operations_t xdp_operations = {
     ROCKETNET_TRANSPORT_STAGED | ROCKETNET_TRANSPORT_FINISH_FINAL | ROCKETNET_TRANSPORT_BINDS_PUBLIC_ADDRESS | ROCKETNET_TRANSPORT_REFLUSHES,
     xdp_create, xdp_destroy, xdp_stop, xdp_stopped,
     xdp_start, xdp_finish, xdp_abort, xdp_flush, xdp_receive, NULL, NULL, xdp_prefilter_counters,
-    xdp_replay_forget, xdp_replay_mark, xdp_replay_commit, xdp_client_accepted, xdp_send_failures, NULL, xdp_send_room, xdp_send_idle
+    xdp_replay_forget, xdp_replay_mark, xdp_replay_commit, xdp_client_accepted, xdp_send_failures, NULL, xdp_send_room, xdp_send_idle, NULL
 };
 #else
 static void * xdp_disabled_create( void *, const rocketnet_server_transport_io_config_t * config, rocketnet_address_t * )
@@ -2019,7 +2155,7 @@ static int xdp_disabled_receive( void *, rocketnet_address_t *, uint8_t *, int, 
 static const rocketnet_server_transport_io_operations_t xdp_operations = {
     0, xdp_disabled_create, xdp_disabled_destroy, synchronous_stop, synchronous_stopped,
     NULL, NULL, NULL, NULL, NULL, xdp_disabled_send, xdp_disabled_receive,
-    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
 };
 #endif // #if ROCKETNET_XDP
 
@@ -2077,7 +2213,7 @@ static const rocketnet_server_transport_io_operations_t iocp_operations = {
     ROCKETNET_TRANSPORT_STAGED | ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE,
     iocp_create, iocp_destroy, iocp_stop, iocp_stopped,
     iocp_start, iocp_finish, iocp_abort, iocp_flush, iocp_receive, NULL, NULL,
-    NULL, NULL, NULL, NULL, NULL, iocp_send_failures, NULL, iocp_send_room, iocp_send_idle
+    NULL, NULL, NULL, NULL, NULL, iocp_send_failures, NULL, iocp_send_room, iocp_send_idle, NULL
 };
 
 // the client column is the iocp client (sdk/rocketnet_client_iocp_windows.cpp):
@@ -2131,7 +2267,7 @@ static const rocketnet_server_transport_io_operations_t rio_operations = {
     ROCKETNET_TRANSPORT_STAGED | ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE,
     rio_create, rio_destroy, rio_stop, rio_stopped,
     rio_start, rio_finish, rio_abort, rio_flush, rio_receive, NULL, NULL,
-    NULL, NULL, NULL, NULL, NULL, rio_send_failures, NULL, rio_send_room, rio_send_idle
+    NULL, NULL, NULL, NULL, NULL, rio_send_failures, NULL, rio_send_room, rio_send_idle, NULL
 };
 
 extern const rocketnet_transport_backend_t rocketnet_rio_transport = { &rio_operations, NULL };
