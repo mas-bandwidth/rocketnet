@@ -6233,7 +6233,7 @@ static void rocketnet_test_gso_wait_sent_or_dropped( struct rocketnet_server_gso
     }
 }
 
-static void rocketnet_test_server_gso_wire_exchange( const char * /* test_name */, const char * bind_string, const char * client_string, const char * server_host, int flags, int expect_ipv4_from )
+static void rocketnet_test_server_gso_wire_exchange( const char * test_name, const char * bind_string, const char * client_string, const char * server_host, int flags, int expect_ipv4_from )
 {
     rocketnet_address_t bind_address;
     rocketnet_check( rocketnet_address_parse( &bind_address, bind_string ) );
@@ -6522,9 +6522,9 @@ static void rocketnet_test_server_gso_wire_exchange( const char * /* test_name *
         }
         else
         {
-            rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE,
-                              "%s: loopback did not coalesce UDP_SEGMENT into GRO batch; skipping GRO_BATCHES check\n",
-                              case_name );
+            printf( "%s: loopback did not coalesce UDP_SEGMENT into GRO batch; skipping GRO_BATCHES check\n",
+                    test_name );
+            fflush( stdout );
         }
     }
 
