@@ -134,7 +134,7 @@ failed records unless they are explicit `bench` debt with actual exit 124.
 | `rnsendspans` | 3 | Send-span ring control and two invariant witnesses |
 | `rnsentmap` | 3 | The sent-packet map against the window (README-RNSentMap.md): control at P = W, RTO = RTT and two invariant witnesses, a map one entry short (`NoLiveEviction`) and a resend delay below the round trip (`NoLiveEviction`) |
 | `rnwindow` | 7 | Existing committed safety/liveness controls and five invariant witnesses |
-| `rnuringdriver` | 3 | io_uring transport control (invariants and liveness) and two invariant witnesses |
+| `rnuringdriver` | 11 | io_uring transport (README-RNUringDriver.md): the safety control (invariants and the action property `NoCallEndsBehindRoom`), two liveness controls (`SubmittedEventuallyFree`; `DestroyEventuallyFrees` and `ReceiveLiveness`), six invariant witnesses, the temporal witness `MCRNUringDriverBrokenNoRearmRetry.cfg` (`ReceiveLiveness`) and the action witness `MCRNUringDriverBrokenStopAtRoom.cfg`, a receive without room ending the call ahead of a send CQE (`NoCallEndsBehindRoom`) |
 | `rnclientio` | 24 | Client I/O thread design: the full threaded instance split by obligation (one safety case and 13 liveness cases, each one property or one conjunct of one), the step-driven mode at one slot (invariants and liveness) and its nine invariants at the full instance, six invariant witnesses, one temporal witness and the step-mode witness |
 | `rnclientiodecrypt` | 5 | Decrypt on the client I/O thread: control (invariants and liveness) and four invariant witnesses |
 | `fragmentsandacks` | 24 | Fragments and the ack window: controls, findings and witnesses, and the sent-ring bitmaps control with its two invariant witnesses, including seven debt cases |
@@ -181,17 +181,11 @@ failed records unless they are explicit `bench` debt with actual exit 124.
 | `rnfreestacklayout` | 4 | The protocol tables' free stacks, capacity 3 (README-RNFreeStackLayout.md): the control and three reversed witnesses, a release without the liveness guard and a pop before the generation refusal (both `StackIsFree`) and a generation that wraps to 1 (`GenerationNeverReissued`) |
 | `rnreconstructlayout` | 4 | The wire sequence reconstruction, modulus 8 in a space of 32 (README-RNReconstructLayout.md): the control and three reversed witnesses, a tie to the smaller, the below gate `>` and no candidate above (all `CodeIsNearest`) |
 | `clientgrocarry` | 4 | The gso client's GRO receive at the code's layout, rooms 1 to 4 and messages of up to three segments (README-RNClientGroCarry.md): the control and three reversed witnesses, the tail past the room dropped and the socket read over held segments (both `Conservation`) and a delivery one slot past the room (`InRoom`) |
-
-The case plan in `CASES.tsv` covers every root configuration: 580 cases
-in 91 groups, 564 required and 16 bench cases whose `debt` column names
-The case plan in `CASES.tsv` covers every root configuration: 581 cases
-in 91 groups, 565 required and 16 bench cases whose `debt` column names
-The case plan in `CASES.tsv` covers every root configuration: 583 cases
-in 91 groups, 567 required and 16 bench cases whose `debt` column names
 | `serverstopspread` | 8 | The disconnect ring's layout and the stop spread across steps within the send room (README-ServerStopSpread.md): a safety control, a liveness control (`StopFinishes`) and six reversed witnesses, the single-shot stop (`FullBurstBeforeStopped`), a ring of `SteadyCap` entries and a steady cap off by one (both `RingHolds`), a complete entry sealed again (`SealedWithinBurst`), an unreachable start that ends the drain (`StopFinishes`) and an I/O stop with a flushed send unfinished (`NoSendCutAtStop`) |
+| `rnuringreaplayout` | 5 | The io_uring reap at the code's layout, a completion ring of four, three buffers and a hold ring of three (README-RNUringReapLayout.md): controls at one and two datagrams per receive and three reversed witnesses, the reap that stops at a receive without room (`SendsNotBehindRoom`), the push index without the modulus and a hold ring one short of the buffers (both `HeldMatches`) |
 
-The case plan in `CASES.tsv` covers every root configuration: 587 cases
-in 91 groups, 571 required and 16 bench cases whose `debt` column names
+The case plan in `CASES.tsv` covers every root configuration: 650 cases
+in 99 groups, 634 required and 16 bench cases whose `debt` column names
 an explicit over-budget reason. Other experiments described in the model
 READMEs remain historical; this plan does not claim fresh measurements
 for uncommitted variants or change their model semantics.
