@@ -171,10 +171,24 @@ struct rocketnet_server_rio_t
     std::atomic<int> test_faults[ROCKETNET_RIO_TEST_NUM_FAULTS]{};
     std::atomic<int> test_fault_status[ROCKETNET_RIO_TEST_NUM_FAULTS]{};
     bool test_try_fails = false;                // main's next tries fail, as under contention
+#if defined( _M_ARM64 )
+    // Make the existing tail padding explicit for the MSVC ARM64 build.
+    // These bytes preserve the 960-byte DEV layout and its 64-byte alignment.
+    uint8_t test_padding[51];
+#endif // #if defined( _M_ARM64 )
 #endif // #if ROCKETNET_DEV
 };
 
 static_assert( offsetof( rocketnet_server_rio_t, outstanding ) == 64, "the rio's aligned members have no implicit padding" );
+
+#if ROCKETNET_DEV && defined( _M_ARM64 )
+static_assert( alignof( rocketnet_server_rio_t ) == 64 && sizeof( rocketnet_server_rio_t ) == 960,
+               "the rio DEV layout retains its cache-line alignment and size" );
+static_assert( offsetof( rocketnet_server_rio_t, test_try_fails ) == 908 && offsetof( rocketnet_server_rio_t, test_padding ) == 909,
+               "explicit tail padding follows the final DEV field without moving it" );
+static_assert( offsetof( rocketnet_server_rio_t, test_padding ) + sizeof( ( (rocketnet_server_rio_t *) 0 )->test_padding ) == sizeof( rocketnet_server_rio_t ),
+               "the rio DEV layout has no implicit tail padding" );
+#endif // #if ROCKETNET_DEV && defined( _M_ARM64 )
 
 // The fault seam (rocketnet_server_rio_test_fail_next) exists only in the
 // test executable. Elsewhere the check is the constant false, so the
