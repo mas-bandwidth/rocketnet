@@ -131,6 +131,16 @@ static const char * server_receive_low_tick_limit_name()
 // max_clients, the grant is read back, and a short grant names the limit.
 void rocketnet_test_server_receive_buffer_sized_from_max_clients()
 {
+    // The receive-buffer oracle requires a real portable socket, even when
+    // the surrounding suite selects an in-process transport.
+    char prior_transport[1024];
+    const bool had_transport = rocketnet_test_getenv( "ROCKETNET_SERVER_TRANSPORT", prior_transport, sizeof( prior_transport ) ) != 0;
+#if defined( _WIN32 )
+    server_receive_low_tick_require( _putenv_s( "ROCKETNET_SERVER_TRANSPORT", "portable" ) == 0 );
+#else
+    server_receive_low_tick_require( setenv( "ROCKETNET_SERVER_TRANSPORT", "portable", 1 ) == 0 );
+#endif // #if defined( _WIN32 )
+
     server_receive_low_tick_clear_log();
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
     rocketnet_log_function( server_receive_low_tick_capture, NULL );
@@ -254,6 +264,12 @@ void rocketnet_test_server_receive_buffer_sized_from_max_clients()
 
     rocketnet_log_function( NULL, NULL );
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+#if defined( _WIN32 )
+    server_receive_low_tick_require( _putenv_s( "ROCKETNET_SERVER_TRANSPORT", had_transport ? prior_transport : "" ) == 0 );
+#else
+    server_receive_low_tick_require( ( had_transport ? setenv( "ROCKETNET_SERVER_TRANSPORT", prior_transport, 1 )
+                                                     : unsetenv( "ROCKETNET_SERVER_TRANSPORT" ) ) == 0 );
+#endif // #if defined( _WIN32 )
 }
 
 #if defined( __linux__ )

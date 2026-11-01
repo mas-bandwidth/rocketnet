@@ -190,6 +190,7 @@ void rocketnet_test_transport_disconnect_delivery()
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 4;
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
 
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config );
     rocketnet_check( server );
@@ -200,7 +201,10 @@ void rocketnet_test_transport_disconnect_delivery()
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
     rocketnet_check( rocketnet_write_test_connect_token( server_address, rocketnet_random_uint64(), rocketnet_functional_token_timestamp( server_config.token_epoch_unix_seconds, rocketnet_platform_time() ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
-    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, NULL, rocketnet_platform_time() );
+    struct rocketnet_client_transport_config_t client_config;
+    rocketnet_client_transport_default_config( &client_config );
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
+    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, &client_config, rocketnet_platform_time() );
     rocketnet_check( client );
 
     double start = rocketnet_platform_time();
@@ -248,6 +252,12 @@ void rocketnet_test_transport_reconnect_churn()
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 1;
+    rocketnet_test_loopback_hub_clients( server_config.max_clients );
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
+
+    struct rocketnet_client_transport_config_t client_config;
+    rocketnet_client_transport_default_config( &client_config );
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
 
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config );
     rocketnet_check( server );
@@ -260,7 +270,7 @@ void rocketnet_test_transport_reconnect_churn()
         uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
         rocketnet_check( rocketnet_write_test_connect_token( server_address, rocketnet_random_uint64(), rocketnet_functional_token_timestamp( server_config.token_epoch_unix_seconds, rocketnet_platform_time() ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
-        struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, NULL, rocketnet_platform_time() );
+        struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, &client_config, rocketnet_platform_time() );
         rocketnet_check( client );
 
         double start = rocketnet_platform_time();
@@ -336,6 +346,8 @@ void rocketnet_test_client_disconnect_reports_state_change()
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 4;
+    rocketnet_test_loopback_hub_clients( server_config.max_clients );
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
 
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config );
     rocketnet_check( server );
@@ -350,6 +362,7 @@ void rocketnet_test_client_disconnect_reports_state_change()
 
     struct rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config( &client_config );
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
     client_config.state_change_callback = rocketnet_test_state_change_callback;
 
     struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( &recorder, connect_token, &client_config, rocketnet_platform_time() );
@@ -730,6 +743,12 @@ void rocketnet_test_transport_ring_exhaustion()
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 4;
+    rocketnet_test_loopback_hub_clients( server_config.max_clients );
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
+
+    struct rocketnet_client_transport_config_t client_config;
+    rocketnet_client_transport_default_config( &client_config );
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
 
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config );
     rocketnet_check( server );
@@ -740,7 +759,7 @@ void rocketnet_test_transport_ring_exhaustion()
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
     rocketnet_check( rocketnet_write_test_connect_token( server_address, rocketnet_random_uint64(), rocketnet_functional_token_timestamp( server_config.token_epoch_unix_seconds, rocketnet_platform_time() ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
-    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, NULL, rocketnet_platform_time() );
+    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, &client_config, rocketnet_platform_time() );
     rocketnet_check( client );
 
     double start = rocketnet_platform_time();
@@ -882,6 +901,12 @@ void rocketnet_test_transport_client_concurrent_fill()
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 4;
+    rocketnet_test_loopback_hub_clients( server_config.max_clients );
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
+
+    struct rocketnet_client_transport_config_t client_config;
+    rocketnet_client_transport_default_config( &client_config );
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
 
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config );
     rocketnet_check( server );
@@ -892,7 +917,7 @@ void rocketnet_test_transport_client_concurrent_fill()
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
     rocketnet_check( rocketnet_write_test_connect_token( server_address, rocketnet_random_uint64(), rocketnet_functional_token_timestamp( server_config.token_epoch_unix_seconds, rocketnet_platform_time() ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
-    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, NULL, rocketnet_platform_time() );
+    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, &client_config, rocketnet_platform_time() );
     rocketnet_check( client );
 
     double start = rocketnet_platform_time();
@@ -981,6 +1006,12 @@ void rocketnet_test_transport_concurrent_fill()
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 4;
+    rocketnet_test_loopback_hub_clients( server_config.max_clients );
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
+
+    struct rocketnet_client_transport_config_t client_config;
+    rocketnet_client_transport_default_config( &client_config );
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
 
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config );
     rocketnet_check( server );
@@ -991,7 +1022,7 @@ void rocketnet_test_transport_concurrent_fill()
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
     rocketnet_check( rocketnet_write_test_connect_token( server_address, rocketnet_random_uint64(), rocketnet_functional_token_timestamp( server_config.token_epoch_unix_seconds, rocketnet_platform_time() ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
-    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, NULL, rocketnet_platform_time() );
+    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, &client_config, rocketnet_platform_time() );
     rocketnet_check( client );
 
     double start = rocketnet_platform_time();
@@ -1076,6 +1107,12 @@ void rocketnet_test_transport_concurrent_fill()
 
 void rocketnet_test_transport_wire_totals_concurrent_send_exact()
 {
+    // This fixture checks socket/family behavior or an explicit transport
+    // selection; an outer suite pin must not replace that configuration.
+    struct rocketnet_test_env_guard_t server_pin_guard, client_pin_guard;
+    rocketnet_test_env_clear( &server_pin_guard, "ROCKETNET_SERVER_TRANSPORT" );
+    rocketnet_test_env_clear( &client_pin_guard, "ROCKETNET_CLIENT_TRANSPORT" );
+
     // the four-thread hammer of test_transport_concurrent_fill, then pin the
     // whole-server and per-client sent wire totals: a lost increment from a
     // non-atomic add fails these exact asserts even without tsan.
@@ -1165,6 +1202,8 @@ void rocketnet_test_transport_wire_totals_concurrent_send_exact()
 
     ROCKETNET_FUNCTIONAL_DESTROY_CLIENT( client );
     ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
+    rocketnet_test_env_restore( &client_pin_guard );
+    rocketnet_test_env_restore( &server_pin_guard );
 }
 
 static int rocketnet_test_shape_asserts = 0;
@@ -1186,6 +1225,12 @@ void rocketnet_test_transport_start_finish_shape()
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 4;
+    rocketnet_test_loopback_hub_clients( server_config.max_clients );
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
+
+    struct rocketnet_client_transport_config_t client_config;
+    rocketnet_client_transport_default_config( &client_config );
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
 
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config );
     rocketnet_check( server );
@@ -1196,7 +1241,7 @@ void rocketnet_test_transport_start_finish_shape()
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
     rocketnet_check( rocketnet_write_test_connect_token( server_address, rocketnet_random_uint64(), rocketnet_functional_token_timestamp( server_config.token_epoch_unix_seconds, rocketnet_platform_time() ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
-    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, NULL, rocketnet_platform_time() );
+    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, &client_config, rocketnet_platform_time() );
     rocketnet_check( client );
 
     double start = rocketnet_platform_time();
@@ -1358,6 +1403,12 @@ void rocketnet_test_client_receive_keeps_payloads_on_bad_capacity()
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 16;
+    rocketnet_test_loopback_hub_clients( server_config.max_clients );
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
+
+    struct rocketnet_client_transport_config_t client_config;
+    rocketnet_client_transport_default_config( &client_config );
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
 
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config );
     rocketnet_check( server );
@@ -1368,7 +1419,7 @@ void rocketnet_test_client_receive_keeps_payloads_on_bad_capacity()
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
     rocketnet_check( rocketnet_write_test_connect_token( server_address, rocketnet_random_uint64(), rocketnet_functional_token_timestamp( server_config.token_epoch_unix_seconds, rocketnet_platform_time() ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
-    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, NULL, rocketnet_platform_time() );
+    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, &client_config, rocketnet_platform_time() );
     rocketnet_check( client );
 
     double start = rocketnet_platform_time();
@@ -1618,6 +1669,12 @@ void rocketnet_test_transport_udp_loopback()
 
 void rocketnet_test_client_ipv4_without_ipv6_stack()
 {
+    // This fixture checks socket/family behavior or an explicit transport
+    // selection; an outer suite pin must not replace that configuration.
+    struct rocketnet_test_env_guard_t server_pin_guard, client_pin_guard;
+    rocketnet_test_env_clear( &server_pin_guard, "ROCKETNET_SERVER_TRANSPORT" );
+    rocketnet_test_env_clear( &client_pin_guard, "ROCKETNET_CLIENT_TRANSPORT" );
+
     // a host with no IPv6 stack must still reach an IPv4 server. the seam
     // makes every IPv6 socket create fail as EAFNOSUPPORT does on such a
     // host, so the bind-family choice is exercised on every build platform.
@@ -1769,6 +1826,8 @@ void rocketnet_test_client_ipv4_without_ipv6_stack()
     rocketnet_check( strstr( rocketnet_test_captured_log, "ipv6 is unavailable on this host" ) != NULL );
 
     rocketnet_platform_set_ipv6_socket_available_for_testing( true );
+    rocketnet_test_env_restore( &client_pin_guard );
+    rocketnet_test_env_restore( &server_pin_guard );
 }
 
 void rocketnet_test_transport_stats()
@@ -1782,6 +1841,12 @@ void rocketnet_test_transport_stats()
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 16;
+    rocketnet_test_loopback_hub_clients( server_config.max_clients );
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
+
+    struct rocketnet_client_transport_config_t client_config;
+    rocketnet_client_transport_default_config( &client_config );
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
 
     double game_time = 100.0;
 
@@ -1794,7 +1859,7 @@ void rocketnet_test_transport_stats()
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
     rocketnet_check( rocketnet_write_test_connect_token( server_address, rocketnet_random_uint64(), rocketnet_functional_token_timestamp( server_config.token_epoch_unix_seconds, game_time ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
-    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, NULL, game_time );
+    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, &client_config, game_time );
     rocketnet_check( client );
 
     // connect on the synthetic clock, bounded by the wall clock
@@ -1976,6 +2041,12 @@ void rocketnet_test_client_ack_stats_computed_on_read()
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 16;
+    rocketnet_test_loopback_hub_clients( server_config.max_clients );
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
+
+    struct rocketnet_client_transport_config_t client_config;
+    rocketnet_client_transport_default_config( &client_config );
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
 
     double game_time = 1000.0;
 
@@ -1988,7 +2059,7 @@ void rocketnet_test_client_ack_stats_computed_on_read()
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
     rocketnet_check( rocketnet_write_test_connect_token( server_address, rocketnet_random_uint64(), rocketnet_functional_token_timestamp( server_config.token_epoch_unix_seconds, game_time ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
-    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, NULL, game_time );
+    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, &client_config, game_time );
     rocketnet_check( client );
 
     // connect on the synthetic clock, bounded by the wall clock
@@ -2090,6 +2161,12 @@ void rocketnet_test_transport_update_time_clamped()
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 4;
+    rocketnet_test_loopback_hub_clients( server_config.max_clients );
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
+
+    struct rocketnet_client_transport_config_t client_config;
+    rocketnet_client_transport_default_config( &client_config );
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
 
     double game_time = 100.0;
 
@@ -2102,7 +2179,7 @@ void rocketnet_test_transport_update_time_clamped()
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
     rocketnet_check( rocketnet_write_test_connect_token( server_address, rocketnet_random_uint64(), rocketnet_functional_token_timestamp( server_config.token_epoch_unix_seconds, game_time ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
-    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, NULL, game_time );
+    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, &client_config, game_time );
     rocketnet_check( client );
 
     // connect on the synthetic clock, bounded by the wall clock
@@ -2168,6 +2245,12 @@ void rocketnet_test_transport_packet_loss_stats()
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 16;
+    rocketnet_test_loopback_hub_clients( server_config.max_clients );
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
+
+    struct rocketnet_client_transport_config_t client_config;
+    rocketnet_client_transport_default_config( &client_config );
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
 
     double game_time = 100.0;
 
@@ -2180,7 +2263,7 @@ void rocketnet_test_transport_packet_loss_stats()
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
     rocketnet_check( rocketnet_write_test_connect_token( server_address, rocketnet_random_uint64(), rocketnet_functional_token_timestamp( server_config.token_epoch_unix_seconds, game_time ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
-    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, NULL, game_time );
+    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, &client_config, game_time );
     rocketnet_check( client );
 
     // This handshake uses real sockets and a real receive thread. Advancing
@@ -3069,6 +3152,12 @@ void rocketnet_test_transport_acks_and_client_stats()
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 8;
+    rocketnet_test_loopback_hub_clients( server_config.max_clients );
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
+
+    struct rocketnet_client_transport_config_t client_config;
+    rocketnet_client_transport_default_config( &client_config );
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
 
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config );
     rocketnet_check( server );
@@ -3082,7 +3171,7 @@ void rocketnet_test_transport_acks_and_client_stats()
     {
         uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
         rocketnet_check( rocketnet_write_test_connect_token( server_address, UINT64_C( 0x77000 ) + (uint64_t) i, rocketnet_functional_token_timestamp( server_config.token_epoch_unix_seconds, rocketnet_platform_time() ), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
-        clients[i] = rocketnet_client_transport_create( NULL, token, NULL, rocketnet_platform_time() );
+        clients[i] = rocketnet_client_transport_create( NULL, token, &client_config, rocketnet_platform_time() );
         rocketnet_check( clients[i] );
     }
 
@@ -3250,6 +3339,12 @@ void rocketnet_test_client_stats_of_empty_slot_read_zero()
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 8;
+    rocketnet_test_loopback_hub_clients( server_config.max_clients );
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
+
+    struct rocketnet_client_transport_config_t client_config;
+    rocketnet_client_transport_default_config( &client_config );
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
 
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config );
     rocketnet_check( server );
@@ -3260,7 +3355,7 @@ void rocketnet_test_client_stats_of_empty_slot_read_zero()
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     rocketnet_check( rocketnet_write_test_connect_token( server_address, 0x99100ULL, rocketnet_functional_token_timestamp( server_config.token_epoch_unix_seconds, rocketnet_platform_time() ), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
-    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, token, NULL, rocketnet_platform_time() );
+    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, token, &client_config, rocketnet_platform_time() );
     rocketnet_check( client );
 
     double start = rocketnet_platform_time();
@@ -3550,6 +3645,12 @@ void rocketnet_test_transport_dual_stack_ipv4_client()
 
 void rocketnet_test_server_serves_both_families()
 {
+    // This fixture checks socket/family behavior or an explicit transport
+    // selection; an outer suite pin must not replace that configuration.
+    struct rocketnet_test_env_guard_t server_pin_guard, client_pin_guard;
+    rocketnet_test_env_clear( &server_pin_guard, "ROCKETNET_SERVER_TRANSPORT" );
+    rocketnet_test_env_clear( &client_pin_guard, "ROCKETNET_CLIENT_TRANSPORT" );
+
     // One server at a named IPv4 and a named IPv6 loopback on one port.
     // An IPv4 client and an IPv6 client connect in this run, payloads both ways.
     // The runner pins the server transport. This case does not.
@@ -3691,6 +3792,8 @@ void rocketnet_test_server_serves_both_families()
     rocketnet_server_transport_stop( server );
     rocketnet_server_transport_update( server, rocketnet_platform_time() );
     ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
+    rocketnet_test_env_restore( &client_pin_guard );
+    rocketnet_test_env_restore( &server_pin_guard );
 }
 
 void rocketnet_test_server_handshake_deadline_from_config()
@@ -3848,6 +3951,12 @@ static void rocketnet_test_validate_queries_batch( const struct rocketnet_messag
 
 void rocketnet_test_public_client_server_queries()
 {
+    // This fixture checks socket/family behavior or an explicit transport
+    // selection; an outer suite pin must not replace that configuration.
+    struct rocketnet_test_env_guard_t server_pin_guard, client_pin_guard;
+    rocketnet_test_env_clear( &server_pin_guard, "ROCKETNET_SERVER_TRANSPORT" );
+    rocketnet_test_env_clear( &client_pin_guard, "ROCKETNET_CLIENT_TRANSPORT" );
+
     struct rocketnet_test_env_guard_t max_clients_guard;
     rocketnet_test_env_save( &max_clients_guard, "ROCKETNET_SERVER_MAX_CLIENTS" );
     setenv( "ROCKETNET_SERVER_MAX_CLIENTS", "3", 1 );
@@ -4163,6 +4272,8 @@ void rocketnet_test_public_client_server_queries()
 
     rn_cli_client_stop_and_destroy( client, 1000.0 + ( rocketnet_time() - wall_start ) );
     rn_cli_server_stop_and_destroy( server );
+    rocketnet_test_env_restore( &client_pin_guard );
+    rocketnet_test_env_restore( &server_pin_guard );
 }
 
 void rocketnet_test_config_precedence()
@@ -4179,6 +4290,7 @@ void rocketnet_test_config_precedence()
     // this selection/configuration fixture needs one connection, not 1000 slots
 
     config.max_clients = 1;
+    config.loopback_hub = rocketnet_test_loopback_hub();
 
     // default layer
 
@@ -7752,6 +7864,12 @@ void rocketnet_test_transport_acked_unfragmented_was_in_exactly_one_batch()
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 1;
+    rocketnet_test_loopback_hub_clients( server_config.max_clients );
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
+
+    struct rocketnet_client_transport_config_t client_config;
+    rocketnet_client_transport_default_config( &client_config );
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
 
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config );
     rocketnet_check( server );
@@ -7762,7 +7880,7 @@ void rocketnet_test_transport_acked_unfragmented_was_in_exactly_one_batch()
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     rocketnet_check( rocketnet_write_test_connect_token( server_address, 0xA2A2ULL, rocketnet_functional_token_timestamp( server_config.token_epoch_unix_seconds, rocketnet_platform_time() ), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
-    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, token, NULL, rocketnet_platform_time() );
+    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, token, &client_config, rocketnet_platform_time() );
     rocketnet_check( client );
 
     double start = rocketnet_platform_time();
@@ -7972,6 +8090,12 @@ void rocketnet_test_transport_reply_opens_a_later_update()
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 1;
+    rocketnet_test_loopback_hub_clients( server_config.max_clients );
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
+
+    struct rocketnet_client_transport_config_t client_config;
+    rocketnet_client_transport_default_config( &client_config );
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
 
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config );
     rocketnet_check( server );
@@ -7982,7 +8106,7 @@ void rocketnet_test_transport_reply_opens_a_later_update()
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     rocketnet_check( rocketnet_write_test_connect_token( server_address, 0xB6B6ULL, rocketnet_functional_token_timestamp( server_config.token_epoch_unix_seconds, rocketnet_platform_time() ), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
-    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, token, NULL, rocketnet_platform_time() );
+    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, token, &client_config, rocketnet_platform_time() );
     rocketnet_check( client );
 
     double start = rocketnet_platform_time();
@@ -8122,6 +8246,12 @@ void rocketnet_test_message_objects_loopback_from_t1000()
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 2;
+    rocketnet_test_loopback_hub_clients( server_config.max_clients );
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
+
+    struct rocketnet_client_transport_config_t client_config;
+    rocketnet_client_transport_default_config( &client_config );
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
 
     struct rocketnet_message_server_t * server = rocketnet_message_server_create( NULL, "127.0.0.1", &server_config, NULL, NULL, 0, 0 );
     rocketnet_check( server );
@@ -8132,7 +8262,7 @@ void rocketnet_test_message_objects_loopback_from_t1000()
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
     rocketnet_check( rocketnet_write_test_connect_token( server_address, rocketnet_random_uint64(), rocketnet_functional_token_timestamp( server_config.token_epoch_unix_seconds, rocketnet_platform_time() ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
-    struct rocketnet_message_client_t * client = rocketnet_message_client_create( NULL, connect_token, NULL, NULL, NULL, 0, 0 );
+    struct rocketnet_message_client_t * client = rocketnet_message_client_create( NULL, connect_token, &client_config, NULL, NULL, 0, 0 );
     rocketnet_check( client );
 
     // the game's clock: 1000.0 at the first update, then real seconds on top
@@ -8847,6 +8977,16 @@ extern void rocketnet_test_lifecycle_transport();
 
 static void rocketnet_test_max_size_packet_crosses( const char * host_env, const char * loopback_host, bool ipv6 )
 {
+    // An in-process transport has no IP MTU. Keep this wire fixture on
+    // sockets even inside the loopback-pinned suite; preserve other pins.
+    struct rocketnet_test_env_guard_t server_guard, client_guard;
+    rocketnet_test_env_save( &server_guard, "ROCKETNET_SERVER_TRANSPORT" );
+    rocketnet_test_env_save( &client_guard, "ROCKETNET_CLIENT_TRANSPORT" );
+    if ( server_guard.was_set && strcmp( server_guard.saved, "loopback" ) == 0 )
+        rocketnet_check( setenv( server_guard.name, "portable", 1 ) == 0 );
+    if ( client_guard.was_set && strcmp( client_guard.saved, "loopback" ) == 0 )
+        rocketnet_check( setenv( client_guard.name, "portable", 1 ) == 0 );
+
     char host_value[256];
     const char * host = host_value;
     if ( !rocketnet_test_getenv( host_env, host_value, sizeof( host_value ) ) || host_value[0] == '\0' )
@@ -8982,6 +9122,8 @@ static void rocketnet_test_max_size_packet_crosses( const char * host_env, const
     rocketnet_server_transport_stop( server );
     rocketnet_server_transport_update( server, rocketnet_platform_time() );
     ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
+    rocketnet_test_env_restore( &client_guard );
+    rocketnet_test_env_restore( &server_guard );
 }
 
 void rocketnet_test_max_size_packet_crosses_a_1500_mtu_link_ipv4()
@@ -10857,6 +10999,12 @@ void rocketnet_test_client_receive_thread_quit_wake_before_wait_returns()
 #if ROCKETNET_DEV
 static void rocketnet_test_public_client_reads_server_disconnected()
 {
+    // This fixture checks socket/family behavior or an explicit transport
+    // selection; an outer suite pin must not replace that configuration.
+    struct rocketnet_test_env_guard_t server_pin_guard, client_pin_guard;
+    rocketnet_test_env_clear( &server_pin_guard, "ROCKETNET_SERVER_TRANSPORT" );
+    rocketnet_test_env_clear( &client_pin_guard, "ROCKETNET_CLIENT_TRANSPORT" );
+
     struct rocketnet_server_config_t server_config;
     rocketnet_server_default_config( &server_config );
     server_config.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
@@ -10932,6 +11080,8 @@ static void rocketnet_test_public_client_reads_server_disconnected()
 
     rn_cli_client_stop_and_destroy( client, 1000.0 + ( rocketnet_time() - wall_start ) );
     rn_cli_server_stop_and_destroy( server );
+    rocketnet_test_env_restore( &client_pin_guard );
+    rocketnet_test_env_restore( &server_pin_guard );
 }
 
 // rocketnet_server_stop on a real server transport (proofs/tla/ServerStopSpread.tla
@@ -11066,6 +11216,12 @@ static void rocketnet_test_server_stop_disconnects_every_client_rio() { rocketne
 #if ROCKETNET_DEV
 static void rocketnet_test_two_address_token_connects_over_ipv4()
 {
+    // This fixture checks socket/family behavior or an explicit transport
+    // selection; an outer suite pin must not replace that configuration.
+    struct rocketnet_test_env_guard_t server_pin_guard, client_pin_guard;
+    rocketnet_test_env_clear( &server_pin_guard, "ROCKETNET_SERVER_TRANSPORT" );
+    rocketnet_test_env_clear( &client_pin_guard, "ROCKETNET_CLIENT_TRANSPORT" );
+
     struct rocketnet_server_config_t server_config;
     rocketnet_server_default_config( &server_config );
     server_config.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
@@ -11136,6 +11292,8 @@ static void rocketnet_test_two_address_token_connects_over_ipv4()
     rn_cli_server_stop_and_destroy( server );
 
     rocketnet_platform_set_ipv6_socket_available_for_testing( true );
+    rocketnet_test_env_restore( &client_pin_guard );
+    rocketnet_test_env_restore( &server_pin_guard );
 }
 #endif // #if ROCKETNET_DEV
 
@@ -11188,6 +11346,12 @@ static void race_log( void * context, enum rocketnet_log_level_t level, const ch
 
 static void rocketnet_test_family_race_frees_on_caller_thread()
 {
+    // This fixture checks socket/family behavior or an explicit transport
+    // selection; an outer suite pin must not replace that configuration.
+    struct rocketnet_test_env_guard_t server_pin_guard, client_pin_guard;
+    rocketnet_test_env_clear( &server_pin_guard, "ROCKETNET_SERVER_TRANSPORT" );
+    rocketnet_test_env_clear( &client_pin_guard, "ROCKETNET_CLIENT_TRANSPORT" );
+
     race_caller_thread = std::this_thread::get_id();
     rocketnet_check( rocketnet_test_loopback_hub_release() );
     rocketnet_term();
@@ -11288,6 +11452,8 @@ static void rocketnet_test_family_race_frees_on_caller_thread()
     rocketnet_check( rocketnet_test_loopback_hub_release() );
     rocketnet_check( rocketnet_term() == ROCKETNET_STATUS_OK );
     rocketnet_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
+    rocketnet_test_env_restore( &client_pin_guard );
+    rocketnet_test_env_restore( &server_pin_guard );
 }
 
 
@@ -11325,6 +11491,12 @@ static void fallback_log( void * context, enum rocketnet_log_level_t level, cons
 
 static void rocketnet_test_unroutable_ipv6_falls_back_to_ipv4()
 {
+    // This fixture checks socket/family behavior or an explicit transport
+    // selection; an outer suite pin must not replace that configuration.
+    struct rocketnet_test_env_guard_t server_pin_guard, client_pin_guard;
+    rocketnet_test_env_clear( &server_pin_guard, "ROCKETNET_SERVER_TRANSPORT" );
+    rocketnet_test_env_clear( &client_pin_guard, "ROCKETNET_CLIENT_TRANSPORT" );
+
     struct rocketnet_server_config_t server_config;
     rocketnet_server_default_config( &server_config );
     server_config.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
@@ -11418,6 +11590,8 @@ static void rocketnet_test_unroutable_ipv6_falls_back_to_ipv4()
     rocketnet_log_level( saved_level );
     rocketnet_log_function( rocketnet_test_suite_log_function, NULL );
     rn_cli_server_stop_and_destroy( server );
+    rocketnet_test_env_restore( &client_pin_guard );
+    rocketnet_test_env_restore( &server_pin_guard );
 }
 #endif // #if ROCKETNET_DEV
 
@@ -11425,6 +11599,12 @@ static void rocketnet_test_unroutable_ipv6_falls_back_to_ipv4()
 // carry application bytes in both directions over a real portable socket.
 static void rocketnet_test_public_dev_connect_token_round_trip()
 {
+    // This fixture deliberately selects portable in both configs. Keep an
+    // outer transport pin from replacing that socket-based token exchange.
+    struct rocketnet_test_env_guard_t server_guard, client_guard;
+    rocketnet_test_env_clear( &server_guard, "ROCKETNET_SERVER_TRANSPORT" );
+    rocketnet_test_env_clear( &client_guard, "ROCKETNET_CLIENT_TRANSPORT" );
+
     struct rocketnet_server_config_t server_config;
     enum rocketnet_status_t status = rocketnet_server_default_config( &server_config );
     if ( status != ROCKETNET_STATUS_OK )
@@ -11637,6 +11817,8 @@ static void rocketnet_test_public_dev_connect_token_round_trip()
     printf( "public dev token exchange: client_connected=%d server_connected=%d client_bytes=%d server_bytes=%d cleanup=ok\n",
             client_connected, server_connected, client_bytes, server_bytes );
     rocketnet_check( completed );
+    rocketnet_test_env_restore( &client_guard );
+    rocketnet_test_env_restore( &server_guard );
 }
 
 #endif // #if ROCKETNET_DEV
