@@ -420,7 +420,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
-          name: transport-cells-repeat-${{ matrix.ref }}
+          name: transport-cells-repeat-${{ strategy.job-index }}-${{ github.run_attempt }}
           path: build/transport-cells-repeat
           if-no-files-found: ignore
 
@@ -465,7 +465,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
-          name: macos-transport-cells-repeat-${{ matrix.ref }}
+          name: macos-transport-cells-repeat-${{ strategy.job-index }}-${{ github.run_attempt }}
           path: build/transport-cells-repeat
           if-no-files-found: ignore
 
@@ -511,7 +511,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
-          name: windows-transport-cells-repeat-${{ matrix.ref }}
+          name: windows-transport-cells-repeat-${{ strategy.job-index }}-${{ github.run_attempt }}
           path: build/transport-cells-repeat
           if-no-files-found: ignore
 
