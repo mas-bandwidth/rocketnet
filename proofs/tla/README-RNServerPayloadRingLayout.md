@@ -4,7 +4,7 @@ The portable server transport's payload ring, at the layout of
 `sdk/rocketnet_server_transport.cpp` and with the code's own arithmetic. Game
 threads fill it between updates through the acquire/commit surface, and the
 flush sends what they finished. The staged transports (io_uring, RIO, IOCP,
-XDP, msgx) and the arena path for writes above one packet do not use it.
+XDP, msgx) do not use it. Transport payloads fit within one packet.
 
 ## State
 
@@ -12,16 +12,17 @@ XDP, msgx) and the arena path for writes above one packet do not use it.
 |---|---|
 | `count` | `payload_ring.num_packets`, the fetch-add counter |
 | `info[i]`, `[wb, who]` | `payload_ring.info[i]`: `wire_bytes`, and `to` / `client_index` (here the thread) |
-| a thread's `frame` | `context->frame - payload_ring.data`, or the fill frame's `data` |
-| a thread's `slot` | the slot the fetch-add returned (ghost for the frame path; `frame->slot` for the fill path) |
+| a thread's `frame` | `context->frame - payload_ring.data` |
+| a thread's `slot` | the slot the fetch-add returned (ghost state) |
 | `Cap` | `send_capacity`: `max_clients`, never below `ROCKETNET_SERVER_MIN_SEND_PACKETS` |
-| `RingSize` | `ROCKETNET_SERVER_PAYLOAD_RING_SIZE` (`ROCKETNET_MAX_CLIENTS`) |
+| `RingSize` | `payload_ring.size`, allocated by `rocketnet_server_send_batch_packets(max_clients)` |
 | `Stride` | `ROCKETNET_FRAME_STRIDE` |
 
-`send_capacity` is at most the ring: the floor
-`ROCKETNET_SERVER_MIN_SEND_PACKETS` (256) is below `ROCKETNET_MAX_CLIENTS`, which
-`CMakeLists.txt` holds to 512..32768, the configured client count's own bound, and the test seam's
-`packets <= ROCKETNET_SERVER_MAX_SEND_PACKETS`. The counter has no bound of its
+`send_capacity` is at most the ring: the capacity is the configured client
+count raised to `ROCKETNET_SERVER_MIN_SEND_PACKETS` (256), while the ring is
+that count raised to `ROCKETNET_SERVER_MIN_SIZED_CLIENTS` (512). Both are
+bounded by the build ceiling. A test override is accepted only when it fits
+`payload_ring.size`. The counter has no bound of its
 own between flushes: every refused acquire still moves it. The model bounds
 acquires per flush by `MaxCount`, above `Cap`, so refused acquires are reached.
 A frame is an offset into `data`; each packet carries `wire_bytes` 1, so a
@@ -34,8 +35,7 @@ open across a flush is RNDriverSendStaging's.
 ## Actions and the code they mirror
 
 - **`Acquire(t)`**: the portable branch of
-  `rocketnet_server_transport_start_packet` and
-  `rocketnet_server_reserve_fill_frame`: `slot =
+  `rocketnet_server_transport_start_packet`: `slot =
   rocketnet_platform_atomic_add_u64( &ring->num_packets, 1 )` (fetch-add, the
   old value), refused at `slot >= send_capacity`, else `info[slot]` written
   with `wire_bytes = 0` and the frame at `ring->data + slot *
@@ -43,11 +43,10 @@ open across a flush is RNDriverSendStaging's.
 - **`Finish(t)`**: the portable branch of
   `rocketnet_server_transport_finish_packet_unchecked`, which recovers the
   slot as `( context->frame - payload_ring.data ) / ROCKETNET_FRAME_STRIDE`,
-  and `rocketnet_server_commit_fill_frame`, which keeps `frame->slot`:
-  `wire_bytes` set.
+  and sets `wire_bytes`.
 - **`Abort(t)`**: the portable branch of
   `rocketnet_server_transport_abort_packet_unchecked` (the slot from the frame
-  pointer) and `rocketnet_server_abort_fill_frame`: `wire_bytes` cleared.
+  pointer): `wire_bytes` cleared.
 - **`Flush`**: the portable flush of
   `rocketnet_server_transport_flush`: `num_packets` clamped to
   `send_capacity`, every slot below it with `wire_bytes > 0` handed to the
@@ -66,9 +65,9 @@ open across a flush is RNDriverSendStaging's.
 
 Frame stride 2 (the broken recovery divides by 1). The controls run three
 threads at a capacity of three: `MCRNServerPayloadRingLayout.cfg` with the ring
-exactly the capacity (the code's sizing at `ROCKETNET_MAX_CLIENTS` clients) and
+exactly the capacity (as configured client counts at or above 512 produce) and
 four acquires per flush, `MCRNServerPayloadRingLayoutSpare.cfg` with a ring one
-larger (fewer clients) and five. The witnesses run two threads at a capacity
+larger (the relation below the ring's allocation floor) and five. The witnesses run two threads at a capacity
 of two.
 
 ## Reversed witnesses

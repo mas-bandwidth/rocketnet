@@ -283,8 +283,6 @@ static std::vector<std::string> env_names_set_candidates()
     set.push_back( "ROCKETNET_CLIENT_PACKET_FILTER" );
     env_names_setenv( "ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES", "1200" );
     set.push_back( "ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES" );
-    env_names_setenv( "ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES", "64" );
-    set.push_back( "ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES" );
 #if ROCKETNET_DEV
     env_names_setenv( "ROCKETNET_CLIENT_STEP_DRIVEN", "1" );
     set.push_back( "ROCKETNET_CLIENT_STEP_DRIVEN" );
@@ -308,8 +306,6 @@ static std::vector<std::string> env_names_set_candidates()
     set.push_back( "ROCKETNET_SERVER_NUM_OS_CPUS" );
     env_names_setenv( "ROCKETNET_SERVER_MAX_PAYLOAD_BYTES", "1200" );
     set.push_back( "ROCKETNET_SERVER_MAX_PAYLOAD_BYTES" );
-    env_names_setenv( "ROCKETNET_SERVER_MAX_FRAGMENTED_MESSAGES", "64" );
-    set.push_back( "ROCKETNET_SERVER_MAX_FRAGMENTED_MESSAGES" );
     env_names_setenv( "ROCKETNET_SERVER_MAX_TIMEOUT_SECONDS", "30" );
     set.push_back( "ROCKETNET_SERVER_MAX_TIMEOUT_SECONDS" );
     env_names_setenv( "ROCKETNET_SERVER_HANDSHAKE_DEADLINE_SECONDS", "10" );
@@ -578,7 +574,7 @@ static void test_config_env_every_name_read_is_documented()
     check( env_names_contains( overrides, "ROCKETNET_SERVER_DISCONNECT_PACKETS_PER_UPDATE" ) );
     check( env_names_contains( overrides, "ROCKETNET_SERVER_HANDSHAKES_PER_UPDATE" ) );
     check( env_names_contains( overrides, "ROCKETNET_SERVER_TRANSPORT" ) );
-    check( documented.size() == ( ROCKETNET_DEV ? 69u : 67u ) );
+    check( documented.size() == ( ROCKETNET_DEV ? 67u : 65u ) );
     check( !env_names_contains( documented, "ROCKETNET_SERVER_SERVER_SECRET_KEY" ) );
     check( !env_names_contains( documented, "ROCKETNET_SERVER_PUBLIC_ADDRESS" ) );
     check( !env_names_contains( documented, "ROCKETNET_SERVER_SECOND_PUBLIC_ADDRESS" ) );

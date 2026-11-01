@@ -42,7 +42,6 @@
 #include "rocketnet_test_vectors.h"
 #include "rocketnet_wire.h"
 #include "../portable_crt.h"
-#include "rocketnet_fragment.h"
 #include "rocketnet_client_slots.h"
 #include "rocketnet_encryption_map.h"
 #include "rocketnet_token_tables.h"
@@ -244,17 +243,15 @@ static inline void rocketnet_channel_capture_opened( double time, int kind, cons
 static inline int rocketnet_channel_capture_session_type( int packet_type )
 {
     return packet_type == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET || packet_type == ROCKETNET_CONNECTION_PAYLOAD_PACKET ||
-           packet_type == ROCKETNET_CONNECTION_DISCONNECT_PACKET || packet_type == ROCKETNET_CONNECTION_ACK_PACKET ||
-           packet_type == ROCKETNET_CONNECTION_FRAGMENT_PACKET;
+           packet_type == ROCKETNET_CONNECTION_DISCONNECT_PACKET || packet_type == ROCKETNET_CONNECTION_ACK_PACKET;
 }
 
 // the opened plaintext of one session packet: the whole of it to the ack
-// block reader (kind 1, comment "<end> <type>"), and a fragment's type data
-// behind a valid block to the fragment reader (kind 2). A payload's type data
-// is recorded where the harness hands it to the message layer (kind 3).
+// block reader (kind 1, comment "<end> <type>"). A payload's type data is
+// recorded where the harness hands it to the message layer (kind 3).
 static inline void rocketnet_channel_capture_session( double time, const char * end, const uint8_t * packet, int bytes,
                                                       uint64_t protocol_id, const uint8_t * salt, const uint8_t * key,
-                                                      uint64_t highest_opened, uint64_t highest_sent )
+                                                      uint64_t highest_opened )
 {
     if ( bytes < ROCKETNET_PREFILTER_BYTES + ROCKETNET_SEQUENCE_BYTES || bytes > ROCKETNET_RECEIVE_CEILING )
         return;
@@ -277,16 +274,6 @@ static inline void rocketnet_channel_capture_session( double time, const char * 
     char comment[32];
     snprintf( comment, sizeof( comment ), "%s %d", end, packet_type );
     rocketnet_channel_capture_opened( time, ROCKETNET_PCAPNG_KIND_ACK_BLOCK, opened, opened_bytes, comment );
-
-    if ( packet_type == ROCKETNET_CONNECTION_FRAGMENT_PACKET )
-    {
-        struct rocketnet_ack_block_t block;
-        const int block_bytes = rocketnet_ack_block_read( &block, opened, opened_bytes, highest_sent );
-        if ( block_bytes > 0 )
-        {
-            rocketnet_channel_capture_opened( time, ROCKETNET_PCAPNG_KIND_FRAGMENT, opened + block_bytes, opened_bytes - block_bytes, end );
-        }
-    }
 }
 
 static inline void * rocketnet_channel_counting_malloc( void * context, size_t bytes )
@@ -670,8 +657,7 @@ static inline void rocketnet_channel_endpoint_update( void * transport, double t
                     const struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( h->server.encryption_map, mapping_index );
                     if ( mapping->control->client_index != -1 )
                         rocketnet_channel_capture_session( time, "server", packet, bytes, h->server.protocol_id, mapping->connection_salt,
-                                                           mapping->keys.session_client_to_server, mapping->replay_session.highest_opened,
-                                                           mapping->send_sequence_session - 1 );
+                                                           mapping->keys.session_client_to_server, mapping->replay_session.highest_opened );
                 }
             }
 
@@ -716,8 +702,7 @@ static inline void rocketnet_channel_endpoint_update( void * transport, double t
              ( h->client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE ||
                h->client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED ) )
             rocketnet_channel_capture_session( time, "client", packet, bytes, h->client.signed_fields.protocol_id, h->client.connection_salt,
-                                               h->client.keys.session_server_to_client, h->client.replay_session.highest_opened,
-                                               h->client.send_sequence_session - 1 );
+                                               h->client.keys.session_server_to_client, h->client.replay_session.highest_opened );
         const int accepted = rocketnet_client_protocol_process_packet( &h->client, packet, bytes, time,
                                                                        payload, sizeof( payload ), &payload_bytes );
 
@@ -1101,12 +1086,10 @@ static inline int rocketnet_channel_harness_create_with_config( rocketnet_channe
     server->used_token_history = rocketnet_used_token_history_create( NULL, 64 );
     server->client_slots = rocketnet_client_slots_create( NULL, 4 );
     server->acks = rocketnet_server_acks_create( NULL, 4 );
-    server->reassembly = rocketnet_reassembly_set_create( NULL, 4, 4, 16384, 4 * 4 );
     server->counters = &h->server_counters;
     if ( !server->encryption_map || !server->used_token_history ||
-         !server->client_slots || !server->acks || !server->reassembly )
+         !server->client_slots || !server->acks )
         goto failed;
-    rocketnet_reassembly_set_begin_update( server->reassembly );
     rocketnet_server_protocol_update( server, h->now );
 
     rocketnet_message_default_config( &h->message_config );
@@ -1319,11 +1302,6 @@ static inline void rocketnet_channel_harness_destroy( rocketnet_channel_harness_
     if ( h->server.acks )
     {
         rocketnet_server_acks_destroy( h->server.acks );
-    }
-
-    if ( h->server.reassembly )
-    {
-        rocketnet_reassembly_set_destroy( h->server.reassembly );
     }
 
     if ( h->sim )

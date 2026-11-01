@@ -98,10 +98,6 @@ static void test_max_clients_derived_limits()
     check( ROCKETNET_GSO_SEND_QUEUE_SIZE >= 2 * ROCKETNET_DEFAULT_MAX_CLIENTS );
     check( ROCKETNET_URING_SEND_QUEUE_SIZE >= 2 * ROCKETNET_DEFAULT_MAX_CLIENTS );
 
-    // the reassembly budget scales at 512 MiB per 1000 clients
-
-    check( ROCKETNET_REASSEMBLY_MEMORY_MIB >= 512 * ( ( clients + 999 ) / 1000 ) );
-
     // a server of 1000 clients is sized as it was when ROCKETNET_MAX_CLIENTS
     // was a fixed 1000, in every build that holds 1000
 
@@ -127,7 +123,6 @@ static void test_max_clients_derived_limits()
         check( ROCKETNET_LOOPBACK_QUEUE_PACKETS == 2048 );
         check( ROCKETNET_XDP_REPLAY_MAX_ENTRIES == 1024 );
         check( ROCKETNET_SERVER_PACKET_LEASES == 131072 );
-        check( ROCKETNET_REASSEMBLY_MEMORY_MIB == 512 );
         check( ROCKETNET_GSO_SEND_QUEUE_SIZE == 4096 );
         check( ROCKETNET_URING_SEND_QUEUE_SIZE == 2048 );
     }
@@ -136,8 +131,8 @@ static void test_max_clients_derived_limits()
 REGISTER_UNIT_TEST( test_max_clients_derived_limits );
 
 // A light per-client config, so a server of ROCKETNET_MAX_CLIENTS slots stays
-// small enough for the unit suite (about 370 MB at 1000 clients, 3.7 GB at
-// 10000). The slot count is what the case is about, not the per-client depth.
+// small enough for the unit suite. The slot count is what the case is about,
+// not the per-client depth.
 
 static void max_clients_server_config( rocketnet_server_config_t * config )
 {
@@ -157,7 +152,6 @@ static void max_clients_server_config( rocketnet_server_config_t * config )
     config->packets_per_update = 4;
     config->unreliable_messages_per_update = 16;
     config->max_message_receipts = 16;
-    config->max_fragmented_messages = 1;
     config->message_resend_delay_initial_ms = 100;
 }
 

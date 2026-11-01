@@ -762,10 +762,34 @@ static void test_finish_requires_start_transport_packets()
         check( rocketnet_client_transport_finish_packet( client_a, &failed_ctx, 16 ) == 0 );
         check_asserted_once();
 
-        check( rocketnet_client_transport_start_packet( client_a, ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES + 1, &failed_ctx ) == NULL );
+        // the transport's payload bound is one packet: a request one byte
+        // over ROCKETNET_MAX_PACKET_PAYLOAD_BYTES is refused on both ends
+        check( rocketnet_client_transport_start_packet( client_a, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 1, &failed_ctx ) == NULL );
         check_not_asserted();
         check( rocketnet_client_transport_finish_packet( client_a, &failed_ctx, 16 ) == 0 );
         check_asserted_once();
+
+        check( rocketnet_server_transport_start_packet( server_a, slot_a, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 1, &failed_ctx ) == NULL );
+        check_not_asserted();
+        check( rocketnet_server_transport_finish_packet( server_a, &failed_ctx, 16 ) == 0 );
+        check_asserted_once();
+
+        // and a request of exactly one packet is a real wire frame of that capacity
+        {
+            check( rocketnet_client_transport_max_payload_bytes( client_a ) == ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
+            check( rocketnet_server_transport_max_payload_bytes( server_a ) == ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
+
+            rocketnet_packet_context_t full_ctx;
+            check( rocketnet_client_transport_start_packet( client_a, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, &full_ctx ) != NULL );
+            check( full_ctx.payload_capacity == ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
+            rocketnet_client_transport_abort_packet( client_a, &full_ctx );
+            check_not_asserted();
+
+            check( rocketnet_server_transport_start_packet( server_a, slot_a, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, &full_ctx ) != NULL );
+            check( full_ctx.payload_capacity == ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
+            rocketnet_server_transport_abort_packet( server_a, &full_ctx );
+            check_not_asserted();
+        }
 
         check( rocketnet_server_transport_start_packet( server_a, slot_a, 0, &failed_ctx ) == NULL );
         check_not_asserted();

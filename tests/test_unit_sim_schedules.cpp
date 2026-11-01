@@ -6,35 +6,26 @@
 // A catalog of the replayable fault schedules that shipped the night's bugs,
 // each one a scripted list of steps run through the network simulator's
 // ordered-list delivery. A schedule is a list of {deliver, drop, duplicate,
-// reorder, advance time} steps composed into a prepared packet list and
+// advance time} steps composed into a prepared packet list and
 // handed to rocketnet_network_simulator_deliver_packets; receive() returns
 // the packets in that same order, so the scripted order is the delivered
 // order and the invariant is asserted on the module the received bytes drive.
 //
-// The six schedules:
+// The three schedules:
 //   1. long skip then stragglers  -- the replay window, skipped by exactly
 //      64, 255, 256, 4095, 4096, 4097 and 65536, then highest-k for k in
 //      1..4096 accepted or refused as the model says (the ClearedWords rule).
-//   2. final fragment first       -- reassembly with 16 live slots: the final
-//      fragment stages first (a reorder step), an oversized count is refused,
-//      no slot evicted.
-//   3. batch cap                  -- delivered_capacity + 8 payloads complete
-//      in one update: the capacity is delivered whole, the excess counts
-//      BATCH_FULL, and the next update (an advance-time step) recovers.
-//   4. same-tick slot reuse       -- [A disconnect, B response, A's stale
+//   2. same-tick slot reuse       -- [A disconnect, B response, A's stale
 //      payload, A's stale ack] in one update: B never sees A's data.
-//   5. sequence wrap              -- transport sequence seeded near 2^32 - 128
+//   3. sequence wrap              -- transport sequence seeded near 2^32 - 128
 //      and the replay window near 2^24 - 128, advanced 512 packets across the
 //      wrap.
-//   6. unreliable aggregation     -- 65535, 65536 and max_datagram_bytes + 1
-//      bytes at the unreliable send's two caps.
 
 #include "test_unit_registry.h"
 
 #include "rocketnet_network_simulator.h"
 
 #include "rocketnet_replay.h"
-#include "rocketnet_fragment.h"
 #include "rocketnet_protocol.h"
 #include "rocketnet_server_protocol.h"
 #include "rocketnet_client_slots.h"
@@ -53,7 +44,7 @@
 
 // ---------------------------------------------------------------------------
 // The schedule runner. The simulator is the wire; this is the hand that
-// scripts it. Drop, duplicate and reorder are composed into the prepared list
+// scripts it. Drop and duplicate are composed into the prepared list
 // (rocketnet_network_simulator_deliver_packets); advance time moves the wire clock so
 // the next flush's packets become due at a later delivery time.
 // ---------------------------------------------------------------------------
@@ -142,18 +133,6 @@ static void sim_schedule_duplicate( struct sim_schedule_t * s )
     s->count++;
 }
 
-static void sim_schedule_reorder( struct sim_schedule_t * s, int a, int b )
-{
-    rocketnet_unit_check( a >= 0 && a < s->count && b >= 0 && b < s->count );
-
-    const uint8_t * d = s->packet[a];
-    s->packet[a] = s->packet[b];
-    s->packet[b] = d;
-    int n = s->bytes[a];
-    s->bytes[a] = s->bytes[b];
-    s->bytes[b] = n;
-}
-
 static int sim_schedule_flush( struct sim_schedule_t * s )
 {
     int delivered = rocketnet_network_simulator_deliver_packets( s->sim, &s->from, &s->to,
@@ -165,52 +144,6 @@ static int sim_schedule_flush( struct sim_schedule_t * s )
 static int sim_schedule_receive( struct sim_schedule_t * s )
 {
     return rocketnet_network_simulator_receive( s->sim, &s->to, s->now, &s->rx_from, s->rx );
-}
-
-// ---------------------------------------------------------------------------
-// The reassembly counter table: the standard's indices, in the process order
-// the fragment engine fires them.
-// ---------------------------------------------------------------------------
-
-static const struct rocketnet_reassembly_counters_t sim_fragment_counters = {
-    ROCKETNET_COUNTER_FRAGMENT_ZERO_PAYLOAD_ID,
-    ROCKETNET_COUNTER_FRAGMENT_STALE,
-    ROCKETNET_COUNTER_FRAGMENT_COUNT_INVALID,
-    ROCKETNET_COUNTER_FRAGMENT_INDEX_OUT_OF_RANGE,
-    ROCKETNET_COUNTER_FRAGMENT_COUNT_MISMATCH,
-    ROCKETNET_COUNTER_FRAGMENT_SIZE_MISMATCH,
-    ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_TOO_LARGE,
-    ROCKETNET_COUNTER_FRAGMENT_DUPLICATE_INDEX,
-    ROCKETNET_COUNTER_FRAGMENT_ACCEPTED,
-    ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_REASSEMBLED,
-    ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_ABANDONED,
-    ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_BATCH_FULL
-};
-
-// builds one fragment's type data -- header plus patterned bytes read from the
-// position the fragment claims, so a reassembled payload is verifiable
-// wherever its fragments came from
-
-static int sim_build_fragment( uint8_t * type_data, uint32_t payload_id,
-                               int fragment_index, int fragment_count,
-                               int fragment_bytes, int stride, uint8_t pattern )
-{
-    rocketnet_write_fragment_header( type_data, payload_id, fragment_index, fragment_count );
-
-    for ( int i = 0; i < fragment_bytes; i++ )
-    {
-        type_data[ROCKETNET_FRAGMENT_HEADER_BYTES + i] = (uint8_t) ( pattern + stride * fragment_index + i );
-    }
-
-    return ROCKETNET_FRAGMENT_HEADER_BYTES + fragment_bytes;
-}
-
-static void sim_check_reassembled( const uint8_t * payload, int payload_bytes, uint8_t pattern )
-{
-    for ( int i = 0; i < payload_bytes; i++ )
-    {
-        rocketnet_unit_check( payload[i] == (uint8_t) ( pattern + i ) );
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -296,162 +229,7 @@ static void test_sim_schedule_long_skip_stragglers()
 }
 
 // ---------------------------------------------------------------------------
-// 2. final fragment first, sixteen live slots
-// ---------------------------------------------------------------------------
-
-static void test_sim_schedule_final_fragment_first()
-{
-    struct rocketnet_counters_t counters_storage;
-    memset( &counters_storage, 0, sizeof( counters_storage ) );
-    uint64_t * counters = counters_storage.values;
-    const struct rocketnet_reassembly_counters_t * table = &sim_fragment_counters;
-
-    struct rocketnet_reassembly_set_t * set = rocketnet_reassembly_set_create( NULL, 1, 16, 8192, 16 );
-    rocketnet_unit_check( set != NULL );
-
-    rocketnet_reassembly_set_begin_update( set );
-
-    struct sim_schedule_t sched;
-    sim_schedule_begin( &sched );
-
-    uint8_t frag_a[ROCKETNET_FRAGMENT_HEADER_BYTES + ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES];
-    uint8_t frag_b[ROCKETNET_FRAGMENT_HEADER_BYTES + ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES];
-
-    // sixteen two-fragment payloads, final fragment first, one per slot: none
-    // evicts another and every payload completes. the final fragment is
-    // queued first and the reorder step is what stages it ahead of the first.
-
-    for ( int id = 1; id <= 16; id++ )
-    {
-        int b0 = sim_build_fragment( frag_a, (uint32_t) id, 0, 2, 100, 100, (uint8_t) ( 0x40 + id ) );
-        int b1 = sim_build_fragment( frag_b, (uint32_t) id, 1, 2, 40, 100, (uint8_t) ( 0x40 + id ) );
-        sim_schedule_deliver( &sched, frag_a, b0 );
-        sim_schedule_deliver( &sched, frag_b, b1 );
-        sim_schedule_reorder( &sched, sched.count - 2, sched.count - 1 );
-        rocketnet_unit_check( sim_schedule_flush( &sched ) == 2 );
-
-        rocketnet_unit_check( sim_schedule_receive( &sched ) == b1 );
-        rocketnet_unit_check( rocketnet_reassembly_process_fragment( set, 0, sched.rx, b1, counters, table ) == 1 );
-        rocketnet_unit_check( set->completed_bytes == 0 );
-
-        rocketnet_unit_check( sim_schedule_receive( &sched ) == b0 );
-        rocketnet_unit_check( rocketnet_reassembly_process_fragment( set, 0, sched.rx, b0, counters, table ) == 1 );
-        rocketnet_unit_check( set->completed_bytes == 140 );
-
-        sim_check_reassembled( set->completed_payload, 140, (uint8_t) ( 0x40 + id ) );
-    }
-
-    rocketnet_unit_check( counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_REASSEMBLED] == 16 );
-    rocketnet_unit_check( counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_ABANDONED] == 0 );
-    rocketnet_unit_check( counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_BATCH_FULL] == 0 );
-
-    // an oversized final-first payload: the final stages first, then a
-    // non-final whose stride makes the reconstruction exceed the ceiling --
-    // refused as too large, and nothing keeps the slot
-
-    int b1 = sim_build_fragment( frag_b, 17, 7, 8, 40, ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES, 0x80 );
-    sim_schedule_deliver( &sched, frag_b, b1 );
-    rocketnet_unit_check( sim_schedule_flush( &sched ) == 1 );
-    rocketnet_unit_check( sim_schedule_receive( &sched ) == b1 );
-    rocketnet_unit_check( rocketnet_reassembly_process_fragment( set, 0, sched.rx, b1, counters, table ) == 1 );
-
-    int b0 = sim_build_fragment( frag_a, 17, 0, 8, ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES, ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES, 0x80 );
-    sim_schedule_deliver( &sched, frag_a, b0 );
-    rocketnet_unit_check( sim_schedule_flush( &sched ) == 1 );
-    rocketnet_unit_check( sim_schedule_receive( &sched ) == b0 );
-    rocketnet_unit_check( rocketnet_reassembly_process_fragment( set, 0, sched.rx, b0, counters, table ) == 0 );
-    rocketnet_unit_check( counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_TOO_LARGE] == 1 );
-
-    sim_schedule_end( &sched );
-    rocketnet_reassembly_set_destroy( set );
-}
-
-// ---------------------------------------------------------------------------
-// 3. the batch cap
-// ---------------------------------------------------------------------------
-
-static void test_sim_schedule_batch_cap()
-{
-    struct rocketnet_counters_t counters_storage;
-    memset( &counters_storage, 0, sizeof( counters_storage ) );
-    uint64_t * counters = counters_storage.values;
-    const struct rocketnet_reassembly_counters_t * table = &sim_fragment_counters;
-
-    // a delivery batch of four, so twelve completions in one update overflow
-    // by eight
-
-    struct rocketnet_reassembly_set_t * set = rocketnet_reassembly_set_create( NULL, 1, 16, 8192, 4 );
-    rocketnet_unit_check( set != NULL );
-
-    rocketnet_reassembly_set_begin_update( set );
-
-    struct sim_schedule_t sched;
-    sim_schedule_begin( &sched );
-
-    uint8_t frag_a[ROCKETNET_FRAGMENT_HEADER_BYTES + ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES];
-    uint8_t frag_b[ROCKETNET_FRAGMENT_HEADER_BYTES + ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES];
-
-    // the first four complete inside the capacity and are all delivered
-
-    for ( int id = 1; id <= 4; id++ )
-    {
-        int b0 = sim_build_fragment( frag_a, (uint32_t) id, 0, 2, 100, 100, 0x20 );
-        int b1 = sim_build_fragment( frag_b, (uint32_t) id, 1, 2, 40, 100, 0x20 );
-        sim_schedule_deliver( &sched, frag_a, b0 );
-        sim_schedule_deliver( &sched, frag_b, b1 );
-        rocketnet_unit_check( sim_schedule_flush( &sched ) == 2 );
-        rocketnet_unit_check( sim_schedule_receive( &sched ) == b0 );
-        rocketnet_unit_check( rocketnet_reassembly_process_fragment( set, 0, sched.rx, b0, counters, table ) == 1 );
-        rocketnet_unit_check( sim_schedule_receive( &sched ) == b1 );
-        rocketnet_unit_check( rocketnet_reassembly_process_fragment( set, 0, sched.rx, b1, counters, table ) == 1 );
-    }
-
-    rocketnet_unit_check( set->num_delivered == 4 );
-    rocketnet_unit_check( counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_BATCH_FULL] == 0 );
-
-    // eight more in the same update overflow the batch and are counted, not
-    // silently lost
-
-    for ( int id = 5; id <= 12; id++ )
-    {
-        int b0 = sim_build_fragment( frag_a, (uint32_t) id, 0, 2, 100, 100, 0x20 );
-        int b1 = sim_build_fragment( frag_b, (uint32_t) id, 1, 2, 40, 100, 0x20 );
-        sim_schedule_deliver( &sched, frag_a, b0 );
-        sim_schedule_deliver( &sched, frag_b, b1 );
-        rocketnet_unit_check( sim_schedule_flush( &sched ) == 2 );
-        rocketnet_unit_check( sim_schedule_receive( &sched ) == b0 );
-        rocketnet_unit_check( rocketnet_reassembly_process_fragment( set, 0, sched.rx, b0, counters, table ) == 1 );
-        rocketnet_unit_check( sim_schedule_receive( &sched ) == b1 );
-        rocketnet_unit_check( rocketnet_reassembly_process_fragment( set, 0, sched.rx, b1, counters, table ) == 1 );
-    }
-
-    rocketnet_unit_check( set->num_delivered == 4 );
-    rocketnet_unit_check( counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_REASSEMBLED] == 12 );
-    rocketnet_unit_check( counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_BATCH_FULL] == 8 );
-
-    // the next update opens a fresh batch and delivers again
-
-    sim_schedule_advance_time( &sched, 1.0 );
-    rocketnet_reassembly_set_begin_update( set );
-
-    int b0 = sim_build_fragment( frag_a, 13, 0, 2, 100, 100, 0x20 );
-    int b1 = sim_build_fragment( frag_b, 13, 1, 2, 40, 100, 0x20 );
-    sim_schedule_deliver( &sched, frag_a, b0 );
-    sim_schedule_deliver( &sched, frag_b, b1 );
-    rocketnet_unit_check( sim_schedule_flush( &sched ) == 2 );
-    rocketnet_unit_check( sim_schedule_receive( &sched ) == b0 );
-    rocketnet_unit_check( rocketnet_reassembly_process_fragment( set, 0, sched.rx, b0, counters, table ) == 1 );
-    rocketnet_unit_check( sim_schedule_receive( &sched ) == b1 );
-    rocketnet_unit_check( rocketnet_reassembly_process_fragment( set, 0, sched.rx, b1, counters, table ) == 1 );
-    rocketnet_unit_check( set->num_delivered == 1 );
-    rocketnet_unit_check( counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_BATCH_FULL] == 8 );
-
-    sim_schedule_end( &sched );
-    rocketnet_reassembly_set_destroy( set );
-}
-
-// ---------------------------------------------------------------------------
-// 4. same-tick slot reuse
+// 2. same-tick slot reuse
 // ---------------------------------------------------------------------------
 
 static void sim_run_same_tick_slot_reuse( bool same_address )
@@ -470,15 +248,12 @@ static void sim_run_same_tick_slot_reuse( bool same_address )
     server.encryption_map = rocketnet_encryption_map_create( NULL, 8 );
     server.client_slots = rocketnet_client_slots_create( NULL, 4 );
     server.acks = rocketnet_server_acks_create( NULL, 4 );
-    server.reassembly = rocketnet_reassembly_set_create( NULL, 4, 4, 8192, 4 );
     server.counters = &counters;
     server.connection_ids = connection_ids;
     server.acked_connection_ids = acked_connection_ids;
     server.next_connection_id = 1;
     rocketnet_unit_check( server.encryption_map != NULL && server.client_slots != NULL );
-    rocketnet_unit_check( server.acks != NULL && server.reassembly != NULL );
-
-    rocketnet_reassembly_set_begin_update( server.reassembly );
+    rocketnet_unit_check( server.acks != NULL );
 
     struct rocketnet_address_t addr_a, addr_b;
     rocketnet_unit_check( rocketnet_address_parse( &addr_a, "198.51.100.7:56789" ) );
@@ -511,34 +286,16 @@ static void sim_run_same_tick_slot_reuse( bool same_address )
     m_a->control->established = 1;
     connection_ids[slot_a] = server.next_connection_id++;
     const uint64_t a_connection_id = connection_ids[slot_a];
-    rocketnet_unit_check( rocketnet_ack_endpoint_record_sent( &server.acks->endpoints[slot_a], 1, 64, 0xA111ULL, 1, 0, 99.0 ) );
-
-    // stage fragment 0/2 of A's fragmented payload (payload_id = 1) before A disconnects
-
-    uint8_t a_frag0_plaintext[ROCKETNET_ACK_BLOCK_MIN_BYTES + ROCKETNET_FRAGMENT_HEADER_BYTES + 100];
-    memset( a_frag0_plaintext, 0, ROCKETNET_ACK_BLOCK_MIN_BYTES );
-    const int a_frag0_type_bytes = sim_build_fragment( a_frag0_plaintext + ROCKETNET_ACK_BLOCK_MIN_BYTES, 1, 0, 2, 100, 100, 0xA0 );
-    uint8_t a_frag0_packet[ROCKETNET_RECEIVE_CEILING];
-    const int a_frag0_bytes = rocketnet_write_sealed_packet( a_frag0_packet, ROCKETNET_CONNECTION_FRAGMENT_PACKET,
-                                                             rocketnet_test_filter_value, 1, NULL,
-                                                             a_frag0_plaintext, ROCKETNET_ACK_BLOCK_MIN_BYTES + a_frag0_type_bytes,
-                                                             ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt, NULL,
-                                                             rocketnet_test_session_c2s_key );
-    rocketnet_unit_check( a_frag0_bytes != 0 );
+    rocketnet_unit_check( rocketnet_ack_endpoint_record_sent( &server.acks->endpoints[slot_a], 1, 64, 0xA111ULL, 1, 99.0 ) );
 
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
     int response_bytes = 0;
     uint8_t payload_out[ROCKETNET_RECEIVE_CEILING];
     int payload_out_bytes = 0;
     int payload_client_index = -1;
-    rocketnet_unit_check( rocketnet_server_protocol_process_packet( &server, &addr_a, a_frag0_packet, a_frag0_bytes,
-                                                                    ROCKETNET_TEST_CREATE_TS, 100.0,
-                                                                    response, &response_bytes,
-                                                                    payload_out, &payload_out_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_ACCEPTED );
-    rocketnet_unit_check( server.reassembly->completed_bytes == 0 );
 
-    // A's stale payload, ack (acknowledging sequence 1), keep-alive, and
-    // completing fragment 1/2, all sealed under A's session key and salt
+    // A's stale payload, ack (acknowledging sequence 1) and keep-alive, all
+    // sealed under A's session key and salt
 
     struct rocketnet_replay_protection_t ack_seq1_replay;
     memset( &ack_seq1_replay, 0, sizeof( ack_seq1_replay ) );
@@ -581,17 +338,6 @@ static void sim_run_same_tick_slot_reuse( bool same_address )
                                                             rocketnet_test_session_c2s_key );
     rocketnet_unit_check( a_keep_alive_bytes != 0 );
 
-    uint8_t a_frag1_plaintext[ROCKETNET_ACK_BLOCK_MIN_BYTES + ROCKETNET_FRAGMENT_HEADER_BYTES + 40];
-    memset( a_frag1_plaintext, 0, ROCKETNET_ACK_BLOCK_MIN_BYTES );
-    const int a_frag1_type_bytes = sim_build_fragment( a_frag1_plaintext + ROCKETNET_ACK_BLOCK_MIN_BYTES, 1, 1, 2, 40, 100, 0xA0 );
-    uint8_t a_frag1_packet[ROCKETNET_RECEIVE_CEILING];
-    int a_frag1_bytes = rocketnet_write_sealed_packet( a_frag1_packet, ROCKETNET_CONNECTION_FRAGMENT_PACKET,
-                                                       rocketnet_test_filter_value, 5, NULL,
-                                                       a_frag1_plaintext, ROCKETNET_ACK_BLOCK_MIN_BYTES + a_frag1_type_bytes,
-                                                       ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt, NULL,
-                                                       rocketnet_test_session_c2s_key );
-    rocketnet_unit_check( a_frag1_bytes != 0 );
-
     // A disconnects: slot 0 is reset and A's mapping destroyed
 
     uint8_t disconnect_packets[ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS * ROCKETNET_SEND_BUDGET];
@@ -620,9 +366,9 @@ static void sim_run_same_tick_slot_reuse( bool same_address )
     connection_ids[slot_b] = server.next_connection_id++;
     const uint64_t b_connection_id = connection_ids[slot_b];
     rocketnet_unit_check( b_connection_id != 0 && b_connection_id != a_connection_id );
-    rocketnet_unit_check( rocketnet_ack_endpoint_record_sent( &server.acks->endpoints[slot_b], 1, 64, 0xB222ULL, 1, 0, 100.0 ) );
+    rocketnet_unit_check( rocketnet_ack_endpoint_record_sent( &server.acks->endpoints[slot_b], 1, 64, 0xB222ULL, 1, 100.0 ) );
 
-    // B's payload, ACK, and 2-fragment payload, sealed under B's session key and salt
+    // B's payload and ACK, sealed under B's session key and salt
 
     uint8_t b_payload_plaintext[ROCKETNET_ACK_BLOCK_MIN_BYTES + 4];
     memset( b_payload_plaintext, 0, ROCKETNET_ACK_BLOCK_MIN_BYTES );
@@ -646,31 +392,8 @@ static void sim_run_same_tick_slot_reuse( bool same_address )
                                                      rocketnet_test_session_s2c_key );
     rocketnet_unit_check( b_ack_bytes != 0 );
 
-    uint8_t b_frag0_plaintext[ROCKETNET_ACK_BLOCK_MIN_BYTES + ROCKETNET_FRAGMENT_HEADER_BYTES + 100];
-    memset( b_frag0_plaintext, 0, ROCKETNET_ACK_BLOCK_MIN_BYTES );
-    const int b_frag0_type_bytes = sim_build_fragment( b_frag0_plaintext + ROCKETNET_ACK_BLOCK_MIN_BYTES, 1, 0, 2, 100, 100, 0xCC );
-    uint8_t b_frag0_packet[ROCKETNET_RECEIVE_CEILING];
-    int b_frag0_bytes = rocketnet_write_sealed_packet( b_frag0_packet, ROCKETNET_CONNECTION_FRAGMENT_PACKET,
-                                                       rocketnet_test_filter_value, 3, NULL,
-                                                       b_frag0_plaintext, ROCKETNET_ACK_BLOCK_MIN_BYTES + b_frag0_type_bytes,
-                                                       ROCKETNET_TEST_PROTOCOL_ID, b_salt, NULL,
-                                                       rocketnet_test_session_s2c_key );
-    rocketnet_unit_check( b_frag0_bytes != 0 );
-
-    uint8_t b_frag1_plaintext[ROCKETNET_ACK_BLOCK_MIN_BYTES + ROCKETNET_FRAGMENT_HEADER_BYTES + 40];
-    memset( b_frag1_plaintext, 0, ROCKETNET_ACK_BLOCK_MIN_BYTES );
-    const int b_frag1_type_bytes = sim_build_fragment( b_frag1_plaintext + ROCKETNET_ACK_BLOCK_MIN_BYTES, 1, 1, 2, 40, 100, 0xCC );
-    uint8_t b_frag1_packet[ROCKETNET_RECEIVE_CEILING];
-    int b_frag1_bytes = rocketnet_write_sealed_packet( b_frag1_packet, ROCKETNET_CONNECTION_FRAGMENT_PACKET,
-                                                       rocketnet_test_filter_value, 4, NULL,
-                                                       b_frag1_plaintext, ROCKETNET_ACK_BLOCK_MIN_BYTES + b_frag1_type_bytes,
-                                                       ROCKETNET_TEST_PROTOCOL_ID, b_salt, NULL,
-                                                       rocketnet_test_session_s2c_key );
-    rocketnet_unit_check( b_frag1_bytes != 0 );
-
-    // One server update driven through the wire: A's stale payload, stale ack,
-    // stale keep-alive, and stale completing fragment 1/2 arrive first, then
-    // B's payload, ACK, and 2-fragment payload.
+    // One server update driven through the wire: A's stale payload, stale ack
+    // and stale keep-alive arrive first, then B's payload and ACK.
 
     struct sim_schedule_t sched;
     sim_schedule_begin( &sched );
@@ -679,19 +402,16 @@ static void sim_run_same_tick_slot_reuse( bool same_address )
     sim_schedule_deliver( &sched, a_payload_packet, a_payload_bytes );
     sim_schedule_deliver( &sched, a_ack_packet, a_ack_bytes );
     sim_schedule_deliver( &sched, a_keep_alive_packet, a_keep_alive_bytes );
-    sim_schedule_deliver( &sched, a_frag1_packet, a_frag1_bytes );
-    rocketnet_unit_check( sim_schedule_flush( &sched ) == 4 );
+    rocketnet_unit_check( sim_schedule_flush( &sched ) == 3 );
 
     sched.from = addr_b;
     sim_schedule_deliver( &sched, b_payload_packet, b_payload_bytes );
     sim_schedule_deliver( &sched, b_ack_packet, b_ack_bytes );
-    sim_schedule_deliver( &sched, b_frag0_packet, b_frag0_bytes );
-    sim_schedule_deliver( &sched, b_frag1_packet, b_frag1_bytes );
-    rocketnet_unit_check( sim_schedule_flush( &sched ) == 4 );
+    rocketnet_unit_check( sim_schedule_flush( &sched ) == 2 );
 
-    const int stale_bytes[4] = { a_payload_bytes, a_ack_bytes, a_keep_alive_bytes, a_frag1_bytes };
+    const int stale_bytes[3] = { a_payload_bytes, a_ack_bytes, a_keep_alive_bytes };
 
-    for ( int i = 0; i < 4; i++ )
+    for ( int i = 0; i < 3; i++ )
     {
         payload_out_bytes = 0;
         payload_client_index = -1;
@@ -712,28 +432,23 @@ static void sim_run_same_tick_slot_reuse( bool same_address )
         rocketnet_unit_check( counters.values[ROCKETNET_COUNTER_PAYLOAD_DID_NOT_OPEN] == 1 );
         rocketnet_unit_check( counters.values[ROCKETNET_COUNTER_ACK_DID_NOT_OPEN] == 1 );
         rocketnet_unit_check( counters.values[ROCKETNET_COUNTER_KEEP_ALIVE_DID_NOT_OPEN] == 1 );
-        rocketnet_unit_check( counters.values[ROCKETNET_COUNTER_FRAGMENT_DID_NOT_OPEN] == 1 );
     }
     else
     {
         rocketnet_unit_check( counters.values[ROCKETNET_COUNTER_PAYLOAD_NO_MAPPING] == 1 );
         rocketnet_unit_check( counters.values[ROCKETNET_COUNTER_ACK_NO_MAPPING] == 1 );
         rocketnet_unit_check( counters.values[ROCKETNET_COUNTER_KEEP_ALIVE_NO_MAPPING] == 1 );
-        rocketnet_unit_check( counters.values[ROCKETNET_COUNTER_FRAGMENT_NO_MAPPING] == 1 );
     }
 
-    // none of A's stale packets advanced B's replay window, ack state, or reassembly state
+    // none of A's stale packets advanced B's replay window or ack state
 
     rocketnet_unit_check( m_b->replay_session.highest_opened == 0 );
     rocketnet_unit_check( m_b->accepted_session.highest_opened == 0 );
     rocketnet_unit_check( server.acks->num_acked == 0 );
     rocketnet_unit_check( server.acks->endpoints[slot_b].largest_acked_sequence == 0 );
     rocketnet_unit_check( server.acks->endpoints[slot_b].highest_received_sequence == 0 );
-    rocketnet_unit_check( server.reassembly->completed_bytes == 0 );
-    rocketnet_unit_check( server.reassembly->num_delivered == 0 );
-    rocketnet_unit_check( server.reassembly->newest_completed[slot_b] == 0 );
 
-    // now B's new-generation payload, ACK, and 2-fragment payload all complete cleanly
+    // now B's new-generation payload and ACK both complete cleanly
 
     payload_out_bytes = 0;
     payload_client_index = -1;
@@ -767,38 +482,7 @@ static void sim_run_same_tick_slot_reuse( bool same_address )
     rocketnet_unit_check( server.acked_connection_ids[0] == b_connection_id );
     rocketnet_unit_check( server.acks->endpoints[slot_b].largest_acked_sequence == 1 );
 
-    payload_out_bytes = 0;
-    payload_client_index = -1;
-
-    rocketnet_unit_check( sim_schedule_receive( &sched ) == b_frag0_bytes );
-
-    r = rocketnet_server_protocol_process_packet( &server, &sched.rx_from, sched.rx, b_frag0_bytes,
-                                                  ROCKETNET_TEST_CREATE_TS, 100.0,
-                                                  response, &response_bytes,
-                                                  payload_out, &payload_out_bytes, &payload_client_index );
-    rocketnet_unit_check( r == ROCKETNET_SERVER_PROCESS_ACCEPTED );
-    rocketnet_unit_check( server.reassembly->completed_bytes == 0 );
-
-    payload_out_bytes = 0;
-    payload_client_index = -1;
-
-    rocketnet_unit_check( sim_schedule_receive( &sched ) == b_frag1_bytes );
-
-    r = rocketnet_server_protocol_process_packet( &server, &sched.rx_from, sched.rx, b_frag1_bytes,
-                                                  ROCKETNET_TEST_CREATE_TS, 100.0,
-                                                  response, &response_bytes,
-                                                  payload_out, &payload_out_bytes, &payload_client_index );
-    rocketnet_unit_check( r == ROCKETNET_SERVER_PROCESS_ACCEPTED );
-    rocketnet_unit_check( payload_client_index == slot_b );
-    rocketnet_unit_check( server.payload_connection_id == b_connection_id );
-    rocketnet_unit_check( server.reassembly->completed_bytes == 140 );
-    rocketnet_unit_check( server.reassembly->num_delivered == 1 );
-    rocketnet_unit_check( server.reassembly->newest_completed[slot_b] == 1 );
-
-    sim_check_reassembled( server.reassembly->completed_payload, 140, 0xCC );
-
     sim_schedule_end( &sched );
-    rocketnet_reassembly_set_destroy( server.reassembly );
     rocketnet_server_acks_destroy( server.acks );
     rocketnet_client_slots_destroy( server.client_slots );
     rocketnet_encryption_map_destroy( server.encryption_map );
@@ -812,7 +496,7 @@ static void test_sim_schedule_same_tick_slot_reuse()
 }
 
 // ---------------------------------------------------------------------------
-// 5. sequence pre-seeding across the wrap
+// 3. sequence pre-seeding across the wrap
 // ---------------------------------------------------------------------------
 
 static void test_sim_schedule_sequence_wrap()
@@ -1049,8 +733,6 @@ static void test_simulator_patterns_change_releases_the_held_window()
 }
 
 REGISTER_UNIT_TEST( test_simulator_patterns_change_releases_the_held_window );
-REGISTER_UNIT_TEST( test_sim_schedule_final_fragment_first );
-REGISTER_UNIT_TEST( test_sim_schedule_batch_cap );
 REGISTER_UNIT_TEST( test_sim_schedule_same_tick_slot_reuse );
 REGISTER_UNIT_TEST( test_sim_schedule_sequence_wrap );
 REGISTER_UNIT_TEST( test_sim_schedule_long_skip_stragglers );

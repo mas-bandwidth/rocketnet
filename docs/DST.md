@@ -13,7 +13,7 @@ The harness checks properties that also appear in the TLA+ models:
 - stale packets from an earlier connection cannot enter a reused slot;
 - an acknowledgement names a packet the acknowledged endpoint itself issued,
   and names it once;
-- buffers, queues, reassembly slots and receipt rings remain within their
+- buffers, queues and receipt rings remain within their
   configured bounds;
 - an endpoint (the server or a client) that can make fair progress does not remain wedged.
 

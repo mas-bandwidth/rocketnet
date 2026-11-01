@@ -50,7 +50,6 @@
 #include "rocketnet_client_slots.h"
 #include "rocketnet_encryption_map.h"
 #include "rocketnet_token_tables.h"
-#include "rocketnet_fragment.h"
 #include "rocketnet_ack.h"
 #include "rocketnet_counters.h"
 #include "rocketnet_layers.h"
@@ -196,14 +195,12 @@ static void fuzz_server_create( struct fuzz_server_t * server )
     p->used_token_history = rocketnet_used_token_history_create( NULL, 64 );
     p->client_slots = rocketnet_client_slots_create( NULL, 4 );
     p->acks = rocketnet_server_acks_create( NULL, 4 );
-    p->reassembly = rocketnet_reassembly_set_create( NULL, 4, 4, 16384, 16 );
     p->counters = &server->counters;
-    if ( !p->encryption_map || !p->used_token_history || !p->client_slots || !p->acks || !p->reassembly )
+    if ( !p->encryption_map || !p->used_token_history || !p->client_slots || !p->acks )
     {
         abort();
     }
 
-    rocketnet_reassembly_set_begin_update( p->reassembly );
     rocketnet_server_protocol_update( p, (double) FUZZ_NOW );
 }
 
@@ -214,7 +211,6 @@ static void fuzz_server_destroy( struct fuzz_server_t * server )
     rocketnet_used_token_history_destroy( p->used_token_history );
     rocketnet_client_slots_destroy( p->client_slots );
     rocketnet_server_acks_destroy( p->acks );
-    rocketnet_reassembly_set_destroy( p->reassembly );
 }
 
 // the request, through the cookie gate as a client would: an empty-cookie

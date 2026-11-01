@@ -42,7 +42,7 @@ do                                                                              
 // key: interface-0 datagrams to the prefilter and the receive ladder of the
 // end they were addressed to (the connect request on into the connect-token
 // readers, under the published test keys), interface-1 records to the ack
-// block reader, the fragment reassembly and the message reader. Each packet
+// block reader and the message reader. Each packet
 // ends read, or refused under the name of the counter the code fires; an
 // unnamed end fails with its file and index, and the per-name tally of each
 // captured file is pinned. File input only: no sockets, no threads, no clock
@@ -53,8 +53,6 @@ do                                                                              
 #include "rocketnet_allocator.h"
 #include "rocketnet_channel.h"
 #include "rocketnet_connect_token.h"
-#include "rocketnet_fragment.h"
-#include "rocketnet_memory.h"
 #include "rocketnet_message.h"
 #include "rocketnet_protocol.h"
 #include "rocketnet_read_write.h"
@@ -71,15 +69,6 @@ do                                                                              
 #define PCAPNG_SERVER_ADDRESS   ( ( 203u << 24 ) | ( 0u << 16 ) | ( 113u << 8 ) | 10u )
 #define PCAPNG_SERVER_PORT      40000
 #define PCAPNG_CLOCK_START_US   1000000000ULL
-
-// the replay's reassembly geometry: two connections of the capture server's
-// shape (4 slots at a 16384-byte payload maximum), a delivery window of 4. A
-// fragment record names its connection ("connection=1" in its comment; 0
-// when absent), as the fuzz harness alternates its two.
-#define PCAPNG_REASSEMBLY_CONNECTIONS   2
-#define PCAPNG_REASSEMBLY_SLOTS         4
-#define PCAPNG_REASSEMBLY_MAX_PAYLOAD   16384
-#define PCAPNG_REASSEMBLY_DELIVERED     4
 
 // the counting allocator, after test_unit_connection_memory.cpp cm_malloc/cm_free,
 // with a size header so live bytes are known at every free
@@ -141,8 +130,8 @@ static std::string pcapng_directory()
 
 static const char * pcapng_type_name( int packet_type )
 {
-    static const char * names[10] = { "REQUEST", "DENIED", "CHALLENGE", "RESPONSE", "KEEP_ALIVE", "PAYLOAD", "DISCONNECT", "COOKIE", "ACK", "FRAGMENT" };
-    return packet_type >= 0 && packet_type < 10 ? names[packet_type] : "RESERVED";
+    static const char * names[ROCKETNET_FIRST_RESERVED_PACKET_TYPE] = { "REQUEST", "DENIED", "CHALLENGE", "RESPONSE", "KEEP_ALIVE", "PAYLOAD", "DISCONNECT", "COOKIE", "ACK" };
+    return packet_type >= 0 && packet_type < ROCKETNET_FIRST_RESERVED_PACKET_TYPE ? names[packet_type] : "RESERVED";
 }
 
 // one packet's end: read (counter -1, a "read ..." name) or refused under a
@@ -227,9 +216,6 @@ static const pcapng_session_counters_t pcapng_session_counters[] = {
     { ROCKETNET_CONNECTION_ACK_PACKET, ROCKETNET_CONNECTION_ACK_MIN_WIRE_BYTES,
       ROCKETNET_COUNTER_ACK_WRONG_SIZE, ROCKETNET_COUNTER_ACK_BAD_ACK_BLOCK, ROCKETNET_COUNTER_ACK_WRONG_OPENED_SIZE,
       ROCKETNET_COUNTER_CLIENT_ACK_WRONG_SIZE, ROCKETNET_COUNTER_CLIENT_ACK_BAD_ACK_BLOCK, ROCKETNET_COUNTER_CLIENT_ACK_WRONG_OPENED_SIZE },
-    { ROCKETNET_CONNECTION_FRAGMENT_PACKET, ROCKETNET_CONNECTION_FRAGMENT_MIN_WIRE_BYTES,
-      ROCKETNET_COUNTER_FRAGMENT_WRONG_SIZE, ROCKETNET_COUNTER_FRAGMENT_BAD_ACK_BLOCK, ROCKETNET_COUNTER_FRAGMENT_WRONG_OPENED_SIZE,
-      ROCKETNET_COUNTER_CLIENT_FRAGMENT_WRONG_SIZE, ROCKETNET_COUNTER_CLIENT_FRAGMENT_BAD_ACK_BLOCK, ROCKETNET_COUNTER_CLIENT_FRAGMENT_WRONG_OPENED_SIZE },
 };
 
 static const pcapng_session_counters_t * pcapng_session( int packet_type )
@@ -310,7 +296,7 @@ static pcapng_outcome_t pcapng_wire( const uint8_t * packet, int bytes, int to_s
         return pcapng_fault_drop_prefilter_name ? pcapng_outcome_t() : pcapng_refused( rocketnet_prefilter_counter( code ) );
 
     const int packet_type = code;
-    if ( packet_type > ROCKETNET_CONNECTION_FRAGMENT_PACKET )
+    if ( packet_type >= ROCKETNET_FIRST_RESERVED_PACKET_TYPE )
         return pcapng_refused( ROCKETNET_COUNTER_RESERVED_TYPE );
 
     std::string read = std::string( to_server ? "server " : "client " ) + pcapng_type_name( packet_type );
@@ -358,34 +344,16 @@ static pcapng_outcome_t pcapng_wire( const uint8_t * packet, int bytes, int to_s
     return pcapng_read_as( read.c_str() );
 }
 
-// the replay's reader state for one file: one reassembly connection, the
-// default message limits
+// the replay's reader state for one file: the default message limits
 
 struct pcapng_replay_t
 {
-    struct rocketnet_reassembly_set_t * reassembly;
     struct rocketnet_message_limits_t limits;
-    struct rocketnet_counters_t counters;
-};
-
-static const struct rocketnet_reassembly_counters_t pcapng_server_fragment_counters = {
-    ROCKETNET_COUNTER_FRAGMENT_ZERO_PAYLOAD_ID, ROCKETNET_COUNTER_FRAGMENT_STALE, ROCKETNET_COUNTER_FRAGMENT_COUNT_INVALID,
-    ROCKETNET_COUNTER_FRAGMENT_INDEX_OUT_OF_RANGE, ROCKETNET_COUNTER_FRAGMENT_COUNT_MISMATCH, ROCKETNET_COUNTER_FRAGMENT_SIZE_MISMATCH,
-    ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_TOO_LARGE, ROCKETNET_COUNTER_FRAGMENT_DUPLICATE_INDEX, ROCKETNET_COUNTER_FRAGMENT_ACCEPTED,
-    ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_REASSEMBLED, ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_ABANDONED, ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_BATCH_FULL
-};
-
-static const struct rocketnet_reassembly_counters_t pcapng_client_fragment_counters = {
-    ROCKETNET_COUNTER_CLIENT_FRAGMENT_ZERO_PAYLOAD_ID, ROCKETNET_COUNTER_CLIENT_FRAGMENT_STALE, ROCKETNET_COUNTER_CLIENT_FRAGMENT_COUNT_INVALID,
-    ROCKETNET_COUNTER_CLIENT_FRAGMENT_INDEX_OUT_OF_RANGE, ROCKETNET_COUNTER_CLIENT_FRAGMENT_COUNT_MISMATCH, ROCKETNET_COUNTER_CLIENT_FRAGMENT_SIZE_MISMATCH,
-    ROCKETNET_COUNTER_CLIENT_FRAGMENT_PAYLOAD_TOO_LARGE, ROCKETNET_COUNTER_CLIENT_FRAGMENT_DUPLICATE_INDEX, ROCKETNET_COUNTER_CLIENT_FRAGMENT_ACCEPTED,
-    ROCKETNET_COUNTER_CLIENT_FRAGMENT_PAYLOAD_REASSEMBLED, ROCKETNET_COUNTER_CLIENT_FRAGMENT_PAYLOAD_ABANDONED, ROCKETNET_COUNTER_CLIENT_FRAGMENT_PAYLOAD_BATCH_FULL
 };
 
 // interface 1: one kind byte, then the bytes that reader is handed. The
 // comment names the receiving end ("server" or "client") and, for an ack
-// block, the packet type ("server 5"); a fragment may name its reassembly
-// connection ("server connection=1").
+// block, the packet type ("server 5").
 static pcapng_outcome_t pcapng_opened( pcapng_replay_t * replay, const std::vector<uint8_t> & record, const std::string & comment )
 {
     if ( record.empty() )
@@ -429,39 +397,9 @@ static pcapng_outcome_t pcapng_opened( pcapng_replay_t * replay, const std::vect
         if ( ( packet_type == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET && type_data_bytes != 8 ) ||
              ( packet_type == ROCKETNET_CONNECTION_PAYLOAD_PACKET && type_data_bytes < 1 ) ||
              ( packet_type == ROCKETNET_CONNECTION_DISCONNECT_PACKET && type_data_bytes != 0 ) ||
-             ( packet_type == ROCKETNET_CONNECTION_ACK_PACKET && type_data_bytes != 0 ) ||
-             ( packet_type == ROCKETNET_CONNECTION_FRAGMENT_PACKET && type_data_bytes < ROCKETNET_FRAGMENT_HEADER_BYTES + 1 ) )
+             ( packet_type == ROCKETNET_CONNECTION_ACK_PACKET && type_data_bytes != 0 ) )
             return pcapng_refused( is_server ? session->server_wrong_opened_size : session->client_wrong_opened_size );
         return pcapng_read_as( ( end + " ack block " + pcapng_type_name( packet_type ) ).c_str() );
-    }
-
-    if ( kind == ROCKETNET_PCAPNG_KIND_FRAGMENT )
-    {
-        if ( bytes < ROCKETNET_FRAGMENT_HEADER_BYTES + 1 || bytes > ROCKETNET_FRAGMENT_HEADER_BYTES + ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES )
-            return pcapng_refused( is_server ? ROCKETNET_COUNTER_FRAGMENT_WRONG_OPENED_SIZE : ROCKETNET_COUNTER_CLIENT_FRAGMENT_WRONG_OPENED_SIZE );
-
-        const struct rocketnet_reassembly_counters_t * table = is_server ? &pcapng_server_fragment_counters : &pcapng_client_fragment_counters;
-        const int connection = comment.find( "connection=1" ) != std::string::npos ? 1 : 0;
-        struct rocketnet_counters_t before = replay->counters;
-
-        rocketnet_reassembly_set_begin_update( replay->reassembly );
-
-        const int accepted = rocketnet_reassembly_process_fragment( replay->reassembly, connection, data, bytes, replay->counters.values, table );
-        if ( accepted )
-        {
-            check( replay->counters.values[table->accepted] == before.values[table->accepted] + 1 );
-            return pcapng_read_as( replay->reassembly->completed_bytes > 0 ? ( end + " fragment completing" ).c_str() : ( end + " fragment" ).c_str() );
-        }
-
-        // refused: named by the refusal the engine fired, from its own table
-
-        const int refusals[9] = { table->zero_payload_id, table->stale, table->count_invalid, table->index_out_of_range,
-                                  table->count_mismatch, table->size_mismatch, table->payload_too_large, table->duplicate_index,
-                                  table->batch_full };
-        for ( int i = 0; i < 9; i++ )
-            if ( replay->counters.values[refusals[i]] != before.values[refusals[i]] )
-                return pcapng_refused( refusals[i] );
-        return pcapng_outcome_t();
     }
 
     if ( kind == ROCKETNET_PCAPNG_KIND_MESSAGE_PAYLOAD )
@@ -513,8 +451,6 @@ static pcapng_file_result_t pcapng_replay_file( const std::string & path )
 
     pcapng_replay_t replay;
     memset( &replay, 0, sizeof( replay ) );
-    replay.reassembly = rocketnet_reassembly_set_create( NULL, PCAPNG_REASSEMBLY_CONNECTIONS, PCAPNG_REASSEMBLY_SLOTS, PCAPNG_REASSEMBLY_MAX_PAYLOAD, PCAPNG_REASSEMBLY_DELIVERED );
-    check( replay.reassembly != NULL );
 
     struct rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
@@ -568,8 +504,6 @@ static pcapng_file_result_t pcapng_replay_file( const std::string & path )
         }
     }
 
-    rocketnet_reassembly_set_destroy( replay.reassembly );
-
     return result;
 }
 
@@ -597,7 +531,6 @@ struct pcapng_pin_t
 };
 
 static const pcapng_pin_t pcapng_pins[] = {
-    { "fragment_seeds.pcapng", "FRAGMENT_COUNT_INVALID=1;FRAGMENT_INDEX_OUT_OF_RANGE=1;FRAGMENT_PAYLOAD_TOO_LARGE=1;FRAGMENT_WRONG_OPENED_SIZE=2;FRAGMENT_ZERO_PAYLOAD_ID=1;read server fragment=8;read server fragment completing=4;" },
     { "test_harness_one_message_each_way_lossy.pcapng", "read client CHALLENGE=1;read client COOKIE=2;read client KEEP_ALIVE=10;read client PAYLOAD=2;read client ack block KEEP_ALIVE=8;read client ack block PAYLOAD=2;read client message payload=2;read server KEEP_ALIVE=8;read server PAYLOAD=4;read server REQUEST token=2;read server RESPONSE=2;read server ack block KEEP_ALIVE=8;read server ack block PAYLOAD=2;read server message payload=2;" },
     { "hostile_prefilter.pcapng", "CONNECTION_REQUEST_WRONG_VERSION=1;PREFILTER_TOO_SHORT=2;PREFILTER_WRONG_EPOCH=1;PREFILTER_WRONG_VALUE=1;RESERVED_TYPE=1;read server KEEP_ALIVE=1;read server PAYLOAD=2;" },
     { "test_ordered_small_and_large_interleaved.pcapng", "read client CHALLENGE=1;read client COOKIE=1;read client KEEP_ALIVE=4;read client ack block KEEP_ALIVE=3;read server PAYLOAD=25;read server REQUEST token=2;read server RESPONSE=1;read server ack block PAYLOAD=17;read server message payload=16;" },
@@ -609,7 +542,6 @@ static const pcapng_pin_t pcapng_pins[] = {
     { "test_unreliable_receipts_over_lossy_link.pcapng", "read client CHALLENGE=1;read client COOKIE=2;read client KEEP_ALIVE=4;read client PAYLOAD=48;read client ack block KEEP_ALIVE=2;read client ack block PAYLOAD=43;read client message payload=42;read server KEEP_ALIVE=2;read server PAYLOAD=48;read server REQUEST token=2;read server RESPONSE=2;read server ack block KEEP_ALIVE=1;read server ack block PAYLOAD=47;read server message payload=42;" },
     { "test_control_denied_when_server_full.pcapng", "read client COOKIE=1;read client DENIED=1;read server REQUEST token=2;" },
     { "test_control_disconnect_burst_each_end.pcapng", "read client CHALLENGE=2;read client COOKIE=2;read client DISCONNECT=10;read client KEEP_ALIVE=2;read client ack block DISCONNECT=1;read client ack block KEEP_ALIVE=2;read server DISCONNECT=10;read server REQUEST token=4;read server RESPONSE=2;read server ack block DISCONNECT=1;" },
-    { "test_control_fragment_packets_each_end.pcapng", "read client CHALLENGE=1;read client COOKIE=1;read client FRAGMENT=3;read client KEEP_ALIVE=1;read client ack block FRAGMENT=3;read client ack block KEEP_ALIVE=1;read client fragment=2;read client fragment completing=1;read server FRAGMENT=3;read server REQUEST token=2;read server RESPONSE=1;read server ack block FRAGMENT=3;read server fragment=2;read server fragment completing=1;" },
     { "test_control_standalone_ack_each_end.pcapng", "read client ACK=1;read client CHALLENGE=1;read client COOKIE=1;read client KEEP_ALIVE=1;read client ack block ACK=1;read client ack block KEEP_ALIVE=1;read server PAYLOAD=72;read server REQUEST token=2;read server RESPONSE=1;read server ack block PAYLOAD=72;read server message payload=72;" },
 };
 
@@ -627,15 +559,10 @@ static int pcapng_replay_corpus( int pin_tallies )
 
     pcapng_allocator_install();
 
-    // the bound: the replay's one reassembly set by the geometry above -- its
-    // requested component bytes plus the allocator's per-allocation overhead
-    // on each of its four allocations (the set, the slot records, the arena,
-    // the delivered mirror) -- and nothing else. No packet allocates.
+    // the bound: the replay holds no heap state and no packet allocates, so
+    // the library allocates nothing while a file is read
 
-    const uint64_t required = rocketnet_reassembly_memory_required( PCAPNG_REASSEMBLY_CONNECTIONS, PCAPNG_REASSEMBLY_SLOTS, PCAPNG_REASSEMBLY_MAX_PAYLOAD, PCAPNG_REASSEMBLY_DELIVERED );
-    check( required > 0 );
-
-    const uint64_t bound = required + 4 * rocketnet_allocation_overhead();
+    const uint64_t bound = 0;
 
     int unnamed = 0;
     size_t corpus_bytes = 0;
@@ -814,15 +741,14 @@ void test_pcapng_corpus_witness_unread_packet_goes_red()
 // The corpus covers each control packet type: every top-level file under
 // tests/pcapng/ is read and its interface-0 frames counted by packet type
 // (the first byte of the UDP payload), and the corpus must hold at least
-// one frame of each of types 1 (denied), 6 (disconnect), 8 (ack) and 9
-// (fragment). File input only: no sockets, no threads, no real time.
+// one frame of each of types 1 (denied), 6 (disconnect) and 8 (ack). File
+// input only: no sockets, no threads, no real time.
 void test_pcapng_corpus_covers_control_packet_types()
 {
-    static const int required_types[4] = {
+    static const int required_types[3] = {
         ROCKETNET_CONNECTION_DENIED_PACKET,
         ROCKETNET_CONNECTION_DISCONNECT_PACKET,
-        ROCKETNET_CONNECTION_ACK_PACKET,
-        ROCKETNET_CONNECTION_FRAGMENT_PACKET
+        ROCKETNET_CONNECTION_ACK_PACKET
     };
 
     const std::string root = pcapng_directory();
@@ -830,7 +756,7 @@ void test_pcapng_corpus_covers_control_packet_types()
     rocketnet_pcapng_list( root, names );
     check( !names.empty() );
 
-    long counts[10] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+    long counts[ROCKETNET_FIRST_RESERVED_PACKET_TYPE] = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 
     for ( size_t i = 0; i < names.size(); i++ )
     {
@@ -854,18 +780,18 @@ void test_pcapng_corpus_covers_control_packet_types()
                 continue;
 
             const int packet_type = datagram[0];
-            if ( packet_type < 0 || packet_type >= 10 )
+            if ( packet_type < 0 || packet_type >= ROCKETNET_FIRST_RESERVED_PACKET_TYPE )
                 continue;
             counts[packet_type]++;
         }
     }
 
-    for ( int i = 0; i < 10; i++ )
+    for ( int i = 0; i < ROCKETNET_FIRST_RESERVED_PACKET_TYPE; i++ )
     {
         printf( "pcapng coverage: type %d count %ld\n", i, counts[i] );
     }
 
-    for ( int i = 0; i < 4; i++ )
+    for ( int i = 0; i < 3; i++ )
     {
         check( counts[required_types[i]] >= 1 );
     }
@@ -944,7 +870,7 @@ void test_fuzz_prefilter_seed_names_match_outcomes()
         const int result = rocketnet_prefilter_check( datagram.data(), datagram_bytes, packet_filter );
 
         const bool matches = seed.expected == SEED_ACCEPTED_ANY_TYPE
-                                 ? result > ROCKETNET_CONNECTION_FRAGMENT_PACKET
+                                 ? result >= ROCKETNET_FIRST_RESERVED_PACKET_TYPE
                                  : result == seed.expected;
         if ( !matches || ( seed.expected_bytes >= 0 && datagram_bytes != seed.expected_bytes ) )
             printf( "fuzz prefilter seed %s: %d bytes, prefilter result %d, the name says %d\n",

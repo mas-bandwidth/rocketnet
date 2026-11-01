@@ -25,19 +25,16 @@ naming `<struct>.<member>`.
 | | `connection_salt`, ephemeral keypair, `return_cookie`, `has_cookie`, `latest_cookie`, `has_latest_cookie`, `send_latest_cookie` | handshake material | RESET | secret and attempt material must not cross attempts |
 | | `session_nonce`, `keys`, `stored_response` | session key state | RESET | one session only; key copies retire before erasure |
 | | `client_index`, `max_clients` | assigned server slot | RESET | learned by this session |
-| | handshake/session sequences, fragment payload id | wire sequence spaces | RESET | fresh sequence spaces start at one |
+| | handshake/session sequences | wire sequence spaces | RESET | fresh sequence spaces start at one |
 | | replay windows, `integrity_failures` | receive security state | RESET | old traffic must not affect a new session |
 | | attempt, send, receive and total deadlines | attempt clocks | RESET | token and session clocks |
 | | RTT sample state and received sequence | quality state | RESET | per-session inputs |
 | | `ack`, `num_acked`, `acked_packet_ids` | ack bitfields, packet rings and receipt batch | RESET | packet ids and measurements belong to one session |
-| | `reassembly` | allocation owner | KEEP | allocation lives with the client; connection-0 slots reset |
 | | key publication hooks and context | transport hooks | KEEP | transport wiring |
 | | current record verdict and sequence | input record | RESET | no record is live after reset |
-| `rocketnet_reassembly_set_t` | `slots[0]`, `newest_completed[0]` | fragment slots and stale watermark | RESET | partial payloads never cross sessions |
-| | geometry, arenas and delivered capacity | fixed allocation | KEEP | client object storage |
-| `rocketnet_ack_endpoint_t` | sequence heads, ack debt, sent/received records, bitmaps and aggregates | delivery and ack history | RESET | a new connection starts with no packet history |
+| `rocketnet_ack_endpoint_t` | sequence heads, ack debt, sent/received records and bitmaps | delivery and ack history | RESET | a new connection starts with no packet history |
 | | RTT, jitter, loss and bandwidth estimates | connection quality | RESET | statistics describe one session |
-| `rocketnet_client_transport_t` | payload rings and send arena contents | staged connection packets | RESET | invalid after the terminal transition |
+| `rocketnet_client_transport_t` | payload rings | staged connection packets | RESET | invalid after the terminal transition |
 | | `received_packets` | the last update's batch of delivered payloads | KEEP | counted `CLIENT_PAYLOAD_DELIVERED`, so the caller reads them until the next update clears the batch, also when the connection ended inside that update (`proofs/tla/RNClientDelivery.tla` `CountedImpliesHanded`); a transport runs one connection, so no later connection reads them |
 | | config, transport, I/O objects, lifetime counters and statistics rings | client-lifetime transport state | KEEP | construction state of this transport object; public session counters are the connection that is held |
 | | `time`, `raw_time`, `time_offset` | the update clock, the caller's raw time and the backwards offset | KEEP | the game's clock is client-lifetime state; a connection reset does not rewind it |
@@ -62,7 +59,7 @@ other session state.
 | | client id, user data | slot identity | RESET | identity cannot leak to reuse |
 | | control pointer | parallel timeout-control allocation | KEEP | map owner retains the indexed allocation |
 | | send times | clocks and pacing | RESET | one mapping |
-| | handshake/session sequences and fragment id | packet sequence spaces | RESET | new mapping starts fresh |
+| | handshake/session sequences | packet sequence spaces | RESET | new mapping starts fresh |
 | | replay windows and integrity failures | receive security history | RESET | old ciphertext cannot affect a new mapping |
 | `rocketnet_encryption_mapping_control_t` | client index, established | slot identity | RESET | identity cannot leak to reuse |
 | | timeout, handshake deadline and receive time | expiry clocks | RESET | one mapping |
@@ -71,8 +68,6 @@ other session state.
 | `rocketnet_server_acks_t` | `endpoints[client_index]` | ack rings, bitfields and quality estimates | RESET | packet history is per connection |
 | | acked batch rows for this index | pending receipts | RESET | compacted out before reuse |
 | | other endpoints and rows | other clients | KEEP | reset touches only its slot |
-| `rocketnet_reassembly_set_t` | slot slice and newest watermark for this index | partial fragments | RESET | partial payloads never cross clients |
-| | other slices and geometry | other clients / fixed storage | KEEP | reset touches only its slot |
 | `rocketnet_server_protocol_t` | `connection_ids[client_index]` | slot incarnation tag | RESET | free slots have id zero |
 | | `end_reasons[client_index]` | why the slot's connection ended (`TIMED_OUT`, `CLIENT_DISCONNECTED`, `SERVER_DISCONNECTED`, `NONE` for the integrity limit) | WRITTEN by the reset | the ending path's reason, which the message object reads when it observes the slot dropped; cleared to `NONE` when the slot is next assigned |
 | | `next_connection_id` | lifetime id source | KEEP | ids never repeat in one server life |
@@ -86,8 +81,7 @@ other session state.
 
 The server reset wipes the encryption mapping's secrets and removes it while the slot still
 names it, releases identity and user data, clears the connection id, compacts
-the slot's pending ack rows, resets its ack endpoint, and finally resets only
-that slot's fragment slice. Message storage resets when the message object
+the slot's pending ack rows, and finally resets its ack endpoint. Message storage resets when the message object
 observes the transport connection-id change.
 
 A deferred server disconnect burst has no per-client wire-total owner after

@@ -85,7 +85,7 @@ Safety, checked under every loss pattern with no fairness:
 | `TimeoutHonoured`, `DeadlineHonoured` | the idle timeout and the total deadline fire when due |
 | `NoSendOnArrival` | no receive sends (STANDARD.md, ClientConnection NoSendOnArrival) |
 | `OnlyAuthenticatedRefreshes` | the client trusts only the server: in states 1 and 2 of one attempt nothing restarts the receive clock; a cookie's salt is in the clear, so only the challenge and the session packets after it reset it (TRANSPORT.md t11 rule 8, t11.1) |
-| `FreshAttemptFromFailure` | a connect from a failure state (-7..-1) is a fresh attempt: a new attempt index (the fresh salt, ephemeral and keys) and nothing of the earlier attempt carried, no keys, cookie, client index, reassembly or replay window, and fresh timers |
+| `FreshAttemptFromFailure` | a connect from a failure state (-7..-1) is a fresh attempt: a new attempt index (the fresh salt, ephemeral and keys) and nothing of the earlier attempt carried, no keys, cookie, client index or replay window, and fresh timers |
 | `TypeOK` | types, including both links' |
 
 Liveness, under the fairness described below:
@@ -205,15 +205,6 @@ On a Linux bench with the TLA+ tools (`tla2tools.jar`, TLC 2.19), from `proofs/t
 java -cp /path/to/tla2tools.jar tlc2.TLC -workers 8 -cleanup -deadlock -lncheck final \
      -config MCClientConnection.cfg MCClientConnection
 ```
-
-**Fragments** are modelled at the receive step: `ClientFragmentReceive` creates
-client reassembly state (`cReasm`) only in state 4 (connected), and
-`ServerFragmentReceive` creates server reassembly state (`sReasm`) only for a
-mapping holding its slot. The invariant `FragmentOnlyWhenConnected` states
-that reassembly state changes only while connected, on both sides.
-`MCClientConnectionBrokenEarlyFragment.cfg` is its reversed witness: it adds
-`ClientFragmentReceiveEarly`, the pre-fix acceptance in sending-connection-response
-(state 3), and must fail `FragmentOnlyWhenConnected`.
 
 **Payloads** are accepted only in state 4, as netcode.io's client: the server's
 first payloads can reach the client ahead of the keep-alive that connects it
@@ -545,8 +536,8 @@ from every negative state; `rocketnet_client_protocol_connect` runs
 `rocketnet_client_connection_reset` and takes a fresh salt, a fresh
 ephemeral keypair and sequences at one). No property said so. The action
 property `FreshAttemptFromFailure` does: a step from `cstate < 0` to 1
-takes `cAttempt + 1` and leaves no keys, no cookie, no client index, no
-reassembly, an empty replay window (`cSeen`), the ephemeral live and both
+takes `cAttempt + 1` and leaves no keys, no cookie, no client index, an
+empty replay window (`cSeen`), the ephemeral live and both
 timers at zero.
 
 `MCClientConnectionRetryFromFailure.cfg` is the control: a responsive

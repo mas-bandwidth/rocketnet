@@ -33,7 +33,6 @@ static_assert( ROCKETNET_DEFAULT_COOKIE_ROTATION_SECONDS > ROCKETNET_DEFAULT_COO
 #include "rocketnet_connection_reset.h"
 #include "rocketnet_constants.h"
 #include "rocketnet_platform.h"
-#include "rocketnet_fragment.h"
 #include "rocketnet_config.h"
 #include "rocketnet_network_simulator.h"
 #include "rocketnet_memory.h"
@@ -293,13 +292,6 @@ struct rocketnet_server_transport_t
     uint64_t token_epoch_unix_seconds;                  // unix seconds at the game clock's zero for the token check; 0 until the first update resolves it from the wall clock
     uint64_t frame;                                     // advanced once per update; identifies initialized stats buckets
 
-    // the fragmentation shape from the config, and the send arena for
-    // over-wire-capacity requests -- allocated once at create, to the
-    // configured maximum. the reassembly set lives on the protocol.
-
-    int max_payload_bytes;
-    struct rocketnet_send_arena_t * send_arena;
-
     struct rocketnet_server_transport_stats_t server_stats;
     int current_stats_index;
     struct rocketnet_server_wire_totals_t * client_wire_totals;         // one per client slot
@@ -543,12 +535,6 @@ bool rocketnet_server_transport_slot_clean_for_test( struct rocketnet_server_tra
         }
     }
 
-    if ( !member && protocol->reassembly->newest_completed[client_index] != 0 )
-        member = "rocketnet_reassembly_set_t.newest_completed";
-    const uint8_t * slice = (const uint8_t *) ( protocol->reassembly->slots + client_index * protocol->reassembly->num_slots );
-    for ( size_t i = 0; !member && i < (size_t) protocol->reassembly->num_slots * sizeof( struct rocketnet_reassembly_slot_t ); i++ )
-        if ( slice[i] != 0 )
-            member = "rocketnet_reassembly_set_t.slots";
     if ( member )
     {
         if ( allocation_failed )
@@ -1219,11 +1205,7 @@ bool rocketnet_server_transport_memory_plan( const rocketnet_server_transport_co
     }
 
     const int clients = config->max_clients;
-    const int payload = ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES;
-    const int slots = config->max_fragmented_messages ? config->max_fragmented_messages : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
-    if ( clients < 1 || clients > ROCKETNET_MAX_CLIENTS || payload < ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ||
-         payload > ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES || slots < 1 || slots > ROCKETNET_MAX_FRAGMENTS ||
-         config->num_xdp_queues < 0 || config->num_xdp_queues > 1024 )
+    if ( clients < 1 || clients > ROCKETNET_MAX_CLIENTS || config->num_xdp_queues < 0 || config->num_xdp_queues > 1024 )
         return false;
 
     rocketnet_server_transport_layout_t layout;
@@ -1242,12 +1224,6 @@ bool rocketnet_server_transport_memory_plan( const rocketnet_server_transport_co
             return false;
     }
 
-    plan.reassembly_bytes = rocketnet_reassembly_memory_required_delivered( clients, slots, payload,
-                                                                            rocketnet_server_reassembly_delivered_capacity( clients, slots ),
-                                                                            rocketnet_server_reassembly_delivered_bytes( clients, slots, payload ) );
-    if ( !plan.reassembly_bytes || !rocketnet_memory_add( plan.reassembly_bytes, 4, rocketnet_allocation_overhead() ) )
-        return false;
-    plan.send_arena_bytes = rocketnet_send_arena_allocation_bytes( ROCKETNET_SEND_ARENA_SLOTS, ( payload + 15 ) & ~15 );
     if ( !rocketnet_builtin_server_memory_plan( config, transport, plan ) )
         return false;
 
@@ -1266,10 +1242,9 @@ bool rocketnet_server_transport_memory_plan( const rocketnet_server_transport_co
     }
 
     // loopback opens no socket and plans no I/O bytes: its endpoint is in the caller's hub
-    if ( !plan.transport_bytes || !plan.send_arena_bytes || ( plan.sockets != 0 && !plan.transport_io_bytes ) )
+    if ( !plan.transport_bytes || ( plan.sockets != 0 && !plan.transport_io_bytes ) )
         return false;
-    for ( uint64_t bytes : { plan.transport_bytes, plan.protocol_bytes, plan.reassembly_bytes,
-                             plan.send_arena_bytes, plan.transport_io_bytes, plan.registered_region_bytes } )
+    for ( uint64_t bytes : { plan.transport_bytes, plan.protocol_bytes, plan.transport_io_bytes, plan.registered_region_bytes } )
         if ( !rocketnet_memory_add( plan.allocator_bytes, 1, bytes ) )
             return false;
     if ( rocketnet_public_link_simulator_development() )
@@ -1567,22 +1542,6 @@ static bool rocketnet_server_transport_resolve_staged( const char * public_addre
     }
 
     config = &effective_config;
-
-    // Refuse large cross-field allocations before sockets, transports or arenas
-    // are acquired. Independent field maxima do not define a usable budget.
-
-    const int requested_payload = ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES;
-    const int requested_slots = config->max_fragmented_messages > 0 ? config->max_fragmented_messages : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
-    const int requested_clients = config->max_clients > 0 ? config->max_clients : ROCKETNET_DEFAULT_MAX_CLIENTS;
-    if ( !rocketnet_reassembly_memory_allowed_delivered( requested_clients, requested_slots, requested_payload,
-                                                         rocketnet_server_reassembly_delivered_capacity( requested_clients, requested_slots ),
-                                                         rocketnet_server_reassembly_delivered_bytes( requested_clients, requested_slots, requested_payload ) ) )
-    {
-        if ( status )
-            *status = ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED;
-        rocketnet_error( "server config refused: the reassembly memory for max_clients %d and max_fragmented_messages %d exceeds the fixed reassembly limit of %d MiB", requested_clients, requested_slots, ROCKETNET_REASSEMBLY_MEMORY_MIB );
-        return false;
-    }
 
     // the config's public_address, when set, displaces the create call's
     // address parameter here, before anything reads it. The address the
@@ -2074,11 +2033,6 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_s
     // the wall clock once (rocketnet_server_transport_update)
     server_transport->token_epoch_unix_seconds = config->token_epoch_unix_seconds;
 
-    // the fragmentation shape: zero means the defaults; the table already
-    // refused anything out of range, loudly, never clamped
-
-    server_transport->max_payload_bytes = ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES;
-
     const int default_send_capacity = config->max_clients > ROCKETNET_SERVER_MIN_SEND_PACKETS ? config->max_clients : ROCKETNET_SERVER_MIN_SEND_PACKETS;
     const int test_send_capacity = rocketnet_server_test_create_send_capacity <= server_transport->payload_ring.size ? rocketnet_server_test_create_send_capacity : 0;
     server_transport->send_capacity = test_send_capacity > 0 ? test_send_capacity : default_send_capacity;
@@ -2088,7 +2042,6 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_s
 #if ROCKETNET_DEV
     rocketnet_server_test_create_send_capacity = 0;
 #endif // #if ROCKETNET_DEV
-    const int max_fragmented_messages = config->max_fragmented_messages > 0 ? config->max_fragmented_messages : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
 
     const int development_keys = memcmp( config->server_public_key, rocketnet_dev_server_public_key, 32 ) == 0 ||
                                  memcmp( config->backend_public_key, rocketnet_dev_backend_public_key, 32 ) == 0;
@@ -2266,37 +2219,13 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_s
         memset( protocol->end_reasons, 0, (size_t) max_clients * sizeof( int ) );     // ROCKETNET_DISCONNECT_REASON_NONE
     if ( server_transport->client_wire_totals )
         memset( server_transport->client_wire_totals, 0, (size_t) max_clients * sizeof( struct rocketnet_server_wire_totals_t ) );
-    // one reassembly set per connection slot, created here at create and
-    // reached only from a connected slot (STANDARD.md _Fragmentation_).
-    // the delivered mirror sizes to the server's completion bound: the
-    // receive path drains one global array of up to
-    // rocketnet_server_receive_packets_per_update packets per update with no
-    // per-client share, and a slot clears at completion, so one client
-    // completes more payloads in an update than it has slots. half the
-    // drain plus the payloads begun in an earlier update (at most
-    // connections x slots) bounds the completions, and at that capacity
-    // BATCH_FULL stays zero under any load the drain delivers
-    // (rocketnet_server_reassembly_delivered_capacity; finding D2 of
-    // proofs/tla/README-FragmentsAndAcks.md). its bytes are what one update can
-    // complete -- the drained fragments plus the payloads half-held in
-    // slots -- not capacity x max payload
-    // (rocketnet_server_reassembly_delivered_bytes).
 
-    protocol->reassembly = rocketnet_reassembly_set_create_delivered( context, max_clients, max_fragmented_messages, server_transport->max_payload_bytes,
-                                                                      rocketnet_server_reassembly_delivered_capacity( max_clients, max_fragmented_messages ),
-                                                                      rocketnet_server_reassembly_delivered_bytes( max_clients, max_fragmented_messages, server_transport->max_payload_bytes ) );
     protocol->counters = &server_transport->counters;
-
-    // the arena's slot stride stays 16-aligned so every root handed to a
-    // caller is aligned for any word-based serializer
-
-    server_transport->send_arena = rocketnet_send_arena_create( context, ROCKETNET_SEND_ARENA_SLOTS,
-                                                                ( server_transport->max_payload_bytes + 15 ) & ~15 );
 
     if ( server_transport->io.operations->replay_mark )
         server_transport->replay_marks = rocketnet_server_replay_marks_create( context, max_clients );
 
-    if ( !protocol->encryption_map || !protocol->used_token_history || !protocol->client_slots || !protocol->acks || !protocol->connection_ids || !protocol->acked_connection_ids || !protocol->end_reasons || !server_transport->client_wire_totals || !protocol->reassembly || !server_transport->send_arena || ( server_transport->io.operations->replay_mark && !server_transport->replay_marks ) )
+    if ( !protocol->encryption_map || !protocol->used_token_history || !protocol->client_slots || !protocol->acks || !protocol->connection_ids || !protocol->acked_connection_ids || !protocol->end_reasons || !server_transport->client_wire_totals || ( server_transport->io.operations->replay_mark && !server_transport->replay_marks ) )
     {
         if ( status )
             *status = ROCKETNET_STATUS_OUT_OF_MEMORY;
@@ -2387,10 +2316,6 @@ void rocketnet_server_transport_destroy( struct rocketnet_server_transport_t * s
         rocketnet_free( server_transport->context, server_transport->protocol.end_reasons );
     if ( server_transport->client_wire_totals )
         rocketnet_free( server_transport->context, server_transport->client_wire_totals );
-    if ( server_transport->protocol.reassembly )
-        rocketnet_reassembly_set_destroy( server_transport->protocol.reassembly );
-    if ( server_transport->send_arena )
-        rocketnet_send_arena_destroy( server_transport->send_arena );
     if ( server_transport->replay_marks )
         rocketnet_server_replay_marks_destroy( server_transport->replay_marks );
     if ( server_transport->link_simulator )
@@ -2612,8 +2537,8 @@ void rocketnet_server_transport_begin_message_update( struct rocketnet_server_tr
 
 // proofs/tla/RNDriverSendStaging.tla Update
 // One received datagram, once counted: its shape and mapping, the protocol,
-// the response sealed straight into a send frame, and the payload (or the
-// payload a fragment completed) into this update's batch in arrival order.
+// the response sealed straight into a send frame, and the payload into this
+// update's batch in arrival order.
 // view_index names the packet in a staged transport's receive view, -1 on
 // the batch path.
 // The unit seam: the payload batch's capacity for this update's receive,
@@ -2664,6 +2589,8 @@ static void rocketnet_server_receive_one( struct rocketnet_server_transport_t * 
     if ( response )
         response += ROCKETNET_FRAME_WIRE_OFFSET;
 
+    // proofs/tla/SessionAcks.tla RecvData: the replay check, then the payload opens
+
     const int outcome = rocketnet_server_protocol_process_received( &server_transport->protocol, from, mapping_index,
                                                                     packet_data, packet_bytes,
                                                                     current_timestamp, current_time,
@@ -2711,31 +2638,6 @@ static void rocketnet_server_receive_one( struct rocketnet_server_transport_t * 
         // stays zero while that bound holds
         rocketnet_spam( "server dropped payload. receive batch full" );
         server_transport->counters.values[ROCKETNET_COUNTER_PAYLOAD_BATCH_FULL]++;
-    }
-
-    // a fragment that completed its payload delivers here, in arrival
-    // position: the reassembled bytes live in the reassembly's delivered
-    // arena, valid until the next update, and join the same batch
-    // attributed to their client slot
-
-    struct rocketnet_reassembly_set_t * reassembly = server_transport->protocol.reassembly;
-    if ( reassembly->completed_bytes > 0 )
-    {
-        if ( server_transport->payloads.num_payloads < batch_capacity )
-        {
-            const int index = server_transport->payloads.num_payloads;
-            server_transport->payloads.client_index[index] = payload_client_index;
-            server_transport->payloads.connection_id[index] = server_transport->protocol.payload_connection_id;
-            server_transport->payloads.payload_data[index] = reassembly->completed_payload;
-            server_transport->payloads.payload_bytes[index] = reassembly->completed_bytes;
-            server_transport->payloads.sequence[index] = 0;
-            server_transport->payloads.num_payloads++;
-        }
-        else
-        {
-            rocketnet_spam( "server dropped reassembled payload. receive batch full" );
-            server_transport->counters.values[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_BATCH_FULL]++;
-        }
     }
 }
 
@@ -2787,15 +2689,11 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
 
     server_transport->payloads.num_payloads = 0;
 
-    // the acked-packet batch drains per update: what the blocks processed
-    // below acknowledge lands here, valid until the next update
+    // proofs/tla/SessionAcks.tla Tick: the acked-packet batch drains per
+    // update: what the blocks processed below acknowledge lands here, valid
+    // until the next update
 
     server_transport->protocol.acks->num_acked = 0;
-
-    // the reassembly's delivered window is per update: payloads completed
-    // last update are invalid from here
-
-    rocketnet_reassembly_set_begin_update( server_transport->protocol.reassembly );
 
     // receive and process, responses sealed straight into send frames
 
@@ -3121,7 +3019,7 @@ uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_trans
     if ( server_transport->state != ROCKETNET_SERVER_TRANSPORT_RUNNING )
         return NULL;
 
-    if ( request_bytes < 1 || request_bytes > server_transport->max_payload_bytes )
+    if ( request_bytes < 1 || request_bytes > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
     {
         rocketnet_spam( "server start packet refused. request out of range" );
         return NULL;
@@ -3137,43 +3035,6 @@ uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_trans
         return NULL;
 
     uint8_t * frame = NULL;
-
-    if ( request_bytes > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
-    {
-        // above the wire's capacity: the arena backs the write, and
-        // finish_packet splits into fragments -- or collapses to one wire
-        // packet when the write turns out small. The lease supplies its
-        // public packet id independently of the transport.
-
-        frame = rocketnet_send_arena_acquire( server_transport->send_arena );
-        if ( !frame )
-        {
-            rocketnet_spam( "server send arena full. packet dropped" );
-            rocketnet_platform_atomic_add_u64( &server_transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_ARENA_FULL], 1 );
-            return NULL;
-        }
-
-        rocketnet_assert( ( (uintptr_t) frame % 16 ) == 0 );
-
-        context->frame = frame;
-        context->payload_index = 0;
-        context->payload_capacity = server_transport->max_payload_bytes;
-        context->packet_id = 0; // private lease supplies the public identifier
-        context->sequence = 0;
-        context->client_index = client_index;
-
-        // proofs/tla/RNDriverSendStaging.tla StartPacket: the caller holds this lease
-        // until finish, abort, or a reset.
-
-        if ( !server_transport->packet_leases.insert( *context ) )
-        {
-            rocketnet_platform_atomic_add_u64( &server_transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_LEASE_FULL], 1 );
-            rocketnet_server_transport_abort_packet_unchecked( server_transport, context, context->packet_id );
-            return NULL;
-        }
-
-        return frame;
-    }
 
     if ( rocketnet_server_transport_staged( server_transport ) )
     {
@@ -3241,13 +3102,6 @@ static void rocketnet_server_transport_abort_packet_unchecked( struct rocketnet_
     if ( !context->frame )
         return;
 
-    if ( rocketnet_send_arena_owns( server_transport->send_arena, context->frame ) )
-    {
-        // an arena slot needs no undo: the flush reclaims the whole arena
-        context->frame = NULL;
-        return;
-    }
-
     if ( rocketnet_server_transport_staged( server_transport ) )
     {
         rocketnet_server_transport_io_abort_packet( server_transport, backend_id, context->frame );
@@ -3293,60 +3147,6 @@ void rocketnet_server_transport_abort_packet( rocketnet_server_transport_t * ser
     context->frame = NULL;
 }
 
-// The fill-phase wire frame behind the arena finish: one sealed packet's
-// destination on any transport, reserved before sealing so a split goes
-// out whole or not at all. On the portable transport the frame is a payload
-// ring slot; on the staged transports it is a transport frame with its own packet
-// id for the transport's bookkeeping -- the application's join key stays the
-// context's.
-
-struct rocketnet_server_fill_frame_t
-{
-    uint8_t * data;
-    uint64_t socket_packet_id;      // the staged transports' bookkeeping id
-    uint64_t slot;                  // the portable payload ring slot
-    int client_index;
-    rocketnet_address_t to;
-};
-
-static int rocketnet_server_reserve_fill_frame( struct rocketnet_server_transport_t * server_transport,
-                                                const rocketnet_address_t * to, int client_index,
-                                                struct rocketnet_server_fill_frame_t * frame )
-{
-    frame->client_index = client_index;
-    frame->to = *to;
-
-    if ( rocketnet_server_transport_staged( server_transport ) )
-    {
-        frame->data = rocketnet_server_transport_io_start_packet( server_transport, to, &frame->socket_packet_id );
-        if ( !frame->data )
-            return 0;
-
-        rocketnet_platform_atomic_add_u64( &server_transport->send_staged, 1 );
-        return 1;
-    }
-
-    struct rocketnet_server_payload_ring_t * ring = &server_transport->payload_ring;
-
-    // proofs/tla/RNServerPayloadRingLayout.tla Acquire: one fetch-add; a slot at or past
-    // send_capacity is refused, though the counter has moved past it
-    frame->slot = rocketnet_platform_atomic_add_u64( &ring->num_packets, 1 );
-    if ( frame->slot >= (uint64_t) server_transport->send_capacity )
-    {
-        rocketnet_spam( "server payload ring full. packet dropped" );
-        rocketnet_platform_atomic_add_u64( &server_transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_RING_FULL], 1 );
-        frame->data = NULL;
-        return 0;
-    }
-
-    ring->info[frame->slot].to = *to;
-    ring->info[frame->slot].client_index = client_index;
-    ring->info[frame->slot].wire_bytes = 0;
-    frame->data = ring->data + frame->slot * ROCKETNET_FRAME_STRIDE;
-
-    return 1;
-}
-
 // The staged sent charge, from any game thread: relaxed atomics folded into
 // the current bucket by send_packets on the main thread.
 static void rocketnet_server_charge_staged_frame( struct rocketnet_server_transport_t * server_transport,
@@ -3357,213 +3157,7 @@ static void rocketnet_server_charge_staged_frame( struct rocketnet_server_transp
     rocketnet_server_wire_totals_add_sent_atomic( server_transport, client_index, address_type, wire_bytes );
 }
 
-// Returns true when a staged frame left (the staging finished it or the link
-// took it) and is the caller's to charge with
-// rocketnet_server_charge_staged_frame; a portable frame returns false and is
-// charged by the flush, once the link took it. A frame the link was handed
-// is back in the staging either way, so its data is cleared and a later
-// withdrawal does not return it twice.
-static bool rocketnet_server_commit_fill_frame( struct rocketnet_server_transport_t * server_transport,
-                                                struct rocketnet_server_fill_frame_t * frame, int wire_bytes )
-{
-    rocketnet_assert( server_transport && frame && frame->data && wire_bytes > 0 && wire_bytes <= ROCKETNET_RECEIVE_CEILING );
-
-    if ( !server_transport || !frame || !frame->data || wire_bytes <= 0 || wire_bytes > ROCKETNET_RECEIVE_CEILING )
-        return false;
-    if ( rocketnet_server_transport_staged( server_transport ) )
-    {
-        return rocketnet_server_commit_staged( server_transport, &frame->to, frame->socket_packet_id, &frame->data, wire_bytes );
-    }
-
-    // proofs/tla/RNServerPayloadRingLayout.tla Finish: the slot the fill frame kept
-    server_transport->payload_ring.info[frame->slot].wire_bytes = wire_bytes;
-
-    return false;
-}
-
-static void rocketnet_server_abort_fill_frame( struct rocketnet_server_transport_t * server_transport,
-                                               struct rocketnet_server_fill_frame_t * frame )
-{
-    if ( !frame->data )
-        return;
-    if ( rocketnet_server_transport_staged( server_transport ) )
-    {
-        rocketnet_server_transport_io_abort_packet( server_transport, frame->socket_packet_id, frame->data );
-        frame->data = NULL;
-        return;
-    }
-
-    // proofs/tla/RNServerPayloadRingLayout.tla Abort: the slot the fill frame kept
-    server_transport->payload_ring.info[frame->slot].wire_bytes = 0;
-    frame->data = NULL;
-}
-
-// proofs/tla/FragmentsAndAcks.tla BurnOne: a small payload whose seal fails after its sequence was taken leaves that sequence unsent.
-// proofs/tla/FragmentsAndAcks.tla BurnFragmented: a seal refusal after the fragment reservation, payload id and aggregate withdraws the frames and sends nothing.
-// The arena finish: the request was over the wire's capacity, so the
-// payload sits contiguous in an arena slot. A write that turned out to fit
-// one packet collapses to a single ordinary payload -- one copy into one
-// wire frame, cheaper than fragmenting -- and a genuinely large one splits
-// into type 9 fragments. Every wire frame is reserved before anything
-// seals, so a reservation shortfall drops the payload whole; a seal
-// refusal mid-split -- possible only through a fill-contract violation,
-// since connections are stable during a fill -- withdraws every reserved
-// frame on the portable and gso transports, whose staging is untouched until
-// the main-thread flush, while frames already committed to the xdp socket
-// stay committed there (its worker drains staging asynchronously), a
-// partial payload the semantics already price as fragments lost on the
-// wire. Returns the total wire bytes staged.
-
-static int rocketnet_server_transport_finish_arena_packet( struct rocketnet_server_transport_t * server_transport, struct rocketnet_packet_context_t * context, int payload_bytes )
-{
-    rocketnet_address_t to;
-    if ( !rocketnet_server_protocol_client_address( &server_transport->protocol, context->client_index, &to ) )
-    {
-        context->frame = NULL;
-        return 0;
-    }
-
-    if ( payload_bytes <= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
-    {
-        struct rocketnet_server_fill_frame_t frame;
-        if ( !rocketnet_server_reserve_fill_frame( server_transport, &to, context->client_index, &frame ) )
-        {
-            context->frame = NULL;
-            return 0;
-        }
-
-        memcpy( frame.data + ROCKETNET_FRAME_PAYLOAD_OFFSET, context->frame, (size_t) payload_bytes );
-
-        if ( !rocketnet_server_protocol_start_payload( &server_transport->protocol, context->client_index, &to, &context->sequence ) )
-        {
-            rocketnet_server_abort_fill_frame( server_transport, &frame );
-            context->frame = NULL;
-            return 0;
-        }
-
-        int wire_bytes = rocketnet_server_protocol_seal_payload_frame( &server_transport->protocol, context->client_index,
-                                                                       context->sequence, context->packet_id,
-                                                                       frame.data + ROCKETNET_FRAME_WIRE_OFFSET,
-                                                                       payload_bytes, server_transport->time );
-        if ( wire_bytes == 0 )
-        {
-            rocketnet_server_abort_fill_frame( server_transport, &frame );
-            context->frame = NULL;
-            return 0;
-        }
-
-        // a datagram is counted sent only once the link took it
-
-        if ( rocketnet_server_commit_fill_frame( server_transport, &frame, wire_bytes ) )
-            rocketnet_server_charge_staged_frame( server_transport, frame.client_index, frame.to.type, wire_bytes );
-        context->frame = NULL;
-        return wire_bytes;
-    }
-
-    int fragment_count, fragment_stride;
-
-    if ( !rocketnet_fragment_plan( payload_bytes, &fragment_count, &fragment_stride ) )
-    {
-        context->frame = NULL;
-        return 0;
-    }
-
-    struct rocketnet_server_fill_frame_t frames[ROCKETNET_MAX_FRAGMENTS];
-
-    for ( int i = 0; i < fragment_count; i++ )
-    {
-        if ( !rocketnet_server_reserve_fill_frame( server_transport, &to, context->client_index, &frames[i] ) )
-        {
-            // all or nothing: a partial payload is a dead payload, so the
-            // frames already reserved go back
-            rocketnet_spam( "server dropped fragmented packet. could not reserve every wire frame" );
-            for ( int j = 0; j < i; j++ )
-                rocketnet_server_abort_fill_frame( server_transport, &frames[j] );
-            context->frame = NULL;
-            return 0;
-        }
-    }
-
-    // Reserve the whole sequence block only after every wire frame is ready.
-    // Fragment 0 uses the first sequence, preserving the wire order without
-    // spending any sequence when start or finish cannot complete.
-
-    uint64_t base_sequence = 0;
-    if ( !rocketnet_server_protocol_start_fragments( &server_transport->protocol, context->client_index, fragment_count, &base_sequence ) )
-    {
-        for ( int i = 0; i < fragment_count; i++ )
-            rocketnet_server_abort_fill_frame( server_transport, &frames[i] );
-        context->frame = NULL;
-        return 0;
-    }
-
-    context->sequence = base_sequence;
-
-    uint32_t payload_id = rocketnet_server_protocol_next_fragment_payload_id( &server_transport->protocol, context->client_index );
-    uint64_t aggregate = rocketnet_ack_endpoint_open_aggregate( &server_transport->protocol.acks->endpoints[context->client_index],
-                                                                context->packet_id, fragment_count );
-
-    int total_wire_bytes = 0;
-    int fragment_wire_bytes[ROCKETNET_MAX_FRAGMENTS];
-    bool fragment_sent[ROCKETNET_MAX_FRAGMENTS];
-
-    for ( int i = 0; i < fragment_count; i++ )
-    {
-        const uint64_t sequence = base_sequence + (uint64_t) i;
-        const int fragment_bytes = i < fragment_count - 1 ? fragment_stride : payload_bytes - fragment_stride * ( fragment_count - 1 );
-        int wire_bytes = rocketnet_server_protocol_seal_fragment( &server_transport->protocol, context->client_index,
-                                                                  sequence, payload_id, i, fragment_count,
-                                                                  context->frame + i * fragment_stride, fragment_bytes,
-                                                                  aggregate, server_transport->time,
-                                                                  frames[i].data + ROCKETNET_FRAME_WIRE_OFFSET );
-        if ( wire_bytes == 0 )
-        {
-            // the xdp socket's staging drains asynchronously, so frames
-            // already committed to it stay committed (fragments lost on
-            // the wire, priced by the semantics); the portable and gso
-            // stagings are untouched until the main-thread flush, so the
-            // whole reservation withdraws
-
-            const int first_withdrawn = rocketnet_server_transport_io_has( server_transport->io, ROCKETNET_TRANSPORT_FINISH_FINAL ) ? i : 0;
-
-            // a datagram is counted sent only once the link took it, and a
-            // withdrawn frame never left: charge the frames that stay
-            // committed and the ones the link already took (their data is
-            // cleared, so the withdrawal below passes over them)
-
-            for ( int j = 0; j < i; j++ )
-            {
-                if ( fragment_sent[j] && ( j < first_withdrawn || !frames[j].data ) )
-                    rocketnet_server_charge_staged_frame( server_transport, frames[j].client_index, frames[j].to.type, fragment_wire_bytes[j] );
-            }
-
-            for ( int j = first_withdrawn; j < fragment_count; j++ )
-                rocketnet_server_abort_fill_frame( server_transport, &frames[j] );
-            context->frame = NULL;
-            return 0;
-        }
-
-        fragment_sent[i] = rocketnet_server_commit_fill_frame( server_transport, &frames[i], wire_bytes );
-        fragment_wire_bytes[i] = wire_bytes;
-        total_wire_bytes += wire_bytes;
-    }
-
-    // a datagram is counted sent only once the link took it: the fragments
-    // are charged after the whole split is committed, so a withdrawal never
-    // leaves a charge behind
-
-    for ( int i = 0; i < fragment_count; i++ )
-    {
-        if ( fragment_sent[i] )
-            rocketnet_server_charge_staged_frame( server_transport, frames[i].client_index, frames[i].to.type, fragment_wire_bytes[i] );
-    }
-
-    context->frame = NULL;
-
-    return total_wire_bytes;
-}
-
-// proofs/tla/FragmentsAndAcks.tla BurnOne: a seal refusal after the sequence was taken leaves that sequence unsent.
+// proofs/tla/SessionAcks.tla BurnOne: a seal refusal after the sequence was taken leaves that sequence unsent.
 static int rocketnet_server_transport_finish_packet_unchecked( struct rocketnet_server_transport_t * server_transport, struct rocketnet_packet_context_t * context, int payload_bytes, uint64_t backend_id )
 {
     rocketnet_assert( server_transport );
@@ -3583,9 +3177,6 @@ static int rocketnet_server_transport_finish_packet_unchecked( struct rocketnet_
         rocketnet_server_transport_abort_packet_unchecked( server_transport, context, backend_id );
         return 0;
     }
-
-    if ( rocketnet_send_arena_owns( server_transport->send_arena, context->frame ) )
-        return rocketnet_server_transport_finish_arena_packet( server_transport, context, payload_bytes );
 
     rocketnet_address_t to;
     if ( !rocketnet_server_protocol_start_payload( &server_transport->protocol, context->client_index, &to, &context->sequence ) )
@@ -3670,7 +3261,7 @@ int rocketnet_server_transport_finish_packet( rocketnet_server_transport_t * ser
     return result;
 }
 
-// proofs/tla/FragmentsAndAcks.tla Flush: puts this update's staged packets on the wire in fill order.
+// proofs/tla/SessionAcks.tla Flush: puts this update's staged packets on the wire in fill order.
 // The flush of send_packets, and of each stop step (shutdown: the
 // nonwaiting backend send, and a staged transport is flushed whatever was
 // staged, so work it kept from an earlier flush is retried every step).
@@ -3707,8 +3298,6 @@ static void rocketnet_server_transport_flush( struct rocketnet_server_transport_
         }
 
         rocketnet_server_link_flush( server_transport );
-
-        rocketnet_send_arena_reset( server_transport->send_arena );
         return;
     }
 
@@ -3759,8 +3348,6 @@ static void rocketnet_server_transport_flush( struct rocketnet_server_transport_
     rocketnet_server_flush_control_buffer( server_transport, shutdown );
 
     rocketnet_server_link_flush( server_transport );
-
-    rocketnet_send_arena_reset( server_transport->send_arena );
 }
 
 void rocketnet_server_transport_send_packets( struct rocketnet_server_transport_t * server_transport )
@@ -3793,7 +3380,7 @@ void rocketnet_server_transport_send_packet( struct rocketnet_server_transport_t
     rocketnet_assert( server_transport );
     rocketnet_assert( payload_data );
 
-    if ( payload_bytes < 1 || payload_bytes > server_transport->max_payload_bytes )
+    if ( payload_bytes < 1 || payload_bytes > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
         return;
 
     struct rocketnet_packet_context_t context;
@@ -4213,7 +3800,7 @@ int rocketnet_server_transport_max_payload_bytes( struct rocketnet_server_transp
     if ( !rocketnet_api_null_guard( server_transport ) )
         return 0;
     rocketnet_assert( server_transport );
-    return server_transport->max_payload_bytes;
+    return ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
 }
 
 int rocketnet_server_transport_acked_packets( struct rocketnet_server_transport_t * server_transport, const int ** client_index, const uint64_t ** packet_ids )
@@ -4358,13 +3945,6 @@ int rocketnet_server_transport_test_reflush_flags( unsigned int flags )
     if ( !transport )
         return -1;
     void * storage = transport;
-    transport->send_arena = rocketnet_send_arena_create( NULL, 1, 1 );
-    if ( !transport->send_arena )
-    {
-        transport->~rocketnet_server_transport_t();
-        rocketnet_free( NULL, storage );
-        return -1;
-    }
 
     int flushes = 0;
     rocketnet_server_transport_io_operations_t operations = {};
@@ -4375,7 +3955,6 @@ int rocketnet_server_transport_test_reflush_flags( unsigned int flags )
     transport->send_staged = 1;
     rocketnet_server_transport_send_packets( transport );
     rocketnet_server_transport_send_packets( transport );
-    rocketnet_send_arena_destroy( transport->send_arena );
     transport->~rocketnet_server_transport_t();
     rocketnet_free( NULL, storage );
 
@@ -4402,14 +3981,13 @@ int rocketnet_server_transport_test_staged_simulator_flush()
     if ( !transport )
         return -1;
     void * storage = transport;
-    transport->send_arena = rocketnet_send_arena_create( NULL, 1, 1 );
     transport->link_simulator = rocketnet_network_simulator_create( NULL, 4, 1 );
 
     const bool mutex_created = transport->link_simulator &&
                                rocketnet_platform_mutex_create( &transport->link_simulator_mutex );
     int result = -1;
 
-    if ( transport->send_arena && transport->link_simulator && mutex_created &&
+    if ( transport->link_simulator && mutex_created &&
          rocketnet_network_simulator_patterns( transport->link_simulator, 0, 2 ) )
     {
         int flushes = 0;
@@ -4443,8 +4021,6 @@ int rocketnet_server_transport_test_staged_simulator_flush()
         rocketnet_platform_mutex_destroy( &transport->link_simulator_mutex );
     if ( transport->link_simulator )
         rocketnet_network_simulator_destroy( transport->link_simulator );
-    if ( transport->send_arena )
-        rocketnet_send_arena_destroy( transport->send_arena );
     transport->~rocketnet_server_transport_t();
     rocketnet_free( NULL, storage );
 

@@ -69,7 +69,7 @@ int rocketnet_ack_block_write( uint8_t * output, const struct rocketnet_ack_bloc
 // exactly while nothing is opened, and every other block has a first range
 // length of at least one (proofs/tla/AckBlockWrap.tla WriteBlock)
 
-// proofs/tla/FragmentsAndAcks.tla SendAck: builds the block the session packet carries from the replay window
+// proofs/tla/SessionAcks.tla SendAck: builds the block the session packet carries from the replay window
 // proofs/tla/RNSentHistory.tla ReceiverAck: restates the received set inside the window as one ack block
 
 // proofs/tla/RNAckBuildLayout.tla Step and Finish: the word load, the clz phases, the range cap and the run emitted at the floor
@@ -312,7 +312,6 @@ static bool rocketnet_sent_record_state_equal( const rocketnet_sent_packet_recor
 {
     return a->sequence == b->sequence &&
            a->packet_id == b->packet_id &&
-           a->aggregate_id == b->aggregate_id &&
            a->send_time == b->send_time &&
            a->wire_bytes == b->wire_bytes &&
            a->acked == b->acked &&
@@ -325,13 +324,6 @@ static bool rocketnet_received_record_state_equal( const rocketnet_received_pack
     return a->sequence == b->sequence &&
            a->receive_time == b->receive_time &&
            a->wire_bytes == b->wire_bytes;
-}
-
-static bool rocketnet_aggregate_state_equal( const rocketnet_packet_aggregate_t * a, const rocketnet_packet_aggregate_t * b )
-{
-    return a->id == b->id &&
-           a->packet_id == b->packet_id &&
-           a->remaining == b->remaining;
 }
 
 bool rocketnet_ack_endpoint_state_equal( const struct rocketnet_ack_endpoint_t * a, const struct rocketnet_ack_endpoint_t * b )
@@ -349,10 +341,6 @@ bool rocketnet_ack_endpoint_state_equal( const struct rocketnet_ack_endpoint_t *
 
     for ( uint64_t i = 0; i < ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE; i++ )
         if ( rocketnet_ack_bit( a->received_written, i ) && !rocketnet_received_record_state_equal( &a->received[i], &b->received[i] ) )
-            return false;
-
-    for ( uint64_t i = 0; i < ROCKETNET_PACKET_AGGREGATE_BUFFER_SIZE; i++ )
-        if ( rocketnet_ack_bit( a->aggregates_written, i ) && !rocketnet_aggregate_state_equal( &a->aggregates[i], &b->aggregates[i] ) )
             return false;
 
     return true;
@@ -379,7 +367,7 @@ bool rocketnet_ack_endpoint_state_equal( const struct rocketnet_ack_endpoint_t *
 static_assert( ROCKETNET_ACK_RECEIVED_STATS_STORAGE_WORDS <= ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE,
                "received summaries and suffixes fit in reclaimed record words" );
 
-// proofs/tla/RNWrittenRing.tla Reset. Every field but the three record rings, which
+// proofs/tla/RNWrittenRing.tla Reset. Every field but the two record rings, which
 // a written bit guards (Write sets it, every Read checks it first): the
 // rings' payloads are never zeroed. Reset also clears the 64 generation
 // tags and the cached pieces' base in the received records' reclaimed stats
@@ -391,8 +379,7 @@ void rocketnet_ack_endpoint_reset( struct rocketnet_ack_endpoint_t * endpoint )
 {
     rocketnet_assert( endpoint );
     static_assert( offsetof( rocketnet_ack_endpoint_t, received ) > offsetof( rocketnet_ack_endpoint_t, sent ) &&
-                       offsetof( rocketnet_ack_endpoint_t, aggregates ) > offsetof( rocketnet_ack_endpoint_t, received ) &&
-                       offsetof( rocketnet_ack_endpoint_t, rtt_history ) > offsetof( rocketnet_ack_endpoint_t, aggregates ),
+                       offsetof( rocketnet_ack_endpoint_t, rtt_history ) > offsetof( rocketnet_ack_endpoint_t, received ),
                    "the record rings are one span, before the rtt history" );
 
     memset( (void *) endpoint, 0, offsetof( rocketnet_ack_endpoint_t, sent ) );
@@ -1154,18 +1141,17 @@ static void rocketnet_ack_stats_publish_received( struct rocketnet_ack_endpoint_
 }
 
 // proofs/tla/RNSentHistory.tla Send
-// proofs/tla/FragmentsAndAcks.tla StartPayload: writes the one sequence's record with its packet id and sets its held and unacked bits
+// proofs/tla/SessionAcks.tla StartPayload: writes the one sequence's record with its packet id and sets its held and unacked bits
 // proofs/tla/RNServerStats.tla Send: takes the sent sequence (past the high-water mark, or a refused stale one)
 // proofs/tla/RNServerStats.tla Write: removes the overwritten record from the aggregates, writes the ring slot and adds it
 
 enum rocketnet_ack_sent_result_t rocketnet_ack_endpoint_record_sent_classified( struct rocketnet_ack_endpoint_t * endpoint,
                                                                                 uint64_t sequence, int wire_bytes,
                                                                                 uint64_t packet_id, int has_packet_id,
-                                                                                uint64_t aggregate_id, double time )
+                                                                                double time )
 {
     rocketnet_assert( endpoint );
     rocketnet_assert( sequence != 0 );
-    rocketnet_assert( !( has_packet_id && aggregate_id != 0 ) );        // a fragment's packet id lives in its aggregate
 
     if ( !sequence || !isfinite( time ) )
         return ROCKETNET_ACK_SENT_REFUSED_STALE;
@@ -1208,7 +1194,6 @@ enum rocketnet_ack_sent_result_t rocketnet_ack_endpoint_record_sent_classified( 
 
     record->sequence = sequence;
     record->packet_id = packet_id;
-    record->aggregate_id = aggregate_id;
     record->send_time = time;
     record->wire_bytes = (uint32_t) wire_bytes;
     record->acked = 0;
@@ -1248,10 +1233,10 @@ enum rocketnet_ack_sent_result_t rocketnet_ack_endpoint_record_sent_classified( 
 bool rocketnet_ack_endpoint_record_sent( struct rocketnet_ack_endpoint_t * endpoint,
                                          uint64_t sequence, int wire_bytes,
                                          uint64_t packet_id, int has_packet_id,
-                                         uint64_t aggregate_id, double time )
+                                         double time )
 {
     return rocketnet_ack_endpoint_record_sent_classified( endpoint, sequence, wire_bytes, packet_id, has_packet_id,
-                                                          aggregate_id, time ) == ROCKETNET_ACK_SENT_RECORDED;
+                                                          time ) == ROCKETNET_ACK_SENT_RECORDED;
 }
 
 // proofs/tla/RNSentHistory.tla Send
@@ -1289,32 +1274,6 @@ void rocketnet_ack_endpoint_mark_keep_alive( struct rocketnet_ack_endpoint_t * e
         record->was_keep_alive = 1;
 
     rocketnet_platform_spin_unlock_u64( &endpoint->sent_lock );
-}
-
-// proofs/tla/FragmentsAndAcks.tla StartFragmented: draws the aggregate id and pins the packet id behind cnt fragment acks
-
-uint64_t rocketnet_ack_endpoint_open_aggregate( struct rocketnet_ack_endpoint_t * endpoint,
-                                                uint64_t packet_id, int fragment_count )
-{
-    rocketnet_assert( endpoint );
-    rocketnet_assert( fragment_count >= 2 );
-
-    // claim and publish together: arbitrarily many fill threads may lap the finite aggregate ring, and an older writer must not replace a newer one
-
-    rocketnet_platform_spin_lock_u64( &endpoint->sent_lock );
-
-    uint64_t id = rocketnet_platform_atomic_add_u64( &endpoint->num_aggregates, 1 ) + 1;
-
-    struct rocketnet_packet_aggregate_t * aggregate = &endpoint->aggregates[id % ROCKETNET_PACKET_AGGREGATE_BUFFER_SIZE];
-    rocketnet_ack_set_bit( endpoint->aggregates_written, id % ROCKETNET_PACKET_AGGREGATE_BUFFER_SIZE );
-
-    aggregate->id = id;
-    aggregate->packet_id = packet_id;
-    aggregate->remaining = (uint32_t) fragment_count;
-
-    rocketnet_platform_spin_unlock_u64( &endpoint->sent_lock );
-
-    return id;
 }
 
 // proofs/tla/RNServerStats.tla Send: takes any received sequence the remote end chose
@@ -1461,7 +1420,7 @@ static void rn_bitmap_walk_bits_desc( const uint64_t * bitmap, uint32_t a, uint3
 
 // marks one described run of received sequences [low, high], clamped to the
 // retained window, and appends newly acknowledged packet ids to the batch
-// (proofs/tla/FragmentsAndAcks.tla, RecvAck: SurfacedOnce, SurfacedOnlyIfOpened,
+// (proofs/tla/SessionAcks.tla, RecvAck: SurfacedOnce, SurfacedOnlyIfOpened,
 // AckedMeansSurfaced, BurnedNeverNamed)
 // proofs/tla/RNSentHistory.tla ReceiveAck
 // proofs/tla/RNServerStats.tla Ack: marks each held, unacknowledged record acked and moves it to the acked aggregates
@@ -1502,7 +1461,7 @@ static int rocketnet_ack_apply_run( struct rocketnet_ack_endpoint_t * endpoint,
     int newly_acked = 0;
 
     // RNSentHistory ReceiveAck marks exactly the named records that are held
-    // and unacknowledged; FragmentsAndAcks RecvAck carries the batch deferral
+    // and unacknowledged; SessionAcks RecvAck carries the batch deferral
     // (SurfacedOnce, AckedMeansSurfaced, BurnedNeverNamed,
     // OpenedSurfacesOrLaps). The held count over the named slots yields the
     // unknown count arithmetically (the named-but-never-sent sequences); only
@@ -1543,11 +1502,9 @@ static int rocketnet_ack_apply_run( struct rocketnet_ack_endpoint_t * endpoint,
         // a packet id that cannot fit the batch is deferred, never dropped:
         // the record stays unacknowledged, so a later block -- every block
         // restates the recent interval -- surfaces it into a drained batch.
-        // the counter records the deferral. a fragment record defers on the
-        // same condition, because its acknowledgment may complete its
-        // aggregate and surface the payload's packet id.
+        // the counter records the deferral.
 
-        if ( ( record->has_packet_id || record->aggregate_id != 0 ) && *acked_count >= acked_capacity )
+        if ( record->has_packet_id && *acked_count >= acked_capacity )
         {
             ( *batch_full_counter )++;
         }
@@ -1592,25 +1549,7 @@ static int rocketnet_ack_apply_run( struct rocketnet_ack_endpoint_t * endpoint,
             }
 
             if ( record->has_packet_id )
-            {
                 acked_packet_ids[( *acked_count )++] = record->packet_id;
-            }
-            else if ( record->aggregate_id != 0 )
-            {
-                // one fragment of an aggregated payload: the payload's packet
-                // id surfaces only when every fragment's wire packet is
-                // acknowledged. a recycled aggregate slot no longer names this
-                // id and the ack is simply absorbed.
-
-                struct rocketnet_packet_aggregate_t * aggregate = &endpoint->aggregates[record->aggregate_id % ROCKETNET_PACKET_AGGREGATE_BUFFER_SIZE];
-                if ( rocketnet_ack_bit( endpoint->aggregates_written, record->aggregate_id % ROCKETNET_PACKET_AGGREGATE_BUFFER_SIZE ) &&
-                     aggregate->id == record->aggregate_id && aggregate->remaining > 0 )
-                {
-                    aggregate->remaining--;
-                    if ( aggregate->remaining == 0 )
-                        acked_packet_ids[( *acked_count )++] = aggregate->packet_id;
-                }
-            }
         }
     };
 

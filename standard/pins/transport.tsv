@@ -15,8 +15,7 @@ connection payload packet	ROCKETNET_CONNECTION_PAYLOAD_PACKET	5
 connection disconnect packet	ROCKETNET_CONNECTION_DISCONNECT_PACKET	6
 connection cookie packet	ROCKETNET_CONNECTION_COOKIE_PACKET	7
 connection ack packet	ROCKETNET_CONNECTION_ACK_PACKET	8
-connection payload fragment packet	ROCKETNET_CONNECTION_FRAGMENT_PACKET	9
-first reserved packet type	ROCKETNET_CONNECTION_FRAGMENT_PACKET + 1	10
+first reserved packet type	ROCKETNET_FIRST_RESERVED_PACKET_TYPE	9
 unkeyed filter epoch	ROCKETNET_FILTER_EPOCH_UNKEYED	0
 handshake client to server label	ROCKETNET_KDF_CONTEXT_HANDSHAKE_C2S	"RKTNHNDC"
 handshake server to client label	ROCKETNET_KDF_CONTEXT_HANDSHAKE_S2C	"RKTNHNDS"
@@ -49,15 +48,11 @@ user data	ROCKETNET_USER_DATA_BYTES	256
 token key	ROCKETNET_KEY_BYTES	32
 token identifier	ROCKETNET_TOKEN_IDENTIFIER_BYTES	16
 ack block minimum	ROCKETNET_ACK_BLOCK_MIN_BYTES	7
-fragment header	ROCKETNET_FRAGMENT_HEADER_BYTES	6
-fragments per payload maximum	ROCKETNET_MAX_FRAGMENTS	256
 link MTU	ROCKETNET_LINK_MTU_BYTES	1500
 receive ceiling	ROCKETNET_RECEIVE_PACKET_BYTES	1452
 maximum packet size limit	ROCKETNET_RECEIVE_PACKET_BYTES	1452
 payload capacity	ROCKETNET_MAX_PACKET_PAYLOAD_BYTES	1416
 received payload maximum	ROCKETNET_RECEIVE_PAYLOAD_BYTES	1416
-fragment stride	ROCKETNET_MAX_FRAGMENT_BYTES	1413
-received fragment stride maximum	ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES	1413
 maximum packet size	ROCKETNET_SEND_BUDGET	1452
 send rate	ROCKETNET_DEFAULT_SEND_RATE	10
 cookie lifetime	ROCKETNET_DEFAULT_COOKIE_LIFETIME_SECONDS	3
@@ -70,11 +65,7 @@ used-token history per slot	ROCKETNET_USED_TOKEN_HISTORY_RATIO	8
 server protocol_id	rn_pin_server_default_protocol_id	0
 server max_clients	rn_pin_server_default_max_clients	1000
 server max_clients limit	ROCKETNET_MAX_CLIENTS	1000
-server max_fragmented_messages	ROCKETNET_DEFAULT_REASSEMBLY_SLOTS	8
 server transport	rn_pin_server_default_transport	"auto"
 server max_timeout_seconds	rn_pin_server_default_max_timeout_seconds	60
 server handshake_deadline_seconds	rn_pin_server_default_handshake_deadline_seconds	5
-client max_fragmented_messages	ROCKETNET_DEFAULT_REASSEMBLY_SLOTS	8
 client transport	rn_pin_client_default_transport	"auto"
-fragmented payload maximum	ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES	361728
-reassembled payload maximum	ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES	16384

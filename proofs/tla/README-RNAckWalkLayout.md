@@ -4,7 +4,7 @@
 bitmaps in `sdk/rocketnet_ack.cpp`. Sequence `s` lives at slot `s % N`, word
 `slot >> 6`, bit `slot & 63`; `sent_held` has a slot's bit while it holds its
 in-window sequence, `sent_unacked` while that sequence is also
-unacknowledged. `FragmentsAndAcks.tla` checks the reconcile that keeps them
+unacknowledged. `SessionAcks.tla` checks the reconcile that keeps them
 so, slot by slot; this model carries the word arithmetic that reads them.
 Every input is checked where it stands (`Next` is a stutter).
 

@@ -15,7 +15,7 @@
 //   0 = the connection request: every field at its offset, the prefilter
 //       naming type 0, the fixed wire size
 //   1 = the connection cookie: likewise, type 7
-//   2 = a sealed packet of a fuzz-chosen sealed type (1-6, 8, 9) under a
+//   2 = a sealed packet of a fuzz-chosen sealed type (1-6, 8) under a
 //       fuzz-chosen key, salt, protocol id and sequence: the open returns the
 //       plaintext and the clear session nonce exactly, the wire carries the
 //       sequence's low 32 bits, reconstruction from any highest-opened within
@@ -26,7 +26,7 @@
 //   4 = an ack block built from a fuzz-chosen replay window: the reader
 //       accepts it whole, and every sequence it names is one the window
 //       holds, at or above the window's floor
-//   5 = the fragment header: payload id, index and count survive
+//   5 = unassigned: the input is ignored
 //   6 = the signed connect data and the private block: every field survives
 //   7 = addresses: text -> parse -> to_string -> parse is the same address,
 //       and an address from fuzz bytes -> to_string -> parse is itself
@@ -37,7 +37,6 @@
 #include "rocketnet_protocol.h"
 #include "rocketnet_ack.h"
 #include "rocketnet_replay.h"
-#include "rocketnet_fragment.h"
 #include "rocketnet_connect_token.h"
 #include "rocketnet_address.h"
 #include "rocketnet_wire.h"
@@ -176,7 +175,7 @@ static void fuzz_cookie( struct fuzz_reader_t * r )
 static const uint8_t fuzz_sealed_types[] = {
     ROCKETNET_CONNECTION_DENIED_PACKET, ROCKETNET_CONNECTION_CHALLENGE_PACKET, ROCKETNET_CONNECTION_RESPONSE_PACKET,
     ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, ROCKETNET_CONNECTION_PAYLOAD_PACKET, ROCKETNET_CONNECTION_DISCONNECT_PACKET,
-    ROCKETNET_CONNECTION_ACK_PACKET, ROCKETNET_CONNECTION_FRAGMENT_PACKET
+    ROCKETNET_CONNECTION_ACK_PACKET
 };
 
 // the clear session nonce rides types 1 and 2; the client ephemeral key is
@@ -369,31 +368,6 @@ static void fuzz_ack_build_read( struct fuzz_reader_t * r )
 }
 
 // -----------------------------------------------------------------------
-//  5: the fragment header
-// -----------------------------------------------------------------------
-
-static void fuzz_fragment_header( struct fuzz_reader_t * r )
-{
-    uint32_t payload_id = (uint32_t) fuzz_u64( r );
-    if ( payload_id == 0 )
-    {
-        payload_id = 1;
-    }
-
-    const int count = 2 + fuzz_u8( r ) % ( ROCKETNET_MAX_FRAGMENTS - 1 );
-    const int index = fuzz_u8( r ) % count;
-
-    uint8_t header[ROCKETNET_FRAGMENT_HEADER_BYTES];
-    rocketnet_write_fragment_header( header, payload_id, index, count );
-
-    uint32_t read_id = 0;
-    int read_index = -1;
-    int read_count = -1;
-    rocketnet_read_fragment_header( header, &read_id, &read_index, &read_count );
-    rocketnet_fuzz_require( read_id == payload_id && read_index == index && read_count == count, "a fragment header round-trips" );
-}
-
-// -----------------------------------------------------------------------
 //  6: the connect token's two layouts
 // -----------------------------------------------------------------------
 
@@ -544,12 +518,11 @@ static void fuzz_write_seeds( const char * dir )
     static uint8_t body[2048];
     memset( body, 0, sizeof( body ) );
 
-    // 0, 1, 5, 6: the fields at their defaults
+    // 0, 1, 6: the fields at their defaults
 
     body[0] = 1;
     fuzz_write_seed( dir, "request_with_cookie", 0, body, 1 + ROCKETNET_COOKIE_FIELD_BYTES + ROCKETNET_CONNECTION_SALT_BYTES + ROCKETNET_KEY_BYTES + ROCKETNET_SIGNED_CONNECT_DATA_BYTES + ROCKETNET_SIGNATURE_BYTES );
     fuzz_write_seed( dir, "cookie_fields", 1, body, ROCKETNET_CONNECTION_SALT_BYTES + 8 + ROCKETNET_COOKIE_MAC_BYTES );
-    fuzz_write_seed( dir, "fragment_header_fields", 5, body, 10 );
     fuzz_write_seed( dir, "token_layout_fields", 6, body, 900 );
 
     // 2: every sealed type at sequence one with a 16-byte plaintext
@@ -678,7 +651,7 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
         case 2: fuzz_sealed( &r ); break;
         case 3: fuzz_ack_read_write( &r ); break;
         case 4: fuzz_ack_build_read( &r ); break;
-        case 5: fuzz_fragment_header( &r ); break;
+        case 5: break;
         case 6: fuzz_token_layouts( &r ); break;
         case 7: fuzz_address( &r ); break;
     }

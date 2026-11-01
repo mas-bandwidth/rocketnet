@@ -362,7 +362,6 @@ int rocketnet_encryption_map_add( struct rocketnet_encryption_map_t * map,
 #else // #if ROCKETNET_DEV
     mapping->send_sequence_session = 1;
 #endif // #if ROCKETNET_DEV
-    mapping->send_fragment_payload_id = 1;
 
     map->index[index_position] = (uint32_t) index;
 

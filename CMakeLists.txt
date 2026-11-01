@@ -159,18 +159,9 @@ if(ROCKETNET_MAX_CLIENTS LESS 512 OR ROCKETNET_MAX_CLIENTS GREATER 32768)
     message(FATAL_ERROR "ROCKETNET_MAX_CLIENTS must be 512..32768")
 endif()
 
-# Empty ROCKETNET_REASSEMBLY_MEMORY_MIB scales with the clients: 512 MiB per
-# 1000 (sdk/rocketnet_memory.h), so 512 at the default and 5120 at 10000.
-set(ROCKETNET_REASSEMBLY_MEMORY_MIB "" CACHE STRING "Maximum reassembly component allocation in MiB (empty: 512 per 1000 clients)")
 set(ROCKETNET_XDP_MEMORY_MIB 4096 CACHE STRING "Maximum XDP queues plus UMEM allocation in MiB")
 set(ROCKETNET_MEMORY_BUDGET_DEFINITIONS ROCKETNET_XDP_MEMORY_MIB=${ROCKETNET_XDP_MEMORY_MIB})
-if(NOT ROCKETNET_REASSEMBLY_MEMORY_MIB STREQUAL "")
-    list(APPEND ROCKETNET_MEMORY_BUDGET_DEFINITIONS ROCKETNET_REASSEMBLY_MEMORY_MIB=${ROCKETNET_REASSEMBLY_MEMORY_MIB})
-endif()
-foreach(budget ROCKETNET_REASSEMBLY_MEMORY_MIB ROCKETNET_XDP_MEMORY_MIB)
-    if(${budget} STREQUAL "")
-        continue()
-    endif()
+foreach(budget ROCKETNET_XDP_MEMORY_MIB)
     if(NOT ${budget} MATCHES "^[0-9]+$")
         message(FATAL_ERROR "${budget} must be an integer")
     endif()
@@ -667,7 +658,6 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
             tests/test_unit_api_polish.cpp
             tests/test_unit_channel_ordered.cpp
             tests/test_unit_client_memory_plan.cpp
-            tests/test_unit_client_reassembled_batch.cpp
             tests/test_unit_client_required_memory_validates.cpp
             tests/test_unit_connect_token_vectors.cpp
             tests/test_unit_connection_internal_error_counters.cpp
@@ -687,7 +677,6 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
             tests/test_unit_send_errnos.cpp
             tests/test_unit_sequence_burn.cpp
             tests/test_unit_server_payload_capacity.cpp
-            tests/test_unit_server_reassembled_batch.cpp
             tests/test_unit_server_send_cap_fair.cpp
             tests/test_unit_server_serves_both_families.cpp
             tests/test_unit_shutdown_request_completion.cpp

@@ -10,9 +10,8 @@
 // arguments logs; a refused update time is counted and logged with no live
 // connection too; receipts stay readable after disconnect until the next
 // update; the integrity-limit end reads a negative state; init with another
-// allocator and a dev token with no address are API misuse; the default
-// num_channels fits the build; and the reassembly refusal names its fixed
-// limit. Everything runs in one process over the in-memory loopback transport
+// allocator and a dev token with no address are API misuse; and the default
+// num_channels fits the build. Everything runs in one process over the in-memory loopback transport
 // with step-driven clients: no socket, no thread, no sleep, and time is an
 // argument starting at 1000.0.
 
@@ -34,6 +33,8 @@
 #define CONTRACT_AUDIT_PROTOCOL 0x434F4E5452414354ULL
 
 // --- log and assert capture -------------------------------------------------
+
+#if ROCKETNET_DEV
 
 static int contract_errors = 0;
 static char contract_last_error[1024];
@@ -88,8 +89,6 @@ static void contract_capture_end( const contract_capture_t * capture )
 // U2: both dev token addresses NULL is a required argument missing (the dev
 // token exists only in a development build)
 
-#if ROCKETNET_DEV
-
 static void test_contract_dev_token_without_address_is_misuse()
 {
     contract_capture_t capture;
@@ -124,33 +123,6 @@ static void test_contract_default_channels_fit_the_build()
 }
 
 REGISTER_UNIT_TEST( test_contract_default_channels_fit_the_build );
-
-// C7: the reassembly refusal names the fixed reassembly limit it checks, not
-// the operator memory budget, which that check never reads
-
-static void test_contract_reassembly_refusal_names_its_limit()
-{
-    contract_capture_t capture;
-    contract_capture_begin( &capture );
-
-    // a title's own packet filter: a production build refuses the test one first
-    static const uint8_t packet_filter[ROCKETNET_PACKET_FILTER_BYTES] = { 0x43, 0x37, 0x52, 0x4D };
-
-    struct rocketnet_server_transport_config_t config;
-    rocketnet_server_transport_default_config( &config );
-    memcpy( config.packet_filter, packet_filter, sizeof( config.packet_filter ) );
-    config.max_clients = ROCKETNET_MAX_CLIENTS;
-    config.max_fragmented_messages = 256;
-    int status = ROCKETNET_STATUS_OK;
-    check( rocketnet_server_transport_create_ex( NULL, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
-    check( status == ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED );
-    check( strstr( contract_last_error, "fixed reassembly limit" ) != NULL );
-    check( strstr( contract_last_error, "operator memory budget" ) == NULL );
-
-    contract_capture_end( &capture );
-}
-
-REGISTER_UNIT_TEST( test_contract_reassembly_refusal_names_its_limit );
 
 #if ROCKETNET_DEV
 
@@ -771,7 +743,6 @@ REGISTER_UNIT_TEST( test_contract_integrity_limit_reads_negative );
 #include "../sdk/rocketnet_client_slots.h"
 #include "../sdk/rocketnet_constants.h"
 #include "../sdk/rocketnet_encryption_map.h"
-#include "../sdk/rocketnet_fragment.h"
 #include "../sdk/rocketnet_keys.h"
 #include "../sdk/rocketnet_protocol.h"
 #include "../sdk/rocketnet_read_write.h"
@@ -877,15 +848,13 @@ static void witness_server_setup( struct witness_server_t * test )
     server->used_token_history = rocketnet_used_token_history_create( NULL, 64 );
     server->client_slots = rocketnet_client_slots_create( NULL, 4 );
     server->acks = rocketnet_server_acks_create( NULL, 4 );
-    server->reassembly = rocketnet_reassembly_set_create( NULL, 4, 4, 16384, 4 * 4 );
     server->counters = &test->counters;
     server->next_connection_id = 1;
     server->connection_ids = test->connection_ids;
     server->acked_connection_ids = test->acked_connection_ids;
     server->end_reasons = test->end_reasons;
     check( server->encryption_map && server->used_token_history &&
-           server->client_slots && server->acks && server->reassembly );
-    rocketnet_reassembly_set_begin_update( server->reassembly );
+           server->client_slots && server->acks );
     rocketnet_server_protocol_update( server, 100.0 );
 
     check( rocketnet_address_parse( &test->client_address, "198.51.100.7:56789" ) );
@@ -898,7 +867,6 @@ static void witness_server_teardown( struct witness_server_t * test )
     rocketnet_used_token_history_destroy( test->server.used_token_history );
     rocketnet_client_slots_destroy( test->server.client_slots );
     rocketnet_server_acks_destroy( test->server.acks );
-    rocketnet_reassembly_set_destroy( test->server.reassembly );
 }
 
 static void witness_drive_to_sending_response( struct witness_server_t * test,
@@ -1637,9 +1605,9 @@ static void test_witness_ack_block_truthfulness_preserves_keep_alive_latch()
     rocketnet_ack_endpoint_reset( &server_endpoint );
 
     // Server sends keep-alive at sequence 1 (which is lost) and payload at sequence 2 (which arrives).
-    rocketnet_ack_endpoint_record_sent( &server_endpoint, 1, ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES, 0, 0, 0, 100.0 );
+    rocketnet_ack_endpoint_record_sent( &server_endpoint, 1, ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES, 0, 0, 100.0 );
     rocketnet_ack_endpoint_mark_keep_alive( &server_endpoint, 1 );
-    rocketnet_ack_endpoint_record_sent( &server_endpoint, 2, 64, 1, 1, 0, 100.05 );
+    rocketnet_ack_endpoint_record_sent( &server_endpoint, 2, 64, 1, 1, 100.05 );
 
     // Client opens ONLY sequence 2, never sequence 1.
     struct rocketnet_replay_protection_t client_opened;

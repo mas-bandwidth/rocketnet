@@ -493,7 +493,8 @@ static void channels_test_single_zero_copy()
     channels_check( rocketnet_message_single_finish( payload, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, 0 ) == 0 );
     channels_check( rocketnet_message_single_finish( payload, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ) == 0 );
 
-    // a large SINGLE (the arena route) is legal: unreliable may ride fragments
+    // a SINGLE longer than one packet is well formed to the record reader:
+    // check 9 refuses only reliable and CONTROL records past one packet
 
     std::vector<uint8_t> large( 4097, 0x33 );
     channels_check( rocketnet_message_single_finish( large.data(), (int) large.size(), 4096 ) == 4097 );

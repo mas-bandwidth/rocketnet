@@ -28,8 +28,7 @@
 //   the sealed packet       construction and opening, in memory: the
 //                           associated data, the sequence, the AEAD, the
 //                           clear header bytes.
-//   the parsers             prefilter, fragment header and plan, base64,
-//                           the config value parses.
+//   the parsers             prefilter, base64, the config value parses.
 //
 // It exits nonzero, loudly, naming the first check that failed.
 
@@ -38,7 +37,6 @@
 #include "rocketnet_address.h"
 #include "rocketnet_base64.h"
 #include "rocketnet_protocol.h"
-#include "rocketnet_fragment.h"
 #include "rocketnet_config.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_connect_token.h"
@@ -319,33 +317,6 @@ static void check_sealed_packet()
            associated_data[2] == 0x7c && associated_data[3] == 0x4e );
 }
 
-static void check_fragments()
-{
-    uint8_t header[ROCKETNET_FRAGMENT_HEADER_BYTES];
-    rocketnet_write_fragment_header( header, 0x11223344, 3, 7 );
-
-    // the payload id is little-endian on the wire, then index, then count-1
-
-    CHECK( header[0] == 0x44 && header[1] == 0x33 && header[2] == 0x22 && header[3] == 0x11 );
-    CHECK( header[4] == 3 );
-    CHECK( header[5] == 6 );
-
-    uint32_t payload_id = 0;
-    int fragment_index = 0;
-    int fragment_count = 0;
-    rocketnet_read_fragment_header( header, &payload_id, &fragment_index, &fragment_count );
-    CHECK( payload_id == 0x11223344 );
-    CHECK( fragment_index == 3 );
-    CHECK( fragment_count == 7 );
-
-    int plan_count = 0;
-    int plan_stride = 0;
-    CHECK( rocketnet_fragment_plan( 3000, &plan_count, &plan_stride ) );
-    CHECK( plan_count >= 2 && plan_count <= ROCKETNET_MAX_FRAGMENTS );
-    CHECK( plan_stride >= 1 && plan_stride <= ROCKETNET_MAX_FRAGMENT_BYTES );
-    CHECK( 3000 - plan_stride * ( plan_count - 1 ) >= 1 );
-}
-
 static void check_base64_and_config()
 {
     uint8_t bytes[64];
@@ -408,7 +379,6 @@ int main()
     check_addresses();
     check_prefilter();
     check_sealed_packet();
-    check_fragments();
     check_base64_and_config();
 
     rocketnet_term();

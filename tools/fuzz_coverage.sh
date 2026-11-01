@@ -69,7 +69,6 @@ AREAS=(
   "protocol_core:sdk/rocketnet_protocol.cpp sdk/rocketnet_replay.cpp"
   "connect_token:sdk/rocketnet_connect_token.cpp"
   "channels_and_messages:$(ls sdk/rocketnet_message*.cpp sdk/rocketnet_channel*.cpp sdk/rocketnet_window_*.cpp | tr '\n' ' ')"
-  "fragments:sdk/rocketnet_fragment.cpp"
   "acks_and_receipts:sdk/rocketnet_ack.cpp sdk/rocketnet_channel_receipts.cpp"
   "config_and_env:sdk/rocketnet_config.cpp sdk/rocketnet_base64.cpp sdk/rocketnet_address.cpp"
 )

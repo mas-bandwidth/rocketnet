@@ -406,10 +406,9 @@ static void staged_sites_run( int latency_ms, int loss_percent, int busy, int * 
     rocketnet_server_transport_send_packet( pair.server, 0, payload, sizeof( payload ) );
     check( fake->starts == 1 );
 
-    // site: a write above the wire's capacity that finishes small collapses
-    // to one wire frame out of the arena
+    // site: a full-capacity acquire that finishes small
     struct rocketnet_packet_context_t context;
-    uint8_t * frame = rocketnet_server_transport_start_packet( pair.server, 0, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 100, &context );
+    uint8_t * frame = rocketnet_server_transport_start_packet( pair.server, 0, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, &context );
     check( frame != NULL );
     memcpy( frame + context.payload_index, payload, sizeof( payload ) );
     check( rocketnet_server_transport_finish_packet( pair.server, &context, (int) sizeof( payload ) ) > 0 );

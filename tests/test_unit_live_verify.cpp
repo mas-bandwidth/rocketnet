@@ -84,10 +84,11 @@ static void live_verify_boundary_list()
         rocketnet_unit_check( list[i] == expect3[i] );
     }
 
-    // code 1: its transport payload edges and fragment fills, clipped to 16,373
+    // code 1: the promotion edge and the schedule's payload bound, clipped to
+    // 16,373; every size above one packet is sent as a promoted message
 
     const int n1 = rocketnet_live_boundaries( &config, 1, list );
-    const uint32_t expect1[] = { 1404, 1405, 1406, 2814, 2815, 2816, 4227, 4228, 4229, 16372, 16373, 1403, 16373 - 1153, 16373 - 1152 };
+    const uint32_t expect1[] = { 1404, 1405, 1406, 16372, 16373, 1403, 16373 - 1153, 16373 - 1152 };
     for ( size_t i = 0; i < sizeof( expect1 ) / sizeof( expect1[0] ); i++ )
     {
         rocketnet_unit_check( live_verify_in_list( list, n1, expect1[i] ) );
@@ -205,7 +206,8 @@ static void live_verify_buckets()
     rocketnet_unit_check( rocketnet_live_bucket( &config, 3, 16385 ) == ROCKETNET_LIVE_BUCKET_LARGE );
     rocketnet_unit_check( rocketnet_live_bucket( &config, 3, 262144 ) == ROCKETNET_LIVE_BUCKET_MAX );
     rocketnet_unit_check( rocketnet_live_bucket( &config, 3, 262145 ) == ROCKETNET_LIVE_BUCKET_OVER );
-    rocketnet_unit_check( rocketnet_live_bucket( &config, 1, 2815 ) == ROCKETNET_LIVE_BUCKET_FRAGMENT );
+    rocketnet_unit_check( rocketnet_live_bucket( &config, 1, 2304 ) == ROCKETNET_LIVE_BUCKET_FRAGMENT );
+    rocketnet_unit_check( rocketnet_live_bucket( &config, 1, 2815 ) == ROCKETNET_LIVE_BUCKET_MEDIUM );
     rocketnet_unit_check( rocketnet_live_bucket( &config, 0, 1411 ) == ROCKETNET_LIVE_BUCKET_MAX );
     rocketnet_unit_check( strcmp( rocketnet_live_bucket_name( ROCKETNET_LIVE_BUCKET_FRAGMENT ), "fragment" ) == 0 );
 }

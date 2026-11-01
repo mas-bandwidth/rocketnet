@@ -7,11 +7,10 @@ import subprocess
 import sys
 
 binary = Path(sys.argv[1] if len(sys.argv) > 1 else 'bin/transport_memory').resolve()
-# (clients, payload column, max_fragmented_messages). The payload column is
-# ignored: the payload is fixed at ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES (16384).
-# Slots 0 is the default config (ROCKETNET_DEFAULT_REASSEMBLY_SLOTS, 8), which
-# must plan and create at 1000 clients.
-profiles = [(1, 1416, 1), (2, 1416, 1), (1000, 1416, 1), (1000, 1416, 0), (1000, 4096, 1)]
+# (clients, payload column). The payload column is ignored: the payload is
+# fixed at ROCKETNET_MAX_PACKET_PAYLOAD_BYTES (1416). The 1000-client row is
+# the default config, which must plan and create.
+profiles = [(1, 1416), (2, 1416), (1000, 1416)]
 transports = ['portable']
 if sys.platform == 'darwin':
     transports.append('msgx')
@@ -102,12 +101,8 @@ for transport in transports:
             assert row['canaries_ok'] is True, (transport, profile, row)
         assert server['os_bytes'] == server['thread_stack_bytes'] + server['umem_bytes'] + server['mapped_ring_bytes']
         assert server['thread_stack_bytes'] > 0 and server['worker_threads'] == 2
-# This legal field combination is deliberately too large for the default
-# reassembly budget. The plan-only path must not try to create it.
-large, = run(1000, 305408, 256, 'portable', 0, '--plan-only')
-assert large['reassembly_bytes'] > 512 * 1024**2
 if sys.platform.startswith('linux'):
-    xdp, = run(1000, 1416, 1, 'xdp', 7, '--plan-only')
+    xdp, = run(1000, 1416, 'xdp', 7, '--plan-only')
     # UMEM is rocketnet_xdp_umem_bytes in the SDK. Do not restate the product here.
     assert xdp['umem_bytes'] > 0
     assert xdp['worker_threads'] == 7  # seven queue workers
@@ -115,7 +110,7 @@ if sys.platform.startswith('linux'):
     assert xdp['os_bytes'] >= xdp['umem_bytes'] + xdp['thread_stack_bytes'] and xdp['thread_stack_bytes'] > 0
     # the provided buffer rings are kernel-mapped memory outside the allocator;
     # a build without liburing has no io_uring plan
-    uring = subprocess.run([str(binary), '1', '1416', '1', 'io_uring', '4', '--plan-only'],
+    uring = subprocess.run([str(binary), '1', '1416', 'io_uring', '4', '--plan-only'],
                            capture_output=True, text=True, timeout=10)
     if uring.returncode == 0:
         uring_plan = json.loads(uring.stdout)
@@ -123,37 +118,30 @@ if sys.platform.startswith('linux'):
     else:
         assert 'memory plan unavailable' in uring.stderr, (uring.returncode, uring.stdout, uring.stderr)
 if sys.platform == 'win32':
-    rio_plan, = run(1, 1416, 1, 'rio', 0, '--plan-only')
+    rio_plan, = run(1, 1416, 'rio', 0, '--plan-only')
     assert rio_plan['worker_threads'] == 1  # one RIO I/O worker
     # the RIO registered region comes from the allocator; nothing but stacks is OS-owned
     assert rio_plan['allocator_bytes'] == rio_plan['planned_bytes']
     assert rio_plan['os_bytes'] == rio_plan['thread_stack_bytes']
-    rio, = run(1, 1416, 1, 'rio', 0, '--session-plan-only')
+    rio, = run(1, 1416, 'rio', 0, '--session-plan-only')
     assert rio['active_rio_registered_region_bytes'] > 0
     assert rio['active_xdp_umem_bytes'] == 0
     assert rio['active_transport_sdk_callback_bytes'] > 0
-# 1000 clients x 16 reassembly slots (not the default 8) at the fixed 16384
-# payload is over the reassembly budget (ROCKETNET_REASSEMBLY_MEMORY_MIB):
-# create refuses it before allocating. The budget is not raised.
-refused_slots = subprocess.run([str(binary), '1000', '1416', '16', 'portable', '1'],
-                               capture_output=True, text=True, timeout=60)
-assert refused_slots.returncode != 0 and 'memory profile configuration refused' in refused_slots.stderr, (
-    refused_slots.returncode, refused_slots.stdout, refused_slots.stderr)
-refused = subprocess.run([str(binary), '1001', '1416', '1', 'portable', '0', '--plan-only'],
+refused = subprocess.run([str(binary), '1001', '1416', 'portable', '0', '--plan-only'],
                          capture_output=True, text=True, timeout=10)
 assert refused.returncode != 0 and 'memory plan unavailable' in refused.stderr, (
     refused.returncode, refused.stdout, refused.stderr)
 env = dict(os.environ)
 env['ROCKETNET_SERVER_MAX_CLIENTS'] = '2'
-refused_env = subprocess.run([str(binary), '1', '1416', '1', 'portable', '0', '--session-plan-only'],
+refused_env = subprocess.run([str(binary), '1', '1416', 'portable', '0', '--session-plan-only'],
                              capture_output=True, text=True, timeout=10, env=env)
 assert refused_env.returncode != 0 and 'environment overrides' in refused_env.stderr
 env.pop('ROCKETNET_SERVER_MAX_CLIENTS')
 env['ROCKETNET_DEV_SERVER_LATENCY_MS'] = '1'
-refused_impairment = subprocess.run([str(binary), '1', '1416', '1', 'portable', '0', '--session-plan-only'],
+refused_impairment = subprocess.run([str(binary), '1', '1416', 'portable', '0', '--session-plan-only'],
                                     capture_output=True, text=True, timeout=10, env=env)
 assert refused_impairment.returncode != 0 and 'environment overrides' in refused_impairment.stderr
-refused_candidate = subprocess.run([str(binary), '1', '1416', '1', 'auto', '0', '--session-plan-only'],
+refused_candidate = subprocess.run([str(binary), '1', '1416', 'auto', '0', '--session-plan-only'],
                                    capture_output=True, text=True, timeout=10)
 assert refused_candidate.returncode != 0 and 'memory plan unavailable' in refused_candidate.stderr
 print('test_transport_memory_plans_match_allocations')

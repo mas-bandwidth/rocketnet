@@ -35,7 +35,6 @@ HEADERS = [
     "rocketnet_wire.h",
     "rocketnet_protocol.h",
     "rocketnet_message.h",
-    "rocketnet_fragment.h",
     "rocketnet_history.h",
 ]
 

@@ -15,7 +15,6 @@
 #include "rocketnet_constants.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_protocol.h"
-#include "rocketnet_fragment.h"
 #include "rocketnet_memory.h"
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 #include "rocketnet_client_gso.h"
@@ -303,9 +302,6 @@ struct rocketnet_client_legacy_receive_state_t
     X( frame, uint64_t frame ) /* advanced once per update; identifies initialized stats buckets */                  \
     X( last_state, int last_state )                                                                                  \
     X( config, struct rocketnet_client_transport_config_t config )                                                   \
-    X( max_payload_bytes, int max_payload_bytes ) /* the fragmentation shape from the config, and the storage it sizes: */ /* the send arena for over-wire-capacity requests, and the reassembly */ /* set the protocol delivers completed payloads through -- both */ /* allocated once at create, to the configured maximum */ \
-    X( send_arena, struct rocketnet_send_arena_t * send_arena )                                                      \
-    X( reassembly, struct rocketnet_reassembly_set_t * reassembly )                                                  \
     X( io_thread, bool io_thread ) /* the I/O thread design (docs/CLIENT-IO.md): true when the granted */ /* transport has wait and wake; step_driven when no I/O thread runs and the */ /* caller calls rocketnet_client_io_step itself (unit tests) */ \
     X( step_driven, bool step_driven ) /* an internal unit-test create: the caller runs the step */                  \
     X( step_in_update, bool step_in_update ) /* the public config field: update and send_packets run the step */     \
@@ -437,12 +433,6 @@ bool rocketnet_client_transport_reset_witness_for_test( struct rocketnet_client_
     if ( !client || client->io_thread )
         return false;
 
-    uint8_t * arena_first = rocketnet_send_arena_acquire( client->send_arena );
-    if ( !arena_first )
-        return false;
-
-    memset( arena_first, 0xA5, (size_t) client->send_arena->slot_bytes );
-
     for ( int ring = 0; ring < ROCKETNET_CLIENT_IO_NUM_RINGS; ring++ )
     {
         client->payload_ring[ring].num_packets = 7;
@@ -461,12 +451,7 @@ bool rocketnet_client_transport_reset_witness_for_test( struct rocketnet_client_
             return false;
     }
 
-    const bool arena_clean = client->send_arena->num_used == 0 &&
-                             rocketnet_send_arena_acquire( client->send_arena ) == arena_first;
-
-    rocketnet_send_arena_reset( client->send_arena );
-
-    return arena_clean && client->stats_counted == 0;
+    return client->stats_counted == 0;
 }
 
 void rocketnet_client_transport_mark_connection_state_for_test( struct rocketnet_client_transport_t * client )
@@ -494,8 +479,6 @@ bool rocketnet_client_transport_connection_state_clean_for_test( struct rocketne
             member = "payload_ring";
     }
 
-    if ( !member && client->send_arena->num_used != 0 )
-        member = "send_arena";
     if ( !member && client->stats_counted != 0 )
         member = "stats_counted";
     if ( member )
@@ -543,14 +526,11 @@ void rocketnet_client_connection_reset( struct rocketnet_client_transport_t * cl
         rocketnet_client_transport_reset_buffer_counts( client, ring );
     }
 
-    rocketnet_send_arena_reset( client->send_arena );
-
     // the received batch is left as it is: its payloads were counted
     // CLIENT_PAYLOAD_DELIVERED, and they stay the caller's until the next
     // update clears the batch (proofs/tla/RNClientDelivery.tla
     // CountedImpliesHanded). A transport runs one connection, so no later
     // connection reads them.
-
     client->stats_counted = 0;
 }
 
@@ -1050,8 +1030,7 @@ bool rocketnet_client_transport_uses_io_thread( const rocketnet_client_transport
 // written from the config table so every default is declared exactly once
 
 // Pre-allocation client memory plan. The client's create allocations are the
-// transport block, the send arena, the reassembly set and the granted transport's
-// socket; each has a byte helper used here, never a re-derived size. The
+// transport block and the granted transport's socket; each has a byte helper used here, never a re-derived size. The
 // components embedded in the transport block (receive buffers, payload ring,
 // protocol state) ride its sizeof, and the SDK allocator's alignment and
 // ownership overhead is added per allocation. The transport name must be a
@@ -1068,7 +1047,7 @@ bool rocketnet_client_transport_uses_io_thread( const rocketnet_client_transport
 // the OS-owned default stack of the network thread a threaded client starts.
 struct rocketnet_client_memory_plan_t
 {
-    uint64_t transport_bytes, reassembly_bytes, send_arena_bytes;
+    uint64_t transport_bytes;
     uint64_t transport_io_bytes, race_bytes, link_simulator_bytes, total_bytes, thread_stack_bytes;
     int sockets;
 };
@@ -1258,18 +1237,7 @@ static bool rocketnet_client_transport_memory_plan( const rocketnet_client_trans
         config = &defaults;
     }
 
-    const int payload = ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES;
-    const int slots = config->max_fragmented_messages ? config->max_fragmented_messages : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
-    if ( payload < ROCKETNET_MAX_PACKET_PAYLOAD_BYTES || payload > ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES ||
-         slots < 1 || slots > ROCKETNET_MAX_FRAGMENTS )
-        return false;
-
     plan.transport_bytes = rocketnet_memory_allocations( { sizeof( rocketnet_client_transport_t ) } );
-    plan.reassembly_bytes = rocketnet_reassembly_memory_required( 1, slots, payload, rocketnet_client_reassembly_delivered_capacity( slots ) );
-    if ( !plan.reassembly_bytes || !rocketnet_memory_add( plan.reassembly_bytes, 4, rocketnet_allocation_overhead() ) )
-        return false;
-
-    plan.send_arena_bytes = rocketnet_send_arena_allocation_bytes( ROCKETNET_SEND_ARENA_SLOTS, ( payload + 15 ) & ~15 );
 
     if ( rocketnet_public_link_simulator_development() )
     {
@@ -1351,12 +1319,12 @@ static bool rocketnet_client_transport_memory_plan( const rocketnet_client_trans
     // loopback opens no socket and runs no family race; its endpoint is in
     // the caller's hub, so a step-driven loopback client plans no I/O bytes
 
-    if ( !plan.transport_bytes || !plan.send_arena_bytes || ( plan.sockets != 0 && !plan.transport_io_bytes ) )
+    if ( !plan.transport_bytes || ( plan.sockets != 0 && !plan.transport_io_bytes ) )
         return false;
     if ( plan.sockets != 0 && !plan.race_bytes )
         return false;
 
-    for ( uint64_t bytes : { plan.transport_bytes, plan.reassembly_bytes, plan.send_arena_bytes, plan.transport_io_bytes, plan.race_bytes,
+    for ( uint64_t bytes : { plan.transport_bytes, plan.transport_io_bytes, plan.race_bytes,
                              plan.link_simulator_bytes } )
         if ( !rocketnet_memory_add( plan.total_bytes, 1, bytes ) )
             return false;
@@ -1696,18 +1664,6 @@ static bool rocketnet_client_transport_resolve( const struct rocketnet_client_tr
     }
 #endif // #if ROCKETNET_DEV
 
-    // refuse large cross-field allocations before sockets, transports or arenas are acquired. Independent field maxima do not define a usable budget.
-
-    const int requested_payload = ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES;
-    const int requested_slots = config->max_fragmented_messages > 0 ? config->max_fragmented_messages : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
-    if ( !rocketnet_reassembly_memory_allowed( 1, requested_slots, requested_payload, rocketnet_client_reassembly_delivered_capacity( requested_slots ) ) )
-    {
-        if ( status )
-            *status = ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED;
-
-        return false;
-    }
-
     // the transport candidate list parses before anything allocates: a typo fails here, loudly, listing the valid names
 
     int num_available_transports = 0;
@@ -1847,45 +1803,12 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
 
     client_transport->context = context;
 
-    // the fragmentation shape: zero means the defaults; the table already refused anything out of range, loudly, never clamped
-
-    client_transport->max_payload_bytes = ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES;
-
-    const int max_fragmented_messages = config->max_fragmented_messages > 0 ? config->max_fragmented_messages : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
-
-    // the arena's slot stride stays 16-aligned so every root handed to a caller is aligned for any word-based serializer
-
-    client_transport->send_arena = rocketnet_send_arena_create( context, ROCKETNET_SEND_ARENA_SLOTS,
-                                                                ( client_transport->max_payload_bytes + 15 ) & ~15 );
-
-    // the delivered mirror sizes to the completion bound: one update drains
-    // at most ROCKETNET_NUM_CLIENT_PACKETS packets, and its completions are
-    // half the drain plus the payloads begun in an earlier update (at most
-    // the slot count), so BATCH_FULL stays zero under any load the drain
-    // delivers -- about 8.4MB at the default maximum
-
-    client_transport->reassembly = rocketnet_reassembly_set_create( context, 1, max_fragmented_messages, client_transport->max_payload_bytes,
-                                                                    rocketnet_client_reassembly_delivered_capacity( max_fragmented_messages ) );
-    if ( !client_transport->send_arena || !client_transport->reassembly )
-    {
-        rocketnet_error( "client could not allocate fragmentation storage" );
-
-        rocketnet_client_transport_abort_create( client_transport );
-
-        if ( status )
-            *status = ROCKETNET_STATUS_OUT_OF_MEMORY;
-
-        return NULL;
-    }
-
     // connect with the caller's token: the token names the server and is
     // the credential. the game owns the clock; with a configured epoch the
     // token check reads epoch plus the caller's time, and with the epoch zero
     // it reads unix time once, as before.
 
     rocketnet_client_protocol_init( &client_transport->protocol, &client_transport->counters );
-
-    client_transport->protocol.reassembly = client_transport->reassembly;
 
     memcpy( client_transport->protocol.packet_filter, config->packet_filter, ROCKETNET_FILTER_VALUE_BYTES );
 
@@ -2750,11 +2673,6 @@ void rocketnet_client_transport_destroy( rocketnet_client_transport_t * client_t
 
     rocketnet_platform_mutex_destroy( &client_transport->mutex );
 
-    if ( client_transport->send_arena )
-        rocketnet_send_arena_destroy( client_transport->send_arena );
-    if ( client_transport->reassembly )
-        rocketnet_reassembly_set_destroy( client_transport->reassembly );
-
     // the keys, and only the keys: the protocol's and the I/O thread's open
     // copy (joined above). Every other byte goes back as it is; the OS
     // zero-fills a page before another process gets it.
@@ -2814,6 +2732,7 @@ static void rocketnet_client_process_packet( rocketnet_client_transport_t * clie
     // proofs/tla/RNClientIoDecrypt.tla UpdateConsume: a record the I/O thread opened
     // or refused is consumed with its verdict; a raw one is processed as at
     // BASE
+    // proofs/tla/SessionAcks.tla RecvData: the replay check, then the payload opens
 
     rocketnet_client_protocol_process_record( &client_transport->protocol, packet_data, packet_bytes, verdict, sequence,
                                               current_time,
@@ -2831,12 +2750,7 @@ static void rocketnet_client_process_packet( rocketnet_client_transport_t * clie
 
     // proofs/tla/RNClientDelivery.tla RecvPayload: the payload the protocol
     // opened into the slot and counted CLIENT_PAYLOAD_DELIVERED is placed in
-    // the same step; nothing between the two can leave it unplaced. A
-    // fragment that completed its payload takes the slot instead (a packet is
-    // one type, so never both), in arrival position: the reassembled bytes
-    // live in the reassembly's delivered arena, valid until the next update.
-
-    struct rocketnet_reassembly_set_t * reassembly = client_transport->protocol.reassembly;
+    // the same step; nothing between the two can leave it unplaced.
 
     if ( payload_bytes > 0 )
     {
@@ -2844,14 +2758,6 @@ static void rocketnet_client_process_packet( rocketnet_client_transport_t * clie
         received->packet_data[index] = payload;
         received->packet_bytes[index] = payload_bytes;
         received->sequence[index] = session_sequence;
-        received->num_packets++;
-    }
-    else if ( reassembly && reassembly->completed_bytes > 0 )
-    {
-        const int index = received->num_packets;
-        received->packet_data[index] = reassembly->completed_payload;
-        received->packet_bytes[index] = reassembly->completed_bytes;
-        received->sequence[index] = 0; // fragmented unreliable payload: no delivery ACK
         received->num_packets++;
     }
 }
@@ -3152,7 +3058,7 @@ void rocketnet_client_transport_update( rocketnet_client_transport_t * client_tr
 
     const int state_before = client_transport->protocol.state;
 
-    // the acked-packet batch drains per update: what the blocks processed below acknowledge lands there, valid until the next update
+    // proofs/tla/SessionAcks.tla Tick: the acked-packet batch drains per update: what the blocks processed below acknowledge lands there, valid until the next update
 
     client_transport->protocol.num_acked = 0;
 
@@ -3198,10 +3104,6 @@ void rocketnet_client_transport_update( rocketnet_client_transport_t * client_tr
 
     client_transport->received_packets.num_packets = 0;
     client_transport->received_packets.receive_index = 0;
-
-    // the reassembly's delivered window is per update: payloads completed last update are invalid from here
-
-    rocketnet_reassembly_set_begin_update( client_transport->reassembly );
 
     const int stats_index = client_transport->current_stats_index;
 
@@ -3300,7 +3202,7 @@ void rocketnet_client_transport_send_packet( rocketnet_client_transport_t * clie
     rocketnet_assert( packet_data );
     rocketnet_assert( packet_bytes > 0 );
 
-    if ( packet_bytes < 1 || packet_bytes > client_transport->max_payload_bytes )
+    if ( packet_bytes < 1 || packet_bytes > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
         return;
 
     struct rocketnet_packet_context_t context;
@@ -3315,7 +3217,7 @@ void rocketnet_client_transport_send_packet( rocketnet_client_transport_t * clie
     rocketnet_client_transport_send_packets( client_transport );
 }
 
-// proofs/tla/FragmentsAndAcks.tla BurnOne: a sequence taken for this packet is spent unsent when the ring, the arena or the lease refuses the frame.
+// proofs/tla/SessionAcks.tla BurnOne: a sequence taken for this packet is spent unsent when the ring or the lease refuses the frame.
 // The client's acquire family: the same shape, layout and phase
 // contract as the server's, minus the client index. The convenience send
 // above rides this path and flushes immediately, preserving its
@@ -3343,7 +3245,7 @@ uint8_t * rocketnet_client_transport_start_packet( rocketnet_client_transport_t 
     if ( client_transport->stop_requested )
         return NULL;
 
-    if ( request_bytes < 1 || request_bytes > client_transport->max_payload_bytes )
+    if ( request_bytes < 1 || request_bytes > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
     {
         rocketnet_spam( "client start packet refused. request out of range" );
         return NULL;
@@ -3353,48 +3255,26 @@ uint8_t * rocketnet_client_transport_start_packet( rocketnet_client_transport_t 
     if ( !rocketnet_client_protocol_start_payload( &client_transport->protocol, &sequence ) )
         return NULL;
 
-    uint8_t * frame = NULL;
+    // a real wire frame, written in place, sealed in place, zero copies, in
+    // the ring send_fill names (RNClientIo Write)
 
-    if ( request_bytes <= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
+    struct rocketnet_client_payload_ring_t * ring = rocketnet_client_fill_ring( client_transport );
+
+    uint64_t slot = rocketnet_platform_atomic_add_u64( &ring->num_packets, 1 );
+    if ( slot >= ROCKETNET_CLIENT_PAYLOAD_RING_SIZE )
     {
-        // at or under the wire's capacity: a real wire frame, written in place, sealed in place, zero copies
+        rocketnet_spam( "client payload ring full. packet dropped" );
 
-        // the ring send_fill names (RNClientIo Write)
-
-        struct rocketnet_client_payload_ring_t * ring = rocketnet_client_fill_ring( client_transport );
-
-        uint64_t slot = rocketnet_platform_atomic_add_u64( &ring->num_packets, 1 );
-        if ( slot >= ROCKETNET_CLIENT_PAYLOAD_RING_SIZE )
-        {
-            rocketnet_spam( "client payload ring full. packet dropped" );
-
-            rocketnet_platform_atomic_add_u64( &client_transport->counters.values[ROCKETNET_COUNTER_SEND_RING_FULL], 1 );
-            return NULL;
-        }
-
-        ring->info[slot].wire_bytes = 0;
-
-        frame = ring->data + slot * ROCKETNET_FRAME_STRIDE;
-
-        context->payload_index = ROCKETNET_FRAME_PAYLOAD_OFFSET;
-        context->payload_capacity = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
+        rocketnet_platform_atomic_add_u64( &client_transport->counters.values[ROCKETNET_COUNTER_SEND_RING_FULL], 1 );
+        return NULL;
     }
-    else
-    {
-        // above the wire's capacity: the arena backs the write, and finish_packet splits into fragments -- or collapses to one wire packet when the write turns out small
 
-        frame = rocketnet_send_arena_acquire( client_transport->send_arena );
-        if ( !frame )
-        {
-            rocketnet_spam( "client send arena full. packet dropped" );
+    ring->info[slot].wire_bytes = 0;
 
-            rocketnet_platform_atomic_add_u64( &client_transport->counters.values[ROCKETNET_COUNTER_SEND_ARENA_FULL], 1 );
-            return NULL;
-        }
+    uint8_t * frame = ring->data + slot * ROCKETNET_FRAME_STRIDE;
 
-        context->payload_index = 0;
-        context->payload_capacity = client_transport->max_payload_bytes;
-    }
+    context->payload_index = ROCKETNET_FRAME_PAYLOAD_OFFSET;
+    context->payload_capacity = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
 
     rocketnet_assert( ( (uintptr_t) frame % 16 ) == 0 );
 
@@ -3422,14 +3302,9 @@ static void rocketnet_client_transport_abort_packet_unchecked( rocketnet_client_
     if ( !context->frame )
         return;
 
-    if ( !rocketnet_send_arena_owns( client_transport->send_arena, context->frame ) )
-    {
-        struct rocketnet_client_payload_ring_t * ring = rocketnet_client_frame_ring( client_transport, context->frame );
-        const uint64_t slot = (uint64_t) ( context->frame - ring->data ) / ROCKETNET_FRAME_STRIDE;
-        ring->info[slot].wire_bytes = 0;
-    }
-
-    // an arena slot needs no undo: the flush reclaims the whole arena
+    struct rocketnet_client_payload_ring_t * ring = rocketnet_client_frame_ring( client_transport, context->frame );
+    const uint64_t slot = (uint64_t) ( context->frame - ring->data ) / ROCKETNET_FRAME_STRIDE;
+    ring->info[slot].wire_bytes = 0;
 
     context->frame = NULL;
 }
@@ -3474,127 +3349,6 @@ void rocketnet_client_transport_abort_packet( rocketnet_client_transport_t * cli
     context->frame = NULL;
 }
 
-// proofs/tla/FragmentsAndAcks.tla BurnOne: a sequence already taken is spent unsent when the ring is full before any frame is sealed.
-// proofs/tla/FragmentsAndAcks.tla BurnFragmented: a seal refusal after the fragment reservation, payload id and aggregate leaves every frame unsent.
-// The arena finish: the request was over the wire's capacity, so the
-// payload sits contiguous in an arena slot. A write that turned out to fit
-// one packet collapses to a single ordinary payload -- one copy into one
-// wire frame, cheaper than fragmenting -- and a genuinely large one splits
-// into type 9 fragments. Every wire frame is reserved before anything
-// seals, so a reservation shortfall drops the payload whole; a seal
-// refusal mid-split -- possible only through a fill-contract violation,
-// since connections are stable during a fill -- withdraws every reserved
-// frame, the committed prefix included. Returns the total wire bytes
-// staged.
-
-static int rocketnet_client_transport_finish_arena_packet( rocketnet_client_transport_t * client_transport, struct rocketnet_packet_context_t * context, int payload_bytes )
-{
-    // the ring send_fill names (RNClientIo Write, Commit)
-
-    struct rocketnet_client_payload_ring_t * ring = rocketnet_client_fill_ring( client_transport );
-
-    if ( payload_bytes <= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
-    {
-        uint64_t slot = rocketnet_platform_atomic_add_u64( &ring->num_packets, 1 );
-        if ( slot >= ROCKETNET_CLIENT_PAYLOAD_RING_SIZE )
-        {
-            rocketnet_spam( "client payload ring full. packet dropped" );
-
-            rocketnet_platform_atomic_add_u64( &client_transport->counters.values[ROCKETNET_COUNTER_SEND_RING_FULL], 1 );
-
-            context->frame = NULL;
-            return 0;
-        }
-
-        ring->info[slot].wire_bytes = 0;
-
-        uint8_t * frame = ring->data + slot * ROCKETNET_FRAME_STRIDE;
-        memcpy( frame + ROCKETNET_FRAME_PAYLOAD_OFFSET, context->frame, (size_t) payload_bytes );
-
-        int wire_bytes = rocketnet_client_protocol_seal_payload_frame( &client_transport->protocol, context->sequence,
-                                                                       context->packet_id,
-                                                                       frame + ROCKETNET_FRAME_WIRE_OFFSET,
-                                                                       payload_bytes, client_transport->time );
-        if ( wire_bytes == 0 )
-        {
-            context->frame = NULL;
-            return 0;
-        }
-
-        ring->info[slot].wire_bytes = wire_bytes;
-        context->frame = NULL;
-        return wire_bytes;
-    }
-
-    int fragment_count, fragment_stride;
-    if ( !rocketnet_fragment_plan( payload_bytes, &fragment_count, &fragment_stride ) )
-    {
-        context->frame = NULL;
-        return 0;
-    }
-
-    uint64_t slots[ROCKETNET_MAX_FRAGMENTS];
-
-    for ( int i = 0; i < fragment_count; i++ )
-    {
-        slots[i] = rocketnet_platform_atomic_add_u64( &ring->num_packets, 1 );
-        if ( slots[i] >= ROCKETNET_CLIENT_PAYLOAD_RING_SIZE )
-        {
-            // all or nothing: the frames already reserved stay empty and the flush skips them -- a partial payload is a dead payload
-            rocketnet_spam( "client payload ring full. fragmented packet dropped" );
-
-            rocketnet_platform_atomic_add_u64( &client_transport->counters.values[ROCKETNET_COUNTER_SEND_RING_FULL], 1 );
-
-            context->frame = NULL;
-            return 0;
-        }
-
-        ring->info[slots[i]].wire_bytes = 0;
-    }
-
-    // fragment 0 rides the sequence start_packet burned; the rest reserve
-    // a block. the payload's one packet id lives in the aggregate, and
-    // surfaces when every fragment's wire packet is acknowledged.
-
-    uint64_t base_sequence = 0;
-    if ( !rocketnet_client_protocol_start_fragments( &client_transport->protocol, fragment_count - 1, &base_sequence ) )
-    {
-        context->frame = NULL;
-        return 0;
-    }
-
-    uint32_t payload_id = rocketnet_client_protocol_next_fragment_payload_id( &client_transport->protocol );
-    uint64_t aggregate = rocketnet_ack_endpoint_open_aggregate( &client_transport->protocol.ack, context->packet_id, fragment_count );
-
-    int total_wire_bytes = 0;
-
-    for ( int i = 0; i < fragment_count; i++ )
-    {
-        const uint64_t sequence = i == 0 ? context->sequence : base_sequence + (uint64_t) ( i - 1 );
-        const int fragment_bytes = i < fragment_count - 1 ? fragment_stride : payload_bytes - fragment_stride * ( fragment_count - 1 );
-        int wire_bytes = rocketnet_client_protocol_seal_fragment( &client_transport->protocol, sequence, payload_id,
-                                                                  i, fragment_count,
-                                                                  context->frame + i * fragment_stride, fragment_bytes,
-                                                                  aggregate, client_transport->time,
-                                                                  ring->data + slots[i] * ROCKETNET_FRAME_STRIDE + ROCKETNET_FRAME_WIRE_OFFSET );
-        if ( wire_bytes == 0 )
-        {
-            for ( int j = 0; j < fragment_count; j++ )
-                ring->info[slots[j]].wire_bytes = 0;
-
-            context->frame = NULL;
-            return 0;
-        }
-
-        ring->info[slots[i]].wire_bytes = wire_bytes;
-        total_wire_bytes += wire_bytes;
-    }
-
-    context->frame = NULL;
-
-    return total_wire_bytes;
-}
-
 // proofs/tla/RNClientIo.tla Commit: seals the slot in place and commits it.
 
 static int rocketnet_client_transport_finish_packet_unchecked( rocketnet_client_transport_t * client_transport, struct rocketnet_packet_context_t * context, int payload_bytes )
@@ -3616,9 +3370,6 @@ static int rocketnet_client_transport_finish_packet_unchecked( rocketnet_client_
         rocketnet_client_transport_abort_packet_unchecked( client_transport, context );
         return 0;
     }
-
-    if ( rocketnet_send_arena_owns( client_transport->send_arena, context->frame ) )
-        return rocketnet_client_transport_finish_arena_packet( client_transport, context, payload_bytes );
 
     int wire_bytes = rocketnet_client_protocol_seal_payload_frame( &client_transport->protocol, context->sequence,
                                                                    context->packet_id,
@@ -3666,7 +3417,7 @@ int rocketnet_client_transport_finish_packet( rocketnet_client_transport_t * cli
     return result;
 }
 
-// proofs/tla/FragmentsAndAcks.tla Flush: puts the outbox on the wire in fill order.
+// proofs/tla/SessionAcks.tla Flush: puts the outbox on the wire in fill order.
 
 void rocketnet_client_transport_send_packets( rocketnet_client_transport_t * client_transport )
 {
@@ -3682,11 +3433,8 @@ void rocketnet_client_transport_send_packets( rocketnet_client_transport_t * cli
     if ( rocketnet_client_io_core( client_transport ) )
     {
         // RNClientIo HandOff or Defer: no transport call on the main thread.
-        // The arena resets as at BASE: finish already copied every arena
-        // write into ring slots, so the I/O thread never reads the arena.
         rocketnet_client_transport_io_hand_off( client_transport );
 
-        rocketnet_send_arena_reset( client_transport->send_arena );
 #if ROCKETNET_DEV
         if ( client_transport->step_in_update )
             rocketnet_client_io_step( &client_transport->client_io, false ); // RNClientIo CallerStep
@@ -3722,8 +3470,6 @@ void rocketnet_client_transport_send_packets( rocketnet_client_transport_t * cli
     ring->num_packets = 0;
 
     rocketnet_client_link_flush( client_transport );
-
-    rocketnet_send_arena_reset( client_transport->send_arena );
 }
 
 int rocketnet_client_transport_receive_packet( rocketnet_client_transport_t * client_transport, uint8_t * packet_data, int packet_capacity )
@@ -3779,7 +3525,7 @@ int rocketnet_client_transport_max_payload_bytes( rocketnet_client_transport_t *
         return 0;
 
     rocketnet_assert( client_transport );
-    return client_transport->max_payload_bytes;
+    return ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
 }
 
 // the batch the copying cursor above walks, exposed whole: by count and

@@ -22,7 +22,7 @@ revision under review.
 | io_uring server driver, reap and send phases | `RNUringDriver`, `RNUringReapLayout`, `RNUringSendPhases` | no slot reused while the kernel owns it; the fill bank within its room; no call ends with a send completion behind a receive held for room; a send reaped one call late never leaves the next update without slots |
 | replay and ACKs | `ReplayWindow`, `RNSentHistory` | replay refusal, honest ACK ranges and bounded retained history |
 | channel delivery | `RNChannel`, `RNChannelTypes` | reliable exactly once, ordered in order, sequenced newest and unreliable at most once |
-| fragmentation | `RNBlocks`, `FragmentsAndAcks` | exact reconstruction, bounded slots and ACK coupling |
+| message blocks | `RNBlocks` | exact reconstruction and bounded slots |
 | send store and descriptor pool | `RNSendStore`, `RNLazyPool`, `RNSendStoreLayout` | no chunk or descriptor handed out while live, exact free counts and free stack, a refusal only when nothing is free, no read of never-taken memory, live generations never 0 |
 | receipts | `RNReceipts` | at most one terminal receipt for a receipt-bearing send |
 | sent map and receipt rings | `RNSentMap`, `RNSentHistory`, `RNSentRingLayout` | no live sent-packet entry or reference overwritten, exact reference accounting, every reported receipt the event written at its index, serials never 0 |

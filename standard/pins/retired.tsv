@@ -17,7 +17,7 @@ prefilter header bytes	transport.tsv: prefilter header
 test filter value	RN-1 t5 vectors (TRANSPORT.md t5.unkeyed-accept)
 unkeyed filter epoch (test title constant)	transport.tsv: unkeyed filter epoch
 unkeyed filter epoch (its own row)	transport.tsv: unkeyed filter epoch
-highest packet type	transport.tsv: connection payload fragment packet
+highest packet type	transport.tsv: first reserved packet type
 lowest packet type	transport.tsv: connection request packet
 first reserved type	transport.tsv: first reserved packet type
 lowest client state	RN-1 t3 client-state table (carried by the t3 rows)
@@ -26,8 +26,8 @@ associated data bytes	transport.tsv: associated data
 associated data bytes with ephemeral	transport.tsv: associated data with ephemeral key
 per-packet overhead	transport.tsv: per-packet overhead
 minimum ack block	transport.tsv: ack block minimum
-fragment header bytes	transport.tsv: fragment header
-maximum fragments	transport.tsv: fragments per payload maximum
+fragment header bytes	removed: RN-1 has no fragmentation (packet type 9 is reserved)
+maximum fragments	removed: RN-1 has no fragmentation (packet type 9 is reserved)
 send budget default	transport.tsv: maximum packet size
 send budget maximum	transport.tsv: receive ceiling
 receive ceiling	transport.tsv: receive ceiling
@@ -48,8 +48,8 @@ SINGLE message bytes	m2.tsv: SINGLE message limit
 unreliable one-record threshold	m2.tsv: UNRELIABLE record limit
 unreliable sequenced threshold narrow	m2.tsv: UNRELIABLE_SEQUENCED record limit
 unreliable sequenced threshold WIDE	m2.tsv: UNRELIABLE_SEQUENCED record limit, WIDE
-fragment stride sent	transport.tsv: fragment stride
-fragment stride received	transport.tsv: received fragment stride maximum
+fragment stride sent	removed: RN-1 has no fragmentation (packet type 9 is reserved)
+fragment stride received	removed: RN-1 has no fragmentation (packet type 9 is reserved)
 connect token bytes	transport.tsv: connect token
 signed connect data bytes	transport.tsv: signed connect data
 sealed block bytes	transport.tsv: sealed block

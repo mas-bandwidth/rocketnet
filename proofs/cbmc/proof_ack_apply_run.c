@@ -10,8 +10,8 @@
     A symbolic retained run has length 1..ACK_RUN_BOUND. Every sequence in
     the run has a matching live sent record; whether it was already acked is
     symbolic. The sent_held and sent_unacked bitmaps are initialized to the
-    exact ring state those records describe. No record carries a packet id or
-    aggregate id, and a negative time avoids the independent RTT tree update.
+    exact ring state those records describe. No record carries a packet id,
+    and a negative time avoids the independent RTT tree update.
 
     The assertions prove that the production walk:
       * counts every and only newly acked live record;
@@ -82,7 +82,6 @@ int harness_ack_apply_run( void )
 
         record->sequence = sequence;
         record->packet_id = 0;
-        record->aggregate_id = 0;
         record->send_time = 0.0;
         record->wire_bytes = 0;
         record->acked = already_acked;
@@ -115,9 +114,9 @@ int harness_ack_apply_run( void )
     __CPROVER_assert( unknown_sequence_counter == 0,
                       "every held sequence remains known" );
     __CPROVER_assert( batch_full_counter == 0,
-                      "records without packet or aggregate ids never defer" );
+                      "records without packet ids never defer" );
     __CPROVER_assert( acked_count == 0,
-                      "records without packet or aggregate ids surface no id" );
+                      "records without packet ids surface no id" );
     __CPROVER_assert( endpoint.stats_eligible_unacked == 0,
                       "every eligible unacked record leaves the running total" );
     __CPROVER_assert( g_ack_visit_count == expected_new,

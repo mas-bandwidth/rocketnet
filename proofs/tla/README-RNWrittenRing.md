@@ -1,8 +1,8 @@
 # RNWrittenRing
 
-The ack endpoint's record rings in `sdk/rocketnet_ack.cpp`: the sent records,
-the received records and the aggregates. Each ring's emptiness is a written
-bit per record (`sent_written`, `received_written`, `aggregates_written`),
+The ack endpoint's record rings in `sdk/rocketnet_ack.cpp`: the sent records
+and the received records. Each ring's emptiness is a written bit per record
+(`sent_written`, `received_written`),
 cleared by `rocketnet_ack_endpoint_reset`, instead of zeroed records.
 
 A reset used to zero the whole endpoint, 271 KB, at every client create,
@@ -10,10 +10,10 @@ connect and disconnect and at every server slot's create and reuse. It now
 writes about 9 KB: the bits, the counters and the rtt history's empty marks.
 The rings' pages are touched only by records.
 
-- **Write** (`record_sent`, `record_received`, `open_aggregate`) writes the
+- **Write** (`record_sent`, `record_received`) writes the
   record and sets its bit.
 - **Read** (every reader: the stale and eviction checks in `record_sent`,
-  `mark_keep_alive`, the reconcile, the aggregate lookup, the stats windows)
+  `mark_keep_alive`, the reconcile, the stats windows)
   takes a record's bytes only when its bit is set; a clear bit reads as the
   empty record (sequence 0) without reading the bytes.
 - **Reset** clears the bits and leaves the records' bytes as the previous

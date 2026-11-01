@@ -1,7 +1,6 @@
 # The libFuzzer dictionary for the rocketnet_fuzz target: the stateless
-# parser sweep. Every entry is a token one of its four parsers branches on
-# -- the prefilter, the fragment header and its reassembly, the base64
-# decoder and the config value parses -- spelled as the bytes the parser
+# parser sweep. Every entry is a token one of its three parsers branches on
+# -- the prefilter, the base64 decoder and the config value parses -- spelled as the bytes the parser
 # compares against, so mutation lands on the constants the checks gate on
 # instead of rediscovering them a byte at a time.
 #
@@ -15,7 +14,8 @@
 packet_filter="\xb7\x59\x01\x00"
 
 # the type byte on its own: ROCKETNET_CONNECTION_REQUEST_PACKET (0) to
-# ROCKETNET_CONNECTION_FRAGMENT_PACKET (9), and the first reserved type
+# ROCKETNET_CONNECTION_ACK_PACKET (8), and
+# ROCKETNET_FIRST_RESERVED_PACKET_TYPE (9)
 type_request="\x00"
 type_denied="\x01"
 type_challenge="\x02"
@@ -25,8 +25,7 @@ type_payload="\x05"
 type_disconnect="\x06"
 type_cookie="\x07"
 type_ack="\x08"
-type_fragment="\x09"
-type_reserved="\x0a"
+type_reserved="\x09"
 
 # full 6-byte prefilter headers at epoch 0: type, epoch, filter value
 prefilter_request="\x00\x00\xb7\x59\x01\x00"
@@ -38,27 +37,10 @@ prefilter_payload="\x05\x00\xb7\x59\x01\x00"
 prefilter_disconnect="\x06\x00\xb7\x59\x01\x00"
 prefilter_cookie="\x07\x00\xb7\x59\x01\x00"
 prefilter_ack="\x08\x00\xb7\x59\x01\x00"
-prefilter_fragment="\x09\x00\xb7\x59\x01\x00"
 
 # ROCKETNET_FILTER_EPOCH_UNKEYED is 0 and every other epoch is refused
 epoch_unkeyed="\x00"
 epoch_keyed="\x01"
-
-# --- the fragment header (sdk/rocketnet_fragment.h) ---
-
-# the payload id (u32 LE, zero invalid), the fragment index, and the
-# fragment count - 1: the first of two, the last of two, and the most
-# fragments the engine accepts (ROCKETNET_MAX_FRAGMENTS)
-fragment_first_of_two="\x01\x00\x00\x00\x00\x01"
-fragment_last_of_two="\x01\x00\x00\x00\x01\x01"
-fragment_max_count="\x01\x00\x00\x00\xff\xff"
-
-# the zero payload id the sender produces when it is uninitialized
-fragment_zero_payload_id="\x00\x00\x00\x00"
-
-# the payload id half the id space ahead of the newest completed one: the
-# stale id the reassembly engine refuses
-fragment_stale_id="\x00\x00\x00\x50"
 
 # --- base64 (sdk/rocketnet_base64.cpp) ---
 

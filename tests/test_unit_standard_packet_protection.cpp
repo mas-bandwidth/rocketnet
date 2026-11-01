@@ -41,8 +41,6 @@ static const rn_standard_vector_t standard_packet_protection_table[] = {
     RN_STANDARD_VECTOR( "t9.disconnect-sealed", "e4db4c3d2d40303931ba1355325bfd8f2f3a2b3175bda2" ),
     RN_STANDARD_VECTOR( "t9.ack-ad", "931a7c4e88776655443322110853414c5430303031" ),
     RN_STANDARD_VECTOR( "t9.ack-sealed", "cbaca39867d9e72a0e3fb604855128e15bd4b118bdd59638f79ae2" ),
-    RN_STANDARD_VECTOR( "t9.fragment-ad", "931a7c4e88776655443322110953414c5430303031" ),
-    RN_STANDARD_VECTOR( "t9.fragment-sealed", "4d11935455cd7bdfe3973505ee2042143337a0b1eba2ced353f8ddb378a4e5edff7f" ),
     RN_STANDARD_VECTOR( "t9.version-tampered", "921a7c4e88776655443322110253414c54303030313a553d74792d727efa9b9a4cde3da1ad93f1a2d0c09cb639b1a3c0fda14cbe24" ),
     RN_STANDARD_VECTOR( "t9.protocol-id-tampered", "931a7c4e89776655443322110253414c54303030313a553d74792d727efa9b9a4cde3da1ad93f1a2d0c09cb639b1a3c0fda14cbe24" ),
     RN_STANDARD_VECTOR( "t9.packet-type-tampered", "931a7c4e88776655443322110353414c54303030313a553d74792d727efa9b9a4cde3da1ad93f1a2d0c09cb639b1a3c0fda14cbe24" ),
@@ -123,8 +121,6 @@ static int standard_packet_protection_generate( const char * id, uint8_t * out, 
         return standard_packet_protection_ad( out, capacity, ROCKETNET_CONNECTION_DISCONNECT_PACKET );
     if ( strcmp( id, "t9.ack-ad" ) == 0 )
         return standard_packet_protection_ad( out, capacity, ROCKETNET_CONNECTION_ACK_PACKET );
-    if ( strcmp( id, "t9.fragment-ad" ) == 0 )
-        return standard_packet_protection_ad( out, capacity, ROCKETNET_CONNECTION_FRAGMENT_PACKET );
 
     if ( strcmp( id, "t9.challenge-sealed" ) == 0 )
         return standard_packet_protection_sealed( out, capacity, ROCKETNET_CONNECTION_CHALLENGE_PACKET, 1,
@@ -158,11 +154,6 @@ static int standard_packet_protection_generate( const char * id, uint8_t * out, 
         return standard_packet_protection_sealed( out, capacity, ROCKETNET_CONNECTION_ACK_PACKET, 5,
                                                   NULL, rocketnet_test_ack_plaintext,
                                                   (int) sizeof( rocketnet_test_ack_plaintext ), NULL,
-                                                  rocketnet_test_session_c2s_key );
-    if ( strcmp( id, "t9.fragment-sealed" ) == 0 )
-        return standard_packet_protection_sealed( out, capacity, ROCKETNET_CONNECTION_FRAGMENT_PACKET, 6,
-                                                  NULL, rocketnet_test_fragment_plaintext,
-                                                  (int) sizeof( rocketnet_test_fragment_plaintext ), NULL,
                                                   rocketnet_test_session_c2s_key );
 
     return standard_packet_protection_tamper( id, out, capacity );

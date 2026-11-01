@@ -4,7 +4,7 @@ The RocketNet standard is three documents:
 
 - [standard/TRANSPORT.md](../standard/TRANSPORT.md) — RN-1, the normative
   transport standard: packets, the handshake, keys, replay, acknowledgements,
-  fragmentation, timing and counters.
+  timing and counters.
 - [standard/MESSAGES.md](../standard/MESSAGES.md) — RN-2, the normative message
   standard: message forms, delivery, channels, receipts, blocks, resend and
   send budgets.
@@ -68,7 +68,6 @@ that the receiver has received or delivered anything.
 | Fragment index / fragment count | RN-2 indexes start at zero. The wire field `fragments` stores count minus one. For three fragments, the encoded value is 2 and valid indexes are 0, 1 and 2. |
 | Fragment ring offset / block base | A fragment's `ring` field already identifies that fragment's position, in 16-byte units. It is not the block base. |
 | Resend delay / reliable timeout | The former schedules another attempt; the latter ends an unacknowledged connection. Convert `_ms` configuration values to seconds before using them with time inputs. |
-| Transport fragments / message blocks | RN-1 reassembles a payload. RN-2 reassembles a reliable message from records. They have separate identifiers, limits and acceptance rules. |
 
 For example, a three-fragment block placed at byte zero has ring fields
 0, 72 and 144 with the current 1152-byte stride. Fragment 1 is copied to

@@ -124,8 +124,8 @@ and units are defined in [rocketnet.h](../sdk/rocketnet.h).
 
 ## Memory and failure
 
-Message stores, queues, delivery batches, receipt rings, replay windows and
-reassembly slots have bounded capacity derived from the public config. Their
+Message stores, queues, delivery batches, receipt rings and replay windows
+have bounded capacity derived from the public config. Their
 storage lifecycle uses the caller allocator and a refused allocation is
 reported. Message frame calls do not wait on the network. Client update can
 briefly wait for a lock shared with the I/O thread. Exhausting connection message memory ends
@@ -167,8 +167,7 @@ The executable message invariants are split by concern:
 
 - `proofs/tla/RNChannel.tla` and `proofs/tla/RNChannelTypes.tla`: ordering, sequencing and
   exactly-once delivery;
-- `proofs/tla/RNBlocks.tla` and `proofs/tla/FragmentsAndAcks.tla`: bounded fragmentation,
-  reassembly and acknowledgement coupling;
+- `proofs/tla/RNBlocks.tla`: bounded block fragmentation and reassembly;
 - `proofs/tla/RNReceipts.tla` and `proofs/tla/RNSentHistory.tla`: receipt and sent-history
   behavior;
 - unit and functional suites: public calls, all reliability values, reset,

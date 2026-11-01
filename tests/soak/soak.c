@@ -79,7 +79,7 @@
     which. Every REFUSAL counter must read 0, with one exception: when the
     link simulator at one end duplicates packets, the duplicates it plants
     are refused as already received at the other end, so there every
-    <FAMILY>_ALREADY_RECEIVED refusal (payload, keep-alive, ack, fragment and
+    <FAMILY>_ALREADY_RECEIVED refusal (payload, keep-alive, ack and
     disconnect) is counted and printed, not failed.
 
     THE LINK IMPAIRMENT. ROCKETNET_DEV_SERVER_LATENCY_MS, _JITTER_MS,
@@ -491,7 +491,7 @@ static void soak_link_witness_receive( struct soak_link_witness_t * witness, int
 }
 
 // a planted duplicate of any sealed packet (payload, keep-alive, ack,
-// fragment, disconnect) is refused as already received, counted by the
+// disconnect) is refused as already received, counted by the
 // family's <FAMILY>_ALREADY_RECEIVED refusal; only those refusals are
 // expected, and only when the simulator plants duplicates
 
@@ -1323,7 +1323,7 @@ int main( int argc, char ** argv )
                 failures++;
             }
 
-            if ( rocketnet_client_transport_max_payload_bytes( client ) != ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES )
+            if ( rocketnet_client_transport_max_payload_bytes( client ) != ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
             {
                 printf( "soak: unexpected client payload capacity\n" );
                 failures++;
@@ -1514,12 +1514,10 @@ int main( int argc, char ** argv )
                 }
             }
 
-            // sized by the default configured maximum -- the clients here
-            // run the default config, asserted right after create; a custom
-            // config would size this by
-            // rocketnet_client_transport_max_payload_bytes instead
+            // sized by the transport's payload maximum, asserted right after
+            // create
 
-            static uint8_t received[ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES];
+            static uint8_t received[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
             int received_bytes;
             while ( ( received_bytes = rocketnet_client_transport_receive_packet( client, received, sizeof( received ) ) ) > 0 )
             {

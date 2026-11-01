@@ -12,5 +12,4 @@ receive connection keep-alive minimum wire size	ROCKETNET_CONNECTION_KEEP_ALIVE_
 connection payload minimum wire size	ROCKETNET_CONNECTION_PAYLOAD_MIN_WIRE_BYTES	34
 connection disconnect minimum wire size	ROCKETNET_CONNECTION_DISCONNECT_MIN_WIRE_BYTES	33
 connection ack minimum wire size	ROCKETNET_CONNECTION_ACK_MIN_WIRE_BYTES	33
-connection payload fragment minimum wire size	ROCKETNET_CONNECTION_FRAGMENT_MIN_WIRE_BYTES	40
 connection response padding	ROCKETNET_RESPONSE_PADDING_BYTES	24

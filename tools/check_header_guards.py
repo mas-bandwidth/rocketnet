@@ -43,7 +43,6 @@ OWNED_GLOBS = (
     "tests/fuzz/*.h",
     "tests/load/load_census.h",
     "proofs/cbmc/*.h",
-    "proofs/cbmc/fragment_reassembly/*.h",
     "sdk/*.h",
     "tests/*.h",
     "tools/*.h",

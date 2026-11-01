@@ -27,8 +27,7 @@ successful run also requires an obvious response to the planted slowdown.
 
 The harness establishes a real portable loopback connection, then measures
 start/write/finish, start/write/abort, or start/eight owned-payload accesses/write/
-abort. A batch has 64 payloads at 64 or 1192 bytes, and 16 at 4096 bytes to stay
-within the actual fragmented-send arena budget. It warms up 100 batches and
+abort. A batch has 64 payloads at 64 or 1192 bytes. It warms up 100 batches and
 measures 300. The 4-thread case uses persistent workers; its timing includes the
 wake/join barrier. The 1-thread case calls directly. Every start and finish must
 succeed, every owned view must match the acquired payload, every returned context
@@ -62,38 +61,26 @@ process runs. Overlapping ranges do not establish a stable difference here.
 | server | finish | 64 | 4 | 467.76 [411.25, 957.10] | 429.48 [360.04, 1112.32] |
 | server | finish | 1192 | 1 | 2432.40 [2299.48, 2504.19] | 2402.32 [2260.62, 2464.34] |
 | server | finish | 1192 | 4 | 1097.28 [951.99, 2041.91] | 1024.45 [953.75, 1784.54] |
-| server | finish | 4096 | 1 | 8672.93 [8140.72, 8842.60] | 8822.27 [8238.48, 9008.31] |
-| server | finish | 4096 | 4 | 3532.35 [3458.13, 4367.68] | 3983.53 [3409.25, 4517.82] |
 | server | abort | 64 | 1 | 15.51 [14.79, 33.90] | 11.27 [10.00, 32.14] |
 | server | abort | 64 | 4 | 303.34 [236.39, 762.30] | 229.61 [144.30, 338.04] |
 | server | abort | 1192 | 1 | 31.97 [27.74, 42.87] | 25.35 [24.54, 52.23] |
 | server | abort | 1192 | 4 | 345.06 [216.03, 480.05] | 300.77 [190.11, 411.23] |
-| server | abort | 4096 | 1 | 165.63 [108.59, 182.79] | 91.72 [56.19, 135.02] |
-| server | abort | 4096 | 4 | 785.18 [606.51, 1651.21] | 1148.48 [755.18, 2022.46] |
 | server | access | 64 | 1 | 61.55 [36.39, 129.67] | 20.00 [17.78, 55.82] |
 | server | access | 64 | 4 | 271.04 [219.14, 379.03] | 331.80 [233.77, 841.39] |
 | server | access | 1192 | 1 | 54.39 [49.53, 115.35] | 34.45 [30.15, 59.60] |
 | server | access | 1192 | 4 | 266.62 [225.96, 830.91] | 342.92 [202.02, 374.68] |
-| server | access | 4096 | 1 | 131.02 [104.56, 240.96] | 63.72 [59.56, 156.28] |
-| server | access | 4096 | 4 | 1018.08 [794.44, 1706.86] | 1243.97 [765.55, 1910.27] |
 | client | finish | 64 | 1 | 587.18 [548.64, 614.14] | 536.45 [523.14, 608.97] |
 | client | finish | 64 | 4 | 662.86 [423.15, 996.68] | 501.84 [383.16, 955.55] |
 | client | finish | 1192 | 1 | 2504.43 [2382.59, 2549.27] | 2475.87 [2274.41, 2538.52] |
 | client | finish | 1192 | 4 | 1498.53 [966.85, 1972.69] | 996.79 [958.54, 2083.83] |
-| client | finish | 4096 | 1 | 8868.32 [8217.22, 9084.75] | 8840.93 [8561.18, 9055.08] |
-| client | finish | 4096 | 4 | 4467.90 [3546.61, 7218.59] | 4158.20 [3520.81, 7199.61] |
 | client | abort | 64 | 1 | 13.98 [11.91, 42.79] | 7.40 [6.68, 7.62] |
 | client | abort | 64 | 4 | 275.48 [196.83, 716.14] | 246.20 [192.75, 624.64] |
 | client | abort | 1192 | 1 | 27.08 [26.08, 32.01] | 21.72 [20.33, 22.89] |
 | client | abort | 1192 | 4 | 376.77 [212.62, 897.76] | 274.69 [174.79, 843.40] |
-| client | abort | 4096 | 1 | 82.63 [71.53, 92.33] | 63.25 [57.98, 64.83] |
-| client | abort | 4096 | 4 | 1229.57 [947.26, 4301.66] | 1091.94 [844.71, 2371.44] |
 | client | access | 64 | 1 | 36.51 [32.13, 50.30] | 15.32 [14.85, 34.70] |
 | client | access | 64 | 4 | 369.42 [258.81, 645.26] | 357.56 [280.79, 690.88] |
 | client | access | 1192 | 1 | 55.51 [50.53, 129.72] | 31.15 [28.02, 71.85] |
 | client | access | 1192 | 4 | 380.37 [231.31, 647.37] | 368.18 [302.76, 568.94] |
-| client | access | 4096 | 1 | 137.01 [111.01, 227.98] | 66.41 [62.71, 110.30] |
-| client | access | 4096 | 4 | 1097.61 [1016.28, 2083.51] | 1122.59 [743.83, 2343.62] |
 
 The server's single-thread 64-byte finish median was 432.17 ns with checks
 and 422.41 ns in the control: 9.76 ns (2.31% relative to the control).
@@ -115,8 +102,8 @@ ordinary range. This checks timing sensitivity, not a library performance target
 
 `sizeof` the unchanged table is 8,388,672 bytes per server and 65,600 per client
 on this target. Both benchmark builds retain those bytes. The timed connection
-uses two configured server clients and 4096-byte maximum payloads; its observed
-allocator totals are 33,129,896 bytes for the server and 9,405,558 for the client.
+uses two configured server clients and 1416-byte maximum payloads; its observed
+allocator totals are 71,985,678 bytes for the server and 10,916,519 for the client.
 
 `transport_memory.cpp` supplies a separate constructor/destructor observation:
 
@@ -124,20 +111,18 @@ allocator totals are 33,129,896 bytes for the server and 9,405,558 for the clien
 c++ -O3 -DNDEBUG -std=c++11 -ffp-contract=off -I sdk \
   benchmarks/transport_memory.cpp build/librocketnet.a \
   -framework CoreFoundation -framework SystemConfiguration -o build/transport-memory
-./build/transport-memory 1000 4096 16
+./build/transport-memory 1000 1192 portable
 ```
 
 Use `-lbpf -lxdp -pthread` instead of the frameworks on Linux.
 
-| Configured clients | Max payload bytes | Reassembly slots | Live allocator bytes after create |
-| ---: | ---: | ---: | ---: |
-| 1 | 1192 | 1 | 32,609,307 |
-| 2 | 1192 | 1 | 32,937,054 |
-| 1000 | 1192 | 1 | 360,028,560 |
-| 1000 | 1192 | 16 | 417,433,560 |
-| 1000 | 4096 | 16 | 510,407,896 |
+| Configured clients | Max payload bytes | Live allocator bytes after create |
+| ---: | ---: | ---: |
+| 1 | 1192 | 71,629,272 |
+| 2 | 1192 | 71,985,678 |
+| 1000 | 1192 | 495,178,866 |
 
-Each profile used the portable server, 40 live allocations, and the same peak
+Each profile used the portable server, 62 live allocations, and the same peak
 as post-create storage. Every profile returned to zero on destroy. These totals
 include RocketNet's alignment/ownership overhead, and exclude kernel socket
 buffers, OS thread stacks, libc bookkeeping, observer overhead and application

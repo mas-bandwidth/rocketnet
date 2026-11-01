@@ -4,9 +4,8 @@
 */
 
 // The control packets the harness never sent: the disconnect burst
-// (type 6), the standalone ack (type 8), the fragment (type 9) and the
-// denied (type 1). The fragment case uses the public client and server APIs
-// over the portable transport; the other cases use the channel harness.
+// (type 6), the standalone ack (type 8) and the denied (type 1), over the
+// channel harness.
 #include "channel_harness.h"
 #include "../../sdk/rocketnet_platform.h"
 
@@ -15,7 +14,6 @@
 #include <string.h>
 
 #define CONTROL_TICK              ( 1.0 / 60.0 )
-#define CONTROL_MAX_FRAGMENTS     16
 
 static void control_check( bool condition, const char * label )
 {
@@ -154,72 +152,6 @@ void control_standalone_ack_each_end()
     rocketnet_channel_harness_destroy( &h );
 
     printf( "test_control_standalone_ack_each_end: both protocols accepted standalone ACKs and completed sent sequences\n" );
-}
-
-void control_fragment_packets_each_end()
-{
-    // Keep the deterministic control capture for the pinned wire corpus while
-    // the public API exercise below proves that both real endpoints deliver
-    // the complete message to an application consumer.
-
-    rocketnet_channel_harness_t h;
-    control_check( rocketnet_channel_harness_create( &h ) != 0, "create" );
-    control_check( rocketnet_channel_harness_connect( &h, 60 * 10 ) != 0, "connect" );
-    rocketnet_channel_harness_set_link( &h, 0.0, 0.0, 0.0f, 0.0f );
-
-    uint8_t payload[3000];
-
-    for ( int i = 0; i < 3000; i++ )
-    {
-        payload[i] = (uint8_t) ( i * 7 );
-    }
-
-    uint8_t packets[CONTROL_MAX_FRAGMENTS * ROCKETNET_SEND_BUDGET];
-    int packet_bytes[CONTROL_MAX_FRAGMENTS];
-
-    if ( !h.client.reassembly )
-    {
-        h.client.reassembly = rocketnet_reassembly_set_create( NULL, 1, 4, 16384, 4 );
-    }
-
-    const uint64_t server_reassembled_before = h.server_counters.values[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_REASSEMBLED];
-
-    const int client_count = rocketnet_client_protocol_write_fragments( &h.client, payload, 3000, h.now,
-                                                                        packets, packet_bytes, CONTROL_MAX_FRAGMENTS );
-    control_check( client_count >= 2, "client write fragments" );
-    for ( int i = 0; i < client_count; i++ )
-    {
-        rocketnet_channel_endpoint_send_control( &h.client_endpoint, packets + (size_t) i * ROCKETNET_SEND_BUDGET, packet_bytes[i] );
-        rocketnet_channel_endpoint_update( &h.server_endpoint, h.now );
-    }
-
-    control_check( h.server_counters.values[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_REASSEMBLED] == server_reassembled_before + 1,
-                   "server reassembled one fragment payload" );
-
-    const uint64_t client_reassembled_before = h.client_counters.values[ROCKETNET_COUNTER_CLIENT_FRAGMENT_PAYLOAD_REASSEMBLED];
-
-    const int server_count = rocketnet_server_protocol_write_fragments( &h.server, 0, payload, 3000, h.now,
-                                                                        packets, packet_bytes, CONTROL_MAX_FRAGMENTS );
-    control_check( server_count >= 2, "server write fragments" );
-    for ( int i = 0; i < server_count; i++ )
-    {
-        rocketnet_channel_endpoint_send_control( &h.server_endpoint, packets + (size_t) i * ROCKETNET_SEND_BUDGET, packet_bytes[i] );
-        rocketnet_channel_endpoint_update( &h.client_endpoint, h.now );
-    }
-
-    control_check( h.client_counters.values[ROCKETNET_COUNTER_CLIENT_FRAGMENT_PAYLOAD_REASSEMBLED] == client_reassembled_before + 1,
-                   "client reassembled one fragment payload" );
-    control_check( rocketnet_channel_harness_overflows( &h ) == 0, "delivery ring overflow" );
-    if ( h.client.reassembly )
-    {
-        rocketnet_reassembly_set_destroy( h.client.reassembly );
-        h.client.reassembly = NULL;
-    }
-
-    rocketnet_channel_harness_destroy( &h );
-
-    extern void rocketnet_test_public_fragment_delivery();
-    rocketnet_test_public_fragment_delivery();
 }
 
 void control_denied_when_server_full()

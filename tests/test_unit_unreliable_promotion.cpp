@@ -12,7 +12,6 @@
 #include "../sdk/rocketnet_channel.h"
 #include "../sdk/rocketnet_counters.h"
 #include "../sdk/rocketnet_message.h"
-#include "../sdk/rocketnet_fragment.h"
 #include "../sdk/rocketnet_message_object.h"
 #include "../sdk/rocketnet_send_budget.h"
 #include "../sdk/rocketnet_wire.h"
@@ -39,8 +38,7 @@ struct boundary_packet_t
     uint64_t id;
     int slot;
     int bytes;
-    int fragment;
-    uint8_t head_pad[32 - sizeof( uint64_t ) - 3 * sizeof( int )];
+    uint8_t head_pad[32 - sizeof( uint64_t ) - 2 * sizeof( int )];
     alignas( 16 ) uint8_t data[BOUNDARY_FRAME_CAPACITY];
     uint8_t tail_pad[( BOUNDARY_FRAME_CAPACITY + 15 ) / 16 * 16 - BOUNDARY_FRAME_CAPACITY];
 };
@@ -69,15 +67,6 @@ struct boundary_net_t
     boundary_endpoint_t * client;
     uint64_t slot_connection;
     uint64_t next_packet_id;
-    uint32_t next_payload_id;
-    rocketnet_reassembly_set_t * reassembly;
-    uint64_t fragment_counters[ROCKETNET_NUM_COUNTERS];
-};
-static const rocketnet_reassembly_counters_t boundary_fragment_counter_table = {
-    ROCKETNET_COUNTER_FRAGMENT_ZERO_PAYLOAD_ID, ROCKETNET_COUNTER_FRAGMENT_STALE, ROCKETNET_COUNTER_FRAGMENT_COUNT_INVALID,
-    ROCKETNET_COUNTER_FRAGMENT_INDEX_OUT_OF_RANGE, ROCKETNET_COUNTER_FRAGMENT_COUNT_MISMATCH, ROCKETNET_COUNTER_FRAGMENT_SIZE_MISMATCH,
-    ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_TOO_LARGE, ROCKETNET_COUNTER_FRAGMENT_DUPLICATE_INDEX, ROCKETNET_COUNTER_FRAGMENT_ACCEPTED,
-    ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_REASSEMBLED, ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_ABANDONED, ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_BATCH_FULL
 };
 static void boundary_update( void * transport, double time )
 {
@@ -92,10 +81,6 @@ static void boundary_update( void * transport, double time )
     e->batch_bytes.clear();
     e->batch_slot.clear();
     e->batch.reserve( e->inbound.size() );
-    if ( e->is_server )
-    {
-        rocketnet_reassembly_set_begin_update( e->net->reassembly );
-    }
 
     for ( size_t i = 0; i < e->inbound.size(); ++i )
     {
@@ -103,24 +88,9 @@ static void boundary_update( void * transport, double time )
         if ( ( e->is_server && e->net->slot_connection == 0 ) || ( !e->is_server && !e->connected ) )
             continue;
         boundary_endpoint_t * sender = e->is_server ? e->net->client : e->net->server;
-        if ( p.fragment && e->is_server )
-        {
-            check( rocketnet_reassembly_process_fragment( e->net->reassembly, 0, p.data, p.bytes, e->net->fragment_counters, &boundary_fragment_counter_table ) );
-            if ( e->net->reassembly->completed_payload )
-            {
-                boundary_packet_t complete = {};
-                complete.slot = p.slot;
-                complete.bytes = e->net->reassembly->completed_bytes;
-                memcpy( complete.data, e->net->reassembly->completed_payload, (size_t) complete.bytes );
-                e->batch.push_back( complete );
-            }
-        }
-        else
-        {
-            e->batch.push_back( p );
-            sender->acks_inbox.push_back( p.id );
-            sender->acks_inbox_slot.push_back( p.slot );
-        }
+        e->batch.push_back( p );
+        sender->acks_inbox.push_back( p.id );
+        sender->acks_inbox_slot.push_back( p.slot );
     }
 
     e->inbound.clear();
@@ -149,17 +119,19 @@ static int boundary_acked( void * transport, const int ** client_index, const ui
     return (int) e->acked.size();
 }
 
+// the fixture mirrors the real transports' payload bound: one packet
+
 static int boundary_max_payload( void * transport )
 {
     (void) transport;
-    return 16384;
+    return ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
 }
 
 static uint8_t * boundary_start_packet( void * transport, int client_index, int request_bytes, rocketnet_packet_context_t * context )
 {
     boundary_endpoint_t * e = (boundary_endpoint_t *) transport;
     memset( context, 0, sizeof( *context ) );
-    if ( request_bytes < 1 || request_bytes > BOUNDARY_FRAME_CAPACITY )
+    if ( request_bytes < 1 || request_bytes > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
         return NULL;
     if ( e->is_server ? e->net->slot_connection == 0 : !e->connected )
         return NULL;
@@ -198,40 +170,13 @@ static int boundary_finish_packet( void * transport, rocketnet_packet_context_t 
     e->frame_used[f] = false;
     boundary_endpoint_t * receiver = e->is_server ? e->net->client : e->net->server;
     const uint8_t * payload = e->frames[f] + BOUNDARY_PAYLOAD_INDEX;
-    if ( payload_bytes <= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
-    {
-        boundary_packet_t p = {};
-        p.id = e->frame_id[f];
-        p.slot = e->frame_slot[f];
-        p.bytes = payload_bytes;
-        memcpy( p.data, payload, (size_t) payload_bytes );
-        receiver->inbound.push_back( p );
-        return rocketnet_send_budget_wire_bytes( ROCKETNET_ACK_BLOCK_MIN_BYTES, payload_bytes );
-    }
-
-    int fragments = 0, stride = 0;
-    check( rocketnet_fragment_plan( payload_bytes, &fragments, &stride ) );
-
-    const uint32_t payload_id = e->net->next_payload_id++;
-    int total_wire_bytes = 0;
-    for ( int i = 0; i < fragments; ++i )
-    {
-        const int bytes = i + 1 < fragments ? stride : payload_bytes - stride * ( fragments - 1 );
-        boundary_packet_t fragment = {};
-        fragment.id = e->net->next_packet_id++;
-        fragment.slot = e->frame_slot[f];
-        fragment.fragment = 1;
-        rocketnet_write_fragment_header( fragment.data, payload_id, i, fragments );
-        memcpy( fragment.data + ROCKETNET_FRAGMENT_HEADER_BYTES, payload + stride * i, (size_t) bytes );
-        fragment.bytes = ROCKETNET_FRAGMENT_HEADER_BYTES + bytes;
-        receiver->inbound.push_back( fragment );
-        const int wire_bytes = rocketnet_send_budget_max_wire_bytes( fragment.bytes );
-        check( wire_bytes > 0 );
-
-        total_wire_bytes += wire_bytes;
-    }
-
-    return total_wire_bytes;
+    boundary_packet_t p = {};
+    p.id = e->frame_id[f];
+    p.slot = e->frame_slot[f];
+    p.bytes = payload_bytes;
+    memcpy( p.data, payload, (size_t) payload_bytes );
+    receiver->inbound.push_back( p );
+    return rocketnet_send_budget_wire_bytes( ROCKETNET_ACK_BLOCK_MIN_BYTES, payload_bytes );
 }
 
 static void boundary_abort_packet( void * transport, rocketnet_packet_context_t * context )
@@ -330,20 +275,11 @@ static void boundary_default_max_config( rocketnet_message_config_t * c )
     c->reliable_messages_in_flight = 1024;
 }
 
-static void boundary_setup( boundary_pair_t * pair, bool default_max = false )
+static void boundary_setup_config( boundary_pair_t * pair, const rocketnet_message_config_t & config )
 {
-    rocketnet_message_config_t config;
-    if ( default_max )
-        boundary_default_max_config( &config );
-    else
-        boundary_config( &config );
     pair->net = new boundary_net_t();
     pair->net->slot_connection = 100;
     pair->net->next_packet_id = 1000;
-    pair->net->next_payload_id = 1;
-    memset( pair->net->fragment_counters, 0, sizeof( pair->net->fragment_counters ) );
-    pair->net->reassembly = rocketnet_reassembly_set_create( NULL, 1, 8, 16384, 64 );
-    check( pair->net->reassembly );
 
     pair->net->server = new boundary_endpoint_t();
     pair->net->client = new boundary_endpoint_t();
@@ -370,11 +306,20 @@ static void boundary_setup( boundary_pair_t * pair, bool default_max = false )
     pair->time = 1000.0;
 }
 
+static void boundary_setup( boundary_pair_t * pair, bool default_max = false )
+{
+    rocketnet_message_config_t config;
+    if ( default_max )
+        boundary_default_max_config( &config );
+    else
+        boundary_config( &config );
+    boundary_setup_config( pair, config );
+}
+
 static void boundary_teardown( boundary_pair_t * pair )
 {
     rocketnet_message_client_destroy( pair->client );
     rocketnet_message_server_destroy( pair->server );
-    rocketnet_reassembly_set_destroy( pair->net->reassembly );
     delete pair->net->server;
     delete pair->net->client;
     delete pair->net;
@@ -449,7 +394,7 @@ static void test_unreliable_promotion_every_mode()
             std::vector<boundary_received_t> got;
             boundary_step( &pair, &got );
 
-            // the fixture transport exceeds the packet cap, so the packet cap bounds each record
+            // the fixture transport's cap is the packet cap, which bounds each record
 
             const int record_capacity = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
             const int header = reliability == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED ? 3 + 3 + 3 + ( channel >= 256 ? 2 : 1 ) : ROCKETNET_MESSAGE_RECORD_FIXED_BYTES;

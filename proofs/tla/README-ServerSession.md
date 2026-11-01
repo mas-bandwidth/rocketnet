@@ -74,7 +74,7 @@ inventory each field below stands for, citing this model.
 |---|---|
 | `ClientConnects(i, t)` (the mapping is created) | `token_state` (the slot's challenge, cookie and token state), `client_id`, `user_data`, `timeouts`, `session_keys` |
 | `ServerSend(i)` | `packet_sequence`, `message_sequence`, `sent_packets`, `reliable_send_queue`, `ordering_indices`, `send_budget`, `connection_counters`, `ack_receipt_ring` |
-| `Deliver(s)` (a client packet opens) | `received_packets`, `reliable_receive_queue`, `ack_bits`, `replay_window`, `fragment_reassembly`, `rtt_estimator`, `loss_estimator`, `connection_counters` |
+| `Deliver(s)` (a client packet opens) | `received_packets`, `reliable_receive_queue`, `ack_bits`, `replay_window`, `rtt_estimator`, `loss_estimator`, `connection_counters` |
 | `DisconnectClient(i)`, `DisconnectAll` | `pending_disconnect` (the disconnect burst) |
 
 **The used-token history is per run.** standard/TRANSPORT.md t13.4 (Slot reset): a slot
@@ -127,7 +127,7 @@ reset `Clean`: `EndSlot` applies it through `Reset(i)`, and `Stop` applies it to
 | `DropLeavesNothing` | invariant | a drop happens only to a FREE or HANDSHAKE slot, and such a slot holds no send-side field, so nothing dropped is sent to the client that connects into it |
 | `ResetIsInit` | invariant | a free slot's per-connection fields are all Init; the history holds every token established in this run, the lifetime counter every connection of the object, and the keys and config stay |
 | `RecordIsCurrent` | invariant | a slot's record holds only Init and its current session's writes |
-| `SlotReuseObservesNothing` | invariant | per slot, no packet of session s opens in another session, and no step reads a field another session wrote (a stale ack, a stale fragment, a replay-window false reject) |
+| `SlotReuseObservesNothing` | invariant | per slot, no packet of session s opens in another session, and no step reads a field another session wrote (a stale ack, a replay-window false reject) |
 | `NoClientWhileStopped` | invariant | no slot is occupied while STOPPING, STOPPED, or with no object |
 | `NoReceiveUnlessRunning` | invariant | a read happens only while RUNNING (`readIn` holds only that state) |
 | `NoAdmitUnlessRunning` | invariant | `ClientConnects` and `Establish` run only while RUNNING |

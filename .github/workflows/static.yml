@@ -16,7 +16,7 @@
 #
 # WHAT IT COVERS. gcc -fanalyzer runs over the parser translation units: every
 # sdk/*.cpp that includes rocketnet_read_write.h, plus the parser files named
-# in the card (base64, fragment, message, ack, replay, connect_token). The
+# in the card (base64, message, ack, replay, connect_token). The
 # analyzer walks these paths interprocedurally, which is where wire parsing
 # defects live.
 #

@@ -6,9 +6,7 @@
     simulator at heavy loss, latency, jitter and duplication, under mocked
     time stepped fast -- hours of simulated network abuse per minute of wall
     clock. Its job is smoking out crashes and state machine hangs: every
-    payload is pattern verified -- fragmented payloads included, reassembled
-    under the same abuse, where a lost fragment abandons its payload by
-    design and any other fragment refusal fails the run -- and a watchdog
+    payload is pattern verified, and a watchdog
     treats a machine that neither progresses nor terminally fails as a
     wedge and fails loudly.
 
@@ -54,7 +52,9 @@
                                   survives, the audit proves nothing. Without
                                   the audit it does NOT die, which is the whole
                                   reason the audit exists -- the soak simply
-                                  loses a packet and reports success.
+                                  loses a packet and reports success. A lost
+                                  control packet can leave application totals
+                                  unchanged; the wire receive count exposes it.
                                   scripts/soak-sim-selftest runs both.
 */
 
@@ -64,7 +64,6 @@
 #include "rocketnet_client_slots.h"
 #include "rocketnet_connect_token.h"
 #include "rocketnet_network_simulator.h"
-#include "rocketnet_fragment.h"
 #include "rocketnet_ack.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_test_vectors.h"
@@ -78,6 +77,7 @@
 #include <sodium.h>
 
 static volatile int quit;
+static uint64_t wire_datagrams_received;
 
 // ---------------------------------------------------------------------------
 // where the soak's wall clock goes
@@ -254,6 +254,8 @@ static int wire_receive( struct rocketnet_network_simulator_t * simulator,
 {
     const double start = soak_profile_now();
     const int bytes = rocketnet_network_simulator_receive( simulator, to, current_time, out_from, out_packet );
+    if ( bytes > 0 )
+        wire_datagrams_received++;
     soak_profile_charge( SOAK_PROFILE_WIRE, start );
     return bytes;
 }
@@ -474,14 +476,6 @@ int main( int argc, char ** argv )
         return 1;
     }
 
-    server.reassembly = rocketnet_reassembly_set_create( NULL, 16, 8, 16384, 16 * 8 );
-    if ( !server.reassembly )
-    {
-        printf( "soak_sim: failed to create the reassembly set\n" );
-        rocketnet_term();
-        return 1;
-    }
-
     server.counters = &server_counters;
 
 #define SOAK_NUM_CLIENTS 8
@@ -567,12 +561,9 @@ int main( int argc, char ** argv )
     uint64_t connects = 0;
     uint64_t terminals = 0;
     uint64_t payloads_verified = 0;
-    uint64_t fragmented_sent = 0;
-    uint64_t fragmented_verified = 0;
     uint64_t failures = 0;
     uint64_t hangs = 0;
     int payload_size = 1;
-    int fragmented_payload_size = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 1;
     uint64_t client_id = 1;
 
     const double soak_started = rocketnet_platform_time();
@@ -707,45 +698,12 @@ int main( int argc, char ** argv )
                 }
 
                 payload_size = payload_size < ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ? payload_size + 1 : 1;
-
-            // an occasional fragmented payload, staggered per client, so
-            // reassembly soaks under the same hostile wire: at this loss a
-            // multi-fragment payload sometimes dies, which is its specified
-            // semantics -- the abandoned counter records it, and nothing
-            // else in the fragment family may ever fire
-
-                if ( ( ( iteration + (uint64_t) c * 29 ) % 233 ) == 0 )
-                {
-                    static uint8_t fragmented_payload[16384];
-                    generate_payload( fragmented_payload, fragmented_payload_size );
-
-                    static uint8_t fragment_packets[16 * ROCKETNET_SEND_BUDGET];
-                    int fragment_packet_bytes[16];
-                    int fragment_count = 0;
-
-                    SOAK_PROFILE( SOAK_PROFILE_PRODUCT,
-                                  fragment_count = rocketnet_client_protocol_write_fragments( &client, fragmented_payload, fragmented_payload_size,
-                                                                                              time, fragment_packets, fragment_packet_bytes, 16 ) );
-
-                    if ( fragment_count > 0 )
-                    {
-                        for ( int i = 0; i < fragment_count; i++ )
-                            wire_send( simulator, &client_address[c], &server_address,
-                                       fragment_packets + i * ROCKETNET_SEND_BUDGET,
-                                       fragment_packet_bytes[i], time );
-                        fragmented_sent++;
-                    }
-
-                    fragmented_payload_size = fragmented_payload_size < 16384 - 997 ? fragmented_payload_size + 997 : ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 1;
-                }
             }
         }   // for each client
 
         struct rocketnet_address_t from;
         int bytes;
 
-        SOAK_PROFILE( SOAK_PROFILE_PRODUCT,
-                      rocketnet_reassembly_set_begin_update( server.reassembly ) );
         server.acks->num_acked = 0;
 
         while ( ( bytes = wire_receive( simulator, &server_address, time, &from, packet ) ) > 0 )
@@ -774,19 +732,6 @@ int main( int argc, char ** argv )
                 else
                 {
                     printf( "PAYLOAD VERIFY FAILED at server (%d bytes)\n", delivered_bytes );
-                    failures++;
-                }
-            }
-
-            if ( server.reassembly->completed_bytes > 0 )
-            {
-                if ( verify_payload( server.reassembly->completed_payload, server.reassembly->completed_bytes ) )
-                {
-                    fragmented_verified++;
-                }
-                else
-                {
-                    printf( "FRAGMENTED PAYLOAD VERIFY FAILED at server (%d bytes)\n", server.reassembly->completed_bytes );
                     failures++;
                 }
             }
@@ -852,12 +797,10 @@ int main( int argc, char ** argv )
 
         if ( ( iteration % 100000 ) == 0 )
         {
-            printf( "soak_sim: %llu iterations, %.0f sim seconds, %llu attempts, %llu connects, %llu terminals, %llu payloads verified, %llu/%llu fragmented verified (%llu abandoned), %llu failures\n",
+            printf( "soak_sim: %llu iterations, %.0f sim seconds, %llu attempts, %llu connects, %llu terminals, %llu payloads verified, %llu failures\n",
                     (unsigned long long) iteration, time - 100.0, (unsigned long long) attempts,
                     (unsigned long long) connects, (unsigned long long) terminals,
                     (unsigned long long) payloads_verified,
-                    (unsigned long long) fragmented_verified, (unsigned long long) fragmented_sent,
-                    (unsigned long long) server_counters.values[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_ABANDONED],
                     (unsigned long long) failures );
         }
     }
@@ -894,7 +837,6 @@ int main( int argc, char ** argv )
         { ROCKETNET_COUNTER_SEND_HISTORY_OVERFLOW, "loss: a lost keep-alive takes its acks with it, so sent packets age out of the history unacknowledged" },
         { ROCKETNET_COUNTER_KEEP_ALIVE_ALREADY_RECEIVED, "duplication: the wire delivers a keep-alive twice, the second is a replay" },
         { ROCKETNET_COUNTER_PAYLOAD_ALREADY_RECEIVED, "duplication: the wire delivers a payload twice, the second is a replay" },
-        { ROCKETNET_COUNTER_FRAGMENT_ALREADY_RECEIVED, "duplication: the wire delivers a fragment twice, the second is a replay" },
         { ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_ALREADY_RECEIVED, "duplication: the wire delivers a keep-alive twice, the second is a replay" },
         { ROCKETNET_COUNTER_ACK_ALREADY_RECEIVED, "duplication: the wire delivers a standalone ack twice, the second is a replay" },
         { ROCKETNET_COUNTER_CLIENT_ACK_ALREADY_RECEIVED, "duplication: the wire delivers a standalone ack twice, the second is a replay" },
@@ -955,12 +897,12 @@ int main( int argc, char ** argv )
         }
     }
 
-    printf( "\nsoak_sim finished: %llu iterations, %.0f sim seconds, %llu attempts, %llu connects, %llu terminals, %llu payloads verified, %llu/%llu fragmented verified (%llu abandoned), %llu failures, %llu hangs\n",
+    printf( "soak_sim wire: %llu datagrams received\n", (unsigned long long) wire_datagrams_received );
+
+    printf( "\nsoak_sim finished: %llu iterations, %.0f sim seconds, %llu attempts, %llu connects, %llu terminals, %llu payloads verified, %llu failures, %llu hangs\n",
             (unsigned long long) iteration, time - 100.0, (unsigned long long) attempts,
             (unsigned long long) connects, (unsigned long long) terminals,
             (unsigned long long) payloads_verified,
-            (unsigned long long) fragmented_verified, (unsigned long long) fragmented_sent,
-            (unsigned long long) server_counters.values[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_ABANDONED],
             (unsigned long long) failures, (unsigned long long) hangs );
 
     // a refused attribution is a failed run: the instrument said its own
@@ -980,7 +922,6 @@ int main( int argc, char ** argv )
     rocketnet_used_token_history_destroy( server.used_token_history );
     rocketnet_client_slots_destroy( server.client_slots );
     rocketnet_server_acks_destroy( server.acks );
-    rocketnet_reassembly_set_destroy( server.reassembly );
     rocketnet_network_simulator_destroy( simulator );
 
     rocketnet_term();

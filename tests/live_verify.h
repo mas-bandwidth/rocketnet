@@ -16,8 +16,8 @@
     its sequence.
 
     The schedule depends on the limits of the run's config, carried in
-    rocketnet_live_config_t: the message config's max_message_bytes and the
-    transport's max_payload_bytes.
+    rocketnet_live_config_t: the message config's max_message_bytes, and the
+    schedule's own code-1 payload bound.
 */
 
 #pragma once
@@ -34,15 +34,14 @@
 #define ROCKETNET_LIVE_NUM_CHANNELS             32
 #define ROCKETNET_LIVE_MAX_BOUNDARIES           64
 #define ROCKETNET_LIVE_BLOCK_STRIDE             1152u      // F, ROCKETNET_MESSAGE_FRAGMENT_BYTES
-#define ROCKETNET_LIVE_FRAGMENT_STRIDE          1413u      // the transport fragment stride
 #define ROCKETNET_LIVE_CODE1_OVERHEAD           11u        // code 1's 10-byte header and the form byte
 #define ROCKETNET_LIVE_MAX_RECORD_BYTES         65535u     // code 1's u16 record length
 #define ROCKETNET_LIVE_UNRELIABLE_LIMIT         1411u      // 1415 - 1 - 3, codes 0 and 5 single record
 #define ROCKETNET_LIVE_SLOTS                    32u
 
-// The transport's default payload capacity (the SDK's
-// ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES, internal to the library): the live
-// schedule's payload bound, now that the field is gone.
+// The live schedule's code-1 payload bound: a code-1 message above one
+// packet's record is promoted to its reliable twin, and the schedule probes
+// promoted sizes up to this bound.
 
 // The limits the schedule is computed against (section 4, "The modes'
 // maxima"), and the run seed of the bucket rule.
@@ -191,7 +190,7 @@ static inline void rocketnet_live_boundary_add( uint32_t * list, int * count, in
 
 // Section 4, the boundary list B of a mode, in the order the section lists
 // it: the header prefix, the single-record edge at -1, 0, +1, code 1's
-// transport payload edges, the block stride's multiples, and the
+// promotion edge and payload bound, the block stride's multiples, and the
 // near-maximum values. Returns the count; list holds
 // ROCKETNET_LIVE_MAX_BOUNDARIES entries.
 
@@ -215,14 +214,6 @@ static inline int rocketnet_live_boundaries( const rocketnet_live_config_t * con
         rocketnet_live_boundary_add( list, &n, 1404, m );
         rocketnet_live_boundary_add( list, &n, 1405, m );
         rocketnet_live_boundary_add( list, &n, 1406, m );
-
-        for ( int64_t k = 2; k <= 3; k++ )
-        {
-            const int64_t full = k * (int64_t) ROCKETNET_LIVE_FRAGMENT_STRIDE - o;
-            rocketnet_live_boundary_add( list, &n, full - 1, m );
-            rocketnet_live_boundary_add( list, &n, full, m );
-            rocketnet_live_boundary_add( list, &n, full + 1, m );
-        }
 
         const int64_t payload_max = (int64_t) ROCKETNET_LIVE_DEFAULT_PAYLOAD_BYTES - o;
         rocketnet_live_boundary_add( list, &n, payload_max - 1, m );
@@ -328,13 +319,6 @@ static inline int rocketnet_live_bucket( const rocketnet_live_config_t * config,
         const uint32_t f = k * ROCKETNET_LIVE_BLOCK_STRIDE;
         if ( length + 1u >= f && length <= f + 1u )
             return ROCKETNET_LIVE_BUCKET_FRAGMENT;
-
-        if ( mode == 1 && k >= 2 )
-        {
-            const uint32_t full = k * ROCKETNET_LIVE_FRAGMENT_STRIDE - ROCKETNET_LIVE_CODE1_OVERHEAD;
-            if ( length + 1u >= full && length <= full + 1u )
-                return ROCKETNET_LIVE_BUCKET_FRAGMENT;
-        }
     }
 
     if ( length <= e )
