@@ -107,10 +107,10 @@ int main( void )
 }
 """
 # Only what compiling rocketnet.h needs: ROCKETNET_SHARED selects the shared
-# library's import declaration, and ROCKETNET_DEV and ROCKETNET_MAX_CLIENTS are
-# the values the library was built with, so the header the consumer compiles
-# matches it (sdk/rocketnet.h).
-CONSUMER_DEFINITIONS = {"ROCKETNET_SHARED", "ROCKETNET_DEV", "ROCKETNET_MAX_CLIENTS"}
+# library's import declaration, and ROCKETNET_DEV, ROCKETNET_MAX_CLIENTS and
+# ROCKETNET_MAX_CHANNELS are the values the library was built with, so the
+# header the consumer compiles matches it (sdk/rocketnet.h).
+CONSUMER_DEFINITIONS = {"ROCKETNET_SHARED", "ROCKETNET_DEV", "ROCKETNET_MAX_CLIENTS", "ROCKETNET_MAX_CHANNELS"}
 FLOATING_POINT_OPTIONS = ("-ffp-contract", "/fp:")
 
 
@@ -162,7 +162,7 @@ def prepare_consumer_source(root, shared_enabled, dev_enabled):
 
 
 def check_exported_settings(installed, root, command, config, native_build_options, shared_enabled,
-                            expected_dev, expected_max_clients):
+                            expected_dev, expected_max_clients, expected_max_channels):
     """Fail when the package refuses its own major.minor line or hands the
     library's private build settings to a consumer's compile."""
     version_file = next(installed.rglob("RocketNetConfigVersion.cmake")).read_text()
@@ -192,11 +192,13 @@ def check_exported_settings(installed, root, command, config, native_build_optio
         "rocketnet": {
             f"ROCKETNET_DEV={expected_dev}",
             f"ROCKETNET_MAX_CLIENTS={expected_max_clients}",
+            f"ROCKETNET_MAX_CHANNELS={expected_max_channels}",
         },
         "rocketnet_shared": {
             "ROCKETNET_SHARED",
             f"ROCKETNET_DEV={expected_dev}",
             f"ROCKETNET_MAX_CLIENTS={expected_max_clients}",
+            f"ROCKETNET_MAX_CHANNELS={expected_max_channels}",
         },
     }
     for index, request in enumerate((version, line)):
@@ -351,6 +353,7 @@ def main():
             raise RuntimeError("--client requires ROCKETNET_BUILD_SHARED=ON (static and shared consumers)")
     expected_dev = "1" if cmake_bool(cache.get("ROCKETNET_DEV"), True) else "0"
     expected_max_clients = cache.get("ROCKETNET_MAX_CLIENTS", "1000")
+    expected_max_channels = cache.get("ROCKETNET_MAX_CHANNELS", "32")
     # Reusable MSBuild workers can retain the temporary build directory after
     # a successful build. These consumers have no subsequent build to reuse
     # them for; let the workers exit so TemporaryDirectory can remove the tree.
@@ -390,7 +393,7 @@ def main():
                 command.append(f"-D{key}={cache[key]}")
         if args.client:
             check_exported_settings(installed, root, command, args.config, native_build_options, shared_enabled,
-                                    expected_dev, expected_max_clients)
+                                    expected_dev, expected_max_clients, expected_max_channels)
             check_client_package(installed, root, command, args.config, native_build_options)
             print("Relocated SDK: C static/shared client consumers passed (client configuration)")
             return
@@ -414,7 +417,7 @@ def main():
         env["PATH"] = str(installed / "bin") + os.pathsep + env.get("PATH", "")
         run("ctest", "--test-dir", consumer, "-C", args.config, "--output-on-failure", env=env)
         check_exported_settings(installed, root, command, args.config, native_build_options, shared_enabled,
-                                expected_dev, expected_max_clients)
+                                expected_dev, expected_max_clients, expected_max_channels)
         if args.embedded:
             embedded = root / "embedded build"
             # Reuse generator/toolchain selection, replacing only producer-specific arguments.

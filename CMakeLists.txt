@@ -243,7 +243,7 @@ else()
 endif()
 add_compile_definitions(
     ROCKETNET_MAX_CLIENTS=${ROCKETNET_MAX_CLIENTS}
-    ROCKETNET_MAX_CHANNELS=${ROCKETNET_MAX_CHANNELS}
+    $<$<NOT:$<BOOL:$<TARGET_PROPERTY:ROCKETNET_OWN_MAX_CHANNELS>>>:ROCKETNET_MAX_CHANNELS=${ROCKETNET_MAX_CHANNELS}>
     ROCKETNET_HISTORY_PACKETS=${ROCKETNET_HISTORY_PACKETS}
     ${ROCKETNET_MEMORY_BUDGET_DEFINITIONS})
 
@@ -366,24 +366,21 @@ if(ROCKETNET_HARDEN)
     endif()
 endif()
 
-# The warning floor is directory-wide (the add_compile_options above the
-# dependencies), so it reaches every target, named here or not. The function
-# stays as the place a target names the floor it is checked against; it adds
-# nothing the directory scope has not already given the target.
 # A binary that compiles the SDK sources itself at its own channel count
 # (test_wide, the channel stress binaries): its ROCKETNET_MAX_CHANNELS replaces
-# the build's, which the directory and rocketnet_dev's definitions carry, so
-# the compiler sees one value. The rest of rocketnet_dev's definitions apply.
+# the build's, which the directory (unless the target sets
+# ROCKETNET_OWN_MAX_CHANNELS) and rocketnet_dev's definitions carry, so the
+# compiler sees one value. The rest of rocketnet_dev's definitions apply.
 function(rocketnet_own_max_channels target channels)
-    get_target_property(inherited ${target} COMPILE_DEFINITIONS)
-    if(inherited)
-        list(FILTER inherited EXCLUDE REGEX "^ROCKETNET_MAX_CHANNELS=")
-        set_target_properties(${target} PROPERTIES COMPILE_DEFINITIONS "${inherited}")
-    endif()
+    set_target_properties(${target} PROPERTIES ROCKETNET_OWN_MAX_CHANNELS ON)
     target_compile_definitions(${target} PRIVATE ROCKETNET_MAX_CHANNELS=${channels}
         "$<FILTER:$<TARGET_PROPERTY:rocketnet_dev,COMPILE_DEFINITIONS>,EXCLUDE,^ROCKETNET_MAX_CHANNELS=>")
 endfunction()
 
+# The warning floor is directory-wide (the add_compile_options above the
+# dependencies), so it reaches every target, named here or not. The function
+# stays as the place a target names the floor it is checked against; it adds
+# nothing the directory scope has not already given the target.
 function(rocketnet_warning_floor target)
 endfunction()
 
