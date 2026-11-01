@@ -77,33 +77,23 @@ REGISTER_UNIT_TEST( test_server_receive_buffer_bytes_formula );
 
 static void test_server_transport_receive_buffer_request()
 {
-    // portable and msgx size for the config's max_clients
+    // every UDP transport sizes each socket for the config's max_clients:
+    // an SO_REUSEPORT queue socket (gso, io_uring) for all of them, since it
+    // may receive any share of the clients
 
-    check( rocketnet_server_transport_receive_buffer_request( "portable", 64 ) == rocketnet_server_receive_buffer_request( 64 ) );
-    check( rocketnet_server_transport_receive_buffer_request( "msgx", 64 ) == rocketnet_server_receive_buffer_request( 64 ) );
-    check( rocketnet_server_transport_receive_buffer_request( "portable", ROCKETNET_MAX_CLIENTS ) ==
-           rocketnet_server_receive_buffer_request( ROCKETNET_MAX_CLIENTS ) );
-
-    // gso, io_uring, iocp and rio size every socket for ROCKETNET_MAX_CLIENTS,
-    // whatever max_clients the config carries: their creates do not carry it,
-    // and an SO_REUSEPORT queue socket may receive any share of the clients
-
-    const char * native[] = { "gso", "io_uring", "iocp", "rio" };
-    for ( const char * transport : native )
+    const char * transports[] = { "portable", "msgx", "gso", "io_uring", "iocp", "rio" };
+    const int client_counts[] = { 1, 64, 1000, ROCKETNET_MAX_CLIENTS };
+    for ( const char * transport : transports )
     {
-        check( rocketnet_server_transport_receive_buffer_request( transport, 1 ) == rocketnet_server_receive_buffer_request( ROCKETNET_MAX_CLIENTS ) );
-        check( rocketnet_server_transport_receive_buffer_request( transport, 64 ) == rocketnet_server_receive_buffer_request( ROCKETNET_MAX_CLIENTS ) );
-    }
+        for ( const int max_clients : client_counts )
+            check( rocketnet_server_transport_receive_buffer_request( transport, max_clients ) == rocketnet_server_receive_buffer_request( max_clients ) );
 
-#if ROCKETNET_MAX_CLIENTS == 1000
-    // at the default ceiling: 25,000,000 bytes per socket, not the 1,000,000
-    // floor (ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE)
+        // at 1000 clients: 25,000,000 bytes per socket, not the 1,000,000
+        // floor (ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE), in every build
 
-    for ( const char * transport : native )
         check( rocketnet_server_transport_receive_buffer_request( transport, 1000 ) == 25000000 );
-    check( rocketnet_server_transport_receive_buffer_request( "portable", 1000 ) == 25000000 );
-    check( rocketnet_server_transport_receive_buffer_request( "gso", 1000 ) != ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
-#endif // #if ROCKETNET_MAX_CLIENTS == 1000
+        check( rocketnet_server_transport_receive_buffer_request( transport, 64 ) < rocketnet_server_transport_receive_buffer_request( transport, 1000 ) );
+    }
 
     // no UDP socket, no request
 
@@ -152,7 +142,7 @@ static void test_server_host_estimate_charges_the_receive_request()
 
     check( estimated > 0 );
 
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_MAX_CLIENTS == 1000
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_MAX_CLIENTS >= 1000
     // gso at 4 queues and 1000 clients: four sockets of 25,000,000 bytes each
 
     struct rocketnet_server_transport_config_t config;
@@ -164,7 +154,7 @@ static void test_server_host_estimate_charges_the_receive_request()
     check( rocketnet_server_transport_host_memory_estimate( &config, "gso", &estimate ) );
     check( estimate.sockets == 4 );
     check( estimate.socket_receive_buffer_bytes == (uint64_t) 100000000 );
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_MAX_CLIENTS == 1000
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_MAX_CLIENTS >= 1000
 }
 
 REGISTER_UNIT_TEST( test_server_host_estimate_charges_the_receive_request );
