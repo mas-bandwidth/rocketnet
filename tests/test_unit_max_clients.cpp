@@ -164,10 +164,11 @@ static void max_clients_server_config( rocketnet_server_config_t * config )
 // max_clients, not the build's ROCKETNET_MAX_CLIENTS. The portable plan at
 // the light config is nearly all buffers that scale with clients (it has no
 // fixed transport memory such as XDP's UMEM), so a 1000-client server plans
-// close to 1000 / ROCKETNET_MAX_CLIENTS of a full one, and the check allows
-// twice that. Sized from the build ceiling instead, a 1000-client server in
-// a 10000 build plans 3.93 GB where a full one plans 10.07 GB, almost four
-// times its share. In the default build the two plans are the same server.
+// close to 1000 / ROCKETNET_MAX_CLIENTS of a full one (1.02 GB against
+// 10.07 GB in a 10000 build, the same 1.02 GB as in the default build), and
+// the check allows a quarter more. Sizing even the receive and send buffers
+// alone from the build ceiling plans 1.69 GB, two thirds more than its share.
+// In the default build the two plans are the same server.
 
 static void test_server_plan_follows_configured_max_clients()
 {
@@ -186,7 +187,7 @@ static void test_server_plan_follows_configured_max_clients()
 
     check( at_max > 0 && at_1000 > 0 && at_999 > 0 );
     check( at_999 <= at_1000 && at_1000 <= at_max );
-    check( at_1000 * (uint64_t) ROCKETNET_MAX_CLIENTS <= 2 * 1000 * at_max );
+    check( 4 * at_1000 * (uint64_t) ROCKETNET_MAX_CLIENTS <= 5 * 1000 * at_max );
 }
 
 REGISTER_UNIT_TEST( test_server_plan_follows_configured_max_clients );
