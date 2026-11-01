@@ -1720,7 +1720,8 @@ static void rocketnet_iocp_send_worker( rocketnet_platform_thread_t * thread, vo
                 break;
             iocp->test_active_tx_batches.fetch_sub( 1, std::memory_order_release );
         }
-#endif // #if ROCKETNET_DEV \
+#endif // #if ROCKETNET_DEV
+
         // proofs/tla/RNBankFifoLayout.tla Take: the ready head; Release: the bank back on the free stack after its sends.
         rocketnet_platform_mutex_acquire( &iocp->send_mutex );
 
