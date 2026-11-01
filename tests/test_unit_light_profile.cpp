@@ -80,8 +80,10 @@
 // Re-measured 2026-10-28 on mini-m5 at fd3cc227 (unreliable ring 16Q, resend
 // link 12W): client was 22746605, now 22754581. At 0e32e225 (descriptor
 // 72 bytes, span links) server was 1603277086, now 1607276904; client unchanged.
+// The server's client-scaled buffers carved from layouts sized by its
+// configured max_clients: 1608427487 by the macos-15 Debug CI leg.
 #if ROCKETNET_DEV
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1608369048 )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1608427487 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22754581 )
 #else
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1585902216 )
