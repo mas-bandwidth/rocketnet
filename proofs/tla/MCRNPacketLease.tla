@@ -1,10 +1,9 @@
 ---------------------------- MODULE MCRNPacketLease ----------------------------
 (***************************************************************************)
-(* The small instance of RNPacketLease: a table of four entries (the     *)
-(* limit of used is two), two threads, two frames that hash to the *)
-(* same entry, two values and two operations of thread 1 and one of thread 2.  README-         *)
-(* RNPacketLease.md lists the configs and the check of each trace against *)
-(* the code.                                                               *)
+(* Small RNPacketLease instances: a four-entry table with used limit two. *)
+(* Frames and scheduled operations vary by cfg; UsedOffByOne uses three   *)
+(* frames. README-RNPacketLease.md lists each configuration and the       *)
+(* check of its trace against the code.                                  *)
 (***************************************************************************)
 EXTENDS RNPacketLease
 =============================================================================

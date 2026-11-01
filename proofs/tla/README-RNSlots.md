@@ -15,7 +15,10 @@ and returns this named error in release. Views cannot survive an update.
 This refines section 11.1's batch lifetime and supersedes the earlier open
 choice between automatic expiry and arbitrary explicit lifetime. `BeginUpdate`
 checks for empty held sets before running the transport; `Observe` retains
-that condition; `RejectUnreleasedUpdate` models the invalid call.
+that condition. `RejectUnreleasedUpdate` ends the model on this misuse.
+This is a valid-use model with fail-fast misuse, not a model of release-build
+recovery: the implementation takes back the batch, records the error, and
+continues the update before returning it; Debug also asserts.
 The `updatewithheld` mutation proceeds anyway, violating
 `UpdateRequiresReleasedViews`.
 
@@ -52,7 +55,9 @@ nondeterministic, covering both payload and ack orderings.
 
 The safety specification permits arbitrary connection churn, application
 requests, deferred notification subsets and invalid update calls. Terminal
-API errors are deliberate; configurations ignore terminal deadlock. Safety
+API errors are the model's fail-fast abstraction; configurations ignore
+terminal deadlock. `NoOwnEntryDropped` is a local consistency invariant,
+not a separately declared mutation witness. Safety
 never assumes fairness. The live specification keeps a connection stable,
 submits the next message after previous views are released, publishes deferred
 notifications at the next update, and assumes fair retries, update processing,

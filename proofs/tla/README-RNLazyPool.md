@@ -13,7 +13,10 @@ An eager pool threads its free list through every entry when it is reset, so
 a reset writes every entry and touches every page of the pool. At the
 example soak's configuration that was 3.1 MB of descriptors per connection
 region, written at create and again at every connect and disconnect, most of
-it never used. The lazy pool writes an entry only when it is taken.
+it never used. The lazy pool initializes the modeled entry fields when an
+entry is taken. The implementation also clears `enqueue_ticket` and
+`schedule_flags` below the old descriptor watermark during `rn_region_carve`;
+these scheduling fields are outside this pool abstraction.
 
 - **The watermark**, `fresh`: entries `1..fresh` have been taken since the
   reset and are free-listed or held; entries above it were never taken, and
@@ -21,9 +24,10 @@ it never used. The lazy pool writes an entry only when it is taken.
 - **Take** pops the free list or, when it is empty, takes entry `fresh + 1`,
   and the taker writes the entry whole.
 - **Release** marks the entry free and pushes it on the list.
-- **Reset** empties the list and zeroes the watermark. It writes no entry: an
-  entry keeps whatever bytes its last use left (`mem`), and those bytes are
-  not state.
+- **Reset** empties the list and zeroes the watermark. It leaves the modeled
+  entry fields (`mem`) unchanged; stale values are not pool state. The SDK's
+  scheduling-field cleanup touches only the old taken prefix before lowering
+  the watermark, not the never-taken suffix.
 
 The model runs the eager pool beside the lazy one on the same actions, as the
 reference (`eager`, the list an eager reset threads, `<<1, ..., N>>`).
