@@ -920,6 +920,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Give sort and comm the same byte ordering on every runner.
+          export LC_ALL=C
           mkdir -p unit-cases
           { comm -13 <(./bin/test --list | sort) <(./bin/test_wide --list | sort); echo test_unreliable_promotion_every_mode; } > wide-cases.txt
           test "$(wc -l < wide-cases.txt)" -ge 2
