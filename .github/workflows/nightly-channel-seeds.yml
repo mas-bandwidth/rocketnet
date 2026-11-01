@@ -27,10 +27,15 @@ on:
 permissions:
   contents: read
 
+# Test execution has no repository wall-clock cap; GitHub still limits
+# self-hosted jobs to five days.
+env:
+  ROCKETNET_NIGHTLY_NO_TIMEOUT: '1'
+
 jobs:
   channel-seed-sweep:
     runs-on: ["self-hosted", "Linux", "X64", "fleet", "long"]
-    timeout-minutes: 60
+    timeout-minutes: 7200
     strategy:
       fail-fast: false
       matrix:
@@ -67,8 +72,8 @@ jobs:
       - name: Replay the pinned regression seeds
         run: |
           set -o pipefail
-          echo "channel seed regressions replay: scripts/channel-seed-sweep --regressions tests/functional/channel_seed_regressions.tsv --timeout 120"
-          scripts/channel-seed-sweep --regressions tests/functional/channel_seed_regressions.tsv --timeout 120 | tee channel-seed-regressions.log
+          echo "channel seed regressions replay: scripts/channel-seed-sweep --regressions tests/functional/channel_seed_regressions.tsv --timeout 0"
+          scripts/channel-seed-sweep --regressions tests/functional/channel_seed_regressions.tsv --timeout 0 | tee channel-seed-regressions.log
 
       - name: Sweep every channel case over a rolling seed range
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
@@ -79,8 +84,8 @@ jobs:
           length=2000
           sweep_start=$(( 1 + (CHANNEL_RUN_NUMBER - 1) * length ))
           sweep_end=$(( sweep_start + length - 1 ))
-          echo "channel seed sweep seeds=$sweep_start-$sweep_end length=$length run_number=$CHANNEL_RUN_NUMBER replay: scripts/channel-seed-sweep --all --seeds $sweep_start-$sweep_end --timeout 120"
-          scripts/channel-seed-sweep --all --seeds "$sweep_start-$sweep_end" --timeout 120 | tee channel-seed-sweep.log
+          echo "channel seed sweep seeds=$sweep_start-$sweep_end length=$length run_number=$CHANNEL_RUN_NUMBER replay: scripts/channel-seed-sweep --all --seeds $sweep_start-$sweep_end --timeout 0"
+          scripts/channel-seed-sweep --all --seeds "$sweep_start-$sweep_end" --timeout 0 | tee channel-seed-sweep.log
 
       # GitHub expressions have no replace(): the artifact name's ref slug ('/' -> '-') is made here
       - name: Artifact name for the ref

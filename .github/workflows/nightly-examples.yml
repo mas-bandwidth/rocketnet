@@ -17,10 +17,16 @@ concurrency:
 permissions:
   contents: read
 
+# Test execution has no repository wall-clock cap; GitHub still limits
+# self-hosted jobs to five days.
+env:
+  ROCKETNET_NIGHTLY_NO_TIMEOUT: '1'
+
 jobs:
   examples:
     name: ${{ matrix.os }}
     runs-on: ${{ fromJSON(matrix.runner) }}
+    timeout-minutes: 7200
     strategy:
       fail-fast: false
       matrix:
@@ -74,6 +80,7 @@ jobs:
   examples-macos:
     name: macos-15
     runs-on: [self-hosted, macOS, ARM64, rocketnet-macos]
+    timeout-minutes: 7200
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
@@ -159,6 +166,7 @@ jobs:
   examples-windows:
     name: windows-2025
     runs-on: [self-hosted, Windows, X64, rocketnet-windows]
+    timeout-minutes: 7200
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 

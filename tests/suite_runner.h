@@ -12,7 +12,8 @@
     ROCKETNET_TEST_CASE_TIME_SCALE in the environment multiplies the case limit
     a suite passes in; the nightly macOS TSAN functional runs set 30, a
     one-hour case limit, the nightly Linux threaded TSan leg sets 4, and
-    every other run leaves it unset. A
+    every other run leaves it unset. ROCKETNET_NIGHTLY_NO_TIMEOUT=1 disables
+    only this execution watchdog; fixture durations and assertions stay intact. A
     functional case whose peak resident set (wait4 ru_maxrss on POSIX,
     PeakWorkingSetSize on Windows) is over its bound fails
     (ROCKETNET_TEST_MAX_CASE_RSS_MB, overridable by that environment variable;
@@ -43,6 +44,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <string>
 #include <thread>
 #include <vector>
@@ -131,7 +133,10 @@ inline bool suite_case_limit( double case_limit_s, double * limit_s )
         return false;
     }
 
-    *limit_s = case_limit_s * scale;
+    char no_timeout[16];
+    const bool unbounded = rocketnet_test_getenv( "ROCKETNET_NIGHTLY_NO_TIMEOUT", no_timeout, sizeof( no_timeout ) ) &&
+                           std::strcmp( no_timeout, "1" ) == 0;
+    *limit_s = unbounded ? std::numeric_limits<double>::infinity() : case_limit_s * scale;
 
     return true;
 }

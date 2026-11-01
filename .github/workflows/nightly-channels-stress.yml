@@ -20,10 +20,15 @@ on:
 permissions:
   contents: read
 
+# Test execution has no repository wall-clock cap; GitHub still limits
+# self-hosted jobs to five days.
+env:
+  ROCKETNET_NIGHTLY_NO_TIMEOUT: '1'
+
 jobs:
   channels-stress-linux:
     runs-on: ["self-hosted", "Linux", "X64", "fleet"]
-    timeout-minutes: 60
+    timeout-minutes: 7200
     strategy:
       fail-fast: false
       matrix:
@@ -45,7 +50,7 @@ jobs:
 
   channels-stress-macos:
     runs-on: ["self-hosted", "macOS", "ARM64", "rocketnet-macos"]
-    timeout-minutes: 60
+    timeout-minutes: 7200
     strategy:
       fail-fast: false
       matrix:
@@ -67,7 +72,7 @@ jobs:
 
   channels-stress-windows:
     runs-on: [self-hosted, Windows, X64, rocketnet-windows]
-    timeout-minutes: 90
+    timeout-minutes: 7200
     strategy:
       fail-fast: false
       matrix:

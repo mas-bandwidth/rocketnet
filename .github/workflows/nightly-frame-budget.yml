@@ -34,11 +34,16 @@ concurrency:
   group: nightly-frame-budget-${{ github.ref }}
   cancel-in-progress: true
 
+# Test execution has no repository wall-clock cap; GitHub still limits
+# self-hosted jobs to five days.
+env:
+  ROCKETNET_NIGHTLY_NO_TIMEOUT: '1'
+
 jobs:
   linux-frame-budget:
     name: frame budget (${{ matrix.ref }} / linux-quiet portable)
     runs-on: [self-hosted, Linux, X64, rocketnet-quiet]
-    timeout-minutes: 10
+    timeout-minutes: 7200
     strategy:
       fail-fast: false
       matrix:
@@ -66,7 +71,7 @@ jobs:
     # measurement, and the workflow concurrency group above keeps one run of
     # this workflow per ref.
     runs-on: [self-hosted, macOS, ARM64, rocketnet-macos]
-    timeout-minutes: 10
+    timeout-minutes: 7200
     strategy:
       fail-fast: false
       matrix:
@@ -122,7 +127,7 @@ jobs:
   windows-frame-budget:
     name: frame budget (${{ matrix.ref }} / windows-2025 portable report-only)
     runs-on: [self-hosted, Windows, X64, rocketnet-windows]
-    timeout-minutes: 10
+    timeout-minutes: 7200
     strategy:
       fail-fast: false
       matrix:

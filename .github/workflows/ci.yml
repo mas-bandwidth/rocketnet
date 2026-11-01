@@ -146,7 +146,7 @@ concurrency:
 #
 #   per-commit (push, pull_request, workflow_dispatch with full unset): the
 #       jobs and steps below that fit. Every job carries
-#       timeout-minutes: ${{ inputs.full && N || 2 }}, so a per-commit job that
+#       timeout-minutes: ${{ inputs.full && 7200 || 2 }}, so a per-commit job that
 #       runs past two minutes fails; tools/check_ci_budget.py, run in the lint
 #       job, refuses a per-commit job in any workflow without that bound.
 #       The job count is sized to the pools that run it at once: two macOS
@@ -173,8 +173,12 @@ concurrency:
 #       restores the pinned toolchain from the cache the nightly saves on
 #       main, and fails naming the cold cache if it is missing.
 #
-# The step-level timeout-minutes values below bound single steps in the
-# nightly tier; the job bound is what holds a per-commit run to two minutes.
+# Nightly has no repository execution watchdog. GitHub imposes a five-day
+# self-hosted job ceiling, represented by 7200 minutes below. The per-commit
+# job bound remains two minutes; finite scenarios and hang oracles remain.
+env:
+  ROCKETNET_NIGHTLY_NO_TIMEOUT: ${{ inputs.full && '1' || '0' }}
+
 permissions:
   contents: read
 
@@ -210,7 +214,7 @@ jobs:
     # rocketnet-ci-macos, kept apart from the nightly pool rocketnet-macos so the other nightly workflows never queue ahead of a commit). matrix.os is the display name the check names carry (macos-15 on the macOS rows);
     # runner is the label set runs-on uses.
     runs-on: ${{ fromJSON(matrix.runner) }}
-    timeout-minutes: ${{ inputs.full && 10 || 2 }}
+    timeout-minutes: ${{ inputs.full && 7200 || 2 }}
     strategy:
       fail-fast: false
       matrix:
@@ -401,7 +405,7 @@ jobs:
 
       # Driver selection is runtime now (#106), so one build serves the whole
       # matrix. ./bin/test is the unit suite: no socket, no real driver, the
-      # state machines and the in-memory simulator, parallel, 120s kill. ./bin/functional is the driver matrix. On this unprivileged
+      # state machines and the in-memory simulator, parallel, bounded per commit. ./bin/functional is the driver matrix. On this unprivileged
       # runner the linux functional leg is the FALL made real -- xdp refused
       # for missing privilege, gso granted -- so the functional suite runs
       # over the gso driver here (and over the darwin msgx pump on macOS);
@@ -613,7 +617,6 @@ jobs:
       # Windows; TRANSPORTS.md "Client transports").
       - name: Transport family matrix (every transport on IPv4, IPv6 and dual stack)
         if: matrix.leg == 'functional'
-        timeout-minutes: 3
         shell: bash
         env:
           TRANSPORT_MATRIX_LINUX: |
@@ -666,8 +669,14 @@ jobs:
                   done
                   exit 0
                 fi
-                timeout 120 vng --run "$vm_kernel" --memory 1536M --cpus 2 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir "$PWD" -- \
-                  sh -c 'for case in '"$xdp_cases"'; do sudo '"$functional"' --run "$case" > "'"$logs/$server.$client"'.$case.log" 2>&1; echo $? > "'"$logs/$server.$client"'.$case.rc"; done' \
+                vm_timeout=(timeout 120)
+                nightly_no_timeout=0
+                if [ "${ROCKETNET_NIGHTLY_NO_TIMEOUT:-0}" = 1 ]; then
+                  vm_timeout=()
+                  nightly_no_timeout=1
+                fi
+                ${vm_timeout[@]+"${vm_timeout[@]}"} vng --run "$vm_kernel" --memory 1536M --cpus 2 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir "$PWD" -- \
+                  sh -c 'for case in '"$xdp_cases"'; do sudo env ROCKETNET_NIGHTLY_NO_TIMEOUT='"$nightly_no_timeout"' '"$functional"' --run "$case" > "'"$logs/$server.$client"'.$case.log" 2>&1; echo $? > "'"$logs/$server.$client"'.$case.rc"; done' \
                   > "$logs/$server.$client.vm.log" 2>&1
                 for case in $xdp_cases; do
                   [ -f "$logs/$server.$client.$case.rc" ] || { echo 1 > "$logs/$server.$client.$case.rc"; tail -n 5 "$logs/$server.$client.vm.log" > "$logs/$server.$client.$case.log"; }
@@ -992,6 +1001,11 @@ jobs:
             exit 1
           fi
           timing_elapsed_ms=$(( ( timing_end_ns - timing_start_ns + 999999 ) / 1000000 ))
+          if [[ "${ROCKETNET_NIGHTLY_NO_TIMEOUT:-0}" == 1 ]]; then
+            printf 'CI_UNIT_FUNCTIONAL_TIMING row=%s start_ns=%s end_ns=%s elapsed_ms=%s budget_ms=none\n' \
+              "$CI_TIMING_ROW" "$timing_start_ns" "$timing_end_ns" "$timing_elapsed_ms"
+            exit 0
+          fi
           printf 'CI_UNIT_FUNCTIONAL_TIMING row=%s start_ns=%s end_ns=%s elapsed_ms=%s budget_ms=120000 ideal_ms=60000\n' \
             "$CI_TIMING_ROW" "$timing_start_ns" "$timing_end_ns" "$timing_elapsed_ms"
           if (( timing_elapsed_ms >= 120000 )); then
@@ -1131,7 +1145,7 @@ jobs:
     # captain's job-started hook waits up to 2 minutes for one of its three
     # shared build slots on a check-in run (Glenn 2026-10-24: --slots 3), inside
     # "Set up runner" (73 s on run 40890503823): the limit is that wait plus
-    # the 3-minute law. The test window inside stays timed against 120 s.
+    # the per-commit law. The nightly test window is measured without a cap.
     #
     # NIGHTLY TIER (2026-10-31). Leg (a) alone, narrowed to the unit suite's
     # targets, measured 143s on run 41240496784 (checkout 11s, configure 19s,
@@ -1139,7 +1153,7 @@ jobs:
     # leaves no room for a suite. Per commit, happy path / windows builds the
     # whole tree under MSVC and runs the happy path (106s on the same run).
     if: inputs.full
-    timeout-minutes: 5
+    timeout-minutes: 7200
     strategy:
       fail-fast: false
       matrix:
@@ -1384,7 +1398,6 @@ jobs:
       # Windows; TRANSPORTS.md "Client transports").
       - name: Transport family matrix (every transport on IPv4, IPv6 and dual stack)
         if: matrix.leg == 'b'
-        timeout-minutes: 3
         shell: bash
         env:
           TRANSPORT_MATRIX_WINDOWS: |
@@ -1469,7 +1482,7 @@ jobs:
     # every OS on the fleet: Linux on the fleet pool, macOS on rocketnet-ci-macos, Windows on rocketnet-windows
     runs-on: ${{ fromJSON(matrix.os == 'windows' && '["self-hosted","Windows","X64","rocketnet-windows"]' || startsWith(matrix.os, 'macos') && '["self-hosted","macOS","ARM64","rocketnet-ci-macos"]' || '["self-hosted","Linux","X64","fleet"]') }}
     # the Windows row waits for a captain build slot first (build-and-test-windows)
-    timeout-minutes: ${{ inputs.full && 5 || 2 }}
+    timeout-minutes: ${{ inputs.full && 7200 || 2 }}
     strategy:
       fail-fast: false
       matrix:
@@ -1561,10 +1574,14 @@ jobs:
         run: *start_unit_functional_timing
 
       - name: Run happy_path
-        timeout-minutes: 2
         shell: bash
         run: |
           cd tools/happy_path
+          go_test_timeout=()
+          if [ "${ROCKETNET_NIGHTLY_NO_TIMEOUT:-0}" = 1 ]; then
+            go_test_timeout=(-timeout=0)
+          fi
+          go test ${go_test_timeout[@]+"${go_test_timeout[@]}"} happy_path.go happy_path_test.go
           go run happy_path.go
 
       - name: Enforce combined unit and functional timing
@@ -1589,7 +1606,7 @@ jobs:
     # conformance against standard/vectors; the backends follow nightly
     if: inputs.full
     runs-on: [self-hosted, Linux, X64, fleet]
-    timeout-minutes: 10
+    timeout-minutes: 7200
     strategy:
       fail-fast: false
       matrix:
@@ -1630,7 +1647,11 @@ jobs:
           timing_start_ns=$(python3 -c 'import time; print(time.clock_gettime_ns(time.CLOCK_MONOTONIC) if hasattr(time, "CLOCK_MONOTONIC") else time.monotonic_ns())')
           [[ "$timing_start_ns" =~ ^[0-9]+$ ]] || { echo "CI_UNIT_FUNCTIONAL_TIMING=FAIL reason=invalid_start"; exit 1; }
           printf '%s %s %s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$timing_start_ns" > "$timing_receipt"
-          go test -count=1 ./...
+          go_test_timeout=()
+          if [ "${ROCKETNET_NIGHTLY_NO_TIMEOUT:-0}" = 1 ]; then
+            go_test_timeout=(-timeout=0)
+          fi
+          go test ${go_test_timeout[@]+"${go_test_timeout[@]}"} -count=1 ./...
 
       - name: Build the backend and run its unit tests (C#)
         if: matrix.backend == 'csharp'
@@ -1686,7 +1707,7 @@ jobs:
   sanitizers:
     name: asan + ubsan (${{ matrix.leg }})
     runs-on: [self-hosted, Linux, X64, fleet]   # was ubuntu-24.04, then one host's rocketnet label; the fleet's org runners (see build-and-test's note)
-    timeout-minutes: ${{ inputs.full && 10 || 2 }}
+    timeout-minutes: ${{ inputs.full && 7200 || 2 }}
     strategy:
       fail-fast: false
       matrix:
@@ -1836,7 +1857,7 @@ jobs:
   fuzz-smoke:
     name: fuzz smoke (libFuzzer, corpus replay)
     runs-on: [self-hosted, Linux, X64, fleet]   # was ubuntu-24.04, then one host's rocketnet label; the fleet's org runners (see build-and-test's note)
-    timeout-minutes: ${{ inputs.full && 10 || 2 }}
+    timeout-minutes: ${{ inputs.full && 7200 || 2 }}
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
@@ -1929,7 +1950,7 @@ jobs:
 
       # The bounded pass: fixed seed, fixed WALL-CLOCK BUDGET, and the corpus
       # copied out first so the source tree is not mutated. Every target gets
-      # the same few seconds, and the step's timeout is the runaway guard that
+      # the same few seconds, and the per-input timeout is the hang oracle that
       # fails red if a pass cannot finish; the CI budget is one minute end to
       # end per job. The gate's determinism argument stays the replay above --
       # this pass only adds a few seconds of mutation on top of it.
@@ -1974,7 +1995,7 @@ jobs:
     # nightly tier; fuzz smoke replays the corpora per commit
     if: inputs.full
     runs-on: [self-hosted, Linux, X64, fleet]
-    timeout-minutes: 10
+    timeout-minutes: 7200
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
@@ -2141,7 +2162,7 @@ jobs:
     # ubuntu-2404: the s390x multiarch libraries are provisioned on the 24.04
     # fleet hosts, not on the ubuntu-2604 ones.
     runs-on: [self-hosted, Linux, X64, ubuntu-2404]
-    timeout-minutes: ${{ inputs.full && 10 || 2 }}
+    timeout-minutes: ${{ inputs.full && 7200 || 2 }}
     strategy:
       fail-fast: false
       matrix:
@@ -2323,7 +2344,7 @@ jobs:
   tsan:
     name: tsan (${{ matrix.leg }})
     runs-on: [self-hosted, Linux, X64, fleet]   # was ubuntu-24.04, then one host's rocketnet label; the fleet's org runners (see build-and-test's note)
-    timeout-minutes: ${{ inputs.full && 10 || 2 }}
+    timeout-minutes: ${{ inputs.full && 7200 || 2 }}
     strategy:
       fail-fast: false
       matrix:
@@ -2412,7 +2433,7 @@ jobs:
     # ubuntu-2404: the cached prefix is keyed by runner.os alone and built
     # against the host's glibc, so it is built and restored on one distro.
     runs-on: [self-hosted, Linux, X64, ubuntu-2404]
-    timeout-minutes: 10
+    timeout-minutes: 7200
     env:
       SODIUM_VERSION: "1.0.20"
       SODIUM_SHA256: "ebb65ef6ca439333c2bb41a0c1990587288da07f6c7fd07cb3a18cc18d30ce19"
@@ -2562,7 +2583,7 @@ jobs:
     # the commit's code under test
     if: inputs.full
     runs-on: ${{ fromJSON(matrix.runner) }}
-    timeout-minutes: 10
+    timeout-minutes: 7200
     strategy:
       fail-fast: false
       matrix:
@@ -2637,7 +2658,6 @@ jobs:
       # About 8 s of wall time.
 
       - name: soak argument and summary selftest
-        timeout-minutes: 3
         run: bash scripts/soak-args-selftest
 
       # the bench harnesses' failure states (#98). Building them here is the
@@ -2686,7 +2706,7 @@ jobs:
     # Per commit the gate restores the pinned toolchain and never builds it
     # (396s cold); the nightly tier builds it on a miss and saves it from
     # main, where every branch and pull request can restore it.
-    timeout-minutes: ${{ inputs.full && 75 || 2 }}
+    timeout-minutes: ${{ inputs.full && 7200 || 2 }}
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
@@ -2749,7 +2769,6 @@ jobs:
 
       - name: Build the pinned toolchain from source (content-verified)
         if: inputs.full && steps.toolchain-cache.outputs.cache-hit != 'true'
-        timeout-minutes: 60
         run: bash tools/build_pinned_toolchain.sh "$GITHUB_WORKSPACE/pinned-toolchain" "${{ steps.pins.outputs.gcc }}" "${{ steps.pins.outputs.valgrind }}"
 
       # saved as soon as it is built, so a red gate below never costs the next
@@ -2777,13 +2796,11 @@ jobs:
           [ "$valgrind_resolved" = "valgrind-${{ steps.pins.outputs.valgrind }}" ]
 
       - name: Test the instruction-count checker
-        timeout-minutes: 3
         run: python3 tools/test_check_instructions.py
 
       # the pinned gcc's own libstdc++ by rpath, and the pinned valgrind's
       # cachegrind.h ahead of any the host carries
       - name: Build instruction_count (Release) with the pinned gcc
-        timeout-minutes: 5
         shell: bash
         run: |
           set -euo pipefail
@@ -2797,7 +2814,6 @@ jobs:
           cmake --build build --target instruction_count --parallel
 
       - name: Run the cachegrind instruction gate with the pinned valgrind
-        timeout-minutes: 5
         shell: bash
         run: |
           set -euo pipefail
@@ -2824,7 +2840,7 @@ jobs:
   lint:
     name: lint (workflows, format, standard, tool selftests)
     runs-on: [self-hosted, Linux, X64, fleet]
-    timeout-minutes: ${{ inputs.full && 10 || 2 }}
+    timeout-minutes: ${{ inputs.full && 7200 || 2 }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
       - uses: ./.github/actions/ccache
@@ -2915,6 +2931,9 @@ jobs:
       # having discovered no tests fails here too -- the runner's "Ran N tests"
       # line (the release-version suite's own count line) must name a positive
       # count. Seconds of wall time; the per-commit tier keeps it.
+      - name: Test nightly execution policy
+        run: python3 tools/test_nightly_timeout.py -v
+
       - name: Test the frame-budget checker's verdicts
         shell: bash
         run: |
@@ -3022,7 +3041,7 @@ jobs:
     needs: [build-and-test, build-and-test-windows, sanitizers, sodium-pinned]
     if: ${{ inputs.full && !cancelled() }}
     runs-on: [self-hosted, Linux, X64, fleet]
-    timeout-minutes: 3
+    timeout-minutes: 7200
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0

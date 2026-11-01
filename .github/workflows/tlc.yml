@@ -1,12 +1,7 @@
-# Nightly TLC. The model checks run once a night, not per commit: a TLC
-# case takes up to the runner's 110 s per-case limit, and the per-commit tier
-# is bounded at two minutes. The job measures every stale-group case and each
-# declared timeout-debt case again with the pinned runner and JAR, checks the
-# committed records' outcomes and coverage rows, and fails the run on any
-# case that does not reach its
-# declared result. A model edit still commits fresh records where its author
-# can run TLC (proofs/tla/README.md); the night catches what is left stale and
-# retries committed FAIL/124 bench debt without treating a timeout as a proof.
+# Nightly selected stale/debt cases have no project elapsed-time cutoff.
+# Finite models, configured properties, pinned engine/JAR, worker/heap limits
+# and bounded committed RUNS.tsv records are unchanged. Separate nightly JSON
+# evidence records outcomes; it must never be merged as a bounded measurement.
 
 name: TLC records
 
@@ -26,7 +21,7 @@ jobs:
   stale:
     name: Model records are current
     runs-on: [self-hosted, Linux, X64, fleet]
-    timeout-minutes: 600
+    timeout-minutes: 7200  # GitHub self-hosted platform ceiling
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
@@ -65,7 +60,8 @@ jobs:
         run: |
           set -euo pipefail
           job=$(mktemp -d "$RUNNER_TEMP/rocketnet-tlc.XXXXXX")
-          trap 'rm -rf "$job"' EXIT
+          echo "TLC_EVIDENCE=$job" >> "$GITHUB_ENV"
+          git rev-parse HEAD > "$job/source-revision.txt"
           git -c credential.helper= clone --filter=blob:none --no-checkout https://github.com/mas-bandwidth/nova-tools.git "$job/runner"
           git -C "$job/runner" checkout --detach 0c97d5958bf2b3cb1ad24e6e1b58f5b04e70347a
           (cd "$job/runner" && go build -o "$job/tlacheck" ./tools/tlacheck)
@@ -73,11 +69,6 @@ jobs:
           cat "$job/stale.json"
           plan="$job/plan"
           python3 tools/plan_tlc_nightly.py --stale "$job/stale.json" > "$plan"
-          if [ ! -s "$plan" ]; then
-            echo "TLC-PLAN no stale cases or recorded timeout debt"
-            exit 0
-          fi
-
           # the pinned JAR, from the fleet's tla play
           jar=/opt/tla/tla2tools.jar
           want=936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88
@@ -90,16 +81,26 @@ jobs:
             exit 1
           fi
 
-          # Each selected case keeps its index and cardinality within the full
-          # group. Stale/debt overlap is run once; healthy siblings of current
-          # debt are omitted. The pinned runner retains its 110 s case limit.
+          adapter_sha=$(sha256sum tools/tlc_nightly.go | cut -d' ' -f1)
+          echo "$adapter_sha" > "$job/adapter-source-sha256.txt"
+          export TLC_NIGHTLY_TEST_JAR="$jar" TLC_NIGHTLY_TEST_EVIDENCE="$job/controls"
+          (cd "$job/runner" && go test -timeout=0 -count=1 -v "$GITHUB_WORKSPACE/tools/tlc_nightly.go" "$GITHUB_WORKSPACE/tools/tlc_nightly_test.go") | tee "$job/adapter-controls.log"
+          (cd "$job/runner" && go build -ldflags "-X main.adapterSHA=$adapter_sha" -o "$job/tlc-nightly" "$GITHUB_WORKSPACE/tools/tlc_nightly.go")
+          if [ ! -s "$plan" ]; then
+            echo "TLC-PLAN no stale cases or recorded timeout debt"
+            exit 0
+          fi
+
+          # Each selected case retains its group index/cardinality and exact
+          # oracle. The separate adapter uses the pinned engine with no
+          # execution deadline; heap/workers and finite configs stay unchanged.
           parallel=$(( $(nproc) / 2 ))
           [ "$parallel" -ge 1 ] || parallel=1
-          export TLACHECK="$job/tlacheck" TLC_JAR="$jar" TLC_JOB="$job"
+          export TLC_NIGHTLY="$job/tlc-nightly" TLC_JAR="$jar" TLC_JOB="$job"
           # shellcheck disable=SC2016  # the shard's own shell expands these
           xargs -P "$parallel" -L 1 bash -c '
             dir="$TLC_JOB/run-$0-$2"
-            "$TLACHECK" run --root proofs --jar "$TLC_JAR" --group "$0" --shards "$1" --shard "$2" --workers 2 --dir "$dir" > "$dir.log" 2>&1 \
+            "$TLC_NIGHTLY" --root proofs --jar "$TLC_JAR" --group "$0" --shards "$1" --shard "$2" --dir "$dir" > "$dir.log" 2>&1 \
               || echo "$0 $2" >> "$TLC_JOB/failed"
           ' < "$plan"
           grep -h '^CASE' "$job"/run-*.log | sed 's/^/  /'
@@ -108,7 +109,7 @@ jobs:
             grep -h '^CASE FAIL' "$job"/run-*.log
             exit 1
           fi
-          echo "TLC-PASS every selected stale/debt case reached its declared result; commit fresh records from a bench run"
+          echo "TLC-PASS every selected stale/debt case reached its declared result; separate nightly evidence, bounded records unchanged"
       - name: Check required outcomes and explicit timeout debt
         shell: bash
         run: |
@@ -119,3 +120,26 @@ jobs:
         shell: bash
         run: |
           python3 tools/check_tla_ledger_merge.py
+
+      - name: Upload separate nightly evidence
+        id: nightly-evidence
+        if: always() && env.TLC_EVIDENCE != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: nightly-tlc-evidence
+          path: |
+            ${{ env.TLC_EVIDENCE }}/plan
+            ${{ env.TLC_EVIDENCE }}/stale.json
+            ${{ env.TLC_EVIDENCE }}/*-revision.txt
+            ${{ env.TLC_EVIDENCE }}/*-sha256.txt
+            ${{ env.TLC_EVIDENCE }}/*.log
+            ${{ env.TLC_EVIDENCE }}/run-*/result.json
+            ${{ env.TLC_EVIDENCE }}/run-*/tlc.log
+            ${{ env.TLC_EVIDENCE }}/controls/**/result.json
+            ${{ env.TLC_EVIDENCE }}/controls/**/tlc.log
+          if-no-files-found: ignore
+
+      - name: Remove temporary proof state after preserving evidence
+        if: always() && env.TLC_EVIDENCE != '' && steps.nightly-evidence.outcome == 'success'
+        shell: bash
+        run: rm -rf -- "$TLC_EVIDENCE"

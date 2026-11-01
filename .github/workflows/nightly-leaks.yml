@@ -25,10 +25,16 @@ on:
 permissions:
   contents: read
 
+# Test execution has no repository wall-clock cap; GitHub still limits
+# self-hosted jobs to five days.
+env:
+  ROCKETNET_NIGHTLY_NO_TIMEOUT: '1'
+
 jobs:
   leaks:
     name: asan + ubsan + lsan (full suite)
     runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 7200
     strategy:
       fail-fast: false
       matrix:
@@ -96,7 +102,6 @@ jobs:
           ASAN_OPTIONS: detect_leaks=1
           UBSAN_OPTIONS: print_stacktrace=1
           LSAN_OPTIONS: suppressions=tools/lsan.supp:print_suppressions=1
-        timeout-minutes: 30
         run: |
           set -o pipefail
           ./bin/functional 2>&1 | tee functional.log

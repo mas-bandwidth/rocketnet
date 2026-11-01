@@ -6,6 +6,8 @@ from pathlib import Path
 import subprocess
 import sys
 
+from nightly_timeout import execution_timeout
+
 binary = Path(sys.argv[1] if len(sys.argv) > 1 else 'bin/transport_memory').resolve()
 # (clients, payload column). The payload column is ignored: the payload is
 # fixed at ROCKETNET_MAX_PACKET_PAYLOAD_BYTES (1416). The 1000-client row is
@@ -22,7 +24,7 @@ elif sys.platform.startswith('linux'):
 
 def run(*arguments):
     result = subprocess.run([str(binary), *map(str, arguments)],
-                            capture_output=True, text=True, timeout=120)
+                            capture_output=True, text=True, timeout=execution_timeout(120))
     print(result.stdout, end='')
     print(result.stderr, end='', file=sys.stderr)
     if result.returncode != 0:
@@ -111,7 +113,7 @@ if sys.platform.startswith('linux'):
     # the provided buffer rings are kernel-mapped memory outside the allocator;
     # a build without liburing has no io_uring plan
     uring = subprocess.run([str(binary), '1', '1416', 'io_uring', '4', '--plan-only'],
-                           capture_output=True, text=True, timeout=10)
+                           capture_output=True, text=True, timeout=execution_timeout(10))
     if uring.returncode == 0:
         uring_plan = json.loads(uring.stdout)
         assert uring_plan['mapped_ring_bytes'] > 0 and uring_plan['os_bytes'] >= uring_plan['mapped_ring_bytes']
@@ -128,20 +130,20 @@ if sys.platform == 'win32':
     assert rio['active_xdp_umem_bytes'] == 0
     assert rio['active_transport_sdk_callback_bytes'] > 0
 refused = subprocess.run([str(binary), '1001', '1416', 'portable', '0', '--plan-only'],
-                         capture_output=True, text=True, timeout=10)
+                         capture_output=True, text=True, timeout=execution_timeout(10))
 assert refused.returncode != 0 and 'memory plan unavailable' in refused.stderr, (
     refused.returncode, refused.stdout, refused.stderr)
 env = dict(os.environ)
 env['ROCKETNET_SERVER_MAX_CLIENTS'] = '2'
 refused_env = subprocess.run([str(binary), '1', '1416', 'portable', '0', '--session-plan-only'],
-                             capture_output=True, text=True, timeout=10, env=env)
+                             capture_output=True, text=True, timeout=execution_timeout(10), env=env)
 assert refused_env.returncode != 0 and 'environment overrides' in refused_env.stderr
 env.pop('ROCKETNET_SERVER_MAX_CLIENTS')
 env['ROCKETNET_DEV_SERVER_LATENCY_MS'] = '1'
 refused_impairment = subprocess.run([str(binary), '1', '1416', 'portable', '0', '--session-plan-only'],
-                                    capture_output=True, text=True, timeout=10, env=env)
+                                    capture_output=True, text=True, timeout=execution_timeout(10), env=env)
 assert refused_impairment.returncode != 0 and 'environment overrides' in refused_impairment.stderr
 refused_candidate = subprocess.run([str(binary), '1', '1416', 'auto', '0', '--session-plan-only'],
-                                   capture_output=True, text=True, timeout=10)
+                                   capture_output=True, text=True, timeout=execution_timeout(10))
 assert refused_candidate.returncode != 0 and 'memory plan unavailable' in refused_candidate.stderr
 print('test_transport_memory_plans_match_allocations')

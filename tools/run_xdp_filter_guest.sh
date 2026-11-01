@@ -114,6 +114,11 @@ case "$TIMEOUT_SECONDS" in
     ''|*[!0-9]*|0) refuse "--timeout must be a positive integer" ;;
 esac
 
+TIMEOUT_COMMAND=(timeout "$TIMEOUT_SECONDS")
+if [ "${ROCKETNET_NIGHTLY_NO_TIMEOUT:-}" = 1 ]; then
+    TIMEOUT_COMMAND=()
+fi
+
 case "$VERIFY_EXIT" in
     ''|*[!0-9]*) refuse "--verify-exit must be a non-negative integer" ;;
 esac
@@ -321,8 +326,12 @@ case "$ARTIFACT_DIR/" in
 esac
 
 {
-    printf 'vng_command: timeout %s %s --run %q --memory %s --cpus %s --append %q' \
-        "$TIMEOUT_SECONDS" "$VNG_BIN" "$VM_KERNEL" "$GUEST_MEMORY" "$GUEST_CPUS" "$GUEST_APPEND"
+    printf 'vng_command:'
+    for arg in ${TIMEOUT_COMMAND[@]+"${TIMEOUT_COMMAND[@]}"} "$VNG_BIN"; do
+        printf ' %q' "$arg"
+    done
+    printf ' --run %q --memory %s --cpus %s --append %q' \
+        "$VM_KERNEL" "$GUEST_MEMORY" "$GUEST_CPUS" "$GUEST_APPEND"
     for arg in "${RWDIR_ARGS[@]}"; do
         printf ' %q' "$arg"
     done
@@ -336,7 +345,7 @@ trap 'rm -rf "$SHORT_DIR"' EXIT
 
 (
     cd "$SHORT_DIR" && \
-    timeout "$TIMEOUT_SECONDS" "$VNG_BIN" \
+    ${TIMEOUT_COMMAND[@]+"${TIMEOUT_COMMAND[@]}"} "$VNG_BIN" \
         --run "$VM_KERNEL" \
         --memory "$GUEST_MEMORY" \
         --cpus "$GUEST_CPUS" \

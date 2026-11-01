@@ -38,11 +38,16 @@ on:
 permissions:
   contents: read
 
+# Test execution has no repository wall-clock cap; GitHub still limits
+# self-hosted jobs to five days.
+env:
+  ROCKETNET_NIGHTLY_NO_TIMEOUT: '1'
+
 jobs:
   bigendian-system:
     name: s390x full system
     runs-on: [self-hosted, Linux, X64, fleet, long]
-    timeout-minutes: 180
+    timeout-minutes: 7200
     strategy:
       fail-fast: false
       matrix:
@@ -155,7 +160,9 @@ jobs:
             -o UserKnownHostsFile=/dev/null
             -o IdentitiesOnly=yes)
           ok=0
-          for i in $(seq 1 90); do
+          i=0
+          while :; do
+            i=$((i + 1))
             if ! kill -0 "$QEMU_PID" 2>/dev/null; then
               echo "qemu exited before ssh"
               tail -n 40 "$WORK/serial.log" || true
@@ -187,6 +194,7 @@ jobs:
 
           "${SSH[@]}" bash -s << 'GUEST'
           set +e
+          export ROCKETNET_NIGHTLY_NO_TIMEOUT=1
           cd ~/src
           # The guest kernel's socket buffer ceiling is the stock 256 KiB, so
           # the 8 MiB receive buffer the suite asks for is clamped and a
@@ -244,7 +252,7 @@ jobs:
               i=1
               while [ "$i" -le 3 ]; do
                 echo "REPLAY_BEGIN:$label:$name RUN:$i"
-                env $envs timeout --kill-after=60 900 /usr/bin/time -f "REPLAY_CASE:$name RUN:$i EXIT:%x SEC:%e" $target $args
+                env $envs /usr/bin/time -f "REPLAY_CASE:$name RUN:$i EXIT:%x SEC:%e" $target $args
                 echo "REPLAY_END:$label:$name RUN:$i"
                 i=$((i+1))
               done

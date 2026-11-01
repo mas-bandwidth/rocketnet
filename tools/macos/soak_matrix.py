@@ -32,7 +32,9 @@ one at a time. --wait-quiet waits before each run until no other functional,
 load or soak suite runs on the machine (up to that many seconds). The watcher
 samples until soak prints its "soak finished:" line; leaks then scans the
 process held at exit, and a leaks that has not reported within --leaks-timeout
-seconds (default 600) is stopped and its column reads "not run".
+seconds (default 600) is stopped and its column reads "not run". With
+ROCKETNET_NIGHTLY_NO_TIMEOUT=1, child discovery, sampling and the leaks wait
+have no elapsed cap; sampling still ends at the soak verdict or process exit.
 
 Each run writes into --out (default soak-matrix): <cell>.log (soak's output,
 then the leaks report), <cell>.csv (the watcher samples) and <cell>.verdict.
@@ -76,6 +78,8 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import resource_watch  # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from nightly_timeout import execution_timeout, no_execution_timeout  # noqa: E402
 
 IMPAIRMENT = {
     "PACKET_LOSS_PERCENT": "5",
@@ -157,8 +161,10 @@ def cell_env(server, client, pump, impaired):
 
 
 def child_pid(parent, deadline):
-    while time.monotonic() < deadline:
-        out = subprocess.run(["pgrep", "-P", str(parent)], capture_output=True, text=True).stdout.split()
+    while no_execution_timeout() or time.monotonic() < deadline:
+        if parent.poll() is not None:
+            return None
+        out = subprocess.run(["pgrep", "-P", str(parent.pid)], capture_output=True, text=True).stdout.split()
         if out:
             return int(out[0])
         time.sleep(0.05)
@@ -206,14 +212,14 @@ def run_cell(args, name, server, client, pump, impaired):
     leaks_note = ""
     with open(log_path, "w") as log:
         leaks_proc = subprocess.Popen(command, env=env, stdout=log, stderr=subprocess.STDOUT)
-        soak_pid = child_pid(leaks_proc.pid, time.monotonic() + 30)
+        soak_pid = child_pid(leaks_proc, time.monotonic() + 30)
         # the watch ends when soak prints its verdict: after that the process
         # only exits, and leaks holds it at exit while it scans
-        rows = resource_watch.watch(soak_pid, csv_path, args.interval, stop_after=args.seconds + 300,
+        rows = resource_watch.watch(soak_pid, csv_path, args.interval, stop_after=execution_timeout(args.seconds + 300),
                                     until=soak_finished) if soak_pid else []
         elapsed = time.monotonic() - started
         try:
-            leaks_rc = leaks_proc.wait(timeout=args.leaks_timeout)
+            leaks_rc = leaks_proc.wait(timeout=execution_timeout(args.leaks_timeout))
         except subprocess.TimeoutExpired:
             leaks_note = "leaks did not report within %.0fs of the end of the run (no task port for the process?)" % args.leaks_timeout
             leaks_proc.kill()

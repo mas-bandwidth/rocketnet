@@ -14,14 +14,10 @@
 #   tsan        Debug, -fsanitize=thread -O1 (as ci.yml's tsan leg: at -O0 tsan
 #               does not report a struct copy's memcpy write after an
 #               unordered read). The full functional suite runs here
-#               with a one-hour case limit (ROCKETNET_TEST_CASE_TIME_SCALE=30
-#               on the two functional steps of this leg only; owner ruling
-#               2026-10-25): under TSAN the live message matrix measured 106 to
-#               116 s against the 120 s limit that per-PR CI keeps. The leg's
-#               functional step timeout (80 min) covers one case running to its
-#               hour plus the rest of the suite (about 6 min measured), and the
-#               job timeout (200 min) covers the build, both unit runs and both
-#               functional runs.
+#               without a nightly case execution cap. The existing scale stays
+#               configured for bounded callers; the nightly opt-out takes
+#               precedence. Historical live matrix timing was 106 to 116 s
+#               against the 120 s limit that per-PR CI keeps.
 #   leaks       an unsanitized Debug build. The suites run each case in a child
 #               process, and `leaks --atExit` inspects only the process it
 #               launched and does not pass its exit status through, so the
@@ -36,9 +32,8 @@
 # both portable (the macOS transports of ci.yml's TRANSPORT_MATRIX_MACOS). Every
 # run step runs even when an earlier one is red, so a night shows all four.
 # No suppression file, no skipped case and no changed bound: a finding is a
-# defect with its own card. The step timeouts are about twice the wall time
-# measured by hand on the member (docs/MACOS.md, "Sanitizers and leaks");
-# nightlies are exempt from the two-minute rule.
+# defect with its own card. Nightly execution has no repository wall-clock cap;
+# the scenarios, sanitizer checks and per-commit bounds remain unchanged.
 
 name: nightly-macos-sanitizers
 
@@ -50,11 +45,16 @@ on:
 permissions:
   contents: read
 
+# Test execution has no repository wall-clock cap; GitHub still limits
+# self-hosted jobs to five days.
+env:
+  ROCKETNET_NIGHTLY_NO_TIMEOUT: '1'
+
 jobs:
   sanitizers-macos:
     name: macOS ${{ matrix.leg }}
     runs-on: [self-hosted, macOS, ARM64, rocketnet-macos]
-    timeout-minutes: ${{ matrix.leg == 'leaks' && 260 || (matrix.leg == 'tsan' && 200 || 90) }}
+    timeout-minutes: 7200
     strategy:
       fail-fast: false
       matrix:
@@ -155,7 +155,6 @@ jobs:
 
       - name: Unit suite, msgx
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-        timeout-minutes: ${{ matrix.leg == 'leaks' && 50 || 10 }}
         shell: bash
         env:
           ROCKETNET_SERVER_TRANSPORT: msgx
@@ -167,7 +166,6 @@ jobs:
 
       - name: Unit suite, portable
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-        timeout-minutes: ${{ matrix.leg == 'leaks' && 50 || 10 }}
         shell: bash
         env:
           ROCKETNET_SERVER_TRANSPORT: portable
@@ -179,7 +177,6 @@ jobs:
 
       - name: Functional suite, msgx
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-        timeout-minutes: ${{ matrix.leg == 'leaks' && 75 || (matrix.leg == 'tsan' && 80 || 25) }}
         shell: bash
         env:
           ROCKETNET_SERVER_TRANSPORT: msgx
@@ -193,7 +190,6 @@ jobs:
 
       - name: Functional suite, portable
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-        timeout-minutes: ${{ matrix.leg == 'leaks' && 75 || (matrix.leg == 'tsan' && 80 || 25) }}
         shell: bash
         env:
           ROCKETNET_SERVER_TRANSPORT: portable

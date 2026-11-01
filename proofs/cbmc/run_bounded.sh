@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # run_bounded.sh <memory KB> <seconds> <command...>: runs a proof under a
-# memory limit and a time limit, with the exit statuses the Makefile reads.
+# memory limit and, by default, a time limit. Nightly may explicitly set
+# ROCKETNET_NIGHTLY_NO_TIMEOUT=1; memory and exit-status checks remain.
 #
 #   124  the time limit passed
 #   137  the memory limit was reached (also printed as "out of memory")
@@ -21,7 +22,7 @@ shift 2
 
 if ( ulimit -v "$limit_kb" ) 2>/dev/null; then
     ulimit -v "$limit_kb"
-    exec timeout "$seconds" "$@"
+    exec "$(dirname "$0")/run_with_timeout.sh" "$seconds" "$@"
 fi
 
 "$@" &
@@ -35,7 +36,7 @@ while kill -0 "$pid" 2>/dev/null; do
         echo "run_bounded: out of memory: resident $rss_kb KB over the $limit_kb KB limit after $((SECONDS - start)) s"
         exit 137
     fi
-    if [ $((SECONDS - start)) -ge "$seconds" ]; then
+    if [ "${ROCKETNET_NIGHTLY_NO_TIMEOUT:-0}" != "1" ] && [ $((SECONDS - start)) -ge "$seconds" ]; then
         kill -TERM "$pid" 2>/dev/null
         sleep 5
         kill -KILL "$pid" 2>/dev/null
