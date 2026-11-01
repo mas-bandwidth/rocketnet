@@ -7,7 +7,7 @@ Planned work for RocketNet that is not on main. Work lands on main before new wo
 ## Contents
 
 - [Started work to finish and land](#started-work-to-finish-and-land) (4)
-- [Audit items not yet fixed](#audit-items-not-yet-fixed) (6)
+- [Audit items not yet fixed](#audit-items-not-yet-fixed) (5)
 - [Investigations that need a quiet host](#investigations-that-need-a-quiet-host) (3)
 - [Older open pull requests](#older-open-pull-requests) (2)
 - [Decisions for Glenn](#decisions-for-glenn) (5)
@@ -67,12 +67,6 @@ From: Audit items 88, 124
 The page's exact byte figures go stale with every merge. Generate them, with a CI check that the page matches the generator.
 
 From: #721 follow-on
-
-### A release commit requires a green Nightly CI run
-
-docs/RELEASING.md asks for it; nothing enforces it. Extend tools/check_release_tsan.py to require nightly-ci.yml, msan and CBMC green at the tagged commit.
-
-From: CI under two minutes
 
 ### Low-severity docs, standard, tests and CI items
 
