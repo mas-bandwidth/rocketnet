@@ -262,8 +262,10 @@ limit, so `Swap` waits for an empty receive queue as the old loop did.
 
 ## Code correspondence
 
-`sdk/rocketnet_server_rio_windows.cpp` cites this model: `SwitchPhase` in
-`rocketnet_server_rio_send_packets`, which returns with the switch owed while
-the other phase has outstanding sends, and `DequeueReceive` with its per-call
-bound and `Swap` in `rocketnet_server_rio_receive_packets`. The
-`rio-driver` row of `proofs/tla/COVERAGE.tsv` maps every action to its function.
+This is the historical caller-driven design: `SwitchPhase` represented
+`rocketnet_server_rio_send_packets`, while `DequeueReceive` and `Swap`
+represented the bounded main-thread receive call. Those citations do not
+claim that current `rocketnet_server_rio_receive_packets` drains the RIO
+completion queue. Current worker receive bounds, handoff and shutdown are
+modeled by [RNRioWorker](README-RNRioWorker.md); the `rio-driver` row in
+`proofs/tla/COVERAGE.tsv` retains this earlier design correspondence.

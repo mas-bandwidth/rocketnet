@@ -2970,6 +2970,14 @@ jobs:
           printf '%s\n' "$output"
           grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
 
+      - name: Test the nightly TLA+ case planner
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(python3 tools/test_plan_tlc_nightly.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
+          printf '%s\n' "$output"
+          grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
+
       - name: Test and check the TLA+ run records
         shell: bash
         run: |

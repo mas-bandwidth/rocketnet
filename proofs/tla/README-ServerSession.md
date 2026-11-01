@@ -119,12 +119,15 @@ reset `Clean`: `EndSlot` applies it through `Reset(i)`, and `Stop` applies it to
 
 ## Properties
 
+The table lists configured properties. `DropLeavesNothing` is also defined,
+but no case checks it directly; `NoSendUnlessConnected` checks its shared
+send-state clause, while the drop actions constrain the drop-state ghost.
+
 | Property | Kind | The rule |
 |---|---|---|
 | `TypeOK`, `SlotOwnsItsSession` | invariant | types; an occupied slot holds its session, a free one none |
 | `StartOnlyFromStopped` | invariant | start succeeds only from STOPPED |
 | `NoSendUnlessConnected` | invariant | no message is queued to a slot that is not connected (FREE or HANDSHAKE), and no send-side field is written outside CONNECTED |
-| `DropLeavesNothing` | invariant | a drop happens only to a FREE or HANDSHAKE slot, and such a slot holds no send-side field, so nothing dropped is sent to the client that connects into it |
 | `ResetIsInit` | invariant | a free slot's per-connection fields are all Init; the history holds every token established in this run, the lifetime counter every connection of the object, and the keys and config stay |
 | `RecordIsCurrent` | invariant | a slot's record holds only Init and its current session's writes |
 | `SlotReuseObservesNothing` | invariant | per slot, no packet of session s opens in another session, and no step reads a field another session wrote (a stale ack, a replay-window false reject) |

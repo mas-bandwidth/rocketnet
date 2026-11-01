@@ -304,6 +304,7 @@ MCRNClientReceiveQuitMac.cfg	MCRNClientReceiveQuit.tla	pass	-	check	rnclientrece
 MCRNClientReceiveQuitWindows.cfg	MCRNClientReceiveQuit.tla	pass	-	check	rnclientreceivequit	required	-
 MCRNClientReceiveQuitBrokenWakeBeforeQuit.cfg	MCRNClientReceiveQuit.tla	invariant	WokenSeesQuit	check	rnclientreceivequit	required	-
 MCRNClientReceiveQuitBrokenNoWakeNoTimeout.cfg	MCRNClientReceiveQuit.tla	temporal	DestroyCompletes	check	rnclientreceivequit	required	-
+MCRNClientReceiveQuitBrokenNoWake.cfg	MCRNClientReceiveQuit.tla	temporal	DestroyCompletes	check	rnclientreceivequit	required	-
 MCLinkSpecEveryNth.cfg	MCLink.tla	pass	-	check	link	required	-
 MCLinkWireFairEveryNth.cfg	MCLink.tla	pass	-	check	link	required	-
 MCLinkEveryNth.cfg	MCLinkPatterns.tla	pass	-	check	link	required	-
@@ -394,6 +395,7 @@ MCRNPortableRxBrokenWakeFirst.cfg	MCRNPortableRx.tla	temporal	StopCompletes	chec
 MCRNPortableRxBrokenNoWake.cfg	MCRNPortableRx.tla	temporal	EveryDatagramDelivered	check	rnportablerx	required	-
 MCRNPortableRxBrokenUnboundedRead.cfg	MCRNPortableRx.tla	invariant	ReadBudget	check	rnportablerx	required	-
 MCRNRioWorker.cfg	MCRNRioWorker.tla	pass	-	check	rnrioworker	required	-
+MCRNRioWorkerThreeSends.cfg	MCRNRioWorker.tla	pass	-	check	rnrioworker	required	-
 MCRNRioWorkerReceiveLive.cfg	MCRNRioWorker.tla	pass	-	check	rnrioworker	required	-
 MCRNRioWorkerSendLive.cfg	MCRNRioWorker.tla	pass	-	check	rnrioworker	required	-
 MCRNRioWorkerTwoBanks.cfg	MCRNRioWorker.tla	pass	-	check	rnrioworker	required	-
@@ -410,6 +412,7 @@ MCRNServerStatsBrokenCrossing.cfg	MCRNServerStats.tla	invariant	EligibleExact	ch
 MCRNServerStatsBrokenSeqTimes.cfg	MCRNServerStats.tla	invariant	PublishedSpanExact	check	rnserverstats	required	-
 MCRNServerStatsBrokenAlias.cfg	MCRNServerStats.tla	invariant	RetainedIsNewest	check	rnserverstats	required	-
 MCRNBufferHandoffBase.cfg	MCRNBufferHandoffBase.tla	pass	-	check	rnbufferhandoffbase	required	-
+MCRNBufferHandoffBaseThreeBuffers.cfg	MCRNBufferHandoffBase.tla	pass	-	check	rnbufferhandoffbase	required	-
 MCRNBufferHandoffBaseBrokenSingleTake.cfg	MCRNBufferHandoffBase.tla	invariant	MaximalDrain	check	rnbufferhandoffbase	required	-
 MCRNBufferHandoffBaseBrokenBudget.cfg	MCRNBufferHandoffBase.tla	invariant	BudgetBound	check	rnbufferhandoffbase	required	-
 MCRNBufferHandoffBaseBrokenDeferred.cfg	MCRNBufferHandoffBase.tla	invariant	OneOwner	check	rnbufferhandoffbase	required	-

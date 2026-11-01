@@ -29,8 +29,11 @@ holds a live stack entry in its `free_slot` while it is itself taken or free.
 
 The region's memory is not cleared. `Init` gives every meta word an arbitrary
 live bit and every descriptor an adversarial value (in use, generation 0, slot
-0, chunk 0), and `Carve` leaves both as the previous connection left them. The
-ghost `touchedPast` records any read or write of a meta word at or past
+0, chunk 0), and `Carve` leaves these modeled fields as the previous
+connection left them. The implementation separately clears `enqueue_ticket`
+and `schedule_flags` below the old descriptor watermark; these scheduling
+fields are outside this abstraction. The ghost `touchedPast` records any
+read or write of a meta word at or past
 `fresh`, or of a descriptor at or past `descriptors_fresh`; the code must do
 neither. Generations run modulo `GenMod` (`2^31` for a chunk's tag, `2^32` for
 a descriptor's), and the instance uses 3, so a wrap is two retakes away.
@@ -58,7 +61,8 @@ Functions in `sdk/rocketnet_allocator.cpp`.
   ends in the same free on a send's last fragment.
 - **`Carve`**: `rn_region_carve`, whose store part is
   `rn_send_store_init_counts`: both pools empty and both watermarks at
-  zero, nothing else written.
+  zero, with the modeled meta/descriptor fields unchanged. Scheduling-field
+  cleanup below the old watermark occurs before it is lowered in the SDK.
 
 ## Invariants
 

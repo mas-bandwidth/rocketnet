@@ -58,8 +58,12 @@ every RIO call after create.
 ## The abstraction
 
 - **Receive.** `posted` is the slices posted and `retry` the slices whose
-  re-post was refused. `rcq` is the receive completion queue: a datagram
+  re-post was refused. `retired` counts completed slices that stop deliberately
+  leaves unposted. `rcq` is the receive completion queue: a datagram
   ordinal, or 0 for a cancelled slice. `Arrive` completes a posted slice.
+  At the model's action boundaries, the source's `posted_receives` corresponds
+  to `posted + Len(rcq)`: the source decrements that count at dequeue, while
+  the model separates posted requests from queued completions.
   `ArriveDropped` stands for a kernel drop when no slice is posted; that is
   an OS count, outside the claim. `accepted` is every datagram that
   completed a slice, in order.
@@ -83,7 +87,9 @@ every RIO call after create.
   - `WTake`, under the mutex, which marks the phase posted;
   - `WPost` and `WCommit`;
   - `WRetire`, which retries a refused commit;
-  - `WDequeue`, which is bounded by the fill bank's room under the rule;
+  - `WDequeue`, bounded by the fill bank's room under the rule, which
+    summarizes the retry loop and receive completions, including a stop
+    interleaving as described below;
   - `WPublish`, under the mutex, which publishes the fill bank and returns
     drained phases idle.
 
@@ -91,6 +97,20 @@ every RIO call after create.
   `WStop`, then `WClose` (only once committed, and under the rule only once
   no committed send is in flight; until then it retires the send completions
   and returns to `WStop`), then `WDrain`.
+- **Receive stop interleaving.** The source checks `stopping` once before
+  its whole retry loop, then separately for each completion after copying
+  the datagram. `WDequeue` remains an aggregate action. `stopDuring` summarizes
+  a `Stop` inside that action and sets the same stopping flag and wake.
+  `attemptRetry` selects whether the initial check permits the whole old
+  retry list; `repost` is the completion prefix whose checks precede stop.
+  The remaining completion suffix enters `retired`. When stop was already
+  set on entry, no retry is attempted and every dequeued completion retires.
+  This count abstraction exposes the resulting ownership states without
+  claiming instruction-level interleavings inside the loop or a separate
+  local completion-array model. It adds no fairness condition.
+  A retry already in the list stays unposted and accounted through stop;
+  it is not kernel-owned and does not block close or free. `WDrain` moves
+  queued receive completions into `retired`, including close cancellations.
 - **Main.** Main's steps are:
   - `Stage`, a fill thread;
   - `SendPackets` and `ReceivePackets`, each a successful try;
@@ -107,8 +127,9 @@ every RIO call after create.
   fill bank, then the queued completions are exactly `accepted`.
 - `FillPhaseOwnedByMain`: until stop, the fill phase is `fill`. No send of
   it is outstanding, the worker does not hold it, and it is not handed.
-- `SlicesAccounted`: until close, every slice is posted, queued or waiting
-  for a re-post.
+- `SlicesAccounted`: every slice is posted, queued, waiting for a re-post
+  or retired, including after close and drain. No slice is retired while
+  running, so a refused re-post cannot shrink the running receive depth.
 - `NoSendDuplicated`.
 - `StopSendsHanded`: at worker exit no handed phase was silently dropped.
 - `StopSendsFinished`: every staged send, including the finished fill
@@ -126,6 +147,7 @@ every RIO call after create.
 | Config | Expected | What it shows |
 |---|---|---|
 | `MCRNRioWorker.cfg` | pass | Safety, both directions: three datagrams and two staged sends over three phases, every invariant. |
+| `MCRNRioWorkerThreeSends.cfg` | pass | The exact three-send constants of SwitchBeforeIdle with its guard restored and every safety invariant; the rotation can return to an occupied phase. |
 | `MCRNRioWorkerReceiveLive.cfg` | pass | No sends, three datagrams: invariants, `EveryDatagramConsumed`, `StopCompletes`. |
 | `MCRNRioWorkerSendLive.cfg` | pass | No datagrams, two sends: invariants, `EveryStagedSent`, `StopCompletes`. |
 | `MCRNRioWorkerTwoBanks.cfg` | pass | Two banks, three datagrams: the fill bank fills while main holds the other bank (backpressure); invariants and receive liveness. |
@@ -138,6 +160,15 @@ every RIO call after create.
 
 The liveness controls are split by direction so each run fits the 110 s
 budget at two TLC workers.
+
+On 2026-11-01, the stop-retirement model ran all eleven required cases on
+native Linux with the pinned TLC jar. All five healthy cases passed; the six
+mutations produced exactly the properties listed above. The longest case was
+21.486 s, within the unchanged 110 s budget. Healthy cases used two workers
+and witnesses one. The ten existing configurations and their expected
+properties were unchanged; `RUNS.tsv` records the inputs and actual results.
+These bounded count-model checks do not establish an instruction-level
+refinement of the worker or qualify native Windows timing.
 
 Each reversed witness was read against the code by hand (2026-10-22):
 

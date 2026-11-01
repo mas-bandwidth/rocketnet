@@ -1,8 +1,9 @@
 --------------------------- MODULE RNFilterEpochs ---------------------------
 (***************************************************************************)
-(* The receiver side of the keyed filter value's generations (STANDARD.md, *)
-(* "The keyed filter value"): the table of live magics a keyed receiver    *)
-(* holds, the backend installing the next generation, the oldest retired   *)
+(* Historical design from retired STANDARD.md at commit 96da6fb36107,    *)
+(* "The keyed filter value"; no v1.0 keyed implementation. It models the  *)
+(* live magics held by a keyed receiver, installation and retirement of  *)
+(* generations, the oldest retired                                       *)
 (* when the table is full, and the verdict on a packet's epoch byte.       *)
 (*                                                                         *)
 (* The rule:                                                               *)
