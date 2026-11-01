@@ -1086,6 +1086,11 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         rocketnet_use_sodium(test_iocp)
         target_link_libraries(test_iocp PRIVATE Threads::Threads)
         rocketnet_warning_floor(test_iocp)
+        # Every case fails on purpose, so it never runs as a suite: ci.yml's
+        # Windows leg (c) runs each case under a deadline (suite_no_dialogs).
+        add_executable(windows_no_dialogs tests/windows_no_dialogs.cpp)
+        target_include_directories(windows_no_dialogs PRIVATE tests sdk)
+        rocketnet_warning_floor(windows_no_dialogs)
         if(NOT ROCKETNET_DEV)
             # The same source has a DEV=0-only main that uses ordinary IOCP and
             # RIO constructors, real loopback datagrams and bounded shutdown.
