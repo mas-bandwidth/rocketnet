@@ -89,6 +89,29 @@ class CheckTlaCoverageTest(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertIn("COVERAGE OK 1 rows", out)
 
+    def test_malformed_row_width_fails_after_a_valid_row(self):
+        root = self.plant_basic_repo()
+        fields = ["malformed", "sdk/rocketnet_send_budget.h", "RNSendBudget",
+                  "current", "-", GOOD_NOTE]
+        for malformed in [fields[:-1], fields + ["unexpected"]]:
+            with self.subTest(columns=len(malformed)):
+                write_row(root, {
+                    "machine": "rn-send-budget",
+                    "code": "sdk/rocketnet_send_budget.h",
+                    "module": "RNSendBudget",
+                    "status": "current",
+                    "owed_by": "-",
+                    "note": GOOD_NOTE,
+                })
+                coverage = root / "proofs" / "tla" / "COVERAGE.tsv"
+                with coverage.open("a") as out:
+                    out.write("\t".join(malformed) + "\n")
+                code, out = run_check(root)
+                self.assertEqual(code, 1, out)
+                self.assertIn(f"proofs/tla/COVERAGE.tsv:3: expected 6 columns, "
+                              f"found {len(malformed)}", out)
+                self.assertNotIn("COVERAGE OK", out)
+
     def test_owed_row_whose_module_sdk_cites_is_refused(self):
         root = self.plant_basic_repo()
         write_row(root, {
