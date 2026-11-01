@@ -610,7 +610,7 @@ jobs:
         run: python tools/check_package.py build --config Debug
 
       - name: Ambient config isolation and passing output
-        run: python tools/check_test_environment.py ./bin/Debug/test.exe
+        run: python tools/check_test_environment.py ./bin/Debug/test.exe --production
 
       - name: Memory plans against allocator observations
         run: python tools/check_memory.py ./bin/Debug/transport_memory.exe
