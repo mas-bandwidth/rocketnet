@@ -1589,7 +1589,9 @@ static void posix_mmsg_progress_log( void * context, enum rocketnet_log_level_t 
     if ( strstr( message, "sendmmsg (" ) != NULL )
     {
         log->failures++;
-        if ( strstr( message, strerror( log->error ) ) != NULL )
+        const char * diagnostic = strstr( message, "failed: errno " );
+        int logged_error = 0;
+        if ( diagnostic && sscanf( diagnostic, "failed: errno %d", &logged_error ) == 1 && logged_error == log->error )
             log->matching_errno++;
     }
     if ( strstr( message, "invalid address. could not send packet" ) != NULL )
