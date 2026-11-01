@@ -4,11 +4,13 @@
 */
 
 // ROCKETNET_MAX_CLIENTS is a build setting (-DROCKETNET_MAX_CLIENTS=10000,
-// BUILDING.md "Maximum clients"). These cases hold every limit that serves all
-// of a server's clients to the value the build was compiled with, pin the
-// default build's limits to the values they had before the setting existed,
-// and create a server of ROCKETNET_MAX_CLIENTS slots through the public API.
-// They run in every build; the 10000 build runs them at 10000.
+// MEMORY.md "Maximum clients"): the most clients a config may ask for. Every
+// server buffer that scales with clients is sized from the configured
+// max_clients, so these cases hold each sizing to the configured count in
+// every build, pin the sizes at 1000 clients to the values they had when the
+// build ceiling was a fixed 1000, show a server's plan follows its config and
+// not the ceiling, and create a server of ROCKETNET_MAX_CLIENTS slots through
+// the public API. They run in every build; the 10000 build runs them at 10000.
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
@@ -47,32 +49,49 @@ static void test_max_clients_derived_limits()
     check( config.max_clients == ( clients < 1000 ? clients : 1000 ) );
     check( ROCKETNET_DEFAULT_MAX_CLIENTS == config.max_clients );
 
-    // the server-wide tables hold every client
+    // the build-wide tables hold every client the build allows: the loopback
+    // hub's records, the embedded XDP program's replay map and the packet
+    // lease table
 
-    check( (int) ( sizeof( ( (rn_slots_t *) 0 )->connection_id ) / sizeof( uint64_t ) ) == clients );
     check( rocketnet_loopback_hub_bytes( clients ) > 0 && rocketnet_loopback_hub_bytes( clients + 1 ) == 0 );
     check( ROCKETNET_XDP_REPLAY_MAX_ENTRIES >= clients );
-    check( (int) ( sizeof( ( (rocketnet_xdp_replay_marks_t *) 0 )->mark_keys ) / sizeof( rocketnet_server_xdp_replay_key_t ) ) == ROCKETNET_XDP_REPLAY_MAX_ENTRIES );
-    check( ROCKETNET_XDP_REPLY_MAC_ENTRIES >= 4 * clients );
-    check( ( ROCKETNET_XDP_REPLY_MAC_ENTRIES & ( ROCKETNET_XDP_REPLY_MAC_ENTRIES - 1 ) ) == 0 );
+    check( rocketnet_xdp_replay_entries( clients ) <= ROCKETNET_XDP_REPLAY_MAX_ENTRIES );
+    check( rocketnet_xdp_replay_entries( clients + 1 ) == 0 );
     check( ROCKETNET_SERVER_PACKET_LEASES / 2 >= 2 * clients );
-    check( ROCKETNET_SERVER_PACKET_LEASES / 2 >= ROCKETNET_SERVER_SEND_STAGING_PACKETS );
-    check( ROCKETNET_SERVER_MAX_SEND_PACKETS == clients );
-    check( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE == ROCKETNET_RECEIVE_PACKETS_PER_CLIENT * clients );
+    check( ROCKETNET_SERVER_PACKET_LEASES / 2 >= rocketnet_server_send_staging_packets( clients ) );
 
-    // the server-wide send staging holds two packets for every client, and
-    // each receive side twice that
+    // each server-wide sizing follows the configured count, raised to the
+    // smallest sizing count and never past the build's
 
-    check( ROCKETNET_SERVER_SEND_STAGING_PACKETS >= 2 * clients );
+    const int counts[] = { 1, ROCKETNET_SERVER_MIN_SIZED_CLIENTS, ROCKETNET_DEFAULT_MAX_CLIENTS, clients };
+    for ( const int n : counts )
+    {
+        const int sized = n > ROCKETNET_SERVER_MIN_SIZED_CLIENTS ? n : ROCKETNET_SERVER_MIN_SIZED_CLIENTS;
+        check( rocketnet_server_sized_clients( n ) == sized );
+        check( rocketnet_server_receive_packets_per_update( n ) == ROCKETNET_RECEIVE_PACKETS_PER_CLIENT * sized );
+        check( rocketnet_server_send_batch_packets( n ) == sized );
+
+        // the server-wide send staging holds two packets for every client,
+        // and each receive side twice that
+
+        const int staging = rocketnet_server_send_staging_packets( n );
+        check( staging >= 2 * sized && staging < 4 * sized && ( staging & ( staging - 1 ) ) == 0 );
+        check( rocketnet_server_iocp_send_queue_size( n ) == staging );
+        check( rocketnet_server_iocp_receive_queue_size( n ) == 2 * staging );
+        check( rocketnet_server_rio_send_queue_size( n ) == staging );
+        check( rocketnet_server_rio_receives( n ) == 2 * staging );
+
+        const int macs = rocketnet_xdp_reply_mac_entries( n );
+        check( macs >= 4 * sized && ( macs & ( macs - 1 ) ) == 0 );
+        check( rocketnet_xdp_replay_entries( n ) >= (uint32_t) n );
+        check( rocketnet_server_uring_bank_packets( n ) >= rocketnet_server_receive_packets_per_update( n ) );
+    }
+    check( rocketnet_server_sized_clients( clients + 1 ) == clients );
     check( ROCKETNET_LOOPBACK_QUEUE_PACKETS == 2 * ROCKETNET_CONNECTION_MAX_PACKETS_PER_UPDATE );
-    check( ROCKETNET_IOCP_SEND_QUEUE_SIZE == ROCKETNET_SERVER_SEND_STAGING_PACKETS );
-    check( ROCKETNET_IOCP_RECEIVE_QUEUE_SIZE == 2 * ROCKETNET_SERVER_SEND_STAGING_PACKETS );
-    check( ROCKETNET_RIO_SEND_QUEUE_SIZE == ROCKETNET_SERVER_SEND_STAGING_PACKETS );
-    check( ROCKETNET_RIO_RECEIVES == 2 * ROCKETNET_SERVER_SEND_STAGING_PACKETS );
 
     // the gso producer bank and the io_uring send array are each one
     // server-wide staging whatever the queue count, sized for two packets per
-    // client of the default configuration; a larger build spreads its sends
+    // client of the default configuration; a larger server spreads its sends
     // across updates as the transport's send room reports
 
     check( ROCKETNET_GSO_SEND_QUEUE_SIZE >= 2 * ROCKETNET_DEFAULT_MAX_CLIENTS );
@@ -82,19 +101,30 @@ static void test_max_clients_derived_limits()
 
     check( ROCKETNET_REASSEMBLY_MEMORY_MIB >= 512 * ( ( clients + 999 ) / 1000 ) );
 
-    // the default build is unchanged: these are the values every limit had
-    // when ROCKETNET_MAX_CLIENTS was a fixed 1000
+    // a server of 1000 clients is sized as it was when ROCKETNET_MAX_CLIENTS
+    // was a fixed 1000, in every build that holds 1000
+
+    if ( clients >= 1000 )
+    {
+        check( rocketnet_server_receive_packets_per_update( 1000 ) == 16000 );
+        check( rocketnet_server_send_batch_packets( 1000 ) == 1000 );
+        check( rocketnet_server_send_staging_packets( 1000 ) == 2048 );
+        check( rocketnet_server_iocp_send_queue_size( 1000 ) == 2048 );
+        check( rocketnet_server_iocp_receive_queue_size( 1000 ) == 4096 );
+        check( rocketnet_server_rio_send_queue_size( 1000 ) == 2048 );
+        check( rocketnet_server_rio_receives( 1000 ) == 4096 );
+        check( rocketnet_xdp_replay_entries( 1000 ) == 1024 );
+        check( rocketnet_xdp_reply_mac_entries( 1000 ) == 4096 );
+        check( rocketnet_server_uring_bank_packets( 1000 ) == 16000 );
+        check( rocketnet_loopback_server_queue_packets( 1000 ) == 16384 );
+    }
+
+    // the default build's fixed tables are unchanged
 
     if ( clients == 1000 )
     {
-        check( ROCKETNET_SERVER_SEND_STAGING_PACKETS == 2048 );
         check( ROCKETNET_LOOPBACK_QUEUE_PACKETS == 2048 );
-        check( ROCKETNET_IOCP_SEND_QUEUE_SIZE == 2048 );
-        check( ROCKETNET_IOCP_RECEIVE_QUEUE_SIZE == 4096 );
-        check( ROCKETNET_RIO_SEND_QUEUE_SIZE == 2048 );
-        check( ROCKETNET_RIO_RECEIVES == 4096 );
         check( ROCKETNET_XDP_REPLAY_MAX_ENTRIES == 1024 );
-        check( ROCKETNET_XDP_REPLY_MAC_ENTRIES == 4096 );
         check( ROCKETNET_SERVER_PACKET_LEASES == 131072 );
         check( ROCKETNET_REASSEMBLY_MEMORY_MIB == 512 );
         check( ROCKETNET_GSO_SEND_QUEUE_SIZE == 4096 );
@@ -129,6 +159,38 @@ static void max_clients_server_config( rocketnet_server_config_t * config )
     config->max_fragmented_messages = 1;
     config->message_resend_delay_initial_ms = 100;
 }
+
+// A server's memory is its config's choice: its plan follows the configured
+// max_clients, not the build's ROCKETNET_MAX_CLIENTS. The portable plan at
+// the light config is nearly all buffers that scale with clients (it has no
+// fixed transport memory such as XDP's UMEM), so a 1000-client server plans
+// close to 1000 / ROCKETNET_MAX_CLIENTS of a full one (1.02 GB against
+// 10.07 GB in a 10000 build, the same 1.02 GB as in the default build), and
+// the check allows a quarter more. Sizing even the receive and send buffers
+// alone from the build ceiling plans 1.69 GB, two thirds more than its share.
+// In the default build the two plans are the same server.
+
+static void test_server_plan_follows_configured_max_clients()
+{
+    if ( ROCKETNET_MAX_CLIENTS < 1000 )
+        return;
+
+    rocketnet_server_config_t config;
+    max_clients_server_config( &config );
+    config.transport = "portable";
+
+    const uint64_t at_max = (uint64_t) rocketnet_server_required_memory( &config );
+    config.max_clients = 1000;
+    const uint64_t at_1000 = (uint64_t) rocketnet_server_required_memory( &config );
+    config.max_clients = 999;
+    const uint64_t at_999 = (uint64_t) rocketnet_server_required_memory( &config );
+
+    check( at_max > 0 && at_1000 > 0 && at_999 > 0 );
+    check( at_999 <= at_1000 && at_1000 <= at_max );
+    check( 4 * at_1000 * (uint64_t) ROCKETNET_MAX_CLIENTS <= 5 * 1000 * at_max );
+}
+
+REGISTER_UNIT_TEST( test_server_plan_follows_configured_max_clients );
 
 // the suite reads the bound before any case runs, with no library and no
 // hub, so it plans the portable transport (a superset of loopback's plan,

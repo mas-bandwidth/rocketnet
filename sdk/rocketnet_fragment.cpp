@@ -146,7 +146,7 @@ int rocketnet_server_reassembly_delivered_capacity( int max_clients, int num_slo
     if ( max_clients < 1 || max_clients > ROCKETNET_MAX_CLIENTS || num_slots < 1 || num_slots > ROCKETNET_MAX_FRAGMENTS )
         return 0;
 
-    const int64_t drain = ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE;
+    const int64_t drain = rocketnet_server_receive_packets_per_update( max_clients );
     const int64_t begun_earlier = (int64_t) max_clients * (int64_t) num_slots;
 
     return (int) ( ( drain + ( begun_earlier < drain ? begun_earlier : drain ) ) / 2 );
@@ -188,7 +188,7 @@ uint64_t rocketnet_server_reassembly_delivered_bytes( int max_clients, int num_s
     const uint64_t begun_earlier = (uint64_t) max_clients * (uint64_t) num_slots;
     const uint64_t held = ( begun_earlier < (uint64_t) capacity ? begun_earlier : (uint64_t) capacity ) * (uint64_t) max_payload_bytes;
 
-    const uint64_t by_drain = (uint64_t) ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE * (uint64_t) ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES +
+    const uint64_t by_drain = (uint64_t) rocketnet_server_receive_packets_per_update( max_clients ) * (uint64_t) ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES +
                               held + (uint64_t) capacity * ( ROCKETNET_REASSEMBLY_DELIVERED_ALIGN - 1 );
 
     return by_drain < by_count ? by_drain : by_count;

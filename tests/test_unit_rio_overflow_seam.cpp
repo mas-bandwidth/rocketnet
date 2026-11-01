@@ -31,19 +31,19 @@ static void test_rio_transport_overflow_seam()
     check( rocketnet_server_rio_test_receive_overflow( counters, packet_counts, &repost_calls, &pending_receives, &guard_hit ) );
     check( guard_hit == 0 );
 
-    check( packet_counts[0] == ROCKETNET_RIO_RECEIVES );
-    check( counters[ROCKETNET_RIO_COUNTER_PACKETS_RECEIVED] == ROCKETNET_RIO_RECEIVES );
+    check( packet_counts[0] == rocketnet_server_rio_receives( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
+    check( counters[ROCKETNET_RIO_COUNTER_PACKETS_RECEIVED] == rocketnet_server_rio_receives( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
     check( counters[ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_OVERFLOW] == 0 );
     check( counters[ROCKETNET_RIO_COUNTER_RECEIVE_REPOST_FAILED] == 0 );
-    check( pending_receives == ROCKETNET_RIO_RECEIVES );
+    check( pending_receives == rocketnet_server_rio_receives( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
 
     // The queued tail is delivered by the next update. The seam contains two
     // full banks, so both calls stay within the per-call receive bound.
 
-    check( packet_counts[1] == ROCKETNET_RIO_RECEIVES );
+    check( packet_counts[1] == rocketnet_server_rio_receives( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
     check( counters[ROCKETNET_RIO_NUM_COUNTERS + ROCKETNET_RIO_COUNTER_PACKETS_RECEIVED] ==
-           2 * ROCKETNET_RIO_RECEIVES );
-    check( repost_calls == 2 * ROCKETNET_RIO_RECEIVES );
+           2 * rocketnet_server_rio_receives( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
+    check( repost_calls == 2 * rocketnet_server_rio_receives( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
 
     for ( int i = 0; i < ROCKETNET_RIO_NUM_COUNTERS; ++i )
     {

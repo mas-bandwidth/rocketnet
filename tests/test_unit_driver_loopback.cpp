@@ -1309,7 +1309,10 @@ static rocketnet_server_transport_t * shape_junk_server_create()
 struct shape_junk_staged_t
 {
     struct shape_junk_t junk;
-    rocketnet_server_socket_process_packets_t batch;
+    rocketnet_server_socket_process_packets_t batch;    // a view of the arrays below
+    rocketnet_address_t batch_from[SHAPE_JUNK_COUNT];
+    int batch_bytes[SHAPE_JUNK_COUNT];
+    uint8_t * batch_data[SHAPE_JUNK_COUNT];
     rocketnet_address_t connected;
     int start_packet_calls;
     uint8_t * frame;                // shape_junk_staged_frame
@@ -1369,6 +1372,10 @@ static void test_server_shape_check_first_on_the_staged_loop()
     shape_junk_connect_slot0( server, &fx.connected );
     shape_junk_build( &fx.junk, server->protocol.packet_filter, &fx.connected );
 
+    fx.batch.capacity = SHAPE_JUNK_COUNT;
+    fx.batch.from = fx.batch_from;
+    fx.batch.packet_bytes = fx.batch_bytes;
+    fx.batch.packet_data = fx.batch_data;
     fx.batch.num_packets = SHAPE_JUNK_COUNT;
 
     for ( int i = 0; i < SHAPE_JUNK_COUNT; i++ )
@@ -1529,7 +1536,7 @@ static int server_queued_budget_receive( void * context, rocketnet_address_t * f
 static void test_server_drains_completed_queue_to_budget()
 {
     auto * server = shape_junk_server_create();
-    const int budget = ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE;
+    const int budget = rocketnet_server_receive_packets_per_update( 4 );     // shape_junk_server_create's max_clients
     server_queued_budget_t queue = { budget + 17 };
     rocketnet_server_transport_io_operations_t operations = {};
     operations.destroy = wt_staged_destroy;

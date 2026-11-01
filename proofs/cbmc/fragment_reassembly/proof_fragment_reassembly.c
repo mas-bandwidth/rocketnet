@@ -534,8 +534,9 @@ void harness_process_fragment( void )
    int and uint64 types carry. Without it the arguments range over what the
    transports can pass: up to PROOF_SIZING_MAX_CONNECTIONS connections
    (ROCKETNET_MAX_CLIENTS by default; the client passes one), up to
-   PROOF_SIZING_MAX_CAPACITY completions (by default the server's drain,
-   ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE: both delivered-capacity
+   PROOF_SIZING_MAX_CAPACITY completions (by default the largest server
+   drain, ROCKETNET_RECEIVE_PACKETS_PER_CLIENT for each of
+   ROCKETNET_MAX_CLIENTS: both delivered-capacity
    functions return at most their drain, and the client's drain is
    smaller), a delivered byte bound up to that capacity at the aligned
    largest payload (the most rocketnet_server_reassembly_delivered_bytes
@@ -546,7 +547,7 @@ void harness_process_fragment( void )
 #endif // #ifndef PROOF_SIZING_MAX_CONNECTIONS
 
 #ifndef PROOF_SIZING_MAX_CAPACITY
-#define PROOF_SIZING_MAX_CAPACITY ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE
+#define PROOF_SIZING_MAX_CAPACITY ( ROCKETNET_RECEIVE_PACKETS_PER_CLIENT * ROCKETNET_MAX_CLIENTS )
 #endif // #ifndef PROOF_SIZING_MAX_CAPACITY
 
 void harness_memory_sizing( void )
