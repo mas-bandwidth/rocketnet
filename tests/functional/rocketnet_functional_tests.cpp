@@ -38,11 +38,13 @@
 
 #include "rocketnet_wire.h"
 #include "rocketnet_fragment.h"
+#include "rocketnet_layers.h"
 
 // the suite's assert hook, installed for every case (rocketnet_functional_prepare)
 void rocketnet_functional_restore_assert_function();
 
 #include <unordered_map>
+#include <vector>
 #include <atomic>
 #include <thread>
 
@@ -12991,6 +12993,62 @@ static void rocketnet_test_token_time_game_clock_off_reads_the_wall_clock()
     rocketnet_check( rocketnet_test_token_time_wall_clock_create( now, now + 60 ) == ROCKETNET_STATUS_OK );
 }
 
+// A message client created in a caller block of exactly the bytes
+// required_memory reports for the create's send budget: with a budget above
+// the config's field, and with a positive budget over a config field of 0,
+// create makes the object at the start of that block. The refusal of a block
+// of the config field's size, and required_memory itself, are unit tests
+// (tests/test_unit_message_create_refusals.cpp). Functional because the
+// client create starts its transport: a production client starts a network
+// thread and probes IPv6 with a real socket. Runs in both builds.
+
+static void rocketnet_test_message_client_create_takes_the_create_budget()
+{
+    uint8_t backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
+    uint8_t backend_secret_key[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    uint8_t server_public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
+    uint8_t server_secret_key[ROCKETNET_SERVER_SECRET_KEY_BYTES];
+    rocketnet_check( rocketnet_generate_backend_keypair( backend_public_key, backend_secret_key ) == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_generate_server_keypair( server_public_key, server_secret_key ) == ROCKETNET_STATUS_OK );
+
+    struct rocketnet_client_transport_config_t client_config;
+    rocketnet_check( rocketnet_client_transport_default_config_sized( &client_config, sizeof( client_config ) ) == 1 );
+    snprintf( client_config.transport, sizeof( client_config.transport ), "%s", "loopback" );
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
+    memset( client_config.packet_filter, 0x5A, sizeof( client_config.packet_filter ) );    // not the published test filter, which a production build refuses
+
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    const char * addresses[] = { "127.0.0.1:40000" };
+    rocketnet_check( rocketnet_write_production_connect_token( backend_secret_key, server_public_key, 0x6d63727265717531ULL, addresses, 1,
+                                                               0x2545f4914f6cdd1dULL, 0, 1ULL << 40, 60, NULL,
+                                                               token, sizeof( token ) ) == ROCKETNET_STATUS_OK );
+
+    const int32_t fields[2] = { 1000, 0 };
+
+    for ( int f = 0; f < 2; f++ )
+    {
+        rocketnet_message_config_t config;
+        rocketnet_message_default_config( &config );
+        config.server_send_kbps = fields[f];
+        config.client_send_kbps = fields[f];
+        const uint32_t create_kbps = 10000;
+
+        const uint64_t at_field = rocketnet_message_client_required_memory( &config, 0 );
+        const uint64_t at_create = rocketnet_message_client_required_memory( &config, create_kbps );
+        rocketnet_check( at_field > 0 && at_create > at_field );
+
+        std::vector<uint8_t> storage( (size_t) at_create + ROCKETNET_ALLOCATION_ALIGNMENT, 0 );
+        const uintptr_t base = (uintptr_t) storage.data();
+        void * block = (void *) ( ( base + ROCKETNET_ALLOCATION_ALIGNMENT - 1 ) & ~(uintptr_t) ( ROCKETNET_ALLOCATION_ALIGNMENT - 1 ) );
+
+        struct rocketnet_message_client_t * client = rocketnet_message_client_create( NULL, token, &client_config, &config, block, at_create, create_kbps );
+        rocketnet_check( client != NULL );
+        rocketnet_check( (void *) client == block );
+
+        rn_native_message_client_stop_and_destroy( client );
+    }
+}
+
 static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
 #if ROCKETNET_DEV
     { "test_client_destroy_early_threaded_keeps_then_frees", test_client_destroy_early_threaded_keeps_then_frees, NULL },
@@ -13006,6 +13064,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_hostname_resolve_localhost", rocketnet_test_hostname_resolve_localhost, NULL },
 #endif // #if ROCKETNET_DEV
     { "test_platform_thread", rocketnet_test_platform_thread, NULL },
+    { "test_message_client_create_takes_the_create_budget", rocketnet_test_message_client_create_takes_the_create_budget, NULL },
     { "test_frame_sync_wait", rocketnet_test_frame_sync_wait, NULL },
 #if ROCKETNET_DEV
     { "test_frame_sync_dropped_stats", rocketnet_test_frame_sync_dropped_stats, NULL },
