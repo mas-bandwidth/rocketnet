@@ -7,7 +7,7 @@ Planned work for RocketNet that is not on main. Work lands on main before new wo
 ## Contents
 
 - [Started work to finish and land](#started-work-to-finish-and-land) (4)
-- [Audit items not yet fixed](#audit-items-not-yet-fixed) (8)
+- [Audit items not yet fixed](#audit-items-not-yet-fixed) (7)
 - [Investigations that need a quiet host](#investigations-that-need-a-quiet-host) (3)
 - [Older open pull requests](#older-open-pull-requests) (2)
 - [Decisions for Glenn](#decisions-for-glenn) (5)
@@ -67,12 +67,6 @@ From: Audit item 101
 Audit 88 and 124: measure on captain, then add re-flush counters if the measurement supports it.
 
 From: Audit items 88, 124
-
-### Server-stop functional case asserts no send failures
-
-The Windows cut-off of a flushed bank at stop was never reproduced on captain. Asserting the send-failure counter does not move during stop gives the check a way to fail; it needs a small test accessor for a stopped server's transport stats.
-
-From: Stop-spread follow-on
 
 ### Generate LOAD.md's byte tables
 

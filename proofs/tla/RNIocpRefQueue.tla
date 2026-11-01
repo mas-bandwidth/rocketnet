@@ -215,8 +215,11 @@ NoOverwrite == lost = {}
 (* every pop returns a reference that was published and not yet taken *)
 NoPhantom == phantom = {}
 
-(* the claimed positions never exceed the cells: enqueue - dequeue is in *)
-(* 0 .. Capacity (the clamp in rocketnet_iocp_queue_count never fires)    *)
+(* In one modeled state, claimed positions differ by 0 .. Capacity.    *)
+(* rocketnet_iocp_queue_count samples the two cursors separately;        *)
+(* concurrent movement can put that observed unsigned difference outside *)
+(* the range. Its clamped advisory count is not this single-state       *)
+(* occupancy invariant.                                                *)
 WithinCapacity == SDiff(enqueue, dequeue) \in 0 .. Cap
 
 (* the layout: every position claimed for push and not yet claimed for    *)
