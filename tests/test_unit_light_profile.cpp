@@ -167,8 +167,11 @@ static void test_light_profile_server_1000_required_memory()
     struct rocketnet_server_config_t config;
     check( rocketnet_server_light_config( &config ) == ROCKETNET_STATUS_OK );
     check( config.config_bytes == sizeof( config ) );
-    check( config.max_clients == 1000 );
+    check( config.max_clients == ( ROCKETNET_MAX_CLIENTS < 1000 ? ROCKETNET_MAX_CLIENTS : 1000 ) );
     light_message_fields_server( &config );
+
+    if ( ROCKETNET_MAX_CLIENTS < 1000 )
+        return;
 
     config.max_clients = 1000;
 
