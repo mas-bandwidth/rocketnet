@@ -114,7 +114,7 @@ four cases ran serially on vision (Linux x86_64) with the exact flags and
 1800-second per-case timeout in `proof.mk`; raw output was retained for
 every case. The existing ESBMC 8.5.0 executable was verified live, SHA-256
 `d314db72d213859d6cd1cf9045c227489a817cb133dc14d390a5e2663c31ca0a`.
-Recorded native source hashes match the immutable source snapshot.
+Recorded native source hashes match the frozen source copy.
 
 | Harness | Properties passed / total | Elapsed |
 | --- | ---: | ---: |

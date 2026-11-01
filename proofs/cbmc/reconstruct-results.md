@@ -14,7 +14,7 @@ Frozen RocketNet source: `59752f6f4878360534f03ef7112a27e09013e9ca`,
 integrating type9 `7047d7c68d2f18caf2dc9c54a4b9ead4a16cad14`.
 The harness includes the current `sdk/rocketnet_protocol.cpp` and
 `sdk/rocketnet_message.h`; it does not copy the reconstructed operations.
-Native source hashes were checked against the frozen snapshot.
+Native source hashes were checked against the frozen source copy.
 
 Both targets ran serially on hulk (Linux x86_64) with CBMC
 `6.6.0 (cbmc-6.6.0)`, executable SHA-256
