@@ -682,17 +682,17 @@ static void test_client_gso_receive_gro_fault_is_counted()
 }
 REGISTER_UNIT_TEST( test_client_gso_receive_gro_fault_is_counted );
 
-// a completion the kernel cut short would split into a plausible but short
+// a completion that fills the coalesce buffer with MSG_TRUNC set would split into a plausible but short
 // final segment: it is dropped whole, spends the skip budget, and leaves no carry
 
-static void test_client_gso_truncated_completion_dropped()
+static void test_unit_client_gso_truncated_completion_dropped()
 {
     memset( &test_socket, 0, sizeof( test_socket ) );
     memset( test_receive_bytes, 0, sizeof( test_receive_bytes ) );
     rocketnet_unit_check( rocketnet_client_gso_init( &test_gso, &fake_gso_syscalls, &test_socket, 7, true ) );
     rocketnet_unit_check( rocketnet_client_gso_init_receive( &test_gso, true ) );
 
-    fake_gso_queue_receive( 540, 100, 10, FAKE_GSO_CONTROL_PAYLOAD_TRUNCATED );
+    fake_gso_queue_receive( (int) sizeof( test_gso.coalesce_buffer ), 1200, 10, FAKE_GSO_CONTROL_PAYLOAD_TRUNCATED );
     rocketnet_unit_check( rocketnet_client_gso_receive_batch( &test_gso, test_receive_from, test_receive_data, FAKE_GSO_RECEIVE_STRIDE, test_receive_bytes, 64 ) == 0 );
     rocketnet_unit_check( test_gso.carry_segments == 0 );
     rocketnet_unit_check( test_gso.packets_received == 0 );
@@ -702,7 +702,7 @@ static void test_client_gso_truncated_completion_dropped()
 
     for ( int i = 0; i < 6; i++ )
     {
-        fake_gso_queue_receive( 540, 100, 20, FAKE_GSO_CONTROL_PAYLOAD_TRUNCATED );
+        fake_gso_queue_receive( (int) sizeof( test_gso.coalesce_buffer ), 1200, 20, FAKE_GSO_CONTROL_PAYLOAD_TRUNCATED );
     }
     fake_gso_queue_receive( 200, 0, 30, FAKE_GSO_CONTROL_NONE );
 
@@ -714,6 +714,6 @@ static void test_client_gso_truncated_completion_dropped()
     check_gso_receive_slot( 0, 200, 30 );
     rocketnet_unit_check( test_gso.packets_received == 1 );
 }
-REGISTER_UNIT_TEST( test_client_gso_truncated_completion_dropped );
+REGISTER_UNIT_TEST( test_unit_client_gso_truncated_completion_dropped );
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
