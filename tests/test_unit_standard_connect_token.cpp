@@ -339,6 +339,10 @@ static void rn_zero_mint( uint8_t * token, const struct rn_zero_token_t * spec )
     }
     else
     {
+        // 203.0.113.10:40000, the absent family being IPv6
+
+        const uint8_t server_address[6] = { 203, 0, 113, 10, 0x40, 0x9c };
+        memcpy( sf.ipv4_address, server_address, sizeof( server_address ) );
         if ( spec->absent_index >= 0 )
             sf.ipv6_address[spec->absent_index] = 0x01;
     }
