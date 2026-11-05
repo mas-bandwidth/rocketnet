@@ -14,6 +14,16 @@
 
 #include "rocketnet_connect_token.h"
 #include "rocketnet_test_vectors.h"
+#include "rocketnet_client_protocol.h"
+#include "rocketnet_server_protocol.h"
+#include "rocketnet_encryption_map.h"
+#include "rocketnet_client_slots.h"
+#include "rocketnet_token_tables.h"
+#include "rocketnet_protocol.h"
+#include "rocketnet_address.h"
+#include "rocketnet_read_write.h"
+#include "rocketnet_counters.h"
+#include "rocketnet_layers.h"
 
 #if defined( ROCKETNET_USE_SYSTEM_SODIUM )
 #include <sodium.h>
@@ -267,3 +277,314 @@ static void test_standard_connect_token_vectors()
 }
 
 REGISTER_UNIT_TEST( test_standard_connect_token_vectors );
+
+// The zero fields of the token (TRANSPORT.md t1 rule 3, t6.1 to t6.3): a
+// receiver drops a structure whose zero[n] field is not all zero. The outer
+// pad (bytes 704..767) is checked where the client admits the token, the
+// signed pad (521..575) and the address bytes of an absent family before the
+// server admits the request, and the private pad (344..383) right after the
+// sealed block opens. Each field is poked at its first and last byte; the
+// signed buffer is re-signed and the private block re-sealed so every refusal
+// is the zero field's alone. Time is an argument and nothing here opens a
+// socket.
+
+#define RN_ZERO_OUTER_OFFSET        704
+#define RN_ZERO_OUTER_BYTES         64
+#define RN_ZERO_SIGNED_OFFSET       521
+#define RN_ZERO_SIGNED_BYTES        55
+#define RN_ZERO_PRIVATE_OFFSET      344
+#define RN_ZERO_PRIVATE_BYTES       40
+
+ROCKETNET_STATIC_ASSERT( RN_ZERO_OUTER_OFFSET + RN_ZERO_OUTER_BYTES == ROCKETNET_CONNECT_TOKEN_BYTES, "the outer pad ends the token" );
+ROCKETNET_STATIC_ASSERT( RN_ZERO_SIGNED_OFFSET + RN_ZERO_SIGNED_BYTES == ROCKETNET_SIGNED_CONNECT_DATA_BYTES, "the signed pad ends the signed data" );
+ROCKETNET_STATIC_ASSERT( RN_ZERO_PRIVATE_OFFSET + RN_ZERO_PRIVATE_BYTES == ROCKETNET_PRIVATE_BLOCK_BYTES, "the private pad ends the private block" );
+
+// what the token carries: the family of its one address, and the first byte
+// to set in each zero field (-1 leaves the field zero). absent_index is a
+// byte of the absent family's address field.
+
+struct rn_zero_token_t
+{
+    int ipv6;
+    int outer_index;
+    int signed_index;
+    int private_index;
+    int absent_index;
+};
+
+static void rn_zero_mint( uint8_t * token, const struct rn_zero_token_t * spec )
+{
+    struct rocketnet_signed_connect_data_t sf;
+    struct rocketnet_connect_token_private_t pf;
+    rn_test_fill_signed( &sf );
+    rn_test_fill_private( &pf );
+    pf.protocol_id = sf.protocol_id;
+    pf.expire_timestamp = sf.expire_timestamp;
+
+    if ( spec->ipv6 )
+    {
+        // [2001:db8::1]:40000, the absent family being IPv4
+
+        sf.address_flags = ROCKETNET_ADDRESS_FLAG_IPV6;
+        memset( sf.ipv4_address, 0, sizeof( sf.ipv4_address ) );
+        uint8_t * p = sf.ipv6_address;
+        rocketnet_write_uint16( &p, 0x2001 );
+        rocketnet_write_uint16( &p, 0x0db8 );
+        for ( int i = 0; i < 5; i++ )
+            rocketnet_write_uint16( &p, 0 );
+        rocketnet_write_uint16( &p, 1 );
+        rocketnet_write_uint16( &p, 40000 );
+        if ( spec->absent_index >= 0 )
+            sf.ipv4_address[spec->absent_index] = 0x01;
+    }
+    else
+    {
+        // 203.0.113.10:40000, the absent family being IPv6
+
+        const uint8_t server_address[6] = { 203, 0, 113, 10, 0x40, 0x9c };
+        memcpy( sf.ipv4_address, server_address, sizeof( server_address ) );
+        if ( spec->absent_index >= 0 )
+            sf.ipv6_address[spec->absent_index] = 0x01;
+    }
+
+    uint8_t private_block[ROCKETNET_PRIVATE_BLOCK_BYTES];
+    rocketnet_write_connect_token_private( &pf, private_block );
+    if ( spec->private_index >= 0 )
+        private_block[RN_ZERO_PRIVATE_OFFSET + spec->private_index] = 0x01;
+    rocketnet_unit_check( crypto_box_seal( sf.sealed_private_block, private_block, ROCKETNET_PRIVATE_BLOCK_BYTES,
+                                           rocketnet_test_server_public_key ) == 0 );
+
+    uint8_t signed_buffer[ROCKETNET_SIGNED_CONNECT_DATA_BYTES];
+    rocketnet_write_signed_connect_data( &sf, signed_buffer );
+    if ( spec->signed_index >= 0 )
+        signed_buffer[RN_ZERO_SIGNED_OFFSET + spec->signed_index] = 0x01;
+
+    uint8_t signature[ROCKETNET_SIGNATURE_BYTES];
+    crypto_sign_detached( signature, NULL, signed_buffer, sizeof( signed_buffer ), rocketnet_test_backend_secret_key );
+
+    uint8_t * p = token;
+    memcpy( p, signed_buffer, ROCKETNET_SIGNED_CONNECT_DATA_BYTES );
+    p += ROCKETNET_SIGNED_CONNECT_DATA_BYTES;
+    memcpy( p, signature, ROCKETNET_SIGNATURE_BYTES );
+    p += ROCKETNET_SIGNATURE_BYTES;
+    memcpy( p, pf.client_to_server_key, ROCKETNET_KEY_BYTES );
+    p += ROCKETNET_KEY_BYTES;
+    memcpy( p, pf.server_to_client_key, ROCKETNET_KEY_BYTES );
+    p += ROCKETNET_KEY_BYTES;
+    memset( p, 0, (size_t) ( ROCKETNET_CONNECT_TOKEN_BYTES - ( p - token ) ) );
+    if ( spec->outer_index >= 0 )
+        token[RN_ZERO_OUTER_OFFSET + spec->outer_index] = 0x01;
+}
+
+static const struct rn_zero_token_t rn_zero_none = { 0, -1, -1, -1, -1 };
+
+static int rn_zero_client_admits( const uint8_t * token )
+{
+    struct rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof( counters ) );
+
+    static struct rocketnet_client_protocol_t client;
+    rocketnet_client_protocol_init( &client, &counters );
+
+    const int admitted = rocketnet_client_protocol_connect( &client, token, 1000.0, ROCKETNET_TEST_CREATE_TS );
+    if ( admitted )
+        return client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_REQUESTING_COOKIE;
+
+    rocketnet_unit_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_INVALID_CONNECT_TOKEN );
+
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    int packet_bytes = -1;
+    rocketnet_client_protocol_update( &client, 1000.0, packet, &packet_bytes );
+    rocketnet_unit_check( packet_bytes == 0 );
+    return 0;
+}
+
+#if ROCKETNET_DEV
+extern void ( *rocketnet_token_private_block_hook )( uint8_t * block, int bytes, int at_exit );
+
+static int rn_zero_exit_seen;
+static int rn_zero_exit_clean;
+
+static void rn_zero_block_seen( uint8_t * block, int bytes, int at_exit )
+{
+    if ( at_exit != 1 )
+        return;
+    rn_zero_exit_seen++;
+    rn_zero_exit_clean = sodium_is_zero( block, (size_t) bytes );
+}
+#endif // #if ROCKETNET_DEV
+
+// returns the process result, with the request ladder's counters in *counters
+
+static int rn_zero_server_process( const uint8_t * token, struct rocketnet_counters_t * counters, int * response_bytes )
+{
+    static struct rocketnet_server_protocol_t server;
+    memset( &server, 0, sizeof( server ) );
+    memset( counters, 0, sizeof( *counters ) );
+    server.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
+
+    const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
+    memcpy( server.packet_filter, tag, ROCKETNET_FILTER_VALUE_BYTES );
+    memcpy( server.backend_public_key, rocketnet_test_backend_public_key, 32 );
+    memcpy( server.server_public_key, rocketnet_test_server_public_key, 32 );
+    memcpy( server.server_secret_key, rocketnet_test_server_secret_key, 32 );
+    rocketnet_unit_check( rocketnet_address_parse( &server.advertised_ipv4, "203.0.113.10:40000" ) );
+    rocketnet_unit_check( rocketnet_address_parse( &server.advertised_ipv6, "[2001:db8::1]:40000" ) );
+
+    memcpy( server.cookie_key, rocketnet_test_cookie_key, 32 );
+    server.cookie_lifetime_seconds = 3;
+    server.handshakes_per_update = ROCKETNET_SERVER_MAX_HANDSHAKES_PER_UPDATE;
+    server.handshake_deadline_seconds = 5.0;
+    server.max_timeout_seconds = 0;
+    server.encryption_map = rocketnet_encryption_map_create( NULL, 8 );
+    server.used_token_history = rocketnet_used_token_history_create( NULL, 64 );
+    server.client_slots = rocketnet_client_slots_create( NULL, 4 );
+    server.counters = counters;
+    rocketnet_unit_check( server.encryption_map && server.used_token_history && server.client_slots );
+
+    rocketnet_server_protocol_update( &server, 1000.0 );
+
+    struct rocketnet_address_t client_address;
+    rocketnet_unit_check( rocketnet_address_parse( &client_address, token[ROCKETNET_SIGNED_OFFSET_ADDRESS_FLAGS] == ROCKETNET_ADDRESS_FLAG_IPV6 ? "[2001:db8::7]:56789" : "198.51.100.7:56789" ) );
+
+    struct rocketnet_connect_token_t parsed;
+    rocketnet_read_connect_token( &parsed, token );
+
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    rocketnet_write_connection_request_packet( request, tag, NULL, rocketnet_test_salt,
+                                               rocketnet_test_client_eph_public,
+                                               parsed.signed_connect_data, parsed.signature );
+
+    const uint64_t cookie_expire = ROCKETNET_TEST_CREATE_TS + 3;
+    uint8_t cookie_mac[ROCKETNET_COOKIE_MAC_BYTES];
+    rocketnet_unit_check( rocketnet_generate_cookie_mac( cookie_mac, &client_address, rocketnet_test_salt, cookie_expire, server.cookie_key ) );
+
+    uint8_t * cookie = request + ROCKETNET_PREFILTER_BYTES;
+    rocketnet_write_uint64( &cookie, cookie_expire );
+    memcpy( cookie, cookie_mac, ROCKETNET_COOKIE_MAC_BYTES );
+
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    *response_bytes = 0;
+    const int result = rocketnet_server_protocol_process_connection_request( &server, &client_address,
+                                                                             request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,
+                                                                             ROCKETNET_TEST_CREATE_TS, 1000.0,
+                                                                             response, response_bytes );
+
+    const int mapped = rocketnet_encryption_map_find( server.encryption_map, &client_address ) != -1;
+    rocketnet_unit_check( mapped == ( result == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE ) );
+
+    rocketnet_encryption_map_destroy( server.encryption_map );
+    rocketnet_used_token_history_destroy( server.used_token_history );
+    rocketnet_client_slots_destroy( server.client_slots );
+
+    return result;
+}
+
+static void rn_zero_server_refuses( const struct rn_zero_token_t * spec, int counter )
+{
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rn_zero_mint( token, spec );
+
+    struct rocketnet_counters_t counters;
+    int response_bytes = -1;
+    rocketnet_unit_check( rn_zero_server_process( token, &counters, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    rocketnet_unit_check( response_bytes == 0 );
+    rocketnet_unit_check( counters.values[counter] == 1 );
+}
+
+static void test_standard_connect_token_zero_fields()
+{
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+
+    // all-zero fields are accepted, at every layer
+
+    rn_zero_mint( token, &rn_zero_none );
+    rocketnet_unit_check( rn_zero_client_admits( token ) );
+    {
+        struct rocketnet_counters_t counters;
+        int response_bytes = 0;
+        rocketnet_unit_check( rn_zero_server_process( token, &counters, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
+        rocketnet_unit_check( response_bytes == ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES );
+    }
+    {
+        struct rn_zero_token_t v6 = rn_zero_none;
+        v6.ipv6 = 1;
+        rn_zero_mint( token, &v6 );
+        struct rocketnet_counters_t counters;
+        int response_bytes = 0;
+        rocketnet_unit_check( rn_zero_server_process( token, &counters, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
+    }
+
+    // the outer pad, first and last byte: the client refuses the token
+
+    const int outer_indices[2] = { 0, RN_ZERO_OUTER_BYTES - 1 };
+    for ( int i = 0; i < 2; i++ )
+    {
+        struct rn_zero_token_t spec = rn_zero_none;
+        spec.outer_index = outer_indices[i];
+        rn_zero_mint( token, &spec );
+        rocketnet_unit_check( !rn_zero_client_admits( token ) );
+    }
+
+    // the signed pad, first and last byte: the server ignores the request
+
+    const int signed_indices[2] = { 0, RN_ZERO_SIGNED_BYTES - 1 };
+    for ( int i = 0; i < 2; i++ )
+    {
+        struct rn_zero_token_t spec = rn_zero_none;
+        spec.signed_index = signed_indices[i];
+        rn_zero_server_refuses( &spec, ROCKETNET_COUNTER_CONNECTION_REQUEST_BAD_ADDRESS_FLAGS );
+    }
+
+    // the address bytes of the absent family, first and last byte, in each family
+
+    const int absent_ipv6_indices[2] = { 0, 17 };
+    const int absent_ipv4_indices[2] = { 0, 5 };
+    for ( int i = 0; i < 2; i++ )
+    {
+        struct rn_zero_token_t spec = rn_zero_none;
+        spec.absent_index = absent_ipv6_indices[i];
+        rn_zero_server_refuses( &spec, ROCKETNET_COUNTER_CONNECTION_REQUEST_BAD_ADDRESS_FLAGS );
+
+        spec = rn_zero_none;
+        spec.ipv6 = 1;
+        spec.absent_index = absent_ipv4_indices[i];
+        rn_zero_server_refuses( &spec, ROCKETNET_COUNTER_CONNECTION_REQUEST_BAD_ADDRESS_FLAGS );
+    }
+
+    // the private pad, first and last byte: the sealed block opens but the
+    // server refuses it as one that did not, and its staging is wiped
+
+    const int private_indices[2] = { 0, RN_ZERO_PRIVATE_BYTES - 1 };
+    for ( int i = 0; i < 2; i++ )
+    {
+        struct rn_zero_token_t spec = rn_zero_none;
+        spec.private_index = private_indices[i];
+
+        rn_zero_server_refuses( &spec, ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_OPEN_SEALED_BLOCK );
+
+        rn_zero_mint( token, &spec );
+        struct rocketnet_connect_token_t parsed;
+        rocketnet_read_connect_token( &parsed, token );
+        rocketnet_unit_check( rocketnet_verify_signed_connect_data( parsed.signed_connect_data, parsed.signature, rocketnet_test_backend_public_key ) );
+
+        struct rocketnet_connect_token_private_t opened;
+        memset( &opened, 0xaa, sizeof( opened ) );
+        struct rocketnet_connect_token_private_t untouched = opened;
+#if ROCKETNET_DEV
+        rn_zero_exit_seen = 0;
+        rn_zero_exit_clean = 0;
+        rocketnet_token_private_block_hook = rn_zero_block_seen;
+#endif // #if ROCKETNET_DEV
+        const int opened_ok = rocketnet_open_connect_token_private( &opened, parsed.signed_connect_data, rocketnet_test_server_public_key, rocketnet_test_server_secret_key );
+#if ROCKETNET_DEV
+        rocketnet_token_private_block_hook = NULL;
+        rocketnet_unit_check( rn_zero_exit_seen == 1 );
+        rocketnet_unit_check( rn_zero_exit_clean );
+#endif // #if ROCKETNET_DEV
+        rocketnet_unit_check( !opened_ok );
+        rocketnet_unit_check( memcmp( &opened, &untouched, sizeof( opened ) ) == 0 );
+    }
+}
+
+REGISTER_UNIT_TEST( test_standard_connect_token_zero_fields );
