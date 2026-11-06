@@ -3,10 +3,10 @@ JOBS ?= $(shell n=$$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4); [ "$$n" -
 
 .DEFAULT_GOAL := build
 
-# make uses CMake's defaults; ROCKETNET_DEV=OFF selects the production library.
+# make builds Release with development features; ROCKETNET_DEV=OFF selects the production library.
 .PHONY: build
 build:
-	cmake -S . -B build $(if $(ROCKETNET_DEV),-DROCKETNET_DEV=$(ROCKETNET_DEV))
+	cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DROCKETNET_DEV=$(if $(ROCKETNET_DEV),$(ROCKETNET_DEV),ON)
 	+cmake --build build $(if $(filter -j%,$(MAKEFLAGS)),,--parallel $(JOBS))
 
 # the end-to-end check: build the real binaries, then drive them over loopback.
