@@ -17,17 +17,18 @@ Install the [platform prerequisites](BUILDING.md#prerequisites). On Linux
 or macOS:
 
 ```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DROCKETNET_DEV=ON -DROCKETNET_BUILD_EXAMPLES=ON
-cmake --build build --target example_hello example_client_server_server example_client_server_client --parallel 4
+cmake -S . -B build
+cmake --build build
 ./bin/example_hello
 ```
 
-On Windows, in PowerShell or cmd.exe with the MSVC toolchain installed:
+On Windows, in PowerShell or cmd.exe with Visual Studio installed and its
+generator selected (the CMake default):
 
 ```powershell
-cmake -S . -B build -A x64 -DROCKETNET_DEV=ON -DROCKETNET_BUILD_EXAMPLES=ON
-cmake --build build --config Release --target example_hello example_client_server_server example_client_server_client --parallel 4
-.\bin\Release\example_hello.exe
+cmake -S . -B build -A x64
+cmake --build build
+.\bin\Debug\example_hello.exe
 ```
 
 The important output is:
@@ -60,7 +61,7 @@ run and exits if no client arrives. The server
 binds UDP port 40000 and writes `client_server.keys` in its working directory.
 This file contains its public address and public key, not its secret key.
 The client must run from the same directory. On Windows use
-`.\bin\Release\example_client_server_server.exe`.
+`.\bin\Debug\example_client_server_server.exe`.
 
 The [server source](../examples/client_server_server.c) initializes the
 library, fills a default config, selects one client slot and the portable
@@ -76,7 +77,7 @@ In a second terminal, from the same directory:
 ./bin/example_client_server_client
 ```
 
-On Windows use `.\bin\Release\example_client_server_client.exe`.
+On Windows use `.\bin\Debug\example_client_server_client.exe`.
 The client reads `client_server.keys`, creates a development token for that
 server, and connects. It sends one reliable ordered message, receives the
 server's echo, disconnects, and prints `PASS`. The server also prints `PASS`

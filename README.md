@@ -12,12 +12,13 @@ Start with [Getting started](docs/GETTING-STARTED.md). It takes you through
 building the library, sending a message over an in-memory connection, and
 running a client and server in separate processes over UDP.
 
-With the [platform prerequisites](docs/BUILDING.md#prerequisites) installed, from
-the repository root on Linux or macOS:
+With the [platform prerequisites](docs/BUILDING.md#prerequisites) installed,
+run these commands from the repository root on Linux or macOS. The default
+build includes the examples.
 
 ```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DROCKETNET_DEV=ON -DROCKETNET_BUILD_EXAMPLES=ON
-cmake --build build --target example_hello --parallel 4
+cmake -S . -B build
+cmake --build build
 ./bin/example_hello
 ```
 
