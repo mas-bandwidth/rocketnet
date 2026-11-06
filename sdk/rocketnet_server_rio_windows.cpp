@@ -73,6 +73,12 @@ struct rocketnet_rio_bank_t
 #define ROCKETNET_RIO_PHASE_POSTED  2
 #define ROCKETNET_RIO_PHASE_IDLE    3
 
+// Its cache-line alignment can require implicit tail padding on MSVC ARM64.
+// Keep C4324 disabled only for this private structure; its layout is unchanged.
+#if defined( _MSC_VER )
+#pragma warning( push )
+#pragma warning( disable : 4324 )
+#endif // #if defined( _MSC_VER )
 struct rocketnet_server_rio_t
 {
     // next and outstanding lead, each starting a cache line (next's line
@@ -173,6 +179,9 @@ struct rocketnet_server_rio_t
     bool test_try_fails = false;                // main's next tries fail, as under contention
 #endif // #if ROCKETNET_DEV
 };
+#if defined( _MSC_VER )
+#pragma warning( pop )
+#endif // #if defined( _MSC_VER )
 
 static_assert( offsetof( rocketnet_server_rio_t, outstanding ) == 64, "the rio's aligned members have no implicit padding" );
 
