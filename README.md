@@ -40,7 +40,7 @@ backend service.
 | Update, receive, simulate, queue, and send each frame | [Integration guide](docs/USAGE.md#frame-loop) |
 | Understand tokens and key ownership | [Sessions](docs/SESSION.md), [Keys](docs/KEYS.md) |
 | Replace development tokens with a backend | [Production integration](docs/PRODUCTION.md) |
-| Choose and deploy a transport | [Transports](docs/TRANSPORTS.md) and its platform guides |
+| Choose and deploy a transport | [Transports](docs/TRANSPORTS.md) |
 | Size buffers, capacity, and host resources | [Memory and capacity](docs/MEMORY.md) |
 | Diagnose a refused call, missing message, or shutdown wait | [Troubleshooting](docs/ERRORS-AND-LOGGING.md) |
 | Find reference, engineering, and qualification documents | [Documentation index](docs/README.md) |
