@@ -25,14 +25,11 @@ provides the local commands and prerequisites.
 
 ### Static-analysis evidence limit
 
-The current GCC wrapper (`tools/run_static.py`) does not fail on every analyzer
-invocation failure. It collects `warning` diagnostics with `-Wanalyzer-*`
-options, while the default warnings-as-errors build can emit them as `error`
-diagnostics with `-Werror=analyzer-*`; it also does not check the compiler's exit
-status. A green GCC job alone therefore does not establish a completed, clean
-analysis. Check the analyzer invocations, exit statuses and diagnostics before
-crediting that result. The required workflow remains required; this limitation
-is not a waiver or a claim that the wrapper has been repaired.
+The GCC wrapper (`tools/run_static.py`) analyzes its selected translation
+units and compares findings against the checked-in baseline. It requires a
+compile command for each selected unit, collects analyzer warnings and errors,
+and fails incomplete compiler invocations. A green result covers those selected
+units and the baseline comparison; it is not whole-program analysis.
 
 ## Recorded results
 
