@@ -12,23 +12,19 @@ The version lives in `sdk/rocketnet.h`, in two branches selected by
 The shipping branch carries `ROCKETNET_VERSION_FULL` and the integer macros
 `ROCKETNET_VERSION_MAJOR`, `ROCKETNET_VERSION_MINOR` and
 `ROCKETNET_VERSION_PATCH`. At this revision, the full label is
-`"v1.0.0-preview-6"` and the integers are `1.0.0`. The development branch uses
+`"v1.0.0"` and the integers are `1.0.0`. The development branch uses
 `"dev"` and the integer sentinel `255.255.255`.
 
-The header label does not identify the current checkout as a release. The
-newest tag, `v1.0.0-preview-5`, identifies commit
-`77cd38b0a4f879f3ae04ee6681ac7d94bfd63151`; the header names
-`v1.0.0-preview-6` because wire-affecting changes landed after that tag, and
-no `v1.0.0-preview-6` tag exists yet. Check the exact tag and the repository's
-published release when choosing an artifact. Advancing a label alone neither
-tags nor publishes a release.
+The header label does not identify the current checkout as a release. Check
+the exact tag and the repository's published release when choosing an artifact.
+Advancing a label alone neither tags nor publishes a release.
 
 The numeric `ROCKETNET_VERSION`, CMake project `VERSION` and installed
 `RocketNetConfigVersion.cmake` remain numeric. CMake reads the full label
 from the header and checks that its numeric portion matches the project
-version. It exports `RocketNet_VERSION_STRING` as `v1.0.0-preview-6` and
-derives `RocketNet_VERSION_PRERELEASE` as `preview-6`. A final release has
-an empty prerelease string. There is no separate public prerelease macro.
+version. It exports `RocketNet_VERSION_STRING` as `v1.0.0` and
+`RocketNet_VERSION_PRERELEASE` as an empty string. There is no separate public
+prerelease macro.
 
 The `version-consistency` job in
 [release-check.yml](../.github/workflows/release-check.yml) checks both
@@ -138,10 +134,9 @@ required runs are:
   (`tools/check_release_tsan.py`).
 
 The [GCC analyzer evidence limit](TESTING.md#static-analysis-evidence-limit)
-also applies to release qualification: the current wrapper can return green
-without a completed, clean analyzer invocation. Review the actual invocations,
-exit statuses and diagnostics before crediting that job. Required green jobs
-do not override a known failure in the checks they are intended to run.
+also applies to release qualification: the gate covers its selected translation
+units and compares findings with the baseline. Required green jobs do not
+override a known failure in the checks they are intended to run.
 
 The other `nightly*.yml` workflows and the fuzz-nightly workflow are watches,
 not release gates. The `msan` workflow (`MemorySanitizer`) is advisory: its
