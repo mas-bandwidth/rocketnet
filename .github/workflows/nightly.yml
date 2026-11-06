@@ -385,7 +385,8 @@ jobs:
 
   linux-transport-cells-repeat:
     name: linux / transport cells x50 and ASan
-    runs-on: [self-hosted, Linux, X64, fleet]
+    # The xdp cell needs the same VM tier as the Linux functional matrix.
+    runs-on: [self-hosted, Linux, X64, libxdp-1-4]
     timeout-minutes: 7200
     strategy:
       matrix:
