@@ -1,10 +1,10 @@
-[![CI](https://github.com/mas-bandwidth/rocketnet/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/mas-bandwidth/rocketnet/actions/workflows/ci.yml)
-
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/rocketnet-logo-dark.png">
   <source media="(prefers-color-scheme: light)" srcset="assets/rocketnet-logo-light.png">
   <img alt="RocketNet" src="assets/rocketnet-logo-light.png" width="640">
 </picture>
+
+[![CI](https://github.com/mas-bandwidth/rocketnet/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/mas-bandwidth/rocketnet/actions/workflows/ci.yml)
 
 # RocketNet
 
