@@ -17,16 +17,16 @@ Install the [platform prerequisites](BUILDING.md#prerequisites). On Linux
 or macOS:
 
 ```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DROCKETNET_DEV=ON -DROCKETNET_BUILD_EXAMPLES=ON
-cmake --build build --target example_hello example_client_server_server example_client_server_client --parallel 4
+make
 ./bin/example_hello
 ```
 
-On Windows, in PowerShell or cmd.exe with the MSVC toolchain installed:
+On Windows, in PowerShell or cmd.exe with Visual Studio installed and its
+generator selected (the CMake default):
 
 ```powershell
-cmake -S . -B build -A x64 -DROCKETNET_DEV=ON -DROCKETNET_BUILD_EXAMPLES=ON
-cmake --build build --config Release --target example_hello example_client_server_server example_client_server_client --parallel 4
+cmake -S . -B build -A x64
+cmake --build build --config Release
 .\bin\Release\example_hello.exe
 ```
 
