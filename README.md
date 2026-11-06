@@ -17,8 +17,7 @@ run these commands from the repository root on Linux or macOS. The default
 build includes the examples.
 
 ```sh
-cmake -S . -B build
-cmake --build build
+make
 ./bin/example_hello
 ```
 

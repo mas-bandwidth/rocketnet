@@ -17,8 +17,7 @@ Install the [platform prerequisites](BUILDING.md#prerequisites). On Linux
 or macOS:
 
 ```sh
-cmake -S . -B build
-cmake --build build
+make
 ./bin/example_hello
 ```
 

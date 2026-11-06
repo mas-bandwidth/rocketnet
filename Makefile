@@ -1,11 +1,13 @@
 # the child make's job count, the processors capped at 8, overridden by `make JOBS=<n>` or by the caller's own -j.
 JOBS ?= $(shell n=$$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4); [ "$$n" -gt 8 ] && n=8; echo $$n)
 
-# make builds the default development library (ROCKETNET_DEV=ON); make
-# ROCKETNET_DEV=OFF builds the production library (BUILDING.md, "Production builds").
+.DEFAULT_GOAL := build
+
+# make uses CMake's defaults; ROCKETNET_DEV=OFF selects the production library.
 .PHONY: build
 build:
-	@mkdir -p build && cd build && cmake -DCMAKE_BUILD_TYPE=Release -DROCKETNET_DEV=$(if $(ROCKETNET_DEV),$(ROCKETNET_DEV),ON) .. && $(MAKE) $(if $(filter -j%,$(MAKEFLAGS)),,-j$(JOBS)) --no-print-directory
+	cmake -S . -B build $(if $(ROCKETNET_DEV),-DROCKETNET_DEV=$(ROCKETNET_DEV))
+	+cmake --build build $(if $(filter -j%,$(MAKEFLAGS)),,--parallel $(JOBS))
 
 # the end-to-end check: build the real binaries, then drive them over loopback.
 # the tool is built from its .go file because the two C programs share its
