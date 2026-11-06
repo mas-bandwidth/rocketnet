@@ -70,7 +70,7 @@ alone does not provide a production backend.
 
 ## License and credits
 
-RocketNet is licensed under the [GNU Affero General Public License v3.0](LICENSE).
+**rocketnet** is licensed under the [GNU Affero General Public License v3.0](LICENSE).
 
 See [Credits](docs/CREDITS.md) for its creator and sponsor, and
 [Security](docs/SECURITY.md) for reporting a vulnerability.
