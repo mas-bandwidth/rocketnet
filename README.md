@@ -4,11 +4,7 @@
   <img alt="RocketNet" src="assets/rocketnet-logo-light.png" width="640">
 </picture>
 
-[![CI](https://github.com/mas-bandwidth/rocketnet/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/mas-bandwidth/rocketnet/actions/workflows/ci.yml)
-
-# RocketNet
-
-RocketNet is a client/server UDP transport and message library for games with thousands of players.
+**rocketnet** is a client/server UDP transport and message library for games with thousands of players.
 It connects clients using backend-issued tokens, authenticates and encrypts traffic, and delivers 
 messages with a choice of reliability modes.
 
