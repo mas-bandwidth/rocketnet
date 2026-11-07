@@ -14,22 +14,6 @@ Start with [Getting started](docs/GETTING-STARTED.md). It takes you through
 building the library, sending a message over an in-memory connection, and
 running a client and server in separate processes over UDP.
 
-With the [platform prerequisites](docs/BUILDING.md#prerequisites) installed,
-run these commands from the repository root on Linux or macOS. The default
-build includes the examples.
-
-```sh
-make
-./bin/example_hello
-```
-
-On Windows, use the [Windows build commands](docs/BUILDING.md#windows).
-The example prints `server received: hello from the client`, then `PASS`
-after a second client connection and cleanup checks. It needs no socket or
-backend service.
-
-<a id="documentation"></a>
-
 ## Connect your game
 
 | Task | Start here |
