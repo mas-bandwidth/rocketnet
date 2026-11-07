@@ -62,6 +62,13 @@ its capture, a capture without its seed, and a capture that does not carry the
 seed's bytes. A finding with no pcapng form keeps its `regress_` seed in the
 harness corpus and names why in the pull request.
 
+## Audit report
+
+The consolidated receive-surface audit, with its executive summary, method,
+findings table, residual risk and out-of-scope list, is
+[the 2026-11-05 audit report](security/AUDIT-2026-11-05.md). Its detail
+sections record the evidence for each finding and its current status.
+
 ## Scope and security posture
 
 This policy covers the rocketnet library and its wire protocol. The threat model,

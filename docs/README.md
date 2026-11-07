@@ -27,7 +27,7 @@ message exchange → integrate a frame loop → connect a backend → qualify a 
 | Set environment values | [Environment inventory](ENVIRONMENT.md), [config fields](USAGE.md#configuration) |
 | Budget memory, clients, and host resources | [Memory and capacity](MEMORY.md), [detailed storage model](LOAD.md) |
 | Diagnose a failure | [Troubleshooting, errors, and logging](ERRORS-AND-LOGGING.md) |
-| Evaluate security support and report an issue | [Security](SECURITY.md) |
+| Evaluate security support and report an issue | [Security](SECURITY.md), [receive-surface audit](security/AUDIT-2026-11-05.md) |
 
 ## API, protocols, and engineering
 
