@@ -1482,6 +1482,10 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
         return ROCKETNET_SERVER_PROCESS_ACCEPTED;
     }
 
+    // proofs/tla/ServerConnection.tla ServerRecvDataRule: the client's ack and
+    // payload (sent by ClientSendData) refresh and confirm the slot that the
+    // gates above found, and move no slot or mapping (DataNeverMovesSlot).
+
     if ( packet_type == ROCKETNET_CONNECTION_ACK_PACKET )
     {
         rocketnet_spam( "server received standalone ack from client %d", client_index );

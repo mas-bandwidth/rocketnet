@@ -217,6 +217,17 @@ payload is accepted only while connected.
 `ClientRecvEarlyPayload`, the pre-fix acceptance in state 3, and must fail
 `PayloadOnlyWhenConnected`.
 
+The server's standalone ack (type 8) is accepted in states 3 and 4 under the
+session keys and the replay window, refreshes the receive clock and moves
+nothing else (`rocketnet_client_process_ack`). `ServerAcks <- MCServerAcks`
+adds it: `ServerAck` sends one whenever the server holds the slot (a superset
+of the ack debt's sends) and `ClientRecvSession` accepts it.
+`MCClientConnectionServerAcks.cfg` is the committed run with it on and checks
+the action property `AckNeverMovesState` beside every committed property;
+`MCClientConnectionBrokenAckConnects.cfg` adds `ClientRecvAckConnects`, an ack
+read as a keep-alive in state 3, and must fail `ConnectedMeansHandshake` (the
+client connects without the index only a keep-alive carries).
+
 `MCClientConnection.cfg` is the committed run: the hang check under "the first packet
 of every kind is dropped" (`KindLoss = "firstkind"`), the code's keep-alive behaviour,
 deadlines and timeouts off, payloads on, no disconnects, checking every safety property
