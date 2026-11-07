@@ -145,11 +145,23 @@ NoKeys == [att |-> 0, nonce |-> 0]
 Keys   == [att : Att, nonce : Nonce]
 
 (***************************************************************************)
-(* The packets.  Types are the standard's names.  The client's standalone  *)
-(* ack (ROCKETNET_ACK_DEBT_THRESHOLD, currently 1) and payloads are absent: *)
-(* neither moves the connection machine.                                 *)
+(* The server's standalone ack (type 8, rocketnet_client_process_ack).  An  *)
+(* authenticated ack opens under the session keys in states 3 and 4,       *)
+(* passes the replay window, refreshes the receive clock and moves         *)
+(* nothing else: no state, no index, no keys.  ServerAcks = TRUE adds the  *)
+(* server sending it (ServerAck) and the type to the session packets.  A   *)
+(* definition, replaced with <- in the ack cfgs, so every other run keeps  *)
+(* its cfg and its state space.                                            *)
+(***************************************************************************)
+ServerAcks == FALSE
+
+(***************************************************************************)
+(* The packets.  Types are the standard's names.  The client's own         *)
+(* standalone ack and payloads are absent: neither moves the connection    *)
+(* machine.  The server's ack is present only under ServerAcks.            *)
 (***************************************************************************)
 SessionTypes == {"keepalive", "disconnect"} \cup (IF ServerPayloads THEN {"payload"} ELSE {})
+                \cup (IF ServerAcks THEN {"ack"} ELSE {})
 
 ClientPackets ==
     [type : {"request"}, att : Att, cookie : CookieVal, fams : (SUBSET Families) \ {{}}]
@@ -486,6 +498,7 @@ ClientRecvSessionRule(p, Erase) ==
               /\ cKeys' = IF Erase /\ p.type = "disconnect" THEN NoKeys ELSE cKeys
               /\ CASE p.type = "keepalive"  -> cIndex' = TRUE /\ cstate' = 4
                    [] p.type = "payload"    -> UNCHANGED <<cIndex, cstate>>
+                   [] p.type = "ack"        -> UNCHANGED <<cIndex, cstate>>
                    [] p.type = "disconnect" -> cstate' = 0 /\ UNCHANGED cIndex
          ELSE UNCHANGED <<cSeen, cSinceRecv, cIndex, cstate, cKeys>>
     /\ UNCHANGED <<cookieVars, cEph>>
@@ -522,6 +535,18 @@ ClientRecvEarlyPayload(p) ==
     /\ cstate = 3 /\ KeysOf(p) = cKeys /\ p.id \notin cSeen
     /\ cSeen' = cSeen \cup {p.id} /\ cSinceRecv' = 0
     /\ UNCHANGED <<cIndex, cstate, cookieVars, cKeys, cEph>>
+    /\ UNCHANGED <<cFam, clientRecvUnchanged>>
+
+\* the reversed witness's step, not a disjunct of Next: a standalone ack
+\* read as a keep-alive in sending-connection-response, connecting the
+\* client without the index only a keep-alive carries.  SpecAckConnects
+\* adds it; ConnectedMeansHandshake must fail.
+ClientRecvAckConnects(p) ==
+    /\ p.type = "ack"
+    /\ S2C!Deliver(p)
+    /\ cstate = 3 /\ KeysOf(p) = cKeys /\ p.id \notin cSeen
+    /\ cSeen' = cSeen \cup {p.id} /\ cSinceRecv' = 0 /\ cstate' = 4
+    /\ UNCHANGED <<cIndex, cookieVars, cKeys, cEph>>
     /\ UNCHANGED <<cFam, clientRecvUnchanged>>
 
 ClientRecv(p) ==
@@ -636,6 +661,17 @@ ServerPayload ==
     /\ UNCHANGED <<sOthers, sDiscPending, sDiscKeys, sDiscId>>
     /\ UNCHANGED serverSendUnchanged
 
+\* the server's standalone ack (ServerAcks,
+\* rocketnet_server_protocol_write_ack_if_due): sealed under the connected
+\* slot's session keys at a fresh id.  The ack debt that paces it is not
+\* modelled: the server may send one whenever it holds the slot, a superset
+\* of the code's sends; the model gives it no effect on the server's clocks.
+ServerAck ==
+    /\ ServerAcks /\ ~ServerMute /\ sMap.live /\ sMap.slot
+    /\ \E i \in FreshId : ServerSendSession("ack", i)
+    /\ UNCHANGED <<sMap, sOthers, sDiscPending, sDiscKeys, sDiscId>>
+    /\ UNCHANGED serverSendUnchanged
+
 \* rocketnet_server_protocol_disconnect_client: the burst, then the slot
 \* released and the mapping destroyed at once
 ServerAppDisconnect ==
@@ -740,7 +776,8 @@ Next ==
     \/ ClientCommitEarly
     \/ \E p \in ServerPackets : ClientRecv(p)
     \/ \E p \in ClientPackets : ServerRecv(p)
-    \/ ServerKeepAlive \/ ServerPayload \/ ServerAppDisconnect \/ ServerDiscCopy \/ ServerCrash
+    \/ ServerKeepAlive \/ ServerPayload \/ ServerAck \/ ServerAppDisconnect \/ ServerDiscCopy
+    \/ ServerCrash
     \/ OtherJoins \/ OtherLeaves
     \/ Tick
     \/ C2SEnvironment \/ S2CEnvironment
@@ -849,6 +886,10 @@ SpecCookieReplaces ==
 \* the reversed witness's spec: Next plus the pre-fix retry that keeps the
 \* earlier attempt's cookie and replay window
 SpecRetryKeepsAttempt == Init /\ [][Next \/ AppConnectKeepsAttempt]_vars /\ Fairness
+
+\* the reversed witness's spec: Next plus an ack read as a keep-alive
+SpecAckConnects ==
+    Init /\ [][Next \/ (\E p \in SessionPackets : ClientRecvAckConnects(p))]_vars /\ Fairness
 
 \* the reachability witness's spec: Next plus the payload acceptance that
 \* records the delivered payload in the ghost cPayloadDelivered.  The
@@ -970,6 +1011,14 @@ AcceptedUnderLiveKeys ==
 PayloadOnlyWhenConnected ==
     [][\A p \in SessionPackets :
          (p.type = "payload" /\ AcceptsSession(p)) => cstate = 4]_vars
+
+\* a standalone ack moves nothing but the receive clock and the replay
+\* window: an accepted ack (its id enters the seen-set) leaves the state,
+\* the index and the keys as they were (rocketnet_client_process_ack)
+AckNeverMovesState ==
+    [][\A p \in SessionPackets :
+         (p.type = "ack" /\ AcceptsSession(p)) =>
+             (cstate' = cstate /\ cIndex' = cIndex /\ cKeys' = cKeys)]_vars
 
 \* no receive sends (S:2178-2182)
 NoSendOnArrival ==

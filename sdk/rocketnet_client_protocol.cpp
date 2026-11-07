@@ -1189,6 +1189,9 @@ static int rocketnet_client_process_ack( struct rocketnet_client_protocol_t * cl
     };
 
     // the standalone ack: the block is the packet. opened, replay-marked and reported like any session packet, and never eliciting one back.
+    // proofs/tla/ClientConnection.tla ServerAck is the server sending it and
+    // ClientRecvSession its acceptance: the receive clock refreshes and no
+    // state, index or key moves (AckNeverMovesState).
 
     uint8_t opened[ROCKETNET_RECEIVE_CEILING];
     int type_data_offset = 0;

@@ -31,6 +31,11 @@ MCCommitEarly   == TRUE
 \* request sends cookies echoing the attempt's salt with a mac of its own
 MCForgery       == TRUE
 
+\* the server-ack runs (MCClientConnectionServerAcks.cfg and its reversed
+\* witness MCClientConnectionBrokenAckConnects.cfg): the server sends
+\* standalone acks whenever it holds the slot
+MCServerAcks    == TRUE
+
 (***************************************************************************)
 (* Reachability.  A probe, not a rule: the client is connected and its     *)
 (* application has been handed a payload.  cPayloadDelivered is the ghost  *)
