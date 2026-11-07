@@ -202,6 +202,8 @@ holds each one's measured result. Every case is on a FIFO link without duplicati
 | `MCServerConnectionHoldUntilExpire.cfg` | three clients, one slot, `HoldUntilExpire = TRUE` | `ChurnNeverDenied` | fails (invariant) |
 | `MCServerConnectionExpiredToken.cfg` | one client with an expired token | `ExpiredTokenNeverMapped` | pass |
 | `MCServerConnectionResponseReplay.cfg`, `...ResponseReplayBroken.cfg` | one client, timers on, duplication | `ResponseNeverRefreshesConnected` | pass; fails (action) |
+| `MCServerConnectionClientData.cfg` | the committed run with `ClientData <- MCClientData`: connected clients send payloads (type 5) and standalone acks (type 8) | `SafetyInvariants`, `DataNeverMovesSlot`, `PacketsReachOwnSlotOnly`, `SessionNeverAnswered` | pass |
+| `MCServerConnectionBrokenAckReleases.cfg` | `ClientData` with `SpecDataConfused`: the ack dispatched as a disconnect | `DataNeverMovesSlot` | fails (action) |
 | `MCServerConnectionDualFamily.cfg`, `...BrokenIpv6OnlyMatch.cfg`, `...ServesBothFamilies.cfg`, `...BrokenOneFamilyServed.cfg`, `...Race.cfg`, `...RaceIpv6.cfg`, `...BrokenCommitEarly.cfg` | the address-family runs | `OneFamilyHostConnects`, `BothFamiliesConnect`, `Connects`, `CommitsOnAnswer` | as `CASES.tsv` declares |
 
 Every rule switch is off in some case: `RepeatKeepAlive`, `SweepRemovesMapping`,
