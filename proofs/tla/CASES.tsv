@@ -88,6 +88,8 @@ MCClientConnectionRetryFromFailure.cfg	MCClientConnection.tla	pass	-	ignore-term
 MCClientConnectionBrokenRetryKeepsAttempt.cfg	MCClientConnection.tla	action	FreshAttemptFromFailure	ignore-terminal	clientconnection	required	-
 MCClientConnectionRace.cfg	MCClientConnection.tla	pass	-	ignore-terminal	clientconnection	required	-
 MCClientConnectionBrokenCommitEarly.cfg	MCClientConnection.tla	invariant	CommitsOnAnswer	ignore-terminal	clientconnection	required	-
+MCClientConnectionServerAcks.cfg	MCClientConnection.tla	pass	-	ignore-terminal	clientconnection	required	-
+MCClientConnectionBrokenAckConnects.cfg	MCClientConnection.tla	invariant	ConnectedMeansHandshake	ignore-terminal	clientconnection	required	-
 MCReceiveOrder.cfg	MCReceiveOrder.tla	pass	-	check	receiveorder	required	-
 MCReceiveOrderBrokenSlotsAfterKeypair.cfg	MCReceiveOrder.tla	invariant	CheapRefusalsFirst	check	receiveorder	required	-
 MCReceiveOrderBrokenAdmittedAfterVerify.cfg	MCReceiveOrder.tla	invariant	CheapRefusalsFirst	check	receiveorder	required	-
@@ -331,6 +333,8 @@ MCServerConnectionBrokenAddressNotIdentity.cfg	MCServerConnection.tla	action	Pac
 MCServerConnectionSameId.cfg	MCServerConnection.tla	pass	-	ignore-terminal	serverconnection	required	-
 MCServerConnectionBrokenClientIdNoCheck.cfg	MCServerConnection.tla	invariant	OneSlotPerClientId	ignore-terminal	serverconnection	required	-
 MCServerConnectionHistoryNone.cfg	MCServerConnection.tla	pass	-	ignore-terminal	serverconnection	required	-
+MCServerConnectionClientData.cfg	MCServerConnection.tla	pass	-	ignore-terminal	serverconnection	required	-
+MCServerConnectionBrokenAckReleases.cfg	MCServerConnection.tla	action	DataNeverMovesSlot	ignore-terminal	serverconnection	required	-
 MCRNClientIoShutdown.cfg	MCRNClientIoShutdown.tla	pass	-	check	shutdownownership	required	-
 MCRNClientIoShutdownStuck.cfg	MCRNClientIoShutdown.tla	pass	-	check	shutdownownership	required	-
 MCRNClientReceiveQuitShutdown.cfg	MCRNClientIoShutdown.tla	pass	-	check	shutdownownership	required	-

@@ -200,14 +200,29 @@ NoKeys == [salt |-> NoSalt, nonce |-> 0]
 Keys   == [salt : Salts, nonce : Nonce]
 
 (***************************************************************************)
+(* The client's session data: its payload (type 5) and standalone ack      *)
+(* (type 8).  The server opens either under the mapping's keys only for a  *)
+(* mapping that holds a slot, then refreshes the idle clock and confirms   *)
+(* the slot as a keep-alive does, and moves nothing else: no slot, no      *)
+(* mapping is created, established, released or rebound                    *)
+(* (rocketnet_server_process_sealed_packet).  ClientData = TRUE adds the   *)
+(* connected client sending them (ClientSendData) and the server receiving *)
+(* them.  A definition, replaced with <- in the data cfgs, so every other  *)
+(* run keeps its cfg and its state space.                                  *)
+(***************************************************************************)
+ClientData == FALSE
+
+DataTypes == IF ClientData THEN {"payload", "ack"} ELSE {}
+
+(***************************************************************************)
 (* The packets.  Types are the standard's names, as in ClientConnection.   *)
-(* The client's standalone ack and both ends' payloads are not here:       *)
-(* neither moves a slot or a mapping (a payload confirms a slot as a       *)
-(* keep-alive does).                                                       *)
+(* The server's standalone ack and payloads are not here: neither moves a  *)
+(* slot or a mapping.  The client's are present only under ClientData.     *)
 (***************************************************************************)
 ClientPackets ==
     [type : {"request"}, from : Addrs, salt : Salts, cookie : BOOLEAN, tok : Tokens]
     \cup [type : {"response", "keepalive", "disconnect"}, from : Addrs, salt : Salts, nonce : Nonce]
+    \cup [type : DataTypes, from : Addrs, salt : Salts, nonce : Nonce]
 
 ClientSealed == [type : {"response", "keepalive", "disconnect"}, from : Addrs, salt : Salts, nonce : Nonce]
 
@@ -433,6 +448,18 @@ ClientSend(c) ==
     /\ UNCHANGED <<cstate, cAtt, cTok, cAddr, cCookieAddr, cKeys, cMoves, cDiscPending, cDiscPkt,
                    cFam, serverVars, s2cVars>>
 
+\* the connected client's session data (ClientData): a payload from the
+\* application or a standalone ack the ack debt owes, sealed under its
+\* keys from its address.  Paced by the send clock to bound the model; the
+\* code places no rate on payloads.
+ClientSendData(c) ==
+    /\ ClientData /\ cstate[c] = 4 /\ cSinceSend[c] = SendInterval /\ ReachesServer(c)
+    /\ \E t \in DataTypes :
+          ClientSendPacket(c, [type |-> t, from |-> cAddr[c], salt |-> SaltOf(c), nonce |-> cKeys[c]])
+    /\ cSinceSend' = [cSinceSend EXCEPT ![c] = 0]
+    /\ UNCHANGED <<cstate, cAtt, cTok, cAddr, cCookieAddr, cKeys, cMoves, cDiscPending, cDiscPkt,
+                   cFam, serverVars, s2cVars>>
+
 \* the reversed witness only (CommitBeforeAnswer): the client commits to a
 \* family of its own choosing while still requesting a cookie, before any
 \* answer arrived
@@ -630,7 +657,37 @@ ServerRecvSession(p) ==
     /\ UNCHANGED bound
     /\ UNCHANGED serverRecvUnchanged
 
+\* the client's payload or standalone ack (ClientData): the same rungs as
+\* a keep-alive (a mapping with a slot, its keys); the idle clock is
+\* refreshed and the slot confirmed.  The keep-alive latch is left as it
+\* is: the model does not say whether the block acknowledges a keep-alive,
+\* and the latch only quietens the keep-alive.  A mapping without a slot
+\* ignores it (NOT_CONNECTED), and so does a wrong key.
+ServerRecvDataRule(p, Confused) ==
+    /\ p.type \in DataTypes
+    /\ C2S!Deliver(p)
+    /\ LET a == MapAddr(p)
+           m == smap[a]
+       IN IF m.live /\ m.slot # 0 /\ KeysOf(p) = KeysOf(m)
+            THEN IF Confused /\ p.type = "ack"
+                   THEN Release(a)
+                   ELSE /\ smap' = [smap EXCEPT ![a] = [m EXCEPT !.sinceRecv = 0]]
+                        /\ slot' = [slot EXCEPT ![m.slot].confirmed = TRUE]
+                        /\ UNCHANGED churnDenied
+            ELSE UNCHANGED <<smap, slot, churnDenied>>
+    /\ ServerSilent
+    /\ UNCHANGED bound
+    /\ UNCHANGED serverRecvUnchanged
+
+ServerRecvData(p) == ServerRecvDataRule(p, FALSE)
+
+\* the reversed witness's step, not a disjunct of Next: the type dispatch
+\* confuses the standalone ack with the disconnect and releases the slot.
+\* SpecDataConfused adds it; DataNeverMovesSlot must fail.
+ServerRecvDataConfused(p) == ServerRecvDataRule(p, TRUE)
+
 ServerRecv(p) == ServerRecvRequest(p) \/ ServerRecvResponse(p) \/ ServerRecvSession(p)
+                 \/ ServerRecvData(p)
 
 (***************************************************************************)
 (* The server's own sends.                                                 *)
@@ -708,7 +765,7 @@ S2CEnvironment == S2C!Environment /\ UNCHANGED <<clientVars, serverVars, c2sVars
 Next ==
     \/ \E c \in Clients : ClientConnect(c) \/ ClientAppDisconnect(c) \/ ClientVanish(c)
                           \/ ClientMove(c) \/ ClientSend(c) \/ ClientDiscCopy(c)
-                          \/ ClientCommitEarly(c)
+                          \/ ClientCommitEarly(c) \/ ClientSendData(c)
     \/ \E p \in ServerPackets : ClientRecv(p)
     \/ \E p \in ClientPackets : ServerRecv(p)
     \/ \E i \in Slots : ServerKeepAlive(i) \/ ServerAppDisconnect(i)
@@ -760,6 +817,10 @@ FairnessTyped == SendFair /\ DeliveryFairTyped
 
 Spec      == Init /\ [][Next]_vars /\ Fairness
 SpecTyped == Init /\ [][Next]_vars /\ FairnessTyped
+
+\* the reversed witness's spec: Next plus the ack read as a disconnect
+SpecDataConfused ==
+    Init /\ [][Next \/ (\E p \in ClientPackets : ServerRecvDataConfused(p))]_vars /\ Fairness
 
 (***************************************************************************)
 (* Safety.                                                                 *)
@@ -856,6 +917,19 @@ PacketsReachOwnSlotOnly ==
 SessionNeverAnswered ==
     [][(\E p \in ClientPackets : p.type \in {"keepalive", "disconnect"} /\ C2S!Deliver(p))
          => s2cSent' = s2cSent]_vars
+
+\* a client payload or standalone ack moves no slot and no mapping: every
+\* mapping keeps its liveness, establishment and slot, every slot its use
+\* and address, and only a mapping that holds a slot is touched at all
+\* (rocketnet_server_process_sealed_packet; the refresh and the confirm
+\* are the only effects)
+DataNeverMovesSlot ==
+    [][\A p \in ClientPackets :
+         (p.type \in DataTypes /\ C2S!Deliver(p)) =>
+           /\ \A a \in Addrs : /\ smap'[a].live = smap[a].live /\ smap'[a].est = smap[a].est
+                              /\ smap'[a].slot = smap[a].slot
+                              /\ (smap'[a] # smap[a] => smap[a].slot # 0)
+           /\ \A i \in Slots : slot'[i].used = slot[i].used /\ slot'[i].addr = slot[i].addr]_vars
 
 \* A response retransmission cannot provide fresh activity for a live slot.
 ResponseNeverRefreshesConnected ==

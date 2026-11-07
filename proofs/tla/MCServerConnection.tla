@@ -50,6 +50,11 @@ MCServedIpv6    == "ipv6"
 MCCommitEarly   == TRUE
 
 \* the race invariants, with the safety set
+\* the client-data runs (MCServerConnectionClientData.cfg and its reversed
+\* witness MCServerConnectionBrokenAckReleases.cfg): connected clients send
+\* payloads and standalone acks
+MCClientData == TRUE
+
 RaceInvariants == SafetyInvariants /\ OneFamilyPerAttempt /\ CommitsOnAnswer
 
 =============================================================================
