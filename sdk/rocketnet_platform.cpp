@@ -1261,15 +1261,30 @@ void rocketnet_platform_set_socket_call_for_testing( rocketnet_platform_socket_c
 }
 #endif // #if ROCKETNET_DEV
 
+// It is close-on-exec, so a child process the application spawns never holds
+// the socket (or its bound port): atomically with SOCK_CLOEXEC where the
+// platform has it, by fcntl right after the open on darwin.
+
 static int rocketnet_platform_socket_open( int domain )
 {
+#if defined( SOCK_CLOEXEC )
+    const int type = SOCK_DGRAM | SOCK_CLOEXEC;
+#else // #if defined( SOCK_CLOEXEC )
     const int type = SOCK_DGRAM;
+#endif // #if defined( SOCK_CLOEXEC )
 #if ROCKETNET_DEV
     const rocketnet_platform_socket_call_t call = rocketnet_platform_socket_call_override.load( std::memory_order_acquire );
     const int handle = call ? call( domain, type, IPPROTO_UDP ) : ::socket( domain, type, IPPROTO_UDP );
 #else // #if ROCKETNET_DEV
     const int handle = ::socket( domain, type, IPPROTO_UDP );
 #endif // #if ROCKETNET_DEV
+#if !defined( SOCK_CLOEXEC )
+    if ( handle >= 0 && fcntl( handle, F_SETFD, FD_CLOEXEC ) != 0 )
+    {
+        close( handle );
+        return -1;
+    }
+#endif // #if !defined( SOCK_CLOEXEC )
     return handle;
 }
 
@@ -2626,6 +2641,14 @@ rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rock
         return NULL;
     }
 
+    // close-on-exec, as every platform descriptor is: a spawned child never holds the wake
+    if ( fcntl( wake->kq, F_SETFD, FD_CLOEXEC ) != 0 )
+    {
+        close( wake->kq );
+        rocketnet_free( context, wake );
+        return NULL;
+    }
+
     struct kevent changes[2];
     int num_changes = 0;
     if ( socket )
@@ -3935,7 +3958,7 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
     }
 #endif // #if ROCKETNET_DEV
 
-    s->handle = socket( ( address->type == ROCKETNET_ADDRESS_IPV6 ) ? AF_INET6 : AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+    s->handle = WSASocketW( ( address->type == ROCKETNET_ADDRESS_IPV6 ) ? AF_INET6 : AF_INET, SOCK_DGRAM, IPPROTO_UDP, NULL, 0, WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT );
 
     if ( s->handle == INVALID_SOCKET )
     {
@@ -4637,7 +4660,7 @@ bool rocketnet_platform_client_ipv6_available()
 #endif // #if ROCKETNET_DEV
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    SOCKET probe = socket( AF_INET6, SOCK_DGRAM, IPPROTO_UDP );
+    SOCKET probe = WSASocketW( AF_INET6, SOCK_DGRAM, IPPROTO_UDP, NULL, 0, WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT );
     if ( probe == INVALID_SOCKET )
         return false;
 #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS

@@ -2267,6 +2267,50 @@ static void test_rio_transport_socket_sets_dont_fragment()
     CHECK( enabled_for_both );
 }
 
+// every socket the Windows transports open is non-inheritable, so a child
+// process spawned with handle inheritance never holds the bound port or
+// stalls closesocket's cancel of the posted I/O
+
+static bool socket_is_not_inherited( uintptr_t socket )
+{
+    DWORD flags = 0;
+    return GetHandleInformation( (HANDLE) socket, &flags ) && ( flags & HANDLE_FLAG_INHERIT ) == 0;
+}
+
+static void test_windows_sockets_not_inherited()
+{
+    const int baseline = live_allocations.load();
+    const char * binds[] = { "127.0.0.1:0", "[::1]:0" };
+
+    for ( int family = 0; family < 2; ++family )
+    {
+        rocketnet_address_t bind = address( binds[family] );
+        rocketnet_server_iocp_t * iocp = rocketnet_server_iocp_create( NULL, &bind, 1, ROCKETNET_DEFAULT_MAX_CLIENTS );
+        CHECK( iocp );
+        CHECK( socket_is_not_inherited( rocketnet_server_iocp_test_socket( iocp ) ) );
+        rn_native_backend_stop_and_destroy( iocp, rocketnet_server_iocp_stop,
+                                            rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy );
+
+        bind = address( binds[family] );
+        rocketnet_server_rio_t * rio = rocketnet_server_rio_create( NULL, &bind, ROCKETNET_DEFAULT_MAX_CLIENTS );
+        CHECK( rio );
+        CHECK( socket_is_not_inherited( rocketnet_server_rio_test_socket( rio ) ) );
+        rn_native_backend_stop_and_destroy( rio, rocketnet_server_rio_stop,
+                                            rocketnet_server_rio_stopped, rocketnet_server_rio_destroy );
+
+        bind = address( binds[family] );
+        rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( NULL, &bind, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f,
+                                                                                 ROCKETNET_SOCKET_SEND_BUFFER_SIZE, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
+        CHECK( socket );
+        CHECK( socket_is_not_inherited( (uintptr_t) socket->handle ) );
+        rocketnet_platform_socket_destroy( socket );
+
+        CHECK( live_allocations.load() == baseline );
+    }
+
+    printf( "test_windows_sockets_not_inherited\n" );
+}
+
 struct fault_case_t
 {
     const char * name;
@@ -2291,6 +2335,7 @@ static const fault_case_t fault_cases[] = {
     { "test_rio_transport_stop_retries_refused_deferred_commit", test_rio_stop_retries_refused_deferred_commit },
     { "test_windows_port_exclusive", test_windows_port_exclusive },
     { "test_windows_send_failures_counted", test_windows_send_failures_counted },
+    { "test_windows_sockets_not_inherited", test_windows_sockets_not_inherited },
     { "test_windows_transports_sized_by_max_clients", test_windows_transports_sized_by_max_clients },
 };
 

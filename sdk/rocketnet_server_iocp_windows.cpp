@@ -1300,7 +1300,7 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
         op->state = ROCKETNET_IOCP_OPERATION_IDLE;
     }
 
-    iocp->socket = WSASocketW( iocp->ipv6 ? AF_INET6 : AF_INET, SOCK_DGRAM, IPPROTO_UDP, NULL, 0, WSA_FLAG_OVERLAPPED );
+    iocp->socket = WSASocketW( iocp->ipv6 ? AF_INET6 : AF_INET, SOCK_DGRAM, IPPROTO_UDP, NULL, 0, WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT );
 #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( iocp->socket != INVALID_SOCKET )
         iocp->socket_generation = rocketnet_lifecycle_track_open( ROCKETNET_LIFECYCLE_SOCKET, (uintptr_t) iocp->socket, "iocp socket" );

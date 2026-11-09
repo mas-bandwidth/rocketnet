@@ -386,13 +386,17 @@ static bool rocketnet_client_iocp_win32_post_wake( void * context )
     return false;
 }
 
-// closesocket aborts every posted receive; each still completes on the port,
-// which stays open until the drain is done. The socket's memory stays for
-// destroy, on the caller's thread.
+// CancelIoEx then closesocket abort every posted receive; each still completes
+// on the port, which stays open until the drain is done. The cancel comes
+// first so the receives abort even when another process holds a duplicate
+// of the socket handle. The socket's memory stays for destroy, on the
+// caller's thread.
 
 static void rocketnet_client_iocp_win32_close( void * context )
 {
     rocketnet_client_iocp_io_t * client = (rocketnet_client_iocp_io_t *) context;
+    if ( client->socket && rocketnet_platform_socket_handle_is_valid( client->socket->handle ) )
+        CancelIoEx( (HANDLE) client->socket->handle, NULL );
     rocketnet_platform_socket_close( client->socket );
 }
 
