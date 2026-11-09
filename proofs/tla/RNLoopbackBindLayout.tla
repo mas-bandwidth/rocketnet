@@ -210,6 +210,15 @@ SearchEnds == ~searchStuck
 NoPortZero == \A r \in Recs : live[r] => port[r] # 0
 NextPortInRange == nextPort \in First..Last
 
+\* at most one live endpoint accepts any IPv4 destination: an IPv4 endpoint
+\* bound there, or a dual-stack endpoint bound to the IPv6 wildcard on its port
+AcceptsIPv4(r, a, p) ==
+    /\ live[r] /\ port[r] = p
+    /\ \/ fam[r] = 4 /\ Accepts(r, a)
+       \/ fam[r] = 6 /\ addr[r] = "wild"
+OneIPv4Destination ==
+    \A a \in ToAddrs, p \in 1..Last : Cardinality({r \in Recs : AcceptsIPv4(r, a, p)}) <= 1
+
 \* destroy's test always finds its own entry
 DestroyFindsOwnEntry == ~otherCleared
 
