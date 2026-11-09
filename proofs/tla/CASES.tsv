@@ -615,6 +615,7 @@ MCRNLoopbackBindLayoutBrokenNoPlusOne.cfg	MCRNLoopbackBindLayout.tla	invariant	L
 MCRNLoopbackBindLayoutBrokenNoBindCheck.cfg	MCRNLoopbackBindLayout.tla	invariant	OneEndpointPerFamilyPort	check	rnloopbackbindlayout	required	-
 MCRNLoopbackBindLayoutBrokenWrapToZero.cfg	MCRNLoopbackBindLayout.tla	invariant	EphemeralInRange	check	rnloopbackbindlayout	required	-
 MCRNLoopbackBindLayoutBrokenOneFamily.cfg	MCRNLoopbackBindLayout.tla	invariant	EphemeralPortFree	check	rnloopbackbindlayout	required	-
+MCRNLoopbackBindLayoutBrokenNoDualCheck.cfg	MCRNLoopbackBindLayout.tla	invariant	OneIPv4Destination	check	rnloopbackbindlayout	required	-
 MCRNClientSlotsLayout.cfg	MCRNClientSlotsLayout.tla	pass	-	ignore-terminal	rnclientslotslayout	required	-
 MCRNClientSlotsLayoutBrokenDoublePush.cfg	MCRNClientSlotsLayout.tla	invariant	OneClientPerSlot	ignore-terminal	rnclientslotslayout	required	-
 MCRNClientSlotsLayoutBrokenPopKeepsCount.cfg	MCRNClientSlotsLayout.tla	invariant	OneClientPerSlot	ignore-terminal	rnclientslotslayout	required	-

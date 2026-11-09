@@ -7,8 +7,10 @@
 (* hub->bound[family][port] holds the record index plus one of the live    *)
 (* endpoint bound on that family and port, 0 for none, so a datagram's     *)
 (* destination is one lookup, not a walk of the records.  loopback_create  *)
-(* refuses a bind whose family's entry for its port is nonzero, takes the  *)
-(* server's record or the first free client record, and for a bind to      *)
+(* refuses a bind whose family's entry for its port is nonzero, and a bind *)
+(* sharing its port with an endpoint of the other family when the IPv6 one *)
+(* of the two is the wildcard (dual stack), takes the server's record or   *)
+(* the first free client record, and for a bind to                         *)
 (* port 0 searches from hub->next_port for a port neither family holds,    *)
 (* stepping with loopback_next_port, which wraps from the range's last     *)
 (* port (65535) to its first (49152); then it writes the entry.            *)
@@ -29,6 +31,7 @@
 (*   BindCheck      create without the refusal of a held family port       *)
 (*   WrapToFirst    loopback_next_port as port + 1, wrapping to 0          *)
 (*   BothFamilies   the search tests only the bind's own family            *)
+(*   DualCheck      create without the cross-family dual-stack refusal     *)
 (* A destroy that clears the entry without testing that it names the      *)
 (* record is not a witness: DestroyFindsOwnEntry shows the test is always  *)
 (* true under the code's create, so the unguarded clear is equivalent.     *)
@@ -43,13 +46,14 @@ CONSTANTS
     PlusOne,        \* the entry is the record index plus one, 0 for none
     BindCheck,      \* loopback_create refuses a family port already held
     WrapToFirst,    \* loopback_next_port wraps Last to First
-    BothFamilies    \* the search skips a port either family holds
+    BothFamilies,   \* the search skips a port either family holds
+    DualCheck       \* loopback_create refuses a port shared with a dual-stack wildcard
 
 ASSUME Records \in Nat \ {0}
 ASSUME First \in Nat \ {0} /\ Last \in Nat /\ First <= Last
 ASSUME Records < Last - First + 1          \* assumed, not enforced by the code: a free ephemeral port exists
 ASSUME BindPorts \subseteq 0..Last /\ 0 \in BindPorts
-ASSUME \A f \in {PlusOne, BindCheck, WrapToFirst, BothFamilies} : f \in BOOLEAN
+ASSUME \A f \in {PlusOne, BindCheck, WrapToFirst, BothFamilies, DualCheck} : f \in BOOLEAN
 
 Recs == 0..(Records - 1)
 Ports == 0..Last
@@ -101,6 +105,12 @@ FreeRecord(server) ==
 
 HeldByAny(p) == \E r \in Recs : live[r] /\ port[r] = p
 
+\* the walk of loopback_create: a live endpoint of the other family on the
+\* bind's port, where the IPv6 one of the two is bound to the wildcard
+DualConflict(f, a, bp) ==
+    \E s \in Recs : /\ live[s] /\ port[s] = bp /\ fam[s] # f
+                   /\ (IF fam[s] = 6 THEN addr[s] ELSE a) = "wild"
+
 Init ==
     /\ live = [r \in Recs |-> FALSE]
     /\ fam = [r \in Recs |-> 4]
@@ -114,10 +124,11 @@ Init ==
     /\ searchStuck = FALSE
     /\ otherCleared = FALSE
 
-\* loopback_create: the held-port refusal, the record, the port search for a
-\* bind to port 0, then the record and its entry written
+\* loopback_create: the held-port and dual-stack refusals, the record, the
+\* port search for a bind to port 0, then the record and its entry written
 Create(server, f, a, bp) ==
     /\ ~(BindCheck /\ Held(f, bp))
+    /\ ~(DualCheck /\ DualConflict(f, a, bp))
     /\ LET r == FreeRecord(server)
            found == SearchFrom(f, nextPort, Last + 1)
            p == IF bp = 0 THEN found ELSE bp
