@@ -512,6 +512,8 @@ void rocketnet_used_token_history_record( struct rocketnet_used_token_history_t 
     rn_token_slot_insert( table, slot, token_identifier, address, expire_timestamp, 0.0 );
 }
 
+// proofs/tla/MCReceiveOrder.tla ClaimExpire: a claim is free the moment the
+// clock reaches its deadline, before the update's sweep removes its mapping
 int rocketnet_used_token_history_claim_check( const struct rocketnet_used_token_history_t * history,
                                               const uint8_t * token_identifier,
                                               const struct rocketnet_address_t * address,

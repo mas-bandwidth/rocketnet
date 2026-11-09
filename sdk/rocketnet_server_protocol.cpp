@@ -387,6 +387,8 @@ static int rocketnet_server_protocol_process_connection_request_known( struct ro
     // its address): it goes down the whole ladder and replaces the half-open
     // mapping only if it passes every check, its signature verified and its
     // token bound to no address (proofs/tla/MCReceiveOrder.tla NewRequest).
+    // The half-open mapping's own token may be bound (a response denied for
+    // want of a slot); it is replaced all the same.
 
     int replace_index = -1;
 
@@ -1701,7 +1703,12 @@ void rocketnet_server_protocol_update( struct rocketnet_server_protocol_t * serv
             {
                 // the claim leaves with its mapping here too: today the two
                 // deadlines are equal and the claim has already expired, so
-                // this is a no-op, but the claim's lifetime must not depend on it
+                // this is a no-op, but the claim's lifetime must not depend on it.
+                // proofs/tla/MCReceiveOrder.tla Sweep: this runs after the
+                // receive batch, so for the rest of that batch the claim has
+                // expired (ClaimExpire) while the mapping lives, and a second
+                // address can claim the token; its claim stays when this
+                // mapping's release finds another address
                 rocketnet_debug( "server removed encryption mapping. handshake deadline expired" );
                 rocketnet_server_release_mapping_claim( server, iterator );
                 rocketnet_encryption_map_remove_current( server->encryption_map, iterator );

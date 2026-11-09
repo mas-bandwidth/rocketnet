@@ -83,15 +83,16 @@ packet is refused with the tally at zero.
 
 `MCReceiveOrder.ResponseBind` models an opened response for an unexpired
 mapped token: it records the address binding and releases that address's
-request claim. `BoundHasNoClaim` requires every bound token to have no claim
-once a request is done. The instance explores fresh unbound-token requests
+request claim. `BoundHasNoOwnClaim` requires a bound token to keep no claim of
+the address it is bound to once a request is done; the stricter
+`BoundHasNoClaim` fails across the deadline window (below). The instance explores fresh unbound-token requests
 between bindings; token expiry, binding eviction and reconnect are outside
 this instance. Existing mapping-removal and request-order witnesses remain.
 
 `MCReceiveOrderBrokenClaimOutlivesBinding.cfg` overrides
 `ResponseBindReleasesClaim` with FALSE. Its accepted request leaves a claim;
 the following response writes the binding but retains that claim, violating
-`BoundHasNoClaim`. This is the missing claim release in
+`BoundHasNoOwnClaim`. This is the missing claim release in
 `rocketnet_server_process_connection_response`, pinned by
 `test_claim_released_when_response_binds_token`: a second address passes the
 claim check after the response but remains refused by the token binding.
@@ -99,8 +100,11 @@ claim check after the response but remains refused by the token binding.
 ## Half-open replacement
 
 `MCReceiveOrder.NewRequest` starts a ladder run for a free address, or for an
-address whose half-open mapping holds another token (a mapping whose token is
-bound, a connected one, is never replaced). Such a request passes the capacity
+address whose half-open mapping holds another token (a connected mapping is
+never replaced). The half-open mapping's own token may be bound: a response
+that bound it and was then denied, for want of a slot or because its client
+id is already connected, leaves the mapping half-open, and the code replaces
+it like any other. Such a request passes the capacity
 rung with a full table, since it reuses its address's mapping, and only
 `AcceptStep`, past every rung including the signature, replaces the mapping:
 it installs the new token and releases the replaced token's claim
@@ -127,3 +131,30 @@ test_new_token_replaces_stale_half_open_mapping pins the code: a forged
 request and a bound token leave the stale mapping in place, and a new token
 under a new salt gets a cookie, then a fresh challenge from the replacing
 mapping, with the stale token's claim released.
+
+## Handshake deadline window
+
+A claim and its mapping carry the same deadline, `current_time +
+handshake_deadline_seconds`, but they leave at different times. The claim
+expires the moment the clock reaches it: `rocketnet_used_token_history_claim_check`
+and `rocketnet_used_token_history_claim_record` treat `claim_deadline <=
+current_time` as free. The mapping leaves only at the sweep in
+`rocketnet_server_protocol_update`, which the server transport runs after the
+receive batch of the same update. `MCReceiveOrder` models the two steps:
+`ClaimExpire` drops the claim and marks its address's mapping `stale`, and
+`Sweep` removes every stale mapping, releasing a claim only when the swept
+address holds it (`rocketnet_server_release_mapping_claim`). Requests and
+responses may run between them, as the rest of that receive batch does.
+
+In that window `OneLiveMappingPerToken` does not hold, so the committed run
+checks `OneUnexpiredMappingPerToken`: at most one mapping per token that is
+not yet past its deadline. Two reversed witnesses keep the strict forms:
+
+| Witness | Strict invariant | Code replay |
+|---|---|---|
+| DeadlineWindow | `OneLiveMappingPerToken` | A's mapping and claim for t1 reach their deadline T. In the receive batch at T, before the sweep, B's request for t1 passes the used rung (t1 unbound), passes the claim rung (A's claim expired), claims t1 and is accepted; A's and B's mappings both hold t1 until the sweep removes A's, whose claim release leaves B's claim |
+| DeadlineWindowBound | `BoundHasNoClaim` | as above, then A's connection response opens on its stale mapping in the same batch (the response path does not check the handshake deadline): `rocketnet_used_token_history_record` binds t1 to A and `rocketnet_used_token_history_claim_release(t1, A)` leaves B's claim, which lasts until B's response releases it or B's deadline |
+
+Both counterexamples were replayed against the code by hand as above. The
+window gives a token one more half-open mapping per handshake deadline, not
+more: the second address's claim refuses any third until its own deadline.

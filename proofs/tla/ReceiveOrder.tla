@@ -31,8 +31,11 @@
 (* full mapping table; the claimfull rung after it refuses a full          *)
 (* request-claim table, the code's claim_can_record check.                 *)
 (* OneLiveMappingPerToken is the consequence of check and write together:  *)
-(* a token holds at most one live half-open mapping.  The claim expires    *)
-(* with the mapping on the Deadline step.  The witness ClaimBeforeSignature*)
+(* a token holds at most one live half-open mapping.  MCReceiveOrder adds  *)
+(* the deadline: the claim expires first (ClaimExpire) and the mapping     *)
+(* leaves at the update's sweep (Sweep), and in that window a second       *)
+(* address can take the token, so MCReceiveOrder checks the rule over      *)
+(* unexpired mappings.  The witness ClaimBeforeSignature                   *)
 (* writes at the check rung, the code before the split, and breaks         *)
 (* ClaimOnlyAfterSignature.                                                *)
 (*                                                                         *)
@@ -248,8 +251,9 @@ WorkBudgetOnlyForVerify ==
     (outcome = "refused" /\ refusedRung \in AboveVerify) => Pos(refusedRung) <= Pos("workbudget")
 
 \* one token holds at most one live half-open mapping: the claim rung
-\* refuses a second address while the first mapping lives, and the mapping
-\* leaves only on its handshake deadline.
+\* refuses a second address while the first claim lives.  It does not hold
+\* across the deadline window (MCReceiveOrder ClaimExpire, Sweep); see
+\* MCReceiveOrder OneUnexpiredMappingPerToken.
 OneLiveMappingPerToken == \A t \in Tokens : Cardinality({ a \in Addrs : maps[a] = t }) <= 1
 
 \* a request writes the claim table only once its signature has verified:
