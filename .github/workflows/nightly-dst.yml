@@ -194,7 +194,7 @@ jobs:
           tail -n 1 dst-sweep.log | grep -q '^PASS seeds='
 
   dst-macos:
-    runs-on: [self-hosted, macOS, ARM64, rocketnet-macos]
+    runs-on: [self-hosted, macOS, ARM64, fleet]
     timeout-minutes: 7200
     strategy:
       fail-fast: false

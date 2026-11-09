@@ -23,7 +23,7 @@ the installed interpreter instead of a Microsoft Store `python` stub.
 
 ### Linux
 
-On Ubuntu 24.04, install the native server build dependencies:
+On Ubuntu 24.04 or 26.04, install the native server build dependencies:
 
 ```sh
 sudo apt update
@@ -31,6 +31,8 @@ sudo apt install -y cmake build-essential clang libbpf-dev libxdp-dev liburing-d
 ```
 
 Ubuntu 22.04 supplies AF_XDP through libbpf 0.5; omit `libxdp-dev` there.
+[LINUX.md, section 1](LINUX.md#1-build) lists the tested distributions and
+libxdp versions.
 Build compatibility does not qualify a kernel or NIC for live XDP.
 For a client build without native server dependencies, see
 [Building a Linux client](#building-a-linux-client-without-the-server-libraries).

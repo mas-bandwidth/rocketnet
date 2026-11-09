@@ -7,7 +7,7 @@
 # at or under two minutes, and a nightly is exempt from that rule.
 #
 # One job per platform on the fleet runner labels ci.yml uses: the Linux fleet
-# pool, the macOS Apple-silicon runner (rocketnet-macos) and the Windows runner
+# pool, the macOS Apple-silicon runners (macOS, ARM64, fleet) and the Windows runner
 # (rocketnet-windows). A red night prints the failed check's file and line.
 
 name: nightly-channels-stress
@@ -49,7 +49,7 @@ jobs:
         run: ./bin/test_channels_10k
 
   channels-stress-macos:
-    runs-on: ["self-hosted", "macOS", "ARM64", "rocketnet-macos"]
+    runs-on: ["self-hosted", "macOS", "ARM64", "fleet"]
     timeout-minutes: 7200
     strategy:
       fail-fast: false

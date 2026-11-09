@@ -149,19 +149,22 @@ concurrency:
 #       timeout-minutes: ${{ inputs.full && 7200 || 2 }}, so a per-commit job that
 #       runs past two minutes fails; tools/check_ci_budget.py, run in the lint
 #       job, refuses a per-commit job in any workflow without that bound.
-#       The job count is sized to the pools that run it at once: two macOS
-#       runners (rocketnet-ci-macos; the other nightly workflows use rocketnet-macos, a separate pool), three Windows runners (rocketnet-windows),
-#       and the shared Linux fleet.
+#       The job count is sized to the pools that run it at once: the fleet's
+#       macOS runners (self-hosted,macOS,ARM64,fleet), three Windows runners
+#       (rocketnet-windows), and the shared Linux fleet (self-hosted,Linux,X64,fleet).
 #   nightly (nightly-ci.yml, full: true, no time limit): every job and every
 #       step in this file, the per-commit ones included. What runs only here:
 #
 #   macOS: Debug functional, checks and builds; Release unit, checks and
-#       builds; happy path / macos-15; platform selftests / macos-15.
+#       builds; happy path / macos; platform selftests / macos.
 #       (Per commit: Debug unit, and Release functional, which runs the
 #       development functional suite as well as functional_production.)
 #   Linux: Debug checks and builds; Release functional's development suite
 #       (Debug functional runs it per commit); Release builds' history budget
-#       and no-XDP builds; platform selftests / ubuntu-24.04.
+#       and no-XDP builds; platform selftests / linux.
+#   Ubuntu 22.04 and 24.04: ubuntu 22.04 / Release and ubuntu 24.04 /
+#       Release, the library and the unit suite built in a container of that
+#       release (the fleet's runners are Ubuntu 26.04).
 #   Windows: windows / Release legs (a), (b) and (c) whole (per commit,
 #       happy path / windows builds the whole tree under MSVC and runs the
 #       happy path).
@@ -210,40 +213,39 @@ jobs:
     name: ${{ matrix.os }} / ${{ matrix.build_type }} / ${{ matrix.leg }}
     # Linux rows run on the fleet's organization runners (labels self-hosted,Linux,X64,fleet: Linux x64 gcc
     # hosts), provisioned by the fleet's provisioning repository (group_vars ci_apt_packages), which is why the
-    # self-hosted apt step is skipped. macOS rows run on the self-hosted macOS arm64 hosts (label
-    # rocketnet-ci-macos, kept apart from the nightly pool rocketnet-macos so the other nightly workflows never queue ahead of a commit). matrix.os is the display name the check names carry (macos-15 on the macOS rows);
+    # self-hosted apt step is skipped. macOS rows run on the fleet's macOS arm64 runners (labels
+    # self-hosted,macOS,ARM64,fleet). matrix.os is the display name the check names carry (linux, macos);
     # runner is the label set runs-on uses.
     runs-on: ${{ fromJSON(matrix.runner) }}
     timeout-minutes: ${{ inputs.full && 7200 || 2 }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-15]
+        os: [linux, macos]
         build_type: [Debug, Release]
         leg: [unit, functional, checks, builds]
         # The per-commit tier runs seven of the sixteen rows: five Linux rows
         # (the Release unit row carries the builds leg's steps) and two macOS
-        # rows, one per macOS runner. The nightly tier runs all.
-        exclude: ${{ fromJSON(inputs.full && '[]' || '[{"os":"ubuntu-24.04","build_type":"Debug","leg":"checks"},{"os":"ubuntu-24.04","build_type":"Debug","leg":"builds"},{"os":"ubuntu-24.04","build_type":"Release","leg":"builds"},{"os":"macos-15","build_type":"Debug","leg":"functional"},{"os":"macos-15","build_type":"Debug","leg":"checks"},{"os":"macos-15","build_type":"Debug","leg":"builds"},{"os":"macos-15","build_type":"Release","leg":"unit"},{"os":"macos-15","build_type":"Release","leg":"checks"},{"os":"macos-15","build_type":"Release","leg":"builds"}]') }}
+        # rows. The nightly tier runs all.
+        exclude: ${{ fromJSON(inputs.full && '[]' || '[{"os":"linux","build_type":"Debug","leg":"checks"},{"os":"linux","build_type":"Debug","leg":"builds"},{"os":"linux","build_type":"Release","leg":"builds"},{"os":"macos","build_type":"Debug","leg":"functional"},{"os":"macos","build_type":"Debug","leg":"checks"},{"os":"macos","build_type":"Debug","leg":"builds"},{"os":"macos","build_type":"Release","leg":"unit"},{"os":"macos","build_type":"Release","leg":"checks"},{"os":"macos","build_type":"Release","leg":"builds"}]') }}
         # dev: the ROCKETNET_DEV setting. Debug rows build the default
         # development library (ON); Release rows build the production library
         # (OFF), so every OS runs the suite both ways and the production
         # boundary checks read a production library. runner is the label set
-        # runs-on uses; the Linux functional rows select libxdp-1-4, the label
-        # of the VM-tier runner the xdp matrix cell needs, and not fleet, so a
-        # libxdp-1-4 runner kept out of the general fleet still serves them.
+        # runs-on uses. Every Linux fleet runner carries the VM tier the xdp
+        # matrix cell needs (docs/TESTING.md, "The VM tier"), so the
+        # functional rows select the fleet like every other row.
         include:
           - { build_type: Debug, dev: 'ON' }
           - { build_type: Release, dev: 'OFF' }
-          - { os: ubuntu-24.04, runner: '["self-hosted","Linux","X64","fleet"]' }
-          - { os: ubuntu-24.04, leg: functional, runner: '["self-hosted","Linux","X64","libxdp-1-4"]' }
+          - { os: linux, runner: '["self-hosted","Linux","X64","fleet"]' }
           # Per commit the Linux Release unit row also runs the builds leg's
           # steps over the same production build: one Release build and one
           # runner instead of two, on a fleet where runners, not cores, are
           # what a per-commit run waits for. The nightly tier runs the builds
           # row on its own.
-          - { os: ubuntu-24.04, build_type: Release, leg: unit, with_builds: true, runner: '["self-hosted","Linux","X64","fleet"]' }
-          - { os: macos-15, runner: '["self-hosted","macOS","ARM64","rocketnet-ci-macos"]' }
+          - { os: linux, build_type: Release, leg: unit, with_builds: true, runner: '["self-hosted","Linux","X64","fleet"]' }
+          - { os: macos, runner: '["self-hosted","macOS","ARM64","fleet"]' }
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
@@ -610,8 +612,8 @@ jobs:
       # cell needs root, a namespace and a veth pair, so it runs
       # test_xdp_transport_max_size_both_ways_ipv4 and _ipv6 (the xdp server, the portable
       # client) as root inside a virtme-ng guest on the runner's own kernel,
-      # never on the host; a runner with no VM tier fails the cell, so the
-      # Linux functional rows select libxdp-1-4, the label of the VM-tier runner.
+      # never on the host; a runner with no VM tier fails the cell with one
+      # VM-TIER-MISSING line naming what the host lacks (scripts/vm-tier-missing).
       # A client of auto sets no client pin, so that cell runs the client's
       # automatic order on the wire (gso on Linux, msgx on macOS, iocp on
       # Windows; TRANSPORTS.md "Client transports").
@@ -662,9 +664,10 @@ jobs:
                 # root, a namespace and a veth pair inside a guest of the
                 # runner's own kernel; the host is never touched
                 vm_kernel="$HOME/vm-kernels/vmlinuz-$(uname -r)"
-                if ! command -v vng >/dev/null || [ ! -r "$vm_kernel" ] || [ ! -w /dev/kvm ]; then
+                vm_missing=$(scripts/vm-tier-missing)
+                if [ -n "$vm_missing" ]; then
                   for case in $xdp_cases; do
-                    echo "no VM tier on this runner: needs vng, a readable $vm_kernel and a writable /dev/kvm" > "$logs/$server.$client.$case.log"
+                    echo "VM-TIER-MISSING on $RUNNER_NAME: $vm_missing" > "$logs/$server.$client.$case.log"
                     echo 1 > "$logs/$server.$client.$case.rc"
                   done
                   exit 0
@@ -728,21 +731,30 @@ jobs:
           ROCKETNET_CLIENT_TRANSPORT: portable
         run: ./bin/test_lifecycle
 
-      # THE libxdp 1.4 XDP CELL. sdk/rocketnet_server_socket_linux.cpp
-      # initializes the UMEM ring sizes; libxdp 1.4 rejects zeroed ring sizes
-      # and 1.6 accepts them, so the Linux functional rows run on libxdp-1-4
-      # runners, where the transport family matrix's xdp cell (above) runs
-      # test_xdp_transport_max_size_both_ways_ipv4 and _ipv6 in a guest of the
-      # runner's kernel. This step holds the runner to its label: the cell
-      # proves the ring sizes against 1.4 only while the host's libxdp is 1.4.
-      - name: The XDP cell ran against libxdp 1.4
+      # THE TESTED libxdp RANGE. The AF_XDP providers rocketnet supports are
+      # Ubuntu 22.04's stock libbpf 0.5 (no libxdp; the legacy bpf/xsk.h
+      # path), libxdp 1.4 (Ubuntu 24.04) and libxdp 1.6 (Ubuntu 26.04).
+      # sdk/rocketnet_server_socket_linux.cpp initializes the UMEM ring sizes
+      # because libxdp 1.4 rejects zeroed ring sizes (1.6 accepts them), so
+      # the same source serves every provider with no version switch. The
+      # fleet's runners carry libxdp 1.6, and the transport family matrix's
+      # xdp cell (above) runs test_xdp_transport_max_size_both_ways_ipv4 and
+      # _ipv6 against it in a guest of the runner's kernel; the nightly
+      # distro-container job builds and unit-tests the library against 22.04's
+      # libbpf 0.5 and 24.04's libxdp 1.4. This step records the libxdp the
+      # cell ran against and refuses one outside the tested range, so a host
+      # upgrade past 1.6 is tested before it is trusted.
+      - name: The XDP cell ran against a libxdp in the tested range (1.4 to 1.6)
         if: runner.os == 'Linux' && matrix.leg == 'functional'
         shell: bash
         run: |
           set -euo pipefail
           version=$(pkg-config --modversion libxdp)
-          echo "libxdp $version"
-          case "$version" in 1.4.*) ;; *) echo "libxdp-1-4 requires libxdp 1.4.x"; exit 1 ;; esac
+          echo "libxdp $version on $RUNNER_NAME"
+          case "$version" in
+            1.4.*|1.5.*|1.6.*) ;;
+            *) echo "LIBXDP-UNTESTED libxdp $version on $RUNNER_NAME is outside the tested range 1.4 to 1.6; test it, then widen this step and docs/LINUX.md section 1"; exit 1 ;;
+          esac
 
       - name: Check test scaffolding boundary (red controls)
         if: matrix.leg == 'checks' && ( runner.os == 'Linux' && matrix.dev == 'OFF' )
@@ -1479,18 +1491,18 @@ jobs:
 
   happy-path:
     name: happy path / ${{ matrix.os }}
-    # every OS on the fleet: Linux on the fleet pool, macOS on rocketnet-ci-macos, Windows on rocketnet-windows
-    runs-on: ${{ fromJSON(matrix.os == 'windows' && '["self-hosted","Windows","X64","rocketnet-windows"]' || startsWith(matrix.os, 'macos') && '["self-hosted","macOS","ARM64","rocketnet-ci-macos"]' || '["self-hosted","Linux","X64","fleet"]') }}
+    # every OS on the fleet: Linux and macOS on the fleet pools, Windows on rocketnet-windows
+    runs-on: ${{ fromJSON(matrix.os == 'windows' && '["self-hosted","Windows","X64","rocketnet-windows"]' || startsWith(matrix.os, 'macos') && '["self-hosted","macOS","ARM64","fleet"]' || '["self-hosted","Linux","X64","fleet"]') }}
     # the Windows row waits for a captain build slot first (build-and-test-windows)
     timeout-minutes: ${{ inputs.full && 7200 || 2 }}
     strategy:
       fail-fast: false
       matrix:
-        # macOS runs in the nightly tier: per commit the two macOS runners
-        # hold the two build-and-test rows. The runner comes from os in
+        # macOS runs in the nightly tier: per commit the macOS runners hold
+        # the two build-and-test rows. The runner comes from os in
         # runs-on, not from include rows: an include row that matches no
         # combination would add the macOS row back.
-        os: ${{ fromJSON(inputs.full && '["ubuntu-24.04","macos-15","windows"]' || '["ubuntu-24.04","windows"]') }}
+        os: ${{ fromJSON(inputs.full && '["linux","macos","windows"]' || '["linux","windows"]') }}
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
@@ -2159,9 +2171,9 @@ jobs:
 
   big-endian:
     name: big endian s390x / ${{ matrix.build_type }}
-    # ubuntu-2404: the s390x multiarch libraries are provisioned on the 24.04
-    # fleet hosts, not on the ubuntu-2604 ones.
-    runs-on: [self-hosted, Linux, X64, ubuntu-2404]
+    # Any Linux fleet runner: the runner role provisions the s390x cross
+    # toolchain, the s390x multiarch libraries and qemu-user on every host.
+    runs-on: [self-hosted, Linux, X64, fleet]
     timeout-minutes: ${{ inputs.full && 7200 || 2 }}
     strategy:
       fail-fast: false
@@ -2178,12 +2190,25 @@ jobs:
         run: |
           set -euo pipefail
           missing=0
-          for tool in cmake xxd pkg-config readelf s390x-linux-gnu-gcc s390x-linux-gnu-g++ qemu-s390x-static; do
+          for tool in cmake xxd pkg-config readelf s390x-linux-gnu-gcc s390x-linux-gnu-g++; do
             if ! command -v "$tool" >/dev/null 2>&1; then
               echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
               missing=1
             fi
           done
+          # qemu-user-static installs qemu-s390x-static; qemu-user (Ubuntu
+          # 26.04, which has no qemu-user-static) installs qemu-s390x, itself
+          # a static binary. Either runs the leg; the step after uses $QEMU_S390X.
+          qemu=""
+          for tool in qemu-s390x-static qemu-s390x; do
+            if command -v "$tool" >/dev/null 2>&1; then qemu=$(command -v "$tool"); break; fi
+          done
+          if [ -z "$qemu" ]; then
+            echo "TOOL-MISSING qemu-s390x-static or qemu-s390x (any) (missing; package qemu-user-static or qemu-user) on $RUNNER_NAME"
+            missing=1
+          else
+            echo "QEMU_S390X=$qemu" >> "$GITHUB_ENV"
+          fi
           for lib in libsodium libbpf libxdp; do
             if ! PKG_CONFIG_LIBDIR=/usr/lib/s390x-linux-gnu/pkgconfig:/usr/share/pkgconfig pkg-config --exists "$lib" >/dev/null 2>&1; then
               echo "TOOL-MISSING $lib (s390x) (pkg-config --exists failed) on $RUNNER_NAME"
@@ -2264,8 +2289,8 @@ jobs:
           QEMU_LD_PREFIX: /
           LD_LIBRARY_PATH: /usr/lib/s390x-linux-gnu:/usr/s390x-linux-gnu/lib
         run: |
-          qemu-s390x-static ./bin/wire_check
-          qemu-s390x-static ./bin/test_sodium
+          "$QEMU_S390X" ./bin/wire_check
+          "$QEMU_S390X" ./bin/test_sodium
 
       - name: Enforce combined unit and functional timing
         shell: bash
@@ -2430,9 +2455,11 @@ jobs:
     name: pinned libsodium (built from source)
     # nightly tier
     if: inputs.full
-    # ubuntu-2404: the cached prefix is keyed by runner.os alone and built
-    # against the host's glibc, so it is built and restored on one distro.
-    runs-on: [self-hosted, Linux, X64, ubuntu-2404]
+    # Any Linux fleet runner: the cached prefix is built against the host's
+    # glibc, so its key names the host's distribution, release, machine and
+    # C library (the instruction gate's host key), and a prefix built on one
+    # distro is never restored on another.
+    runs-on: [self-hosted, Linux, X64, fleet]
     timeout-minutes: 7200
     env:
       SODIUM_VERSION: "1.0.20"
@@ -2464,12 +2491,23 @@ jobs:
           done
           exit "$missing"
 
+      - name: Read the host the prefix is built for
+        id: host
+        shell: bash
+        run: |
+          set -euo pipefail
+          . /etc/os-release
+          libc="$(getconf GNU_LIBC_VERSION | tr ' ' '-')"
+          host="${ID}-${VERSION_ID}-$(uname -m)-${libc}"
+          echo "host=$host" >> "$GITHUB_OUTPUT"
+          echo "pinned libsodium prefix for host $host on $RUNNER_NAME"
+
       - name: Restore the pinned sodium prefix
         id: sodium-cache
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4.3.0
         with:
           path: ${{ env.SODIUM_PREFIX }}
-          key: sodium-pin-${{ env.SODIUM_VERSION }}-${{ runner.os }}
+          key: sodium-pin-${{ env.SODIUM_VERSION }}-${{ runner.os }}-${{ steps.host.outputs.host }}
 
       - name: Build the pinned libsodium from source (content-verified)
         if: steps.sodium-cache.outputs.cache-hit != 'true'
@@ -2534,6 +2572,49 @@ jobs:
           CI_TIMING_ROW: ${{ format('{0}/{1}', runner.os, github.job) }}
         run: *enforce_unit_functional_timing
 
+  # THE SUPPORTED UBUNTU LTS RELEASES. Ubuntu 22.04 LTS and 24.04 LTS stay
+  # supported (owner, 2026-11-09: "we still need to support Ubuntu 22.04
+  # LTS"), and the fleet's runners are Ubuntu 26.04, so each older release is
+  # built and tested in a rootless podman container of that release on a
+  # fleet runner. scripts/distro-container-build installs the packages
+  # docs/BUILDING.md names for the release, checks the AF_XDP provider the
+  # configure picked (22.04: the legacy libbpf 0.5 path; 24.04: libxdp 1.4),
+  # builds the tree, and runs the unit suite, test_xdp_compat on 22.04 and
+  # tools/check_package.py. Nightly tier: the package install and a cold
+  # build of the tree do not fit two minutes. The container shares the
+  # host's kernel, so this qualifies the toolchain and userspace libraries,
+  # not the 5.15 or 6.8 kernels (docs/DEPLOYING.md).
+  distro-container:
+    name: ubuntu ${{ matrix.release }} / container build and unit suite
+    if: inputs.full
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 7200
+    strategy:
+      fail-fast: false
+      matrix:
+        release: ['22.04', '24.04']
+    steps:
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      - name: Check a container runtime is present
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v podman >/dev/null 2>&1; then
+            echo "TOOL-MISSING podman (any) (missing; package podman, with uidmap and a subuid/subgid range for $(id -un)) on $RUNNER_NAME"
+            exit 1
+          fi
+          podman --version
+
+      - name: Build and test in an Ubuntu ${{ matrix.release }} container
+        shell: bash
+        run: >
+          podman run --rm --network host
+          --volume "$PWD:/src" --workdir /src
+          docker.io/library/ubuntu:${{ matrix.release }}
+          scripts/distro-container-build ${{ matrix.release }}
+
   # THE PLATFORM SELFTESTS, lifted out of build-and-test (2026-09-13).
   #
   # Both checks below used to be steps on all FOUR build-and-test rows --
@@ -2590,8 +2671,8 @@ jobs:
         include:
           # the Linux platform selftest runs on the fleet bench; a host that
           # cannot build a harness reports it as SKIPPED and fails a built one
-          - { os: ubuntu-24.04, runner: '["self-hosted","Linux","X64","fleet"]' }
-          - { os: macos-15, runner: '["self-hosted","macOS","ARM64","rocketnet-ci-macos"]' }
+          - { os: linux, runner: '["self-hosted","Linux","X64","fleet"]' }
+          - { os: macos, runner: '["self-hosted","macOS","ARM64","fleet"]' }
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
