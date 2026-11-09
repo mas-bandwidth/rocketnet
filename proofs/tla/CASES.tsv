@@ -92,7 +92,7 @@ MCReceiveOrder.cfg	MCReceiveOrder.tla	pass	-	check	receiveorder	required	-
 MCReceiveOrderBrokenSlotsAfterKeypair.cfg	MCReceiveOrder.tla	invariant	CheapRefusalsFirst	check	receiveorder	required	-
 MCReceiveOrderBrokenAdmittedAfterVerify.cfg	MCReceiveOrder.tla	invariant	CheapRefusalsFirst	check	receiveorder	required	-
 MCReceiveOrderBrokenVersionNotFirst.cfg	MCReceiveOrder.tla	invariant	CheapRefusalsFirst	check	receiveorder	required	-
-MCReceiveOrderBrokenTokenManyAddresses.cfg	MCReceiveOrder.tla	invariant	OneLiveMappingPerToken	check	receiveorder	required	-
+MCReceiveOrderBrokenTokenManyAddresses.cfg	MCReceiveOrder.tla	invariant	OneUnexpiredMappingPerToken	check	receiveorder	required	-
 MCReceiveOrderBrokenClaimBeforeSignature.cfg	MCReceiveOrder.tla	invariant	ClaimOnlyAfterSignature	check	receiveorder	required	-
 MCReceiveOrderBrokenClaimOutlivesMapping.cfg	MCReceiveOrder.tla	invariant	ClaimHasMapping	check	receiveorder	required	-
 MCRNDriverSendStaging.cfg	MCRNDriverSendStaging.tla	pass	-	check	rndriversendstaging	required	-
@@ -440,6 +440,7 @@ MCReceiveOrderBrokenClaimOutlivesBinding.cfg	MCReceiveOrder.tla	invariant	BoundH
 MCReceiveOrderBrokenWorkBudgetAtCookie.cfg	MCReceiveOrder.tla	invariant	WorkBudgetOnlyForVerify	check	receiveorder	required	-
 MCReceiveOrderBrokenReplaceKeepsClaim.cfg	MCReceiveOrder.tla	invariant	ClaimHasMapping	check	receiveorder	required	-
 MCReceiveOrderBrokenReplaceBeforeVerify.cfg	MCReceiveOrder.tla	invariant	RefusalKeepsHalfOpen	check	receiveorder	required	-
+MCReceiveOrderDeadlineWindow.cfg	MCReceiveOrder.tla	invariant	OneLiveMappingPerToken	check	receiveorder	required	-
 MCRNMsgxPause.cfg	MCRNMsgxPause.tla	pass	-	check	rnmsgxpause	required	-
 MCRNMsgxPauseBrokenExpiryClearsFresh.cfg	MCRNMsgxPause.tla	invariant	FreshPauseSurvives	check	rnmsgxpause	required	-
 MCRNChannelQueues.cfg	MCRNChannelQueues.tla	pass	-	ignore-terminal	rnchannelqueues	required	-
