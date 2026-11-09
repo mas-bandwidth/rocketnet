@@ -326,6 +326,75 @@ static void test_client_slots_hostile_collision_and_stale_generation()
 
 REGISTER_UNIT_TEST( test_client_slots_hostile_collision_and_stale_generation );
 
+// Four IDs with home cells N-1, N-1, 0, 1 fill the last cell and the first
+// three. Each release must shift survivors back across the end of the table
+// only when that keeps them reachable from their home cell.
+
+static const int erase_wrap_capacity = 4;
+static const int erase_wrap_count = 4;
+
+static struct rocketnet_client_slots_t * erase_wrap_create( uint64_t ids[erase_wrap_count] )
+{
+    struct rocketnet_client_slots_t * slots = rocketnet_client_slots_create( NULL, erase_wrap_capacity );
+    check( slots != NULL );
+
+    const uint64_t last = (uint64_t) erase_wrap_capacity * 2 - 1;
+    const uint64_t homes[erase_wrap_count] = { last, last, 0, 1 };
+
+    uint64_t candidate = UINT64_C( 0x8000000000000000 );
+    for ( int i = 0; i < erase_wrap_count; ++i )
+    {
+        bool found = false;
+        for ( int attempt = 0; attempt < 1000000 && !found; ++attempt )
+        {
+            ++candidate;
+            found = rocketnet_client_slots_test_hash_index( slots, candidate ) == homes[i];
+        }
+        check( found );
+        ids[i] = candidate;
+    }
+
+    uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
+    memset( user_data, 0x3C, sizeof( user_data ) );
+
+    for ( int i = 0; i < erase_wrap_count; ++i )
+    {
+        check( rocketnet_client_slots_assign( slots, ids[i], i, ids[i], user_data ) == i );
+    }
+
+    return slots;
+}
+
+static void test_client_slots_erase_shifts_across_wrap()
+{
+    uint64_t ids[erase_wrap_count];
+
+    for ( int released = 0; released < erase_wrap_count; ++released )
+    {
+        struct rocketnet_client_slots_t * slots = erase_wrap_create( ids );
+        rocketnet_client_slots_release( slots, released );
+        for ( int i = 0; i < erase_wrap_count; ++i )
+        {
+            check( rocketnet_client_slots_find( slots, ids[i] ) == ( i == released ? -1 : i ) );
+        }
+        rocketnet_client_slots_destroy( slots );
+    }
+
+    struct rocketnet_client_slots_t * slots = erase_wrap_create( ids );
+    for ( int released = 0; released < erase_wrap_count; ++released )
+    {
+        rocketnet_client_slots_release( slots, released );
+        for ( int i = 0; i < erase_wrap_count; ++i )
+        {
+            check( rocketnet_client_slots_find( slots, ids[i] ) == ( i <= released ? -1 : i ) );
+        }
+    }
+    check( rocketnet_client_slots_num_connected( slots ) == 0 );
+    rocketnet_client_slots_destroy( slots );
+}
+
+REGISTER_UNIT_TEST( test_client_slots_erase_shifts_across_wrap );
+
 #endif // #if ROCKETNET_DEV
 
 // Exercise the runtime maximum rather than a small fixture: initial indices
@@ -367,6 +436,20 @@ static void test_client_slots_full_capacity_reuse_and_full_width_ids()
     }
 
     check( rocketnet_client_slots_num_free( slots ) == released_count );
+
+    int untouched = 0;
+    for ( int i = 0; i < capacity; ++i )
+    {
+        bool was_released = false;
+        for ( int j = 0; j < released_count; ++j )
+        {
+            was_released = was_released || released[j] == i;
+        }
+        const uint64_t id = ( (uint64_t) (uint32_t) ( i + 1 ) << 32 ) | UINT64_C( 0xA5A5A5A5 );
+        check( rocketnet_client_slots_find( slots, id ) == ( was_released ? -1 : i ) );
+        untouched += was_released ? 0 : 1;
+    }
+    check( untouched == capacity - released_count );
 
     for ( int i = 0; i < released_count; ++i )
     {
