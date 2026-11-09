@@ -27,6 +27,8 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <fcntl.h>
+#include <unistd.h>
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
 static void test_platform_id_is_the_build_platform()
@@ -377,6 +379,127 @@ static void test_platform_socket_hygiene_skipped_reads_are_counted()
 REGISTER_UNIT_TEST( test_platform_socket_hygiene_skipped_reads_are_counted );
 
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS && !defined( __OpenBSD__ )
+
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS && ROCKETNET_DEV
+
+// Every descriptor the platform opens is close-on-exec, so a child process
+// the application spawns never inherits the transport's sockets or wake.
+// The socket call is replaced by a fake that answers with a pipe end and
+// applies SOCK_CLOEXEC as the kernel would; no socket is opened.
+
+typedef int ( *platform_socket_hygiene_socket_call_t )( int domain, int type, int protocol );
+void rocketnet_platform_set_socket_call_for_testing( platform_socket_hygiene_socket_call_t call );
+int rocketnet_platform_socket_open_for_testing( int domain );
+
+static int platform_socket_hygiene_socket_calls = 0;
+static int platform_socket_hygiene_socket_domain = 0;
+
+static int platform_socket_hygiene_fake_socket( int domain, int type, int protocol )
+{
+    (void) protocol;
+    platform_socket_hygiene_socket_calls++;
+    platform_socket_hygiene_socket_domain = domain;
+    int fds[2];
+    if ( pipe( fds ) != 0 )
+        return -1;
+    close( fds[1] );
+#if defined( SOCK_CLOEXEC )
+    if ( ( type & SOCK_CLOEXEC ) != 0 && fcntl( fds[0], F_SETFD, FD_CLOEXEC ) != 0 )
+    {
+        close( fds[0] );
+        return -1;
+    }
+#else // #if defined( SOCK_CLOEXEC )
+    (void) type;
+#endif // #if defined( SOCK_CLOEXEC )
+    return fds[0];
+}
+
+static int platform_socket_hygiene_refused_socket( int domain, int type, int protocol )
+{
+    (void) domain;
+    (void) type;
+    (void) protocol;
+    platform_socket_hygiene_socket_calls++;
+    errno = EMFILE;
+    return -1;
+}
+
+static bool platform_socket_hygiene_close_on_exec( int fd )
+{
+    const int flags = fcntl( fd, F_GETFD );
+    return flags >= 0 && ( flags & FD_CLOEXEC ) != 0;
+}
+
+static void test_platform_socket_hygiene_socket_is_close_on_exec()
+{
+    const int domains[] = { AF_INET, AF_INET6 };
+    for ( int domain : domains )
+    {
+        platform_socket_hygiene_socket_calls = 0;
+        rocketnet_platform_set_socket_call_for_testing( platform_socket_hygiene_fake_socket );
+        const int fd = rocketnet_platform_socket_open_for_testing( domain );
+        rocketnet_platform_set_socket_call_for_testing( NULL );
+
+        rocketnet_unit_check( platform_socket_hygiene_socket_calls == 1 );
+        rocketnet_unit_check( platform_socket_hygiene_socket_domain == domain );
+        rocketnet_unit_check( fd >= 0 );
+        rocketnet_unit_check( platform_socket_hygiene_close_on_exec( fd ) );
+        close( fd );
+    }
+}
+
+static void test_platform_socket_hygiene_creates_open_through_the_socket_call()
+{
+    // the socket create and the IPv6 probe open through the same call, so
+    // the close-on-exec open covers them; the refused call fails each cleanly
+
+    rocketnet_platform_set_socket_call_for_testing( platform_socket_hygiene_refused_socket );
+
+    platform_socket_hygiene_socket_calls = 0;
+    struct rocketnet_address_t address;
+    rocketnet_unit_check( rocketnet_address_parse( &address, "127.0.0.1:0" ) );
+    rocketnet_unit_check( rocketnet_platform_socket_create( NULL, &address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f, 1024, 1024 ) == NULL );
+    rocketnet_unit_check( platform_socket_hygiene_socket_calls == 1 );
+
+    platform_socket_hygiene_socket_calls = 0;
+    rocketnet_unit_check( !rocketnet_platform_client_ipv6_available() );
+    rocketnet_unit_check( platform_socket_hygiene_socket_calls == 1 );
+
+    rocketnet_platform_set_socket_call_for_testing( NULL );
+}
+
+static void test_platform_socket_hygiene_wake_is_close_on_exec()
+{
+    // the event-only wake (eventfd, pipe or kqueue): every descriptor its
+    // create opens is close-on-exec
+
+    const int max_fd = 1024;
+    static bool open_before[1024];
+    for ( int fd = 0; fd < max_fd; fd++ )
+        open_before[fd] = fcntl( fd, F_GETFD ) >= 0;
+
+    struct rocketnet_platform_wake_t * wake = rocketnet_platform_wake_create( NULL, NULL );
+    rocketnet_unit_check( wake != NULL );
+
+    int opened = 0;
+    for ( int fd = 0; fd < max_fd; fd++ )
+    {
+        if ( open_before[fd] || fcntl( fd, F_GETFD ) < 0 )
+            continue;
+        opened++;
+        rocketnet_unit_check( platform_socket_hygiene_close_on_exec( fd ) );
+    }
+    rocketnet_unit_check( opened > 0 );
+
+    rocketnet_platform_wake_destroy( wake );
+}
+
+REGISTER_UNIT_TEST( test_platform_socket_hygiene_socket_is_close_on_exec );
+REGISTER_UNIT_TEST( test_platform_socket_hygiene_creates_open_through_the_socket_call );
+REGISTER_UNIT_TEST( test_platform_socket_hygiene_wake_is_close_on_exec );
+
+#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS && ROCKETNET_DEV
 
 #if defined( __APPLE__ )
 static void test_platform_socket_hygiene_msgx_chaff_drain_is_bounded()

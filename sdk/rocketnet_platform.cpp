@@ -1245,6 +1245,41 @@ int rocketnet_platform_socket_receive_buffer_bytes( rocketnet_platform_socket_t 
     return granted;
 }
 
+// Every POSIX socket the platform opens goes through here.
+
+#if ROCKETNET_DEV
+// the socket() call behind rocketnet_platform_socket_open, for unit tests only: NULL is the real call
+typedef int ( *rocketnet_platform_socket_call_t )( int domain, int type, int protocol );
+void rocketnet_platform_set_socket_call_for_testing( rocketnet_platform_socket_call_t call );
+int rocketnet_platform_socket_open_for_testing( int domain );
+
+static std::atomic<rocketnet_platform_socket_call_t> rocketnet_platform_socket_call_override{ NULL };
+
+void rocketnet_platform_set_socket_call_for_testing( rocketnet_platform_socket_call_t call )
+{
+    rocketnet_platform_socket_call_override.store( call, std::memory_order_release );
+}
+#endif // #if ROCKETNET_DEV
+
+static int rocketnet_platform_socket_open( int domain )
+{
+    const int type = SOCK_DGRAM;
+#if ROCKETNET_DEV
+    const rocketnet_platform_socket_call_t call = rocketnet_platform_socket_call_override.load( std::memory_order_acquire );
+    const int handle = call ? call( domain, type, IPPROTO_UDP ) : ::socket( domain, type, IPPROTO_UDP );
+#else // #if ROCKETNET_DEV
+    const int handle = ::socket( domain, type, IPPROTO_UDP );
+#endif // #if ROCKETNET_DEV
+    return handle;
+}
+
+#if ROCKETNET_DEV
+int rocketnet_platform_socket_open_for_testing( int domain )
+{
+    return rocketnet_platform_socket_open( domain );
+}
+#endif // #if ROCKETNET_DEV
+
 // Darwin picks an ephemeral port for an IPv6 wildcard without checking that
 // an IPv4 socket already owns it; both binds then coexist and IPv4 traffic
 // goes to the other socket. Reserving the port in the IPv4 namespace first,
@@ -1268,7 +1303,7 @@ static int rocketnet_platform_reserve_ipv4_port( const rocketnet_address_t * add
             return -1;
     }
 
-    const int reservation = ::socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+    const int reservation = rocketnet_platform_socket_open( AF_INET );
     if ( reservation < 0 )
     {
         rocketnet_error( "failed to create ipv4 port reservation for dual stack socket" );
@@ -1334,7 +1369,7 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
     }
 #endif // #if ROCKETNET_DEV
 
-    socket->handle = ::socket( ( address->type == ROCKETNET_ADDRESS_IPV6 ) ? AF_INET6 : AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+    socket->handle = rocketnet_platform_socket_open( ( address->type == ROCKETNET_ADDRESS_IPV6 ) ? AF_INET6 : AF_INET );
     if ( socket->handle < 0 )
     {
         rocketnet_error( "failed to create socket" );
@@ -4620,7 +4655,7 @@ bool rocketnet_platform_client_ipv6_available()
 #endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     return true;
 #else
-    int probe = (int) ::socket( AF_INET6, SOCK_DGRAM, IPPROTO_UDP );
+    int probe = rocketnet_platform_socket_open( AF_INET6 );
     if ( probe < 0 )
         return false;
     ::close( probe );
