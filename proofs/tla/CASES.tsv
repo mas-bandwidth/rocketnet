@@ -436,11 +436,12 @@ MCLoopbackQueue.cfg	MCLoopbackQueue.tla	pass	-	check	loopbackqueue	required	-
 MCLoopbackQueueBrokenNoRestart.cfg	MCLoopbackQueue.tla	invariant	TouchedWithinBacklog	check	loopbackqueue	required	-
 MCRNUpdateClock.cfg	MCRNUpdateClock.tla	pass	-	check	rnupdateclock	required	-
 MCRNUpdateClockBrokenStall.cfg	MCRNUpdateClock.tla	invariant	ResumeAdvances	check	rnupdateclock	required	-
-MCReceiveOrderBrokenClaimOutlivesBinding.cfg	MCReceiveOrder.tla	invariant	BoundHasNoClaim	check	receiveorder	required	-
+MCReceiveOrderBrokenClaimOutlivesBinding.cfg	MCReceiveOrder.tla	invariant	BoundHasNoOwnClaim	check	receiveorder	required	-
 MCReceiveOrderBrokenWorkBudgetAtCookie.cfg	MCReceiveOrder.tla	invariant	WorkBudgetOnlyForVerify	check	receiveorder	required	-
 MCReceiveOrderBrokenReplaceKeepsClaim.cfg	MCReceiveOrder.tla	invariant	ClaimHasMapping	check	receiveorder	required	-
 MCReceiveOrderBrokenReplaceBeforeVerify.cfg	MCReceiveOrder.tla	invariant	RefusalKeepsHalfOpen	check	receiveorder	required	-
 MCReceiveOrderDeadlineWindow.cfg	MCReceiveOrder.tla	invariant	OneLiveMappingPerToken	check	receiveorder	required	-
+MCReceiveOrderDeadlineWindowBound.cfg	MCReceiveOrder.tla	invariant	BoundHasNoClaim	check	receiveorder	required	-
 MCRNMsgxPause.cfg	MCRNMsgxPause.tla	pass	-	check	rnmsgxpause	required	-
 MCRNMsgxPauseBrokenExpiryClearsFresh.cfg	MCRNMsgxPause.tla	invariant	FreshPauseSurvives	check	rnmsgxpause	required	-
 MCRNChannelQueues.cfg	MCRNChannelQueues.tla	pass	-	ignore-terminal	rnchannelqueues	required	-

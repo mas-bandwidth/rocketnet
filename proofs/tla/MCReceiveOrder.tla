@@ -187,6 +187,16 @@ OneUnexpiredMappingPerToken ==
 RefusalKeepsHalfOpen == (outcome = "refused" /\ held /= None) => maps[reqAddr] = held
 BoundHasNoClaim == Done => \A t \in Tokens : bound[t] /= None => claims[t] = None
 
+\* BoundHasNoClaim with the window: a response binds its token and releases
+\* its own address's claim, so a bound token never keeps a claim of the
+\* address it is bound to.  It can keep another address's: B claims the
+\* token in the window, then A's stale mapping, which the response path
+\* does not check against its deadline, opens a response and binds the
+\* token to A; rocketnet_used_token_history_claim_release(t, A) leaves B's
+\* claim, which lasts until B's response or B's own deadline.
+\* MCReceiveOrderDeadlineWindowBound.cfg shows it.
+BoundHasNoOwnClaim == Done => \A t \in Tokens : bound[t] /= None => claims[t] /= bound[t]
+
 \* a claim that is live once a request is done names a token some address's
 \* mapping holds: it cannot outlive the mapping it stands for
 ClaimHasMapping ==
