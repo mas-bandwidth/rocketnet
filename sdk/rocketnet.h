@@ -1438,13 +1438,17 @@ struct rocketnet_client_config_t
     bool step_driven;
 
     /// ROCKETNET_CLIENT_TOKEN_EPOCH_UNIX_SECONDS is the Unix time, in seconds,
-    /// at zero of the time the caller passes to rocketnet_client_update. The connect
-    /// token's create and expire checks read this epoch plus that time, in
-    /// whole seconds, and never read the wall clock, so pausing the caller's
-    /// clock (a breakpoint during the handshake, a debug clock) pauses token
-    /// expiry. 0 reads the wall clock once, at connect, and takes the epoch as that
-    /// Unix time less the caller's time. Production builds may set it.
-    /// Default is 0.
+    /// at zero of the time the caller passes to rocketnet_client_update. The
+    /// client checks the connect token's expiry once, at connect, against this
+    /// epoch plus the time of the client's most recent update (zero if it has
+    /// never been updated), in whole seconds, and never reads the wall clock.
+    /// A game with a clock that does not start at zero updates the client at
+    /// least once before connect (a normal frame loop already does). During
+    /// the handshake the client measures the token's lifetime on the caller's
+    /// clock, so pausing that clock (a breakpoint during the handshake, a
+    /// debug clock) pauses it. The client makes no check of the token's create
+    /// time against now; the server makes one. 0 reads the wall clock once, at
+    /// connect. Production builds may set it. Default is 0.
 
     uint64_t token_epoch_unix_seconds;
 };

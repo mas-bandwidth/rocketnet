@@ -74,8 +74,9 @@ static void token_time_game_mint( uint8_t * token_data, uint64_t create, uint64_
     check( rocketnet_write_connect_token( &signed_fields, &private_fields, rocketnet_test_backend_secret_key, token_data ) );
 }
 
-// the client transport reads its epoch at create: the token is admitted only
-// while create <= epoch + time < expire
+// the client transport reads its epoch at create: the client checks expiry
+// only (the server also checks create), so the token is admitted while
+// epoch + time < expire
 
 static int token_time_game_client_create( uint64_t create, uint64_t expire, uint64_t epoch, double time )
 {

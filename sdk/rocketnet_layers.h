@@ -296,7 +296,7 @@ struct rocketnet_client_transport_config_t
     void ( *state_change_callback )( void * context, enum rocketnet_client_state_t previous_state, enum rocketnet_client_state_t current_state );
     /** @brief Optional monotonic receive timestamp clock in seconds; NULL selects the platform clock. */
     double ( *time_callback )( void * context );      // the receive stamp clock, read once at create; NULL is the platform clock
-    uint64_t token_epoch_unix_seconds;                      // unix seconds at the game clock's zero for the token check; 0 reads the wall clock
+    uint64_t token_epoch_unix_seconds;                      // unix seconds at the game clock's zero for the token expire check at create (epoch plus create's time; public connect passes epoch plus the last update's time); 0 reads the wall clock
     uint64_t step_driven;                           // development only: 1 runs the I/O step on the caller; production leaves this 0
     int simulated_loss_percent;                     // development only: simulated loss 0..100, 0 off
     int simulated_latency_ms;                       // development only: simulated latency ms, 0 off

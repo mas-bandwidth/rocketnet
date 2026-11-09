@@ -107,7 +107,10 @@ build refuses the published development keys
 ([Keys, "Writing production tokens"](KEYS.md#writing-production-tokens)).
 
 Token time is the caller's: the token checks read `token_epoch_unix_seconds`
-plus the time passed to update. Set it on both configs to mint and check tokens
+plus the time passed to update. The server checks create and expire times; the
+client checks only expiry, once, at connect, at the time of its most recent
+update (zero if never updated), so update the client before connect when its
+clock does not start at zero. Set it on both configs to mint and check tokens
 on a game or debug clock, so a paused clock pauses expiry; 0 reads the wall
 clock once (the client at connect, the server at its first update after start).
 

@@ -1319,7 +1319,7 @@ static void rn_client_disconnect( struct rocketnet_client_t * client );
 
 static enum rocketnet_status_t rn_client_connect( struct rocketnet_client_t * client, const char * connect_token_string )
 {
-    // connect reads no clock: the connection's clock starts at its first update, as create's always has (documented in rocketnet.h)
+    // the connection's clock starts at its first update, as create's always has (documented in rocketnet.h)
 
     if ( rn_client_state( client ) > ROCKETNET_CLIENT_STATE_DISCONNECTED )
     {
@@ -1370,10 +1370,19 @@ static enum rocketnet_status_t rn_client_connect( struct rocketnet_client_t * cl
 
     client->refused_state = ROCKETNET_CLIENT_STATE_DISCONNECTED;
 
+    // standard/TRANSPORT.md t11 rule 2: the token's expire check, made once
+    // here. With a configured epoch it reads the epoch plus the caller's time
+    // as the handle last knew it: the most recent update's, zero if never
+    // updated. With the epoch 0 the transport reads the wall clock instead.
+
+    const uint64_t epoch = client->transport.token_epoch_unix_seconds;
+    const double caller_time = client->update_timed && client->update_time > 0.0 ? client->update_time : 0.0;
+    const uint64_t token_timestamp = epoch != 0 ? epoch + (uint64_t) caller_time : 0;
+
     int status = ROCKETNET_STATUS_OK;
     client->connection = rocketnet_message_client_create_resolved( client->context, connect_token, &client->transport, &client->message,
                                                                    client->block, client->block_bytes, client->kbps, &status, client->message.client_send_kbps <= 0,
-                                                                   client->memory_budget_bytes );
+                                                                   client->memory_budget_bytes, token_timestamp );
 
     sodium_memzero( connect_token, sizeof( connect_token ) );
 

@@ -76,17 +76,22 @@ and attackers holding valid tokens are answered by the backend, not by this
 layer. Those sections are the authority; this file does not restate their
 reasoning.
 
-The connect-token create and expire checks read the application's clock: the
-epoch `token_epoch_unix_seconds` (or `ROCKETNET_CLIENT_TOKEN_EPOCH_UNIX_SECONDS`
+The connect-token time checks read the application's clock: the epoch
+`token_epoch_unix_seconds` (or `ROCKETNET_CLIENT_TOKEN_EPOCH_UNIX_SECONDS`
 and `ROCKETNET_SERVER_TOKEN_EPOCH_UNIX_SECONDS`) plus the time the caller
-passes. An epoch of 0 resolves the epoch once, at client connect and at the
-server's first update after start: wall-clock Unix seconds minus the caller's
-elapsed seconds, with a positive fallback when subtraction is not possible.
-Later checks add the caller's elapsed seconds to that epoch; they do not read
-the wall clock again. Pausing the caller's clock therefore pauses token expiry.
-The application must advance the supplied clock correctly; an explicit epoch
-must represent Unix time at that clock's zero, not Unix time at the current
-update.
+passes. The server checks the create and expire times at each request; its
+epoch of 0 is resolved once, at its first update after start: wall-clock Unix
+seconds minus the caller's elapsed seconds, with a positive fallback when
+subtraction is not possible. Later server checks add the caller's elapsed
+seconds to that epoch; they do not read the wall clock again. The client
+checks only the expire time, once, at connect: against its epoch plus the time
+of its most recent update (zero if it has never been updated), or with an
+epoch of 0 against the wall clock read then. During the handshake the client
+measures the token's lifetime on the caller's clock. Pausing the caller's clock
+therefore pauses token expiry. The application must advance the supplied clock
+correctly; an explicit epoch must represent Unix time at that clock's zero, not
+Unix time at the current update, and a client on such an epoch whose clock
+does not start at zero is updated at least once before connect.
 
 The following are in scope for a report: packet parsing and generation, the
 connect handshake and token handling, replay and acknowledgement state, message

@@ -1523,10 +1523,10 @@ rocketnet_client_transport_t * rocketnet_client_transport_create_current_ex( voi
 }
 
 rocketnet_client_transport_t * rocketnet_client_transport_create_resolved( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time,
-                                                                           uint64_t memory_budget_bytes, int * status )
+                                                                           uint64_t memory_budget_bytes, uint64_t token_timestamp, int * status )
 {
     rocketnet_assert( config );
-    return rocketnet_client_transport_create_internal( context, connect_token, config, time, status, NULL, NULL, sizeof( struct rocketnet_client_transport_config_t ), 0, &memory_budget_bytes );
+    return rocketnet_client_transport_create_internal( context, connect_token, config, time, status, NULL, NULL, sizeof( struct rocketnet_client_transport_config_t ), token_timestamp, &memory_budget_bytes );
 }
 
 #if ROCKETNET_DEV
