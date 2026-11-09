@@ -158,6 +158,19 @@ if printf '%s\n' "$all_cells" | grep -q '^xdp ' && [ -z "$xdp_cases" ]; then
     echo "transport-cells-repeat: TRANSPORT_MATRIX_$OS has an xdp cell but its step names no xdp_cases" >&2; exit 2
 fi
 
+# every functional row gated by rocketnet_test_xdp_veth_runs_here runs only in
+# the xdp cell's guest, so each must be named in xdp_cases
+if printf '%s\n' "$all_cells" | grep -q '^xdp '; then
+    functional_source=tests/functional/rocketnet_functional_tests.cpp
+    veth_rows=$(sed -n 's/^[[:space:]]*{ "\([A-Za-z0-9_]*\)", [A-Za-z0-9_]*, rocketnet_test_xdp_veth_runs_here },*$/\1/p' "$functional_source")
+    [ -n "$veth_rows" ] || { echo "transport-cells-repeat: no rocketnet_test_xdp_veth_runs_here rows read from $functional_source" >&2; exit 2; }
+    missing=""
+    for row in $veth_rows; do
+        case " $xdp_cases " in *" $row "*) ;; *) missing="$missing $row" ;; esac
+    done
+    [ -z "$missing" ] || { echo "transport-cells-repeat: rocketnet_test_xdp_veth_runs_here rows not in $ci xdp_cases:$missing" >&2; exit 2; }
+fi
+
 cell_cases() { if [ "$1" = xdp ]; then echo "$xdp_cases"; else echo "$socket_cases"; fi; }
 
 # the cells to run: every cell, or the ones --cell names (each must exist)

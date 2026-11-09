@@ -607,10 +607,11 @@ jobs:
       # expected failure that passes fails the step, so the mark is removed
       # as the card lands; any other skip fails. No cell holds a mark: the
       # in-memory loopback serves dual stack like the socket transports. The xdp
-      # cell needs root, a namespace and a veth pair, so it runs
-      # test_xdp_transport_max_size_both_ways_ipv4 and _ipv6 (the xdp server, the portable
+      # cell needs root, a namespace and a veth pair, so it runs every
+      # rocketnet_test_xdp_veth_runs_here case (xdp_cases; the xdp server, the portable
       # client) as root inside a virtme-ng guest on the runner's own kernel,
-      # never on the host; a runner with no VM tier fails the cell, so the
+      # never on the host; a case missing from xdp_cases, or one that skips,
+      # fails the step; a runner with no VM tier fails the cell, so the
       # Linux functional rows select libxdp-1-4, the label of the VM-tier runner.
       # A client of auto sets no client pin, so that cell runs the client's
       # automatic order on the wire (gso on Linux, msgx on macOS, iocp on
@@ -644,7 +645,9 @@ jobs:
             *) echo "TRANSPORT-MATRIX no matrix for $RUNNER_OS"; exit 1 ;;
           esac
           socket_cases="test_loopback_transport_udp test_loopback_transport_ipv6 test_transport_dual_stack_ipv4_client test_transport_env_pin_is_honoured"
-          xdp_cases="test_xdp_transport_max_size_both_ways_ipv4 test_xdp_transport_max_size_both_ways_ipv6"
+          xdp_cases="test_xdp_transport_max_size_both_ways_ipv4 test_xdp_transport_max_size_both_ways_ipv6 test_xdp_transport_keep_alive_before_first_payloads_ipv4 test_xdp_transport_keep_alive_before_first_payloads_ipv6 test_posix_hard_killed_client_xdp_ipv4_client_portable test_posix_hard_killed_client_xdp_ipv6_client_portable test_posix_send_to_closed_port_xdp_ipv4_client_portable test_posix_send_to_closed_port_xdp_ipv6_client_portable test_posix_client_server_gone_xdp_ipv4_client_portable test_posix_client_server_gone_xdp_ipv6_client_portable test_session_reconnect_isolation_xdp"
+          # every rocketnet_test_xdp_veth_runs_here row must be named in xdp_cases
+          scripts/transport-cells-repeat --list --os linux > /dev/null || exit 1
           cell_cases() { if [ "$1" = xdp ]; then echo "$xdp_cases"; else echo "$socket_cases"; fi; }
           uring_offered=0
           if [ "$RUNNER_OS" = Linux ] && [ "$(cat /proc/sys/kernel/io_uring_disabled 2>/dev/null || echo 0)" = 0 ]; then uring_offered=1; fi
