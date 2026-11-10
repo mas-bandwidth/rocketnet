@@ -2848,6 +2848,52 @@ static void test_channels_window_receive_outside_window_is_violation()
     channels_window_receive_teardown( &rig );
 }
 
+static void test_channels_window_receive_accepts_the_upper_window_edge()
+{
+    {
+        channels_window_receive_rig_t rig;
+        channels_window_receive_setup( &rig, 0 );
+
+        rocketnet_message_record_t record = channels_window_record( 63 );
+        uint32_t slot = RN_DESCRIPTOR_NONE;
+        check( rn_window_receive_accept( &rig.receive, &record, &slot ) == RN_WINDOW_RECEIVE_ACCEPT );
+        check( slot == 63 );
+        check( rig.receive.R == 0 );
+        check( rig.region->receive_descriptors[slot].number == 63 );
+        check( rig.region->receive_descriptors[slot].live );
+
+        record = channels_window_record( 64 );
+        slot = RN_DESCRIPTOR_NONE;
+        check( rn_window_receive_accept( &rig.receive, &record, &slot ) == RN_WINDOW_RECEIVE_VIOLATION );
+        check( rig.receive.violation == ROCKETNET_MESSAGE_VIOLATION_NUMBER_OUTSIDE_WINDOW );
+        check( rig.receive.R == 0 );
+        channels_window_receive_teardown( &rig );
+    }
+
+    {
+        const uint64_t first = ( 1ULL << 24 ) - 2;
+        channels_window_receive_rig_t rig;
+        channels_window_receive_setup( &rig, first );
+
+        const uint64_t edge = ( first + 63 ) & ROCKETNET_MESSAGE_U24_MASK;
+        rocketnet_message_record_t record = channels_window_record( (uint32_t) edge );
+        uint32_t slot = RN_DESCRIPTOR_NONE;
+        check( rn_window_receive_accept( &rig.receive, &record, &slot ) == RN_WINDOW_RECEIVE_ACCEPT );
+        check( slot == (uint32_t) ( edge & 63 ) );
+        check( rig.receive.R == first );
+        check( rig.region->receive_descriptors[slot].number == first + 63 );
+        check( rig.region->receive_descriptors[slot].live );
+
+        const uint64_t outside = ( first + 64 ) & ROCKETNET_MESSAGE_U24_MASK;
+        record = channels_window_record( (uint32_t) outside );
+        slot = RN_DESCRIPTOR_NONE;
+        check( rn_window_receive_accept( &rig.receive, &record, &slot ) == RN_WINDOW_RECEIVE_VIOLATION );
+        check( rig.receive.violation == ROCKETNET_MESSAGE_VIOLATION_NUMBER_OUTSIDE_WINDOW );
+        check( rig.receive.R == first );
+        channels_window_receive_teardown( &rig );
+    }
+}
+
 static void test_channels_window_receive_slot_collision_is_violation()
 {
     channels_window_receive_rig_t rig;
@@ -5058,6 +5104,7 @@ static const struct channels_test_t channels_tests[] = {
     { "test_channels_window_receive_accepts_in_order", "ChannelsWindowReceiveAcceptsInOrder", test_channels_window_receive_accepts_in_order },
     { "test_channels_window_receive_duplicate_is_counted_not_violation", "ChannelsWindowReceiveDuplicateIsCountedNotViolation", test_channels_window_receive_duplicate_is_counted_not_violation },
     { "test_channels_window_receive_outside_window_is_violation", "ChannelsWindowReceiveOutsideWindowIsViolation", test_channels_window_receive_outside_window_is_violation },
+    { "test_channels_window_receive_accepts_the_upper_window_edge", "ChannelsWindowReceiveAcceptsTheUpperWindowEdge", test_channels_window_receive_accepts_the_upper_window_edge },
     { "test_channels_window_receive_slot_collision_is_violation", "ChannelsWindowReceiveSlotCollisionIsViolation", test_channels_window_receive_slot_collision_is_violation },
     { "test_channels_window_receive_reconstructs_across_the_24_bit_wrap", "ChannelsWindowReceiveReconstructsAcrossThe24BitWrap", test_channels_window_receive_reconstructs_across_the_24_bit_wrap },
     { "test_channels_window_receive_advance_clears_only_what_it_passes", "ChannelsWindowReceiveAdvanceClearsOnlyWhatItPasses", test_channels_window_receive_advance_clears_only_what_it_passes },
