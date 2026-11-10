@@ -2,12 +2,12 @@
 
 Changes compared with the `v1.0.0` tag.
 
-- Tag: `v1.0.1`, on the commit that adds these notes.
+- Tag: `v1.0.1`, on the merged `main` commit.
 - Release: [GitHub release](https://github.com/mas-bandwidth/rocketnet/releases/tag/v1.0.1).
 
 ## Changes
 
-- v1.0.1 is a fix release: it adds no function, configuration field, status value, environment variable or export, and code built against v1.0.0 compiles against it unchanged.
+- v1.0.1 is a fix release: it adds no function, configuration field, status value, environment variable or export, and code built against v1.0.0 compiles against it unchanged, except on 32-bit x86 Windows.
 - Packet layouts, connect tokens, message records and the protocol version `0x4E7C1A93` are unchanged, so v1.0.0 and v1.0.1 endpoints interoperate in both directions.
 - A late fragment of a reliable-sequenced block that a newer message superseded is now dropped and counted as `MESSAGE_SEQUENCED_STALE` instead of later ending the connection ([MESSAGES.md m7.3](../standard/MESSAGES.md#m7.3)); a v1.0.0 receiver keeps the old behaviour.
 - An IPv6 dual-stack socket now sets Don't-Fragment on IPv4 traffic, so an IPv4 client whose path MTU is below 1480 bytes can connect to it but loses full-size packets.
@@ -27,9 +27,9 @@ Changes compared with the `v1.0.0` tag.
 - `PREFILTER_TOO_LARGE` counts only a datagram whose reported size is above the receive limit; a custom transport's negative size, `NULL` receive view or out-of-range count is dropped without counting there.
 - `SEND_RING_FULL` and `SEND_NO_LINK_ADDRESS` on the server's receive path count only a response that was refused.
 - A disconnect burst dropped at the server's disconnect ring cap is counted in the new `DISCONNECT_BURST_DROPPED` counter and logged at debug level.
-- Every socket and wake handle the library opens is non-inheritable, so a child process you start no longer holds them.
+- The sockets of every client, of the portable, gso and io_uring servers and of the Windows IOCP and RIO servers, and the library's wake handles, are non-inheritable, so a child process you start no longer holds them.
 - Server stop finishes when a disconnect burst cannot be sealed, and that client then times out instead of receiving a disconnect.
-- A create that fails after its I/O worker started, and a destroy of a message layer that was not stopped, wait at most about one second for the worker, then log an error and keep its memory.
+- A create that fails after its I/O worker started, other than on the Windows IOCP server, and a destroy of a message layer that was not stopped, wait at most about one second for the worker, then log an error and keep its memory.
 - `rocketnet_init` returns `ROCKETNET_STATUS_LIVE_ALLOCATIONS` only when another thread calls into the library while init installs a different allocator.
 - `rocketnet_create_connect_token` with both addresses `NULL` counts as one API misuse.
 - The header now states that gso and io_uring refuse `num_xdp_queues` above 32, that an overlong transport environment value returns `ROCKETNET_STATUS_CONFIG_ENV_INVALID`, and that a loopback hub's memory is outside both memory plans.
@@ -42,8 +42,9 @@ Changes compared with the `v1.0.0` tag.
 - The loopback transport refuses a bind to port 0 when every ephemeral port is held.
 - The standard now permits a server's transport to drop a datagram shorter than the smallest packet a server receives, or longer than the receive ceiling, before the shared checks, counted as `PREFILTER_TOO_SHORT` or `PREFILTER_TOO_LARGE` ([TRANSPORT.md t10](../standard/TRANSPORT.md#t10)).
 - On Linux gso, one destination that refuses UDP segmentation no longer turns segmentation off for the others.
-- On Linux gso, a send interrupted by a signal is retried at once.
+- On Linux gso, a send interrupted by a signal is retried at once; while a refused segmented run is resent as plain datagrams, it is retried at the next send retry, within 1 ms.
 - On Linux gso, a socket that stays full while the server stops no longer keeps the transport from reaching stopped.
+- On Linux gso, the packets such a socket never took at stop are dropped and counted in `SEND_DROPPED`.
 - On Linux gso, the receive worker sleeps 1 ms instead of spinning when its buffer is full or a read keeps failing.
 - On Linux gso, the receive walk rotates which queue it reads first, so a busy early queue cannot starve the later ones.
 - On Linux gso, the client drops a truncated receive completion.
@@ -51,11 +52,13 @@ Changes compared with the `v1.0.0` tag.
 - On Linux xdp, `SEND_FAILED` counts each datagram the kernel dropped at a transmit wakeup, and a hard wakeup error once per run of errors, which is logged once.
 - On Linux xdp, stop no longer waits forever on a queue whose transmit wakeup keeps failing.
 - On Linux xdp, the gateway refresh asks for the known gateway's neighbour entry instead of reading the whole route and neighbour tables.
-- On Linux, the netlink reply parser rejects a reply whose error code is not a valid error number.
+- On Linux xdp, the gateway refresh keeps the known gateway while its neighbour entry resolves, so a change of the default gateway's IP address may need a server restart.
+- On Linux, the netlink reply parser rejects a reply whose error code is `INT_MIN`.
 - On the portable transport, the send worker waits for a full socket to become writable and retries within 1 ms.
 - On the Windows IOCP server, a send release or receive retry refused while its queue is briefly busy is retried, so stop completes once every operation has finished.
 - On the Windows IOCP server, a send length out of range is refused in release builds and counted as `SEND_FAILED`.
 - On the Windows RIO server, stop drains every completion batch in one pass, and a create that fails part way waits only for its posted completions.
+- On the Windows RIO server, a create that fails part way and stops seeing its posted receives complete logs an error and keeps the transport's memory.
 - On the Windows IOCP client, posted I/O is cancelled before its socket is closed.
 - The spin lock guarding the sent-packet history pauses while it spins and yields after a bounded number of attempts.
 - In development builds, each client's network simulator has its own seed, server stop drains the simulator before the transport stops, and taking a pending simulator setting never blocks the send path.
