@@ -843,6 +843,103 @@ static void test_receive_boundaries()
     printf( "test_iocp_transport_receive_boundaries\n" );
 }
 
+// A receive posted while an oversized datagram already waits in the socket:
+// held completions take every posted receive with a small datagram, then
+// oversized ones (a normal 1472-byte UDP payload and the 65507-byte IPv4
+// maximum) queue behind them, so each repost meets one inline. Every repost
+// is accepted, each oversized datagram is counted dropped and too large once,
+// the depth stays exact, the datagrams behind them arrive, and the stop
+// drains pending to exactly zero: no receive is posted twice on one operation.
+
+static void receive_oversize_queued_at_post( int flags )
+{
+    rocketnet_address_t bind = address( "127.0.0.1:0" );
+    rocketnet_server_iocp_t * transport = rocketnet_server_iocp_create( NULL, &bind, 1, ROCKETNET_DEFAULT_MAX_CLIENTS, 0, flags );
+    CHECK( transport );
+    CHECK( rocketnet_server_iocp_pending( transport ) == ROCKETNET_IOCP_RECEIVES_PER_WORKER );
+
+    SOCKET client = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+    CHECK( client != INVALID_SOCKET );
+    int send_buffer = 4 * 1024 * 1024;
+    CHECK( setsockopt( client, SOL_SOCKET, SO_SNDBUF, (const char *) &send_buffer, sizeof( send_buffer ) ) == 0 );
+
+    sockaddr_in to = {};
+    to.sin_family = AF_INET;
+    to.sin_port = htons( bind.port );
+    to.sin_addr.s_addr = htonl( INADDR_LOOPBACK );
+
+    static char oversized[65507];
+    memset( oversized, 0x5A, sizeof( oversized ) );
+    const int sizes[] = { 1472, 65507 };
+    const int per_size = 8;
+    const int num_oversized = per_size * 2;
+    const int num_after = 16;
+
+    rocketnet_server_iocp_test_hold_completions( transport, true );
+    for ( int i = 0; i < ROCKETNET_IOCP_RECEIVES_PER_WORKER; ++i )
+        CHECK( sendto( client, "fill", 4, 0, (sockaddr *) &to, sizeof( to ) ) == 4 );
+    for ( int i = 0; i < num_oversized; ++i )
+    {
+        const int bytes = sizes[i % 2];
+        CHECK( sendto( client, oversized, bytes, 0, (sockaddr *) &to, sizeof( to ) ) == bytes );
+    }
+    for ( int i = 0; i < num_after; ++i )
+        CHECK( sendto( client, "good", 4, 0, (sockaddr *) &to, sizeof( to ) ) == 4 );
+    rocketnet_server_iocp_test_hold_completions( transport, false );
+
+    int fills = 0;
+    int goods = 0;
+    uint64_t counters[ROCKETNET_IOCP_NUM_COUNTERS] = {};
+    const double deadline = rocketnet_platform_time() + 5.0;
+    while ( rocketnet_platform_time() < deadline )
+    {
+        rocketnet_server_iocp_receive_packets( transport );
+
+        rocketnet_server_socket_process_packets_t * batch = rocketnet_server_iocp_process_packets( transport );
+        for ( int i = 0; i < batch->num_packets; ++i )
+        {
+            CHECK( batch->packet_bytes[i] == 4 );
+            if ( memcmp( batch->packet_data[i], "fill", 4 ) == 0 )
+                ++fills;
+            else if ( memcmp( batch->packet_data[i], "good", 4 ) == 0 )
+                ++goods;
+            else
+                CHECK( false );
+        }
+
+        rocketnet_server_iocp_counters( transport, counters );
+        if ( fills == ROCKETNET_IOCP_RECEIVES_PER_WORKER && goods == num_after &&
+             counters[ROCKETNET_IOCP_RECEIVE_DROPPED] >= (uint64_t) num_oversized &&
+             rocketnet_server_iocp_pending( transport ) == ROCKETNET_IOCP_RECEIVES_PER_WORKER )
+            break;
+        rocketnet_platform_sleep( 0.001 );
+    }
+
+    // one more pass of the worker, so a late completion is counted too
+    rocketnet_server_iocp_test_hold_completions( transport, true );
+    rocketnet_server_iocp_test_hold_completions( transport, false );
+    rocketnet_server_iocp_counters( transport, counters );
+    printf( "  flags=%d fills=%d goods=%d dropped=%llu too_large=%llu repost_failed=%llu pending=%d\n", flags, fills, goods,
+            (unsigned long long) counters[ROCKETNET_IOCP_RECEIVE_DROPPED], (unsigned long long) counters[ROCKETNET_IOCP_RECEIVE_TOO_LARGE],
+            (unsigned long long) counters[ROCKETNET_IOCP_RECEIVE_REPOST_FAILED], rocketnet_server_iocp_pending( transport ) );
+
+    CHECK( fills == ROCKETNET_IOCP_RECEIVES_PER_WORKER && goods == num_after );
+    CHECK( counters[ROCKETNET_IOCP_RECEIVE_REPOST_FAILED] == 0 );
+    CHECK( counters[ROCKETNET_IOCP_RECEIVE_DROPPED] == (uint64_t) num_oversized );
+    CHECK( counters[ROCKETNET_IOCP_RECEIVE_TOO_LARGE] == (uint64_t) num_oversized );
+    CHECK( rocketnet_server_iocp_pending( transport ) == ROCKETNET_IOCP_RECEIVES_PER_WORKER );
+    wait_stopped( transport );
+    rn_native_backend_stop_and_destroy( transport, rocketnet_server_iocp_stop, rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy );
+    closesocket( client );
+}
+
+static void test_receive_oversize_queued_at_post()
+{
+    receive_oversize_queued_at_post( ROCKETNET_IOCP_DISABLE_URO );
+    receive_oversize_queued_at_post( 0 );
+    printf( "test_iocp_transport_receive_oversize_queued_at_post\n" );
+}
+
 // ---------------------------------------------------------------------------
 // Fault cases: each failure path of the IOCP and RIO transports, injected
 // through the test-only fault seams (ROCKETNET_DEV)
@@ -2282,6 +2379,7 @@ static const fault_case_t fault_cases[] = {
     { "test_iocp_transport_send_completion_fails", test_iocp_send_completion_fails },
     { "test_iocp_transport_send_post_fails", test_iocp_send_post_fails },
     { "test_iocp_transport_receive_completion_fails", test_iocp_receive_completion_fails },
+    { "test_iocp_transport_receive_oversize_queued_at_post", test_receive_oversize_queued_at_post },
     { "test_iocp_transport_send_queue_full_recovers", test_iocp_send_queue_full_recovers },
     { "test_iocp_transport_destroy_never_hangs", test_iocp_destroy_never_hangs },
     { "test_rio_transport_completion_queue_full", test_rio_completion_queue_full },
