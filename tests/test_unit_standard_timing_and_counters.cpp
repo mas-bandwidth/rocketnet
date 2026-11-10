@@ -15,6 +15,7 @@
 #include "rocketnet_constants.h"
 #include "rocketnet_server_protocol.h"
 #include "rocketnet_client_protocol.h"
+#include "rocketnet_config.h"
 
 #define ROCKETNET_CONFORMANCE_DEFAULTS_ONLY
 #include "rocketnet_server_transport.cpp"
@@ -62,9 +63,13 @@ static int standard_timing_and_counters_generate( const char * id, uint8_t * out
 {
     if ( strcmp( id, "t17.timing-defaults" ) == 0 )
     {
-        static const uint64_t defaults[] = {
+        // the handshake deadline default is the config table's, the one the create path reads
+        struct rocketnet_server_transport_config_t config;
+        rocketnet_server_transport_default_config_current( &config );
+
+        const uint64_t defaults[] = {
             (uint64_t) ROCKETNET_DEFAULT_SEND_RATE,
-            (uint64_t) ROCKETNET_DEFAULT_HANDSHAKE_DEADLINE_SECONDS,
+            (uint64_t) config.handshake_deadline_seconds,
             (uint64_t) ROCKETNET_HALF_OPEN_IDLE_TIMEOUT_SECONDS,
             (uint64_t) ROCKETNET_DEFAULT_COOKIE_LIFETIME_SECONDS,
             (uint64_t) ROCKETNET_DEFAULT_COOKIE_ROTATION_SECONDS,
