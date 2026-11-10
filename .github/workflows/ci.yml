@@ -167,7 +167,7 @@ concurrency:
 #       release (the fleet's runners are Ubuntu 26.04).
 #   Windows: windows / Release legs (a), (b) and (c) whole (per commit,
 #       happy path / windows builds the whole tree under MSVC and runs the
-#       happy path and the unit suite).
+#       happy path, and windows / Release / unit runs the unit suite).
 #   unit-case coverage (every registered unit case runs in some
 #       configuration); the wide-channel unit cases (Linux Debug builds).
 #   fuzz smoke NDEBUG, big endian s390x /
@@ -1211,8 +1211,8 @@ jobs:
     # targets, measured 143s on run 41240496784 (checkout 11s, configure 19s,
     # build 55s, unit suite 38s) and hit the two-minute bound; MSVC's floor
     # leaves no room for a suite. Per commit, happy path / windows builds the
-    # whole tree under MSVC and runs the happy path and the unit suite
-    # (test.exe; the happy path alone measured 106s on the same run).
+    # whole tree under MSVC and runs the happy path (106s on the same run),
+    # and windows / Release / unit builds the test target and runs test.exe.
     if: inputs.full
     timeout-minutes: 7200
     strategy:
@@ -1647,11 +1647,6 @@ jobs:
         shell: bash
         run: *start_unit_functional_timing
 
-      - name: Run the unit suite (Windows)
-        if: runner.os == 'Windows'
-        shell: bash
-        run: ./bin/Release/test.exe
-
       - name: Run happy_path
         shell: bash
         run: |
@@ -1667,6 +1662,53 @@ jobs:
         shell: bash
         env:
           CI_TIMING_ROW: ${{ format('{0}/{1}/{2}', runner.os, github.job, matrix.os) }}
+        run: *enforce_unit_functional_timing
+
+  # THE WINDOWS UNIT SUITE PER COMMIT: test.exe under MSVC. It was a step of
+  # happy path / windows, after that job's whole-tree build, and the two
+  # together ran 1m43 to 2m07 against the two-minute bound. Its own job builds
+  # only the test target, on its own runner, beside happy path / windows.
+  windows-unit:
+    name: windows / Release / unit
+    runs-on: [self-hosted, Windows, X64, rocketnet-windows]
+    timeout-minutes: ${{ inputs.full && 7200 || 2 }}
+    steps:
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: ./.github/actions/ccache
+
+      - name: Check the fleet's build dependencies are present
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          # MSVC comes through CMake's Visual Studio generator; the job PATH carries cmake, python and Git Bash
+          for tool in cmake python git; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Configure (Windows)
+        run: cmake -B build -G "Visual Studio 18 2026" -A x64
+
+      - name: Build the unit suite (Windows)
+        run: cmake --build build --config Release --target test --parallel
+
+      - name: Start combined unit and functional timing
+        shell: bash
+        run: *start_unit_functional_timing
+
+      - name: Run the unit suite (Windows)
+        shell: bash
+        run: ./bin/Release/test.exe
+
+      - name: Enforce combined unit and functional timing
+        shell: bash
+        env:
+          CI_TIMING_ROW: ${{ format('{0}/{1}', runner.os, github.job) }}
         run: *enforce_unit_functional_timing
 
   # THE BACKEND EXAMPLES: the Go and C# backends in examples/backend/ that mint

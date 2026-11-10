@@ -106,7 +106,8 @@ required runs are:
     also runs the `builds` leg's steps), `functional` and `checks`; macOS on
     arm64 (rows named `macos`) Debug `unit` and Release `functional`;
   - `happy path / <os>` (linux,
-    windows; the Windows row is the per-commit MSVC whole-tree build);
+    windows; the Windows row is the per-commit MSVC whole-tree build) and
+    `windows / Release / unit` (the unit suite under MSVC);
   - `asan + ubsan (<leg>)` (`unit suite`, `functional suite`) and
     `tsan (loopback soak)`;
   - `fuzz smoke (libFuzzer, corpus replay)`, `big endian s390x / Debug`,
