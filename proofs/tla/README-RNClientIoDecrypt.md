@@ -26,17 +26,20 @@ the design, and `proofs/tla/COVERAGE.tsv` marks the client-io-decrypt row curren
   record of the buffer it exposed, and `snap` holds the exposed records for
   `ExposedStable`.
 - **The datagrams** (`socket`, `Arrive`). The challenge, once; the server's
-  genuine session sequences, in increasing order; one replayed copy of a sent
-  sequence, which is a duplicate or, once the window has passed it, too old;
-  one forged session datagram with any sequence. Reordering is the replayed
-  copy. A genuine session datagram arrives only after the I/O thread has read
-  the live epoch: the server sends session traffic only after the connection
-  response, which `update` commits after it publishes the keys and the I/O
-  thread sends after the epoch read at the top of its drain.
+  genuine session sequences, in increasing order, each a keep-alive (kind
+  session) or a payload (kind payload); one replayed copy of a sent sequence,
+  which is a duplicate or, once the window has passed it, too old; one forged
+  session datagram with any kind, sequence and size. Reordering is the
+  replayed copy. A genuine session datagram arrives only after the I/O thread
+  has read the live epoch: the server sends session traffic only after the
+  connection response, which `update` commits after it publishes the keys and
+  the I/O thread sends after the epoch read at the top of its drain. A payload
+  can therefore arrive before the keep-alive that connects the client.
 - **The keys** (`epoch`, `ioKeys`, `ioSeen`). `PublishKeys` is `update`
-  consuming the challenge: it stores the epoch live (release) and the session
-  connected, and sets the wake, which stands for the hand-off of the
-  connection response that `update` commits next (RNClientIo's `HandOff`).
+  consuming the challenge: it stores the epoch live (release) and sets the
+  session to sending the connection response, and sets the wake, which stands for the
+  hand-off of the connection response that `update` commits next (RNClientIo's
+  `HandOff`). The first accepted keep-alive moves the session to connected.
   `RetireKeys` is disconnect or destroy, and the integrity limit inside
   `UpdateConsume` does the same: the epoch retired (seq_cst) before
   `update`'s own keys are zeroed, the session ended, and the wake set so a
@@ -45,24 +48,29 @@ the design, and `proofs/tla/COVERAGE.tsv` marks the client-io-decrypt row curren
   `IoTakeKeys` takes the copy on live, `IoDropKeys` zeroes it on retired,
   `IoKeepKeys` is a read that sees no change. It never receives or blocks
   before that read.
-- **The I/O thread's rungs.** `IoCheck` runs the cheap rungs with the replay
-  check on `ioWin` last: a handshake datagram, or any datagram while the
-  thread holds no live copy, passes through with the verdict raw; a sequence
-  `ioWin` refuses gets the verdict replay; anything else is checked.
-  `IoOpen` is the AEAD on a checked record: a genuine datagram opens
-  (opened) and advances `ioWin`, a forged one does not (forged). One datagram
-  is worked at a time: the next `IoReceive`, `IoPublish` and epoch read wait
-  until the last record has a final verdict.
+- **The I/O thread's rungs.** `IoCheck` runs the cheap rungs in the reading
+  order, the replay check on `ioWin` last: a handshake datagram, or any
+  datagram while the thread holds no live copy, passes through with the
+  verdict raw; a short datagram gets wrong size; sequence zero gets zero
+  sequence; a sequence `ioWin` refuses gets the verdict replay; anything else
+  is checked. `IoOpen` is the AEAD on a checked record: a genuine datagram
+  opens (opened) and advances `ioWin`, a forged one does not (forged). One
+  datagram is worked at a time: the next `IoReceive`, `IoPublish` and epoch
+  read wait until the last record has a final verdict.
 - **update's consumption** (`UpdateConsume`), one record in arrival order,
   every verdict counted with today's counter (`nCounted`): an opened record
   passes the state check, `update`'s own replay check on `mainWin` and
-  `rocketnet_replay_advance` on `mainWin`, and its sequence is accepted; a
-  replay record is counted as already received; a forged record runs
-  `rocketnet_client_integrity_failure` in its position while connected, and
-  at the limit retires the keys and ends the session; a raw record is
-  processed as at BASE (a handshake record outside the handshake is wrong
-  state; a session record gets the state check, the replay check on
-  `mainWin` and the AEAD on the main thread).
+  `rocketnet_replay_advance` on `mainWin`, and its sequence is accepted. The
+  state check accepts a keep-alive from sending the response on and a payload
+  only once connected, so a payload opened before connected is refused without
+  touching `mainWin`; a replay record is counted as already received; a
+  zero-sequence or wrong-size record is refused and counted; a forged record
+  runs `rocketnet_client_integrity_failure` in its position while the state
+  accepts its type, and at the limit retires the keys and ends the session; a
+  raw record is processed as at BASE (a handshake record outside the handshake
+  is wrong state; a session record gets the state check, the size and
+  zero-sequence rungs, the replay check on `mainWin` and the AEAD on the main
+  thread).
 - **The fill threads** (`FillAckBuild`) read `mainWin`, as
   `rocketnet_ack_block_build` does under the phase contract; `ackMark` is the
   mark read.
@@ -83,8 +91,8 @@ the design, and `proofs/tla/COVERAGE.tsv` marks the client-io-decrypt row curren
   (`protocol_id`, `connection_salt`, `packet_filter`) travel with it.
 - Sequence reconstruction is exact: a record holds the 64-bit sequence, so
   `update`'s second reconstruction always agrees with the I/O thread's.
-- The cheap rungs other than the replay check (wire floor, zero sequence) and
-  the ack block read and everything after the open are not modelled.
+- The wire floor is one short flag and the zero sequence is the sequence
+  field; the ack block read and everything after the open are not modelled.
 - The counters are one count of verdicts counted; integrity failures are
   `integrity`. Handshake integrity failures are not modelled (the challenge is
   genuine).
@@ -104,11 +112,14 @@ the design, and `proofs/tla/COVERAGE.tsv` marks the client-io-decrypt row curren
   construction (a record is checked only while the copy is held, and the copy
   is dropped only between datagrams), so the NoRetire witness fails on the
   second half.
-- **`MirrorAgrees`**: while the session has not ended, `mainWin` advanced by
-  the sequences the I/O thread opened and `update` has not consumed yet, in
-  order, equals `ioWin`. The two windows are one function of one sequence
-  stream, `update`'s lagging by the unconsumed records; so `update`'s replay
-  check never refuses an opened record while connected.
+- **`MirrorAgrees`**: while the session has not ended, `ioWin` contains
+  `mainWin` advanced by the sequences the I/O thread opened and `update` has
+  not consumed yet, in order. Containment means every sequence the latter
+  refuses as already received, `ioWin` refuses too. The two windows are one
+  function of one sequence stream, `update`'s lagging by the unconsumed
+  records. A payload the I/O thread opened while `update` was still sending
+  the connection response is refused by `update`'s state check and never
+  advances `mainWin`, so `ioWin` may stay ahead; equality would be false.
 - **`AcceptedOnce`**: `update` accepts a sequence at most once, and both
   windows refuse every accepted sequence (`ReceivedIsRefused` for each).
 - **`SingleWriter`**: `mainWin`, the counters and the session change only in
@@ -130,7 +141,9 @@ RNClientIo; here it does, which makes this fairness stronger than RNClientIo's. 
 which `Next` sets after the step.
 
 - **`GenuineEventuallyAccepted`**: every genuine session sequence the server
-  sends is accepted by `update`, unless the session ends first.
+  sends is accepted by `update`, unless `update` refused it because it arrived
+  as a payload before the client connected (`earlyRefused`), or the session
+  ends first.
 - **`RetiredEventuallyZeroed`**: after the retire the I/O thread eventually
   reads retired and holds no copy.
 
@@ -168,20 +181,22 @@ the copy of sequence 1 is a duplicate after sequence 1 has opened and too old
 after sequence 2 has. An integrity limit of 1 makes the forged datagram end
 the session.
 
-The committed run generates 268,589 states and finds 113,876 distinct states,
+The committed run generates 1,178,607 states and finds 495,946 distinct states,
 depth 42, with no error: the eight invariants hold, and
 `GenuineEventuallyAccepted` and `RetiredEventuallyZeroed` hold under the
-fairness above (30.6 s under `tlacheck run`, two workers).
+fairness above (79 s on the development machine, two workers).
 
 Reachability, checked by scratch runs (not committed) of the committed
 constants under `Spec` with one negated predicate each, every one violated,
 so each is a path the committed run explores: a too-old replay refused by
-`IoCheck` (depth 23), a duplicate refused by `IoCheck` (17), the integrity
-limit reached (12), a raw forged session record opened on the main thread
-(12), sequences 1 and 2 both accepted (23), the copy dropped after retired
-(11), `mainWin` behind `ioWin` with an opened record unconsumed (14) and with
-two (18), an open on the I/O thread after `RetireKeys` and before the I/O
-thread reads retired (15), and a fill thread reading a nonzero mark (19). A
+`IoCheck`, a duplicate refused by `IoCheck`, the integrity limit reached, a
+raw forged session record opened on the main thread, sequences 1 and 2 both
+accepted, the copy dropped after retired, `mainWin` behind `ioWin` with an
+opened record unconsumed, an open on the I/O thread after `RetireKeys` and
+before the I/O thread reads retired, a fill thread reading a nonzero mark, a
+zero-sequence record refused by `IoCheck`, a wrong-size record refused by
+`IoCheck`, and a payload opened on the I/O thread while the session is still
+sending the connection response and refused by `update` (`earlyRefused`). A
 raw genuine session record while connected is not reachable (the scratch run
 of that negation passes): the arrival rule above is what keeps genuine
 traffic off the main thread's AEAD.
@@ -201,7 +216,7 @@ invariant, so on no earlier one in the configuration's list.
 ### `MCRNClientIoDecryptBrokenOpenBeforeReplay.cfg`
 
 `OpenBeforeReplay = TRUE`: `IoCheck` skips the replay check and `IoOpen`
-runs it after the AEAD. TLC exits 12: **`Invariant CheapRefusalsFirst is violated`**, at depth 18 (9,772 states generated, 4,484 distinct).
+runs it after the AEAD. TLC exits 12: **`Invariant CheapRefusalsFirst is violated`** (32,214 states generated, 16,720 distinct).
 
 - **The trace:**
   1. The challenge arrives, passes the I/O thread raw and is published;
@@ -227,8 +242,8 @@ runs it after the AEAD. TLC exits 12: **`Invariant CheapRefusalsFirst is violate
 ### `MCRNClientIoDecryptBrokenSharedWindow.cfg`
 
 `SharedWindow = TRUE`: the I/O thread's open also advances `replay_session`
-(`mainWin`). TLC exits 12: **`Invariant SingleWriter is violated`**, at depth
-14 (1,518 states generated, 908 distinct).
+(`mainWin`). TLC exits 12: **`Invariant SingleWriter is violated`** (5,189
+states generated, 3,524 distinct).
 
 - **The trace:**
   1. The challenge, `PublishKeys`, and the I/O thread takes its copy, as
@@ -248,11 +263,12 @@ runs it after the AEAD. TLC exits 12: **`Invariant CheapRefusalsFirst is violate
 ### `MCRNClientIoDecryptBrokenNoRetire.cfg`
 
 `NoRetire = TRUE`: `IoDropKeys` reads retired and keeps the copy. TLC exits
-12: **`Invariant NoOpenWithoutKeys is violated`**, at depth 13 (805 states
-generated, 480 distinct).
+12: **`Invariant NoOpenWithoutKeys is violated`** (17,958 states generated,
+9,249 distinct).
 
 - **The trace:**
-  1. The challenge, `PublishKeys`, and the I/O thread takes its copy.
+  1. The challenge, `PublishKeys`, the I/O thread takes its copy, and a
+     keep-alive connects the client.
   2. `update` disconnects (`RetireKeys`): the epoch retired, the session
      ended, the wake set.
   3. The I/O thread wakes, reads retired at the top of the drain, and keeps
@@ -269,8 +285,8 @@ generated, 480 distinct).
 ### `MCRNClientIoDecryptBrokenCountOnIo.cfg`
 
 `CountOnIo = TRUE`: the I/O thread counts its own replay refusal. TLC exits
-12: **`Invariant SingleWriter is violated`**, at depth 17 (6,665 states
-generated, 3,090 distinct).
+12: **`Invariant SingleWriter is violated`** (3,377 states generated, 2,179
+distinct).
 
 - **The trace:**
   1. The challenge, `PublishKeys`, and the I/O thread takes its copy.
