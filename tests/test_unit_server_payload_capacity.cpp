@@ -7,7 +7,9 @@
 // not fit the caller's cursor whole, before publishing any payload metadata.
 // A fitting sealed payload is delivered byte-exact from the open buffer with
 // its live slot and connection generation, and its deferred delivery ACK is
-// accepted only when the caller explicitly accepts it.
+// accepted only when the caller explicitly accepts it. The fitting payload is
+// the full receive payload bound, so the live path proves the per-update
+// receive payload capacity at runtime.
 
 #include "test_unit_registry.h"
 
@@ -38,8 +40,8 @@ static void check_counter_delta( const struct rocketnet_counters_t * before,
 
 static int seal_payload( uint8_t * packet, uint64_t sequence, const uint8_t * data, int data_bytes )
 {
-    uint8_t plaintext[ROCKETNET_ACK_BLOCK_MIN_BYTES + 64];
-    rocketnet_unit_check( data_bytes <= 64 );
+    uint8_t plaintext[ROCKETNET_ACK_BLOCK_MIN_BYTES + ROCKETNET_RECEIVE_PAYLOAD_BYTES];
+    rocketnet_unit_check( data_bytes <= ROCKETNET_RECEIVE_PAYLOAD_BYTES );
 
     memset( plaintext, 0, ROCKETNET_ACK_BLOCK_MIN_BYTES );
     memcpy( plaintext + ROCKETNET_ACK_BLOCK_MIN_BYTES, data, (size_t) data_bytes );
@@ -85,40 +87,9 @@ static void test_server_payload_capacity_uses_live_session_path()
     mapping->control->client_index = client_index;
     mapping->control->established = 1;
 
-    const uint8_t expected[32] = {
-        0x01,
-        0x23,
-        0x45,
-        0x67,
-        0x89,
-        0xab,
-        0xcd,
-        0xef,
-        0x10,
-        0x32,
-        0x54,
-        0x76,
-        0x98,
-        0xba,
-        0xdc,
-        0xfe,
-        0xff,
-        0xee,
-        0xdd,
-        0xcc,
-        0xbb,
-        0xaa,
-        0x99,
-        0x88,
-        0x77,
-        0x66,
-        0x55,
-        0x44,
-        0x33,
-        0x22,
-        0x11,
-        0x00,
-    };
+    uint8_t expected[ROCKETNET_RECEIVE_PAYLOAD_BYTES];
+    for ( int i = 0; i < ROCKETNET_RECEIVE_PAYLOAD_BYTES; i++ )
+        expected[i] = (uint8_t) ( i * 37 + 11 );
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
     uint8_t opened[ROCKETNET_RECEIVE_CEILING];
     uint8_t response[ROCKETNET_RECEIVE_CEILING];

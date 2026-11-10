@@ -7275,6 +7275,9 @@ void rocketnet_test_server_keyless_config_has_no_keys()
     rocketnet_check( memcmp( config.server_public_key, zero, 32 ) != 0 );
 }
 
+static_assert( ROCKETNET_RECEIVE_PAYLOAD_BYTES == ROCKETNET_MAX_PACKET_PAYLOAD_BYTES,
+               "the receive payload ring's slot width is the sender's payload capacity" );
+
 void rocketnet_test_transport_payload_capacity()
 {
     // The capacity invariant that was violated, stated where it will be
@@ -7287,9 +7290,23 @@ void rocketnet_test_transport_payload_capacity()
     // as a replay. Silent, uncounted, unrecoverable, and only on the
     // production transport. One per-update receive bound sizes the process
     // batch and the payload batch. Each stored payload is a full received
-    // payload: the slot width is the sender's payload capacity.
+    // payload: the slot width is the sender's payload capacity. The
+    // constant relation is a static_assert; a created server reports the
+    // same capacity at runtime.
 
-    rocketnet_check( ROCKETNET_RECEIVE_PAYLOAD_BYTES == ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
+    struct rocketnet_server_transport_config_t config;
+    rocketnet_server_transport_dev_config( &config );
+    config.max_clients = 1;
+    snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
+    config.loopback_hub = rocketnet_test_loopback_hub();
+
+    struct rocketnet_server_transport_t * server =
+        rocketnet_server_transport_create_sized( NULL, "127.0.0.1:0", &config, sizeof( config ) );
+    rocketnet_check( server != NULL );
+    rocketnet_check( rocketnet_server_transport_max_payload_bytes( server ) == ROCKETNET_RECEIVE_PAYLOAD_BYTES );
+
+    rocketnet_server_transport_stop( server );
+    rocketnet_server_transport_destroy( server );
 }
 
 void rocketnet_test_client_rtt_handshake()
