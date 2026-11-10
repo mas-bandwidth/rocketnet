@@ -155,6 +155,7 @@ which `Next` sets after the step.
 On a Linux bench, from `proofs/tla/`:
 
 ```sh
+java -XX:+UseParallelGC -cp /path/to/tla2tools.jar tlc2.TLC -workers 2 -cleanup -config MCRNClientIoDecryptReduced.cfg MCRNClientIoDecrypt
 java -XX:+UseParallelGC -cp /path/to/tla2tools.jar tlc2.TLC -workers 2 -cleanup -config MCRNClientIoDecrypt.cfg MCRNClientIoDecrypt
 java -XX:+UseParallelGC -cp /path/to/tla2tools.jar tlc2.TLC -workers 1 -cleanup -config MCRNClientIoDecryptBrokenOpenBeforeReplay.cfg MCRNClientIoDecrypt
 java -XX:+UseParallelGC -cp /path/to/tla2tools.jar tlc2.TLC -workers 1 -cleanup -config MCRNClientIoDecryptBrokenSharedWindow.cfg MCRNClientIoDecrypt
@@ -163,12 +164,12 @@ java -XX:+UseParallelGC -cp /path/to/tla2tools.jar tlc2.TLC -workers 1 -cleanup 
 ```
 
 The records come from `tlacheck run` as `proofs/tla/README.md` describes (group
-`rnclientiodecrypt`, five cases, one shard each). The small instance:
+`rnclientiodecrypt`, six cases, one shard each). The small instance:
 
 | Constant | Value |
 |---|---|
 | `BufferCap` | 2 |
-| `MaxDatagrams` | 4 |
+| `MaxDatagrams` | 4 (3 in `MCRNClientIoDecryptReduced.cfg`) |
 | `MaxSeq` | 3 |
 | `W` | 1 |
 | `MaxReplays` | 1 |
@@ -184,10 +185,21 @@ the copy of sequence 1 is a duplicate after sequence 1 has opened and too old
 after sequence 2 has. An integrity limit of 1 makes the forged datagram end
 the session.
 
-The committed run generates 1,178,607 states and finds 495,946 distinct states,
-depth 42, with no error: the eight invariants hold, and
-`GenuineEventuallyAccepted` and `RetiredEventuallyZeroed` hold under the
-fairness above (79 s on the development machine, two workers).
+The full instance (`MCRNClientIoDecrypt.cfg`) generates 2,892,828 states and
+finds 1,170,702 distinct states, depth 42, with no error: the eight invariants
+hold, and `GenuineEventuallyAccepted` and `RetiredEventuallyZeroed` hold under
+the fairness above (a run with no time limit, four workers, on a Linux bench).
+That is over the 110-second case budget at two workers, so it is declared bench
+debt in `CASES.tsv` (`full-instance-over-budget`), its record is the timeout
+(exit 124), and `MCRNClientIoDecryptReduced.cfg` is the required control: the
+same rules and properties with three datagrams in a behaviour, 200,546 states
+generated, 88,959 distinct, depth 34, no error. In the reduced instance every
+path of the list below is reachable except the too-old replay, which needs
+sequences 1 and 2 and a copy of 1 (scratch runs of the reduced constants, one
+negated predicate each: the duplicate, the integrity limit, sequences 1 and 2
+both accepted, the copy dropped after retired, `earlyRefused`, zero sequence,
+wrong size and the retire before connected are violated; the too-old negation
+passes).
 
 Reachability, checked by scratch runs (not committed) of the committed
 constants under `Spec` with one negated predicate each, every one violated,
@@ -329,6 +341,7 @@ distinct).
 
 ## Runs
 
-The five rows are in `proofs/tla/RUNS.tsv` from `tlacheck run` on a Linux bench
-(TLC 2.19, the pinned JAR): the control passes with exit 0, and each witness
+The six rows are in `proofs/tla/RUNS.tsv` from `tlacheck run` on a Linux bench
+(TLC 2.19, the pinned JAR): the reduced control passes with exit 0, the full
+instance is the declared bench-debt timeout (exit 124), and each witness
 exits 12 naming its declared invariant.
