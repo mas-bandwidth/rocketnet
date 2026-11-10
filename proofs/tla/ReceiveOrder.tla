@@ -19,9 +19,9 @@
 (* CheapRefusalsFirst: a refusal at a rung above the signature spends no   *)
 (* cryptography at all, and the slot refusal, which must wait for a        *)
 (* verified token, spends no keypair work.  The committed instance holds   *)
-(* it; the witnesses (slots after keypair, admitted after verify, version  *)
-(* not first, and the token claim removed) break it or the one-mapping     *)
-(* rule, each replayed against the code by hand in README-ReceiveOrder.md. *)
+(* it; the witnesses (slots after keypair, version not first, and the    *)
+(* token claim removed) break it or the one-mapping rule, each replayed    *)
+(* against the code by hand in README-ReceiveOrder.md.                     *)
 (*                                                                         *)
 (* The claim is split in two.  ClaimCheck, the claim rung, is read-only:   *)
 (* it refuses a second address while another holds the token's claim.      *)
@@ -46,21 +46,20 @@
 EXTENDS Integers, FiniteSets
 
 CONSTANTS PosVersion, PosTimestamps, PosCompares, PosCookie, PosUsed,
-          PosAdmitted, PosRestart, PosSignature, PosSeal, PosSlots,
-          PosKeypair
+          PosRestart, PosSignature, PosSeal, PosSlots, PosKeypair
 
 Rungs == {"version", "timestamps", "compares", "cookie", "used",
-          "verifybudget", "claim", "capacity", "claimfull", "admitted",
+          "verifybudget", "claim", "capacity", "claimfull",
           "restart", "workbudget", "signature", "seal", "slots", "keypair"}
 
 CryptoRungs == {"signature", "seal", "keypair"}
 
 AboveVerify == {"version", "timestamps", "compares", "cookie", "used",
                 "verifybudget", "claim", "capacity", "claimfull",
-                "admitted", "restart", "workbudget"}
+                "restart", "workbudget"}
 
 Faults == {"none", "version", "expired", "full", "mapfull", "claimed",
-           "budget", "claimfull", "admitted", "workspent", "signature", "seal"}
+           "budget", "claimfull", "workspent", "signature", "seal"}
 
 \* the handshake work budget's rung: immediately before the signature, as
 \* the code charges it (sdk/rocketnet_server_protocol.cpp, the check under
@@ -84,7 +83,6 @@ Pos(r) ==
       [] r = "claim"     -> 10 * PosUsed + 2
       [] r = "capacity"  -> 10 * PosUsed + 5
       [] r = "claimfull" -> 10 * PosUsed + 6
-      [] r = "admitted"  -> 10 * PosAdmitted
       [] r = "restart"   -> 10 * PosRestart
       [] r = "workbudget" -> IF WorkBudgetAtVerify THEN 10 * PosSignature - 1
                                                    ELSE 10 * PosCookie + 1
@@ -147,7 +145,6 @@ Refuses(r, f) ==
     \/ (r = "capacity" /\ (f = "mapfull" \/ (MapFull /\ maps[reqAddr] = None)))
     \/ (r = "claimfull" /\ f = "claimfull")
     \/ (r = "slots" /\ f = "full")
-    \/ (r = "admitted" /\ f = "admitted")
     \/ (r = "workbudget" /\ f = "workspent")
     \/ (r = "signature" /\ f = "signature")
     \/ (r = "seal" /\ f = "seal")

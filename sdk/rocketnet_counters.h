@@ -15,20 +15,10 @@
 // request past it is dropped before any asymmetric work and counted in
 // CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED.
 
-// returned by rocketnet_server_protocol_process_connection_request when the
-// handshake budget is exhausted: the next value after
-// ROCKETNET_SERVER_PROCESS_ACCEPTED (5). Declared here, in the same header as
-// the drop counter it causes, so the test reads the code it asserts from the
-// same header that returns it.
-/** @brief Status returned when the per-update handshake work budget is exhausted. */
-#define ROCKETNET_SERVER_PROCESS_BUDGET_EXCEEDED        6
-
 // counters, per the standard's observability section: one counter per
 // distinct reason a packet is rejected, arrival counted separately from
 // outcome, monotonic and never reset. Names are the standard's; indices are
-// this implementation's. Before the 1.0 release, a retired counter is removed
-// and the rest are renumbered; from the 1.0 release on, the indices are
-// append-only and never renumbered.
+// this implementation's. The indices are append-only and never renumbered.
 //
 // The set grows with the code that counts: a counter with no code path is a
 // dead counter, so entries land here in the same change as their first user.

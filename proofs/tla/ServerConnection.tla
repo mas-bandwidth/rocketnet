@@ -898,13 +898,19 @@ BothFamiliesConnect ==
      /\ ConfiguredFamilies = {"ipv4", "ipv6"})
       => (\A c \in Clients : <>(cstate[c] = 4))
 
+\* a half-open mapping is established or dies, even while its client keeps
+\* refreshing its idle clock (a response from a client id already connected
+\* elsewhere is ignored but refreshes it): the handshake deadline is fixed at
+\* creation and never refreshed
+HalfOpenMappingDies ==
+    \A a \in Addrs : (smap[a].live /\ ~smap[a].est) ~> (~smap[a].live \/ smap[a].est)
+
 \* neither side is left waiting for a packet nobody will send again: a
 \* half-open mapping is established or dies, and an unacknowledged slot is
 \* acknowledged or released
 ServerNotStranded ==
-    \A a \in Addrs :
-      /\ (smap[a].live /\ ~smap[a].est) ~> (~smap[a].live \/ smap[a].est)
-      /\ (smap[a].est /\ ~smap[a].acked) ~> (~smap[a].est \/ smap[a].acked)
+    /\ HalfOpenMappingDies
+    /\ \A a \in Addrs : (smap[a].est /\ ~smap[a].acked) ~> (~smap[a].est \/ smap[a].acked)
 
 \* a timed-out slot is freed: a slot whose client is gone (no client holds
 \* its keys in a session state, so nothing will ever refresh it) is

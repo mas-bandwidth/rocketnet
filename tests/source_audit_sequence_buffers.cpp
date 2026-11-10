@@ -6,7 +6,8 @@
 // The owned storage manifest in docs/SEQUENCE-BUFFERS.md against the source.
 // Every row names the family whose links were removed and the symbol that
 // replaced them; this case reads each row's file and requires that symbol in
-// its code (comments and literals blanked), requires the fourteen SDK
+// its code (comments and literals blanked) and every cited line to hold its
+// symbol, requires the fourteen SDK
 // families and the four suite, functional and soak rows, and fails on every
 // row still marked residual. Every external ABI traversal row must name a
 // file holding its function, its link field and its release call. The
@@ -188,6 +189,78 @@ static std::string sequence_audit_path( const std::string & cell )
     return std::string();
 }
 
+// every "`symbol` path:N" and "`symbol` :N" (the path last named) in a cell
+// must name a line whose code holds that symbol; returns the mismatches
+static int sequence_audit_check_lines( const std::string & family, const std::string & cell )
+{
+    static const char * const roots[] = { "sdk/", "tests/", "examples/", "tools/" };
+    int problems = 0;
+    std::string path;
+    size_t open = cell.find( '`' );
+    while ( open != std::string::npos )
+    {
+        const size_t close = cell.find( '`', open + 1 );
+        if ( close == std::string::npos )
+            break;
+        const std::string symbol = cell.substr( open + 1, close - open - 1 );
+        size_t at = close + 1;
+        while ( at < cell.size() && cell[at] == ' ' )
+            at++;
+        size_t colon = std::string::npos;
+        if ( at < cell.size() && cell[at] == ':' )
+        {
+            colon = at;
+        }
+        else
+        {
+            for ( size_t r = 0; r < sizeof( roots ) / sizeof( roots[0] ); r++ )
+            {
+                if ( cell.compare( at, strlen( roots[r] ), roots[r] ) != 0 )
+                    continue;
+                size_t end = at;
+                while ( end < cell.size() && cell[end] != ':' && cell[end] != ' ' )
+                    end++;
+                path = cell.substr( at, end - at );
+                if ( end < cell.size() && cell[end] == ':' )
+                    colon = end;
+                break;
+            }
+        }
+        int line = 0;
+        for ( size_t d = colon == std::string::npos ? cell.size() : colon + 1; d < cell.size() && cell[d] >= '0' && cell[d] <= '9'; d++ )
+            line = line * 10 + ( cell[d] - '0' );
+        if ( line > 0 )
+        {
+            std::string source;
+            if ( path.empty() || !sequence_audit_read( path, source ) )
+            {
+                printf( "%s: %s cites %s :%d in no readable file\n", sequence_audit_case, family.c_str(), symbol.c_str(), line );
+                problems++;
+            }
+            else
+            {
+                const std::string code = sequence_audit_code( source );
+                size_t start = 0;
+                for ( int n = 1; n < line && start != std::string::npos; n++ )
+                {
+                    start = code.find( '\n', start );
+                    if ( start != std::string::npos )
+                        start++;
+                }
+                const size_t stop = start == std::string::npos ? start : code.find( '\n', start );
+                const std::string text = start == std::string::npos ? std::string() : code.substr( start, stop == std::string::npos ? std::string::npos : stop - start );
+                if ( !sequence_audit_has_token( text, symbol ) )
+                {
+                    printf( "%s: %s cites %s at %s:%d, but that line's code does not hold it\n", sequence_audit_case, family.c_str(), symbol.c_str(), path.c_str(), line );
+                    problems++;
+                }
+            }
+        }
+        open = cell.find( '`', close + 1 );
+    }
+    return problems;
+}
+
 static void test_sequence_buffers_manifest_matches_source()
 {
     std::string doc;
@@ -261,6 +334,7 @@ static void test_sequence_buffers_manifest_matches_source()
             printf( "%s: %s replacement %s is not in the code of %s\n", sequence_audit_case, family.c_str(), symbol.c_str(), path.c_str() );
             problems++;
         }
+        problems += sequence_audit_check_lines( family, row[3] );
     }
 
     if ( sdk_rows != 14 )
