@@ -3,15 +3,13 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// The XDP receive handoff's swap-on-request rule
-// (rocketnet_server_socket_linux.cpp): main's non-blocking try-acquire can miss
-// the receive mutex while the worker is in a heavy pass. Main raises a request
-// and returns; the worker completes the bank swap at its pass boundary, so the
-// packets reach main's next view without waiting another update. The fixture
-// also forces service between main's exhaustion check and bank clear, and
-// verifies that a partly consumed bank stays with main. It drives the real
-// receive call with fake staging buffers: no socket, kernel object, thread or
-// clock is involved.
+// The XDP receive handoff (rocketnet_server_socket_linux.cpp,
+// proofs/tla/RNXdpReceiveRing.tla): only main swaps receive banks, with a
+// non-blocking try-acquire. A try that misses the worker's hold takes nothing
+// in that call and is retried on the next, whose view then holds every packet
+// staged before it. The fixture drives the real receive call with fake
+// staging buffers and holds the receive mutex itself where the worker would:
+// no socket, kernel object or thread is involved.
 
 #include "test_unit_registry.h"
 
@@ -21,13 +19,13 @@
 
 // the fixture is in rocketnet_server_socket_linux.cpp, beside the existing
 // native staging cases (test_xdp calls those without kernel resources too)
-bool rocketnet_server_socket_test_receive_swap_on_request();
+bool rocketnet_server_socket_test_receive_handoff();
 
-static void test_xdp_transport_receive_swap_on_request_hands_over_packets()
+static void test_xdp_transport_receive_missed_swap_is_retried_next_call()
 {
-    rocketnet_unit_check( rocketnet_server_socket_test_receive_swap_on_request() );
+    rocketnet_unit_check( rocketnet_server_socket_test_receive_handoff() );
 }
 
-REGISTER_UNIT_TEST( test_xdp_transport_receive_swap_on_request_hands_over_packets );
+REGISTER_UNIT_TEST( test_xdp_transport_receive_missed_swap_is_retried_next_call );
 
 #endif // #if defined( __linux__ ) && ROCKETNET_XDP && ROCKETNET_DEV

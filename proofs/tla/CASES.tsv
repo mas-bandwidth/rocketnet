@@ -246,6 +246,15 @@ MCRNXdpReceiveRing.cfg	MCRNXdpReceiveRing.tla	pass	-	check	rnxdpreceivering	requ
 MCRNXdpReceiveRingBrokenFillOfTheFrames.cfg	MCRNXdpReceiveRing.tla	invariant	FillNeverEmptyWhileFramesFree	check	rnxdpreceivering	required	-
 MCRNXdpReceiveRingBrokenRefusedRefilled.cfg	MCRNXdpReceiveRing.tla	invariant	FillHoldsOnlyReceiveFrames	check	rnxdpreceivering	required	-
 MCRNXdpReceiveRingBrokenDrainStale.cfg	MCRNXdpReceiveRing.tla	invariant	StagedBeforeClaimInView	check	rnxdpreceivering	required	-
+MCRNXdpReceiveRingBrokenSwapInCall.cfg	MCRNXdpReceiveRing.tla	invariant	ViewStable	check	rnxdpreceivering	required	-
+MCRNXdpReceiveRingBrokenDoubleSwap.cfg	MCRNXdpReceiveRing.tla	invariant	StagedBeforeClaimInView	check	rnxdpreceivering	required	-
+MCRNXdpReceiveRingBrokenSwapUnread.cfg	MCRNXdpReceiveRing.tla	invariant	StagedBeforeClaimInView	check	rnxdpreceivering	required	-
+MCRNXdpReceiveRingBrokenKeepCursor.cfg	MCRNXdpReceiveRing.tla	invariant	ConsumedInOrder	check	rnxdpreceivering	required	-
+MCRNXdpReceiveRingBrokenMissNoRetry.cfg	MCRNXdpReceiveRing.tla	temporal	StagedEventuallyConsumed	ignore-terminal	rnxdpreceivering	required	-
+MCRNXdpReceiveRingBrokenMissDropsBank.cfg	MCRNXdpReceiveRing.tla	invariant	BankOneOwner	check	rnxdpreceivering	required	-
+MCRNXdpReceiveRingBrokenStaleBank.cfg	MCRNXdpReceiveRing.tla	invariant	HeldBankStable	check	rnxdpreceivering	required	-
+MCRNXdpReceiveRingBrokenStaleRoom.cfg	MCRNXdpReceiveRing.tla	temporal	ReceiveNeverStalls	check	rnxdpreceivering	required	-
+MCRNXdpReceiveRingBrokenSpareKept.cfg	MCRNXdpReceiveRing.tla	invariant	BankOneOwner	check	rnxdpreceivering	required	-
 MCRNRioDriver.cfg	MCRNRioDriver.tla	pass	-	check	rnriodriver	required	-
 MCRNRioDriverBrokenSwitchWithoutDrain.cfg	MCRNRioDriver.tla	invariant	NoReserveIntoPostedPhase	check	rnriodriver	required	-
 MCRNRioDriverBrokenFreeBeforeDrain.cfg	MCRNRioDriver.tla	invariant	FreedOnlyWhenDrained	check	rnriodriver	required	-

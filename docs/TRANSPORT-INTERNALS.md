@@ -319,18 +319,13 @@ still defer a staged packet to the next call: main still holds a retained
 tail from a budget-capped call (it swaps only once that bank is consumed,
 because the current view points into it), or main's try-acquire finds the
 worker holding the mutex (main never waits on the worker). On GSO the
-`recvmmsg` calls leave the mutex free between batches. On XDP a pass under
-heavy load appends batch after batch, so main can still miss a queue; it then
-sets that queue's lock-free swap-request flag and moves on. At the end of the
-pass, before starting the next receive batch, the worker sees the flag, takes
-the receive mutex, and swaps the filled bank for main's exhausted one (or for
-a spare on main's first claim). Only a completed swap clears the flag, and a
-failed try leaves it for the next pass. While the flag is set, main skips that
-queue before reading the held bank or cursor: the worker may be publishing a
-new held bank under the receive mutex. The worker clears the flag after the
-swap, so main's next update sees the accumulated packets without waiting
-another full update. Main requests a swap only for an exhausted or absent held
-bank; a partly consumed view remains main's until it is drained.
+`recvmmsg` calls leave the mutex free between batches; an XDP pass under
+heavy load appends batch after batch, so there main can miss a queue for
+an update. A miss takes nothing from that queue in that call and changes no
+ownership: main keeps its emptied bank and retries the swap on its next call,
+whose view then holds everything staged up to that call
+(`RNXdpReceiveRing.DrainMiss`). Only main swaps receive banks, on both
+transports.
 
 ## Creation and shutdown
 
