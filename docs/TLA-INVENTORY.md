@@ -12,9 +12,11 @@ sources); and `tools/check_tla_coverage.py` validates module, action, symbol
 and citation coverage in `proofs/tla/COVERAGE.tsv`.
 
 This is a navigation inventory, not a claim that every model matches every
-current implementation detail. In particular, `RNOutgoingBuild` describes the
-earlier one-message-per-frame design; its recorded results do not qualify the
-current [unreliable aggregation path](OUTGOING-BUILD.md#evidence-and-scope).
+current implementation detail. `RNOutgoingBuild` models the shipped packed
+design of the [unreliable aggregation path](OUTGOING-BUILD.md#evidence-and-scope)
+(records appended to one open frame per connection); its six cases were run on
+2026-10-24 (`proofs/tla/RUNS.tsv`), and its abstractions from the code are
+listed in `proofs/tla/README-RNOutgoingBuild.md`.
 `RNMessageViews` models internal view ownership; the public receive API has no
 release call. Check each model's abstraction and recorded inputs at the source
 revision under review.
@@ -51,17 +53,24 @@ revision under review.
 | wire sequence reconstruction | `AckBlockWrap`, `RNReconstructLayout` | the three-candidate arithmetic chooses the nearest candidate, the larger on a tie |
 | transport bank queues | `RNPortableRx`, `RNPortableTx`, `RNGsoHandoff`, `RNGsoRecvFill`, `RNBufferHandoff`, `RNRioWorker`, `RNClientIocp`, `RNBankFifoLayout`, `RNMsgxPause` | every bank in exactly one place read through the free and ready arrays, the ready ring in publish order, no position outside an array, for FIFO and stack free queues, both initializers and the iocp client's ring of num_receives |
 | RIO send slots | `RNRioDriver`, `RNRioWorker`, `RNRioSendSlotLayout` | a reservation returns only a free slot at the counter's own width, the send_ready ring the handed phases in order |
-| IOCP server queues and send leases | `RNIocpRefQueue`, `RNIocpRetryStop`, `RNIocpRunRing`, `RNIocpSendLease` | bounded MPMC reference queue, stop-ticketed receive retry queue, USO run-ticket ring and generation-tagged send operation leases |
+| IOCP server queues and send leases | `RNIocpRefQueue`, `RNIocpRetryStop`, `RNIocpRunRing`, `RNIocpSendLease` | bounded MPMC reference queue with a push a stalled pop refuses kept and retried, stop-ticketed receive retry queue, USO run-ticket ring and generation-tagged send operation leases |
 | client I/O compaction | `RNClientIoDecrypt`, `RNClientIoCompactLayout` | every record names the slot holding its datagram after the in-place compaction, records dense from slot 0 |
 | kernel replay pending buffer | `RNXdpReplay`, `RNXdpReplayMarksLayout` | no write past the buffer, the arrays' prefixes exactly the pending forgets and marks in order across each in-place compaction, the kept prefix naming each key once |
 | reply MAC table and XDP rings | `RNXdpReplay`, `RNXdpReplyMacsLayout`, `RNXdpGatewayRefresh`, `RNXdpReceiveRing` | every lookup returns the address's learned MAC, else its answered one, one slot per address within the probe window with no empty slot before it, evictions of the oldest entry only, bounded gateway refresh and AF_XDP receive frame ownership |
-| deferred disconnect bursts | `ServerSession`, `RNDisconnectBurstRing`, `ServerStopSpread` | no waiting burst overwritten, seals only for waiting bursts, one packet per waiting burst per pass, each burst leaving with exactly its packets sealed |
+| deferred disconnect bursts | `ServerSession`, `RNDisconnectBurstRing`, `ServerStopSpread` | no waiting burst overwritten, seals only for waiting bursts, one packet per still-waiting burst per pass when a burst is abandoned and a complete entry is passed over, sealed counts of bursts still waiting never rising from the head, a burst that was not abandoned leaving with exactly its packets sealed |
 | replay walk slot records | `RNXdpReplay`, `RNServerReplaySlots` | a forget owed for a slot's old address never lost across slot reuse; a forget the sink refused can delete a later session's kernel entry (a recorded finding) |
-| loopback bind table | `LoopbackHub`, `LoopbackHubLayout`, `LoopbackQueue`, `RNLoopbackBindLayout` | one endpoint per family and port, the one-lookup destination equal to a walk of the live records, ephemeral ports in range and free in both families |
+| loopback bind table | `LoopbackHub`, `LoopbackHubLayout`, `LoopbackQueue`, `RNLoopbackBindLayout` | one endpoint per family and port, at most one endpoint accepting any IPv4 destination (a dual-stack IPv6 wildcard shares its port with no IPv4 endpoint), the one-lookup destination equal to a walk of the live records, ephemeral ports in range and free in both families |
 | client slots free stack | `ServerConnection`, `RNOpenAddress`, `RNClientSlotsLayout` | each free slot on the stack exactly once, no slot taken while held, a handle releases only its own tenure, a slot never holds an owner generation twice |
 | link simulator store | `Link`, `RNSimulatorStoreLayout` | the bitmap walk chooses the slot the full scan chooses, a send takes the lowest free slot, every slot below the free hint occupied, summary bits exactly the nonempty words, the shard bound below every delivery time, a stale handle never retires a live packet |
 | server payload ring | `RNDriverSendStaging`, `RNServerPayloadRingLayout` | no slot at or past the send capacity handed out or read, each flush sends exactly the slots finished since the last, a slot held by one thread at its own frame |
 | live fleet and split-load barriers | `RNLiveFleetRun`, `SplitStart` | live fleet lifecycle phases and split-load start barrier synchronization |
+
+ReplayWindow's two gate invariants (`NoAdvanceBeforeConnect` and
+`NoOpenBeforeConnect`), RNWrittenRing's `NoUnwrittenRead`, and RNOpenAddress's
+clear-first `EraseEnds` hold by construction. The gated receive never opens or
+advances a window that has no slot, a read that checks the written bit never
+takes an unwritten record's bytes, and the clear-first erase increments its
+scan only while `scanned < N`. Those invariants stay in their modules.
 
 Model constants must stay small enough for exhaustive checking while retaining
 the production relationship being proved. A model-check result is evidence for
