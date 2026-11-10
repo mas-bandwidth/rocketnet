@@ -476,6 +476,135 @@ static void test_server_stop_waits_for_flushed_sends()
     delete f;
 }
 
+#if ROCKETNET_DEV
+#include "rocketnet_base64.h"
+
+static double stop_spread_link_now = 1000.0;
+static double stop_spread_link_clock( void * ) { return stop_spread_link_now; }
+
+// Stopping a server with the link simulator active drains the disconnect
+// burst from the simulator into the transport within its send room, ahead of
+// any latency, and requests I/O stop only once the simulator queue is empty,
+// so connected clients receive SERVER_DISCONNECTED instead of timing out.
+static void test_server_stop_sends_burst_staged_in_link_simulator()
+{
+    uint8_t seed[32];
+    for ( int i = 0; i < 32; i++ )
+        seed[i] = (uint8_t) ( 0x6C ^ i );
+
+    uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
+    uint8_t backend_secret[RN_TEST_BACKEND_SECRET_KEY_BYTES];
+    uint8_t server_public[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
+    uint8_t server_secret[RN_TEST_SERVER_SECRET_KEY_BYTES];
+    rocketnet_unit_check( rocketnet_generate_backend_keypair_from_seed( seed, backend_public, backend_secret ) == ROCKETNET_STATUS_OK );
+    rocketnet_unit_check( rocketnet_generate_server_keypair( server_public, server_secret ) == ROCKETNET_STATUS_OK );
+
+    const uint64_t protocol_id = UINT64_C( 0x53544F5053494D01 );
+    const int latency_ms[] = { 0, 50 };
+
+    for ( int i = 0; i < 2; i++ )
+    {
+        stop_spread_link_now = 1000.0;
+
+        rocketnet_server_config_t server_config;
+        rocketnet_server_default_config( &server_config );
+        server_config.protocol_id = protocol_id;
+        server_config.max_clients = 2;
+        memcpy( server_config.backend_public_key, backend_public, sizeof( server_config.backend_public_key ) );
+        server_config.transport = "loopback";
+        server_config.loopback_hub = rocketnet_test_loopback_hub();
+
+        rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL );
+        rocketnet_unit_check( server != NULL );
+        rocketnet_server_public_key( server, server_public );
+        rocketnet_unit_check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
+
+        rocketnet_client_config_t client_config;
+        rocketnet_client_default_config( &client_config );
+        client_config.transport = "loopback";
+        client_config.loopback_hub = rocketnet_test_loopback_hub();
+        client_config.step_driven = true;
+        client_config.time_callback = stop_spread_link_clock;
+
+        rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL );
+        rocketnet_unit_check( client != NULL );
+
+        uint8_t raw_token[ROCKETNET_CONNECT_TOKEN_BYTES];
+        char address[64];
+        snprintf( address, sizeof( address ), "127.0.0.1:%u", (unsigned) rocketnet_server_port( server ) );
+        const char * addresses[] = { address };
+        rocketnet_unit_check( rocketnet_write_production_connect_token( backend_secret, server_public, protocol_id,
+                                                                        addresses, 1, UINT64_C( 0xE510 ) + (uint64_t) i,
+                                                                        1000, UINT64_C( 1 ) << 40, 10, NULL,
+                                                                        raw_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+        char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+        rocketnet_unit_check( rocketnet_base64_encode_data( raw_token, sizeof( raw_token ), token, sizeof( token ) ) == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
+
+        rocketnet_unit_check( rn_test_client_connect_after_completion( client, token ) == ROCKETNET_STATUS_OK );
+        for ( int step = 0; step < 400 && ( rocketnet_client_state( client ) != ROCKETNET_CLIENT_STATE_CONNECTED ||
+                                            rocketnet_server_num_connected_clients( server ) == 0 );
+              step++ )
+        {
+            stop_spread_link_now += 0.01;
+            rocketnet_client_update( client, stop_spread_link_now );
+            rocketnet_client_send_packets( client );
+            rocketnet_server_update( server, stop_spread_link_now );
+            rocketnet_server_send_packets( server );
+        }
+        rocketnet_unit_check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
+        const int slot = rocketnet_client_index( client );
+        rocketnet_unit_check( slot >= 0 && rocketnet_server_client_connected( server, slot ) );
+
+        rocketnet_server_network_simulator( server, latency_ms[i], 0, 0, latency_ms[i] == 0 ? 100 : 0 );
+
+        rocketnet_server_stop( server );
+        rn_test_server_wait_stopped( server );
+
+        rocketnet_client_update( client, stop_spread_link_now );
+        rocketnet_unit_check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED );
+
+        rn_test_client_stop_and_destroy( client );
+        rn_test_server_stop_and_destroy( server );
+    }
+
+    for ( int i = 0; i < 2; i++ )
+    {
+        stop_spread_fixture_t * f = new stop_spread_fixture_t();
+        f->capacity = 24;
+        const int clients = 8;
+        const int duplicate = latency_ms[i] == 0 ? 100 : 0;
+        const int owed = clients * ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS * ( duplicate == 100 ? 2 : 1 );
+
+        rocketnet_server_transport_io_operations_t operations;
+        rocketnet_server_transport_t * server = stop_spread_server( f, &operations, clients, true );
+        rocketnet_unit_check( rocketnet_server_transport_network_simulator( server, latency_ms[i], 0, 0, duplicate ) );
+
+        stop_spread_stop_server( server, clients );
+        rocketnet_unit_check( stop_spread_flushed( f ) == f->capacity );
+        rocketnet_unit_check( f->stops == 0 );
+        rocketnet_unit_check( rocketnet_server_transport_state( server ) == ROCKETNET_SERVER_TRANSPORT_STOPPING );
+
+        double time = 1000.0;
+        int updates = 0;
+        while ( rocketnet_server_transport_state( server ) != ROCKETNET_SERVER_TRANSPORT_STOPPED && updates < 16 )
+        {
+            time += 1.0 / 60.0;
+            rocketnet_server_transport_update( server, time );
+            updates++;
+        }
+
+        rocketnet_unit_check( rocketnet_server_transport_state( server ) == ROCKETNET_SERVER_TRANSPORT_STOPPED );
+        rocketnet_unit_check( f->stops == 1 );
+        rocketnet_unit_check( f->refused_for_room == 0 );
+        rocketnet_unit_check( stop_spread_flushed( f ) == owed );
+        rocketnet_unit_check( !rocketnet_network_simulator_holds_any( server->link_simulator ) );
+
+        rn_test_server_transport_stop_and_destroy( server );
+        delete f;
+    }
+}
+#endif // #if ROCKETNET_DEV
+
 REGISTER_UNIT_TEST( test_server_stop_spreads_disconnect_bursts_across_updates );
 REGISTER_UNIT_TEST( test_server_stop_waits_for_flushed_sends );
 REGISTER_UNIT_TEST( test_server_refused_starts_counted_by_cause );
@@ -483,3 +612,6 @@ REGISTER_UNIT_TEST( test_server_stop_polls_are_the_stop_steps );
 REGISTER_UNIT_TEST( test_server_stop_abandons_an_unreachable_burst );
 REGISTER_UNIT_TEST( test_server_kick_spreads_its_burst_across_updates );
 REGISTER_UNIT_TEST( test_server_send_capacity_reports_staged_room );
+#if ROCKETNET_DEV
+REGISTER_UNIT_TEST( test_server_stop_sends_burst_staged_in_link_simulator );
+#endif // #if ROCKETNET_DEV

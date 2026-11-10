@@ -55,6 +55,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_PAYLOAD_SLOT_BYTES >= ROCKETNET_RECEIV
                          "a payload slot holds the largest payload" );
 
 #include <sodium.h>
+#include <float.h>
 #include <memory.h>
 #include <string.h>
 #include <stdio.h>
@@ -931,10 +932,19 @@ static void rocketnet_server_link_flush( rocketnet_server_transport_t * transpor
 // A due packet leaves only while the transport reports send room; the rest
 // stay held for the next update's drain, so none is refused and lost
 // (proofs/tla/ServerStopSpread.tla Room).
-static void rocketnet_server_link_drain( rocketnet_server_transport_t * transport )
+static void rocketnet_server_link_drain( rocketnet_server_transport_t * transport, bool shutdown = false )
 {
-    if ( !transport->link_simulator || !rocketnet_network_simulator_holds_any( transport->link_simulator ) )
+    if ( !transport->link_simulator )
         return;
+    if ( shutdown && rocketnet_network_simulator_patterns_active( transport->link_simulator ) )
+    {
+        rocketnet_platform_mutex_acquire( &transport->link_simulator_mutex );
+        rocketnet_network_simulator_flush_window( transport->link_simulator );
+        rocketnet_platform_mutex_release( &transport->link_simulator_mutex );
+    }
+    if ( !rocketnet_network_simulator_holds_any( transport->link_simulator ) )
+        return;
+    const double cutoff_time = shutdown ? DBL_MAX : transport->time;
     for ( ;; )
     {
         if ( rocketnet_server_transport_io_send_room( transport ) <= 0 )
@@ -946,7 +956,7 @@ static void rocketnet_server_link_drain( rocketnet_server_transport_t * transpor
         rocketnet_platform_mutex_acquire( &transport->link_simulator_mutex );
 
         const int packet_bytes = rocketnet_network_simulator_receive_any( transport->link_simulator,
-                                                                          transport->time, &from, &to, packet );
+                                                                          cutoff_time, &from, &to, packet );
         rocketnet_platform_mutex_release( &transport->link_simulator_mutex );
         if ( packet_bytes <= 0 )
             break;
@@ -968,7 +978,10 @@ static void rocketnet_server_link_drain( rocketnet_server_transport_t * transpor
         else
         {
             rocketnet_platform_send_t send = { &to, packet, packet_bytes };
-            transport->io.operations->send_batch( transport->io.instance, &send, 1 );
+            if ( shutdown && transport->io.operations->send_batch_shutdown )
+                transport->io.operations->send_batch_shutdown( transport->io.instance, &send, 1 );
+            else
+                transport->io.operations->send_batch( transport->io.instance, &send, 1 );
         }
     }
 
@@ -2351,8 +2364,11 @@ static void rocketnet_server_transport_stop_step( struct rocketnet_server_transp
         rocketnet_server_transport_drain_disconnect_bursts( server_transport, rocketnet_server_transport_io_send_room( server_transport ), true );
 
     rocketnet_server_transport_flush( server_transport, true );
+    rocketnet_server_link_drain( server_transport, true );
 
-    if ( server_transport->disconnect_burst_count == 0 && rocketnet_server_transport_io_send_idle( server_transport ) )
+    const bool link_empty = !server_transport->link_simulator ||
+                            !rocketnet_network_simulator_holds_any( server_transport->link_simulator );
+    if ( server_transport->disconnect_burst_count == 0 && link_empty && rocketnet_server_transport_io_send_idle( server_transport ) )
     {
         server_transport->io_stop_requested = true;
         rocketnet_server_transport_io_stop( &server_transport->io );
