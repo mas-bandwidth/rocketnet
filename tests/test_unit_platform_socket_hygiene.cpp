@@ -27,6 +27,8 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <fcntl.h>
+#include <unistd.h>
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
 static void test_platform_id_is_the_build_platform()
@@ -378,6 +380,125 @@ REGISTER_UNIT_TEST( test_platform_socket_hygiene_skipped_reads_are_counted );
 
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS && !defined( __OpenBSD__ )
 
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS && ROCKETNET_DEV
+
+// Every descriptor the platform opens is close-on-exec, so a child process
+// the application spawns never inherits the transport's sockets or wake.
+// The socket call is replaced by a fake that answers with a pipe end and
+// applies SOCK_CLOEXEC as the kernel would; no socket is opened.
+
+typedef int ( *platform_socket_hygiene_socket_call_t )( int domain, int type, int protocol );
+void rocketnet_platform_set_socket_call_for_testing( platform_socket_hygiene_socket_call_t call );
+int rocketnet_platform_socket_open_for_testing( int domain );
+
+static int platform_socket_hygiene_socket_calls = 0;
+static int platform_socket_hygiene_socket_domain = 0;
+
+static int platform_socket_hygiene_fake_socket( int domain, int type, int protocol )
+{
+    (void) protocol;
+    platform_socket_hygiene_socket_calls++;
+    platform_socket_hygiene_socket_domain = domain;
+    int fds[2];
+    if ( pipe( fds ) != 0 )
+        return -1;
+    close( fds[1] );
+#if defined( SOCK_CLOEXEC )
+    if ( ( type & SOCK_CLOEXEC ) != 0 && fcntl( fds[0], F_SETFD, FD_CLOEXEC ) != 0 )
+    {
+        close( fds[0] );
+        return -1;
+    }
+#else // #if defined( SOCK_CLOEXEC )
+    (void) type;
+#endif // #if defined( SOCK_CLOEXEC )
+    return fds[0];
+}
+
+static int platform_socket_hygiene_refused_socket( int domain, int type, int protocol )
+{
+    (void) domain;
+    (void) type;
+    (void) protocol;
+    platform_socket_hygiene_socket_calls++;
+    errno = EMFILE;
+    return -1;
+}
+
+static bool platform_socket_hygiene_close_on_exec( int fd )
+{
+    const int flags = fcntl( fd, F_GETFD );
+    return flags >= 0 && ( flags & FD_CLOEXEC ) != 0;
+}
+
+static void test_platform_socket_hygiene_socket_is_close_on_exec()
+{
+    const int domains[] = { AF_INET, AF_INET6 };
+    for ( int domain : domains )
+    {
+        platform_socket_hygiene_socket_calls = 0;
+        rocketnet_platform_set_socket_call_for_testing( platform_socket_hygiene_fake_socket );
+        const int fd = rocketnet_platform_socket_open_for_testing( domain );
+        rocketnet_platform_set_socket_call_for_testing( NULL );
+
+        rocketnet_unit_check( platform_socket_hygiene_socket_calls == 1 );
+        rocketnet_unit_check( platform_socket_hygiene_socket_domain == domain );
+        rocketnet_unit_check( fd >= 0 );
+        rocketnet_unit_check( platform_socket_hygiene_close_on_exec( fd ) );
+        close( fd );
+    }
+}
+
+static void test_platform_socket_hygiene_creates_open_through_the_socket_call()
+{
+    // the socket create opens through the same call, so the close-on-exec
+    // open covers it; the refused call fails the create cleanly. (The IPv6
+    // probe opens through it too, but the unit suite answers the probe with
+    // a fake lookup, so it is not reached here.)
+
+    rocketnet_platform_set_socket_call_for_testing( platform_socket_hygiene_refused_socket );
+
+    platform_socket_hygiene_socket_calls = 0;
+    struct rocketnet_address_t address;
+    rocketnet_unit_check( rocketnet_address_parse( &address, "127.0.0.1:0" ) );
+    rocketnet_unit_check( rocketnet_platform_socket_create( NULL, &address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f, 1024, 1024 ) == NULL );
+    rocketnet_unit_check( platform_socket_hygiene_socket_calls == 1 );
+
+    rocketnet_platform_set_socket_call_for_testing( NULL );
+}
+
+static void test_platform_socket_hygiene_wake_is_close_on_exec()
+{
+    // the event-only wake (eventfd, pipe or kqueue): every descriptor its
+    // create opens is close-on-exec
+
+    const int max_fd = 1024;
+    static bool open_before[1024];
+    for ( int fd = 0; fd < max_fd; fd++ )
+        open_before[fd] = fcntl( fd, F_GETFD ) >= 0;
+
+    struct rocketnet_platform_wake_t * wake = rocketnet_platform_wake_create( NULL, NULL );
+    rocketnet_unit_check( wake != NULL );
+
+    int opened = 0;
+    for ( int fd = 0; fd < max_fd; fd++ )
+    {
+        if ( open_before[fd] || fcntl( fd, F_GETFD ) < 0 )
+            continue;
+        opened++;
+        rocketnet_unit_check( platform_socket_hygiene_close_on_exec( fd ) );
+    }
+    rocketnet_unit_check( opened > 0 );
+
+    rocketnet_platform_wake_destroy( wake );
+}
+
+REGISTER_UNIT_TEST( test_platform_socket_hygiene_socket_is_close_on_exec );
+REGISTER_UNIT_TEST( test_platform_socket_hygiene_creates_open_through_the_socket_call );
+REGISTER_UNIT_TEST( test_platform_socket_hygiene_wake_is_close_on_exec );
+
+#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS && ROCKETNET_DEV
+
 #if defined( __APPLE__ )
 static void test_platform_socket_hygiene_msgx_chaff_drain_is_bounded()
 {
@@ -469,7 +590,59 @@ static void test_platform_msgx_receive_weather_drain_is_bounded()
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC && ROCKETNET_DEV
 
+void rocketnet_platform_socket_apply_dont_fragment( bool ipv6, void ( *set_option )( void * user, int level, int option_name, int value ), void * user );
+
+struct platform_socket_hygiene_options_t
+{
+    int levels[4];
+    int names[4];
+    int values[4];
+    int count;
+};
+
+static void platform_socket_hygiene_record_option( void * user, int level, int option_name, int value )
+{
+    platform_socket_hygiene_options_t * options = (platform_socket_hygiene_options_t *) user;
+    rocketnet_unit_check( options->count < 4 );
+    options->levels[options->count] = level;
+    options->names[options->count] = option_name;
+    options->values[options->count] = value;
+    options->count++;
+}
+
+static void test_platform_socket_hygiene_dual_stack_sets_both_dont_fragment()
+{
+    platform_socket_hygiene_options_t ipv4_options;
+    memset( &ipv4_options, 0, sizeof( ipv4_options ) );
+    rocketnet_platform_socket_apply_dont_fragment( false, platform_socket_hygiene_record_option, &ipv4_options );
+
+    platform_socket_hygiene_options_t ipv6_options;
+    memset( &ipv6_options, 0, sizeof( ipv6_options ) );
+    rocketnet_platform_socket_apply_dont_fragment( true, platform_socket_hygiene_record_option, &ipv6_options );
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    rocketnet_unit_check( ipv4_options.count == 1 );
+    rocketnet_unit_check( ipv4_options.levels[0] == IPPROTO_IP && ipv4_options.names[0] == IP_DONTFRAGMENT && ipv4_options.values[0] == 1 );
+    rocketnet_unit_check( ipv6_options.count == 2 );
+    rocketnet_unit_check( ipv6_options.levels[0] == IPPROTO_IPV6 && ipv6_options.names[0] == IPV6_DONTFRAG && ipv6_options.values[0] == 1 );
+    rocketnet_unit_check( ipv6_options.levels[1] == IPPROTO_IP && ipv6_options.names[1] == IP_DONTFRAGMENT && ipv6_options.values[1] == 1 );
+#elif defined( __linux__ )
+    rocketnet_unit_check( ipv4_options.count == 1 );
+    rocketnet_unit_check( ipv4_options.levels[0] == IPPROTO_IP && ipv4_options.names[0] == IP_MTU_DISCOVER && ipv4_options.values[0] == IP_PMTUDISC_DO );
+    rocketnet_unit_check( ipv6_options.count == 2 );
+    rocketnet_unit_check( ipv6_options.levels[0] == IPPROTO_IPV6 && ipv6_options.names[0] == IPV6_MTU_DISCOVER && ipv6_options.values[0] == IPV6_PMTUDISC_DO );
+    rocketnet_unit_check( ipv6_options.levels[1] == IPPROTO_IP && ipv6_options.names[1] == IP_MTU_DISCOVER && ipv6_options.values[1] == IP_PMTUDISC_DO );
+#elif defined( IPV6_DONTFRAG ) && defined( IP_DONTFRAG )
+    rocketnet_unit_check( ipv4_options.count == 1 );
+    rocketnet_unit_check( ipv4_options.levels[0] == IPPROTO_IP && ipv4_options.names[0] == IP_DONTFRAG && ipv4_options.values[0] == 1 );
+    rocketnet_unit_check( ipv6_options.count == 2 );
+    rocketnet_unit_check( ipv6_options.levels[0] == IPPROTO_IPV6 && ipv6_options.names[0] == IPV6_DONTFRAG && ipv6_options.values[0] == 1 );
+    rocketnet_unit_check( ipv6_options.levels[1] == IPPROTO_IP && ipv6_options.names[1] == IP_DONTFRAG && ipv6_options.values[1] == 1 );
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+}
+
 REGISTER_UNIT_TEST( test_platform_socket_hygiene_mapped_source_decision );
+REGISTER_UNIT_TEST( test_platform_socket_hygiene_dual_stack_sets_both_dont_fragment );
 REGISTER_UNIT_TEST( test_platform_socket_hygiene_descriptor_valid );
 REGISTER_UNIT_TEST( test_platform_socket_hygiene_refused_source_reads_next );
 REGISTER_UNIT_TEST( test_platform_socket_hygiene_refused_source_then_drained );

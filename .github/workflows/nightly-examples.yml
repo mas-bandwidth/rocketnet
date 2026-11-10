@@ -31,7 +31,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-24.04, runner: '["self-hosted","Linux","X64","fleet"]' }
+          - { os: linux, runner: '["self-hosted","Linux","X64","fleet"]' }
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
@@ -78,8 +78,8 @@ jobs:
         run: python3 tools/run_backend_examples.py --build build
 
   examples-macos:
-    name: macos-15
-    runs-on: [self-hosted, macOS, ARM64, rocketnet-macos]
+    name: macos
+    runs-on: [self-hosted, macOS, ARM64, fleet]
     timeout-minutes: 7200
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
