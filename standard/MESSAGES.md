@@ -2367,6 +2367,14 @@ duplicate; it is never delivered and is not a violation.
    held code 4 record for that epoch if its sequencing index is not behind the
    watermark, then continue with the held ordered records. An ordered
    delivery sets the sequencing watermark to zero.
+8. A fragment of a code 4 block that arrives when no block state exists for
+   it on the channel ([m8 Blocks](#m8)) MUST be dropped and counted as stale,
+   and its number MUST NOT be kept live, when another number of the same
+   block was already accepted as code 4 and is no longer live, its descriptor
+   at that number modulo the window count still naming that number. It is not
+   a violation: the block was released when a newer record superseded it and
+   can never complete, and a fragment kept live for it would make a later
+   honest number a `MESSAGE_SLOT_COLLISION` violation.
 
 <a id="m7.4"></a>
 ### m7.4. Outcomes
