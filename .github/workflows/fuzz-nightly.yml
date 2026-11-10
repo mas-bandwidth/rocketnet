@@ -278,7 +278,7 @@ jobs:
   # tests/fuzz/Makefile (CoreFoundation and SystemConfiguration).
   fuzz-macos:
     name: nightly fuzz macOS (${{ fromJSON(matrix.leg).target }})
-    runs-on: [self-hosted, macOS, ARM64, rocketnet-macos]
+    runs-on: [self-hosted, macOS, ARM64, fleet]
     timeout-minutes: 7200
     strategy:
       fail-fast: false
@@ -824,7 +824,7 @@ jobs:
   coverage-macos:
     name: nightly fuzz coverage (macOS)
     needs: fuzz-macos
-    runs-on: [self-hosted, macOS, ARM64, rocketnet-macos]
+    runs-on: [self-hosted, macOS, ARM64, fleet]
     timeout-minutes: 7200
     steps:
 

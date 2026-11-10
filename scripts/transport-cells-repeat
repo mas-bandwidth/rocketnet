@@ -24,9 +24,10 @@
 # series, run after run, never two runs of one cell at once; the cells run
 # in parallel, as the matrix step runs them. The xdp cell runs its cases as
 # root inside a virtme-ng guest of this machine's own kernel, exactly as the
-# matrix does, and never on the host: a machine with no VM tier (vng, a
-# readable ~/vm-kernels/vmlinuz-$(uname -r), a writable /dev/kvm) fails the
-# xdp cell. The xdp cell belongs on the dedicated XDP machine only. The
+# matrix does, and never on the host: a machine with no VM tier fails the
+# xdp cell with one VM-TIER-MISSING line naming what it lacks
+# (scripts/vm-tier-missing lists the VM tier: vng, qemu-system-x86_64, a
+# writable /dev/kvm, a readable ~/vm-kernels/vmlinuz-$(uname -r)). The
 # io_uring cell is skipped, as the matrix skips it, when the kernel disables
 # io_uring.
 #
@@ -252,9 +253,10 @@ run_xdp_cell() { # server client
     run=1
     while [ "$run" -le "$runs" ]; do
         prefix="$logs/$1.$2.run$run"
-        if ! command -v vng >/dev/null || [ ! -r "$vm_kernel" ] || [ ! -w /dev/kvm ]; then
+        vm_missing=$(scripts/vm-tier-missing)
+        if [ -n "$vm_missing" ]; then
             for case in $xdp_cases; do
-                echo "no VM tier on this machine: needs vng, a readable $vm_kernel and a writable /dev/kvm" > "$prefix.$case.log"
+                echo "VM-TIER-MISSING on $(hostname): $vm_missing" > "$prefix.$case.log"
                 record "$1" "$2" "$case" "$run" 1 "$prefix.$case.log"
             done
         else
