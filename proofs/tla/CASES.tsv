@@ -747,3 +747,5 @@ MCRNSchedulerBrokenRtxById.cfg	MCRNScheduler.tla	invariant	RtxHeadBoost	check	rn
 MCRNUnreliableRingLayoutBrokenWalkFromHead.cfg	MCRNUnreliableRingLayout.tla	invariant	WalkExact	check	rnunreliableringlayout	required	-
 MCReceiveOrderDeadlineWindow.cfg	MCReceiveOrder.tla	invariant	OneLiveMappingPerToken	check	receiveorder	required	-
 MCReceiveOrderDeadlineWindowBound.cfg	MCReceiveOrder.tla	invariant	BoundHasNoClaim	check	receiveorder	required	-
+MCRNResendTimingRefused.cfg	MCRNResendTiming.tla	pass	-	check	rnresendtiming	required	-
+MCRNResendTimingBrokenRefusedClock.cfg	MCRNResendTiming.tla	invariant	AttemptsBeforeTimeout	check	rnresendtiming	required	-
