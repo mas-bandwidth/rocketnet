@@ -7028,9 +7028,6 @@ void rocketnet_test_server_gso_shutdown_send_interruptions()
     rocketnet_server_gso_destroy( gso );
 }
 
-// rocketnet_server_gso_test_receive_staged in sdk/rocketnet_server_gso_linux.cpp
-int rocketnet_server_gso_test_receive_staged( struct rocketnet_server_gso_t * gso, int queue_index );
-
 void rocketnet_test_server_gso_held_receive_view()
 {
     rocketnet_address_t bind, client_address;
@@ -7076,73 +7073,26 @@ void rocketnet_test_server_gso_held_receive_view()
 
     rocketnet_check( held_view );
 
-    // The worker stages later packets into its own bank, across as many of
-    // its passes as their arrival takes, without touching the main-held first
-    // view. Each packet carries its index; the update at which it is
-    // delivered is recorded. Every packet staged before an update's claim
-    // must be in that update's view (proofs/tla/RNGsoHandoff.tla
-    // StagedBeforeClaimInView): the claim swaps the whole worker bank in. The
-    // published-bank design this replaced handed main only the bank the
-    // worker had published, and deferred packets staged after that publish
-    // by an update. The polls observe staging, not elapsed sleep. Loopback may
-    // lose a datagram, so delivery is never required to be complete: only
-    // what was staged before a claim is checked against that claim.
+    // The worker must publish a second packet without touching the main-held
+    // first view. This condition poll observes ownership, not elapsed sleep.
 
-    const int later = 8;
-    int delivered_update[later];
-    for ( int i = 0; i < later; i++ )
-    {
-        delivered_update[i] = -1;
-        memset( second, 0x5A, sizeof( second ) );
-        second[0] = (uint8_t) i;
-        rocketnet_platform_socket_send_packet( client_socket, &server_address, second, sizeof( second ) );
-    }
+    rocketnet_platform_socket_send_packet( client_socket, &server_address, second, sizeof( second ) );
 
-    int staged_before_claim = 0;
-    const double staged_deadline = rocketnet_time() + 5.0;
-    while ( rocketnet_time() < staged_deadline )
+    const double ready_deadline = rocketnet_time() + 5.0;
+    while ( !rocketnet_server_gso_test_receive_ready( gso, 0 ) && rocketnet_time() < ready_deadline )
     {
-        const int staged = rocketnet_server_gso_test_receive_staged( gso, 0 );
-        if ( staged >= 0 )
-            staged_before_claim = staged;
-        if ( staged_before_claim == later )
-            break;
         rocketnet_platform_sleep( 0.001 );
     }
 
-    rocketnet_check( staged_before_claim > 0 );
+    rocketnet_check( rocketnet_server_gso_test_receive_ready( gso, 0 ) );
     rocketnet_check( memcmp( held_view, first, sizeof( first ) ) == 0 );
 
-    int delivered = 0;
-    int next_index = 0;
-    int delivered_at_claim = 0;
-    const double collect_deadline = rocketnet_time() + 1.0;
-    for ( int update = 0; delivered < later && rocketnet_time() < collect_deadline; update++ )
-    {
-        rocketnet_server_gso_receive_packets( gso );
+    rocketnet_server_gso_receive_packets( gso );
 
-        struct rocketnet_server_socket_process_packets_t * received = rocketnet_server_gso_process_packets( gso );
-        for ( int j = 0; j < received->num_packets; j++ )
-        {
-            rocketnet_check( received->packet_bytes[j] == (int) sizeof( second ) );
-            const int marker = (int) received->packet_data[j][0];
-            rocketnet_check( marker >= next_index && marker < later );
-            rocketnet_check( delivered_update[marker] < 0 );
-            delivered_update[marker] = update;
-            next_index = marker + 1;
-            delivered++;
-            if ( update == 0 )
-                delivered_at_claim++;
-        }
-
-        if ( received->num_packets == 0 )
-            rocketnet_platform_sleep( 0.001 );
-    }
-
-    printf( "    %d of %d later packets staged before the first claim, %d delivered by it, %d delivered in all\n",
-            staged_before_claim, later, delivered_at_claim, delivered );
-
-    rocketnet_check( delivered_at_claim >= staged_before_claim );
+    struct rocketnet_server_socket_process_packets_t * received = rocketnet_server_gso_process_packets( gso );
+    rocketnet_check( received->num_packets == 1 );
+    rocketnet_check( received->packet_bytes[0] == (int) sizeof( second ) );
+    rocketnet_check( memcmp( received->packet_data[0], second, sizeof( second ) ) == 0 );
 
     rocketnet_platform_socket_destroy( client_socket );
     rn_native_backend_stop_and_destroy( gso, rocketnet_server_gso_stop,

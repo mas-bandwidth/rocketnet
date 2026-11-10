@@ -211,11 +211,10 @@ int rocketnet_server_gso_send_room( struct rocketnet_server_gso_t * gso );
 // thread; a send mutex held by the worker reads as not idle.
 bool rocketnet_server_gso_send_idle( struct rocketnet_server_gso_t * gso );
 
-// Receive workers stage into a per-queue current bank off main, and main
-// swaps its exhausted bank for the worker's filled one under the receive
-// mutex once per update; unconsumed tails stay main-owned until a later
-// receive call. process_packets exposes stable views valid until the next
-// receive_packets call.
+// Receive workers stage into per-queue producer/ready/main banks off main.
+// receive_packets try-swaps ownership and gathers within the caller budget;
+// unconsumed tails stay main-owned until a later receive call. process_packets
+// exposes stable views valid until the next receive_packets call.
 
 void rocketnet_server_gso_receive_packets( struct rocketnet_server_gso_t * gso );
 
@@ -230,6 +229,8 @@ struct rocketnet_server_socket_process_packets_t * rocketnet_server_gso_process_
 void rocketnet_server_gso_test_force_create_flags( int flags );
 void rocketnet_server_gso_test_fail_receives( struct rocketnet_server_gso_t * gso, int count, int error );
 void rocketnet_server_gso_test_fail_sends( struct rocketnet_server_gso_t * gso, int count, int error );
+// Observe publication without consuming it; returns false on lock contention.
+bool rocketnet_server_gso_test_receive_ready( struct rocketnet_server_gso_t * gso, int queue_index );
 // Main thread: no staged packet, no ready bank, no bank held by the TX worker.
 bool rocketnet_server_gso_test_send_idle( struct rocketnet_server_gso_t * gso );
 // Deterministic ownership/full/contended/stop and retained-RX-tail regression.
@@ -257,19 +258,11 @@ struct mmsghdr;
 // the staged bank and sends it on this thread.
 struct rocketnet_server_gso_t * rocketnet_server_gso_test_open( int num_queues );
 void rocketnet_server_gso_test_close( struct rocketnet_server_gso_t * gso );
-// Stage packets into one queue's worker buffer, each byte set to marker, as a
-// worker pass would. false when that buffer has no room for them (main has
-// not swapped it out since it was filled), or the queue index or count is
-// out of range.
-bool rocketnet_server_gso_test_stage_marked( struct rocketnet_server_gso_t * gso, int queue_index, uint8_t marker, uint32_t packets );
 void rocketnet_server_gso_test_set_send( struct rocketnet_server_gso_t * gso,
                                          int ( *send )( struct mmsghdr * messages, unsigned int count, void * user ),
                                          void * user );
 void rocketnet_server_gso_test_set_features( struct rocketnet_server_gso_t * gso, int features );
 bool rocketnet_server_gso_test_flush_staged( struct rocketnet_server_gso_t * gso );
-// Publish packets on one queue, each byte set to marker. false when a ready
-// buffer already waits, or the queue index or count is out of range.
-bool rocketnet_server_gso_test_publish_marked( struct rocketnet_server_gso_t * gso, int queue_index, uint8_t marker, uint32_t packets );
 #endif // #if defined( __linux__ )
 #endif // #if ROCKETNET_DEV
 
