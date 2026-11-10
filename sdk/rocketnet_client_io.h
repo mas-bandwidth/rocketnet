@@ -30,7 +30,7 @@
 // so the header needs no sodium include.
 void rocketnet_client_io_wipe( void * data, size_t bytes );
 
-// The client I/O step (rocketnet_client_io_step) and wake (rocketnet_client_io_wake),
+// The client I/O step (rocketnet_client_io_step) and wake (the transport's operations->wake),
 // and the proofs/tla/RNClientIo.tla actions it names. The thread loop is one call per iteration;
 // unit tests call it directly, with a fake transport and a test clock, on the
 // test's thread.
@@ -83,7 +83,7 @@ struct rocketnet_client_io_ring_view_t
 
 // Each record carries the I/O thread's verdict (ROCKETNET_CLIENT_IO_VERDICT_*,
 // sdk/rocketnet_client_protocol.h) and, when opened, the reconstructed 64-bit
-// session sequence (rocketnet_client_io_open_datagram, proofs/tla/RNClientIoDecrypt.tla IoCheck, IoOpen). An opened
+// session sequence (rocketnet_client_io_decrypt_datagram, proofs/tla/RNClientIoDecrypt.tla IoCheck, IoOpen). An opened
 // record keeps its wire header and its wire byte count; the plaintext replaces
 // the ciphertext behind the header.
 

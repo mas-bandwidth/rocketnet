@@ -563,7 +563,7 @@ static int rocketnet_client_gso_receive( void * transport, rocketnet_address_t *
     return rocketnet_platform_socket_receive_packet( client->socket, from, data, capacity );
 }
 
-// proofs/tla/RNClientIo.tla IoSend (rocketnet_client_io_send): the gso path names no
+// proofs/tla/RNClientIo.tla IoSend (rocketnet_client_io_send_ring): the gso path names no
 // destination, so it needs the socket connected to the server; connect runs
 // at create, before the first send. An unconnected socket takes the
 // platform's sendmmsg batch, which names each destination.
@@ -591,7 +591,7 @@ static int rocketnet_client_gso_send_batch_progress( void * transport, const roc
     return num_packets;
 }
 
-// proofs/tla/RNClientIo.tla IoReceive (rocketnet_client_io_receive): recvmmsg through the
+// proofs/tla/RNClientIo.tla IoReceive (rocketnet_client_io_step): recvmmsg through the
 // coalesce buffer, split at the GRO stride, when UDP_GRO is on (connected or
 // not: a GRO socket's message may be coalesced, which the platform's slot
 // sized batch would truncate); the platform's recvmmsg otherwise. Either way
@@ -607,7 +607,7 @@ static int rocketnet_client_gso_receive_batch_operation( void * transport, rocke
     return rocketnet_platform_socket_receive_packets_mmsg( client->socket, from, packet_data, packet_stride, packet_bytes, max_packets );
 }
 
-// proofs/tla/RNClientIo.tla IoWait, IoWake, FullWaitsOnWake (rocketnet_client_io_step, rocketnet_client_io_wake)
+// proofs/tla/RNClientIo.tla IoWait, IoWake, FullWaitsOnWake (rocketnet_client_io_step, operations->wake)
 
 static bool rocketnet_client_gso_wait( void * transport, bool readable, double timeout_seconds )
 {

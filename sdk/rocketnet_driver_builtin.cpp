@@ -1849,7 +1849,7 @@ static int portable_io_client_receive_batch( void * transport, rocketnet_address
 
 static bool portable_io_client_wait( void * transport, bool readable, double timeout_seconds )
 {
-    // proofs/tla/RNClientIo.tla IoWait, IoWake, FullWaitsOnWake (rocketnet_client_io_step, rocketnet_client_io_wake):
+    // proofs/tla/RNClientIo.tla IoWait, IoWake, FullWaitsOnWake (rocketnet_client_io_step, operations->wake):
     // readable passes through, so with it false the socket is not polled and a
     // full receive buffer waits on the eventfd alone.
 

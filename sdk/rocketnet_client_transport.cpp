@@ -3895,7 +3895,7 @@ void rocketnet_client_transport_stats( rocketnet_client_transport_t * client_tra
     g_client_ack_stats_count.fetch_add( 1, std::memory_order_relaxed );
 #endif // #if ROCKETNET_DEV
 
-    // the client's only reader of the ack statistics is this getter (rocketnet_client_transport_get_stats), so they are computed here via rocketnet_ack_endpoint_update_stats
+    // the client's only reader of the ack statistics is this getter (rocketnet_client_transport_stats), so they are computed here via rocketnet_ack_endpoint_update_stats
 
     rocketnet_ack_endpoint_update_stats( &client_transport->protocol.ack );
 
@@ -4169,7 +4169,8 @@ static void rocketnet_client_thread_function( rocketnet_platform_thread_t * thre
 // A development connection always owns a link simulator, so this stores the new
 // settings as a config record under the tiny mutex and the thread that owns the
 // simulator applies them before its next send. No simulator work happens under
-// the lock. Stop transfers the simulator to the worker; a stopped transport
+// the lock. On the legacy path stop transfers the simulator to the worker; on
+// the I/O-core path stop drains it on the caller (rocketnet_client_link_drain). A stopped transport
 // cannot be reconfigured.
 #if ROCKETNET_DEV
 bool rocketnet_client_transport_network_simulator( struct rocketnet_client_transport_t * client_transport, int latency_ms, int jitter_ms, int packet_loss_percent, int duplicate_percent )
