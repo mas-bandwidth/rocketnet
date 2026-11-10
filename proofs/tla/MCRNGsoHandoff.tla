@@ -1,8 +1,10 @@
 --------------------------- MODULE MCRNGsoHandoff ---------------------------
 (***************************************************************************)
-(* The small instance of RNGsoHandoff: three receive buffers of two       *)
-(* packets, three transmit banks of two packets and four staged packets.  *)
-(* MCRNGsoHandoff.cfg runs with every rule on;                            *)
+(* The small instances of RNGsoHandoff: three receive buffers and three   *)
+(* transmit banks of two packets.  MCRNGsoHandoff.cfg checks every         *)
+(* invariant with every rule on, five datagrams and four staged packets;   *)
+(* MCRNGsoHandoffLive.cfg checks them and the liveness properties with one *)
+(* datagram and three staged packets;                                     *)
 (* MCRNGsoHandoffBrokenPublishWhileHeld.cfg restores the publish-while-   *)
 (* held defect and must fail NoPublishWhileHeld;                          *)
 (* MCRNGsoHandoffBrokenFullDrops.cfg drops a full socket's rest and must  *)

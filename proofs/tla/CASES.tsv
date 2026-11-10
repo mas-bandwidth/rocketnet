@@ -457,6 +457,7 @@ MCRNResendGenerationsBrokenSlotOnly.cfg	MCRNResendGenerations.tla	invariant	Name
 MCRNResendGenerationsReachStale.cfg	MCRNResendGenerations.tla	invariant	NoStaleNameInFlight	ignore-terminal	rnresendgenerations	required	-
 MCRNResendGenerationsBrokenWindowSlack.cfg	MCRNResendGenerations.tla	invariant	WindowOwnsSlots	ignore-terminal	rnresendgenerations	required	-
 MCRNGsoHandoff.cfg	MCRNGsoHandoff.tla	pass	-	check	rngsohandoff	required	-
+MCRNGsoHandoffLive.cfg	MCRNGsoHandoff.tla	pass	-	check	rngsohandoff	required	-
 MCRNGsoHandoffBrokenCarryBehind.cfg	MCRNGsoHandoff.tla	invariant	TxInOrder	check	rngsohandoff	required	-
 MCRNGsoHandoffBrokenDropBeforeShutdown.cfg	MCRNGsoHandoff.tla	invariant	DroppedOnlyAfterShutdown	check	rngsohandoff	required	-
 MCRNGsoHandoffBrokenBoundOnQuitOnly.cfg	MCRNGsoHandoff.tla	temporal	ShutdownCompletes	check	rngsohandoff	required	-
