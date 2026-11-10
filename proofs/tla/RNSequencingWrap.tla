@@ -57,6 +57,7 @@ CONSTANTS
     Net,          \* records in flight at once
     MaxSeqSends,  \* sequenced messages a behaviour sends
     MaxOrdSends,  \* ordered messages a behaviour sends
+    Starts,       \* the read index and sequencing index a behaviour may start from
     Broken        \* "none", or the one compare written wrong (above)
 
 Half == Mod \div 2
@@ -68,6 +69,7 @@ MaxS == Mod - 1 + MaxSeqSends
 ASSUME /\ Mod >= 4 /\ Mod % 2 = 0
        /\ CounterMod % Mod = 0 /\ CounterMod > Mod /\ CounterMod > MaxO
        /\ Net >= 2 /\ MaxSeqSends >= 0 /\ MaxOrdSends >= 0
+       /\ Starts \subseteq 0..Mod-1
 
 U24(x) == x % Mod
 
@@ -116,9 +118,9 @@ TypeOK ==
 
 \* a quiescent channel anywhere on the ring: every earlier record delivered
 Init ==
-    /\ read \in 0..Mod-1
+    /\ read \in Starts
     /\ ow = read
-    /\ sw \in 0..Mod-1
+    /\ sw \in Starts
     /\ wmT = sw
     /\ wm = sw
     /\ inTurn = NoTurn
@@ -201,18 +203,18 @@ Arrive(r) ==
          ELSE Future(r)
 
 \* an ordered delivery (rn_channels_deliver_ordered: read + 1, watermark 0),
-\* then rn_channels_drain_sequenced
+\* then rn_channels_drain_sequenced: the closed epoch's in-turn block is
+\* released stale (its ordering is no longer the read index), then the hold
 OpenEpoch ==
     /\ read < ow
     /\ read' = read + 1
-    /\ inTurn' = NoTurn          \* the closed epoch's in-turn block is stale
     /\ UNCHANGED <<ow, sw, net, seqSent, ordSent, silent>>
     /\ LET g == Sub(U24(hold.o), read + 1, "drainGapUnmasked") IN
        IF ~hold.on \/ (g # 0 /\ g < Half)
-         THEN /\ wm' = 0 /\ wmT' = 0
+         THEN /\ wm' = 0 /\ wmT' = 0 /\ inTurn' = NoTurn
               /\ UNCHANGED <<hold, lostNewer, outOfOrder>>
        ELSE IF g # 0
-         THEN /\ wm' = 0 /\ wmT' = 0                                     \* SEQUENCED_STALE
+         THEN /\ wm' = 0 /\ wmT' = 0 /\ inTurn' = NoTurn               \* SEQUENCED_STALE
               /\ hold' = NoHold
               /\ lostNewer' = (lostNewer \/ hold.o >= read + 1)
               /\ UNCHANGED outOfOrder
@@ -224,10 +226,11 @@ OpenEpoch ==
        ELSE IF DeliverOK(hold.o, hold.s, read + 1, 0)
          THEN /\ wm' = U24(U24(hold.s) + 1)
               /\ wmT' = hold.s + 1
+              /\ inTurn' = NoTurn
               /\ hold' = NoHold
               /\ outOfOrder' = (outOfOrder \/ hold.o # read + 1)
               /\ UNCHANGED lostNewer
-       ELSE /\ wm' = 0 /\ wmT' = 0                                       \* refused: SEQUENCED_STALE
+       ELSE /\ wm' = 0 /\ wmT' = 0 /\ inTurn' = NoTurn                 \* refused: SEQUENCED_STALE
             /\ hold' = NoHold
             /\ lostNewer' = TRUE
             /\ UNCHANGED outOfOrder
