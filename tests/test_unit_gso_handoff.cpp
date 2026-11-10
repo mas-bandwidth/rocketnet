@@ -14,6 +14,8 @@
 
 #if defined( __linux__ ) && ROCKETNET_DEV
 
+bool rocketnet_server_gso_test_receive_backoff();
+
 // The GSO worker's handoffs (proofs/tla/RNGsoHandoff.tla), stepped on this thread
 // with a faked transport: no socket, no worker thread, no clock.
 static void test_server_gso_worker_handoff()
@@ -60,5 +62,12 @@ static void test_server_gso_drain_room()
 }
 
 REGISTER_UNIT_TEST( test_server_gso_drain_room );
+
+static void test_server_gso_receive_backoff()
+{
+    check( rocketnet_server_gso_test_receive_backoff() );
+}
+
+REGISTER_UNIT_TEST( test_server_gso_receive_backoff );
 
 #endif
