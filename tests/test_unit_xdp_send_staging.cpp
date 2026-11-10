@@ -194,6 +194,37 @@ static void test_xdp_send_wakeup_back_pressure_is_not_a_send_failure()
 
 REGISTER_UNIT_TEST( test_xdp_send_wakeup_back_pressure_is_not_a_send_failure );
 
+// An interface that went down and came back up: the hard error the worker
+// kept releases the queue at stop only until a wakeup succeeds again. After
+// that the stop drain waits for the queue's ring as for any healthy queue,
+// so its disconnect packets are sent. The failure count is not taken back.
+static void test_xdp_send_wakeup_success_clears_the_hard_error()
+{
+    std::atomic<uint64_t> failures( 0 );
+    std::atomic<int> hard_error( 0 );
+
+    rocketnet_xdp_send_wakeup_failed( ENETDOWN, failures, hard_error );
+    rocketnet_unit_check( rocketnet_xdp_send_queue_released( hard_error.load( std::memory_order_relaxed ), false, false ) );
+
+    // back-pressure is no sign the interface is back
+
+    rocketnet_xdp_send_wakeup_failed( EAGAIN, failures, hard_error );
+    rocketnet_unit_check( rocketnet_xdp_send_queue_released( hard_error.load( std::memory_order_relaxed ), false, false ) );
+
+    rocketnet_xdp_send_wakeup_succeeded( hard_error );
+    rocketnet_unit_check( hard_error.load( std::memory_order_relaxed ) == 0 );
+    rocketnet_unit_check( !rocketnet_xdp_send_queue_released( hard_error.load( std::memory_order_relaxed ), false, false ) );
+    rocketnet_unit_check( rocketnet_xdp_send_queue_released( hard_error.load( std::memory_order_relaxed ), true, true ) );
+    rocketnet_unit_check( failures.load( std::memory_order_relaxed ) == 1 );
+
+    // a success with no error kept changes nothing
+
+    rocketnet_xdp_send_wakeup_succeeded( hard_error );
+    rocketnet_unit_check( hard_error.load( std::memory_order_relaxed ) == 0 );
+}
+
+REGISTER_UNIT_TEST( test_xdp_send_wakeup_success_clears_the_hard_error );
+
 // The fixture calls the actual transport send_packets twice with a fake
 // staged backend carrying the given flags, after one commit: a transport that
 // declares ROCKETNET_TRANSPORT_REFLUSHES flushes at both boundaries, any other

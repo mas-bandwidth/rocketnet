@@ -257,8 +257,9 @@ struct rocketnet_server_xdp_socket_t
     uint64_t send_refused_overflow_warned{ 0 };
 
     // hard TX wakeup (sendto) failures this queue's worker saw, and the errno
-    // of the last one. A hard error means the TX ring can never drain, so
-    // the stop drain gives up on this queue (rocketnet_server_socket_send_idle).
+    // of the last one, cleared by the next wakeup that succeeds. While it is
+    // set the TX ring cannot drain, so the stop drain gives up on this queue
+    // (rocketnet_server_socket_send_idle).
     std::atomic<uint64_t> send_wakeup_failures{ 0 };
     std::atomic<int> send_hard_error{ 0 };
 
@@ -2575,8 +2576,8 @@ bool rocketnet_server_socket_send_idle( struct rocketnet_server_socket_t * serve
     {
         rocketnet_server_xdp_socket_t * socket = &server_socket->socket[queue];
 
-        // A queue whose worker reported a hard TX wakeup error never drains
-        // its ring: give up on it before waiting on its buffers or mutex.
+        // A queue whose worker's last TX wakeup failed hard cannot drain its
+        // ring: give up on it before waiting on its buffers or mutex.
 
         const int hard_send_error = socket->send_hard_error.load( std::memory_order_relaxed );
         if ( rocketnet_xdp_send_wakeup_hard_error( hard_send_error ) )
@@ -4514,6 +4515,7 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
             else
             {
                 send_error = 0;
+                rocketnet_xdp_send_wakeup_succeeded( socket->send_hard_error );
             }
         }
 

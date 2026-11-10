@@ -37,8 +37,8 @@ inline int rocketnet_xdp_send_claim( std::atomic<uint64_t> & num_packets, int li
 
 // An AF_XDP TX wakeup (sendto on the socket fd) fails hard when no retry can
 // clear it: the interface is down (ENETDOWN), the device is gone (ENXIO), or
-// the descriptor is no longer valid (EBADF). A queue that saw one can never
-// drain its TX ring, so the server stop must not wait for it.
+// the descriptor is no longer valid (EBADF). A queue whose last wakeup failed
+// so cannot drain its TX ring, so the server stop must not wait for it.
 inline bool rocketnet_xdp_send_wakeup_hard_error( int error )
 {
     return error == ENETDOWN || error == ENXIO || error == EBADF;
@@ -66,6 +66,15 @@ inline void rocketnet_xdp_send_wakeup_failed( int error, std::atomic<uint64_t> &
         return;
     failures.fetch_add( 1, std::memory_order_relaxed );
     hard_error.store( error, std::memory_order_relaxed );
+}
+
+// A TX wakeup that succeeded shows the ring can drain: a hard error kept from
+// an interface that went down and came back up no longer holds, and the stop
+// drain waits for this queue again. The store is skipped while there is none.
+inline void rocketnet_xdp_send_wakeup_succeeded( std::atomic<int> & hard_error )
+{
+    if ( hard_error.load( std::memory_order_relaxed ) != 0 )
+        hard_error.store( 0, std::memory_order_relaxed );
 }
 
 // The worker logs a hard wakeup failure once per contiguous run of one errno:
