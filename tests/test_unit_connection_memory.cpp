@@ -12,6 +12,7 @@
 // region. No sockets and no clock: nothing here reads time.
 
 #include "test_unit_registry.h"
+#include "unit_arena.h"
 
 #include "rocketnet_allocator.h"
 #include "rocketnet_channel.h"
@@ -271,7 +272,7 @@ static void test_exhaustion_is_a_kick_with_its_reason()
 
     // the client shape: one region
 
-    rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &counters );
+    rn_arena_t * arena = rn_unit_arena_create( NULL, 1, &counters );
     check( arena );
 
     rn_region_t * region = rn_arena_region( arena, 0 );
@@ -315,7 +316,7 @@ static void test_exhaustion_is_a_kick_with_its_reason()
     config.client_send_kbps = config.server_send_kbps = 0; // isolate explicit capacity
     config.send_queue_messages = 16;
 
-    rn_arena_t * small = rn_arena_create( NULL, &config, 1, &counters );
+    rn_arena_t * small = rn_unit_arena_create( &config, 1, &counters );
     check( small );
 
     rn_region_t * q = rn_arena_region( small, 0 );
@@ -330,8 +331,8 @@ static void test_exhaustion_is_a_kick_with_its_reason()
     check( !rn_region_exhausted( region ) );
     check( rn_connection_memory_decide( region ) == ROCKETNET_DISCONNECT_REASON_NONE );
 
-    rn_arena_destroy( small );
-    rn_arena_destroy( arena );
+    rn_unit_arena_destroy( small );
+    rn_unit_arena_destroy( arena );
 }
 #endif // #if ROCKETNET_DEV
 
@@ -344,8 +345,8 @@ static void test_reused_slot_starts_clean()
     rocketnet_counters_t counters;
     memset( &counters, 0, sizeof( counters ) );
 
-    rn_arena_t * arena = rn_arena_create( NULL, NULL, 2, &counters );
-    rn_arena_t * fresh_arena = rn_arena_create( NULL, NULL, 1, &counters );
+    rn_arena_t * arena = rn_unit_arena_create( NULL, 2, &counters );
+    rn_arena_t * fresh_arena = rn_unit_arena_create( NULL, 1, &counters );
     check( arena && fresh_arena );
 
     rn_region_t * a = rn_arena_region( arena, 0 );
@@ -394,15 +395,15 @@ static void test_reused_slot_starts_clean()
     // and the reused slot behaves as fresh: the same descriptor order
 
     const uint32_t first_a = rn_region_send_alloc( a, 10 );
-    rn_arena_t * fresh_arena2 = rn_arena_create( NULL, NULL, 1, &counters );
+    rn_arena_t * fresh_arena2 = rn_unit_arena_create( NULL, 1, &counters );
     check( fresh_arena2 );
 
     const uint32_t first_fresh = rn_region_send_alloc( rn_arena_region( fresh_arena2, 0 ), 10 );
     check( first_a == first_fresh );
 
-    rn_arena_destroy( fresh_arena2 );
-    rn_arena_destroy( fresh_arena );
-    rn_arena_destroy( arena );
+    rn_unit_arena_destroy( fresh_arena2 );
+    rn_unit_arena_destroy( fresh_arena );
+    rn_unit_arena_destroy( arena );
 }
 
 // The caller may supply the block: create takes nothing from the allocator,
@@ -488,8 +489,8 @@ static void test_connection_memory_no_allocation_after_create()
     memset( &counters, 0, sizeof( counters ) );
 
     const uint64_t mallocs_before = cm_mallocs;
-    rn_arena_t * server = rn_arena_create( NULL, NULL, 4, &counters );
-    rn_arena_t * client = rn_arena_create( NULL, NULL, 1, &counters );
+    rn_arena_t * server = rn_unit_arena_create( NULL, 4, &counters );
+    rn_arena_t * client = rn_unit_arena_create( NULL, 1, &counters );
     check( server && client );
     check( cm_mallocs == mallocs_before + 2 );
 
@@ -528,8 +529,8 @@ static void test_connection_memory_no_allocation_after_create()
     check( cm_calls() == after_create );
 
     const uint64_t frees_before = cm_frees;
-    rn_arena_destroy( server );
-    rn_arena_destroy( client );
+    rn_unit_arena_destroy( server );
+    rn_unit_arena_destroy( client );
     check( cm_frees == frees_before + 2 );
 
     cm_restore();
@@ -551,7 +552,7 @@ static void test_exhausted_region_refuses_sends_until_reset()
     config.client_send_kbps = config.server_send_kbps = 0; // isolate explicit capacity
     config.send_queue_messages = 16;
 
-    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+    rn_arena_t * arena = rn_unit_arena_create( &config, 1, &counters );
     check( arena );
 
     rn_region_t * region = rn_arena_region( arena, 0 );
@@ -606,7 +607,7 @@ static void test_exhausted_region_refuses_sends_until_reset()
     rn_region_send_free( region, d );
     check( region->descriptors_free == 16 );
 
-    rn_arena_destroy( arena );
+    rn_unit_arena_destroy( arena );
 }
 
 // The receive descriptor take is guaranteed room by the window: accept rejects
@@ -621,7 +622,7 @@ static void test_receive_without_room_exhausts_the_region()
     rocketnet_counters_t counters;
     memset( &counters, 0, sizeof( counters ) );
 
-    rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &counters );
+    rn_arena_t * arena = rn_unit_arena_create( NULL, 1, &counters );
     check( arena );
 
     rn_region_t * region = rn_arena_region( arena, 0 );
@@ -664,7 +665,7 @@ static void test_receive_without_room_exhausts_the_region()
     check( rn_connection_memory_decide( region ) == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
     check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == exhausted_before );
 
-    rn_arena_destroy( arena );
+    rn_unit_arena_destroy( arena );
 }
 
 // RNConnectionMemory Use requires ~exhausted for every way a send takes room,
@@ -684,7 +685,7 @@ static void test_exhausted_region_refuses_spans()
     config.send_queue_messages = 16;
     check( config.max_message_bytes >= (int) RN_SPAN_MIN_BYTES );
 
-    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+    rn_arena_t * arena = rn_unit_arena_create( &config, 1, &counters );
     check( arena );
 
     rn_region_t * region = rn_arena_region( arena, 0 );
@@ -716,7 +717,7 @@ static void test_exhausted_region_refuses_spans()
     check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 3 );
     check( rn_connection_memory_decide( region ) == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
 
-    rn_arena_destroy( arena );
+    rn_unit_arena_destroy( arena );
 }
 
 // RNConnectionMemory Reuse: the reset clears the sticky state, and the span
@@ -732,7 +733,7 @@ static void test_span_granted_after_reset()
     config.client_send_kbps = config.server_send_kbps = 0; // isolate explicit capacity
     config.send_queue_messages = 16;
 
-    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+    rn_arena_t * arena = rn_unit_arena_create( &config, 1, &counters );
     check( arena );
 
     rn_region_t * region = rn_arena_region( arena, 0 );
@@ -759,7 +760,7 @@ static void test_span_granted_after_reset()
     check( region->descriptors_free == 16 );
     check( region->span_first == RN_DESCRIPTOR_NONE );
 
-    rn_arena_destroy( arena );
+    rn_unit_arena_destroy( arena );
 }
 
 // Generation-tagged slots: a descriptor's generation bumps on every take and
@@ -777,7 +778,7 @@ static void test_generation_tagged_slots_and_lifo_stack()
     config.client_send_kbps = config.server_send_kbps = 0;
     config.send_queue_messages = 16;
 
-    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+    rn_arena_t * arena = rn_unit_arena_create( &config, 1, &counters );
     check( arena );
 
     rn_region_t * region = rn_arena_region( arena, 0 );
@@ -816,7 +817,7 @@ static void test_generation_tagged_slots_and_lifo_stack()
     check( region->send_descriptors[a2].chunk == live_chunk );     // the lowest free chunk
     check( rn_send_store_chunk_generation( &region->store, live_chunk ) == gen_before + 1 );
 
-    rn_arena_destroy( arena );
+    rn_unit_arena_destroy( arena );
 }
 #endif // #if ROCKETNET_DEV
 
@@ -834,7 +835,7 @@ static void test_span_links_pin_oldest_live()
     config.client_send_kbps = config.server_send_kbps = 0;
     config.send_queue_messages = 16;
 
-    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+    rn_arena_t * arena = rn_unit_arena_create( &config, 1, &counters );
     check( arena );
 
     rn_region_t * region = rn_arena_region( arena, 0 );
@@ -875,7 +876,7 @@ static void test_span_links_pin_oldest_live()
     rn_region_send_free( region, s1b );
     check( region->span_first == RN_DESCRIPTOR_NONE && region->span_head == 0 && region->span_tail == 0 );
 
-    rn_arena_destroy( arena );
+    rn_unit_arena_destroy( arena );
 }
 
 // A store class may hold up to RN_HANDLE_INDEX chunks, the reach of a
@@ -913,7 +914,7 @@ static void test_message_descriptor_generation_never_zero()
     config.client_send_kbps = config.server_send_kbps = 0;
     config.send_queue_messages = 16;
 
-    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+    rn_arena_t * arena = rn_unit_arena_create( &config, 1, &counters );
     check( arena );
 
     rn_region_t * region = rn_arena_region( arena, 0 );
@@ -927,7 +928,7 @@ static void test_message_descriptor_generation_never_zero()
     check( rn_region_send_take( region, 10 ) == d );
     check( region->send_descriptors[d].generation == 1 );
 
-    rn_arena_destroy( arena );
+    rn_unit_arena_destroy( arena );
 }
 
 // A chunk's generation tag wraps to 1, never to 0: 0 is never a live name
@@ -939,7 +940,7 @@ static void test_store_chunk_generation_never_zero()
     rocketnet_counters_t counters;
     memset( &counters, 0, sizeof( counters ) );
 
-    rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &counters );
+    rn_arena_t * arena = rn_unit_arena_create( NULL, 1, &counters );
     check( arena );
 
     rn_region_t * region = rn_arena_region( arena, 0 );
@@ -964,7 +965,7 @@ static void test_store_chunk_generation_never_zero()
     check( rn_region_send_take( region, 10 ) != RN_DESCRIPTOR_NONE );
     check( rn_send_store_chunk_generation( &region->store, chunk ) == 2 );
 
-    rn_arena_destroy( arena );
+    rn_unit_arena_destroy( arena );
 }
 #endif // #if ROCKETNET_DEV
 

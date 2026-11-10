@@ -191,6 +191,9 @@ struct rocketnet_server_gso_t
     rocketnet_platform_wake_t * send_wake = NULL;
     rocketnet_platform_thread_t * send_thread = NULL;
     std::atomic<bool> send_quit{ false };
+    // shutdown has begun (rocketnet_server_gso_begin_shutdown, or stop): the
+    // TX worker's retry of a full socket is bounded from here
+    std::atomic<bool> send_shutdown{ false };
     std::atomic<bool> send_stopped{ false };
     // TX worker sets it while it holds a bank the socket refused; main's
     // next update wakes the worker to send the rest
@@ -300,18 +303,20 @@ bool rocketnet_server_gso_test_send_idle( struct rocketnet_server_gso_t * gso )
     return idle;
 }
 
-bool rocketnet_server_gso_test_receive_ready( struct rocketnet_server_gso_t * gso, int queue_index )
+// the packets the receive worker has staged in its buffer and main has not
+// yet claimed: -1 while the worker holds the receive mutex
+int rocketnet_server_gso_test_receive_staged( struct rocketnet_server_gso_t * gso, int queue_index )
 {
     rocketnet_assert( gso );
     rocketnet_assert( queue_index >= 0 && queue_index < gso->num_queues );
 
     struct rocketnet_server_gso_queue_t * queue = &gso->queues[queue_index];
     if ( !rocketnet_platform_mutex_try_acquire( &queue->receive_mutex ) )
-        return false;
-    const bool ready = queue->worker_buffer && queue->worker_buffer->num_packets > 0;
+        return -1;
+    const int staged = queue->worker_buffer ? (int) queue->worker_buffer->num_packets : 0;
     rocketnet_platform_mutex_release( &queue->receive_mutex );
 
-    return ready;
+    return staged;
 }
 
 #endif // #if ROCKETNET_DEV
@@ -446,21 +451,26 @@ static void rocketnet_server_gso_send_worker( rocketnet_platform_thread_t *, voi
             count = ROCKETNET_GSO_SEND_QUEUE_SIZE;
         // a full socket keeps the bank's unsent tail here, ahead of every
         // later bank; main's next update (or the retry timeout) wakes the
-        // worker to send it. once stop is requested that wait is bounded:
+        // worker to send it. once shutdown has begun that wait is bounded:
         // ROCKETNET_GSO_SEND_RETRIES_AFTER_QUIT further attempts, then the
-        // tail is left so a socket that stays full cannot keep send_stopped
-        // false.
+        // tail is left so a socket that stays full cannot keep send_idle
+        // false (the server's stop is requested only once it is true) or
+        // send_stopped false.
 
         int slot = 0;
         int retries_after_quit = 0;
         while ( !rocketnet_server_gso_send_bank( gso, bank, &slot, count ) )
         {
             gso->send_full.store( true, std::memory_order_release );
-            if ( gso->send_quit.load( std::memory_order_acquire ) )
+            if ( gso->send_shutdown.load( std::memory_order_acquire ) )
             {
                 retries_after_quit++;
                 if ( retries_after_quit > ROCKETNET_GSO_SEND_RETRIES_AFTER_QUIT )
+                {
+                    // the tail the socket never took is dropped: count it
+                    gso->counter_send_dropped += (uint64_t) ( count - slot );
                     break;
+                }
             }
             rocketnet_platform_wake_wait( gso->send_wake, false, ROCKETNET_GSO_SEND_RETRY_SECONDS );
         }
@@ -552,13 +562,20 @@ static bool rocketnet_server_gso_sockaddr_to_address( const struct sockaddr_stor
 // non-blocking, don't-fragment, buffers requested at the configured sizes
 // with what the kernel actually granted read back and reported -- the box's
 // default rmem/wmem sysctls are tiny, so never assume the request was
-// honored.
+// honored. Close-on-exec, so a child process never holds a socket of the
+// reuseport group (rocketnet_platform_socket_open).
+
+static void rocketnet_server_gso_set_socket_option( void * user, int level, int option_name, int value )
+{
+    const int fd = *(const int *) user;
+    setsockopt( fd, level, option_name, &value, sizeof( value ) );
+}
 
 static int rocketnet_server_gso_open_socket( const rocketnet_address_t * bind_address, int queue_index, int max_clients, uint16_t * bound_port )
 {
     const bool ipv6 = bind_address->type == ROCKETNET_ADDRESS_IPV6;
 
-    int fd = socket( ipv6 ? AF_INET6 : AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+    int fd = socket( ipv6 ? AF_INET6 : AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, IPPROTO_UDP );
     if ( fd < 0 )
     {
         rocketnet_error( "gso transport: failed to create socket: %s", strerror( errno ) );
@@ -697,16 +714,7 @@ static int rocketnet_server_gso_open_socket( const rocketnet_address_t * bind_ad
         return -1;
     }
 
-    if ( ipv6 )
-    {
-        int df = 1;
-        setsockopt( fd, IPPROTO_IPV6, IPV6_DONTFRAG, &df, sizeof( df ) );
-    }
-    else
-    {
-        int pmtud = IP_PMTUDISC_DO;
-        setsockopt( fd, IPPROTO_IP, IP_MTU_DISCOVER, &pmtud, sizeof( pmtud ) );
-    }
+    rocketnet_platform_socket_apply_dont_fragment( ipv6, rocketnet_server_gso_set_socket_option, &fd );
 
     return fd;
 }
@@ -1268,11 +1276,26 @@ void rocketnet_server_gso_stop( rocketnet_server_gso_t * gso )
     // Release the final producer after all main-thread writes. The worker
     // drains it after earlier published banks; main never waits or scans it.
 
+    gso->send_shutdown.store( true, std::memory_order_release );
     gso->send_quit.store( true, std::memory_order_release );
     if ( gso->send_wake )
         rocketnet_platform_wake_set( gso->send_wake );
     for ( int i = 0; gso->queues && i < gso->num_queues; ++i )
         gso->queues[i].quit.store( true, std::memory_order_release );
+}
+
+// the builtin transport's begin_shutdown hook: main thread, once, when the
+// server starts stopping and before its last disconnect batches. The server
+// asks for stop only once send_idle is true, so from here a socket that stays
+// full gets the TX worker's bounded retries, as after stop, and the worker
+// then leaves the tail and returns the bank instead of holding it forever.
+void rocketnet_server_gso_begin_shutdown( struct rocketnet_server_gso_t * gso )
+{
+    rocketnet_assert( gso );
+
+    gso->send_shutdown.store( true, std::memory_order_release );
+    if ( gso->send_wake )
+        rocketnet_platform_wake_set( gso->send_wake );
 }
 
 bool rocketnet_server_gso_stopped( rocketnet_server_gso_t * gso )
@@ -2791,6 +2814,198 @@ bool rocketnet_server_gso_test_send_retry_quit()
     gso->test_send_user = NULL;
     rocketnet_server_gso_test_destroy( gso );
     return valid;
+}
+
+// a socket that stays full once the server's shutdown has begun, before stop.
+// The server asks for stop only when send_idle is true, and send_idle is false
+// while the TX worker holds a bank, so the worker must give up on the full
+// socket without send_quit. Bank A (port 40000) meets a full socket; bank B
+// (port 40001) is ready behind it. The worker must leave A after the bounded
+// retries and go on to B. A second attempt at A means it retried with the
+// socket still full: the seam then stops the transport, which the stop path
+// handles, so this thread is not stuck, and the test fails. B is accepted and
+// stops the transport, so the worker exits.
+struct rocketnet_server_gso_test_shutdown_full_t
+{
+    struct rocketnet_server_gso_t * gso;
+    int calls_a;
+    bool retried;
+    bool sent_b;
+};
+
+static int rocketnet_server_gso_test_shutdown_full_send( struct mmsghdr * messages, unsigned int count, void * user )
+{
+    struct rocketnet_server_gso_test_shutdown_full_t * full = (struct rocketnet_server_gso_test_shutdown_full_t *) user;
+    const struct sockaddr_in * to = (const struct sockaddr_in *) messages[0].msg_hdr.msg_name;
+    if ( to && ntohs( to->sin_port ) == 40001 )
+    {
+        full->sent_b = true;
+        rocketnet_server_gso_stop( full->gso );
+        return (int) count;
+    }
+
+    full->calls_a++;
+    if ( full->calls_a > ROCKETNET_GSO_SEND_RETRIES_AFTER_QUIT + 1 )
+    {
+        full->retried = true;
+        rocketnet_server_gso_stop( full->gso );
+    }
+    if ( full->gso->send_wake )
+        rocketnet_platform_wake_set( full->gso->send_wake );
+    errno = EAGAIN;
+    return -1;
+}
+
+bool rocketnet_server_gso_test_send_shutdown_full()
+{
+    struct rocketnet_server_gso_t * gso = rocketnet_server_gso_test_create();
+    if ( !gso )
+        return false;
+
+    // eventfd wake, not a socket: a set wake makes the worker's waits return
+    // without blocking.
+    gso->send_wake = rocketnet_platform_wake_create( NULL, NULL, NULL );
+    if ( !gso->send_wake )
+    {
+        gso->stopping = true;
+        gso->queues[0].stopped.store( true, std::memory_order_release );
+        gso->send_stopped.store( true, std::memory_order_release );
+        rocketnet_server_gso_test_destroy( gso );
+        return false;
+    }
+
+    bool valid = rocketnet_server_gso_test_stage( gso, 40000 );
+    rocketnet_server_gso_send_packets( gso );
+    valid = valid && rocketnet_server_gso_test_stage( gso, 40001 );
+    rocketnet_server_gso_send_packets( gso );
+    valid = valid && gso->send_ready_count == 2;
+
+    struct rocketnet_server_gso_test_shutdown_full_t full;
+    memset( &full, 0, sizeof( full ) );
+    full.gso = gso;
+    gso->test_send = rocketnet_server_gso_test_shutdown_full_send;
+    gso->test_send_user = &full;
+
+    rocketnet_server_gso_begin_shutdown( gso );
+    rocketnet_server_gso_send_worker( NULL, gso );
+
+    valid = valid && !full.retried && full.calls_a == ROCKETNET_GSO_SEND_RETRIES_AFTER_QUIT + 1 && full.sent_b;
+    // bank A's one packet was left: it is counted as dropped, B's is sent
+    valid = valid && gso->counter_send_dropped == 1 && gso->counter_packets_sent == 1;
+    valid = valid && gso->send_stopped.load( std::memory_order_acquire );
+    gso->queues[0].stopped.store( true, std::memory_order_release );
+    valid = valid && rocketnet_server_gso_stopped( gso );
+
+    gso->test_send = NULL;
+    gso->test_send_user = NULL;
+    rocketnet_server_gso_test_destroy( gso );
+    return valid;
+}
+
+// the bounded retry after shutdown, from both sides. a bank holds a packet to
+// port 40000 and one to port 40002. the seam accepts 40000; 40002 meets a
+// full socket `refusals` times and is then accepted. the first refusal also
+// stops the transport, so the worker exits whatever it does with the bank.
+// a refusal past the bound's last retry means the worker kept retrying: the
+// seam then accepts so this thread is not stuck, and the test fails.
+struct rocketnet_server_gso_test_bounded_retry_t
+{
+    struct rocketnet_server_gso_t * gso;
+    int refusals;
+    int calls_tail;
+    bool retried;
+};
+
+static int rocketnet_server_gso_test_bounded_retry_send( struct mmsghdr * messages, unsigned int count, void * user )
+{
+    struct rocketnet_server_gso_test_bounded_retry_t * retry = (struct rocketnet_server_gso_test_bounded_retry_t *) user;
+
+    int accepted = 0;
+    while ( accepted < (int) count )
+    {
+        const struct sockaddr_in * to = (const struct sockaddr_in *) messages[accepted].msg_hdr.msg_name;
+        if ( !to || ntohs( to->sin_port ) != 40000 )
+            break;
+        accepted++;
+    }
+    if ( accepted > 0 )
+        return accepted;
+
+    retry->calls_tail++;
+    if ( retry->calls_tail == 1 )
+        rocketnet_server_gso_stop( retry->gso );
+    if ( retry->calls_tail > retry->refusals || retry->calls_tail > ROCKETNET_GSO_SEND_RETRIES_AFTER_QUIT + 1 )
+    {
+        retry->retried = retry->calls_tail > ROCKETNET_GSO_SEND_RETRIES_AFTER_QUIT + 1;
+        return (int) count;
+    }
+    if ( retry->gso->send_wake )
+        rocketnet_platform_wake_set( retry->gso->send_wake );
+    errno = EAGAIN;
+    return -1;
+}
+
+static bool rocketnet_server_gso_test_bounded_retry( int refusals, uint64_t expect_sent, uint64_t expect_dropped )
+{
+    struct rocketnet_server_gso_t * gso = rocketnet_server_gso_test_create();
+    if ( !gso )
+        return false;
+
+    // eventfd wake, not a socket: a set wake makes the worker's waits return
+    // without blocking.
+    gso->send_wake = rocketnet_platform_wake_create( NULL, NULL, NULL );
+    if ( !gso->send_wake )
+    {
+        gso->stopping = true;
+        gso->queues[0].stopped.store( true, std::memory_order_release );
+        gso->send_stopped.store( true, std::memory_order_release );
+        rocketnet_server_gso_test_destroy( gso );
+        return false;
+    }
+
+    bool valid = rocketnet_server_gso_test_stage( gso, 40000 );
+    valid = valid && rocketnet_server_gso_test_stage( gso, 40002 );
+    rocketnet_server_gso_send_packets( gso );
+    valid = valid && gso->send_ready_count == 1;
+
+    struct rocketnet_server_gso_test_bounded_retry_t retry;
+    memset( &retry, 0, sizeof( retry ) );
+    retry.gso = gso;
+    retry.refusals = refusals;
+    gso->test_send = rocketnet_server_gso_test_bounded_retry_send;
+    gso->test_send_user = &retry;
+
+    rocketnet_server_gso_begin_shutdown( gso );
+    rocketnet_server_gso_send_worker( NULL, gso );
+
+    const int expect_calls = refusals <= ROCKETNET_GSO_SEND_RETRIES_AFTER_QUIT ? refusals + 1 : ROCKETNET_GSO_SEND_RETRIES_AFTER_QUIT + 1;
+    valid = valid && !retry.retried && retry.calls_tail == expect_calls;
+    valid = valid && gso->counter_packets_sent == expect_sent && gso->counter_send_dropped == expect_dropped;
+    valid = valid && gso->send_stopped.load( std::memory_order_acquire );
+    gso->queues[0].stopped.store( true, std::memory_order_release );
+    valid = valid && rocketnet_server_gso_stopped( gso );
+
+    gso->test_send = NULL;
+    gso->test_send_user = NULL;
+    rocketnet_server_gso_test_destroy( gso );
+    return valid;
+}
+
+// the socket refuses the tail fewer times than the bound ends: once (one
+// transient EAGAIN), then as many times as the bound allows retries, so the
+// last allowed retry is accepted. both packets are sent, none dropped.
+bool rocketnet_server_gso_test_send_shutdown_within_bound()
+{
+    bool valid = rocketnet_server_gso_test_bounded_retry( 1, 2, 0 );
+    valid = valid && rocketnet_server_gso_test_bounded_retry( ROCKETNET_GSO_SEND_RETRIES_AFTER_QUIT, 2, 0 );
+    return valid;
+}
+
+// the socket refuses the tail past the bound: the worker stops retrying, the
+// one packet it never sent is dropped and counted, and stop completes
+bool rocketnet_server_gso_test_send_shutdown_past_bound()
+{
+    return rocketnet_server_gso_test_bounded_retry( ROCKETNET_GSO_SEND_RETRIES_AFTER_QUIT + 2, 1, 1 );
 }
 
 #endif // #if ROCKETNET_DEV

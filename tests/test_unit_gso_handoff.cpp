@@ -61,6 +61,39 @@ static void test_server_gso_send_retry_quit()
 
 REGISTER_UNIT_TEST( test_server_gso_send_retry_quit );
 
+// A full socket once shutdown has begun, before stop: the server asks for
+// stop only when send_idle is true, so the TX worker must give up on the
+// full socket without send_quit and go on to the next bank.
+bool rocketnet_server_gso_test_send_shutdown_full();
+
+static void test_server_gso_send_shutdown_full()
+{
+    check( rocketnet_server_gso_test_send_shutdown_full() );
+}
+
+REGISTER_UNIT_TEST( test_server_gso_send_shutdown_full );
+
+// The bounded retry once shutdown has begun: a socket that refuses fewer
+// times than ROCKETNET_GSO_SEND_RETRIES_AFTER_QUIT allows takes the whole
+// bank, nothing dropped; one that refuses past it loses only the unsent tail,
+// which is counted in SEND_DROPPED, and stop completes.
+bool rocketnet_server_gso_test_send_shutdown_within_bound();
+bool rocketnet_server_gso_test_send_shutdown_past_bound();
+
+static void test_server_gso_send_shutdown_within_bound()
+{
+    check( rocketnet_server_gso_test_send_shutdown_within_bound() );
+}
+
+REGISTER_UNIT_TEST( test_server_gso_send_shutdown_within_bound );
+
+static void test_server_gso_send_shutdown_past_bound()
+{
+    check( rocketnet_server_gso_test_send_shutdown_past_bound() );
+}
+
+REGISTER_UNIT_TEST( test_server_gso_send_shutdown_past_bound );
+
 // The receive drain's read budget: full batches of zero-length, refused-source
 // and undersized datagrams, far more than the budget, through the receive
 // seam; each drain returns after ROCKETNET_GSO_RECV_QUEUE_SIZE messages.
@@ -198,7 +231,11 @@ static void test_server_gso_segment_refusal_keeps_other_destinations()
     check( rocketnet_server_gso_test_flush_staged( gso ) );
 
     // the refused run left as two plain datagrams. the other destination
-    // was still one segmented send, and the tier is still on.
+    // was still one segmented send, and the tier is still on. gso's sendmmsg
+    // refuses synchronously with the bank still held, so the run is resent;
+    // io_uring's refusal arrives in a CQE after the slots are handed back, so
+    // there the run is dropped and counted (test_uring_segment_refusal_keeps_other_destinations).
+    // On both, one refusal leaves segmentation on for every destination.
     check( socket.plain_packets == 2 );
     check( socket.plain_ports_n == 2 );
     check( socket.plain_ports[0] == 40000 );

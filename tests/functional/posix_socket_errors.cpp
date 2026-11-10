@@ -44,6 +44,8 @@ uint64_t rocketnet_functional_token_timestamp( uint64_t token_epoch_unix_seconds
 #if defined( __linux__ )
 #include "rocketnet_server_gso.h"
 #include "rocketnet_server_uring.h"
+#include <fcntl.h>
+#include <sys/stat.h>
 #endif // #if defined( __linux__ )
 
 // darwin declares IPV6_DONTFRAG only under __APPLE_USE_RFC_3542, which the
@@ -2806,6 +2808,95 @@ void rocketnet_test_linux_uring_refuses_explicit_port_in_use()
     }
 
     posix_port_refused( POSIX_NATIVE_URING );
+}
+
+// ---------------------------------------------------
+// every socket a gso or io_uring server opens is close-on-exec, so a child
+// process never holds a socket of the reuseport group, and has both
+// don't-fragment options the platform socket gets
+// (rocketnet_platform_socket_apply_dont_fragment): a dual-stack IPv6 socket
+// carries the IPv4 option too, for its v4-mapped traffic
+
+#define POSIX_HYGIENE_MAX_FDS 1024
+
+static bool posix_hygiene_udp_socket( int fd )
+{
+    struct stat info;
+    if ( fstat( fd, &info ) != 0 || !S_ISSOCK( info.st_mode ) )
+        return false;
+
+    int type = 0;
+    socklen_t type_bytes = sizeof( type );
+    return getsockopt( fd, SOL_SOCKET, SO_TYPE, &type, &type_bytes ) == 0 && type == SOCK_DGRAM;
+}
+
+static void posix_native_socket_hygiene( int kind, int ipv6 )
+{
+    const char * name = kind == POSIX_NATIVE_GSO ? "gso" : "io_uring";
+
+    bool before[POSIX_HYGIENE_MAX_FDS];
+    for ( int fd = 0; fd < POSIX_HYGIENE_MAX_FDS; fd++ )
+    {
+        before[fd] = posix_hygiene_udp_socket( fd );
+    }
+
+    rocketnet_address_t address;
+    posix_check( rocketnet_address_parse( &address, ipv6 ? "[::1]:0" : "127.0.0.1:0" ) );
+
+    void * server;
+    if ( kind == POSIX_NATIVE_GSO )
+    {
+        server = rocketnet_server_gso_create( NULL, &address, 2, ROCKETNET_DEFAULT_MAX_CLIENTS, 0 );
+    }
+    else
+    {
+        server = rocketnet_server_uring_create( NULL, &address, 2, ROCKETNET_DEFAULT_MAX_CLIENTS );
+    }
+
+    posix_check( server != NULL );
+
+    int checked = 0;
+    for ( int fd = 0; fd < POSIX_HYGIENE_MAX_FDS; fd++ )
+    {
+        if ( before[fd] || !posix_hygiene_udp_socket( fd ) )
+            continue;
+
+        const int flags = fcntl( fd, F_GETFD );
+        posix_check( flags >= 0 && ( flags & FD_CLOEXEC ) != 0 );
+
+        int pmtud = -1;
+        socklen_t pmtud_bytes = sizeof( pmtud );
+        posix_check( getsockopt( fd, IPPROTO_IP, IP_MTU_DISCOVER, &pmtud, &pmtud_bytes ) == 0 );
+        posix_check( pmtud == IP_PMTUDISC_DO );
+
+        if ( ipv6 )
+        {
+            int pmtud6 = -1;
+            socklen_t pmtud6_bytes = sizeof( pmtud6 );
+            posix_check( getsockopt( fd, IPPROTO_IPV6, IPV6_MTU_DISCOVER, &pmtud6, &pmtud6_bytes ) == 0 );
+            posix_check( pmtud6 == IPV6_PMTUDISC_DO );
+        }
+
+        checked++;
+    }
+
+    printf( "  %s ipv%d: %d server sockets close-on-exec with both don't-fragment options\n", name, ipv6 ? 6 : 4, checked );
+    fflush( stdout );
+    posix_check( checked == 2 );
+
+    posix_port_server_destroy( kind, server );
+}
+
+void rocketnet_test_linux_gso_socket_hygiene()
+{
+    posix_native_socket_hygiene( POSIX_NATIVE_GSO, 0 );
+    posix_native_socket_hygiene( POSIX_NATIVE_GSO, 1 );
+}
+
+void rocketnet_test_linux_uring_socket_hygiene()
+{
+    posix_native_socket_hygiene( POSIX_NATIVE_URING, 0 );
+    posix_native_socket_hygiene( POSIX_NATIVE_URING, 1 );
 }
 
 // ---------------------------------------------------

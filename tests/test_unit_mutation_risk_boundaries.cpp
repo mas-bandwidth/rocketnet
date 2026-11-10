@@ -6,6 +6,7 @@
 // sockets, network or threads: every time is passed as an argument.
 
 #include "test_unit_registry.h"
+#include "unit_arena.h"
 
 #include "rocketnet_ack.h"
 #include "rocketnet_allocator.h"
@@ -94,7 +95,7 @@ static void risk_window_begin( struct risk_window_t * w )
 {
     rocketnet_message_default_config( &w->config );
     memset( &w->counters, 0, sizeof( w->counters ) );
-    w->arena = rn_arena_create( NULL, &w->config, 1, &w->counters );
+    w->arena = rn_unit_arena_create( &w->config, 1, &w->counters );
     check( w->arena );
     w->region = rn_arena_region( w->arena, 0 );
     rn_region_carve( w->region );
@@ -104,7 +105,7 @@ static void risk_window_begin( struct risk_window_t * w )
 
 static void risk_window_end( struct risk_window_t * w )
 {
-    rn_arena_destroy( w->arena );
+    rn_unit_arena_destroy( w->arena );
 }
 
 // ----------------------------------------------------------------

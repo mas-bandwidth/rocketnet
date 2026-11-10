@@ -300,6 +300,11 @@ uint64_t rocketnet_platform_receive_resets( void );
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 
+// the don't-fragment options every rocketnet UDP socket gets, through
+// set_option: an IPv6 (dual-stack) socket gets the IPv6 option and the IPv4
+// one, so v4-mapped traffic carries DF too. A refusal is tolerated.
+void rocketnet_platform_socket_apply_dont_fragment( bool ipv6, void ( *set_option )( void * user, int level, int option_name, int value ), void * user );
+
 // the process-wide counts of datagrams a receive read and skipped: a
 // zero-length datagram, which the per-packet receive cannot return (its 0
 // means drained) and the POSIX batch receives compact out, and a datagram
@@ -904,7 +909,11 @@ inline void rocketnet_platform_spin_lock_u64( volatile uint64_t * value )
 #if defined( _MSC_VER )
     while ( _InterlockedCompareExchange64( (volatile long long *) value, 1, 0 ) != 0 )
     {
+#if defined( _M_ARM64 )
+        __yield();
+#else
         _mm_pause();
+#endif // #if defined( _M_ARM64 )
         if ( ++spins >= ROCKETNET_PLATFORM_SPIN_YIELD_AFTER )
         {
             SwitchToThread();

@@ -7,6 +7,7 @@
 #include <stdlib.h>
 
 #include "test_unit_registry.h"
+#include "unit_arena.h"
 #include "../sdk/rocketnet_allocator.h"
 #include "../sdk/rocketnet_channel.h"
 #include "../sdk/rocketnet_message.h"
@@ -18,7 +19,7 @@ static void test_reliable_disabled_before_and_enabled_after()
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
 
-    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, NULL );
+    rn_arena_t * arena = rn_unit_arena_create( &config, 1, NULL );
     check( arena != NULL );
 
     rn_region_t * region = rn_arena_region( arena, 0 );
@@ -34,7 +35,7 @@ static void test_reliable_disabled_before_and_enabled_after()
     check( payload != NULL );
     memset( payload, 0xA5, 16 );
     check( rn_channels_finish( &enabled, 16 ) );
-    rn_arena_destroy( arena );
+    rn_unit_arena_destroy( arena );
 }
 
 REGISTER_UNIT_TEST( test_reliable_disabled_before_and_enabled_after );
@@ -62,7 +63,7 @@ struct reliable_test_node_t
 static void reliable_test_init( reliable_test_node_t * node, const rocketnet_message_config_t * config )
 {
     memset( node, 0, sizeof( *node ) );
-    node->arena = rn_arena_create( NULL, config, 1, &node->counters );
+    node->arena = rn_unit_arena_create( config, 1, &node->counters );
     check( node->arena != NULL );
     node->region = rn_arena_region( node->arena, 0 );
     check( rn_ordered_init( &node->ordered, node->region, config, NULL, 8, ROCKETNET_MESSAGE_SINGLE_BYTES ) );
@@ -158,8 +159,8 @@ static void test_reliable_exactly_once_any_order_under_loss_dup_reorder()
     }
 
     check( receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_DUPLICATE] >= 1 );
-    rn_arena_destroy( sender.arena );
-    rn_arena_destroy( receiver.arena );
+    rn_unit_arena_destroy( sender.arena );
+    rn_unit_arena_destroy( receiver.arena );
 }
 
 REGISTER_UNIT_TEST( test_reliable_exactly_once_any_order_under_loss_dup_reorder );
@@ -201,8 +202,8 @@ static void test_reliable_chunked_delivered_whole()
         rn_ordered_end_update( &receiver.ordered );
     }
 
-    rn_arena_destroy( sender.arena );
-    rn_arena_destroy( receiver.arena );
+    rn_unit_arena_destroy( sender.arena );
+    rn_unit_arena_destroy( receiver.arena );
 }
 
 REGISTER_UNIT_TEST( test_reliable_chunked_delivered_whole );
@@ -252,7 +253,7 @@ static void test_reliable_packet_fit_boundary()
     check( reliable_test_write( &sender, 1.02, packets, 1 ) == 1 );
     check( rocketnet_message_reader_begin( &reader, packets[0].data, packets[0].bytes, &sender.ordered.limits ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
     check( rocketnet_message_reader_next( &reader, &record ) && record.code == ROCKETNET_MESSAGE_CODE_RELIABLE && record.channel == 0 );
-    rn_arena_destroy( sender.arena );
+    rn_unit_arena_destroy( sender.arena );
 }
 
 REGISTER_UNIT_TEST( test_reliable_packet_fit_boundary );
@@ -300,7 +301,7 @@ static void test_rnchannel_reliable_witness_replays()
     check( rn_window_receive_accept( &node.ordered.receive, &record, &slot ) == RN_WINDOW_RECEIVE_ACCEPT );
     record.number = ROCKETNET_MESSAGE_U24_MASK;
     check( rn_window_receive_accept( &node.ordered.receive, &record, &slot ) == RN_WINDOW_RECEIVE_DUPLICATE );
-    rn_arena_destroy( node.arena );
+    rn_unit_arena_destroy( node.arena );
 }
 
 REGISTER_UNIT_TEST( test_rnchannel_reliable_witness_replays );
@@ -347,8 +348,8 @@ static void test_reliable_no_allocation_after_create()
     check( rn_ordered_acks( &sender.ordered, &packet.id, 1, 1.01 ) == 1 );
     check( reliable_allocator_calls == created );
 
-    rn_arena_destroy( sender.arena );
-    rn_arena_destroy( receiver.arena );
+    rn_unit_arena_destroy( sender.arena );
+    rn_unit_arena_destroy( receiver.arena );
     rocketnet_term();
     check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
@@ -386,7 +387,7 @@ static void test_reliable_control_record_frees_its_number()
     check( node.ordered.channels.deliveries == 0 );
     check( node.ordered.channels.error == ROCKETNET_DISCONNECT_REASON_NONE );
 
-    rn_arena_destroy( node.arena );
+    rn_unit_arena_destroy( node.arena );
 }
 
 REGISTER_UNIT_TEST( test_reliable_control_record_frees_its_number );
@@ -422,7 +423,7 @@ static void test_reliable_record_on_a_disabled_mask_is_refused()
     check( ch.deliveries == 0 );
     check( ch.error == ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION );
 
-    rn_arena_destroy( node.arena );
+    rn_unit_arena_destroy( node.arena );
 }
 
 REGISTER_UNIT_TEST( test_reliable_record_on_a_disabled_mask_is_refused );
@@ -456,7 +457,7 @@ static void test_reliable_record_without_a_live_number_stands_alone()
     check( node.counters.values[ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION] == before );
     check( node.ordered.channels.error == ROCKETNET_DISCONNECT_REASON_NONE );
 
-    rn_arena_destroy( node.arena );
+    rn_unit_arena_destroy( node.arena );
 }
 
 REGISTER_UNIT_TEST( test_reliable_record_without_a_live_number_stands_alone );
@@ -602,7 +603,7 @@ static void reliable_block_case( int order )
 
     free( arrival );
     free( data );
-    rn_arena_destroy( node.arena );
+    rn_unit_arena_destroy( node.arena );
 }
 
 static void test_reliable_block_in_order_delivered_once()
@@ -671,7 +672,7 @@ static void reliable_block_refused_case( int wrong )
     check( node.ordered.channels.error == ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION );
     check( node.ordered.channels.deliveries == 0 );
 
-    rn_arena_destroy( node.arena );
+    rn_unit_arena_destroy( node.arena );
 }
 
 static void test_reliable_block_chunk_with_wrong_ring_is_refused()
@@ -740,7 +741,7 @@ static void test_reliable_dispatch_stands_alone()
     check( node.counters.values[ROCKETNET_COUNTER_MESSAGE_SLOT_COLLISION] == collision_before + 1 );
     check( node.ordered.channels.deliveries == 1 );   // no second delivery
 
-    rn_arena_destroy( node.arena );
+    rn_unit_arena_destroy( node.arena );
 }
 
 REGISTER_UNIT_TEST( test_reliable_dispatch_stands_alone );

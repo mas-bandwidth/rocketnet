@@ -24,6 +24,7 @@
 #include <vector>
 
 #include "test_unit_registry.h"
+#include "unit_arena.h"
 #if ROCKETNET_DEV
 #include "test_env_source.h"
 #endif // #if ROCKETNET_DEV
@@ -3209,7 +3210,7 @@ static void test_send_room_watch_crosses_once_and_rearms_below_half()
     rocketnet_counters_t counters;
     memset( &counters, 0, sizeof( counters ) );
 
-    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+    rn_arena_t * arena = rn_unit_arena_create( &config, 1, &counters );
     check( arena );
 
     rn_region_t * region = rn_arena_region( arena, 0 );
@@ -3291,7 +3292,7 @@ static void test_send_room_watch_crosses_once_and_rearms_below_half()
     check( region->send_room_armed == 1 );
     check( rn_region_send_fits( region, 100, NULL, NULL, NULL ) == 1 );
 
-    rn_arena_destroy( arena );
+    rn_unit_arena_destroy( arena );
 }
 
 // ---------------------------------------------------------------------------
@@ -4830,7 +4831,7 @@ static int mo_carve_leaves_payload_and_counts_one( const rocketnet_message_confi
     rocketnet_counters_t counters;
     memset( &counters, 0, sizeof( counters ) );
 
-    rn_arena_t * arena = rn_arena_create( NULL, config, 1, &counters );
+    rn_arena_t * arena = rn_unit_arena_create( config, 1, &counters );
     check( arena );
 
     rn_region_t * region = rn_arena_region( arena, 0 );
@@ -4852,7 +4853,7 @@ static int mo_carve_leaves_payload_and_counts_one( const rocketnet_message_confi
     const int metadata_reset = region->channel_receive[0].ordered_read == 0 && region->sent_packets[0].packet_id == 0;
     const int ring_kept = mo_count_byte( region->receive_ring, region->ring_bytes, 0xA5 ) == region->ring_bytes;
     const int store_kept = mo_count_byte( region->store_memory, region->store_bytes, 0x5A ) == region->store_bytes;
-    rn_arena_destroy( arena );
+    rn_unit_arena_destroy( arena );
     check( one_carve );
     check( metadata_reset );
     check( ring_kept );

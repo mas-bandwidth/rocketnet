@@ -108,15 +108,21 @@ static inline int rocketnet_server_gso_recv_vlen( int num_packets, bool gro )
 
 // a full socket keeps the TX worker's bank for the next update; this is how
 // long the worker waits for main's wake before it tries the socket again.
-// once stop is requested that wait is not repeated: a socket that stays full
-// must not keep rocketnet_server_gso_stopped false.
+// before shutdown the worker retries without limit and drops nothing.
 
 #define ROCKETNET_GSO_SEND_RETRY_SECONDS                                 0.001
 
-// after stop, a full socket is tried this many further times and then the
-// worker leaves the bank. zero is the bound: the attempt that just failed
-// is the last one.
-#define ROCKETNET_GSO_SEND_RETRIES_AFTER_QUIT                               0
+// once shutdown has begun (rocketnet_server_gso_begin_shutdown, called when
+// the server starts to stop and before its disconnect packets drain, or
+// rocketnet_server_gso_stop), a full socket is tried this many further times;
+// then the worker drops the bank's unsent tail, counts it in SEND_DROPPED and
+// returns the bank. a socket that stays full then cannot keep send_idle false
+// (the server asks for stop only once it is true) or the transport from
+// reporting stopped. each retry waits for main's wake or the retry
+// timeout, so a socket that stays full holds a bank at most about 100 ms;
+// a transient refusal (a disconnect burst meeting a busy socket) is sent.
+// the value is unmeasured: chosen, not derived from a measured drain time.
+#define ROCKETNET_GSO_SEND_RETRIES_AFTER_QUIT                             100
 
 // feature bits reported by rocketnet_server_gso_features: what the runtime
 // probe found and the transport is actually using
@@ -224,9 +230,6 @@ struct rocketnet_server_socket_process_packets_t * rocketnet_server_gso_process_
 void rocketnet_server_gso_test_force_create_flags( int flags );
 void rocketnet_server_gso_test_fail_receives( struct rocketnet_server_gso_t * gso, int count, int error );
 void rocketnet_server_gso_test_fail_sends( struct rocketnet_server_gso_t * gso, int count, int error );
-// Observe the worker's current bank without consuming it; returns false on
-// lock contention. True once the worker staged a packet main has not claimed.
-bool rocketnet_server_gso_test_receive_ready( struct rocketnet_server_gso_t * gso, int queue_index );
 // Main thread: no staged packet, no ready bank, no bank held by the TX worker.
 bool rocketnet_server_gso_test_send_idle( struct rocketnet_server_gso_t * gso );
 // Deterministic ownership/full/contended/stop and retained-RX-tail regression.

@@ -422,13 +422,19 @@ static socklen_t rocketnet_server_uring_address_to_sockaddr( const rocketnet_add
 // one reuseport socket, bound as the gso transport binds its group: family from
 // the bind address, dual stack when ipv6, the configured buffer sizes
 // requested and the grant reported, the first socket discovering an
-// ephemeral port the rest join, non-blocking, don't-fragment.
+// ephemeral port the rest join, non-blocking, don't-fragment, close-on-exec.
+
+static void rocketnet_server_uring_set_socket_option( void * user, int level, int option_name, int value )
+{
+    const int fd = *(const int *) user;
+    setsockopt( fd, level, option_name, &value, sizeof( value ) );
+}
 
 static int rocketnet_server_uring_open_socket( const rocketnet_address_t * bind_address, int queue_index, int max_clients, uint16_t * bound_port )
 {
     const bool ipv6 = bind_address->type == ROCKETNET_ADDRESS_IPV6;
 
-    int fd = socket( ipv6 ? AF_INET6 : AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+    int fd = socket( ipv6 ? AF_INET6 : AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, IPPROTO_UDP );
     if ( fd < 0 )
     {
         rocketnet_error( "io_uring transport: failed to create socket: %s", strerror( errno ) );
@@ -559,16 +565,7 @@ static int rocketnet_server_uring_open_socket( const rocketnet_address_t * bind_
         return -1;
     }
 
-    if ( ipv6 )
-    {
-        int df = 1;
-        setsockopt( fd, IPPROTO_IPV6, IPV6_DONTFRAG, &df, sizeof( df ) );
-    }
-    else
-    {
-        int pmtud = IP_PMTUDISC_DO;
-        setsockopt( fd, IPPROTO_IP, IP_MTU_DISCOVER, &pmtud, sizeof( pmtud ) );
-    }
+    rocketnet_platform_socket_apply_dont_fragment( ipv6, rocketnet_server_uring_set_socket_option, &fd );
 
     return fd;
 }

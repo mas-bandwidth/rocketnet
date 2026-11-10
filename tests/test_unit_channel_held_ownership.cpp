@@ -14,6 +14,7 @@
 #include <string.h>
 
 #include "test_unit_registry.h"
+#include "unit_arena.h"
 #include "../sdk/rocketnet_channel.h"
 #include "../sdk/rocketnet_message_object.h"
 
@@ -40,7 +41,7 @@ static void ho_init( ho_node_t * node )
     config.max_message_bytes = 32768;       // a block is at most W fragments
     check( rocketnet_message_validate_config( &config ) == 1 );
 
-    node->arena = rn_arena_create( NULL, &config, 1, &node->counters );
+    node->arena = rn_unit_arena_create( &config, 1, &node->counters );
     check( node->arena != NULL );
     node->region = rn_arena_region( node->arena, 0 );
     check( rn_ordered_init( &node->ordered, node->region, &config, NULL, 8, ROCKETNET_MESSAGE_SINGLE_BYTES ) );
@@ -146,7 +147,7 @@ static void test_sequenced_block_release_spares_a_foreign_hold()
     check( node.counters.values[ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK] == bad_block + 1 );
     check( node.counters.values[ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION] == violations + 1 );
 
-    rn_arena_destroy( node.arena );
+    rn_unit_arena_destroy( node.arena );
 }
 
 REGISTER_UNIT_TEST( test_sequenced_block_release_spares_a_foreign_hold );
@@ -184,7 +185,7 @@ static void test_sequenced_block_release_never_delivers_stale_ring_bytes()
     check( node.ordered.channels.error == ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION );
 
     rn_ordered_end_update( &node.ordered );
-    rn_arena_destroy( node.arena );
+    rn_unit_arena_destroy( node.arena );
 }
 
 REGISTER_UNIT_TEST( test_sequenced_block_release_never_delivers_stale_ring_bytes );
@@ -225,7 +226,7 @@ static void test_held_entry_with_a_reused_descriptor_is_refused()
     check( node.counters.values[ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION] == violations + 1 );
 
     rn_ordered_end_update( &node.ordered );
-    rn_arena_destroy( node.arena );
+    rn_unit_arena_destroy( node.arena );
 }
 
 REGISTER_UNIT_TEST( test_held_entry_with_a_reused_descriptor_is_refused );
@@ -281,7 +282,7 @@ static void test_held_index_stays_within_the_window()
     ho_check_channel_one( &node, &trigger, held, (int) sizeof( held ) );
 
     rn_ordered_end_update( &node.ordered );
-    rn_arena_destroy( node.arena );
+    rn_unit_arena_destroy( node.arena );
 }
 
 REGISTER_UNIT_TEST( test_held_index_stays_within_the_window );
@@ -323,7 +324,7 @@ static void test_held_erase_ends_on_a_full_index()
         check( region->deliveries[i].data == &trigger );
 
     rn_ordered_end_update( &node.ordered );
-    rn_arena_destroy( node.arena );
+    rn_unit_arena_destroy( node.arena );
 }
 
 REGISTER_UNIT_TEST( test_held_erase_ends_on_a_full_index );
@@ -364,7 +365,7 @@ static void test_held_insert_refuses_the_window_plus_first_entry()
     check( ho_held_used( &node ) == W );
 
     rn_ordered_end_update( &node.ordered );
-    rn_arena_destroy( node.arena );
+    rn_unit_arena_destroy( node.arena );
 }
 
 REGISTER_UNIT_TEST( test_held_insert_refuses_the_window_plus_first_entry );
@@ -446,7 +447,7 @@ static void test_held_erase_shifts_back_across_the_wrap()
     check( ho_held_used( &node ) == 0 );
     check( node.ordered.channels.error == 0 );
 
-    rn_arena_destroy( node.arena );
+    rn_unit_arena_destroy( node.arena );
 }
 
 REGISTER_UNIT_TEST( test_held_erase_shifts_back_across_the_wrap );
@@ -519,7 +520,7 @@ static void test_sequenced_orphan_fragment_after_supersede_is_stale()
     check( node.ordered.receive.violation == ROCKETNET_MESSAGE_VIOLATION_NONE );
     check( node.ordered.channels.error == ROCKETNET_DISCONNECT_REASON_NONE );
 
-    rn_arena_destroy( node.arena );
+    rn_unit_arena_destroy( node.arena );
 }
 
 REGISTER_UNIT_TEST( test_sequenced_orphan_fragment_after_supersede_is_stale );

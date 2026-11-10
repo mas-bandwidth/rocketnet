@@ -17,6 +17,7 @@
 #include <string.h>
 
 #include "test_unit_registry.h"
+#include "unit_arena.h"
 #include "../sdk/rocketnet.h"
 #include "../sdk/rocketnet_allocator.h"
 #include "../sdk/rocketnet_message.h"
@@ -61,7 +62,7 @@ static void test_resend_stale_ack_leaves_the_later_generation()
     f.config.max_message_bytes = ROCKETNET_MESSAGE_SINGLE_BYTES;
     f.config.send_message_buffer_bytes = 12288;
     check( rocketnet_message_validate_config( &f.config ) );
-    f.arena = rn_arena_create( NULL, &f.config, 1, NULL );
+    f.arena = rn_unit_arena_create( &f.config, 1, NULL );
     check( f.arena != NULL );
     f.region = rn_arena_region( f.arena, 0 );
     rn_region_carve( f.region );
@@ -131,7 +132,7 @@ static void test_resend_stale_ack_leaves_the_later_generation()
     check( !( f.region->resend_fifo[0].prev & resend_generations_linked ) );
     check( !f.region->send_descriptors[later_descriptor].in_use );
 
-    rn_arena_destroy( f.arena );
+    rn_unit_arena_destroy( f.arena );
 }
 
 REGISTER_UNIT_TEST( test_resend_stale_ack_leaves_the_later_generation );
@@ -145,7 +146,7 @@ static void test_resend_requeue_keeps_the_number_linked()
     memset( &f.config, 0, sizeof( f.config ) );
     rocketnet_message_default_config( &f.config );
     check( rocketnet_message_validate_config( &f.config ) );
-    f.arena = rn_arena_create( NULL, &f.config, 1, NULL );
+    f.arena = rn_unit_arena_create( &f.config, 1, NULL );
     check( f.arena != NULL );
     f.region = rn_arena_region( f.arena, 0 );
     rn_region_carve( f.region );
@@ -167,7 +168,7 @@ static void test_resend_requeue_keeps_the_number_linked()
     check( f.region->send_numbers[slot].acked );
     check( !( f.region->resend_fifo[slot].prev & resend_generations_linked ) );
 
-    rn_arena_destroy( f.arena );
+    rn_unit_arena_destroy( f.arena );
 }
 
 REGISTER_UNIT_TEST( test_resend_requeue_keeps_the_number_linked );

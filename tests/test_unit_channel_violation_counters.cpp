@@ -13,6 +13,7 @@
 #include <string.h>
 
 #include "test_unit_registry.h"
+#include "unit_arena.h"
 #include "../sdk/rocketnet_allocator.h"
 #include "../sdk/rocketnet_channel.h"
 #include "../sdk/rocketnet_message.h"
@@ -56,7 +57,7 @@ static void violation_config( rocketnet_message_config_t * config, int num_chann
 static void violation_init( violation_node_t * node, const rocketnet_message_config_t * config )
 {
     memset( node, 0, sizeof( *node ) );
-    node->arena = rn_arena_create( NULL, config, 1, &node->counters );
+    node->arena = rn_unit_arena_create( config, 1, &node->counters );
     check( node->arena != NULL );
     node->region = rn_arena_region( node->arena, 0 );
     check( rn_ordered_init( &node->ordered, node->region, config, NULL, 8, ROCKETNET_MESSAGE_SINGLE_BYTES ) );
@@ -123,8 +124,8 @@ static void test_violation_malformed_ordered_record_moves_its_own_counter()
     check( receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_BAD_CHANNEL] == 1 );
     check( rn_ordered_decide( &receiver.ordered ) == ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION );
 
-    rn_arena_destroy( sender.arena );
-    rn_arena_destroy( receiver.arena );
+    rn_unit_arena_destroy( sender.arena );
+    rn_unit_arena_destroy( receiver.arena );
 }
 
 REGISTER_UNIT_TEST( test_violation_malformed_ordered_record_moves_its_own_counter );
@@ -163,8 +164,8 @@ static void test_violation_receipt_only_reliable_connection_takes_its_records()
     check( delivery.code == ROCKETNET_CHANNEL_TYPE_RELIABLE && delivery.bytes == 1 && delivery.data[0] == value );
     rn_ordered_end_update( &receiver.ordered );
 
-    rn_arena_destroy( sender.arena );
-    rn_arena_destroy( receiver.arena );
+    rn_unit_arena_destroy( sender.arena );
+    rn_unit_arena_destroy( receiver.arena );
 }
 
 REGISTER_UNIT_TEST( test_violation_receipt_only_reliable_connection_takes_its_records );
@@ -207,8 +208,8 @@ static void test_violation_wide_reliable_sequenced_boundary_is_sent()
     check( delivery.channel == channel && delivery.bytes == (int) bytes && memcmp( delivery.data, data, bytes ) == 0 );
     rn_ordered_end_update( &receiver.ordered );
 
-    rn_arena_destroy( sender.arena );
-    rn_arena_destroy( receiver.arena );
+    rn_unit_arena_destroy( sender.arena );
+    rn_unit_arena_destroy( receiver.arena );
 }
 
 REGISTER_UNIT_TEST( test_violation_wide_reliable_sequenced_boundary_is_sent );
@@ -244,7 +245,7 @@ static void test_violation_reader_and_window_checks_move_their_own_counters()
 
         const uint8_t payload[1] = { 0x00 };
         violation_feed_refuses( &receiver, payload, 1, ROCKETNET_MESSAGE_VIOLATION_BAD_FORM, ROCKETNET_COUNTER_MESSAGE_BAD_FORM );
-        rn_arena_destroy( receiver.arena );
+        rn_unit_arena_destroy( receiver.arena );
     }
 
     // check 2: TRUNCATED
@@ -256,7 +257,7 @@ static void test_violation_reader_and_window_checks_move_their_own_counters()
 
         const uint8_t payload[2] = { 0x00, ROCKETNET_MESSAGE_FORM_RECORDS };
         violation_feed_refuses( &receiver, payload, 2, ROCKETNET_MESSAGE_VIOLATION_TRUNCATED, ROCKETNET_COUNTER_MESSAGE_TRUNCATED );
-        rn_arena_destroy( receiver.arena );
+        rn_unit_arena_destroy( receiver.arena );
     }
 
     // check 3: BAD_FLAGS (reserved bits)
@@ -268,7 +269,7 @@ static void test_violation_reader_and_window_checks_move_their_own_counters()
 
         const uint8_t payload[4] = { 0x80, 0x00, 0x00, ROCKETNET_MESSAGE_FORM_RECORDS };
         violation_feed_refuses( &receiver, payload, 4, ROCKETNET_MESSAGE_VIOLATION_BAD_FLAGS, ROCKETNET_COUNTER_MESSAGE_BAD_FLAGS );
-        rn_arena_destroy( receiver.arena );
+        rn_unit_arena_destroy( receiver.arena );
     }
 
     // check 4: BAD_LENGTH (a RELIABLE_ORDERED record with length zero)
@@ -292,7 +293,7 @@ static void test_violation_reader_and_window_checks_move_their_own_counters()
         *p++ = 0;
         *p++ = ROCKETNET_MESSAGE_FORM_RECORDS;
         violation_feed_refuses( &receiver, payload, (int) ( p - payload ), ROCKETNET_MESSAGE_VIOLATION_BAD_LENGTH, ROCKETNET_COUNTER_MESSAGE_BAD_LENGTH );
-        rn_arena_destroy( receiver.arena );
+        rn_unit_arena_destroy( receiver.arena );
     }
 
     // check 9: BAD_SIZE (a reliable record on a payload past the wire maximum)
@@ -320,7 +321,7 @@ static void test_violation_reader_and_window_checks_move_their_own_counters()
         memset( p, 0xFF, (size_t) ( total - 1 - (int) ( p - payload ) ) );
         payload[total - 1] = ROCKETNET_MESSAGE_FORM_RECORDS;
         violation_feed_refuses( &receiver, payload, total, ROCKETNET_MESSAGE_VIOLATION_BAD_SIZE, ROCKETNET_COUNTER_MESSAGE_BAD_SIZE );
-        rn_arena_destroy( receiver.arena );
+        rn_unit_arena_destroy( receiver.arena );
     }
 
     // check 12: BAD_CONTROL (a CONFIG control record with an invalid body)
@@ -340,7 +341,7 @@ static void test_violation_reader_and_window_checks_move_their_own_counters()
         *p++ = 0x00;
         *p++ = ROCKETNET_MESSAGE_FORM_RECORDS;
         violation_feed_refuses( &receiver, payload, (int) ( p - payload ), -1, ROCKETNET_COUNTER_MESSAGE_BAD_CONTROL );
-        rn_arena_destroy( receiver.arena );
+        rn_unit_arena_destroy( receiver.arena );
     }
 
     // check 10: NUMBER_OUTSIDE_WINDOW
@@ -365,7 +366,7 @@ static void test_violation_reader_and_window_checks_move_their_own_counters()
         *p++ = 0x00;
         *p++ = ROCKETNET_MESSAGE_FORM_RECORDS;
         violation_feed_refuses( &receiver, payload, (int) ( p - payload ), ROCKETNET_MESSAGE_VIOLATION_NUMBER_OUTSIDE_WINDOW, ROCKETNET_COUNTER_MESSAGE_NUMBER_OUTSIDE_WINDOW );
-        rn_arena_destroy( receiver.arena );
+        rn_unit_arena_destroy( receiver.arena );
     }
 }
 
@@ -406,7 +407,7 @@ static void test_violation_single_message_over_max_message_bytes_is_refused()
         const int bytes = rocketnet_message_single_finish( payload, (int) sizeof( payload ), over[i] );
         check( bytes == over[i] + 1 );
         violation_feed_refuses( &receiver, payload, bytes, ROCKETNET_MESSAGE_VIOLATION_BAD_SIZE, ROCKETNET_COUNTER_MESSAGE_BAD_SIZE );
-        rn_arena_destroy( receiver.arena );
+        rn_unit_arena_destroy( receiver.arena );
     }
 
     // the SINGLE form at the limit is delivered
@@ -421,7 +422,7 @@ static void test_violation_single_message_over_max_message_bytes_is_refused()
         check( rn_ordered_receive( &receiver.ordered, payload, bytes ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
         check( receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION] == 0 );
         check( receiver.ordered.channels.deliveries == 1 );
-        rn_arena_destroy( receiver.arena );
+        rn_unit_arena_destroy( receiver.arena );
     }
 
     // one UNRELIABLE or UNRELIABLE_SEQUENCED record over the limit, in RECORDS form
@@ -447,7 +448,7 @@ static void test_violation_single_message_over_max_message_bytes_is_refused()
 
         const int bytes = rocketnet_message_writer_finish( &writer );
         violation_feed_refuses( &receiver, payload, bytes, ROCKETNET_MESSAGE_VIOLATION_BAD_SIZE, ROCKETNET_COUNTER_MESSAGE_BAD_SIZE );
-        rn_arena_destroy( receiver.arena );
+        rn_unit_arena_destroy( receiver.arena );
     }
 
     // the block path refuses a message over the limit the same way: three
@@ -473,7 +474,7 @@ static void test_violation_single_message_over_max_message_bytes_is_refused()
 
         const int bytes = rocketnet_message_writer_finish( &writer );
         violation_feed_refuses( &receiver, payload, bytes, ROCKETNET_MESSAGE_VIOLATION_BAD_BLOCK, ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK );
-        rn_arena_destroy( receiver.arena );
+        rn_unit_arena_destroy( receiver.arena );
     }
 }
 
@@ -532,7 +533,7 @@ static void test_violation_two_ordered_records_with_one_ordering_index_get_their
     check( receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_SLOT_COLLISION] == 0 );
     check( rn_ordered_decide( &receiver.ordered ) == ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION );
 
-    rn_arena_destroy( receiver.arena );
+    rn_unit_arena_destroy( receiver.arena );
 }
 
 REGISTER_UNIT_TEST( test_violation_two_ordered_records_with_one_ordering_index_get_their_own_counter );
@@ -572,7 +573,7 @@ static void test_violation_slot_collision_is_reachable_from_the_wire()
     check( receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION] == 1 );
     check( rn_ordered_decide( &receiver.ordered ) == ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION );
 
-    rn_arena_destroy( receiver.arena );
+    rn_unit_arena_destroy( receiver.arena );
 }
 
 REGISTER_UNIT_TEST( test_violation_slot_collision_is_reachable_from_the_wire );
@@ -617,7 +618,7 @@ static void block_shape_refusal( const rocketnet_message_record_t * record, int 
     check( rn_channels_dispatch( &node.ordered.channels, record, &delivery ) == ROCKETNET_CHANNEL_DISPATCH_NONE );
     check( node.counters.values[counter] == before + 1 );
     check( node.ordered.channels.error == ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION );
-    rn_arena_destroy( node.arena );
+    rn_unit_arena_destroy( node.arena );
 }
 
 static void test_block_shape_refusals_match_across_reliable_codes()
@@ -632,7 +633,7 @@ static void test_block_shape_refusals_match_across_reliable_codes()
 
     const uint32_t W = probe.region->window;
     const uint32_t ring_bytes = probe.region->ring_bytes;
-    rn_arena_destroy( probe.arena );
+    rn_unit_arena_destroy( probe.arena );
 
     // shape: count 1, count over W, index at count, short non-last, last over F
 

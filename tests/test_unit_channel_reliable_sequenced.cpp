@@ -9,6 +9,7 @@
 #include <string.h>
 
 #include "test_unit_registry.h"
+#include "unit_arena.h"
 #include "../sdk/rocketnet_channel.h"
 #include "../sdk/rocketnet_message_object.h"
 
@@ -25,7 +26,7 @@ struct rs_node_t
 static void rs_init( rs_node_t * node )
 {
     memset( node, 0, sizeof( *node ) );
-    node->arena = rn_arena_create( NULL, NULL, 1, &node->counters );
+    node->arena = rn_unit_arena_create( NULL, 1, &node->counters );
     check( node->arena != NULL );
     node->region = rn_arena_region( node->arena, 0 );
     check( rn_ordered_init( &node->ordered, node->region, NULL, NULL, 8, ROCKETNET_MESSAGE_SINGLE_BYTES ) );
@@ -66,7 +67,7 @@ static void test_stale_acked_then_discarded()
     check( receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_STALE] == before + 1 );
     check( receiver.region->receive_descriptors[slot].live == 0 );
     check( receiver.ordered.channels.deliveries == 0 );
-    rn_arena_destroy( receiver.arena );
+    rn_unit_arena_destroy( receiver.arena );
 }
 
 REGISTER_UNIT_TEST( test_stale_acked_then_discarded );
@@ -88,7 +89,7 @@ static void test_shares_the_watermark_with_code_1()
     check( receiver.region->channel_receive[0].sequenced_watermark == 2 );
     record = rs_record( ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, 0, 0, &old );
     check( rn_channels_dispatch( &receiver.ordered.channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_STALE );
-    rn_arena_destroy( receiver.arena );
+    rn_unit_arena_destroy( receiver.arena );
 }
 
 REGISTER_UNIT_TEST( test_shares_the_watermark_with_code_1 );
@@ -137,7 +138,7 @@ static void test_sequencing_crosses_the_u24_wrap()
     check( rn_channels_dispatch( &receiver.ordered.channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_DELIVERED );
     check( receiver.region->channel_receive[0].sequenced_watermark == 7 );
 
-    rn_arena_destroy( receiver.arena );
+    rn_unit_arena_destroy( receiver.arena );
 }
 
 REGISTER_UNIT_TEST( test_sequencing_crosses_the_u24_wrap );
@@ -241,7 +242,7 @@ static void test_newest_delivered_under_loss_and_reorder()
     check( receiver.region->channel_receive[0].sequenced_watermark == 2 );
     rn_ordered_end_update( &receiver.ordered );
     check( receiver.region->receive_descriptors[1].live == 0 );
-    rn_arena_destroy( receiver.arena );
+    rn_unit_arena_destroy( receiver.arena );
 }
 
 REGISTER_UNIT_TEST( test_newest_delivered_under_loss_and_reorder );
@@ -302,8 +303,8 @@ static void test_reservation_skips_a_code_1_hold_past_du()
     check( receiver.region->channel_receive[0].held_sequenced == RN_DESCRIPTOR_NONE );
     check( receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_DELIVERY_FULL] == full + 1 );
 
-    rn_arena_destroy( sender.arena );
-    rn_arena_destroy( receiver.arena );
+    rn_unit_arena_destroy( sender.arena );
+    rn_unit_arena_destroy( receiver.arena );
 }
 
 REGISTER_UNIT_TEST( test_reservation_skips_a_code_1_hold_past_du );
@@ -329,7 +330,7 @@ static void test_resent_until_packet_acked()
     check( record.code == ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED && record.number == 0 );
     check( rn_ordered_acks( &sender.ordered, &retry[0].id, 1, 10.01 ) == 1 );
     check( rs_write( &sender, 20.0, retry, 1, 13 ) == 0 );
-    rn_arena_destroy( sender.arena );
+    rn_unit_arena_destroy( sender.arena );
 }
 
 REGISTER_UNIT_TEST( test_resent_until_packet_acked );
@@ -371,8 +372,8 @@ static void test_stale_transport_ack_retires_resend_after_discard()
     check( record.number == 1 ); // only the newer unacked message resends
     check( rn_ordered_acks( &sender.ordered, &retry[0].id, 1, 10.01 ) == 1 );
     check( rs_write( &sender, 20.0, retry, 1, 34 ) == 0 );
-    rn_arena_destroy( sender.arena );
-    rn_arena_destroy( receiver.arena );
+    rn_unit_arena_destroy( sender.arena );
+    rn_unit_arena_destroy( receiver.arena );
 }
 
 REGISTER_UNIT_TEST( test_stale_transport_ack_retires_resend_after_discard );
@@ -415,8 +416,8 @@ static void test_reliable_sequenced_block_delivers_whole()
         rn_ordered_end_update( &receiver.ordered );
     }
 
-    rn_arena_destroy( sender.arena );
-    rn_arena_destroy( receiver.arena );
+    rn_unit_arena_destroy( sender.arena );
+    rn_unit_arena_destroy( receiver.arena );
 }
 
 REGISTER_UNIT_TEST( test_reliable_sequenced_block_delivers_whole );
@@ -451,8 +452,8 @@ static void test_reliable_sequenced_block_ahead_drains_from_ring()
     check( delivery.data >= receiver.region->receive_ring && delivery.data < receiver.region->receive_ring + receiver.region->ring_bytes );
     check( memcmp( delivery.data, data, sizeof( data ) ) == 0 );
     rn_ordered_end_update( &receiver.ordered );
-    rn_arena_destroy( sender.arena );
-    rn_arena_destroy( receiver.arena );
+    rn_unit_arena_destroy( sender.arena );
+    rn_unit_arena_destroy( receiver.arena );
 }
 
 REGISTER_UNIT_TEST( test_reliable_sequenced_block_ahead_drains_from_ring );
@@ -492,7 +493,7 @@ static void test_newer_state_releases_incomplete_block()
     check( rn_window_receive_accept( &receiver.ordered.receive, &record, &slot ) == RN_WINDOW_RECEIVE_ACCEPT );
     check( rn_channels_dispatch( &receiver.ordered.channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_STALE );
     check( receiver.region->receive_descriptors[slot].live == 0 );
-    rn_arena_destroy( receiver.arena );
+    rn_unit_arena_destroy( receiver.arena );
 }
 
 REGISTER_UNIT_TEST( test_newer_state_releases_incomplete_block );
@@ -553,7 +554,7 @@ static void test_stale_numbers_released_across_ordered_epochs()
     {
         check( receiver.region->receive_descriptors[i].live == 0 );
     }
-    rn_arena_destroy( receiver.arena );
+    rn_unit_arena_destroy( receiver.arena );
 }
 
 REGISTER_UNIT_TEST( test_stale_numbers_released_across_ordered_epochs );
@@ -582,7 +583,7 @@ static void test_reliable_sequenced_drain_refusal_counts_stale()
     check( receiver.region->channel_receive[0].held_sequenced == RN_DESCRIPTOR_NONE );
     check( receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_STALE] == stale_before + 1 );
     check( receiver.region->receive_descriptors[ahead_slot].live == 0 );
-    rn_arena_destroy( receiver.arena );
+    rn_unit_arena_destroy( receiver.arena );
 }
 
 REGISTER_UNIT_TEST( test_reliable_sequenced_drain_refusal_counts_stale );
@@ -622,8 +623,8 @@ static void test_reliable_sequenced_no_allocation_after_create()
     rn_ordered_end_update( &receiver.ordered );
     check( rn_ordered_acks( &sender.ordered, &packet.id, 1, 1.01 ) == 1 );
     check( rs_allocations == created );
-    rn_arena_destroy( sender.arena );
-    rn_arena_destroy( receiver.arena );
+    rn_unit_arena_destroy( sender.arena );
+    rn_unit_arena_destroy( receiver.arena );
     rocketnet_term();
     check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
@@ -684,8 +685,8 @@ static void test_sequenced_behind_a_full_ordered_backlog_is_held()
     check( receiver.region->channel_receive[0].held_sequenced == RN_DESCRIPTOR_NONE );
     check( receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION] == 0 );
 
-    rn_arena_destroy( sender.arena );
-    rn_arena_destroy( receiver.arena );
+    rn_unit_arena_destroy( sender.arena );
+    rn_unit_arena_destroy( receiver.arena );
 }
 
 REGISTER_UNIT_TEST( test_sequenced_behind_a_full_ordered_backlog_is_held );
@@ -729,7 +730,7 @@ static void test_hostile_sequenced_records_are_refused()
         rocketnet_message_record_t record = rs_record( ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, 0, 0, &payload );
         record.channel = node.ordered.channels.num_channels;
         rs_check_refused( &node, &record, ROCKETNET_COUNTER_MESSAGE_BAD_CHANNEL );
-        rn_arena_destroy( node.arena );
+        rn_unit_arena_destroy( node.arena );
     }
 
     // (b) a code 1 record whose ordering is window epochs ahead is held,
@@ -745,7 +746,7 @@ static void test_hostile_sequenced_records_are_refused()
         check( node.counters.values[ROCKETNET_COUNTER_MESSAGE_ORDERING_AHEAD] == 0 );
         check( node.counters.values[ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION] == 0 );
         check( node.ordered.channels.error == 0 );
-        rn_arena_destroy( node.arena );
+        rn_unit_arena_destroy( node.arena );
     }
 
     // (c) PROTOCOL_VIOLATION: code 4 number 5 that the window never accepted
@@ -755,7 +756,7 @@ static void test_hostile_sequenced_records_are_refused()
 
         rocketnet_message_record_t record = rs_record( ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED, 5, 0, 0, &payload );
         rs_check_refused( &node, &record, ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION );
-        rn_arena_destroy( node.arena );
+        rn_unit_arena_destroy( node.arena );
     }
 
     // (d) BAD_RING: a future code-4 state whose ring offset is the ring's end
@@ -767,7 +768,7 @@ static void test_hostile_sequenced_records_are_refused()
         record.ring = (uint32_t) ( node.region->ring_bytes / 16 );
         check( rn_window_receive_accept( &node.ordered.receive, &record, &slot ) == RN_WINDOW_RECEIVE_ACCEPT );
         rs_check_refused( &node, &record, ROCKETNET_COUNTER_MESSAGE_BAD_RING );
-        rn_arena_destroy( node.arena );
+        rn_unit_arena_destroy( node.arena );
     }
 
     // (e) BAD_BLOCK: a non-last chunk shorter than ROCKETNET_MESSAGE_FRAGMENT_BYTES
@@ -783,7 +784,7 @@ static void test_hostile_sequenced_records_are_refused()
         record.ring = 0;
         check( rn_window_receive_accept( &node.ordered.receive, &record, &slot ) == RN_WINDOW_RECEIVE_ACCEPT );
         rs_check_refused( &node, &record, ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK );
-        rn_arena_destroy( node.arena );
+        rn_unit_arena_destroy( node.arena );
     }
 }
 
@@ -822,7 +823,7 @@ static void test_equal_sequencing_at_a_held_block_is_superseded()
     check( receiver.region->receive_descriptors[slot].live == 0 );
     check( receiver.region->receive_descriptors[0].live != 0 );
     check( receiver.ordered.channels.deliveries == 0 );
-    rn_arena_destroy( receiver.arena );
+    rn_unit_arena_destroy( receiver.arena );
 }
 
 REGISTER_UNIT_TEST( test_equal_sequencing_at_a_held_block_is_superseded );
@@ -890,7 +891,7 @@ static void test_sequenced_in_turn_block_follows_record_rule()
         check( receiver.region->channel_receive[0].held_sequenced != RN_DESCRIPTOR_NONE );
         check( receiver.region->receive_descriptors[2].live != 0 );
         rn_ordered_end_update( &receiver.ordered );
-        rn_arena_destroy( receiver.arena );
+        rn_unit_arena_destroy( receiver.arena );
     }
 
     // the in-turn block is collecting when a future state arrives
@@ -913,7 +914,7 @@ static void test_sequenced_in_turn_block_follows_record_rule()
         check( receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_SUPERSEDED] == superseded_before );
         check( receiver.region->channel_receive[0].held_sequenced != RN_DESCRIPTOR_NONE );
         rn_ordered_end_update( &receiver.ordered );
-        rn_arena_destroy( receiver.arena );
+        rn_unit_arena_destroy( receiver.arena );
     }
 }
 
