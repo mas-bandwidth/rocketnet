@@ -25,6 +25,7 @@
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
+#include "portable_crt.h"
 #include "../sdk/rocketnet_base64.h"
 
 #include "rocketnet_internal.h"
@@ -34,6 +35,8 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+
+#include <string>
 #include "loopback_hub.h"
 
 #define check rocketnet_unit_check
@@ -728,6 +731,66 @@ static void test_public_config_bytes_inside_a_field_is_refused()
     check( memcmp( &server_config, &server_before, sizeof( server_config ) ) == 0 );
 }
 
+// The shipped guides must state the rule the code enforces: a smaller
+// config_bytes is accepted only when it ends where one of the struct's fields
+// ends, and rocketnet_connect_token_config_t follows the public config rules.
+
+static bool sized_config_read_doc( const char * relative_path, std::string & contents )
+{
+    std::string path = __FILE__;
+    for ( size_t i = 0; i < path.size(); i++ )
+        if ( path[i] == '\\' )
+            path[i] = '/';
+
+    const std::string suffix = "tests/test_unit_sized_config.cpp";
+    const size_t at = path.rfind( suffix );
+    path = at == std::string::npos ? std::string( relative_path ) : path.substr( 0, at ) + relative_path;
+
+    FILE * file = rocketnet_test_fopen( path.c_str(), "rb" );
+    if ( !file )
+        return false;
+
+    contents.clear();
+    char buffer[4096];
+    size_t n;
+    while ( ( n = fread( buffer, 1, sizeof( buffer ), file ) ) > 0 )
+        contents.append( buffer, n );
+    fclose( file );
+    return true;
+}
+
+static std::string sized_config_doc_section( const std::string & text, const char * heading, const char * next )
+{
+    const size_t start = text.find( heading );
+    if ( start == std::string::npos )
+        return std::string();
+
+    const size_t end = text.find( next, start );
+    if ( end == std::string::npos )
+        return std::string();
+
+    return text.substr( start, end - start );
+}
+
+static void test_docs_abi_evolution_records_the_field_boundary()
+{
+    std::string abi;
+    check( sized_config_read_doc( "docs/ABI-EVOLUTION.md", abi ) );
+    std::string usage;
+    check( sized_config_read_doc( "docs/USAGE.md", usage ) );
+
+    const std::string rule = sized_config_doc_section( abi, "## 1. The Rule", "## 2." );
+    const std::string implementation = sized_config_doc_section( abi, "## 3. The Implementation", "## 4." );
+    const std::string table = sized_config_doc_section( abi, "## 4. The Other Public Structs", "## 5." );
+
+    check( rule.find( "rocketnet_connect_token_config_t" ) != std::string::npos );
+    check( rule.find( "ends inside a field" ) != std::string::npos );
+    check( implementation.find( "ends inside a field" ) != std::string::npos );
+    check( table.find( "| `rocketnet_connect_token_config_t` | in | yes, `config_bytes` |" ) != std::string::npos );
+    check( abi.find( "accept every size of at least" ) == std::string::npos );
+    check( usage.find( "ends inside a field" ) != std::string::npos );
+}
+
 static void test_public_light_config_honours_caller_size()
 {
     // client: a caller whose struct ends before num_channels
@@ -1133,5 +1196,6 @@ REGISTER_UNIT_TEST( test_public_config_bytes_zeroed_is_refused );
 REGISTER_UNIT_TEST( test_public_config_bytes_older_smaller_reads_the_prefix );
 REGISTER_UNIT_TEST( test_public_config_bytes_newer_larger_ignores_the_tail );
 REGISTER_UNIT_TEST( test_public_config_bytes_inside_a_field_is_refused );
+REGISTER_UNIT_TEST( test_docs_abi_evolution_records_the_field_boundary );
 REGISTER_UNIT_TEST( test_public_light_config_honours_caller_size );
 REGISTER_UNIT_TEST( test_public_server_disconnect_allowance_revision_and_copy );

@@ -14,13 +14,16 @@ and bumps the major version.
 ## 1. The Rule
 
 1. **Each public config struct carries its own size.** The first field of
-   `rocketnet_client_config_t` and `rocketnet_server_config_t` is
+   `rocketnet_client_config_t`, `rocketnet_server_config_t` and
+   `rocketnet_connect_token_config_t` is
    `size_t config_bytes`, the `sizeof` of the struct the caller compiled
-   against. The header's inline `rocketnet_client_default_config` and
-   `rocketnet_server_default_config` set it to `sizeof( *config )` and then
-   call the library's `rocketnet_client_default_config_internal` or
-   `rocketnet_server_default_config_internal`, which writes the defaults. The
-   caller's idiom is two lines:
+   against. The header's inline `rocketnet_client_default_config`,
+   `rocketnet_server_default_config` and `rocketnet_connect_token_default_config`
+   set it to `sizeof( *config )` and then call the library's
+   `rocketnet_client_default_config_internal`,
+   `rocketnet_server_default_config_internal` or
+   `rocketnet_connect_token_default_config_internal`, which writes the
+   defaults. The caller's idiom is two lines:
 
    ```c
    struct rocketnet_client_config_t config;
@@ -39,7 +42,9 @@ and bumps the major version.
 4. **Smaller is read as a prefix, with defaults after it.** A caller compiled
    against an older header passes a smaller `config_bytes`: the library reads
    the caller's fields as it set them and takes the defaults for every field
-   past them.
+   past them. A smaller size must end where one of the struct's fields ends,
+   as an older struct does; a size that ends inside a field is refused with
+   `ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED`.
 5. **The library never reads or writes past `config_bytes`.** Every byte the
    library reads from or writes to the caller's struct is below the caller's
    `config_bytes`. A `NULL` config, where a call accepts one, means the
@@ -102,8 +107,10 @@ copy. The caller wipes its supplied copy after create. See [Keys](KEYS.md).
 
 The internal transport and message configs keep oldest-first known-size lists
 in the internal layer header, checked in `sdk/rocketnet_abi.cpp`; the public
-configs need no such list, because rules 3 and 4 accept every size of at least
-`sizeof( size_t )`.
+configs need no such list: rule 3 reads a larger size only as far as the
+library knows, and rule 4 accepts a smaller size only when it ends where one of
+the struct's fields ends. A size below the struct that ends inside a field is
+refused with `ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED`.
 
 ## 4. The Other Public Structs
 
@@ -111,6 +118,7 @@ configs need no such list, because rules 3 and 4 accept every size of at least
 | :--- | :--- | :--- |
 | `rocketnet_client_config_t` | in | yes, `config_bytes` |
 | `rocketnet_server_config_t` | in | yes, `config_bytes` |
+| `rocketnet_connect_token_config_t` | in | yes, `config_bytes` |
 | `rocketnet_client_stats_t` | out | no |
 | `rocketnet_server_stats_t` | out | no |
 | `rocketnet_server_client_stats_t` | out | no |
