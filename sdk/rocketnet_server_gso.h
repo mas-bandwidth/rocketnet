@@ -108,13 +108,17 @@ static inline int rocketnet_server_gso_recv_vlen( int num_packets, bool gro )
 
 // a full socket keeps the TX worker's bank for the next update; this is how
 // long the worker waits for main's wake before it tries the socket again.
-// once stop is requested that wait is not repeated: a socket that stays full
-// must not keep rocketnet_server_gso_stopped false.
+// before shutdown the worker retries without limit and drops nothing.
 
 #define ROCKETNET_GSO_SEND_RETRY_SECONDS                                 0.001
 
-// after stop, a full socket is tried this many further times and then the
-// worker leaves the bank. each retry waits for main's wake or the retry
+// once shutdown has begun (rocketnet_server_gso_begin_shutdown, called when
+// the server starts to stop and before its disconnect packets drain, or
+// rocketnet_server_gso_stop), a full socket is tried this many further times;
+// then the worker drops the bank's unsent tail, counts it in SEND_DROPPED and
+// returns the bank. a socket that stays full then cannot keep send_idle false
+// (the server asks for stop only once it is true) or the transport from
+// reporting stopped. each retry waits for main's wake or the retry
 // timeout, so a socket that stays full holds a bank at most about 100 ms;
 // a transient refusal (a disconnect burst meeting a busy socket) is sent.
 // the value is unmeasured: chosen, not derived from a measured drain time.
