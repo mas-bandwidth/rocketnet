@@ -6,6 +6,7 @@
 #include <stdio.h>
 
 bool rocketnet_server_socket_test_buffer_exchange();
+bool rocketnet_server_socket_test_receive_handoff_threads( uint64_t * counts );
 bool rocketnet_server_socket_test_inactive_flow();
 bool rocketnet_server_socket_test_replay_marks();
 bool rocketnet_server_socket_test_send_failures_without_mutex();
@@ -22,6 +23,8 @@ int main()
     rocketnet_server_socket_forbid_commit();
 
     const bool passed = rocketnet_server_socket_test_buffer_exchange();
+    uint64_t handoff_counts[6] = {};
+    const bool handoff_threads_passed = rocketnet_server_socket_test_receive_handoff_threads( handoff_counts );
     const bool inactive_passed = rocketnet_server_socket_test_inactive_flow();
     const bool replay_passed = rocketnet_server_socket_test_replay_marks();
     const bool send_failures_passed = rocketnet_server_socket_test_send_failures_without_mutex();
@@ -38,6 +41,22 @@ int main()
     }
 
     printf( "test_xdp_transport_buffer_exchange\n" );
+
+    // the receive handoff against a real worker thread: every packet once, in
+    // order. The counts are this run's scheduling, printed for whoever reads
+    // the log; none of them is a pass condition.
+
+    printf( "receive handoff: %llu calls, %llu owed a swap, %llu swaps, %llu missed, longest run of misses %llu, %llu worker yields\n",
+            (unsigned long long) handoff_counts[0], (unsigned long long) handoff_counts[1], (unsigned long long) handoff_counts[2],
+            (unsigned long long) handoff_counts[3], (unsigned long long) handoff_counts[4], (unsigned long long) handoff_counts[5] );
+
+    if ( !handoff_threads_passed )
+    {
+        fprintf( stderr, "native XDP receive handoff with a worker thread check failed\n" );
+        return 1;
+    }
+
+    printf( "test_xdp_transport_receive_handoff_with_a_worker_thread\n" );
 
     if ( !inactive_passed )
     {

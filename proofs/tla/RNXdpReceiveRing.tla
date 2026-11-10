@@ -26,25 +26,47 @@
 (*                                                                         *)
 (* Only main swaps, once per receive call and before it reads, so the      *)
 (* call's view (the packets it returned, which point into the bank) stays  *)
-(* main's until the call ends.  The swap is a try-acquire and never waits. *)
-(* A try that finds the worker holding the mutex is DrainMiss: main takes  *)
-(* nothing from the queue in that call, keeps its bank (emptied, the view  *)
-(* having expired) and its cursor, and retries on its next call, whose     *)
-(* claim views every packet staged before it.  A miss costs its own call   *)
-(* and no other.  The model makes no claim about how many tries in a row   *)
-(* can miss: SF_vars(Drain) assumes a try succeeds in the end, which holds *)
-(* here because the arrivals are finite (MaxPackets).                      *)
+(* main's until the call ends.  Main never waits for the mutex beyond a    *)
+(* bounded spin.  It tries once (Drain when the mutex is free).  When the   *)
+(* worker holds the mutex it raises a flag (DrainWant, receive_wanted) and *)
+(* tries again at most SpinMax times (DrainSpin for a try that misses,     *)
+(* Drain for one that takes the mutex).  The worker reads the flag between *)
+(* two descriptors (WorkerCheck when it is clear): when it is set it lets  *)
+(* go of the mutex (WorkerYield) and does not take it again (WorkerLock)   *)
+(* until main clears the flag, which main does when its swap is done or    *)
+(* its tries have run out.  A claim whose every try missed is DrainMiss:   *)
+(* main takes nothing from the queue in that call, keeps its bank          *)
+(* (emptied, the view having expired) and its cursor, and claims again on  *)
+(* its next call, whose claim views every packet staged before it.  Only   *)
+(* main writes the flag, its held bank and its cursor.                     *)
 (*                                                                         *)
-(* The worker holds the mutex only to append, LockBatch descriptors per    *)
-(* hold (WorkerLock, Take, WorkerYield, WorkerUnlock), and reads the       *)
-(* producer bank again under every hold, because main's swap between two   *)
-(* holds changes it.  It bounds its peek by its own count of the bank      *)
-(* (seenCount, the bank's packets when it last let go of the mutex),       *)
-(* without the mutex: main's swap only ever hands the worker an emptied    *)
-(* bank and counts in receive_swaps, so a new count (emptied) means the    *)
-(* bank is empty and the room is never overstated.  The counter is 32 bits *)
-(* in the code; the model keeps only "changed since the worker looked",    *)
-(* which differs after 2^32 swaps with no worker pass between.             *)
+(* What bounds a miss.  With Stall FALSE the model assumes neither thread  *)
+(* stops: the worker takes a step (one descriptor, or letting go) between  *)
+(* two of main's tries, and at most TryArrivals packets arrive between     *)
+(* two of them.  A try of the model stands for as many of the code's tries *)
+(* as one worker step lasts.  Under that assumption ClaimWithinSpin holds  *)
+(* with SpinMax = 2 (the descriptor in hand, then the letting go): main    *)
+(* swaps in the call that asked, no call misses, and the liveness          *)
+(* properties hold with weak fairness alone (SpecWeak).  The worker is     *)
+(* kept off the mutex only while main spins (WantedOnlyInSpin), and no     *)
+(* arrival is dropped for a full RX ring in that time if the ring had      *)
+(* room for a spin's arrivals when main raised the flag                    *)
+(* (NoDropWhilePaused).  With Stall TRUE a thread may stop for any length  *)
+(* of time: a worker stopped while it holds the mutex makes the claim      *)
+(* miss, the safety properties still hold, and liveness then rests on      *)
+(* SF_vars(Drain) and finite arrivals, as it did before the flag.          *)
+(*                                                                         *)
+(* The worker holds the mutex only to append, for the staging loop of a    *)
+(* pass (WorkerLock, Take, WorkerCheck, WorkerYield, WorkerUnlock), and    *)
+(* reads the producer bank again under every hold, because main's swap     *)
+(* between two holds changes it.  It bounds its peek by its own count of   *)
+(* the bank (seenCount, the bank's packets when it last let go of the      *)
+(* mutex at the end of a pass), without the mutex: main's swap only ever   *)
+(* hands the worker an emptied bank and counts in receive_swaps, so a new  *)
+(* count (emptied) means the bank is empty and the room is never           *)
+(* overstated.  The counter is 32 bits in the code; the model keeps only   *)
+(* "changed since the worker looked", which differs after 2^32 swaps with  *)
+(* no worker pass between.                                                 *)
 (*                                                                         *)
 (* The spare banks are a ring of indices (rocketnet_xdp_buffer_exchange_t: *)
 (* free_index, free_head, free_count), modelled as laid out: swap_producer *)
@@ -72,7 +94,8 @@
 (* and advances it; cancel moves it back; release advances the consumer.   *)
 (* The release hands the kernel the first n descriptors of the ring,       *)
 (* whichever frames they hold, so a release while ahead > 0 at the start   *)
-(* of a pass gives back descriptors that were never read.                  *)
+(* of a pass gives back descriptors that were never read.  A packet that   *)
+(* arrives while the ring is full is dropped by the kernel (KernelDrop).   *)
 (*                                                                         *)
 (* A driver or kernel defect can post a descriptor naming a frame outside  *)
 (* the receive region (a send frame, SendFrame here): KernelMisdeliver,    *)
@@ -87,7 +110,8 @@
 (* never binds), packet contents and the frame codec's drops (a dropped    *)
 (* frame is still taken and returned), the other queues of the same        *)
 (* receive call (the budget here is this queue's share of the call), and   *)
-(* main's own hold of the mutex, which is the swap alone and is one step.  *)
+(* main's own hold of the mutex, which is the swap alone and is one step   *)
+(* with the clearing of the flag that follows its release.                 *)
 (***************************************************************************)
 EXTENDS Integers, Sequences, FiniteSets
 
@@ -99,7 +123,9 @@ CONSTANTS
     FillSize,     \* the fill ring's entries (ROCKETNET_XDP_FILL_RING_SIZE)
     Budget,       \* packets one receive call may consume
     MaxPackets,   \* packets that arrive in one behaviour
-    LockBatch     \* descriptors the worker stages per hold of the receive mutex
+    SpinMax,      \* main's further tries for the mutex after its first misses
+    TryArrivals,  \* the most packets that arrive between two of main's tries
+    Stall         \* TRUE: a thread may stop for any length of time
 
 ASSUME /\ Frames # {}
        /\ RingSize \in Nat \ {0}
@@ -108,7 +134,9 @@ ASSUME /\ Frames # {}
        /\ FillSize \in Nat /\ FillSize >= Cardinality(Frames)
        /\ Budget \in Nat \ {0}
        /\ MaxPackets \in Nat \ {0}
-       /\ LockBatch \in Nat \ {0}
+       /\ SpinMax \in Nat
+       /\ TryArrivals \in Nat \ {0}
+       /\ Stall \in BOOLEAN
 
 (***************************************************************************)
 (* Rule switches, each overridden by one reversed witness and FALSE in the *)
@@ -129,16 +157,25 @@ ASSUME /\ Frames # {}
 (*     tail it has not read.                                               *)
 (*   KeepCursor: a swap leaves the read cursor where the last bank ended   *)
 (*     (no receive_read_index = 0), so the next bank is read from there.   *)
-(*   MissNoRetry: after a missed try main skips the queue on every later   *)
+(*   MissNoRetry: after a missed claim main skips the queue on every later *)
 (*     call, as it did for a queue whose swap request stayed pending.      *)
-(*   MissDropsBank: a missed try gives up the bank main holds.             *)
-(*   StaleBank: after a batch boundary the worker stages into the bank it  *)
-(*     read at the start of its pass instead of reading the producer       *)
+(*   MissDropsBank: a missed claim gives up the bank main holds.           *)
+(*   StaleBank: after it let go for main the worker stages into the bank   *)
+(*     it read at the start of its pass instead of reading the producer    *)
 (*     again.                                                              *)
 (*   StaleRoom: the worker ignores the swap count and keeps its old count  *)
 (*     of the bank.                                                        *)
 (*   SpareKept: the first claim takes free_index[free_head] without        *)
 (*     advancing free_head or lowering free_count.                         *)
+(*   NoYield: the worker never reads main's flag: it holds the mutex for   *)
+(*     the whole staging loop and takes it whenever it is free, as it did  *)
+(*     before the flag (its release and re-acquire at a batch boundary     *)
+(*     were back to back, and main's try never queued).                    *)
+(*   GrabWhileWanted: the worker lets go for main but takes the mutex      *)
+(*     again without waiting for main to clear the flag.                   *)
+(*   StickyWant: main leaves the flag raised when its tries run out.       *)
+(*   LateClear: main leaves the flag raised after its swap, until the      *)
+(*     call ends.                                                          *)
 (***************************************************************************)
 RefusedRefilled == FALSE
 DrainStale == FALSE
@@ -151,6 +188,10 @@ MissDropsBank == FALSE
 StaleBank == FALSE
 StaleRoom == FALSE
 SpareKept == FALSE
+NoYield == FALSE
+GrabWhileWanted == FALSE
+StickyWant == FALSE
+LateClear == FALSE
 
 (* The frame a defective descriptor names: one the model does not own for  *)
 (* receive (a send-region frame).  An untyped model value Frames holds is  *)
@@ -167,48 +208,60 @@ Banks == 0 .. NumBanks - 1
 NONE == NumBanks
 
 VARIABLES
-    fq,          \* the fill ring's entries, published consumer to producer
-    kcache,      \* the entries at the front of fq the kernel's batch peeked
-    kused,       \* the entries of that batch the kernel has taken
-    ring,        \* the RX ring's descriptors, consumer to producer (kernel view)
-    ahead,       \* cached consumer - consumer (user)
-    phase,       \* "idle" or "taking" in the fill pass
-    start,       \* the ring offset the current peek began at
-    peeked,      \* the descriptors the current peek returned
-    taken,       \* the descriptors the current pass took
-    pending,     \* the frames the worker holds: taken, awaiting the fill ring
-    mutex,       \* the receive mutex: "free" or "worker" (main's hold is one step)
-    batch,       \* descriptors taken in the worker's current hold
-    stageBank,   \* the bank the worker's hold stages into, or NONE (receive_buffer)
-    seenCount,   \* the worker's count of its bank's packets (receive_staged)
-    emptied,     \* main swapped since the worker last looked (receive_swaps moved)
-    workerBank,  \* the receive bank the worker stages into (the producer)
-    mainBank,    \* the receive bank main holds, or NONE (receive_held_index)
-    freeIndex,   \* the spare banks' ring of indices (free_index)
-    freeHead,    \* the ring's oldest entry (free_head)
-    freeCount,   \* the ring's entries (free_count)
-    bankContent, \* the packet ids staged in each receive bank
-    readCursor,  \* packets of mainBank main has consumed (receive_read_index)
-    budget,      \* packets this receive call may still consume
-    mainPhase,   \* "claim": a call's swap decision; "read": the rest of the call
-    viewBank,    \* ghost: the bank this call's returned packets point into, or NONE
-    heldView,    \* ghost: mainBank's packets as main last claimed or emptied it
-    nextPacket,  \* the next packet staged
-    claimMark,   \* ghost: nextPacket at main's last claim
-    consumed,    \* ghost: the packet ids main consumed, in order
-    took,        \* ghost: the current pass has taken a descriptor
-    defect       \* the kernel has posted a descriptor naming SendFrame
+    fq,           \* the fill ring's entries, published consumer to producer
+    kcache,       \* the entries at the front of fq the kernel's batch peeked
+    kused,        \* the entries of that batch the kernel has taken
+    ring,         \* the RX ring's descriptors, consumer to producer (kernel view)
+    ahead,        \* cached consumer - consumer (user)
+    phase,        \* "idle" or "taking" in the fill pass
+    start,        \* the ring offset the current peek began at
+    peeked,       \* the descriptors the current peek returned
+    taken,        \* the descriptors the current pass took
+    pending,      \* the frames the worker holds: taken, awaiting the fill ring
+    mutex,        \* the receive mutex: "free" or "worker" (main's hold is one step)
+    checked,      \* under its hold, the worker may take the next descriptor
+    stageBank,    \* the bank the worker's hold stages into, or NONE (receive_buffer)
+    seenCount,    \* the worker's count of its bank's packets (receive_staged)
+    emptied,      \* main swapped since the worker last looked (receive_swaps moved)
+    workerBank,   \* the receive bank the worker stages into (the producer)
+    mainBank,     \* the receive bank main holds, or NONE (receive_held_index)
+    freeIndex,    \* the spare banks' ring of indices (free_index)
+    freeHead,     \* the ring's oldest entry (free_head)
+    freeCount,    \* the ring's entries (free_count)
+    bankContent,  \* the packet ids staged in each receive bank
+    readCursor,   \* packets of mainBank main has consumed (receive_read_index)
+    budget,       \* packets this receive call may still consume
+    mainPhase,    \* "claim": a call's first try; "spin": its further tries; "read"
+    viewBank,     \* ghost: the bank this call's returned packets point into, or NONE
+    heldView,     \* ghost: mainBank's packets as main last claimed or emptied it
+    wanted,       \* main is spinning for the mutex (receive_wanted)
+    spins,        \* main's further tries that have missed in this claim
+    missRun,      \* ghost: calls in a row whose claim missed (saturates at 2)
+    owed,         \* ghost: main tried since the worker's last step under its hold
+    spinArrivals, \* ghost: packets arrived since main's last try of a spin
+    freeAtWant,   \* ghost: the RX ring's free entries when main raised the flag
+    badDrop,      \* ghost: a packet was dropped while the worker was kept off the
+                  \* mutex, though the ring had room for a spin's arrivals
+    dropped,      \* packets the kernel dropped for a full RX ring
+    nextPacket,   \* the next packet staged
+    claimMark,    \* ghost: nextPacket at main's last claim
+    consumed,     \* ghost: the packet ids main consumed, in order
+    took,         \* ghost: the current pass has taken a descriptor
+    defect        \* the kernel has posted a descriptor naming SendFrame
 
 fillVars == <<fq, kcache, kused>>
 passVars == <<ahead, phase, start, peeked, taken>>
-lockVars == <<mutex, batch, stageBank>>
+lockVars == <<mutex, checked, stageBank>>
 roomVars == <<seenCount, emptied>>
 freeVars == <<freeIndex, freeHead, freeCount>>
 mainVars == <<mainBank, readCursor, budget, mainPhase, viewBank, heldView,
               claimMark, consumed>>
+claimVars == <<wanted, spins, missRun>>
+waitVars == <<spinArrivals, freeAtWant, badDrop>>
 
 vars == <<fillVars, ring, passVars, pending, lockVars, roomVars, workerBank,
-          freeVars, bankContent, mainVars, nextPacket, took, defect>>
+          freeVars, bankContent, mainVars, claimVars, owed, waitVars, dropped,
+          nextPacket, took, defect>>
 
 Range(s) == {s[i] : i \in DOMAIN s}
 
@@ -230,6 +283,15 @@ FlushFits == Len(fq) + Cardinality(pending) <= FillSize
 Untaken == {i \in 1..Len(ring) : i \notin start + 1..start + taken /\ ring[i] \in Frames}
 InRing == {ring[i] : i \in Untaken}
 
+(* The packets that have arrived: staged, posted and not yet taken, or     *)
+(* dropped.  MaxPackets bounds them.                                       *)
+Arrivals == nextPacket + Cardinality(Untaken) + dropped
+
+(* Between two of main's tries at most TryArrivals packets arrive, unless  *)
+(* a thread may stop (Stall).                                              *)
+ArrivalInTime == Stall \/ mainPhase # "spin" \/ spinArrivals < TryArrivals
+CountArrival == IF ~Stall /\ mainPhase = "spin" THEN spinArrivals + 1 ELSE spinArrivals
+
 (* The live entries of the spare ring, and how many of them name bank b.   *)
 FreeSlots == {(freeHead + i) % NumBanks : i \in 0..freeCount - 1}
 FreeOwns(b) == Cardinality({s \in FreeSlots : freeIndex[s] = b})
@@ -237,6 +299,10 @@ FreeOwns(b) == Cardinality({s \in FreeSlots : freeIndex[s] = b})
 (* The packets of the bank main holds, and whether main has read them all. *)
 Held == IF mainBank = NONE THEN <<>> ELSE bankContent[mainBank]
 Exhausted == readCursor >= Len(Held)
+
+(* The worker has descriptors to stage and is kept off the mutex by main's *)
+(* flag.                                                                   *)
+Paused == phase = "taking" /\ taken < peeked /\ mutex = "free" /\ wanted
 
 TypeOK ==
     /\ fq \in Seq(AllFrames) /\ Len(fq) <= FillSize
@@ -250,7 +316,7 @@ TypeOK ==
     /\ taken \in 0..PeekMax
     /\ pending \subseteq AllFrames
     /\ mutex \in {"free", "worker"}
-    /\ batch \in 0..LockBatch
+    /\ checked \in BOOLEAN
     /\ stageBank \in Banks \cup {NONE}
     /\ seenCount \in 0..StageCap
     /\ emptied \in BOOLEAN
@@ -263,9 +329,17 @@ TypeOK ==
     /\ \A b \in Banks : Len(bankContent[b]) <= StageCap
     /\ readCursor \in 0..StageCap
     /\ budget \in 0..Budget
-    /\ mainPhase \in {"claim", "read", "skipped"}
+    /\ mainPhase \in {"claim", "spin", "read", "skipped"}
     /\ viewBank \in Banks \cup {NONE}
     /\ heldView \in Seq(1..MaxPackets)
+    /\ wanted \in BOOLEAN
+    /\ spins \in 0..SpinMax
+    /\ missRun \in 0..2
+    /\ owed \in BOOLEAN
+    /\ spinArrivals \in 0..TryArrivals
+    /\ freeAtWant \in 0..RingSize
+    /\ badDrop \in BOOLEAN
+    /\ dropped \in 0..MaxPackets
     /\ nextPacket \in 0..MaxPackets
     /\ claimMark \in 0..MaxPackets
     /\ consumed \in Seq(1..MaxPackets)
@@ -286,7 +360,7 @@ Init ==
     /\ taken = 0
     /\ pending = {}
     /\ mutex = "free"
-    /\ batch = 0
+    /\ checked = FALSE
     /\ stageBank = NONE
     /\ seenCount = 0
     /\ emptied = FALSE
@@ -301,6 +375,14 @@ Init ==
     /\ mainPhase = "claim"
     /\ viewBank = NONE
     /\ heldView = <<>>
+    /\ wanted = FALSE
+    /\ spins = 0
+    /\ missRun = 0
+    /\ owed = FALSE
+    /\ spinArrivals = 0
+    /\ freeAtWant = 0
+    /\ badDrop = FALSE
+    /\ dropped = 0
     /\ nextPacket = 0
     /\ claimMark = 0
     /\ consumed = <<>>
@@ -310,28 +392,47 @@ Init ==
 (* KernelReceive: a packet lands in the next frame of the kernel's batch,  *)
 (* posted to the RX ring while the ring has a free entry as the kernel     *)
 (* sees it.  The fill ring slot stays the kernel's until it publishes.     *)
-(* MaxPackets bounds the arrivals: the packets staged and the descriptors  *)
-(* posted and not yet taken.                                               *)
 KernelReceive ==
     /\ kused < kcache
     /\ Len(ring) < RingSize
-    /\ nextPacket + Cardinality(Untaken) < MaxPackets
+    /\ Arrivals < MaxPackets
+    /\ ArrivalInTime
     /\ kused' = kused + 1
     /\ ring' = Append(ring, fq[kused + 1])
+    /\ spinArrivals' = CountArrival
     /\ UNCHANGED <<fq, kcache, passVars, pending, lockVars, roomVars,
-                    workerBank, freeVars, bankContent, mainVars, nextPacket,
-                    took, defect>>
+                    workerBank, freeVars, bankContent, mainVars, claimVars,
+                    owed, freeAtWant, badDrop, dropped, nextPacket, took,
+                    defect>>
+
+(* KernelDrop: a packet arrives while the RX ring is full, and the kernel  *)
+(* drops it.  badDrop records one dropped while the worker was kept off    *)
+(* the mutex for main although the ring had room, when main raised the     *)
+(* flag, for every packet a whole spin lets arrive.                        *)
+KernelDrop ==
+    /\ Len(ring) = RingSize
+    /\ Arrivals < MaxPackets
+    /\ ArrivalInTime
+    /\ dropped' = dropped + 1
+    /\ spinArrivals' = CountArrival
+    /\ badDrop' = (badDrop \/ (Paused /\ freeAtWant >= SpinMax * TryArrivals))
+    /\ UNCHANGED <<fillVars, ring, passVars, pending, lockVars, roomVars,
+                    workerBank, freeVars, bankContent, mainVars, claimVars,
+                    owed, freeAtWant, nextPacket, took, defect>>
 
 (* KernelMisdeliver: a driver or kernel defect posts a descriptor naming a *)
-(* frame outside the receive region, once.                                 *)
+(* frame outside the receive region, once.  It takes a ring entry like any *)
+(* arrival, so it counts with the arrivals between two of main's tries.    *)
 KernelMisdeliver ==
     /\ ~defect
     /\ Len(ring) < RingSize
+    /\ ArrivalInTime
     /\ ring' = Append(ring, SendFrame)
     /\ defect' = TRUE
+    /\ spinArrivals' = CountArrival
     /\ UNCHANGED <<fillVars, passVars, pending, lockVars, roomVars,
-                    workerBank, freeVars, bankContent, mainVars, nextPacket,
-                    took>>
+                    workerBank, freeVars, bankContent, mainVars, claimVars,
+                    owed, freeAtWant, badDrop, dropped, nextPacket, took>>
 
 (* KernelRefresh: a packet finds the batch used up.  The kernel publishes  *)
 (* its consumer (the taken entries' slots go back to the user) and peeks   *)
@@ -344,7 +445,8 @@ KernelRefresh ==
     /\ kused' = 0
     /\ kcache' = Len(fq) - kused
     /\ UNCHANGED <<ring, passVars, pending, lockVars, roomVars, workerBank,
-                    freeVars, bankContent, mainVars, nextPacket, took, defect>>
+                    freeVars, bankContent, mainVars, claimVars, owed, waitVars,
+                    dropped, nextPacket, took, defect>>
 
 (* Peek: xsk_ring_cons__peek from the cached consumer, at most PeekMax and *)
 (* at most the current bank's remaining room; begin the modeled fill pass. *)
@@ -366,21 +468,41 @@ Peek ==
     /\ seenCount' = believed
     /\ emptied' = FALSE
     /\ UNCHANGED <<fillVars, ring, pending, lockVars, workerBank, freeVars,
-                    bankContent, mainVars, nextPacket, took, defect>>
+                    bankContent, mainVars, claimVars, owed, waitVars, dropped,
+                    nextPacket, took, defect>>
 
 (* WorkerLock: the worker acquires the receive mutex to append, at the     *)
-(* start of its staging loop and again after each batch boundary, and      *)
-(* reads the producer bank under it.  It waits for the mutex; main's hold  *)
-(* is the swap alone.  StaleBank keeps the bank read before the boundary.  *)
+(* start of its staging loop and again after it let go for main, and reads *)
+(* the producer bank under it.  It stays off the mutex while main's flag   *)
+(* is raised; otherwise it waits for the mutex, and main's hold is the     *)
+(* swap alone.  The first descriptor of a hold needs no look at the flag.  *)
+(* StaleBank keeps the bank read before the worker let go.                 *)
 WorkerLock ==
     /\ phase = "taking"
     /\ taken < peeked
     /\ mutex = "free"
+    /\ ~wanted \/ GrabWhileWanted \/ NoYield
     /\ mutex' = "worker"
-    /\ batch' = 0
+    /\ checked' = TRUE
     /\ stageBank' = IF stageBank = NONE THEN workerBank ELSE stageBank
+    /\ owed' = FALSE
     /\ UNCHANGED <<fillVars, ring, passVars, pending, roomVars, workerBank,
-                    freeVars, bankContent, mainVars, nextPacket, took, defect>>
+                    freeVars, bankContent, mainVars, claimVars, waitVars,
+                    dropped, nextPacket, took, defect>>
+
+(* WorkerCheck: between two descriptors, under its hold, the worker reads  *)
+(* main's flag and finds it clear.  Main may raise it straight after, so   *)
+(* one more descriptor can be taken under a raised flag.                   *)
+WorkerCheck ==
+    /\ mutex = "worker"
+    /\ taken < peeked
+    /\ ~checked
+    /\ ~wanted \/ NoYield
+    /\ checked' = TRUE
+    /\ owed' = FALSE
+    /\ UNCHANGED <<fillVars, ring, passVars, pending, mutex, stageBank,
+                    roomVars, workerBank, freeVars, bankContent, mainVars,
+                    claimVars, waitVars, dropped, nextPacket, took, defect>>
 
 (* Take: under the mutex, read descriptor start + taken + 1 (rx_desc at    *)
 (* the peek's index + i) and hold its frame.  A receive-region descriptor  *)
@@ -393,31 +515,36 @@ Take ==
     /\ phase = "taking"
     /\ mutex = "worker"
     /\ taken < peeked
-    /\ batch < LockBatch
+    /\ checked
     /\ d \in Frames => (Len(bankContent[stageBank]) < StageCap /\ nextPacket < MaxPackets)
     /\ pending' = IF d \in Frames \/ RefusedRefilled THEN pending \cup {d} ELSE pending
     /\ taken' = taken + 1
-    /\ batch' = batch + 1
+    /\ checked' = FALSE
     /\ bankContent' = IF d \in Frames
                          THEN [bankContent EXCEPT ![stageBank] = Append(@, nextPacket + 1)]
                          ELSE bankContent
     /\ nextPacket' = IF d \in Frames THEN nextPacket + 1 ELSE nextPacket
     /\ took' = TRUE
+    /\ owed' = FALSE
     /\ UNCHANGED <<fillVars, ring, ahead, phase, start, peeked, mutex,
-                    stageBank, roomVars, workerBank, freeVars, mainVars, defect>>
+                    stageBank, roomVars, workerBank, freeVars, mainVars,
+                    claimVars, waitVars, dropped, defect>>
 
-(* WorkerYield: a batch boundary (i > 0 and i % receive_lock_batch = 0)    *)
-(* with descriptors still to take.  The worker releases the mutex so       *)
-(* main's swap can come in between batches, then locks again (WorkerLock). *)
+(* WorkerYield: between two descriptors, under its hold, the worker reads  *)
+(* main's flag and finds it raised.  It releases the mutex so that main's  *)
+(* next try takes it, and takes it again (WorkerLock) only once the flag   *)
+(* is clear.                                                               *)
 WorkerYield ==
     /\ mutex = "worker"
     /\ taken < peeked
-    /\ batch = LockBatch
+    /\ ~checked
+    /\ wanted /\ ~NoYield
     /\ mutex' = "free"
-    /\ batch' = 0
     /\ stageBank' = IF StaleBank THEN stageBank ELSE NONE
-    /\ UNCHANGED <<fillVars, ring, passVars, pending, roomVars, workerBank,
-                    freeVars, bankContent, mainVars, nextPacket, took, defect>>
+    /\ owed' = FALSE
+    /\ UNCHANGED <<fillVars, ring, passVars, pending, checked, roomVars,
+                    workerBank, freeVars, bankContent, mainVars, claimVars,
+                    waitVars, dropped, nextPacket, took, defect>>
 
 (* WorkerUnlock: every peeked descriptor is taken.  Still under the mutex  *)
 (* the worker notes the bank's count and the swap count it has seen        *)
@@ -426,12 +553,14 @@ WorkerUnlock ==
     /\ mutex = "worker"
     /\ taken = peeked
     /\ mutex' = "free"
-    /\ batch' = 0
+    /\ checked' = FALSE
     /\ seenCount' = Len(bankContent[stageBank])
     /\ emptied' = FALSE
     /\ stageBank' = NONE
+    /\ owed' = FALSE
     /\ UNCHANGED <<fillVars, ring, passVars, pending, workerBank, freeVars,
-                    bankContent, mainVars, nextPacket, took, defect>>
+                    bankContent, mainVars, claimVars, waitVars, dropped,
+                    nextPacket, took, defect>>
 
 (* Finish: every peeked descriptor was taken (the peek was bounded by the  *)
 (* bank's room) and the mutex is released.  End the fill pass and release  *)
@@ -455,7 +584,8 @@ Finish ==
                /\ pending' = {}
           ELSE UNCHANGED <<fq, pending>>
     /\ UNCHANGED <<kcache, kused, lockVars, roomVars, workerBank, freeVars,
-                    bankContent, mainVars, nextPacket, defect>>
+                    bankContent, mainVars, claimVars, owed, waitVars, dropped,
+                    nextPacket, defect>>
 
 (* Refill: the flush again at the top of the worker's next pass; a         *)
 (* reservation of zero is this step not yet taken.                         *)
@@ -466,27 +596,31 @@ Refill ==
     /\ fq' = fq \o SetSeq(pending)
     /\ pending' = {}
     /\ UNCHANGED <<kcache, kused, ring, passVars, lockVars, roomVars,
-                    workerBank, freeVars, bankContent, mainVars, nextPacket,
-                    took, defect>>
+                    workerBank, freeVars, bankContent, mainVars, claimVars,
+                    owed, waitVars, dropped, nextPacket, took, defect>>
 
-(* Drain: main's try-acquire finds the mutex free and main claims the      *)
+(* Drain: a try of main's finds the mutex free, its first (mainPhase       *)
+(* "claim") or one of its further tries ("spin"), and main claims the      *)
 (* worker's filled bank, exchanging the exhausted bank main holds (or a    *)
 (* spare on the first claim: swap_producer takes free_index[free_head])    *)
 (* under the receive mutex.  A claim happens at the start of a receive     *)
-(* call (mainPhase "claim"), only once main has consumed every packet of   *)
-(* the bank it holds, and it resets the read cursor.  Every packet staged  *)
-(* before the claim is in the claimed bank's view; DrainStale instead      *)
-(* leaves the most recently staged packet in the worker's new bank, as     *)
-(* the pre-fix worker publish did.  The worker learns of the swap from     *)
-(* the swap count (emptied).                                               *)
+(* call, only once main has consumed every packet of the bank it holds,    *)
+(* and it resets the read cursor.  Every packet staged before the claim is *)
+(* in the claimed bank's view; DrainStale instead leaves the most recently *)
+(* staged packet in the worker's new bank, as the pre-fix worker publish   *)
+(* did.  The worker learns of the swap from the swap count (emptied).      *)
+(* Main releases the mutex and then clears its flag; LateClear leaves the  *)
+(* flag raised until the call ends.                                        *)
 Drain ==
     LET first == mainBank = NONE
         c == bankContent[workerBank]
         stale == DrainStale /\ c # <<>>
         view == IF stale THEN SubSeq(c, 1, Len(c) - 1) ELSE c
         left == IF stale THEN <<c[Len(c)]>> ELSE <<>>
-        takes == first /\ ~SpareKept IN
+        takes == first /\ ~SpareKept
+        keeps == LateClear /\ wanted IN
     /\ \/ mainPhase = "claim"
+       \/ mainPhase = "spin" /\ spins < SpinMax
        \/ SwapInCall /\ mainPhase = "read" /\ viewBank # NONE /\ Exhausted
     /\ mutex = "free"
     /\ first => freeCount > 0
@@ -502,28 +636,74 @@ Drain ==
     /\ emptied' = TRUE
     /\ mainPhase' = IF DoubleSwap THEN "claim" ELSE "read"
     /\ claimMark' = nextPacket
+    /\ wanted' = keeps
+    /\ spins' = 0
+    /\ missRun' = 0
+    /\ owed' = FALSE
+    /\ spinArrivals' = 0
+    /\ freeAtWant' = IF keeps THEN freeAtWant ELSE 0
     /\ UNCHANGED <<fillVars, ring, passVars, pending, lockVars, seenCount,
-                    freeIndex, budget, viewBank, consumed, nextPacket, took,
-                    defect>>
+                    freeIndex, budget, viewBank, consumed, badDrop, dropped,
+                    nextPacket, took, defect>>
 
-(* DrainMiss: main's try-acquire finds the worker holding the mutex.  Main *)
-(* does not wait.  It has already emptied the bank it holds (the view of   *)
-(* the last call has expired); it keeps that bank and its cursor and takes *)
-(* nothing from the queue in this call, so the next call finds the bank    *)
-(* exhausted again and retries.  MissNoRetry instead skips the queue from  *)
-(* then on; MissDropsBank gives the bank up.                               *)
-DrainMiss ==
+(* DrainWant: main's first try finds the worker holding the mutex.  Main   *)
+(* has already emptied the bank it holds (the view of the last call has    *)
+(* expired).  It raises its flag and goes on to its further tries.         *)
+DrainWant ==
     /\ mainPhase = "claim"
     /\ mutex = "worker"
     /\ bankContent' = IF mainBank = NONE
                          THEN bankContent
                          ELSE [bankContent EXCEPT ![mainBank] = <<>>]
     /\ heldView' = <<>>
+    /\ wanted' = TRUE
+    /\ spins' = 0
+    /\ mainPhase' = "spin"
+    /\ owed' = ~Stall
+    /\ spinArrivals' = 0
+    /\ freeAtWant' = RingSize - Len(ring)
+    /\ UNCHANGED <<fillVars, ring, passVars, pending, lockVars, roomVars,
+                    workerBank, freeVars, mainBank, readCursor, budget,
+                    viewBank, claimMark, consumed, missRun, badDrop, dropped,
+                    nextPacket, took, defect>>
+
+(* DrainSpin: a further try of main's still finds the worker holding the   *)
+(* mutex.  Unless a thread may stop (Stall), the worker has taken a step   *)
+(* since main's last try.                                                  *)
+DrainSpin ==
+    /\ mainPhase = "spin"
+    /\ spins < SpinMax
+    /\ mutex = "worker"
+    /\ Stall \/ ~owed
+    /\ spins' = spins + 1
+    /\ owed' = ~Stall
+    /\ spinArrivals' = 0
+    /\ UNCHANGED <<fillVars, ring, passVars, pending, lockVars, roomVars,
+                    workerBank, freeVars, bankContent, mainVars, wanted,
+                    missRun, freeAtWant, badDrop, dropped, nextPacket, took,
+                    defect>>
+
+(* DrainMiss: main's tries have run out.  Main does not wait any longer:   *)
+(* it clears its flag, keeps the bank it holds and its cursor, and takes   *)
+(* nothing from the queue in this call, so the next call finds the bank    *)
+(* exhausted again and claims again.  MissNoRetry instead skips the queue  *)
+(* from then on; MissDropsBank gives the bank up; StickyWant leaves the    *)
+(* flag raised.                                                            *)
+DrainMiss ==
+    /\ mainPhase = "spin"
+    /\ spins = SpinMax
+    /\ wanted' = StickyWant
+    /\ spins' = 0
+    /\ missRun' = Min(missRun + 1, 2)
     /\ mainBank' = IF MissDropsBank THEN NONE ELSE mainBank
     /\ mainPhase' = IF MissNoRetry THEN "skipped" ELSE "read"
+    /\ owed' = FALSE
+    /\ spinArrivals' = 0
+    /\ freeAtWant' = IF StickyWant THEN freeAtWant ELSE 0
     /\ UNCHANGED <<fillVars, ring, passVars, pending, lockVars, roomVars,
-                    workerBank, freeVars, readCursor, budget, viewBank,
-                    claimMark, consumed, nextPacket, took, defect>>
+                    workerBank, freeVars, bankContent, readCursor, budget,
+                    viewBank, heldView, claimMark, consumed, badDrop, dropped,
+                    nextPacket, took, defect>>
 
 (* Consume: main reads one packet from the bank it holds, advancing its    *)
 (* read cursor and spending one packet of the call's budget.  The packet   *)
@@ -540,50 +720,74 @@ Consume ==
     /\ viewBank' = mainBank
     /\ UNCHANGED <<fillVars, ring, passVars, pending, lockVars, roomVars,
                     workerBank, freeVars, bankContent, mainBank, mainPhase,
-                    heldView, claimMark, nextPacket, took, defect>>
+                    heldView, claimMark, claimVars, owed, waitVars, dropped,
+                    nextPacket, took, defect>>
 
 (* NewCall: a receive call ends, at its budget or at the end of the bank   *)
 (* main holds, and the next begins with a fresh budget.  The last call's   *)
 (* view expires.  A partly consumed bank and its read cursor carry over    *)
 (* and the new call reads on; an exhausted bank, or none, sends the new    *)
-(* call to its swap (Drain or DrainMiss).  SwapUnread sends it there with  *)
-(* a tail unread.                                                          *)
+(* call to its claim.  SwapUnread sends it there with a tail unread.       *)
+(* LateClear clears main's flag only here.                                 *)
 NewCall ==
     /\ mainPhase = "read"
     /\ budget = 0 \/ Exhausted
     /\ budget' = Budget
     /\ viewBank' = NONE
     /\ mainPhase' = IF Exhausted \/ SwapUnread THEN "claim" ELSE "read"
+    /\ wanted' = IF LateClear THEN FALSE ELSE wanted
+    /\ freeAtWant' = IF LateClear THEN 0 ELSE freeAtWant
     /\ UNCHANGED <<fillVars, ring, passVars, pending, lockVars, roomVars,
                     workerBank, freeVars, bankContent, mainBank, readCursor,
-                    heldView, claimMark, consumed, nextPacket, took, defect>>
+                    heldView, claimMark, consumed, spins, missRun, owed,
+                    spinArrivals, badDrop, dropped, nextPacket, took, defect>>
 
-Next ==
-    \/ KernelReceive
-    \/ KernelRefresh
-    \/ KernelMisdeliver
+MainStep ==
+    \/ Drain
+    \/ DrainWant
+    \/ DrainSpin
+    \/ DrainMiss
+    \/ Consume
+    \/ NewCall
+
+WorkerStep ==
     \/ Peek
     \/ WorkerLock
+    \/ WorkerCheck
     \/ Take
     \/ WorkerYield
     \/ WorkerUnlock
     \/ Finish
     \/ Refill
-    \/ Drain
-    \/ DrainMiss
-    \/ Consume
-    \/ NewCall
 
-(* The worker takes whenever the ring has descriptors and never keeps the  *)
-(* mutex; main reads and starts calls; and a try-acquire succeeds in the   *)
-(* end (strong fairness on Drain: it is enabled only while the mutex is    *)
-(* free, and DrainMiss needs no fairness).                                 *)
+Next ==
+    \/ KernelReceive
+    \/ KernelDrop
+    \/ KernelRefresh
+    \/ KernelMisdeliver
+    \/ MainStep
+    \/ WorkerStep
+
+(* A thread that may stop for any length of time (Stall TRUE): the worker  *)
+(* takes whenever the ring has descriptors, reads main's flag between two  *)
+(* descriptors whichever way it stands, and never keeps the mutex; main    *)
+(* reads, starts calls and gives up a spin; and a try succeeds in the end  *)
+(* (strong fairness on Drain: it is enabled only while the mutex is free). *)
 Spec == Init /\ [][Next]_vars
         /\ WF_vars(KernelReceive) /\ WF_vars(KernelRefresh)
-        /\ WF_vars(Peek) /\ WF_vars(WorkerLock) /\ WF_vars(Take)
-        /\ WF_vars(WorkerYield) /\ WF_vars(WorkerUnlock)
+        /\ WF_vars(Peek) /\ WF_vars(WorkerLock)
+        /\ WF_vars(WorkerCheck \/ WorkerYield)
+        /\ WF_vars(Take) /\ WF_vars(WorkerUnlock)
         /\ WF_vars(Finish) /\ WF_vars(Refill)
-        /\ WF_vars(Consume) /\ WF_vars(NewCall) /\ SF_vars(Drain)
+        /\ WF_vars(Consume) /\ WF_vars(NewCall) /\ WF_vars(DrainMiss)
+        /\ SF_vars(Drain)
+
+(* Threads that do not stop (Stall FALSE): each thread goes on taking      *)
+(* steps, and no step is singled out.  No strong fairness, on Drain or     *)
+(* anything else.                                                          *)
+SpecWeak == Init /\ [][Next]_vars
+            /\ WF_vars(KernelReceive) /\ WF_vars(KernelRefresh)
+            /\ WF_vars(MainStep) /\ WF_vars(WorkerStep)
 
 (***************************************************************************)
 (* Invariants.                                                             *)
@@ -651,6 +855,22 @@ HeldBankStable == mainBank # NONE => bankContent[mainBank] = heldView
 PeekedFitsBank ==
     phase = "taking" => peeked - taken <= StageCap - Len(bankContent[workerBank])
 
+(* Main's flag is raised only while main spins for the mutex: it never     *)
+(* outlives the bounded tries of the claim that raised it, so the worker   *)
+(* is kept off the mutex for no longer than that.                          *)
+WantedOnlyInSpin == wanted => mainPhase = "spin"
+
+(* The bound on a miss, for threads that do not stop (Stall FALSE, with    *)
+(* SpinMax at least 2): main's claim takes the mutex within its bounded    *)
+(* tries, in the call that asked.  No call's claim misses.                 *)
+ClaimWithinSpin == missRun = 0
+
+(* No arrival is dropped for a full RX ring while the worker is kept off   *)
+(* the mutex for main, if the ring had room for a whole spin's arrivals    *)
+(* when main raised its flag (Stall FALSE: at most TryArrivals packets     *)
+(* arrive between two of main's tries).                                    *)
+NoDropWhilePaused == ~badDrop
+
 (* The kernel finds the fill ring empty (no entry it has not taken, so a   *)
 (* refresh peeks nothing) only while no frame is free: none is waiting in  *)
 (* the worker's hands between passes to go back.                           *)
@@ -659,15 +879,15 @@ FillEmpty == kused = Len(fq)
 FillNeverEmptyWhileFramesFree == FillEmpty => ~(phase = "idle" /\ pending # {})
 
 (***************************************************************************)
-(* Liveness: receive never stalls while frames are free and another packet *)
-(* may still arrive.  Whenever a frame is in the fill ring or the RX ring, *)
-(* a pass eventually takes one.  And main catches up: again and again      *)
-(* every packet staged so far has been consumed, so a missed try (or a     *)
-(* full bank) defers packets and never strands them.                       *)
+(* Liveness: receive never stalls while a descriptor is posted or a frame  *)
+(* is free and another packet may still arrive: a pass eventually takes    *)
+(* one.  And main catches up: again and again every packet staged so far   *)
+(* has been consumed, so a missed claim (or a full bank) defers packets    *)
+(* and never strands them.                                                 *)
 (***************************************************************************)
-FramesFree == Fill # {} \/ ring # <<>>
+CanStillTake == ring # <<>> \/ (Fill # {} /\ Arrivals < MaxPackets)
 
-ReceiveNeverStalls == (FramesFree /\ nextPacket < MaxPackets) ~> took
+ReceiveNeverStalls == CanStillTake ~> took
 
 StagedEventuallyConsumed == []<>(Len(consumed) = nextPacket)
 =============================================================================

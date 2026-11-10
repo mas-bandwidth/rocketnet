@@ -1,11 +1,16 @@
 ------------------------ MODULE MCRNXdpReceiveRing ------------------------
 (***************************************************************************)
 (* The small instance of RNXdpReceiveRing.  MCRNXdpReceiveRing.cfg is the  *)
-(* design: three receive banks, main's held bank and read cursor, a packet *)
-(* budget carried across calls, an RX ring of two, a peek of up to two, a  *)
-(* bank of two packets, one descriptor per hold of the receive mutex (so a *)
-(* pass of two has a batch boundary where main's swap can come in) and a   *)
-(* fill ring of twice the frames (ROCKETNET_XDP_FILL_RING_SIZE).           *)
+(* design with threads that may stop for any length of time: three receive *)
+(* banks, main's held bank and read cursor, a packet budget carried across *)
+(* calls, an RX ring of two, a peek of up to two (so the worker looks at   *)
+(* main's flag between two descriptors), a bank of two packets, two        *)
+(* further tries for the mutex after a miss and a fill ring of twice the   *)
+(* frames (ROCKETNET_XDP_FILL_RING_SIZE).  MCRNXdpReceiveRingBounded.cfg   *)
+(* is the design with threads that do not stop, an RX ring of three and    *)
+(* five packets: the bound on a missed claim (ClaimWithinSpin), the bound  *)
+(* on how long the worker is kept off the mutex (WantedOnlyInSpin,         *)
+(* NoDropWhilePaused), and liveness with weak fairness alone (SpecWeak).   *)
 (*                                                                         *)
 (* Each reversed witness restores one broken rule and must fail the        *)
 (* property named with it:                                                 *)
@@ -27,16 +32,26 @@
 (*     retained tail): StagedBeforeClaimInView.                            *)
 (*   MCRNXdpReceiveRingBrokenKeepCursor.cfg (a swap that does not reset    *)
 (*     the read cursor): ConsumedInOrder.                                  *)
-(*   MCRNXdpReceiveRingBrokenMissNoRetry.cfg (a missed try that is never   *)
+(*   MCRNXdpReceiveRingBrokenMissNoRetry.cfg (a missed claim that is never *)
 (*     retried, the lost swap): StagedEventuallyConsumed.                  *)
-(*   MCRNXdpReceiveRingBrokenMissDropsBank.cfg (a missed try that gives up *)
-(*     main's bank): BankOneOwner.                                         *)
+(*   MCRNXdpReceiveRingBrokenMissDropsBank.cfg (a missed claim that gives  *)
+(*     up main's bank): BankOneOwner.                                      *)
 (*   MCRNXdpReceiveRingBrokenStaleBank.cfg (the worker stages into the     *)
-(*     bank it read before a batch boundary): HeldBankStable.              *)
+(*     bank it read before it let go for main): HeldBankStable.            *)
 (*   MCRNXdpReceiveRingBrokenStaleRoom.cfg (the worker ignores the swap    *)
 (*     count, so a bank it saw full stays full to it): ReceiveNeverStalls. *)
 (*   MCRNXdpReceiveRingBrokenSpareKept.cfg (the first claim takes a spare  *)
 (*     and leaves it in the spare ring): BankOneOwner.                     *)
+(*   MCRNXdpReceiveRingBrokenNoYield.cfg (the worker never reads main's    *)
+(*     flag and holds the mutex for its whole staging loop, the unbounded  *)
+(*     miss of the handoff before the flag): ClaimWithinSpin.              *)
+(*   MCRNXdpReceiveRingBrokenGrabWhileWanted.cfg (the worker lets go and   *)
+(*     takes the mutex again under main's raised flag): ClaimWithinSpin.   *)
+(*   MCRNXdpReceiveRingBrokenStickyWant.cfg (main leaves its flag raised   *)
+(*     when its tries run out): WantedOnlyInSpin.                          *)
+(*   MCRNXdpReceiveRingBrokenLateClear.cfg (main leaves its flag raised    *)
+(*     until the call ends, and the RX ring fills behind the worker):      *)
+(*     NoDropWhilePaused.                                                  *)
 (***************************************************************************)
 EXTENDS RNXdpReceiveRing
 
@@ -63,4 +78,12 @@ StaleBankBroken == TRUE
 StaleRoomBroken == TRUE
 
 SpareKeptBroken == TRUE
+
+NoYieldBroken == TRUE
+
+GrabWhileWantedBroken == TRUE
+
+StickyWantBroken == TRUE
+
+LateClearBroken == TRUE
 =============================================================================

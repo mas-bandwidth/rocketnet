@@ -229,6 +229,12 @@ struct rocketnet_server_xdp_socket_t
     std::atomic<bool> quit{ 0 };
     std::atomic<bool> stopped{ false };
 
+    // main is spinning for the receive mutex; only main writes it, and only
+    // when a try has missed. The worker reads it between two descriptors, so
+    // it sits here with the flags main seldom writes, away from main's
+    // receive cursor, which main writes for every packet it reads.
+    std::atomic<bool> receive_wanted{ false };
+
     uint8_t padding_4[4096];
 
     // frames the receive loop dropped, by reason (rocketnet_xdp_frame_receive);
@@ -608,6 +614,107 @@ static void rocketnet_server_socket_refresh_gateway( struct rocketnet_server_soc
 static void rocketnet_server_socket_publish_receive_dropped( rocketnet_server_xdp_socket_t * socket )
 {
     socket->receive_dropped.store( rocketnet_xdp_receive_drops_total( &socket->receive_drops ), std::memory_order_relaxed );
+}
+
+// ---------------------------------------------------------------------------
+// The receive mutex between main and the queue's worker
+// (proofs/tla/RNXdpReceiveRing.tla). The worker holds it for the staging loop
+// of a pass. Main never waits for it: it tries, and when the worker holds it,
+// raises receive_wanted and tries again at most
+// ROCKETNET_XDP_RECEIVE_CLAIM_SPINS times, a pause apart. The worker reads the
+// flag between two descriptors: it lets go of the mutex and stays off it
+// until main clears the flag, which main does when its swap is done or its
+// tries run out. So a worker that is running keeps main out for one
+// descriptor at most, and is itself kept off the mutex for main's bounded
+// spin at most. Only main swaps, and only main writes its held index, its
+// cursor and the flag.
+//
+// The number of tries bounds main's wait whatever the worker does. A try (a
+// pause and a try-acquire that misses) measured 14 ns on a Ryzen 9 7950X3D,
+// so 256 of them are about 4 microseconds there, and several times that on
+// a CPU with a longer pause instruction. That is meant to be several times
+// one descriptor's staging, which has not been measured: the count is a
+// guess to that extent. A worker that is off its CPU for longer than the
+// spin while it holds the mutex still makes that call miss, and the next
+// call claims again.
+// ---------------------------------------------------------------------------
+
+#define ROCKETNET_XDP_RECEIVE_CLAIM_SPINS 256
+
+static void rocketnet_server_xdp_socket_pause()
+{
+#if defined( __i386__ ) || defined( __x86_64__ ) || defined( __amd64__ )
+    __builtin_ia32_pause();
+#else
+    __asm__ __volatile__( "" ::: "memory" );
+#endif // #if defined( __i386__ ) || defined( __x86_64__ ) || defined( __amd64__ )
+}
+
+#if ROCKETNET_DEV
+// A unit fixture stands in for the worker between two of main's tries: it is
+// called with the number of tries that have missed so far in this claim.
+static void ( *rocketnet_server_xdp_socket_claim_spin_for_test )( rocketnet_server_xdp_socket_t *, int ) = NULL;
+#endif // #if ROCKETNET_DEV
+
+// proofs/tla/RNXdpReceiveRing.tla Drain, DrainWant, DrainSpin and DrainMiss:
+// main's claim of the receive mutex for a swap. True with the mutex held
+// (Drain; the caller swaps and calls the release below); false when the
+// first try and every further one missed (DrainMiss), with the flag clear
+// again.
+static bool rocketnet_server_xdp_socket_claim_receive_mutex( rocketnet_server_xdp_socket_t * socket )
+{
+    if ( rocketnet_platform_mutex_try_acquire( &socket->receive_mutex ) )
+        return true;
+
+    socket->receive_wanted.store( true, std::memory_order_release );
+
+    for ( int spin = 0; spin < ROCKETNET_XDP_RECEIVE_CLAIM_SPINS; spin++ )
+    {
+#if ROCKETNET_DEV
+        if ( rocketnet_server_xdp_socket_claim_spin_for_test )
+            rocketnet_server_xdp_socket_claim_spin_for_test( socket, spin + 1 );
+#endif // #if ROCKETNET_DEV
+        rocketnet_server_xdp_socket_pause();
+        if ( rocketnet_platform_mutex_try_acquire( &socket->receive_mutex ) )
+            return true;
+    }
+
+    socket->receive_wanted.store( false, std::memory_order_release );
+
+    return false;
+}
+
+// Main's release after its swap. The flag is cleared after the mutex is
+// free, so the worker that was kept off it finds it free and never sleeps on
+// it. The store is skipped when the first try took the mutex.
+static void rocketnet_server_xdp_socket_release_receive_mutex( rocketnet_server_xdp_socket_t * socket )
+{
+    rocketnet_platform_mutex_release( &socket->receive_mutex );
+    if ( socket->receive_wanted.load( std::memory_order_relaxed ) )
+        socket->receive_wanted.store( false, std::memory_order_release );
+}
+
+// proofs/tla/RNXdpReceiveRing.tla WorkerYield: between two descriptors of its
+// staging loop the worker lets go of the receive mutex when main is spinning
+// for it. True when it let go.
+static bool rocketnet_server_xdp_socket_yield_receive_mutex( rocketnet_server_xdp_socket_t * socket )
+{
+    if ( !socket->receive_wanted.load( std::memory_order_acquire ) )
+        return false;
+    rocketnet_platform_mutex_release( &socket->receive_mutex );
+    return true;
+}
+
+// proofs/tla/RNXdpReceiveRing.tla WorkerLock: the worker takes the receive
+// mutex to stage, at the start of its staging loop and again after it let go
+// for main, and never while main is spinning for it: it stays off, a pause at
+// a time, until main clears the flag. The wait is main's bounded spin and its
+// swap.
+static void rocketnet_server_xdp_socket_acquire_receive_mutex( rocketnet_server_xdp_socket_t * socket )
+{
+    while ( socket->receive_wanted.load( std::memory_order_acquire ) )
+        rocketnet_server_xdp_socket_pause();
+    rocketnet_platform_mutex_acquire( &socket->receive_mutex );
 }
 
 static uint64_t alloc_send_frame( rocketnet_server_xdp_socket_t * socket )
@@ -3079,8 +3186,8 @@ static void rocketnet_server_socket_test_stage( rocketnet_server_xdp_socket_t * 
 }
 
 // The receive handoff, one step at a time as proofs/tla/RNXdpReceiveRing.tla
-// has it: Drain (main's swap), DrainMiss (a try-acquire the worker's hold
-// defeats), Consume and NewCall. Only main swaps. A miss takes nothing in
+// has it: Drain (main's swap), DrainMiss (a claim whose every try the
+// worker's hold defeats), Consume and NewCall. Only main swaps. A miss takes nothing in
 // that call and costs that call alone: main keeps its bank and its cursor,
 // the next call retries, and that call's view holds every packet staged
 // before it, the ones the miss deferred and the ones staged since. A partly
@@ -3245,6 +3352,359 @@ bool rocketnet_server_socket_test_receive_handoff()
     if ( socket->send_mutex.ok )
         rocketnet_platform_mutex_destroy( &socket->send_mutex );
     if ( socket->receive_mutex.ok )
+        rocketnet_platform_mutex_destroy( &socket->receive_mutex );
+    socket->~rocketnet_server_xdp_socket_t();
+    rocketnet_server_socket_test_destruct( server );
+    rocketnet_free( NULL, socket_storage );
+    rocketnet_free( NULL, server_storage );
+
+    return valid;
+}
+
+// The worker's part between two of main's tries, for the claim fixture below:
+// at the try the fixture names it lets go of the receive mutex, as the staging
+// loop does between two descriptors. Every call sees main's flag raised.
+static struct
+{
+    int let_go_at;
+    int calls;
+    int let_go;
+    bool wanted;
+} rocketnet_server_socket_test_claim;
+
+static void rocketnet_server_socket_test_claim_spin( rocketnet_server_xdp_socket_t * socket, int missed )
+{
+    rocketnet_server_socket_test_claim.calls++;
+    rocketnet_server_socket_test_claim.wanted &= socket->receive_wanted.load( std::memory_order_acquire );
+    if ( missed == rocketnet_server_socket_test_claim.let_go_at && rocketnet_server_xdp_socket_yield_receive_mutex( socket ) )
+        rocketnet_server_socket_test_claim.let_go++;
+}
+
+// Main's bounded claim of the receive mutex, one step at a time as
+// proofs/tla/RNXdpReceiveRing.tla has it: the worker holds the mutex
+// (WorkerLock), main's first try misses and raises the flag (DrainWant), the
+// worker lets go between two descriptors (WorkerYield), and main's next try
+// swaps inside the same call (Drain). The worker then takes the mutex back
+// and finds the other bank (WorkerLock). A worker that never lets go costs
+// main its bounded tries and that call alone (DrainSpin, DrainMiss): the flag
+// is clear again and the next call swaps. The fixture stands in for the
+// worker through the worker's own two functions; no thread is involved.
+bool rocketnet_server_socket_test_receive_claim()
+{
+    void * server_storage = rocketnet_malloc( NULL, sizeof( rocketnet_server_socket_t ) );
+    void * socket_storage = rocketnet_malloc( NULL, sizeof( rocketnet_server_xdp_socket_t ) );
+    if ( !server_storage || !socket_storage )
+    {
+        rocketnet_free( NULL, socket_storage );
+        rocketnet_free( NULL, server_storage );
+        return false;
+    }
+
+    auto * server = rocketnet_server_socket_test_construct( server_storage );
+    auto * socket = new ( socket_storage ) rocketnet_server_xdp_socket_t();
+    server->num_queues = 1;
+    server->socket = socket;
+
+    const bool send_mutex_ok = rocketnet_platform_mutex_create( &socket->send_mutex );
+    const bool receive_mutex_ok = rocketnet_platform_mutex_create( &socket->receive_mutex );
+    if ( !send_mutex_ok || !receive_mutex_ok )
+    {
+        if ( send_mutex_ok )
+            rocketnet_platform_mutex_destroy( &socket->send_mutex );
+        if ( receive_mutex_ok )
+            rocketnet_platform_mutex_destroy( &socket->receive_mutex );
+        socket->~rocketnet_server_xdp_socket_t();
+        rocketnet_server_socket_test_destruct( server );
+        rocketnet_free( NULL, socket_storage );
+        rocketnet_free( NULL, server_storage );
+        return false;
+    }
+
+    static const uint8_t gateway_mac[ETH_ALEN] = { 0x02, 0, 0, 0, 0, 2 };
+    rocketnet_xdp_reply_macs_reset( &server->reply_macs, gateway_mac );
+
+    rocketnet_address_t to = {};
+    to.type = ROCKETNET_ADDRESS_IPV4;
+
+    rocketnet_server_xdp_socket_claim_spin_for_test = rocketnet_server_socket_test_claim_spin;
+
+    // WorkerLock, then DrainWant, WorkerYield and Drain inside one call: the
+    // worker holds the mutex with one packet staged and lets go at main's
+    // first further try. Main swaps in that call and takes the packet.
+
+    rocketnet_server_xdp_socket_acquire_receive_mutex( socket );
+    rocketnet_server_socket_test_stage( socket, 0, &to );
+    rocketnet_server_socket_test_claim = { 1, 0, 0, true };
+    rocketnet_server_socket_receive_packets( server );
+    bool valid = rocketnet_server_socket_test_claim.calls == 1;
+    valid &= rocketnet_server_socket_test_claim.let_go == 1;
+    valid &= rocketnet_server_socket_test_claim.wanted;
+    valid &= !socket->receive_wanted.load( std::memory_order_acquire );
+    valid &= socket->receive_held_index == 0;
+    valid &= socket->receive_handoff.producer == 1;
+    valid &= socket->receive_swaps.load( std::memory_order_acquire ) == 1;
+    valid &= server->process_packets.num_packets == 1;
+    valid &= server->process_packets.packet_data[0] == socket->receive_buffer[0].packet_data[0];
+
+    // a claim that never reached the worker's part leaves the fixture
+    // holding the mutex: the case has failed, and it must not go on to wait
+    // for itself
+
+    if ( rocketnet_server_socket_test_claim.let_go == 0 )
+        rocketnet_platform_mutex_release( &socket->receive_mutex );
+
+    // WorkerLock again: main is done, so the worker takes the mutex back at
+    // once and stages into the bank main's swap gave it. With the flag clear
+    // it does not let go between two descriptors (WorkerCheck).
+
+    rocketnet_server_xdp_socket_acquire_receive_mutex( socket );
+    rocketnet_server_socket_test_stage( socket, socket->receive_handoff.producer, &to );
+    valid &= !rocketnet_server_xdp_socket_yield_receive_mutex( socket );
+    valid &= socket->receive_buffer[1].num_packets == 1;
+
+    // DrainWant, DrainSpin and DrainMiss: the worker still holds the mutex
+    // and never lets go. Main spends its bounded tries, clears the flag and
+    // takes nothing; it keeps its emptied bank and its cursor.
+
+    rocketnet_server_socket_test_claim = { 0, 0, 0, true };
+    rocketnet_server_socket_receive_packets( server );
+    valid &= rocketnet_server_socket_test_claim.calls == ROCKETNET_XDP_RECEIVE_CLAIM_SPINS;
+    valid &= rocketnet_server_socket_test_claim.let_go == 0;
+    valid &= rocketnet_server_socket_test_claim.wanted;
+    valid &= !socket->receive_wanted.load( std::memory_order_acquire );
+    valid &= server->process_packets.num_packets == 0;
+    valid &= socket->receive_held_index == 0;
+    valid &= socket->receive_read_index == 1;
+    valid &= socket->receive_buffer[0].num_packets == 0;
+    valid &= socket->receive_handoff.producer == 1;
+    valid &= socket->receive_swaps.load( std::memory_order_acquire ) == 1;
+
+    // The worker lets go at main's third further try of the next call: two
+    // tries miss, the third swaps, and the call's view holds the packet the
+    // missed call deferred.
+
+    rocketnet_server_socket_test_claim = { 3, 0, 0, true };
+    rocketnet_server_socket_receive_packets( server );
+    valid &= rocketnet_server_socket_test_claim.calls == 3;
+    valid &= rocketnet_server_socket_test_claim.let_go == 1;
+    valid &= rocketnet_server_socket_test_claim.wanted;
+    valid &= !socket->receive_wanted.load( std::memory_order_acquire );
+    valid &= socket->receive_held_index == 1;
+    valid &= socket->receive_handoff.producer == 0;
+    valid &= socket->receive_swaps.load( std::memory_order_acquire ) == 2;
+    valid &= server->process_packets.num_packets == 1;
+    valid &= server->process_packets.packet_data[0] == socket->receive_buffer[1].packet_data[0];
+
+    if ( rocketnet_server_socket_test_claim.let_go == 0 )
+        rocketnet_platform_mutex_release( &socket->receive_mutex );
+
+    // A free mutex is claimed by the first try: no flag, no further try.
+
+    rocketnet_server_socket_test_claim = { 1, 0, 0, true };
+    rocketnet_server_socket_receive_packets( server );
+    valid &= rocketnet_server_socket_test_claim.calls == 0;
+    valid &= !socket->receive_wanted.load( std::memory_order_acquire );
+    valid &= socket->receive_held_index == 0;
+    valid &= socket->receive_swaps.load( std::memory_order_acquire ) == 3;
+
+    rocketnet_server_xdp_socket_claim_spin_for_test = NULL;
+
+    if ( socket->send_mutex.ok )
+        rocketnet_platform_mutex_destroy( &socket->send_mutex );
+    if ( socket->receive_mutex.ok )
+        rocketnet_platform_mutex_destroy( &socket->receive_mutex );
+    socket->~rocketnet_server_xdp_socket_t();
+    rocketnet_server_socket_test_destruct( server );
+    rocketnet_free( NULL, socket_storage );
+    rocketnet_free( NULL, server_storage );
+
+    return valid;
+}
+
+// The worker's staging loop, for the threaded handoff case below: the real
+// worker's room rule and its own lock functions around one payload copy per
+// packet, in passes of up to 64. A packet's first four bytes are its number.
+struct rocketnet_server_socket_test_stager_t
+{
+    rocketnet_server_xdp_socket_t * socket;
+    uint32_t total;
+    uint64_t yields;
+    std::atomic<bool> stop;
+};
+
+static void rocketnet_server_socket_test_stager_thread( rocketnet_platform_thread_t *, void * data )
+{
+    auto * stager = (rocketnet_server_socket_test_stager_t *) data;
+    rocketnet_server_xdp_socket_t * socket = stager->socket;
+
+    uint8_t payload[1200];
+    memset( payload, 0xA5, sizeof( payload ) );
+
+    rocketnet_address_t from = {};
+    from.type = ROCKETNET_ADDRESS_IPV4;
+
+    uint32_t next = 0;
+    uint32_t receive_staged = 0;
+    uint32_t receive_swaps_seen = 0;
+
+    while ( next < stager->total && !stager->stop.load( std::memory_order_acquire ) )
+    {
+        const uint32_t receive_swaps = socket->receive_swaps.load( std::memory_order_acquire );
+        if ( receive_swaps != receive_swaps_seen )
+        {
+            receive_swaps_seen = receive_swaps;
+            receive_staged = 0;
+        }
+
+        uint32_t num_packets = ROCKETNET_XDP_RECV_QUEUE_SIZE - receive_staged;
+        if ( num_packets > 64 )
+            num_packets = 64;
+        if ( num_packets > stager->total - next )
+            num_packets = stager->total - next;
+        if ( num_packets == 0 )
+        {
+            rocketnet_server_xdp_socket_pause();
+            continue;
+        }
+
+        rocketnet_server_xdp_socket_acquire_receive_mutex( socket );
+
+        rocketnet_server_socket_receive_buffer_t * receive_buffer = &socket->receive_buffer[socket->receive_handoff.producer];
+
+        for ( uint32_t i = 0; i < num_packets; i++ )
+        {
+            if ( i > 0 && rocketnet_server_xdp_socket_yield_receive_mutex( socket ) )
+            {
+                stager->yields++;
+                rocketnet_server_xdp_socket_acquire_receive_mutex( socket );
+                receive_buffer = &socket->receive_buffer[socket->receive_handoff.producer];
+            }
+
+            const uint32_t index = receive_buffer->num_packets;
+            memcpy( payload, &next, sizeof( next ) );
+            memcpy( receive_buffer->packet_data[index], payload, sizeof( payload ) );
+            receive_buffer->packet_bytes[index] = sizeof( payload );
+            receive_buffer->from[index] = from;
+            receive_buffer->num_packets++;
+            next++;
+        }
+
+        receive_staged = receive_buffer->num_packets;
+        receive_swaps_seen = socket->receive_swaps.load( std::memory_order_relaxed );
+        rocketnet_platform_mutex_release( &socket->receive_mutex );
+    }
+}
+
+// The receive handoff with a real worker thread: the thread stages 200000
+// numbered packets through the worker's own lock functions while this thread
+// calls receive without pause. Every packet must come out once, in order, and
+// main's flag must be clear after every call. A functional case (it runs a
+// thread): test_xdp calls it. counts, when given, receives the calls, the
+// calls that owed a swap, the swaps, the owed swaps that missed, the longest
+// run of calls that missed, and the worker's yields.
+bool rocketnet_server_socket_test_receive_handoff_threads( uint64_t * counts )
+{
+    void * server_storage = rocketnet_malloc( NULL, sizeof( rocketnet_server_socket_t ) );
+    void * socket_storage = rocketnet_malloc( NULL, sizeof( rocketnet_server_xdp_socket_t ) );
+    if ( !server_storage || !socket_storage )
+    {
+        rocketnet_free( NULL, socket_storage );
+        rocketnet_free( NULL, server_storage );
+        return false;
+    }
+
+    auto * server = rocketnet_server_socket_test_construct( server_storage );
+    auto * socket = new ( socket_storage ) rocketnet_server_xdp_socket_t();
+    server->num_queues = 1;
+    server->socket = socket;
+
+    const bool send_mutex_ok = rocketnet_platform_mutex_create( &socket->send_mutex );
+    const bool receive_mutex_ok = rocketnet_platform_mutex_create( &socket->receive_mutex );
+
+    static const uint8_t gateway_mac[ETH_ALEN] = { 0x02, 0, 0, 0, 0, 2 };
+    rocketnet_xdp_reply_macs_reset( &server->reply_macs, gateway_mac );
+
+    rocketnet_server_socket_test_stager_t stager;
+    stager.socket = socket;
+    stager.total = 200000;
+    stager.yields = 0;
+    stager.stop.store( false, std::memory_order_release );
+
+    rocketnet_platform_thread_t * thread = NULL;
+    if ( send_mutex_ok && receive_mutex_ok )
+        thread = rocketnet_platform_thread_create( NULL, rocketnet_server_socket_test_stager_thread, &stager, NULL );
+
+    bool valid = thread != NULL;
+
+    uint32_t expected = 0;
+    uint64_t calls = 0;
+    uint64_t owed = 0;
+    uint64_t missed = 0;
+    uint64_t run = 0;
+    uint64_t longest = 0;
+
+    // the call limit ends a case that has stopped delivering instead of
+    // letting it spin for good
+
+    while ( thread && expected < stager.total && calls < 400000000ull )
+    {
+        const bool swap_owed = socket->receive_held_index < 0 ||
+                               socket->receive_read_index >= socket->receive_buffer[socket->receive_held_index].num_packets;
+        const uint32_t swaps_before = socket->receive_swaps.load( std::memory_order_relaxed );
+
+        rocketnet_server_socket_receive_packets( server );
+
+        calls++;
+        valid &= !socket->receive_wanted.load( std::memory_order_acquire );
+
+        if ( swap_owed )
+        {
+            owed++;
+            if ( socket->receive_swaps.load( std::memory_order_relaxed ) == swaps_before )
+            {
+                missed++;
+                run++;
+                if ( run > longest )
+                    longest = run;
+            }
+            else
+            {
+                run = 0;
+            }
+        }
+
+        for ( int i = 0; i < server->process_packets.num_packets; i++ )
+        {
+            uint32_t number = 0;
+            memcpy( &number, server->process_packets.packet_data[i], sizeof( number ) );
+            valid &= number == expected;
+            valid &= server->process_packets.packet_bytes[i] == 1200;
+            expected++;
+        }
+    }
+
+    if ( thread )
+    {
+        stager.stop.store( true, std::memory_order_release );
+        rocketnet_platform_thread_join( thread );
+        rocketnet_platform_thread_destroy( thread );
+    }
+
+    valid &= expected == stager.total;
+
+    if ( counts )
+    {
+        counts[0] = calls;
+        counts[1] = owed;
+        counts[2] = socket->receive_swaps.load( std::memory_order_relaxed );
+        counts[3] = missed;
+        counts[4] = longest;
+        counts[5] = stager.yields;
+    }
+
+    if ( send_mutex_ok )
+        rocketnet_platform_mutex_destroy( &socket->send_mutex );
+    if ( receive_mutex_ok )
         rocketnet_platform_mutex_destroy( &socket->receive_mutex );
     socket->~rocketnet_server_xdp_socket_t();
     rocketnet_server_socket_test_destruct( server );
@@ -4000,31 +4460,33 @@ void rocketnet_server_socket_receive_packets( rocketnet_server_socket_t * server
         // owned here with its cursor; a finished one is swapped for the
         // worker's filled buffer, so every packet staged before this claim
         // is in this call's view. Only main swaps, once per call and before
-        // it reads. A try-acquire that misses the worker's hold
-        // (proofs/tla/RNXdpReceiveRing.tla DrainMiss) takes nothing from this
-        // queue in this call: main keeps its emptied bank and its cursor, so
-        // the next call finds the bank exhausted again and retries the swap.
+        // it reads. The claim never waits on the worker beyond its bounded
+        // spin (rocketnet_server_xdp_socket_claim_receive_mutex). A claim
+        // whose every try missed (proofs/tla/RNXdpReceiveRing.tla DrainMiss)
+        // takes nothing from this queue in this call: main keeps its emptied
+        // bank and its cursor, so the next call finds the bank exhausted
+        // again and retries the swap.
 
         if ( socket->receive_held_index >= 0 &&
              socket->receive_read_index >= socket->receive_buffer[socket->receive_held_index].num_packets )
         {
             socket->receive_buffer[socket->receive_held_index].num_packets = 0;
-            if ( !rocketnet_platform_mutex_try_acquire( &socket->receive_mutex ) )
+            if ( !rocketnet_server_xdp_socket_claim_receive_mutex( socket ) )
                 continue;
             socket->receive_held_index = socket->receive_handoff.swap_producer( socket->receive_held_index );
             socket->receive_read_index = 0;
             socket->receive_swaps.fetch_add( 1, std::memory_order_release );
-            rocketnet_platform_mutex_release( &socket->receive_mutex );
+            rocketnet_server_xdp_socket_release_receive_mutex( socket );
         }
         else if ( socket->receive_held_index < 0 )
         {
-            if ( !rocketnet_platform_mutex_try_acquire( &socket->receive_mutex ) )
+            if ( !rocketnet_server_xdp_socket_claim_receive_mutex( socket ) )
                 continue;
             socket->receive_held_index = socket->receive_handoff.swap_producer( -1 );
             socket->receive_read_index = 0;
             if ( socket->receive_held_index >= 0 )
                 socket->receive_swaps.fetch_add( 1, std::memory_order_release );
-            rocketnet_platform_mutex_release( &socket->receive_mutex );
+            rocketnet_server_xdp_socket_release_receive_mutex( socket );
         }
 
         if ( socket->receive_held_index < 0 )
@@ -4123,10 +4585,6 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
     uint32_t receive_staged = 0;
     uint32_t receive_swaps_seen = 0;
 
-    // the descriptors staged per hold of the receive mutex
-
-    const uint32_t receive_lock_batch = 64;
-
     // the last errno each wakeup call saw, so a hard failure is logged once
     // per contiguous run rather than every pass
 
@@ -4172,9 +4630,9 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
         // Peek: xsk_ring_cons__peek, at most the staging room and pending storage).
         // The worker appends to its current bank under the receive mutex and
         // never publishes: main's next receive swaps this filled bank for its own.
-        // The mutex is held only to append, a batch of descriptors at a time.
-        // Main's swap is a try-acquire and never waits: during a heavy pass
-        // it can still miss the mutex and defer this queue to its next call.
+        // The mutex is held only to append, for the staging loop of the pass,
+        // and the worker lets go of it between two descriptors when main asks
+        // (rocketnet_server_xdp_socket_claim_receive_mutex).
 
         uint32_t receive_index;
 
@@ -4223,21 +4681,22 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
             const uint64_t receive_region_begin = (uint64_t) ROCKETNET_XDP_NUM_FRAMES / 2 * ROCKETNET_XDP_FRAME_SIZE;
             const uint64_t receive_region_end = (uint64_t) ROCKETNET_XDP_UMEM_FRAMES * ROCKETNET_XDP_FRAME_SIZE;
 
-            // proofs/tla/RNXdpReceiveRing.tla WorkerLock, WorkerYield and
-            // WorkerUnlock: the producer bank is read again under every hold,
-            // because main's swap between two holds changes it
+            // proofs/tla/RNXdpReceiveRing.tla WorkerLock, WorkerCheck,
+            // WorkerYield and WorkerUnlock: the worker holds the mutex for the
+            // staging loop and reads main's flag between two descriptors.
+            // When main is spinning for the mutex it lets go, stays off until
+            // main is done, and reads the producer bank again under the new
+            // hold, because main's swap changed it.
 
-            rocketnet_platform_mutex_acquire( &socket->receive_mutex );
+            rocketnet_server_xdp_socket_acquire_receive_mutex( socket );
 
             rocketnet_server_socket_receive_buffer_t * receive_buffer = &socket->receive_buffer[socket->receive_handoff.producer];
 
             for ( uint32_t i = 0; i < num_packets; i++ )
             {
-                if ( i > 0 && i % receive_lock_batch == 0 )
+                if ( i > 0 && rocketnet_server_xdp_socket_yield_receive_mutex( socket ) )
                 {
-                    // let main's swap in between batches; the bank may change
-                    rocketnet_platform_mutex_release( &socket->receive_mutex );
-                    rocketnet_platform_mutex_acquire( &socket->receive_mutex );
+                    rocketnet_server_xdp_socket_acquire_receive_mutex( socket );
                     receive_buffer = &socket->receive_buffer[socket->receive_handoff.producer];
                 }
 
