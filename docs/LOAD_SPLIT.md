@@ -320,9 +320,11 @@ per update, and the server offers once per client every 100 ms
 (`rate_target_hz=10 load=proof payload_bytes=proof` in the receipts). The
 server itself ticks at 100 Hz, as in the default mode, with the clients'
 offer slots spread over five ticks. This reduces bursts between socket
-drains: 1000 clients at 256 kbps offer 32 MB/s inbound. Receive-buffer requests
-and grants differ by transport and host; GSO requests 1,000,000 bytes per
-socket, while portable and io_uring use client-count sizing. Inspect the
+drains: 1000 clients at 256 kbps offer 32 MB/s inbound. UDP send-buffer
+requests are 1,000,000 bytes per socket, while receive-buffer requests scale
+with runtime `max_clients` (`ceil(max_clients * 1000 kbps * 125 * 2 / 10 Hz)`,
+at least 1,000,000 bytes: 25,000,000 bytes per socket at 1000 clients) across
+portable, GSO and io_uring; actual grants depend on the host. Inspect the
 startup grants as described in [Receive buffer sizing](MEMORY.md#receive-buffer-sizing).
 Each offer, in each direction, is two messages: a 1200-byte small message in one
 of the eight reliability modes and a 2000-byte fragmented message in one of
