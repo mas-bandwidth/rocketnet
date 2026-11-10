@@ -104,7 +104,9 @@ required runs are:
     `functional` (which carries the XDP cell in the runner kernel guest,
     against a libxdp in the tested range 1.4 to 1.6), Release `unit` (which
     also runs the `builds` leg's steps), `functional` and `checks`; macOS on
-    arm64 (rows named `macos`) Debug `unit` and Release `functional`;
+    arm64 (rows named `macos`) Debug `unit`, Release `functional` (the
+    development suite) and Release `functional_production` (the production
+    library's suite);
   - `happy path / <os>` (linux,
     windows; the Windows row is the per-commit MSVC whole-tree build) and
     `windows / Release / unit` (the unit suite under MSVC);

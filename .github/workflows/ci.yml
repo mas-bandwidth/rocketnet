@@ -157,8 +157,8 @@ concurrency:
 #
 #   macOS: Debug functional, checks and builds; Release unit, checks and
 #       builds; happy path / macos; platform selftests / macos.
-#       (Per commit: Debug unit, and Release functional, which runs the
-#       development functional suite as well as functional_production.)
+#       (Per commit: Debug unit, Release functional, which runs the
+#       development functional suite, and Release functional_production.)
 #   Linux: Debug checks and builds; Release functional's development suite
 #       (Debug functional runs it per commit); Release builds' history budget
 #       and no-XDP builds; platform selftests / linux.
@@ -224,9 +224,10 @@ jobs:
         os: [linux, macos]
         build_type: [Debug, Release]
         leg: [unit, functional, checks, builds]
-        # The per-commit tier runs seven of the sixteen rows: five Linux rows
-        # (the Release unit row carries the builds leg's steps) and two macOS
-        # rows. The nightly tier runs all.
+        # The per-commit tier runs eight of the seventeen rows: five Linux rows
+        # (the Release unit row carries the builds leg's steps) and three macOS
+        # rows (macOS Release functional_production is the include row below).
+        # The nightly tier runs all.
         exclude: ${{ fromJSON(inputs.full && '[]' || '[{"os":"linux","build_type":"Debug","leg":"checks"},{"os":"linux","build_type":"Debug","leg":"builds"},{"os":"linux","build_type":"Release","leg":"builds"},{"os":"macos","build_type":"Debug","leg":"functional"},{"os":"macos","build_type":"Debug","leg":"checks"},{"os":"macos","build_type":"Debug","leg":"builds"},{"os":"macos","build_type":"Release","leg":"unit"},{"os":"macos","build_type":"Release","leg":"checks"},{"os":"macos","build_type":"Release","leg":"builds"}]') }}
         # dev: the ROCKETNET_DEV setting. Debug rows build the default
         # development library (ON); Release rows build the production library
@@ -246,6 +247,13 @@ jobs:
           # row on its own.
           - { os: linux, build_type: Release, leg: unit, with_builds: true, runner: '["self-hosted","Linux","X64","fleet"]' }
           - { os: macos, runner: '["self-hosted","macOS","ARM64","fleet"]' }
+          # The macOS Release functional row ran both suites in one job, 1m30
+          # to 1m50 against the two-minute bound. The production library's
+          # suite (functional_production) runs in this row of its own, on its
+          # own runner; the functional row keeps the development suite. A leg
+          # value outside the matrix adds a combination, and every field is
+          # given here so it does not depend on the include rows above.
+          - { os: macos, build_type: Release, leg: functional_production, dev: 'OFF', runner: '["self-hosted","macOS","ARM64","fleet"]' }
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
@@ -577,9 +585,10 @@ jobs:
 
       # functional_production links the production (ROCKETNET_DEV=OFF)
       # library, so it exists only on the Release rows; it runs the same
-      # auto ladder and the same pinned-portable pass as the DEV suite.
+      # auto ladder and the same pinned-portable pass as the DEV suite. On
+      # macOS it is the functional_production row's, beside the functional row.
       - name: Run functional_production suite (auto ladder, production library)
-        if: matrix.leg == 'functional' && matrix.build_type == 'Release'
+        if: matrix.build_type == 'Release' && ((matrix.leg == 'functional' && runner.os != 'macOS') || matrix.leg == 'functional_production')
         shell: bash
         run: |
           set -euo pipefail
@@ -590,7 +599,7 @@ jobs:
           fi
 
       - name: Run functional_production suite (portable rung pinned by env)
-        if: matrix.leg == 'functional' && matrix.build_type == 'Release'
+        if: matrix.build_type == 'Release' && ((matrix.leg == 'functional' && runner.os != 'macOS') || matrix.leg == 'functional_production')
         shell: bash
         env:
           ROCKETNET_SERVER_TRANSPORT: portable
