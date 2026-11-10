@@ -235,6 +235,7 @@ static int rn_sequenced_block( rn_channels_t * channels, const rocketnet_message
 
     if ( current == RN_DESCRIPTOR_NONE )
     {
+        // proofs/tla/RNSequencedSlot.tla NoSlotCollision:
         // A sibling fragment already accepted as code 4 and no longer live
         // was released when this block was superseded: it can never join
         // again, so the arriving fragment is stale, not a new anchor.

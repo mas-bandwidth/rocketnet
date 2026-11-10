@@ -481,14 +481,14 @@ ServerSend(i) ==
 \* delivery the application never took, or an endpoint error) or from a send
 \* whose connection exhausted its message memory. rn_message_object_kick
 \* records the reason and calls link.disconnect
-\* (sdk/rocketnet_message_server.cpp:582), which on the server is
+\* (sdk/rocketnet_message_server.cpp:607), which on the server is
 \* rocketnet_server_transport_disconnect_client
-\* (sdk/rocketnet_server_transport.cpp:3765): a connected slot is sent its
+\* (sdk/rocketnet_server_transport.cpp:3787): a connected slot is sent its
 \* disconnect burst, so sendDisc is TRUE. The kick is enabled only while the
 \* server is RUNNING and the slot CONNECTED: the update returns before the
 \* message layer while stopped or stopping (rocketnet_server_update,
-\* sdk/rocketnet_api.cpp:2856), and a send with no running block is dropped
-\* (rocketnet_server_start_message, sdk/rocketnet_api.cpp:3076). The defect
+\* sdk/rocketnet_api.cpp:2832), and a send with no running block is dropped
+\* (rocketnet_server_start_message, sdk/rocketnet_api.cpp:3059). The defect
 \* "messageendbeforeconnected" lets it end a slot that is not CONNECTED.
 MessageEnd(i) ==
     /\ state = "RUNNING"
