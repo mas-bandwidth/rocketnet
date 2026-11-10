@@ -53,8 +53,11 @@ the library you link.
 Start with [Testing and qualification](TESTING.md). The [release process](RELEASING.md#default-ci-requirements)
 uses the release commit's required CI results as qualification evidence,
 subject to the documented check limitations. The index explains
-what each test tier establishes and labels older qualification records as history. [Release notes](RELEASE-NOTES-v1.0.0-preview-5.md)
-describe migrations; [Hardening](HARDENING.md) explains the verification methods
+what each test tier establishes and labels older qualification records as history. [Release notes](RELEASE-NOTES-v1.0.1.md)
+describe migrations; the v1.0.0 notes are on its
+[GitHub release](https://github.com/mas-bandwidth/rocketnet/releases/tag/v1.0.0),
+and the preview notes, such as [preview-5](RELEASE-NOTES-v1.0.0-preview-5.md),
+are history; [Hardening](HARDENING.md) explains the verification methods
 and their limits. A plan, model, host-shim test, or successful build is
 not interchangeable with an executed live-transport or performance result.
 
