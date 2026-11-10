@@ -287,14 +287,25 @@ static void rn_sent_index_insert( rn_region_t * region, uint64_t packet_id, uint
 // proofs/tla/RNOpenAddress.tla EraseStart and EraseStep (ClearLast TRUE): the scan
 // moves back each entry whose home is not cyclically in (hole, scan], and the
 // final hole clears last; the scan ends only on a cell already empty, so the
-// index is sized at twice its capacity
-static void rn_sent_index_remove_at( rn_region_t * region, uint32_t slot )
+// index is sized at twice its capacity. Every cell used means the index memory
+// was corrupted: the scan stops after cap cells and the connection ends as a
+// protocol violation through ack->error.
+static void rn_sent_index_remove_at( rn_window_ack_t * ack, uint32_t slot )
 {
+    rn_region_t * region = ack->region;
     const uint32_t cap = region->sent_index_entries;
     uint32_t empty = slot;
     uint32_t j = ( empty + 1 ) % cap;
+    uint32_t steps = 0;
     while ( region->sent_index[j].used )
     {
+        if ( ++steps == cap )
+        {
+            if ( ack->error == ROCKETNET_DISCONNECT_REASON_NONE )
+                ack->error = ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION;
+            return;
+        }
+
         const uint32_t home = rn_sent_index_hash( region->sent_index[j].packet_id, cap );
         const bool move = ( empty < j ) ? ( home <= empty || home > j ) : ( home <= empty && home > j );
         if ( move )
@@ -311,11 +322,11 @@ static void rn_sent_index_remove_at( rn_region_t * region, uint32_t slot )
     region->sent_index[empty].used = 0;
 }
 
-static void rn_sent_index_remove( rn_region_t * region, uint64_t packet_id )
+static void rn_sent_index_remove( rn_window_ack_t * ack, uint64_t packet_id )
 {
     uint32_t slot = 0;
-    if ( rn_sent_index_find( region, packet_id, &slot ) )
-        rn_sent_index_remove_at( region, slot );
+    if ( rn_sent_index_find( ack->region, packet_id, &slot ) )
+        rn_sent_index_remove_at( ack, slot );
 }
 
 // ----------------------------------------------------------------
@@ -609,7 +620,7 @@ static void rn_window_ack_commit( rn_window_ack_t * ack, uint64_t packet_id, con
         if ( oldest->packet_id != 0 )
         {
             rn_window_ack_receipt_resolve( ack, oldest, ROCKETNET_RECEIPT_STATUS_LOSS ); // RNReceipts EvictMap
-            rn_sent_index_remove( region, oldest->packet_id );
+            rn_sent_index_remove( ack, oldest->packet_id );
             oldest->packet_id = 0;
             rn_window_ack_count( region, ROCKETNET_COUNTER_MESSAGE_SENT_MAP_EVICTED );
         }
@@ -773,7 +784,7 @@ int rn_window_ack_on_ack( rn_window_ack_t * ack, uint64_t packet_id, double now 
 
     // 3. Remove the entry from sent_index and reclaim the head of sent_packets
 
-    rn_sent_index_remove_at( region, index_slot );
+    rn_sent_index_remove_at( ack, index_slot );
     entry->packet_id = 0;
     rn_window_ack_reclaim_head( ack );
 
