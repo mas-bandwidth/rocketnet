@@ -12,9 +12,10 @@ count, the pass cursor, the modulo and the sealed counts.
 |---|---|
 | `sealed[s]` | `disconnect_bursts[s].sealed` |
 | `head`, `count` | `disconnect_burst_head`, `disconnect_burst_count` |
-| `cursor` | `disconnect_burst_cursor`, the offset from the head of the burst the pass seals next |
-| `C` | `ROCKETNET_MAX_CLIENTS`, the ring's slots |
+| `cursor` | `disconnect_burst_cursor`, the offset from the head of the burst the pass visits next |
+| `C` | `rocketnet_server_disconnect_bursts(max_clients)`, the ring's slots, which is `2 * max_clients` and not `ROCKETNET_MAX_CLIENTS` |
 | `K` | `ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS` |
+| `abandoned` | bursts marked complete because the destination was refused |
 
 The ghosts name each burst by the order it was deferred (`bid[s]`), count the
 packets sealed for it (`seals`), collect the bursts that left the ring
@@ -24,22 +25,32 @@ packets sealed for it (`seals`), collect the bursts that left the ring
 
 - **`Defer`**: `rocketnet_server_transport_disconnect_client_impl` when a
   burst already waits or the update's allowance is short of `K`: with
-  `disconnect_burst_count < ROCKETNET_MAX_CLIENTS`,
+  `disconnect_burst_count < C`,
   `rocketnet_server_transport_defer_disconnect_burst` writes slot
-  `(head + count) % ROCKETNET_MAX_CLIENTS` with `sealed = 0` and counts it;
+  `(head + count) % C` with `sealed = 0` and counts it;
   with the ring full the new burst is dropped and the slot closed locally.
-- **`SealStep`**: one iteration of
+  A running server refuses earlier, at `max_clients`
+  (`disconnect_burst_steady_cap`); `ServerStopSpread` models that cap. This
+  model is the ring at its own capacity.
+- **`SealStep`**: one seal in
   `rocketnet_server_transport_drain_disconnect_bursts`: the cursor restarts
-  at 0 once it reaches `count`, the burst at `(head + cursor) % MAX` seals its
-  next packet, the cursor moves on, and each completed burst at the head leaves
-  (the head moves modulo `MAX`, `count` falls, a nonzero cursor drops by one).
+  at 0 once it reaches `count`, the incomplete burst at `(head + cursor) % C`
+  seals its next packet, the cursor moves on, and each completed burst at the
+  head leaves (the head moves modulo `C`, `count` falls, a nonzero cursor
+  drops by one).
+- **`Abandon`**: the same iteration when the start is refused for its
+  destination with room left. The burst is marked complete (`sealed = K`) and
+  no packet of it is sealed, then the head pop runs.
+- **`PassOver`**: the same iteration when the entry is already complete. The
+  cursor moves on and the entry is not sealed. An abandoned burst away from
+  the head leaves only once the pop reaches it.
 
-A drain ends when its allowance is spent or a send frame is refused. Either
-leaves the ring and the cursor as they are, and the next update's drain
-continues the pass, so any interleaving of `Defer` and `SealStep` is a run of
-updates. The stop path's drain is the same loop with a larger allowance. The
-immediate burst (no burst waiting, the allowance covering `K`) never touches
-the ring.
+A drain ends when its allowance is spent or a send frame is refused for a
+reason other than the destination. Either leaves the ring and the cursor as
+they are, and the next update's drain continues the pass, so any interleaving
+of `Defer`, `SealStep`, `Abandon` and `PassOver` is a run of updates. The stop
+path's drain is the same loop with a larger allowance. The immediate burst
+(no burst waiting, the allowance covering `K`) never touches the ring.
 
 ## Invariants
 
@@ -47,13 +58,17 @@ the ring.
 - **`SealOnlyLive`**: a seal is made only for a waiting burst, never for the
   slot past the tail.
 - **`PassFair`**: no burst is sealed twice in a pass, and a pass ends only
-  when every waiting burst was sealed in it.
-- **`SealedFallFromHead`**: sealed counts never rise from the head to the
-  tail, so the head's burst completes first and the pop at the head frees
-  every completed burst.
+  when every burst still waiting was sealed in it. An abandoned burst is
+  complete, so the pass does not owe it a seal, and passing over it is not a
+  second seal.
+- **`SealedFallFromHead`**: among bursts still waiting, sealed counts never
+  rise from the head to the tail. A live entry already at `K` was abandoned
+  and sits behind the head; the head itself is never left complete.
 - **`CursorInRange`**: the cursor is at most `count`.
-- **`ExactSeals`**: each waiting burst's record holds its own seals, fewer
-  than `K`, and each burst that left had exactly `K`.
+- **`ExactSeals`**: a waiting burst that was not abandoned holds its own
+  seals, fewer than `K`. An abandoned one is marked complete and was sent
+  fewer than `K`. A burst that left without being abandoned was sent exactly
+  `K`.
 
 A burst deferred during a pass joins that pass at the tail, so the bursts ahead
 of it in the pass may have a redundant packet sealed before its first. The
@@ -80,7 +95,7 @@ counterexample below was checked against the C by hand.
 1. **`MCRNDisconnectBurstRingBrokenFullOffByOne.cfg`**
    (`FullTestExact = FALSE`): the room test in
    `rocketnet_server_transport_disconnect_client_impl` as
-   `disconnect_burst_count <= ROCKETNET_MAX_CLIENTS`. Violates `NoOverwrite`:
+   `disconnect_burst_count <= C`. Violates `NoOverwrite`:
    three bursts fill the ring of three at head 0; a fourth writes slot
    `(0 + 3) % 3 = 0`, the waiting head's record and key.
 2. **`MCRNDisconnectBurstRingBrokenCursorWrapLate.cfg`**

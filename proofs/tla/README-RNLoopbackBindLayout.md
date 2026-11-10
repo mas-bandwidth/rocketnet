@@ -28,7 +28,12 @@ Functions in `sdk/rocketnet_driver_loopback.cpp`.
 
 - **`Create(server, f, a, bp)`**: `loopback_create`. A bind to a family and
   port a live endpoint already holds is refused (the walk of the records,
-  which under `BoundExact` is that family's entry for the port being nonzero); the server takes record 0 and a
+  which under `BoundExact` is that family's entry for the port being nonzero).
+  So is a bind sharing its port with a live endpoint of the other family
+  when the IPv6 one of the two is bound to the wildcard (`DualConflict`):
+  that endpoint is dual stack and would accept the IPv4 endpoint's
+  datagrams, as a dual-stack socket's bind fails with `EADDRINUSE`. The
+  server takes record 0 and a
   client the first free record after it, a full hub refusing. A bind to port
   0 searches from `next_port`, skipping every port either family holds and
   stepping with `loopback_next_port` (the last port wraps to the first), takes
@@ -51,6 +56,9 @@ when its endpoint is a live IPv6 wildcard (dual stack).
 - **`LookupIsWalk`**: for every family, destination address and port, the
   table lookup returns the endpoint a walk of the live records returns
   (`WalkFind`), the abstract contract the table replaces.
+- **`OneIPv4Destination`**: for every IPv4 destination address and port, at
+  most one live endpoint accepts it: an IPv4 endpoint bound to the wildcard
+  or that address, or a dual-stack IPv6 wildcard on the port.
 - **`EphemeralInRange`**: every port the search hands out is in
   `First..Last`.
 - **`EphemeralPortFree`**: every port the search hands out is held by no live
@@ -109,6 +117,14 @@ counterexample below was checked against the C by hand.
    IPv4 port 2 explicitly, client record 2 binds IPv6 port 0 and the search
    from 2 tests only the IPv6 entry, so the ephemeral IPv6 endpoint shares
    port 2 with the IPv4 one.
+
+5. **`MCRNLoopbackBindLayoutBrokenNoDualCheck.cfg`** (`DualCheck = FALSE`):
+   `loopback_create` without its cross-family test (the `loopback_is_wildcard`
+   refusal after the same-family one). Violates `OneIPv4Destination`: client
+   record 1 binds IPv4 port 2 at a specific address, client record 2 binds
+   the IPv6 wildcard on port 2, and an IPv4 datagram to that address and
+   port is accepted by both; the lookup returns the IPv4 endpoint and the
+   dual-stack one never sees it.
 
 ## Runs
 
