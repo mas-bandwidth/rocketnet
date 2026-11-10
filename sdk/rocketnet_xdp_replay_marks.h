@@ -19,8 +19,10 @@
 // fills it once per server update -- a FORGET per slot seen connected that is
 // no longer connected or whose address changed, whether or not it held a mark,
 // then a MARK per connected slot first seen (zero included), whose
-// highest_opened fell, or whose highest_opened advanced by the mark step -- and the transport applies every
-// forget, then every mark, in one commit, then resets keeping every forget the
+// highest_opened fell, or whose highest_opened advanced by the mark step --
+// and the transport applies every forget (issuing no kernel delete for a key
+// no applied mark ever inserted), then every mark, in one commit, then resets
+// keeping every forget the
 // kernel refused that no applied mark for the same key superseded, so it is
 // tried again first in the next commit (proofs/tla/RNXdpReplay.tla, Commit,
 // ForgetOwedUntilApplied and RetryNeverDeletesNewerMark), and every mark the
