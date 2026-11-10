@@ -510,16 +510,18 @@ static void test_server_kick_at_steady_cap_counts_dropped_burst()
     rocketnet_unit_check( server->disconnect_burst_count == clients );
     rocketnet_unit_check( counters[ROCKETNET_COUNTER_DISCONNECT_BURST_DROPPED] == dropped );
 
-    // slot 0 connects again and is kicked with the ring at its steady cap
+    // the last slot freed is the first reused (the free list is LIFO): it
+    // connects again and is kicked with the ring at its steady cap
 
-    stop_spread_connect( server, 0 );
+    const int again = clients - 1;
+    stop_spread_connect( server, again );
 
     const enum rocketnet_log_level_t saved_level = rocketnet_log_level_current();
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_DEBUG );
     g_stop_spread_dropped_lines = 0;
     rocketnet_log_function( stop_spread_log_capture, NULL );
 
-    rocketnet_server_transport_disconnect_client( server, 0 );
+    rocketnet_server_transport_disconnect_client( server, again );
 
     rocketnet_log_function( NULL, NULL );
     rocketnet_log_level( saved_level );
