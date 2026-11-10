@@ -40,7 +40,10 @@ the design, and `proofs/tla/COVERAGE.tsv` marks the client-io-decrypt row curren
   session to sending the connection response, and sets the wake, which stands for the
   hand-off of the connection response that `update` commits next (RNClientIo's
   `HandOff`). The first accepted keep-alive moves the session to connected.
-  `RetireKeys` is disconnect or destroy, and the integrity limit inside
+  `RetireKeys` is disconnect, destroy or a timeout, from sending the
+  connection response or connected (`rocketnet_client_protocol_disconnect`
+  and every terminal `rocketnet_client_set_state` run the connection reset,
+  whose `retire_keys` hook retires the copy), and the integrity limit inside
   `UpdateConsume` does the same: the epoch retired (seq_cst) before
   `update`'s own keys are zeroed, the session ended, and the wake set so a
   blocked I/O thread reads the epoch. The I/O thread reads the epoch once at

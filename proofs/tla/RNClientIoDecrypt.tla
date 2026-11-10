@@ -314,9 +314,11 @@ PublishKeys ==
     /\ UNCHANGED netVars
     /\ UNCHANGED ghostVars
 
-\* disconnect or destroy (rocketnet_client_protocol_disconnect)
+\* disconnect, destroy or a timeout (rocketnet_client_protocol_disconnect,
+\* rocketnet_client_set_state to a terminal state, whose connection reset
+\* runs retire_keys), from sending the connection response or connected
 RetireKeys ==
-    /\ session = "connected"
+    /\ session \in {"response_sent", "connected"}
     /\ Retire
     /\ UNCHANGED <<socket, rec, buf, snap, cur, owed, waiting, waitReadable,
                    fresh, ioWin, mainWin, ioKeys, ioSeen, nCounted, integrity>>
