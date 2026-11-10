@@ -947,6 +947,7 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
     const bool unreliable = reliability == ROCKETNET_RELIABILITY_UNRELIABLE || reliability == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED ||
                             reliability == ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT;
     const int transport_max = rn_message_send_transport_max( object, reliability );
+    bool frame_refused = false;
 
     // RNOutgoingBuild StartInPlace: a fitting unreliable message reserves its
     // declared maximum at the open build's committed end, or opens a frame;
@@ -987,6 +988,7 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
                      rn_endpoint_in_place_affordable( connection, header + bytes + 1, object->time ) )
                 {
                     uint8_t * frame = object->link.start_packet( object->link.transport, index, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, &build->context );
+                    frame_refused = frame == NULL && object->link.max_payload_bytes && transport_max >= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
                     if ( frame && build->context.payload_capacity >= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
                         rocketnet_message_writer_begin( &build->writer, frame + build->context.payload_index, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
                     else if ( frame )
@@ -1030,7 +1032,7 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
         if ( header >= 0 && !rn_endpoint_in_place_affordable( connection, header + bytes + 1, object->time ) )
             header = RN_ENDPOINT_IN_PLACE_QUEUED;               // the bucket cannot pay it now: the write pass decides
 
-        if ( header >= 0 )
+        if ( header >= 0 && !frame_refused )
         {
             const int request = header + bytes + 1;
             rocketnet_packet_context_t context;
