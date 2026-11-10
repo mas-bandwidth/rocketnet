@@ -162,6 +162,7 @@ send-state clause, while the drop actions constrain the drop-state ghost.
 | `MCServerSessionBrokenReceiveWhileStopping.cfg` | `Defect = "receivewhilestopping"`: Read runs while STOPPING | `NoReceiveUnlessRunning`, exit 12 | a datagram is read while `state = "STOPPING"`, so `readIn` holds STOPPING. The code returns before receive (`sdk/rocketnet_server_transport.cpp:2388`) |
 | `MCServerSessionBrokenConnIdPerRun.cfg` | `Defect = "connidperrun"`, `MaxStarts = 2`: the public id is the per-run transport id alone, with no base for earlier runs | `ConnIdNeverRepeats`, exit 12 | create, start, a session establishes with id 1, stop, start, the next session establishes with id 1 again. In the code `rn_server_finish_stop` adds the old run's `rocketnet_server_transport_connections_assigned` to `connection_id_base` (`sdk/rocketnet_api.cpp`); `test_server_connection_id_tracks_each_connection` fails the same way with the base removed |
 | `MCServerSessionBrokenAdmitWhileStopping.cfg` | `Defect = "admitwhilestopping"`: ClientConnects runs while STOPPING | `NoAdmitUnlessRunning`, exit 12 | a mapping opens while `state = "STOPPING"`, so `admitIn` holds STOPPING. Admission is inside the receive the transport skips while not RUNNING |
+| `MCServerSessionTwoClientsReachable.cfg` (module `MCServerSessionTwoClients.tla`) | `Defect = "none"`, the `MCServerSessionTwoClients.cfg` constants; invariant `NotTwoConnected` (a reachability witness) | `NotTwoConnected`, exit 12 | 7 states: create, start, session 1 opens a mapping into slot 1 with token 1 and is established, then session 2 into slot 2 with token 2 and is established: both slots CONNECTED. The two-client control's multi-client invariants are reached |
 
 The DisconnectAllLeavesClient trace, step by step against `sdk/rocketnet_api.cpp:1253-1265`:
 state 1 is Init (NONE, every slot FREE), state 2 is Create (STOPPED), state 3 is Start
@@ -210,8 +211,16 @@ case, one for witnesses, 110-second cap per case):
 - `MCServerSession.cfg`: `SlotCount = 2`, `MaxSessions = 2`, `MaxTokens = 1` (one token per
   run, so a slot is reused across the stop and start), `MaxStarts = 2` (start, stop, start
   again), `MaxCreates = 1`, `Defect = "none"`, `SPECIFICATION LiveSpec`. The one-token bound
-  keeps the added `MessageEnd` within the 110-second cap; the witness cases keep
-  `MaxTokens = 2` for two simultaneous clients.
+  keeps the added `MessageEnd` within the 110-second cap. With one token no two slots are
+  ever CONNECTED at once, so in this case the distinct half of `ConnIdLiveAndDistinct` and the
+  multi-client content of `DisconnectAllIsAtomic` and `StopDisconnectsAll` check nothing.
+- `MCServerSessionTwoClients.cfg` (module `MCServerSessionTwoClients.tla`): the same
+  constants with `MaxTokens = 2` and `MaxStarts = 1`, every invariant and both liveness
+  properties: two clients connected at once in one run (the stop and restart reuse is the
+  case above). `MaxTokens = 2` with `MaxStarts = 2` also passes (5,115,808 generated,
+  486,498 distinct, depth 24, 1 min 53 s with four workers on macOS, 2026-11-10; not a recorded case) but does not fit the
+  cap with two workers. `MCServerSessionTwoClientsReachable.cfg` shows two CONNECTED slots
+  are reached in this instance.
 - The witnesses: `SlotCount = 2`, `MaxSessions = 2`, `MaxTokens = 2`, `MaxCreates = 1`,
   `SPECIFICATION Spec`. `MaxStarts = 1`, except `MCServerSessionReadmitAfterStart.cfg`,
   `MCServerSessionBrokenReasonAcrossRestart.cfg`, `MCServerSessionBrokenReceiveWhileStopping.cfg`,

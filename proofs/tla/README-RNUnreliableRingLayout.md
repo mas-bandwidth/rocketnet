@@ -115,7 +115,7 @@ For any other descriptor the renumber needs no such test: its tombstones lie
 before its one live entry, so the loop reaches them, still dead, before it
 gives that entry a new ticket.
 
-4. **`MCRNUnreliableRingLayoutBrokenWalkFromHead.cfg`** (`WalkSnapshot =
+4. **`MCRNUnreliableRingLayoutBrokenWalkFromHead.cfg`** (`WalkCopyHead =
    FALSE`): the walk reads from the current head instead of the head
    captured at its start. TLC: push 1 (ticket 1), push 2 (ticket 2), push 3
    (ticket 3, the counter wraps), unlink 3, unlink 2, then push 3 again:

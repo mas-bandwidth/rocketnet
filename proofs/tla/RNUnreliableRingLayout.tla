@@ -33,7 +33,7 @@
 (*                 tickets from the last lap                               *)
 (*   DropPushed    the renumber keeps entries naming the pushed           *)
 (*                 descriptor (a stale one revived by its new stamp)      *)
-(*   WalkSnapshot  the walk reads from the current head instead of the    *)
+(*   WalkCopyHead  the walk reads from the current head instead of the    *)
 (*                 head captured at its start: after an unlink's sync     *)
 (*                 moves the head, the walk re-reads entries past the     *)
 (*                 live range and returns one descriptor twice            *)
@@ -47,10 +47,10 @@ CONSTANTS
     Renumber,       \* rn_unreliable_push renumbers after a wrap
     FreshTickets,   \* the renumber draws a fresh ticket for each survivor
     DropPushed,     \* the renumber drops every entry naming the pushed descriptor
-    WalkSnapshot    \* the walk reads from the head captured at WalkBegin
+    WalkCopyHead    \* the walk reads from the head captured at WalkBegin
 
 ASSUME Q \in Nat \ {0} /\ N >= Q + 1 /\ TicketMod >= 3
-ASSUME \A f \in {Renumber, FreshTickets, DropPushed, WalkSnapshot} : f \in BOOLEAN
+ASSUME \A f \in {Renumber, FreshTickets, DropPushed, WalkCopyHead} : f \in BOOLEAN
 
 Descs == 1..Q
 Pos == 0..(N - 1)
@@ -190,9 +190,9 @@ WalkBegin ==
 
 \* rn_unreliable_walk_next: the next live entry from the step, or the end.
 \* The code reads at walk->base, the head captured by WalkBegin; the
-\* WalkSnapshot = FALSE witness reads at the current head instead, which
+\* WalkCopyHead = FALSE witness reads at the current head instead, which
 \* an unlink's sync may have moved since the walk began.
-WalkBase == IF WalkSnapshot THEN wbase ELSE head
+WalkBase == IF WalkCopyHead THEN wbase ELSE head
 
 RECURSIVE NextLive(_)
 NextLive(k) ==

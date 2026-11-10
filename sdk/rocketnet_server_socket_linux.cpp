@@ -232,9 +232,10 @@ struct rocketnet_server_xdp_socket_t
     // that thread writes it
     uint64_t send_refused_overflow_warned{ 0 };
 
-    // TX wakeup (sendto) failures this queue's worker saw, and the errno of
-    // the last hard one. A hard error means the TX ring can never drain, so
-    // the stop drain gives up on this queue (rocketnet_server_socket_send_idle).
+    // hard TX wakeup (sendto) failures this queue's worker saw, and the errno
+    // of the last one, cleared by the next wakeup that succeeds. While it is
+    // set the TX ring cannot drain, so the stop drain gives up on this queue
+    // (rocketnet_server_socket_send_idle).
     std::atomic<uint64_t> send_wakeup_failures{ 0 };
     std::atomic<int> send_hard_error{ 0 };
 
@@ -2550,8 +2551,8 @@ bool rocketnet_server_socket_send_idle( struct rocketnet_server_socket_t * serve
     {
         rocketnet_server_xdp_socket_t * socket = &server_socket->socket[queue];
 
-        // A queue whose worker reported a hard TX wakeup error never drains
-        // its ring: give up on it before waiting on its buffers or mutex.
+        // A queue whose worker's last TX wakeup failed hard cannot drain its
+        // ring: give up on it before waiting on its buffers or mutex.
 
         const int hard_send_error = socket->send_hard_error.load( std::memory_order_relaxed );
         if ( rocketnet_xdp_send_wakeup_hard_error( hard_send_error ) )
@@ -3908,10 +3909,7 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
         {
             const int error = errno;
             if ( rocketnet_xdp_send_wakeup_hard_error( error ) )
-            {
-                socket->send_wakeup_failures.fetch_add( 1, std::memory_order_relaxed );
-                socket->send_hard_error.store( error, std::memory_order_relaxed );
-            }
+                rocketnet_xdp_send_wakeup_failed( error, socket->send_wakeup_failures, socket->send_hard_error );
             if ( rocketnet_xdp_send_wakeup_report( error, poll_error ) )
             {
                 char reason[128];
@@ -4249,9 +4247,7 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
             if ( sendto( xsk_socket__fd( socket->xsk ), NULL, 0, MSG_DONTWAIT, NULL, 0 ) < 0 )
             {
                 const int error = errno;
-                socket->send_wakeup_failures.fetch_add( 1, std::memory_order_relaxed );
-                if ( rocketnet_xdp_send_wakeup_hard_error( error ) )
-                    socket->send_hard_error.store( error, std::memory_order_relaxed );
+                rocketnet_xdp_send_wakeup_failed( error, socket->send_wakeup_failures, socket->send_hard_error );
                 if ( rocketnet_xdp_send_wakeup_report( error, send_error ) )
                 {
                     char reason[128];
@@ -4262,6 +4258,7 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
             else
             {
                 send_error = 0;
+                rocketnet_xdp_send_wakeup_succeeded( socket->send_hard_error );
             }
         }
 

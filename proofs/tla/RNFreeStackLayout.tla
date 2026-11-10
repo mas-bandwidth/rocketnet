@@ -17,11 +17,15 @@
 (*                changes, then pops.                                      *)
 (*   PeekClaim    rocketnet_used_token_history_claim_record                *)
 (*                (sdk/rocketnet_token_tables.cpp): rn_token_claim_select_ *)
-(*                slot peeks free[free_count - 1] and remembers it.        *)
-(*   PopClaim     the record pops that slot only while it is still the    *)
-(*                top.  No other table operation runs between these       *)
-(*                steps under the endpoint's caller serialization.  The   *)
-(*                interleaved-release witness reverses this assumption.   *)
+(*                slot peeks free[free_count - 1] and remembers it; with   *)
+(*                no free slot it selects the oldest claim whose deadline  *)
+(*                has passed, a live slot (any live slot here: the model   *)
+(*                keeps no deadlines or insertion order).                  *)
+(*   PopClaim     the record pops the slot only when free_count > 0 and   *)
+(*                it is the top; otherwise (the expired live slot) it     *)
+(*                retires it and inserts it again, so it stays live and    *)
+(*                the stack is untouched.  Both steps are in the one call, *)
+(*                so no other table operation runs between them.  The     *)
 (*                bindings' rn_token_free_pop is TakeMap's pop without     *)
 (*                the generation.                                          *)
 (*   Release(i)   rocketnet_encryption_map_remove_generation, rocketnet_   *)
@@ -39,8 +43,8 @@
 (*               so a refused take loses the slot (StackIsFree);           *)
 (*   "wrapone"   the generation steps from its maximum to 1, not to the    *)
 (*               exhausted 0 (GenerationNeverReissued).                    *)
-(*   "interleaveclaim" a release runs between a free-slot peek and pop   *)
-(*               (StackIsFree).                                            *)
+(*   "popexpired" the claim pops the stack for the expired live slot too, *)
+(*               not only for a slot taken from it (StackIsFree).          *)
 (***************************************************************************)
 EXTENDS Integers, FiniteSets
 
@@ -51,7 +55,7 @@ CONSTANTS
     Broken      \* "none", or the reversed witness
 
 ASSUME /\ Cap \in Nat \ {0} /\ MaxGen \in Nat \ {0} /\ Owners \subseteq Nat \ {0}
-       /\ Broken \in {"none", "noguard", "decfirst", "wrapone", "interleaveclaim"}
+       /\ Broken \in {"none", "noguard", "decfirst", "wrapone", "popexpired"}
 
 Idx == 0..Cap-1
 
@@ -102,20 +106,21 @@ TakeSlots(g) ==
               /\ gen' = [gen EXCEPT ![i] = g]
               /\ UNCHANGED <<free, nextGen, issued, pending>>
 
-\* rn_token_claim_select_slot peeks the top. PopClaim is the next table
-\* operation under caller serialization; the witness permits Release between.
+\* rn_token_claim_select_slot: the top while free_count > 0, else the oldest
+\* expired claim, a live slot. PopClaim is the rest of the same call.
 PeekClaim ==
     /\ pending = NoPeek
-    /\ count > 0
-    /\ pending' = free[count - 1]
+    /\ IF count > 0
+       THEN pending' = free[count - 1]
+       ELSE \E i \in Idx : live[i] /\ pending' = i
     /\ UNCHANGED <<free, count, live, gen, nextGen, issued>>
 
-\* Pop only while the peeked slot is still the top. In the reversed witness,
-\* a release changes the top. The code's else arm skips --free_count, then
-\* retires and inserts pending, so it ends live while count is unchanged.
+\* The code's test: free_count > 0 and the slot is the top, then --free_count;
+\* else rn_token_slot_retire, and the insert below leaves the slot live. The
+\* "popexpired" witness pops in the else arm too.
 PopClaim ==
     /\ pending \in Idx
-    /\ IF count > 0 /\ free[count - 1] = pending
+    /\ IF (count > 0 /\ free[count - 1] = pending) \/ Broken = "popexpired"
        THEN /\ count' = count - 1
             /\ live' = [live EXCEPT ![pending] = TRUE]
        ELSE /\ count' = count
@@ -124,7 +129,7 @@ PopClaim ==
     /\ UNCHANGED <<free, gen, nextGen, issued>>
 
 Release(i) ==
-    /\ (pending = NoPeek \/ Broken = "interleaveclaim")
+    /\ pending = NoPeek
     /\ live[i] \/ (Broken = "noguard" /\ count < Cap)
     /\ live' = [live EXCEPT ![i] = FALSE]
     /\ free' = [free EXCEPT ![count] = i]

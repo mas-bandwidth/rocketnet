@@ -12,9 +12,18 @@
 (* it, and is reposted by that worker.  rocketnet_iocp_post_receive        *)
 (* retires the operation once stopping is stored; otherwise it increments  *)
 (* the generation, marks the operation posted and counts it pending, then  *)
-(* issues the receive.  A refused post has no completion: pending drops,   *)
+(* issues the receive.  A refused post has no completion (a queued         *)
+(* datagram longer than the buffer is not one: Windows 11 reports it       *)
+(* WSA_IO_PENDING and completes it once, PostAccepted; tests/test_iocp.cpp *)
+(* test_windows_oversize_receive_at_post measures it): pending drops,      *)
 (* the operation is marked RETRY and its reference (index, generation) is  *)
-(* pushed onto retry_receives.  After each completion batch a worker runs  *)
+(* pushed onto retry_receives (rocketnet_iocp_queue_retry_receive).  The   *)
+(* queue has a cell for every operation, so the push finds its cell taken  *)
+(* only while another worker's pass has claimed that cell's last round and *)
+(* not yet freed it (PassTake); it is then retried until the cell is free  *)
+(* (rocketnet_iocp_queue_push_retry), so PushClaim is simply not enabled   *)
+(* meanwhile, and only stop ever retires a receive (RetiredOnlyByStop).    *)
+(* After each completion batch a worker runs                               *)
 (* a retry pass: it captures stop = enqueue, then pops with                *)
 (* rocketnet_iocp_queue_pop_before until it returns false, reposting every *)
 (* reference that still names a RETRY operation at its generation.        *)
@@ -47,7 +56,12 @@
 (* (RetryOwned).  PosMod = 2 * Cap is a stop ticket that wraps: a pass     *)
 (* stalls after capturing stop while the others advance dequeue past it   *)
 (* by more than half the wrap, so stop - position looks positive and the   *)
-(* pass claims beyond its stop (PassBounded).                              *)
+(* pass claims beyond its stop (PassBounded).  RefuseRetires = TRUE takes  *)
+(* a refused push as final and marks the operation RETIRED, as             *)
+(* rocketnet_iocp_post_receive did before the retry: one worker holds a    *)
+(* claimed cell, the other is refused a repost and pushes onto that cell,  *)
+(* and a receive is gone for the life of the server with no stop           *)
+(* (RetiredOnlyByStop).                                                    *)
 (***************************************************************************)
 EXTENDS Integers, FiniteSets
 
@@ -59,10 +73,12 @@ CONSTANTS
     MaxFail,          \* exploration bound: refused posts
     MaxComplete,      \* exploration bound: completions while running
     StopSlack,        \* 0 is the code's stop test; 1 is the off-by-one
-    ClaimBeforeStop   \* defect: the stop test after the claim
+    ClaimBeforeStop,  \* defect: the stop test after the claim
+    RefuseRetires     \* defect: a refused push retires the operation
 
 ASSUME NumOps >= 1 /\ Cap >= NumOps /\ PosMod >= 2 * Cap /\ PosMod % Cap = 0
 ASSUME MaxFail >= 1 /\ MaxComplete >= 0 /\ StopSlack \in 0 .. 1 /\ ClaimBeforeStop \in BOOLEAN
+ASSUME RefuseRetires \in BOOLEAN
 
 Ops == 0 .. NumOps - 1
 Cells == 0 .. Cap - 1
@@ -166,11 +182,17 @@ PostRefused(w) ==
     /\ UNCHANGED << gen, stopping, seq, ref, enqueue, dequeue, cur, ret, pos, stop, absEnq,
                     absDeq, absPos, absStop, completes >>
 
-(* rocketnet_iocp_queue_push's claim: the cell at enqueue is free, CAS;  *)
-(* a full queue retires the operation                                     *)
+(* rocketnet_iocp_queue_push's claim: the cell at enqueue is free, CAS.  *)
+(* A cell not yet freed by the pass that claimed its last round refuses  *)
+(* the push, which rocketnet_iocp_queue_push_retry tries again until the *)
+(* cell is free: the action waits.  RefuseRetires retires the operation  *)
+(* at the first refusal instead                                           *)
+CellFree == SDiff(seq[Index(enqueue)], enqueue) = 0
+
 PushClaim(w) ==
     /\ wpc[w] = "push"
-    /\ IF SDiff(seq[Index(enqueue)], enqueue) = 0
+    /\ CellFree \/ RefuseRetires
+    /\ IF CellFree
        THEN /\ pos' = [ pos EXCEPT ![w] = enqueue ]
             /\ enqueue' = Wrap(enqueue + 1)
             /\ absEnq' = absEnq + 1
@@ -312,8 +334,12 @@ PendingIsPosted ==
 
 (* Single-state occupancy is bounded. This does not constrain queue_count's *)
 (* separate atomic reads: their sampled difference can need clamping.  *)
-(* It does not prove the clamp or RETIRED fallback unreachable in the code. *)
+(* It does not prove the clamp unreachable in the code. *)
 WithinCapacity == absEnq - absDeq \in 0 .. Cap
+
+(* a receive operation is retired only once stop is stored: a refused    *)
+(* post, and a refused push of its retry, never end it                    *)
+RetiredOnlyByStop == \A o \in Ops : state[o] = "retired" => stopping
 
 (* once every worker exited nothing is posted: every completion was taken *)
 ExitQuiescent ==

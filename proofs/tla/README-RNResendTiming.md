@@ -83,7 +83,12 @@ Actions:
   records no `firstSend` (`send_first_sends`), so its timeout has no clock,
   and goes back to the head of its FIFO; `refused` marks it for
   `NoDueRecordHeld`. A refused resend of a record already on the wire is
-  not modelled. `RefuseFor` is 0 (no refusals) except in the refusal cases.
+  not modelled: the code puts it back at the head of its FIFO with
+  `last_send` at the due-now sentinel `-(resend_delay_max + 2)` and its
+  first send, so its timeout clock, unchanged. Nothing is sent, so
+  `AttemptsBeforeTimeout` and `ResendGapBounded` are claims for a transport
+  that refuses no resend (by reading; not checked). `RefuseFor` is 0 (no
+  refusals) except in the refusal cases.
 - `Tick`: the update ends and time moves one tick.
 - `Done`: every record acked, or the timeout fired; a stutter, so the end is
   not a deadlock.
@@ -97,7 +102,14 @@ Invariants:
 - `ResendGapBounded`: while the connection is up, an unacked record waits at
   most `Min(RtoMax, Cap(r)) · MaxBackoff` ticks between sends.
 - `NoDueRecordHeld`: no update ends with a record of either class due; a due
-  record is sent in the update it falls due, whatever the other class does.
+  record is sent in the update it falls due, whatever the other class does,
+  except one whose packet this update's walk offered and the transport
+  refused. That exception is the code's behaviour, not a loosening:
+  `rn_window_ack_packet_failed` leaves every refused record due at once (a
+  never-sent number keeps `RN_SEND_NUMBER_NEVER_SENT`, a resend gets the
+  due-now sentinel), so it waits for the next walk; no sentinel value can
+  remove it. `refused` is set only for records the walk offered and is
+  cleared by every walk, so a due record the walk did not offer still fails.
 - `SeededGapBounded`: from `SeedAt` until the layer's own first sample, an
   unacked record waits at most `Min(SeedRto, Cap(r))` ticks past the later of
   its last send and `SeedAt`: a record lost before the transport measured the

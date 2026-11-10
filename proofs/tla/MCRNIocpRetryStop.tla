@@ -6,9 +6,10 @@
 (* MCRNIocpRetryStopLive.cfg: one operation and two workers under the     *)
 (* fairness, both liveness properties.  Reversed witnesses:               *)
 (* MCRNIocpRetryStopBrokenStopOffByOne.cfg (PassBounded),                  *)
-(* MCRNIocpRetryStopBrokenClaimBeforeStop.cfg (the lost retry, RetryOwned) *)
-(* and MCRNIocpRetryStopBrokenStopWrap.cfg (the stop ticket wraps,         *)
-(* PassBounded).                                                           *)
+(* MCRNIocpRetryStopBrokenClaimBeforeStop.cfg (the lost retry, RetryOwned),*)
+(* MCRNIocpRetryStopBrokenStopWrap.cfg (the stop ticket wraps,             *)
+(* PassBounded) and MCRNIocpRetryStopBrokenRefuseRetires.cfg (a push a     *)
+(* stalled pass refuses retires the receive, RetiredOnlyByStop).           *)
 (***************************************************************************)
 EXTENDS RNIocpRetryStop
 =============================================================================
