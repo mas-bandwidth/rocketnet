@@ -721,3 +721,6 @@ MCRNUringSendPhasesLateReap.cfg	MCRNUringSendPhases.tla	pass	-	check	rnuringsend
 MCRNUringSendPhasesBrokenOnePhase.cfg	MCRNUringSendPhases.tla	invariant	NeverRefusedUnderLateReap	check	rnuringsendphases	required	-
 MCRNUringSendPhasesBrokenNoBase.cfg	MCRNUringSendPhases.tla	invariant	NoWriteWhileKernelOwned	check	rnuringsendphases	required	-
 MCRNUringSendPhasesBrokenRemainder.cfg	MCRNUringSendPhases.tla	invariant	PendingMatches	check	rnuringsendphases	required	-
+MCRNIocpSendLeaseCap4.cfg	MCRNIocpSendLease.tla	pass	-	ignore-terminal	rniocpsendlease	required	-
+MCRNIocpSendLeaseStalledPop.cfg	MCRNIocpSendLease.tla	pass	-	ignore-terminal	rniocpsendlease	required	-
+MCRNIocpSendLeaseBrokenRetireRefused.cfg	MCRNIocpSendLease.tla	invariant	RetiredOnlyAtGenMax	ignore-terminal	rniocpsendlease	required	-
