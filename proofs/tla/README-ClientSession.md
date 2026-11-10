@@ -186,3 +186,31 @@ historical tables above and the recovered 2026-10-21 six-case ledger do not
 replace them. That earlier candidate assumed atomic terminal cleanup and
 immediate retry. Future input changes require fresh exact-input shards and
 the runner's stale/dependency checks on the combined ledger.
+
+## Message-layer end and connect outcomes revision (2026-11-09)
+
+The model now follows `sdk/rocketnet_api.cpp` on three points. `Errors` holds
+the thirteen negative values of `enum rocketnet_client_state_t`: the message
+layer's five ends of a CONNECTED connection (`MessageErrors`) join the eight
+earlier ones, and `MessageEnd(call, to)` takes CONNECTED to one of them through
+`End`, reported by the call that saw it (`send`: `rocketnet_client_start_message`,
+`MESSAGE_MEMORY_EXHAUSTED` only; `update`: `rocketnet_client_update`, any of
+the five). `Connect` has the code's five outcomes, `malformed` and
+`createfails` added. `kept.lifetime`, the client `reason`, and their ghosts
+`connected` and `lastEnd` are gone, with `ReasonKeptUntilNextConnection`: the
+handle has no reason field (the public state carries it) and its one lifetime
+count is not-connected drops, not connections. `connectFrom` records only a
+non-terminal source, which keeps `ConnectOnlyFromTerminal` as it was without
+the ghost multiplying over the fourteen restart states.
+
+New reversed witness:
+
+| cfg | Defect | Expected | Counterexample, last state |
+|---|---|---|---|
+| `MCClientSessionSilentExhaust.cfg` | `Defect = "silentexhaust"`: `rocketnet_client_start_message` without `if ( !pointer ) rn_client_report_state( client );`, so a start whose memory exhaustion ends the connection reports nothing | `CallbackReportsPublicState`, exit 12 | 7 states: create, connect, three handshake steps, `MessageEnd("send", "MESSAGE_MEMORY_EXHAUSTED")`: `st = "MESSAGE_MEMORY_EXHAUSTED"`, `reported = "CONNECTED"`, `lastReport = <<>>`. A poll after the start reads the error state the callback never reported |
+
+Against the base model this cfg is refused (`ASSUME` on `Defect`, TLC exit 10):
+the base had no message-layer end to break. The twelve cases were measured on
+a Linux bench with the pinned runner and JAR and are in `proofs/tla/RUNS.tsv`;
+the main control passes at 100,651 generated and 11,053 distinct states, and
+TLC's action coverage shows every `Connect` branch and `MessageEnd` taken.
