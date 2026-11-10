@@ -17,10 +17,10 @@ on:
   workflow_dispatch:
 
 concurrency:
-  # each main commit queues in its own group: pending runs on main are
-  # replaced, not queued, so a burst of landings leaves every commit a verdict
+  # a nightly run on main is grouped by the commit it checks: a dispatch on the same
+  # commit queues behind it, and a run on a newer commit is its own group
   group: cbmc-${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
-  # main never cancels a run in progress: every merge gets a verdict.
+  # main never cancels a run in progress, so the night gets its verdict.
   # Branches and PRs still cancel a superseded run.
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 

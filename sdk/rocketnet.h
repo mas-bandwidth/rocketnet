@@ -1092,8 +1092,8 @@ ROCKETNET_EXPORT void rocketnet_thread_priority( bool enabled );
 ROCKETNET_EXPORT const char * rocketnet_log_level_name( enum rocketnet_log_level_t level );
 
 /// Receives one formatted log line on the thread that logs it. This may be a
-/// network thread, so the callback must be thread-safe. It must not call
-/// rocketnet_log_function. context is the installed pointer. message is
+/// network thread, so the callback must be thread-safe. It must not call any
+/// rocketnet function. context is the installed pointer. message is
 /// NUL-terminated and length excludes the NUL. The message is at most 1023
 /// bytes and is valid only until the callback returns.
 
@@ -1294,7 +1294,11 @@ struct rocketnet_client_config_t
     /// public state, the negative ones included. NULL disables the callback.
     /// It runs on the caller thread at the end of connect, update,
     /// disconnect (the one an early destroy makes included), and a start
-    /// message whose memory exhaustion ends the connection. Do not call client functions from it. Default is NULL.
+    /// message whose memory exhaustion ends the connection. Do not call client
+    /// functions from it: a call that changes the client (connect, destroy,
+    /// update, send_packets, disconnect, the message, receipt and send rate
+    /// calls, network_simulator) made from it is refused at once, leaves the
+    /// client as it was, and counts one api_misuse. Default is NULL.
 
     void ( *state_change_callback )( void * context, enum rocketnet_client_state_t previous_state, enum rocketnet_client_state_t current_state );
 
