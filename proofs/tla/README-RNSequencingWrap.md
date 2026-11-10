@@ -37,6 +37,10 @@ the ordering and the sequencing pass the wire wrap within the sends; from 0
 the half-range boundary is reached without a wrap. A start anywhere on the
 ring is a state the code reaches: every earlier record delivered.
 
+The recorded control is sized for the 110-second budget. Once, on a bench and
+not recorded, the same control at every start (`Starts = 0..7`) with three
+records in flight passed: 18,722,216 distinct states, depth 20.
+
 ## Actions and the code they mirror
 
 | Action | Code |
