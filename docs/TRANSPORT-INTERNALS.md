@@ -305,20 +305,17 @@ and `RetryFlushPublishes` model this rule. Packet-slot capacity is still
 not permit an unbounded backlog. None
 of these rules sets a frame, packet-send or ACK rate.
 
-The GSO and XDP receive sides flip their banks consumer-driven: the receive
-worker appends to its current bank under the receive mutex and never
-publishes, and `receive_packets` swaps the worker's filled bank for main's
-exhausted one under the same mutex, so every packet staged before a claim is
-in that claim's view. `RNGsoHandoff.RxClaim` and `RNXdpReceiveRing.Drain`
-model this rule. A GSO worker pass that finds its bank full (it stays full
-until main's swap) or whose receive fails sleeps 1 ms before the next pass
-instead of spinning on poll and the mutex (`RNGsoHandoff.RxBacksOff`).
-The workers hold the mutex only to append one batch (one `recvmmsg` call's
-results on GSO, 64 descriptors on XDP), never across a syscall. Two cases
-still defer a staged packet to the next call: main still holds a retained
-tail from a budget-capped call (it swaps only once that bank is consumed,
-because the current view points into it), or main's try-acquire meets a
-worker mid-batch (main never waits on the worker).
+On the GSO and XDP receive sides the worker fills its bank outside the
+receive mutex. Under the mutex it only moves bank pointers or indices: it
+publishes a filled bank and takes a free one. Main, with a try-acquire,
+swaps the published bank for the one it has finished reading. Neither thread
+copies packets while it holds the mutex. `RNGsoHandoff.RxPublish` and
+`RxClaim` model the GSO exchange. A GSO worker pass that finds its bank full
+and cannot publish it, or whose receive fails, sleeps 1 ms before the next
+pass instead of polling again at once (`RNGsoHandoff.RxBacksOff`). Each GSO
+`receive_packets` call starts after the queue where the previous call's
+packet budget ran out, as XDP's does, so a full queue cannot starve the
+queues after it (`RNGsoRecvWalk`).
 
 ## Creation and shutdown
 
