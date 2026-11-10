@@ -162,6 +162,38 @@ static void test_xdp_send_wakeup_hard_errno_and_logging_run()
 
 REGISTER_UNIT_TEST( test_xdp_send_wakeup_hard_errno_and_logging_run );
 
+// The worker's accounting of failed TX wakeups, which the public SEND_FAILED
+// counter sums. Back-pressure leaves the descriptors queued and loses
+// nothing, so it is no failed send; a hard error is one, and is kept for the
+// stop drain.
+static void test_xdp_send_wakeup_back_pressure_is_not_a_send_failure()
+{
+    std::atomic<uint64_t> failures( 0 );
+    std::atomic<int> hard_error( 0 );
+
+    rocketnet_xdp_send_wakeup_failed( EAGAIN, failures, hard_error );
+    rocketnet_xdp_send_wakeup_failed( EBUSY, failures, hard_error );
+    rocketnet_xdp_send_wakeup_failed( ENOBUFS, failures, hard_error );
+    rocketnet_unit_check( failures.load( std::memory_order_relaxed ) == 0 );
+    rocketnet_unit_check( hard_error.load( std::memory_order_relaxed ) == 0 );
+
+    rocketnet_xdp_send_wakeup_failed( ENETDOWN, failures, hard_error );
+    rocketnet_unit_check( failures.load( std::memory_order_relaxed ) == 1 );
+    rocketnet_unit_check( hard_error.load( std::memory_order_relaxed ) == ENETDOWN );
+
+    // back-pressure after a hard error neither counts nor forgets it
+
+    rocketnet_xdp_send_wakeup_failed( EAGAIN, failures, hard_error );
+    rocketnet_unit_check( failures.load( std::memory_order_relaxed ) == 1 );
+    rocketnet_unit_check( hard_error.load( std::memory_order_relaxed ) == ENETDOWN );
+
+    rocketnet_xdp_send_wakeup_failed( ENXIO, failures, hard_error );
+    rocketnet_unit_check( failures.load( std::memory_order_relaxed ) == 2 );
+    rocketnet_unit_check( hard_error.load( std::memory_order_relaxed ) == ENXIO );
+}
+
+REGISTER_UNIT_TEST( test_xdp_send_wakeup_back_pressure_is_not_a_send_failure );
+
 // The fixture calls the actual transport send_packets twice with a fake
 // staged backend carrying the given flags, after one commit: a transport that
 // declares ROCKETNET_TRANSPORT_REFLUSHES flushes at both boundaries, any other
