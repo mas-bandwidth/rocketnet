@@ -7,7 +7,9 @@ shutdown) and the C standard headers below, and may name only rocketnet_
 identifiers that sdk/rocketnet.h declares. A rocketnet_client_connect call's
 status is kept in a variable, never compared where it is made, so a refused
 connect reports its own status and not the earlier create's
-(docs/GETTING-STARTED.md, "A call fails").
+(docs/GETTING-STARTED.md, "A call fails"). A scalar a scanf call writes
+through &name is declared with an initializer: a failed conversion leaves it
+unwritten, and it must not then be read uninitialized.
 Prints one OK line per source; exits 1 naming file:line for a refusal.
 """
 
@@ -46,6 +48,13 @@ HARNESS_HEADERS = {
 INCLUDE = re.compile(r'^\s*#\s*include\s*([<"])([^>"]+)[>"]', re.M)
 IDENTIFIER = re.compile(r"\brocketnet_[A-Za-z0-9_]+\b")
 CONNECT_COMPARED = re.compile(r"\brocketnet_client_connect\s*\([^;{}]*?\)\s*[!=]=")
+SCANF_CALL = re.compile(r"\b[fs]?scanf\s*\(([^;]*)\)\s*")
+SCANF_TARGET = re.compile(r"&\s*([A-Za-z_][A-Za-z0-9_]*)\b")
+
+
+def uninitialized_declaration(name):
+    """A scalar declaration of name with no initializer, e.g. "unsigned int byte;"."""
+    return re.compile(r"\b(?:unsigned|signed|int|long|short|char|float|double|[A-Za-z0-9_]+_t)\s+" + re.escape(name) + r"\s*;")
 
 
 def strip_comments(text):
@@ -102,6 +111,12 @@ def main():
         for match in CONNECT_COMPARED.finditer(cleaned):
             print(f"{rel}:{line_of(cleaned, match.start())}: rocketnet_client_connect's status is compared, not kept; keep it and report it", file=sys.stderr)
             source_failed = True
+
+        for call in SCANF_CALL.finditer(cleaned):
+            for target in SCANF_TARGET.finditer(call.group(1)):
+                for decl in uninitialized_declaration(target.group(1)).finditer(cleaned):
+                    print(f"{rel}:{line_of(cleaned, decl.start())}: {target.group(1)} is written by scanf but declared without an initializer; a failed conversion leaves it uninitialized", file=sys.stderr)
+                    source_failed = True
 
         if source_failed:
             failed = True

@@ -45,7 +45,7 @@ static int read_keys( uint8_t * server_public_key, char * address )
     fclose( file );
     for ( int i = 0; ok && i < ROCKETNET_SERVER_PUBLIC_KEY_BYTES; i++ )
     {
-        unsigned int byte;
+        unsigned int byte = 0;
         ok = sscanf( hex + i * 2, "%2x", &byte ) == 1;
         server_public_key[i] = (uint8_t) byte;
     }
