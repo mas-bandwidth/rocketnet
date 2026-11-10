@@ -4,7 +4,7 @@
 */
 
 // XDP's gateway discovery over canned rtnetlink replies. The server asks the
-// kernel for an RTM_GETROUTE dump and then an RTM_GETNEIGH dump
+// kernel for an RTM_GETROUTE dump and then the gateway's RTM_GETNEIGH entry
 // (sdk/rocketnet_gateway_netlink.h) and hands each received datagram to a
 // pure parser. These cases build the datagrams here, byte by byte from the
 // uapi structs (nlmsghdr, rtmsg, ndmsg, rtattr, rtnexthop, nlmsgerr), and
@@ -927,6 +927,7 @@ static void test_xdp_transport_gateway_netlink_skips_other_requests()
 struct fake_netlink_t
 {
     std::vector<netlink_datagram_t> script;
+    std::vector<netlink_datagram_t> requests;       // every request sent, in order
     size_t next = 0;
     int sockets = 0;
     int closes = 0;
@@ -962,8 +963,11 @@ static int fake_netlink_getsockname( int, struct sockaddr * address, socklen_t *
     return 0;
 }
 
-static ssize_t fake_netlink_sendto( int, const void *, size_t bytes, int, const struct sockaddr *, socklen_t )
+static ssize_t fake_netlink_sendto( int, const void * data, size_t bytes, int, const struct sockaddr *, socklen_t )
 {
+    netlink_datagram_t request;
+    netlink_append( &request, data, bytes );
+    fake_netlink->requests.push_back( request );
     return (ssize_t) bytes;
 }
 
@@ -1095,6 +1099,223 @@ static void test_xdp_transport_gateway_netlink_short_local_address()
     fake_netlink = NULL;
 }
 
+// ---------------------------------------------------------------------------
+// the neighbour entry asked directly, and the periodic refresh
+
+// a request is a dump when it carries NLM_F_DUMP
+
+static bool request_is_dump( const netlink_datagram_t & request, uint16_t * type )
+{
+    struct nlmsghdr header;
+    memcpy( &header, request.bytes.data(), sizeof( header ) );
+    *type = header.nlmsg_type;
+    return ( header.nlmsg_flags & NLM_F_DUMP ) == NLM_F_DUMP;
+}
+
+static int fake_dumps( const fake_netlink_t & fake )
+{
+    int dumps = 0;
+    for ( size_t i = 0; i < fake.requests.size(); i++ )
+    {
+        uint16_t type = 0;
+        if ( request_is_dump( fake.requests[i], &type ) )
+            dumps++;
+    }
+    return dumps;
+}
+
+static netlink_datagram_t neighbor_reply( int family, uint16_t state = NUD_REACHABLE )
+{
+    netlink_datagram_t datagram;
+    netlink_neighbor_t neighbor;
+    neighbor.family = family;
+    neighbor.state = state;
+    neighbor.destination = family == AF_INET ? gateway_ipv4 : gateway_ipv6;
+    neighbor.lladdr = state == NUD_INCOMPLETE ? NULL : gateway_mac;
+    netlink_neighbor( &datagram, neighbor );
+    return datagram;
+}
+
+// the gateway's neighbour entry is one RTM_GETNEIGH for that entry (the
+// interface and NDA_DST named, no NLM_F_DUMP), answered by the one reply:
+// the kernel's whole neighbour table is never walked for it
+
+static void check_neighbor_asked_directly( int family )
+{
+    const uint8_t * gateway = family == AF_INET ? gateway_ipv4 : gateway_ipv6;
+    const size_t address_bytes = netlink_address_bytes( family );
+
+    fake_netlink_t fake;
+    fake_netlink = &fake;
+    fake.script.push_back( neighbor_reply( family ) );
+
+    uint8_t mac[6];
+    memset( mac, 0, sizeof( mac ) );
+    int error = -1;
+    check( rocketnet_gateway_netlink_neighbor_with( &fake_netlink_system, family, server_interface, gateway, mac, &error ) == ROCKETNET_GATEWAY_NETLINK_FOUND );
+    check( memcmp( mac, gateway_mac, 6 ) == 0 );
+    check( fake.requests.size() == 1 && fake.sockets == 1 && fake.closes == 1 );
+
+    const netlink_datagram_t & request = fake.requests[0];
+    check( request.bytes.size() >= NLMSG_SPACE( sizeof( struct ndmsg ) ) + RTA_SPACE( address_bytes ) );
+    uint16_t type = 0;
+    check( !request_is_dump( request, &type ) );
+    check( type == RTM_GETNEIGH );
+
+    struct nlmsghdr header;
+    memcpy( &header, request.bytes.data(), sizeof( header ) );
+    check( header.nlmsg_flags == NLM_F_REQUEST );
+    check( header.nlmsg_len == request.bytes.size() );
+
+    struct ndmsg message;
+    memcpy( &message, request.bytes.data() + NLMSG_HDRLEN, sizeof( message ) );
+    check( message.ndm_family == family );
+    check( message.ndm_ifindex == server_interface );
+    check( message.ndm_state == 0 && message.ndm_flags == 0 && message.ndm_type == 0 );
+
+    struct rtattr attribute;
+    memcpy( &attribute, request.bytes.data() + NLMSG_SPACE( sizeof( struct ndmsg ) ), sizeof( attribute ) );
+    check( attribute.rta_type == NDA_DST );
+    check( attribute.rta_len == RTA_LENGTH( address_bytes ) );
+    check( memcmp( request.bytes.data() + NLMSG_SPACE( sizeof( struct ndmsg ) ) + RTA_LENGTH( 0 ), gateway, address_bytes ) == 0 );
+
+    fake_netlink = NULL;
+}
+
+static void test_xdp_transport_gateway_netlink_neighbor_asked_directly()
+{
+    check_neighbor_asked_directly( AF_INET );
+    check_neighbor_asked_directly( AF_INET6 );
+}
+
+// no entry for the gateway (the kernel answers ENOENT), or an entry with no
+// usable link-layer address, is DONE at once: nothing waits for a
+// datagram that will not come
+
+static void test_xdp_transport_gateway_netlink_neighbor_missing_entry()
+{
+    {
+        fake_netlink_t fake;
+        fake_netlink = &fake;
+        netlink_datagram_t missing;
+        netlink_error( &missing, -ENOENT );
+        fake.script.push_back( missing );
+
+        uint8_t mac[6];
+        int error = -1;
+        check( rocketnet_gateway_netlink_neighbor_with( &fake_netlink_system, AF_INET, server_interface, gateway_ipv4, mac, &error ) == ROCKETNET_GATEWAY_NETLINK_DONE );
+        check( error == 0 );
+        check( fake.next == 1 && fake.sockets == 1 && fake.closes == 1 );
+    }
+
+    {
+        fake_netlink_t fake;
+        fake_netlink = &fake;
+        fake.script.push_back( neighbor_reply( AF_INET, NUD_INCOMPLETE ) );
+
+        uint8_t mac[6];
+        int error = -1;
+        check( rocketnet_gateway_netlink_neighbor_with( &fake_netlink_system, AF_INET, server_interface, gateway_ipv4, mac, &error ) == ROCKETNET_GATEWAY_NETLINK_DONE );
+        check( error == 0 );
+        check( fake.next == 1 && fake.closes == 1 );
+    }
+
+    fake_netlink = NULL;
+}
+
+// the periodic refresh, on the main update thread: with the gateway known it
+// asks that gateway's neighbour entry directly, one request and no dump.
+// The route dump runs only when no gateway is known or the direct query does
+// not find the entry, and then the neighbour is asked directly again.
+
+static void test_xdp_transport_gateway_netlink_refresh_never_dumps_in_steady_state()
+{
+    uint8_t gateway[16];
+    memset( gateway, 0, sizeof( gateway ) );
+    bool gateway_known = false;
+    uint8_t mac[6];
+    int error = -1;
+
+    // the first refresh knows no gateway: the route dump, then the neighbour
+
+    {
+        fake_netlink_t fake;
+        fake_netlink = &fake;
+        fake.script.push_back( default_route_datagram() );
+        fake.script.push_back( neighbor_reply( AF_INET ) );
+        memset( mac, 0, sizeof( mac ) );
+        check( rocketnet_gateway_netlink_refresh_with( &fake_netlink_system, AF_INET, server_interface, gateway, &gateway_known, mac, &error ) == ROCKETNET_GATEWAY_NETLINK_FOUND );
+        check( gateway_known );
+        check( memcmp( gateway, gateway_ipv4, 4 ) == 0 );
+        check( memcmp( mac, gateway_mac, 6 ) == 0 );
+        check( fake.requests.size() == 2 && fake_dumps( fake ) == 1 );
+    }
+
+    // every refresh after it: one direct neighbour query, no dump
+
+    for ( int i = 0; i < 3; i++ )
+    {
+        fake_netlink_t fake;
+        fake_netlink = &fake;
+        fake.script.push_back( neighbor_reply( AF_INET ) );
+        memset( mac, 0, sizeof( mac ) );
+        check( rocketnet_gateway_netlink_refresh_with( &fake_netlink_system, AF_INET, server_interface, gateway, &gateway_known, mac, &error ) == ROCKETNET_GATEWAY_NETLINK_FOUND );
+        check( memcmp( mac, gateway_mac, 6 ) == 0 );
+        check( fake.requests.size() == 1 && fake_dumps( fake ) == 0 );
+        uint16_t type = 0;
+        check( !request_is_dump( fake.requests[0], &type ) && type == RTM_GETNEIGH );
+    }
+
+    // the known gateway's entry gone: the routes are dumped again
+
+    {
+        fake_netlink_t fake;
+        fake_netlink = &fake;
+        netlink_datagram_t missing;
+        netlink_error( &missing, -ENOENT );
+        fake.script.push_back( missing );
+        fake.script.push_back( default_route_datagram() );
+        fake.script.push_back( neighbor_reply( AF_INET ) );
+        check( rocketnet_gateway_netlink_refresh_with( &fake_netlink_system, AF_INET, server_interface, gateway, &gateway_known, mac, &error ) == ROCKETNET_GATEWAY_NETLINK_FOUND );
+        check( gateway_known );
+        check( fake.requests.size() == 3 && fake_dumps( fake ) == 1 );
+    }
+
+    // no default route any more: DONE, and no gateway is known
+
+    {
+        fake_netlink_t fake;
+        fake_netlink = &fake;
+        netlink_datagram_t missing;
+        netlink_error( &missing, -ENOENT );
+        fake.script.push_back( missing );
+        netlink_datagram_t empty;
+        netlink_done( &empty );
+        fake.script.push_back( empty );
+        check( rocketnet_gateway_netlink_refresh_with( &fake_netlink_system, AF_INET, server_interface, gateway, &gateway_known, mac, &error ) == ROCKETNET_GATEWAY_NETLINK_DONE );
+        check( !gateway_known );
+        check( fake.requests.size() == 2 );
+    }
+
+    // a failed route dump keeps the gateway it knew
+
+    {
+        gateway_known = true;
+        memcpy( gateway, gateway_ipv4, 4 );
+        fake_netlink_t fake;
+        fake_netlink = &fake;
+        netlink_datagram_t refused;
+        netlink_error( &refused, -EPERM );
+        fake.script.push_back( refused );
+        fake.script.push_back( refused );
+        check( rocketnet_gateway_netlink_refresh_with( &fake_netlink_system, AF_INET, server_interface, gateway, &gateway_known, mac, &error ) == ROCKETNET_GATEWAY_NETLINK_ERROR );
+        check( error == EPERM );
+        check( gateway_known && memcmp( gateway, gateway_ipv4, 4 ) == 0 );
+    }
+
+    fake_netlink = NULL;
+}
+
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_ipv4_default_route_found );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_ipv4_default_route_not_on_this_interface );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_ipv4_no_default_route );
@@ -1120,5 +1341,8 @@ REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_interrupted_dump_retried 
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_interrupted_dump_bounded );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_error_not_retried );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_short_local_address );
+REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_neighbor_asked_directly );
+REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_neighbor_missing_entry );
+REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_refresh_never_dumps_in_steady_state );
 
 #endif // #if ROCKETNET_XDP
