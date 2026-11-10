@@ -95,7 +95,47 @@ REGISTER_UNIT_TEST( test_public_server_secret_key_round_trips );
 
 #if ROCKETNET_DEV
 
+#include "../sdk/rocketnet_test_seams.h"
 #include "public_step_pair.h"
+
+// a failed key generation or derivation during create (the seam stands in
+// for rocketnet_crypto_acquire / crypto_scalarmult_base failing) refuses
+// the create: no server, and the status is CRYPTO_INIT_FAILED, on both the
+// generated-pair path (all-zero secret) and the derived path (a supplied
+// secret); with the seam cleared the same configs create
+
+static void test_public_server_keygen_failure_create_fails()
+{
+    rocketnet_server_config_t config;
+    server_key_config( &config );
+
+    rocketnet_dev_set_server_keygen_failure( true );
+    enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
+    rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &config, &status );
+    rocketnet_dev_set_server_keygen_failure( false );
+    check( server == NULL );
+    check( status == ROCKETNET_STATUS_CRYPTO_INIT_FAILED );
+
+    uint8_t secret[ROCKETNET_SERVER_SECRET_KEY_BYTES];
+    uint8_t public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
+    check( rocketnet_generate_server_keypair( public_key, secret ) == ROCKETNET_STATUS_OK );
+    memcpy( config.server_secret_key, secret, sizeof( config.server_secret_key ) );
+
+    rocketnet_dev_set_server_keygen_failure( true );
+    status = ROCKETNET_STATUS_OK;
+    server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &config, &status );
+    rocketnet_dev_set_server_keygen_failure( false );
+    check( server == NULL );
+    check( status == ROCKETNET_STATUS_CRYPTO_INIT_FAILED );
+
+    status = ROCKETNET_STATUS_OK;
+    server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &config, &status );
+    check( server != NULL );
+    check( status == ROCKETNET_STATUS_OK );
+    rocketnet_server_destroy( server );
+}
+
+REGISTER_UNIT_TEST( test_public_server_keygen_failure_create_fails );
 
 // a token the backend sealed to the fixed key, never read from the server,
 // connects a public step-driven client

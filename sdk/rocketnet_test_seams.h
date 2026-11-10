@@ -50,6 +50,14 @@ void rocketnet_dev_set_sequence_taken_hook( rocketnet_dev_sequence_taken_functio
 
 void rocketnet_dev_session_sequence_taken( uint64_t sequence );
 
+// The server keygen failure seam: while set, rocketnet_server_create fails
+// its X25519 key generation / derivation step as if
+// rocketnet_generate_server_keypair / crypto_scalarmult_base had failed, so
+// a unit case can reach the create failure path without a broken sodium.
+// Per process, false by default. Defined in sdk/rocketnet_api.cpp.
+
+void rocketnet_dev_set_server_keygen_failure( bool fail );
+
 #endif // #if ROCKETNET_DEV
 
 #endif // ROCKETNET_SDK_ROCKETNET_TEST_SEAMS_H

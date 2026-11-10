@@ -2395,6 +2395,15 @@ static enum rocketnet_status_t rn_server_addresses( const char * ipv4_address, c
     return ROCKETNET_STATUS_OK;
 }
 
+#if ROCKETNET_DEV
+static bool rn_server_keygen_failure = false;
+
+void rocketnet_dev_set_server_keygen_failure( bool fail )
+{
+    rn_server_keygen_failure = fail;
+}
+#endif // #if ROCKETNET_DEV
+
 // proofs/tla/ServerSession.tla Create: STOPPED, no transport bound, the one memory
 // block made.
 
@@ -2506,21 +2515,40 @@ static struct rocketnet_server_t * rn_server_create_current( void * context, con
     // pair for this object. The game reads the public key
     // (rocketnet_server_public_key) and registers it with its backend; start
     // refuses the published development key in a production build; destroy
-    // wipes the secret. Neither can fail: sodium's keypair and base
-    // multiplication return 0, and an unavailable OS random source aborts
-    // the process inside sodium after rocketnet_init's misuse handler logs it
+    // wipes the secret. A failed generation or derivation (an unavailable
+    // crypto source, or the DEV seam) refuses the create below: a server
+    // with an all-zero secret key must never be handed out.
 
+#if ROCKETNET_DEV
+    const bool keygen_failed_by_seam = rn_server_keygen_failure;
+#else
+    const bool keygen_failed_by_seam = false;
+#endif // #if ROCKETNET_DEV
+
+    bool keygen_failed = keygen_failed_by_seam;
     if ( sodium_is_zero( transport.server_secret_key, sizeof( transport.server_secret_key ) ) )
     {
         const enum rocketnet_status_t generated = rocketnet_generate_server_keypair( transport.server_public_key, transport.server_secret_key );
-        rocketnet_assert( generated == ROCKETNET_STATUS_OK );
-        (void) generated;
+        keygen_failed = keygen_failed || generated != ROCKETNET_STATUS_OK;
     }
     else
     {
         const int derived = crypto_scalarmult_base( transport.server_public_key, transport.server_secret_key );
-        rocketnet_assert( derived == 0 );
-        (void) derived;
+        keygen_failed = keygen_failed || derived != 0;
+    }
+
+    if ( keygen_failed )
+    {
+        sodium_memzero( &transport, sizeof( transport ) );
+        sodium_memzero( base, (size_t) total );
+
+        if ( !memory )
+            rocketnet_free( context, base );
+
+        if ( status )
+            *status = ROCKETNET_STATUS_CRYPTO_INIT_FAILED;
+
+        return NULL;
     }
 
     struct rocketnet_server_t * server = (struct rocketnet_server_t *) base;
