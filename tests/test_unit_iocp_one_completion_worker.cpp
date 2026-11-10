@@ -58,7 +58,7 @@ REGISTER_UNIT_TEST( test_iocp_server_has_one_completion_worker );
 #include "../sdk/rocketnet_server_iocp.h"
 
 extern const rocketnet_transport_backend_t rocketnet_iocp_transport;
-extern void rocketnet_server_iocp_set_create_for_test( rocketnet_server_iocp_t * ( *function )( void *, rocketnet_address_t *, int, int, int, int, int * ) );
+extern void rocketnet_server_iocp_set_create_for_test( rocketnet_server_iocp_t * ( *function )(void *, rocketnet_address_t *, int, int, int, int, int *) );
 
 static int iocp_create_seen_workers = -1;
 static int iocp_create_seen_max_clients = -1;
