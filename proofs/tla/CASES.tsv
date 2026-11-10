@@ -250,7 +250,7 @@ MCRNRioDriverBrokenRetireOnRefusal.cfg	MCRNRioDriver.tla	invariant	ReceiveDepthN
 MCRNRioDriverBrokenUnboundedReceive.cfg	MCRNRioDriver.tla	invariant	ReceiveCallBound	check	rnriodriver	required	-
 MCRNFlows.cfg	MCRNFlows.tla	pass	-	check	rnflows	required	-
 MCRNFlowsBrokenSendAfterUnsubscribe.cfg	MCRNFlows.tla	invariant	DeliveredOnlyToSubscribers	check	rnflows	required	-
-MCRNClientIoDecrypt.cfg	MCRNClientIoDecrypt.tla	pass	-	check	rnclientiodecrypt	required	-
+MCRNClientIoDecrypt.cfg	MCRNClientIoDecrypt.tla	pass	-	check	rnclientiodecrypt	bench	full-instance-over-budget-reduced-replacement-MCRNClientIoDecryptReduced.cfg
 MCRNClientIoDecryptBrokenOpenBeforeReplay.cfg	MCRNClientIoDecrypt.tla	invariant	CheapRefusalsFirst	check	rnclientiodecrypt	required	-
 MCRNClientIoDecryptBrokenSharedWindow.cfg	MCRNClientIoDecrypt.tla	invariant	SingleWriter	check	rnclientiodecrypt	required	-
 MCRNClientIoDecryptBrokenNoRetire.cfg	MCRNClientIoDecrypt.tla	invariant	NoOpenWithoutKeys	check	rnclientiodecrypt	required	-
@@ -729,3 +729,4 @@ MCRNBuilderPlanLayout.cfg	MCRNBuilderPlanLayout.tla	pass	-	ignore-terminal	rnbui
 MCRNBuilderPlanLayoutBrokenNoRestore.cfg	MCRNBuilderPlanLayout.tla	invariant	ChannelOrderKept	ignore-terminal	rnbuilderplanlayout	required	-
 MCRNBuilderPlanLayoutBrokenInclusivePrefix.cfg	MCRNBuilderPlanLayout.tla	invariant	NoOverlap	ignore-terminal	rnbuilderplanlayout	required	-
 MCRNBuilderPlanLayoutBrokenReverseScatter.cfg	MCRNBuilderPlanLayout.tla	invariant	PlanSorted	ignore-terminal	rnbuilderplanlayout	required	-
+MCRNClientIoDecryptReduced.cfg	MCRNClientIoDecrypt.tla	pass	-	check	rnclientiodecrypt	required	-
