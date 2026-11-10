@@ -434,3 +434,112 @@ static void test_counters_every_outcome_in_at_most_one_family()
 }
 
 REGISTER_UNIT_TEST( test_counters_every_outcome_in_at_most_one_family );
+
+// ---------------------------------------------------------------------------
+// 3: every server process outcome lives with its siblings, documented
+
+// ROCKETNET_SERVER_PROCESS_BUDGET_EXCEEDED is one of the outcomes returned by
+// the request ladder, so it belongs beside the other ROCKETNET_SERVER_PROCESS_*
+// defines and in their comments, not in the counters header. This reads the
+// two headers and fails when the define is out of place or undocumented.
+
+static std::string counters_trim( const std::string & text )
+{
+    const size_t first = text.find_first_not_of( " \t\r" );
+    if ( first == std::string::npos )
+        return "";
+    const size_t last = text.find_last_not_of( " \t\r" );
+    return text.substr( first, last - first + 1 );
+}
+
+static std::vector<std::string> counters_lines( const std::string & text )
+{
+    std::vector<std::string> lines;
+    size_t start = 0;
+    for ( ;; )
+    {
+        const size_t end = text.find( '\n', start );
+        lines.push_back( text.substr( start, end == std::string::npos ? std::string::npos : end - start ) );
+        if ( end == std::string::npos )
+            break;
+        start = end + 1;
+    }
+    return lines;
+}
+
+static int counters_line_with( const std::vector<std::string> & lines, const char * needle )
+{
+    for ( size_t i = 0; i < lines.size(); i++ )
+        if ( lines[i].find( needle ) != std::string::npos )
+            return (int) i;
+    return -1;
+}
+
+// The // comment block immediately above a line, allowing one blank line
+// between the comment and the declaration it documents.
+
+static std::string counters_comment_above( const std::vector<std::string> & lines, int line )
+{
+    std::string comment;
+    int i = line - 1;
+    if ( i >= 0 && counters_trim( lines[(size_t) i] ).empty() )
+        i--;
+    while ( i >= 0 )
+    {
+        const std::string trimmed = counters_trim( lines[(size_t) i] );
+        if ( trimmed.compare( 0, 2, "//" ) != 0 )
+            break;
+        comment = trimmed + "\n" + comment;
+        i--;
+    }
+    return comment;
+}
+
+static void test_server_process_outcomes_budget_exceeded_with_siblings()
+{
+    std::string protocol_text;
+    std::string counters_text;
+    check( counters_read_file( "sdk/rocketnet_server_protocol.h", protocol_text ) );
+    check( counters_read_file( "sdk/rocketnet_counters.h", counters_text ) );
+
+    const std::vector<std::string> protocol_lines = counters_lines( protocol_text );
+
+    // the define is in the protocol header, with value 6
+
+    const int define_line = counters_line_with( protocol_lines, "#define ROCKETNET_SERVER_PROCESS_BUDGET_EXCEEDED" );
+    if ( define_line < 0 )
+        printf( "ROCKETNET_SERVER_PROCESS_BUDGET_EXCEEDED is not defined in sdk/rocketnet_server_protocol.h\n" );
+    check( define_line >= 0 );
+
+    int value = -1;
+    check( sscanf( protocol_lines[(size_t) define_line].c_str(), "#define ROCKETNET_SERVER_PROCESS_BUDGET_EXCEEDED %d", &value ) == 1 );
+    check( value == 6 );
+
+    // it is no longer in the counters header
+
+    const int counters_define = counters_line_with( counters_lines( counters_text ),
+                                                    "#define ROCKETNET_SERVER_PROCESS_BUDGET_EXCEEDED" );
+    if ( counters_define >= 0 )
+        printf( "ROCKETNET_SERVER_PROCESS_BUDGET_EXCEEDED is still defined in sdk/rocketnet_counters.h\n" );
+    check( counters_define < 0 );
+
+    // the outcome list comment names it
+
+    const int ignored_line = counters_line_with( protocol_lines, "#define ROCKETNET_SERVER_PROCESS_IGNORED" );
+    check( ignored_line >= 0 );
+    const std::string outcome_comment = counters_comment_above( protocol_lines, ignored_line );
+    if ( outcome_comment.find( "BUDGET_EXCEEDED" ) == std::string::npos )
+        printf( "the ROCKETNET_SERVER_PROCESS_* outcome list comment does not mention BUDGET_EXCEEDED\n" );
+    check( outcome_comment.find( "BUDGET_EXCEEDED" ) != std::string::npos );
+
+    // the request entry's doc comment names it
+
+    const int request_line = counters_line_with( protocol_lines, "rocketnet_server_protocol_process_connection_request(" );
+    check( request_line >= 0 );
+    const std::string request_comment = counters_comment_above( protocol_lines, request_line );
+    if ( request_comment.find( "BUDGET_EXCEEDED" ) == std::string::npos )
+        printf( "the request entry's doc comment does not mention BUDGET_EXCEEDED\n" );
+    check( request_comment.find( "BUDGET_EXCEEDED" ) != std::string::npos );
+}
+
+REGISTER_UNIT_TEST( test_server_process_outcomes_budget_exceeded_with_siblings );
