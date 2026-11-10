@@ -2718,10 +2718,10 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
     }
     else
     {
-    // Drain the receive queue up to this update's packet budget. Each read
-    // takes whatever the endpoint has queued, up to the remaining budget, and
-    // is processed before the next read; what is left past the budget stays
-    // in the transport's queue for the next update. The budget is
+    // One read per update: a single receive_batch call takes whatever the
+    // endpoint has queued, up to this update's packet budget, and each packet
+    // is processed in turn; what is left past the budget stays in the
+    // transport's queue for the next update. The budget is
     // rocketnet_server_receive_packets_per_update (16 * 1000 = 16000 at 1000
     // clients), which equals the payload-batch capacity, so all packets read
     // in one update fit the payload batch that feeds the application.
@@ -2729,15 +2729,9 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
         struct rocketnet_server_receive_buffer_t * receive_buffer = &server_transport->receive_buffer;
 
         const int stats_index = server_transport->current_stats_index;
-        int packets_processed = 0;
-        int batch_capacity = 0;
-        int num_received = 0;
+        const int batch_capacity = receive_buffer->capacity;
 
-        do
-        {
-            const int remaining_budget = receive_buffer->capacity - packets_processed;
-            batch_capacity = remaining_budget;
-            num_received = server_transport->io.operations->receive_batch( server_transport->io.instance,
+        int num_received = server_transport->io.operations->receive_batch( server_transport->io.instance,
                                                                            receive_buffer->from,
                                                                            receive_buffer->data,
                                                                            ROCKETNET_RECEIVE_CEILING,
@@ -2746,47 +2740,44 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
 
         // a count past the slots asked for, or a byte count that is negative
         // or beyond the UDP envelope, is a transport fault and is not a received packet
-            if ( num_received < 0 )
+        if ( num_received < 0 )
+        {
+            server_transport->transport_faults++;
+            num_received = 0;
+        }
+        else if ( num_received > batch_capacity )
+        {
+            server_transport->transport_faults++;
+            num_received = batch_capacity;
+        }
+
+        for ( int i = 0; i < num_received; i++ )
+        {
+            struct rocketnet_address_t from = receive_buffer->from[i];
+            uint8_t * receive_frame = receive_buffer->data + i * ROCKETNET_RECEIVE_CEILING;
+            const int packet_bytes = receive_buffer->packet_bytes[i];
+            if ( packet_bytes < 0 || packet_bytes > ROCKETNET_TRANSPORT_MAX_DATAGRAM_BYTES )
             {
                 server_transport->transport_faults++;
-                num_received = 0;
-            }
-            else if ( num_received > batch_capacity )
-            {
-                server_transport->transport_faults++;
-                num_received = batch_capacity;
+                continue;
             }
 
-            for ( int i = 0; i < num_received; i++ )
-            {
-                struct rocketnet_address_t from = receive_buffer->from[i];
-                uint8_t * receive_frame = receive_buffer->data + i * ROCKETNET_RECEIVE_CEILING;
-                const int packet_bytes = receive_buffer->packet_bytes[i];
-                if ( packet_bytes < 0 || packet_bytes > ROCKETNET_TRANSPORT_MAX_DATAGRAM_BYTES )
-                {
-                    server_transport->transport_faults++;
-                    continue;
-                }
-
-                server_transport->stats_frames[stats_index].packets_received++;
-                server_transport->stats_frames[stats_index].bytes_received += (uint64_t) ( packet_bytes + rocketnet_wire_header_bytes( from.type ) );
+            server_transport->stats_frames[stats_index].packets_received++;
+            server_transport->stats_frames[stats_index].bytes_received += (uint64_t) ( packet_bytes + rocketnet_wire_header_bytes( from.type ) );
 
             // A truncated datagram retains its original length for accounting,
             // but only the shorter prefix is stored. Reject an oversize report
             // before the protocol reads that stored prefix as the whole packet.
-                if ( packet_bytes > ROCKETNET_RECEIVE_CEILING )
-                {
-                    rocketnet_server_wire_totals_add_received( server_transport, -1, &from, packet_bytes );
-                    server_transport->counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED]++;
-                    server_transport->counters.values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE]++;
-                    continue;
-                }
-
-                rocketnet_server_receive_one( server_transport, &from, receive_frame, packet_bytes, -1, current_timestamp, current_time );
+            if ( packet_bytes > ROCKETNET_RECEIVE_CEILING )
+            {
+                rocketnet_server_wire_totals_add_received( server_transport, -1, &from, packet_bytes );
+                server_transport->counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED]++;
+                server_transport->counters.values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE]++;
+                continue;
             }
 
-            packets_processed += num_received;
-        } while ( num_received == batch_capacity && packets_processed < receive_buffer->capacity );
+            rocketnet_server_receive_one( server_transport, &from, receive_frame, packet_bytes, -1, current_timestamp, current_time );
+        }
     }
 
     // proofs/tla/RNChannel.tla FixBatch and proofs/tla/RNWindow.tla FixBatch: the received
