@@ -1544,6 +1544,14 @@ void rocketnet_server_iocp_finish_packet( rocketnet_server_iocp_t * iocp, uint64
     if ( !op || frame != op->frame )
         return;
     (void) frame;
+
+    // a refused length loses the packet: the slot keeps zero bytes and the
+    // send phase releases it, so the loss is counted here (as RIO finish)
+    if ( packet_bytes <= 0 || packet_bytes > ROCKETNET_RECEIVE_CEILING )
+    {
+        iocp->counters[ROCKETNET_IOCP_SEND_FAILED].fetch_add( 1, std::memory_order_relaxed );
+        return;
+    }
     op->packet_bytes = packet_bytes;
 }
 
