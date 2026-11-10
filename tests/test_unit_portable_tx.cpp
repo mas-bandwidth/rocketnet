@@ -34,4 +34,13 @@ static void test_portable_tx_retains_suffix_and_terminal_drain_unblocks_stop()
     rocketnet_unit_check( rocketnet_portable_tx_test_carry() );
 }
 REGISTER_UNIT_TEST( test_portable_tx_retains_suffix_and_terminal_drain_unblocks_stop );
+
+// After EAGAIN retains a bank, the step is the carry wait (writable/1 ms, not
+// the 100 ms idle wait) and a NO_FREE_BANK publish wakes the worker.
+bool rocketnet_portable_tx_test_carry_wake();
+static void test_portable_tx_carry_waits_for_writable_and_no_free_bank_wakes()
+{
+    rocketnet_unit_check( rocketnet_portable_tx_test_carry_wake() );
+}
+REGISTER_UNIT_TEST( test_portable_tx_carry_waits_for_writable_and_no_free_bank_wakes );
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
