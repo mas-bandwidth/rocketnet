@@ -241,7 +241,8 @@ enum rocketnet_status_t
     /// start, and the library stays uninitialized. The connect token makers
     /// return it when a token could not be sealed; nothing is created. The
     /// keypair generators return it when the crypto library did not start.
-    /// Retrying will not help unless the cause is corrected. An unavailable OS
+    /// rocketnet_server_create returns it when the server's key could not be
+    /// made; nothing is created. Retrying will not help unless the cause is corrected. An unavailable OS
     /// random source is not a status: the crypto library aborts the process,
     /// after one error line once rocketnet_init has run (no line in a
     /// ROCKETNET_USE_SYSTEM_SODIUM build).
@@ -2732,6 +2733,8 @@ ROCKETNET_EXPORT size_t rocketnet_server_required_memory( const struct rocketnet
 /// ROCKETNET_STATUS_LOOPBACK_HUB_MISSING or
 /// ROCKETNET_STATUS_LOOPBACK_HUB_MISMATCH for a list naming loopback,
 /// ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION,
+/// ROCKETNET_STATUS_CRYPTO_INIT_FAILED when the server keypair could not be
+/// generated, or its public key derived from a supplied server_secret_key,
 /// ROCKETNET_STATUS_OUT_OF_MEMORY.
 /// An unavailable OS random source aborts the process after one error line
 /// while the server key is made (rocketnet_init installs the line; a
