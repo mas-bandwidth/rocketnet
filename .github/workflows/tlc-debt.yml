@@ -9,8 +9,8 @@
 # case. tlc.yml still requires each one to stay declared as debt with its
 # reason.
 #
-# The plan job lists the debt cases; each case is then its own job, on its own
-# runner, with its own deadline of 96 hours (TLC_DEBT_SECONDS, above the
+# The plan job lists the debt cases; each case is then its own job, two at a
+# time (max-parallel), on its own runner, with its own deadline of 96 hours (TLC_DEBT_SECONDS, above the
 # longest measured case) inside a job bound of 100 hours, and its own evidence
 # artifact (tlc-debt-<config>). A runner that dies loses that one case; the
 # others still report. A case still running at its deadline is recorded as
@@ -106,6 +106,9 @@ jobs:
     timeout-minutes: 6000  # 100 h: the 96 h case deadline plus the build
     strategy:
       fail-fast: false
+      # Two cases at once, so the debt never holds more than two of the
+      # fleet's Linux runners for days and per-commit CI keeps the rest.
+      max-parallel: 2
       matrix:
         case: ${{ fromJSON(needs.plan.outputs.cases) }}
     env:

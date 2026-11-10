@@ -181,7 +181,10 @@ override a known failure in the checks they are intended to run.
 The other `nightly*.yml` workflows, the fuzz-nightly workflow and
 [tlc-debt.yml](../.github/workflows/tlc-debt.yml) (weekly, each timeout-debt
 case run to its declared result as its own job, with its own 96-hour deadline
-and its own evidence artifact) are watches, not
+and its own evidence artifact, two cases at a time; at the case times measured
+so far, in run 41337755290 and a 213-second MCRNClientIoDecrypt run, a run in
+plan order takes about 89 hours, against 87 for its longest case alone) are
+watches, not
 release gates. The `msan` workflow (`MemorySanitizer`) is advisory: its
 job is `continue-on-error`. The release commit must also be the commit the tag
 points at, not a later merge.
