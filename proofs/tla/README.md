@@ -200,6 +200,7 @@ model's README for its current controls, witnesses and configured bounds.
 | `rnreceivedblockslayout` | Receive statistics blocks and partial-edge queries (README-RNReceivedBlocksLayout.md); bounds vary by configuration. |
 | `rnrtttreelayout` | The rtt minimum tree, a history of 8 (README-RNRttTreeLayout.md). |
 | `rnfreestacklayout` | The protocol tables' free stacks, capacity 3 (README-RNFreeStackLayout.md). |
+| `rntokenfloorlayout` | The used-token bindings' expiry floor and eviction scan as PR #1017 lays them out, three slots, four tokens, clock to 4 (RNTokenFloorLayout.tla). |
 | `rnreconstructlayout` | The wire sequence reconstruction, modulus 8 in a space of 32 (README-RNReconstructLayout.md). |
 | `rnbankfifolayout` | The hand-written bank queues of the portable, gso, xdp, iocp and rio server transports, the buffer handoff and the iocp client at their layout (README-RNBankFifoLayout.md). |
 | `rnriosendslotlayout` | The RIO send slots, reservation counter and send_ready FIFO of phases at their layout (README-RNRioSendSlotLayout.md). |

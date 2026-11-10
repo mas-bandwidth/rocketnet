@@ -51,6 +51,7 @@ revision under review.
 | receive statistics blocks layout | `RNServerStats`, `RNReceivedBlocksLayout` | each generation-tagged summary exact, the cached left, middle and right pieces exact, the older-half publication equal to a record-by-record read |
 | rtt minimum tree layout | `RNRttTreeLayout` | every tree node the minimum of its children, the root the minimum positive sample |
 | protocol tables' free stacks | `RNOpenAddress`, `RNFreeStackLayout` | each stack holds exactly the slots not live, each once; a map generation never reissued and never 0 |
+| used-token bindings' expiry floor (PR #1017) | `RNTokenFloorLayout` | the floor never above a live binding's expiry; a live binding never evicted while an expired one remains |
 | wire sequence reconstruction | `AckBlockWrap`, `RNReconstructLayout` | the three-candidate arithmetic chooses the nearest candidate, the larger on a tie |
 | transport bank queues | `RNPortableRx`, `RNPortableTx`, `RNGsoHandoff`, `RNGsoRecvFill`, `RNBufferHandoff`, `RNRioWorker`, `RNClientIocp`, `RNBankFifoLayout`, `RNMsgxPause` | every bank in exactly one place read through the free and ready arrays, the ready ring in publish order, no position outside an array, for FIFO and stack free queues, both initializers and the iocp client's ring of num_receives |
 `RNRioDriver` describes the earlier caller-driven two-phase RIO design; its
