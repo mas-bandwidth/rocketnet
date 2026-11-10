@@ -140,3 +140,43 @@ static void test_platform_spin_lock_acquire_release_under_contention()
 }
 
 REGISTER_UNIT_TEST( test_platform_spin_lock_acquire_release_under_contention );
+
+// A relaxed 64-bit load must not be a locked read-modify-write. On 64-bit MSVC
+// the word is readable with the volatile load intrinsic, so the load path and
+// the receive-reset read take the guarded branch instead of the compare-exchange
+// fallback the 32-bit targets still need.
+
+static void platform_nits_check_relaxed_u64_load( const std::string & text, const char * start_name, const char * end_name )
+{
+    const size_t start = text.find( start_name );
+    const size_t end = text.find( end_name, start );
+    rocketnet_unit_check( start != std::string::npos );
+    rocketnet_unit_check( end != std::string::npos && end > start );
+
+    const std::string body = text.substr( start, end - start );
+    rocketnet_unit_check( body.find( "_M_X64" ) != std::string::npos );
+    rocketnet_unit_check( body.find( "_M_ARM64" ) != std::string::npos );
+
+    const size_t plain = body.find( "__iso_volatile_load64" );
+    rocketnet_unit_check( plain != std::string::npos );
+
+    const size_t locked = body.find( "_InterlockedCompareExchange64" );
+    rocketnet_unit_check( locked == std::string::npos || plain < locked );
+}
+
+static void test_platform_relaxed_u64_load_is_not_locked_on_64_bit_msvc()
+{
+    const std::string header = platform_nits_read_repo_file( "sdk/rocketnet_platform.h" );
+    rocketnet_unit_check( !header.empty() );
+    platform_nits_check_relaxed_u64_load( header,
+                                          "inline uint64_t rocketnet_platform_atomic_load_u64",
+                                          "inline void rocketnet_platform_atomic_store_u64" );
+
+    const std::string source = platform_nits_read_repo_file( "sdk/rocketnet_platform.cpp" );
+    rocketnet_unit_check( !source.empty() );
+    platform_nits_check_relaxed_u64_load( source,
+                                          "uint64_t rocketnet_platform_receive_resets()",
+                                          "int rocketnet_platform_socket_receive_buffer_bytes" );
+}
+
+REGISTER_UNIT_TEST( test_platform_relaxed_u64_load_is_not_locked_on_64_bit_msvc );
