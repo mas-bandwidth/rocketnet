@@ -810,10 +810,13 @@ static void reset_loopback_slot_reuse_scenario()
     rocketnet_server_transport_client_stats_t b_stats;
     memset( &b_stats, 0, sizeof( b_stats ) );
     rocketnet_server_transport_client_stats( rocketnet_message_server_transport( f.server ), b_slot, &b_stats );
-    check( b_stats.packets_sent != 0xA5A5A5A5A5A5A5A5ULL );
-    check( b_stats.packets_received != 0xA5A5A5A5A5A5A5A5ULL );
-    check( b_stats.bytes_sent != 0xA5A5A5A5A5A5A5A5ULL );
-    check( b_stats.bytes_received != 0xA5A5A5A5A5A5A5A5ULL );
+    // Cleared when the slot is assigned, then only this connection handshake.
+    // Exact counts, not != poison: traffic on an uncleared 0xA5 slot
+    // still differs from the poison, so that check passes without the reset.
+    check( b_stats.packets_sent == 2 );
+    check( b_stats.packets_received == 2 );
+    check( b_stats.bytes_sent == 165 );
+    check( b_stats.bytes_received == 157 );
 
     const uint8_t * stale = NULL;
     int stale_bytes = 0;
