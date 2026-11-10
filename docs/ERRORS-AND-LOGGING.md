@@ -574,8 +574,8 @@ ROCKETNET_EXPORT void rocketnet_log_function(
      messages past return must copy `[message, message + length)`.
    - The callback may be invoked on the main thread, on any game fill thread
      between `update` and `send_packets`, or on a transport receive
-     thread. Callbacks must be thread-safe, must not call
-     `rocketnet_log_function` re-entrantly, and must not unwind via C++
+     thread. Callbacks must be thread-safe, must not call any
+     rocketnet function, and must not unwind via C++
      exceptions or `longjmp`.
    - The `(callback, context)` pair is guarded by
      `rocketnet_platform_spin_lock_u64` so it is never observed torn.
