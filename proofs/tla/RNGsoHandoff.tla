@@ -12,10 +12,10 @@
 (* recycled under it and every packet staged before the claim is in that   *)
 (* claim's view.  Main's swap is a try-acquire: on contention it returns   *)
 (* and retries next update.  A worker pass that stages nothing while a     *)
-(* datagram waits (its bank is full until main's swap, or the receive      *)
-(* failed) is a stall, and the worker sleeps 1ms before its next pass      *)
-(* instead of spinning on poll and the mutex (RxStall, RxSleep,            *)
-(* RxBacksOff).                                                            *)
+(* datagram waits (its bank is full until main's swap; a failed receive   *)
+(* takes the same path in the code and is not modelled) is a stall, and   *)
+(* the worker sleeps 1ms before its next pass instead of spinning on poll  *)
+(* and the mutex (RxStall, RxSleep, RxBacksOff).                           *)
 (*                                                                         *)
 (* Transmit (three banks): game threads stage into the producer bank;      *)
 (* send_packets try-publishes it into a bounded FIFO and takes a free      *)
@@ -79,10 +79,6 @@ Threads == { "main", "worker" }
 ClaimStale == FALSE
 NoBackoff == FALSE
 
-(* the stalled passes one behaviour may take: enough for a stall, a sleep *)
-(* and a second stall, and for fills after them                           *)
-MaxStalls == 3
-
 Range(s) == { s[i] : i \in DOMAIN s }
 
 VARIABLES
@@ -95,8 +91,8 @@ VARIABLES
     rxCursor,    \* packets of rxMain main has consumed (the retained tail follows)
     rxView,      \* rxMain's content as main claimed it
     rxStagedClaim, \* ghost: datagrams staged (arrived) before the last claim
-    rxBackoff,   \* the RX worker's stall passes, its 1ms sleeps, and whether
-                 \* the last pass stalled (a sleep is owed before the next)
+    rxBackoff,   \* owed: the last RX pass stalled and a 1ms sleep is owed
+                 \* before the next; spun (ghost): a pass ran while one was owed
     arrived,     \* datagrams arrived: the next is arrived + 1
     rxConsumed,  \* packets main consumed, in order
     txProducer,  \* the TX bank main's fill threads stage into, or NONE
@@ -125,7 +121,7 @@ Init ==
     /\ rxWorker = 0 /\ rxMain = 1
     /\ rxContent = [ b \in RxBuffers |-> << >> ]
     /\ rxCursor = 0 /\ rxView = << >> /\ rxStagedClaim = 0
-    /\ rxBackoff = [ stalls |-> 0, sleeps |-> 0, stalled |-> FALSE ]
+    /\ rxBackoff = [ owed |-> FALSE, spun |-> FALSE ]
     /\ arrived = 0 /\ rxConsumed = << >>
     /\ txProducer = 0 /\ txFree = << 1, 2 >> /\ txReady = << >> /\ txHeld = NONE
     /\ txFinal = FALSE
@@ -140,7 +136,7 @@ Init ==
 (* the worker sleeps (RxSleep) before its next pass                         *)
 RxFill ==
     /\ pcRx = "run" /\ ~rxExited /\ ~quit
-    /\ ~rxBackoff.stalled
+    /\ ~rxBackoff.owed
     /\ Len(rxContent[rxWorker]) < RxCap
     /\ arrived < MaxRx
     /\ rxContent' = [ rxContent EXCEPT ![rxWorker] = Append( @, arrived + 1 ) ]
@@ -150,17 +146,19 @@ RxFill ==
                     txHeld, txFinal, txContent, staged, txSent, quit,
                     rxExited, txExited, joined, freed >>
 
-(* a stalled pass: a datagram waits, so poll returns at once, but the pass  *)
-(* stages nothing -- the worker's bank is full (it stays full until main's  *)
-(* swap) or the receive failed. The worker then owes a 1ms sleep before its *)
-(* next pass; NoBackoff instead goes straight back to poll and the mutex,   *)
-(* the spin                                                                 *)
+(* a stalled pass: a datagram waits, so poll returns at once, but the     *)
+(* worker's bank is full (it stays full until main's swap) and the pass    *)
+(* stages nothing. The worker then owes a 1ms sleep before its next pass;  *)
+(* NoBackoff instead lets it go straight back to poll and the mutex, the   *)
+(* spin, and a stall while a sleep is still owed is recorded as one. A     *)
+(* failed receive takes the same path in the code; it is not modelled      *)
+(* separately (test_server_gso_receive_backoff covers it)                  *)
 RxStall ==
     /\ pcRx = "run" /\ ~rxExited /\ ~quit
-    /\ ~rxBackoff.stalled
+    /\ Len(rxContent[rxWorker]) = RxCap
     /\ arrived < MaxRx
-    /\ rxBackoff.stalls < MaxStalls
-    /\ rxBackoff' =[ rxBackoff EXCEPT !.stalls = @ + 1, !.stalled = ~NoBackoff ]
+    /\ NoBackoff \/ ~rxBackoff.owed
+    /\ rxBackoff' = [ owed |-> TRUE, spun |-> rxBackoff.spun \/ rxBackoff.owed ]
     /\ UNCHANGED << lock, pc, pcRx, rxWorker, rxMain, rxContent, rxCursor,
                     rxView, rxStagedClaim, arrived, rxConsumed, txProducer,
                     txFree, txReady, txHeld, txFinal, txContent, staged,
@@ -168,8 +166,8 @@ RxStall ==
 
 (* the 1ms sleep after a stalled pass, outside the mutex                    *)
 RxSleep ==
-    /\ pcRx = "run" /\ rxBackoff.stalled
-    /\ rxBackoff' = [ rxBackoff EXCEPT !.sleeps = @ + 1, !.stalled = FALSE ]
+    /\ pcRx = "run" /\ rxBackoff.owed
+    /\ rxBackoff' = [ rxBackoff EXCEPT !.owed = FALSE ]
     /\ UNCHANGED << lock, pc, pcRx, rxWorker, rxMain, rxContent, rxCursor,
                     rxView, rxStagedClaim, arrived, rxConsumed, txProducer,
                     txFree, txReady, txHeld, txFinal, txContent, staged,
@@ -471,8 +469,7 @@ TypeOK ==
     /\ pcRx \in { "run", "done" }
     /\ rxWorker \in RxBuffers /\ rxMain \in RxBuffers
     /\ rxStagedClaim \in 0 .. MaxRx
-    /\ rxBackoff.stalls \in 0 .. MaxStalls /\ rxBackoff.sleeps \in 0 .. MaxStalls
-    /\ rxBackoff.stalled \in BOOLEAN
+    /\ rxBackoff \in [ owed : BOOLEAN, spun : BOOLEAN ]
     /\ arrived \in 0 .. MaxRx /\ staged \in 0 .. MaxTx
     /\ txProducer \in Buffers \cup { NONE } /\ txHeld \in Buffers \cup { NONE }
 
@@ -501,10 +498,10 @@ NoPublishWhileHeld == rxContent[rxMain] = rxView
 StagedBeforeClaimInView ==
     \A n \in 1 .. rxStagedClaim : n \in Range(rxConsumed) \cup Range(rxContent[rxMain])
 
-(* the RX worker never spins: every stalled pass after the first is paid  *)
-(* for by a 1ms sleep, so a full bank or a failing receive cannot drive   *)
-(* poll and the receive mutex back to back                                *)
-RxBacksOff == rxBackoff.stalls <= rxBackoff.sleeps + 1
+(* the RX worker never spins: after a stalled pass it sleeps 1ms before   *)
+(* its next pass, so a full bank cannot drive poll and the receive mutex  *)
+(* back to back                                                           *)
+RxBacksOff == ~rxBackoff.spun
 
 (* a free bank on either side holds nothing: it was consumed or sent and  *)
 (* cleared before it was released                                         *)
