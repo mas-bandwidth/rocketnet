@@ -480,7 +480,11 @@ static void rocketnet_server_gso_send_worker( rocketnet_platform_thread_t *, voi
             {
                 retries_after_quit++;
                 if ( retries_after_quit > ROCKETNET_GSO_SEND_RETRIES_AFTER_QUIT )
+                {
+                    // the tail the socket never took is dropped: count it
+                    gso->counter_send_dropped += (uint64_t) ( count - slot );
                     break;
+                }
             }
             rocketnet_platform_wake_wait( gso->send_wake, false, ROCKETNET_GSO_SEND_RETRY_SECONDS );
         }
@@ -2900,6 +2904,8 @@ bool rocketnet_server_gso_test_send_shutdown_full()
     rocketnet_server_gso_send_worker( NULL, gso );
 
     valid = valid && !full.retried && full.calls_a == ROCKETNET_GSO_SEND_RETRIES_AFTER_QUIT + 1 && full.sent_b;
+    // bank A's one packet was left: it is counted as dropped, B's is sent
+    valid = valid && gso->counter_send_dropped == 1 && gso->counter_packets_sent == 1;
     valid = valid && gso->send_stopped.load( std::memory_order_acquire );
     gso->queues[0].stopped.store( true, std::memory_order_release );
     valid = valid && rocketnet_server_gso_stopped( gso );
