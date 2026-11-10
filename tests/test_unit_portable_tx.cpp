@@ -2,6 +2,12 @@
 #include "test_unit_registry.h"
 #include "suite_runner.h"
 #include "rocketnet_internal.h"
+#include "rocketnet_platform.h"
+#include "rocketnet_layers.h"
+#include "unit_shutdown.h"
+#include "loopback_hub.h"
+
+#include <stdio.h>
 
 // Needs ROCKETNET_DEV. No socket or wall-clock schedule:
 // the adapter drives borrow, contested publish, full-bank drop and both stop
@@ -43,10 +49,6 @@ REGISTER_UNIT_TEST( test_portable_tx_retains_suffix_and_terminal_drain_unblocks_
 // with no socket and no worker; the test plays the worker between updates,
 // and time is an argument from 1.0.
 #if defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
-#include "unit_shutdown.h"
-#include "loopback_hub.h"
-#include "rocketnet_layers.h"
-#include <stdio.h>
 
 void * rocketnet_portable_tx_test_sweep_owner( int capacity, int room, const rocketnet_server_transport_io_operations_t ** operations );
 uint64_t rocketnet_portable_tx_test_sweep_drain( void * transport );
