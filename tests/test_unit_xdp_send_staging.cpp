@@ -1,9 +1,166 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 #include "../sdk/rocketnet_driver.h"
 #include "../sdk/rocketnet_server_socket.h"
+#include "../sdk/rocketnet_layers.h"
+#include "../sdk/rocketnet_config.h"
+#include "loopback_hub.h"
 #include "test_unit_registry.h"
+#include "unit_shutdown.h"
+
+#include <errno.h>
+#include <string.h>
 
 #if ROCKETNET_DEV
+
+// The stop drain's view of one XDP queue. A queue whose worker reported a
+// hard TX wakeup error (ENETDOWN) can never drain its ring, even though its
+// producer buffer still holds frames; the drain must release it so
+// rocketnet_server_stop reaches rocketnet_server_stopped. These cases run the
+// real transport stop over a fake staged io whose send_idle is the XDP seam:
+// no socket, thread, clock or kernel resource is involved.
+
+static struct
+{
+    const rocketnet_server_transport_io_operations_t * real_operations;
+    void * real_instance;
+    int hard_error;
+    bool buffer_empty;
+    bool handoff_idle;
+    int stops;
+} xdp_stop_fixture;
+
+static rocketnet_server_transport_io_operations_t xdp_stop_operations;
+
+static void xdp_stop_fixture_destroy( void * )
+{
+    xdp_stop_fixture.real_operations->destroy( xdp_stop_fixture.real_instance );
+}
+
+static void xdp_stop_fixture_stop( void * )
+{
+    xdp_stop_fixture.stops++;
+    xdp_stop_fixture.real_operations->stop( xdp_stop_fixture.real_instance );
+}
+
+static bool xdp_stop_fixture_stopped( void * )
+{
+    return xdp_stop_fixture.real_operations->stopped( xdp_stop_fixture.real_instance );
+}
+
+static void xdp_stop_fixture_flush( void * ) {}
+
+static bool xdp_stop_fixture_send_idle( void * )
+{
+    return rocketnet_xdp_send_queue_released( xdp_stop_fixture.hard_error, xdp_stop_fixture.buffer_empty, xdp_stop_fixture.handoff_idle );
+}
+
+// Stop one server over the fake staged io with the given queue state. Returns
+// false only when the case's own cleanup failed; stopped_after is the answer
+// after the stop call and `polls` completion polls.
+static bool xdp_stop_scenario( int hard_error, bool buffer_empty, bool handoff_idle, int polls, bool * stopped_after )
+{
+    xdp_stop_fixture.real_operations = NULL;
+    xdp_stop_fixture.real_instance = NULL;
+    xdp_stop_fixture.hard_error = hard_error;
+    xdp_stop_fixture.buffer_empty = buffer_empty;
+    xdp_stop_fixture.handoff_idle = handoff_idle;
+    xdp_stop_fixture.stops = 0;
+
+    rocketnet_server_transport_config_t config;
+    rocketnet_server_transport_default_config_current( &config );
+    config.max_clients = 1;
+    config.protocol_id = 1;
+    snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
+    config.loopback_hub = rocketnet_test_loopback_hub();
+    memset( config.backend_public_key, 0xAB, 32 );
+    memset( config.server_public_key, 0xCD, 32 );
+    memset( config.server_secret_key, 0xEF, 32 );
+
+    int create_status = -1;
+    rocketnet_server_transport_t * server =
+        rocketnet_server_transport_create_current_ex( NULL, "127.0.0.1:0", &config, 1000.0, &create_status );
+    rocketnet_unit_check( server != NULL );
+
+    memset( &xdp_stop_operations, 0, sizeof( xdp_stop_operations ) );
+    xdp_stop_operations.flags = ROCKETNET_TRANSPORT_STAGED;
+    xdp_stop_operations.destroy = xdp_stop_fixture_destroy;
+    xdp_stop_operations.stop = xdp_stop_fixture_stop;
+    xdp_stop_operations.stopped = xdp_stop_fixture_stopped;
+    xdp_stop_operations.flush = xdp_stop_fixture_flush;
+    xdp_stop_operations.send_idle = xdp_stop_fixture_send_idle;
+
+    const rocketnet_server_transport_io_operations_t * real_operations = &xdp_stop_operations;
+    void * real_instance = &xdp_stop_fixture;
+    rocketnet_server_transport_swap_io_for_test( server, &real_operations, &real_instance );
+    xdp_stop_fixture.real_operations = real_operations;
+    xdp_stop_fixture.real_instance = real_instance;
+
+    rocketnet_server_transport_stop( server );
+
+    bool stopped = rocketnet_server_transport_stopped( server );
+    for ( int poll = 0; !stopped && poll < polls; ++poll )
+        stopped = rocketnet_server_transport_stopped( server );
+
+    *stopped_after = stopped;
+
+    // A waiting queue still finishes when its work is done, so restore this
+    // transport to a stoppable state before destroy even for the not-stopped
+    // case.
+
+    if ( !stopped )
+    {
+        xdp_stop_fixture.buffer_empty = true;
+        xdp_stop_fixture.handoff_idle = true;
+        stopped = rocketnet_server_transport_stopped( server );
+    }
+
+    const bool clean = stopped;
+
+    const rocketnet_server_transport_io_operations_t * fake_operations = &xdp_stop_operations;
+    void * fake_instance = &xdp_stop_fixture;
+    rocketnet_server_transport_swap_io_for_test( server, &fake_operations, &fake_instance );
+
+    rocketnet_server_transport_destroy( server );
+
+    return clean;
+}
+
+static void test_xdp_transport_stop_gives_up_on_hard_send_error()
+{
+    // A hard TX wakeup error releases the queue though its ring is still full.
+    bool stopped = false;
+    rocketnet_unit_check( xdp_stop_scenario( ENETDOWN, false, false, 0, &stopped ) );
+    rocketnet_unit_check( stopped );
+    rocketnet_unit_check( xdp_stop_fixture.stops == 1 );
+
+    // A healthy queue with the same non-empty ring still waits.
+    rocketnet_unit_check( xdp_stop_scenario( 0, false, true, 4, &stopped ) );
+    rocketnet_unit_check( !stopped );
+}
+
+REGISTER_UNIT_TEST( test_xdp_transport_stop_gives_up_on_hard_send_error );
+
+static void test_xdp_send_wakeup_hard_errno_and_logging_run()
+{
+    rocketnet_unit_check( !rocketnet_xdp_send_wakeup_hard_error( 0 ) );
+    rocketnet_unit_check( !rocketnet_xdp_send_wakeup_hard_error( EAGAIN ) );
+    rocketnet_unit_check( !rocketnet_xdp_send_wakeup_hard_error( ENOBUFS ) );
+    rocketnet_unit_check( rocketnet_xdp_send_wakeup_hard_error( ENETDOWN ) );
+    rocketnet_unit_check( rocketnet_xdp_send_wakeup_hard_error( ENXIO ) );
+    rocketnet_unit_check( rocketnet_xdp_send_wakeup_hard_error( EBADF ) );
+
+    // one log per contiguous run of one hard errno
+
+    int last_error = 0;
+    rocketnet_unit_check( rocketnet_xdp_send_wakeup_report( ENETDOWN, last_error ) );
+    rocketnet_unit_check( !rocketnet_xdp_send_wakeup_report( ENETDOWN, last_error ) );
+    rocketnet_unit_check( rocketnet_xdp_send_wakeup_report( ENXIO, last_error ) );
+    rocketnet_unit_check( !rocketnet_xdp_send_wakeup_report( EAGAIN, last_error ) );
+    rocketnet_unit_check( rocketnet_xdp_send_wakeup_report( ENXIO, last_error ) );
+    rocketnet_unit_check( !rocketnet_xdp_send_wakeup_report( 0, last_error ) );
+}
+
+REGISTER_UNIT_TEST( test_xdp_send_wakeup_hard_errno_and_logging_run );
 
 // The fixture calls the actual transport send_packets twice with a fake
 // staged backend carrying the given flags, after one commit: a transport that

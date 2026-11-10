@@ -64,9 +64,9 @@ static void test_rio_transport_layout_slices_tile_the_region()
     // no two sub-regions overlap: each region's start is at least the end
     // of the previous one.
 
-    rocketnet_unit_check( p.receive_slices_offset >= p.send_addresses_offset + 32768 * 64 - 1 );
-    rocketnet_unit_check( p.receive_addresses_offset >= p.receive_slices_offset + 4096 * 2048 - 1 );
-    rocketnet_unit_check( p.total_bytes >= p.receive_addresses_offset + 4096 * 64 - 1 );
+    rocketnet_unit_check( p.receive_slices_offset >= p.send_addresses_offset + 32768 * 64 );
+    rocketnet_unit_check( p.receive_addresses_offset >= p.receive_slices_offset + 4096 * 2048 );
+    rocketnet_unit_check( p.total_bytes >= p.receive_addresses_offset + 4096 * 64 );
 
     // total_bytes is a multiple of 4096 and at least the sum of the regions
 

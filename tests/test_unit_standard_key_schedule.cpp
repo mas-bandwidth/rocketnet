@@ -63,13 +63,13 @@ static int standard_key_schedule_verify_signatures( uint8_t * out, int capacity 
     uint8_t token[ROCKETNET_SIGNED_CONNECT_DATA_BYTES + 64];
     for ( int i = 0; i < ROCKETNET_SIGNED_CONNECT_DATA_BYTES; i++ )
         token[i] = (uint8_t) i;
-    out[0] = (uint8_t) ( crypto_sign_verify_detached( signatures[0], token, ROCKETNET_SIGNED_CONNECT_DATA_BYTES, public_key ) == 0 );
-    out[1] = (uint8_t) ( crypto_sign_verify_detached( signatures[1], token, ROCKETNET_SIGNED_CONNECT_DATA_BYTES, public_key ) == 0 );
+    out[0] = (uint8_t) ( rocketnet_verify_signed_connect_data( token, signatures[0], public_key ) != 0 );
+    out[1] = (uint8_t) ( rocketnet_verify_signed_connect_data( token, signatures[1], public_key ) != 0 );
     rocketnet_unit_check( memcmp( signatures[0], signatures[1], 64 ) != 0 );
     token[0] ^= 1;
-    out[2] = (uint8_t) ( crypto_sign_verify_detached( signatures[0], token, ROCKETNET_SIGNED_CONNECT_DATA_BYTES, public_key ) == 0 );
+    out[2] = (uint8_t) ( rocketnet_verify_signed_connect_data( token, signatures[0], public_key ) != 0 );
     token[0] ^= 1;
-    out[3] = (uint8_t) ( crypto_sign_verify_detached( signatures[2], token, ROCKETNET_SIGNED_CONNECT_DATA_BYTES, public_key ) == 0 );
+    out[3] = (uint8_t) ( rocketnet_verify_signed_connect_data( token, signatures[2], public_key ) != 0 );
 
     uint8_t identifiers[2][ROCKETNET_TOKEN_IDENTIFIER_BYTES];
     for ( int i = 0; i < 2; i++ )

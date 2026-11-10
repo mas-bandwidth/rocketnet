@@ -17,6 +17,7 @@ struct rocketnet_server_socket_t;
 
 #if defined( __cplusplus )
 #include <atomic>
+#include <errno.h>
 
 // Claims the next staging slot of an XDP send buffer. A claim at or past limit
 // is refused and counted in refused. The count is 64 bits: a buffer never takes
@@ -32,6 +33,36 @@ inline int rocketnet_xdp_send_claim( std::atomic<uint64_t> & num_packets, int li
     }
 
     return (int) index;
+}
+
+// An AF_XDP TX wakeup (sendto on the socket fd) fails hard when no retry can
+// clear it: the interface is down (ENETDOWN), the device is gone (ENXIO), or
+// the descriptor is no longer valid (EBADF). A queue that saw one can never
+// drain its TX ring, so the server stop must not wait for it.
+inline bool rocketnet_xdp_send_wakeup_hard_error( int error )
+{
+    return error == ENETDOWN || error == ENXIO || error == EBADF;
+}
+
+// The stop drain's answer for one XDP queue: released once its producer
+// buffer is empty and its handoff holds no work, or at once when the worker
+// reported a hard wakeup error. Waiting on such a queue would keep
+// rocketnet_server_stopped false forever.
+inline bool rocketnet_xdp_send_queue_released( int hard_send_error, bool buffer_empty, bool handoff_idle )
+{
+    if ( rocketnet_xdp_send_wakeup_hard_error( hard_send_error ) )
+        return true;
+    return buffer_empty && handoff_idle;
+}
+
+// The worker logs a hard wakeup failure once per contiguous run of one errno:
+// report when it is hard and differs from last_error, and remember every
+// attempt's errno (0 for success) so the next run reports again.
+inline bool rocketnet_xdp_send_wakeup_report( int error, int & last_error )
+{
+    const bool report = rocketnet_xdp_send_wakeup_hard_error( error ) && error != last_error;
+    last_error = error;
+    return report;
 }
 #endif // #if defined( __cplusplus )
 
@@ -92,10 +123,11 @@ bool rocketnet_server_socket_interrupt_line_matches_interface( const char * line
 //
 // create is VERIFY AND BIND only: the pre-flight above, then the library's
 // own per-socket acts -- building and loading its BPF program, attaching
-// it, AF_XDP binds, the memlock rlimit. Machine provisioning (xdp-loader
-// clearing, SMT, napi tuning, ethtool -L queue counts, isolcpus guidance)
-// lives in scripts/rocketnet-provision, run deliberately by the operator;
-// create never mutates machine state.
+// it, AF_XDP binds, and raising the process RLIMIT_MEMLOCK to RLIM_INFINITY
+// (which neither destroy nor a failed create restores). Machine provisioning
+// (xdp-loader clearing, SMT, napi tuning, ethtool -L queue counts, isolcpus
+// guidance) lives in scripts/rocketnet-provision, run deliberately by the
+// operator; create never mutates host-wide machine configuration.
 
 // Requested XDP component bytes (userspace queues, the parts sized from the
 // server's configured max_clients, and UMEM), excluding kernel bookkeeping,
@@ -180,6 +212,7 @@ bool rocketnet_server_socket_test_buffer_exchange();
 bool rocketnet_server_socket_test_inactive_flow();
 bool rocketnet_server_socket_test_replay_marks();
 bool rocketnet_server_socket_test_send_failures_without_mutex();
+bool rocketnet_server_socket_test_send_idle_hard_error();
 // the unit suite's case: dispatch is rocketnet_server_transport_io_receive_frames_dropped
 // and xdp the xdp operations table, as the transport's counter read uses them
 typedef bool rocketnet_server_socket_test_frames_dropped_t( const struct rocketnet_server_transport_io_operations_t * operations, void * transport,
