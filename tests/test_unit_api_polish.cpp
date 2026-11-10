@@ -658,9 +658,10 @@ static void test_api_polish_state_callback_reentry_is_refused()
     check( g_polish_asserts == 0 );
 
     g_polish_reentry.client = NULL;
+    const uint64_t after = rocketnet_api_misuse_count();
     rn_test_client_wait_disconnected( client );
     rocketnet_client_destroy( client );
-    check( rocketnet_api_misuse_count() == before );
+    check( rocketnet_api_misuse_count() == after );
     check( g_polish_asserts == 0 );
 
     rocketnet_assert_function( NULL );
