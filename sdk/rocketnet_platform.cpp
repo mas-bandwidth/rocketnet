@@ -183,7 +183,7 @@ static bool rocketnet_platform_test_environment_getenv( const char * name, char 
 // without a clock (test_unit_platform_sleep.cpp); compiled on every platform.
 // A request of zero, less, or NaN yields only (Sleep(0)). Otherwise the
 // high-resolution waitable timer gets a relative due time in negative 100-ns
-// units, rounded up and never zero, and the timeBeginPeriod fallback sleeps
+// units, rounded up and never zero, and the Sleep fallback sleeps
 // whole milliseconds, rounded up, at least 1 and capped below INFINITE. The
 // rounding forgives the floating-point error of the scaling (a millionth of
 // a unit), so 0.0005 s is exactly 5000 units and not 5001.
@@ -3660,8 +3660,10 @@ void rocketnet_platform_mutex_destroy( rocketnet_platform_mutex_t * mutex )
 // Sleep() rounds up to the system timer tick (15.6 ms by default) and a
 // millisecond cast truncates a sub-millisecond request to Sleep(0), so the
 // sleep blocks on a high-resolution waitable timer instead (Windows 10 1803
-// and later), set for the whole request, which keeps the system-wide timer
-// resolution untouched. rocketnet_platform_sleep_plan converts the request;
+// and later), set for the whole request. The sleep makes no timer period
+// call: when the priority calls are enabled, rocketnet_platform_init requests
+// a 1 ms period with timeBeginPeriod( 1 ) and rocketnet_platform_term releases
+// it with timeEndPeriod( 1 ). rocketnet_platform_sleep_plan converts the request;
 // rocketnet_platform_sleep_tail_yields decides the at most 50 us
 // SwitchToThread tail when the timer wakes before the request is up. A thread
 // rocketnet_platform_thread_create started sleeps on its own timer, created
@@ -3669,8 +3671,7 @@ void rocketnet_platform_mutex_destroy( rocketnet_platform_mutex_t * mutex )
 // timer, and its sleep creates one for itself and closes it on return
 // (rocketnet_platform_sleep). Where the timer cannot be created,
 // SetWaitableTimer fails, or the wait does not return WAIT_OBJECT_0, the
-// fallback raises the timer to 1 ms only for the duration of a rounded-up
-// Sleep.
+// fallback is a rounded-up Sleep at whatever timer period is in effect.
 
 #ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
 #define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002

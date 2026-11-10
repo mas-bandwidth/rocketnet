@@ -126,11 +126,12 @@ refusal of a name no build knows.
   `ROCKETNET_SERVER_MEMORY_BUDGET_BYTES`; a transport whose memory plan does
   not fit is refused before anything is allocated.
 
-No transport needs an elevated process. The library changes no system
-setting. `rocketnet_init` asks Windows for a 1 ms timer period until
-`rocketnet_term`, and each network thread `iocp` and `rio` create is set to
-`THREAD_PRIORITY_TIME_CRITICAL`; call `rocketnet_thread_priority( false )`
-before init if the game sets priorities itself (`sdk/rocketnet.h`).
+No transport needs an elevated process. By default `rocketnet_init` asks
+Windows for a 1 ms timer period (`timeBeginPeriod( 1 )`) and `rocketnet_term`
+releases it (`timeEndPeriod( 1 )`), and each network thread `iocp` and `rio`
+create is set to `THREAD_PRIORITY_TIME_CRITICAL`; call
+`rocketnet_thread_priority( false )` before init to skip both if the game sets
+the timer period and priorities itself (`sdk/rocketnet.h`).
 
 ## The firewall
 
