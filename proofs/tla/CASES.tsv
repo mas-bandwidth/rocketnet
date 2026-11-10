@@ -740,3 +740,6 @@ MCRNSequencingWrapBrokenWatermarkUnmasked.cfg	MCRNSequencingWrap.tla	invariant	N
 MCRNSequencingWrapBrokenWatermarkBoundary.cfg	MCRNSequencingWrap.tla	invariant	NothingSilent	check	rnsequencingwrap	required	-
 MCRNSequencingWrapBrokenHoldGapUnmasked.cfg	MCRNSequencingWrap.tla	invariant	NewerNeverDiscarded	check	rnsequencingwrap	required	-
 MCRNSequencingWrapBrokenDrainGapUnmasked.cfg	MCRNSequencingWrap.tla	invariant	NewerNeverDiscarded	check	rnsequencingwrap	required	-
+MCRNRioWorkerInlineStop.cfg	MCRNRioWorker.tla	pass	-	check	rnrioworker	required	-
+MCRNRioWorkerBrokenUnboundedRetry.cfg	MCRNRioWorker.tla	temporal	StopCompletes	check	rnrioworker	required	-
+MCRNRioWorkerBrokenOneBatchPerPass.cfg	MCRNRioWorker.tla	invariant	LeakOnlyAfterRefusal	check	rnrioworker	required	-
