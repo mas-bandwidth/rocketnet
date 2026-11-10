@@ -118,10 +118,10 @@ gives that entry a new ticket.
 4. **`MCRNUnreliableRingLayoutBrokenWalkFromHead.cfg`** (`WalkSnapshot =
    FALSE`): the walk reads from the current head instead of the head
    captured at its start. TLC: push 1 (ticket 1), push 2 (ticket 2), push 3
-   (ticket 3, the counter wraps), unlink 2, unlink 3, then push 1 again:
-   the renumber writes the survivors (1 under ticket 2, 3 under ticket 3)
-   at positions 0 and 1 and leaves 3's old copy (3, ticket 3) at position
-   2, outside the live range (`count = 2`). A walk begins there (base 0,
+   (ticket 3, the counter wraps), unlink 3, unlink 2, then push 3 again:
+   the renumber writes survivor 1 under ticket 2 at position 0, and the
+   push writes 3 under ticket 3 at position 1, leaving 3's old copy (3, ticket 3)
+   at position 2, outside the live range (`count = 2`). A walk begins there (base 0,
    span 2, queue 1, 3); unlink 1 and its sync move the head from 0 to 1
    and drop `count` to 1. The broken walk re-reads from the moved head
    over its old span: position 1 returns 3, then position 2 returns 3
