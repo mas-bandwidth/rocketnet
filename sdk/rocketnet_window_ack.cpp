@@ -880,6 +880,7 @@ uint32_t rn_window_ack_on_acks( rn_window_ack_t * ack, const uint64_t * packet_i
 void rn_window_ack_packet_failed( rn_window_ack_t * ack, const uint64_t * numbers, uint32_t count, double now )
 {
     rocketnet_assert( ack );
+    (void) now;
     if ( count == 0 || !numbers )
         return;
 
@@ -898,10 +899,9 @@ void rn_window_ack_packet_failed( rn_window_ack_t * ack, const uint64_t * number
         rn_send_number_t * slot = &region->send_numbers[slot_index];
         rocketnet_assert( slot->number == n );
 
-        if ( rn_send_number_never_sent( slot->last_send ) )
-            rn_window_ack_record_first_send( ack, slot, now );
-
-        slot->last_send = due_now_sentinel;
+        // never on the wire: stays never sent, so no reliable timeout clock (m9.3)
+        if ( !rn_send_number_never_sent( slot->last_send ) )
+            slot->last_send = due_now_sentinel;
         if ( !slot->acked )
             rn_resend_fifo_push_head( ack, slot_index );
     }
