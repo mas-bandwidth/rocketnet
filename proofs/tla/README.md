@@ -184,7 +184,7 @@ model's README for its current controls, witnesses and configured bounds.
 | `rnsentringlayout` | The sent-packet ring, the reference ring, the receipt ring and the receipt serial at the code's layout (README-RNSentRingLayout.md). |
 | `rnsendrotation` | The server send loop over the endpoint write pass under the transport's per-flush capacity (README-RNSendRotation.md). |
 | `rniocprefqueue` | The IOCP server's MPMC reference queue as laid out, and the push a stalled pop refuses (README-RNIocpRefQueue.md). |
-| `rniocpsendlease` | The IOCP send operations' generation tags (RNIocpSendLease.tla). |
+| `rniocpsendlease` | The IOCP send operations' generation tags over free_sends as laid out, and the release push a stalled pop refuses, retried (RNIocpSendLease.tla). |
 | `rniocprunring` | The IOCP USO run-ticket ring (RNIocpRunRing.tla). |
 | `rniocpretrystop` | The IOCP receive retry queue and its stop-ticketed pass (RNIocpRetryStop.tla). |
 | `rnportabletx` | The portable/msgx server transmit handoff at the code's own fields (README-RNPortableTx.md). |

@@ -535,6 +535,9 @@ static bool rocketnet_iocp_release_send( rocketnet_server_iocp_t * iocp, const r
 {
     // proofs/tla/RNIocpSendLease.tla ReleaseStaged and Retire: FREE, then the
     // reference at its unchanged generation goes back on free_sends.
+    // proofs/tla/RNIocpSendLease.tla ReleasePush claims a position (a pop
+    // stalled before its sequence store refuses it, and the push retries,
+    // never retires: RetiredOnlyAtGenMax) and ReleasePublish writes the cell.
     rocketnet_iocp_operation_t * op = rocketnet_iocp_send_from_ref( iocp, ref, state );
     if ( !op )
         return false;
@@ -543,7 +546,8 @@ static bool rocketnet_iocp_release_send( rocketnet_server_iocp_t * iocp, const r
 
 static bool rocketnet_iocp_acquire_send( rocketnet_server_iocp_t * iocp, rocketnet_iocp_ref_t * ref )
 {
-    // proofs/tla/RNIocpSendLease.tla Acquire is one pass of this loop; its
+    // proofs/tla/RNIocpSendLease.tla AcquireClaim is the pop's CAS and read,
+    // Acquire its sequence store and one pass of this loop; its
     // StaleNeverNamesLease is why the GenMax refusal below must stay.
     rocketnet_iocp_ref_t free_ref;
     while ( rocketnet_iocp_queue_pop( &iocp->free_sends, &free_ref ) )
