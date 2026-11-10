@@ -71,7 +71,9 @@ Receive ==
                             ELSE 0 ]
             /\ start' = IF StartAtZero THEN 0 ELSE ( origin + 1 ) % NumQueues
 
-Spec == Init /\ [][Receive]_vars
+Next == Receive
+
+Spec == Init /\ [][Next]_vars
 
 ----------------------------------------------------------------------------
 
