@@ -1157,13 +1157,15 @@ coming, and that no traffic pattern can stop it.
 [RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13)
 **What it costs.** A client whose keep-alive has not yet been acknowledged receives
 keep-alives on the send rate's pacing in addition to whatever the application sends it.
-The window is one round trip in the ordinary case, and the server's connection timeout
-bounds it if the client never acknowledges. The handshake deadline governs only a
-mapping that has not established, and a slot is assigned at establishment, so such a
-slot is already past it. A retransmitted connection response is ignored as already
-connected and does not refresh the slot's last-received time ([RN-1 t12 Handshake: server](TRANSPORT.md#t12) rule 14), so a client that only retransmits connection
-responses without sending an opened session packet does not extend the window past the
-connection timeout.
+The window is one round trip in the ordinary case. For a client that sends no opened
+session packets — such as one that only retransmits connection responses — the server's
+connection timeout bounds it: the handshake deadline governs only a mapping that has not
+established, and a slot is assigned at establishment, so such a slot is already past it,
+while a retransmitted connection response is ignored as already connected and does not
+refresh the slot's last-received time ([RN-1 t12 Handshake: server](TRANSPORT.md#t12) rule 14). Continuing opened session traffic refreshes the slot's idle clock under
+[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13) rule 2,
+so a client that sends such packets without acknowledging a keep-alive can extend the
+window beyond the connection timeout.
 
 [RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13)
 **Establishment on the client.** A client transitions to _connected_ on the first
