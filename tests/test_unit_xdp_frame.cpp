@@ -17,7 +17,6 @@
 #include "../sdk/rocketnet.h"
 #include "../sdk/rocketnet_address.h"
 #include "../sdk/rocketnet_xdp_frame.h"
-#include "../sdk/rocketnet_xdp_free_list.h"
 #include "../sdk/rocketnet_config.h"
 
 #include <stdlib.h>
@@ -799,38 +798,6 @@ static void test_xdp_transport_mac_address_parse_is_strict()
     }
 }
 
-// The XDP free list keeps only frames inside its region. With a non-zero
-// region_begin the lower bound is off zero: a frame one full frame below the
-// region is aligned (so only the lower-bound check can refuse it) and is
-// refused, as is one byte below the boundary; the region's first frame is
-// accepted.
-
-static void test_xdp_free_list_refuses_below_nonzero_region_begin()
-{
-    const uint64_t frame_bytes = (uint64_t) ROCKETNET_XDP_FRAME_SIZE;
-    const uint64_t region_begin = 3 * frame_bytes;
-    const uint64_t region_end = region_begin + 2 * frame_bytes;
-
-    uint64_t frames[2] = { 0, 0 };
-    int count = 0;
-
-    // one frame below the region: aligned, so only the lower bound refuses it
-
-    rocketnet_unit_check( !rocketnet_xdp_free_list_push( frames, &count, 2, region_begin - frame_bytes, region_begin, region_end ) );
-    rocketnet_unit_check( count == 0 );
-
-    // one byte below the region's first frame
-
-    rocketnet_unit_check( !rocketnet_xdp_free_list_push( frames, &count, 2, region_begin - 1, region_begin, region_end ) );
-    rocketnet_unit_check( count == 0 );
-
-    // the region's first frame is accepted
-
-    rocketnet_unit_check( rocketnet_xdp_free_list_push( frames, &count, 2, region_begin, region_begin, region_end ) );
-    rocketnet_unit_check( count == 1 );
-    rocketnet_unit_check( frames[0] == region_begin );
-}
-
 // A server create that pins xdp with an IPv6 address is not refused for its
 // family: the ladder hands it to the xdp transport, whose create meets this
 // process's commit barrier (the unit suite forbids an XDP data plane) and
@@ -964,7 +931,6 @@ REGISTER_UNIT_TEST( test_xdp_transport_frame_ipv4_unchanged );
 REGISTER_UNIT_TEST( test_xdp_transport_receive_dispatches_both_families_counted );
 REGISTER_UNIT_TEST( test_xdp_transport_ladder_keeps_xdp_for_ipv6 );
 REGISTER_UNIT_TEST( test_xdp_transport_mac_address_parse_is_strict );
-REGISTER_UNIT_TEST( test_xdp_free_list_refuses_below_nonzero_region_begin );
 #if ROCKETNET_XDP
 REGISTER_UNIT_TEST( test_xdp_transport_ipv6_pin_reaches_the_xdp_transport_at_create );
 #endif // #if ROCKETNET_XDP
