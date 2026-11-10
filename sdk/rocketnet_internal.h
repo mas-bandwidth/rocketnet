@@ -502,6 +502,11 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
 #define ROCKETNET_DEFAULT_MAX_CLIENTS          1000
 #endif // #if ROCKETNET_MAX_CLIENTS < 1000
 
+// the send rate (hertz): handshake retransmission and keep-alive pacing, one
+// value for client and server (RN-1 t3 "send rate")
+
+#define ROCKETNET_DEFAULT_SEND_RATE            10.0
+
 // the handshake work budget (handshakes_per_update): the most connection
 // requests one server update takes to the signature verify, each one Ed25519 verify
 // and, when it verifies, the sealed-block open, a keypair and the key

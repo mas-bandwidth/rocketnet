@@ -1937,7 +1937,7 @@ static int rocketnet_server_keep_alive_due( const struct rocketnet_server_protoc
                                             const struct rocketnet_encryption_mapping_t * mapping,
                                             int client_index, double current_time )
 {
-    const double send_rate = server->send_rate > 0.0 ? server->send_rate : 10.0;
+    const double send_rate = server->send_rate > 0.0 ? server->send_rate : ROCKETNET_DEFAULT_SEND_RATE;
     const int acknowledged = server->acks && client_index >= 0
                                  ? (int) server->acks->endpoints[client_index].keep_alive_acked
                                  : 0;

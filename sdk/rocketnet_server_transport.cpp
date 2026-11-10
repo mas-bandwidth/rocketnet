@@ -3,7 +3,6 @@
 // the conformance dump includes this file under
 // ROCKETNET_CONFORMANCE_DEFAULTS_ONLY and expands the same ones.
 
-#define ROCKETNET_DEFAULT_SEND_RATE                    10.0
 #define ROCKETNET_DEFAULT_HANDSHAKE_DEADLINE_SECONDS   5.0
 #define ROCKETNET_DEFAULT_COOKIE_LIFETIME_SECONDS      3
 #define ROCKETNET_DEFAULT_COOKIE_ROTATION_SECONDS      60
