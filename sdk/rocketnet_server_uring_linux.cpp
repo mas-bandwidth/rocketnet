@@ -210,6 +210,7 @@ struct rocketnet_server_uring_t
     int send_pending[ROCKETNET_URING_SEND_PHASES];      // per phase: its sends submitted with no CQE reaped
     int fill_bank;                              // the bank receive CQEs are copied into; the other is exposed
     int features;                               // ROCKETNET_SERVER_URING_FEATURE_*: UDP_SEGMENT in use now
+    int segment_consecutive_refusals = 0;       // main thread only. An accepted segmented send resets it. A plain send does not.
 
     // the run builder's view of the slots ahead, main thread only: the
     // bytes, destination and wire pointer of at most a run's worth of slots
@@ -1075,20 +1076,32 @@ static void rocketnet_server_uring_reap_cqe( struct rocketnet_server_uring_t * u
             {
                 // the kernel accepted the UDP_SEGMENT probe but refused a live
                 // segmented send. unlike the gso transport's sendmmsg the run
-                // cannot be resent: its CQE has handed the slots back, and a
-                // resend would put them in the kernel again after this call
-                // may reset the index. so the run is dropped, counted, and
-                // every later flush sends plain, one SENDMSG per slot
+                // cannot be resent: its CQE has handed the slots back. the run
+                // is dropped and counted. one refusal leaves segmentation on.
+                // the tier turns off only after the consecutive-refusal threshold
+                // (rocketnet_server_gso.h), with no accepted segmented send
+                // between the refusals. a later success does not turn it back on.
 
-                uring->features &= ~ROCKETNET_SERVER_URING_FEATURE_SEGMENT;
-                uring->counters[ROCKETNET_SERVER_URING_COUNTER_GSO_FALLBACKS]++;
-                rocketnet_warn( "io_uring transport: live segmented send refused (%s). degrading to one SENDMSG per packet", strerror( -cqe->res ) );
+                uring->segment_consecutive_refusals++;
+                if ( uring->segment_consecutive_refusals >= ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD )
+                {
+                    uring->features &= ~ROCKETNET_SERVER_URING_FEATURE_SEGMENT;
+                    uring->counters[ROCKETNET_SERVER_URING_COUNTER_GSO_FALLBACKS]++;
+                    rocketnet_warn( "io_uring transport: live segmented send refused (%s). %d consecutive refusals, degrading to one SENDMSG per packet", strerror( -cqe->res ), uring->segment_consecutive_refusals );
+                }
+                else
+                {
+                    rocketnet_warn( "io_uring transport: live segmented send refused (%s). counted, segmentation stays on", strerror( -cqe->res ) );
+                }
             }
 
             uring->counters[ROCKETNET_SERVER_URING_COUNTER_SEND_DROPPED] += (uint64_t) run_packets;
         }
         else
         {
+            if ( run_packets > 1 )
+                uring->segment_consecutive_refusals = 0;
+
             uring->counters[ROCKETNET_SERVER_URING_COUNTER_PACKETS_SENT] += (uint64_t) run_packets;
         }
 
@@ -1270,6 +1283,12 @@ void rocketnet_server_uring_test_set_reserved( struct rocketnet_server_uring_t *
     rocketnet_assert( phase >= 0 && phase < ROCKETNET_URING_SEND_PHASES );
     uring->send.fill.store( phase, std::memory_order_relaxed );
     uring->send.num_packets[phase].store( (decltype( uring->send.num_packets[phase].load() )) count, std::memory_order_relaxed );
+}
+
+void rocketnet_server_uring_test_set_features( struct rocketnet_server_uring_t * uring, int features )
+{
+    rocketnet_assert( uring );
+    uring->features = features;
 }
 
 
@@ -1939,8 +1958,10 @@ void rocketnet_server_uring_abort_packet( struct rocketnet_server_uring_t * urin
 // chunks no larger than the free submission queue space, rotated across the
 // group's sockets, each chunk submitted and followed by a reap within the
 // call's budget. A run never crosses a phase, and its SQE names its head by
-// its staging slot. Returns false when a submit took nothing, so a later
-// call submits the rest, the older phase's before the newer's.
+// its staging slot (proofs/tla/RNUringSendPhases.tla SubmitRun). An aborted
+// or unroutable slot is skipped without a send (SkipSlot). Returns false
+// when a submit took nothing, so a later call submits the rest, the older
+// phase's before the newer's (a submit pass can stop part way).
 
 static bool rocketnet_server_uring_submit_phase( struct rocketnet_server_uring_t * uring, int phase, int * budget )
 {
@@ -2071,8 +2092,9 @@ static bool rocketnet_server_uring_submit_phase( struct rocketnet_server_uring_t
 }
 
 // proofs/tla/RNUringDriver.tla Submit, Reap, SendReturn and ResetIndex, and
-// at the staging's layout proofs/tla/RNUringSendPhases.tla SendBegin, Reap
-// and SendEnd: the staged slots not yet submitted, the committed phase's
+// at the staging's layout proofs/tla/RNUringSendPhases.tla SendBegin,
+// SubmitRun, SkipSlot, Reap and SendEnd: the staged slots not yet submitted,
+// the committed phase's
 // first and then the fill phase's (rocketnet_server_uring_submit_phase); then
 // reap, at most ROCKETNET_URING_SEND_BUDGET CQEs in the whole call and after
 // no waits (receive CQEs met on the way go to the fill bank, or are held for

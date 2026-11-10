@@ -85,6 +85,37 @@ void rocketnet_dev_session_sequence_taken( uint64_t sequence )
     if ( rocketnet_dev_sequence_taken_function )
         rocketnet_dev_sequence_taken_function( rocketnet_dev_sequence_taken_context, sequence );
 }
+
+// the hash-key seed seam (sdk/rocketnet_test_seams.h): per thread, so a case
+// that seeds touches no other thread's tables
+
+static thread_local uint64_t rocketnet_dev_hash_key_seed_value;
+
+void rocketnet_dev_set_hash_key_seed( uint64_t seed )
+{
+    rocketnet_dev_hash_key_seed_value = seed;
+}
+
+uint64_t rocketnet_dev_hash_key_seed( void )
+{
+    return rocketnet_dev_hash_key_seed_value;
+}
+
+void rocketnet_dev_seed_hash_key( uint8_t * key, size_t key_bytes, int table_kind )
+{
+    const uint64_t seed = rocketnet_dev_hash_key_seed_value;
+    if ( seed == 0 )
+        return;
+
+    // BLAKE2b of the seed (little endian) and the table kind: one key per
+    // seed and kind, the same on every platform
+
+    uint8_t input[9];
+    for ( int i = 0; i < 8; i++ )
+        input[i] = (uint8_t) ( seed >> ( 8 * i ) );
+    input[8] = (uint8_t) table_kind;
+    crypto_generichash( key, key_bytes, input, sizeof( input ), NULL, 0 );
+}
 #endif // #if ROCKETNET_DEV
 
 uint64_t rocketnet_encryption_map_allocation_bytes( int capacity )
@@ -122,6 +153,7 @@ struct rocketnet_encryption_map_t * rocketnet_encryption_map_create( void * cont
     randombytes_buf( map->hash_key, sizeof( map->hash_key ) );
 
 #if ROCKETNET_DEV
+    rocketnet_dev_seed_hash_key( map->hash_key, sizeof( map->hash_key ), ROCKETNET_DEV_HASH_KEY_ENCRYPTION_MAP );
     (void) rocketnet_dev_session_sequence_start();          // the seam's one read, here at create
 #endif // #if ROCKETNET_DEV
 

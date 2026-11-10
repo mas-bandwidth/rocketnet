@@ -4,9 +4,10 @@
    RNClientReceiveQuit, ClientSession or ServerSession. Those data-path models
    retain their original synchronous shutdown assumptions and measurements.
 
-   Request publishes the final client Filling ring even while the other ring
-   is Sending. It never reopens either ring. Worker drains both, wipes its own
-   key copy, then acknowledges quiescence. Poll only observes acknowledgement.
+   Request publishes the final client Filling ring while one ring is half-sent
+   (Sending) and one is ready (HandedOff). It never reopens a ring. Worker
+   drains every send ring, wipes its own key copy, then acknowledges
+   quiescence. Poll only observes acknowledgement.
    A permanently stuck backend retains ownership, while request/poll return.
    Synchronous destroy/restart joins the OS thread after quiescence; the shim
    may finish after acknowledgement. No elapsed-time bound is modeled.
@@ -26,7 +27,10 @@ ASSUME Defect \in {"none", "requestwait", "requestcomplete", "freeearly",
                   "reuseearly", "ackbeforewipe", "repeatcallback"}
 Workers == 1..NumWorkers
 Generations == 1..MaxGenerations
-Rings == {0, 1}
+(* Three send rings: sdk/rocketnet_client_io.h
+   ROCKETNET_CLIENT_IO_NUM_RINGS is 3. There is no
+   ROCKETNET_CLIENT_IO_SEND_RINGS. *)
+Rings == {0, 1, 2}
 HasRings == Endpoint = "clientio"
 HasKeys == Endpoint \in {"clientio", "client"}
 Phases == {"stopped", "running", "stopping", "restarting", "destroying", "freed"}
@@ -68,10 +72,14 @@ Start ==
     /\ phase' = "running" /\ generation' = generation + 1
     /\ worker' = [w \in Workers |-> "working"]
     /\ keys' = [w \in Workers |-> HasKeys]
-    (* The hardest client handoff: other ring already Sending, final ring
-       Filling with committed data. No new producer runs during shutdown. *)
+    (* Worst-case shutdown start for ROCKETNET_CLIENT_IO_NUM_RINGS (3):
+       ring 0 is half-sent (Sending, still in the I/O hand), ring 1 is ready
+       in the queue (HandedOff), and ring 2 is Filling so RequestStop hands
+       it over as the final ring. No new producer runs during shutdown. *)
     /\ ring' = [r \in Rings |-> IF ~HasRings THEN "empty"
-                              ELSE IF r = 0 THEN "sending" ELSE "filling"]
+                              ELSE IF r = 0 THEN "sending"
+                              ELSE IF r = 1 THEN "handedoff"
+                              ELSE "filling"]
     /\ ioRing' = IF HasRings THEN 0 ELSE -1
     /\ request' = "idle" /\ poll' = "idle" /\ pollValue' = FALSE
     /\ badReuse' = (badReuse \/ ~Joined)
@@ -79,8 +87,10 @@ Start ==
 RequestStop ==
     /\ IdleCaller /\ phase = "running"
     /\ phase' = "stopping" /\ request' = "entered"
-    (* Both rings may now belong to I/O. Publication does not inspect or
-       wait for the other ring, and never changes a worker-owned ring. *)
+    (* The half-sent ring, the queued ring and the final ring may now
+       belong to I/O. Publication does not inspect or wait for a ring
+       already sending or queued, and never changes a worker-owned ring.
+       The Filling ring is handed over as final. *)
     /\ ring' = [r \in Rings |-> IF ring[r] = "filling" THEN "handedoff" ELSE ring[r]]
     /\ callbacks' = [callbacks EXCEPT ![generation] = @ + 1]
     /\ pollValue' = FALSE
@@ -171,7 +181,7 @@ FairSpec == Spec
 TypeOK ==
     /\ phase \in Phases /\ generation \in 0..MaxGenerations
     /\ worker \in [Workers -> WorkerStates] /\ keys \in [Workers -> BOOLEAN]
-    /\ ring \in [Rings -> RingStates] /\ ioRing \in {-1, 0, 1}
+    /\ ring \in [Rings -> RingStates] /\ ioRing \in {-1} \cup Rings
     /\ request \in CallStates /\ poll \in CallStates /\ pollValue \in BOOLEAN
     /\ callbacks \in [Generations -> 0..2] /\ contextLive \in BOOLEAN /\ badReuse \in BOOLEAN
 CompletionMeansQuiescent == pollValue => Quiescent /\ NoWorkerKeys /\ NoRingOwner

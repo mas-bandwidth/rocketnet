@@ -37,11 +37,11 @@
 #define LIGHT_REQUIRED_MEMORY_SLACK_BYTES ( (size_t) 1024 * 1024 )
 #if defined( _WIN32 )
 // Windows x64, MSVC, Release.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1608568918 )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1608568958 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22971951 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1469129191 )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1469129231 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13997378 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Debug.
@@ -49,7 +49,7 @@
 // 64-byte head-block alignment, as measured on main, adding 64 bytes.
 // The xdp worker's two receive frame arrays moved from its thread stack into
 // each queue's rocketnet_server_xdp_socket_t, adding 872136 bytes (measured).
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110339299ULL )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110339339ULL )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14146994 )
 #endif // #if defined( _WIN32 )
 

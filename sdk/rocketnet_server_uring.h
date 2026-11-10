@@ -157,7 +157,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_SEND_BUDGET > ROCKETNET_URING_MAX_SEGME
 #define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_NO_BUFFER            11      // a receive CQE with res >= 0 that names no provided buffer (no IORING_CQE_F_BUFFER, or an id outside the ring)
 #define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_REARM_FAILED                 12      // a re-arm found no submission entry (queue left disarmed)
 #define ROCKETNET_SERVER_URING_COUNTER_GSO_SENDS                            13      // segmented SENDMSGs submitted: a run of more than one packet with a UDP_SEGMENT cmsg
-#define ROCKETNET_SERVER_URING_COUNTER_GSO_FALLBACKS                        14      // a segmented send's CQE refused with EINVAL, EIO or EOPNOTSUPP: segmentation is off for the transport from then on
+#define ROCKETNET_SERVER_URING_COUNTER_GSO_FALLBACKS                        14      // consecutive refused segmented sends hit ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD: segmentation is off for the transport from then on
 #define ROCKETNET_SERVER_URING_COUNTER_GRO_BATCHES                          15      // receive buffers that held more than one segment (a UDP_GRO coalesced receive split by its stride)
 #define ROCKETNET_SERVER_URING_COUNTER_GRO_CMSG_FAULTS                      16      // a receive whose UDP_GRO control was truncated or malformed: taken as one datagram, the gso transport's fault
 #define ROCKETNET_SERVER_URING_NUM_COUNTERS                                 17
@@ -203,8 +203,10 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create_flags( void * co
 
 int rocketnet_server_uring_bank_size( const struct rocketnet_server_uring_t * uring );
 
-// the FEATURE bits in use now: a live refusal of a segmented send clears
-// ROCKETNET_SERVER_URING_FEATURE_SEGMENT
+// the FEATURE bits in use now. one refused segmented send does not clear
+// ROCKETNET_SERVER_URING_FEATURE_SEGMENT; that happens only after
+// ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD consecutive refusals
+// with no accepted segmented send between them (rocketnet_server_gso.h)
 
 int rocketnet_server_uring_features( struct rocketnet_server_uring_t * uring );
 
@@ -236,6 +238,8 @@ bool rocketnet_server_uring_test_send_idle( struct rocketnet_server_uring_t * ur
 // selects the fill phase and sets its reservation count, as a caller that
 // took count reservations without a flush leaves it.
 void rocketnet_server_uring_test_set_reserved( struct rocketnet_server_uring_t * uring, int phase, uint64_t count );
+// installs the feature bits (the create probe's result) on a fake transport
+void rocketnet_server_uring_test_set_features( struct rocketnet_server_uring_t * uring, int features );
 
 // unit suite only (the test hook library): a transport over a fake completion
 // source, with no kernel ring and no socket. the source stands in for the

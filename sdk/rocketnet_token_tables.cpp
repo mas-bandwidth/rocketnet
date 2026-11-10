@@ -6,6 +6,7 @@
 #include "rocketnet_memory.h"
 #include "rocketnet_token_tables.h"
 #include "rocketnet_internal.h"
+#include "rocketnet_test_seams.h"
 
 #include <sodium.h>
 #include <string.h>
@@ -128,6 +129,9 @@ static struct rocketnet_token_table_t * rn_token_table_create( void * context, i
     table->next_ticket = 1;
     table->claims = claims;
     randombytes_buf( table->hash_key, sizeof( table->hash_key ) );
+#if ROCKETNET_DEV
+    rocketnet_dev_seed_hash_key( table->hash_key, sizeof( table->hash_key ), ROCKETNET_DEV_HASH_KEY_TOKEN_TABLE );
+#endif // #if ROCKETNET_DEV
 
     table->index = (int *) rocketnet_malloc( context, sizeof( int ) * (size_t) table->index_capacity );
     table->free_slots = (int *) rocketnet_malloc( context, sizeof( int ) * (size_t) capacity );
@@ -507,6 +511,8 @@ void rocketnet_used_token_history_record( struct rocketnet_used_token_history_t 
     rn_token_order_push( table, slot );
 }
 
+// proofs/tla/MCReceiveOrder.tla ClaimExpire: a claim is free the moment the
+// clock reaches its deadline, before the update's sweep removes its mapping
 int rocketnet_used_token_history_claim_check( const struct rocketnet_used_token_history_t * history,
                                               const uint8_t * token_identifier,
                                               const struct rocketnet_address_t * address,

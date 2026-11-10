@@ -483,9 +483,8 @@ bool rocketnet_server_config_resolve( const struct rocketnet_server_config_t * c
 // ---------------------------------------------------------------
 
 // The public client is a session object (proofs/tla/ClientSession.tla): it holds
-// the resolved config, one memory block made at create, the lifetime
-// counters and the last disconnect reason (the model's `kept` and `reason`),
-// and, between rocketnet_client_connect and rocketnet_client_disconnect, one
+// the resolved config (the model's `kept`), one memory block made at create,
+// the not-connected drop count that outlives a connection, and, between rocketnet_client_connect and rocketnet_client_disconnect, one
 // connection: a message client over its own client transport, created in the
 // block by connect (the model's Connect) and ended by disconnect, destroy, or
 // the next connect after the server ended it (End, then Reset). Every end
@@ -1338,6 +1337,9 @@ static void rn_client_disconnect( struct rocketnet_client_t * client );
 // proofs/tla/ClientSession.tla RetryPending: from a terminal state whose worker is
 // still running, connect asks that worker to stop and returns
 // CLIENT_NOT_DISCONNECTED, keeping the public state and starting nothing.
+// proofs/tla/ClientSession.tla Connect: its five outcomes are a malformed string
+// refused with nothing changed, a handshake started, INVALID_CONNECT_TOKEN,
+// CONNECT_TOKEN_EXPIRED, and any other create failure left DISCONNECTED.
 
 static enum rocketnet_status_t rn_client_connect( struct rocketnet_client_t * client, const char * connect_token_string )
 {
@@ -1486,7 +1488,9 @@ void rocketnet_client_destroy( struct rocketnet_client_t * client )
 // token's expiry, a stage or connected timeout, or the server's disconnect;
 // Deliver: what arrives opens only under the connection's own keys;
 // WorkerComplete: a retiring connection's transport is stepped through its
-// stop until its worker completes.
+// stop until its worker completes; MessageEnd: the message layer ends a
+// CONNECTED connection (reliable timeout, protocol violation, config
+// mismatch, message memory exhausted, message not received).
 
 // With no live connection the time still meets update's rule: a non-finite or
 // backwards time is counted as API misuse and logged, and the last good time
@@ -1741,7 +1745,7 @@ uint8_t * rocketnet_client_start_message( struct rocketnet_client_t * client, in
 
     uint8_t * pointer = rocketnet_message_client_start( client->connection, channel, reliability_value, max_bytes );
 
-    // a start the connection's message memory cannot hold ends the connection (MESSAGE_MEMORY_EXHAUSTED)
+    // a start the connection's message memory cannot hold ends the connection (MESSAGE_MEMORY_EXHAUSTED, proofs/tla/ClientSession.tla MessageEnd)
 
     if ( !pointer )
         rn_client_report_state( client );
@@ -2390,6 +2394,15 @@ static enum rocketnet_status_t rn_server_addresses( const char * ipv4_address, c
     return ROCKETNET_STATUS_OK;
 }
 
+#if ROCKETNET_DEV
+static bool rn_server_keygen_failure = false;
+
+void rocketnet_dev_set_server_keygen_failure( bool fail )
+{
+    rn_server_keygen_failure = fail;
+}
+#endif // #if ROCKETNET_DEV
+
 // proofs/tla/ServerSession.tla Create: STOPPED, no transport bound, the one memory
 // block made.
 
@@ -2501,21 +2514,40 @@ static struct rocketnet_server_t * rn_server_create_current( void * context, con
     // pair for this object. The game reads the public key
     // (rocketnet_server_public_key) and registers it with its backend; start
     // refuses the published development key in a production build; destroy
-    // wipes the secret. Neither can fail: sodium's keypair and base
-    // multiplication return 0, and an unavailable OS random source aborts
-    // the process inside sodium after rocketnet_init's misuse handler logs it
+    // wipes the secret. A failed generation or derivation (an unavailable
+    // crypto source, or the DEV seam) refuses the create below: a server
+    // with an all-zero secret key must never be handed out.
 
+#if ROCKETNET_DEV
+    const bool keygen_failed_by_seam = rn_server_keygen_failure;
+#else
+    const bool keygen_failed_by_seam = false;
+#endif // #if ROCKETNET_DEV
+
+    bool keygen_failed = keygen_failed_by_seam;
     if ( sodium_is_zero( transport.server_secret_key, sizeof( transport.server_secret_key ) ) )
     {
         const enum rocketnet_status_t generated = rocketnet_generate_server_keypair( transport.server_public_key, transport.server_secret_key );
-        rocketnet_assert( generated == ROCKETNET_STATUS_OK );
-        (void) generated;
+        keygen_failed = keygen_failed || generated != ROCKETNET_STATUS_OK;
     }
     else
     {
         const int derived = crypto_scalarmult_base( transport.server_public_key, transport.server_secret_key );
-        rocketnet_assert( derived == 0 );
-        (void) derived;
+        keygen_failed = keygen_failed || derived != 0;
+    }
+
+    if ( keygen_failed )
+    {
+        sodium_memzero( &transport, sizeof( transport ) );
+        sodium_memzero( base, (size_t) total );
+
+        if ( !memory )
+            rocketnet_free( context, base );
+
+        if ( status )
+            *status = ROCKETNET_STATUS_CRYPTO_INIT_FAILED;
+
+        return NULL;
     }
 
     struct rocketnet_server_t * server = (struct rocketnet_server_t *) base;

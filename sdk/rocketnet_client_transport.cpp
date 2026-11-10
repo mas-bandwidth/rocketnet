@@ -743,6 +743,8 @@ static void rocketnet_client_race_send( void * instance, const rocketnet_address
 // their shared original prefix is returned to the ring owner. The same I/O
 // thread closes the loser in receive, so it cannot close a socket during
 // this callback; a caller-thread commit is observed on the next attempt.
+// proofs/tla/RNClientSendCursorLayout.tla Send: the returned prefix is how many packets have every required family bit consumed.
+// proofs/tla/RNClientSendCursorLayout.tla Commit: rocketnet_client_race_commit, observed here, drops a packet not yet started for the other family.
 static int rocketnet_client_race_send_progress( void * instance, const rocketnet_platform_send_t * sends, int num_packets, bool terminal )
 {
     rocketnet_client_race_t * race = (rocketnet_client_race_t *) instance;

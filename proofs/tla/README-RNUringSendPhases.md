@@ -4,10 +4,14 @@
 transport (`sdk/rocketnet_server_uring_linux.cpp`) with the code's own index
 arithmetic: two phases of slots in one array, the fill phase start_packet
 reserves from, each phase's reservation index, submitted mark and pending
-count, and the phase a send's completion is charged to. `RNUringDriver` is
-the abstract model of the same driver; its slots are one phase, and its
-`ResetIndex` is one phase's reset. The `io-uring-send-phases` row in
-`COVERAGE.tsv` tracks the coverage.
+count, and the phase a send's completion is charged to. A send is a run of
+consecutive slots (up to `ROCKETNET_URING_MAX_SEGMENTS`) retired by one
+completion; an aborted or unroutable slot is skipped without a send; a
+submit pass can stop part way, the rest submitted by a later call; and
+`send_pending` counts sends, not slots. `RNUringDriver` is the abstract
+model of the same driver; its slots are one phase, and its `ResetIndex` is
+one phase's reset. The `io-uring-send-phases` row in `COVERAGE.tsv` tracks
+the coverage.
 
 ## Why two phases
 
@@ -27,14 +31,16 @@ thread; io_uring submits on the main thread.
 | Model | Code |
 |---|---|
 | `Phases`, `Size` | `ROCKETNET_URING_SEND_PHASES`, `ROCKETNET_URING_SEND_QUEUE_SIZE` |
+| `MaxSegments` | `ROCKETNET_URING_MAX_SEGMENTS` |
 | `fill` | `send.fill` |
 | `num[p]` | `send.num_packets[p]` |
 | `submitted[p]` | `send_submitted[p]` |
-| `pendC[p]` | `send_pending[p]` |
+| `pendC[p]` | `send_pending[p]`: its in-flight sends, not its slots |
 | `Base(p) + i`, `SlotOf` | the staging slot `phase * ROCKETNET_URING_SEND_QUEUE_SIZE + index` in `rocketnet_server_uring_start_packet` |
-| `p * Size + i`, `NewSends` | the staging slot `base + slot` that `rocketnet_server_uring_submit_phase` names in the send's tag |
+| `SlotOf(p, i)`, `SubmitRun` | the run head staging slot `base + slot` that `rocketnet_server_uring_submit_phase` names in the send's tag |
+| `runLen[g]` | the run's `run_packets`, the slots its one CQE retires |
 | `PhaseOf(g)` | `slot / ROCKETNET_URING_SEND_QUEUE_SIZE` in the send case of `rocketnet_server_uring_reap_cqe` |
-| `unposted`, `cq`, `Kern` | sends the kernel holds; their posted completions, oldest first; the slots the kernel owns |
+| `unposted`, `cq`, `Kern` | send heads the kernel holds; their posted completions, oldest first; every slot of every run the kernel owns |
 | `written` | the slots the fill threads wrote since the last submit |
 
 ## Actions
@@ -42,15 +48,13 @@ thread; io_uring submits on the main thread.
 | Action | Code |
 |---|---|
 | `Reserve` | `rocketnet_server_uring_start_packet`: one fetch_add on the fill phase's index, NULL past `Size` |
-| `SendBegin` | `rocketnet_server_uring_send_packets` submits every staged slot not yet submitted, the committed phase's before the fill phase's (`rocketnet_server_uring_submit_phase`) |
+| `SendBegin` | the start of `rocketnet_server_uring_send_packets`: the fill threads are joined and the staged slots are submitted |
+| `SubmitRun` | `rocketnet_server_uring_submit_phase` builds one run from the next unsubmitted slot, up to `MaxSegments` slots of the phase, and tags its head staging slot |
+| `SkipSlot` | `rocketnet_server_uring_submit_phase` skips an aborted slot (`packet_bytes <= 0`) or one unroutable on the socket family, dropping and counting it with no send |
 | `KernelComplete(g)` | the kernel posts a send's completion (environment action) |
-| `Reap` | a send completion reaped, in `send_packets` or `receive_packets`: its phase's pending count falls |
-| `SendEnd` | the end of `send_packets`: every complete phase (every slot submitted, none pending) has its index and submitted mark reset; when the fill phase still holds staged slots and the next phase is empty, the fill moves to it |
+| `Reap` | a send completion reaped, in `send_packets` or `receive_packets`: its phase's pending count falls by one send |
+| `SendEnd` | the end of `send_packets`: every complete phase (every slot submitted or skipped, none pending) has its index and submitted mark reset; when the fill phase still holds staged slots and the next phase is empty, the fill moves to it. Under `LateReap` the pass does not stop part way; with late completions it may, the rest submitted by a later call |
 | `RecvEnd` | the end of `receive_packets` and of the update; under `LateReap` every send submitted is reaped by now |
-
-The model submits every staged slot at once; the code submits in chunks the
-submission queue has room for, and a chunk the kernel takes nothing of ends
-the call, the rest submitted by a later one in the same order.
 
 ## Properties
 
@@ -64,17 +68,18 @@ the call, the rest submitted by a later one in the same order.
 
 ## Cases
 
-Every case has `Size = 2` and four updates. Group `rnuringsendphases` in
-`CASES.tsv`; the records are in `RUNS.tsv`, measured on a 17-cpu
-linux-amd64 bench (Java 21.0.12.1, the pinned JAR, two workers).
+Every case has `Size = 2`, `MaxSegments = 2` and four updates. Group
+`rnuringsendphases` in `CASES.tsv`; the records are in `RUNS.tsv`, measured
+on a 16-cpu linux-amd64 bench (Java 21.0.12.1, the pinned JAR, two workers).
 
 | Case | Change | Expected | Exit | Distinct | Seconds |
 |---|---|---|---:|---:|---:|
-| `MCRNUringSendPhases.cfg` | the code, any completion late any number of calls | pass | 0 | 12752 | 1.6 |
-| `MCRNUringSendPhasesLateReap.cfg` | the code, every completion reaped by the next receive call | pass | 0 | 390 | 1.1 |
-| `MCRNUringSendPhasesBrokenOnePhase.cfg` | `Phases = 1`, the staging before the phases | `NeverRefusedUnderLateReap` | 12 | 54 | 1.0 |
-| `MCRNUringSendPhasesBrokenNoBase.cfg` | `BaseRule = FALSE`: start_packet's slot without the phase base | `NoWriteWhileKernelOwned` | 12 | 29 | 1.0 |
-| `MCRNUringSendPhasesBrokenRemainder.cfg` | `QuotientRule = FALSE`: a completion's phase is its slot's remainder | `PendingMatches` | 12 | 107 | 1.0 |
+| `MCRNUringSendPhases.cfg` | the code, any completion late any number of calls, submit passes may stop part way | pass | 0 | 26005 | 3.0 |
+| `MCRNUringSendPhasesLateReap.cfg` | the code, every completion reaped by the next receive call | pass | 0 | 516 | 1.0 |
+| `MCRNUringSendPhasesBrokenOnePhase.cfg` | `Phases = 1`, the staging before the phases | `NeverRefusedUnderLateReap` | 12 | 76 | 0.8 |
+| `MCRNUringSendPhasesBrokenNoBase.cfg` | `BaseRule = FALSE`: start_packet's slot without the phase base | `NoWriteWhileKernelOwned` | 12 | 56 | 0.6 |
+| `MCRNUringSendPhasesBrokenRemainder.cfg` | `QuotientRule = FALSE`: a completion's phase is its slot's remainder | `PendingMatches` | 12 | 405 | 0.6 |
+| `MCRNUringSendPhasesBrokenSlots.cfg` | `CountRule = FALSE`: the submit counts the run's slots while the reap retires one send | `PendingMatches` | 12 | 13 | 4.4 |
 
 ## Counterexamples, checked by hand against the code
 
@@ -94,8 +99,18 @@ kernel keeps it; `SendEnd` moves the fill to phase 1. Update 1's
 `start_packet` takes index 0 of phase 1 and, without the base, returns
 staging slot 0, the slot the kernel still sends from.
 
+**BrokenSlots**: update 0 stages two slots of phase 0 and `send_packets`
+submits them as one two-slot run. With `CountRule = FALSE` the submit
+counts the run's slots while the reap retires one send. `PendingMatches`
+counts the one in-flight send, so the count is already too high before any
+completion, and after the reap it is still above the sends that remain.
+The code adds one per run (`send_pending[phase]++`) and decrements one
+send when that run's CQE is reaped.
+
 **BrokenRemainder**: phase 0's slot 0 and phase 1's slot 2 are submitted
-and the kernel posts slot 2's completion first. Its remainder by `Size` is
-0, so the reap lowers phase 0's count while the kernel still owns slot 0,
-and phase 1's count stays at 1 with nothing pending: phase 0 could be reset
-under the kernel, and phase 1 never.
+(as one-slot runs) and the kernel posts slot 2's completion first. Its
+remainder by `Size` is 0, so the reap lowers phase 0's count while the
+kernel still owns slot 0, and phase 1's count stays at 1 with nothing
+pending: phase 0 could be reset under the kernel, and phase 1 never. A
+multi-slot run still has one head, so its one completion lowers one send's
+count.

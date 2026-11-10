@@ -158,6 +158,8 @@ struct rocketnet_network_simulator_index_stats_t
     uint64_t max_selection_summary_words;
     uint64_t max_selection_occupancy_words;
     uint64_t max_selection_slots;
+    uint64_t receive_any_slots;
+    uint64_t max_receive_any_slots;
     uint64_t stale_removals;
 };
 

@@ -910,7 +910,8 @@ void rn_window_ack_packet_failed( rn_window_ack_t * ack, const uint64_t * number
         rn_send_number_t * slot = &region->send_numbers[slot_index];
         rocketnet_assert( slot->number == n );
 
-        // never on the wire: stays never sent, so no reliable timeout clock (m9.3)
+        // never on the wire: stays never sent, so no reliable timeout clock (m9.3;
+        // proofs/tla/RNResendTiming.tla WalkRefused)
         if ( !rn_send_number_never_sent( slot->last_send ) )
             slot->last_send = due_now_sentinel;
         if ( !slot->acked )
