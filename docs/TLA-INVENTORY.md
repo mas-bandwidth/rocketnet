@@ -65,6 +65,13 @@ revision under review.
 | server payload ring | `RNDriverSendStaging`, `RNServerPayloadRingLayout` | no slot at or past the send capacity handed out or read, each flush sends exactly the slots finished since the last, a slot held by one thread at its own frame |
 | live fleet and split-load barriers | `RNLiveFleetRun`, `SplitStart` | live fleet lifecycle phases and split-load start barrier synchronization |
 
+ReplayWindow's two gate invariants (`NoAdvanceBeforeConnect` and
+`NoOpenBeforeConnect`), RNWrittenRing's `NoUnwrittenRead`, and RNOpenAddress's
+clear-first `EraseEnds` hold by construction. The gated receive never opens or
+advances a window that has no slot, a read that checks the written bit never
+takes an unwritten record's bytes, and the clear-first erase increments its
+scan only while `scanned < N`. Those invariants stay in their modules.
+
 Model constants must stay small enough for exhaustive checking while retaining
 the production relationship being proved. A model-check result is evidence for
 its stated abstraction; unit and functional gates still verify the C++ seam.
