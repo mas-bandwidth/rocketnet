@@ -69,10 +69,10 @@
 #                           that fires in Debug is compiled out, and the
 #                           optimizer is a different compiler. The ubuntu
 #                           Release row runs as two parallel legs.
-#   build-and-test-windows  the build and the unit suite under MSVC, Release,
-#                           as two parallel legs. The Debug row and the
-#                           Windows functional suite are in nightly.yml
-#                           (windows / Debug, windows / Release ASan).
+#   build-and-test-windows  nightly: the build and the unit suite under MSVC,
+#                           Release, as three parallel legs. Per commit, happy
+#                           path / windows runs the build, the unit suite and
+#                           the happy path; Debug and functional are nightly.yml.
 #   sanitizers              asan + ubsan over focused transport recovery,
 #                           lifecycle, driver, sodium and XDP controls; the
 #                           exhaustive functional suite is in nightly-leaks
@@ -164,7 +164,7 @@ concurrency:
 #       and no-XDP builds; platform selftests / ubuntu-24.04.
 #   Windows: windows / Release legs (a), (b) and (c) whole (per commit,
 #       happy path / windows builds the whole tree under MSVC and runs the
-#       happy path).
+#       happy path and the unit suite).
 #   unit-case coverage (every registered unit case runs in some
 #       configuration); the wide-channel unit cases (Linux Debug builds).
 #   asan + ubsan (unit suite portable), fuzz smoke NDEBUG, big endian s390x /
@@ -1151,7 +1151,8 @@ jobs:
     # targets, measured 143s on run 41240496784 (checkout 11s, configure 19s,
     # build 55s, unit suite 38s) and hit the two-minute bound; MSVC's floor
     # leaves no room for a suite. Per commit, happy path / windows builds the
-    # whole tree under MSVC and runs the happy path (106s on the same run).
+    # whole tree under MSVC and runs the happy path and the unit suite
+    # (test.exe; the happy path alone measured 106s on the same run).
     if: inputs.full
     timeout-minutes: 7200
     strategy:
@@ -1572,6 +1573,11 @@ jobs:
       - name: Start combined unit and functional timing
         shell: bash
         run: *start_unit_functional_timing
+
+      - name: Run the unit suite (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: ./bin/Release/test.exe
 
       - name: Run happy_path
         shell: bash
