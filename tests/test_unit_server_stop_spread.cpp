@@ -531,6 +531,15 @@ static void test_server_kick_at_steady_cap_counts_dropped_burst()
     rocketnet_unit_check( counters[ROCKETNET_COUNTER_DISCONNECT_BURST_DROPPED] == dropped + 1 );
     rocketnet_unit_check( g_stop_spread_dropped_lines == 1 );
 
+    // with room for every waiting packet, the stop sends the two retained
+    // bursts whole and nothing for the dropped one
+
+    f->capacity = 64;
+    rocketnet_server_transport_stop( server );
+    rocketnet_unit_check( rocketnet_server_transport_stopped( server ) );
+    for ( int i = 0; i < clients; i++ )
+        rocketnet_unit_check( f->flushed[i] == ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
+
     rn_test_server_transport_stop_and_destroy( server );
     delete f;
 }
