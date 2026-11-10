@@ -11,6 +11,7 @@ bool rocketnet_server_socket_test_replay_marks();
 bool rocketnet_server_socket_test_send_failures_without_mutex();
 bool rocketnet_server_socket_test_reply_mac_refreshed_at_finish();
 bool rocketnet_server_socket_test_gateway_refresh();
+bool rocketnet_server_socket_test_worker_stack();
 
 int main()
 {
@@ -25,6 +26,7 @@ int main()
     const bool send_failures_passed = rocketnet_server_socket_test_send_failures_without_mutex();
     const bool reply_mac_passed = rocketnet_server_socket_test_reply_mac_refreshed_at_finish();
     const bool gateway_refresh_passed = rocketnet_server_socket_test_gateway_refresh();
+    const bool worker_stack_passed = rocketnet_server_socket_test_worker_stack();
     rocketnet_term();
 
     if ( !passed )
@@ -74,6 +76,14 @@ int main()
     }
 
     printf( "test_xdp_transport_gateway_refresh\n" );
+
+    if ( !worker_stack_passed )
+    {
+        fprintf( stderr, "native XDP worker 128 KiB stack check failed\n" );
+        return 1;
+    }
+
+    printf( "test_xdp_transport_worker_fits_128k_stack\n" );
 
     // a umem frame holds the largest datagram a receiver accepts, with the
     // ethernet header and the larger (IPv6) IP header in front of it

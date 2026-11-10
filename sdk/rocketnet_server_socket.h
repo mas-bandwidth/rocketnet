@@ -188,6 +188,7 @@ bool rocketnet_server_socket_test_receive_dropped( rocketnet_server_socket_test_
                                                    const struct rocketnet_server_transport_io_operations_t * xdp );
 bool rocketnet_server_socket_test_reply_mac_refreshed_at_finish();
 bool rocketnet_server_socket_test_gateway_refresh();
+bool rocketnet_server_socket_test_worker_stack();
 #endif // #if ROCKETNET_DEV
 
 struct rocketnet_server_socket_process_packets_t * rocketnet_server_socket_process_packets( struct rocketnet_server_socket_t * server_socket );
