@@ -24,7 +24,6 @@
 #include "rocketnet_platform.h"
 #include "rocketnet_memory.h"
 #include "rocketnet_driver_loopback.h"
-#include "rocketnet_standard_rules.h"
 
 #include <sodium.h>
 
@@ -1785,17 +1784,6 @@ void rocketnet_client_abort_message( struct rocketnet_client_t * client )
 // the room query: rn_message_object_send_room shares start message's checks,
 // its route and the region's allocation decision, so the answer is the
 // start's. Pure; with no connection object there is nothing to send on
-
-// The one-record limits of standard/MESSAGES.md m2.1 from the formulas the
-// send paths use: the unreliable record rule (rn_endpoint_send_route), the
-// reliable fragment rule over the SINGLE payload capacity the ordered path is
-// given (rn_channels_finish), and each sequenced code's record header for the
-// channel. Pure: no state, no misuse count.
-
-int rocketnet_max_unfragmented_message_bytes( enum rocketnet_reliability_t reliability, int channel )
-{
-    return rn_standard_max_unfragmented_message_bytes( reliability, channel );
-}
 
 bool rocketnet_client_can_send_message( const struct rocketnet_client_t * client, int channel, enum rocketnet_reliability_t reliability, int max_bytes )
 {

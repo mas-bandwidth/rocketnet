@@ -52,9 +52,13 @@
 #define ROCKETNET_FILTER_EPOCH_KEYED_LAST       255
 
 // the keyed filter input: the packet type, the packet length as a little-endian
-// u16, then the first four bytes after the prefilter header
+// u16, then the first four bytes after the prefilter header. A packet shorter
+// than the prefilter header plus those four bytes is refused before any MAC.
 
-#define ROCKETNET_KEYED_FILTER_INPUT_BYTES      ( ROCKETNET_PACKET_TYPE_FIELD_BYTES + 2 + ROCKETNET_FILTER_VALUE_BYTES )
+#define ROCKETNET_KEYED_FILTER_LENGTH_BYTES     2
+#define ROCKETNET_KEYED_FILTER_PAYLOAD_BYTES    4
+#define ROCKETNET_KEYED_FILTER_INPUT_BYTES      ( ROCKETNET_PACKET_TYPE_FIELD_BYTES + ROCKETNET_KEYED_FILTER_LENGTH_BYTES + ROCKETNET_KEYED_FILTER_PAYLOAD_BYTES )
+#define ROCKETNET_KEYED_FILTER_MIN_PACKET_BYTES ( ROCKETNET_PREFILTER_BYTES + ROCKETNET_KEYED_FILTER_PAYLOAD_BYTES )
 
 // the published test filter value, embedded so development works out of the
 // box at epoch 0. production titles get their own constant from the per-title
