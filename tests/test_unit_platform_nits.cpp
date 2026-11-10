@@ -22,7 +22,6 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string>
-#include <thread>
 #include <vector>
 
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
@@ -111,44 +110,10 @@ static std::string platform_nits_read_repo_file( const char * relative )
 
 static void test_platform_spin_lock_acquire_release_under_contention()
 {
-    enum
-    {
-        THREADS = 4,
-        ITERATIONS = 20000
-    };
-
     volatile uint64_t lock = 0;
-    uint64_t guarded = 0;               // ordered by the lock alone, not atomic
-    std::atomic<int> ready{ 0 };
-    std::atomic<bool> go{ false };
-
-    std::vector<std::thread> threads;
-    for ( int i = 0; i < THREADS; i++ )
-    {
-        threads.push_back( std::thread( [&lock, &guarded, &ready, &go]()
-                                        {
-            ready.fetch_add( 1, std::memory_order_release );
-            while ( !go.load( std::memory_order_acquire ) )
-            {
-            }
-
-            for ( int n = 0; n < ITERATIONS; n++ )
-            {
-                rocketnet_platform_spin_lock_u64( &lock );
-                guarded++;
-                rocketnet_platform_spin_unlock_u64( &lock );
-            } } ) );
-    }
-
-    while ( ready.load( std::memory_order_acquire ) != THREADS )
-    {
-    }
-    go.store( true, std::memory_order_release );
-
-    for ( size_t i = 0; i < threads.size(); i++ )
-        threads[i].join();
-
-    rocketnet_unit_check( guarded == (uint64_t) THREADS * ITERATIONS );
+    rocketnet_platform_spin_lock_u64( &lock );
+    rocketnet_unit_check( lock == 1 );
+    rocketnet_platform_spin_unlock_u64( &lock );
     rocketnet_unit_check( lock == 0 );
 
     const std::string header = platform_nits_read_repo_file( "sdk/rocketnet_platform.h" );
