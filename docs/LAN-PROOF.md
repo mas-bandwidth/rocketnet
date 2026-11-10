@@ -92,9 +92,10 @@ inside a `virtme-ng` guest with three CPUs,
 `--network bridge=<test bridge>`. The guest holds the whole server, so its
 memory is computed, not fixed: the script runs `load_split plan-server <clients>` on the built head and sizes the guest as
 `(server_public_required_bytes + clients * 9848630) * 5 / 4 + 1 GiB`, rounded
-up to whole GiB. The 9848630-byte per-client reserve is the measured run
-reserve (start-time allocations and UMEM) from
-[LOAD.md](LOAD.md#the-nightly-af_xdp-cells-guest-memory); the 1 GiB is the
+up to whole GiB. The 9,848,630-byte (`9848630`) per-client figure is a chosen
+per-client reserve allowance in `scripts/lan-proof-remote` (compared with the
+1,742,815-byte per-client touched-memory figure measured in
+[LOAD.md](LOAD.md#the-nightly-af_xdp-cells-guest-memory)); the 1 GiB is the
 guest kernel's own. The recorded 1,000-client plan was 18394142400 bytes,
 giving a 34 GiB guest; use the current planner output for another build or
 configuration. The script refuses the xdp cell when the host's
