@@ -544,10 +544,11 @@ static bool rocketnet_rio_close_socket( rocketnet_server_rio_t * rio )
 
 static void rocketnet_rio_post_phase( rocketnet_server_rio_t * rio, int phase, int count );
 
-// proofs/tla/RNRioWorker.tla WStop, WClose and WDrain: post handed and finished fill
-// phases, commit deferred sends, retire send completions until no committed
-// send is in flight, close the socket (which cancels every posted receive),
-// then dequeue every available completion of each queue. True when nothing is
+// proofs/tla/RNRioWorker.tla WStop, WClose, WDrainSend and WDrainReceive: post handed
+// and finished fill phases, commit deferred sends, retire send completions
+// until no committed send is in flight, close the socket (which cancels every
+// posted receive), then dequeue every available completion of each queue, a
+// call per full batch. True when nothing is
 // kernel owned. Runs on the worker, or inline on create's failure path
 // before the worker exists; never waits.
 // proofs/tla/RNRioDriver.tla Drain: both completion queues are dequeued and nothing
