@@ -21,11 +21,22 @@
 #include "rocketnet_address.h"
 #include "rocketnet_platform.h"
 
-#include <assert.h>
 #include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define ROCKETNET_FAKE_CLIENT_MAX_DATAGRAMS 256
+
+// a full queue fails the test under every build, NDEBUG included
+
+static inline void rocketnet_fake_client_check_room( int count, const char * queue )
+{
+    if ( count < ROCKETNET_FAKE_CLIENT_MAX_DATAGRAMS )
+        return;
+    printf( "fake client driver: %s queue full at %d datagrams (ROCKETNET_FAKE_CLIENT_MAX_DATAGRAMS)\n", queue, ROCKETNET_FAKE_CLIENT_MAX_DATAGRAMS );
+    exit( 1 );
+}
 
 struct rocketnet_fake_client_datagram_t
 {
@@ -112,7 +123,7 @@ static void rocketnet_fake_client_send( void * transport, const rocketnet_addres
 {
     rocketnet_fake_client_transport_io_t * fake = (rocketnet_fake_client_transport_io_t *) transport;
     fake->send_calls++;
-    assert( fake->num_sent < ROCKETNET_FAKE_CLIENT_MAX_DATAGRAMS );
+    rocketnet_fake_client_check_room( fake->num_sent, "sent" );
 
     rocketnet_fake_client_datagram_t * dg = &fake->sent[fake->num_sent++];
     dg->address = *to;
@@ -120,8 +131,18 @@ static void rocketnet_fake_client_send( void * transport, const rocketnet_addres
     memcpy( dg->data, data, (size_t) bytes );
 }
 
+// the bytes a receive copies: the stored prefix of a datagram, at most the
+// caller's room. The wire size, which may exceed both, is what is reported
+// (sdk/rocketnet_driver.h).
+
+static inline int rocketnet_fake_client_copy_bytes( const rocketnet_fake_client_datagram_t * dg, int room )
+{
+    int n = dg->bytes < room ? dg->bytes : room;
+    return n < (int) sizeof( dg->data ) ? n : (int) sizeof( dg->data );
+}
+
 // receive pops one inbound datagram into the caller's buffer, copying at most
-// the capacity, and returns its bytes, or 0 when drained.
+// the capacity, and returns its wire size, or 0 when drained.
 
 static int rocketnet_fake_client_receive( void * transport, rocketnet_address_t * from, uint8_t * data, int capacity )
 {
@@ -135,10 +156,9 @@ static int rocketnet_fake_client_receive( void * transport, rocketnet_address_t 
     fake->inbound_count--;
     *from = dg->address;
 
-    int n = dg->bytes < capacity ? dg->bytes : capacity;
-    memcpy( data, dg->data, (size_t) n );
+    memcpy( data, dg->data, (size_t) rocketnet_fake_client_copy_bytes( dg, capacity ) );
 
-    return n;
+    return dg->bytes;
 }
 
 // send_batch appends each send.
@@ -150,7 +170,7 @@ static void rocketnet_fake_client_send_batch( void * transport, const rocketnet_
 
     for ( int i = 0; i < count; i++ )
     {
-        assert( fake->num_sent < ROCKETNET_FAKE_CLIENT_MAX_DATAGRAMS );
+        rocketnet_fake_client_check_room( fake->num_sent, "sent" );
 
         rocketnet_fake_client_datagram_t * dg = &fake->sent[fake->num_sent++];
         dg->address = *sends[i].to;
@@ -160,7 +180,8 @@ static void rocketnet_fake_client_send_batch( void * transport, const rocketnet_
 }
 
 // receive_batch pops up to max_packets into packet_data + i * packet_stride,
-// writing from[i] and packet_bytes[i], and returns the count.
+// copying at most the stride, writing from[i] and each wire size to
+// packet_bytes[i], and returns the count.
 
 static int rocketnet_fake_client_receive_batch( void * transport, rocketnet_address_t * from, uint8_t * packet_data, int packet_stride, int * packet_bytes, int max_packets )
 {
@@ -175,9 +196,8 @@ static int rocketnet_fake_client_receive_batch( void * transport, rocketnet_addr
         fake->inbound_count--;
         from[got] = dg->address;
 
-        int n = dg->bytes < packet_stride ? dg->bytes : packet_stride;
-        memcpy( packet_data + got * packet_stride, dg->data, (size_t) n );
-        packet_bytes[got] = n;
+        memcpy( packet_data + got * packet_stride, dg->data, (size_t) rocketnet_fake_client_copy_bytes( dg, packet_stride ) );
+        packet_bytes[got] = dg->bytes;
         got++;
     }
 
@@ -264,12 +284,12 @@ static const rocketnet_client_transport_io_operations_t rocketnet_fake_client_op
     NULL, NULL, NULL, NULL
 };
 
-// Push an inbound datagram (docs/CLIENT-IO.md "The I/O step"). Appends past
-// ROCKETNET_FAKE_CLIENT_MAX_DATAGRAMS assert.
+// Push an inbound datagram (docs/CLIENT-IO.md "The I/O step"). An append past
+// ROCKETNET_FAKE_CLIENT_MAX_DATAGRAMS fails the test.
 
 inline void rocketnet_fake_client_push( rocketnet_fake_client_transport_io_t * fake, const rocketnet_address_t * from, const uint8_t * data, int bytes )
 {
-    assert( fake->inbound_count < ROCKETNET_FAKE_CLIENT_MAX_DATAGRAMS );
+    rocketnet_fake_client_check_room( fake->inbound_count, "inbound" );
 
     rocketnet_fake_client_datagram_t * dg = &fake->inbound[( fake->inbound_head + fake->inbound_count ) % ROCKETNET_FAKE_CLIENT_MAX_DATAGRAMS];
     dg->address = *from;
