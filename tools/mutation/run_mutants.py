@@ -12,9 +12,11 @@ the oracle:
   did_not_compile the build fails (a text mutator has no type awareness)
   not_run         the time budget ran out first
 
-Every operator this generator emits is risk-class. The process exits 1 when a
-chosen risk-class mutant survives. --self-test checks that rule on planted
-source: it does not compile the SDK and it does not sleep.
+Every operator this generator emits is risk-class, except a mutation inside a
+rocketnet_assert argument, which a Release build compiles out and which is
+therefore non-risk. The process exits 1 when a chosen risk-class mutant
+survives. --self-test checks that rule on planted source: it does not compile
+the SDK and it does not sleep.
 
 Python 3 standard library only. Example:
 
@@ -55,6 +57,7 @@ COND_RE = re.compile(r"\b(if|while)\s*\(")
 ASSIGN_RE = re.compile(r"^(?P<lhs>[^=;]+?)\s*(?:=|\+=|-=|\*=|/=|\|=|&=|\^=|<<=|>>=)\s*(?!=)[^;]*;$")
 INCREMENT_RE = re.compile(r"^(?:\+\+|--)[\w\->.\[\] ]+;$|^[\w\->.\[\] ]+(?:\+\+|--);$")
 TYPE_WORDS = {"char", "short", "int", "long", "unsigned", "signed", "float", "double", "void", "bool", "const", "auto", "size_t"}
+ASSERT_RE = re.compile(r"\brocketnet_assert\s*\(")
 
 # The operators generate() emits. A survivor of one of these is a risk-class
 # survivor: the unit suite did not kill it. did_not_compile is not survival.
@@ -123,6 +126,33 @@ def code_mask(text):
     return mask
 
 
+def assert_mask(text):
+    """One flag per character: True inside a rocketnet_assert call.
+
+    Release builds compile rocketnet_assert out (ROCKETNET_ASSERTS is 0 under
+    NDEBUG), so a survivor inside its argument is not a risk-class survivor.
+    """
+    mask = [False] * len(text)
+    code = code_mask(text)
+    for m in ASSERT_RE.finditer(text):
+        if not code[m.start()]:
+            continue
+        open_pos = m.end() - 1
+        depth = 0
+        for j in range(open_pos, len(text)):
+            if not code[j]:
+                continue
+            if text[j] == "(":
+                depth += 1
+            elif text[j] == ")":
+                depth -= 1
+                if depth == 0:
+                    for k in range(m.start(), j + 1):
+                        mask[k] = True
+                    break
+    return mask
+
+
 def in_macro_call(line, pos):
     depth = 0
     for j in range(pos - 1, -1, -1):
@@ -147,17 +177,21 @@ def matching_paren(line, open_pos):
 
 def generate(rel, text):
     mask = code_mask(text)
+    amask = assert_mask(text)
     mutants, offset, prev_code = [], 0, ""
     for number, line in enumerate(text.split("\n"), 1):
         lmask = mask[offset:offset + len(line)]
+        lamask = amask[offset:offset + len(line)]
         offset += len(line) + 1
 
         def code(s, e):
             return all(lmask[s:e])
 
         def add(op, col, old, new, mutated):
+            guarded = any(lamask[col:col + max(1, len(old))]) or old.lstrip().startswith("rocketnet_assert")
             mutants.append({"id": f"{rel}:{number}:{col + 1}:{op}:{new}", "file": rel, "line": number, "column": col + 1,
-                            "operator": op, "class": mutant_class(op), "original_token": old, "mutated_token": new,
+                            "operator": op, "class": "other" if guarded else mutant_class(op),
+                            "original_token": old, "mutated_token": new,
                             "original": line, "mutated": mutated})
 
         for m in OPERATOR_RE.finditer(line):
@@ -313,7 +347,24 @@ def self_test():
     if risk_survivors([detected]) or risk_survivors([missed]) or risk_survivors([other]):
         print("self-test FAILED: a non-survivor or a non-risk mutant failed the gate")
         return 1
-    print(f"ok run_mutants self-test: {len(first)} planted mutants, risk-class survival fails the gate")
+    planted_assert = (
+        "int guarded(int a, int b) {\n"
+        "    rocketnet_assert( a < b );\n"
+        "    return a;\n"
+        "}\n"
+    )
+    guards = [m for m in generate("plant.cpp", planted_assert) if m["line"] == 2]
+    if not guards:
+        print("self-test FAILED: no mutant planted inside rocketnet_assert")
+        return 1
+    if any(m["class"] == "risk" for m in guards):
+        print("self-test FAILED: a rocketnet_assert mutant is risk-class")
+        return 1
+    if risk_survivors([dict(m, status="survived") for m in guards]):
+        print("self-test FAILED: a survived rocketnet_assert mutant failed the gate")
+        return 1
+    print(f"ok run_mutants self-test: {len(first)} planted mutants, risk-class survival fails the gate, "
+          "rocketnet_assert survivors do not")
     return 0
 
 
