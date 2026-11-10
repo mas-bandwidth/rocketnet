@@ -8,8 +8,8 @@
 // what that plan refuses before any allocation, and frees everything when an
 // allocation fails; a reverse window the allocator refuses leaves the patterns
 // off; deliver_packets and send refuse a size outside 1 .. the receive
-// ceiling, a NULL packet and a full wire. No socket, no thread, no clock: time
-// is an argument.
+// ceiling, a NULL packet and a full wire. No socket and no clock: time is an
+// argument. One case starts a helper thread that only holds a mutex.
 
 #include "test_unit_registry.h"
 
@@ -21,6 +21,9 @@
 
 #include <limits.h>
 #include <string.h>
+#include <atomic>
+
+#include "rocketnet_platform.h"
 
 #define check rocketnet_unit_check
 
@@ -272,10 +275,88 @@ static void test_network_simulator_refuses_bad_sizes_and_a_full_wire()
     rocketnet_network_simulator_destroy( simulator );
 }
 
+// A producer that still owns the simulator mutex must not stall the send
+// path. The helper holds the mutex across the call. take_setting returns
+// without applying the handed-over latency, and the next pass that finds the
+// mutex free applies it. Delivery time is an argument.
+
+struct simulator_take_hold_t
+{
+    struct rocketnet_platform_mutex_t * mutex;
+    std::atomic<int> held;
+    std::atomic<int> release;
+};
+
+static void simulator_take_hold_thread( struct rocketnet_platform_thread_t * thread, void * arg )
+{
+    (void) thread;
+
+    struct simulator_take_hold_t * hold = (struct simulator_take_hold_t *) arg;
+    rocketnet_platform_mutex_acquire( hold->mutex );
+    hold->held.store( 1, std::memory_order_release );
+    while ( hold->release.load( std::memory_order_acquire ) == 0 )
+    {
+    }
+    rocketnet_platform_mutex_release( hold->mutex );
+}
+
+static void test_network_simulator_take_setting_does_not_wait()
+{
+    struct rocketnet_network_simulator_t * simulator = rocketnet_network_simulator_create( NULL, 8, 1 );
+    check( simulator != NULL );
+
+    struct rocketnet_address_t from, to;
+    simulator_addresses( &from, &to );
+
+    struct rocketnet_platform_mutex_t mutex;
+    check( rocketnet_platform_mutex_create( &mutex ) );
+
+    rocketnet_network_simulator_reconfigure( simulator, &mutex, 1.0, 0.0, 0.0f, 0.0f );
+
+    struct simulator_take_hold_t hold;
+    hold.mutex = &mutex;
+    hold.held.store( 0, std::memory_order_relaxed );
+    hold.release.store( 0, std::memory_order_relaxed );
+
+    int started = 0;
+    struct rocketnet_platform_thread_t * helper = rocketnet_platform_thread_create( NULL, simulator_take_hold_thread, &hold, &started );
+    check( helper != NULL );
+
+    while ( hold.held.load( std::memory_order_acquire ) == 0 )
+    {
+    }
+
+    const bool active = rocketnet_network_simulator_take_setting( simulator, &mutex );
+    check( !active );
+
+    const uint8_t byte = 7;
+    rocketnet_network_simulator_send( simulator, &from, &to, &byte, 1, 0.0 );
+    uint8_t received[ROCKETNET_RECEIVE_CEILING];
+    struct rocketnet_address_t received_from;
+    check( rocketnet_network_simulator_receive( simulator, &to, 0.0, &received_from, received ) == 1 );
+    check( received[0] == byte );
+
+    hold.release.store( 1, std::memory_order_release );
+    rocketnet_platform_thread_join( helper );
+    rocketnet_platform_thread_destroy( helper );
+
+    check( rocketnet_network_simulator_take_setting( simulator, &mutex ) );
+
+    const uint8_t late = 8;
+    rocketnet_network_simulator_send( simulator, &from, &to, &late, 1, 0.0 );
+    check( rocketnet_network_simulator_receive( simulator, &to, 0.0, &received_from, received ) == 0 );
+    check( rocketnet_network_simulator_receive( simulator, &to, 1.0, &received_from, received ) == 1 );
+    check( received[0] == late );
+
+    rocketnet_platform_mutex_destroy( &mutex );
+    rocketnet_network_simulator_destroy( simulator );
+}
+
 REGISTER_UNIT_TEST( test_network_simulator_create_allocates_its_plan );
 REGISTER_UNIT_TEST( test_network_simulator_create_refuses_what_its_plan_refuses );
 REGISTER_UNIT_TEST( test_network_simulator_create_frees_on_a_refused_allocation );
 REGISTER_UNIT_TEST( test_network_simulator_refused_window_leaves_patterns_off );
 REGISTER_UNIT_TEST( test_network_simulator_refuses_bad_sizes_and_a_full_wire );
+REGISTER_UNIT_TEST( test_network_simulator_take_setting_does_not_wait );
 
 #endif // #if ROCKETNET_DEV

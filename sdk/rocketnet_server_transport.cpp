@@ -930,7 +930,8 @@ static void rocketnet_server_link_flush( rocketnet_server_transport_t * transpor
 // A simulator holding nothing is read without the lock and drains nothing.
 // A due packet leaves only while the transport reports send room; the rest
 // stay held for the next update's drain, so none is refused and lost
-// (proofs/tla/ServerStopSpread.tla Room).
+// (proofs/tla/ServerStopSpread.tla Room).  A busy simulator lock leaves the
+// held packets for the next drain.  This path does not wait.
 static void rocketnet_server_link_drain( rocketnet_server_transport_t * transport )
 {
     if ( !transport->link_simulator || !rocketnet_network_simulator_holds_any( transport->link_simulator ) )
@@ -943,7 +944,8 @@ static void rocketnet_server_link_drain( rocketnet_server_transport_t * transpor
         rocketnet_address_t from, to;
 
         uint8_t packet[ROCKETNET_RECEIVE_CEILING];
-        rocketnet_platform_mutex_acquire( &transport->link_simulator_mutex );
+        if ( !rocketnet_platform_mutex_try_acquire( &transport->link_simulator_mutex ) )
+            break;
 
         const int packet_bytes = rocketnet_network_simulator_receive_any( transport->link_simulator,
                                                                           transport->time, &from, &to, packet );
