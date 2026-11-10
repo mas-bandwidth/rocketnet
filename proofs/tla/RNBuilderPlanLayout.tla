@@ -294,9 +294,9 @@ Range ==
 
 \* rn_builder_next_in_class's offer: a group with cursor < end whose
 \* sequence[cursor] names it
-Head(g) == gcursor[g] < gend[g] /\ seqGroup[gcursor[g]] = g
+HeadAt(g) == gcursor[g] < gend[g] /\ seqGroup[gcursor[g]] = g
 
-Live(k) == \E g \in cgBegin[k]..(cgEnd[k] - 1) : Head(g)
+Live(k) == \E g \in cgBegin[k]..(cgEnd[k] - 1) : HeadAt(g)
 
 \* a head of the lowest live class taken: taken_positions[records++] =
 \* rn_builder_take_head (cursor++), items[i].taken = 1
@@ -307,7 +307,7 @@ Take ==
          /\ Live(k)
          /\ \A k2 \in 0..(k - 1) : ~Live(k2)
          /\ \E g \in cgBegin[k]..(cgEnd[k] - 1) :
-              /\ Head(g)
+              /\ HeadAt(g)
               /\ packet' = Append(packet, gcursor[g])
               /\ gcursor' = [gcursor EXCEPT ![g] = @ + 1]
               /\ taken' = [taken EXCEPT ![seqItem[gcursor[g]]] = TRUE]
