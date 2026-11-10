@@ -1829,11 +1829,11 @@ static void test_channels_allocator_sizing()
     check( strstr( rn_log_last, "16 connections" ) != NULL );
 }
 
+#if !defined( _WIN32 )
 static void test_channels_allocator_trap_witness()
 {
     // the trap fires: each net, armed in a child, ends it with exit 1
 
-#if !defined( _WIN32 )
     for ( int net = 0; net < 4; net++ )
     {
         if ( net == 2 && !RN_TEST_TRAP_LIBC )
@@ -1884,8 +1884,8 @@ static void test_channels_allocator_trap_witness()
         check( waitpid( pid, &status, 0 ) == pid );
         check( WIFEXITED( status ) && WEXITSTATUS( status ) == 1 );
     }
-#endif // #if !defined(_WIN32)
 }
+#endif // #if !defined( _WIN32 )
 
 // ----------------------------------------------------------------
 //                  the soak: send and receive at full load
@@ -5043,7 +5043,9 @@ static const struct channels_test_t channels_tests[] = {
     { "test_channels_allocator_descriptor_pool", "ChannelsAllocatorDescriptorPool", test_channels_allocator_descriptor_pool },
     { "test_channels_allocator_arena", "ChannelsAllocatorArena", test_channels_allocator_arena },
     { "test_channels_allocator_sizing", "ChannelsAllocatorSizing", test_channels_allocator_sizing },
+#if !defined( _WIN32 )
     { "test_channels_allocator_trap_witness", "ChannelsAllocatorTrapWitness", test_channels_allocator_trap_witness },
+#endif // #if !defined( _WIN32 )
     { "test_channels_allocator_no_live_allocation", "ChannelsAllocatorNoLiveAllocation", test_channels_allocator_no_live_allocation },
     { "test_channels_single_form_parses_as_one_code0_record", "ChannelsSingleFormParsesAsOneCode0Record", test_channels_single_form_parses_as_one_code0_record },
     { "test_channels_window_send_numbers_late_never_at_send", "ChannelsWindowSendNumbersLateNeverAtSend", test_channels_window_send_numbers_late_never_at_send },
