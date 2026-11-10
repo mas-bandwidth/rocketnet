@@ -313,6 +313,12 @@ in that claim's view. `RNGsoHandoff.RxClaim` and `RNXdpReceiveRing.Drain`
 model this rule. A GSO worker pass that finds its bank full (it stays full
 until main's swap) or whose receive fails sleeps 1 ms before the next pass
 instead of spinning on poll and the mutex (`RNGsoHandoff.RxBacksOff`).
+The workers hold the mutex only to append one batch (one `recvmmsg` call's
+results on GSO, 64 descriptors on XDP), never across a syscall. Two cases
+still defer a staged packet to the next call: main still holds a retained
+tail from a budget-capped call (it swaps only once that bank is consumed,
+because the current view points into it), or main's try-acquire meets a
+worker mid-batch (main never waits on the worker).
 
 ## Creation and shutdown
 

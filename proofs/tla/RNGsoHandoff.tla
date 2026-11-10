@@ -34,8 +34,8 @@
 (* storage, and refuses (does not free) while a worker has not exited.     *)
 (*                                                                         *)
 (* Defect switches, FALSE in the passing run: ClaimStale (the RX claim     *)
-(* drops the most recently staged packet instead of taking the whole       *)
-(* bank, so a packet staged before the claim is not in its view),          *)
+(* leaves the most recently staged packet behind for a later claim, so a   *)
+(* packet staged before the claim is not in its view),                     *)
 (* PublishWhileHeld (the RX worker writes a datagram into the buffer main  *)
 (* currently holds, as if it published over main's view), MainBlocks       *)
 (* (main acquires the TX mutex with a blocking wait instead of a try),     *)
@@ -69,19 +69,21 @@ Buffers == 0 .. 2
 Threads == { "main", "worker" }
 
 (* Rule switches (operators, overridden in a cfg with <-): ClaimStale      *)
-(* makes the RX claim drop the most recently staged packet instead of     *)
-(* taking the whole bank, so a packet staged before the claim is not in   *)
-(* its view; NoBackoff sends the RX worker straight back to poll after a  *)
-(* stalled pass instead of sleeping 1ms. FALSE in the passing run; the    *)
-(* reversed witnesses MCRNGsoHandoffBrokenClaimStale.cfg and              *)
-(* MCRNGsoHandoffBrokenNoBackoff.cfg set each TRUE and violate            *)
-(* StagedBeforeClaimInView and RxBacksOff.                                *)
+(* makes the RX claim leave the most recently staged packet behind in the *)
+(* worker's next bank, deferred to a later claim as the worker-driven      *)
+(* publish deferred a packet staged after it; NoBackoff sends the RX      *)
+(* worker straight back to poll after a stalled pass instead of sleeping  *)
+(* 1ms. FALSE in the passing run; the reversed witnesses                  *)
+(* MCRNGsoHandoffBrokenClaimStale.cfg and MCRNGsoHandoffBrokenNoBackoff.cfg *)
+(* set each TRUE and violate StagedBeforeClaimInView and RxBacksOff.      *)
 ClaimStale == FALSE
 NoBackoff == FALSE
 
-(* the 1ms sleeps one behaviour may take: enough for a stall, a sleep and *)
-(* a second stall                                                          *)
-MaxSleeps == 2
+(* the stalled passes one behaviour may take: enough for a stall, a sleep *)
+(* and a second stall, and for fills after them                           *)
+MaxStalls == 3
+
+Range(s) == { s[i] : i \in DOMAIN s }
 
 VARIABLES
     lock,        \* "none", "main" or "worker": who holds the TX mutex
@@ -92,7 +94,7 @@ VARIABLES
     rxContent,   \* the packets staged in each RX buffer
     rxCursor,    \* packets of rxMain main has consumed (the retained tail follows)
     rxView,      \* rxMain's content as main claimed it
-    rxStagedClaim, \* packets staged in the worker's buffer at the last claim
+    rxStagedClaim, \* ghost: datagrams staged (arrived) before the last claim
     rxBackoff,   \* the RX worker's stall passes, its 1ms sleeps, and whether
                  \* the last pass stalled (a sleep is owed before the next)
     arrived,     \* datagrams arrived: the next is arrived + 1
@@ -157,17 +159,16 @@ RxStall ==
     /\ pcRx = "run" /\ ~rxExited /\ ~quit
     /\ ~rxBackoff.stalled
     /\ arrived < MaxRx
-    /\ rxBackoff' = [ rxBackoff EXCEPT !.stalls = @ + 1, !.stalled = ~NoBackoff ]
+    /\ rxBackoff.stalls < MaxStalls
+    /\ rxBackoff' =[ rxBackoff EXCEPT !.stalls = @ + 1, !.stalled = ~NoBackoff ]
     /\ UNCHANGED << lock, pc, pcRx, rxWorker, rxMain, rxContent, rxCursor,
                     rxView, rxStagedClaim, arrived, rxConsumed, txProducer,
                     txFree, txReady, txHeld, txFinal, txContent, staged,
                     txSent, quit, rxExited, txExited, joined, freed >>
 
-(* the 1ms sleep after a stalled pass, outside the mutex; a bounded number *)
-(* of sleeps keeps the instance finite                                     *)
+(* the 1ms sleep after a stalled pass, outside the mutex                    *)
 RxSleep ==
     /\ pcRx = "run" /\ rxBackoff.stalled
-    /\ rxBackoff.sleeps < MaxSleeps
     /\ rxBackoff' = [ rxBackoff EXCEPT !.sleeps = @ + 1, !.stalled = FALSE ]
     /\ UNCHANGED << lock, pc, pcRx, rxWorker, rxMain, rxContent, rxCursor,
                     rxView, rxStagedClaim, arrived, rxConsumed, txProducer,
@@ -194,13 +195,14 @@ WriteHeld ==
 RxClaim ==
     /\ pc["main"] = "run" /\ ~quit
     /\ rxCursor = Len(rxContent[rxMain])
-    /\ LET taken == IF ClaimStale /\ rxContent[rxWorker] # << >>
-                    THEN SubSeq( rxContent[rxWorker], 1, Len(rxContent[rxWorker]) - 1 )
-                    ELSE rxContent[rxWorker]
+    /\ LET c     == rxContent[rxWorker]
+           stale == ClaimStale /\ c # << >>
+           taken == IF stale THEN SubSeq( c, 1, Len(c) - 1 ) ELSE c
+           left  == IF stale THEN << c[Len(c)] >> ELSE << >>
        IN  /\ rxMain' = rxWorker /\ rxWorker' = rxMain
            /\ rxView' = taken /\ rxCursor' = 0
-           /\ rxStagedClaim' = Len(rxContent[rxWorker])
-           /\ rxContent' = [ rxContent EXCEPT ![rxWorker] = taken, ![rxMain] = << >> ]
+           /\ rxStagedClaim' = arrived
+           /\ rxContent' = [ rxContent EXCEPT ![rxWorker] = taken, ![rxMain] = left ]
     /\ UNCHANGED << lock, pc, pcRx, rxBackoff, arrived, rxConsumed, txProducer,
                     txFree, txReady, txHeld, txFinal, txContent, staged,
                     txSent, quit, rxExited, txExited, joined, freed >>
@@ -469,7 +471,7 @@ TypeOK ==
     /\ pcRx \in { "run", "done" }
     /\ rxWorker \in RxBuffers /\ rxMain \in RxBuffers
     /\ rxStagedClaim \in 0 .. MaxRx
-    /\ rxBackoff.stalls \in Nat /\ rxBackoff.sleeps \in 0 .. MaxSleeps
+    /\ rxBackoff.stalls \in 0 .. MaxStalls /\ rxBackoff.sleeps \in 0 .. MaxStalls
     /\ rxBackoff.stalled \in BOOLEAN
     /\ arrived \in 0 .. MaxRx /\ staged \in 0 .. MaxTx
     /\ txProducer \in Buffers \cup { NONE } /\ txHeld \in Buffers \cup { NONE }
@@ -493,9 +495,11 @@ TxQueuesDistinct ==
 (* into it while main holds it, retained tail included                    *)
 NoPublishWhileHeld == rxContent[rxMain] = rxView
 
-(* every packet staged before a claim is in that claim's view: the view   *)
-(* holds exactly the packets the worker had staged when main claimed it   *)
-StagedBeforeClaimInView == Len(rxView) = rxStagedClaim
+(* every packet staged before a claim is in that claim's view: each        *)
+(* datagram that arrived before the last claim was consumed earlier or is *)
+(* in the buffer main claimed, none left behind in the worker's bank      *)
+StagedBeforeClaimInView ==
+    \A n \in 1 .. rxStagedClaim : n \in Range(rxConsumed) \cup Range(rxContent[rxMain])
 
 (* the RX worker never spins: every stalled pass after the first is paid  *)
 (* for by a 1ms sleep, so a full bank or a failing receive cannot drive   *)

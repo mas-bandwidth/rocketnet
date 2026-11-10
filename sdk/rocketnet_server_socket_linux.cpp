@@ -133,6 +133,9 @@ struct rocketnet_server_socket_receive_buffer_t
 // buffer remains owned by its consumer until recycle().
 // proofs/tla/RNBankFifoLayout.tla Init (the constructor's loop), Publish (publish), Take (claim) and
 // Release (recycle); MCRNBankFifoLayoutLoopFour.cfg checks them at N = 4.
+// The receive side uses swap_producer instead (the consumer-driven flip,
+// not in RNBankFifoLayout): main exchanges the producer for its exhausted
+// buffer, taking a spare only for its first claim.
 template <int N> struct rocketnet_xdp_buffer_exchange_t
 {
     static_assert( N >= 3, "producer, consumer and spare XDP buffers" );
@@ -3825,7 +3828,7 @@ void rocketnet_server_socket_receive_packets( rocketnet_server_socket_t * server
 
         if ( socket->receive_held_index < 0 )
             continue;
-        // the budget already ended on an earlier queue: still recycle this
+        // the budget already ended on an earlier queue: still swap this
         // one, and take no packet from it
 
         if ( filled_queue >= 0 )
@@ -3910,6 +3913,17 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
 
     bool reported_frame_pressure = false;
 
+    // the packets the worker last saw in its current receive bank. Main's
+    // swap only hands the worker an emptied bank, so room counted from this
+    // never overstates the bank's; it is read again under the receive mutex
+    // when it says the bank is full.
+
+    uint32_t receive_staged = 0;
+
+    // the descriptors staged per hold of the receive mutex
+
+    const uint32_t receive_lock_batch = 64;
+
     // the last errno each wakeup call saw, so a hard failure is logged once
     // per contiguous run rather than every pass
 
@@ -3958,14 +3972,19 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
         // Peek: xsk_ring_cons__peek, at most the staging room and pending storage).
         // The worker appends to its current bank under the receive mutex and
         // never publishes: main's next receive swaps this filled bank for its own.
+        // The mutex is held only to append, a batch of descriptors at a time,
+        // so main's try-acquire swap never waits on more than one batch.
 
         uint32_t receive_index;
 
-        rocketnet_platform_mutex_acquire( &socket->receive_mutex );
+        if ( receive_staged >= ROCKETNET_XDP_RECV_QUEUE_SIZE )
+        {
+            rocketnet_platform_mutex_acquire( &socket->receive_mutex );
+            receive_staged = socket->receive_buffer[socket->receive_handoff.producer].num_packets;
+            rocketnet_platform_mutex_release( &socket->receive_mutex );
+        }
 
-        rocketnet_server_socket_receive_buffer_t * receive_buffer =
-            &socket->receive_buffer[socket->receive_handoff.producer];
-        const uint32_t receive_capacity = ROCKETNET_XDP_RECV_QUEUE_SIZE - receive_buffer->num_packets;
+        const uint32_t receive_capacity = ROCKETNET_XDP_RECV_QUEUE_SIZE - receive_staged;
         const uint32_t receive_limit = (uint32_t) pending_return.available() < receive_capacity ? (uint32_t) pending_return.available() : receive_capacity;
         uint32_t num_packets = receive_limit ? xsk_ring_cons__peek( &socket->receive_queue, receive_limit, &receive_index ) : 0;
 
@@ -4003,8 +4022,20 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
             const uint64_t receive_region_begin = (uint64_t) ROCKETNET_XDP_NUM_FRAMES / 2 * ROCKETNET_XDP_FRAME_SIZE;
             const uint64_t receive_region_end = (uint64_t) ROCKETNET_XDP_UMEM_FRAMES * ROCKETNET_XDP_FRAME_SIZE;
 
+            rocketnet_platform_mutex_acquire( &socket->receive_mutex );
+
+            rocketnet_server_socket_receive_buffer_t * receive_buffer = &socket->receive_buffer[socket->receive_handoff.producer];
+
             for ( uint32_t i = 0; i < num_packets; i++ )
             {
+                if ( i > 0 && i % receive_lock_batch == 0 )
+                {
+                    // let main's swap in between batches; the bank may change
+                    rocketnet_platform_mutex_release( &socket->receive_mutex );
+                    rocketnet_platform_mutex_acquire( &socket->receive_mutex );
+                    receive_buffer = &socket->receive_buffer[socket->receive_handoff.producer];
+                }
+
                 rocketnet_assert( receive_buffer->num_packets < ROCKETNET_XDP_RECV_QUEUE_SIZE );
 
                 const struct xdp_desc * __restrict__ desc = xsk_ring_cons__rx_desc( &socket->receive_queue, receive_index + i );
@@ -4059,6 +4090,9 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
                 }
             }
 
+            receive_staged = receive_buffer->num_packets;
+            rocketnet_platform_mutex_release( &socket->receive_mutex );
+
             rocketnet_xdp_receive_ring_finish( num_packets, num_consumed, []( void * r, uint32_t n )
                                                { xsk_ring_cons__cancel( (struct xsk_ring_cons *) r, n ); }, []( void * r, uint32_t n )
                                                { xsk_ring_cons__release( (struct xsk_ring_cons *) r, n ); }, &socket->receive_queue );
@@ -4076,7 +4110,6 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
 
             if ( !retained )
             {
-                rocketnet_platform_mutex_release( &socket->receive_mutex );
                 rocketnet_error( "xdp pending frame ownership invariant failed" );
                 socket->quit = true;
                 break;
@@ -4084,13 +4117,6 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
 
             return_pending_frames();
         }
-
-        // The worker never publishes: main swapped this filled buffer out
-        // under the mutex only between passes, and the worker keeps filling
-        // its current bank until main's next receive exchanges it for the
-        // exhausted one.
-
-        rocketnet_platform_mutex_release( &socket->receive_mutex );
 
         // mark any completed send packet frames as free to be reused
 

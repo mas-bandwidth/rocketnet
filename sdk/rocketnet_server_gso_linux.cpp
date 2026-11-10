@@ -1761,7 +1761,7 @@ void rocketnet_server_gso_send_packets( struct rocketnet_server_gso_t * gso )
 // Returns the filled buffer on a try-acquire, or NULL when contended.
 // proofs/tla/RNGsoRecvFill.tla Publish: main hands the worker an empty buffer;
 // Done is a drained socket whose last buffer main claimed.
-static rocketnet_server_gso_recv_buffer_t * rocketnet_server_gso_publish_receive( struct rocketnet_server_gso_queue_t * queue )
+static rocketnet_server_gso_recv_buffer_t * rocketnet_server_gso_claim_receive( struct rocketnet_server_gso_queue_t * queue )
 {
     if ( !rocketnet_platform_mutex_try_acquire( &queue->receive_mutex ) )
         return NULL;
@@ -1790,7 +1790,7 @@ static void rocketnet_server_gso_receive_from_queue( rocketnet_server_gso_t * gs
         queue->main_buffer->num_packets = 0;
         queue->main_cursor = 0;
 
-        rocketnet_server_gso_recv_buffer_t * buffer = rocketnet_server_gso_publish_receive( queue );
+        rocketnet_server_gso_recv_buffer_t * buffer = rocketnet_server_gso_claim_receive( queue );
         if ( !buffer )
             return;
 
