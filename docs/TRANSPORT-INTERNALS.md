@@ -319,16 +319,9 @@ still defer a staged packet to the next call: main still holds a retained
 tail from a budget-capped call (it swaps only once that bank is consumed,
 because the current view points into it), or main's try-acquire finds the
 worker holding the mutex (main never waits on the worker). On GSO the
-`recvmmsg` calls leave the mutex free between batches. On XDP a pass under
-heavy load appends batch after batch, so main can still miss a queue; it then
-sets that queue's lock-free swap-request flag and moves on. At the end of the
-pass, before starting the next receive batch, the worker sees the flag, takes
-the receive mutex, and swaps the filled bank for main's exhausted one (or for
-a spare on main's first claim). Only a completed swap clears the flag, and a
-failed try leaves it for the next pass. Main's next update therefore sees the
-accumulated packets without waiting another full update. Main also clears the
-flag when its own next try-acquire succeeds, so a request is never applied
-twice.
+`recvmmsg` calls leave the mutex free between batches; an XDP pass under
+heavy load appends batch after batch, so there main can miss a queue for
+an update.
 
 ## Creation and shutdown
 
