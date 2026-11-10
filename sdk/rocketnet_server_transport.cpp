@@ -3406,10 +3406,10 @@ static void rocketnet_server_transport_close_client_locally( struct rocketnet_se
     struct rocketnet_server_protocol_t * protocol = &server_transport->protocol;
     if ( missing_mapping )
         rocketnet_server_protocol_note_missing_mapping( protocol );
-    rocketnet_debug( "server disconnected client %d", client_index );
     protocol->counters->values[ROCKETNET_COUNTER_SERVER_DISCONNECTED_CLIENT]++;
     protocol->counters->values[ROCKETNET_COUNTER_CLIENT_DISCONNECTED]++;
     rocketnet_server_connection_reset( protocol, client_index, ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED );
+    rocketnet_debug( "server disconnected client %d", client_index );
 }
 
 // proofs/tla/RNDisconnectBurstRing.tla Defer: append within the ring capacity (NoOverwrite).

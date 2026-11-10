@@ -2201,11 +2201,11 @@ void rocketnet_server_protocol_disconnect_client( struct rocketnet_server_protoc
     // release the slot and destroy the mapping immediately, exactly as when
     // a client-sent disconnect arrives
 
-    rocketnet_debug( "server disconnected client %d", client_index );
     counters[ROCKETNET_COUNTER_SERVER_DISCONNECTED_CLIENT]++;
     counters[ROCKETNET_COUNTER_CLIENT_DISCONNECTED]++;
 
     rocketnet_server_connection_reset( server, client_index, ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED );
+    rocketnet_debug( "server disconnected client %d", client_index );
 }
 
 void rocketnet_server_protocol_accept_payload( struct rocketnet_server_protocol_t * server, int client_index, uint64_t connection_id, uint64_t sequence )

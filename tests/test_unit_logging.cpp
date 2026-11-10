@@ -22,6 +22,13 @@
 
 #define check rocketnet_unit_check
 
+#include "public_step_pair.h"
+
+#if ROCKETNET_DEV
+int rocketnet_server_transport_disconnect_burst_key_for_test( struct rocketnet_server_transport_t * server_transport,
+                                                              int index, uint8_t * out, int out_bytes, int * head, int * count );
+#endif // #if ROCKETNET_DEV
+
 // --- shared capture state -------------------------------------------------
 
 static char g_buf[4096];
@@ -263,7 +270,104 @@ static void test_log_unknown_level_reaches_the_sink_and_reads_unknown()
 #endif // #if ROCKETNET_DEV
 }
 
+// --- a log callback that disconnects the slot being disconnected ----------
+
+static rocketnet_server_t * g_reentry_server = NULL;
+static int g_reentry_slot = 0;
+static int g_reentry_logs = 0;
+static int g_reentry_calls = 0;
+
+static void disconnect_reentry_callback( void * context, enum rocketnet_log_level_t level, const char * message, size_t length )
+{
+    (void) context;
+    (void) level;
+
+    static const char prefix[] = "server disconnected client ";
+    if ( length < sizeof( prefix ) - 1 || memcmp( message, prefix, sizeof( prefix ) - 1 ) != 0 )
+        return;
+
+    g_reentry_logs++;
+    if ( g_reentry_calls != 0 )
+        return;
+
+    g_reentry_calls++;
+    rocketnet_server_disconnect_client( g_reentry_server, g_reentry_slot );
+}
+
+static void reentry_pair_create( public_step_pair_t * pair )
+{
+    (void) &public_step_pair_create;
+
+    public_step_identity_t identity;
+    public_step_identity( &identity );
+
+    rocketnet_server_config_t server_config;
+    public_step_server_config( &server_config, &identity );
+    server_config.disconnect_packets_per_update = 1;
+
+    memset( pair, 0, sizeof( *pair ) );
+    pair->time = 1000.0;
+    rocketnet_quiet( 1 );
+
+    pair->server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL );
+    check( pair->server != NULL );
+    check( rocketnet_server_start( pair->server ) == ROCKETNET_STATUS_OK );
+
+    char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+    public_step_token_string( pair->server, &identity, token );
+
+    rocketnet_client_config_t client_config;
+    public_step_client_config( &client_config );
+    pair->client = rocketnet_client_create( NULL, &client_config, NULL );
+    check( pair->client != NULL );
+    check( rocketnet_client_connect( pair->client, token ) == ROCKETNET_STATUS_OK );
+
+    public_step_connect( pair );
+}
+
+static void test_log_callback_disconnect_reentry_does_not_repeat()
+{
+    public_step_pair_t pair;
+    reentry_pair_create( &pair );
+
+    rocketnet_server_transport_t * transport = rocketnet_message_server_transport( rocketnet_server_message_server( pair.server ) );
+    check( transport != NULL );
+
+    enum rocketnet_log_level_t saved = rocketnet_log_level_current();
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_SPAM );
+
+    rocketnet_quiet( 0 );
+
+    g_reentry_server = pair.server;
+    g_reentry_slot = 0;
+    g_reentry_logs = 0;
+    g_reentry_calls = 0;
+    rocketnet_log_function( disconnect_reentry_callback, NULL );
+
+    rocketnet_server_disconnect_client( pair.server, g_reentry_slot );
+
+    rocketnet_log_function( NULL, NULL );
+    rocketnet_log_level( saved );
+
+    check( g_reentry_calls == 1 );
+    check( g_reentry_logs == 1 );
+    check( !rocketnet_server_client_connected( pair.server, g_reentry_slot ) );
+
+#if ROCKETNET_DEV
+    uint8_t key[ROCKETNET_KEY_BYTES];
+    int head = -1;
+    int count = -1;
+    check( rocketnet_server_transport_disconnect_burst_key_for_test( transport, 0, key,
+                                                                     (int) sizeof( key ), &head, &count ) == 1 );
+    check( count == 1 );
+#endif // #if ROCKETNET_DEV
+
+    g_reentry_server = NULL;
+    public_step_pair_destroy( &pair );
+}
+
 REGISTER_UNIT_TEST( test_log_callback_preformatted_contract );
 REGISTER_UNIT_TEST( test_log_unknown_level_reaches_the_sink_and_reads_unknown );
 REGISTER_UNIT_TEST( test_log_callback_filters_before_formatting );
 REGISTER_UNIT_TEST( test_log_callback_last_registration_wins );
+REGISTER_UNIT_TEST( test_log_callback_disconnect_reentry_does_not_repeat );
