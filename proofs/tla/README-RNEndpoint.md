@@ -196,12 +196,16 @@ workers, merged into `proofs/tla/RUNS.tsv` with `tlacheck merge --keep proofs/tl
 | `MCRNEndpointTwoWay.cfg` | bench | 124 | FAIL (debt `endpoint-two-way-safety-over-budget`) | - | - | 110.332 |
 | `MCRNEndpointPartial.cfg` | bench | 124 | FAIL (debt `endpoint-partial-write-safety-over-budget`) | - | - | 110.335 |
 
-The two bench cases complete outside the budget. Run on the same bench
-with the same JAR, TLC on two workers with `-deadlock` and no budget:
-`MCRNEndpointTwoWay.cfg` completes with no error, 37543692 states
-generated, 5082866 distinct, in 4 min 12 s; `MCRNEndpointPartial.cfg`
-completes with no error, 30828410 generated, 3326097 distinct, in
-2 min 56 s. Those runs are evidence for this document, not records: the
+Every run ends in the `Done` terminal stutter (both wires empty, each end
+in error or finished: all N sent, its records written and acked, its acks
+out, the remote CONFIG taken), and deadlock is checked: a state with no
+step that is not one of those ends is reported. The two bench cases
+complete outside the budget. Run on a 16-CPU Linux bench under a
+one-minute load of 30 to 80, with the same JAR, TLC on two workers with
+deadlock checked and no budget: `MCRNEndpointTwoWay.cfg` completes with
+no error, 37560926 states generated, 5082866 distinct, in 13 min 2 s;
+`MCRNEndpointPartial.cfg` completes with no error, 30838074 generated,
+3326097 distinct, in 14 min 12 s. Those runs are evidence for this document, not records: the
 records stay the 110-second debt rows. The one-way safety control took
 89 s of 110 under a one-minute load of 35 to 55; a refresh on a heavily
 loaded bench may need a quieter one.
