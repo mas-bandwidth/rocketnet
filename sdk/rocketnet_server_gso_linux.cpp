@@ -1931,6 +1931,7 @@ void rocketnet_server_gso_receive_packets( struct rocketnet_server_gso_t * gso )
     // as the xdp drain (rocketnet_xdp_drain_queue). A call that does not fill
     // the budget still advances by one. Two full queues exhaust the per-update
     // budget, so a walk that always starts at 0 never reaches the later ones.
+    // proofs/tla/RNGsoRecvWalk.tla Receive and NoQueueStarves.
     const int num_queues = gso->num_queues;
     int filled_queue = -1;
     for ( int step = 0; step < num_queues; step++ )
