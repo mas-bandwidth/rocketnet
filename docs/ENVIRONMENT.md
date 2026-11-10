@@ -139,7 +139,9 @@ include:
   intended transport rather than reserving worst-case `xdp` allocator headroom.
   When using `xdp`, tune queue and CPU count only through the supported
   `ROCKETNET_SERVER_NUM_XDP_QUEUES` (`1 .. 1024`) and
-  `ROCKETNET_SERVER_NUM_OS_CPUS` (`1 .. 256`) overrides. Preserve the pinned
+  `ROCKETNET_SERVER_NUM_OS_CPUS` (`1 .. 256`) overrides. The same queue count
+  applies to `gso` and `io_uring`, but `gso` and `io_uring` refuse a value
+  above `32`. Preserve the pinned
   AF_XDP geometry: 4,096-byte frames, a 4,096-entry send queue, 16,384-entry
   receive queue and fill set, a 32,768-entry fill ring, and 49,152 UMEM frames
   per queue.
