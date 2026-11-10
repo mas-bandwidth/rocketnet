@@ -508,6 +508,7 @@ MCRNIocpRunRingBrokenCheckShort.cfg	MCRNIocpRunRing.tla	invariant	NoOverwrite	ig
 MCRNIocpRunRingBrokenTicketWrap.cfg	MCRNIocpRunRing.tla	invariant	TakeOnlyLive	ignore-terminal	rniocprunring	required	-
 MCRNIocpRetryStop.cfg	MCRNIocpRetryStop.tla	pass	-	check	rniocpretrystop	required	-
 MCRNIocpRetryStopLive.cfg	MCRNIocpRetryStop.tla	pass	-	check	rniocpretrystop	required	-
+MCRNIocpRetryStopLiveTwoOps.cfg	MCRNIocpRetryStop.tla	pass	-	check	rniocpretrystop	required	-
 MCRNIocpRetryStopBrokenStopOffByOne.cfg	MCRNIocpRetryStop.tla	invariant	PassBounded	check	rniocpretrystop	required	-
 MCRNIocpRetryStopBrokenClaimBeforeStop.cfg	MCRNIocpRetryStop.tla	invariant	RetryOwned	check	rniocpretrystop	required	-
 MCRNIocpRetryStopBrokenStopWrap.cfg	MCRNIocpRetryStop.tla	invariant	PassBounded	check	rniocpretrystop	required	-
