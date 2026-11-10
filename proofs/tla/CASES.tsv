@@ -751,3 +751,4 @@ MCRNResendTimingRefused.cfg	MCRNResendTiming.tla	pass	-	check	rnresendtiming	req
 MCRNResendTimingBrokenRefusedClock.cfg	MCRNResendTiming.tla	invariant	AttemptsBeforeTimeout	check	rnresendtiming	required	-
 MCRNClientSendCursorLayout.cfg	MCRNClientSendCursorLayout.tla	pass	-	check	rnclientsendcursorlayout	required	-
 MCRNClientSendCursorLayoutBrokenPlus.cfg	MCRNClientSendCursorLayout.tla	invariant	AtMostOnce	check	rnclientsendcursorlayout	required	-
+MCRNWindowLayoutBrokenWordShift.cfg	MCRNWindowLayout.tla	invariant	BitsAreReceived	check	rnwindowlayout	required	-

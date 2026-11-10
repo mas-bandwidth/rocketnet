@@ -2,13 +2,14 @@
 
 `RNWindowLayout.tla` models the receive window of one connection as
 `sdk/rocketnet_window_receive.cpp` lays it out: the received bitmap as words
-of 64 bits (`region->received_bits`), the descriptor slot array
-(`region->receive_descriptors`), `R`, and the sticky `violation`. It carries
-the code's arithmetic: the 24-bit half-range reconstruction of the wire
-number against `R`, `index = number & (W - 1)`, word `index >> 6` and bit
-`index & 63`, the duplicate test on the bit, the `SLOT_COLLISION` test on a
-live descriptor, the claim, and the advance loop that clears each floor bit
-as `R` passes it.
+of `WordBits` bits (`region->received_bits`; 64 in the code), the descriptor
+slot array (`region->receive_descriptors`), `R`, and the sticky `violation`.
+It carries the code's arithmetic: the 24-bit half-range reconstruction of the
+wire number against `R`, `index = number & (W - 1)`, word
+`index \div WordBits` and bit `index % WordBits` (`index >> 6` and
+`index & 63` in the code), the duplicate test on the bit, the
+`SLOT_COLLISION` test on a live descriptor, the claim, and the advance loop
+that clears each floor bit as `R` passes it.
 
 `RNWindow.tla` checks the protocol around this (the sender's window, P6,
 U') with the received bits as a set and the descriptors indexed abstractly.
@@ -18,9 +19,11 @@ model carries.
 
 ## The instance
 
-`MCRNWindowLayout.tla`: `W = 4` (one bit word), `WireMod = 16` (the model's
-2^24; half range 8), `R` bounded at 20 by the state constraint `Bound`, so
-`R` crosses the wire wrap and the slot array turns over five times.
+`MCRNWindowLayout.tla`: `W = 4` over two 2-bit words (`WordBits = 2`),
+`WireMod = 16` (the model's 2^24; half range 8), `R` bounded at 20 by the
+state constraint `Bound`, so `R` crosses the wire wrap and the slot array
+turns over five times. The two words exercise the word-index shift and the
+bit mask across a word boundary.
 
 ## Actions and the code they mirror
 
@@ -66,6 +69,7 @@ invariant (exit 12).
 | `MCRNWindowLayoutBrokenNoClearFloor.cfg` | `ClearFloor = FALSE`: the advance does not clear the floor bit | a stale received bit after `R` passes: silent loss | `NoSilentLoss` |
 | `MCRNWindowLayoutBrokenNoHalfRange.cfg` | `HalfRange = FALSE`: the unsigned difference, no sign | a duplicate behind `R` read as far ahead | `HonestReadExactly` |
 | `MCRNWindowLayoutBrokenNoCollisionTest.cfg` | `CollisionTest = FALSE`: the `SLOT_COLLISION` test removed | a live descriptor overwritten | `NoLiveOverwrite` |
+| `MCRNWindowLayoutBrokenWordShift.cfg` | `WordShift = FALSE`: the word index shifts by twice the word width | two slots alias one bit, so the bitmap names the wrong numbers | `BitsAreReceived` |
 
 ### Hand checks against the code
 
@@ -95,6 +99,12 @@ received-bit test lets it through, and without the `SLOT_COLLISION` test the
 claim overwrites number 0's descriptor while number 0's delivery still points
 at it. With the test the forged record ends the connection as
 `SLOT_COLLISION`.
+
+**WordShift.** TLC's trace: number 1 arrives at `R = 0` and is accepted
+(`above = {1}`), in slot 1. With the correct split it lives in word 0 at bit
+1; with the wrong shift the word index is `1 \div 4 = 0` but the bit is still
+`1 % 2 = 1`, the same word and bit as slot 3. The bitmap therefore also shows
+slot 3 set though no received number names it, and `BitsAreReceived` fails.
 
 ## Records
 
