@@ -8,6 +8,10 @@ EXTENDS Integers, FiniteSets
 \* Each number has its own packet here. ACK eligibility starts only after
 \* EndUpdate has released every delivery view (P6). The receiver's received
 \* set, live descriptors, future/in-turn holds, and ordered epoch are distinct.
+\* sdk/rocketnet_channel.cpp:381-403: ordered enqueue advances ordered_write;
+\* sdk/rocketnet_channel.cpp:1296-1313 stamps it before same-channel FIFO append.
+\* sdk/rocketnet_channel.cpp:1673-1705 numbers that FIFO's head first.
+\* Thus N#3 before Z has ordering 1; ordering 2 requires Z#3, then N#4.
 CONSTANTS W, MaxNum, CheckAcceptedSpan, ForwardFragmentOrder
 ASSUME /\ W \in {4, 8}
        /\ MaxNum \in 6..10
