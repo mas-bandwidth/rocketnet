@@ -357,6 +357,12 @@ the client form. The detailed per-transport plan and the kernel-facing host memo
 estimate are internal to the transport layer (`sdk/rocketnet_layers.h`), not part
 of the public client and server API.
 
+`rocketnet_loopback_hub_create` sits outside both memory plans. It allocates
+one block: each client endpoint's queue is 2048 slots of 1476 bytes
+(2048 * 1476 bytes). At `max_clients` 1000 the block is about 3.05 GB.
+`rocketnet_client_required_memory` and `rocketnet_server_required_memory` do
+not count it.
+
 The client's corresponding transport plan is applied at connect, after the
 token selects an address and the transport ladder. For portable and msgx it
 includes the client transport block, socket, wake object and one SDK thread allocation. The normal client runs one background
