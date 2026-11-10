@@ -193,6 +193,54 @@ class CheckerFixture(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("is in no proofs/tla/*.tla", report)
 
+    def test_property_in_another_module_is_not_the_cited_one(self):
+        # The base's replay row names a property that lives in a different
+        # module than the one the row cites. A name that exists elsewhere
+        # does not satisfy the citation.
+        root = self.build([
+            ["t1", "a receiver MUST drop a packet below its floor",
+             "ReplayWindow.tla:ReceiverNeverOutsideWindow",
+             "-", "-", "none"],
+        ])
+        tla = os.path.join(root, "proofs", "tla")
+        with open(os.path.join(tla, "ReplayWindow.tla"), "w") as handle:
+            handle.write("---- MODULE ReplayWindow ----\nReceivedIsRefused == TRUE\n====\n")
+        with open(os.path.join(tla, "RNWindow.tla"), "w") as handle:
+            handle.write("---- MODULE RNWindow ----\nReceiverNeverOutsideWindow == TRUE\n====\n")
+        code, report = check_witnesses.run(root)
+        self.assertEqual(code, 1, report)
+        self.assertIn("ReceiverNeverOutsideWindow", report)
+        self.assertIn("not defined in proofs/tla/ReplayWindow.tla", report)
+
+    def test_property_defined_in_the_cited_module_passes(self):
+        root = self.build([
+            ["t1", "a receiver MUST drop a packet below its floor",
+             "proofs/tla/ReplayWindow.tla:ReceivedIsRefused",
+             "-", "-", "none"],
+        ])
+        with open(os.path.join(root, "proofs", "tla", "ReplayWindow.tla"), "w") as handle:
+            handle.write("---- MODULE ReplayWindow ----\nReceivedIsRefused == TRUE\n====\n")
+        code, report = check_witnesses.run(root)
+        self.assertEqual(code, 0, report)
+
+    def test_replay_row_property_is_defined_in_the_module_it_cites(self):
+        root = os.path.abspath(os.path.join(HERE, "..", ".."))
+        tsv = os.path.join(root, "docs", "WITNESSES.tsv")
+        with open(tsv, encoding="utf-8") as handle:
+            lines = [line for line in handle.read().splitlines() if line.strip()]
+        self.assertGreaterEqual(len(lines), 17)
+        cells = lines[16].split("\t")
+        self.assertTrue(cells[1].startswith("Refuse the packet without opening"), cells[1])
+        cited = check_witnesses.split_module_citation(cells[2])
+        if cited is None:
+            module, name = "proofs/tla/ReplayWindow.tla", cells[2]
+        else:
+            module, name = cited
+        self.assertTrue(
+            check_witnesses.property_defined(root, module, name),
+            "WITNESSES.tsv line 17 names %s, which is not defined in %s" % (name, module),
+        )
+
     def test_stale_test_anchor_fails(self):
         root = self.build([
             ["t1", "a receiver MUST drop a packet below its floor",

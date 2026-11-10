@@ -1391,7 +1391,7 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
         op->state = ROCKETNET_IOCP_OPERATION_IDLE;
     }
 
-    iocp->socket = WSASocketW( iocp->ipv6 ? AF_INET6 : AF_INET, SOCK_DGRAM, IPPROTO_UDP, NULL, 0, WSA_FLAG_OVERLAPPED );
+    iocp->socket = WSASocketW( iocp->ipv6 ? AF_INET6 : AF_INET, SOCK_DGRAM, IPPROTO_UDP, NULL, 0, WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT );
 #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( iocp->socket != INVALID_SOCKET )
         iocp->socket_generation = rocketnet_lifecycle_track_open( ROCKETNET_LIFECYCLE_SOCKET, (uintptr_t) iocp->socket, "iocp socket" );
@@ -1416,8 +1416,9 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
         goto failed;
     // Match the portable socket's don't-fragment rule, tolerating option refusal.
 
-    setsockopt( iocp->socket, iocp->ipv6 ? IPPROTO_IPV6 : IPPROTO_IP,
-                iocp->ipv6 ? IPV6_DONTFRAG : IP_DONTFRAGMENT, (const char *) &enabled, sizeof( enabled ) );
+    if ( iocp->ipv6 )
+        setsockopt( iocp->socket, IPPROTO_IPV6, IPV6_DONTFRAG, (const char *) &enabled, sizeof( enabled ) );
+    setsockopt( iocp->socket, IPPROTO_IP, IP_DONTFRAGMENT, (const char *) &enabled, sizeof( enabled ) );
     // both ICMP reset reports off; a refusal is logged once and the receive
     // paths skip the statuses
 
@@ -1631,6 +1632,14 @@ void rocketnet_server_iocp_finish_packet( rocketnet_server_iocp_t * iocp, uint64
     if ( !op || frame != op->frame )
         return;
     (void) frame;
+
+    // a refused length loses the packet: the slot keeps zero bytes and the
+    // send phase releases it, so the loss is counted here (as RIO finish)
+    if ( packet_bytes <= 0 || packet_bytes > ROCKETNET_RECEIVE_CEILING )
+    {
+        iocp->counters[ROCKETNET_IOCP_SEND_FAILED].fetch_add( 1, std::memory_order_relaxed );
+        return;
+    }
     op->packet_bytes = packet_bytes;
 }
 

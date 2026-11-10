@@ -35,6 +35,9 @@
 // it is not refused forever, and because the table is a fixed part of the
 // server struct (not file-scope), two servers in one process each have their
 // own budget.
+//
+// The budget, window and table size below are chosen design values, not
+// measurements from a recorded run in docs/runs/.
 
 #define ROCKETNET_SIGNATURE_VERIFY_FAILURE_BUDGET        90
 #define ROCKETNET_SIGNATURE_VERIFY_FAILURE_WINDOW_SECONDS 10

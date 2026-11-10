@@ -1,4 +1,6 @@
 // Protocol defaults and table-sizing ratios the create path assigns.
+// These values are chosen design values, not measurements from a recorded run
+// in docs/runs/.
 // One declaration: rocketnet_server_transport_create uses these macros, and
 // the conformance dump includes this file under
 // ROCKETNET_CONFORMANCE_DEFAULTS_ONLY and expands the same ones.
@@ -491,6 +493,37 @@ void rocketnet_server_transport_poison_slot_for_test( struct rocketnet_server_tr
     memset( &server->client_wire_totals[client_index], 0xA5, sizeof( server->client_wire_totals[client_index] ) );
 }
 
+// The unit seam for a sweep over many clients without a handshake: seats
+// slots 0..clients-1 connected at 127.0.0.1:(1000 + i) under test keys, each
+// with its keep-alive due from the first update. Returns false when a slot
+// cannot be seated.
+bool rocketnet_server_transport_seat_clients_for_test( struct rocketnet_server_transport_t * server, int clients )
+{
+    rocketnet_assert( server );
+    for ( int i = 0; i < clients; ++i )
+    {
+        rocketnet_address_t address;
+        if ( !rocketnet_address_parse( &address, "127.0.0.1:0" ) )
+            return false;
+        address.port = (uint16_t) ( 1000 + i );
+        const int index = rocketnet_encryption_map_add( server->protocol.encryption_map, &address, 100.0 );
+        if ( index < 0 )
+            return false;
+        struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( server->protocol.encryption_map, index );
+        uint8_t user_data[ROCKETNET_USER_DATA_BYTES] = {};
+        const uint64_t owner_generation = rocketnet_encryption_map_owner_generation( server->protocol.encryption_map, index );
+        if ( rocketnet_client_slots_assign( server->protocol.client_slots, (uint64_t) i + 1, index, owner_generation, user_data ) != i )
+            return false;
+        mapping->control->client_index = i;
+        mapping->client_id = (uint64_t) i + 1;
+        mapping->control->established = 1;
+        mapping->control->timeout_seconds = 1000;
+        memset( &mapping->keys, i + 1, sizeof( mapping->keys ) );
+        server->protocol.connection_ids[i] = ++server->protocol.next_connection_id;
+    }
+    return true;
+}
+
 bool rocketnet_server_transport_connection_state_clean_for_test( struct rocketnet_server_transport_t * server )
 {
     return server && server->protocol.encryption_map && server->protocol.client_slots &&
@@ -697,7 +730,13 @@ static int rocketnet_server_transport_io_send_room( const rocketnet_server_trans
 {
     if ( !server_transport->io.operations || !server_transport->io.operations->send_room )
         return INT_MAX;
-    const int room = server_transport->io.operations->send_room( server_transport->io.instance );
+    int room = server_transport->io.operations->send_room( server_transport->io.instance );
+
+    // a buffered transport's control frames take their room at the flush:
+    // each one committed and not yet flushed has already spent it
+
+    if ( !rocketnet_server_transport_staged( server_transport ) )
+        room -= server_transport->send_buffer.num_packets;
     return room > 0 ? room : 0;
 }
 
@@ -740,19 +779,24 @@ int rocketnet_server_transport_send_capacity_available( const rocketnet_server_t
 // its room) is a full staging, SEND_RING_FULL; any
 // other is the transport refusing that one frame (an address its socket
 // cannot carry), which the transport counts in its own send_failures,
-// SEND_FAILED. None is ever sent or counted as sent.
-static uint8_t * rocketnet_server_transport_io_start_packet( rocketnet_server_transport_t * transport, const rocketnet_address_t * to, uint64_t * id )
+// SEND_FAILED. None is ever sent or counted as sent. An uncounted start (the
+// receive path's speculative response frame) is counted by its caller, and
+// only when a response was there to send.
+static void rocketnet_server_transport_io_count_refused( rocketnet_server_transport_t * transport, uint64_t id )
+{
+    if ( id == ROCKETNET_TRANSPORT_PACKET_UNREACHABLE )
+        rocketnet_platform_atomic_add_u64( &transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_NO_LINK_ADDRESS], 1 );
+    else if ( rocketnet_server_transport_io_refused_full( transport ) )
+        rocketnet_platform_atomic_add_u64( &transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_RING_FULL], 1 );
+}
+static uint8_t * rocketnet_server_transport_io_start_packet( rocketnet_server_transport_t * transport, const rocketnet_address_t * to, uint64_t * id, bool counted = true )
 {
     *id = 0;
 
     uint8_t * frame = transport->io.operations->start_packet( transport->io.instance, to, id );
-    if ( frame )
-        return frame;
-    if ( *id == ROCKETNET_TRANSPORT_PACKET_UNREACHABLE )
-        rocketnet_platform_atomic_add_u64( &transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_NO_LINK_ADDRESS], 1 );
-    else if ( rocketnet_server_transport_io_refused_full( transport ) )
-        rocketnet_platform_atomic_add_u64( &transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_RING_FULL], 1 );
-    return NULL;
+    if ( !frame && counted )
+        rocketnet_server_transport_io_count_refused( transport, *id );
+    return frame;
 }
 static void rocketnet_server_transport_io_finish_packet( rocketnet_server_transport_t * transport, uint64_t id, uint8_t * frame, int bytes )
 {
@@ -1048,10 +1092,12 @@ struct rocketnet_server_frame_t
 };
 
 // proofs/tla/RNDriverSendStaging.tla Reserve and FailedSend: reserves a frame in the
-// transport's staging, or returns NULL and drops the frame when the staging is full
+// transport's staging, or returns NULL and drops the frame when the staging is full;
+// an uncounted reserve leaves counting a refusal to the caller
 static uint8_t * rocketnet_server_reserve_send_frame( struct rocketnet_server_transport_t * server_transport,
                                                       const rocketnet_address_t * to,
-                                                      struct rocketnet_server_frame_t * frame, bool shutdown = false )
+                                                      struct rocketnet_server_frame_t * frame, bool shutdown = false,
+                                                      bool counted = true )
 {
     frame->to = *to;
     frame->client_index = -1;
@@ -1059,7 +1105,7 @@ static uint8_t * rocketnet_server_reserve_send_frame( struct rocketnet_server_tr
 
     if ( rocketnet_server_transport_staged( server_transport ) )
     {
-        frame->data = rocketnet_server_transport_io_start_packet( server_transport, to, &frame->packet_id );
+        frame->data = rocketnet_server_transport_io_start_packet( server_transport, to, &frame->packet_id, counted );
         if ( !frame->data )
         {
             rocketnet_spam( "server transport send staging full. packet dropped" );
@@ -2601,7 +2647,9 @@ static void rocketnet_server_receive_one( struct rocketnet_server_transport_t * 
     struct rocketnet_server_frame_t frame;
     frame.data = NULL;
 
-    uint8_t * response = shape_valid ? rocketnet_server_reserve_send_frame( server_transport, from, &frame ) : NULL;
+    // the response frame is reserved before the packet is processed, so its
+    // refusal is counted below only when there was a response to send
+    uint8_t * response = shape_valid ? rocketnet_server_reserve_send_frame( server_transport, from, &frame, false, false ) : NULL;
     uint8_t response_overflow[ROCKETNET_RECEIVE_CEILING];
     int response_bytes = 0;
 
@@ -2636,6 +2684,8 @@ static void rocketnet_server_receive_one( struct rocketnet_server_transport_t * 
         else
             rocketnet_server_abort_send_frame( server_transport, &frame );
     }
+    else if ( response_bytes > 0 )
+        rocketnet_server_transport_io_count_refused( server_transport, frame.packet_id );
 
     if ( payload_slot_free && payload && payload_bytes > 0 )
     {
@@ -2758,10 +2808,10 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
     }
     else
     {
-    // Drain the receive queue up to this update's packet budget. Each read
-    // takes whatever the endpoint has queued, up to the remaining budget, and
-    // is processed before the next read; what is left past the budget stays
-    // in the transport's queue for the next update. The budget is
+    // One read per update: a single receive_batch call takes whatever the
+    // endpoint has queued, up to this update's packet budget, and each packet
+    // is processed in turn; what is left past the budget stays in the
+    // transport's queue for the next update. The budget is
     // rocketnet_server_receive_packets_per_update (16 * 1000 = 16000 at 1000
     // clients), which equals the payload-batch capacity, so all packets read
     // in one update fit the payload batch that feeds the application.
@@ -2769,15 +2819,9 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
         struct rocketnet_server_receive_buffer_t * receive_buffer = &server_transport->receive_buffer;
 
         const int stats_index = server_transport->current_stats_index;
-        int packets_processed = 0;
-        int batch_capacity = 0;
-        int num_received = 0;
+        const int batch_capacity = receive_buffer->capacity;
 
-        do
-        {
-            const int remaining_budget = receive_buffer->capacity - packets_processed;
-            batch_capacity = remaining_budget;
-            num_received = server_transport->io.operations->receive_batch( server_transport->io.instance,
+        int num_received = server_transport->io.operations->receive_batch( server_transport->io.instance,
                                                                            receive_buffer->from,
                                                                            receive_buffer->data,
                                                                            ROCKETNET_RECEIVE_CEILING,
@@ -2786,47 +2830,44 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
 
         // a count past the slots asked for, or a byte count that is negative
         // or beyond the UDP envelope, is a transport fault and is not a received packet
-            if ( num_received < 0 )
+        if ( num_received < 0 )
+        {
+            server_transport->transport_faults++;
+            num_received = 0;
+        }
+        else if ( num_received > batch_capacity )
+        {
+            server_transport->transport_faults++;
+            num_received = batch_capacity;
+        }
+
+        for ( int i = 0; i < num_received; i++ )
+        {
+            struct rocketnet_address_t from = receive_buffer->from[i];
+            uint8_t * receive_frame = receive_buffer->data + i * ROCKETNET_RECEIVE_CEILING;
+            const int packet_bytes = receive_buffer->packet_bytes[i];
+            if ( packet_bytes < 0 || packet_bytes > ROCKETNET_TRANSPORT_MAX_DATAGRAM_BYTES )
             {
                 server_transport->transport_faults++;
-                num_received = 0;
-            }
-            else if ( num_received > batch_capacity )
-            {
-                server_transport->transport_faults++;
-                num_received = batch_capacity;
+                continue;
             }
 
-            for ( int i = 0; i < num_received; i++ )
-            {
-                struct rocketnet_address_t from = receive_buffer->from[i];
-                uint8_t * receive_frame = receive_buffer->data + i * ROCKETNET_RECEIVE_CEILING;
-                const int packet_bytes = receive_buffer->packet_bytes[i];
-                if ( packet_bytes < 0 || packet_bytes > ROCKETNET_TRANSPORT_MAX_DATAGRAM_BYTES )
-                {
-                    server_transport->transport_faults++;
-                    continue;
-                }
-
-                server_transport->stats_frames[stats_index].packets_received++;
-                server_transport->stats_frames[stats_index].bytes_received += (uint64_t) ( packet_bytes + rocketnet_wire_header_bytes( from.type ) );
+            server_transport->stats_frames[stats_index].packets_received++;
+            server_transport->stats_frames[stats_index].bytes_received += (uint64_t) ( packet_bytes + rocketnet_wire_header_bytes( from.type ) );
 
             // A truncated datagram retains its original length for accounting,
             // but only the shorter prefix is stored. Reject an oversize report
             // before the protocol reads that stored prefix as the whole packet.
-                if ( packet_bytes > ROCKETNET_RECEIVE_CEILING )
-                {
-                    rocketnet_server_wire_totals_add_received( server_transport, -1, &from, packet_bytes );
-                    server_transport->counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED]++;
-                    server_transport->counters.values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE]++;
-                    continue;
-                }
-
-                rocketnet_server_receive_one( server_transport, &from, receive_frame, packet_bytes, -1, current_timestamp, current_time );
+            if ( packet_bytes > ROCKETNET_RECEIVE_CEILING )
+            {
+                rocketnet_server_wire_totals_add_received( server_transport, -1, &from, packet_bytes );
+                server_transport->counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED]++;
+                server_transport->counters.values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE]++;
+                continue;
             }
 
-            packets_processed += num_received;
-        } while ( num_received == batch_capacity && packets_processed < receive_buffer->capacity );
+            rocketnet_server_receive_one( server_transport, &from, receive_frame, packet_bytes, -1, current_timestamp, current_time );
+        }
     }
 
     // proofs/tla/RNChannel.tla FixBatch and proofs/tla/RNWindow.tla FixBatch: the received
