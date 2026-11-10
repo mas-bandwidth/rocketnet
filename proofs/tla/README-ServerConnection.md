@@ -175,9 +175,15 @@ vacuous.
 On a Linux bench with the TLA+ tools (`tla2tools.jar`, TLC 2.19), from `proofs/tla/`:
 
 ```sh
-java -cp /path/to/tla2tools.jar tlc2.TLC -workers 4 -cleanup -deadlock -lncheck final \
+java -cp /path/to/tla2tools.jar tlc2.TLC -workers 4 -cleanup -lncheck final \
      -config MCServerConnection.cfg MCServerConnection
 ```
+
+Deadlock is checked. A run ends in the `Done` terminal stutter: every client idle with its
+attempts spent, every disconnect burst sent and both wires drained, or a request at the head
+of the wire that needs a fresh nonce from the model's spent pool. `Tick` must change
+something, so a run that halts anywhere else is reported as a deadlock rather than hidden
+by time passing in place.
 
 The committed cases are the rows of group `serverconnection` in `CASES.tsv`; `RUNS.tsv`
 holds each one's measured result. Every case is on a FIFO link without duplication
