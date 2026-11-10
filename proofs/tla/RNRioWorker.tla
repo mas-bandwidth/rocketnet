@@ -425,8 +425,10 @@ Bounded == InlineStop /\ BoundedStopDrain
 PassMayStart == ~Bounded \/ stopwaits <= StopDrainWaits
 
 \* the pass returned false.  The worker waits 1 ms on the notification
-\* event and runs it again; create sleeps ROCKETNET_RIO_DRAIN_SECONDS and
-\* runs it again.  Neither wait changes the model's state.
+\* event and runs it again; create (rocketnet_rio_create_drain_wait) waits
+\* on that event for at most ROCKETNET_RIO_DRAIN_NOTIFY_MILLISECONDS when
+\* the socket is closed and receives are still counted posted, not at all
+\* otherwise, and runs it again.  Neither wait changes the model's state.
 PassFails ==
     /\ wpc' = "stop"
     /\ stopwaits' = IF Bounded THEN stopwaits + 1 ELSE stopwaits

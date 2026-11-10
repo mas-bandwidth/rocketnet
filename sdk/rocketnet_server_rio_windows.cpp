@@ -37,13 +37,17 @@
 #define ROCKETNET_RIO_SEND_PHASES 3
 #define ROCKETNET_RIO_DEQUEUE_BATCH 256
 
-// A create that fails before its worker exists drains inline. A stop pass
-// that cannot make progress (a refused commit, a corrupt queue or a refused
-// closesocket) is bounded here: after these waits the transport leaks rather
-// than freeing memory the kernel may still write, as the iocp client's
-// destroy does.
+// A create that fails before its worker exists drains inline, and the drain
+// is bounded by counting passes, never by seconds. closesocket cancels every
+// posted receive; a pass that finds some of those completions still on their
+// way waits for the receive queue's notification, at most
+// ROCKETNET_RIO_DRAIN_NOTIFY_MILLISECONDS so a lost notification cannot hold
+// create. A pass that cannot close the socket has nothing on its way and is
+// run again at once. After ROCKETNET_RIO_DRAIN_WAITS failed passes the
+// transport leaks rather than freeing memory the kernel may still write, as
+// the iocp client's destroy does.
 #define ROCKETNET_RIO_DRAIN_WAITS 10
-#define ROCKETNET_RIO_DRAIN_SECONDS 1.0
+#define ROCKETNET_RIO_DRAIN_NOTIFY_MILLISECONDS 50
 
 static_assert( ROCKETNET_RIO_RECEIVE_SLICE_BYTES >= ROCKETNET_RECEIVE_CEILING + 1, "receive detects oversize datagrams" );
 
@@ -902,19 +906,26 @@ bool rocketnet_server_rio_available()
 static void rocketnet_rio_worker( rocketnet_platform_thread_t *, void * argument );
 
 // proofs/tla/RNRioWorker.tla PassFails on create's inline drain: the wait
-// between two passes.
+// between two passes. Only one thing is worth waiting for: closesocket
+// succeeded, which cancelled every posted receive, and some of those
+// completions have not reached the receive queue yet. That wait is for the
+// queue's own notification, which RIONotify sets at once on a queue that is
+// not empty. A pass that failed with the socket still open has nothing on
+// its way, so the next pass runs at once.
 static void rocketnet_rio_create_drain_wait( rocketnet_server_rio_t * rio )
 {
-    (void) rio;
+    if ( rio->socket != INVALID_SOCKET || rio->posted_receives.load( std::memory_order_relaxed ) == 0 )
+        return;
 #if ROCKETNET_DEV
     if ( rocketnet_rio_test_drain_wait )
     {
-        rocketnet_rio_test_drain_wait( (DWORD) ( ROCKETNET_RIO_DRAIN_SECONDS * 1000.0 ) );
+        rocketnet_rio_test_drain_wait( ROCKETNET_RIO_DRAIN_NOTIFY_MILLISECONDS );
         return;
     }
     rocketnet_rio_test_create_drain_waits.fetch_add( 1, std::memory_order_relaxed );
 #endif // #if ROCKETNET_DEV
-    rocketnet_platform_sleep( ROCKETNET_RIO_DRAIN_SECONDS );
+    rio->rio.RIONotify( rio->receive_cq ); // WSAEALREADY: an earlier notify is still armed
+    WaitForSingleObject( rio->notify, ROCKETNET_RIO_DRAIN_NOTIFY_MILLISECONDS );
 }
 
 // proofs/tla/RNRioWorker.tla Stop, then WStop to WDrainReceive inline

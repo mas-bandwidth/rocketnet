@@ -2189,9 +2189,8 @@ static void test_rio_completion_queue_full()
 
 // Sends a refused RIO_MSG_COMMIT_ONLY left deferred at destroy are
 // committed before rocketnet_server_rio_destroy closes the socket: the
-// destroy drains well inside ROCKETNET_RIO_DRAIN_SECONDS and leaks no
-// region. The close may abort committed sends, so delivery is printed, not
-// checked.
+// destroy drains well inside a second and leaks no region. The close may
+// abort committed sends, so delivery is printed, not checked.
 
 static void test_rio_destroy_commits_deferred_sends()
 {
