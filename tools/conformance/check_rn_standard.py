@@ -17,7 +17,7 @@ checks, and fails with one line per fault naming the section id:
   layouts     RN-1 packet field offsets are contiguous, including symbolic
               acknowledgement and payload lengths
   pins        every pin row's sdk expression, compiled through the real
-              headers in one generated translation unit, equals the pin
+              headers and rule functions in one generated translation unit, equals the pin
               file's value and the value cell of the document row it names;
               every document row with a value has a pin, and an
               #unpinned line fails; every pin lies in a section its file owns;
@@ -84,6 +84,7 @@ BASE_INCLUDES = """
 #include "rocketnet_keys.cpp"
 #undef ROCKETNET_CONFORMANCE_DEFAULTS_ONLY
 #include "sodium/sodium.h"
+#include "rocketnet_standard_pins.h"
 
 // the configuration tables' defaults, by field name: rn_pin_server_default_<field>,
 // rn_pin_client_default_<field>, rn_pin_message_default_<field>; an int field's

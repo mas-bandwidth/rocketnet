@@ -150,5 +150,42 @@ class PinExpressionTests(unittest.TestCase):
         self.assertEqual([text for _, text in faults if "names no sdk identifier" in text], [])
 
 
+class RulePinTests(unittest.TestCase):
+    def pins(self):
+        faults = []
+        pins, includes, unpinned = standard.read_pins(faults)
+        self.assertEqual(faults, [])
+        self.assertEqual(unpinned, [])
+        return {pin["name"]: pin for pin in pins}, includes
+
+    def test_t5_pins_name_the_prefilter_constants(self):
+        pins, _ = self.pins()
+        self.assertEqual(pins["packet type field width"]["expr"], "ROCKETNET_PACKET_TYPE_FIELD_BYTES")
+        self.assertEqual(pins["filter epoch field width"]["expr"], "ROCKETNET_FILTER_EPOCH_FIELD_BYTES")
+        self.assertEqual(pins["first keyed filter epoch"]["expr"], "ROCKETNET_FILTER_EPOCH_KEYED_FIRST")
+        self.assertEqual(pins["keyed filter input width"]["expr"], "ROCKETNET_KEYED_FILTER_INPUT_BYTES")
+
+    def test_m2_limits_pin_the_one_record_function(self):
+        pins, includes = self.pins()
+        names = [name for name in pins if name.endswith("record limit") or name.endswith("record limit, WIDE")]
+        self.assertEqual(len(names), 7)
+        for name in names:
+            self.assertIn("rocketnet_max_unfragmented_message_bytes", pins[name]["expr"])
+        selected = [pins[name] for name in names]
+        values = standard.compile_pins(selected, includes)
+        for index, name in enumerate(names):
+            self.assertEqual(values[index], standard.parse_value(pins[name]["value"]))
+
+    def test_unreliable_record_rule_compiles_from_the_endpoint_predicate(self):
+        expression = ("rn_endpoint_unreliable_over_record_capacity( "
+                      "ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, "
+                      "ROCKETNET_MESSAGE_WIDE_CHANNEL, 1404, "
+                      "ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )")
+        pins = [{"file": "m2.tsv", "line": 1, "doc": "RN-2",
+                 "name": "UNRELIABLE_SEQUENCED record limit, WIDE",
+                 "expr": expression, "value": "0"}]
+        self.assertEqual(standard.compile_pins(pins, []), {0: ("n", 0)})
+
+
 if __name__ == "__main__":
     unittest.main()
