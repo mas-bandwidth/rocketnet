@@ -144,6 +144,8 @@ REGISTER_UNIT_TEST( test_encryption_map_churn_probe_bound );
 
 static void test_encryption_map_full_probe_bound()
 {
+    rocketnet_dev_set_hash_key_seed( UINT64_C( 0x5EED0000000000A4 ) );
+
     const int capacity = 2048;
     const int index_cells = 2 * capacity;
     const int absent_count = 4 * capacity;
@@ -233,6 +235,7 @@ static void test_encryption_map_full_probe_bound()
     check( erase_lookup_mean <= 3.0 );
     check( erase_lookup_worst < probe_cap );
     check( erase_scan_worst < probe_cap );
+    rocketnet_dev_set_hash_key_seed( 0 );
 }
 
 REGISTER_UNIT_TEST( test_encryption_map_full_probe_bound );
