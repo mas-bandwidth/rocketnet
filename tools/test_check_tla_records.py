@@ -131,6 +131,73 @@ class CheckTlaRecordsTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("MCEx.cfg: stale record", text)
 
+    def delivery_fixture(self, witness_property="Eventually", witness=True):
+        """A property config in a module with an anonymous delivery implication."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tla = Path(tmp)
+            (tla / "MCDelivery.tla").write_text(
+                "---- MODULE MCDelivery ----\n"
+                "VARIABLE x\nvars == <<x>>\n"
+                "Send == x' = x\nRecv == x' = x\n"
+                "Fairness == ([]<> <<Send>>_vars) => ([]<> <<Recv>>_vars)\n"
+                "Spec == TRUE /\\ [][Send \\/ Recv]_vars /\\ Fairness\n"
+                "SpecSafety == TRUE /\\ [][Send \\/ Recv]_vars\n"
+                "Eventually == <>TRUE\n"
+                "====\n",
+                encoding="utf-8",
+            )
+            (tla / "MCPass.cfg").write_text(
+                "SPECIFICATION Spec\nPROPERTIES\n    Eventually\n", encoding="utf-8")
+            cases = [case_row("MCPass.cfg", "MCDelivery.tla")]
+            runs = [run_row("MCPass.cfg", "MCDelivery.tla")]
+            if witness:
+                (tla / "MCWitness.cfg").write_text(
+                    "SPECIFICATION SpecSafety\nPROPERTIES\n    Eventually\n",
+                    encoding="utf-8")
+                cases.append(case_row(
+                    "MCWitness.cfg", "MCDelivery.tla", "temporal", witness_property))
+                runs.append(run_row(
+                    "MCWitness.cfg", "MCDelivery.tla", "temporal", witness_property,
+                    "13", "PASS"))
+            write_tsv(tla / "CASES.tsv", check_tla_records.CASES_COLUMNS, cases)
+            write_tsv(tla / "RUNS.tsv", check_tla_records.RUNS_COLUMNS, runs)
+            out = io.StringIO()
+            code = check_tla_records.check(
+                tla / "CASES.tsv", tla / "RUNS.tsv", out, forbid_stale=False)
+            return code, out.getvalue()
+
+    def test_property_without_reversed_liveness_witness_rejected(self):
+        code, text = self.delivery_fixture(witness=False)
+        self.assertEqual(code, 1)
+        self.assertIn("MCPass.cfg: property Eventually has no reversed liveness witness", text)
+
+    def test_property_witness_for_another_property_rejected(self):
+        code, text = self.delivery_fixture(witness_property="SomethingElse")
+        self.assertEqual(code, 1)
+        self.assertIn("MCPass.cfg: property Eventually has no reversed liveness witness", text)
+
+    def test_property_with_reversed_liveness_witness_passes(self):
+        code, text = self.delivery_fixture()
+        self.assertEqual(code, 0, text)
+
+    def test_property_without_delivery_implication_needs_no_witness(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tla = Path(tmp)
+            (tla / "MCPlain.tla").write_text(
+                "---- MODULE MCPlain ----\nEventually == <>TRUE\n====\n",
+                encoding="utf-8",
+            )
+            (tla / "MCPlain.cfg").write_text(
+                "SPECIFICATION Spec\nPROPERTIES\n    Eventually\n", encoding="utf-8")
+            write_tsv(tla / "CASES.tsv", check_tla_records.CASES_COLUMNS,
+                      [case_row("MCPlain.cfg", "MCPlain.tla")])
+            write_tsv(tla / "RUNS.tsv", check_tla_records.RUNS_COLUMNS,
+                      [run_row("MCPlain.cfg", "MCPlain.tla")])
+            out = io.StringIO()
+            code = check_tla_records.check(
+                tla / "CASES.tsv", tla / "RUNS.tsv", out, forbid_stale=False)
+            self.assertEqual(code, 0, out.getvalue())
+
     def test_committed_ledgers_pass(self):
         out = io.StringIO()
         code = check_tla_records.check(out=out)
