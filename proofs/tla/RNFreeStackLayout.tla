@@ -15,11 +15,15 @@
 (*                slots.cpp): peeks free[count - 1], refuses a slot whose  *)
 (*                generation is already the owner's g before any state     *)
 (*                changes, then pops.                                      *)
-(*   TakeClaim    rocketnet_used_token_history_claim_record                *)
+(*   PeekClaim    rocketnet_used_token_history_claim_record                *)
 (*                (sdk/rocketnet_token_tables.cpp): rn_token_claim_select_ *)
-(*                slot peeks free[free_count - 1]; the record pops it only *)
-(*                while it is still the top.  The bindings' rn_token_free_ *)
-(*                pop is TakeMap's pop without the generation.             *)
+(*                slot peeks free[free_count - 1] and remembers it.        *)
+(*   PopClaim     the record pops that slot only while it is still the    *)
+(*                top.  No other table operation runs between these       *)
+(*                steps under the endpoint's caller serialization.  The   *)
+(*                interleaved-release witness reverses this assumption.   *)
+(*                bindings' rn_token_free_pop is TakeMap's pop without     *)
+(*                the generation.                                          *)
 (*   Release(i)   rocketnet_encryption_map_remove_generation, rocketnet_   *)
 (*                client_slots_release and the token tables' release with  *)
 (*                rn_token_free_push: only a live slot, matched by its     *)
@@ -35,6 +39,8 @@
 (*               so a refused take loses the slot (StackIsFree);           *)
 (*   "wrapone"   the generation steps from its maximum to 1, not to the    *)
 (*               exhausted 0 (GenerationNeverReissued).                    *)
+(*   "interleaveclaim" a release runs between a free-slot peek and pop   *)
+(*               (StackIsFree).                                            *)
 (***************************************************************************)
 EXTENDS Integers, FiniteSets
 
@@ -45,7 +51,7 @@ CONSTANTS
     Broken      \* "none", or the reversed witness
 
 ASSUME /\ Cap \in Nat \ {0} /\ MaxGen \in Nat \ {0} /\ Owners \subseteq Nat \ {0}
-       /\ Broken \in {"none", "noguard", "decfirst", "wrapone"}
+       /\ Broken \in {"none", "noguard", "decfirst", "wrapone", "interleaveclaim"}
 
 Idx == 0..Cap-1
 
@@ -55,9 +61,12 @@ VARIABLES
     live,       \* slot -> live (address type, connected, ticket)
     gen,        \* slot -> its generation (the map's tag, the slot's owner)
     nextGen,    \* map->next_generation; 0 is exhausted
-    issued      \* ghost: every map generation handed out
+    issued,     \* ghost: every map generation handed out
+    pending     \* the slot PeekClaim selected, or NoPeek between claims
 
-vars == <<free, count, live, gen, nextGen, issued>>
+vars == <<free, count, live, gen, nextGen, issued, pending>>
+
+NoPeek == -1
 
 \* create: free[capacity - 1 - i] = i
 Init ==
@@ -67,8 +76,10 @@ Init ==
     /\ gen = [i \in Idx |-> 0]
     /\ nextGen = 1
     /\ issued = {}
+    /\ pending = NoPeek
 
 TakeMap ==
+    /\ pending = NoPeek
     /\ count > 0 /\ nextGen # 0
     /\ LET i == free[count - 1] IN
        /\ count' = count - 1
@@ -76,38 +87,55 @@ TakeMap ==
        /\ gen' = [gen EXCEPT ![i] = nextGen]
        /\ nextGen' = IF nextGen = MaxGen THEN (IF Broken = "wrapone" THEN 1 ELSE 0) ELSE nextGen + 1
        /\ issued' = issued \cup {nextGen}
-       /\ UNCHANGED free
+       /\ UNCHANGED <<free, pending>>
 
 TakeSlots(g) ==
+    /\ pending = NoPeek
     /\ count > 0
     /\ LET i == free[count - 1] IN
        IF gen[i] = g
          THEN \* refused: nothing changes, unless the pop came first
               /\ count' = IF Broken = "decfirst" THEN count - 1 ELSE count
-              /\ UNCHANGED <<free, live, gen, nextGen, issued>>
+              /\ UNCHANGED <<free, live, gen, nextGen, issued, pending>>
          ELSE /\ count' = count - 1
               /\ live' = [live EXCEPT ![i] = TRUE]
               /\ gen' = [gen EXCEPT ![i] = g]
-              /\ UNCHANGED <<free, nextGen, issued>>
+              /\ UNCHANGED <<free, nextGen, issued, pending>>
 
-TakeClaim ==
+\* rn_token_claim_select_slot peeks the top. PopClaim is the next table
+\* operation under caller serialization; the witness permits Release between.
+PeekClaim ==
+    /\ pending = NoPeek
     /\ count > 0
-    /\ LET slot == free[count - 1] IN
-       /\ count' = IF count > 0 /\ free[count - 1] = slot THEN count - 1 ELSE count
-       /\ live' = [live EXCEPT ![slot] = TRUE]
-       /\ UNCHANGED <<free, gen, nextGen, issued>>
+    /\ pending' = free[count - 1]
+    /\ UNCHANGED <<free, count, live, gen, nextGen, issued>>
+
+\* Pop only while the peeked slot is still the top. In the reversed witness,
+\* a release changes the top. The code's else arm skips --free_count, then
+\* retires and inserts pending, so it ends live while count is unchanged.
+PopClaim ==
+    /\ pending \in Idx
+    /\ IF count > 0 /\ free[count - 1] = pending
+       THEN /\ count' = count - 1
+            /\ live' = [live EXCEPT ![pending] = TRUE]
+       ELSE /\ count' = count
+            /\ live' = [live EXCEPT ![pending] = TRUE]
+    /\ pending' = NoPeek
+    /\ UNCHANGED <<free, gen, nextGen, issued>>
 
 Release(i) ==
+    /\ (pending = NoPeek \/ Broken = "interleaveclaim")
     /\ live[i] \/ (Broken = "noguard" /\ count < Cap)
     /\ live' = [live EXCEPT ![i] = FALSE]
     /\ free' = [free EXCEPT ![count] = i]
     /\ count' = count + 1
-    /\ UNCHANGED <<gen, nextGen, issued>>
+    /\ UNCHANGED <<gen, nextGen, issued, pending>>
 
 Next ==
     \/ TakeMap
     \/ \E g \in Owners : TakeSlots(g)
-    \/ TakeClaim
+    \/ PeekClaim
+    \/ PopClaim
     \/ \E i \in Idx : Release(i)
 
 Spec == Init /\ [][Next]_vars
@@ -117,6 +145,7 @@ TypeOK ==
     /\ count \in 0..Cap
     /\ live \in [Idx -> BOOLEAN]
     /\ nextGen \in 0..MaxGen
+    /\ pending \in Idx \cup {NoPeek}
 
 \* the stack below count holds every slot that is not live, each once
 StackIsFree ==
