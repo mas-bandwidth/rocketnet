@@ -1708,11 +1708,11 @@ bool rocketnet_portable_tx_test_carry()
     portable_send( server, sends, 3 );
     portable_send( server, sends + 3, 1 );
     bool valid = server->ready_count == 2 && server->free_count == 0;
-    valid &= portable_tx_step( server ) == PORTABLE_TX_WAIT;
+    valid &= portable_tx_step( server ) == PORTABLE_TX_WAIT_CARRY;
     valid &= server->tx_consumer == 0 && server->tx_cursor == 1 && server->free_count == 0;
     valid &= portable_carry_count == 1 && portable_carry_sent[0] == 10;
     portable_carry_allow = 0;
-    valid &= portable_tx_step( server ) == PORTABLE_TX_WAIT;
+    valid &= portable_tx_step( server ) == PORTABLE_TX_WAIT_CARRY;
     valid &= !portable_send_idle( server ) && portable_carry_progress_calls == 2;
     valid &= server->tx_consumer == 0 && server->tx_cursor == 1 && portable_carry_count == 1;
     portable_begin_shutdown( server );
