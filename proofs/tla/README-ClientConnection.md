@@ -237,11 +237,11 @@ only the measured changes the table names; the TSV has one row per run.
 | `W-anysend` | KeepAliveClock "anysend" | Spec | Connects | 32712 | fail as expected |
 | `L-silent` | Timeout 2, ServerMute TRUE, KindLoss "none" | Spec | SilentServerTimesOut, AttemptResolves | 20 | pass |
 | `L-crash` | Timeout 3, Deadline 6, ServerDeadline 4, MaxNonces 2, Disconnects TRUE, KindLoss "none" | Spec | CrashedServerTimesOut, AttemptResolves | - at the 110 s stop | bench debt: crash-timeout-liveness-over-budget |
-| `S-none` | Timeout 2, Deadline 4, ServerDeadline 3, MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", MaxDelay 1, Duplication TRUE, Reordering TRUE | Spec | safety only | - at the 110 s stop | bench debt: reduced replacement `Reach-none` |
+| `S-none` | Timeout 2, Deadline 4, ServerDeadline 3, MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", MaxDelay 1, Duplication TRUE, Reordering TRUE | Spec | safety only | - at the 110 s stop | bench debt: no reduced safety check (`Reach-none` is a reachability witness only) |
 | `S-first` | Timeout 2, Deadline 5, ServerDeadline 3, MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", C2SPattern "first", S2CPattern "first", Duplication TRUE, Reordering TRUE | Spec | safety only | 2234 | pass (handshake up to the timeout) |
-| `S-alternate` | MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", C2SPattern "alternate", S2CPattern "alternate", Duplication TRUE, Reordering TRUE | Spec | safety only | - at the 110 s stop | bench debt: reduced replacement `Reach-alternate` |
-| `S-burst` | MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", C2SPattern "burst", S2CPattern "burst", Duplication TRUE, Reordering TRUE | Spec | safety only | - at the 110 s stop | bench debt: reduced replacement `Reach-burst` |
-| `S-arbitrary` | Timeout 2, Deadline 5, ServerDeadline 3, MaxAttempts 2, MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", C2SPattern "arbitrary", S2CPattern "arbitrary", Duplication TRUE, Reordering TRUE | Spec | safety only | - at the 110 s stop | bench debt: reduced replacement `Reach-arbitrary` |
+| `S-alternate` | MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", C2SPattern "alternate", S2CPattern "alternate", Duplication TRUE, Reordering TRUE | Spec | safety only | - at the 110 s stop | bench debt: no reduced safety check (`Reach-alternate` is a reachability witness only) |
+| `S-burst` | MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", C2SPattern "burst", S2CPattern "burst", Duplication TRUE, Reordering TRUE | Spec | safety only | - at the 110 s stop | bench debt: no reduced safety check (`Reach-burst` is a reachability witness only) |
+| `S-arbitrary` | Timeout 2, Deadline 5, ServerDeadline 3, MaxAttempts 2, MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", C2SPattern "arbitrary", S2CPattern "arbitrary", Duplication TRUE, Reordering TRUE | Spec | safety only | - at the 110 s stop | bench debt: no reduced safety check (`Reach-arbitrary` is a reachability witness only) |
 | `S-firstkind` | Timeout 2, Deadline 4, ServerDeadline 3, MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, MaxDelay 1, Duplication TRUE, Reordering TRUE | Spec | safety only | 12162 | pass (handshake up to the timeout) |
 | `S-delay` | Timeout 2, Deadline 4, ServerDeadline 3, MaxNonces 2, KindLoss "none", C2SPattern "first", S2CPattern "first", MaxDelay 1, Duplication TRUE, Reordering TRUE | Spec | safety only | 2196 | pass (handshake up to the timeout) |
 | `Reach-none` | the S-none constants | SpecReach | NotReached | 86216 | fail as expected (NotReached violated) |
@@ -265,9 +265,11 @@ the server may disconnect, other clients may take the slot; `S-firstkind` and `S
 add a tick of latency; `S-arbitrary` adds a second attempt (a reconnect, so a late
 packet of an old attempt meets a new one). `L-arbitrary` under `SpecTyped` and `L-crash`
 do not finish inside the 110 s per-case budget, and `S-none`, `S-alternate`, `S-burst`
-and `S-arbitrary` do not either: they are explicit bench debt, and `S-none`,
-`S-alternate`, `S-burst` and `S-arbitrary` name a reduced reachability replacement that
-does reach CONNECTED. Under `Spec` the arbitrary-loss instance fails with the
+and `S-arbitrary` do not either: they are explicit bench debt. No reduced case checks
+their safety properties. Each names its reachability witness (`Reach-none`,
+`Reach-alternate`, `Reach-burst`, `Reach-arbitrary`), which shows only that CONNECTED with
+a payload is reachable under the same constants; it is not a smaller safety check, and
+the safety at those constants is checked only by the weekly debt run. Under `Spec` the arbitrary-loss instance fails with the
 type-targeted drop of "What TLC found" 9, which is the fairness being too weak, not the
 protocol; the arbitrary-loss liveness therefore stands on the hand replay of that lasso
 and on the four deterministic patterns, not on a completed run. `S-first`, `S-firstkind`
@@ -446,11 +448,11 @@ original parameters and is not a completed proof.
 | 20 | `MCClientConnectionWAnysend.cfg` | temporal / Connects |
 | 21 | `MCClientConnectionLSilent.cfg` | pass |
 | 22 | `MCClientConnectionLCrash.cfg` | pass; debt: crash-timeout-liveness-over-budget |
-| 23 | `MCClientConnectionSNone.cfg` | pass; debt: full-environment-safety-over-budget-reduced-replacement-MCClientConnectionReachSNone.cfg |
+| 23 | `MCClientConnectionSNone.cfg` | pass; debt: full-environment-safety-over-budget-no-reduced-safety-check-MCClientConnectionReachSNone.cfg-is-a-reachability-witness-only |
 | 24 | `MCClientConnectionSFirst.cfg` | pass (handshake up to the timeout) |
-| 25 | `MCClientConnectionSAlternate.cfg` | pass; debt: alternate-loss-full-environment-safety-over-budget-reduced-replacement-MCClientConnectionReachSAlternate.cfg |
-| 26 | `MCClientConnectionSBurst.cfg` | pass; debt: burst-loss-full-environment-safety-over-budget-reduced-replacement-MCClientConnectionReachSBurst.cfg |
-| 27 | `MCClientConnectionSArbitrary.cfg` | pass; debt: arbitrary-loss-safety-over-budget-reduced-replacement-MCClientConnectionReachSArbitrary.cfg |
+| 25 | `MCClientConnectionSAlternate.cfg` | pass; debt: alternate-loss-full-environment-safety-over-budget-no-reduced-safety-check-MCClientConnectionReachSAlternate.cfg-is-a-reachability-witness-only |
+| 26 | `MCClientConnectionSBurst.cfg` | pass; debt: burst-loss-full-environment-safety-over-budget-no-reduced-safety-check-MCClientConnectionReachSBurst.cfg-is-a-reachability-witness-only |
+| 27 | `MCClientConnectionSArbitrary.cfg` | pass; debt: arbitrary-loss-safety-over-budget-no-reduced-safety-check-MCClientConnectionReachSArbitrary.cfg-is-a-reachability-witness-only |
 | 28 | `MCClientConnectionSFirstkind.cfg` | pass (handshake up to the timeout) |
 | 29 | `MCClientConnectionSDelay.cfg` | pass (handshake up to the timeout) |
 | 30 | `MCClientConnectionF4Ephemeral.cfg` | pass |
