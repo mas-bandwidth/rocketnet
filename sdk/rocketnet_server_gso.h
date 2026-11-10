@@ -242,9 +242,11 @@ bool rocketnet_server_gso_test_drain_room();
 // per-update budget. NULL when the fixture cannot be built.
 struct rocketnet_server_gso_t * rocketnet_server_gso_test_open( int num_queues );
 void rocketnet_server_gso_test_close( struct rocketnet_server_gso_t * gso );
-// Publish packets on one queue, each byte set to marker. false when a ready
-// buffer already waits, or the queue index or count is out of range.
-bool rocketnet_server_gso_test_publish_marked( struct rocketnet_server_gso_t * gso, int queue_index, uint8_t marker, uint32_t packets );
+// Stage packets into one queue's worker buffer, each byte set to marker, as a
+// worker pass would. false when that buffer has no room for them (main has
+// not swapped it out since it was filled), or the queue index or count is
+// out of range.
+bool rocketnet_server_gso_test_stage_marked(struct rocketnet_server_gso_t * gso, int queue_index, uint8_t marker, uint32_t packets );
 #endif // #if ROCKETNET_DEV
 
 #endif // ROCKETNET_SDK_ROCKETNET_SERVER_GSO_H
