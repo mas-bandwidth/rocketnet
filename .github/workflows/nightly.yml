@@ -65,6 +65,13 @@
 #   cells x50               matrix (the portable, iocp and rio servers and
 #                           loopback) fifty times in a row on the native
 #                           Windows runner, for the same one-in-fifty reason.
+#
+#   linux / mutation        tools/mutation/run_mutants.py at full mutant
+#                           count over the day's changed SDK files and the
+#                           six core table and ring files. A risk-class
+#                           survivor fails the job. One mutant is one rebuild
+#                           and one unit-suite run, which does not fit the
+#                           per-commit two minutes.
 
 name: nightly
 
@@ -824,3 +831,65 @@ jobs:
           "$dumpbin" //nologo //headers build-arm64/bin/Release/rocketnet.dll | tr -d '\r' | tee arm64-headers.txt | grep -i machine
           grep -q 'AA64 machine (ARM64)' arm64-headers.txt
           python tools/check_exports.py build-arm64/bin/Release/rocketnet.dll build-arm64/Release/rocketnet.lib
+
+  # THE MUTATION GATE. Full mutant count (--max-mutants 0 is every mutant the
+  # generator emits, not a sample) over SDK sources committed in the last 24
+  # hours and, always, the six core table and ring files. The script exits 1
+  # when a risk-class mutant survives ./bin/test. --self-test does not build;
+  # this step is the campaign, which is why it is not on the per-commit gate.
+
+  mutation:
+    name: linux / mutation
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 7200
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+    concurrency:
+      group: nightly-mutation-${{ matrix.ref }}
+      cancel-in-progress: true
+    steps:
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          ref: ${{ matrix.ref }}
+          fetch-depth: 0
+
+      - name: Mutation campaign, full count, risk-class survivors fail
+        shell: bash
+        run: |
+          set -euo pipefail
+          core=(
+            sdk/rocketnet_token_tables.cpp
+            sdk/rocketnet_encryption_map.cpp
+            sdk/rocketnet_client_slots.cpp
+            sdk/rocketnet_replay.cpp
+            sdk/rocketnet_window_receive.cpp
+            sdk/rocketnet_window_send.cpp
+          )
+          for f in "${core[@]}"; do
+            if [[ ! -f "$f" ]]; then
+              echo "missing core file: $f" >&2
+              exit 1
+            fi
+          done
+          changed="$(git log --since='24 hours ago' --name-only --pretty=format: -- sdk | sed '/^$/d' | sort -u)"
+          files=("${core[@]}")
+          while IFS= read -r f; do
+            [[ "$f" =~ ^sdk/.+\.(c|cc|cpp|cxx|h|hh|hpp|hxx|inc)$ ]] || continue
+            [[ -f "$f" ]] || continue
+            skip=0
+            for have in "${files[@]}"; do
+              if [[ "$have" == "$f" ]]; then
+                skip=1
+                break
+              fi
+            done
+            if [[ "$skip" -eq 0 ]]; then
+              files+=("$f")
+            fi
+          done <<< "$changed"
+          printf 'mutation files:\n'
+          printf '  %s\n' "${files[@]}"
+          python3 tools/mutation/run_mutants.py --max-mutants 0 --files "${files[@]}"

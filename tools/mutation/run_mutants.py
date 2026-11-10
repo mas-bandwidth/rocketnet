@@ -12,6 +12,10 @@ the oracle:
   did_not_compile the build fails (a text mutator has no type awareness)
   not_run         the time budget ran out first
 
+Every operator this generator emits is risk-class. The process exits 1 when a
+chosen risk-class mutant survives. --self-test checks that rule on planted
+source: it does not compile the SDK and it does not sleep.
+
 Python 3 standard library only. Example:
 
   python3 tools/mutation/run_mutants.py --files sdk/rocketnet_ack.cpp \
@@ -51,6 +55,32 @@ COND_RE = re.compile(r"\b(if|while)\s*\(")
 ASSIGN_RE = re.compile(r"^(?P<lhs>[^=;]+?)\s*(?:=|\+=|-=|\*=|/=|\|=|&=|\^=|<<=|>>=)\s*(?!=)[^;]*;$")
 INCREMENT_RE = re.compile(r"^(?:\+\+|--)[\w\->.\[\] ]+;$|^[\w\->.\[\] ]+(?:\+\+|--);$")
 TYPE_WORDS = {"char", "short", "int", "long", "unsigned", "signed", "float", "double", "void", "bool", "const", "auto", "size_t"}
+
+# The operators generate() emits. A survivor of one of these is a risk-class
+# survivor: the unit suite did not kill it. did_not_compile is not survival.
+RISK_OPERATORS = frozenset({
+    "relational",
+    "arithmetic",
+    "boolean",
+    "delete_plus_minus_one",
+    "off_by_one",
+    "negate_condition",
+    "delete_statement",
+})
+
+
+def mutant_class(operator):
+    return "risk" if operator in RISK_OPERATORS else "other"
+
+
+def risk_survivors(mutants):
+    """Risk-class mutants whose status is survived."""
+    found = []
+    for mutant in mutants:
+        kind = mutant.get("class") or mutant_class(mutant.get("operator", ""))
+        if kind == "risk" and mutant.get("status") == "survived":
+            found.append(mutant)
+    return found
 
 
 def code_mask(text):
@@ -127,7 +157,7 @@ def generate(rel, text):
 
         def add(op, col, old, new, mutated):
             mutants.append({"id": f"{rel}:{number}:{col + 1}:{op}:{new}", "file": rel, "line": number, "column": col + 1,
-                            "operator": op, "original_token": old, "mutated_token": new,
+                            "operator": op, "class": mutant_class(op), "original_token": old, "mutated_token": new,
                             "original": line, "mutated": mutated})
 
         for m in OPERATOR_RE.finditer(line):
@@ -248,8 +278,49 @@ class Worker:
             path.write_text(original)
 
 
+def self_test():
+    """Deterministic check of generation and the risk-class gate. No build, no sleep."""
+    text = (
+        "int gate(int a, int b) {\n"
+        "    if (a < b) {\n"
+        "        a = a + 1;\n"
+        "    }\n"
+        "    return a;\n"
+        "}\n"
+    )
+    first = generate("plant.cpp", text)
+    second = generate("plant.cpp", text)
+    if not first or [m["id"] for m in first] != [m["id"] for m in second]:
+        print("self-test FAILED: generation is empty or not deterministic")
+        return 1
+    operators = {m["operator"] for m in first}
+    need = {"relational", "arithmetic", "off_by_one", "negate_condition", "delete_statement"}
+    if not need <= operators:
+        print(f"self-test FAILED: planted operators {sorted(operators)}")
+        return 1
+    for mutant in first:
+        if mutant["class"] != "risk" or mutant_class(mutant["operator"]) != "risk":
+            print(f"self-test FAILED: {mutant['operator']} is not risk-class")
+            return 1
+    survived = dict(first[0], status="survived")
+    detected = dict(first[0], status="detected")
+    missed = dict(first[0], status="did_not_compile")
+    other = dict(first[0], status="survived", operator="note")
+    other["class"] = "other"
+    if len(risk_survivors([survived])) != 1:
+        print("self-test FAILED: a survived risk-class mutant was not a failure")
+        return 1
+    if risk_survivors([detected]) or risk_survivors([missed]) or risk_survivors([other]):
+        print("self-test FAILED: a non-survivor or a non-risk mutant failed the gate")
+        return 1
+    print(f"ok run_mutants self-test: {len(first)} planted mutants, risk-class survival fails the gate")
+    return 0
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--self-test", action="store_true",
+                   help="check the generator and the risk-class gate on planted source, then exit (no build, no sleep)")
     p.add_argument("--files", nargs="+", default=DEFAULT_FILES, help="repository-relative sources to mutate")
     p.add_argument("--workers", type=int, default=4, help="parallel trees (default 4)")
     p.add_argument("--max-mutants", type=int, default=0, help="sample this many (0: all)")
@@ -266,6 +337,8 @@ def main():
     p.add_argument("--work-dir", default=str(ROOT / "build" / "mutation"), help="per-worker trees live here")
     p.add_argument("--out", default="", help="JSON results file (default <work-dir>/results.json)")
     args = p.parse_args()
+    if args.self_test:
+        return self_test()
     started = time.monotonic()
 
     mutants = []
@@ -356,6 +429,10 @@ def main():
         print(f"{m['status']:<15} {m['file'] + ':' + str(m['line']):<45} {m['operator']:<22} "
               f"{m['original'].strip()}  ->  {m['mutated'].strip()}")
     print(f"\nsummary: {json.dumps(summary)}\nresults: {out}")
+    survivors = risk_survivors(chosen)
+    if survivors:
+        print(f"risk-class survivors: {len(survivors)}", flush=True)
+        return 1
     return 0
 
 
