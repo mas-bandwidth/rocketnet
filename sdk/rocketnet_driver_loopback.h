@@ -87,6 +87,11 @@ void rocketnet_loopback_test_send_contention( bool busy );
 // Read-only queue-index seam; test library only. Writes the endpoint's
 // free-running head and tail and its fixed capacity.
 void rocketnet_loopback_test_queue_indices( void * instance, uint32_t * head, uint32_t * tail, uint32_t * capacity );
+
+// Ephemeral range seam; test library only. A port 0 bind is given a port in
+// port .. 65535, so a small hub can hold the whole range. Set it before the
+// hub is created; 0 restores the full range from 49152.
+void rocketnet_loopback_test_first_port( uint16_t port );
 #endif // #if ROCKETNET_DEV
 
 #endif // ROCKETNET_SDK_ROCKETNET_DRIVER_LOOPBACK_H

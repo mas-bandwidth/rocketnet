@@ -36,9 +36,12 @@ Functions in `sdk/rocketnet_driver_loopback.cpp`.
   server takes record 0 and a
   client the first free record after it, a full hub refusing. A bind to port
   0 searches from `next_port`, skipping every port either family holds and
-  stepping with `loopback_next_port` (the last port wraps to the first), takes
-  the port found and moves `next_port` past it. The record is written and the
-  entry set to the record index plus one.
+  stepping with `loopback_next_port` (the last port wraps to the first), one
+  try per port of the range, takes the port found and moves `next_port` past
+  it. The record is written and the entry set to the record index plus one.
+- **`RefuseFull(server, f, a)`**: `loopback_create` when the search for a
+  bind to port 0 tries every port of the range and finds each held: the bind
+  is refused and nothing is written.
 - **`Destroy(r)`**: `loopback_destroy`. The entry is cleared only when it
   names this record; the record is cleared and `registered` lowered.
 
@@ -63,9 +66,8 @@ when its endpoint is a live IPv6 wildcard (dual stack).
   `First..Last`.
 - **`EphemeralPortFree`**: every port the search hands out is held by no live
   endpoint of either family.
-- **`SearchEnds`**: the search always finds a port. The model assumes the
-  range has more ports than the hub has records; no static assert in the
-  code holds that, and its search stops after 65536 tries either way.
+- **`RefusesOnlyWhenFull`**: a bind to port 0 is refused only when every
+  port of the range is held by a live endpoint of either family.
 - **`NoPortZero`**, **`NextPortInRange`**: no live endpoint holds port 0, and
   `next_port` stays in the range.
 - **`DestroyFindsOwnEntry`**: destroy's test always finds its own entry.
@@ -81,11 +83,16 @@ unbinding another endpoint.
 ## The instance
 
 `MCRNLoopbackBindLayout.cfg`: three records (a server and two clients), ports
-0..5 with the ephemeral range 2..5 (four ports, one more than the records, as
-the model assumes), explicit binds to port 1 (outside the range) and
+0..5 with the ephemeral range 2..5 (four ports, one more than the records),
+explicit binds to port 1 (outside the range) and
 port 2 (inside it, so an explicit bind and the search contend), binds to the
 wildcard or a specific address in each family, and destinations at that
 address or another.
+
+`MCRNLoopbackBindLayoutFullRange.cfg`: the same three records with the range
+4..5 (two ports, fewer than the records) and explicit binds to ports 1 and 4,
+so a bind to port 0 can find every port of the range held and is refused, as
+a hub of 16384 or more clients can hold all 16384 ports of the real range.
 
 ## Reversed witnesses
 
@@ -125,6 +132,15 @@ counterexample below was checked against the C by hand.
    the IPv6 wildcard on port 2, and an IPv4 datagram to that address and
    port is accepted by both; the lookup returns the IPv4 endpoint and the
    dual-stack one never sees it.
+6. **`MCRNLoopbackBindLayoutBrokenNoFullCheck.cfg`** (`FullCheck = FALSE`),
+   on the range 4..5: `loopback_create` without its refusal when the search
+   finds no free port, keeping the port its loop is left on. Violates
+   `EphemeralPortFree`: client record 1 binds IPv4 port 0 and takes port 4,
+   client record 2 binds IPv4 port 0 and takes port 5, and `next_port`
+   wraps to 4; the server then binds IPv4 port 0, its search tries 4 and 5,
+   finds both held, is left on 4 after its two steps, and takes port 4 from
+   client record 1, overwriting its entry so record 1 is bound but
+   unreachable.
 
 ## Runs
 
