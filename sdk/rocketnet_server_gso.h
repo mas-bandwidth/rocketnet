@@ -193,10 +193,11 @@ int rocketnet_server_gso_send_room( struct rocketnet_server_gso_t * gso );
 // thread; a send mutex held by the worker reads as not idle.
 bool rocketnet_server_gso_send_idle( struct rocketnet_server_gso_t * gso );
 
-// Receive workers stage into per-queue producer/ready/main banks off main.
-// receive_packets try-swaps ownership and gathers within the caller budget;
-// unconsumed tails stay main-owned until a later receive call. process_packets
-// exposes stable views valid until the next receive_packets call.
+// Receive workers stage into a per-queue current bank off main, and main
+// swaps its exhausted bank for the worker's filled one under the receive
+// mutex once per update; unconsumed tails stay main-owned until a later
+// receive call. process_packets exposes stable views valid until the next
+// receive_packets call.
 
 void rocketnet_server_gso_receive_packets( struct rocketnet_server_gso_t * gso );
 
@@ -211,7 +212,8 @@ struct rocketnet_server_socket_process_packets_t * rocketnet_server_gso_process_
 void rocketnet_server_gso_test_force_create_flags( int flags );
 void rocketnet_server_gso_test_fail_receives( struct rocketnet_server_gso_t * gso, int count, int error );
 void rocketnet_server_gso_test_fail_sends( struct rocketnet_server_gso_t * gso, int count, int error );
-// Observe publication without consuming it; returns false on lock contention.
+// Observe the worker's current bank without consuming it; returns false on
+// lock contention. True once the worker staged a packet main has not claimed.
 bool rocketnet_server_gso_test_receive_ready( struct rocketnet_server_gso_t * gso, int queue_index );
 // Main thread: no staged packet, no ready bank, no bank held by the TX worker.
 bool rocketnet_server_gso_test_send_idle( struct rocketnet_server_gso_t * gso );
