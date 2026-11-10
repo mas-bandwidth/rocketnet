@@ -215,11 +215,14 @@ def generate(rel, text):
             digits, suffix = m.group(1), m.group(2)
             if not code(m.start(), m.end()) or in_macro_call(line, m.start()):
                 continue
-            value = int(digits, 0)
+            # a leading zero is a C octal literal, which Python's base 0 refuses
+            octal = len(digits) > 1 and digits[0] == "0" and digits[1].isdigit()
+            value = int(digits, 8 if octal else 0)
             for new_value in (value + 1, value - 1):
                 if new_value < 0 or new_value >= 1 << 64:
                     continue
-                new = (hex(new_value) if digits.lower().startswith("0x") else str(new_value)) + suffix
+                new = (hex(new_value) if digits.lower().startswith("0x") else
+                       "0%o" % new_value if octal else str(new_value)) + suffix
                 add("off_by_one", m.start(), m.group(0), new, line[:m.start()] + new + line[m.end():])
         for m in COND_RE.finditer(line):
             close = matching_paren(line, m.end() - 1)
@@ -362,6 +365,10 @@ def self_test():
         return 1
     if risk_survivors([dict(m, status="survived") for m in guards]):
         print("self-test FAILED: a survived rocketnet_assert mutant failed the gate")
+        return 1
+    octal = {m["mutated"].strip() for m in generate("plant.cpp", "    mode = 0700;\n") if m["operator"] == "off_by_one"}
+    if octal != {"mode = 0701;", "mode = 0677;"}:
+        print(f"self-test FAILED: a C octal literal mutated to {sorted(octal)}")
         return 1
     print(f"ok run_mutants self-test: {len(first)} planted mutants, risk-class survival fails the gate, "
           "rocketnet_assert survivors do not")
