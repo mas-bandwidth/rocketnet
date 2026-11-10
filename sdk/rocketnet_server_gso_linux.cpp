@@ -1712,7 +1712,10 @@ static int rocketnet_server_gso_flush( struct rocketnet_server_gso_t * gso, rock
             // message and the bank keeps the rest, in order, for the next
             // attempt (proofs/tla/RNGsoHandoff.tla TxSend, SentOrHeld)
 
-            if ( errno == EAGAIN || errno == EWOULDBLOCK || errno == ENOBUFS || errno == ENOMEM || errno == EINTR )
+            if ( errno == EINTR )
+                continue;
+
+            if ( errno == EAGAIN || errno == EWOULDBLOCK || errno == ENOBUFS || errno == ENOMEM )
             {
                 rocketnet_spam( "gso transport sendmmsg refused (errno %d). %d messages wait for the next attempt", errno, num_messages - sent );
 

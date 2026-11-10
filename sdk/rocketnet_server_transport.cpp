@@ -2644,8 +2644,9 @@ static void rocketnet_server_receive_one( struct rocketnet_server_transport_t * 
     int payload_bytes = 0;
     int payload_client_index = -1;
 
-    struct rocketnet_server_frame_t frame;
-    frame.data = NULL;
+    struct rocketnet_server_frame_t frame
+    {
+    };
 
     // the response frame is reserved before the packet is processed, so its
     // refusal is counted below only when there was a response to send
