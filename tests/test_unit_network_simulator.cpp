@@ -8,8 +8,8 @@
 // what that plan refuses before any allocation, and frees everything when an
 // allocation fails; a reverse window the allocator refuses leaves the patterns
 // off; deliver_packets and send refuse a size outside 1 .. the receive
-// ceiling, a NULL packet and a full wire. No socket and no clock: time is an
-// argument. One case starts a helper thread that only holds a mutex.
+// ceiling, a NULL packet and a full wire. No socket, thread or clock: time is
+// an argument, and the lock-contention case holds the mutex on this thread.
 
 #include "test_unit_registry.h"
 
@@ -21,7 +21,6 @@
 
 #include <limits.h>
 #include <string.h>
-#include <atomic>
 
 #include "rocketnet_platform.h"
 
@@ -276,29 +275,10 @@ static void test_network_simulator_refuses_bad_sizes_and_a_full_wire()
 }
 
 // A producer that still owns the simulator mutex must not stall the send
-// path. The helper holds the mutex across the call. take_setting returns
-// without applying the handed-over latency, and the next pass that finds the
-// mutex free applies it. Delivery time is an argument.
-
-struct simulator_take_hold_t
-{
-    struct rocketnet_platform_mutex_t * mutex;
-    std::atomic<int> held;
-    std::atomic<int> release;
-};
-
-static void simulator_take_hold_thread( struct rocketnet_platform_thread_t * thread, void * arg )
-{
-    (void) thread;
-
-    struct simulator_take_hold_t * hold = (struct simulator_take_hold_t *) arg;
-    rocketnet_platform_mutex_acquire( hold->mutex );
-    hold->held.store( 1, std::memory_order_release );
-    while ( hold->release.load( std::memory_order_acquire ) == 0 )
-    {
-    }
-    rocketnet_platform_mutex_release( hold->mutex );
-}
+// path. This thread holds the mutex across the call (a normal mutex refuses a
+// second acquisition). take_setting returns without applying the handed-over
+// latency, and the next pass that finds the mutex free applies it. Delivery
+// time is an argument.
 
 static void test_network_simulator_take_setting_does_not_wait()
 {
@@ -313,18 +293,7 @@ static void test_network_simulator_take_setting_does_not_wait()
 
     rocketnet_network_simulator_reconfigure( simulator, &mutex, 1.0, 0.0, 0.0f, 0.0f );
 
-    struct simulator_take_hold_t hold;
-    hold.mutex = &mutex;
-    hold.held.store( 0, std::memory_order_relaxed );
-    hold.release.store( 0, std::memory_order_relaxed );
-
-    int started = 0;
-    struct rocketnet_platform_thread_t * helper = rocketnet_platform_thread_create( NULL, simulator_take_hold_thread, &hold, &started );
-    check( helper != NULL );
-
-    while ( hold.held.load( std::memory_order_acquire ) == 0 )
-    {
-    }
+    rocketnet_platform_mutex_acquire( &mutex );
 
     const bool active = rocketnet_network_simulator_take_setting( simulator, &mutex );
     check( !active );
@@ -336,9 +305,7 @@ static void test_network_simulator_take_setting_does_not_wait()
     check( rocketnet_network_simulator_receive( simulator, &to, 0.0, &received_from, received ) == 1 );
     check( received[0] == byte );
 
-    hold.release.store( 1, std::memory_order_release );
-    rocketnet_platform_thread_join( helper );
-    rocketnet_platform_thread_destroy( helper );
+    rocketnet_platform_mutex_release( &mutex );
 
     check( rocketnet_network_simulator_take_setting( simulator, &mutex ) );
 
