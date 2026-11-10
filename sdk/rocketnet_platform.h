@@ -463,6 +463,8 @@ void rocketnet_platform_wake_destroy( struct rocketnet_platform_wake_t * wake );
 bool rocketnet_platform_wake_close( struct rocketnet_platform_wake_t * wake );
 // readable also releases on socket readability; an event-only wake returns false at once for readable
 bool rocketnet_platform_wake_wait( struct rocketnet_platform_wake_t * wake, bool readable, double timeout_seconds );
+// waits until the wake is set, the wake's socket is writable (POLLOUT) or the timeout passes, and consumes a set wake; a wake with no socket waits on the wake alone
+bool rocketnet_platform_wake_wait_writable( struct rocketnet_platform_wake_t * wake, double timeout_seconds );
 // any thread may signal; a signal made before a wait stays pending until a wait consumes it
 void rocketnet_platform_wake_set( struct rocketnet_platform_wake_t * wake );
 

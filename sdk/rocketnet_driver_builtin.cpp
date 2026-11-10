@@ -299,8 +299,11 @@ static bool portable_tx_publish( portable_server_t * server )
 
     if ( server->free_count == 0 )
     {
+        const bool retained = server->tx_consumer >= 0 || server->ready_count > 0;
         rocketnet_platform_mutex_release( &server->mutex );
         server->publish_refusal = PORTABLE_TX_DROP_NO_FREE_BANK;
+        if ( retained )
+            rocketnet_platform_wake_set( server->wake );
         return false;
     }
 
@@ -327,6 +330,7 @@ enum portable_tx_step_t
     PORTABLE_TX_EXIT,
     PORTABLE_TX_SENT,
     PORTABLE_TX_WAIT,
+    PORTABLE_TX_WAIT_CARRY, // a retained bank's suffix is unsent (EAGAIN): wait for writability, not the idle timeout
 };
 
 #if defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
@@ -401,7 +405,7 @@ static portable_tx_step_t portable_tx_step( portable_server_t * server )
             rocketnet_assert( consumed >= 0 && consumed <= remaining );
             server->tx_cursor += consumed;
             if ( server->tx_cursor < bank->count )
-                return PORTABLE_TX_WAIT;
+                return PORTABLE_TX_WAIT_CARRY;
         }
         else
 #endif // #if defined( __linux__ )
@@ -445,6 +449,8 @@ static void portable_tx_worker( rocketnet_platform_thread_t *, void * arg )
 
         if ( step == PORTABLE_TX_WAIT )
             rocketnet_platform_wake_wait( server->wake, false, 0.1 );
+        else if ( step == PORTABLE_TX_WAIT_CARRY )
+            rocketnet_platform_wake_wait_writable( server->wake, 0.001 );
     }
 
     server->exited.store( true, std::memory_order_release );
@@ -740,7 +746,12 @@ static void * portable_create( void * context, const rocketnet_server_transport_
         return NULL;
     }
 
+#if defined( __linux__ )
+    // the TX wake polls its socket for POLLOUT while a bank is retained
+    server->wake = rocketnet_platform_wake_create( context, server->socket, config->status );
+#else
     server->wake = rocketnet_platform_wake_create( context, NULL, config->status );
+#endif // #if defined( __linux__ )
 #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
     server->rx_wake = rocketnet_platform_wake_create( context, server->socket, config->status );
 #else
@@ -1718,6 +1729,63 @@ bool rocketnet_portable_tx_test_carry()
     portable_stop( server );
     valid &= portable_tx_step( server ) == PORTABLE_TX_EXIT;
     valid &= portable_carry_progress_calls == 2;
+    portable_server_cleanup( server );
+    return valid;
+}
+
+bool rocketnet_portable_tx_test_carry_wake()
+{
+    void * storage = rocketnet_malloc( NULL, sizeof( portable_server_t ) );
+    if ( !storage )
+        return false;
+    portable_server_t * server = new ( storage ) portable_server_t();
+    if ( !portable_tx_storage_create( server, 4 ) || !rocketnet_platform_mutex_create( &server->mutex ) )
+    {
+        portable_server_cleanup( server );
+        return false;
+    }
+    server->wake = rocketnet_platform_wake_create( NULL, NULL );
+    if ( !server->wake )
+    {
+        portable_server_cleanup( server );
+        return false;
+    }
+    server->send_progress_for_test = portable_carry_progress;
+    server->send_terminal_for_test = portable_carry_terminal;
+    portable_carry_count = portable_carry_terminal_count = portable_carry_progress_calls = 0;
+    portable_carry_allow = 1;
+    rocketnet_address_t to = {};
+    to.type = ROCKETNET_ADDRESS_IPV4;
+    to.port = 1234;
+    uint8_t data[] = { 10, 20, 30, 40 };
+    rocketnet_platform_send_t sends[4];
+    for ( int i = 0; i < 4; i++ )
+        sends[i] = { &to, &data[i], 1 };
+    portable_send( server, sends, 3 );
+    portable_send( server, sends + 3, 1 );
+    bool valid = server->ready_count == 2 && server->free_count == 0;
+    // EAGAIN retains the bank: the step is the carry wait, not the idle wait
+    valid &= portable_tx_step( server ) == PORTABLE_TX_WAIT_CARRY;
+    valid &= server->tx_consumer == 0 && server->tx_cursor == 1 && portable_carry_count == 1;
+    portable_carry_allow = 0;
+    valid &= portable_tx_step( server ) == PORTABLE_TX_WAIT_CARRY;
+    valid &= server->tx_cursor == 1 && portable_carry_progress_calls == 2;
+    // drain the publishes' wake, then a publish refused for NO_FREE_BANK
+    // while the bank is retained must wake the worker again
+    (void) rocketnet_platform_wake_wait( server->wake, false, 0.0 );
+    portable_send( server, sends, 4 );
+    valid &= server->publish_refusal == PORTABLE_TX_DROP_NO_FREE_BANK;
+    valid &= rocketnet_platform_wake_wait( server->wake, false, 0.0 );
+    valid &= !rocketnet_platform_wake_wait( server->wake, false, 0.0 );
+    portable_carry_allow = 10;
+    valid &= portable_tx_step( server ) == PORTABLE_TX_SENT;
+    valid &= portable_tx_step( server ) == PORTABLE_TX_SENT;
+    valid &= portable_tx_step( server ) == PORTABLE_TX_WAIT;
+    valid &= !portable_send_idle( server );
+    valid &= portable_tx_step( server ) == PORTABLE_TX_SENT;
+    valid &= portable_send_idle( server );
+    portable_stop( server );
+    valid &= portable_tx_step( server ) == PORTABLE_TX_EXIT;
     portable_server_cleanup( server );
     return valid;
 }

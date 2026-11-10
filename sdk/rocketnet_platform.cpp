@@ -2669,6 +2669,13 @@ bool rocketnet_platform_wake_wait( rocketnet_platform_wake_t * wake, bool readab
     return woken;
 }
 
+bool rocketnet_platform_wake_wait_writable( rocketnet_platform_wake_t * wake, double timeout_seconds )
+{
+    // no retained-bank carry arises off Linux, so the wake alone with the
+    // caller's retry timeout is the writable wait on this platform
+    return rocketnet_platform_wake_wait( wake, false, timeout_seconds );
+}
+
 void rocketnet_platform_wake_set( rocketnet_platform_wake_t * wake )
 {
     rocketnet_assert( wake );
@@ -2800,6 +2807,36 @@ bool rocketnet_platform_wake_wait( rocketnet_platform_wake_t * wake, bool readab
     }
 
     return nfds > 1 && ( fds[1].revents & POLLIN );
+}
+
+bool rocketnet_platform_wake_wait_writable( rocketnet_platform_wake_t * wake, double timeout_seconds )
+{
+    rocketnet_assert( wake );
+
+    if ( wake->socket_fd < 0 )
+        return rocketnet_platform_wake_wait( wake, false, timeout_seconds );
+
+    struct pollfd fds[2];
+    fds[0].fd = wake->read_fd;
+    fds[0].events = POLLIN;
+    fds[0].revents = 0;
+    fds[1].fd = wake->socket_fd;
+    fds[1].events = POLLOUT;
+    fds[1].revents = 0;
+
+    const int timeout_ms = timeout_seconds > 0.0 ? (int) ceil( timeout_seconds * 1000.0 ) : 0;
+    if ( poll( fds, (nfds_t) 2, timeout_ms ) <= 0 )
+        return false;
+
+    if ( fds[0].revents & POLLIN )
+    {
+        uint8_t buffer[64];
+        const ssize_t bytes = read( wake->read_fd, buffer, sizeof( buffer ) );
+        (void) bytes;
+        return true;
+    }
+
+    return ( fds[1].revents & POLLOUT ) != 0;
 }
 
 void rocketnet_platform_wake_set( rocketnet_platform_wake_t * wake )
@@ -4479,6 +4516,12 @@ bool rocketnet_platform_wake_wait( rocketnet_platform_wake_t * wake, bool readab
     return false;
 }
 
+bool rocketnet_platform_wake_wait_writable( rocketnet_platform_wake_t * wake, double timeout_seconds )
+{
+    // as on the kqueue wake above: no retained-bank carry arises here
+    return rocketnet_platform_wake_wait( wake, false, timeout_seconds );
+}
+
 // proofs/tla/RNClientIo.tla's Wake: set the level-triggered wake from any thread
 void rocketnet_platform_wake_set( rocketnet_platform_wake_t * wake )
 {
@@ -4852,6 +4895,13 @@ bool rocketnet_platform_wake_wait( rocketnet_platform_wake_t * wake, bool readab
 {
     (void) wake;
     (void) readable;
+    (void) timeout_seconds;
+    return false;
+}
+
+bool rocketnet_platform_wake_wait_writable( rocketnet_platform_wake_t * wake, double timeout_seconds )
+{
+    (void) wake;
     (void) timeout_seconds;
     return false;
 }
