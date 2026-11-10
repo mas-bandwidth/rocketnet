@@ -368,3 +368,76 @@ static void test_held_insert_refuses_the_window_plus_first_entry()
 }
 
 REGISTER_UNIT_TEST( test_held_insert_refuses_the_window_plus_first_entry );
+
+// A multi-fragment code-4 block superseded in the future slot: its first
+// fragment (number 1) is released when a newer future message supersedes
+// it. Its remaining fragment (number 2) arriving after its epoch opens must
+// be stale, not anchor an orphan in-turn block whose first fragment can
+// never arrive again; that orphan would leave descriptor 2 live until
+// number 2 + W collides with it in the receive window.
+
+static void test_sequenced_orphan_fragment_after_supersede_is_stale()
+{
+    ho_node_t node;
+    ho_init( &node );
+
+    const uint32_t W = node.region->window;
+    uint8_t chunk[ROCKETNET_MESSAGE_FRAGMENT_BYTES] = {};
+    uint8_t tail[20] = {};
+    const uint8_t newest = 9;
+    const uint8_t ordered_data = 7;
+    const uint8_t honest = 5;
+
+    // O.f0: number 1, channel 1, ordering 1, sequencing 0, fragment 0 of 2
+
+    rocketnet_message_record_t fragment = ho_record( ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED, 1, 1, 1, 0, chunk,
+                                                     ROCKETNET_MESSAGE_FRAGMENT_BYTES, 0 );
+    fragment.block = 1;
+    fragment.fragment = 0;
+    fragment.fragments = 1;
+    check( ho_receive( &node, fragment ) == ROCKETNET_CHANNEL_DISPATCH_HELD );
+    check( node.region->receive_descriptors[1].live != 0 );
+
+    // N: number 4, ordering 2 supersedes O.f0 in the future slot
+
+    check( ho_receive( &node, ho_record( ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED, 4, 1, 2, 0, &newest, 1, 200 ) ) ==
+           ROCKETNET_CHANNEL_DISPATCH_HELD );
+    check( node.region->receive_descriptors[1].live == 0 );
+
+    // Y: number 0, RELIABLE_ORDERED ordering 0 opens epoch 1
+
+    check( ho_receive( &node, ho_record( ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 0, 1, 0, 0, &ordered_data, 1, 400 ) ) ==
+           ROCKETNET_CHANNEL_DISPATCH_DELIVERED );
+    check( node.region->channel_receive[1].ordered_read == 1 );
+    rn_ordered_end_update( &node.ordered );
+
+    // O.f1: number 2, fragment 1 of 2, in its now-open epoch
+
+    const uint64_t stale_before = node.counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_STALE];
+    fragment = ho_record( ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED, 2, 1, 1, 0, tail, (int) sizeof( tail ),
+                          ROCKETNET_MESSAGE_FRAGMENT_BYTES / 16 );
+    fragment.block = 1;
+    fragment.fragment = 1;
+    fragment.fragments = 1;
+    check( ho_receive( &node, fragment ) == ROCKETNET_CHANNEL_DISPATCH_STALE );
+    check( node.counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_STALE] == stale_before + 1 );
+    check( node.region->receive_descriptors[2].live == 0 );
+    check( node.region->channel_receive[1].block_in_turn == RN_DESCRIPTOR_NONE );
+    rn_ordered_end_update( &node.ordered );
+
+    // honest RELIABLE messages 5 .. 2 + W: no window violation
+
+    for ( uint32_t number = 5; number <= 2 + W; number++ )
+    {
+        check( ho_receive( &node, ho_record( ROCKETNET_MESSAGE_CODE_RELIABLE, number, 1, 0, 0, &honest, 1, 500 + number ) ) ==
+               ROCKETNET_CHANNEL_DISPATCH_DELIVERED );
+        rn_ordered_end_update( &node.ordered );
+    }
+
+    check( node.ordered.receive.violation == ROCKETNET_MESSAGE_VIOLATION_NONE );
+    check( node.ordered.channels.error == ROCKETNET_DISCONNECT_REASON_NONE );
+
+    rn_arena_destroy( node.arena );
+}
+
+REGISTER_UNIT_TEST( test_sequenced_orphan_fragment_after_supersede_is_stale );
