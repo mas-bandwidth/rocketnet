@@ -233,8 +233,8 @@ static void test_server_gso_segment_refusal_keeps_other_destinations()
     // was still one segmented send, and the tier is still on. gso's sendmmsg
     // refuses synchronously with the bank still held, so the run is resent;
     // io_uring's refusal arrives in a CQE after the slots are handed back, so
-    // there the run is dropped and counted (test_uring_segment_refusal_keeps_other_destinations).
-    // On both, one refusal leaves segmentation on for every destination.
+    // there the run is dropped and counted, and segmentation is off from then
+    // on (test_uring_segment_refusal_sends_plain_after).
     check( socket.plain_packets == 2 );
     check( socket.plain_ports_n == 2 );
     check( socket.plain_ports[0] == 40000 );
