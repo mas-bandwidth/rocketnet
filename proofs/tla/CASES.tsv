@@ -45,6 +45,12 @@ MCReplayWindowMid.cfg	MCReplayWindow.tla	pass	-	check	replaywindow	bench	mid-win
 MCReplayWindowBrokenLongSkip.cfg	MCReplayWindow.tla	invariant	WindowIsTruth	check	replaywindow	required	-
 MCReplayWindowBrokenOpenBeforeGate.cfg	MCReplayWindow.tla	invariant	NoOpenBeforeConnect	check	replaywindow	required	-
 MCReplayWindowBrokenGate.cfg	MCReplayWindow.tla	invariant	NoAdvanceBeforeConnect	check	replaywindow	required	-
+MCReplayWindowBrokenGenuine.cfg	MCReplayWindow.tla	invariant	GenuineIsAccepted	check	replaywindow	required	-
+MCReplayWindowBrokenAck.cfg	MCReplayWindow.tla	invariant	AckReportsOnlyReceived	check	replaywindow	required	-
+MCReplayWindowBrokenProcessed.cfg	MCReplayWindow.tla	invariant	AckReportsOnlyProcessed	check	replaywindow	required	-
+MCReplayWindowBrokenReceived.cfg	MCReplayWindow.tla	invariant	ReceivedIsRefused	check	replaywindow	required	-
+MCReplayWindowBrokenBelowFloor.cfg	MCReplayWindow.tla	invariant	BelowFloorIsRefused	check	replaywindow	required	-
+MCReplayWindowBrokenHighest.cfg	MCReplayWindow.tla	invariant	HighestIsReceived	check	replaywindow	required	-
 MCRNSendStore.cfg	MCRNSendStore.tla	pass	-	check	rnsendstore	required	-
 MCRNSendStoreBrokenNoGuard.cfg	MCRNSendStore.tla	invariant	NoLeak	check	rnsendstore	required	-
 MCRNSendStoreLayout.cfg	MCRNSendStoreLayout.tla	pass	-	check	rnsendstorelayout	required	-

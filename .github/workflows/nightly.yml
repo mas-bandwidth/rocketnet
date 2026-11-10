@@ -137,7 +137,7 @@ jobs:
 
   macos-functional-nightly:
     name: macos / Release functional nightly tier
-    runs-on: [self-hosted, macOS, ARM64, rocketnet-macos]
+    runs-on: [self-hosted, macOS, ARM64, fleet]
     timeout-minutes: 7200
     strategy:
       matrix:
@@ -386,7 +386,7 @@ jobs:
   linux-transport-cells-repeat:
     name: linux / transport cells x50 and ASan
     # The xdp cell needs the same VM tier as the Linux functional matrix.
-    runs-on: [self-hosted, Linux, X64, libxdp-1-4]
+    runs-on: [self-hosted, Linux, X64, fleet]
     timeout-minutes: 7200
     strategy:
       matrix:
@@ -425,7 +425,7 @@ jobs:
           if-no-files-found: ignore
 
   # THE MACOS TRANSPORT CELLS, FIFTY TIMES IN A ROW. The same script as the
-  # Linux job above, on the fleet's Apple-silicon runner (rocketnet-macos):
+  # Linux job above, on the fleet's Apple-silicon runners (macOS, ARM64, fleet):
   # it reads ci.yml's TRANSPORT_MATRIX_MACOS step (never a copy), so every
   # macOS cell -- portable/portable, portable/msgx, msgx/portable, msgx/msgx
   # and loopback/loopback -- runs each of its cases fifty times in a row,
@@ -437,7 +437,7 @@ jobs:
 
   macos-transport-cells-repeat:
     name: macos / transport cells x50
-    runs-on: [self-hosted, macOS, ARM64, rocketnet-macos]
+    runs-on: [self-hosted, macOS, ARM64, fleet]
     timeout-minutes: 7200
     strategy:
       fail-fast: false

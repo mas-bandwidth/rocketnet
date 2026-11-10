@@ -559,6 +559,7 @@ struct rn_client_head_t
     struct rocketnet_message_client_t * retiring;       // retained until worker completion and synchronous reclamation
     int refused_state;                                  // token refusal or terminal state retained during retry, 0 otherwise
     int reported_state;                                 // the rocketnet_client_state the state change callback last reported
+    int in_state_callback;                              // 1 while the state change callback runs: a changing call from it is refused
     int receipts_retained;                              // 1 from a disconnect until the next update: the retiring connection's receipts read
     int update_timed;                                   // 1 once an update without a live connection read a good time
     double update_time;                                 // that clock (rocketnet_update_clock_advance): the last good time,
@@ -1298,6 +1299,22 @@ static bool rn_connect_token_decode( const char * connect_token, uint8_t token[R
 // of rocketnet_client_state after each call would see. The value is stored
 // before the call, so a callback that reads the state reads the new one.
 
+// A call that changes the client, made from inside the state change callback,
+// is refused: counted as API misuse, logged, and returned at once with the
+// client untouched. The flag is set only around the callback, so every path
+// out of rn_client_report_state leaves it clear.
+
+static bool rn_client_reentry_guard( struct rocketnet_client_t * client, const char * function )
+{
+    if ( !client->in_state_callback )
+        return true;
+
+    rocketnet_api_misuse_record();
+
+    rocketnet_error( "%s refused: called from the client's state change callback", function );
+    return false;
+}
+
 static void rn_client_report_state( struct rocketnet_client_t * client )
 {
     const int previous_state = client->reported_state;
@@ -1307,8 +1324,12 @@ static void rn_client_report_state( struct rocketnet_client_t * client )
 
     client->reported_state = current_state;
 
-    if ( client->state_change_callback )
-        client->state_change_callback( client->context, (enum rocketnet_client_state_t) previous_state, (enum rocketnet_client_state_t) current_state );
+    if ( !client->state_change_callback )
+        return;
+
+    client->in_state_callback = 1;
+    client->state_change_callback( client->context, (enum rocketnet_client_state_t) previous_state, (enum rocketnet_client_state_t) current_state );
+    client->in_state_callback = 0;
 }
 
 static void rn_client_disconnect( struct rocketnet_client_t * client );
@@ -1392,6 +1413,8 @@ enum rocketnet_status_t rocketnet_client_connect( struct rocketnet_client_t * cl
 {
     if ( !rocketnet_api_null_guard( client ) || !rocketnet_api_null_guard( connect_token_string ) )
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
+    if ( !rn_client_reentry_guard( client, "rocketnet_client_connect" ) )
+        return ROCKETNET_STATUS_INVALID_ARGUMENT;
 
     const enum rocketnet_status_t status = rn_client_connect( client, connect_token_string );
 
@@ -1408,6 +1431,9 @@ void rocketnet_client_destroy( struct rocketnet_client_t * client )
 {
     if ( !client )
         return;                                         // as free(NULL): silent, uncounted
+
+    if ( !rn_client_reentry_guard( client, "rocketnet_client_destroy" ) )
+        return;
 
     rocketnet_assert( rocketnet_client_disconnected( client ) );
 
@@ -1485,6 +1511,8 @@ void rocketnet_client_update( struct rocketnet_client_t * client, double time )
 {
     if ( !rocketnet_api_null_guard( client ) )
         return;
+    if ( !rn_client_reentry_guard( client, "rocketnet_client_update" ) )
+        return;
 
     // the retiring connection's receipts were readable until this update
 
@@ -1507,6 +1535,8 @@ void rocketnet_client_update( struct rocketnet_client_t * client, double time )
 void rocketnet_client_send_packets( struct rocketnet_client_t * client )
 {
     if ( !rocketnet_api_null_guard( client ) )
+        return;
+    if ( !rn_client_reentry_guard( client, "rocketnet_client_send_packets" ) )
         return;
     if ( !client->connection )
         return;
@@ -1551,6 +1581,8 @@ static void rn_client_disconnect( struct rocketnet_client_t * client )
 void rocketnet_client_disconnect( struct rocketnet_client_t * client )
 {
     if ( !rocketnet_api_null_guard( client ) )
+        return;
+    if ( !rn_client_reentry_guard( client, "rocketnet_client_disconnect" ) )
         return;
 
     rn_client_disconnect( client );
@@ -1693,6 +1725,8 @@ uint8_t * rocketnet_client_start_message( struct rocketnet_client_t * client, in
 {
     if ( !rocketnet_api_null_guard( client ) )
         return NULL;
+    if ( !rn_client_reentry_guard( client, "rocketnet_client_start_message" ) )
+        return NULL;
 
     if ( !client->connection )
     {
@@ -1722,6 +1756,8 @@ uint32_t rocketnet_client_finish_message( struct rocketnet_client_t * client, in
 {
     if ( !rocketnet_api_null_guard( client ) )
         return 0;
+    if ( !rn_client_reentry_guard( client, "rocketnet_client_finish_message" ) )
+        return 0;
 
     if ( !client->connection )
     {
@@ -1735,6 +1771,8 @@ uint32_t rocketnet_client_finish_message( struct rocketnet_client_t * client, in
 void rocketnet_client_abort_message( struct rocketnet_client_t * client )
 {
     if ( !rocketnet_api_null_guard( client ) )
+        return;
+    if ( !rn_client_reentry_guard( client, "rocketnet_client_abort_message" ) )
         return;
     if ( !client->connection )
         return;
@@ -1814,6 +1852,8 @@ const struct rocketnet_message_batch_t * rocketnet_client_receive_messages( stru
 {
     if ( !rocketnet_api_null_guard( client ) )
         return NULL;
+    if ( !rn_client_reentry_guard( client, "rocketnet_client_receive_messages" ) )
+        return NULL;
 
     client->batch.num_messages = 0;
     if ( client->connection )
@@ -1828,6 +1868,8 @@ const struct rocketnet_message_batch_t * rocketnet_client_receive_messages( stru
 int rocketnet_client_receipts( struct rocketnet_client_t * client, struct rocketnet_receipt_t * out, int capacity )
 {
     if ( !rocketnet_api_null_guard( client ) )
+        return 0;
+    if ( !rn_client_reentry_guard( client, "rocketnet_client_receipts" ) )
         return 0;
 
     // a NULL out with room to fill is misuse in every state, as the connection's own read counts it
@@ -1863,6 +1905,8 @@ static enum rocketnet_status_t rn_send_kbps_runtime( const char * endpoint, int 
 enum rocketnet_status_t rocketnet_client_set_send_kbps( struct rocketnet_client_t * client, int kbps )
 {
     if ( !rocketnet_api_null_guard( client ) )
+        return ROCKETNET_STATUS_INVALID_ARGUMENT;
+    if ( !rn_client_reentry_guard( client, "rocketnet_client_set_send_kbps" ) )
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
 
     int32_t resolved = 0;
@@ -3400,6 +3444,8 @@ static bool rn_network_simulator_valid( const char * who, int latency_ms, int ji
 void rocketnet_client_network_simulator( struct rocketnet_client_t * client, int latency_ms, int jitter_ms, int packet_loss_percent, int duplicate_percent )
 {
     if ( !rocketnet_api_null_guard( client ) )
+        return;
+    if ( !rn_client_reentry_guard( client, "rocketnet_client_network_simulator" ) )
         return;
     if ( !rn_network_simulator_valid( "client", latency_ms, jitter_ms, packet_loss_percent, duplicate_percent ) )
         return;

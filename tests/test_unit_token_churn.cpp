@@ -40,6 +40,7 @@
 extern "C" void rocketnet_dev_token_table_reset_operation_counts( struct rocketnet_used_token_history_t * history );
 extern "C" uint64_t rocketnet_dev_token_claim_probe_steps( const struct rocketnet_used_token_history_t * history );
 extern "C" uint64_t rocketnet_dev_token_claim_slot_steps( const struct rocketnet_used_token_history_t * history );
+extern "C" uint64_t rocketnet_dev_token_binding_slot_steps( const struct rocketnet_used_token_history_t * history );
 extern "C" int rocketnet_dev_token_claim_index_start( const struct rocketnet_used_token_history_t * history,
                                                       const uint8_t * token_identifier );
 #endif // #if ROCKETNET_DEV
@@ -932,6 +933,119 @@ static void test_claim_equal_deadlines_reuse_in_insertion_order()
     rocketnet_used_token_history_destroy( history );
 }
 
+static void tc_binding_id( uint8_t * identifier, int round, int index )
+{
+    tc_claim_id( identifier, (uint8_t) index );
+    identifier[1] = (uint8_t) round;
+}
+
+// Once 8 * max_clients connections have filled the bindings table and
+// expired, each new binding reuses the oldest expired one from the head of
+// the insertion order: a slot or two read per insertion, never a scan from
+// slot 0. Four rounds walk the head twice around the ring.
+static void test_binding_expired_oldest_reused_in_constant_time()
+{
+    const int max_clients = 4;
+    const int capacity = 8 * max_clients;
+    struct rocketnet_used_token_history_t * history = rocketnet_used_token_history_create( NULL, capacity );
+    check( history );
+
+    struct rocketnet_address_t holder, other;
+    tc_claim_addresses( &holder, &other );
+
+    uint8_t id[ROCKETNET_TOKEN_IDENTIFIER_BYTES];
+    for ( int i = 0; i < capacity; ++i )
+    {
+        tc_binding_id( id, 0, i );
+        rocketnet_used_token_history_record( history, id, &holder, 1100, 1000 );
+    }
+
+    for ( int round = 1; round <= 4; ++round )
+    {
+        const uint64_t now = 1000 + 200 * (uint64_t) round;
+        for ( int i = 0; i < capacity; ++i )
+        {
+            tc_binding_id( id, round, i );
+            rocketnet_dev_token_table_reset_operation_counts( history );
+            rocketnet_used_token_history_record( history, id, &holder, now + 100, now );
+            check( rocketnet_dev_token_binding_slot_steps( history ) <= 2 );
+        }
+
+        // only expired bindings were reused: every binding of this round still
+        // refuses another address
+        for ( int i = 0; i < capacity; ++i )
+        {
+            tc_binding_id( id, round, i );
+            check( rocketnet_used_token_history_check( history, id, &other, now ) == 0 );
+        }
+    }
+
+    rocketnet_used_token_history_destroy( history );
+}
+
+// The binding order ring at its edges, capacity 4 and a ring of 8: the head
+// moves, an expired token re-recorded in place leaves a tombstone, the tail
+// wraps past the end of the ring, a push into the full ring compacts it, and
+// a table of live bindings then evicts strictly in insertion order.
+static void test_binding_wrapped_compaction_keeps_insertion_order()
+{
+    struct rocketnet_used_token_history_t * history = rocketnet_used_token_history_create( NULL, 4 );
+    check( history );
+
+    struct rocketnet_address_t holder, other;
+    tc_claim_addresses( &holder, &other );
+
+    uint8_t a[4][ROCKETNET_TOKEN_IDENTIFIER_BYTES];
+    uint8_t b[2][ROCKETNET_TOKEN_IDENTIFIER_BYTES];
+    uint8_t x[4][ROCKETNET_TOKEN_IDENTIFIER_BYTES];
+    for ( int i = 0; i < 4; ++i )
+    {
+        tc_binding_id( a[i], 0xA0, i );
+        tc_binding_id( x[i], 0xC0, i );
+    }
+    for ( int i = 0; i < 2; ++i )
+        tc_binding_id( b[i], 0xB0, i );
+
+    // fill: ring positions 0..3
+    for ( int i = 0; i < 4; ++i )
+        rocketnet_used_token_history_record( history, a[i], &holder, 1010, 1000 );
+
+    // a0 and a1 expire and their slots go to b0 and b1 (positions 4, 5); the
+    // head moves past a0's tombstone
+    rocketnet_used_token_history_record( history, b[0], &holder, 1100, 1020 );
+    rocketnet_used_token_history_record( history, b[1], &holder, 1100, 1020 );
+
+    // a2 and a3 are re-recorded in their own slots (positions 6, 7), then a2
+    // again at the wrapped position 0: the ring is full
+    rocketnet_used_token_history_record( history, a[2], &holder, 1025, 1020 );
+    rocketnet_used_token_history_record( history, a[3], &holder, 1028, 1020 );
+    rocketnet_used_token_history_record( history, a[2], &holder, 1100, 1030 );
+
+    // a3 again: the full, wrapped ring compacts to b0 b1 a2 before a3 joins
+    rocketnet_used_token_history_record( history, a[3], &holder, 1100, 1030 );
+
+    check( rocketnet_used_token_history_check( history, b[0], &other, 1040 ) == 0 );
+    check( rocketnet_used_token_history_check( history, b[1], &other, 1040 ) == 0 );
+    check( rocketnet_used_token_history_check( history, a[2], &other, 1040 ) == 0 );
+    check( rocketnet_used_token_history_check( history, a[3], &other, 1040 ) == 0 );
+
+    // all four live: each new binding evicts the oldest, b0 b1 a2 a3
+    const uint8_t * expected[4] = { b[0], b[1], a[2], a[3] };
+    for ( int i = 0; i < 4; ++i )
+    {
+        rocketnet_used_token_history_record( history, x[i], &holder, 1300, 1040 );
+        check( rocketnet_used_token_history_check( history, expected[i], &other, 1040 ) == 1 );
+        for ( int j = i + 1; j < 4; ++j )
+            check( rocketnet_used_token_history_check( history, expected[j], &other, 1040 ) == 0 );
+        for ( int j = 0; j <= i; ++j )
+            check( rocketnet_used_token_history_check( history, x[j], &other, 1040 ) == 0 );
+    }
+
+    rocketnet_used_token_history_destroy( history );
+}
+
+REGISTER_UNIT_TEST( test_binding_expired_oldest_reused_in_constant_time );
+REGISTER_UNIT_TEST( test_binding_wrapped_compaction_keeps_insertion_order );
 REGISTER_UNIT_TEST( test_claim_flat_index_full_key_collisions_are_bounded );
 REGISTER_UNIT_TEST( test_claim_interior_churn_is_bounded );
 REGISTER_UNIT_TEST( test_claim_full_refusal_is_constant_time );
