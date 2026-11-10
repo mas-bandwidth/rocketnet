@@ -669,6 +669,7 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
 
         rn_message_count( object, ROCKETNET_COUNTER_MESSAGE_NOT_RECEIVED, waiting );
         rocketnet_api_misuse_record();
+        // proofs/tla/ServerSession.tla MessageEnd: the update kick ends a connected slot of a running server.
         rn_message_object_kick( object, i, ROCKETNET_DISCONNECT_REASON_MESSAGE_NOT_RECEIVED );
         rocketnet_error( "message update with %u delivered message(s) not received on connection %d: loop receive_messages until NULL before update", waiting, i );
         rocketnet_assert( waiting == 0 && "every delivered message is received before the next update" );
@@ -835,8 +836,9 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
         }
     }
 
-    // RNSlots Kick, RNConnectionMemory Kick: exhaustion first, then a wire
-    // violation, then a reliable message past its timeout (rn_endpoint_error)
+    // RNSlots Kick, RNConnectionMemory Kick, proofs/tla/ServerSession.tla
+    // MessageEnd: exhaustion first, then a wire violation, then a reliable
+    // message past its timeout (rn_endpoint_error)
 
     for ( int i = 0; i < object->num_connections; i++ )
     {
@@ -1077,6 +1079,7 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
             if ( connection->send_error == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED )
                 rn_region_send_room_exhausted( connection->region, object->is_server, index );
 
+            // proofs/tla/ServerSession.tla MessageEnd: the send kick ends a connected slot of a running server.
             rn_message_object_kick( object, index, connection->send_error );   // R5
         }
 

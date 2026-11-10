@@ -288,6 +288,7 @@ MCServerSessionDestroySilent.cfg	MCServerSession.tla	invariant	StopDisconnectsAl
 MCServerSessionResetClearsHistory.cfg	MCServerSession.tla	invariant	TokenAdmitsOnce	ignore-terminal	serversession	required	-
 MCServerSessionReadmitAfterStart.cfg	MCServerSession.tla	invariant	NoReadmitAfterStart	ignore-terminal	serversession	required	-
 MCServerSessionSendBeforeConnected.cfg	MCServerSession.tla	invariant	NoSendUnlessConnected	ignore-terminal	serversession	required	-
+MCServerSessionBrokenMessageEnd.cfg	MCServerSession.tla	invariant	MessageEndOnlyConnected	ignore-terminal	serversession	required	-
 MCServerSessionBrokenReasonAcrossRestart.cfg	MCServerSession.tla	invariant	ReasonKeptWithinRun	ignore-terminal	serversession	required	-
 MCServerSessionBrokenReceiveWhileStopping.cfg	MCServerSession.tla	invariant	NoReceiveUnlessRunning	ignore-terminal	serversession	required	-
 MCServerSessionBrokenAdmitWhileStopping.cfg	MCServerSession.tla	invariant	NoAdmitUnlessRunning	ignore-terminal	serversession	required	-
