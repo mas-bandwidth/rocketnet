@@ -1276,7 +1276,7 @@ signature 2: c1feb7cd2979a67e446dce907b856166f65c876623531d5e51ae737beea27912dba
 <a id="t8"></a>
 ## t8. Packet formats
 
-Every packet begins with the 6-byte prefilter header of [t5 Prefilter header](#t5): the packet type at offset 0, the filter epoch at offset 1, and the filter value at offsets 2 to 5. A sender MUST set the packet type byte to one of the ten types below. A receiver MUST drop a packet whose type is 10 or above.
+Every packet begins with the 6-byte prefilter header of [t5 Prefilter header](#t5): the packet type at offset 0, the filter epoch at offset 1, and the filter value at offsets 2 to 5. A sender MUST set the packet type byte to one of the nine types below, the packet type rows of [t3 Constants and registries](#t3). A receiver MUST drop a packet whose type is the row `first reserved packet type` or above.
 
 A sender MUST emit a packet of the size its type and fields give, and MUST NOT emit a packet larger than the maximum packet size. A receiver MUST drop a packet whose size is below its type's minimum or above the receive ceiling before it examines any field inside the packet ([t10 Receive processing](#t10)).
 
