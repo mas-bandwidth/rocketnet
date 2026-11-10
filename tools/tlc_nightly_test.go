@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -99,6 +100,45 @@ func TestRealTLCWrongOracleAndParseFailure(t *testing.T) {
 			t.Fatalf("wrong oracle or parse failure accepted: %+v %v", rec, err)
 		}
 		t.Logf("parseFailure=%t exit=%d reason=%s", brokenSource, rec.Exit, rec.Reason)
+	}
+}
+
+// A guard that halts every behaviour early must fail even when the case row
+// still says ignore-terminal: a legitimate end is a Done stutter in the model.
+func TestDeadlockIsAlwaysChecked(t *testing.T) {
+	o := fixture(t, "pass", "-", "INVARIANT Safe")
+	dir := filepath.Join(o.root, "tla")
+	halting := strings.Replace(tinyModel, "Next == x' = 1 - x", "Next == x = 0 /\\ x' = 1", 1)
+	if err := os.WriteFile(filepath.Join(dir, "MCNightly.tla"), []byte(halting), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	plan := "config\tmodule\texpected\tproperty\tdeadlock\tgroup\tgate\tdebt\n" +
+		"MCNightly.cfg\tMCNightly.tla\tpass\t-\tignore-terminal\tnightly-control\trequired\t-\n"
+	if err := os.WriteFile(filepath.Join(dir, "CASES.tsv"), []byte(plan), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := runCase(context.Background(), o, hooks{})
+	raw, _ := os.ReadFile(filepath.Join(o.out, "tlc.log"))
+	if err != nil || rec.Result != "FAIL" || rec.Exit == 0 || !strings.Contains(string(raw), "Deadlock reached") {
+		t.Fatalf("premature halt accepted: %+v %v\n%s", rec, err, raw)
+	}
+}
+
+// Every committed case checks deadlock: no row may switch TLC's check off.
+func TestCommittedCasesCheckDeadlock(t *testing.T) {
+	_, self, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("cannot locate this test file")
+	}
+	raw, err := os.ReadFile(filepath.Join(filepath.Dir(self), "..", "proofs", "tla", "CASES.tsv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n")[1:] {
+		fields := strings.Split(line, "\t")
+		if len(fields) < 5 || fields[4] != "check" {
+			t.Errorf("case does not check deadlock: %s", line)
+		}
 	}
 }
 
