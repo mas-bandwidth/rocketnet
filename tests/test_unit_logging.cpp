@@ -22,9 +22,9 @@
 
 #define check rocketnet_unit_check
 
+#if ROCKETNET_DEV
 #include "public_step_pair.h"
 
-#if ROCKETNET_DEV
 int rocketnet_server_transport_disconnect_burst_key_for_test( struct rocketnet_server_transport_t * server_transport,
                                                               int index, uint8_t * out, int out_bytes, int * head, int * count );
 #endif // #if ROCKETNET_DEV
@@ -270,6 +270,8 @@ static void test_log_unknown_level_reaches_the_sink_and_reads_unknown()
 #endif // #if ROCKETNET_DEV
 }
 
+#if ROCKETNET_DEV
+
 // --- a log callback that disconnects the slot being disconnected ----------
 
 static rocketnet_server_t * g_reentry_server = NULL;
@@ -366,8 +368,13 @@ static void test_log_callback_disconnect_reentry_does_not_repeat()
     public_step_pair_destroy( &pair );
 }
 
+#endif // #if ROCKETNET_DEV
+
 REGISTER_UNIT_TEST( test_log_callback_preformatted_contract );
 REGISTER_UNIT_TEST( test_log_unknown_level_reaches_the_sink_and_reads_unknown );
 REGISTER_UNIT_TEST( test_log_callback_filters_before_formatting );
 REGISTER_UNIT_TEST( test_log_callback_last_registration_wins );
+
+#if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_log_callback_disconnect_reentry_does_not_repeat );
+#endif // #if ROCKETNET_DEV
