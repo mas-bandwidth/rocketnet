@@ -115,8 +115,8 @@ reports 3,109,351,757 bytes (about 3.1 GB) from
 makes `rocketnet_client_required_memory` report 15,185,786 bytes. Those two
 figures, and the default-profile figures above, are from the 2026-11-01
 source. This revision's Linux x86-64 development build with io_uring and XDP
-reports 3,111,387,923 bytes for the light server at `max_clients` 1000, and
-at most 15,195,570 bytes for the light client; the other figures were not regenerated
+reports 3,111,387,939 bytes for the light server at `max_clients` 1000 and
+15,195,570 bytes for the light client; the other figures were not regenerated
 for it.
 
 Both figures are the planned lifecycle peak (create, connect or start, stop or
