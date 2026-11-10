@@ -88,7 +88,10 @@ status code and the accompanying `ERROR` log line:
    - **Action**: never re-submit the same invalid or expired token. Request a
      fresh connect token from the backend and verify that client and server
      wall clocks (or `ROCKETNET_CLIENT_TOKEN_EPOCH_UNIX_SECONDS` and
-     `ROCKETNET_SERVER_TOKEN_EPOCH_UNIX_SECONDS`) are synchronized.
+     `ROCKETNET_SERVER_TOKEN_EPOCH_UNIX_SECONDS`) are synchronized. With a
+     configured client epoch, connect checks expiry at the time of the
+     client's most recent update (zero if it has never been updated), so a
+     client whose clock does not start at zero is updated once before connect.
 3. **Transport ladder and host capability failures (`INVALID_TRANSPORT_LIST`, `TRANSPORT_NOT_BUILT`, `TRANSPORT_FAMILIES_UNSUPPORTED`, `TRANSPORT_LADDER_EXHAUSTED`)**:
    - `INVALID_TRANSPORT_LIST`: `config.transport` (or
      `ROCKETNET_*_TRANSPORT`) contains an unknown transport name, an empty
@@ -406,7 +409,7 @@ application error.
 
 | Public Entry Point | Return on Refusal |
 | :--- | :--- |
-| `rocketnet_init( context, malloc_fn, free_fn )` | the status code: `INVALID_ARGUMENT` for one allocator function without the other, `ALREADY_INITIALIZED`, `LIVE_ALLOCATIONS` for an allocator change while allocations are live, `PLATFORM_INIT_FAILED` or `CRYPTO_INIT_FAILED` |
+| `rocketnet_init( context, malloc_fn, free_fn )` | the status code: `INVALID_ARGUMENT` for one allocator function without the other, `ALREADY_INITIALIZED`, `LIVE_ALLOCATIONS` only when another thread calls into the library while init installs a different allocator, `PLATFORM_INIT_FAILED` or `CRYPTO_INIT_FAILED` |
 | `rocketnet_term( void )` | the status code: `NOT_INITIALIZED` or `LIVE_ALLOCATIONS`; nothing changes |
 | `rocketnet_client_default_config( config )` | `INVALID_ARGUMENT` for a NULL config, counted; `CONFIG_NOT_INITIALIZED` is never returned, because the inline call sets `config_bytes` first |
 | `rocketnet_client_required_memory( config )` | `0` for a refused config, a `config_bytes` too small included |
@@ -414,7 +417,7 @@ application error.
 | `rocketnet_client_connect( client, token )` | the status code: `CLIENT_NOT_DISCONNECTED`, `INVALID_CONNECT_TOKEN`, `CONNECT_TOKEN_EXPIRED`, or a transport's code |
 | `rocketnet_server_default_config( config )` | `INVALID_ARGUMENT` for a NULL config, counted |
 | `rocketnet_server_required_memory( config )` | `0` for a refused config, a `config_bytes` too small included |
-| `rocketnet_server_create( context, ipv4_address, ipv6_address, config, status )` | `NULL` with one error line; `status` holds the refusal's code (the client's codes, plus `INVALID_ADDRESS` for an address that does not parse or names the wrong family), or `OK` with the handle |
+| `rocketnet_server_create( context, ipv4_address, ipv6_address, config, status )` | `NULL` with one error line; `status` holds the refusal's code (the client's codes, plus `INVALID_ADDRESS` for an address that does not parse or names the wrong family), or `OK` with the handle. It also returns `NULL` with `CRYPTO_INIT_FAILED`, and no error line, when the server key could not be generated or derived |
 | `rocketnet_server_start( server )` | the status code: `SERVER_NOT_STOPPED`, or the transport's code (`TRANSPORT_LADDER_EXHAUSTED`, `MISSING_KEYS`, ...) |
 | `rocketnet_client_update( client, time )` / `rocketnet_server_update( server, time )` | nothing (`void`); a refused time is counted as API misuse and logged |
 | `rocketnet_create_dev_connect_token`, `*_set_send_kbps` | the status code; see each declaration in `sdk/rocketnet.h` |
@@ -469,7 +472,8 @@ out-parameter, and log one `ERROR` line with the reason: `NOT_INITIALIZED`,
 `CONFIG_NOT_INITIALIZED`, `INVALID_ARGUMENT`, `CONFIG_ENV_INVALID`,
 `CONFIG_OUT_OF_RANGE`, `INVALID_TRANSPORT_LIST`,
 `LOOPBACK_HUB_MISSING`, `LOOPBACK_HUB_MISMATCH`, `INVALID_ADDRESS` (server) or
-`OUT_OF_MEMORY`. Client connect and server start
+`OUT_OF_MEMORY`. Server create also returns `CRYPTO_INIT_FAILED`, with no
+error line, when its key could not be generated or derived. Client connect and server start
 return the token and transport codes: `CLIENT_NOT_DISCONNECTED`,
 `INVALID_CONNECT_TOKEN`, `CONNECT_TOKEN_EXPIRED`, `CONNECT_TOKEN_PORT_ZERO`, `SERVER_NOT_STOPPED`,
 `TRANSPORT_LADDER_EXHAUSTED`, `TRANSPORT_FAMILIES_UNSUPPORTED`, `TRANSPORT_NOT_BUILT`, `MISSING_KEYS`,
@@ -573,8 +577,8 @@ ROCKETNET_EXPORT void rocketnet_log_function(
      messages past return must copy `[message, message + length)`.
    - The callback may be invoked on the main thread, on any game fill thread
      between `update` and `send_packets`, or on a transport receive
-     thread. Callbacks must be thread-safe, must not call
-     `rocketnet_log_function` re-entrantly, and must not unwind via C++
+     thread. Callbacks must be thread-safe, must not call any
+     rocketnet function, and must not unwind via C++
      exceptions or `longjmp`.
    - The `(callback, context)` pair is guarded by
      `rocketnet_platform_spin_lock_u64` so it is never observed torn.

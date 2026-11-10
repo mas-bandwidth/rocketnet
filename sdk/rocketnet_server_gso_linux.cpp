@@ -1282,7 +1282,8 @@ void rocketnet_server_gso_stop( rocketnet_server_gso_t * gso )
         gso->queues[i].quit.store( true, std::memory_order_release );
 }
 
-// the builtin transport's begin_shutdown hook: main thread, once, when the
+// proofs/tla/RNGsoHandoff.tla BeginShutdown: the builtin transport's
+// begin_shutdown hook: main thread, once, when the
 // server starts stopping and before its last disconnect batches. The server
 // asks for stop only once send_idle is true, so from here a socket that stays
 // full gets the TX worker's bounded retries, as after stop, and the worker

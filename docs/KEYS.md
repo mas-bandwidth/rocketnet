@@ -154,6 +154,9 @@ own production minter, legal in a production build (`ROCKETNET_DEV=0`):
   X25519 keypair of the kind a server object makes for itself
   (`ROCKETNET_SERVER_PUBLIC_KEY_BYTES` and `ROCKETNET_SERVER_SECRET_KEY_BYTES`,
   32 each).
+- Each generator returns `ROCKETNET_STATUS_OK`,
+  `ROCKETNET_STATUS_INVALID_ARGUMENT` for a NULL buffer, or
+  `ROCKETNET_STATUS_CRYPTO_INIT_FAILED` when the crypto library did not start.
 - `rocketnet_create_connect_token( &config, connect_token )` writes the token
   string from a `struct rocketnet_connect_token_config_t`, initialized with
   `rocketnet_connect_token_default_config`: the backend secret key, the server

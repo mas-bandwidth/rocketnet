@@ -46,12 +46,16 @@ lookup and time calls are thread-safe, and client and server objects are not.
   `rocketnet_init` can run on a network thread and must be thread-safe. The log
   function installed with `rocketnet_log_function` runs on the thread that
   logs, which can be a network thread, so it must be thread-safe and must not
-  call `rocketnet_log_function`. The assert function installed with
+  call any rocketnet function. The assert function installed with
   `rocketnet_assert_function` runs on the thread that fires the assert, in
   debug builds only. A client's `state_change_callback` reports each change of
   `rocketnet_client_state` once; it runs on the caller's thread, during
   connect, update, disconnect, destroy and a start message that ends the
-  connection, and must not call client functions.
+  connection, and must not call client functions: a call that changes the
+  client (connect, destroy, update, send_packets, disconnect, the message,
+  receipt and send rate calls, network_simulator) made from it is refused at
+  once, leaves the client as it was, and counts one `api_misuses`. A destroy
+  refused this way does not free the client.
 - **Process-wide setup is serialized with application work.** Never race
   `rocketnet_init` with `rocketnet_term`, call `rocketnet_term` only while no other
   library call runs, and install the assert function before concurrent

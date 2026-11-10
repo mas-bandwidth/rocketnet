@@ -45,10 +45,14 @@ The manifest's seven-by-six oracle mapping is:
 | `replay` | `PAYLOAD_ALREADY_RECEIVED` | `PAYLOAD_ALREADY_RECEIVED` | `PAYLOAD_ALREADY_RECEIVED` | `PAYLOAD_ALREADY_RECEIVED` | `PAYLOAD_ALREADY_RECEIVED` | `PAYLOAD_ALREADY_RECEIVED` |
 | `bad_tag` | `PAYLOAD_DID_NOT_OPEN` | `PAYLOAD_DID_NOT_OPEN` | `PAYLOAD_DID_NOT_OPEN` | `PAYLOAD_DID_NOT_OPEN` | `PAYLOAD_DID_NOT_OPEN` | `PAYLOAD_DID_NOT_OPEN` |
 
-XDP owns the first five filter/type stages before the shared server protocol.
-The other physical server transports publish the generic named counters.
-Their native receive paths may reject a short or oversize datagram before the
-shared protocol; `server-ingress-size-filter` is therefore the published
+XDP owns the first five filter/type stages before the shared server protocol,
+and its kernel drops count only in its own kernel counters. The other physical
+server transports publish the generic named counters. As
+[RN-1 t10](../standard/TRANSPORT.md#t10) rule 2 permits, their native receive
+paths may drop a datagram shorter than the smallest packet a server receives
+or longer than the receive ceiling before the shared checks, counted in
+`PREFILTER_TOO_SHORT` or `PREFILTER_TOO_LARGE` and not in `PACKETS_RECEIVED`;
+`server-ingress-size-filter` is therefore the published
 counter-family stage, not a claim that one shared function executed. Wrong
 epoch/value and reserved-type packets reach the shared server checks.
 Replay and authenticated-open refusals remain shared payload-stage oracles for

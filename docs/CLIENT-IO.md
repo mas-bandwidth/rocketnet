@@ -12,10 +12,12 @@ each owned by one side at a time (`sdk/rocketnet_buffer_handoff.h`,
 `proofs/tla/RNBufferHandoff.tla`). Only buffer indices move, under a mutex held for
 that exchange (and, in development builds, for a pending network-simulator
 setting hand-over via `rocketnet_network_simulator_reconfigure` and
-`rocketnet_network_simulator_take_setting`). For buffer exchanges `update` and
-`send_packets` only try-acquire that mutex (a pending development simulator
-setting takes it blocking): when the I/O thread holds it, the exchange waits
-for the next call, so buffer hand-offs never wait on the I/O thread. Sends then leave with the next hand-off
+`rocketnet_network_simulator_take_setting`). `update` and `send_packets` only
+try-acquire that mutex, for buffer exchanges and for taking a pending
+development simulator setting alike: when the I/O thread holds it, the
+exchange or the setting waits for the next call, so neither waits on the I/O
+thread. Only `rocketnet_client_network_simulator`, which hands a new setting
+over, acquires it blocking. Sends then leave with the next hand-off
 (`CLIENT_SEND_DEFERRED`) and received datagrams with the next update. In a
 development library only, the client config's `step_driven` (or
 `ROCKETNET_CLIENT_STEP_DRIVEN=1`) lets deterministic
