@@ -20,11 +20,13 @@ exact final implementation correspondence still requires source review.
 
 The four named control families instantiate one module:
 
-- `RNClientIo`: one worker, two committed send rings and worker-owned keys.
-  Start seeds the difficult boundary: ring 0 is already Sending while ring 1
-  is Filling. Request publishes ring 1 as HandedOff without waiting for ring 0,
-  changing its ownership, reopening it or making producer space. The worker
-  finishes both rings, wipes its key copy, then acknowledges quiescence.
+- `RNClientIo`: one worker, three committed send rings
+  (`ROCKETNET_CLIENT_IO_NUM_RINGS`) and worker-owned keys. Start seeds the
+  difficult boundary: ring 0 is half-sent (Sending), ring 1 is ready in the
+  queue (HandedOff), and ring 2 is Filling. Request publishes ring 2 as
+  HandedOff without waiting for ring 0 or ring 1, changing their ownership,
+  reopening a ring or making producer space. The worker finishes all three
+  rings, wipes its key copy, then acknowledges quiescence.
 - `RNClientReceiveQuit`: one receive worker, no send-ring abstraction.
 - `ClientSession`: one retained transport owner and its key storage. This is
   lifecycle coverage, not another handshake or wire-state model.
@@ -66,7 +68,7 @@ reversed guarantees. Negative controls separately restore:
 5. Acknowledging before wiping worker-owned keys.
 6. Calling the terminal callback again on repeated request.
 
-The two-ring fixture intentionally tests the final handoff boundary; ordinary
+The three-ring fixture intentionally tests the final handoff boundary; ordinary
 ring allocation, payload bytes, address binding and receive publication remain
 in `RNClientIo`. That old model's blocking DestroyWait/Timeout path is
 historical, not silently accepted as the new shutdown algorithm.

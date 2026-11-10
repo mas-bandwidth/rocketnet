@@ -49,6 +49,8 @@ void rocketnet_client_io_wipe( void * data, size_t bytes );
 
 // The send rings: game threads fill one, and up to two wait for or are sent
 // by the I/O thread (proofs/tla/RNBufferHandoff.tla, MaxReady 2).
+// proofs/tla/RNClientIoShutdown.tla Start: three rings at shutdown, one half-sent
+// (sending), one ready (handedoff), and the filling ring RequestStop hands over as final.
 
 #define ROCKETNET_CLIENT_IO_NUM_RINGS 3
 
