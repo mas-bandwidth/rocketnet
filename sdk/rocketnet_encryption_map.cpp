@@ -21,7 +21,6 @@ struct rocketnet_encryption_map_t
 {
     void * context;
     int capacity;
-    int index_cells;                                         // 2 * capacity: load factor <= 0.5
     int num_free;
     uint64_t next_generation;
     uint8_t hash_key[crypto_shorthash_KEYBYTES];
@@ -32,6 +31,7 @@ struct rocketnet_encryption_map_t
     struct rocketnet_address_t * address;                    // hot: full key; NONE is the free state
     struct rocketnet_encryption_mapping_control_t * control; // hot: timeout walk
     struct rocketnet_encryption_mapping_t * mapping;        // cold: same index
+    int index_cells;                                         // 2 * capacity: load factor <= 0.5
 #if ROCKETNET_DEV
     mutable uint64_t test_hashes;                           // keyed hashes computed, for the unit suite
     mutable uint64_t test_probes;                           // flat index cells inspected by bounded DEV oracles
