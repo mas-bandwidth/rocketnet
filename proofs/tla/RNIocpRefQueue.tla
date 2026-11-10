@@ -141,7 +141,7 @@ PushStart(p) ==
     /\ nextTok' = nextTok + 1
     /\ ppos' = [ ppos EXCEPT ![p] = enqueue ]
     /\ ppc' = [ ppc EXCEPT ![p] = "read" ]
-    /\ UNCHANGED << seq, ref, enqueue, dequeue, cpc, cpos, inq, lost, phantom, refused >>
+    /\ UNCHANGED << seq, ref, enqueue, dequeue, cpc, cpos, inq, lost, phantom, refused, popped >>
 
 (* push reads its cell's sequence: free, full or passed.  A refused push *)
 (* keeps its operation and reloads enqueue, as a passed one does, until   *)
