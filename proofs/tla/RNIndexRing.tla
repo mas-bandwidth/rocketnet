@@ -86,9 +86,18 @@ PopStale ==
     /\ ring' = Tail(ring)
     /\ UNCHANGED <<ticket, next, order>>
 
+\* the tickets spent, every slot released and every tombstone popped: a
+\* terminal stutter
+Done ==
+    /\ next > MaxTicket
+    /\ \A s \in Slots : ~Live(s)
+    /\ ring = << >>
+    /\ UNCHANGED vars
+
 Next ==
     \/ \E s \in Slots : Insert(s) \/ Reinsert(s) \/ Release(s)
     \/ PopStale
+    \/ Done
 
 Spec == Init /\ [][Next]_vars
 

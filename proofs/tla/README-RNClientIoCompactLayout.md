@@ -45,8 +45,9 @@ loop sees the same shape; the model does not draw it separately.
 
 `C = 4` slots, batches of up to `B = 3`, seven datagrams in all with any subset
 of each batch faulty: batches compact, fill a buffer partly and fully, and a
-published buffer's stale slots are written again. Terminal states are the
-harness's bound (`ignore-terminal`).
+published buffer's stale slots are written again. Once every datagram is
+delivered and the last buffer published, the run ends in the `Done` terminal
+stutter; deadlock is checked.
 
 ## Reversed witnesses
 

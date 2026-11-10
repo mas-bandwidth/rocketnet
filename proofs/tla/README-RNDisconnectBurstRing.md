@@ -67,9 +67,9 @@ burst; `PassFair` is the rule the code keeps.
 `MCRNDisconnectBurstRing.cfg`: four slots, bursts of two packets, eight
 disconnects, so the ring fills, drops a burst, wraps and refills.
 `MCRNDisconnectBurstRingK3.cfg`: three slots, bursts of three, seven
-disconnects, so waiting bursts are two seals apart. Both run without deadlock
-checking (`ignore-terminal`): once every disconnect is made and every burst
-has left, nothing is enabled. `SealStep` is enabled whenever a burst waits, so
+disconnects, so waiting bursts are two seals apart. Once every disconnect is
+made and every burst has left, the run ends in the `Done` terminal stutter;
+deadlock is checked. `SealStep` is enabled whenever a burst waits, so
 no other state is terminal.
 
 ## Reversed witnesses

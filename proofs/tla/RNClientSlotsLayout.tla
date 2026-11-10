@@ -149,10 +149,18 @@ Release(i) ==
     /\ ReleaseSteps(i)
     /\ UNCHANGED wrongRelease
 
+\* the fresh generations (or the tenures) spent and every slot free: a
+\* terminal stutter
+Done ==
+    /\ nextGen > MaxGen \/ tenures >= 2 * MaxGen
+    /\ \A i \in Slots : ~connected[i]
+    /\ UNCHANGED vars
+
 Next ==
     \/ \E id \in Ids : AssignFresh(id) \/ AssignStale(id)
     \/ \E h \in handles : ReleaseHandle(h)
     \/ \E i \in Slots : Release(i)
+    \/ Done
 
 Spec == Init /\ [][Next]_vars
 
