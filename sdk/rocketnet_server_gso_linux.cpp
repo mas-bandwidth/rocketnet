@@ -552,13 +552,20 @@ static bool rocketnet_server_gso_sockaddr_to_address( const struct sockaddr_stor
 // non-blocking, don't-fragment, buffers requested at the configured sizes
 // with what the kernel actually granted read back and reported -- the box's
 // default rmem/wmem sysctls are tiny, so never assume the request was
-// honored.
+// honored. Close-on-exec, so a child process never holds a socket of the
+// reuseport group (rocketnet_platform_socket_open).
+
+static void rocketnet_server_gso_set_socket_option( void * user, int level, int option_name, int value )
+{
+    const int fd = *(const int *) user;
+    setsockopt( fd, level, option_name, &value, sizeof( value ) );
+}
 
 static int rocketnet_server_gso_open_socket( const rocketnet_address_t * bind_address, int queue_index, int max_clients, uint16_t * bound_port )
 {
     const bool ipv6 = bind_address->type == ROCKETNET_ADDRESS_IPV6;
 
-    int fd = socket( ipv6 ? AF_INET6 : AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+    int fd = socket( ipv6 ? AF_INET6 : AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, IPPROTO_UDP );
     if ( fd < 0 )
     {
         rocketnet_error( "gso transport: failed to create socket: %s", strerror( errno ) );
@@ -697,16 +704,7 @@ static int rocketnet_server_gso_open_socket( const rocketnet_address_t * bind_ad
         return -1;
     }
 
-    if ( ipv6 )
-    {
-        int df = 1;
-        setsockopt( fd, IPPROTO_IPV6, IPV6_DONTFRAG, &df, sizeof( df ) );
-    }
-    else
-    {
-        int pmtud = IP_PMTUDISC_DO;
-        setsockopt( fd, IPPROTO_IP, IP_MTU_DISCOVER, &pmtud, sizeof( pmtud ) );
-    }
+    rocketnet_platform_socket_apply_dont_fragment( ipv6, rocketnet_server_gso_set_socket_option, &fd );
 
     return fd;
 }
