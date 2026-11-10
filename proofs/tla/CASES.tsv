@@ -730,3 +730,4 @@ MCRNBuilderPlanLayoutBrokenNoRestore.cfg	MCRNBuilderPlanLayout.tla	invariant	Cha
 MCRNBuilderPlanLayoutBrokenInclusivePrefix.cfg	MCRNBuilderPlanLayout.tla	invariant	NoOverlap	ignore-terminal	rnbuilderplanlayout	required	-
 MCRNBuilderPlanLayoutBrokenReverseScatter.cfg	MCRNBuilderPlanLayout.tla	invariant	PlanSorted	ignore-terminal	rnbuilderplanlayout	required	-
 MCRNClientIoDecryptReduced.cfg	MCRNClientIoDecrypt.tla	pass	-	check	rnclientiodecrypt	required	-
+MCRNUringSendPhasesBrokenSlots.cfg	MCRNUringSendPhases.tla	invariant	PendingMatches	check	rnuringsendphases	required	-
