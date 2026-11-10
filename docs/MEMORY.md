@@ -112,7 +112,12 @@ messages, 100 sequenced messages are held, 128 receipts are kept, and there
 are eight channels. At `max_clients` 1000, the same Linux development build
 reports 3,109,351,757 bytes (about 3.1 GB) from
 `rocketnet_server_required_memory`. The matching `rocketnet_client_light_config`
-makes `rocketnet_client_required_memory` report 15,185,786 bytes.
+makes `rocketnet_client_required_memory` report 15,185,786 bytes. Those two
+figures, and the default-profile figures above, are from the 2026-11-01
+source. This revision's Linux x86-64 development build with io_uring and XDP
+reports 3,112,481,547 bytes for the light server at `max_clients` 1000 and
+15,195,570 bytes for the light client; the other figures were not regenerated
+for it.
 
 Both figures are the planned lifecycle peak (create, connect or start, stop or
 disconnect, the next cycle, and destroy) plus the 1 MiB allowance. They exclude
