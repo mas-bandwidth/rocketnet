@@ -90,10 +90,10 @@ end, `DISCONNECT_BURST_DROPPED`; no existing counter moves.
 - **Memory.** `rocketnet_server_required_memory` reports more than v1.0.0 for
   the same configuration: the encryption map's index has two cells per mapping, the
   connect-token bindings table keeps an insertion-order ring, and on Linux the
-  XDP worker's receive frame arrays and its replay records are part of the
-  plan. On the Linux x86-64 development build with io_uring and XDP, the light
-  profile's server at `max_clients` 1000 plans 3,112,481,547 bytes and its
-  client 15,195,570 bytes. Query your own build before allocating
+  XDP worker's receive frame arrays are part of the plan. On the Linux x86-64
+  development build with io_uring and XDP, the light profile's server at
+  `max_clients` 1000 plans 3,111,387,923 bytes and its client at most
+  15,195,570 bytes. Query your own build before allocating
   ([MEMORY.md](MEMORY.md)).
 - **Sockets.** Every socket and wake handle the library opens is
   non-inheritable (close-on-exec on Linux and macOS, no handle inheritance on
