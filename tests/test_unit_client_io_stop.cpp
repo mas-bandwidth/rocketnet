@@ -445,13 +445,18 @@ static void test_client_io_destroy_requires_completed_stop()
 REGISTER_UNIT_TEST( test_client_io_destroy_requires_completed_stop );
 
 // Create fails after the transport worker is up. The hold seam keeps that
-// worker not-stopped and counts polls; past the ceiling the case fails, so
-// the unbounded wait does not hang and does not sleep. No socket.
+// worker not-stopped and counts polls; the wait is the build's own loop, run
+// on a counter clock its sleep advances. Its 1 s deadline at 1 ms steps ends
+// it after two polls a step (one before the transport's update, one after):
+// past the ceiling the case fails, so a wait with no deadline does not hang
+// and does not sleep. On the deadline the wait logs once and the transport,
+// still owned by its worker, is kept: destroy is not called on it. No socket.
 struct link_stop_wait_hold_t
 {
     int polls;
     int ceiling;
     int destroyed;
+    int logged;
 };
 
 static int link_stop_wait_hold( void * context )
@@ -468,12 +473,19 @@ static void link_stop_wait_destroy( void * transport )
     ( (link_stop_wait_hold_t *) transport )->destroyed++;
 }
 
+static void link_stop_wait_log( void * context, enum rocketnet_log_level_t level, const char * message, size_t )
+{
+    if ( level == ROCKETNET_LOG_LEVEL_ERROR && strstr( message, "the transport is kept, not freed" ) != NULL )
+        ( (link_stop_wait_hold_t *) context )->logged++;
+}
+
 static void test_message_link_stop_and_wait_bounds_held_worker()
 {
     link_stop_wait_hold_t hold = {};
-    hold.ceiling = 1001;
+    hold.ceiling = 2 * 1000 + 4;
 
     rocketnet_dev_set_link_stop_wait_hold_hook( link_stop_wait_hold, &hold );
+    rocketnet_log_function( link_stop_wait_log, &hold );
 
     rn_message_link_t link;
     memset( &link, 0, sizeof( link ) );
@@ -482,11 +494,13 @@ static void test_message_link_stop_and_wait_bounds_held_worker()
 
     rn_message_object_t * object = rn_message_object_create( NULL, &link, 0, 0, NULL, NULL, 0, 1, 1000.0, false );
 
+    rocketnet_log_function( NULL, NULL );
     rocketnet_dev_set_link_stop_wait_hold_hook( NULL, NULL );
 
     rocketnet_unit_check( object == NULL );
-    rocketnet_unit_check( hold.destroyed == 1 );
-    rocketnet_unit_check( hold.polls == 1001 );
+    rocketnet_unit_check( hold.destroyed == 0 );
+    rocketnet_unit_check( hold.logged == 1 );
+    rocketnet_unit_check( hold.polls >= 2 * 1000 );
 }
 REGISTER_UNIT_TEST( test_message_link_stop_and_wait_bounds_held_worker );
 #endif // #if ROCKETNET_DEV
