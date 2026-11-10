@@ -313,19 +313,37 @@ in that claim's view. `RNGsoHandoff.RxClaim` and `RNXdpReceiveRing.Drain`
 model this rule. A GSO worker pass that finds its bank full (it stays full
 until main's swap) or whose receive fails sleeps 1 ms before the next pass
 instead of spinning on poll and the mutex (`RNGsoHandoff.RxBacksOff`).
-The workers hold the mutex only to append one batch (one `recvmmsg` call's
-results on GSO, 64 descriptors on XDP), never across a syscall. Two cases
-still defer a staged packet to the next call: main still holds a retained
+The workers hold the mutex only to append (one `recvmmsg` call's results on
+GSO, the staging loop of one pass on XDP), never across a syscall. Two cases
+still defer a staged packet to a later call: main still holds a retained
 tail from a budget-capped call (it swaps only once that bank is consumed,
-because the current view points into it), or main's try-acquire finds the
-worker holding the mutex (main never waits on the worker). On GSO the
-`recvmmsg` calls leave the mutex free between batches; an XDP pass under
-heavy load appends batch after batch, so there main can miss a queue for
-an update. A miss takes nothing from that queue in that call and changes no
-ownership: main keeps its emptied bank and retries the swap on its next call,
-whose view then holds everything staged up to that call
-(`RNXdpReceiveRing.DrainMiss`). Only main swaps receive banks, on both
-transports.
+because the current view points into it), or main's claim of the mutex
+misses. Main never blocks on the worker, and only main swaps receive banks,
+on both transports. A miss takes nothing from that queue in that call and
+changes no ownership: main keeps its emptied bank and claims again on its
+next call, whose view then holds everything staged up to that call.
+
+On GSO the claim is one try-acquire. The worker holds the mutex while it
+copies one `recvmmsg` call's results and leaves it free across the next
+`recvmmsg`, so a try misses when it lands inside a copy, and each later call
+is another try of the same kind: nothing bounds how many calls in a row can
+miss.
+
+On XDP the worker holds the mutex for the whole staging loop of a pass, so
+main's claim is a try and, when the worker holds the mutex, a flag
+(`receive_wanted`) and at most 256 further tries a pause apart: about 4
+microseconds where a try was measured (14 ns on a Ryzen 9 7950X3D), longer
+on a CPU with a longer pause instruction. The worker reads the flag between two
+descriptors, lets go of the mutex and stays off it until main has swapped or
+given up, so a worker that is running keeps main out for one descriptor and
+main swaps inside the call that asked. A claim still misses when the worker
+does not get to its next look at the flag within main's tries, for example
+when it is off its CPU while it holds the mutex; the next call claims again,
+and nothing bounds how many calls in a row that can happen: each needs the
+worker stopped again. `RNXdpReceiveRing` models this: `DrainWant`,
+`DrainSpin`, `WorkerYield` and `DrainMiss` are the steps, `ClaimWithinSpin`
+is the bound for threads that keep running, and `WantedOnlyInSpin` and
+`NoDropWhilePaused` bound how long the worker is kept off the mutex.
 
 ## Creation and shutdown
 
