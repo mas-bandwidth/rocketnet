@@ -20,9 +20,11 @@
 #include <stdint.h>
 #include <string.h>
 
+#if ROCKETNET_DEV
 // every address probe the walk makes, counted in development builds only
 // (sdk/rocketnet_server_replay_marks.cpp)
 uint32_t rocketnet_server_replay_marks_comparisons_for_test( const struct rocketnet_server_replay_marks_t * marks );
+#endif // #if ROCKETNET_DEV
 
 #define ROCKETNET_REPLAY_MARKS_TEST_HANDSHAKE_DEADLINE 1005.0
 #define ROCKETNET_REPLAY_MARKS_TEST_MAX_CALLS 16
@@ -372,12 +374,17 @@ static void test_server_replay_marks_mass_disconnect_is_linear()
 
     // every queued forget clears the other records of its address: a
     // constant number of address comparisons each, never a scan of every slot
+    // (counted in development builds only)
 
+#if ROCKETNET_DEV
     const uint32_t comparisons_before = rocketnet_server_replay_marks_comparisons_for_test( fixture.marks );
+#endif // #if ROCKETNET_DEV
     memset( &counts, 0, sizeof( counts ) );
     rocketnet_server_replay_marks_walk( fixture.marks, fixture.slots, fixture.map, &sink );
     rocketnet_unit_check( counts.forgets == clients && counts.marks == 0 );
+#if ROCKETNET_DEV
     rocketnet_unit_check( rocketnet_server_replay_marks_comparisons_for_test( fixture.marks ) - comparisons_before <= 8u * (uint32_t) clients );
+#endif // #if ROCKETNET_DEV
 
     memset( &counts, 0, sizeof( counts ) );
     rocketnet_server_replay_marks_walk( fixture.marks, fixture.slots, fixture.map, &sink );
