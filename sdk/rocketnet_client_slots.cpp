@@ -459,13 +459,14 @@ void rocketnet_client_slots_confirm( struct rocketnet_client_slots_t * slots, in
 // proofs/tla/RNOpenAddress.tla EraseStart and EraseStep (ClearLast TRUE): the scan
 // moves back each entry whose home is not cyclically in (hole, scan], and the
 // final hole clears last; the scan ends only on a cell already empty, so the
-// index is sized at twice its capacity
+// index is sized at twice its capacity. The scan is bounded by num_buckets, as
+// locate is, so an index corrupted full still ends.
 static void rocketnet_client_slots_erase_index( struct rocketnet_client_slots_t * slots, int hole )
 {
     int * entries = rocketnet_client_slot_index_entries( slots );
     int scan = hole;
 
-    for ( ;; )
+    for ( int probe = 0; probe < slots->num_buckets; ++probe )
     {
         scan = rocketnet_client_slots_next_index( slots, scan );
 
