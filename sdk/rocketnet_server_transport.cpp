@@ -260,7 +260,6 @@ struct rocketnet_server_transport_t
 
     rocketnet_server_transport_io_t io;
     uint64_t transport_faults;                     // a receive count or byte count this update refused
-    uint64_t transport_faults_folded = 0;          // the part of transport_faults already added to PREFILTER_TOO_LARGE
 
     // the kernel replay marks: allocated only when the granted transport reports
     // the replay capability, written from the update walk and committed to the
@@ -2815,6 +2814,8 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
             if ( received->packet_bytes[i] < 0 || received->packet_bytes[i] > ROCKETNET_RECEIVE_CEILING )
             {
                 server_transport->transport_faults++;
+                if ( received->packet_bytes[i] > ROCKETNET_RECEIVE_CEILING )
+                    server_transport->counters.values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE]++;
                 continue;
             }
 
@@ -2867,6 +2868,8 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
             if ( packet_bytes < 0 || packet_bytes > ROCKETNET_TRANSPORT_MAX_DATAGRAM_BYTES )
             {
                 server_transport->transport_faults++;
+                if ( packet_bytes > ROCKETNET_TRANSPORT_MAX_DATAGRAM_BYTES )
+                    server_transport->counters.values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE]++;
                 continue;
             }
 
@@ -3916,13 +3919,6 @@ const struct rocketnet_counters_t * rocketnet_server_transport_counters( struct 
     if ( server_transport->io.operations && server_transport->io.operations->send_failures )
         server_transport->counters.values[ROCKETNET_COUNTER_SEND_FAILED] = server_transport->io.operations->send_failures( server_transport->io.instance );
 
-    // transport_faults is the transport's own cumulative count of receive
-    // counts and byte counts it refused; its growth since the last read
-    // lands on PREFILTER_TOO_LARGE, which the protocol's own prefilter also
-    // counts into, so a driver fault reads on the public counters once
-
-    server_transport->counters.values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE] += server_transport->transport_faults - server_transport->transport_faults_folded;
-    server_transport->transport_faults_folded = server_transport->transport_faults;
     // a transport's own size pass drops before the prefilter sees a datagram:
     // its growth lands on the prefilter size counters, so one oversize
     // datagram reads PREFILTER_TOO_LARGE on every transport

@@ -1064,8 +1064,9 @@ REGISTER_UNIT_TEST( test_client_ignores_payloads_before_connected );
 
 // A transport result outside the contract (here a negative receive byte count)
 // is a transport fault. The I/O step refuses it and counts it on its own;
-// the fold at update adds it once to the public PREFILTER_TOO_LARGE counter,
-// so a driver fault is visible outside the I/O state.
+// it is not a datagram too large, so the fold at update leaves the public
+// PREFILTER_TOO_LARGE counter alone (only a byte count past the UDP size
+// limit reaches it: test_transport_results_client_oversize_counts_at_the_fold).
 
 struct rcr_transport_fault_t
 {
@@ -1096,7 +1097,7 @@ static double rcr_transport_fault_time( void * context )
     return *(const double *) context;
 }
 
-static void test_client_transport_faults_fold_into_public_counter()
+static void test_client_transport_fault_is_not_counted_too_large()
 {
     rcr_transport_fault_t fault = {};
     rocketnet_client_transport_io_operations_t operations = rocketnet_fake_client_operations_base;
@@ -1122,12 +1123,10 @@ static void test_client_transport_faults_fold_into_public_counter()
     check( counters.values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE] == 0 );
 
     rocketnet_client_io_fold_counters( &io );
-    check( counters.values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE] == 1 );
-
-    rocketnet_client_io_fold_counters( &io );
-    check( counters.values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE] == 1 );
+    check( io.transport_faults == 1 );
+    check( counters.values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE] == 0 );
 
     rocketnet_client_transport_io_close( &transport );
     rocketnet_client_io_rig_destroy( rig );
 }
-REGISTER_UNIT_TEST( test_client_transport_faults_fold_into_public_counter );
+REGISTER_UNIT_TEST( test_client_transport_fault_is_not_counted_too_large );
