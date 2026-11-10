@@ -92,10 +92,11 @@ bool rocketnet_server_socket_interrupt_line_matches_interface( const char * line
 //
 // create is VERIFY AND BIND only: the pre-flight above, then the library's
 // own per-socket acts -- building and loading its BPF program, attaching
-// it, AF_XDP binds, the memlock rlimit. Machine provisioning (xdp-loader
-// clearing, SMT, napi tuning, ethtool -L queue counts, isolcpus guidance)
-// lives in scripts/rocketnet-provision, run deliberately by the operator;
-// create never mutates machine state.
+// it, AF_XDP binds, and raising the process RLIMIT_MEMLOCK to RLIM_INFINITY
+// (which neither destroy nor a failed create restores). Machine provisioning
+// (xdp-loader clearing, SMT, napi tuning, ethtool -L queue counts, isolcpus
+// guidance) lives in scripts/rocketnet-provision, run deliberately by the
+// operator; create never mutates host-wide machine configuration.
 
 // Requested XDP component bytes (userspace queues, the parts sized from the
 // server's configured max_clients, and UMEM), excluding kernel bookkeeping,

@@ -213,8 +213,8 @@ threads (`sdk/rocketnet_server_uring_linux.cpp`). It binds the same
 `SO_REUSEPORT` group as `gso`: `num_xdp_queues` sockets, default 4, at most
 32 (`sdk/rocketnet_server_uring.h`,
 `sdk/rocketnet_server_uring_linux.cpp`,
-`sdk/rocketnet_driver_builtin.cpp`). All sockets share one 2048-slot send
-array; pending completions keep their slots occupied. More queues do not
+`sdk/rocketnet_driver_builtin.cpp`). All sockets share two phases of 2048 send
+slots (`ROCKETNET_URING_SEND_PHASES`, `ROCKETNET_URING_SEND_QUEUE_SIZE`); pending completions keep their phase occupied. More queues do not
 increase that capacity. See [staging and drain bounds](TRANSPORT-INTERNALS.md#staging-and-drain-bounds)
 before sizing a large server.
 
@@ -551,8 +551,8 @@ What each path does with the errors it can see:
   holds. A `sendmmsg` refused
   with `EAGAIN`, `EWOULDBLOCK`, `ENOBUFS`, `ENOMEM` or `EINTR` (a full
   socket) drops nothing: the TX worker keeps the bank's unsent rest, in
-  order and ahead of every later bank, and sends it when main's next update
-  wakes it (`ROCKETNET_GSO_SEND_RETRY_SECONDS` once main stops updating).
+  order and ahead of every later bank, and retries every `ROCKETNET_GSO_SEND_RETRY_SECONDS` (1 ms) on `send_wake`
+  (or sooner when main's next update wakes it).
   Any other errno drops the one refused message and
   continues with the next, as the portable batch does; dropped packets
   count in `ROCKETNET_SERVER_GSO_COUNTER_SEND_DROPPED`, never resent

@@ -205,8 +205,8 @@ bounded per receive call by the read budget below.
 
 GSO's three send banks are shared across all sockets. Only its current
 producer bank can be filled; the transmit worker consumes published banks.
-io_uring likewise has one shared send array, and an incomplete send continues
-to occupy its slot. `num_xdp_queues` adds receive queues and changes socket
+io_uring likewise has two shared 2048-slot send phases, and an incomplete send
+continues to occupy its phase. `num_xdp_queues` adds receive queues and changes socket
 rotation; it does not multiply the 4096-slot GSO or 2048-slot io_uring send
 capacity (`sdk/rocketnet_server_gso_linux.cpp`,
 `sdk/rocketnet_server_uring_linux.cpp`).
@@ -238,7 +238,7 @@ budget is its `max_packets`; a single-packet call's is `ROCKETNET_PLATFORM_RECEI
 generic batch pump and the Windows per-packet loop (`sdk/rocketnet_platform.cpp`).
 The Linux GSO server worker's drain (`rocketnet_server_gso_drain`,
 `sdk/rocketnet_server_gso_linux.cpp`) counts each message and interrupted call
-against `ROCKETNET_GSO_RECV_QUEUE_SIZE` (4096). It checks that threshold before
+against `ROCKETNET_GSO_RECV_QUEUE_SIZE` (8192). It checks that threshold before
 each receive batch; the final batch can take the count past it by at most
 `ROCKETNET_GSO_RECV_BATCH - 1` (63).
 The Linux GSO client's plain fallback uses the platform helpers; its GRO path
@@ -296,9 +296,9 @@ Start/finish/abort may run on concurrent fill threads, with one producer per
 frame. Join them before update, receive, flush, stop or destroy. Flush is called
 for staged work; the backend retains ownership until it can safely reuse
 that storage. XDP retries a flush on each `send_packets` call, including when
-no new commit advances the transport counter. With two staging buffers,
-`rocketnet_xdp_buffer_exchange_t::publish` queues at most one and keeps the other
-for producers until the worker retires the queued generation. The next flush
+no new commit advances the transport counter. With three staging buffers (`ROCKETNET_XDP_NUM_BUFFERS`),
+`rocketnet_xdp_buffer_exchange_t::publish` queues at most two and keeps the remaining
+buffer for producers until the worker retires the queued generations. The next flush
 publishes the retained work. `RNDriverSendStaging.Publish`, `WorkerRetire`
 and `RetryFlushPublishes` model this rule. Packet-slot capacity is still
 `ROCKETNET_XDP_SEND_QUEUE_SIZE` per buffer; retaining producer storage does
