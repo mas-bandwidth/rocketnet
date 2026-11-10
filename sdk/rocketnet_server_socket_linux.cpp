@@ -549,12 +549,12 @@ static bool get_gateway_mac_address( const char * interface_name, int interface_
 
 #define INVALID_FRAME UINT64_MAX
 
-// the refresh's resolve: rtnetlink, quiet, on the main update thread, so the
-// known gateway's neighbour entry is asked directly and the routes are dumped
-// only when no gateway is known or that entry is not found
-// (rocketnet_gateway_netlink_refresh). No default route resolves with *found
-// false. A failure warns once per failing streak, and the table keeps the
-// gateway it has.
+// proofs/tla/RNXdpGatewayRefresh.tla Resolve: rtnetlink, quiet, on the main
+// update thread, so the known gateway's neighbour entry is asked directly and
+// the routes are dumped only when no gateway is known or that entry is not
+// found (rocketnet_gateway_netlink_refresh), no route dump while it is known.
+// No default route resolves with *found false. A failure warns once per
+// failing streak, and the table keeps the gateway it has.
 
 static bool rocketnet_server_socket_resolve_gateway( void * context, int address_type, uint8_t * mac, bool * found )
 {
@@ -574,9 +574,10 @@ static bool rocketnet_server_socket_resolve_gateway( void * context, int address
     return resolved;
 }
 
-// proofs/tla/RNXdpGatewayRefresh.tla Refresh: main thread, from the receive
-// call (fills joined); now is the caller's clock, an argument so a unit
-// case drives it. One line logged for each gateway MAC that changed.
+// proofs/tla/RNXdpGatewayRefresh.tla Refresh, Resolve and WriteLow: main
+// thread, from the receive call (fills joined); now is the platform monotonic
+// clock (rocketnet_platform_time), an argument so a unit case drives it. One
+// line logged for each gateway MAC that changed.
 
 static void rocketnet_server_socket_refresh_gateway( struct rocketnet_server_socket_t * server_socket, double now )
 {
@@ -4005,9 +4006,10 @@ void rocketnet_server_socket_receive_packets( rocketnet_server_socket_t * server
 
     server_socket->process_packets.num_packets = 0;
 
-    // proofs/tla/RNXdpGatewayRefresh.tla Join and Refresh: the fills are
-    // joined before receive (rocketnet_driver.h), so the refresh's stores
-    // land before the next fill copies a gateway MAC
+    // proofs/tla/RNXdpGatewayRefresh.tla Join, Refresh, Resolve and WriteLow:
+    // the fills are joined before receive (rocketnet_driver.h), so the
+    // refresh's stores land before the next fill copies a gateway MAC; the
+    // platform monotonic clock is read once, for this call
 
     rocketnet_server_socket_refresh_gateway( server_socket, rocketnet_platform_time() );
 

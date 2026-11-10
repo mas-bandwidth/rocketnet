@@ -10,18 +10,24 @@
 (* thread alternates between the receive call, where the refresh runs,     *)
 (* and the fill phase, where game threads stage packets through start and  *)
 (* finish, which copy the table's gateway MAC into each packet; the fills  *)
-(* are joined before the next update starts, and the clock advances once   *)
-(* per update. The kernel's neighbour entry for the gateway (what the      *)
-(* resolve reads) changes at any moment, at most MaxChanges times. The     *)
-(* xdp threads send the staged copies and never read the table, so the     *)
-(* staged set is what goes on the wire.                                    *)
+(* are joined before the next update starts. The clock is the platform     *)
+(* monotonic clock the receive call samples (rocketnet_platform_time);     *)
+(* the platform may advance by any step between updates (MaxStep), so the  *)
+(* model does not tie time to one update tick. The resolve is the netlink  *)
+(* query the refresh makes (rocketnet_gateway_netlink_refresh) on the main *)
+(* thread: the known gateway's neighbour entry is asked directly, no route *)
+(* dump, and the kernel's answer (resolver) changes at any moment, at most *)
+(* MaxChanges times. The xdp threads send the staged copies and never read *)
+(* the table, so the staged set is what goes on the wire.                  *)
 (*                                                                         *)
 (* Actions:                                                                *)
-(*   Join          fills joined; the next update starts, the clock ticks   *)
+(*   Join          fills joined; the next update starts, the platform      *)
+(*                 clock advances by up to MaxStep                         *)
 (*   Refresh       the receive call's refresh: schedules on its first      *)
-(*                 call, then at or past the deadline resolves, sets the   *)
-(*                 next deadline and writes the first half of a changed    *)
-(*                 MAC                                                     *)
+(*                 call, then at or past the deadline sets the next        *)
+(*                 deadline and starts a resolve                           *)
+(*   Resolve       the netlink query's answer is written: the first half   *)
+(*                 of a changed MAC                                        *)
 (*   WriteLow      the refresh writes the second half                      *)
 (*   ReceiveWithoutRefresh  the receive call when the refresh runs in the  *)
 (*                 fill phase instead (RefreshInFill only)                 *)
@@ -31,8 +37,8 @@
 (*                                                                         *)
 (* Invariants: NoTornMac (every staged MAC is one some resolve gave, never *)
 (* a mix of two) and FreshAfterPeriod (a packet staged Period or more     *)
-(* ticks after the last change carries the new MAC). The first receive     *)
-(* only schedules, at the tick create resolved in.                         *)
+(* clock units after the last change carries the new MAC). The first       *)
+(* receive only schedules, at the time create resolved in.                 *)
 (*                                                                         *)
 (* Rule switches for the reversed witnesses:                               *)
 (*   RefreshInFill  the refresh runs during the fill phase, as on a worker *)
@@ -43,15 +49,15 @@
 (***************************************************************************)
 EXTENDS Naturals
 
-CONSTANTS Period, MaxTime, MaxChanges, RefreshInFill, RefreshNever
+CONSTANTS Period, MaxTime, MaxStep, MaxChanges, RefreshInFill, RefreshNever
 
 Halves == {1, 2}
 Macs == {<<1, 1>>, <<2, 2>>}
 Nil == 0
 
 VARIABLES
-    phase,          \* "receive", "writelow" (the refresh's second store) or "fill"
-    now,            \* the transport clock, one tick per update
+    phase,          \* "receive", "resolve", "writelow" or "fill"
+    now,            \* the platform monotonic clock, sampled each update
     scheduled,      \* the refresh has set its first deadline
     nextTime,       \* the refresh deadline
     table,          \* the table's gateway MAC, two halves
@@ -65,7 +71,7 @@ VARIABLES
 vars == << phase, now, scheduled, nextTime, table, pendingLow, resolver, changedAt, changes, readHigh, staged >>
 
 TypeOK ==
-    /\ phase \in {"receive", "writelow", "fill"}
+    /\ phase \in {"receive", "resolve", "writelow", "fill"}
     /\ now \in 0..MaxTime
     /\ scheduled \in BOOLEAN
     /\ nextTime \in 0..(MaxTime + Period)
@@ -99,8 +105,10 @@ Join ==
     /\ readHigh = Nil
     /\ pendingLow = Nil
     /\ now < MaxTime
+    /\ \E delta \in 1..MaxStep :
+        /\ now + delta <= MaxTime
+        /\ now' = now + delta
     /\ phase' = "receive"
-    /\ now' = now + 1
     /\ UNCHANGED << scheduled, nextTime, table, pendingLow, resolver, changedAt, changes, readHigh, staged >>
 
 \* the refresh, once per receive call (or once per fill phase under RefreshInFill)
@@ -110,21 +118,29 @@ Refresh ==
     /\ \/ /\ ~scheduled
           /\ scheduled' = TRUE
           /\ nextTime' = now + Period
+          /\ phase' = "fill"
           /\ UNCHANGED << table, pendingLow >>
        \/ /\ scheduled
           /\ (RefreshNever \/ now < nextTime \/ resolver = table)
           /\ nextTime' = IF ~RefreshNever /\ now >= nextTime THEN now + Period ELSE nextTime
+          /\ phase' = "fill"
           /\ UNCHANGED << scheduled, table, pendingLow >>
        \/ /\ scheduled
           /\ ~RefreshNever
           /\ now >= nextTime
           /\ resolver /= table
           /\ nextTime' = now + Period
-          /\ table' = << resolver[1], table[2] >>
-          /\ pendingLow' = resolver[2]
-          /\ UNCHANGED scheduled
-    /\ phase' = IF RefreshInFill THEN "fill" ELSE IF pendingLow' /= Nil THEN "writelow" ELSE "fill"
+          /\ phase' = "resolve"
+          /\ UNCHANGED << scheduled, table, pendingLow >>
     /\ UNCHANGED << now, resolver, changedAt, changes, readHigh, staged >>
+
+\* the netlink query's answer: the kernel's neighbour entry the resolve read
+Resolve ==
+    /\ phase = "resolve"
+    /\ table' = << resolver[1], table[2] >>
+    /\ pendingLow' = resolver[2]
+    /\ phase' = IF RefreshInFill THEN "fill" ELSE "writelow"
+    /\ UNCHANGED << now, scheduled, nextTime, resolver, changedAt, changes, readHigh, staged >>
 
 WriteLow ==
     /\ pendingLow /= Nil
@@ -165,6 +181,7 @@ ChangeGateway ==
 Next ==
     \/ Join
     \/ Refresh
+    \/ Resolve
     \/ ReceiveWithoutRefresh
     \/ WriteLow
     \/ ReadHigh
