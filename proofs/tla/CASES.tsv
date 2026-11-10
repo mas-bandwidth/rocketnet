@@ -707,3 +707,11 @@ MCRNUringSendPhasesLateReap.cfg	MCRNUringSendPhases.tla	pass	-	check	rnuringsend
 MCRNUringSendPhasesBrokenOnePhase.cfg	MCRNUringSendPhases.tla	invariant	NeverRefusedUnderLateReap	check	rnuringsendphases	required	-
 MCRNUringSendPhasesBrokenNoBase.cfg	MCRNUringSendPhases.tla	invariant	NoWriteWhileKernelOwned	check	rnuringsendphases	required	-
 MCRNUringSendPhasesBrokenRemainder.cfg	MCRNUringSendPhases.tla	invariant	PendingMatches	check	rnuringsendphases	required	-
+MCRNSequencingWrap.cfg	MCRNSequencingWrap.tla	pass	-	check	rnsequencingwrap	required	-
+MCRNSequencingWrapBrokenDeltaUnmasked.cfg	MCRNSequencingWrap.tla	invariant	NewerNeverDiscarded	check	rnsequencingwrap	required	-
+MCRNSequencingWrapBrokenDeltaBoundary.cfg	MCRNSequencingWrap.tla	invariant	HoldAhead	check	rnsequencingwrap	required	-
+MCRNSequencingWrapBrokenBlockGapUnmasked.cfg	MCRNSequencingWrap.tla	invariant	NewerNeverDiscarded	check	rnsequencingwrap	required	-
+MCRNSequencingWrapBrokenWatermarkUnmasked.cfg	MCRNSequencingWrap.tla	invariant	NewerNeverDiscarded	check	rnsequencingwrap	required	-
+MCRNSequencingWrapBrokenWatermarkBoundary.cfg	MCRNSequencingWrap.tla	invariant	NothingSilent	check	rnsequencingwrap	required	-
+MCRNSequencingWrapBrokenHoldGapUnmasked.cfg	MCRNSequencingWrap.tla	invariant	NewerNeverDiscarded	check	rnsequencingwrap	required	-
+MCRNSequencingWrapBrokenDrainGapUnmasked.cfg	MCRNSequencingWrap.tla	invariant	NewerNeverDiscarded	check	rnsequencingwrap	required	-

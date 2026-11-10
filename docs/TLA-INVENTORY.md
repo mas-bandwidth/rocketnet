@@ -42,6 +42,7 @@ revision under review.
 | message receive views | `RNSlots`, `RNMessageViews`, `RNPacketLease` | held counts exact, a release always finds the view or packet lease it names, every delivery of an update handed out |
 | channel queues layout | `RNChannelQueues`, `RNChannelQueuesLayout` | the links walk each FIFO and the ready list exactly, no link written into a descriptor outside its FIFO, every channel with work takes turns |
 | ordering index width | `RNOrderingWrap` | every comparison of the 24-bit wire ordering with the 32-bit read index made modulo 2^24; a full delivery table defers a packet rather than exhausting the region |
+| sequencing index width | `RNSequencingWrap` | every sequenced compare of a 24-bit ordering or sequencing index made modulo 2^24 and stale at or past the half range: no newer state discarded, no record exactly half the range behind delivered, held or dropped uncounted |
 | replay window layout | `ReplayWindow`, `RNReplayLayout` | the ring bits equal the received sequences of the retained range after every advance, its word-level clear split at the ring end |
 | ack block builder layout | `RNAckBuildLayout` | the descending word pass builds the bit-by-bit walk's block, never more ranges than the capacity |
 | acknowledged-run walk layout | `RNAckWalkLayout` | the masked popcount and descending walk over the sent ring's words visit exactly the named unacknowledged sequences, newest first; the lowest-acked word skip finds the lowest |

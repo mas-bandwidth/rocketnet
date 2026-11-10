@@ -310,6 +310,10 @@ static int rn_sequenced_block( rn_channels_t * channels, const rocketnet_message
 // as soon as it is complete. A newer in-turn message releases an in-turn block
 // still collecting; one no newer is superseded by it. An in-turn block held in
 // the future-state slot is the reversed witness MCRNChannelBrokenBlockInTurnHeld.cfg.
+// proofs/tla/RNSequencingWrap.tla Arrive, in turn: held_gap and sequence_gap
+// are 24-bit differences masked to the wire, stale at or past the half range
+// (MCRNSequencingWrapBrokenBlockGapUnmasked.cfg, ...WatermarkUnmasked.cfg and
+// ...WatermarkBoundary.cfg write them wrong).
 
 static int rn_sequenced_in_turn( rn_channels_t * channels, const rocketnet_message_record_t * record,
                                  rn_channel_receive_t * rx, uint32_t number_slot, rn_delivery_t * out )
@@ -380,6 +384,9 @@ static int rn_sequenced_in_turn( rn_channels_t * channels, const rocketnet_messa
 // RNChannelTypes!Dispatch: code 1 does not consult the reliable receive window.
 
 // proofs/tla/RNSequencedHoldPool.tla Hold: a newer future code-1 record returns the old hold and takes the free stack's top
+// proofs/tla/RNSequencingWrap.tla Arrive: delta against the 32-bit read index and the
+// future hold's gap are masked to the wire and stale at or past the half range
+// (MCRNSequencingWrapBrokenDeltaUnmasked.cfg, ...DeltaBoundary.cfg and ...HoldGapUnmasked.cfg)
 int rn_channels_dispatch_sequenced( struct rn_channels_t * channels, const struct rocketnet_message_record_t * record, struct rn_delivery_t * out )
 {
     if ( !channels || !record || !out )
@@ -525,6 +532,7 @@ int rn_channels_dispatch_sequenced( struct rn_channels_t * channels, const struc
 // RNChannelTypes!Drain: the ordered transition has already opened the epoch.
 
 // proofs/tla/RNSequencedHoldPool.tla DrainDeliver and DrainRelease: a delivered hold joins the delivered list, any other returns to the free stack
+// proofs/tla/RNSequencingWrap.tla OpenEpoch: the hold's gap against the 32-bit read index is masked to the wire (MCRNSequencingWrapBrokenDrainGapUnmasked.cfg)
 bool rn_channels_drain_sequenced( struct rn_channels_t * channels, uint32_t channel )
 {
     if ( !channels || channel >= channels->num_channels )
