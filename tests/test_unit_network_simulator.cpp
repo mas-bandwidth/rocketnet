@@ -12,12 +12,16 @@
 // is an argument.
 
 #include "test_unit_registry.h"
+#include "unit_shutdown.h"
 
 #include "rocketnet.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_address.h"
 #include "rocketnet_wire.h"
 #include "rocketnet_network_simulator.h"
+#include "rocketnet_connect_token.h"
+#include "rocketnet_config.h"
+#include "fake_client_driver.h"
 
 #include <limits.h>
 #include <string.h>
@@ -272,6 +276,76 @@ static void test_network_simulator_refuses_bad_sizes_and_a_full_wire()
     rocketnet_network_simulator_destroy( simulator );
 }
 
+// Each client's link simulator gets its own seed: two clients created with
+// the same 50% loss setting must not drop at the same sends.
+
+static void network_simulator_client_token( uint8_t * token )
+{
+    struct rocketnet_signed_connect_data_t signed_fields;
+    memset( &signed_fields, 0, sizeof( signed_fields ) );
+    signed_fields.version = ROCKETNET_WIRE_VERSION;
+    signed_fields.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
+    signed_fields.create_timestamp = 1;
+    signed_fields.expire_timestamp = UINT64_C( 1 ) << 40;
+    signed_fields.timeout_seconds = 300;
+    signed_fields.address_flags = ROCKETNET_ADDRESS_FLAG_IPV4;
+    signed_fields.ipv4_address[0] = 127;
+    signed_fields.ipv4_address[3] = 1;
+    signed_fields.ipv4_address[4] = 0x40;
+    signed_fields.ipv4_address[5] = 0x9c;
+    memcpy( signed_fields.server_public_key, rocketnet_dev_server_public_key, ROCKETNET_KEY_BYTES );
+    memset( token, 0, ROCKETNET_CONNECT_TOKEN_BYTES );
+    rocketnet_write_signed_connect_data( &signed_fields, token );
+}
+
+static rocketnet_client_transport_t * network_simulator_client(
+    rocketnet_fake_client_transport_io_t * transport, const rocketnet_client_transport_config_t * config )
+{
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    network_simulator_client_token( token );
+    return rocketnet_client_transport_create_step_driven_current( transport, token, config, 1000.0,
+                                                                  &rocketnet_fake_client_operations_base, transport );
+}
+
+static void test_network_simulator_clients_have_distinct_seeds()
+{
+    struct rocketnet_client_transport_config_t config;
+    rocketnet_client_transport_default_config_current( &config );
+    config.simulated_loss_percent = 50;
+
+    rocketnet_fake_client_transport_io_t * first_io = new rocketnet_fake_client_transport_io_t();
+    rocketnet_fake_client_transport_io_t * second_io = new rocketnet_fake_client_transport_io_t();
+    rocketnet_client_transport_t * first = network_simulator_client( first_io, &config );
+    rocketnet_client_transport_t * second = network_simulator_client( second_io, &config );
+    check( first != NULL );
+    check( second != NULL );
+
+    bool first_dropped[40];
+    bool second_dropped[40];
+    for ( int i = 0; i < 40; i++ )
+    {
+        const double time = 1000.0 + 0.2 * ( i + 1 );
+        const int first_before = first_io->num_sent;
+        const int second_before = second_io->num_sent;
+        rocketnet_client_transport_update( first, time );
+        rocketnet_client_transport_update( second, time );
+        first_dropped[i] = first_io->num_sent == first_before;
+        second_dropped[i] = second_io->num_sent == second_before;
+    }
+
+    bool identical = true;
+    for ( int i = 0; i < 40; i++ )
+        if ( first_dropped[i] != second_dropped[i] )
+            identical = false;
+    check( !identical );
+
+    rn_test_client_transport_stop_and_destroy( first );
+    rn_test_client_transport_stop_and_destroy( second );
+    delete first_io;
+    delete second_io;
+}
+
+REGISTER_UNIT_TEST( test_network_simulator_clients_have_distinct_seeds );
 REGISTER_UNIT_TEST( test_network_simulator_create_allocates_its_plan );
 REGISTER_UNIT_TEST( test_network_simulator_create_refuses_what_its_plan_refuses );
 REGISTER_UNIT_TEST( test_network_simulator_create_frees_on_a_refused_allocation );
