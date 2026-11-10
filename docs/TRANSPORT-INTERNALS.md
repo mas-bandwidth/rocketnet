@@ -325,10 +325,12 @@ sets that queue's lock-free swap-request flag and moves on. At the end of the
 pass, before starting the next receive batch, the worker sees the flag, takes
 the receive mutex, and swaps the filled bank for main's exhausted one (or for
 a spare on main's first claim). Only a completed swap clears the flag, and a
-failed try leaves it for the next pass. Main's next update therefore sees the
-accumulated packets without waiting another full update. Main also clears the
-flag when its own next try-acquire succeeds, so a request is never applied
-twice.
+failed try leaves it for the next pass. While the flag is set, main skips that
+queue before reading the held bank or cursor: the worker may be publishing a
+new held bank under the receive mutex. The worker clears the flag after the
+swap, so main's next update sees the accumulated packets without waiting
+another full update. Main requests a swap only for an exhausted or absent held
+bank; a partly consumed view remains main's until it is drained.
 
 ## Creation and shutdown
 
