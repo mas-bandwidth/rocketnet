@@ -8,7 +8,7 @@ finalize the old generation and reuse the block. The detailed two-ring and key
 wipe ownership model remains [RNClientIoShutdown](README-RNClientIoShutdown.md).
 These models are related by their completion boundary, not a proved refinement.
 The current Linux measurements are recorded in `proofs/tla/RUNS.tsv`; all
-eleven declared cases have their expected outcomes for this revision.
+twelve declared cases have their expected outcomes for this revision.
 
 `proofs/tla/ClientSession.tla` models the client object over many connections: create (no token,
 DISCONNECTED), connect(token), the handshake abstracted to its three stages, CONNECTED, every
@@ -25,11 +25,10 @@ files are the instances; their required cases are in `proofs/tla/CASES.tsv` (gro
 
 | Variable | Code | Meaning |
 |---|---|---|
-| `st` | the public client state in `sdk/rocketnet_api.cpp` | `NONE` (no object), `DISCONNECTED`, the three handshake stages, `CONNECTED`, and the seven modeled token/transport errors |
+| `st` | the public client state in `sdk/rocketnet_api.cpp` | `NONE` (no object), `DISCONNECTED`, the three handshake stages, `CONNECTED`, and the thirteen error states of `enum rocketnet_client_state_t` (`MessageErrors` are the message layer's five) |
 | `cur` | ghost | the session tag of the connection in progress, 0 outside one |
 | `conn[f]` | the per-connection fields of `struct rocketnet_client_protocol_t` (`sdk/rocketnet_client_protocol.h`: the send sequences, the replay windows) and the message layer above it | one field per row of the reset inventory, each 0 (Init) or the tag of the session that wrote it |
-| `reason` | `rocketnet_message_client_disconnect_reason` (`sdk/rocketnet.h`) | the disconnect reason, kept through the reset, cleared to NONE when the next connection reaches CONNECTED |
-| `kept` | the lifetime counters and the config | kept across connections; fresh only at create |
+| `kept` | the config | kept across connections; fresh only at create |
 | `link` | the path from the server | the session tags of server packets in flight, including old generations (lossy: `Lose`) |
 | `owner`, `ownerGen`, `pending` | `connection`/`retiring` and transport stop/completion in `sdk/rocketnet_api.cpp` | current worker ownership and a pending nonwaiting stop request |
 
@@ -51,20 +50,21 @@ lifecycle boundary. Token parsing and native thread mechanics are abstracted.
 
 The `received_packets` field stands for the last update's payload batch reaching a later connection, which it never does: a client transport runs one connection, and the next connect runs on a new transport generation. On the transport itself the reset keeps that batch until the next update clears it, so payloads counted delivered reach the caller ([RNClientDelivery](README-RNClientDelivery.md)).
 
-**Kept on purpose**: `kept.lifetime` (the lifetime counters, monotonic over the client's life),
-`kept.config`, and `reason`. Everything else is reset.
+**Kept on purpose**: `kept.config`. Everything else is reset. The handle keeps no
+disconnect reason of its own (the public state names how a connection ended), and its
+one lifetime count, the not-connected drops, is not modelled.
 
 **Actions.**
 
 | Action | API or event |
 |---|---|
 | `Create`, `Destroy` | create a pristine client; destroy only with no old owner or after completion (packets in flight may outlive it) |
-| `RetryPending`, `WorkerComplete`, `Connect(tok)` | A terminal retry with a running old worker requests stop and returns `CLIENT_NOT_DISCONNECTED`; a stuck worker stays pending. Completion is separate. Connect is enabled immediately for token-only errors or after completed old ownership; it joins/finalizes the old generation before reuse. Live states still refuse. |
-| `HandshakeStep` | the server's reply to the current stage arrives; the challenge writes the session keys; the establishing keep-alive reaches CONNECTED and clears the reason |
+| `RetryPending`, `WorkerComplete`, `Connect(tok)` | A terminal retry with a running old worker requests stop and returns `CLIENT_NOT_DISCONNECTED`; a stuck worker stays pending. Completion is separate. Connect is enabled immediately for token-only errors or after completed old ownership; it joins/finalizes the old generation before reuse. Live states still refuse. Connect has the code's five outcomes (`rn_client_connect`): `malformed` (not one base64 token) is refused before anything changes, whatever the old worker is doing; `valid` starts the handshake; `invalid` and `expired` end in `INVALID_CONNECT_TOKEN` and `CONNECT_TOKEN_EXPIRED`; `createfails` (socket, thread or memory) leaves `DISCONNECTED`. |
+| `HandshakeStep` | the server's reply to the current stage arrives; the challenge writes the session keys; the establishing keep-alive reaches CONNECTED |
 | `Deny`, `TokenExpires`, `Timer` | a denial during the handshake; the token expiring during the handshake; each stage's deadline and the connected timeout |
 | `ServerDisconnect`, `ClientDisconnect` | the server's disconnect; the client's disconnect from the handshake or connected |
 
-The model's reasons map to `enum rocketnet_disconnect_reason_t` (`sdk/rocketnet.h:339-347`):
+The model's end states read the reasons of `enum rocketnet_disconnect_reason_t` (`sdk/rocketnet.h:339-347`):
 `ServerDisconnect`'s `SERVER_DISCONNECTED` is `ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED`
 (`6`), recorded by the message object's client terminal check
 (`sdk/rocketnet_message_server.cpp:477-478`) when the client transport counted the server's
@@ -75,7 +75,8 @@ state: `SERVER_DISCONNECTED` reads `ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED` 
 `CLIENT_DISCONNECTED` returns the client to `ROCKETNET_CLIENT_STATE_DISCONNECTED`.
 In the model `ServerDisconnect` ends in `st = "SERVER_DISCONNECTED"`, the state the poll reads.
 | `StateReported` | conjoined to every step of `Next` (and to each fair action): the state change callback reports `st` once when it changed, from the value it last reported; `Create` and `Destroy` report nothing (`rn_client_report_state` in `sdk/rocketnet_api.cpp`) |
-| `DisconnectFromError` | disconnect from an error state: back to DISCONNECTED, the reason kept |
+| `DisconnectFromError` | disconnect from an error state: back to DISCONNECTED |
+| `MessageEnd(call, to)` | the message layer ends a CONNECTED connection (`rn_message_object_kick`): `to` is one of `RELIABLE_TIMED_OUT`, `PROTOCOL_VIOLATION`, `CONFIG_MISMATCH`, `MESSAGE_MEMORY_EXHAUSTED`, `MESSAGE_NOT_RECEIVED`, the state `rocketnet_client_state` reads from the reason. `call` is the public call that reports it: `send` (`rocketnet_client_start_message`, a start the message memory cannot hold, `MESSAGE_MEMORY_EXHAUSTED` only) or `update` (any of the five). The worker keeps running, as after `ServerDisconnect`. It carries its own `StateReported`. |
 | `Send` | message start/finish, only while CONNECTED (the `queuebeforeconnected` defect also enables it in a handshake state) |
 | `DropSend` | message start outside CONNECTED (`rocketnet_client_start_message` returns NULL and counts the `messages_dropped_not_connected` stat; the message layer's `MESSAGE_SEND_NOT_CONNECTED`, `rn_message_object_start` in `sdk/rocketnet_message_server.cpp`): no per-connection field changes, nothing is held; the ghost `droppedIn` is `{st}` after a drop and `{}` after any other step (RN-2 m1.5) |
 | `ServerSend(s)`, `Deliver(s)`, `Lose(s)` | the server's packets of any session ever started, delivered, or lost; a packet opens only under the session keys it was sealed with |
@@ -104,10 +105,9 @@ send-state clause, while the drop actions constrain the drop-state ghost.
 | `NoReuseBeforeComplete`, `PendingRefuses`, `PendingRefusalRetained`, `OwnerGeneration` | invariants | a live/stopping old owner cannot be replaced; pending refusal retains the generation; no owner has no generation |
 | `TerminalRetryEnabled`, `StuckRetainsOwner` | invariants | a terminal state permits a stop request or completed retry; a permanently stuck worker stays retained |
 | `NoSendUnlessConnected` | invariant | no message is queued outside CONNECTED, and no send-side field is written outside it |
-| `ResetIsInit` | invariant | outside a connection every per-connection field is Init; the lifetime counter equals the connections this object made, and the config stays |
+| `ResetIsInit` | invariant | outside a connection every per-connection field is Init, and the config stays |
 | `RecordIsCurrent` | invariant | the record holds only Init and the current session's writes |
 | `ReconnectObservesNothing` | invariant | no packet of session s opens in session s' # s, and no step reads a field another session wrote |
-| `ReasonKeptUntilNextConnection` | invariant | the reason equals the one the ended connection set until the next connection reaches CONNECTED, where it is NONE (the ghost `lastEnd` is written in the same step as the reason on every end path, so this catches a reason cleared or overwritten by a reset, a connect or a handshake step; no witness breaks it) |
 | `CallbackReportsPublicState` | invariant | the value the callback last reported is the state a poll reads, and every report is a change ending in that state |
 | `ConnectReachesConnectedOrError` | liveness | under weak fairness of the handshake replies and the timers, a handshake stage reaches CONNECTED or an error (or the application disconnects or destroys first) |
 

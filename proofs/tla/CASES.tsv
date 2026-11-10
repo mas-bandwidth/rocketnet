@@ -274,6 +274,7 @@ MCClientSessionSkipStop.cfg	MCClientSession.tla	invariant	PendingRefuses	ignore-
 MCClientSessionCompletionRefused.cfg	MCClientSession.tla	invariant	TerminalRetryEnabled	ignore-terminal	clientsession	required	-
 MCClientSessionReuseKeys.cfg	MCClientSession.tla	invariant	ReconnectObservesNothing	ignore-terminal	clientsession	required	-
 MCClientSessionTransportState.cfg	MCClientSession.tla	invariant	CallbackReportsPublicState	ignore-terminal	clientsession	required	-
+MCClientSessionSilentExhaust.cfg	MCClientSession.tla	invariant	CallbackReportsPublicState	ignore-terminal	clientsession	required	-
 MCServerSession.cfg	MCServerSession.tla	pass	-	ignore-terminal	serversession	required	-
 MCServerSessionUnresetSlot.cfg	MCServerSession.tla	invariant	SlotReuseObservesNothing	ignore-terminal	serversession	required	-
 MCServerSessionStopLeavesClient.cfg	MCServerSession.tla	invariant	NoClientWhileStopped	ignore-terminal	serversession	required	-

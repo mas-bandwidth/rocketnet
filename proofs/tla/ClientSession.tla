@@ -3,15 +3,19 @@
 \* the handshake abstracted to its three stages, connected, the paths out of a
 \* connection (the client's disconnect, a timeout, the server's disconnect, a
 \* denial, a bad token), disconnect back to DISCONNECTED, connect again, and
-\* destroy. The handshake packet by packet is tla/ClientConnection.tla; this
+\* destroy, and the message layer's end of a CONNECTED connection. The
+\* handshake packet by packet is tla/ClientConnection.tla; this
 \* module models what that one does not: the per-connection state written by
 \* one connection and the single Reset that clears it before the next.
 \*
 \* Every per-connection field holds 0 (Init) or the tag of the session that
 \* wrote it. Session tags never repeat, also across destroy and create, so a
 \* field holding a tag other than the current session's is state of an earlier
-\* connection. The fields deliberately kept across connections are `kept` (the
-\* lifetime counters and the config) and the disconnect reason.
+\* connection. The one field deliberately kept across connections is `kept`
+\* (the config). The handle keeps no disconnect reason of its own: the public
+\* state names how the connection ended (sdk/rocketnet_api.cpp:1590-1599), and
+\* its one lifetime count (not-connected drops, sdk/rocketnet_api.cpp:567) is not
+\* modelled.
 \*
 \* A message send outside CONNECTED is dropped (DropSend): it changes no
 \* per-connection field and nothing of it is held for a later send
@@ -26,18 +30,23 @@
 \* isolation guards to make each invariant produce a concrete witness.
 \*
 \* st is the public state, rocketnet_client_state: the server's disconnect
-\* ends a connection in SERVER_DISCONNECTED, an error state like the others.
+\* ends a connection in SERVER_DISCONNECTED, and each message-layer end
+\* (MessageEnd) in its own error state, error states like the others: the
+\* thirteen negative values of enum rocketnet_client_state_t.
 \* StateReported: the state change callback runs at the end of every public
 \* call that changes st and reports the change once, from the value it last
 \* reported (reported) to st; lastReport is the step's report, <<>> when the
 \* step reports none. Create and Destroy report nothing: the callback belongs
 \* to the object. The transportstate defect reports the transport's own state,
 \* which reads DISCONNECTED where the public state reads SERVER_DISCONNECTED.
+\* The silentexhaust defect is rocketnet_client_start_message without its
+\* report (sdk/rocketnet_api.cpp:1715-1716 deleted): a start whose memory
+\* exhaustion ends the connection reports nothing.
 EXTENDS Naturals, FiniteSets
 
 CONSTANTS MaxSessions, MaxCreates, Defect, UnresetField, StuckWorker
 
-ASSUME Defect \in {"none", "unreset", "connectanywhere", "queuebeforeconnected", "destroysilent", "reusepending", "skipstop", "reusekeys", "completionrefused", "transportstate"}
+ASSUME Defect \in {"none", "unreset", "connectanywhere", "queuebeforeconnected", "destroysilent", "reusepending", "skipstop", "reusekeys", "completionrefused", "transportstate", "silentexhaust"}
 ASSUME MaxSessions \in Nat \ {0} /\ MaxCreates \in Nat \ {0}
 ASSUME StuckWorker \in BOOLEAN
 
@@ -63,15 +72,24 @@ ASSUME HandshakeReads \cup SendReads \cup RecvReads = Fields
 
 HandshakeStates == {"REQUESTING_COOKIE", "SENDING_CONNECTION_REQUEST",
                     "SENDING_CONNECTION_RESPONSE"}
+\* The message layer's own ends of a CONNECTED connection, each read back as
+\* its own public state (sdk/rocketnet_api.cpp:1590-1599).
+MessageErrors == {"RELIABLE_TIMED_OUT", "PROTOCOL_VIOLATION", "CONFIG_MISMATCH",
+                  "MESSAGE_MEMORY_EXHAUSTED", "MESSAGE_NOT_RECEIVED"}
 Errors == {"CONNECTION_DENIED", "COOKIE_REQUEST_TIMED_OUT",
            "CONNECTION_REQUEST_TIMED_OUT", "CONNECTION_RESPONSE_TIMED_OUT",
            "CONNECTION_TIMED_OUT", "CONNECT_TOKEN_EXPIRED", "INVALID_CONNECT_TOKEN",
-           "SERVER_DISCONNECTED"}
+           "SERVER_DISCONNECTED"} \cup MessageErrors
 RestartStates == {"DISCONNECTED"} \cup Errors
 Live == HandshakeStates \cup {"CONNECTED"}
 States == {"NONE", "DISCONNECTED"} \cup Live \cup Errors
-Reasons == {"NONE", "CLIENT_DISCONNECTED", "SERVER_DISCONNECTED"} \cup Errors
-Tokens == {"valid", "invalid", "expired"}
+\* What connect is handed: a string that is not one base64 token, a token the
+\* transport accepts, one it refuses as invalid or as expired, and a token
+\* whose connection cannot be created (socket, thread, memory).
+Tokens == {"malformed", "valid", "invalid", "expired", "createfails"}
+\* The calls a message-layer end reaches the public state through: a start
+\* the message memory cannot hold, and the update.
+MessageEnds == {<<"send", "MESSAGE_MEMORY_EXHAUSTED">>} \cup ({"update"} \X MessageErrors)
 Sessions == 1..MaxSessions
 Tags == 0..MaxSessions
 
@@ -89,28 +107,26 @@ Write(c, fs, s) == [f \in Fields |-> IF f \in fs THEN s ELSE c[f]]
 Reset(c) == [f \in Fields |-> IF Defect = "unreset" /\ f = UnresetField THEN c[f] ELSE 0]
 StaleIn(c, fs, s) == {f \in fs : c[f] \notin {0, s}}
 
-VARIABLES st, cur, conn, reason, kept, link, nextSess, creates,
-          lastEnd, connected, observed, crossDelivered, connectFrom, queuedIn, droppedIn,
+VARIABLES st, cur, conn, kept, link, nextSess, creates,
+          observed, crossDelivered, connectFrom, queuedIn, droppedIn,
           silentEnd, owner, ownerGen, pending, refusedPending, badReuse,
           reported, lastReport
-\* st, cur, conn, reason, kept: the client object (cur is the session tag of
+\* st, cur, conn, kept: the client object (cur is the session tag of
 \*   the connection in progress, 0 outside one)
 \* link: the session tags of server packets in flight to this client (lossy)
 \* nextSess, creates: the environment's counters
-\* lastEnd, connected, observed, crossDelivered, connectFrom, queuedIn,
-\*   droppedIn, silentEnd: ghosts
+\* observed, crossDelivered, connectFrom, queuedIn, droppedIn, silentEnd: ghosts
 \* reported, lastReport: the state change callback (StateReported)
-vars == <<st, cur, conn, reason, kept, link, nextSess, creates,
-          lastEnd, connected, observed, crossDelivered, connectFrom, queuedIn, droppedIn,
+vars == <<st, cur, conn, kept, link, nextSess, creates,
+          observed, crossDelivered, connectFrom, queuedIn, droppedIn,
           silentEnd, owner, ownerGen, pending, refusedPending, badReuse,
           reported, lastReport>>
 ghosts == <<observed, crossDelivered, connectFrom, queuedIn, silentEnd>>
 
 Init ==
-    /\ st = "NONE" /\ cur = 0 /\ conn = InitConn /\ reason = "NONE"
-    /\ kept = [lifetime |-> 0, config |-> 0]
+    /\ st = "NONE" /\ cur = 0 /\ conn = InitConn
+    /\ kept = [config |-> 0]
     /\ link = {} /\ nextSess = 1 /\ creates = 0
-    /\ lastEnd = "NONE" /\ connected = 0
     /\ observed = {} /\ crossDelivered = {} /\ connectFrom = {} /\ queuedIn = {}
     /\ droppedIn = {} /\ silentEnd = FALSE
     /\ owner = "none" /\ ownerGen = 0 /\ pending = FALSE
@@ -120,9 +136,9 @@ Init ==
 \* rocketnet_client_create: no token, DISCONNECTED, a fresh object.
 Create ==
     /\ st = "NONE" /\ creates < MaxCreates
-    /\ st' = "DISCONNECTED" /\ cur' = 0 /\ conn' = InitConn /\ reason' = "NONE"
-    /\ kept' = [lifetime |-> 0, config |-> 1]
-    /\ creates' = creates + 1 /\ lastEnd' = "NONE" /\ connected' = 0
+    /\ st' = "DISCONNECTED" /\ cur' = 0 /\ conn' = InitConn
+    /\ kept' = [config |-> 1]
+    /\ creates' = creates + 1
     /\ owner' = "none" /\ ownerGen' = 0 /\ pending' = FALSE
     /\ UNCHANGED <<link, nextSess, ghosts, refusedPending, badReuse>>
 
@@ -130,23 +146,20 @@ Create ==
 Destroy ==
     /\ st # "NONE"
     /\ owner \in {"none", "stopped"} \/ Defect = "destroysilent"
-    /\ st' = "NONE" /\ cur' = 0 /\ conn' = InitConn /\ reason' = "NONE"
-    /\ kept' = [lifetime |-> 0, config |-> 0]
-    /\ lastEnd' = "NONE" /\ connected' = 0
+    /\ st' = "NONE" /\ cur' = 0 /\ conn' = InitConn
+    /\ kept' = [config |-> 0]
     /\ silentEnd' = (silentEnd \/ (st \in {"SENDING_CONNECTION_RESPONSE", "CONNECTED"} /\ Defect = "destroysilent"))
     /\ badReuse' = (badReuse \/ (owner \in {"running", "stopping"}))
     /\ owner' = "none" /\ ownerGen' = 0 /\ pending' = FALSE
     /\ refusedPending' = FALSE
     /\ UNCHANGED <<link, nextSess, creates, observed, crossDelivered, connectFrom, queuedIn>>
 
-\* Every path out of a connection: Reset, the reason the path names, and
-\* the reason recorded for ReasonKeptUntilNextConnection.
-End(c, to, why, stop) ==
+\* Every path out of a connection: Reset, and the state the path names.
+End(c, to, stop) ==
     /\ st' = to /\ cur' = 0 /\ conn' = Reset(c)
-    /\ reason' = why /\ lastEnd' = why
     /\ owner' = IF stop THEN "stopping" ELSE owner
     /\ pending' = stop
-    /\ UNCHANGED <<kept, link, nextSess, creates, connected, ghosts,
+    /\ UNCHANGED <<kept, link, nextSess, creates, ghosts,
                    ownerGen, refusedPending, badReuse>>
 
 \* A retry from a terminal state with an old worker requests nonwaiting stop.
@@ -156,87 +169,91 @@ RetryPending ==
     /\ st \in RestartStates /\ owner = "running"
     /\ owner' = IF Defect = "skipstop" THEN "running" ELSE "stopping"
     /\ pending' = TRUE /\ refusedPending' = TRUE
-    /\ UNCHANGED <<st, cur, conn, reason, kept, link, nextSess, creates,
-                   lastEnd, connected, ghosts, ownerGen, badReuse>>
+    /\ UNCHANGED <<st, cur, conn, kept, link, nextSess, creates,
+                   ghosts, ownerGen, badReuse>>
 
 WorkerComplete ==
     /\ owner = "stopping" /\ ~StuckWorker
     /\ owner' = "stopped"
-    /\ UNCHANGED <<st, cur, conn, reason, kept, link, nextSess, creates,
-                   lastEnd, connected, ghosts, ownerGen, pending,
-                   refusedPending, badReuse>>
+    /\ UNCHANGED <<st, cur, conn, kept, link, nextSess, creates,
+                   ghosts, ownerGen, pending, refusedPending, badReuse>>
 
-\* connect(token): a terminal state may retry only when it owns no worker or
-\* the old worker has completed. Finalization joins the stopped generation.
+\* connect(token), rn_client_connect (sdk/rocketnet_api.cpp:1322-1391), with
+\* its five outcomes. A live state is refused first (1326-1332). A string that
+\* is not one base64 token is refused next, before the terminal attempt or
+\* its worker is touched (1338-1343): nothing changes, whatever the old worker
+\* is doing. Otherwise a terminal state may retry only when it owns no worker
+\* or the old worker has completed (RetryPending otherwise, 1359-1368), and
+\* finalization joins the stopped generation; then the connection is created
+\* (1373-1390): a valid token starts the handshake, a token the transport
+\* refuses ends in INVALID_CONNECT_TOKEN or CONNECT_TOKEN_EXPIRED, and any
+\* other create failure leaves DISCONNECTED.
 Connect(tok) ==
     /\ st # "NONE"
     /\ st \in RestartStates \/ Defect = "connectanywhere"
-    /\ (IF Defect = "completionrefused" THEN owner = "none"
-        ELSE owner \in {"none", "stopped"}) \/ Defect \in {"connectanywhere", "reusepending"}
-    /\ badReuse' = (badReuse \/ (owner \in {"running", "stopping"}))
-    /\ pending' = FALSE
-    /\ refusedPending' = FALSE
-    /\ IF tok = "valid"
-       THEN /\ nextSess <= MaxSessions
-            /\ st' = "REQUESTING_COOKIE" /\ cur' = nextSess /\ nextSess' = nextSess + 1
-            /\ conn' = Write(conn, TokenFields, nextSess)
-            /\ owner' = "running" /\ ownerGen' = nextSess
-            /\ connectFrom' = connectFrom \cup {st}
-            /\ UNCHANGED <<reason, kept, link, creates, lastEnd, connected,
-                           observed, crossDelivered, queuedIn, silentEnd>>
-       ELSE /\ connectFrom' = connectFrom \cup {st}
-            /\ LET to == IF tok = "invalid" THEN "INVALID_CONNECT_TOKEN"
-                         ELSE "CONNECT_TOKEN_EXPIRED"
-               IN /\ st' = to /\ cur' = 0 /\ conn' = Reset(conn)
-                  /\ reason' = to /\ lastEnd' = to
-            /\ owner' = "none" /\ ownerGen' = 0
-            /\ UNCHANGED <<kept, link, nextSess, creates, connected,
-                           observed, crossDelivered, queuedIn, silentEnd>>
+    /\ IF tok = "malformed"
+       THEN UNCHANGED <<st, cur, conn, kept, link, nextSess, creates, ghosts,
+                        owner, ownerGen, pending, refusedPending, badReuse>>
+       ELSE
+       /\ (IF Defect = "completionrefused" THEN owner = "none"
+           ELSE owner \in {"none", "stopped"}) \/ Defect \in {"connectanywhere", "reusepending"}
+       /\ badReuse' = (badReuse \/ (owner \in {"running", "stopping"}))
+       /\ pending' = FALSE
+       /\ refusedPending' = FALSE
+       /\ connectFrom' = connectFrom \cup {st}
+       /\ IF tok = "valid"
+          THEN /\ nextSess <= MaxSessions
+               /\ st' = "REQUESTING_COOKIE" /\ cur' = nextSess /\ nextSess' = nextSess + 1
+               /\ conn' = Write(conn, TokenFields, nextSess)
+               /\ owner' = "running" /\ ownerGen' = nextSess
+               /\ UNCHANGED <<kept, link, creates,
+                              observed, crossDelivered, queuedIn, silentEnd>>
+          ELSE /\ st' = CASE tok = "invalid" -> "INVALID_CONNECT_TOKEN"
+                          [] tok = "expired" -> "CONNECT_TOKEN_EXPIRED"
+                          [] OTHER           -> "DISCONNECTED"
+               /\ cur' = 0 /\ conn' = Reset(conn)
+               /\ owner' = "none" /\ ownerGen' = 0
+               /\ UNCHANGED <<kept, link, nextSess, creates,
+                              observed, crossDelivered, queuedIn, silentEnd>>
 
 \* The handshake abstracted to its stages: the server's reply to the stage
 \* arrives. The challenge derives the session keys; the establishing
-\* keep-alive moves to CONNECTED, which clears the disconnect reason.
+\* keep-alive moves to CONNECTED.
 HandshakeStep ==
     /\ st \in HandshakeStates
     /\ droppedIn' = {}
     /\ observed' = observed \cup StaleIn(conn, HandshakeReads, cur)
     /\ st' = NextStage(st)
-    /\ IF NextStage(st) = "CONNECTED"
-       THEN /\ reason' = "NONE"
-            /\ kept' = [kept EXCEPT !.lifetime = @ + 1]
-            /\ connected' = connected + 1
-            /\ UNCHANGED conn
-       ELSE /\ conn' = IF NextStage(st) = "SENDING_CONNECTION_RESPONSE"
-                       THEN Write(conn, KeyFields, IF Defect = "reusekeys" /\ cur > 1 THEN cur - 1 ELSE cur) ELSE conn
-            /\ UNCHANGED <<reason, kept, connected>>
-    /\ UNCHANGED <<cur, link, nextSess, creates, lastEnd,
+    /\ conn' = IF NextStage(st) = "SENDING_CONNECTION_RESPONSE"
+                THEN Write(conn, KeyFields, IF Defect = "reusekeys" /\ cur > 1 THEN cur - 1 ELSE cur) ELSE conn
+    /\ UNCHANGED <<cur, kept, link, nextSess, creates,
                    crossDelivered, connectFrom, queuedIn, silentEnd,
                    owner, ownerGen, pending, refusedPending, badReuse>>
 
-Deny == st \in HandshakeStates /\ End(conn, "CONNECTION_DENIED", "CONNECTION_DENIED", FALSE)
+Deny == st \in HandshakeStates /\ End(conn, "CONNECTION_DENIED", FALSE)
 
 \* The token expires while the handshake is still running.
-TokenExpires == st \in HandshakeStates /\ End(conn, "CONNECT_TOKEN_EXPIRED", "CONNECT_TOKEN_EXPIRED", FALSE)
+TokenExpires == st \in HandshakeStates /\ End(conn, "CONNECT_TOKEN_EXPIRED", FALSE)
 
 \* The stage deadlines and the connected timeout.
-Timer == st \in Live /\ End(conn, TimedOut(st), TimedOut(st), FALSE) /\ droppedIn' = {}
+Timer == st \in Live /\ End(conn, TimedOut(st), FALSE) /\ droppedIn' = {}
 
-ServerDisconnect == st = "CONNECTED" /\ End(conn, "SERVER_DISCONNECTED", "SERVER_DISCONNECTED", FALSE)
+ServerDisconnect == st = "CONNECTED" /\ End(conn, "SERVER_DISCONNECTED", FALSE)
 
 \* The client's disconnect from the handshake or connected: the disconnect
 \* burst is written, then the one Reset.
 ClientDisconnect ==
     /\ st \in Live
-    /\ End(Write(conn, DisconnectFields, cur), "DISCONNECTED", "CLIENT_DISCONNECTED", TRUE)
+    /\ End(Write(conn, DisconnectFields, cur), "DISCONNECTED", TRUE)
 
-\* Disconnect from an error state: the connection already ended, so the
-\* reason it set is kept; the Reset runs again and changes nothing.
+\* Disconnect from an error state: the connection already ended; the Reset
+\* runs again and changes nothing.
 DisconnectFromError ==
     /\ st \in Errors
     /\ st' = "DISCONNECTED" /\ cur' = 0 /\ conn' = Reset(conn)
     /\ owner' = IF owner = "running" THEN "stopping" ELSE owner
     /\ pending' = (owner # "none")
-    /\ UNCHANGED <<reason, kept, link, nextSess, creates, lastEnd, connected, ghosts,
+    /\ UNCHANGED <<kept, link, nextSess, creates, ghosts,
                    ownerGen, refusedPending, badReuse>>
 
 \* Message start/finish: only while CONNECTED. The defect lets a send in a
@@ -246,8 +263,8 @@ Send ==
     /\ observed' = observed \cup StaleIn(conn, SendReads, cur)
     /\ conn' = Write(conn, SendFields, cur)
     /\ queuedIn' = queuedIn \cup {st}
-    /\ UNCHANGED <<st, cur, reason, kept, link, nextSess, creates, lastEnd,
-                   connected, crossDelivered, connectFrom, silentEnd,
+    /\ UNCHANGED <<st, cur, kept, link, nextSess, creates,
+                   crossDelivered, connectFrom, silentEnd,
                    owner, ownerGen, pending, refusedPending, badReuse>>
 
 \* Message start outside CONNECTED (rocketnet_client_start_message returns
@@ -256,8 +273,8 @@ Send ==
 DropSend ==
     /\ st \notin {"NONE", "CONNECTED"}
     /\ droppedIn' = {st}
-    /\ UNCHANGED <<st, cur, conn, reason, kept, link, nextSess, creates, lastEnd,
-                   connected, observed, crossDelivered, connectFrom, queuedIn, silentEnd,
+    /\ UNCHANGED <<st, cur, conn, kept, link, nextSess, creates,
+                   observed, crossDelivered, connectFrom, queuedIn, silentEnd,
                    owner, ownerGen, pending, refusedPending, badReuse>>
 
 \* The server side of any session ever started may still have packets in
@@ -265,8 +282,8 @@ DropSend ==
 ServerSend(s) ==
     /\ s < nextSess /\ s \notin link
     /\ link' = link \cup {s}
-    /\ UNCHANGED <<st, cur, conn, reason, kept, nextSess, creates, lastEnd,
-                   connected, ghosts, owner, ownerGen, pending, refusedPending, badReuse>>
+    /\ UNCHANGED <<st, cur, conn, kept, nextSess, creates,
+                   ghosts, owner, ownerGen, pending, refusedPending, badReuse>>
 
 \* A packet arrives. It opens only under the session keys it was sealed
 \* with; one that does not open, or arrives outside a session, is discarded.
@@ -280,15 +297,15 @@ Deliver(s) ==
             /\ observed' = observed \cup StaleIn(conn, RecvReads, cur)
             /\ conn' = Write(conn, RecvFields, cur)
        ELSE UNCHANGED <<conn, observed, crossDelivered>>
-    /\ UNCHANGED <<st, cur, reason, kept, nextSess, creates, lastEnd,
-                   connected, connectFrom, queuedIn, silentEnd, owner,
+    /\ UNCHANGED <<st, cur, kept, nextSess, creates,
+                   connectFrom, queuedIn, silentEnd, owner,
                    ownerGen, pending, refusedPending, badReuse>>
 
 Lose(s) ==
     /\ s \in link
     /\ link' = link \ {s}
-    /\ UNCHANGED <<st, cur, conn, reason, kept, nextSess, creates, lastEnd,
-                   connected, ghosts, owner, ownerGen, pending, refusedPending, badReuse>>
+    /\ UNCHANGED <<st, cur, conn, kept, nextSess, creates,
+                   ghosts, owner, ownerGen, pending, refusedPending, badReuse>>
 
 \* The state the callback reports: the public state, or with the
 \* transportstate defect the transport's, which has no SERVER_DISCONNECTED.
@@ -303,18 +320,37 @@ StateReported ==
     ELSE /\ reported' = ReportedView(st')
          /\ lastReport' = IF ReportedView(st') # reported THEN <<reported, ReportedView(st')>> ELSE <<>>
 
+\* The message layer ends a CONNECTED connection (rn_message_object_kick in
+\* sdk/rocketnet_message_server.cpp): the connection object stays, its
+\* transport reads DISCONNECTED, and rocketnet_client_state reads the reason's
+\* own error state (sdk/rocketnet_api.cpp:1590-1599). The worker keeps
+\* running, as after ServerDisconnect. The call that reaches it reports it:
+\* a start the message memory cannot hold (rocketnet_client_start_message,
+\* 1711-1716) with MESSAGE_MEMORY_EXHAUSTED, or the update (rocketnet_client_update,
+\* 1488-1509) with any of the five. With the silentexhaust defect the start
+\* reports nothing.
+MessageEnd(call, to) ==
+    /\ st = "CONNECTED"
+    /\ End(conn, to, FALSE)
+    /\ droppedIn' = {}
+    /\ IF call = "send" /\ Defect = "silentexhaust"
+       THEN UNCHANGED reported /\ lastReport' = <<>>
+       ELSE StateReported
+
 \* Every step but a drop clears droppedIn (the two fair actions also say so
-\* themselves, so that their fairness conditions name a whole step).
+\* themselves, so that their fairness conditions name a whole step). Every
+\* step but MessageEnd carries StateReported here; MessageEnd carries its own.
 Next ==
-    /\ \/ /\ \/ Create \/ Destroy
-             \/ \E tok \in Tokens : Connect(tok)
-             \/ RetryPending \/ WorkerComplete
-             \/ HandshakeStep \/ Deny \/ TokenExpires \/ Timer \/ ServerDisconnect
-             \/ ClientDisconnect \/ DisconnectFromError \/ Send
-             \/ \E s \in Sessions : ServerSend(s) \/ Deliver(s) \/ Lose(s)
-          /\ droppedIn' = {}
-       \/ DropSend
-    /\ StateReported
+    \/ /\ \/ /\ \/ Create \/ Destroy
+                \/ \E tok \in Tokens : Connect(tok)
+                \/ RetryPending \/ WorkerComplete
+                \/ HandshakeStep \/ Deny \/ TokenExpires \/ Timer \/ ServerDisconnect
+                \/ ClientDisconnect \/ DisconnectFromError \/ Send
+                \/ \E s \in Sessions : ServerSend(s) \/ Deliver(s) \/ Lose(s)
+             /\ droppedIn' = {}
+          \/ DropSend
+       /\ StateReported
+    \/ \E e \in MessageEnds : MessageEnd(e[1], e[2])
 
 Spec == Init /\ [][Next]_vars
 \* Fair delivery of the server's handshake replies, and the timers; each fair
@@ -324,10 +360,9 @@ LiveSpec == Spec /\ Fairness
 
 TypeOK ==
     /\ st \in States /\ cur \in Tags /\ conn \in [Fields -> Tags]
-    /\ reason \in Reasons /\ lastEnd \in Reasons
-    /\ kept \in [lifetime : 0..MaxSessions, config : 0..1]
+    /\ kept \in [config : 0..1]
     /\ link \subseteq Sessions /\ nextSess \in 1..MaxSessions + 1
-    /\ creates \in 0..MaxCreates /\ connected \in 0..MaxSessions
+    /\ creates \in 0..MaxCreates
     /\ observed \subseteq Fields
     /\ crossDelivered \subseteq [from : Sessions, to : Tags]
     /\ connectFrom \subseteq States /\ queuedIn \subseteq States
@@ -363,12 +398,10 @@ DropLeavesNothing ==
     /\ droppedIn \cap {"NONE", "CONNECTED"} = {}
     /\ st # "CONNECTED" => \A f \in SendFields \ RecvFields : conn[f] = 0
 
-\* Outside a connection every per-connection field is Init; the kept fields
-\* are unchanged by every reset: the lifetime counter counts every
-\* connection the object made, and the config stays.
+\* Outside a connection every per-connection field is Init; the kept config
+\* is unchanged by every reset.
 ResetIsInit ==
     /\ st \notin Live => conn = InitConn
-    /\ kept.lifetime = connected
     /\ st # "NONE" => kept.config = 1
 
 \* The record holds nothing but Init and the current session's writes.
@@ -379,9 +412,6 @@ RecordIsCurrent == \A f \in Fields : conn[f] \in {0, cur}
 \* session wrote (a stale ack bit or sent entry, a replay window
 \* that would refuse the new session's first sequences).
 ReconnectObservesNothing == observed = {} /\ crossDelivered = {}
-
-ReasonKeptUntilNextConnection ==
-    reason = IF st = "CONNECTED" THEN "NONE" ELSE lastEnd
 
 DestroyDisconnectsLive == ~silentEnd
 
