@@ -26,9 +26,7 @@
 // counters, per the standard's observability section: one counter per
 // distinct reason a packet is rejected, arrival counted separately from
 // outcome, monotonic and never reset. Names are the standard's; indices are
-// this implementation's. Before the 1.0 release, a retired counter is removed
-// and the rest are renumbered; from the 1.0 release on, the indices are
-// append-only and never renumbered.
+// this implementation's. The indices are append-only and never renumbered.
 //
 // The set grows with the code that counts: a counter with no code path is a
 // dead counter, so entries land here in the same change as their first user.
