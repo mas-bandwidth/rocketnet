@@ -63,6 +63,7 @@ models in the module:
 | `OtherJoins`, `OtherLeaves` | other clients | a slot taken or freed |
 | `Tick` | time | one send interval passes: `rocketnet_client_check_deadlines` (total deadline in 1..3, then idle timeout to -(state+1)), `rocketnet_server_protocol_update` (handshake deadline for a half-open mapping, idle timeout for an established one), both links `Age` |
 | `C2SEnvironment`, `S2CEnvironment` | the path | Link's `Drop`, `Duplicate`, `Reorder`, `Delay` |
+| `Done` | the end of the run | the terminal stutter, see "How to run it" |
 
 Every packet that drives a transition crosses a Link instance: `ClientSend` and the
 server's answers are `Link!Send`, every receive is `Link!Deliver`, `Tick` is `Link!Age`.
@@ -202,9 +203,16 @@ code's behaviour passes and the two bad behaviours fail.
 On a Linux bench with the TLA+ tools (`tla2tools.jar`, TLC 2.19), from `proofs/tla/`:
 
 ```sh
-java -cp /path/to/tla2tools.jar tlc2.TLC -workers 8 -cleanup -deadlock -lncheck final \
+java -cp /path/to/tla2tools.jar tlc2.TLC -workers 8 -cleanup -lncheck final \
      -config MCClientConnection.cfg MCClientConnection
 ```
+
+Deadlock is checked. A run ends in the `Done` terminal stutter: the application's
+connects spent and the last attempt over, both disconnect bursts sent, both wires
+empty, and no server mapping for the client but a half-open one whose handshake
+deadline is off. `Tick` and the links' `Age` are in `Next` only when they change
+something, so a state where nothing else can happen and `Done` does not hold is
+reported as a deadlock.
 
 **Payloads** are accepted only in state 4, as netcode.io's client: the server's
 first payloads can reach the client ahead of the keep-alive that connects it
