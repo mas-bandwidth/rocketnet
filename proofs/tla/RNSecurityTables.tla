@@ -423,10 +423,15 @@ Tick ==
     /\ UNCHANGED <<history, admitted, insertOrder, mapGen, mapBorn, slots, others,
                    deniedPulse, admits, lateAdmit, evictedLive, churnDenied, claimVars>>
 
-Next == /\ \/ (\E a \in Addrs, tok \in Tokens, g \in Gens : Request(a, tok, g) \/ RequestRefused(a, tok, g))
-           \/ (\E a \in Addrs : Response(a) \/ Disconnect(a))
-           \/ OtherJoins \/ OtherLeaves \/ Tick
-        /\ UNCHANGED floodVars
+\* the harness's clock bound spent: a terminal stutter
+Done ==
+    /\ clock = MaxClock
+    /\ UNCHANGED vars
+Next == \/ /\ \/ (\E a \in Addrs, tok \in Tokens, g \in Gens : Request(a, tok, g) \/ RequestRefused(a, tok, g))
+              \/ (\E a \in Addrs : Response(a) \/ Disconnect(a))
+              \/ OtherJoins \/ OtherLeaves \/ Tick
+           /\ UNCHANGED floodVars
+        \/ Done
 Spec == Init /\ [][Next]_vars /\ WF_vars(Tick)
 SpecFair == Spec
 
@@ -449,8 +454,12 @@ ClaimControlRelease(tk, a) ==
 ClaimControlTick ==
     /\ clock < MaxClock /\ clock' = clock + 1
     /\ UNCHANGED <<claimVars, ClaimControlOtherVars>>
+\* the control's clock bound spent: a terminal stutter
+ClaimsDone ==
+    /\ clock = MaxClock
+    /\ UNCHANGED vars
 ClaimsNext == (\E tk \in ClaimTokens, a \in Addrs : ClaimControlRecord(tk, a) \/ ClaimControlRelease(tk, a))
-              \/ ClaimControlTick
+              \/ ClaimControlTick \/ ClaimsDone
 ClaimsSpec == Init /\ [][ClaimsNext]_vars
 
 \* ---------------------------------------------------------------------------
@@ -535,8 +544,12 @@ FloodClockBack ==
     /\ \E t \in 0..(fclock - 1) : fclock' = t
     /\ UNCHANGED <<failCount, failTable, honest, floodVerifies, windowStart, tableVars>>
 
+\* the honest client connected: a terminal stutter
+FloodDone ==
+    /\ honest = "connected"
+    /\ UNCHANGED vars
 FloodNext == (\E f \in Forgers : Forge(f)) \/ HonestRequest \/ HonestResponse \/ FloodUpdate
-             \/ FloodClockForward \/ FloodClockBack
+             \/ FloodClockForward \/ FloodClockBack \/ FloodDone
 \* the honest request is enabled again after every update while the flood
 \* takes the budget, hence strong fairness for it
 FloodSpec == Init /\ [][FloodNext]_vars
