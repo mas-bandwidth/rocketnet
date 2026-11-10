@@ -141,6 +141,12 @@ struct rocketnet_message_record_t
 
 int rocketnet_message_record_header_bytes( const struct rocketnet_message_record_t * record );
 
+// the one-record limit of standard/MESSAGES.md m2.1 for a reliability at any
+// channel, WIDE included; rocketnet_max_unfragmented_message_bytes is this
+// rule over the build's channel range. 0 for a reliability outside the enum.
+
+int rocketnet_message_max_unfragmented_bytes( int reliability, int channel );
+
 // nonzero when the record is one a correct sender may write, before any
 // receiver's limits: a code 0 to 4, flags the standard allows, absent fields
 // zero, each present field inside its wire width, 1 to 65535 data bytes, and

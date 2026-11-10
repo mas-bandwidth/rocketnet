@@ -114,6 +114,64 @@ int rocketnet_message_record_header_bytes( const struct rocketnet_message_record
     return rocketnet_message_flags_header_bytes( rocketnet_message_record_flags( record ) );
 }
 
+// The one-record limits of standard/MESSAGES.md m2.1 from the formulas the
+// send paths use: the unreliable record rule (rn_endpoint_send_route), the
+// reliable fragment rule over the SINGLE payload capacity the ordered path is
+// given (rn_channels_finish, whose ROCKETNET_CHANNEL_ORDERED_HEADER_BYTES is
+// the longest code 3 header, on a WIDE channel), and each sequenced code's
+// record header for the channel. Pure: no state, no misuse count.
+
+int rocketnet_message_max_unfragmented_bytes( int reliability, int channel )
+{
+    struct rocketnet_message_record_t shape;
+    memset( &shape, 0, sizeof( shape ) );
+    shape.channel = (uint32_t) channel;
+
+    switch ( reliability )
+    {
+        case ROCKETNET_RELIABILITY_UNRELIABLE:
+        case ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT:
+            return ROCKETNET_MESSAGE_SINGLE_BYTES - 1 - ROCKETNET_MESSAGE_RECORD_FIXED_BYTES;
+
+        case ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED:
+            shape.code = ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED;
+            return ROCKETNET_MESSAGE_SINGLE_BYTES - rocketnet_message_record_header_bytes( &shape );
+
+        case ROCKETNET_RELIABILITY_RELIABLE:
+        case ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT:
+            return ROCKETNET_MESSAGE_SINGLE_BYTES - 7;
+
+        case ROCKETNET_RELIABILITY_RELIABLE_ORDERED:
+        case ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT:
+            shape.code = ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED;
+            shape.channel = ROCKETNET_MESSAGE_WIDE_CHANNEL;
+            return ROCKETNET_MESSAGE_SINGLE_BYTES - 1 - rocketnet_message_record_header_bytes( &shape );
+
+        case ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED:
+            shape.code = ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED;
+            return ROCKETNET_MESSAGE_SINGLE_BYTES - 1 - rocketnet_message_record_header_bytes( &shape );
+
+        default:
+            return 0;
+    }
+}
+
+int rocketnet_max_unfragmented_message_bytes( enum rocketnet_reliability_t reliability, int channel )
+{
+    if ( channel < 0 || channel >= ROCKETNET_MAX_CHANNELS )
+        return 0;
+
+    // a C caller can pass any int here; the value is read as an int, never as
+    // the enum, so one outside the enumerators is refused by the rule and not
+    // undefined behavior in a C++ translation unit
+
+    ROCKETNET_STATIC_ASSERT( sizeof( reliability ) == sizeof( int ), "rocketnet_reliability_t is int-sized" );
+    int value = 0;
+    memcpy( &value, &reliability, sizeof( value ) );
+
+    return rocketnet_message_max_unfragmented_bytes( value, channel );
+}
+
 int rocketnet_message_record_valid( const struct rocketnet_message_record_t * record )
 {
     if ( !record )

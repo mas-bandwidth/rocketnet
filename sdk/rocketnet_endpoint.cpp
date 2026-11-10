@@ -23,6 +23,7 @@
 #include "rocketnet_packet_builder.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_send_budget.h"
+#include "rocketnet_standard_rules.h"
 
 static void rn_endpoint_count( rn_endpoint_t * endpoint, int counter, uint64_t amount = 1 )
 {
@@ -191,16 +192,6 @@ static void rn_unreliable_push( rn_endpoint_t * endpoint, uint32_t d )
 // the public promotion threshold is the record rule at the full payload capacity
 static_assert( ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES == ROCKETNET_MESSAGE_SINGLE_BYTES - ROCKETNET_MESSAGE_RECORD_FIXED_BYTES - 1,
                "ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES is the largest unreliable message one packet carries" );
-
-static bool rn_endpoint_unreliable_over_record_capacity( int reliability, int channel, int bytes, int capacity )
-{
-    // every unreliable mode uses the same record-size rule, including its wire header and form byte
-
-    const int header = reliability == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED ? 3 + 3 + 3 + ( channel >= ROCKETNET_MESSAGE_WIDE_CHANNEL ? 2 : 1 ) : ROCKETNET_MESSAGE_RECORD_FIXED_BYTES;
-    const int one_packet_capacity = reliability == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED ? capacity : ( capacity < ROCKETNET_MESSAGE_SINGLE_BYTES ? capacity : ROCKETNET_MESSAGE_SINGLE_BYTES );
-
-    return (uint64_t) (uint32_t) bytes + (uint64_t) header + 1u > (uint64_t) one_packet_capacity;
-}
 
 // ---------------------------------------------------------------
 //                     init and reset
