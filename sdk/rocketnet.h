@@ -1092,8 +1092,8 @@ ROCKETNET_EXPORT void rocketnet_thread_priority( bool enabled );
 ROCKETNET_EXPORT const char * rocketnet_log_level_name( enum rocketnet_log_level_t level );
 
 /// Receives one formatted log line on the thread that logs it. This may be a
-/// network thread, so the callback must be thread-safe. It must not call
-/// rocketnet_log_function. context is the installed pointer. message is
+/// network thread, so the callback must be thread-safe. It must not call any
+/// rocketnet function. context is the installed pointer. message is
 /// NUL-terminated and length excludes the NUL. The message is at most 1023
 /// bytes and is valid only until the callback returns.
 

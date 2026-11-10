@@ -500,11 +500,12 @@ static void rn_message_object_close_in_place( rn_message_object_t * object )
     const int pending = object->pending_connection;
     rn_message_count( object, ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED );
     rocketnet_api_misuse_record();
-    rocketnet_error( "message start pending at update or send_packets: the in-place send is aborted" );
 
     rn_message_connection_cancel_pending( object, pending );
     if ( pending >= 0 )
         object->in_place = -1 - pending;
+
+    rocketnet_error( "message start pending at update or send_packets: the in-place send is aborted" );
 }
 
 static void rn_message_connection_cancel_at_reset( rn_message_object_t * object, int index )
@@ -668,9 +669,9 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
 
         rn_message_count( object, ROCKETNET_COUNTER_MESSAGE_NOT_RECEIVED, waiting );
         rocketnet_api_misuse_record();
+        rn_message_object_kick( object, i, ROCKETNET_DISCONNECT_REASON_MESSAGE_NOT_RECEIVED );
         rocketnet_error( "message update with %u delivered message(s) not received on connection %d: loop receive_messages until NULL before update", waiting, i );
         rocketnet_assert( waiting == 0 && "every delivered message is received before the next update" );
-        rn_message_object_kick( object, i, ROCKETNET_DISCONNECT_REASON_MESSAGE_NOT_RECEIVED );
     }
 
     rn_message_object_close_in_place( object );       // RNOutgoingBuild BeginUpdate: the open builds sealed
