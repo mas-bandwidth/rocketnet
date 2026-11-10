@@ -39,11 +39,12 @@ subset, and the rest of the suite for that row runs in the nightly tier. The
 Windows 11 row is a subset: the whole functional suite takes about 223 s on
 the Windows runner, which is over the two-minute per-commit law and the
 three-minute job bound, so per commit the Windows runner builds the whole tree
-and runs the happy path (`happy path / windows`); the unit suite, the lifecycle
+and runs the happy path (`happy path / windows`), and the Release unit suite
+runs on every commit in its own job (`windows / Release / unit`); the lifecycle
 binary, the native driver contract and the transport family matrix (`windows /
 Release` legs (a) to (c)) run in the nightly tier (`nightly-ci.yml`), and the
-whole suite runs nightly in `nightly.yml` (the Debug
-leg under the default and IOCP transports, the Release ASan leg under the
+whole suite, the Debug unit suite included, runs nightly in `nightly.yml` (the
+Debug leg under the default and IOCP transports, the Release ASan leg under the
 default, IOCP and RIO transports). The s390x row is a subset for the same
 reason in kind: per commit it runs the wire and sodium checks under qemu-user,
 and the socket-crossing suite runs in the nightly full-system guest.
