@@ -59,12 +59,16 @@ end, `DISCONNECT_BURST_DROPPED`; no existing counter moves.
 - **Client token expiry at connect.** With a nonzero
   `token_epoch_unix_seconds`, `rocketnet_client_connect` checks the token's
   expiry against that epoch plus the time of the client's most recent update
-  (zero if it has never been updated; on reconnect, the time the ended
-  connection handed back), and never reads the wall clock. A connect before
-  the client's first update is checked against the epoch alone, so a game
-  whose clock does not start at zero updates the client once before
-  connecting; a normal frame loop does. An epoch of 0 still reads the wall
-  clock once, at connect ([SECURITY.md](SECURITY.md)).
+  (zero if it has never been updated), and never reads the wall clock. v1.0.0
+  checked against the epoch alone, so it could accept a token already expired
+  at the caller's time, and the connect attempt ran until it timed out; v1.0.1 returns
+  `ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED` from connect at once. The epoch
+  must be the Unix time at which the clock you pass to
+  `rocketnet_client_update` reads zero, as the header has always required: a
+  game that sets an epoch but passes a clock running ahead of it can now have
+  a valid token refused at connect. A connect before the client's first
+  update is checked against the epoch alone. An epoch of 0 still reads the
+  wall clock once, at connect ([SECURITY.md](SECURITY.md)).
 - **`rocketnet_client_index`.** A connected client's index is the slot the
   server assigned. A debug build no longer asserts when that index is at or
   past the client build's `ROCKETNET_MAX_CLIENTS`.
