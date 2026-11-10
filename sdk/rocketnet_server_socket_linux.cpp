@@ -4144,10 +4144,7 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
         {
             const int error = errno;
             if ( rocketnet_xdp_send_wakeup_hard_error( error ) )
-            {
-                socket->send_wakeup_failures.fetch_add( 1, std::memory_order_relaxed );
-                socket->send_hard_error.store( error, std::memory_order_relaxed );
-            }
+                rocketnet_xdp_send_wakeup_failed( error, socket->send_wakeup_failures, socket->send_hard_error );
             if ( rocketnet_xdp_send_wakeup_report( error, poll_error ) )
             {
                 char reason[128];
