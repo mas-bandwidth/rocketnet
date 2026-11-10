@@ -272,10 +272,66 @@ static void test_network_simulator_refuses_bad_sizes_and_a_full_wire()
     rocketnet_network_simulator_destroy( simulator );
 }
 
+// receive_any honours a global delivery-time bound, and a drain at one time
+// resumes after the slot it last delivered: many not-yet-due packets ahead of
+// due ones must not be rescanned from slot zero for every due packet.
+static void test_network_simulator_receive_any_bounds_its_scan()
+{
+    const int capacity = 512;
+    const int late_count = 256;
+    const int due_count = 16;
+
+    struct rocketnet_network_simulator_t * simulator = rocketnet_network_simulator_create( NULL, capacity, 1 );
+    check( simulator != NULL );
+
+    struct rocketnet_address_t from, to;
+    simulator_addresses( &from, &to );
+
+    uint8_t values[capacity];
+    const uint8_t * packets[capacity];
+    int bytes[capacity];
+    for ( int i = 0; i < capacity; i++ )
+    {
+        values[i] = (uint8_t) i;
+        packets[i] = &values[i];
+        bytes[i] = 1;
+    }
+
+    check( rocketnet_network_simulator_deliver_packets( simulator, &from, &to, packets, bytes, late_count, 100.0 ) == late_count );
+
+    uint8_t received[ROCKETNET_RECEIVE_CEILING];
+    struct rocketnet_address_t received_from;
+    struct rocketnet_address_t received_to;
+    struct rocketnet_network_simulator_index_stats_t stats;
+
+    rocketnet_network_simulator_test_reset_index_stats( simulator );
+    check( rocketnet_network_simulator_receive_any( simulator, 0.0, &received_from, &received_to, received ) == 0 );
+    rocketnet_network_simulator_test_index_stats( simulator, &stats );
+    check( stats.receive_any_slots == 0 );
+
+    check( rocketnet_network_simulator_deliver_packets( simulator, &from, &to,
+                                                        packets + late_count, bytes + late_count,
+                                                        due_count, 0.0 ) == due_count );
+
+    rocketnet_network_simulator_test_reset_index_stats( simulator );
+    for ( int i = 0; i < due_count; i++ )
+    {
+        check( rocketnet_network_simulator_receive_any( simulator, 0.0, &received_from, &received_to, received ) == 1 );
+        check( received[0] == values[late_count + i] );
+    }
+    check( rocketnet_network_simulator_receive_any( simulator, 0.0, &received_from, &received_to, received ) == 0 );
+
+    rocketnet_network_simulator_test_index_stats( simulator, &stats );
+    check( stats.receive_any_slots <= (uint64_t) capacity );
+
+    rocketnet_network_simulator_destroy( simulator );
+}
+
 REGISTER_UNIT_TEST( test_network_simulator_create_allocates_its_plan );
 REGISTER_UNIT_TEST( test_network_simulator_create_refuses_what_its_plan_refuses );
 REGISTER_UNIT_TEST( test_network_simulator_create_frees_on_a_refused_allocation );
 REGISTER_UNIT_TEST( test_network_simulator_refused_window_leaves_patterns_off );
 REGISTER_UNIT_TEST( test_network_simulator_refuses_bad_sizes_and_a_full_wire );
+REGISTER_UNIT_TEST( test_network_simulator_receive_any_bounds_its_scan );
 
 #endif // #if ROCKETNET_DEV
