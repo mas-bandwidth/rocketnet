@@ -4,8 +4,8 @@
 */
 
 // the SDK's layers under the public client and server: the transports, the
-// message objects, frame sync, the counter blocks, the logging emitters and
-// the allocator helpers. Not for callers and not exported: the library's own
+// message objects, the counter blocks, the logging emitters and the
+// allocator helpers. Not for callers and not exported: the library's own
 // sources, its tests and its tools include it through rocketnet_internal.h.
 // rocketnet.h is the public API
 
@@ -127,8 +127,9 @@ bool rocketnet_get_thread_priority( void );
 #define ROCKETNET_MESSAGE_FRAGMENT_BYTES                             1152
 
 // the reliable resend schedule adapts to the measured round trip, with no
-// per-resend back-off. The timeout uses 2*srtt + 4*rttvar + 30 ms and is
-// capped at 2 s. Validation reserves four sends of the configured initial resend delay
+// per-resend back-off. The resend delay uses 2*srtt + 4*rttvar + 30 ms and is
+// capped at the configured maximum (message_resend_delay_max_ms).
+// Validation reserves four sends of the configured initial resend delay
 
 #define ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS                        4
 
@@ -1352,10 +1353,8 @@ void rocketnet_server_transport_stats( struct rocketnet_server_transport_t * ser
 // per-client connection quality, per slot: rtt and jitter in milliseconds,
 // packet loss as the percentage of this end's sent packets never
 // acknowledged, and the trailing bandwidth sent, received and acknowledged.
-// Fed by the ack blocks every session packet carries; recomputed by modulo
-// phase, at most 20 configured slots visited per update, every slot covered
-// once per phase cycle. The cumulative totals count every wire
-// datagram and byte over the slot's current connection, zeroed when a new
+// Fed by the ack blocks every session packet carries. The cumulative totals
+// count every wire datagram and byte over the slot's current connection, zeroed when a new
 // connection takes the slot
 
 struct rocketnet_server_transport_client_stats_t
@@ -1429,14 +1428,6 @@ int rocketnet_server_transport_send_capacity( const struct rocketnet_server_tran
  */
 int rocketnet_server_transport_send_capacity_available( const struct rocketnet_server_transport_t * server_transport );
 
-// -----------------------------------------
-//                         frame sync
-// -----------------------------------------
-
-// pegs a headless server loop to real time: an absolute deadline per frame,
-// the platform sleep that honors it, thread priority so the wakeups are
-// sharp, and a capped adaptive spin guard for the last microseconds.
-// Optional -- examples may still just sleep. Create at a frame rate, then
 // -----------------------------------------
 //                           messages
 // -----------------------------------------

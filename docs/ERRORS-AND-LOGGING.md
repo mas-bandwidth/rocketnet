@@ -43,7 +43,7 @@ status code and the accompanying `ERROR` log line:
 | Status code (`rocketnet_status_name`) | Where returned | Root cause | Bounded recovery action |
 | --- | --- | --- | --- |
 | `NOT_INITIALIZED` | `create`, `term` | `rocketnet_init` was not called before `create` / `term`. A create before init increments `api_misuses`. | Call `rocketnet_init()` once at process startup before creating any endpoint, and `rocketnet_term()` once after all endpoints are destroyed. |
-| `CONFIG_NOT_INITIALIZED` | `create`, `required_memory` | `config->config_bytes` is `0` or smaller than `sizeof(size_t)` (see [sized configs](ABI-EVOLUTION.md)). | Initialize with `rocketnet_client_default_config(&cfg)` / `rocketnet_server_default_config(&cfg)` (or the light function) before modifying fields. |
+| `CONFIG_NOT_INITIALIZED` | `create`, `required_memory` | `config->config_bytes` is `0` or smaller than `sizeof(size_t)`, or is smaller than the struct and ends inside a field rather than where one of its fields ends (see [sized configs](ABI-EVOLUTION.md)). | Initialize with `rocketnet_client_default_config(&cfg)` / `rocketnet_server_default_config(&cfg)` (or the light function) before modifying fields. |
 | `CONFIG_ENV_INVALID` | `create` (`required_memory` returns `0`) | A `ROCKETNET_*` environment variable failed strict syntax parsing (whitespace, `+` prefix, non-decimal characters, integer overflow, or wrong base64 key/filter length). | Read the `ERROR` line naming the variable, fix or unset it (`docs/ENVIRONMENT.md`), and recreate the endpoint. Empty variables are ignored and logged. |
 | `CONFIG_OUT_OF_RANGE` | `create` (`required_memory` returns `0`) | A field is outside its public-header range or violates a cross-field invariant (`max_message_bytes > receive_message_buffer_bytes`, `packets_in_flight < reliable_messages_in_flight`, or simulator settings in `ROCKETNET_DEV=0`). | Read the field and rule from the `ERROR` line and adjust the configuration using [`docs/LOAD.md`](LOAD.md). Values are never silently clamped. |
 | `INVALID_ADDRESS` | `rocketnet_server_create`, `rocketnet_server_start`, `rocketnet_create_connect_token`, `rocketnet_create_dev_connect_token` | Create: `ipv4_address` or `ipv6_address` (or its environment override) could not be parsed as its address family (`a.b.c.d:port` or `[v6]:port`). Start: the transport could not bind or use the address. The token minters: a server address does not parse. | Pass a valid address string with port for at least one family. |
@@ -156,28 +156,39 @@ disconnects under load:
      (`connection_bytes`, [`docs/LOAD.md`](LOAD.md)).
    - Any send (reliable, or unreliable that finds no room in the send region)
      that finds no message memory ends the connection with
-     `MESSAGE_MEMORY_EXHAUSTED` and returns `NULL`: if a connected caller calls
+     `MESSAGE_MEMORY_EXHAUSTED` and returns `NULL`. Message memory is the
+     connection's send descriptor pool (`send_queue_messages`) and send store
+     (`send_message_buffer_bytes`): if a connected caller calls
      `rocketnet_client_start_message` or `rocketnet_server_start_message` when
-     the connection's send descriptor pool (`send_queue_messages`), send store
-     (`send_message_buffer_bytes`), reliable sliding window
-     (`reliable_messages_in_flight`), or sent-packet ring
-     (`packets_in_flight`) cannot accommodate the message (for example, when
-     messages accumulate faster than ACKs arrive or `send_kbps` /
-     `per_client_send_kbps` paces them out), the message layer treats region
+     either cannot take the message, the message layer treats region
      exhaustion on an attempted `start_message` as fatal to that connection
      (`proofs/tla/RNConnectionMemory.tla` `Kick`, requirement `R5`): `start_message`
      returns `NULL` and **immediately disconnects that connection** with
      `ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED` (transitioning
      the client to `ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED`, `-12`).
+   - The reliable window (`reliable_messages_in_flight`), the sent-packet ring
+     (`packets_in_flight`) and the send budget (`send_kbps` /
+     `per_client_send_kbps`) never refuse a start. A message they hold back
+     waits in the send region with its descriptor and bytes until acks free
+     room, so messages that accumulate faster than ACKs arrive fill the
+     region and the next start that finds no room exhausts it.
 2. **How `can_send_message` prevents `MESSAGE_MEMORY_EXHAUSTED`**:
    - `rocketnet_client_can_send_message(client, channel, reliability, max_bytes)`
      and `rocketnet_server_can_send_message(server, client_index, channel, reliability, max_bytes)`
-     execute the exact same room, window, per-update cap, and wire-budget check
-     (`rn_message_object_send_room`) as `start_message`, but **purely (`O(1)`,
-     zero state mutation, zero drops, no disconnect)**.
-   - When `can_send_message` returns `true`, `start_message` with the same
-     `(channel, reliability, max_bytes)` arguments is given room provided no
-     intervening start or update changes that single-thread-owned object.
+     return `true` if `start_message` with the same `channel`, `reliability`
+     and `max_bytes` would be given room now, and `false` if it would not: the
+     message memory is full, or the start would be dropped or refused (not
+     connected, a message already open, a bad argument).
+   - For valid arguments the call changes no state, counts nothing and
+     allocates nothing. It is usually constant time; a message that needs a
+     send store chunk scans that size class for a free one, so its worst case
+     grows with the chunks in the class. It does not reserve wire bandwidth or
+     guarantee immediate transmission.
+   - Only start and update take room, so a `true` answer holds until the next
+     of either on that single-thread-owned object.
+   - A `false` answer may be pessimistic for a small unreliable message:
+     `start_message` can write it straight into a transport frame without
+     message memory.
    - When `can_send_message` returns `false`, the connection remains healthy
      and connected.
 3. **Other reasons `start_message` returns `NULL` (and how they are counted)**:
@@ -437,8 +448,9 @@ applications call only declarations in [rocketnet.h](../sdk/rocketnet.h).
 Status codes follow these rules:
 
 1. `ROCKETNET_STATUS_OK = 0` is the sole success value.
-2. Every failure code is negative, dense from `-1` to `-34`. `status < 0`
-   means the call failed.
+2. Every failure code is negative, from `-1` to `-34`. `-9` is not a code
+   and `-22` is reserved; no call returns either. `status < 0` means the call
+   failed.
 3. There is no count value. `rocketnet_status_name` maps each code by value.
    It returns a static ASCII identifier, for example `"INVALID_CONNECT_TOKEN"`,
    and `"UNKNOWN"` for any other value, never `NULL` and without asserting.
@@ -472,7 +484,9 @@ when it cannot serve both named families, and start returns it when every
 candidate that opened refused for that reason.
 `ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED` is -27: a config whose
 `config_bytes` is 0 or smaller than the field itself, one that skipped its
-default_config call, is refused with it before any other check
+default_config call, is refused with it before any other check, and so is a
+`config_bytes` smaller than the struct that ends inside a field rather than
+where one of its fields ends
 (`docs/ABI-EVOLUTION.md`). Its string is `CONFIG_NOT_INITIALIZED`
 (`rocketnet_status_name` in `sdk/rocketnet.cpp`).
 `ROCKETNET_STATUS_TRANSPORT_NOT_BUILT` is -28: start returns it

@@ -490,12 +490,15 @@ by `sudo scripts/rocketnet-provision <interface> 2 verify`. Missing boot-tier
 settings require a reboot before retrying.
 
 The nightly 1,000-client xdp load cell needs a far larger guest: the server
-and its 1,000 default-profile clients share one process, and the plan alone is
-16.96 GiB and the measured peak RSS is 26.1 GiB. The step sizes the guest from
-`LOAD_PLAN_ONLY=1 ./bin/load 1000 60` plus a measured per-client run reserve,
-as `(plan + 1000 * 9848630) * 5 / 4 + 1 GiB` (34G today), so the runner needs
-that much `MemAvailable`; a 16G guest is OOM-killed and a 24G guest is killed at the
-shutdown wipe (`docs/LOAD.md`, "The nightly AF_XDP cell's guest memory").
+and its 1,000 default-profile clients share one process. The nightly step sizes
+the guest from `LOAD_PLAN_ONLY=1 ./bin/load 1000 60` (`server_public_required_bytes`)
+plus the 1,742,815-byte per-client touched-memory figure measured in
+`docs/LOAD.md` ("The nightly AF_XDP cell's guest memory", 27G at the recorded
+plan), whereas `scripts/lan-proof-remote` uses a chosen 9,848,630-byte
+(`9848630`) per-client reserve allowance as
+`(plan + 1000 * 9848630) * 5 / 4 + 1 GiB` (34G at the recorded server plan),
+so the runner needs that much `MemAvailable`; a 16G guest refuses server
+creation (`OUT_OF_MEMORY`).
 
 ## 7. Socket errors and ICMP
 
