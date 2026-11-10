@@ -12,7 +12,7 @@ The version lives in `sdk/rocketnet.h`, in two branches selected by
 The shipping branch carries `ROCKETNET_VERSION_FULL` and the integer macros
 `ROCKETNET_VERSION_MAJOR`, `ROCKETNET_VERSION_MINOR` and
 `ROCKETNET_VERSION_PATCH`. At this revision, the full label is
-`"v1.0.0"` and the integers are `1.0.0`. The development branch uses
+`"v1.0.1"` and the integers are `1.0.1`. The development branch uses
 `"dev"` and the integer sentinel `255.255.255`.
 
 The header label does not identify the current checkout as a release. Check

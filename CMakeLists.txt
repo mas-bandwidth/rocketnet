@@ -5,10 +5,10 @@ cmake_minimum_required(VERSION 3.20)
 if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
     set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Minimum supported macOS version" FORCE)
 endif()
-# CMake's VERSION holds numbers only, so it is the 1.0.0 of v1.0.0;
+# CMake's VERSION holds numbers only, so it is the 1.0.1 of v1.0.1;
 # the release label, prerelease included, is ROCKETNET_VERSION_STRING below,
 # read from sdk/rocketnet.h, and the installed package carries both.
-project(rocketnet VERSION 1.0.0 LANGUAGES C CXX)
+project(rocketnet VERSION 1.0.1 LANGUAGES C CXX)
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/sdk/rocketnet.h" ROCKETNET_VERSION_FULL_LINE
     REGEX "^ *#define ROCKETNET_VERSION_FULL +\"v[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?\"$")
 list(LENGTH ROCKETNET_VERSION_FULL_LINE ROCKETNET_VERSION_FULL_COUNT)
