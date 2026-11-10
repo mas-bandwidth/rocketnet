@@ -37,6 +37,14 @@
 #define ROCKETNET_RIO_SEND_PHASES 3
 #define ROCKETNET_RIO_DEQUEUE_BATCH 256
 
+// A create that fails before its worker exists drains inline. A stop pass
+// that cannot make progress (a refused commit, a corrupt queue or a refused
+// closesocket) is bounded here: after these waits the transport leaks rather
+// than freeing memory the kernel may still write, as the iocp client's
+// destroy does.
+#define ROCKETNET_RIO_DRAIN_WAITS 10
+#define ROCKETNET_RIO_DRAIN_SECONDS 1.0
+
 static_assert( ROCKETNET_RIO_RECEIVE_SLICE_BYTES >= ROCKETNET_RECEIVE_CEILING + 1, "receive detects oversize datagrams" );
 
 // A whole bank fits the process view: a bank holds twice the staging (at most
@@ -539,7 +547,7 @@ static void rocketnet_rio_post_phase( rocketnet_server_rio_t * rio, int phase, i
 // proofs/tla/RNRioWorker.tla WStop, WClose and WDrain: post handed and finished fill
 // phases, commit deferred sends, retire send completions until no committed
 // send is in flight, close the socket (which cancels every posted receive),
-// then dequeue one available batch of each queue. True when nothing is
+// then dequeue every available completion of each queue. True when nothing is
 // kernel owned. Runs on the worker, or inline on create's failure path
 // before the worker exists; never waits.
 // proofs/tla/RNRioDriver.tla Drain: both completion queues are dequeued and nothing
@@ -593,25 +601,36 @@ static bool rocketnet_rio_stop_pass( rocketnet_server_rio_t * rio )
 
     if ( !rocketnet_rio_close_socket( rio ) )
         return false;
-    // Exactly one available batch per queue, never wait for new completions.
+    // Every available completion, in batches until one comes back short, never
+    // waiting for new completions.
 
     if ( rio->have_table && rio->send_cq != RIO_INVALID_CQ )
     {
-        RIORESULT results[ROCKETNET_RIO_DEQUEUE_BATCH];
-        const ULONG count = rocketnet_rio_dequeue( rio, rio->send_cq, results, ROCKETNET_RIO_DEQUEUE_BATCH );
-        if ( count == RIO_CORRUPT_CQ )
-            return false;
-        for ( ULONG i = 0; i < count; ++i )
-            rocketnet_rio_retire_send( rio, &results[i] );
+        for ( ;; )
+        {
+            RIORESULT results[ROCKETNET_RIO_DEQUEUE_BATCH];
+            const ULONG count = rocketnet_rio_dequeue( rio, rio->send_cq, results, ROCKETNET_RIO_DEQUEUE_BATCH );
+            if ( count == RIO_CORRUPT_CQ )
+                return false;
+            for ( ULONG i = 0; i < count; ++i )
+                rocketnet_rio_retire_send( rio, &results[i] );
+            if ( count < ROCKETNET_RIO_DEQUEUE_BATCH )
+                break;
+        }
     }
 
     if ( rio->have_table && rio->receive_cq != RIO_INVALID_CQ )
     {
-        RIORESULT results[ROCKETNET_RIO_DEQUEUE_BATCH];
-        const ULONG count = rocketnet_rio_dequeue( rio, rio->receive_cq, results, ROCKETNET_RIO_DEQUEUE_BATCH );
-        if ( count == RIO_CORRUPT_CQ )
-            return false;
-        rio->posted_receives.fetch_sub( (int) count, std::memory_order_relaxed );
+        for ( ;; )
+        {
+            RIORESULT results[ROCKETNET_RIO_DEQUEUE_BATCH];
+            const ULONG count = rocketnet_rio_dequeue( rio, rio->receive_cq, results, ROCKETNET_RIO_DEQUEUE_BATCH );
+            if ( count == RIO_CORRUPT_CQ )
+                return false;
+            rio->posted_receives.fetch_sub( (int) count, std::memory_order_relaxed );
+            if ( count < ROCKETNET_RIO_DEQUEUE_BATCH )
+                break;
+        }
     }
 
     return rocketnet_rio_outstanding_sends( rio ) == 0 &&
@@ -1087,8 +1106,18 @@ failed:
 #endif
     // Partial construction remains private to this synchronous create call.
     rocketnet_server_rio_stop( rio );
-    while ( !rocketnet_server_rio_stopped( rio ) )
-        rocketnet_platform_sleep( 0.001 );
+    bool stopped = rocketnet_server_rio_stopped( rio );
+    for ( int i = 0; i < ROCKETNET_RIO_DRAIN_WAITS && !stopped; ++i )
+    {
+        rocketnet_platform_sleep( ROCKETNET_RIO_DRAIN_SECONDS );
+        stopped = rocketnet_server_rio_stopped( rio );
+    }
+    if ( !stopped )
+    {
+        // The kernel may still write the region: leak it, never free it.
+        rocketnet_error( "rio transport: create failed with %d receives posted; leaking the transport", rio->posted_receives.load( std::memory_order_relaxed ) );
+        return NULL;
+    }
     rocketnet_server_rio_destroy( rio );
 
     return NULL;
@@ -2098,13 +2127,21 @@ bool rocketnet_server_rio_test_stop_drains_sends()
     valid &= !rocketnet_rio_stop_pass( rio ) && state.closes == 0 && rio->socket != INVALID_SOCKET;
 
     // The sends complete. The next pass retires them, closes the socket and
-    // drains the cancelled receives.
+    // drains every cancelled receive in that same pass, not one 256 completion
+    // batch per 1 ms wait.
 
     rocketnet_rio_stop_test_complete_in_flight( 0 );
-    bool stopped = false;
-    for ( int pass = 0; pass <= rio->receives / ROCKETNET_RIO_DEQUEUE_BATCH + 1 && !stopped; ++pass )
+    const double start = rocketnet_platform_time();
+    bool stopped = rocketnet_rio_stop_pass( rio );
+    int passes = 1;
+    while ( !stopped && passes <= rio->receives / ROCKETNET_RIO_DEQUEUE_BATCH + 1 )
+    {
+        rocketnet_platform_sleep( 0.001 );
         stopped = rocketnet_rio_stop_pass( rio );
-    valid &= stopped && state.closes == 1 && rio->socket == INVALID_SOCKET;
+        passes++;
+    }
+    const double elapsed = rocketnet_platform_time() - start;
+    valid &= stopped && passes == 1 && elapsed < ROCKETNET_RIO_DRAIN_SECONDS && state.closes == 1 && rio->socket == INVALID_SOCKET;
     valid &= rio->counters[ROCKETNET_RIO_COUNTER_PACKETS_SENT].load() == (uint64_t) burst &&
              rio->counters[ROCKETNET_RIO_COUNTER_SEND_FAILED].load() == 0 &&
              rocketnet_rio_outstanding_sends( rio ) == 0 && rio->posted_receives.load() == 0;
