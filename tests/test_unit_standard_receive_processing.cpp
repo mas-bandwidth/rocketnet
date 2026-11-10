@@ -518,6 +518,7 @@ static void standard_receive_processing_counters()
         int bytes = standard_receive_processing_generate( "t10.reserved-type", packet, (int) sizeof( packet ) );
         standard_server_process( &server, packet, bytes );
         rocketnet_unit_check( server.counters.values[ROCKETNET_COUNTER_RESERVED_TYPE] == 1 );
+        rocketnet_unit_check( server.counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED] == 1 );
 
         standard_server_teardown( &server );
     }
@@ -527,6 +528,7 @@ static void standard_receive_processing_counters()
         int bytes = standard_receive_processing_generate( "t10.server-wrong-direction", packet, (int) sizeof( packet ) );
         standard_server_process( &server, packet, bytes );
         rocketnet_unit_check( server.counters.values[ROCKETNET_COUNTER_WRONG_DIRECTION] == 1 );
+        rocketnet_unit_check( server.counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED] == 1 );
 
         standard_server_teardown( &server );
     }
@@ -536,6 +538,7 @@ static void standard_receive_processing_counters()
         int bytes = standard_receive_processing_generate( "t10.client-wrong-direction", packet, (int) sizeof( packet ) );
         standard_client_process( &client, packet, bytes );
         rocketnet_unit_check( client.counters.values[ROCKETNET_COUNTER_WRONG_DIRECTION] == 1 );
+        rocketnet_unit_check( client.counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED] == 1 );
 
         standard_client_teardown( &client );
     }
@@ -547,6 +550,7 @@ static void standard_receive_processing_counters()
         int bytes = standard_receive_processing_generate( "t10.server-no-mapping", packet, (int) sizeof( packet ) );
         standard_server_process( &server, packet, bytes );
         rocketnet_unit_check( server.counters.values[ROCKETNET_COUNTER_KEEP_ALIVE_NO_MAPPING] == 1 );
+        rocketnet_unit_check( server.counters.values[ROCKETNET_COUNTER_KEEP_ALIVE_RECEIVED] == 1 );
 
         standard_server_teardown( &server );
     }
@@ -556,6 +560,7 @@ static void standard_receive_processing_counters()
         int bytes = standard_receive_processing_generate( "t10.client-session-wrong-size", packet, (int) sizeof( packet ) );
         standard_client_process( &client, packet, bytes );
         rocketnet_unit_check( client.counters.values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_WRONG_SIZE] == 1 );
+        rocketnet_unit_check( client.counters.values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_RECEIVED] == 1 );
         rocketnet_unit_check( client.counters.values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_DID_NOT_OPEN] == 0 );
         rocketnet_unit_check( client.client.integrity_failures == 0 );
 
@@ -569,6 +574,7 @@ static void standard_receive_processing_counters()
         int bytes = standard_receive_processing_generate( "t10.client-cookie-state-before-size", packet, (int) sizeof( packet ) );
         standard_client_process( &client, packet, bytes );
         rocketnet_unit_check( client.counters.values[ROCKETNET_COUNTER_CLIENT_COOKIE_WRONG_STATE] == 1 );
+        rocketnet_unit_check( client.counters.values[ROCKETNET_COUNTER_CLIENT_COOKIE_RECEIVED] == 1 );
         rocketnet_unit_check( client.counters.values[ROCKETNET_COUNTER_CLIENT_COOKIE_WRONG_SIZE] == 0 );
 
         standard_client_teardown( &client );
@@ -581,17 +587,19 @@ static void standard_receive_processing_counters()
         int bytes = standard_receive_processing_generate( "t10.client-wrong-state", packet, (int) sizeof( packet ) );
         standard_client_process( &client, packet, bytes );
         rocketnet_unit_check( client.counters.values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_WRONG_STATE] == 1 );
+        rocketnet_unit_check( client.counters.values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_RECEIVED] == 1 );
 
         standard_client_teardown( &client );
     }
 
-    // the server slot gate, after the open and before the replay mark
+    // the server slot gate, after the replay mark and before the open
     {
         static struct standard_server_t server;
         standard_server_setup( &server, true, false );
         int bytes = standard_receive_processing_generate( "t10.server-not-connected", packet, (int) sizeof( packet ) );
         standard_server_process( &server, packet, bytes );
         rocketnet_unit_check( server.counters.values[ROCKETNET_COUNTER_KEEP_ALIVE_NOT_CONNECTED] == 1 );
+        rocketnet_unit_check( server.counters.values[ROCKETNET_COUNTER_KEEP_ALIVE_RECEIVED] == 1 );
 
         standard_server_teardown( &server );
     }
@@ -605,6 +613,7 @@ static void standard_receive_processing_counters()
         int bytes = standard_receive_processing_generate( "t10.zero-sequence", packet, (int) sizeof( packet ) );
         standard_client_process( &client, packet, bytes );
         rocketnet_unit_check( client.counters.values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_ZERO_SEQUENCE] == 1 );
+        rocketnet_unit_check( client.counters.values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_RECEIVED] == 1 );
         rocketnet_unit_check( client.client.integrity_failures == 0 );
 
         standard_client_teardown( &client );
@@ -617,6 +626,7 @@ static void standard_receive_processing_counters()
         rocketnet_unit_check( standard_client_process( &client, packet, bytes ) );
         rocketnet_unit_check( standard_client_process( &client, packet, bytes ) == 0 );
         rocketnet_unit_check( client.counters.values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_ALREADY_RECEIVED] == 1 );
+        rocketnet_unit_check( client.counters.values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_RECEIVED] == 2 );
 
         standard_client_teardown( &client );
     }
@@ -627,6 +637,7 @@ static void standard_receive_processing_counters()
         int bytes = standard_receive_processing_generate( "t10.did-not-open", packet, (int) sizeof( packet ) );
         standard_client_process( &client, packet, bytes );
         rocketnet_unit_check( client.counters.values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_DID_NOT_OPEN] == 1 );
+        rocketnet_unit_check( client.counters.values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_RECEIVED] == 1 );
         rocketnet_unit_check( client.client.integrity_failures == 1 );
 
         standard_client_teardown( &client );
@@ -638,6 +649,7 @@ static void standard_receive_processing_counters()
         int bytes = standard_receive_processing_generate( "t10.bad-ack-block", packet, (int) sizeof( packet ) );
         standard_client_process( &client, packet, bytes );
         rocketnet_unit_check( client.counters.values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_BAD_ACK_BLOCK] == 1 );
+        rocketnet_unit_check( client.counters.values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_RECEIVED] == 1 );
 
         standard_client_teardown( &client );
     }
@@ -648,6 +660,7 @@ static void standard_receive_processing_counters()
         int bytes = standard_receive_processing_generate( "t10.wrong-opened-size", packet, (int) sizeof( packet ) );
         standard_client_process( &client, packet, bytes );
         rocketnet_unit_check( client.counters.values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE] == 1 );
+        rocketnet_unit_check( client.counters.values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_RECEIVED] == 1 );
 
         standard_client_teardown( &client );
     }
@@ -658,6 +671,7 @@ static void standard_receive_processing_counters()
         int bytes = standard_receive_processing_generate( "t10.keep-alive-invalid-index", packet, (int) sizeof( packet ) );
         standard_client_process( &client, packet, bytes );
         rocketnet_unit_check( client.counters.values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE] == 1 );
+        rocketnet_unit_check( client.counters.values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_RECEIVED] == 1 );
         rocketnet_unit_check( client.client.integrity_failures == 0 );
 
         standard_client_teardown( &client );
