@@ -1194,3 +1194,68 @@ static void test_ack_received_stats_random_receives_match_scan()
     rocketnet_free( NULL, endpoint );
 }
 REGISTER_UNIT_TEST( test_ack_received_stats_random_receives_match_scan );
+
+// A drifted sent count whose low record has left the window. Counted
+// survivors lie only in [base, old_top]. The scan must stop there and record
+// the internal error. A present record one ring above the scan base lets an
+// unbounded walk finish, so the check fails instead of spinning. A present
+// record in (old_top, highest] is not a counted survivor. No sleep, no
+// socket, no network.
+
+static void stats_plant_present( rocketnet_ack_endpoint_t * endpoint, uint64_t sequence )
+{
+    const uint64_t slot = sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE;
+    endpoint->sent_written[slot >> 6] |= 1ull << ( slot & 63 );
+    endpoint->sent[slot].sequence = sequence;
+}
+
+static void stats_slide_one_past_ring( rocketnet_ack_endpoint_t * endpoint )
+{
+    const uint64_t ring = ROCKETNET_SENT_PACKET_BUFFER_SIZE;
+    endpoint->highest_sequence = ring;
+    endpoint->stats_sent_count = 1;
+    endpoint->stats_sent_low = 1;
+    endpoint->stats_sent_high = 0;
+    endpoint->internal_error = 0;
+    rocketnet_unit_check( rocketnet_ack_endpoint_record_sent_classified( endpoint, ring + 1, 100, 0, 0, 1000.0 ) !=
+                          ROCKETNET_ACK_SENT_REFUSED_STALE );
+}
+
+static void test_ack_stats_sent_low_scan_far_record_not_in_window()
+{
+    auto * endpoint = stats_endpoint();
+    memset( endpoint->sent_written, 0, sizeof( endpoint->sent_written ) );
+    memset( endpoint->sent_held, 0, sizeof( endpoint->sent_held ) );
+    memset( endpoint->sent_unacked, 0, sizeof( endpoint->sent_unacked ) );
+
+    const uint64_t ring = ROCKETNET_SENT_PACKET_BUFFER_SIZE;
+    const uint64_t highest = ring + 1;
+    const uint64_t base = highest >= ring ? highest - ring + 1 : 1;
+    stats_plant_present( endpoint, base + ring );
+
+    stats_slide_one_past_ring( endpoint );
+    rocketnet_unit_check( endpoint->internal_error != 0 );
+    rocketnet_unit_check( endpoint->stats_sent_low == 1 );
+    rocketnet_free( NULL, endpoint );
+}
+REGISTER_UNIT_TEST( test_ack_stats_sent_low_scan_far_record_not_in_window );
+
+static void test_ack_stats_sent_low_scan_record_above_old_top()
+{
+    auto * endpoint = stats_endpoint();
+    memset( endpoint->sent_written, 0, sizeof( endpoint->sent_written ) );
+    memset( endpoint->sent_held, 0, sizeof( endpoint->sent_held ) );
+    memset( endpoint->sent_unacked, 0, sizeof( endpoint->sent_unacked ) );
+
+    // ring 4096, highest 4096 -> 4097, the only present record at 4096.
+    // old_top is ring/2, so 4096 is in (old_top, highest].
+    const uint64_t ring = ROCKETNET_SENT_PACKET_BUFFER_SIZE;
+    stats_plant_present( endpoint, ring );
+
+    stats_slide_one_past_ring( endpoint );
+    rocketnet_unit_check( endpoint->internal_error != 0 );
+    rocketnet_unit_check( endpoint->stats_sent_low == 1 );
+    rocketnet_unit_check( endpoint->stats_sent_high == 0 );
+    rocketnet_free( NULL, endpoint );
+}
+REGISTER_UNIT_TEST( test_ack_stats_sent_low_scan_record_above_old_top );
