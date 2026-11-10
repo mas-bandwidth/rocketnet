@@ -230,9 +230,6 @@ struct rocketnet_server_socket_process_packets_t * rocketnet_server_gso_process_
 void rocketnet_server_gso_test_force_create_flags( int flags );
 void rocketnet_server_gso_test_fail_receives( struct rocketnet_server_gso_t * gso, int count, int error );
 void rocketnet_server_gso_test_fail_sends( struct rocketnet_server_gso_t * gso, int count, int error );
-// Observe the worker's current bank without consuming it; returns false on
-// lock contention. True once the worker staged a packet main has not claimed.
-bool rocketnet_server_gso_test_receive_ready( struct rocketnet_server_gso_t * gso, int queue_index );
 // Main thread: no staged packet, no ready bank, no bank held by the TX worker.
 bool rocketnet_server_gso_test_send_idle( struct rocketnet_server_gso_t * gso );
 // Deterministic ownership/full/contended/stop and retained-RX-tail regression.
