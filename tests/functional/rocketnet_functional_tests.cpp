@@ -12491,6 +12491,7 @@ extern void rocketnet_test_bundled_rng_opens_once_under_concurrent_keygen_on_mac
 #endif // #if defined(__APPLE__) && !defined(ROCKETNET_USE_SYSTEM_SODIUM)
 extern void rocketnet_test_connect_token_mint_concurrent();
 extern void rocketnet_test_ack_endpoints_independent_across_threads();
+extern void rocketnet_test_platform_spin_lock_acquire_release_under_contention();
 extern void test_api_polish_dev_token_string();
 extern void test_dev_connect_token_timeout_is_the_named_constant();
 extern void test_dev_token_minting_absent_in_release();
@@ -12710,6 +12711,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_loopback_hub_two_shared_objects", test_loopback_hub_two_shared_objects, rocketnet_test_no_transport_pin_is_set },
 #endif // #if ROCKETNET_DEV
     { "test_ack_endpoints_independent_across_threads", rocketnet_test_ack_endpoints_independent_across_threads, NULL },
+    { "test_platform_spin_lock_acquire_release_under_contention", rocketnet_test_platform_spin_lock_acquire_release_under_contention, NULL },
     { "test_server_refuses_keyless_config", rocketnet_test_server_refuses_keyless_config, NULL },
     { "test_server_async_delivery_with_max_clients", rocketnet_test_server_async_delivery_with_max_clients, NULL },
     { "test_server_receive_buffer_sized_from_max_clients", rocketnet_test_server_receive_buffer_sized_from_max_clients, NULL },
