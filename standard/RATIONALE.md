@@ -786,9 +786,10 @@ not the signature bytes. Signature malleability means an implementation that doe
 enforce canonical Ed25519 verification would see a mangled copy of the same token as a
 new one, and an attacker could mint unbounded distinct identifiers from one captured
 request. Hashing the signed data has no such freedom, and is smaller per entry.)*
-The reference implementation compares 16-byte token identifiers in constant time for
-each fixed-size comparison, rather than across table traversal or the whole request
-path. * **A server should apply a failed-signature budget
+Token-identifier equality comparisons must be constant time. The reference
+implementation compares 16-byte token identifiers for each fixed-size comparison,
+rather than across table traversal or the whole request path.
+* **A server should apply a failed-signature budget
 before the verify: at most 90 failed signature verifications per 10-second window by
 default.** Once the budget is spent, a request from a source that has already failed
 this window is refused before the verify. A refused request sees no answer, and the
