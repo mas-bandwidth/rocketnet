@@ -726,7 +726,13 @@ static int rocketnet_server_transport_io_send_room( const rocketnet_server_trans
 {
     if ( !server_transport->io.operations || !server_transport->io.operations->send_room )
         return INT_MAX;
-    const int room = server_transport->io.operations->send_room( server_transport->io.instance );
+    int room = server_transport->io.operations->send_room( server_transport->io.instance );
+
+    // a buffered transport's control frames take their room at the flush:
+    // each one committed and not yet flushed has already spent it
+
+    if ( !rocketnet_server_transport_staged( server_transport ) )
+        room -= server_transport->send_buffer.num_packets;
     return room > 0 ? room : 0;
 }
 
