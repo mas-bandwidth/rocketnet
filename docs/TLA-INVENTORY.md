@@ -59,11 +59,18 @@ revision under review.
 | reply MAC table and XDP rings | `RNXdpReplay`, `RNXdpReplyMacsLayout`, `RNXdpGatewayRefresh`, `RNXdpReceiveRing` | every lookup returns the address's learned MAC, else its answered one, one slot per address within the probe window with no empty slot before it, evictions of the oldest entry only, bounded gateway refresh and AF_XDP receive frame ownership |
 | deferred disconnect bursts | `ServerSession`, `RNDisconnectBurstRing`, `ServerStopSpread` | no waiting burst overwritten, seals only for waiting bursts, one packet per still-waiting burst per pass when a burst is abandoned and a complete entry is passed over, sealed counts of bursts still waiting never rising from the head, a burst that was not abandoned leaving with exactly its packets sealed |
 | replay walk slot records | `RNXdpReplay`, `RNServerReplaySlots` | a forget owed for a slot's old address never lost across slot reuse; a forget the sink refused can delete a later session's kernel entry (a recorded finding) |
-| loopback bind table | `LoopbackHub`, `LoopbackHubLayout`, `LoopbackQueue`, `RNLoopbackBindLayout` | one endpoint per family and port, the one-lookup destination equal to a walk of the live records, ephemeral ports in range and free in both families |
+| loopback bind table | `LoopbackHub`, `LoopbackHubLayout`, `LoopbackQueue`, `RNLoopbackBindLayout` | one endpoint per family and port, at most one endpoint accepting any IPv4 destination (a dual-stack IPv6 wildcard shares its port with no IPv4 endpoint), the one-lookup destination equal to a walk of the live records, ephemeral ports in range and free in both families |
 | client slots free stack | `ServerConnection`, `RNOpenAddress`, `RNClientSlotsLayout` | each free slot on the stack exactly once, no slot taken while held, a handle releases only its own tenure, a slot never holds an owner generation twice |
 | link simulator store | `Link`, `RNSimulatorStoreLayout` | the bitmap walk chooses the slot the full scan chooses, a send takes the lowest free slot, every slot below the free hint occupied, summary bits exactly the nonempty words, the shard bound below every delivery time, a stale handle never retires a live packet |
 | server payload ring | `RNDriverSendStaging`, `RNServerPayloadRingLayout` | no slot at or past the send capacity handed out or read, each flush sends exactly the slots finished since the last, a slot held by one thread at its own frame |
 | live fleet and split-load barriers | `RNLiveFleetRun`, `SplitStart` | live fleet lifecycle phases and split-load start barrier synchronization |
+
+ReplayWindow's two gate invariants (`NoAdvanceBeforeConnect` and
+`NoOpenBeforeConnect`), RNWrittenRing's `NoUnwrittenRead`, and RNOpenAddress's
+clear-first `EraseEnds` hold by construction. The gated receive never opens or
+advances a window that has no slot, a read that checks the written bit never
+takes an unwritten record's bytes, and the clear-first erase increments its
+scan only while `scanned < N`. Those invariants stay in their modules.
 
 Model constants must stay small enough for exhaustive checking while retaining
 the production relationship being proved. A model-check result is evidence for

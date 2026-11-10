@@ -1245,6 +1245,56 @@ int rocketnet_platform_socket_receive_buffer_bytes( rocketnet_platform_socket_t 
     return granted;
 }
 
+// Every POSIX socket the platform opens goes through here.
+
+#if ROCKETNET_DEV
+// the socket() call behind rocketnet_platform_socket_open, for unit tests only: NULL is the real call
+typedef int ( *rocketnet_platform_socket_call_t )( int domain, int type, int protocol );
+void rocketnet_platform_set_socket_call_for_testing( rocketnet_platform_socket_call_t call );
+int rocketnet_platform_socket_open_for_testing( int domain );
+
+static std::atomic<rocketnet_platform_socket_call_t> rocketnet_platform_socket_call_override{ NULL };
+
+void rocketnet_platform_set_socket_call_for_testing( rocketnet_platform_socket_call_t call )
+{
+    rocketnet_platform_socket_call_override.store( call, std::memory_order_release );
+}
+#endif // #if ROCKETNET_DEV
+
+// It is close-on-exec, so a child process the application spawns never holds
+// the socket (or its bound port): atomically with SOCK_CLOEXEC where the
+// platform has it, by fcntl right after the open on darwin.
+
+static int rocketnet_platform_socket_open( int domain )
+{
+#if defined( SOCK_CLOEXEC )
+    const int type = SOCK_DGRAM | SOCK_CLOEXEC;
+#else // #if defined( SOCK_CLOEXEC )
+    const int type = SOCK_DGRAM;
+#endif // #if defined( SOCK_CLOEXEC )
+#if ROCKETNET_DEV
+    const rocketnet_platform_socket_call_t call = rocketnet_platform_socket_call_override.load( std::memory_order_acquire );
+    const int handle = call ? call( domain, type, IPPROTO_UDP ) : ::socket( domain, type, IPPROTO_UDP );
+#else // #if ROCKETNET_DEV
+    const int handle = ::socket( domain, type, IPPROTO_UDP );
+#endif // #if ROCKETNET_DEV
+#if !defined( SOCK_CLOEXEC )
+    if ( handle >= 0 && fcntl( handle, F_SETFD, FD_CLOEXEC ) != 0 )
+    {
+        close( handle );
+        return -1;
+    }
+#endif // #if !defined( SOCK_CLOEXEC )
+    return handle;
+}
+
+#if ROCKETNET_DEV
+int rocketnet_platform_socket_open_for_testing( int domain )
+{
+    return rocketnet_platform_socket_open( domain );
+}
+#endif // #if ROCKETNET_DEV
+
 // Darwin picks an ephemeral port for an IPv6 wildcard without checking that
 // an IPv4 socket already owns it; both binds then coexist and IPv4 traffic
 // goes to the other socket. Reserving the port in the IPv4 namespace first,
@@ -1268,7 +1318,7 @@ static int rocketnet_platform_reserve_ipv4_port( const rocketnet_address_t * add
             return -1;
     }
 
-    const int reservation = ::socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+    const int reservation = rocketnet_platform_socket_open( AF_INET );
     if ( reservation < 0 )
     {
         rocketnet_error( "failed to create ipv4 port reservation for dual stack socket" );
@@ -1304,6 +1354,33 @@ static int rocketnet_platform_reserve_ipv4_port( const rocketnet_address_t * add
 }
 #endif // #if defined( __APPLE__ )
 
+void rocketnet_platform_socket_apply_dont_fragment( bool ipv6, void ( *set_option )( void * user, int level, int option_name, int value ), void * user )
+{
+    if ( ipv6 )
+    {
+#if defined( __linux__ )
+        set_option( user, IPPROTO_IPV6, IPV6_MTU_DISCOVER, IPV6_PMTUDISC_DO );
+#elif defined( IPV6_DONTFRAG )
+        set_option( user, IPPROTO_IPV6, IPV6_DONTFRAG, 1 );
+#endif // #if defined( __linux__ )
+    }
+
+#if defined( __linux__ )
+    set_option( user, IPPROTO_IP, IP_MTU_DISCOVER, IP_PMTUDISC_DO );
+#elif defined( IP_DONTFRAG )
+    set_option( user, IPPROTO_IP, IP_DONTFRAG, 1 );
+#else
+    (void) set_option;
+    (void) user;
+#endif // #if defined( __linux__ )
+}
+
+static void rocketnet_platform_socket_set_dont_fragment_option( void * user, int level, int option_name, int value )
+{
+    const int handle = *(const int *) user;
+    setsockopt( handle, level, option_name, &value, sizeof( value ) );
+}
+
 // batch_pump false suppresses the darwin batch pump for this socket (a pinned
 // "portable" transport). Nothing is read at create: the first real batch call
 // is the probe and delivers what it reads.
@@ -1334,7 +1411,7 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
     }
 #endif // #if ROCKETNET_DEV
 
-    socket->handle = ::socket( ( address->type == ROCKETNET_ADDRESS_IPV6 ) ? AF_INET6 : AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+    socket->handle = rocketnet_platform_socket_open( ( address->type == ROCKETNET_ADDRESS_IPV6 ) ? AF_INET6 : AF_INET );
     if ( socket->handle < 0 )
     {
         rocketnet_error( "failed to create socket" );
@@ -1485,25 +1562,8 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
     // don't fragment: linux through PMTU discovery, everything else through
     // the RFC 3542 options where the system has them. A refusal is tolerated.
 
-    int dont_fragment = 1;
-    if ( address->type == ROCKETNET_ADDRESS_IPV6 )
-    {
-#if defined( __linux__ )
-        dont_fragment = IPV6_PMTUDISC_DO;
-        setsockopt( socket->handle, IPPROTO_IPV6, IPV6_MTU_DISCOVER, &dont_fragment, sizeof( dont_fragment ) );
-#elif defined( IPV6_DONTFRAG )
-        setsockopt( socket->handle, IPPROTO_IPV6, IPV6_DONTFRAG, &dont_fragment, sizeof( dont_fragment ) );
-#endif // #if defined( __linux__ )
-    }
-    else
-    {
-#if defined( __linux__ )
-        dont_fragment = IP_PMTUDISC_DO;
-        setsockopt( socket->handle, IPPROTO_IP, IP_MTU_DISCOVER, &dont_fragment, sizeof( dont_fragment ) );
-#elif defined( IP_DONTFRAG )
-        setsockopt( socket->handle, IPPROTO_IP, IP_DONTFRAG, &dont_fragment, sizeof( dont_fragment ) );
-#endif // #if defined( __linux__ )
-    }
+    rocketnet_platform_socket_apply_dont_fragment( address->type == ROCKETNET_ADDRESS_IPV6,
+                                                   rocketnet_platform_socket_set_dont_fragment_option, &socket->handle );
 
 #if defined( __APPLE__ ) && TARGET_OS_OSX
 #if ROCKETNET_DEV
@@ -2591,6 +2651,14 @@ rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rock
         return NULL;
     }
 
+    // close-on-exec, as every platform descriptor is: a spawned child never holds the wake
+    if ( fcntl( wake->kq, F_SETFD, FD_CLOEXEC ) != 0 )
+    {
+        close( wake->kq );
+        rocketnet_free( context, wake );
+        return NULL;
+    }
+
     struct kevent changes[2];
     int num_changes = 0;
     if ( socket )
@@ -2667,6 +2735,13 @@ bool rocketnet_platform_wake_wait( rocketnet_platform_wake_t * wake, bool readab
     }
 
     return woken;
+}
+
+bool rocketnet_platform_wake_wait_writable( rocketnet_platform_wake_t * wake, double timeout_seconds )
+{
+    // no retained-bank carry arises off Linux, so the wake alone with the
+    // caller's retry timeout is the writable wait on this platform
+    return rocketnet_platform_wake_wait( wake, false, timeout_seconds );
 }
 
 void rocketnet_platform_wake_set( rocketnet_platform_wake_t * wake )
@@ -2800,6 +2875,36 @@ bool rocketnet_platform_wake_wait( rocketnet_platform_wake_t * wake, bool readab
     }
 
     return nfds > 1 && ( fds[1].revents & POLLIN );
+}
+
+bool rocketnet_platform_wake_wait_writable( rocketnet_platform_wake_t * wake, double timeout_seconds )
+{
+    rocketnet_assert( wake );
+
+    if ( wake->socket_fd < 0 )
+        return rocketnet_platform_wake_wait( wake, false, timeout_seconds );
+
+    struct pollfd fds[2];
+    fds[0].fd = wake->read_fd;
+    fds[0].events = POLLIN;
+    fds[0].revents = 0;
+    fds[1].fd = wake->socket_fd;
+    fds[1].events = POLLOUT;
+    fds[1].revents = 0;
+
+    const int timeout_ms = timeout_seconds > 0.0 ? (int) ceil( timeout_seconds * 1000.0 ) : 0;
+    if ( poll( fds, (nfds_t) 2, timeout_ms ) <= 0 )
+        return false;
+
+    if ( fds[0].revents & POLLIN )
+    {
+        uint8_t buffer[64];
+        const ssize_t bytes = read( wake->read_fd, buffer, sizeof( buffer ) );
+        (void) bytes;
+        return true;
+    }
+
+    return ( fds[1].revents & POLLOUT ) != 0;
 }
 
 void rocketnet_platform_wake_set( rocketnet_platform_wake_t * wake )
@@ -3901,7 +4006,7 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
     }
 #endif // #if ROCKETNET_DEV
 
-    s->handle = socket( ( address->type == ROCKETNET_ADDRESS_IPV6 ) ? AF_INET6 : AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+    s->handle = WSASocketW( ( address->type == ROCKETNET_ADDRESS_IPV6 ) ? AF_INET6 : AF_INET, SOCK_DGRAM, IPPROTO_UDP, NULL, 0, WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT );
 
     if ( s->handle == INVALID_SOCKET )
     {
@@ -4033,20 +4138,25 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
         }
     }
 
-    // set don't fragment bit
+    // set don't fragment bit (including IPv4 DF on dual-stack IPv6 sockets)
 
     if ( address->type == ROCKETNET_ADDRESS_IPV6 )
     {
         int val = 1;
         setsockopt( s->handle, IPPROTO_IPV6, IPV6_DONTFRAG, (const char *) &val, sizeof( val ) );
     }
-    else
-    {
-        int val = 1;
-        setsockopt( s->handle, IPPROTO_IP, IP_DONTFRAGMENT, (const char *) &val, sizeof( val ) );
-    }
+
+    int val = 1;
+    setsockopt( s->handle, IPPROTO_IP, IP_DONTFRAGMENT, (const char *) &val, sizeof( val ) );
 
     return s;
+}
+
+void rocketnet_platform_socket_apply_dont_fragment( bool ipv6, void ( *set_option )( void * user, int level, int option_name, int value ), void * user )
+{
+    if ( ipv6 )
+        set_option( user, IPPROTO_IPV6, IPV6_DONTFRAG, 1 );
+    set_option( user, IPPROTO_IP, IP_DONTFRAGMENT, 1 );
 }
 
 // false only when the lifecycle tracker refused the close: the handle is
@@ -4480,6 +4590,12 @@ bool rocketnet_platform_wake_wait( rocketnet_platform_wake_t * wake, bool readab
     return false;
 }
 
+bool rocketnet_platform_wake_wait_writable( rocketnet_platform_wake_t * wake, double timeout_seconds )
+{
+    // as on the kqueue wake above: no retained-bank carry arises here
+    return rocketnet_platform_wake_wait( wake, false, timeout_seconds );
+}
+
 // proofs/tla/RNClientIo.tla's Wake: set the level-triggered wake from any thread
 void rocketnet_platform_wake_set( rocketnet_platform_wake_t * wake )
 {
@@ -4603,7 +4719,7 @@ bool rocketnet_platform_client_ipv6_available()
 #endif // #if ROCKETNET_DEV
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    SOCKET probe = socket( AF_INET6, SOCK_DGRAM, IPPROTO_UDP );
+    SOCKET probe = WSASocketW( AF_INET6, SOCK_DGRAM, IPPROTO_UDP, NULL, 0, WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT );
     if ( probe == INVALID_SOCKET )
         return false;
 #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
@@ -4621,7 +4737,7 @@ bool rocketnet_platform_client_ipv6_available()
 #endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     return true;
 #else
-    int probe = (int) ::socket( AF_INET6, SOCK_DGRAM, IPPROTO_UDP );
+    int probe = rocketnet_platform_socket_open( AF_INET6 );
     if ( probe < 0 )
         return false;
     ::close( probe );
@@ -4853,6 +4969,13 @@ bool rocketnet_platform_wake_wait( rocketnet_platform_wake_t * wake, bool readab
 {
     (void) wake;
     (void) readable;
+    (void) timeout_seconds;
+    return false;
+}
+
+bool rocketnet_platform_wake_wait_writable( rocketnet_platform_wake_t * wake, double timeout_seconds )
+{
+    (void) wake;
     (void) timeout_seconds;
     return false;
 }

@@ -248,10 +248,11 @@ deterministic, so a regenerated corpus differs only when the code under it
 changed. The generator exits the process itself, from
 `LLVMFuzzerInitialize`, in the libFuzzer build and the replay driver alike:
 libFuzzer ignores that function's return value, and so does the replay
-driver. ci.yml's macOS checks leg runs all ten generators on every push
-and requires each to exit 0, and requires `rocketnet_fuzz_connect_token` and
-`rocketnet_fuzz_receive_structured` to exit 1 with `INCOMPLETE` when a seed
-is withheld (`ROCKETNET_FUZZ_WITHHOLD`).
+driver. ci.yml's macOS checks leg, on the nightly tier, runs all ten
+generators and requires each to exit 0, and requires
+`rocketnet_fuzz_connect_token` and `rocketnet_fuzz_receive_structured` to
+exit 1 with `INCOMPLETE` when a seed is withheld
+(`ROCKETNET_FUZZ_WITHHOLD`).
 
 ## Coverage
 
@@ -304,8 +305,9 @@ commit the minimized input to its corpus as `regress_<name>`.
 
 ## In CI
 
-- `ci.yml` `fuzz-smoke` replays the committed corpora through the
-  `fuzz_replay_*` drivers on every push.
+- `ci.yml` `fuzz-smoke` deterministically replays all ten committed corpora
+  through the `fuzz_replay_*` drivers on every push. The time-boxed
+  fixed-seed mutation pass moved to `fuzz-nightly.yml`.
 - `fuzz-nightly.yml` builds the libFuzzer targets on Linux, macOS and
   Windows, restores each target's growing corpus from the cache (one cache
   per platform), runs a bounded campaign (`max_total_time`, 900 s by

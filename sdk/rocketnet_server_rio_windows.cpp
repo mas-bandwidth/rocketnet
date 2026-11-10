@@ -868,7 +868,7 @@ static bool rocketnet_rio_load_table( SOCKET socket, RIO_EXTENSION_FUNCTION_TABL
 
 bool rocketnet_server_rio_available()
 {
-    SOCKET socket = WSASocketW( AF_INET, SOCK_DGRAM, IPPROTO_UDP, NULL, 0, WSA_FLAG_REGISTERED_IO );
+    SOCKET socket = WSASocketW( AF_INET, SOCK_DGRAM, IPPROTO_UDP, NULL, 0, WSA_FLAG_REGISTERED_IO | WSA_FLAG_NO_HANDLE_INHERIT );
     if ( socket == INVALID_SOCKET )
         return false;
 #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
@@ -962,7 +962,7 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
         goto failed;
     address_bytes = rio->ipv6 ? (int) sizeof( sockaddr_in6 ) : (int) sizeof( sockaddr_in );
 
-    rio->socket = WSASocketW( rio->ipv6 ? AF_INET6 : AF_INET, SOCK_DGRAM, IPPROTO_UDP, NULL, 0, WSA_FLAG_REGISTERED_IO );
+    rio->socket = WSASocketW( rio->ipv6 ? AF_INET6 : AF_INET, SOCK_DGRAM, IPPROTO_UDP, NULL, 0, WSA_FLAG_REGISTERED_IO | WSA_FLAG_NO_HANDLE_INHERIT );
 #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( rio->socket != INVALID_SOCKET )
         rio->socket_generation = rocketnet_lifecycle_track_open( ROCKETNET_LIFECYCLE_SOCKET, (uintptr_t) rio->socket, "rio socket" );
@@ -987,8 +987,9 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
         goto failed;
     // Match the portable socket's don't-fragment rule, tolerating option refusal.
 
-    setsockopt( rio->socket, rio->ipv6 ? IPPROTO_IPV6 : IPPROTO_IP,
-                rio->ipv6 ? IPV6_DONTFRAG : IP_DONTFRAGMENT, (const char *) &enabled, sizeof( enabled ) );
+    if ( rio->ipv6 )
+        setsockopt( rio->socket, IPPROTO_IPV6, IPV6_DONTFRAG, (const char *) &enabled, sizeof( enabled ) );
+    setsockopt( rio->socket, IPPROTO_IP, IP_DONTFRAGMENT, (const char *) &enabled, sizeof( enabled ) );
     // both ICMP reset reports off; a refusal is logged once and the receive
     // path skips the statuses
 
