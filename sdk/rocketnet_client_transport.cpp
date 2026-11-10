@@ -2453,7 +2453,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
         return NULL;
     }
 
-    // the clock (docs/CLIENT-IO.md _The clock_): read once here; NULL means rocketnet_platform_time
+    // the receive-stamp clock (rocketnet_client_io_init, config->time_callback): read once here; NULL means rocketnet_platform_time
 
     client_transport->time_callback = config->time_callback ? config->time_callback : rocketnet_client_platform_time;
 
@@ -2876,8 +2876,8 @@ static void rocketnet_client_process_packet( rocketnet_client_transport_t * clie
 // RNClientIo HandOff and Defer; main thread, I/O thread path only, with the
 // fills joined. The stats count a slot at the hand-off attempt that first sees
 // it committed (stats_counted keeps a deferred slot from counting twice), not
-// when the I/O thread sends it (docs/CLIENT-IO.md _Reuse only after sent; a hand-off never
-// waits_). The committed slots of the Filling ring are counted into the stats
+// when the I/O thread sends it (rocketnet_client_io_hand_off,
+// proofs/tla/RNClientIo.tla NoReuseBeforeSent, HandOffNeverWaits). The committed slots of the Filling ring are counted into the stats
 // once, then handed to the I/O thread. A ROCKETNET_CLIENT_RINGS_LATE result is
 // the deferred hand-off: it counts CLIENT_SEND_DEFERRED and returns at once,
 // the committed slots staying in the Filling ring, open to the game threads,
@@ -2953,8 +2953,8 @@ static void rocketnet_client_transport_io_hand_off( rocketnet_client_transport_t
 
 // RNClientIo Write and Commit for a packet the main thread built: the
 // protocol packet of update and the disconnect burst are sealed into a slot of
-// the Filling ring like a payload (docs/CLIENT-IO.md _The protocol packet and
-// disconnect_), and leave with the next hand-off. No transport send on the main
+// the Filling ring like a payload (rocketnet_client_transport_io_commit_packet,
+// proofs/tla/RNClientIo.tla Write, Commit, Disconnect), and leave with the next hand-off. No transport send on the main
 // thread in the I/O thread path. A full Filling ring drops the packet and
 // counts SEND_RING_FULL, as start_packet refuses a payload.
 
@@ -3173,7 +3173,7 @@ void rocketnet_client_transport_update( rocketnet_client_transport_t * client_tr
 
     client_transport->protocol.num_acked = 0;
 
-    // RNClientIo Expose (docs/CLIENT-IO.md _The receive path_, update step 1):
+    // proofs/tla/RNClientIo.tla Expose (rocketnet_client_io_expose):
     // a Ready buffer becomes Exposed and is processed exactly as at BASE. The
     // BASE path exposes the oldest Ready buffers that fit the packet budget
     // under one short mutex hold; additional buffers stay Ready for later.
@@ -3773,7 +3773,7 @@ void rocketnet_client_transport_disconnect( rocketnet_client_transport_t * clien
         // the burst is sealed into slots of the Filling ring and handed off
         // like any packet: deferred when the other ring is busy, retried by
         // the next update, or published as the final ring by stop
-        // (docs/CLIENT-IO.md _The protocol packet and disconnect_)
+        // (rocketnet_client_transport_io_commit_packet, proofs/tla/RNClientIo.tla Disconnect, Write, Commit)
         for ( int i = 0; i < burst_count; i++ )
             rocketnet_client_transport_io_commit_packet( client_transport, burst + i * ROCKETNET_SEND_BUDGET, burst_bytes );
 
@@ -3895,7 +3895,7 @@ void rocketnet_client_transport_stats( rocketnet_client_transport_t * client_tra
     g_client_ack_stats_count.fetch_add( 1, std::memory_order_relaxed );
 #endif // #if ROCKETNET_DEV
 
-    // the client's only reader of the ack statistics is this getter, so they are computed here (docs/CLIENT-IO-DECRYPT.md, The ack statistics)
+    // the client's only reader of the ack statistics is this getter (rocketnet_client_transport_get_stats), so they are computed here via rocketnet_ack_endpoint_update_stats
 
     rocketnet_ack_endpoint_update_stats( &client_transport->protocol.ack );
 

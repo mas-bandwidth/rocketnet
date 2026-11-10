@@ -463,7 +463,7 @@ struct rocketnet_client_gso_io_t
     rocketnet_client_gso_t gso;
 };
 
-// RNClientIo initial / Stop and destroy order (docs/CLIENT-IO.md): create
+// proofs/tla/RNClientIo.tla Init, Stop, Join, Free (rocketnet_client_gso_create): create
 // owns the socket and the wake beside it, in one allocation with the send
 // scratch; any failure releases what it opened.
 
@@ -531,7 +531,7 @@ static void rocketnet_client_gso_close( void * transport )
     rocketnet_platform_socket_close( client->socket );
 }
 
-// RNClientIo Stop and destroy order (docs/CLIENT-IO.md): the transport joins
+// proofs/tla/RNClientIo.tla Stop, Join, Free, FreedOnlyAfterJoin (rocketnet_client_gso_destroy): the transport joins
 // the I/O thread before closing the transport, so the wake goes, then the socket.
 
 static void rocketnet_client_gso_destroy( void * transport )
@@ -563,7 +563,7 @@ static int rocketnet_client_gso_receive( void * transport, rocketnet_address_t *
     return rocketnet_platform_socket_receive_packet( client->socket, from, data, capacity );
 }
 
-// RNClientIo IoSend (docs/CLIENT-IO.md The I/O step): the gso path names no
+// proofs/tla/RNClientIo.tla IoSend (rocketnet_client_io_send): the gso path names no
 // destination, so it needs the socket connected to the server; connect runs
 // at create, before the first send. An unconnected socket takes the
 // platform's sendmmsg batch, which names each destination.
@@ -591,7 +591,7 @@ static int rocketnet_client_gso_send_batch_progress( void * transport, const roc
     return num_packets;
 }
 
-// RNClientIo IoReceive (docs/CLIENT-IO.md The I/O step): recvmmsg through the
+// proofs/tla/RNClientIo.tla IoReceive (rocketnet_client_io_receive): recvmmsg through the
 // coalesce buffer, split at the GRO stride, when UDP_GRO is on (connected or
 // not: a GRO socket's message may be coalesced, which the platform's slot
 // sized batch would truncate); the platform's recvmmsg otherwise. Either way
@@ -607,7 +607,7 @@ static int rocketnet_client_gso_receive_batch_operation( void * transport, rocke
     return rocketnet_platform_socket_receive_packets_mmsg( client->socket, from, packet_data, packet_stride, packet_bytes, max_packets );
 }
 
-// RNClientIo IoWait / waitReadable and the wake (docs/CLIENT-IO.md The wake)
+// proofs/tla/RNClientIo.tla IoWait, IoWake, FullWaitsOnWake (rocketnet_client_io_step, rocketnet_client_io_wake)
 
 static bool rocketnet_client_gso_wait( void * transport, bool readable, double timeout_seconds )
 {

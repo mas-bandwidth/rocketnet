@@ -30,8 +30,8 @@
 // so the header needs no sodium include.
 void rocketnet_client_io_wipe( void * data, size_t bytes );
 
-// The client I/O step of docs/CLIENT-IO.md _The I/O step_ and _The wake_, and
-// the RNClientIo actions it names. The thread loop is one call per iteration;
+// The client I/O step (rocketnet_client_io_step) and wake (rocketnet_client_io_wake),
+// and the proofs/tla/RNClientIo.tla actions it names. The thread loop is one call per iteration;
 // unit tests call it directly, with a fake transport and a test clock, on the
 // test's thread.
 
@@ -83,7 +83,7 @@ struct rocketnet_client_io_ring_view_t
 
 // Each record carries the I/O thread's verdict (ROCKETNET_CLIENT_IO_VERDICT_*,
 // sdk/rocketnet_client_protocol.h) and, when opened, the reconstructed 64-bit
-// session sequence (docs/CLIENT-IO-DECRYPT.md, If decrypt moves). An opened
+// session sequence (rocketnet_client_io_open_datagram, proofs/tla/RNClientIoDecrypt.tla IoCheck, IoOpen). An opened
 // record keeps its wire header and its wire byte count; the plaintext replaces
 // the ciphertext behind the header.
 
@@ -125,13 +125,16 @@ struct rocketnet_client_io_open_t
 
 // Both handoffs are rocketnet_buffer_handoff_t (proofs/tla/RNBufferHandoff.tla):
 // each ring and each receive buffer has one owner at a time, and only their
-// indices cross threads, under the transport's mutex, which covers nothing
-// else. The main thread only try-acquires it; the I/O thread acquires it.
+// indices cross threads, under the transport's mutex (shared in development
+// builds only with rocketnet_network_simulator_reconfigure and
+// rocketnet_network_simulator_take_setting, which acquire it blocking when a
+// simulator setting is handed over). For buffer handoffs the main thread only
+// try-acquires it; the I/O thread acquires it.
 
 struct rocketnet_client_io_t
 {
     const rocketnet_client_transport_io_t * transport;
-    rocketnet_platform_mutex_t * mutex;         // the handoff mutex: index exchanges only
+    rocketnet_platform_mutex_t * mutex;         // the handoff mutex: index exchanges (and dev simulator settings)
     rocketnet_client_io_ring_view_t ring_view[ROCKETNET_CLIENT_IO_NUM_RINGS];
 
     // send: game threads fill send_fill; a published ring's committed count
@@ -446,8 +449,8 @@ inline void rocketnet_client_io_stop( rocketnet_client_io_t * io, uint64_t commi
 // proofs/tla/RNClientIo.tla HandOffTo: publishes the filling ring and names the next filling ring.
 // proofs/tla/RNClientIo.tla DeferTo: leaves the committed slots in the filling ring when the exchange cannot run.
 // proofs/tla/RNBufferHandoff.tla ProducerExchange: try-acquires the mutex and swaps the producer index.
-// A LATE result is the deferred hand-off of docs/CLIENT-IO.md _Reuse only
-// after sent_: no ring is free, or the I/O thread holds the mutex this
+// A LATE result is the deferred hand-off (rocketnet_client_io_hand_off,
+// proofs/tla/RNClientIo.tla DeferTo, NoReuseBeforeSent): no ring is free, or the I/O thread holds the mutex this
 // instant, so the committed slots stay in the Filling ring and leave with the
 // next hand-off. This function never waits, spins or retries: it try-acquires
 // the mutex for one index exchange, and wakes the I/O thread after releasing
