@@ -56,6 +56,7 @@ enum fake_gso_control_t
     FAKE_GSO_CONTROL_GRO,               // a UDP_GRO cmsg holding stride
     FAKE_GSO_CONTROL_SHORT,             // a UDP_GRO cmsg too short to hold an int
     FAKE_GSO_CONTROL_TRUNCATED,         // MSG_CTRUNC: the kernel had more control than room
+    FAKE_GSO_CONTROL_PAYLOAD_TRUNCATED, // a UDP_GRO cmsg holding stride, and MSG_TRUNC: the kernel had more payload than room
 };
 
 struct fake_gso_receive_t
@@ -212,13 +213,18 @@ static int fake_gso_recvmmsg( void * context, int socket, struct mmsghdr * messa
         cmsg->cmsg_level = IPPROTO_UDP;
         cmsg->cmsg_type = UDP_GRO;
 
-        if ( receive->control == FAKE_GSO_CONTROL_GRO )
+        if ( receive->control == FAKE_GSO_CONTROL_GRO || receive->control == FAKE_GSO_CONTROL_PAYLOAD_TRUNCATED )
         {
             cmsg->cmsg_len = CMSG_LEN( sizeof( int ) );
 
             const int stride = receive->stride;
             memcpy( CMSG_DATA( cmsg ), &stride, sizeof( stride ) );
             header->msg_controllen = CMSG_SPACE( sizeof( int ) );
+
+            if ( receive->control == FAKE_GSO_CONTROL_PAYLOAD_TRUNCATED )
+            {
+                header->msg_flags = MSG_TRUNC;
+            }
         }
         else
         {
@@ -675,5 +681,39 @@ static void test_client_gso_receive_gro_fault_is_counted()
     rocketnet_unit_check( test_gso.packets_received == 4 );
 }
 REGISTER_UNIT_TEST( test_client_gso_receive_gro_fault_is_counted );
+
+// a completion that fills the coalesce buffer with MSG_TRUNC set would split into a plausible but short
+// final segment: it is dropped whole, spends the skip budget, and leaves no carry
+
+static void test_unit_client_gso_truncated_completion_dropped()
+{
+    memset( &test_socket, 0, sizeof( test_socket ) );
+    memset( test_receive_bytes, 0, sizeof( test_receive_bytes ) );
+    rocketnet_unit_check( rocketnet_client_gso_init( &test_gso, &fake_gso_syscalls, &test_socket, 7, true ) );
+    rocketnet_unit_check( rocketnet_client_gso_init_receive( &test_gso, true ) );
+
+    fake_gso_queue_receive( (int) sizeof( test_gso.coalesce_buffer ), 1200, 10, FAKE_GSO_CONTROL_PAYLOAD_TRUNCATED );
+    rocketnet_unit_check( rocketnet_client_gso_receive_batch( &test_gso, test_receive_from, test_receive_data, FAKE_GSO_RECEIVE_STRIDE, test_receive_bytes, 64 ) == 0 );
+    rocketnet_unit_check( test_gso.carry_segments == 0 );
+    rocketnet_unit_check( test_gso.packets_received == 0 );
+    rocketnet_unit_check( test_gso.gro_batches == 0 );
+
+    // the skip budget bounds a stream of them, and the next call carries on
+
+    for ( int i = 0; i < 6; i++ )
+    {
+        fake_gso_queue_receive( (int) sizeof( test_gso.coalesce_buffer ), 1200, 20, FAKE_GSO_CONTROL_PAYLOAD_TRUNCATED );
+    }
+    fake_gso_queue_receive( 200, 0, 30, FAKE_GSO_CONTROL_NONE );
+
+    const int calls = test_socket.recvmmsg_calls;
+    rocketnet_unit_check( rocketnet_client_gso_receive_batch( &test_gso, test_receive_from, test_receive_data, FAKE_GSO_RECEIVE_STRIDE, test_receive_bytes, 4 ) == 0 );
+    rocketnet_unit_check( test_socket.recvmmsg_calls == calls + 4 );
+
+    rocketnet_unit_check( rocketnet_client_gso_receive_batch( &test_gso, test_receive_from, test_receive_data, FAKE_GSO_RECEIVE_STRIDE, test_receive_bytes, 4 ) == 1 );
+    check_gso_receive_slot( 0, 200, 30 );
+    rocketnet_unit_check( test_gso.packets_received == 1 );
+}
+REGISTER_UNIT_TEST( test_unit_client_gso_truncated_completion_dropped );
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
