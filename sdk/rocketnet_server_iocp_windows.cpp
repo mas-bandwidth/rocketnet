@@ -6,6 +6,14 @@
 #include "rocketnet_memory.h"
 #include "rocketnet_internal.h"
 
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+
+#ifndef _WIN32_WINNT
+#define _WIN32_WINNT 0x0600
+#endif // #ifndef _WIN32_WINNT
+
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS || ROCKETNET_DEV
 
 #include "rocketnet_server_iocp.h"
@@ -242,10 +250,6 @@ bool rocketnet_server_iocp_test_release_send_retries_stalled_pop( bool * release
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS || ROCKETNET_DEV
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-
-#ifndef _WIN32_WINNT
-#define _WIN32_WINNT 0x0600
-#endif // #ifndef _WIN32_WINNT
 
 #include "rocketnet_coalesce.h"
 #include <ws2tcpip.h>
