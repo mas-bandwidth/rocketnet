@@ -543,7 +543,7 @@ static void test_server_kick_at_steady_cap_counts_dropped_burst()
     rn_test_server_transport_stop_and_destroy( server );
     delete f;
 }
-
+REGISTER_UNIT_TEST( test_server_kick_at_steady_cap_counts_dropped_burst );
 REGISTER_UNIT_TEST( test_server_stop_spreads_disconnect_bursts_across_updates );
 REGISTER_UNIT_TEST( test_server_stop_waits_for_flushed_sends );
 REGISTER_UNIT_TEST( test_server_refused_starts_counted_by_cause );
@@ -551,4 +551,3 @@ REGISTER_UNIT_TEST( test_server_stop_polls_are_the_stop_steps );
 REGISTER_UNIT_TEST( test_server_stop_abandons_an_unreachable_burst );
 REGISTER_UNIT_TEST( test_server_kick_spreads_its_burst_across_updates );
 REGISTER_UNIT_TEST( test_server_send_capacity_reports_staged_room );
-REGISTER_UNIT_TEST( test_server_kick_at_steady_cap_counts_dropped_burst );
