@@ -115,7 +115,7 @@ void rocketnet_client_protocol_init( struct rocketnet_client_protocol_t * client
 
     const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
     memcpy( client->packet_filter, tag, ROCKETNET_FILTER_VALUE_BYTES );
-    client->send_rate = 10.0;
+    client->send_rate = ROCKETNET_DEFAULT_SEND_RATE;
     client->counters = counters;
     client->state = ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED;
     client->client_index = -1;

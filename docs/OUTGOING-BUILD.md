@@ -31,8 +31,7 @@ reset and destruction discard open builds and release their frame leases.
 The payload cap includes headers and the final format byte. Plain and sequenced
 records have no artificial 16-record limit on this direct-write path; available
 payload space bounds the count. The queued reliable writer retains its existing
-16-reference bound. A plain message that fits SINGLE but cannot fit with a
-record header keeps the whole-frame path.
+16-reference bound.
 
 ## Budget, ordering and fallback
 
@@ -62,6 +61,12 @@ Unit tests additionally count message payload
 copies, exercise short finish/abort, receipt boundaries, packet budgets,
 interleaved server destinations and stopping with open builds.
 
-`proofs/tla/RNOutgoingBuild.tla` describes the previous one-message-per-frame design.
-Its existing results do not qualify aggregation; a revised model has not yet
-been checked. The executable tests above are the evidence for this change.
+`proofs/tla/RNOutgoingBuild.tla` models this packed design: one open frame per
+connection, reservations at the committed end, short finish and abort, seals at
+a start that does not fit or falls back, at `send_packets` and at `update`, the
+shared packet allowance with one packet kept for due reliable work, and the
+over-budget drop. Its control and five reversed witnesses
+(`MCRNOutgoingBuild*.cfg`) were run on 2026-10-24 (`proofs/tla/RUNS.tsv`). The
+model's abstractions from the code are listed in
+`proofs/tla/README-RNOutgoingBuild.md`; the executable tests above cover the
+byte-level behaviour it abstracts.
