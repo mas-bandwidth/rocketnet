@@ -18,6 +18,22 @@ XDP needs libbpf and an AF_XDP provider: libxdp on newer distributions,
 or the AF_XDP APIs in stock libbpf 0.5 on Ubuntu 22.04. On 22.04 omit
 `libxdp-dev` from the package command; configure reports
 `XDP: using legacy AF_XDP APIs from libbpf (Ubuntu 22.04)`.
+
+The tested distributions and AF_XDP providers, and what CI runs on each:
+
+| Distribution | libbpf | AF_XDP provider | CI |
+| --- | --- | --- | --- |
+| Ubuntu 22.04 LTS | 0.5 | libbpf 0.5 (legacy `bpf/xsk.h`; no libxdp package) | nightly: build, unit suite, `test_xdp_compat`, package consumers, in an Ubuntu 22.04 container |
+| Ubuntu 24.04 LTS | 1.3 | libxdp 1.4 | nightly: build, unit suite, package consumers, in an Ubuntu 24.04 container |
+| Ubuntu 26.04 | 1.6 | libxdp 1.6 | every commit: the whole suite on the CI runners, including the xdp transport cell in a guest of the runner's kernel |
+
+The libxdp range is 1.4 to 1.6. The source has no libxdp version switch:
+it sets the UMEM ring sizes itself because libxdp 1.4 rejects zeroed sizes
+(1.6 accepts them). CI refuses a runner whose libxdp is outside the range
+(`ci.yml`, "The XDP cell ran against a libxdp in the tested range"), so a newer libxdp is
+tested before it is listed here. No CI host carries libxdp 1.5. The
+containers share the runner's kernel, so the 22.04 and 24.04 rows qualify
+the toolchain and userspace libraries, not those releases' kernels.
 The installed package retains the provider used for its build.
 liburing is optional; without suitable headers and the library, io_uring is
 omitted from the available transports and its name is skipped in a list.
