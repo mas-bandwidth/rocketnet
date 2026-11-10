@@ -27,11 +27,16 @@
 #                          summary lines.
 #   4  verify fault     -- ROCKETNET_SOAK_FAULT_VERIFY=1 plants one verify
 #                          failure and proves soak goes red (exits nonzero).
-#   5  soak 100         -- the bound falls during the first handshake: soak
+#   5  soak 1           -- the bound falls during the first handshake: soak
 #                          finishes the handshake before its teardown, so the
 #                          server refuses nothing (no DISCONNECT_NOT_CONNECTED)
-#                          and the connect counts. Too short to verify
-#                          payloads, so its only failure is the coverage line.
+#                          and the connect counts. One iteration is one client
+#                          update, and the client reads no server reply before
+#                          its second, so the bound is inside the handshake on
+#                          any host; no payload is verified, so its only
+#                          failure is the coverage line. (soak 100 assumed the
+#                          handshake outlasts 100 iterations, which a fast host
+#                          does not: it connected and verified payloads.)
 
 set -u
 
@@ -183,15 +188,15 @@ fi
 # ---------------------------------------------------------------------------
 # 5. a bound inside the first handshake: finished before teardown, no refusal
 
-"$SOAK" 100 > "$WORK/handshake.txt" 2>&1
+"$SOAK" 1 > "$WORK/handshake.txt" 2>&1
 status=$?
 if grep -q 'REFUSAL on a clean run' "$WORK/handshake.txt"; then
-    fail "soak 100 counted a refusal: $( grep -m1 'REFUSAL on a clean run' "$WORK/handshake.txt" )"
-elif ! grep -q '^soak finished: 100 iterations, 1 connects, .* 1 failures$' "$WORK/handshake.txt" ||
+    fail "soak 1 counted a refusal: $( grep -m1 'REFUSAL on a clean run' "$WORK/handshake.txt" )"
+elif ! grep -q '^soak finished: 1 iterations, 1 connects, 0 payloads verified, 1 failures$' "$WORK/handshake.txt" ||
      ! grep -q '^soak: insufficient coverage' "$WORK/handshake.txt"; then
-    fail "soak 100 did not finish its first handshake with coverage its only failure: $( grep -m1 '^soak finished' "$WORK/handshake.txt" )"
+    fail "soak 1 did not finish its first handshake with coverage its only failure: $( grep -m1 '^soak finished' "$WORK/handshake.txt" )"
 else
-    echo "leg 5  soak 100: the handshake at the bound completed before teardown, no refusal, exit $status (coverage only)"
+    echo "leg 5  soak 1: the handshake at the bound completed before teardown, no refusal, exit $status (coverage only)"
 fi
 
 # ---------------------------------------------------------------------------
