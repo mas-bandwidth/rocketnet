@@ -325,8 +325,8 @@ jobs:
           if-no-files-found: ignore
 
   soak-macos:
-    name: soak (${{ matrix.ref }} / macos-15)
-    runs-on: [self-hosted, macOS, ARM64, rocketnet-macos]
+    name: soak (${{ matrix.ref }} / macos)
+    runs-on: [self-hosted, macOS, ARM64, fleet]
     timeout-minutes: 7200
     strategy:
       fail-fast: false
