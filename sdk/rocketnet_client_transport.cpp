@@ -624,7 +624,10 @@ static inline void rocketnet_client_link_flush( rocketnet_client_transport_t * t
 // destroyed, after the reading thread is joined (FreedOnlyByCaller,
 // FreedOnlyAfterJoin).
 
-#define ROCKETNET_CLIENT_RACE_WAIT_SECONDS 0.001     // the reading thread's poll of the second socket during the race
+// The reading thread's poll of the second socket during the race. One
+// millisecond is a chosen design value, not a measurement recorded in
+// docs/runs/.
+#define ROCKETNET_CLIENT_RACE_WAIT_SECONDS 0.001
 
 struct rocketnet_client_race_t
 {
