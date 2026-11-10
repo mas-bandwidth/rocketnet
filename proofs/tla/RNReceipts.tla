@@ -209,10 +209,17 @@ NeedSend == \E s \in Issued \cap ReceiptSerials :
 EvictForSpace == NeedSend /\ Len(smap)=MapCapacity /\ EvictMap
 TransportStep(pid) == OpenPacket(pid) \/ ReceiveAck(pid) \/ PacketLost(pid) \/ RetireLostPacket(pid)
 
+\* the connection ended and the application took every receipt in the
+\* ring: a terminal stutter (a live connection can always Tick)
+Done ==
+ /\ ~live /\ ring = <<>>
+ /\ UNCHANGED vars
+
 Next == (\E t \in 0..7 : Send(t)) \/ Tick \/ EvictMap \/ TakeReceipt \/ Disconnect
      \/ (\E n \in Nums, p \in Pids : WritePacket(n,p))
      \/ (\E p \in Pids : OpenPacket(p) \/ ReceiveAck(p) \/ PacketLost(p) \/ RetireLostPacket(p))
      \/ (\E s \in ReceiptSerials : EmitAck(s) \/ SweepLoss(s))
+     \/ Done
 
 TypeOK ==
  /\ receiptType \in {5,6,7} /\ fragmentCount \in 1..2

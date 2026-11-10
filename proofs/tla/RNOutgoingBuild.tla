@@ -475,11 +475,22 @@ BeginUpdate ==
     /\ UNCHANGED << next, pending, handed, fellback, resAt, wrote, regionData, queue, wire,
                     finished, flushing >>
 
+\* the game started every message and none is pending, no flush runs,
+\* nothing is queued, staged or open in a build, and the last update has
+\* begun: everything finished is with the transport or dropped, and the
+\* run ends in a terminal stutter
+Done ==
+    /\ next = N + 1 /\ pending = None /\ ~flushing
+    /\ queue = << >> /\ staged = << >> /\ open = None
+    /\ packetsThisUpdate = 0
+    /\ UNCHANGED vars
+
 Next ==
     \/ StartInPlace \/ StartQueued \/ Write
     \/ FinishInPlace \/ FinishQueued \/ Abort \/ SealBuild
     \/ BeginFlush \/ SendReliable \/ SendUnreliable \/ EndFlush
     \/ TransportSend \/ BeginUpdate
+    \/ Done
 
 Spec == Init /\ [][Next]_vars
 
