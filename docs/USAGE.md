@@ -638,7 +638,9 @@ A value that does not parse, or is out of range, **refuses the create with one
 error line; nothing is ever clamped**. Create is the one check of a config: there is no
 separate validate call. A `config_bytes` larger than the library knows, from a
 newer header, is read as far as the library knows; a smaller one, from an older
-header, is read as far as it goes and the rest takes the defaults. Each create
+header, is read as far as it goes and the rest takes the defaults, provided it
+ends where one of the struct's fields ends. A size that ends inside a field is
+refused with `ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED`. Each create
 takes a final status out-parameter (NULL is accepted): it holds
 `ROCKETNET_STATUS_OK` with a non-NULL result, or the refusal's code with NULL.
 
