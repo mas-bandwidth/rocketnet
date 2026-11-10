@@ -577,6 +577,9 @@ inline void rocketnet_client_io_return( rocketnet_client_io_t * io )
 // proofs/tla/RNClientIo.tla IoSend: sends each committed slot of one ring whose byte count is nonzero.
 // Slot i is at data + i * frame_stride +
 // wire_offset; a zero int byte count is an aborted slot and stays unsent.
+// proofs/tla/RNClientSendCursorLayout.tla Take: a handed-off ring is the slot array and its committed count, cursor at 0.
+// proofs/tla/RNClientSendCursorLayout.tla Send: the progress batch skips a zero byte count, keeps at most a batch of live slots, and a prefix consume sets the cursor to slots[consumed], or to the walk's end when the prefix finishes the batch.
+// proofs/tla/RNClientSendCursorLayout.tla Commit: rocketnet_client_race_commit chooses the kept family; until then a primary slot is owed on both family bits.
 
 inline bool rocketnet_client_io_send_ring( rocketnet_client_io_t * io, int ring, bool terminal )
 {
@@ -709,6 +712,7 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
     bool worked = false;
 
     // proofs/tla/RNClientIo.tla IoFinishRing: releases a ring whose slots were sent and clears the ring in hand.
+    // proofs/tla/RNClientSendCursorLayout.tla Release: send_slot == committed gives the ring back, and a later ring does not send it.
     // proofs/tla/RNClientIoShutdown.tla FinishRing: the same release, the sending ring becoming sent.
     // proofs/tla/RNClientIoShutdown.tla TakeRing: takes the oldest handed-off ring into the sending hand.
     // proofs/tla/RNBufferHandoff.tla ConsumerExchange: gives back the ring sent last step and takes the oldest ready one.

@@ -749,3 +749,5 @@ MCReceiveOrderDeadlineWindow.cfg	MCReceiveOrder.tla	invariant	OneLiveMappingPerT
 MCReceiveOrderDeadlineWindowBound.cfg	MCReceiveOrder.tla	invariant	BoundHasNoClaim	check	receiveorder	required	-
 MCRNResendTimingRefused.cfg	MCRNResendTiming.tla	pass	-	check	rnresendtiming	required	-
 MCRNResendTimingBrokenRefusedClock.cfg	MCRNResendTiming.tla	invariant	AttemptsBeforeTimeout	check	rnresendtiming	required	-
+MCRNClientSendCursorLayout.cfg	MCRNClientSendCursorLayout.tla	pass	-	check	rnclientsendcursorlayout	required	-
+MCRNClientSendCursorLayoutBrokenPlus.cfg	MCRNClientSendCursorLayout.tla	invariant	AtMostOnce	check	rnclientsendcursorlayout	required	-
