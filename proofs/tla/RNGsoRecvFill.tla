@@ -80,15 +80,13 @@ Read ==
     /\ socket' = Tail(socket)
     /\ UNCHANGED arrived
 
-(* main swaps the filled buffer out and hands the worker an emptied one: *)
-(* the worker starts filling from slot 1                                *)
+(* main returns a free buffer: the worker starts filling from slot 1 *)
 Publish ==
     /\ num > 0
     /\ num' = 0
     /\ UNCHANGED << socket, dropped, arrived >>
 
-(* every message the kernel queues is read and claimed by main: the run *)
-(* ends                                                                 *)
+(* every message the kernel queues is read and published: the run ends    *)
 Done ==
     /\ arrived = MaxArrive /\ socket = << >> /\ num = 0
     /\ UNCHANGED vars
