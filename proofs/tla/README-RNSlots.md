@@ -55,8 +55,8 @@ nondeterministic, covering both payload and ack orderings.
 
 The safety specification permits arbitrary connection churn, application
 requests, deferred notification subsets and invalid update calls. Terminal
-API errors are the model's fail-fast abstraction; configurations ignore
-terminal deadlock. `NoOwnEntryDropped` is a local consistency invariant,
+API errors are the model's fail-fast abstraction: the run ends there in the
+`Done` terminal stutter, and deadlock is checked. `NoOwnEntryDropped` is a local consistency invariant,
 not a separately declared mutation witness. Safety
 never assumes fairness. The live specification keeps a connection stable,
 submits the next message after previous views are released, publishes deferred
