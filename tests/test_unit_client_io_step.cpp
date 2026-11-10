@@ -190,12 +190,10 @@ static void test_client_io_step_sends_rings_in_order_and_defers()
 }
 REGISTER_UNIT_TEST( test_client_io_step_sends_rings_in_order_and_defers );
 
-#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
-
 // A hand-off while the I/O thread holds the mutex is deferred at once: the
 // game thread never waits for the lock. RNBufferHandoff MainNeverWaits. The
-// test holds the mutex on its own thread, so it runs where the platform mutex
-// is not recursive (a Windows critical section is).
+// test holds the mutex on its own thread, so it runs on every platform: the
+// platform mutex is not recursive.
 
 static void test_client_io_hand_off_never_waits_for_the_mutex()
 {
@@ -230,8 +228,6 @@ static void test_client_io_hand_off_never_waits_for_the_mutex()
     rocketnet_client_io_rig_destroy( rig );
 }
 REGISTER_UNIT_TEST( test_client_io_hand_off_never_waits_for_the_mutex );
-
-#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
 // The clock callback stamps receive_time: one datagram read with now = 1000.25
 // is exposed with receive_time 1000.25. docs/CLIENT-IO.md _The clock_.
