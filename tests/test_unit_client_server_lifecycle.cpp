@@ -1930,6 +1930,62 @@ static void test_client_invalid_token_retries_without_disconnect()
 }
 REGISTER_UNIT_TEST( test_client_invalid_token_retries_without_disconnect );
 
+// A refused create cleans up a transport block that never held zeros: every
+// allocation is filled with 0xA5, so a member the construction leaves
+// indeterminate (a memset an optimizer may drop before placement new) is a
+// garbage pointer the abort_create cleanup frees, and ASan/UBSan stop on it.
+
+struct lifecycle_poison_allocator_t
+{
+    int live;
+};
+
+static void * lifecycle_poison_allocate( void * context, size_t bytes )
+{
+    void * p = malloc( bytes );
+    if ( !p )
+        return NULL;
+    memset( p, 0xA5, bytes );
+    ( (lifecycle_poison_allocator_t *) context )->live++;
+    return p;
+}
+
+static void lifecycle_poison_release( void * context, void * p )
+{
+    ( (lifecycle_poison_allocator_t *) context )->live--;
+    free( p );
+}
+
+static void test_client_refused_create_cleans_a_poisoned_transport_block()
+{
+    lifecycle_poison_allocator_t allocator = { 0 };
+    check( rocketnet_test_loopback_hub_release() );
+    check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    int status = -1;
+    check( rocketnet_init_ex( &allocator, lifecycle_poison_allocate, lifecycle_poison_release, &status ) );
+    check( status == ROCKETNET_STATUS_OK );
+    rocketnet_test_loopback_hub_context( &allocator );
+    rocketnet_quiet( 1 );
+
+    rocketnet_client_config_t client_config;
+    lifecycle_client_config( &client_config );
+    rocketnet_client_t * client = rocketnet_client_create( &allocator, &client_config, NULL );
+    check( client != NULL );
+
+    char invalid[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+    memset( invalid, 'A', sizeof( invalid ) - 1 );
+    invalid[sizeof( invalid ) - 1] = '\0';
+    check( rocketnet_client_connect( client, invalid ) == ROCKETNET_STATUS_INVALID_CONNECT_TOKEN );
+    check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_INVALID_CONNECT_TOKEN );
+
+    rn_test_client_stop_and_destroy( client );
+    check( rocketnet_test_loopback_hub_release() );
+    check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    check( allocator.live == 0 );
+    check( rocketnet_allocator_ex( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
+}
+REGISTER_UNIT_TEST( test_client_refused_create_cleans_a_poisoned_transport_block );
+
 // One update sends more packets than one builder call tracks
 // (ROCKETNET_PACKET_BUILDER_MAX_PACKETS, 16): the per-update limit is the
 // config's packets_per_update.
