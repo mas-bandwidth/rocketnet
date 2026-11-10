@@ -4013,8 +4013,8 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
             // (xsk_ring_cons__cancel) before releasing num_consumed
             // (xsk_ring_cons__release), so a later peek returns them first.
             // The frame ownership is modelled in proofs/tla/RNXdpReceiveRing.tla;
-            // the loop below is its Take, one descriptor read and its frame
-            // held while the staging buffer has room.
+            // the loop below is its Take, and main's reads are Consume and
+            // NewCall, one packet at a time from the bank it holds.
 
             uint32_t num_consumed = 0;
 

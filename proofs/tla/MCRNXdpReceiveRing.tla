@@ -1,10 +1,10 @@
 ------------------------ MODULE MCRNXdpReceiveRing ------------------------
 (***************************************************************************)
 (* The small instance of RNXdpReceiveRing.  MCRNXdpReceiveRing.cfg is the  *)
-(* design.  The reversed witness MCRNXdpReceiveRingBrokenNoCancel.cfg sets *)
-(* CancelUnconsumed <- CancelUnconsumedBroken (the pass releases what it   *)
-(* took and leaves the rest peeked, as the worker did before the cancel)   *)
-(* and must fail FrameConservation.  The reversed witness                  *)
+(* design: three receive banks, main's held bank and read cursor, a packet *)
+(* budget carried across calls, an RX ring of two, a peek of up to two, a  *)
+(* bank of two packets and a fill ring of twice the frames                *)
+(* (ROCKETNET_XDP_FILL_RING_SIZE).  The reversed witness                   *)
 (* MCRNXdpReceiveRingBrokenFillOfTheFrames.cfg sets FillSize to the frames *)
 (* (a fill ring of exactly the frames, as the server had before            *)
 (* ROCKETNET_XDP_FILL_RING_SIZE) and must fail                             *)
@@ -15,15 +15,13 @@
 (* worker did before rocketnet_xdp_fill_return) and must fail              *)
 (* FillHoldsOnlyReceiveFrames.  The reversed witness                       *)
 (* MCRNXdpReceiveRingBrokenDrainStale.cfg sets DrainStale <-               *)
-(* DrainStaleBroken (a drain leaves the last staged packet out of the      *)
-(* claim's view, as the worker-driven publish did) and must fail           *)
-(* StagedBeforeClaimInView.                                                *)
+(* DrainStaleBroken (a claim leaves the most recently staged packet in the *)
+(* worker's next bank, as the pre-fix worker publish deferred it) and must *)
+(* fail StagedBeforeClaimInView.                                           *)
 (***************************************************************************)
 EXTENDS RNXdpReceiveRing
 
 CONSTANTS F1, F2, F3
-
-CancelUnconsumedBroken == FALSE
 
 RefusedRefilledBroken == TRUE
 
