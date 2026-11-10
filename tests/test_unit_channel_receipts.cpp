@@ -6,6 +6,7 @@
 // RNReceipts Send: all three receipt types are accepted by the send mask.
 
 #include "test_unit_registry.h"
+#include "unit_arena.h"
 #include "../sdk/rocketnet.h"
 #include "../sdk/rocketnet_allocator.h"
 #include "../sdk/rocketnet_channel.h"
@@ -34,7 +35,7 @@ static void receipt_fixture_init( receipt_fixture_t * f, int ring = 16 )
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
     config.max_message_receipts = ring;
-    f->arena = rn_arena_create( NULL, &config, 1, &f->counters );
+    f->arena = rn_unit_arena_create( &config, 1, &f->counters );
     rocketnet_unit_check( f->arena != NULL );
     f->region = rn_arena_region( f->arena, 0 );
     rn_window_send_init( &f->send, f->region, 0 );
@@ -43,7 +44,7 @@ static void receipt_fixture_init( receipt_fixture_t * f, int ring = 16 )
 
 static void receipt_fixture_destroy( receipt_fixture_t * f )
 {
-    rn_arena_destroy( f->arena );
+    rn_unit_arena_destroy( f->arena );
 }
 
 static int receipt_list( receipt_fixture_t * f, rocketnet_message_receipt_t * out, int capacity )
@@ -85,7 +86,7 @@ REGISTER_UNIT_TEST( test_receipts_report_available_without_overwriting_capacity 
 
 static void test_unreliable_receipt_acked_or_loss_exactly_once()
 {
-    rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, NULL );
+    rn_arena_t * arena = rn_unit_arena_create( NULL, 1, NULL );
     rocketnet_unit_check( arena != NULL );
 
     rn_region_t * region = rn_arena_region( arena, 0 );
@@ -94,7 +95,7 @@ static void test_unreliable_receipt_acked_or_loss_exactly_once()
     rocketnet_unit_check( rn_channels_send_check( &channels, ROCKETNET_CHANNEL_TYPE_UNRELIABLE_WITH_RECEIPT, 0 ) == ROCKETNET_CHANNEL_SEND_OK );
     rocketnet_unit_check( rn_channels_send_check( &channels, ROCKETNET_CHANNEL_TYPE_RELIABLE_WITH_RECEIPT, 0 ) == ROCKETNET_CHANNEL_SEND_OK );
     rocketnet_unit_check( rn_channels_send_check( &channels, ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED_WITH_RECEIPT, 0 ) == ROCKETNET_CHANNEL_SEND_OK );
-    rn_arena_destroy( arena );
+    rn_unit_arena_destroy( arena );
 
     receipt_fixture_t f;
     receipt_fixture_init( &f );

@@ -6,6 +6,7 @@
 // RN-2 m10 channel records and m12 receipt-promotion vectors.
 
 #include "test_unit_standard.h"
+#include "unit_arena.h"
 
 #include "rocketnet.h"
 #include "rocketnet_allocator.h"
@@ -57,7 +58,7 @@ static int standard_channels_receipts_security_generate( const char * id, uint8_
         rocketnet_message_default_config( &config );
         check( rocketnet_message_validate_config( &config ) );
 
-        rn_arena_t * arena = rn_arena_create( NULL, &config, 1, NULL );
+        rn_arena_t * arena = rn_unit_arena_create( &config, 1, NULL );
         check( arena != NULL );
         if ( !arena )
             return -1;
@@ -113,7 +114,7 @@ static int standard_channels_receipts_security_generate( const char * id, uint8_
                 selected_bytes = written;
                 if ( capacity < written )
                 {
-                    rn_arena_destroy( arena );
+                    rn_unit_arena_destroy( arena );
                     return -1;
                 }
 
@@ -127,7 +128,7 @@ static int standard_channels_receipts_security_generate( const char * id, uint8_
         check( packet_count == 2 );
         check( rn_endpoint_next_packet_bytes( &endpoint, 1000.0 ) == 0 );
 
-        rn_arena_destroy( arena );
+        rn_unit_arena_destroy( arena );
         return selected_bytes;
     }
 

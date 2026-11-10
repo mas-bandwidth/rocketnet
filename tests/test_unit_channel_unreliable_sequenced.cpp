@@ -10,6 +10,7 @@
 #include <stdlib.h>
 
 #include "test_unit_registry.h"
+#include "unit_arena.h"
 #include "../sdk/rocketnet_allocator.h"
 #include "../sdk/rocketnet_channel.h"
 #include "../sdk/rocketnet_counters.h"
@@ -23,7 +24,7 @@ static rn_region_t * sequenced_region()
 {
     if ( !sequenced_arena )
     {
-        sequenced_arena = rn_arena_create( NULL, NULL, 1, &sequenced_counters );
+        sequenced_arena = rn_unit_arena_create( NULL, 1, &sequenced_counters );
     }
     return sequenced_arena ? rn_arena_region( sequenced_arena, 0 ) : NULL;
 }
@@ -141,7 +142,7 @@ static void test_hold_full_drops_and_counts()
     config.sequenced_messages_held = 1;
 
     rocketnet_counters_t counters = {};
-    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+    rn_arena_t * arena = rn_unit_arena_create( &config, 1, &counters );
     rocketnet_unit_check( arena != NULL );
 
     rn_region_t * region = rn_arena_region( arena, 0 );
@@ -157,7 +158,7 @@ static void test_hold_full_drops_and_counts()
     rocketnet_unit_check( rn_channels_dispatch( &channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_NONE );
     rocketnet_unit_check( counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_HOLD_FULL] == 1 );
     rocketnet_unit_check( region->channel_receive[1].held_sequenced == RN_DESCRIPTOR_NONE );
-    rn_arena_destroy( arena );
+    rn_unit_arena_destroy( arena );
 }
 
 static void test_large_future_state_drops_without_violation()
@@ -343,7 +344,7 @@ static void test_sequenced_no_allocation_after_create()
     rocketnet_term();
     rocketnet_unit_check( rocketnet_init( NULL, sequenced_counting_malloc, sequenced_counting_free ) == ROCKETNET_STATUS_OK );
 
-    rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &sequenced_counters );
+    rn_arena_t * arena = rn_unit_arena_create( NULL, 1, &sequenced_counters );
     rocketnet_unit_check( arena != NULL );
 
     rn_region_t * region = rn_arena_region( arena, 0 );
@@ -360,7 +361,7 @@ static void test_sequenced_no_allocation_after_create()
     rocketnet_unit_check( rn_channels_dispatch( &channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_DELIVERED );
     rn_channels_end_update( &channels );
     rocketnet_unit_check( sequenced_allocations == after_create );
-    rn_arena_destroy( arena );
+    rn_unit_arena_destroy( arena );
     rocketnet_term();
     rocketnet_unit_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }

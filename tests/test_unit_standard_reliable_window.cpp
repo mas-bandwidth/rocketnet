@@ -11,6 +11,7 @@
 // little-endian for an accepted record.
 
 #include "test_unit_standard.h"
+#include "unit_arena.h"
 
 #include "../sdk/rocketnet_allocator.h"
 #include "../sdk/rocketnet_message.h"
@@ -54,7 +55,7 @@ static int m5_reconstruct_generate( const char * id, uint8_t * out, int capacity
 
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
-    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, NULL );
+    rn_arena_t * arena = rn_unit_arena_create( &config, 1, NULL );
     if ( !arena )
         return -1;
     rn_region_t * region = rn_arena_region( arena, 0 );
@@ -95,7 +96,7 @@ static int m5_reconstruct_generate( const char * id, uint8_t * out, int capacity
         bytes = 1;
     }
 
-    rn_arena_destroy( arena );
+    rn_unit_arena_destroy( arena );
 
     return bytes;
 }

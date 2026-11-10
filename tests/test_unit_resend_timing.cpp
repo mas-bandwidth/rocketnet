@@ -22,6 +22,7 @@
 #include <string.h>
 
 #include "test_unit_registry.h"
+#include "unit_arena.h"
 #include "../sdk/rocketnet.h"
 #include "../sdk/rocketnet_allocator.h"
 #include "../sdk/rocketnet_message.h"
@@ -56,7 +57,7 @@ static void resend_timing_open( resend_timing_fixture_t * f )
 {
     check( rocketnet_message_validate_config( &f->config ) );
 
-    f->arena = rn_arena_create( NULL, &f->config, 1, NULL );
+    f->arena = rn_unit_arena_create( &f->config, 1, NULL );
     check( f->arena != NULL );
 
     f->region = rn_arena_region( f->arena, 0 );
@@ -68,7 +69,7 @@ static void resend_timing_open( resend_timing_fixture_t * f )
 
 static void resend_timing_close( resend_timing_fixture_t * f )
 {
-    rn_arena_destroy( f->arena );
+    rn_unit_arena_destroy( f->arena );
     f->arena = NULL;
 }
 

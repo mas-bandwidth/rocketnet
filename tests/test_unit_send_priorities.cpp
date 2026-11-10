@@ -15,6 +15,7 @@
 #include <string.h>
 
 #include "test_unit_registry.h"
+#include "unit_arena.h"
 
 #include "../sdk/rocketnet.h"
 #include "../sdk/rocketnet_allocator.h"
@@ -114,7 +115,7 @@ static int priorities_position( const int * order, int count, int index )
 
 static void test_higher_priority_first_within_class()
 {
-    rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &priorities_counters );
+    rn_arena_t * arena = rn_unit_arena_create( NULL, 1, &priorities_counters );
     rocketnet_unit_check( arena != NULL );
 
     rn_region_t * region = rn_arena_region( arena, 0 );
@@ -134,7 +135,7 @@ static void test_higher_priority_first_within_class()
     rocketnet_unit_check( order[1] == 2 );
     rocketnet_unit_check( order[2] == 1 );
 
-    rn_arena_destroy( arena );
+    rn_unit_arena_destroy( arena );
 }
 
 // a channel's records are first-written in the order they were queued. An
@@ -144,7 +145,7 @@ static void test_higher_priority_first_within_class()
 
 static void test_channel_fifo_kept_per_channel()
 {
-    rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &priorities_counters );
+    rn_arena_t * arena = rn_unit_arena_create( NULL, 1, &priorities_counters );
     rocketnet_unit_check( arena != NULL );
 
     rn_region_t * region = rn_arena_region( arena, 0 );
@@ -163,7 +164,7 @@ static void test_channel_fifo_kept_per_channel()
     rocketnet_unit_check( order[1] == 1 );
     rocketnet_unit_check( order[2] == 2 );
 
-    rn_arena_destroy( arena );
+    rn_unit_arena_destroy( arena );
 }
 
 // within one level, channels take turns, one record each, starting after the
@@ -171,7 +172,7 @@ static void test_channel_fifo_kept_per_channel()
 
 static void test_round_robin_across_channels()
 {
-    rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &priorities_counters );
+    rn_arena_t * arena = rn_unit_arena_create( NULL, 1, &priorities_counters );
     rocketnet_unit_check( arena != NULL );
 
     rn_region_t * region = rn_arena_region( arena, 0 );
@@ -199,7 +200,7 @@ static void test_round_robin_across_channels()
         rocketnet_unit_check( order[i] == expected[i] );
     }
 
-    rn_arena_destroy( arena );
+    rn_unit_arena_destroy( arena );
 }
 
 // a LOW channel is not starved by an IMMEDIATE backlog: the level clocks give
@@ -208,7 +209,7 @@ static void test_round_robin_across_channels()
 
 static void test_no_starvation_of_low()
 {
-    rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &priorities_counters );
+    rn_arena_t * arena = rn_unit_arena_create( NULL, 1, &priorities_counters );
     rocketnet_unit_check( arena != NULL );
 
     rn_region_t * region = rn_arena_region( arena, 0 );
@@ -257,7 +258,7 @@ static void test_no_starvation_of_low()
     rocketnet_unit_check( builder.level_clock[ROCKETNET_PRIORITY_IMMEDIATE] == 0 );
     rocketnet_unit_check( builder.level_clock[ROCKETNET_PRIORITY_LOW] == 27 );
 
-    rn_arena_destroy( arena );
+    rn_unit_arena_destroy( arena );
 }
 
 // the budget's class order is the outer rule: a LOW retransmit goes before a
@@ -266,7 +267,7 @@ static void test_no_starvation_of_low()
 
 static void test_budget_class_order_still_rules()
 {
-    rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &priorities_counters );
+    rn_arena_t * arena = rn_unit_arena_create( NULL, 1, &priorities_counters );
     rocketnet_unit_check( arena != NULL );
 
     rn_region_t * region = rn_arena_region( arena, 0 );
@@ -287,7 +288,7 @@ static void test_budget_class_order_still_rules()
     rocketnet_unit_check( order[2] == 1 );
     rocketnet_unit_check( order[3] == 0 );
 
-    rn_arena_destroy( arena );
+    rn_unit_arena_destroy( arena );
 }
 
 // the two reversed witnesses of proofs/tla/RNScheduler.tla, replayed against the
@@ -306,7 +307,7 @@ static void test_budget_class_order_still_rules()
 
 static void test_rnscheduler_witness_replays()
 {
-    rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &priorities_counters );
+    rn_arena_t * arena = rn_unit_arena_create( NULL, 1, &priorities_counters );
     rocketnet_unit_check( arena != NULL );
 
     rn_region_t * region = rn_arena_region( arena, 0 );
@@ -342,7 +343,7 @@ static void test_rnscheduler_witness_replays()
     rocketnet_unit_check( order[2] == 2 );          // every reliable record written before ...
     rocketnet_unit_check( order[3] == 3 );          // ... the unreliable class gets the budget
 
-    rn_arena_destroy( arena );
+    rn_unit_arena_destroy( arena );
 }
 
 // R2's acceptance for the scheduler: a counting allocator is installed, the
@@ -376,7 +377,7 @@ static void test_send_priorities_no_allocation_after_create()
 
     priorities_allocs = 0;
 
-    rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &priorities_counters );
+    rn_arena_t * arena = rn_unit_arena_create( NULL, 1, &priorities_counters );
     rocketnet_unit_check( arena != NULL );
 
     const size_t after_create = priorities_allocs;
@@ -413,7 +414,7 @@ static void test_send_priorities_no_allocation_after_create()
 
     rocketnet_unit_check( priorities_allocs == after_create );
 
-    rn_arena_destroy( arena );
+    rn_unit_arena_destroy( arena );
 
     // the suite's own term follows: hand it back an initialised library on
     // the default allocator
