@@ -20,7 +20,11 @@
 (*                                                                         *)
 (* Channel FIFO: within each reliable class, only a channel's head is      *)
 (* offered, at the best priority among that class's channel items. The     *)
-(* initial writes and retransmits preserve their respective channel order. *)
+(* "rel" head is the earliest queued item (the application's order).  The  *)
+(* "rtx" head is the lost item earliest in the resend FIFO, resendQ: the    *)
+(* caller's order there is rn_ordered_walk's walk of that FIFO, and every   *)
+(* send moves its number to the FIFO's tail (rn_resend_fifo_push_tail), so  *)
+(* the head is the least recently sent lost item, not the lowest id.        *)
 (* Per-send priority boosts the whole channel (17.3 item 3).               *)
 (* The implementation refines the head and boost into one flat sequence    *)
 (* per call: contiguous channel/class ranges, with the suffix priority     *)
@@ -48,11 +52,18 @@
 (* An item's ordering on its channel is its position among the items of    *)
 (* that channel.                                                           *)
 (*                                                                         *)
-(* Two constants flip the guarding rules, one per reversed witness:        *)
-(*   ChannelFIFO = FALSE     per-message priority: every queued item is    *)
-(*                           offered at its own level, not only the        *)
-(*                           channel's head.  Fails                        *)
-(*                           FirstWriteInOrderPerChannel.                  *)
+(* Three constants flip the guarding rules for the reversed witnesses:     *)
+(*   ChannelFIFO = FALSE     per-message priority: every queued or lost    *)
+(*                           item is offered at its own level, not only    *)
+(*                           the channel's head.  Fails                    *)
+(*                           FirstWriteInOrderPerChannel (BrokenPer-       *)
+(*                           MessagePriority) and RtxHeadBoost (Broken-    *)
+(*                           RtxPerMessage).                               *)
+(*   RtxSendOrder = FALSE    the "rtx" head is the lost item with the      *)
+(*                           lowest id, not the least recently sent.       *)
+(*                           Fails RtxHeadBoost once an earlier item was   *)
+(*                           resent before a later one is lost (Broken-    *)
+(*                           RtxById, 3 losses).                           *)
 (*   UnreliableLast = FALSE  the unreliable class is offered first.  Under *)
 (*                           a steady unreliable load the budget is spent  *)
 (*                           every update before any reliable item.        *)
@@ -68,7 +79,8 @@ CONSTANTS
     Cap,            \* items one update may write (the budget)
     UPerTick,       \* unreliable items arriving with every update
     MaxLoss,        \* transport packet losses, at most
-    ChannelFIFO,    \* TRUE: only a channel's head is offered (FALSE: BrokenPerMessagePriority)
+    ChannelFIFO,    \* TRUE: only a channel's head is offered (FALSE: BrokenPerMessagePriority, BrokenRtxPerMessage)
+    RtxSendOrder,   \* TRUE: the rtx head is the least recently sent lost item (FALSE: BrokenRtxById)
     UnreliableLast  \* TRUE: the class order (FALSE: BrokenUnreliableStarvesOrdered)
 
 Levels == 0..3
@@ -80,7 +92,7 @@ ASSUME /\ NC \in Nat \ {0}
        /\ ULevel \in Levels
        /\ W \in Nat \ {0} /\ Cap \in Nat \ {0}
        /\ UPerTick \in Nat /\ MaxLoss \in Nat
-       /\ ChannelFIFO \in BOOLEAN /\ UnreliableLast \in BOOLEAN
+       /\ ChannelFIFO \in BOOLEAN /\ RtxSendOrder \in BOOLEAN /\ UnreliableLast \in BOOLEAN
 
 \* The stride and seed per level
 Pow2(p) == CASE p = 0 -> 1 [] p = 1 -> 2 [] p = 2 -> 4 [] p = 3 -> 8
@@ -90,6 +102,7 @@ Seeds == [p \in Levels |-> Seed(p)]
 MaxClock == 35
 
 Min(a, b) == IF a < b THEN a ELSE b
+Without(q, i) == SelectSeq(q, LAMBDA j : j # i)
 Max(a, b) == IF a > b THEN a ELSE b
 
 VARIABLES
@@ -102,10 +115,11 @@ VARIABLES
     losses,     \* transport packet losses so far
     drops,      \* unreliable drops counted (capped)
     written,    \* ghost: per channel, the orderings first-written, in order
-    classBad    \* ghost: a write took a class while a higher class had an item
+    classBad,   \* ghost: a write took a class while a higher class had an item
+    resendQ     \* the resend FIFO: written, unacked reliable items, least recently sent first
 
 vars == << sent, st, clock, rr, unrelQ, budget, losses, drops, written,
-           classBad >>
+           classBad, resendQ >>
 
 DropCap == 2
 
@@ -127,9 +141,20 @@ Boost(c) == CHOOSE l \in Levels :
                 /\ \E j \in Ids : st[j] = "queued" /\ Msgs[j].ch = c /\ Msgs[j].lv = l
                 /\ \A j \in Ids : (st[j] = "queued" /\ Msgs[j].ch = c) => l <= Msgs[j].lv
 
-\* retransmits have their own per-channel head and boost within the rtx class
-RtxHead(i) == st[i] = "lost" /\
-              \A j \in Ids : (j < i /\ Msgs[j].ch = Msgs[i].ch) => st[j] # "lost"
+\* an item's place in the resend FIFO (defined for every lost item: it was
+\* written and is not acked, so it is in resendQ)
+FifoPos(i) == CHOOSE k \in 1..Len(resendQ) : resendQ[k] = i
+
+\* the C++ rtx group head: the channel's lost item earliest in the resend FIFO
+FifoHead(i) == st[i] = "lost" /\
+               \A j \in Ids : (j # i /\ st[j] = "lost" /\ Msgs[j].ch = Msgs[i].ch) => FifoPos(i) < FifoPos(j)
+
+\* retransmits have their own per-channel head and boost within the rtx class;
+\* RtxSendOrder = FALSE is the reversed witness that orders by id instead
+RtxHead(i) == IF RtxSendOrder
+              THEN FifoHead(i)
+              ELSE st[i] = "lost" /\
+                   \A j \in Ids : (j < i /\ Msgs[j].ch = Msgs[i].ch) => st[j] # "lost"
 RtxBoost(c) == CHOOSE l \in Levels :
                    /\ \E j \in Ids : st[j] = "lost" /\ Msgs[j].ch = c /\ Msgs[j].lv = l
                    /\ \A j \in Ids : (st[j] = "lost" /\ Msgs[j].ch = c) => l <= Msgs[j].lv
@@ -150,10 +175,16 @@ Cands(c) ==
       [] c = "unrel" ->
             IF unrelQ > 0 THEN { [id |-> 0, ch |-> 0, lv |-> ULevel] } ELSE {}
 
-\* source contract: a retransmit group offers only its head at its best level
+\* source contract: a retransmit group offers only its resend-FIFO head at its
+\* best level.  Stated from resendQ (FifoHead), not from RtxHead, so it checks
+\* what Cands("rtx") offers against the C++ walk order.  Under the design
+\* constants (ChannelFIFO, RtxSendOrder) Cands is built from the same
+\* definitions and it holds by construction: there it guards Cands against
+\* drift, and it bites only in MCRNSchedulerBrokenRtxPerMessage.cfg (each lost
+\* item at its own level) and MCRNSchedulerBrokenRtxById.cfg (head by id).
 RtxHeadBoost ==
     Cands("rtx") = { [id |-> i, ch |-> Msgs[i].ch, lv |-> RtxBoost(Msgs[i].ch)] :
-                     i \in { j \in Ids : RtxHead(j) } }
+                     i \in { j \in Ids : FifoHead(j) } }
 
 HasItem(c) == Cands(c) # {}
 
@@ -189,6 +220,7 @@ TypeOK ==
     /\ drops \in 0..DropCap
     /\ written \in [0..(NC - 1) -> Seq(Nat)]
     /\ classBad \in BOOLEAN
+    /\ resendQ \in Seq(Ids)
 
 Init ==
     /\ sent = 0
@@ -201,6 +233,7 @@ Init ==
     /\ drops = 0
     /\ written = [c \in 0..(NC - 1) |-> << >>]
     /\ classBad = FALSE
+    /\ resendQ = << >>
 
 (***************************************************************************)
 (* Queue(i): the application queues the next item of the scenario.         *)
@@ -209,13 +242,15 @@ Queue ==
     /\ sent < N
     /\ sent' = sent + 1
     /\ st' = [st EXCEPT ![sent + 1] = "queued"]
-    /\ UNCHANGED << clock, rr, unrelQ, budget, losses, drops, written, classBad >>
+    /\ UNCHANGED << clock, rr, unrelQ, budget, losses, drops, written, classBad, resendQ >>
 
 (***************************************************************************)
 (* Write: the builder takes the next item.  The level taken becomes the    *)
 (* clocks' origin: its clock advances by its stride, every other clock is  *)
 (* measured from the taken one and a clock behind it is pulled forward to  *)
-(* zero (the pull-forward).                                                *)
+(* zero (the pull-forward).  A reliable item written, first or resent,      *)
+(* moves to the resend FIFO's tail (rn_window_ack_commit ->                *)
+(* rn_resend_fifo_push_tail); an ack unlinks it (rn_resend_fifo_unlink).   *)
 (***************************************************************************)
 Write ==
     /\ CanWrite
@@ -230,8 +265,9 @@ Write ==
        /\ budget' = budget - 1
        /\ IF c = "unrel"
           THEN /\ unrelQ' = unrelQ - 1
-               /\ UNCHANGED << st, written >>
+               /\ UNCHANGED << st, written, resendQ >>
           ELSE /\ st' = [st EXCEPT ![x.id] = "inflight"]
+               /\ resendQ' = Append(Without(resendQ, x.id), x.id)
                /\ unrelQ' = unrelQ
                /\ IF c = "rel"
                   THEN written' = [written EXCEPT ![x.ch] = Append(@, Ordering(x.id))]
@@ -250,11 +286,12 @@ Tick ==
     /\ unrelQ' = UPerTick
     /\ budget' = Cap
     /\ clock' = IF \A i \in Ids : st[i] # "queued" /\ st[i] # "lost" THEN Seeds ELSE clock
-    /\ UNCHANGED << sent, st, rr, losses, written, classBad >>
+    /\ UNCHANGED << sent, st, rr, losses, written, classBad, resendQ >>
 
 Ack(i) ==
     /\ st[i] = "inflight"
     /\ st' = [st EXCEPT ![i] = "acked"]
+    /\ resendQ' = Without(resendQ, i)
     /\ UNCHANGED << sent, clock, rr, unrelQ, budget, losses, drops, written, classBad >>
 
 Lose(i) ==
@@ -262,7 +299,7 @@ Lose(i) ==
     /\ losses < MaxLoss
     /\ st' = [st EXCEPT ![i] = "lost"]
     /\ losses' = losses + 1
-    /\ UNCHANGED << sent, clock, rr, unrelQ, budget, drops, written, classBad >>
+    /\ UNCHANGED << sent, clock, rr, unrelQ, budget, drops, written, classBad, resendQ >>
 
 Next ==
     \/ Queue
