@@ -227,10 +227,13 @@ class CheckerFixture(unittest.TestCase):
         root = os.path.abspath(os.path.join(HERE, "..", ".."))
         tsv = os.path.join(root, "docs", "WITNESSES.tsv")
         with open(tsv, encoding="utf-8") as handle:
-            lines = [line for line in handle.read().splitlines() if line.strip()]
-        self.assertGreaterEqual(len(lines), 17)
-        cells = lines[16].split("\t")
-        self.assertTrue(cells[1].startswith("Refuse the packet without opening"), cells[1])
+            rows = [line.split("\t") for line in handle.read().splitlines() if line.strip()]
+        # the replay row is found by its rule, never by its line: other
+        # branches add witness rows above it
+        matches = [cells for cells in rows
+                   if len(cells) > 2 and cells[1].startswith("Refuse the packet without opening")]
+        self.assertEqual(len(matches), 1, "WITNESSES.tsv must hold exactly one replay refusal row")
+        cells = matches[0]
         cited = check_witnesses.split_module_citation(cells[2])
         if cited is None:
             module, name = "proofs/tla/ReplayWindow.tla", cells[2]
@@ -238,7 +241,7 @@ class CheckerFixture(unittest.TestCase):
             module, name = cited
         self.assertTrue(
             check_witnesses.property_defined(root, module, name),
-            "WITNESSES.tsv line 17 names %s, which is not defined in %s" % (name, module),
+            "WITNESSES.tsv's replay refusal row names %s, which is not defined in %s" % (name, module),
         )
 
     def test_stale_test_anchor_fails(self):
