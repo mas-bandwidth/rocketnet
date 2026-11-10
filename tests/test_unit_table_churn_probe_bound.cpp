@@ -163,12 +163,18 @@ static void test_encryption_map_full_probe_bound()
             absent_worst = probes;
     }
 
-    // each erase runs on the full map: remove one mapping, measure, add it back
+    // each erase runs on the full map: remove one mapping, measure, add it
+    // back. Backward-shift erase leaves the layout a fresh fill would have, and
+    // a re-added mapping is the newest, so the order matters: in fill order the
+    // measured mapping is always the oldest live one, at its home, and the
+    // lookup is always one probe. In reverse fill order every mapping filled
+    // before the measured one is untouched, so it sits where its own add put
+    // it and the lookups are the full map's real successful-search costs.
 
     uint64_t erase_lookup_total = 0;
     uint64_t erase_lookup_worst = 0;
     uint64_t erase_scan_worst = 0;
-    for ( int i = 0; i < capacity; ++i )
+    for ( int i = capacity - 1; i >= 0; --i )
     {
         const uint64_t find_before = rocketnet_encryption_map_test_probes( map );
         check( rocketnet_encryption_map_find( map, &live_addr[i] ) == live_index[i] );
