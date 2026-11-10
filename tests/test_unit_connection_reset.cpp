@@ -1124,6 +1124,111 @@ static void test_connection_reset_deferred_disconnect_does_not_charge_reused_slo
 }
 REGISTER_UNIT_TEST( test_connection_reset_deferred_disconnect_does_not_charge_reused_slot );
 
+// A payload frame sealed for slot i stays in the portable/msgx send ring until
+// send_packets. An update in between can free that slot and assign it to a new
+// connection. The drained frame must not land on the new occupant's
+// packets_sent or bytes_sent. The server totals still count it. Time is the
+// caller's clock; nothing sleeps and nothing opens a socket.
+static void test_connection_reset_drained_frame_charges_sealing_connection_only()
+{
+    reset_loopback_t f;
+    memset( &f, 0, sizeof( f ) );
+    f.now = 1000.0;
+    f.server = reset_loopback_server_create( f.now );
+    check( f.server );
+
+    const int slot = reset_loopback_connect( &f, 0, 0xA010 );
+    check( slot == 0 );
+
+    rocketnet_server_transport_t * transport = rocketnet_message_server_transport( f.server );
+    const uint64_t old_connection = rocketnet_server_transport_client_connection_id( transport, slot );
+    check( old_connection != 0 );
+
+    // B's CONNECTION_RESPONSE waits in the server receive queue. The server
+    // has not taken it, so A still holds the only live slot.
+    rocketnet_message_client_t * replacement = reset_loopback_client_create( f.server, 0xB010 );
+    check( replacement );
+    rocketnet_client_transport_t * replacement_transport = rocketnet_message_client_transport( replacement );
+    int handshake_ticks = 0;
+
+    while ( rocketnet_client_transport_state( replacement_transport ) != ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE )
+    {
+        f.now += 0.01;
+        check( rocketnet_message_client_update( replacement, f.now ) == ROCKETNET_UPDATE_OK );
+        rocketnet_message_client_send_packets( replacement );
+        if ( rocketnet_client_transport_state( replacement_transport ) == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE )
+            break;
+        check( rocketnet_message_client_update( f.clients[0], f.now ) == ROCKETNET_UPDATE_OK );
+        rocketnet_message_client_send_packets( f.clients[0] );
+        check( rocketnet_message_server_update( f.server, f.now ) == ROCKETNET_UPDATE_OK );
+        rocketnet_message_server_send_packets( f.server );
+        reset_loopback_drain_server( f.server );
+        reset_loopback_drain_client( f.clients[0] );
+        reset_loopback_drain_client( replacement );
+        handshake_ticks++;
+        check( handshake_ticks < 200 );
+    }
+
+    check( rocketnet_client_transport_state( replacement_transport ) == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE );
+    f.now += 0.11;
+    check( rocketnet_message_client_update( replacement, f.now ) == ROCKETNET_UPDATE_OK );
+    rocketnet_message_client_send_packets( replacement );
+
+    check( rocketnet_server_transport_num_connected_clients( transport ) == 1 );
+    check( rocketnet_server_transport_client_id( transport, slot ) == 0xA010 );
+    check( rocketnet_server_transport_client_connection_id( transport, slot ) == old_connection );
+
+    const uint8_t payload[8] = { 1, 2, 3, 4, 5, 6, 7, 8 };
+    rocketnet_packet_context_t context;
+    uint8_t * frame = rocketnet_server_transport_start_packet( transport, slot, (int) sizeof( payload ), &context );
+    check( frame );
+    memcpy( frame + context.payload_index, payload, sizeof( payload ) );
+    const int sealed = rocketnet_server_transport_finish_packet( transport, &context, (int) sizeof( payload ) );
+    check( sealed > 0 );
+
+    // update runs before send_packets: the slot is freed and given to B while
+    // A's sealed frame is still in the send ring.
+    rocketnet_server_transport_disconnect_client( transport, slot );
+    check( !rocketnet_server_transport_is_client_connected( transport, slot ) );
+
+    f.now += 0.01;
+    rocketnet_server_transport_update( transport, f.now );
+
+    check( rocketnet_server_transport_is_client_connected( transport, slot ) );
+    check( rocketnet_server_transport_client_id( transport, slot ) == 0xB010 );
+    const uint64_t new_connection = rocketnet_server_transport_client_connection_id( transport, slot );
+    check( new_connection != 0 && new_connection != old_connection );
+
+    rocketnet_server_transport_client_stats_t slot_before = {};
+    rocketnet_server_transport_stats_t server_before = {};
+    rocketnet_server_transport_client_stats( transport, slot, &slot_before );
+    rocketnet_server_transport_stats( transport, &server_before );
+
+    rocketnet_server_transport_send_packets( transport );
+
+    rocketnet_server_transport_client_stats_t slot_after = {};
+    rocketnet_server_transport_stats_t server_after = {};
+    rocketnet_server_transport_client_stats( transport, slot, &slot_after );
+    rocketnet_server_transport_stats( transport, &server_after );
+
+    printf( "reused slot charge: server packets %llu -> %llu, slot packets %llu -> %llu, slot bytes %llu -> %llu\n",
+            (unsigned long long) server_before.packets_sent, (unsigned long long) server_after.packets_sent,
+            (unsigned long long) slot_before.packets_sent, (unsigned long long) slot_after.packets_sent,
+            (unsigned long long) slot_before.bytes_sent, (unsigned long long) slot_after.bytes_sent );
+    fflush( stdout );
+
+    check( server_after.packets_sent == server_before.packets_sent + 1 );
+    check( server_after.bytes_sent > server_before.bytes_sent );
+    check( slot_after.packets_sent == slot_before.packets_sent );
+    check( slot_after.bytes_sent == slot_before.bytes_sent );
+
+    rn_test_message_client_stop_and_destroy( f.clients[0] );
+    rn_test_message_client_stop_and_destroy( replacement );
+    rn_test_message_server_stop_and_destroy( f.server );
+}
+REGISTER_UNIT_TEST( test_connection_reset_drained_frame_charges_sealing_connection_only );
+
+
 static void reset_loopback_other_slot_scenario()
 {
     reset_loopback_t f;

@@ -454,7 +454,7 @@ static inline void rocketnet_ack_stats_prefetch( const void * address )
 {
 #if defined( __GNUC__ ) || defined( __clang__ )
     __builtin_prefetch( address );
-#elif defined( _MSC_VER ) && ( defined( _M_X64 ) || defined( _M_IX86 ) )
+#elif defined( _MSC_VER ) && defined( _M_X64 )
     _mm_prefetch( (const char *) address, _MM_HINT_T0 );
 #else
     (void) address;

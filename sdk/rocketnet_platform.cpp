@@ -183,7 +183,7 @@ static bool rocketnet_platform_test_environment_getenv( const char * name, char 
 // without a clock (test_unit_platform_sleep.cpp); compiled on every platform.
 // A request of zero, less, or NaN yields only (Sleep(0)). Otherwise the
 // high-resolution waitable timer gets a relative due time in negative 100-ns
-// units, rounded up and never zero, and the timeBeginPeriod fallback sleeps
+// units, rounded up and never zero, and the Sleep fallback sleeps
 // whole milliseconds, rounded up, at least 1 and capped below INFINITE. The
 // rounding forgives the floating-point error of the scaling (a millionth of
 // a unit), so 0.0005 s is exactly 5000 units and not 5001.
@@ -1304,6 +1304,33 @@ static int rocketnet_platform_reserve_ipv4_port( const rocketnet_address_t * add
 }
 #endif // #if defined( __APPLE__ )
 
+void rocketnet_platform_socket_apply_dont_fragment( bool ipv6, void ( *set_option )( void * user, int level, int option_name, int value ), void * user )
+{
+    if ( ipv6 )
+    {
+#if defined( __linux__ )
+        set_option( user, IPPROTO_IPV6, IPV6_MTU_DISCOVER, IPV6_PMTUDISC_DO );
+#elif defined( IPV6_DONTFRAG )
+        set_option( user, IPPROTO_IPV6, IPV6_DONTFRAG, 1 );
+#endif // #if defined( __linux__ )
+    }
+
+#if defined( __linux__ )
+    set_option( user, IPPROTO_IP, IP_MTU_DISCOVER, IP_PMTUDISC_DO );
+#elif defined( IP_DONTFRAG )
+    set_option( user, IPPROTO_IP, IP_DONTFRAG, 1 );
+#else
+    (void) set_option;
+    (void) user;
+#endif // #if defined( __linux__ )
+}
+
+static void rocketnet_platform_socket_set_dont_fragment_option( void * user, int level, int option_name, int value )
+{
+    const int handle = *(const int *) user;
+    setsockopt( handle, level, option_name, &value, sizeof( value ) );
+}
+
 // batch_pump false suppresses the darwin batch pump for this socket (a pinned
 // "portable" transport). Nothing is read at create: the first real batch call
 // is the probe and delivers what it reads.
@@ -1485,25 +1512,8 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
     // don't fragment: linux through PMTU discovery, everything else through
     // the RFC 3542 options where the system has them. A refusal is tolerated.
 
-    int dont_fragment = 1;
-    if ( address->type == ROCKETNET_ADDRESS_IPV6 )
-    {
-#if defined( __linux__ )
-        dont_fragment = IPV6_PMTUDISC_DO;
-        setsockopt( socket->handle, IPPROTO_IPV6, IPV6_MTU_DISCOVER, &dont_fragment, sizeof( dont_fragment ) );
-#elif defined( IPV6_DONTFRAG )
-        setsockopt( socket->handle, IPPROTO_IPV6, IPV6_DONTFRAG, &dont_fragment, sizeof( dont_fragment ) );
-#endif // #if defined( __linux__ )
-    }
-    else
-    {
-#if defined( __linux__ )
-        dont_fragment = IP_PMTUDISC_DO;
-        setsockopt( socket->handle, IPPROTO_IP, IP_MTU_DISCOVER, &dont_fragment, sizeof( dont_fragment ) );
-#elif defined( IP_DONTFRAG )
-        setsockopt( socket->handle, IPPROTO_IP, IP_DONTFRAG, &dont_fragment, sizeof( dont_fragment ) );
-#endif // #if defined( __linux__ )
-    }
+    rocketnet_platform_socket_apply_dont_fragment( address->type == ROCKETNET_ADDRESS_IPV6,
+                                                   rocketnet_platform_socket_set_dont_fragment_option, &socket->handle );
 
 #if defined( __APPLE__ ) && TARGET_OS_OSX
 #if ROCKETNET_DEV
@@ -3660,8 +3670,10 @@ void rocketnet_platform_mutex_destroy( rocketnet_platform_mutex_t * mutex )
 // Sleep() rounds up to the system timer tick (15.6 ms by default) and a
 // millisecond cast truncates a sub-millisecond request to Sleep(0), so the
 // sleep blocks on a high-resolution waitable timer instead (Windows 10 1803
-// and later), set for the whole request, which keeps the system-wide timer
-// resolution untouched. rocketnet_platform_sleep_plan converts the request;
+// and later), set for the whole request. The sleep makes no timer period
+// call: when the priority calls are enabled, rocketnet_platform_init requests
+// a 1 ms period with timeBeginPeriod( 1 ) and rocketnet_platform_term releases
+// it with timeEndPeriod( 1 ). rocketnet_platform_sleep_plan converts the request;
 // rocketnet_platform_sleep_tail_yields decides the at most 50 us
 // SwitchToThread tail when the timer wakes before the request is up. A thread
 // rocketnet_platform_thread_create started sleeps on its own timer, created
@@ -3669,8 +3681,7 @@ void rocketnet_platform_mutex_destroy( rocketnet_platform_mutex_t * mutex )
 // timer, and its sleep creates one for itself and closes it on return
 // (rocketnet_platform_sleep). Where the timer cannot be created,
 // SetWaitableTimer fails, or the wait does not return WAIT_OBJECT_0, the
-// fallback raises the timer to 1 ms only for the duration of a rounded-up
-// Sleep.
+// fallback is a rounded-up Sleep at whatever timer period is in effect.
 
 #ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
 #define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
@@ -4032,20 +4043,25 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
         }
     }
 
-    // set don't fragment bit
+    // set don't fragment bit (including IPv4 DF on dual-stack IPv6 sockets)
 
     if ( address->type == ROCKETNET_ADDRESS_IPV6 )
     {
         int val = 1;
         setsockopt( s->handle, IPPROTO_IPV6, IPV6_DONTFRAG, (const char *) &val, sizeof( val ) );
     }
-    else
-    {
-        int val = 1;
-        setsockopt( s->handle, IPPROTO_IP, IP_DONTFRAGMENT, (const char *) &val, sizeof( val ) );
-    }
+
+    int val = 1;
+    setsockopt( s->handle, IPPROTO_IP, IP_DONTFRAGMENT, (const char *) &val, sizeof( val ) );
 
     return s;
+}
+
+void rocketnet_platform_socket_apply_dont_fragment( bool ipv6, void ( *set_option )( void * user, int level, int option_name, int value ), void * user )
+{
+    if ( ipv6 )
+        set_option( user, IPPROTO_IPV6, IPV6_DONTFRAG, 1 );
+    set_option( user, IPPROTO_IP, IP_DONTFRAGMENT, 1 );
 }
 
 // false only when the lifecycle tracker refused the close: the handle is

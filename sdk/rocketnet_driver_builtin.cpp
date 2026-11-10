@@ -1742,7 +1742,7 @@ struct portable_io_client_t
 
 static void * portable_io_client_create( void * context, const rocketnet_client_transport_io_config_t * config, rocketnet_address_t * bind )
 {
-    // RNClientIo initial / Stop and destroy order (docs/CLIENT-IO.md): create owns
+    // proofs/tla/RNClientIo.tla Init, Stop, Join, Free (portable_io_client_create): create owns
     // the socket and the wake beside it; any failure releases what it opened.
 
     struct portable_io_client_t * client = (struct portable_io_client_t *) rocketnet_malloc( context, sizeof( *client ) );
@@ -1785,7 +1785,7 @@ static void portable_io_client_close( void * transport )
 
 static void portable_io_client_destroy( void * transport )
 {
-    // RNClientIo Stop and destroy order (docs/CLIENT-IO.md): the transport joins
+    // proofs/tla/RNClientIo.tla Stop, Join, Free, FreedOnlyAfterJoin (portable_io_client_destroy): the transport joins
     // the I/O thread before closing the transport, so the wake goes, then the socket.
 
     struct portable_io_client_t * client = (struct portable_io_client_t *) transport;
@@ -1799,7 +1799,7 @@ static void portable_io_client_destroy( void * transport )
 
 static void portable_io_client_send( void * transport, const rocketnet_address_t * to, const uint8_t * data, int bytes )
 {
-    // RNClientIo IoSend / IoReceive (docs/CLIENT-IO.md The I/O step): the
+    // proofs/tla/RNClientIo.tla IoSend, IoReceive (rocketnet_client_io_step): the
     // per-packet platform functions on the instance's socket.
 
     struct portable_io_client_t * client = (struct portable_io_client_t *) transport;
@@ -1814,8 +1814,8 @@ static int portable_io_client_receive( void * transport, rocketnet_address_t * f
 
 static void portable_io_client_send_batch( void * transport, const rocketnet_platform_send_t * sends, int num_packets )
 {
-    // RNClientIo IoSend / IoReceive batches (docs/CLIENT-IO.md The I/O step): the
-    // batch pump seam; on Linux it is sendmmsg/recvmmsg (#client-io-linux-mmsg),
+    // proofs/tla/RNClientIo.tla IoSend, IoReceive (rocketnet_client_io_step): the
+    // batch pump seam; on Linux it is rocketnet_platform_socket_send_packets_mmsg / rocketnet_platform_socket_receive_packets_mmsg,
     // otherwise the seam's portable loop. Still off the main thread.
 
     struct portable_io_client_t * client = (struct portable_io_client_t *) transport;
@@ -1849,7 +1849,7 @@ static int portable_io_client_receive_batch( void * transport, rocketnet_address
 
 static bool portable_io_client_wait( void * transport, bool readable, double timeout_seconds )
 {
-    // RNClientIo IoWait / waitReadable and the wake (docs/CLIENT-IO.md The wake):
+    // proofs/tla/RNClientIo.tla IoWait, IoWake, FullWaitsOnWake (rocketnet_client_io_step, operations->wake):
     // readable passes through, so with it false the socket is not polled and a
     // full receive buffer waits on the eventfd alone.
 
@@ -2166,12 +2166,24 @@ extern const rocketnet_transport_backend_t rocketnet_xdp_transport = { &xdp_oper
 #include "rocketnet_server_iocp.h"
 #include "rocketnet_client_iocp.h"
 
+#if ROCKETNET_DEV
+// Test seam: a unit test swaps the create iocp_create calls, so it reads the
+// arguments the transport is created with and no socket is opened. NULL restores it.
+typedef rocketnet_server_iocp_t * iocp_create_function_t( void *, rocketnet_address_t *, int, int, int, int, int * );
+static iocp_create_function_t * iocp_create_function = rocketnet_server_iocp_create;
+
+void rocketnet_server_iocp_set_create_for_test( iocp_create_function_t * function )
+{
+    iocp_create_function = function ? function : rocketnet_server_iocp_create;
+}
+#endif // #if ROCKETNET_DEV
+
 static void * iocp_create( void * context, const rocketnet_server_transport_io_config_t * config, rocketnet_address_t * bind )
 {
     // rn-iocp-one-completion-worker: iocp always runs one completion worker plus one send worker
 
 #if ROCKETNET_DEV
-    return rocketnet_server_iocp_create( context, bind, ROCKETNET_IOCP_DEFAULT_WORKERS, config->transport->max_clients, 0, 0, config->status );
+    return iocp_create_function( context, bind, ROCKETNET_IOCP_DEFAULT_WORKERS, config->transport->max_clients, 0, 0, config->status );
 #else // #if ROCKETNET_DEV
     return rocketnet_server_iocp_create( context, bind, ROCKETNET_IOCP_DEFAULT_WORKERS, config->transport->max_clients, config->status );
 #endif // #if ROCKETNET_DEV
