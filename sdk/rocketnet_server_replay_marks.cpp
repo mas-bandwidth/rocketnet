@@ -35,6 +35,10 @@ struct rocketnet_server_replay_marks_t
 {
     void * context;
     int max_clients;
+    bool supersede_owed;                // the last walk left a refused forget: two records may name one address
+#if ROCKETNET_DEV
+    uint32_t comparisons;               // every record a supersede scan reads, for the unit cost case
+#endif // #if ROCKETNET_DEV
     struct rocketnet_server_replay_slot_mark_t * slots;
 };
 
@@ -79,6 +83,13 @@ void rocketnet_server_replay_marks_destroy( struct rocketnet_server_replay_marks
     rocketnet_free( marks->context, marks );
 }
 
+#if ROCKETNET_DEV
+uint32_t rocketnet_server_replay_marks_comparisons_for_test( const struct rocketnet_server_replay_marks_t * marks )
+{
+    return marks->comparisons;
+}
+#endif // #if ROCKETNET_DEV
+
 // proofs/tla/RNServerReplaySlots.tla Walk (MarkSupersedes, ForgetSupersedes): a
 // queued forget or mark of an address clears every other slot's record of that
 // address. Such a record is a refused forget left by a slot that is no longer
@@ -93,6 +104,9 @@ static void rocketnet_server_replay_marks_supersede( struct rocketnet_server_rep
 {
     for ( int i = 0; i < marks->max_clients; i++ )
     {
+#if ROCKETNET_DEV
+        marks->comparisons++;
+#endif // #if ROCKETNET_DEV
         struct rocketnet_server_replay_slot_mark_t * slot = &marks->slots[i];
         if ( i != keep && slot->seen && rocketnet_address_equal( &slot->seen_address, address ) )
             memset( slot, 0, sizeof( *slot ) );
@@ -156,7 +170,17 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
             if ( sink->forget( sink->context, &forgotten ) )
             {
                 memset( slot, 0, sizeof( *slot ) );
-                rocketnet_server_replay_marks_supersede( marks, i, &forgotten );
+
+                // proofs/tla/RNServerReplaySlots.tla Walk (supOwed,
+                // DistinctUnlessOwed): two records name one address only
+                // after a walk that left a refused forget. Any other walk
+                // ends with every record at its own connected slot's address,
+                // and those are distinct, so there is nothing to clear and
+                // the scan of every slot is skipped: a mass disconnect reads
+                // each slot once.
+
+                if ( marks->supersede_owed )
+                    rocketnet_server_replay_marks_supersede( marks, i, &forgotten );
             }
             else
             {
@@ -231,6 +255,12 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
         if ( refused_forgets > 0 )
             rocketnet_server_replay_marks_supersede( marks, i, address );
     }
+
+    // proofs/tla/RNServerReplaySlots.tla Walk (supOwed'): a forget refused in
+    // this walk may leave its record beside a newer one of the same address,
+    // so the next walk's forget pass owes the scan
+
+    marks->supersede_owed = refused_forgets > 0;
 }
 
 #if ROCKETNET_DEV

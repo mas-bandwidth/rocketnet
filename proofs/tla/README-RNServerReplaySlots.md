@@ -15,6 +15,7 @@ reuse.
 | `rec[i].seen`, `rec[i].at` | `slots[i].seen`, `slots[i].seen_address` |
 | `rec[i].has`, `rec[i].marked` | `slots[i].has_mark`, `slots[i].marked_value` |
 | `rec[i].owes` | `slots[i].mark_owed` |
+| `supOwed` | `marks->supersede_owed`: the last walk left a refused forget |
 | `kernel[a]` | the kernel replay map's entry for `a` |
 
 The ghost `owed` holds each `<<slot, address>>` the walk saw the slot
@@ -32,7 +33,12 @@ or another slot's queued forget or mark of the address supersedes it.
   slot that is no longer connected or is connected at another address; only an
   accepted forget clears the record (the `memset`), and it clears every other
   slot's record of the same address (`rocketnet_server_replay_marks_supersede`,
-  `ForgetSupersedes`). The mark pass, for every connected slot, skips a slot
+  `ForgetSupersedes`). The code scans for such a record only while
+  `supersede_owed` is set (`supOwed`): the walk sets it at its end when it
+  left a refused forget, and clears it otherwise. Two records name one address
+  only after such a walk (`DistinctUnlessOwed`), so every other walk's queued
+  forgets have nothing to clear, and a mass disconnect reads each slot once
+  instead of every slot for every forget. The mark pass, for every connected slot, skips a slot
   whose record still names another address; otherwise it sets `seen` and
   `seen_address`, and asks the sink to mark a slot first seen, owing a mark,
   or whose `highest_opened` differs from its last mark; a refused mark sets
@@ -56,13 +62,21 @@ here the commit applies everything.
 - **`OneIdentityPerSlot`**: a slot owes forgets for one address at a time.
 - **`KernelHoldsMark`**: a connected slot whose record holds its current mark,
   owing nothing, has that mark in the kernel map.
+- **`DistinctUnlessOwed`**: unless `supOwed` is set, no two slots' records
+  name one address. This is what the forget pass's skipped scan rests on.
 
 ## The instance
 
 Two client slots, two addresses, `highest_opened` 0..1.
 `MCRNServerReplaySlots.cfg` is the control with forgets and marks refusable,
 every invariant. `MCRNServerReplaySlotsNoForgetRefusal.cfg` is the control with
-every forget queued, every invariant.
+every forget queued, every invariant. In both, the forget pass's scan is
+guarded by `supOwed` and the mark pass's by a forget refused in the same walk,
+as in the code. `MCRNServerReplaySlotsScanEveryForget.cfg`
+(`ScanWhenOwedOnly = FALSE`) is the control of the v1.0.0 walk, whose forget
+pass scanned for every queued forget: every invariant, and its record in
+`RUNS.tsv` counts the same states as `MCRNServerReplaySlots.cfg`, since the
+scan the code skips clears nothing.
 
 ## The stale forget
 
@@ -127,6 +141,18 @@ counterexample below was checked against the C by hand.
    `a1`, the commit deletes the entry, and slot 0 is not marked.
    `test_server_replay_marks_queued_forget_supersedes_a_held_mark` drives
    this sequence through the sink.
+6. **`MCRNServerReplaySlotsBrokenNoOweOnRefusal.cfg`**
+   (`OweOnRefusal = FALSE`): the walk without
+   `marks->supersede_owed = refused_forgets > 0;`, so the forget pass never
+   scans. Violates `KernelHoldsMark` by the sequence of witness 5: the walk
+   that refused slot 0's forget and slot 1's mark leaves both records naming
+   `a1` and owes nothing, and the next walk's queued forget of `a1` leaves
+   slot 0's record with a mark the commit deletes.
+   `test_server_replay_marks_refused_forget_owes_the_next_scan` drives the
+   sequence and counts the records each walk's scans read (none, none, both
+   slots, none); `test_server_replay_marks_mass_disconnect_is_linear` holds
+   the cost (no record read at `ROCKETNET_MAX_CLIENTS` disconnects, where
+   scanning for every forget reads 1,000,000 at 1000 clients).
 
 ## Runs
 

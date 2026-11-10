@@ -670,6 +670,8 @@ MCRNServerReplaySlotsBrokenNoMarkSupersede.cfg	MCRNServerReplaySlots.tla	invaria
 MCRNServerReplaySlotsBrokenNoForgetSupersede.cfg	MCRNServerReplaySlots.tla	invariant	KernelHoldsMark	check	rnserverreplayslots	required	-
 MCRNServerReplaySlotsBrokenNoSkip.cfg	MCRNServerReplaySlots.tla	invariant	ForgetNeverLost	check	rnserverreplayslots	required	-
 MCRNServerReplaySlotsBrokenClearOnRefusal.cfg	MCRNServerReplaySlots.tla	invariant	ForgetNeverLost	check	rnserverreplayslots	required	-
+MCRNServerReplaySlotsBrokenNoOweOnRefusal.cfg	MCRNServerReplaySlots.tla	invariant	KernelHoldsMark	check	rnserverreplayslots	required	-
+MCRNServerReplaySlotsScanEveryForget.cfg	MCRNServerReplaySlots.tla	pass	-	check	rnserverreplayslots	required	-
 MCServerStopSpread.cfg	MCServerStopSpread.tla	pass	-	check	serverstopspread	required	-
 MCServerStopSpreadLive.cfg	MCServerStopSpread.tla	pass	-	check	serverstopspread	required	-
 MCServerStopSpreadBrokenSingleShot.cfg	MCServerStopSpread.tla	invariant	FullBurstBeforeStopped	check	serverstopspread	required	-
