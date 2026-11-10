@@ -62,6 +62,16 @@ typedef int rocketnet_dev_link_stop_wait_hold_function_t( void * context );
 
 void rocketnet_dev_set_link_stop_wait_hold_hook( rocketnet_dev_link_stop_wait_hold_function_t * function, void * context );
 
+// The disconnect-drain sealed-write seam. While count is positive, the next
+// seal of a deferred disconnect burst fails: rocketnet_write_sealed_packet
+// has already succeeded, and the drain treats that seal as a failed write.
+// The count falls only when that burst is abandoned, so one armed failure
+// keeps failing the same head entry on every later stop step until then.
+// Zero, the default, leaves every write alone. Defined in
+// sdk/rocketnet_server_transport.cpp.
+
+void rocketnet_dev_fail_disconnect_sealed_writes( int count );
+
 #endif // #if ROCKETNET_DEV
 
 #endif // ROCKETNET_SDK_ROCKETNET_TEST_SEAMS_H
