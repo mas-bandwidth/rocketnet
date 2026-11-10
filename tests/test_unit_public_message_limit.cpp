@@ -66,8 +66,8 @@ static void test_public_message_limit_cross_field_bounds()
     check( !rocketnet_message_validate_config( &config ) );
 
     config.reliable_messages_in_flight = 1024;
-    config.send_message_buffer_bytes = 12288;
-    check( !rocketnet_message_validate_config( &config ) );
+    config.send_message_buffer_bytes = 12288;   // three large chunks; a larger message takes a span
+    check( rocketnet_message_validate_config( &config ) );
 
     rocketnet_message_default_config( &config );
     config.max_message_bytes = ROCKETNET_MESSAGE_SINGLE_BYTES;

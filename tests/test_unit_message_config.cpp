@@ -1174,6 +1174,23 @@ static void test_message_config_reserve_past_32_bits_refused_by_validate_and_cre
     check( rocketnet_client_required_memory( &client_config ) == 0 );
 }
 
+// A one-mebibyte send buffer on the default message config is legal. A
+// message larger than one large chunk takes a span of the send spans, never
+// a store chunk, so the large class does not have to hold every fragment of
+// max_message_bytes. Validation is what create checks. Nothing is allocated
+// and no socket is opened.
+
+static void test_message_config_one_mebibyte_send_buffer_accepted()
+{
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    config.send_message_buffer_bytes = 1048576;
+
+    int status = -1;
+    check( rocketnet_message_validate_config_ex( &config, &status ) == 1 );
+    check( status == ROCKETNET_STATUS_OK );
+}
+
 #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_message_config_mismatch_ends_both_connections );
 REGISTER_UNIT_TEST( test_message_config_equal_connects_and_verifies );
@@ -1187,3 +1204,4 @@ REGISTER_UNIT_TEST( test_message_config_sent_map_holds_a_window_burst );
 REGISTER_UNIT_TEST( test_message_config_resend_delay_max_zero_refused );
 REGISTER_UNIT_TEST( test_message_config_resend_delay_cross_rule_refused );
 REGISTER_UNIT_TEST( test_message_config_reserve_past_32_bits_refused_by_validate_and_create );
+REGISTER_UNIT_TEST( test_message_config_one_mebibyte_send_buffer_accepted );

@@ -1296,7 +1296,6 @@ static void test_channels_allocator_validation()
         { "window below its minimum", (int) offsetof( rocketnet_message_config_t, reliable_messages_in_flight ), 32 },
         { "ring not a multiple of 16", (int) offsetof( rocketnet_message_config_t, receive_message_buffer_bytes ), 262144 + 8 },
         { "max message above the ring", (int) offsetof( rocketnet_message_config_t, max_message_bytes ), ROCKETNET_MAX_MESSAGE_BYTES + 16 },
-        { "store too small for a maximal block", (int) offsetof( rocketnet_message_config_t, send_message_buffer_bytes ), 12288 },
         { "queue below its minimum", (int) offsetof( rocketnet_message_config_t, send_queue_messages ), 15 },
         { "resend_delay_initial above resend_delay_max", (int) offsetof( rocketnet_message_config_t, message_resend_delay_initial_ms ), 3000 },
         { "resend_delay_min above resend_delay_max", (int) offsetof( rocketnet_message_config_t, message_resend_delay_min_ms ), 3000 },
@@ -1344,19 +1343,19 @@ static void test_channels_allocator_validation()
     config.max_message_bytes = 64 * ROCKETNET_MESSAGE_FRAGMENT_BYTES;
     check( rocketnet_message_validate_config( &config ) == 1 );
 
-    // the edge of the sizing floor: the large class holds exactly
-    // ceil( max_message_bytes / 1152 ) chunks
+    // one large chunk is enough: a message above that takes a span. 12288
+    // holds three large chunks, so both three and four fragments are legal.
 
     rocketnet_message_default_config( &config );
     config.max_message_bytes = 4 * ROCKETNET_MESSAGE_FRAGMENT_BYTES;
     config.send_message_buffer_bytes = 12288;               // a third of 12288 holds three 1152 chunks with their meta words
-    check( rocketnet_message_validate_config( &config ) == 0 );
+    check( rocketnet_message_validate_config( &config ) == 1 );
     config.max_message_bytes = 3 * ROCKETNET_MESSAGE_FRAGMENT_BYTES;
     check( rocketnet_message_validate_config( &config ) == 1 );
 
-    // docs/LOAD.md Table 3's lean profile is refused at the default max_message_bytes: its
-    // large class holds 18 chunks, below the floor of 29 that a 32768-byte
-    // max_message_bytes sets (section 4)
+    // the default max_message_bytes does not fit a 32768-byte receive ring.
+    // once the message fits the ring, the large class does not have to hold
+    // every fragment: 65536 holds 18 large chunks, and 19 fragments are legal.
 
     rocketnet_message_default_config( &config );
     config.reliable_messages_in_flight = 256;
@@ -1369,7 +1368,7 @@ static void test_channels_allocator_validation()
     config.max_message_bytes = 18 * ROCKETNET_MESSAGE_FRAGMENT_BYTES;
     check( rocketnet_message_validate_config( &config ) == 1 );
     config.max_message_bytes = 18 * ROCKETNET_MESSAGE_FRAGMENT_BYTES + 1;
-    check( rocketnet_message_validate_config( &config ) == 0 );
+    check( rocketnet_message_validate_config( &config ) == 1 );
 
     // the maximum channel count is legal
 

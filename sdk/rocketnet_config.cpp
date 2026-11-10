@@ -276,14 +276,14 @@ int rocketnet_message_validate_config_ex( const struct rocketnet_message_config_
         return 0;
     }
 
-    // the store's large class holds at least ceil(max_message_bytes / 1152)
-    // chunks: a sizing floor on send_message_buffer_bytes (4, 14)
+    // a message above one large chunk takes a span of the send spans, never
+    // the store (rocketnet_allocator.h). The large class holds at least one chunk.
 
     const uint32_t large = rn_send_store_chunks_for( (uint64_t) config->send_message_buffer_bytes, RN_STORE_LARGE );
-    if ( large < (uint32_t) fragments )
+    if ( large < 1 )
     {
-        rocketnet_error( "message config send_message_buffer_bytes %d holds %u large chunks, below the floor of %d that max_message_bytes %d sets",
-                         config->send_message_buffer_bytes, large, fragments, config->max_message_bytes );
+        rocketnet_error( "message config send_message_buffer_bytes %d holds %u large chunks, below the one chunk the large class needs",
+                         config->send_message_buffer_bytes, large );
         if ( status )
             *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
         return 0;

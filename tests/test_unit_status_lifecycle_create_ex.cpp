@@ -117,14 +117,15 @@ static void check_message_validate_status()
     check( rocketnet_message_validate_config_ex( &config, &status ) == 0 );
     check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
 
-    // the large store class cannot hold a maximal block
+    // a message past one large chunk takes a span, so a 12288-byte send
+    // buffer (three large chunks) accepts a 100000-byte message
 
     rocketnet_message_default_config( &config );
     config.send_message_buffer_bytes = 12288;
     config.max_message_bytes = 100000;
     status = -1;
-    check( rocketnet_message_validate_config_ex( &config, &status ) == 0 );
-    check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
+    check( rocketnet_message_validate_config_ex( &config, &status ) == 1 );
+    check( status == ROCKETNET_STATUS_OK );
 
     // resend_delay_min above resend_delay_max
 
