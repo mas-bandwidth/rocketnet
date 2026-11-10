@@ -4032,3 +4032,61 @@ int rocketnet_server_transport_test_staged_simulator_flush()
     return result;
 }
 #endif // #if ROCKETNET_DEV && !defined( ROCKETNET_CONFORMANCE_DEFAULTS_ONLY )
+
+#if defined( ROCKETNET_TESTS_TEST_UNIT_REGISTRY_H ) && ROCKETNET_DEV && !defined( ROCKETNET_CONFORMANCE_DEFAULTS_ONLY )
+bool rocketnet_server_iocp_test_release_send_retries_stalled_pop( bool * released_out, int * state_out, bool * send_idle_out );
+
+static bool test_iocp_stop_step_send_idle_flag = false;
+static int test_iocp_stop_step_io_stops = 0;
+
+static void test_iocp_stop_step_io_flush( void * )
+{
+}
+
+static void test_iocp_stop_step_io_stop( void * )
+{
+    test_iocp_stop_step_io_stops++;
+}
+
+static bool test_iocp_stop_step_io_send_idle( void * )
+{
+    return test_iocp_stop_step_send_idle_flag;
+}
+
+static void test_iocp_release_send_retries_while_pop_sequence_store_stalls()
+{
+    bool released = false;
+    int state = -1;
+    bool send_idle = false;
+    rocketnet_unit_check( rocketnet_server_iocp_test_release_send_retries_stalled_pop( &released, &state, &send_idle ) );
+    rocketnet_unit_check( released );
+    rocketnet_unit_check( state == 1 );
+    rocketnet_unit_check( send_idle );
+
+    auto * transport = rocketnet_server_transport_allocate( NULL, ROCKETNET_DEFAULT_MAX_CLIENTS );
+    rocketnet_unit_check( transport != NULL );
+    if ( !transport )
+        return;
+
+    rocketnet_server_transport_io_operations_t operations = {};
+    operations.flags = ROCKETNET_TRANSPORT_STAGED;
+    operations.flush = test_iocp_stop_step_io_flush;
+    operations.stop = test_iocp_stop_step_io_stop;
+    operations.send_idle = test_iocp_stop_step_io_send_idle;
+    transport->io.operations = &operations;
+    transport->io.instance = &test_iocp_stop_step_io_stops;
+    transport->state = ROCKETNET_SERVER_TRANSPORT_STOPPING;
+
+    test_iocp_stop_step_send_idle_flag = send_idle;
+    test_iocp_stop_step_io_stops = 0;
+    rocketnet_server_transport_stop_step( transport );
+    rocketnet_unit_check( transport->io_stop_requested );
+    rocketnet_unit_check( test_iocp_stop_step_io_stops == 1 );
+
+    void * storage = transport;
+    transport->~rocketnet_server_transport_t();
+    rocketnet_free( NULL, storage );
+}
+
+REGISTER_UNIT_TEST( test_iocp_release_send_retries_while_pop_sequence_store_stalls );
+#endif // #if defined( ROCKETNET_TESTS_TEST_UNIT_REGISTRY_H ) && ROCKETNET_DEV && !defined( ROCKETNET_CONFORMANCE_DEFAULTS_ONLY )

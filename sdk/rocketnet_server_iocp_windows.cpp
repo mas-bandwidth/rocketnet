@@ -6,21 +6,14 @@
 #include "rocketnet_memory.h"
 #include "rocketnet_internal.h"
 
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-
-#ifndef _WIN32_WINNT
-#define _WIN32_WINNT 0x0600
-#endif // #ifndef _WIN32_WINNT
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS || ROCKETNET_DEV
 
 #include "rocketnet_server_iocp.h"
 #include "rocketnet_platform.h"
-#include "rocketnet_coalesce.h"
-#include <ws2tcpip.h>
-#include <mswsock.h>
-#include <mstcpip.h>
 #include <atomic>
 #include <new>
 #include <stddef.h>
+#include <stdint.h>
 #include <string.h>
 
 struct rocketnet_iocp_ref_t
@@ -68,6 +61,9 @@ struct rocketnet_iocp_ref_queue_t
     std::atomic<uint64_t> pushes{ 0 };
     std::atomic<uint64_t> pops{ 0 };
     std::atomic<uint64_t> probes{ 0 };
+    rocketnet_iocp_ref_cell_t * stalled_pop_cell = NULL;
+    uint64_t stalled_pop_sequence = 0;
+    bool stall_next_pop = false;
 #endif // #if ROCKETNET_DEV
 };
 
@@ -110,7 +106,16 @@ static bool rocketnet_iocp_queue_push( rocketnet_iocp_ref_queue_t * queue, const
                 break;
         }
         else if ( difference < 0 )
+        {
+#if ROCKETNET_DEV
+            if ( queue->stalled_pop_cell != NULL )
+            {
+                queue->stalled_pop_cell->sequence.store( queue->stalled_pop_sequence, std::memory_order_release );
+                queue->stalled_pop_cell = NULL;
+            }
+#endif // #if ROCKETNET_DEV
             return false;
+        }
         else
             position = queue->enqueue.load( std::memory_order_relaxed );
     }
@@ -152,12 +157,100 @@ static bool rocketnet_iocp_queue_pop( rocketnet_iocp_ref_queue_t * queue, rocket
     }
 
     *ref = cell->ref;
-    cell->sequence.store( position + queue->capacity, std::memory_order_release );
+#if ROCKETNET_DEV
+    if ( queue->stall_next_pop )
+    {
+        queue->stall_next_pop = false;
+        queue->stalled_pop_cell = cell;
+        queue->stalled_pop_sequence = position + queue->capacity;
+    }
+    else
+#endif // #if ROCKETNET_DEV
+    {
+        cell->sequence.store( position + queue->capacity, std::memory_order_release );
+    }
 #if ROCKETNET_DEV
     queue->pops.fetch_add( 1, std::memory_order_relaxed );
 #endif // #if ROCKETNET_DEV
     return true;
 }
+
+static bool rocketnet_iocp_queue_release_send( rocketnet_iocp_ref_queue_t * free_sends,
+                                               const rocketnet_iocp_ref_t & ref, int * op_state )
+{
+    *op_state = ROCKETNET_IOCP_OPERATION_FREE;
+
+    while ( !rocketnet_iocp_queue_push( free_sends, ref ) )
+    {
+    }
+    return true;
+}
+
+static bool rocketnet_iocp_queue_send_idle( const rocketnet_iocp_ref_queue_t * free_sends,
+                                            uint64_t num_staged, int send_queue_size )
+{
+    if ( num_staged != 0 )
+        return false;
+    const uint64_t dequeue = free_sends->dequeue.load( std::memory_order_acquire );
+    const uint64_t enqueue = free_sends->enqueue.load( std::memory_order_acquire );
+    return enqueue - dequeue >= (uint64_t) send_queue_size;
+}
+
+#if ROCKETNET_DEV
+bool rocketnet_server_iocp_test_release_send_retries_stalled_pop( bool * released_out, int * state_out, bool * send_idle_out )
+{
+    const uint64_t capacity = 4;
+    alignas( rocketnet_iocp_ref_cell_t ) uint8_t storage[capacity * sizeof( rocketnet_iocp_ref_cell_t )];
+    rocketnet_iocp_ref_queue_t free_sends;
+    rocketnet_iocp_queue_initialize( &free_sends, storage, capacity );
+
+    int states[capacity];
+    for ( uint32_t i = 0; i < capacity; ++i )
+    {
+        states[i] = ROCKETNET_IOCP_OPERATION_FREE;
+        const rocketnet_iocp_ref_t init_ref = { 1, 0, i };
+        if ( !rocketnet_iocp_queue_push( &free_sends, init_ref ) )
+            return false;
+    }
+
+    free_sends.stall_next_pop = true;
+
+    rocketnet_iocp_ref_t ref0 = {};
+    if ( !rocketnet_iocp_queue_pop( &free_sends, &ref0 ) )
+        return false;
+    states[ref0.index] = ROCKETNET_IOCP_OPERATION_STAGED;
+    ref0.generation = 1;
+
+    rocketnet_iocp_ref_t ref1 = {};
+    if ( !rocketnet_iocp_queue_pop( &free_sends, &ref1 ) )
+        return false;
+    states[ref1.index] = ROCKETNET_IOCP_OPERATION_STAGED;
+    ref1.generation = 1;
+
+    const bool released1 = rocketnet_iocp_queue_release_send( &free_sends, ref1, &states[ref1.index] );
+    const bool released0 = rocketnet_iocp_queue_release_send( &free_sends, ref0, &states[ref0.index] );
+    if ( !released0 )
+        return false;
+
+    *released_out = released1;
+    *state_out = states[ref1.index];
+    *send_idle_out = rocketnet_iocp_queue_send_idle( &free_sends, 0, (int) capacity );
+    return true;
+}
+#endif // #if ROCKETNET_DEV
+
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS || ROCKETNET_DEV
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+
+#ifndef _WIN32_WINNT
+#define _WIN32_WINNT 0x0600
+#endif // #ifndef _WIN32_WINNT
+
+#include "rocketnet_coalesce.h"
+#include <ws2tcpip.h>
+#include <mswsock.h>
+#include <mstcpip.h>
 
 // Pop only an enqueue position that existed before stop was captured. A
 // failed operation may enqueue a new reference concurrently, but its position
@@ -441,13 +534,7 @@ static bool rocketnet_iocp_release_send( rocketnet_server_iocp_t * iocp, const r
     rocketnet_iocp_operation_t * op = rocketnet_iocp_send_from_ref( iocp, ref, state );
     if ( !op )
         return false;
-    op->state = ROCKETNET_IOCP_OPERATION_FREE;
-
-    const bool pushed = rocketnet_iocp_queue_push( &iocp->free_sends, ref );
-    rocketnet_assert( pushed );
-    if ( !pushed )
-        op->state = ROCKETNET_IOCP_OPERATION_RETIRED;
-    return pushed;
+    return rocketnet_iocp_queue_release_send( &iocp->free_sends, ref, &op->state );
 }
 
 static bool rocketnet_iocp_acquire_send( rocketnet_server_iocp_t * iocp, rocketnet_iocp_ref_t * ref )
@@ -1486,11 +1573,7 @@ int rocketnet_server_iocp_send_room( rocketnet_server_iocp_t * iocp )
 
 bool rocketnet_server_iocp_send_idle( rocketnet_server_iocp_t * iocp )
 {
-    if ( iocp->num_staged.load( std::memory_order_relaxed ) != 0 )
-        return false;
-    const uint64_t dequeue = iocp->free_sends.dequeue.load( std::memory_order_acquire );
-    const uint64_t enqueue = iocp->free_sends.enqueue.load( std::memory_order_acquire );
-    return enqueue - dequeue >= (uint64_t) iocp->send_queue_size;
+    return rocketnet_iocp_queue_send_idle( &iocp->free_sends, iocp->num_staged.load( std::memory_order_relaxed ), iocp->send_queue_size );
 }
 
 uint8_t * rocketnet_server_iocp_start_packet( rocketnet_server_iocp_t * iocp, const rocketnet_address_t * to, uint64_t * packet_id )
