@@ -189,7 +189,17 @@ jobs:
             standard/TRANSPORT.md standard/MESSAGES.md \
             sdk/rocketnet_wire.h \
             sdk/rocketnet_protocol.h sdk/rocketnet_protocol.cpp \
-            sdk/rocketnet_connect_token.h sdk/rocketnet_connect_token.cpp)
+            sdk/rocketnet_connect_token.h sdk/rocketnet_connect_token.cpp \
+            sdk/rocketnet_message.cpp sdk/rocketnet_message.h \
+            sdk/rocketnet_ack.cpp sdk/rocketnet_ack.h \
+            sdk/rocketnet_client_protocol.cpp sdk/rocketnet_client_protocol.h \
+            sdk/rocketnet_server_protocol.cpp sdk/rocketnet_server_protocol.h \
+            sdk/rocketnet_channel.cpp sdk/rocketnet_channel.h \
+            sdk/rocketnet_channel_reliable.cpp sdk/rocketnet_channel_sequenced.cpp \
+            sdk/rocketnet_channel_receipts.cpp \
+            sdk/rocketnet_keys.cpp sdk/rocketnet_keys.h \
+            sdk/rocketnet_read_write.h sdk/rocketnet_layers.h \
+            sdk/rocketnet.h)
 
           if [ -z "$wire_log" ]; then
             echo "HEAD is $total commit(s) past $newest_tag, none of them wire-affecting."
