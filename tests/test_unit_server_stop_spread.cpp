@@ -125,6 +125,28 @@ static int stop_spread_flushed( const stop_spread_fixture_t * f )
     return total;
 }
 
+// Slot i connected from port 1000 + i, as the handshake would leave it.
+static void stop_spread_connect( rocketnet_server_transport_t * server, int i )
+{
+    rocketnet_address_t address;
+    rocketnet_unit_check( rocketnet_address_parse( &address, "127.0.0.1:0" ) );
+    address.port = (uint16_t) ( 1000 + i );
+
+    const int index = rocketnet_encryption_map_add( server->protocol.encryption_map, &address, 1000.0 );
+    rocketnet_unit_check( index >= 0 );
+
+    struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( server->protocol.encryption_map, index );
+    uint8_t user_data[ROCKETNET_USER_DATA_BYTES] = {};
+    const uint64_t owner_generation = rocketnet_encryption_map_owner_generation( server->protocol.encryption_map, index );
+    rocketnet_unit_check( rocketnet_client_slots_assign( server->protocol.client_slots, (uint64_t) ( i + 1 ), index,
+                                                         owner_generation, user_data ) == i );
+    mapping->control->client_index = i;
+    mapping->client_id = (uint64_t) ( i + 1 );
+    mapping->control->established = 1;
+    mapping->control->timeout_seconds = 1000;
+    memset( &mapping->keys, i + 1, sizeof( mapping->keys ) );
+}
+
 // A server transport of `clients` connected slots (ports 1000 + i) over the
 // fake staged transport; report_room offers the send_room operation.
 static rocketnet_server_transport_t * stop_spread_server( stop_spread_fixture_t * f, rocketnet_server_transport_io_operations_t * operations,
@@ -169,25 +191,7 @@ static rocketnet_server_transport_t * stop_spread_server( stop_spread_fixture_t 
     server->io.operations = operations;
 
     for ( int i = 0; i < clients; i++ )
-    {
-        rocketnet_address_t address;
-        rocketnet_unit_check( rocketnet_address_parse( &address, "127.0.0.1:0" ) );
-        address.port = (uint16_t) ( 1000 + i );
-
-        const int index = rocketnet_encryption_map_add( server->protocol.encryption_map, &address, 1000.0 );
-        rocketnet_unit_check( index >= 0 );
-
-        struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( server->protocol.encryption_map, index );
-        uint8_t user_data[ROCKETNET_USER_DATA_BYTES] = {};
-        const uint64_t owner_generation = rocketnet_encryption_map_owner_generation( server->protocol.encryption_map, index );
-        rocketnet_unit_check( rocketnet_client_slots_assign( server->protocol.client_slots, (uint64_t) ( i + 1 ), index,
-                                                             owner_generation, user_data ) == i );
-        mapping->control->client_index = i;
-        mapping->client_id = (uint64_t) ( i + 1 );
-        mapping->control->established = 1;
-        mapping->control->timeout_seconds = 1000;
-        memset( &mapping->keys, i + 1, sizeof( mapping->keys ) );
-    }
+        stop_spread_connect( server, i );
 
     return server;
 }
@@ -476,6 +480,59 @@ static void test_server_stop_waits_for_flushed_sends()
     delete f;
 }
 
+static int g_stop_spread_dropped_lines;
+
+static void stop_spread_log_capture( void *, enum rocketnet_log_level_t level, const char * message, size_t )
+{
+    if ( level == ROCKETNET_LOG_LEVEL_DEBUG && strstr( message, "dropped disconnect burst" ) != NULL )
+        g_stop_spread_dropped_lines++;
+}
+
+// A running server keeps at most max_clients bursts waiting. With the ring at
+// that cap, one more kick ends the slot and drops its burst: the drop is
+// counted as DISCONNECT_BURST_DROPPED and logged at debug, and the bursts
+// already waiting keep their places.
+static void test_server_kick_at_steady_cap_counts_dropped_burst()
+{
+    stop_spread_fixture_t * f = new stop_spread_fixture_t();
+    f->capacity = 4;
+    const int clients = 2;
+
+    rocketnet_server_transport_io_operations_t operations;
+    rocketnet_server_transport_t * server = stop_spread_server( f, &operations, clients, true );
+    const uint64_t * counters = server->protocol.counters->values;
+    const uint64_t dropped = counters[ROCKETNET_COUNTER_DISCONNECT_BURST_DROPPED];
+
+    // the staging has less room than a burst, so each kick's burst waits
+
+    for ( int i = 0; i < clients; i++ )
+        rocketnet_server_transport_disconnect_client( server, i );
+    rocketnet_unit_check( server->disconnect_burst_count == clients );
+    rocketnet_unit_check( counters[ROCKETNET_COUNTER_DISCONNECT_BURST_DROPPED] == dropped );
+
+    // slot 0 connects again and is kicked with the ring at its steady cap
+
+    stop_spread_connect( server, 0 );
+
+    const enum rocketnet_log_level_t saved_level = rocketnet_log_level_current();
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_DEBUG );
+    g_stop_spread_dropped_lines = 0;
+    rocketnet_log_function( stop_spread_log_capture, NULL );
+
+    rocketnet_server_transport_disconnect_client( server, 0 );
+
+    rocketnet_log_function( NULL, NULL );
+    rocketnet_log_level( saved_level );
+
+    rocketnet_unit_check( rocketnet_server_transport_num_connected_clients( server ) == 0 );
+    rocketnet_unit_check( server->disconnect_burst_count == clients );
+    rocketnet_unit_check( counters[ROCKETNET_COUNTER_DISCONNECT_BURST_DROPPED] == dropped + 1 );
+    rocketnet_unit_check( g_stop_spread_dropped_lines == 1 );
+
+    rn_test_server_transport_stop_and_destroy( server );
+    delete f;
+}
+
 REGISTER_UNIT_TEST( test_server_stop_spreads_disconnect_bursts_across_updates );
 REGISTER_UNIT_TEST( test_server_stop_waits_for_flushed_sends );
 REGISTER_UNIT_TEST( test_server_refused_starts_counted_by_cause );
@@ -483,3 +540,4 @@ REGISTER_UNIT_TEST( test_server_stop_polls_are_the_stop_steps );
 REGISTER_UNIT_TEST( test_server_stop_abandons_an_unreachable_burst );
 REGISTER_UNIT_TEST( test_server_kick_spreads_its_burst_across_updates );
 REGISTER_UNIT_TEST( test_server_send_capacity_reports_staged_room );
+REGISTER_UNIT_TEST( test_server_kick_at_steady_cap_counts_dropped_burst );

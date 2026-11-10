@@ -3604,6 +3604,9 @@ static void rocketnet_server_transport_disconnect_client_impl( struct rocketnet_
             // work and drop only this new burst's redundant notification
             // copies. Reset wipes the mapping key without ever copying or
             // counting a packet, and the local connection still ends now.
+            rocketnet_debug( "server dropped disconnect burst for client %d: %d bursts already waiting", client_index,
+                             server_transport->disconnect_burst_count );
+            server_transport->protocol.counters->values[ROCKETNET_COUNTER_DISCONNECT_BURST_DROPPED]++;
             rocketnet_server_transport_close_client_locally( server_transport, client_index, false );
         }
 
