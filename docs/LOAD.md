@@ -209,8 +209,8 @@ stamp removal, the public API allowance, and buffers sized from runtime
 configuration with the 512-client allocation floor. Earlier Linux and Windows
 receipts in this guide predated some of those changes and are not current sizing
 values. This revision's Linux x86-64 development build with io_uring and XDP
-reports 3,112,481,547 bytes for that light server and 15,195,570 bytes for
-that light client; the other figures and the tables below are from the
+reports 3,111,387,923 bytes for that light server, and at most 15,195,570
+bytes for that light client; the other figures and the tables below are from the
 2026-11-01 source and were not regenerated for this revision.
 These are configuration calculations and planned allocator peaks, not
 measured wire usage. The summary reports each endpoint's
