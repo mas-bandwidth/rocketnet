@@ -20,6 +20,10 @@
 #include <stdint.h>
 #include <string.h>
 
+// every address probe the walk makes, counted in development builds only
+// (sdk/rocketnet_server_replay_marks.cpp)
+uint32_t rocketnet_server_replay_marks_comparisons_for_test( const struct rocketnet_server_replay_marks_t * marks );
+
 #define ROCKETNET_REPLAY_MARKS_TEST_HANDSHAKE_DEADLINE 1005.0
 #define ROCKETNET_REPLAY_MARKS_TEST_MAX_CALLS 16
 
@@ -276,7 +280,8 @@ static void test_server_replay_marks_steady_state_marks_coalesce()
 }
 
 // A mass disconnect walks every slot once: every marked slot's forget is
-// queued and the address index clears its record without a scan of the rest.
+// queued and the address table clears the other records of its address
+// without a scan of the rest.
 
 static void test_server_replay_marks_mass_disconnect_is_linear()
 {
@@ -311,9 +316,14 @@ static void test_server_replay_marks_mass_disconnect_is_linear()
         rocketnet_encryption_map_remove_current( fixture.map, records[i].mapping );
     }
 
+    // every queued forget clears the other records of its address: a
+    // constant number of address comparisons each, never a scan of every slot
+
+    const uint32_t comparisons_before = rocketnet_server_replay_marks_comparisons_for_test( fixture.marks );
     memset( &counts, 0, sizeof( counts ) );
     rocketnet_server_replay_marks_walk( fixture.marks, fixture.slots, fixture.map, &sink );
     rocketnet_unit_check( counts.forgets == clients && counts.marks == 0 );
+    rocketnet_unit_check( rocketnet_server_replay_marks_comparisons_for_test( fixture.marks ) - comparisons_before <= 8u * (uint32_t) clients );
 
     memset( &counts, 0, sizeof( counts ) );
     rocketnet_server_replay_marks_walk( fixture.marks, fixture.slots, fixture.map, &sink );

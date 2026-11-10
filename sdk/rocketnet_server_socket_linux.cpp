@@ -2831,51 +2831,27 @@ void rocketnet_server_socket_replay_commit( struct rocketnet_server_socket_t * s
     bool * forget_failed = server_socket->replay_forget_failed;
     memset( forget_failed, 0, marks->capacity * sizeof( bool ) );
 
-    if ( marks->forget_count > 0 )
-    {
-        // a forget of a key the kernel never held needs no delete: the walk
-        // forgets every seen slot for its reply MAC, not only the marked ones
+    // a forget of a key the kernel never held needs no delete; the held keys
+    // move to the front of the forgets and are deleted in one batch
 
-        uint32_t delete_count = 0;
+    if ( rocketnet_xdp_replay_marks_drop_unheld_forgets( marks ) > 0 )
+    {
+        struct bpf_map_batch_opts opts;
+        memset( &opts, 0, sizeof( opts ) );
+        opts.sz = sizeof( opts );
+        __u32 count = marks->forget_count;
+        const bool batch_deleted = bpf_map_delete_batch( server_socket->replay_map_fd, marks->forgets, &count, &opts ) == 0;
+
         for ( uint32_t i = 0; i < marks->forget_count; i++ )
         {
-            forget_failed[i] = false;
-            if ( rocketnet_xdp_replay_marks_kernel_holds( marks, &marks->forgets[i] ) )
-                delete_count++;
-        }
+            // a missing key is not a failure; a refused batch (an older kernel,
+            // a missing key, or any other error) is walked one syscall at a
+            // time so each forget's outcome is known
 
-        if ( delete_count == marks->forget_count )
-        {
-            struct bpf_map_batch_opts opts;
-            memset( &opts, 0, sizeof( opts ) );
-            opts.sz = sizeof( opts );
-            __u32 count = marks->forget_count;
-            const bool batch_deleted = bpf_map_delete_batch( server_socket->replay_map_fd, marks->forgets, &count, &opts ) == 0;
-
-            for ( uint32_t i = 0; i < marks->forget_count; i++ )
+            if ( !batch_deleted && bpf_map_delete_elem( server_socket->replay_map_fd, &marks->forgets[i] ) != 0 && errno != ENOENT )
             {
-                // a missing key is not a failure; a refused batch (an older kernel,
-                // a missing key, or any other error) is walked one syscall at a
-                // time so each forget's outcome is known
-
-                if ( !batch_deleted && bpf_map_delete_elem( server_socket->replay_map_fd, &marks->forgets[i] ) != 0 && errno != ENOENT )
-                {
-                    forget_failed[i] = true;
-                    rocketnet_server_socket_replay_commit_failed( server_socket, "bpf_map_delete_elem" );
-                }
-            }
-        }
-        else
-        {
-            for ( uint32_t i = 0; i < marks->forget_count; i++ )
-            {
-                if ( !rocketnet_xdp_replay_marks_kernel_holds( marks, &marks->forgets[i] ) )
-                    continue;
-                if ( bpf_map_delete_elem( server_socket->replay_map_fd, &marks->forgets[i] ) != 0 && errno != ENOENT )
-                {
-                    forget_failed[i] = true;
-                    rocketnet_server_socket_replay_commit_failed( server_socket, "bpf_map_delete_elem" );
-                }
+                forget_failed[i] = true;
+                rocketnet_server_socket_replay_commit_failed( server_socket, "bpf_map_delete_elem" );
             }
         }
     }
