@@ -70,12 +70,12 @@ read, and a closed walk's fields are all written by `WalkBegin`, so the view
 leaves those values out. The witnesses run without the view; each also fails
 under it (checked on hulk). Two descriptors in a ring of four pass without the
 view (5,298,260 distinct states, 86 s); that instance does not reach the third
-witness, which needs a third descriptor.
+or fourth witness, which need a third descriptor.
 
 ## Reversed witnesses
 
-Each fails with `LiveIsOrder`. Every counterexample was checked against the C
-by hand.
+The first three fail with `LiveIsOrder`; the fourth fails with
+`WalkExact`. Every counterexample was checked against the C by hand.
 
 1. **`MCRNUnreliableRingLayoutBrokenNoRenumber.cfg`** (`Renumber = FALSE`, a
    push after a ticket wrap that renumbers nothing). TLC: push 1 (ticket 1),
@@ -114,3 +114,22 @@ by hand.
 For any other descriptor the renumber needs no such test: its tombstones lie
 before its one live entry, so the loop reaches them, still dead, before it
 gives that entry a new ticket.
+
+4. **`MCRNUnreliableRingLayoutBrokenWalkFromHead.cfg`** (`WalkSnapshot =
+   FALSE`): the walk reads from the current head instead of the head
+   captured at its start. TLC: push 1 (ticket 1), push 2 (ticket 2), push 3
+   (ticket 3, the counter wraps), unlink 2, unlink 3, then push 1 again:
+   the renumber writes the survivors (1 under ticket 2, 3 under ticket 3)
+   at positions 0 and 1 and leaves 3's old copy (3, ticket 3) at position
+   2, outside the live range (`count = 2`). A walk begins there (base 0,
+   span 2, queue 1, 3); unlink 1 and its sync move the head from 0 to 1
+   and drop `count` to 1. The broken walk re-reads from the moved head
+   over its old span: position 1 returns 3, then position 2 returns 3
+   again, still live under `ticket[3] = 3`, so `wseen = <<3, 3>>` and
+   `WalkExact` fails. Against the C: `rn_unreliable_walk_next` reads
+   `(walk->base + walk->step) % entries`, the head as it stood when
+   `rn_unreliable_walk_begin` ran; reading
+   `endpoint->unreliable_ring_head` instead reaches the stale copy the
+   renumber left beyond `unreliable_ring_used` once `rn_unreliable_sync`
+   has advanced the head past an unlinked entry, and the same record is
+   packed twice.

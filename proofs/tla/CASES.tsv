@@ -562,6 +562,7 @@ MCRNUnreliableRingLayout.cfg	MCRNUnreliableRingLayout.tla	pass	-	check	rnunrelia
 MCRNUnreliableRingLayoutBrokenNoRenumber.cfg	MCRNUnreliableRingLayout.tla	invariant	LiveIsOrder	check	rnunreliableringlayout	required	-
 MCRNUnreliableRingLayoutBrokenStaleSurvivors.cfg	MCRNUnreliableRingLayout.tla	invariant	LiveIsOrder	check	rnunreliableringlayout	required	-
 MCRNUnreliableRingLayoutBrokenKeepPushed.cfg	MCRNUnreliableRingLayout.tla	invariant	LiveIsOrder	check	rnunreliableringlayout	required	-
+MCRNUnreliableRingLayoutBrokenWalkFromHead.cfg	MCRNUnreliableRingLayout.tla	invariant	WalkExact	check	rnunreliableringlayout	required	-
 MCRNReplayLayout.cfg	MCRNReplayLayout.tla	pass	-	check	rnreplaylayout	required	-
 MCRNReplayLayoutBrokenNoWrap.cfg	MCRNReplayLayout.tla	invariant	WindowIsTruth	check	rnreplaylayout	required	-
 MCRNReplayLayoutBrokenBeginEarly.cfg	MCRNReplayLayout.tla	invariant	WindowIsTruth	check	rnreplaylayout	required	-
