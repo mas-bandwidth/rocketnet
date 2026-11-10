@@ -1357,9 +1357,10 @@ struct rocketnet_client_config_t
     int max_message_bytes;
 
     /// ROCKETNET_CLIENT_SEND_MESSAGE_BUFFER_BYTES sets queued message bytes.
-    /// Range is 12288 .. 268435456, and it must hold one max_message_bytes
-    /// message whole: a third of it holds 1152-byte fragments, so a little
-    /// over three times max_message_bytes. Default is 4194304.
+    /// Range is 12288 .. 268435456. It holds queued messages of up to 1152
+    /// bytes; a larger message is held in send space sized from
+    /// receive_message_buffer_bytes, so this field has no size relation to
+    /// max_message_bytes. Default is 4194304.
 
     int send_message_buffer_bytes;
 
@@ -1592,10 +1593,10 @@ struct rocketnet_server_config_t
     int max_message_bytes;
 
     /// ROCKETNET_SERVER_SEND_MESSAGE_BUFFER_BYTES sets queued message bytes
-    /// per client. Range is 12288 .. 268435456, and it must hold one
-    /// max_message_bytes message whole: a third of it holds 1152-byte
-    /// fragments, so a little over three times max_message_bytes. Default is
-    /// 4194304.
+    /// per client. Range is 12288 .. 268435456. It holds queued messages of
+    /// up to 1152 bytes; a larger message is held in send space sized from
+    /// receive_message_buffer_bytes, so this field has no size relation to
+    /// max_message_bytes. Default is 4194304.
 
     int send_message_buffer_bytes;
 

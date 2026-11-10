@@ -83,8 +83,7 @@ development key must not be used for production.
      returns `0`).
    - A syntactically valid number that falls outside the field's legal range or
      violates a cross-field invariant (such as
-     `max_message_bytes > receive_message_buffer_bytes`,
-     a send buffer whose large-slab share cannot hold one maximum message, or
+     `max_message_bytes > receive_message_buffer_bytes` or
      `packets_in_flight < reliable_messages_in_flight`) usually fails with
      `ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE`. Some fields have
      a specific status: for example, a negative send budget returns
