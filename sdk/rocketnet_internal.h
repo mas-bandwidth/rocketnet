@@ -503,7 +503,7 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
 #endif // #if ROCKETNET_MAX_CLIENTS < 1000
 
 // the send rate (hertz): handshake retransmission and keep-alive pacing, one
-// value for client and server (RN-1 t3 "send rate")
+// value for client and server (RN-1 t17 "send rate")
 
 #define ROCKETNET_DEFAULT_SEND_RATE            10.0
 
