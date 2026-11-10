@@ -667,3 +667,41 @@ static void test_both_fifos_walk_only_what_is_due()
 
 REGISTER_UNIT_TEST( test_both_fifos_walk_only_what_is_due );
 #endif // #if ROCKETNET_DEV
+
+// A sent_index with every cell used cannot happen (2P cells hold at most P
+// entries), so it means the index memory was corrupted. Release builds
+// compile the asserts out: the backward-shift scan that removes an acked
+// packet is bounded by the table size and ends the connection through
+// ack->error instead of probing forever.
+static void test_sent_index_full_scan_is_bounded()
+{
+    resend_timing_fixture_t f;
+    rocketnet_message_default_config( &f.config );
+    resend_timing_open( &f );
+
+    const double t0 = resend_timing_start;
+    const uint64_t packet_id = resend_timing_send( &f, t0, NULL );
+
+    // white box: fill every empty cell with a packet id no ack will name
+
+    rn_region_t * region = f.region;
+    const uint32_t cap = region->sent_index_entries;
+    check( cap > 0 );
+    for ( uint32_t i = 0; i < cap; i++ )
+    {
+        rn_sent_index_t * cell = &region->sent_index[i];
+        if ( cell->used )
+            continue;
+        cell->packet_id = 0x8000000000000000ULL + i;
+        cell->entry = 0;
+        cell->used = 1;
+    }
+
+    check( f.ack.error == ROCKETNET_DISCONNECT_REASON_NONE );
+    check( rn_window_ack_on_ack( &f.ack, packet_id, t0 + 0.020 ) == 1 );
+    check( f.ack.error == ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION );
+
+    resend_timing_close( &f );
+}
+
+REGISTER_UNIT_TEST( test_sent_index_full_scan_is_bounded );
