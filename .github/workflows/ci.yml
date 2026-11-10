@@ -198,9 +198,11 @@ jobs:
   #   unit        sodium, the unit suite (under strace on Linux), the purity
   #               and ambient config checks
   #   functional  the functional suites (auto ladder, portable pin, and the
-  #               production library's on Release), the family matrix, the
-  #               lifecycle binary
-  #   checks      the read-only gates and audits, the native transport
+  #               production library's on Release), the family matrix on
+  #               macOS, the lifecycle binary
+  #   transport_matrix  (Linux) the transport family matrix and its libxdp
+  #               range check
+  #   checks     the read-only gates and audits, the native transport
   #               contract, memory plans, the fuzz corpus replay on macOS
   #   builds      the extra builds and consumers: without XDP, without server
   #               libraries, the history budget, SDK install and relocation,
@@ -224,9 +226,10 @@ jobs:
         os: [linux, macos]
         build_type: [Debug, Release]
         leg: [unit, functional, checks, builds]
-        # The per-commit tier runs eight of the seventeen rows: five Linux rows
-        # (the Release unit row carries the builds leg's steps) and three macOS
-        # rows (macOS Release functional_production is the include row below).
+        # The per-commit tier runs ten of the nineteen rows: seven Linux rows
+        # (the Release unit row carries the builds leg's steps; the two
+        # transport_matrix rows are include rows below) and three macOS rows
+        # (macOS Release functional_production is the include row below).
         # The nightly tier runs all.
         exclude: ${{ fromJSON(inputs.full && '[]' || '[{"os":"linux","build_type":"Debug","leg":"checks"},{"os":"linux","build_type":"Debug","leg":"builds"},{"os":"linux","build_type":"Release","leg":"builds"},{"os":"macos","build_type":"Debug","leg":"functional"},{"os":"macos","build_type":"Debug","leg":"checks"},{"os":"macos","build_type":"Debug","leg":"builds"},{"os":"macos","build_type":"Release","leg":"unit"},{"os":"macos","build_type":"Release","leg":"checks"},{"os":"macos","build_type":"Release","leg":"builds"}]') }}
         # dev: the ROCKETNET_DEV setting. Debug rows build the default
@@ -254,6 +257,13 @@ jobs:
           # value outside the matrix adds a combination, and every field is
           # given here so it does not depend on the include rows above.
           - { os: macos, build_type: Release, leg: functional_production, dev: 'OFF', runner: '["self-hosted","macOS","ARM64","fleet"]' }
+          # The Linux transport family matrix runs in a row of its own beside
+          # each Linux functional row: its xdp cell's eleven cases in a guest
+          # take 43 to 46 s, which with the functional suite took Linux Debug
+          # functional to the two-minute bound. The macOS matrix stays in its
+          # functional row (about a second).
+          - { os: linux, build_type: Debug, leg: transport_matrix, dev: 'ON', runner: '["self-hosted","Linux","X64","fleet"]' }
+          - { os: linux, build_type: Release, leg: transport_matrix, dev: 'OFF', runner: '["self-hosted","Linux","X64","fleet"]' }
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
@@ -551,7 +561,7 @@ jobs:
       # on this kernel and PASS or FAIL before the suite runs
       # (tools/check_memlock.sh, docs/LINUX.md section 8).
       - name: Locked-memory limit covers the io_uring cases
-        if: runner.os == 'Linux' && matrix.leg == 'functional'
+        if: runner.os == 'Linux' && (matrix.leg == 'functional' || matrix.leg == 'transport_matrix')
         run: bash tools/check_memlock.sh
 
       # This run includes test_unit_case_memory, the row that enforces the unit
@@ -626,9 +636,11 @@ jobs:
       # VM-TIER-MISSING line naming what the host lacks (scripts/vm-tier-missing).
       # A client of auto sets no client pin, so that cell runs the client's
       # automatic order on the wire (gso on Linux, msgx on macOS, iocp on
-      # Windows; TRANSPORTS.md "Client transports").
+      # Windows; TRANSPORTS.md "Client transports"). On Linux the matrix is
+      # the transport_matrix row's, beside the functional row; on macOS it
+      # runs in the functional row.
       - name: Transport family matrix (every transport on IPv4, IPv6 and dual stack)
-        if: matrix.leg == 'functional'
+        if: (matrix.leg == 'functional' && runner.os != 'Linux') || matrix.leg == 'transport_matrix'
         shell: bash
         env:
           TRANSPORT_MATRIX_LINUX: |
@@ -777,7 +789,7 @@ jobs:
       # cell ran against and refuses one outside the tested range, so a host
       # upgrade past 1.6 is tested before it is trusted.
       - name: The XDP cell ran against a libxdp in the tested range (1.4 to 1.6)
-        if: runner.os == 'Linux' && matrix.leg == 'functional'
+        if: runner.os == 'Linux' && matrix.leg == 'transport_matrix'
         shell: bash
         run: |
           set -euo pipefail

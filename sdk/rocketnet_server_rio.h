@@ -75,7 +75,8 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context,
                                                       rocketnet_address_t * bind_address, int max_clients
 #if ROCKETNET_DEV
     // Development constructor control: fail after the socket, RIO table,
-    // region, completion queues, request queue or first posted receive.
+    // region, completion queues, request queue, first posted receive or last
+    // posted receive.
                                                       ,
                                                       int fail_stage = 0
 #endif // #if ROCKETNET_DEV
@@ -126,6 +127,8 @@ uint64_t rocketnet_server_rio_allocation_bytes( int max_clients );
 
 #if ROCKETNET_DEV
 uintptr_t rocketnet_server_rio_test_socket( rocketnet_server_rio_t * rio );
+// the waits between drain passes that failed creates have made in this process
+int rocketnet_server_rio_test_create_drain_waits();
 // The fault seam, compiled only into the test executable. The next count
 // events at a fault point fail with status, as the host fails them: a send or
 // receive completion reports status as its completion status; a send or

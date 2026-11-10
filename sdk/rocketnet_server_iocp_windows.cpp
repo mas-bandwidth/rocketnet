@@ -72,6 +72,8 @@ struct rocketnet_iocp_ref_queue_t
     rocketnet_iocp_ref_cell_t * stalled_pop_cell = NULL;
     uint64_t stalled_pop_sequence = 0;
     bool stall_next_pop = false;
+    int stalled_pop_holds = 0;                  // refused pushes the stalled pop outlasts before its store lands
+    std::atomic<uint64_t> yields{ 0 };          // times a retried push gave up the processor
 #endif // #if ROCKETNET_DEV
 };
 
@@ -116,7 +118,9 @@ static bool rocketnet_iocp_queue_push( rocketnet_iocp_ref_queue_t * queue, const
         else if ( difference < 0 )
         {
 #if ROCKETNET_DEV
-            if ( queue->stalled_pop_cell != NULL )
+            if ( queue->stalled_pop_cell != NULL && queue->stalled_pop_holds > 0 )
+                queue->stalled_pop_holds--;
+            else if ( queue->stalled_pop_cell != NULL )
             {
                 queue->stalled_pop_cell->sequence.store( queue->stalled_pop_sequence, std::memory_order_release );
                 queue->stalled_pop_cell = NULL;
@@ -183,15 +187,62 @@ static bool rocketnet_iocp_queue_pop( rocketnet_iocp_ref_queue_t * queue, rocket
     return true;
 }
 
+// proofs/tla/RNIocpRefQueue.tla PushRead's refusal branch: a refused push
+// keeps its operation and tries again (RefusedNeverLost); giving up would
+// lose the operation for good (MCRNIocpRefQueueBrokenDropRefused.cfg). Each
+// queue holds at most capacity operations, so the only refusal is a pop that
+// claimed this cell's last round and has not yet stored the sequence that
+// frees it (RefusalOnlyWhilePopStalled): two statements of another thread,
+// which last only while that thread is descheduled between them. The retry
+// is therefore never an empty spin: every refusal pauses the processor, and
+// every ROCKETNET_PLATFORM_SPIN_YIELD_AFTER refusals the caller gives up its
+// processor so the preempted popper can run on it, as
+// rocketnet_platform_spin_lock_u64 does for a preempted holder. That is the
+// fairness the model's EveryOperationPopped assumes of the popper.
+static void rocketnet_iocp_queue_push_retry( rocketnet_iocp_ref_queue_t * queue, const rocketnet_iocp_ref_t & ref )
+{
+    unsigned refusals = 0;
+
+    while ( !rocketnet_iocp_queue_push( queue, ref ) )
+    {
+        if ( ++refusals < ROCKETNET_PLATFORM_SPIN_YIELD_AFTER )
+        {
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+            YieldProcessor();
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+            continue;
+        }
+
+        refusals = 0;
+#if ROCKETNET_DEV
+        queue->yields.fetch_add( 1, std::memory_order_relaxed );
+#endif // #if ROCKETNET_DEV
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+        SwitchToThread();
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    }
+}
+
 static bool rocketnet_iocp_queue_release_send( rocketnet_iocp_ref_queue_t * free_sends,
                                                const rocketnet_iocp_ref_t & ref, int * op_state )
 {
     *op_state = ROCKETNET_IOCP_OPERATION_FREE;
-
-    while ( !rocketnet_iocp_queue_push( free_sends, ref ) )
-    {
-    }
+    rocketnet_iocp_queue_push_retry( free_sends, ref );
     return true;
+}
+
+// proofs/tla/RNIocpRetryStop.tla PostRefused, PushClaim and PushPublish: a
+// refused receive post is RETRY and its reference goes onto retry_receives.
+// The queue has a cell for every receive operation, so it is never full; one
+// completion worker, production's count, is its only popper and never sees
+// the push refused (MCRNIocpRefQueueOneConsumer.cfg). With more workers one
+// stalled in its pop refuses the push, which is retried as a send release
+// is: a refusal never retires the receive (RetiredOnlyByStop).
+static void rocketnet_iocp_queue_retry_receive( rocketnet_iocp_ref_queue_t * retry_receives,
+                                                const rocketnet_iocp_ref_t & ref, int * op_state )
+{
+    *op_state = ROCKETNET_IOCP_OPERATION_RETRY;
+    rocketnet_iocp_queue_push_retry( retry_receives, ref );
 }
 
 static bool rocketnet_iocp_queue_send_idle( const rocketnet_iocp_ref_queue_t * free_sends,
@@ -205,7 +256,12 @@ static bool rocketnet_iocp_queue_send_idle( const rocketnet_iocp_ref_queue_t * f
 }
 
 #if ROCKETNET_DEV
-bool rocketnet_server_iocp_test_release_send_retries_stalled_pop( bool * released_out, int * state_out, bool * send_idle_out )
+// A pop stalls between its CAS and its sequence store and outlasts refusals
+// refused pushes of the release that needs its cell (one or more). Reports
+// the release, the operation's state, send_idle once both operations are
+// back, and how many times the retried release gave up the processor.
+bool rocketnet_server_iocp_test_release_send_retries_stalled_pop( int refusals, bool * released_out, int * state_out, bool * send_idle_out,
+                                                                  uint64_t * yields_out )
 {
     const uint64_t capacity = 4;
     alignas( rocketnet_iocp_ref_cell_t ) uint8_t storage[capacity * sizeof( rocketnet_iocp_ref_cell_t )];
@@ -235,6 +291,7 @@ bool rocketnet_server_iocp_test_release_send_retries_stalled_pop( bool * release
     states[ref1.index] = ROCKETNET_IOCP_OPERATION_STAGED;
     ref1.generation = 1;
 
+    free_sends.stalled_pop_holds = refusals - 1;
     const bool released1 = rocketnet_iocp_queue_release_send( &free_sends, ref1, &states[ref1.index] );
     const bool released0 = rocketnet_iocp_queue_release_send( &free_sends, ref0, &states[ref0.index] );
     if ( !released0 )
@@ -243,6 +300,51 @@ bool rocketnet_server_iocp_test_release_send_retries_stalled_pop( bool * release
     *released_out = released1;
     *state_out = states[ref1.index];
     *send_idle_out = rocketnet_iocp_queue_send_idle( &free_sends, 0, (int) capacity );
+    *yields_out = free_sends.yields.load( std::memory_order_relaxed );
+    return true;
+}
+
+// The retry queue at its boundary, capacity 4 with all four receive
+// operations on it at once. One worker's pop stalls between its CAS and its
+// sequence store; a second worker takes the next operation, is refused the
+// post again and pushes it back, onto the cell the stalled pop still holds.
+// Reports that every push at the boundary was accepted, the state of the
+// operation pushed against the stalled pop, and the order the four leave in.
+bool rocketnet_server_iocp_test_retry_receive_keeps_operation( bool * boundary_accepted_out, int * state_out, uint32_t * order_out )
+{
+    const uint64_t capacity = 4;
+    alignas( rocketnet_iocp_ref_cell_t ) uint8_t storage[capacity * sizeof( rocketnet_iocp_ref_cell_t )];
+    rocketnet_iocp_ref_queue_t retry_receives;
+    rocketnet_iocp_queue_initialize( &retry_receives, storage, capacity );
+
+    int states[capacity];
+    bool accepted = true;
+    for ( uint32_t i = 0; i < capacity; ++i )
+    {
+        const rocketnet_iocp_ref_t ref = { 1, 1, i };
+        states[i] = ROCKETNET_IOCP_OPERATION_RECEIVE_POSTED;
+        rocketnet_iocp_queue_retry_receive( &retry_receives, ref, &states[i] );
+        accepted = accepted && states[i] == ROCKETNET_IOCP_OPERATION_RETRY;
+    }
+    *boundary_accepted_out = accepted && retry_receives.enqueue.load( std::memory_order_relaxed ) == capacity;
+
+    retry_receives.stall_next_pop = true;
+
+    rocketnet_iocp_ref_t stalled = {};
+    rocketnet_iocp_ref_t taken = {};
+    if ( !rocketnet_iocp_queue_pop( &retry_receives, &stalled ) || !rocketnet_iocp_queue_pop( &retry_receives, &taken ) )
+        return false;
+
+    rocketnet_iocp_queue_retry_receive( &retry_receives, taken, &states[taken.index] );
+    *state_out = states[taken.index];
+    rocketnet_iocp_queue_retry_receive( &retry_receives, stalled, &states[stalled.index] );
+
+    for ( uint32_t i = 0; i < capacity; ++i )
+    {
+        rocketnet_iocp_ref_t ref = {};
+        order_out[i] = rocketnet_iocp_queue_pop( &retry_receives, &ref ) ? ref.index : UINT32_MAX;
+    }
+
     return true;
 }
 #endif // #if ROCKETNET_DEV
@@ -763,6 +865,9 @@ static bool rocketnet_iocp_post_receive( rocketnet_server_iocp_t * iocp, rocketn
 
     if ( result != 0 && error == 0 )
         error = WSAGetLastError();
+    // A queued datagram longer than the buffer is WSA_IO_PENDING too on
+    // Windows 11, not an immediate WSAEMSGSIZE: its one completion carries the
+    // truncation (tests/test_iocp.cpp test_windows_oversize_receive_at_post).
     if ( result == 0 || error == WSA_IO_PENDING )
         return true; // Immediate success also produces exactly one IOCP event.
     iocp->pending.fetch_sub( 1, std::memory_order_release );
@@ -773,12 +878,7 @@ static bool rocketnet_iocp_post_receive( rocketnet_server_iocp_t * iocp, rocketn
     if ( rocketnet_platform_receive_status_is_reset( error ) )
         rocketnet_platform_count_receive_reset();
     iocp->counters[ROCKETNET_IOCP_RECEIVE_REPOST_FAILED].fetch_add( 1, std::memory_order_relaxed );
-    op->state = ROCKETNET_IOCP_OPERATION_RETRY;
-
-    const bool queued = rocketnet_iocp_queue_push( &iocp->retry_receives, op->completion_ref );
-    rocketnet_assert( queued );
-    if ( !queued )
-        op->state = ROCKETNET_IOCP_OPERATION_RETIRED;
+    rocketnet_iocp_queue_retry_receive( &iocp->retry_receives, op->completion_ref, &op->state );
     return false;
 }
 
@@ -2190,6 +2290,67 @@ void rocketnet_server_iocp_test_fail_next( rocketnet_server_iocp_t * iocp, int f
 int rocketnet_server_iocp_test_faults_left( rocketnet_server_iocp_t * iocp, int fault )
 {
     return iocp->test_faults[fault].load( std::memory_order_acquire );
+}
+
+// proofs/tla/MCRNIocpRetryStopBrokenRefuseRetires.cfg, its trace driven
+// through rocketnet_iocp_post_receive itself with no socket, port or worker:
+// two receive operations and a retry queue of two cells, every post refused
+// by the post fault seam before any Winsock call. Both operations wait on
+// the retry queue; one worker's pop claims the first cell and stalls before
+// its sequence store; a second worker takes the other operation, whose
+// repost is refused again, and post_receive pushes it onto the cell the
+// stalled pop still holds. Reports that operation's state after the post,
+// the pending count, the refused posts counted and the retries queued.
+bool rocketnet_server_iocp_test_post_receive_retries_refused_push( int * state_out, int * pending_out, uint64_t * repost_failed_out,
+                                                                   int * queued_out )
+{
+    void * storage = rocketnet_malloc( NULL, sizeof( rocketnet_server_iocp_t ) );
+    void * operations = rocketnet_malloc( NULL, 2 * sizeof( rocketnet_iocp_operation_t ) );
+    if ( !storage || !operations )
+    {
+        rocketnet_free( NULL, storage );
+        rocketnet_free( NULL, operations );
+        return false;
+    }
+
+    rocketnet_server_iocp_t * iocp = new ( storage ) rocketnet_server_iocp_t();
+    alignas( rocketnet_iocp_ref_cell_t ) uint8_t cells[2 * sizeof( rocketnet_iocp_ref_cell_t )];
+    rocketnet_iocp_queue_initialize( &iocp->retry_receives, cells, 2 );
+    iocp->num_workers = 1;
+    iocp->owner_epoch = 1;
+    iocp->receives = (rocketnet_iocp_operation_t *) operations;
+    for ( int i = 0; i < 2; ++i )
+    {
+        rocketnet_iocp_operation_t * op = new ( &iocp->receives[i] ) rocketnet_iocp_operation_t();
+        op->index = i;
+        op->owner_epoch = iocp->owner_epoch;
+        op->state = ROCKETNET_IOCP_OPERATION_IDLE;
+    }
+
+    rocketnet_server_iocp_test_fail_next( iocp, ROCKETNET_IOCP_TEST_FAULT_RECEIVE_POST, 3, WSAENOBUFS );
+    bool valid = !rocketnet_iocp_post_receive( iocp, &iocp->receives[0] ) && !rocketnet_iocp_post_receive( iocp, &iocp->receives[1] );
+
+    iocp->retry_receives.stall_next_pop = true;
+
+    rocketnet_iocp_ref_t stalled = {};
+    rocketnet_iocp_ref_t taken = {};
+    valid = valid && rocketnet_iocp_queue_pop( &iocp->retry_receives, &stalled ) && rocketnet_iocp_queue_pop( &iocp->retry_receives, &taken );
+
+    rocketnet_iocp_operation_t * op = valid ? rocketnet_iocp_receive_from_ref( iocp, taken, ROCKETNET_IOCP_OPERATION_RETRY ) : NULL;
+    valid = valid && op && !rocketnet_iocp_post_receive( iocp, op );
+
+    *state_out = op ? op->state : -1;
+    *pending_out = iocp->pending.load( std::memory_order_relaxed );
+    *repost_failed_out = iocp->counters[ROCKETNET_IOCP_RECEIVE_REPOST_FAILED].load( std::memory_order_relaxed );
+    *queued_out = (int) rocketnet_iocp_queue_count( &iocp->retry_receives );
+
+    for ( int i = 0; i < 2; ++i )
+        iocp->receives[i].~rocketnet_iocp_operation_t();
+    iocp->~rocketnet_server_iocp_t();
+    rocketnet_free( NULL, operations );
+    rocketnet_free( NULL, storage );
+
+    return valid;
 }
 #endif // #if ROCKETNET_DEV
 
