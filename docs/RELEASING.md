@@ -141,7 +141,11 @@ required runs are:
 - **TLC records** ([.github/workflows/tlc.yml](../.github/workflows/tlc.yml)):
   `Model records are current`, a nightly workflow: run it with
   workflow_dispatch on the release commit
-  (`gh workflow run tlc.yml --ref main`). Release Check enforces this on the
+  (`gh workflow run tlc.yml --ref main`). It runs every case of a stale group
+  that is not timeout debt, requires every committed record to be current,
+  and requires every unfinished record to be declared timeout debt with its
+  reason; it does not run the timeout-debt cases. A dispatched run is never
+  replaced or cancelled by a scheduled one. Release Check enforces this on the
   tag push.
 - **docs** ([.github/workflows/docs.yml](../.github/workflows/docs.yml)):
   `docs (MrDocs HTML reference build)`.
@@ -160,8 +164,10 @@ also applies to release qualification: the gate covers its selected translation
 units and compares findings with the baseline. Required green jobs do not
 override a known failure in the checks they are intended to run.
 
-The other `nightly*.yml` workflows and the fuzz-nightly workflow are watches,
-not release gates. The `msan` workflow (`MemorySanitizer`) is advisory: its
+The other `nightly*.yml` workflows, the fuzz-nightly workflow and
+[tlc-debt.yml](../.github/workflows/tlc-debt.yml) (the timeout-debt cases run
+to their declared results, weekly, under a 96-hour deadline) are watches, not
+release gates. The `msan` workflow (`MemorySanitizer`) is advisory: its
 job is `continue-on-error`. The release commit must also be the commit the tag
 points at, not a later merge.
 
