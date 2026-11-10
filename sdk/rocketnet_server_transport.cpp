@@ -132,10 +132,11 @@ struct rocketnet_server_receive_buffer_t
 
 struct alignas( 64 ) rocketnet_server_payload_slot_info_t
 {
+    uint64_t connection_id;                         // the connection that sealed this frame
     rocketnet_address_t to;
     int wire_bytes;
     int client_index;
-    uint8_t padding[64 - sizeof( rocketnet_address_t ) - 2 * sizeof( int )]; // the rest of the cache line, explicit
+    uint8_t padding[64 - sizeof( uint64_t ) - sizeof( rocketnet_address_t ) - 2 * sizeof( int )]; // the rest of the cache line, explicit
 };
 
 static_assert( sizeof( rocketnet_server_payload_slot_info_t ) == 64, "one server slot info per cache line" );
@@ -189,6 +190,8 @@ static_assert( sizeof( rocketnet_server_stats_frame_t ) == 64, "one server stats
 // datagram that arrives or leaves before its slot is assigned counts in the
 // whole-server totals only: the server keeps no per-source state for traffic
 // it has not authenticated, so a slot's totals start at its assignment.
+// a payload frame drained after that slot was freed and assigned again
+// charges the server totals only, not the new connection.
 
 struct rocketnet_server_wire_totals_t
 {
@@ -3067,6 +3070,7 @@ uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_trans
 
         ring->info[slot].to = to;
         ring->info[slot].client_index = client_index;
+        ring->info[slot].connection_id = rocketnet_server_protocol_connection_id( &server_transport->protocol, client_index );
         ring->info[slot].wire_bytes = 0;
 
         frame = ring->data + slot * ROCKETNET_FRAME_STRIDE;
@@ -3266,6 +3270,19 @@ int rocketnet_server_transport_finish_packet( rocketnet_server_transport_t * ser
     return result;
 }
 
+// A drained payload frame charges its slot only while the connection that
+// sealed it still holds that slot. update can free the slot and assign it
+// again before send_packets; the server totals still take the frame.
+static bool rocketnet_server_send_slot_holds( const struct rocketnet_server_transport_t * server_transport,
+                                              int client_index, uint64_t connection_id )
+{
+    if ( connection_id == 0 || client_index < 0 )
+        return false;
+    if ( !rocketnet_client_slots_connected( server_transport->protocol.client_slots, client_index ) )
+        return false;
+    return rocketnet_server_protocol_connection_id( &server_transport->protocol, client_index ) == connection_id;
+}
+
 // proofs/tla/SessionAcks.tla Flush: puts this update's staged packets on the wire in fill order.
 // The flush of send_packets, and of each stop step (shutdown: the
 // nonwaiting backend send, and a staged transport is flushed whatever was
@@ -3336,12 +3353,23 @@ static void rocketnet_server_transport_flush( struct rocketnet_server_transport_
         rocketnet_server_link_send_batch( server_transport, sends, num_sends, accepted, shutdown );
 
         // a datagram is counted sent only once the link took it: each send
-        // is charged on its own result, so the per-client totals stay per send
+        // is charged on its own result. the server totals always move. the
+        // slot totals move only when that slot is still the connection that
+        // sealed the frame (send ring info), not merely the same index.
 
-        for ( int i = 0; i < num_sends; i++ )
+        int send_i = 0;
+        for ( uint64_t i = 0; i < num_packets && send_i < num_sends; i++ )
         {
-            if ( accepted[i] )
-                rocketnet_server_charge_send_frame( server_transport, send_client_index[i], sends[i].to, sends[i].packet_bytes );
+            if ( ring->info[i].wire_bytes <= 0 )
+                continue;
+            if ( accepted[send_i] )
+            {
+                const bool same_connection = rocketnet_server_send_slot_holds( server_transport, send_client_index[send_i],
+                                                                               ring->info[i].connection_id );
+                const int charge_slot = same_connection ? send_client_index[send_i] : -1;
+                rocketnet_server_charge_send_frame( server_transport, charge_slot, sends[send_i].to, sends[send_i].packet_bytes );
+            }
+            send_i++;
         }
     }
 
