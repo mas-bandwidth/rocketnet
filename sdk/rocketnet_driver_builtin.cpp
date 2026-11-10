@@ -1729,6 +1729,80 @@ static const rocketnet_server_transport_io_operations_t portable_server_operatio
     NULL, NULL, NULL, NULL, NULL, portable_send_failures, portable_send, portable_send_room, portable_send_idle, portable_begin_shutdown
 };
 
+#if ROCKETNET_DEV
+// The unit seam for the server's sweep over the real portable send path with
+// no socket and no worker: a TX owner of `capacity` whose producer already
+// holds capacity - room packets and whose every publish is refused as a busy
+// handoff refuses it, behind the portable operations with an
+// empty receive. The caller swaps it in as the server's io and plays the
+// worker with drain, which counts what the banks held as sent.
+static int portable_sweep_test_receive( void *, rocketnet_address_t *, uint8_t *, int, int *, int ) { return 0; }
+static void portable_sweep_test_stop( void * ) {}
+static bool portable_sweep_test_stopped( void * ) { return true; }
+static uint64_t portable_sweep_test_send_failures( void * transport )
+{
+    return ( (portable_server_t *) transport )->dropped.load( std::memory_order_relaxed );
+}
+
+void * rocketnet_portable_tx_test_sweep_owner( int capacity, int room, const rocketnet_server_transport_io_operations_t ** operations )
+{
+    static rocketnet_server_transport_io_operations_t sweep_operations;
+    sweep_operations = portable_server_operations;
+    sweep_operations.create = NULL;
+    sweep_operations.destroy = NULL;
+    sweep_operations.stop = portable_sweep_test_stop;
+    sweep_operations.stopped = portable_sweep_test_stopped;
+    sweep_operations.receive_batch = portable_sweep_test_receive;
+    sweep_operations.send_failures = portable_sweep_test_send_failures;
+    *operations = &sweep_operations;
+
+    portable_server_t * server = portable_tx_test_owner( capacity );
+    if ( !server )
+        return NULL;
+    server->force_publish_busy = true;
+
+    rocketnet_address_t to = {};
+    to.type = ROCKETNET_ADDRESS_IPV4;
+    to.port = 1234;
+    uint8_t byte = 0;
+    const rocketnet_platform_send_t send = { &to, &byte, 1 };
+    for ( int i = 0; i < capacity - room; ++i )
+        portable_send( server, &send, 1 );
+    return server;
+}
+
+// plays the worker: publishes the producer, sends every ready bank and
+// returns it free; publishes stay refused outside this call
+uint64_t rocketnet_portable_tx_test_sweep_drain( void * transport )
+{
+    portable_server_t * server = (portable_server_t *) transport;
+    server->force_publish_busy = false;
+    portable_tx_publish( server );
+    server->force_publish_busy = true;
+    uint64_t sent = 0;
+    while ( server->ready_count > 0 )
+    {
+        const int bank = server->ready_index[server->ready_head];
+        server->ready_head = ( server->ready_head + 1 ) % PORTABLE_TX_BANKS;
+        server->ready_count--;
+        sent += (uint64_t) server->bank[bank].count;
+        server->bank[bank].count = 0;
+        server->free_index[( server->free_head + server->free_count ) % PORTABLE_TX_BANKS] = bank;
+        server->free_count++;
+    }
+    return sent;
+}
+
+uint64_t rocketnet_portable_tx_test_sweep_dropped( void * transport )
+{
+    return ( (portable_server_t *) transport )->dropped.load( std::memory_order_relaxed );
+}
+
+int rocketnet_portable_tx_test_sweep_room( void * transport ) { return portable_send_room( transport ); }
+
+void rocketnet_portable_tx_test_sweep_destroy( void * transport ) { portable_server_cleanup( (portable_server_t *) transport ); }
+#endif // #if ROCKETNET_DEV
+
 #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
 // the portable client on a platform with the client I/O wake: an eight-callback
 // table over the socket and its wake, so the transport runs the I/O thread of

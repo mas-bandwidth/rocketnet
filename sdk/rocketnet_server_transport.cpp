@@ -489,6 +489,37 @@ void rocketnet_server_transport_poison_slot_for_test( struct rocketnet_server_tr
     memset( &server->client_wire_totals[client_index], 0xA5, sizeof( server->client_wire_totals[client_index] ) );
 }
 
+// The unit seam for a sweep over many clients without a handshake: seats
+// slots 0..clients-1 connected at 127.0.0.1:(1000 + i) under test keys, each
+// with its keep-alive due from the first update. Returns false when a slot
+// cannot be seated.
+bool rocketnet_server_transport_seat_clients_for_test( struct rocketnet_server_transport_t * server, int clients )
+{
+    rocketnet_assert( server );
+    for ( int i = 0; i < clients; ++i )
+    {
+        rocketnet_address_t address;
+        if ( !rocketnet_address_parse( &address, "127.0.0.1:0" ) )
+            return false;
+        address.port = (uint16_t) ( 1000 + i );
+        const int index = rocketnet_encryption_map_add( server->protocol.encryption_map, &address, 100.0 );
+        if ( index < 0 )
+            return false;
+        struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( server->protocol.encryption_map, index );
+        uint8_t user_data[ROCKETNET_USER_DATA_BYTES] = {};
+        const uint64_t owner_generation = rocketnet_encryption_map_owner_generation( server->protocol.encryption_map, index );
+        if ( rocketnet_client_slots_assign( server->protocol.client_slots, (uint64_t) i + 1, index, owner_generation, user_data ) != i )
+            return false;
+        mapping->control->client_index = i;
+        mapping->client_id = (uint64_t) i + 1;
+        mapping->control->established = 1;
+        mapping->control->timeout_seconds = 1000;
+        memset( &mapping->keys, i + 1, sizeof( mapping->keys ) );
+        server->protocol.connection_ids[i] = ++server->protocol.next_connection_id;
+    }
+    return true;
+}
+
 bool rocketnet_server_transport_connection_state_clean_for_test( struct rocketnet_server_transport_t * server )
 {
     return server && server->protocol.encryption_map && server->protocol.client_slots &&
