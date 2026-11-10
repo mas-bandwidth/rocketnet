@@ -511,11 +511,15 @@ jobs:
         if: runner.os != 'Linux' && matrix.leg == 'unit'
         run: ./bin/test
 
-      # The unit suite opens no socket: ./bin/test runs under strace and the
-      # check fails, naming the first opener, on any socket() call
+      # The unit suite opens no socket, starts no thread and sleeps no real
+      # time: ./bin/test runs under strace (trace=socket,execve,clone,clone3,
+      # nanosleep,clock_nanosleep) and the check fails, naming the first
+      # offender, on any socket() call, thread start, sleep outside the suite
+      # runner, or process started by a case; the runner spawning its workers
+      # and a worker forking its case are allowed
       # (tools/check_unit_no_sockets.sh). The suite's output and verdict print
       # as in the plain run.
-      - name: Run unit tests under strace (RSS telemetry, deterministic verdict, opens no socket)
+      - name: Run unit tests under strace (RSS telemetry, deterministic verdict, opens no socket, no thread or sleep)
         if: runner.os == 'Linux' && matrix.leg == 'unit'
         run: |
           bash tools/test_check_unit_no_sockets.sh

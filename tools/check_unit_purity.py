@@ -43,6 +43,18 @@ PATTERNS = [
     ("_putenv_s", re.compile(r'(?<![A-Za-z0-9_])_putenv_s\s*\(')),
     ("SetEnvironmentVariable", re.compile(r'(?<![A-Za-z0-9_])SetEnvironmentVariable(?:A|W)?\s*\(')),
     ("rocketnet_platform_thread_join", re.compile(r'(?<![A-Za-z0-9_])rocketnet_platform_thread_join\s*\(')),
+    ("usleep", re.compile(r'(?<![A-Za-z0-9_])usleep\s*\(')),
+    ("nanosleep", re.compile(r'(?<![A-Za-z0-9_])nanosleep\s*\(')),
+    ("clock_gettime", re.compile(r'(?<![A-Za-z0-9_])clock_gettime\s*\(')),
+    ("gettimeofday", re.compile(r'(?<![A-Za-z0-9_])gettimeofday\s*\(')),
+    ("std::chrono", re.compile(r'std\s*::\s*chrono(?![A-Za-z0-9_])')),
+    ("sleep_for", re.compile(r'(?<![A-Za-z0-9_])sleep_for\s*\(')),
+    ("pthread_create", re.compile(r'(?<![A-Za-z0-9_])pthread_create\s*\(')),
+    ("std::async", re.compile(r'std\s*::\s*async(?![A-Za-z0-9_])')),
+    ("fopen", re.compile(r'(?<![A-Za-z0-9_])fopen\s*\(')),
+    ("fork", re.compile(r'(?<![A-Za-z0-9_])fork\s*\(')),
+    ("popen", re.compile(r'(?<![A-Za-z0-9_])popen\s*\(')),
+    ("system", re.compile(r'(?<![A-Za-z0-9_])system\s*\(')),
 ]
 
 # a wake wait is a real OS wait unless its timeout is zero (a poll)
@@ -153,9 +165,9 @@ def check(root):
     for entry in sorted(os.listdir(tests_dir)):
         if entry.startswith("test_unit_") and entry.endswith(".cpp"):
             files.append(os.path.join(tests_dir, entry))
-    sdk_tests = os.path.join(root, "sdk", "rocketnet_tests.cpp")
-    if os.path.exists(sdk_tests):
-        files.append(sdk_tests)
+    for sdk_tests in (os.path.join(root, "sdk", "rocketnet_tests.cpp"), os.path.join(tests_dir, "test_channels.cpp")):
+        if os.path.exists(sdk_tests):
+            files.append(sdk_tests)
 
     failures = []
     for path in files + helpers(root, files):
@@ -192,7 +204,25 @@ def self_test():
             if len(found) != expected:
                 print("FAIL check_unit_purity self-test: %s: expected %d finding(s), got %r" % (label, expected, found))
                 return 1
-    print("ok check_unit_purity self-test: a thread, timed wait or sleep in a DEV fixture or helper is refused")
+    # each libc / std real-time, thread and process call, planted in the unit
+    # suite's sources including tests/test_channels.cpp, is one finding
+    planted = ["usleep( 1 );", "nanosleep( &t, NULL );", "clock_gettime( CLOCK_MONOTONIC, &t );",
+               "gettimeofday( &tv, NULL );", "auto n = std::chrono::steady_clock::now();",
+               "std::this_thread::sleep_for( d );", "pthread_create( &t, NULL, f, NULL );",
+               "auto f = std::async( g );", "FILE * f = fopen( p, \"r\" );", "pid_t p = fork();",
+               "FILE * f = popen( c, \"r\" );", "int s = system( c );"]
+    for source in ("test_unit_thing.cpp", "test_channels.cpp"):
+        for call in planted:
+            with tempfile.TemporaryDirectory() as root:
+                os.mkdir(os.path.join(root, "tests"))
+                with open(os.path.join(root, "tests", source), "w") as fh:
+                    fh.write("static void test_thing()\n{\n    %s\n}\n" % call)
+                found = check(root)
+                if len(found) != 1:
+                    print("FAIL check_unit_purity self-test: %s in tests/%s: expected 1 finding, got %r" % (call, source, found))
+                    return 1
+    print("ok check_unit_purity self-test: a thread, timed wait or sleep in a DEV fixture or helper is refused, "
+          "and each real-time, thread or process call in the unit sources and tests/test_channels.cpp")
     return 0
 
 
