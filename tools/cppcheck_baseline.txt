@@ -26,6 +26,7 @@ cppcheck	sdk/rocketnet_platform.h	invalidPointerCast	0ba34feccc9ec3a8
 cppcheck	sdk/rocketnet_send_budget.h	memsetClassFloat	87bb1792f79b498b
 cppcheck	sdk/rocketnet_server_transport.cpp	memsetClassFloat	04bd9e39fba3f117
 cppcheck	sdk/rocketnet_server_transport.cpp	memsetClassFloat	75897d09e37dafdb
+cppcheck	sdk/rocketnet_tests.cpp	incorrectStringBooleanError	17af8ccfa68d434b
 cppcheck	sdk/rocketnet_tests.cpp	memsetClassFloat	4dbc08b2c8efa197
 cppcheck	sdk/rocketnet_tests.cpp	memsetClassFloat	51c20ff2eb60fd8d
 cppcheck	sdk/rocketnet_tests.cpp	memsetClassFloat	7492b51bd3f63423
