@@ -13765,30 +13765,39 @@ void rocketnet_test_client_index_range_checked()
 
 static void rocketnet_test_protocol_id_zero_refused( void )
 {
+    // a config every build accepts: its own packet filter (a production build
+    // refuses the published test filter the default carries), production-like
+    // keys (a production build refuses the development keys), and the loopback
+    // transport, so the create opens no socket
+
     struct rocketnet_server_transport_config_t config;
-
-    // start with default config (valid values for all fields)
-
     rocketnet_server_transport_default_config( &config );
+    memset( config.packet_filter, 0x5A, sizeof( config.packet_filter ) );
+    memset( config.backend_public_key, 0x42, 32 );
+    memset( config.server_public_key, 0x43, 32 );
+    memset( config.server_secret_key, 0x44, 32 );
+    snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
+    config.loopback_hub = rocketnet_test_loopback_hub();
+    config.max_clients = 1;
 
-    // replace with production keys
-
-    memcpy( config.backend_public_key, rocketnet_test_backend_public_key, 32 );
-    memcpy( config.server_public_key, rocketnet_test_server_public_key, 32 );
-    memcpy( config.server_secret_key, rocketnet_test_server_secret_key, 32 );
-
-    // set protocol_id to 0 (should be refused with production keys)
+    // protocol_id 0 is refused for that reason and no other
 
     config.protocol_id = 0;
+    int status = -1;
+    rocketnet_check( rocketnet_server_transport_create_ex( NULL, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
+    rocketnet_check( status == ROCKETNET_STATUS_INVALID_PROTOCOL_ID );
 
-    // this should be refused: protocol_id 0 with production keys
+    // the same config with protocol_id 1 is accepted
 
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create(
-        NULL,
-        "127.0.0.1:0",
-        &config );
+    config.protocol_id = 1;
+    status = -1;
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:12345", &config, 1000.0, &status );
+    rocketnet_check( server != NULL );
+    rocketnet_check( status == ROCKETNET_STATUS_OK );
 
-    rocketnet_check( server == NULL );
+    rocketnet_server_transport_stop( server );
+    rocketnet_check( rocketnet_server_transport_stopped( server ) );
+    rocketnet_server_transport_destroy( server );
 }
 
 void rocketnet_test_token_timeout_clamped()
