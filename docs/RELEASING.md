@@ -179,8 +179,9 @@ units and compares findings with the baseline. Required green jobs do not
 override a known failure in the checks they are intended to run.
 
 The other `nightly*.yml` workflows, the fuzz-nightly workflow and
-[tlc-debt.yml](../.github/workflows/tlc-debt.yml) (the timeout-debt cases run
-to their declared results, weekly, under a 96-hour deadline) are watches, not
+[tlc-debt.yml](../.github/workflows/tlc-debt.yml) (weekly, each timeout-debt
+case run to its declared result as its own job, with its own 96-hour deadline
+and its own evidence artifact) are watches, not
 release gates. The `msan` workflow (`MemorySanitizer`) is advisory: its
 job is `continue-on-error`. The release commit must also be the commit the tag
 points at, not a later merge.
