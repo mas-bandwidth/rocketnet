@@ -3874,7 +3874,7 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
     uint64_t batch_frames[ROCKETNET_XDP_SEND_BATCH_SIZE];
     int batch_packet_bytes[ROCKETNET_XDP_SEND_BATCH_SIZE];
 
-    rocketnet_pending_frames_t<ROCKETNET_XDP_RECV_QUEUE_SIZE> & pending_return = socket->pending_return;
+    auto & pending_return = socket->pending_return;
 
     auto return_pending_frames = [&]()
     {
@@ -4294,8 +4294,8 @@ static void * rocketnet_server_socket_test_worker_entry( void * data )
 // (cpu past CPU_SETSIZE), so the thread keeps its affinity.
 bool rocketnet_server_socket_test_worker_stack()
 {
-    const size_t stack_bytes = 128 * 1024;
-    const size_t overflow_bytes = 1024 * 1024;
+    const size_t stack_bytes = size_t( 128 ) * 1024;
+    const size_t overflow_bytes = size_t( 1024 ) * 1024;
     const size_t map_bytes = overflow_bytes + stack_bytes;
     const uint8_t paint = 0xA5;
 
@@ -4367,7 +4367,7 @@ bool rocketnet_server_socket_test_worker_stack()
 
     if ( lowest < overflow_bytes )
     {
-        fprintf( stderr, "xdp worker used %zu bytes of stack, past its %zu\n", map_bytes - lowest, stack_bytes );
+        (void) fprintf( stderr, "xdp worker used %zu bytes of stack, past its %zu\n", map_bytes - lowest, stack_bytes );
         valid = false;
     }
 
