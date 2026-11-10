@@ -1957,3 +1957,8 @@ It differs from the text shipped with v1.0.0 in these places:
   ahead of its epoch is held and never refused for its distance, which
   [RN-2 m7.5 Vectors](MESSAGES.md#m7.5) already showed; a late fragment of a code 4
   block that a newer record superseded is dropped as stale rather than kept live.
+- [RN-1 t10 Receive processing](TRANSPORT.md#t10), rule 2, and
+  [RN-1 t1.2 Scope](TRANSPORT.md#t1.2): a server's transport may drop a datagram for its
+  size before the shared checks, counted as `PREFILTER_TOO_SHORT` or
+  `PREFILTER_TOO_LARGE`, or in the kernel counters of a transport that drops it in the
+  kernel.

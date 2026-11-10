@@ -37,7 +37,9 @@ RN-1 does not specify:
 2. how a server's public key reaches the backend, except that the channel is
    authenticated ([t2 Architecture and key inventory](#t2));
 3. the transports that carry the bytes. Every transport carries the same
-   bytes, and nothing in RN-1 varies by transport;
+   bytes, and nothing in RN-1 varies by transport except where a server's
+   transport drops a datagram for its size before the shared checks
+   ([t10 Receive processing](#t10), rule 2);
 4. the content of a payload. A payload is opaque to RN-1; RN-2 specifies the
    message layer carried inside it.
 
@@ -2034,7 +2036,14 @@ a row marked server or client applies only at that end.
    datagram longer than the receive ceiling is `PREFILTER_TOO_LARGE`; an
    epoch this receiver does not hold is `PREFILTER_WRONG_EPOCH`; a filter
    value that does not compare is `PREFILTER_WRONG_VALUE`. The comparison is
-   constant time when the epoch is nonzero.
+   constant time when the epoch is nonzero. A server's transport MAY drop
+   natively, before this list, a datagram shorter than the smallest packet a
+   server receives (the connection disconnect packet minimum wire size of
+   [t8.11 Packet sizes](#t8.11)) or longer than the receive ceiling. Such a
+   drop MUST be counted as `PREFILTER_TOO_SHORT` or `PREFILTER_TOO_LARGE`; it
+   does not reach rule 1 and is not counted as `PACKETS_RECEIVED`. A transport
+   that makes this drop in the kernel (XDP) counts it in its own kernel
+   counters instead.
 3. A receiver MUST reject a packet type at or above the first reserved
    packet type as `RESERVED_TYPE`.
 4. A server MUST reject the connection denied, connection challenge and

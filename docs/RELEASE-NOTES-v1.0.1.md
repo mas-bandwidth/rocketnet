@@ -185,6 +185,8 @@ counter registry and its vector gained `DISCONNECT_BURST_DROPPED`. The
 revision history in [RATIONALE.md](../standard/RATIONALE.md#rh) lists these
 changes. The document version and the protocol version are unchanged.
 
+- The standard now permits a server's transport to drop a datagram shorter than the smallest packet a server receives, or longer than the receive ceiling, before the shared checks, counted as `PREFILTER_TOO_SHORT` or `PREFILTER_TOO_LARGE` ([TRANSPORT.md t10](../standard/TRANSPORT.md#t10)).
+
 ## Documentation
 
 - The header and the guides state the contracts above: the state and log
