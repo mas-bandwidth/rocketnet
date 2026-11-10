@@ -290,4 +290,31 @@ static void test_server_transport_create_ex_reports_every_status()
 }
 
 REGISTER_UNIT_TEST( test_server_transport_create_ex_reports_every_status );
+
+// sdk/rocketnet_tests.cpp is not linked into this binary. The same case:
+// a config this build accepts, protocol_id 0 refused with
+// INVALID_PROTOCOL_ID, then protocol_id 1 on that config accepted.
+static void test_protocol_id_zero_refused( void )
+{
+    struct rocketnet_server_transport_config_t config;
+    production_config( &config );
+    snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
+    config.loopback_hub = rocketnet_test_loopback_hub();
+    config.max_clients = 1;
+
+    config.protocol_id = 0;
+    int status = -1;
+    check( rocketnet_server_transport_create_ex( NULL, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
+    check( status == ROCKETNET_STATUS_INVALID_PROTOCOL_ID );
+
+    config.protocol_id = 1;
+    status = -1;
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:12345", &config, 1000.0, &status );
+    check( server != NULL );
+    check( status == ROCKETNET_STATUS_OK );
+
+    rn_test_server_transport_stop_and_destroy( server );
+}
+
+REGISTER_UNIT_TEST( test_protocol_id_zero_refused );
 #endif // !ROCKETNET_DEV: a development build accepts what this checks is refused
