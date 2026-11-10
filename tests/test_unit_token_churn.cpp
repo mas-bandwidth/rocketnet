@@ -893,7 +893,26 @@ static void test_claim_compaction_write_cursor_wraps()
     struct rocketnet_address_t holder, other;
     tc_claim_addresses( &holder, &other );
 
-    enum { A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, FRESH };
+    enum
+    {
+        A,
+        B,
+        C,
+        D,
+        E,
+        F,
+        G,
+        H,
+        I,
+        J,
+        K,
+        L,
+        M,
+        N,
+        O,
+        P,
+        FRESH
+    };
     uint8_t ids[FRESH + 1][ROCKETNET_TOKEN_IDENTIFIER_BYTES];
     for ( int i = 0; i <= FRESH; ++i )
     {
