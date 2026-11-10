@@ -1322,6 +1322,14 @@ static bool rn_message_connection_write( rn_message_object_t * object, int index
             continue;
         }
 
+        if ( context.payload_capacity < request )
+        {
+            // the frame is smaller than requested: abort it and fail the send
+            link->abort_packet( link->transport, &context );
+            rn_endpoint_packet_failed( connection, 0, now );
+            continue;
+        }
+
         const int payload_bytes = rn_endpoint_write_packet( connection, frame + context.payload_index, context.payload_capacity, context.packet_id, now );
         if ( payload_bytes == 0 )
         {
