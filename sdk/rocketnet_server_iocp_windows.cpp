@@ -921,12 +921,7 @@ static bool rocketnet_iocp_post_receive( rocketnet_server_iocp_t * iocp, rocketn
     if ( rocketnet_platform_receive_status_is_reset( error ) )
         rocketnet_platform_count_receive_reset();
     iocp->counters[ROCKETNET_IOCP_RECEIVE_REPOST_FAILED].fetch_add( 1, std::memory_order_relaxed );
-    op->state = ROCKETNET_IOCP_OPERATION_RETRY;
-
-    const bool queued = rocketnet_iocp_queue_push( &iocp->retry_receives, op->completion_ref );
-    rocketnet_assert( queued );
-    if ( !queued )
-        op->state = ROCKETNET_IOCP_OPERATION_RETIRED;
+    rocketnet_iocp_queue_retry_receive( &iocp->retry_receives, op->completion_ref, &op->state );
     return false;
 }
 
