@@ -12,23 +12,38 @@
 //
 // Time is an argument; no sockets, real time or threads. The probe counters
 // are DEV test seams, so this file is registered only under ROCKETNET_DEV
-// (see CMakeLists.txt).
+// (see CMakeLists.txt). Each layout case seeds the tables' SipHash keys
+// (sdk/rocketnet_test_seams.h) and a failing check prints the seed.
 
 #include "test_unit_registry.h"
 
 #include "rocketnet_encryption_map.h"
 #include "rocketnet_token_tables.h"
+#include "rocketnet_client_slots.h"
 #include "rocketnet_address.h"
+#include "rocketnet_test_seams.h"
 
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
-#define check rocketnet_unit_check
-
 #if ROCKETNET_DEV
+
+// a failing check prints the hash-key seed its case set, so the layout it
+// failed on is reproducible; the condition is evaluated once
+#define check( condition )                                                                               \
+do                                                                                                       \
+{                                                                                                        \
+    const bool check_passed = ( condition );                                                             \
+    if ( !check_passed && rocketnet_dev_hash_key_seed() != 0 )                                           \
+        printf( "hash key seed 0x%016llx\n", (unsigned long long) rocketnet_dev_hash_key_seed() );       \
+    rocketnet_unit_check( check_passed && #condition );                                                  \
+} while ( 0 )
+
 extern "C" void rocketnet_dev_token_table_reset_operation_counts( struct rocketnet_used_token_history_t * history );
 extern "C" uint64_t rocketnet_dev_token_claim_probe_steps( const struct rocketnet_used_token_history_t * history );
+extern "C" int rocketnet_dev_token_claim_index_start( const struct rocketnet_used_token_history_t * history,
+                                                      const uint8_t * token_identifier );
 
 
 static struct rocketnet_address_t churn_map_address( int ordinal )
@@ -58,6 +73,8 @@ static uint64_t churn_map_worst_absent_probes( struct rocketnet_encryption_map_t
 
 static void test_encryption_map_churn_probe_bound()
 {
+    rocketnet_dev_set_hash_key_seed( UINT64_C( 0x5EED0000000000A1 ) );
+
     const int capacity = 32;
     const int load = 24;
     const int absent_count = 128;
@@ -108,6 +125,7 @@ static void test_encryption_map_churn_probe_bound()
     rocketnet_encryption_map_destroy( map );
 
     check( churned_worst <= fresh_worst );
+    rocketnet_dev_set_hash_key_seed( 0 );
 }
 
 REGISTER_UNIT_TEST( test_encryption_map_churn_probe_bound );
@@ -139,6 +157,8 @@ static uint64_t churn_token_worst_absent_probes( struct rocketnet_used_token_his
 
 static void test_used_token_table_churn_probe_bound()
 {
+    rocketnet_dev_set_hash_key_seed( UINT64_C( 0x5EED0000000000A2 ) );
+
     const int capacity = 32;
     const int load = 24;
     const int absent_count = 128;
@@ -192,8 +212,77 @@ static void test_used_token_table_churn_probe_bound()
     rocketnet_used_token_history_destroy( history );
 
     check( churned_worst <= fresh_worst );
+    rocketnet_dev_set_hash_key_seed( 0 );
 }
 
 REGISTER_UNIT_TEST( test_used_token_table_churn_probe_bound );
+
+// The hash-key seed seam: one seed gives every table of a kind the same
+// layout, so a seeded case is reproducible; another seed gives another
+// layout; seed zero is the OS entropy draw again.
+
+static bool seed_layouts_match( uint64_t seed_a, uint64_t seed_b, int * kinds_matching )
+{
+    struct rocketnet_address_t addresses[64];
+    uint8_t identifiers[64][ROCKETNET_TOKEN_IDENTIFIER_BYTES];
+    for ( int i = 0; i < 64; ++i )
+    {
+        addresses[i] = churn_map_address( 1 + i );
+        churn_token_id( identifiers[i], (uint32_t) ( 1 + i ) );
+    }
+
+    rocketnet_dev_set_hash_key_seed( seed_a );
+    struct rocketnet_client_slots_t * slots_a = rocketnet_client_slots_create( NULL, 32 );
+    struct rocketnet_used_token_history_t * history_a = rocketnet_used_token_history_create( NULL, 32 );
+    struct rocketnet_encryption_map_t * map_a = rocketnet_encryption_map_create( NULL, 32 );
+    rocketnet_dev_set_hash_key_seed( seed_b );
+    struct rocketnet_client_slots_t * slots_b = rocketnet_client_slots_create( NULL, 32 );
+    struct rocketnet_used_token_history_t * history_b = rocketnet_used_token_history_create( NULL, 32 );
+    struct rocketnet_encryption_map_t * map_b = rocketnet_encryption_map_create( NULL, 32 );
+    rocketnet_dev_set_hash_key_seed( 0 );
+    check( slots_a && history_a && map_a && slots_b && history_b && map_b );
+
+    bool slots_match = true, history_match = true, map_match = true;
+    for ( int i = 0; i < 64; ++i )
+    {
+        const uint64_t id = UINT64_C( 0x80000000A5A5A5A5 ) + (uint64_t) i;
+        slots_match = slots_match && rocketnet_client_slots_test_hash_index( slots_a, id ) ==
+                                         rocketnet_client_slots_test_hash_index( slots_b, id );
+        history_match = history_match && rocketnet_dev_token_claim_index_start( history_a, identifiers[i] ) ==
+                                             rocketnet_dev_token_claim_index_start( history_b, identifiers[i] );
+        map_match = map_match && rocketnet_encryption_map_test_home( map_a, &addresses[i] ) ==
+                                     rocketnet_encryption_map_test_home( map_b, &addresses[i] );
+    }
+
+    rocketnet_client_slots_destroy( slots_a );
+    rocketnet_client_slots_destroy( slots_b );
+    rocketnet_used_token_history_destroy( history_a );
+    rocketnet_used_token_history_destroy( history_b );
+    rocketnet_encryption_map_destroy( map_a );
+    rocketnet_encryption_map_destroy( map_b );
+
+    *kinds_matching = (int) slots_match + (int) history_match + (int) map_match;
+    return slots_match && history_match && map_match;
+}
+
+static void test_hash_key_seed_reproduces_every_table_layout()
+{
+    int kinds_matching = 0;
+
+    // the same seed: all three kinds lay out identically
+
+    check( seed_layouts_match( UINT64_C( 0x5EED0000000000A3 ), UINT64_C( 0x5EED0000000000A3 ), &kinds_matching ) );
+    check( kinds_matching == 3 );
+
+    // another seed, and no seed: 64 keys over 64 buckets land identically
+    // with odds far below one in 2^64, so no kind matches
+
+    check( !seed_layouts_match( UINT64_C( 0x5EED0000000000A3 ), UINT64_C( 0x5EED0000000000A4 ), &kinds_matching ) );
+    check( kinds_matching == 0 );
+    check( !seed_layouts_match( 0, 0, &kinds_matching ) );
+    check( kinds_matching == 0 );
+}
+
+REGISTER_UNIT_TEST( test_hash_key_seed_reproduces_every_table_layout );
 
 #endif // #if ROCKETNET_DEV

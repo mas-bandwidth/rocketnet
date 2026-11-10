@@ -31,6 +31,7 @@
 #include "rocketnet_server_protocol.h"
 #include "rocketnet_client_protocol.h"
 #include "rocketnet_test_vectors.h"
+#include "rocketnet_test_seams.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -44,7 +45,25 @@ extern "C" int rocketnet_dev_token_claim_index_start( const struct rocketnet_use
                                                       const uint8_t * token_identifier );
 #endif // #if ROCKETNET_DEV
 
+#if ROCKETNET_DEV
+
+// the claim table cases seed the tables' SipHash keys (sdk/rocketnet_test_seams.h);
+// a failing check prints the seed its case set, so the layout it failed on is
+// reproducible. The condition is evaluated once.
+#define check( condition )                                                                               \
+do                                                                                                       \
+{                                                                                                        \
+    const bool check_passed = ( condition );                                                             \
+    if ( !check_passed && rocketnet_dev_hash_key_seed() != 0 )                                           \
+        printf( "hash key seed 0x%016llx\n", (unsigned long long) rocketnet_dev_hash_key_seed() );       \
+    rocketnet_unit_check( check_passed && #condition );                                                  \
+} while ( 0 )
+
+#else // #if ROCKETNET_DEV
+
 #define check rocketnet_unit_check
+
+#endif // #if ROCKETNET_DEV
 
 #define ROCKETNET_COUNTERS_CHECK rocketnet_unit_check
 #include "counters_expect.h"
@@ -731,6 +750,8 @@ REGISTER_UNIT_TEST( test_claim_expired_identifier_moves_to_order_tail );
 // bounded index probe plus the O(1) chronological-head query.
 static void test_claim_flat_index_full_key_collisions_are_bounded()
 {
+    rocketnet_dev_set_hash_key_seed( UINT64_C( 0x5EED0000000000C1 ) );
+
     const int capacity = 4;
     struct rocketnet_used_token_history_t * history = rocketnet_used_token_history_create( NULL, capacity );
     check( history );
@@ -778,12 +799,15 @@ static void test_claim_flat_index_full_key_collisions_are_bounded()
     check( rocketnet_dev_token_claim_probe_steps( history ) <= (uint64_t) ( capacity * 2 ) );
 
     rocketnet_used_token_history_destroy( history );
+    rocketnet_dev_set_hash_key_seed( 0 );
 }
 
 // Releasing an interior claim is one index removal and touches no other
 // claim; the released slot is reused at once, and the claim it held is gone.
 static void test_claim_interior_churn_is_bounded()
 {
+    rocketnet_dev_set_hash_key_seed( UINT64_C( 0x5EED0000000000C2 ) );
+
     const int capacity = 4;
     struct rocketnet_used_token_history_t * history = rocketnet_used_token_history_create( NULL, capacity );
     check( history );
@@ -814,6 +838,7 @@ static void test_claim_interior_churn_is_bounded()
     check( rocketnet_used_token_history_claim_record( history, ids[4], &holder, 1010.0, 1000.0 ) == 0 );
 
     rocketnet_used_token_history_destroy( history );
+    rocketnet_dev_set_hash_key_seed( 0 );
 }
 
 // A compaction of a full, wrapped order ring keeps every live claim in order.
@@ -826,6 +851,8 @@ static void test_claim_interior_churn_is_bounded()
 // claim the compaction lost (E) would never be found as the oldest again.
 static void test_claim_wrapped_compaction_keeps_live_claims()
 {
+    rocketnet_dev_set_hash_key_seed( UINT64_C( 0x5EED0000000000C3 ) );
+
     const int capacity = 4;
     struct rocketnet_used_token_history_t * history = rocketnet_used_token_history_create( NULL, capacity );
     check( history );
@@ -873,12 +900,15 @@ static void test_claim_wrapped_compaction_keeps_live_claims()
     }
 
     rocketnet_used_token_history_destroy( history );
+    rocketnet_dev_set_hash_key_seed( 0 );
 }
 
 // A full table of live claims is refused in constant time however much it
 // has churned: the head of the insertion order is read, never the table.
 static void test_claim_full_refusal_is_constant_time()
 {
+    rocketnet_dev_set_hash_key_seed( UINT64_C( 0x5EED0000000000C4 ) );
+
     const int capacity = 64;
     struct rocketnet_used_token_history_t * history = rocketnet_used_token_history_create( NULL, capacity );
     check( history );
@@ -904,12 +934,15 @@ static void test_claim_full_refusal_is_constant_time()
     check( rocketnet_dev_token_claim_slot_steps( history ) <= (uint64_t) ( 2 * capacity ) );
 
     rocketnet_used_token_history_destroy( history );
+    rocketnet_dev_set_hash_key_seed( 0 );
 }
 
 // Equal deadlines retain insertion chronology: expiry reuses the oldest
 // physical owner first, without making the other full-token claim disappear.
 static void test_claim_equal_deadlines_reuse_in_insertion_order()
 {
+    rocketnet_dev_set_hash_key_seed( UINT64_C( 0x5EED0000000000C5 ) );
+
     struct rocketnet_used_token_history_t * history = rocketnet_used_token_history_create( NULL, 2 );
     check( history );
 
@@ -930,6 +963,7 @@ static void test_claim_equal_deadlines_reuse_in_insertion_order()
     check( rocketnet_used_token_history_claim_check( history, ids[2], &holder, 1005.0 ) == 0 );
 
     rocketnet_used_token_history_destroy( history );
+    rocketnet_dev_set_hash_key_seed( 0 );
 }
 
 REGISTER_UNIT_TEST( test_claim_flat_index_full_key_collisions_are_bounded );

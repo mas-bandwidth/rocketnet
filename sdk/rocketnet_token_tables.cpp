@@ -6,6 +6,7 @@
 #include "rocketnet_memory.h"
 #include "rocketnet_token_tables.h"
 #include "rocketnet_internal.h"
+#include "rocketnet_test_seams.h"
 
 #include <sodium.h>
 #include <string.h>
@@ -127,6 +128,9 @@ static struct rocketnet_token_table_t * rn_token_table_create( void * context, i
     table->next_ticket = 1;
     table->claims = claims;
     randombytes_buf( table->hash_key, sizeof( table->hash_key ) );
+#if ROCKETNET_DEV
+    rocketnet_dev_seed_hash_key( table->hash_key, sizeof( table->hash_key ), ROCKETNET_DEV_HASH_KEY_TOKEN_TABLE );
+#endif // #if ROCKETNET_DEV
 
     table->index = (int *) rocketnet_malloc( context, sizeof( int ) * (size_t) table->index_capacity );
     table->free_slots = (int *) rocketnet_malloc( context, sizeof( int ) * (size_t) capacity );

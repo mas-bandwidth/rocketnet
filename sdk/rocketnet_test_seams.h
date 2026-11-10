@@ -17,6 +17,7 @@
 
 #if ROCKETNET_DEV
 
+#include <stddef.h>
 #include <stdint.h>
 
 // ROCKETNET_DEV_SESSION_SEQUENCE_START: the first session-phase sequence
@@ -49,6 +50,27 @@ typedef void rocketnet_dev_sequence_taken_function_t( void * context, uint64_t s
 void rocketnet_dev_set_sequence_taken_hook( rocketnet_dev_sequence_taken_function_t * function, void * context );
 
 void rocketnet_dev_session_sequence_taken( uint64_t sequence );
+
+// The hash-key seed seam: the client slots, the token tables and the
+// encryption map draw their SipHash keys from OS entropy at create. A unit
+// case that depends on a table's layout sets a nonzero seed here, and every
+// table it then creates on this thread derives its key from that seed and the
+// table's kind instead, so the case is reproducible from the seed it prints.
+// Per thread, zero (OS entropy, the production draw) by default; a production
+// build has no seam and always draws from OS entropy. Defined in
+// sdk/rocketnet_encryption_map.cpp.
+
+#define ROCKETNET_DEV_HASH_KEY_CLIENT_SLOTS   1
+#define ROCKETNET_DEV_HASH_KEY_TOKEN_TABLE    2
+#define ROCKETNET_DEV_HASH_KEY_ENCRYPTION_MAP 3
+
+void rocketnet_dev_set_hash_key_seed( uint64_t seed );
+
+uint64_t rocketnet_dev_hash_key_seed( void );
+
+// called by each create after its OS entropy draw: replaces the key with one
+// derived from the seed and the table kind when this thread set a seed
+void rocketnet_dev_seed_hash_key( uint8_t * key, size_t key_bytes, int table_kind );
 
 #endif // #if ROCKETNET_DEV
 

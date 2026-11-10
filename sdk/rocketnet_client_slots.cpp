@@ -131,6 +131,9 @@ struct rocketnet_client_slots_t * rocketnet_client_slots_create( void * context,
     slots->max_clients = max_clients;
     slots->num_buckets = max_clients * 2;
     randombytes_buf( slots->hash_key, sizeof( slots->hash_key ) );
+#if ROCKETNET_DEV
+    rocketnet_dev_seed_hash_key( slots->hash_key, sizeof( slots->hash_key ), ROCKETNET_DEV_HASH_KEY_CLIENT_SLOTS );
+#endif // #if ROCKETNET_DEV
 
     const size_t index_bytes = rocketnet_client_slot_index_header_bytes() +
                                sizeof( int ) * (size_t) slots->num_buckets;
