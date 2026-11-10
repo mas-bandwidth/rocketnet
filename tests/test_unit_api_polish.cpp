@@ -33,6 +33,19 @@
 #include <string.h>
 #include <type_traits>
 #include "loopback_hub.h"
+#include "fake_client_driver.h"
+#include "rocketnet_ack.h"
+#include "rocketnet_address.h"
+#include "rocketnet_client_io.h"
+#include "rocketnet_config.h"
+#include "rocketnet_constants.h"
+#include "rocketnet_encryption_map.h"
+#include "rocketnet_message_object.h"
+#include "rocketnet_server_protocol.h"
+#include "rocketnet_client_slots.h"
+#include "rocketnet_test_vectors.h"
+#include "rocketnet_token_tables.h"
+#include "rocketnet_wire.h"
 
 #define check rocketnet_unit_check
 
@@ -503,6 +516,165 @@ static void test_api_polish_client_index_is_minus_one_until_connected()
     rocketnet_quiet( false );
 }
 REGISTER_UNIT_TEST( test_api_polish_client_index_is_minus_one_until_connected );
+
+// --- a connected client in a server slot at or past this build's cap ------------
+
+// The client has no opinion on the server's slot count (sdk/rocketnet.h
+// rocketnet_client_index): a server with more slots than this build's
+// ROCKETNET_MAX_CLIENTS assigns a slot at or past that cap, and reading the
+// index back must return it without trapping. The server here is a protocol
+// object with ROCKETNET_MAX_CLIENTS + 1000 slots whose first
+// ROCKETNET_MAX_CLIENTS slots are already held, so the handshake assigns
+// slot ROCKETNET_MAX_CLIENTS; the client is a step-driven transport on the
+// fake driver, adopted as a public client once connected.
+
+static double g_polish_big_index_now = 1000.0;
+static double api_polish_big_index_clock( void * ) { return g_polish_big_index_now; }
+
+static void test_api_polish_client_index_at_build_max_clients()
+{
+    rocketnet_quiet( true );
+    rocketnet_assert_function( api_polish_count_assert );
+    g_polish_asserts = 0;
+    g_polish_big_index_now = 1000.0;
+
+    const int server_max_clients = ROCKETNET_MAX_CLIENTS + 1000;
+
+    struct rocketnet_counters_t server_counters;
+    memset( &server_counters, 0, sizeof( server_counters ) );
+
+    struct rocketnet_server_protocol_t server;
+    memset( &server, 0, sizeof( server ) );
+    server.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
+    memcpy( server.packet_filter, rocketnet_test_filter_value, ROCKETNET_FILTER_VALUE_BYTES );
+    memcpy( server.backend_public_key, rocketnet_test_backend_public_key, 32 );
+    memcpy( server.server_public_key, rocketnet_test_server_public_key, 32 );
+    memcpy( server.server_secret_key, rocketnet_test_server_secret_key, 32 );
+    check( rocketnet_address_parse( &server.advertised_ipv4, "203.0.113.10:40000" ) );
+    memcpy( server.cookie_key, rocketnet_test_cookie_key, 32 );
+    server.cookie_lifetime_seconds = 3;
+    server.handshakes_per_update = ROCKETNET_SERVER_MAX_HANDSHAKES_PER_UPDATE;
+    server.handshake_deadline_seconds = 5.0;
+    server.encryption_map = rocketnet_encryption_map_create( NULL, 8 );
+    server.used_token_history = rocketnet_used_token_history_create( NULL, 64 );
+    server.client_slots = rocketnet_client_slots_create( NULL, server_max_clients );
+    server.acks = rocketnet_server_acks_create( NULL, server_max_clients );
+    server.counters = &server_counters;
+    check( server.encryption_map && server.used_token_history && server.client_slots && server.acks );
+    rocketnet_server_protocol_update( &server, 1000 );
+
+    // every slot below this build's cap is already held
+
+    uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
+    memset( user_data, 0, sizeof( user_data ) );
+    for ( int i = 0; i < ROCKETNET_MAX_CLIENTS; i++ )
+    {
+        const uint64_t dummy_id = UINT64_C( 0xD000000000000000 ) | (uint64_t) (uint32_t) i;
+        check( rocketnet_client_slots_assign( server.client_slots, dummy_id, -1, dummy_id, user_data ) == i );
+    }
+
+    struct rocketnet_signed_connect_data_t signed_fields;
+    memset( &signed_fields, 0, sizeof( signed_fields ) );
+    signed_fields.version = ROCKETNET_WIRE_VERSION;
+    signed_fields.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
+    signed_fields.create_timestamp = 1000;
+    signed_fields.expire_timestamp = 4600;
+    signed_fields.timeout_seconds = 300;
+    signed_fields.address_flags = ROCKETNET_ADDRESS_FLAG_IPV4;
+    const uint8_t token_server_address[6] = { 203, 0, 113, 10, 0x40, 0x9c };   // 203.0.113.10:40000
+    memcpy( signed_fields.ipv4_address, token_server_address, 6 );
+    memcpy( signed_fields.server_public_key, rocketnet_test_server_public_key, 32 );
+
+    struct rocketnet_connect_token_private_t private_fields;
+    memset( &private_fields, 0, sizeof( private_fields ) );
+    private_fields.client_id = UINT64_C( 0x1D3C0FFEE0A11CE5 );
+    private_fields.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
+    private_fields.expire_timestamp = 4600;
+    memcpy( private_fields.client_to_server_key, rocketnet_test_token_c2s_key, 32 );
+    memcpy( private_fields.server_to_client_key, rocketnet_test_token_s2c_key, 32 );
+
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    check( rocketnet_write_connect_token( &signed_fields, &private_fields, rocketnet_test_backend_secret_key, token ) );
+
+    struct rocketnet_fake_client_transport_io_t * fake = new rocketnet_fake_client_transport_io_t();
+
+    struct rocketnet_client_transport_config_t transport_config;
+    rocketnet_client_transport_default_config_current( &transport_config );
+    snprintf( transport_config.transport, sizeof( transport_config.transport ), "%s", "loopback" );
+    memcpy( transport_config.packet_filter, rocketnet_test_filter_value, ROCKETNET_FILTER_VALUE_BYTES );
+    transport_config.step_driven = 1;
+    transport_config.time_callback = api_polish_big_index_clock;
+    transport_config.token_epoch_unix_seconds = 1000;
+
+    rocketnet_client_transport_t * transport = rocketnet_client_transport_create_step_driven_current(
+        NULL, token, &transport_config, g_polish_big_index_now, &rocketnet_fake_client_operations_io, fake );
+    check( transport != NULL );
+
+    rocketnet_address_t client_address;
+    check( rocketnet_address_parse( &client_address, "198.51.100.7:56789" ) );
+    rocketnet_address_t server_address;
+    check( rocketnet_address_parse( &server_address, "203.0.113.10:40000" ) );
+
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    uint8_t server_payload[ROCKETNET_RECEIVE_CEILING];
+
+    for ( int i = 0; i < 400 && rocketnet_client_transport_state( transport ) != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED; i++ )
+    {
+        rocketnet_client_transport_step_legacy_for_test( transport, g_polish_big_index_now );
+        rocketnet_client_transport_update( transport, g_polish_big_index_now );
+        rocketnet_client_transport_send_packets( transport );
+
+        for ( int sent = 0; sent < fake->num_sent; sent++ )
+        {
+            int response_bytes = 0;
+            int payload_bytes = 0;
+            int payload_client_index = -1;
+            rocketnet_server_protocol_process_packet( &server, &client_address,
+                                                      fake->sent[sent].data, fake->sent[sent].bytes,
+                                                      (uint64_t) g_polish_big_index_now, g_polish_big_index_now,
+                                                      response, &response_bytes,
+                                                      server_payload, &payload_bytes, &payload_client_index );
+            if ( response_bytes > 0 )
+            {
+                rocketnet_fake_client_push( fake, &server_address, response, response_bytes );
+            }
+        }
+        fake->num_sent = 0;
+        g_polish_big_index_now += 0.01;
+    }
+
+    check( rocketnet_client_transport_state( transport ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+    check( rocketnet_client_transport_client_index( transport ) == ROCKETNET_MAX_CLIENTS );
+
+    rn_message_link_t link;
+    rn_message_client_link( &link, transport );
+
+    rocketnet_message_client_t * connection = (rocketnet_message_client_t *) rn_message_object_create(
+        NULL, &link, 0, 1, NULL, NULL, 0, ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, 0.0 );
+    check( connection != NULL );
+
+    rocketnet_client_t * client = rocketnet_client_adopt( NULL, connection );
+    check( client != NULL );
+    check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
+
+    // the server-assigned slot is at this build's cap: reading it must not trap
+
+    g_polish_asserts = 0;
+    check( rocketnet_client_index( client ) == ROCKETNET_MAX_CLIENTS );
+    check( g_polish_asserts == 0 );
+
+    rn_test_client_stop_and_destroy( client );
+    delete fake;
+
+    rocketnet_encryption_map_destroy( server.encryption_map );
+    rocketnet_used_token_history_destroy( server.used_token_history );
+    rocketnet_client_slots_destroy( server.client_slots );
+    rocketnet_server_acks_destroy( server.acks );
+
+    rocketnet_assert_function( NULL );
+    rocketnet_quiet( false );
+}
+REGISTER_UNIT_TEST( test_api_polish_client_index_at_build_max_clients );
 
 // --- server abort_message acts on the pending start: with none, a no-op ---------
 

@@ -1665,7 +1665,7 @@ int rocketnet_client_index( const struct rocketnet_client_t * client )
         return -1;
 
     const int index = (int) rocketnet_client_transport_client_index( rocketnet_message_client_transport( client->connection ) );
-    rocketnet_assert( index >= 0 && index < ROCKETNET_MAX_CLIENTS );
+    rocketnet_assert( index >= 0 );
 
     return index;
 }
