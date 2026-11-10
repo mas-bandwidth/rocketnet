@@ -92,8 +92,14 @@ DEVELOPMENT_SYMBOL_PARTS = (
 )
 
 
+# Development names that prefix a production one (rn_arena_create_in_block
+# ships), matched only where the name is not followed by an underscore.
+DEVELOPMENT_SYMBOL_PATTERN = re.compile(r"rn_arena_create(?!_)")
+
+
 def development_symbols(defined):
-    return sorted(symbol for symbol in defined if any(part in symbol for part in DEVELOPMENT_SYMBOL_PARTS))
+    return sorted(symbol for symbol in defined
+                  if any(part in symbol for part in DEVELOPMENT_SYMBOL_PARTS) or DEVELOPMENT_SYMBOL_PATTERN.search(symbol))
 
 
 def dev_server_secret_key(source_path):
