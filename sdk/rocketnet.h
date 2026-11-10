@@ -1092,8 +1092,8 @@ ROCKETNET_EXPORT void rocketnet_thread_priority( bool enabled );
 ROCKETNET_EXPORT const char * rocketnet_log_level_name( enum rocketnet_log_level_t level );
 
 /// Receives one formatted log line on the thread that logs it. This may be a
-/// network thread, so the callback must be thread-safe. It must not call
-/// rocketnet_log_function. context is the installed pointer. message is
+/// network thread, so the callback must be thread-safe. It must not call any
+/// rocketnet function. context is the installed pointer. message is
 /// NUL-terminated and length excludes the NUL. The message is at most 1023
 /// bytes and is valid only until the callback returns.
 
@@ -1187,12 +1187,15 @@ ROCKETNET_EXPORT void rocketnet_sleep( double seconds );
 ///
 /// Create allocates the hub as one block through the configured allocator:
 /// one server endpoint and max_clients client endpoints, each with its full
-/// datagram queue. Server start and client connect register an endpoint and
-/// allocate nothing; stop, disconnect and destroy unregister it. Traffic never
-/// allocates. A server or client past the hub's capacity is refused at start
-/// or connect. Create it once rocketnet_init has run, and destroy it with the
-/// same library copy that created it, after every server and client that uses
-/// it is destroyed and before rocketnet_term.
+/// datagram queue. Each client endpoint's queue is 2048 slots of 1476 bytes,
+/// 2048 * 1476 bytes. At max_clients 1000 the block is about 3.05 GB. It sits
+/// outside rocketnet_client_required_memory and
+/// rocketnet_server_required_memory. Server start and client connect register
+/// an endpoint and allocate nothing; stop, disconnect and destroy unregister
+/// it. Traffic never allocates. A server or client past the hub's capacity is
+/// refused at start or connect. Create it once rocketnet_init has run, and
+/// destroy it with the same library copy that created it, after every server
+/// and client that uses it is destroyed and before rocketnet_term.
 ///
 /// Thread: create and destroy on any thread. The endpoints may use the hub
 /// from any thread at once; a mutex in the hub guards it.
@@ -1294,7 +1297,11 @@ struct rocketnet_client_config_t
     /// public state, the negative ones included. NULL disables the callback.
     /// It runs on the caller thread at the end of connect, update,
     /// disconnect (the one an early destroy makes included), and a start
-    /// message whose memory exhaustion ends the connection. Do not call client functions from it. Default is NULL.
+    /// message whose memory exhaustion ends the connection. Do not call client
+    /// functions from it: a call that changes the client (connect, destroy,
+    /// update, send_packets, disconnect, the message, receipt and send rate
+    /// calls, network_simulator) made from it is refused at once, leaves the
+    /// client as it was, and counts one api_misuse. Default is NULL.
 
     void ( *state_change_callback )( void * context, enum rocketnet_client_state_t previous_state, enum rocketnet_client_state_t current_state );
 

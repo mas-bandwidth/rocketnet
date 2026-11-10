@@ -19,8 +19,7 @@
 // Server-side connection request processing: the ladder from the standard,
 // every check in its exact order, each rung rejecting what it can at its own
 // cost so the expensive rung is reached only by traffic that already cleared
-// the cheap ones. The library does not own sockets yet, so processing returns
-// what to send and the caller sends it.
+// the cheap ones. Processing returns what to send and the caller sends it.
 
 // Pointer-only dependencies, deliberately incomplete here: the encryption
 // map (rocketnet_encryption_map.h), the client slots

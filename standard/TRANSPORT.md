@@ -346,7 +346,6 @@ Registry rules:
 | maximum packet size | `1452` | bytes | protocol value | [t8 Packet formats](#t8) |
 | replay window depth minimum | `4096` | sequences | size | [t14 Replay protection](#t14) |
 | replay window depth maximum | `32768` | sequences | size | [t14 Replay protection](#t14) |
-| send rate | `10` | hertz | protocol value | [t17 Timing and defaults](#t17) |
 | cookie lifetime | `3` | seconds | protocol value | [t12 Handshake: server](#t12) |
 | cookie key rotation | `60` | seconds | protocol value | [t12 Handshake: server](#t12) |
 | server redundant disconnect packets | `10` | packets | protocol value | [t13 Session: keep-alive, timeout, disconnect, slot reset](#t13) |
@@ -2378,7 +2377,7 @@ The client is in exactly one of the states of the table below. A state number is
 4. An attempt MUST begin with a fresh connection salt and a fresh ephemeral keypair. The handshake and session sending sequences MUST start at one and MUST NOT be reset within the attempt.
 5. The client MUST enter requesting cookie (1), sending connection request (2), sending connection response (3) and connected (4) in that order, each at most once per attempt.
 6. While the client is in requesting cookie (1), sending connection request (2) or sending connection response (3), it MUST abandon the attempt for connect token expired (-7) once the token's lifetime, the difference between its expire timestamp and its create timestamp, has elapsed since the attempt began. The check does not apply in connected (4).
-7. In requesting cookie (1), sending connection request (2) and sending connection response (3), the client MUST retransmit its current packet at the send rate of [t3 Constants and registries](#t3) until a packet advances it or a deadline ends the attempt. A client MUST NOT send a packet because a packet arrived.
+7. In requesting cookie (1), sending connection request (2) and sending connection response (3), the client MUST retransmit its current packet at the send rate of [t17 Timing and defaults](#t17) until a packet advances it or a deadline ends the attempt. A client MUST NOT send a packet because a packet arrived.
 8. In a positive state below connected (4), a client that has accepted no authenticated packet for the token's timeout MUST move to the state whose number is one less than the negation of its current state: requesting cookie (1) to cookie request timed out (-2), sending connection request (2) to connection request timed out (-3), sending connection response (3) to connection response timed out (-4). In connected (4) the same silence MUST move the client to connection timed out (-5). An authenticated packet is one that opens under the attempt's keys: a connection challenge or a session packet. The timeout runs from the attempt's start until the first one, and a connection cookie never restarts it ([t11.1 Cookie processing](#t11.1)).
 9. A negative state MUST persist until the client disconnects or accepts a new connect token after any retiring transport from the ended attempt has finished stopping. A disconnect from any state MUST perform the per-connection reset of [t13 Session: keep-alive, timeout, disconnect, slot reset](#t13) and MUST return the client to disconnected (0). From disconnected (0), or from a negative state once any retiring transport has finished stopping, the client MAY connect again with a new token.
 
@@ -2845,7 +2844,7 @@ by either endpoint's timeout, or by the server's stop.
 
 1. An endpoint MUST generate keep-alives as
    [t13.1 Keep-alive generation](#t13.1) says, paced by elapsed time at the
-   `send rate` row of [t3 Constants and registries](#t3).
+   `send rate` row of [t17 Timing and defaults](#t17).
 2. An endpoint MUST refresh the connection's idle clock when it accepts an
    opened session packet from the remote endpoint, whatever the packet type.
 3. Every path that ends a connection MUST run exactly one reset on each side
@@ -3356,7 +3355,7 @@ the round trip time, and no rate is expressed per application update. Time is
 an input ([t1.4 Conventions](#t1.4)).
 
 1. A sender MUST retransmit a handshake packet, and a server MUST generate a
-   keep-alive, at the send rate of [t3 Constants and registries](#t3). The
+   keep-alive, at the send rate of [t17 Timing and defaults](#t17). The
    schedule is driven by elapsed time, not by the number of application
    updates.
 2. A sender MUST keep the send rate constant for the duration of one attempt.
@@ -3428,6 +3427,7 @@ The values this section introduces are:
 
 | Name | Value | Unit | Meaning |
 |---|---|---|---|
+| send rate | `10` | hertz | the handshake retransmission and keep-alive rate, one value for client and server |
 | half-open idle deadline | `10` | seconds | a half-open mapping with no matching request from its address for this long is discarded |
 | handshake work budget | `16` | requests per update | default connection requests one server takes to the signature verification in one update |
 | failed-signature budget | `90` | failed verifications per window | default failed Ed25519 verifications one server performs in one failed-signature window |

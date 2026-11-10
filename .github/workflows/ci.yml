@@ -69,10 +69,10 @@
 #                           that fires in Debug is compiled out, and the
 #                           optimizer is a different compiler. The ubuntu
 #                           Release row runs as two parallel legs.
-#   build-and-test-windows  the build and the unit suite under MSVC, Release,
-#                           as two parallel legs. The Debug row and the
-#                           Windows functional suite are in nightly.yml
-#                           (windows / Debug, windows / Release ASan).
+#   build-and-test-windows  nightly: the build and the unit suite under MSVC,
+#                           Release, as three parallel legs. Per commit, happy
+#                           path / windows runs the build, the unit suite and
+#                           the happy path; Debug and functional are nightly.yml.
 #   sanitizers              asan + ubsan over focused transport recovery,
 #                           lifecycle, driver, sodium and XDP controls; the
 #                           exhaustive functional suite is in nightly-leaks
@@ -149,22 +149,25 @@ concurrency:
 #       timeout-minutes: ${{ inputs.full && 7200 || 2 }}, so a per-commit job that
 #       runs past two minutes fails; tools/check_ci_budget.py, run in the lint
 #       job, refuses a per-commit job in any workflow without that bound.
-#       The job count is sized to the pools that run it at once: two macOS
-#       runners (rocketnet-ci-macos; the other nightly workflows use rocketnet-macos, a separate pool), three Windows runners (rocketnet-windows),
-#       and the shared Linux fleet.
+#       The job count is sized to the pools that run it at once: the fleet's
+#       macOS runners (self-hosted,macOS,ARM64,fleet), three Windows runners
+#       (rocketnet-windows), and the shared Linux fleet (self-hosted,Linux,X64,fleet).
 #   nightly (nightly-ci.yml, full: true, no time limit): every job and every
 #       step in this file, the per-commit ones included. What runs only here:
 #
 #   macOS: Debug functional, checks and builds; Release unit, checks and
-#       builds; happy path / macos-15; platform selftests / macos-15.
+#       builds; happy path / macos; platform selftests / macos.
 #       (Per commit: Debug unit, and Release functional, which runs the
 #       development functional suite as well as functional_production.)
 #   Linux: Debug checks and builds; Release functional's development suite
 #       (Debug functional runs it per commit); Release builds' history budget
-#       and no-XDP builds; platform selftests / ubuntu-24.04.
+#       and no-XDP builds; platform selftests / linux.
+#   Ubuntu 22.04 and 24.04: ubuntu 22.04 / Release and ubuntu 24.04 /
+#       Release, the library and the unit suite built in a container of that
+#       release (the fleet's runners are Ubuntu 26.04).
 #   Windows: windows / Release legs (a), (b) and (c) whole (per commit,
 #       happy path / windows builds the whole tree under MSVC and runs the
-#       happy path).
+#       happy path and the unit suite).
 #   unit-case coverage (every registered unit case runs in some
 #       configuration); the wide-channel unit cases (Linux Debug builds).
 #   asan + ubsan (unit suite portable), fuzz smoke NDEBUG, big endian s390x /
@@ -210,40 +213,39 @@ jobs:
     name: ${{ matrix.os }} / ${{ matrix.build_type }} / ${{ matrix.leg }}
     # Linux rows run on the fleet's organization runners (labels self-hosted,Linux,X64,fleet: Linux x64 gcc
     # hosts), provisioned by the fleet's provisioning repository (group_vars ci_apt_packages), which is why the
-    # self-hosted apt step is skipped. macOS rows run on the self-hosted macOS arm64 hosts (label
-    # rocketnet-ci-macos, kept apart from the nightly pool rocketnet-macos so the other nightly workflows never queue ahead of a commit). matrix.os is the display name the check names carry (macos-15 on the macOS rows);
+    # self-hosted apt step is skipped. macOS rows run on the fleet's macOS arm64 runners (labels
+    # self-hosted,macOS,ARM64,fleet). matrix.os is the display name the check names carry (linux, macos);
     # runner is the label set runs-on uses.
     runs-on: ${{ fromJSON(matrix.runner) }}
     timeout-minutes: ${{ inputs.full && 7200 || 2 }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-15]
+        os: [linux, macos]
         build_type: [Debug, Release]
         leg: [unit, functional, checks, builds]
         # The per-commit tier runs seven of the sixteen rows: five Linux rows
         # (the Release unit row carries the builds leg's steps) and two macOS
-        # rows, one per macOS runner. The nightly tier runs all.
-        exclude: ${{ fromJSON(inputs.full && '[]' || '[{"os":"ubuntu-24.04","build_type":"Debug","leg":"checks"},{"os":"ubuntu-24.04","build_type":"Debug","leg":"builds"},{"os":"ubuntu-24.04","build_type":"Release","leg":"builds"},{"os":"macos-15","build_type":"Debug","leg":"functional"},{"os":"macos-15","build_type":"Debug","leg":"checks"},{"os":"macos-15","build_type":"Debug","leg":"builds"},{"os":"macos-15","build_type":"Release","leg":"unit"},{"os":"macos-15","build_type":"Release","leg":"checks"},{"os":"macos-15","build_type":"Release","leg":"builds"}]') }}
+        # rows. The nightly tier runs all.
+        exclude: ${{ fromJSON(inputs.full && '[]' || '[{"os":"linux","build_type":"Debug","leg":"checks"},{"os":"linux","build_type":"Debug","leg":"builds"},{"os":"linux","build_type":"Release","leg":"builds"},{"os":"macos","build_type":"Debug","leg":"functional"},{"os":"macos","build_type":"Debug","leg":"checks"},{"os":"macos","build_type":"Debug","leg":"builds"},{"os":"macos","build_type":"Release","leg":"unit"},{"os":"macos","build_type":"Release","leg":"checks"},{"os":"macos","build_type":"Release","leg":"builds"}]') }}
         # dev: the ROCKETNET_DEV setting. Debug rows build the default
         # development library (ON); Release rows build the production library
         # (OFF), so every OS runs the suite both ways and the production
         # boundary checks read a production library. runner is the label set
-        # runs-on uses; the Linux functional rows select libxdp-1-4, the label
-        # of the VM-tier runner the xdp matrix cell needs, and not fleet, so a
-        # libxdp-1-4 runner kept out of the general fleet still serves them.
+        # runs-on uses. Every Linux fleet runner carries the VM tier the xdp
+        # matrix cell needs (docs/TESTING.md, "The VM tier"), so the
+        # functional rows select the fleet like every other row.
         include:
           - { build_type: Debug, dev: 'ON' }
           - { build_type: Release, dev: 'OFF' }
-          - { os: ubuntu-24.04, runner: '["self-hosted","Linux","X64","fleet"]' }
-          - { os: ubuntu-24.04, leg: functional, runner: '["self-hosted","Linux","X64","libxdp-1-4"]' }
+          - { os: linux, runner: '["self-hosted","Linux","X64","fleet"]' }
           # Per commit the Linux Release unit row also runs the builds leg's
           # steps over the same production build: one Release build and one
           # runner instead of two, on a fleet where runners, not cores, are
           # what a per-commit run waits for. The nightly tier runs the builds
           # row on its own.
-          - { os: ubuntu-24.04, build_type: Release, leg: unit, with_builds: true, runner: '["self-hosted","Linux","X64","fleet"]' }
-          - { os: macos-15, runner: '["self-hosted","macOS","ARM64","rocketnet-ci-macos"]' }
+          - { os: linux, build_type: Release, leg: unit, with_builds: true, runner: '["self-hosted","Linux","X64","fleet"]' }
+          - { os: macos, runner: '["self-hosted","macOS","ARM64","fleet"]' }
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
@@ -610,8 +612,8 @@ jobs:
       # cell needs root, a namespace and a veth pair, so it runs
       # test_xdp_transport_max_size_both_ways_ipv4 and _ipv6 (the xdp server, the portable
       # client) as root inside a virtme-ng guest on the runner's own kernel,
-      # never on the host; a runner with no VM tier fails the cell, so the
-      # Linux functional rows select libxdp-1-4, the label of the VM-tier runner.
+      # never on the host; a runner with no VM tier fails the cell with one
+      # VM-TIER-MISSING line naming what the host lacks (scripts/vm-tier-missing).
       # A client of auto sets no client pin, so that cell runs the client's
       # automatic order on the wire (gso on Linux, msgx on macOS, iocp on
       # Windows; TRANSPORTS.md "Client transports").
@@ -662,9 +664,10 @@ jobs:
                 # root, a namespace and a veth pair inside a guest of the
                 # runner's own kernel; the host is never touched
                 vm_kernel="$HOME/vm-kernels/vmlinuz-$(uname -r)"
-                if ! command -v vng >/dev/null || [ ! -r "$vm_kernel" ] || [ ! -w /dev/kvm ]; then
+                vm_missing=$(scripts/vm-tier-missing)
+                if [ -n "$vm_missing" ]; then
                   for case in $xdp_cases; do
-                    echo "no VM tier on this runner: needs vng, a readable $vm_kernel and a writable /dev/kvm" > "$logs/$server.$client.$case.log"
+                    echo "VM-TIER-MISSING on $RUNNER_NAME: $vm_missing" > "$logs/$server.$client.$case.log"
                     echo 1 > "$logs/$server.$client.$case.rc"
                   done
                   exit 0
@@ -728,21 +731,30 @@ jobs:
           ROCKETNET_CLIENT_TRANSPORT: portable
         run: ./bin/test_lifecycle
 
-      # THE libxdp 1.4 XDP CELL. sdk/rocketnet_server_socket_linux.cpp
-      # initializes the UMEM ring sizes; libxdp 1.4 rejects zeroed ring sizes
-      # and 1.6 accepts them, so the Linux functional rows run on libxdp-1-4
-      # runners, where the transport family matrix's xdp cell (above) runs
-      # test_xdp_transport_max_size_both_ways_ipv4 and _ipv6 in a guest of the
-      # runner's kernel. This step holds the runner to its label: the cell
-      # proves the ring sizes against 1.4 only while the host's libxdp is 1.4.
-      - name: The XDP cell ran against libxdp 1.4
+      # THE TESTED libxdp RANGE. The AF_XDP providers rocketnet supports are
+      # Ubuntu 22.04's stock libbpf 0.5 (no libxdp; the legacy bpf/xsk.h
+      # path), libxdp 1.4 (Ubuntu 24.04) and libxdp 1.6 (Ubuntu 26.04).
+      # sdk/rocketnet_server_socket_linux.cpp initializes the UMEM ring sizes
+      # because libxdp 1.4 rejects zeroed ring sizes (1.6 accepts them), so
+      # the same source serves every provider with no version switch. The
+      # fleet's runners carry libxdp 1.6, and the transport family matrix's
+      # xdp cell (above) runs test_xdp_transport_max_size_both_ways_ipv4 and
+      # _ipv6 against it in a guest of the runner's kernel; the nightly
+      # distro-container job builds and unit-tests the library against 22.04's
+      # libbpf 0.5 and 24.04's libxdp 1.4. This step records the libxdp the
+      # cell ran against and refuses one outside the tested range, so a host
+      # upgrade past 1.6 is tested before it is trusted.
+      - name: The XDP cell ran against a libxdp in the tested range (1.4 to 1.6)
         if: runner.os == 'Linux' && matrix.leg == 'functional'
         shell: bash
         run: |
           set -euo pipefail
           version=$(pkg-config --modversion libxdp)
-          echo "libxdp $version"
-          case "$version" in 1.4.*) ;; *) echo "libxdp-1-4 requires libxdp 1.4.x"; exit 1 ;; esac
+          echo "libxdp $version on $RUNNER_NAME"
+          case "$version" in
+            1.4.*|1.5.*|1.6.*) ;;
+            *) echo "LIBXDP-UNTESTED libxdp $version on $RUNNER_NAME is outside the tested range 1.4 to 1.6; test it, then widen this step and docs/LINUX.md section 1"; exit 1 ;;
+          esac
 
       - name: Check test scaffolding boundary (red controls)
         if: matrix.leg == 'checks' && ( runner.os == 'Linux' && matrix.dev == 'OFF' )
@@ -1043,6 +1055,31 @@ jobs:
         if: runner.os == 'Linux' && matrix.leg == 'checks'
         run: bash scripts/rocketnet-provision selftest
 
+  # Development-only unit files are in ./bin/test only when ROCKETNET_DEV=ON.
+  # The Debug unit row runs them at -O0. This job runs the same suite from a
+  # Release build, on its own runner, so the optimizer sees those cases on
+  # every commit. timeout-minutes stays inside the two-minute per-commit
+  # bound. The three compilers run the same binary in nightly-dst.yml.
+  release-dev-unit:
+    name: ubuntu-24.04 / Release / ROCKETNET_DEV=ON / unit
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: ${{ inputs.full && 7200 || 2 }}
+    steps:
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: ./.github/actions/ccache
+
+      - name: Build the unit suite (Release, ROCKETNET_DEV=ON, GCC)
+        env:
+          CC: gcc
+          CXX: g++
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DROCKETNET_DEV=ON
+          cmake --build build --target test --parallel
+
+      - name: Run unit tests (Release, ROCKETNET_DEV=ON)
+        run: ./bin/test
+
   # The windows leg (#81's baseline doctrine): the portable driver built with
   # MSVC — the first machine ever to compile the windows arm — and the full
   # test suite run on the runner, Debug and Release. /fp:precise comes from
@@ -1151,7 +1188,8 @@ jobs:
     # targets, measured 143s on run 41240496784 (checkout 11s, configure 19s,
     # build 55s, unit suite 38s) and hit the two-minute bound; MSVC's floor
     # leaves no room for a suite. Per commit, happy path / windows builds the
-    # whole tree under MSVC and runs the happy path (106s on the same run).
+    # whole tree under MSVC and runs the happy path and the unit suite
+    # (test.exe; the happy path alone measured 106s on the same run).
     if: inputs.full
     timeout-minutes: 7200
     strategy:
@@ -1479,18 +1517,18 @@ jobs:
 
   happy-path:
     name: happy path / ${{ matrix.os }}
-    # every OS on the fleet: Linux on the fleet pool, macOS on rocketnet-ci-macos, Windows on rocketnet-windows
-    runs-on: ${{ fromJSON(matrix.os == 'windows' && '["self-hosted","Windows","X64","rocketnet-windows"]' || startsWith(matrix.os, 'macos') && '["self-hosted","macOS","ARM64","rocketnet-ci-macos"]' || '["self-hosted","Linux","X64","fleet"]') }}
+    # every OS on the fleet: Linux and macOS on the fleet pools, Windows on rocketnet-windows
+    runs-on: ${{ fromJSON(matrix.os == 'windows' && '["self-hosted","Windows","X64","rocketnet-windows"]' || startsWith(matrix.os, 'macos') && '["self-hosted","macOS","ARM64","fleet"]' || '["self-hosted","Linux","X64","fleet"]') }}
     # the Windows row waits for a captain build slot first (build-and-test-windows)
     timeout-minutes: ${{ inputs.full && 7200 || 2 }}
     strategy:
       fail-fast: false
       matrix:
-        # macOS runs in the nightly tier: per commit the two macOS runners
-        # hold the two build-and-test rows. The runner comes from os in
+        # macOS runs in the nightly tier: per commit the macOS runners hold
+        # the two build-and-test rows. The runner comes from os in
         # runs-on, not from include rows: an include row that matches no
         # combination would add the macOS row back.
-        os: ${{ fromJSON(inputs.full && '["ubuntu-24.04","macos-15","windows"]' || '["ubuntu-24.04","windows"]') }}
+        os: ${{ fromJSON(inputs.full && '["linux","macos","windows"]' || '["linux","windows"]') }}
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
@@ -1572,6 +1610,11 @@ jobs:
       - name: Start combined unit and functional timing
         shell: bash
         run: *start_unit_functional_timing
+
+      - name: Run the unit suite (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: ./bin/Release/test.exe
 
       - name: Run happy_path
         shell: bash
@@ -1841,21 +1884,20 @@ jobs:
   # Discovery is the nightly's job (#124: hours, with the corpus persisted
   # between nights). What belongs on a per-commit gate is the property a
   # replay has and a hunt does not: the same inputs, in the same order, with
-  # the same verdict, every run. So the gate below is the first step -- every
-  # committed corpus file executed exactly once through the four wire-facing
-  # parsers under asan+ubsan, seconds, no randomness anywhere in it. Each
-  # file in tests/fuzz/corpus is a shape the wire can carry or a shape a defect
-  # once had, and the harness carries oracles beyond memory safety (base64
-  # round-trip, the ladder's output range),
-  # so a wrong ANSWER fails it too, not only a wrong access.
+  # the same verdict, every run. So the gate below is every committed corpus
+  # file, in every target's corpus, executed exactly once through its own
+  # fuzz_replay_ harness under asan+ubsan, seconds, no randomness anywhere in
+  # it. Each file in tests/fuzz/corpus* is a shape the wire can carry or a
+  # shape a defect once had, and the harnesses carry oracles beyond memory
+  # safety (base64 round-trip, the ladder's output range),
+  # so a wrong ANSWER fails them too, not only a wrong access.
   #
-  # The second step is a small fixed-seed mutation pass on top. It is bounded
-  # by a fixed mutation count and a failing step deadline: a slow runner
-  # must finish the count or fail visibly. It is not the gate's determinism
-  # argument -- the regression replay is.
+  # The bounded fixed-seed mutation pass that used to run here is in
+  # fuzz-nightly.yml: a per-commit gate is the deterministic replay, and
+  # mutation belongs to the nightly's duration budget.
 
   fuzz-smoke:
-    name: fuzz smoke (libFuzzer, corpus replay)
+    name: fuzz smoke (corpus replay)
     runs-on: [self-hosted, Linux, X64, fleet]   # was ubuntu-24.04, then one host's rocketnet label; the fleet's org runners (see build-and-test's note)
     timeout-minutes: ${{ inputs.full && 7200 || 2 }}
     steps:
@@ -1912,64 +1954,36 @@ jobs:
       - name: Build the instrumented library
         run: cmake --build build-fuzz --target rocketnet --parallel
 
-      - name: Build the harness
+      # THE GATE: each committed input, once, in order, through its target's
+      # replay driver. A replay driver given files runs exactly them and exits
+      # -- no mutation, no seeded randomness, no clock.
+
+      - name: Build and replay every committed fuzz corpus
+        shell: bash
+        env:
+          ASAN_OPTIONS: detect_leaks=0
         run: |
+          # the ten harnesses build in one parallel build and replay at once;
+          # each replay's exit status is checked
+          harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session"
+          targets=""
+          for harness in $harnesses; do targets="$targets fuzz_replay_$harness"; done
           mkdir -p bin
-          clang++ -g -O1 -std=c++17 \
-            -ffp-contract=off \
-            -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
-            -Isdk tests/fuzz/rocketnet_fuzz.cpp build-fuzz/librocketnet.a \
-            -lbpf -lxdp -luring -lpthread \
-            -o bin/fuzz
-
-      - name: Build the message harness
-        run: |
-          clang++ -g -O1 -std=c++17 \
-            -ffp-contract=off \
-            -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
-            -Isdk tests/fuzz/rocketnet_fuzz_message.cpp build-fuzz/librocketnet.a \
-            -lbpf -lxdp -luring -lpthread \
-            -o bin/fuzz_message
-
-      # THE GATE: each committed input, once, in order. libFuzzer given files
-      # rather than a directory runs exactly them and exits -- no mutation, no
-      # seeded randomness, no clock.
-
-      - name: Replay the regression corpus
-        env:
-          ASAN_OPTIONS: detect_leaks=0
-        run: ./bin/fuzz tests/fuzz/corpus/*
-
-      - name: Replay the message corpus
-        env:
-          ASAN_OPTIONS: detect_leaks=0
-        run: ./bin/fuzz_message tests/fuzz/corpus_message/*
+          cmake --build build-fuzz --target $targets --parallel
+          pids=""
+          for harness in $harnesses; do
+            corpus="tests/fuzz/corpus${harness#rocketnet_fuzz}"
+            "./bin/fuzz_replay_$harness" "$corpus"/* > "fuzz-replay-$harness.log" 2>&1 &
+            pids="$pids $!:$harness"
+          done
+          failed=0
+          for entry in $pids; do
+            if ! wait "${entry%%:*}"; then echo "fuzz replay failed: ${entry#*:}"; cat "fuzz-replay-${entry#*:}.log"; failed=1; fi
+          done
+          exit $failed
 
       - name: Exact-field oracle rejects memory-safe truncation
         run: python3 tools/check_fuzz_oracle.py build-fuzz
-
-      # The bounded pass: fixed seed, fixed WALL-CLOCK BUDGET, and the corpus
-      # copied out first so the source tree is not mutated. Every target gets
-      # the same few seconds, and the per-input timeout is the hang oracle that
-      # fails red if a pass cannot finish; the CI budget is one minute end to
-      # end per job. The gate's determinism argument stays the replay above --
-      # this pass only adds a few seconds of mutation on top of it.
-
-      - name: Mutation pass (time-boxed, fixed seed)
-        env:
-          ASAN_OPTIONS: detect_leaks=0
-        run: |
-          # RUNNER_TEMP, not /tmp: on a persistent self-hosted host /tmp/fuzz-corpus outlives the job and is
-          # shared by every runner on the machine, so the pass would start from another run's grown corpus
-          cp -r tests/fuzz/corpus "$RUNNER_TEMP/fuzz-corpus"
-          ./bin/fuzz "$RUNNER_TEMP/fuzz-corpus" -seed=1 -max_total_time=5 -timeout=10 -rss_limit_mb=2048 -print_final_stats=1
-
-      - name: Message mutation pass (time-boxed, fixed seed)
-        env:
-          ASAN_OPTIONS: detect_leaks=0
-        run: |
-          cp -r tests/fuzz/corpus_message "$RUNNER_TEMP/fuzz-corpus_message"
-          ./bin/fuzz_message "$RUNNER_TEMP/fuzz-corpus_message" -seed=1 -max_total_time=5 -timeout=10 -rss_limit_mb=2048 -print_final_stats=1
 
       - name: Upload crash reproducers
         if: failure()
@@ -2159,9 +2173,9 @@ jobs:
 
   big-endian:
     name: big endian s390x / ${{ matrix.build_type }}
-    # ubuntu-2404: the s390x multiarch libraries are provisioned on the 24.04
-    # fleet hosts, not on the ubuntu-2604 ones.
-    runs-on: [self-hosted, Linux, X64, ubuntu-2404]
+    # Any Linux fleet runner: the runner role provisions the s390x cross
+    # toolchain, the s390x multiarch libraries and qemu-user on every host.
+    runs-on: [self-hosted, Linux, X64, fleet]
     timeout-minutes: ${{ inputs.full && 7200 || 2 }}
     strategy:
       fail-fast: false
@@ -2178,12 +2192,25 @@ jobs:
         run: |
           set -euo pipefail
           missing=0
-          for tool in cmake xxd pkg-config readelf s390x-linux-gnu-gcc s390x-linux-gnu-g++ qemu-s390x-static; do
+          for tool in cmake xxd pkg-config readelf s390x-linux-gnu-gcc s390x-linux-gnu-g++; do
             if ! command -v "$tool" >/dev/null 2>&1; then
               echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
               missing=1
             fi
           done
+          # qemu-user-static installs qemu-s390x-static; qemu-user (Ubuntu
+          # 26.04, which has no qemu-user-static) installs qemu-s390x, itself
+          # a static binary. Either runs the leg; the step after uses $QEMU_S390X.
+          qemu=""
+          for tool in qemu-s390x-static qemu-s390x; do
+            if command -v "$tool" >/dev/null 2>&1; then qemu=$(command -v "$tool"); break; fi
+          done
+          if [ -z "$qemu" ]; then
+            echo "TOOL-MISSING qemu-s390x-static or qemu-s390x (any) (missing; package qemu-user-static or qemu-user) on $RUNNER_NAME"
+            missing=1
+          else
+            echo "QEMU_S390X=$qemu" >> "$GITHUB_ENV"
+          fi
           for lib in libsodium libbpf libxdp; do
             if ! PKG_CONFIG_LIBDIR=/usr/lib/s390x-linux-gnu/pkgconfig:/usr/share/pkgconfig pkg-config --exists "$lib" >/dev/null 2>&1; then
               echo "TOOL-MISSING $lib (s390x) (pkg-config --exists failed) on $RUNNER_NAME"
@@ -2264,8 +2291,8 @@ jobs:
           QEMU_LD_PREFIX: /
           LD_LIBRARY_PATH: /usr/lib/s390x-linux-gnu:/usr/s390x-linux-gnu/lib
         run: |
-          qemu-s390x-static ./bin/wire_check
-          qemu-s390x-static ./bin/test_sodium
+          "$QEMU_S390X" ./bin/wire_check
+          "$QEMU_S390X" ./bin/test_sodium
 
       - name: Enforce combined unit and functional timing
         shell: bash
@@ -2430,9 +2457,11 @@ jobs:
     name: pinned libsodium (built from source)
     # nightly tier
     if: inputs.full
-    # ubuntu-2404: the cached prefix is keyed by runner.os alone and built
-    # against the host's glibc, so it is built and restored on one distro.
-    runs-on: [self-hosted, Linux, X64, ubuntu-2404]
+    # Any Linux fleet runner: the cached prefix is built against the host's
+    # glibc, so its key names the host's distribution, release, machine and
+    # C library (the instruction gate's host key), and a prefix built on one
+    # distro is never restored on another.
+    runs-on: [self-hosted, Linux, X64, fleet]
     timeout-minutes: 7200
     env:
       SODIUM_VERSION: "1.0.20"
@@ -2464,12 +2493,23 @@ jobs:
           done
           exit "$missing"
 
+      - name: Read the host the prefix is built for
+        id: host
+        shell: bash
+        run: |
+          set -euo pipefail
+          . /etc/os-release
+          libc="$(getconf GNU_LIBC_VERSION | tr ' ' '-')"
+          host="${ID}-${VERSION_ID}-$(uname -m)-${libc}"
+          echo "host=$host" >> "$GITHUB_OUTPUT"
+          echo "pinned libsodium prefix for host $host on $RUNNER_NAME"
+
       - name: Restore the pinned sodium prefix
         id: sodium-cache
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4.3.0
         with:
           path: ${{ env.SODIUM_PREFIX }}
-          key: sodium-pin-${{ env.SODIUM_VERSION }}-${{ runner.os }}
+          key: sodium-pin-${{ env.SODIUM_VERSION }}-${{ runner.os }}-${{ steps.host.outputs.host }}
 
       - name: Build the pinned libsodium from source (content-verified)
         if: steps.sodium-cache.outputs.cache-hit != 'true'
@@ -2534,6 +2574,49 @@ jobs:
           CI_TIMING_ROW: ${{ format('{0}/{1}', runner.os, github.job) }}
         run: *enforce_unit_functional_timing
 
+  # THE SUPPORTED UBUNTU LTS RELEASES. Ubuntu 22.04 LTS and 24.04 LTS stay
+  # supported (owner, 2026-11-09: "we still need to support Ubuntu 22.04
+  # LTS"), and the fleet's runners are Ubuntu 26.04, so each older release is
+  # built and tested in a rootless podman container of that release on a
+  # fleet runner. scripts/distro-container-build installs the packages
+  # docs/BUILDING.md names for the release, checks the AF_XDP provider the
+  # configure picked (22.04: the legacy libbpf 0.5 path; 24.04: libxdp 1.4),
+  # builds the tree, and runs the unit suite, test_xdp_compat on 22.04 and
+  # tools/check_package.py. Nightly tier: the package install and a cold
+  # build of the tree do not fit two minutes. The container shares the
+  # host's kernel, so this qualifies the toolchain and userspace libraries,
+  # not the 5.15 or 6.8 kernels (docs/DEPLOYING.md).
+  distro-container:
+    name: ubuntu ${{ matrix.release }} / container build and unit suite
+    if: inputs.full
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 7200
+    strategy:
+      fail-fast: false
+      matrix:
+        release: ['22.04', '24.04']
+    steps:
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      - name: Check a container runtime is present
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v podman >/dev/null 2>&1; then
+            echo "TOOL-MISSING podman (any) (missing; package podman, with uidmap and a subuid/subgid range for $(id -un)) on $RUNNER_NAME"
+            exit 1
+          fi
+          podman --version
+
+      - name: Build and test in an Ubuntu ${{ matrix.release }} container
+        shell: bash
+        run: >
+          podman run --rm --network host
+          --volume "$PWD:/src" --workdir /src
+          docker.io/library/ubuntu:${{ matrix.release }}
+          scripts/distro-container-build ${{ matrix.release }}
+
   # THE PLATFORM SELFTESTS, lifted out of build-and-test (2026-09-13).
   #
   # Both checks below used to be steps on all FOUR build-and-test rows --
@@ -2590,8 +2673,8 @@ jobs:
         include:
           # the Linux platform selftest runs on the fleet bench; a host that
           # cannot build a harness reports it as SKIPPED and fails a built one
-          - { os: ubuntu-24.04, runner: '["self-hosted","Linux","X64","fleet"]' }
-          - { os: macos-15, runner: '["self-hosted","macOS","ARM64","rocketnet-ci-macos"]' }
+          - { os: linux, runner: '["self-hosted","Linux","X64","fleet"]' }
+          - { os: macos, runner: '["self-hosted","macOS","ARM64","fleet"]' }
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
@@ -2695,14 +2778,12 @@ jobs:
   # cache restores the prefix and builds nothing.
   instruction-gate:
     name: instruction count gate
-    # A runner labelled ubuntu-2404: cachegrind counts instructions, not time,
-    # so the gate needs a host the pinned toolchain's cache key names
-    # (ubuntu-24.04 x86_64 glibc-2.39), not a quiet one. The fleet also holds
-    # ubuntu-2604 runners, where that key misses and the per-commit tier
-    # refuses a cold cache, so the label is what keeps the gate off them. The
-    # ubuntu-2404 jobs leave out fleet so the 24.04 runner kept outside the
-    # general fleet (hetzner2-rocketnet-3) can take them too.
-    runs-on: [self-hosted, Linux, X64, ubuntu-2404]
+    # Any fleet runner: cachegrind counts instructions, not time, so the gate
+    # needs a host the pinned toolchain's cache key names, not a quiet one.
+    # Every Linux fleet runner is ubuntu-26.04 x86_64 glibc-2.43, and the
+    # nightly on main saves that key. A host the key does not name misses,
+    # and the per-commit tier refuses the cold cache by name.
+    runs-on: [self-hosted, Linux, X64, fleet]
     # Per commit the gate restores the pinned toolchain and never builds it
     # (396s cold); the nightly tier builds it on a miss and saves it from
     # main, where every branch and pull request can restore it.
