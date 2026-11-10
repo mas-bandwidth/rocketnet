@@ -89,12 +89,27 @@ static constexpr uint64_t ROCKETNET_LOOPBACK_HUB_LAYOUT_VALUES[] = {
 static constexpr uint32_t ROCKETNET_LOOPBACK_HUB_LAYOUT =
     loopback_layout_hash( ROCKETNET_LOOPBACK_HUB_LAYOUT_VALUES, (int) ( sizeof( ROCKETNET_LOOPBACK_HUB_LAYOUT_VALUES ) / sizeof( ROCKETNET_LOOPBACK_HUB_LAYOUT_VALUES[0] ) ), 2166136261u );
 
+#if ROCKETNET_DEV
+static uint16_t loopback_test_first_port = ROCKETNET_LOOPBACK_FIRST_PORT;
+
+void rocketnet_loopback_test_first_port( uint16_t port ) { loopback_test_first_port = port ? port : (uint16_t) ROCKETNET_LOOPBACK_FIRST_PORT; }
+#endif // #if ROCKETNET_DEV
+
+static uint16_t loopback_first_port()
+{
+#if ROCKETNET_DEV
+    return loopback_test_first_port;
+#else // #if ROCKETNET_DEV
+    return ROCKETNET_LOOPBACK_FIRST_PORT;
+#endif // #if ROCKETNET_DEV
+}
+
 // the ephemeral range wraps from its last port to its first
 // (proofs/tla/RNLoopbackBindLayout.tla Create, EphemeralInRange: a port + 1
 // that wrapped at 65536 would hand out port 0)
 static uint16_t loopback_next_port( uint16_t port )
 {
-    return port == ROCKETNET_LOOPBACK_LAST_PORT ? (uint16_t) ROCKETNET_LOOPBACK_FIRST_PORT : (uint16_t) ( port + 1 );
+    return port == ROCKETNET_LOOPBACK_LAST_PORT ? loopback_first_port() : (uint16_t) ( port + 1 );
 }
 
 static uint16_t * loopback_bound_entry( rocketnet_loopback_hub_t * hub, int type, uint16_t port )
@@ -393,7 +408,7 @@ rocketnet_loopback_hub_t * rocketnet_loopback_hub_create( void * context, int ma
     rocketnet_loopback_hub_t * hub = (rocketnet_loopback_hub_t *) block;
     hub->context = context;
     hub->max_clients = max_clients;
-    hub->next_port = ROCKETNET_LOOPBACK_FIRST_PORT;
+    hub->next_port = loopback_first_port();
     hub->endpoints = (rocketnet_loopback_endpoint_t *) ( block + endpoints_offset );
     hub->send_failures = (std::atomic<uint64_t> *) ( block + failures_offset );
 
