@@ -180,8 +180,7 @@ func runCase(ctx context.Context, o options, h hooks) (rec evidence, err error) 
 		Java: java, Jar: jar.Path, Dir: work,
 		JVM:    []string{"-XX:+UseParallelGC", "-XX:ActiveProcessorCount=2", "-Xmx2g"},
 		TmpDir: scratch, Workers: rec.Workers, LnCheckFinal: true,
-		NoDeadlock: rec.Case.Deadlock == "ignore-terminal",
-		MetaDir:    filepath.Join(scratch, "states"), Config: rec.Case.Config, Module: rec.Case.Module,
+		MetaDir: filepath.Join(scratch, "states"), Config: rec.Case.Config, Module: rec.Case.Module,
 	}
 	rec.Command = append([]string{java}, run.Args()...)
 	execute := h.execute
