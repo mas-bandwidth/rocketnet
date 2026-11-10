@@ -313,6 +313,8 @@ static bool rocketnet_client_iocp_win32_post_receive( void * context, int receiv
     if ( result == 0 )
         return true; // completed at once; the completion is still queued on the port
 
+    // pending covers a queued datagram longer than the buffer too: Windows 11 does not fail that post at once with WSAEMSGSIZE, its one completion carries the truncation (tests/test_iocp.cpp test_windows_oversize_receive_at_post)
+
     const int error = WSAGetLastError();
     if ( error == WSA_IO_PENDING )
         return true;

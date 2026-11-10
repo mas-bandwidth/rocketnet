@@ -943,10 +943,10 @@ static void test_receive_oversize_queued_at_post()
 
 // What Windows does with an overlapped receive posted onto a datagram that
 // already waits in the socket and is longer than the receive's buffer, on a
-// socket bound to a completion port. The call returns SOCKET_ERROR with
-// WSAEMSGSIZE at once; whether a completion is queued for it as well decides
-// what rocketnet_iocp_post_receive and the iocp client's post do with that
-// return. Four cells: WSARecvFrom and WSARecvMsg, each with and without
+// socket bound to a completion port. Whether the call fails at once with
+// WSAEMSGSIZE, and whether a completion is queued for it either way, decides
+// what rocketnet_iocp_post_receive and the iocp client's post must do with
+// its return. Four cells: WSARecvFrom and WSARecvMsg, each with and without
 // FILE_SKIP_COMPLETION_PORT_ON_SUCCESS (the transports never set it). Each
 // cell posts the receive the way the transport does (no byte count argument,
 // a ROCKETNET_RECEIVE_CEILING + 1 buffer), drains the port for a fixed time
@@ -1049,6 +1049,8 @@ struct oversize_post_seen_t
     int result;            // the first receive call's return, posted onto the queued oversized datagram
     int error;             // its WSAGetLastError, 0 when the call returned 0
     int completions;       // completions the port then delivered for it
+    unsigned long long status; // that completion's status
+    int overlapped_error;  // WSAGetOverlappedResult's error for it
     int later_completions; // further completions for it after the small datagram and the second receive
 };
 
@@ -1107,6 +1109,8 @@ static void oversize_post_cell( int cell, bool message_api, bool skip_on_success
     int overlapped_error = 0;
     if ( tally.count[0] > 0 && !WSAGetOverlappedResult( server, &receives[0].overlapped, &transferred, FALSE, &result_flags ) )
         overlapped_error = WSAGetLastError();
+    seen->status = (unsigned long long) tally.entry[0].Internal;
+    seen->overlapped_error = overlapped_error;
 
     printf( "  oversize at post: api=%s skip_on_success=%d: result=%d error=%d completions=%d status=0x%llx bytes=%lu overlapped_error=%d message_flags=0x%lx\n",
             message_api ? "WSARecvMsg" : "WSARecvFrom", skip_on_success ? 1 : 0, seen->result, seen->error, tally.count[0],
@@ -1146,6 +1150,25 @@ static void test_windows_oversize_receive_at_post()
     oversize_post_seen_t seen[4];
     for ( int cell = 0; cell < 4; ++cell )
         oversize_post_cell( cell, ( cell & 2 ) != 0, ( cell & 1 ) != 0, &seen[cell] );
+
+    // What Windows 11 does (build 26200, 2026-11-10), and what the post rule
+    // of the IOCP server and the iocp client rests on: the call reports
+    // WSA_IO_PENDING, never WSAEMSGSIZE, and exactly one completion follows,
+    // carrying the truncation as STATUS_BUFFER_OVERFLOW, which
+    // WSAGetOverlappedResult reads as WSAEMSGSIZE. So "any error but
+    // WSA_IO_PENDING started no I/O" holds for an oversized datagram too, and
+    // the receive is never in the kernel twice. The cells with
+    // FILE_SKIP_COMPLETION_PORT_ON_SUCCESS saw the same and are printed
+    // only: the transports never set it.
+
+    for ( int cell = 0; cell < 4; cell += 2 )
+    {
+        CHECK( seen[cell].result == SOCKET_ERROR && seen[cell].error == WSA_IO_PENDING );
+        CHECK( seen[cell].completions == 1 );
+        CHECK( seen[cell].status == 0x80000005ull );
+        CHECK( seen[cell].overlapped_error == WSAEMSGSIZE );
+        CHECK( seen[cell].later_completions == 0 );
+    }
 
     printf( "test_windows_oversize_receive_at_post\n" );
 }

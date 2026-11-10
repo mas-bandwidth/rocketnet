@@ -807,6 +807,9 @@ static bool rocketnet_iocp_post_receive( rocketnet_server_iocp_t * iocp, rocketn
 
     if ( result != 0 && error == 0 )
         error = WSAGetLastError();
+    // A queued datagram longer than the buffer is WSA_IO_PENDING too on
+    // Windows 11, not an immediate WSAEMSGSIZE: its one completion carries the
+    // truncation (tests/test_iocp.cpp test_windows_oversize_receive_at_post).
     if ( result == 0 || error == WSA_IO_PENDING )
         return true; // Immediate success also produces exactly one IOCP event.
     iocp->pending.fetch_sub( 1, std::memory_order_release );
