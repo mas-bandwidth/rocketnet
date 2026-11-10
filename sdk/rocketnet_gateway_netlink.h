@@ -47,7 +47,7 @@
 #define ROCKETNET_GATEWAY_NETLINK_MORE          0   // nothing found in this datagram; the dump continues
 #define ROCKETNET_GATEWAY_NETLINK_FOUND         1   // the answer is written
 #define ROCKETNET_GATEWAY_NETLINK_DONE          2   // NLMSG_DONE: the dump ended with no answer
-#define ROCKETNET_GATEWAY_NETLINK_MALFORMED     3   // a message or attribute overruns its bounds, an answer has the wrong length, or the datagram was truncated
+#define ROCKETNET_GATEWAY_NETLINK_MALFORMED     3   // a message or attribute overruns its bounds, an answer has the wrong length, an error code is INT_MIN, or the datagram was truncated
 #define ROCKETNET_GATEWAY_NETLINK_ERROR         4   // the kernel answered NLMSG_ERROR, or the dump was interrupted; *error holds the errno
 #define ROCKETNET_GATEWAY_NETLINK_SYSTEM        5   // the socket failed, timed out, or the read bound ran out; *error holds the errno
 

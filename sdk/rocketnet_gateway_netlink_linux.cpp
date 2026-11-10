@@ -10,6 +10,7 @@
 #include "rocketnet_gateway_netlink.h"
 
 #include <errno.h>
+#include <limits.h>
 #include <string.h>
 #include <unistd.h>
 #include <sys/socket.h>
@@ -128,6 +129,9 @@ static int rocketnet_gateway_netlink_parse( const uint8_t * data, size_t bytes, 
                     return ROCKETNET_GATEWAY_NETLINK_MALFORMED;
 
                 memcpy( &code, payload, sizeof( code ) );
+                if ( code == INT_MIN )
+                    return ROCKETNET_GATEWAY_NETLINK_MALFORMED;
+
                 if ( code != 0 )
                 {
                     *error = code < 0 ? -code : code;
@@ -144,6 +148,9 @@ static int rocketnet_gateway_netlink_parse( const uint8_t * data, size_t bytes, 
                 {
                     int code;
                     memcpy( &code, payload, sizeof( code ) );
+                    if ( code == INT_MIN )
+                        return ROCKETNET_GATEWAY_NETLINK_MALFORMED;
+
                     if ( code < 0 )
                     {
                         *error = -code;
