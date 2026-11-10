@@ -609,10 +609,11 @@ jobs:
       # expected failure that passes fails the step, so the mark is removed
       # as the card lands; any other skip fails. No cell holds a mark: the
       # in-memory loopback serves dual stack like the socket transports. The xdp
-      # cell needs root, a namespace and a veth pair, so it runs
-      # test_xdp_transport_max_size_both_ways_ipv4 and _ipv6 (the xdp server, the portable
+      # cell needs root, a namespace and a veth pair, so it runs every
+      # rocketnet_test_xdp_veth_runs_here case (xdp_cases; the xdp server, the portable
       # client) as root inside a virtme-ng guest on the runner's own kernel,
-      # never on the host; a runner with no VM tier fails the cell with one
+      # never on the host; a case missing from xdp_cases, or one that skips,
+      # fails the step; a runner with no VM tier fails the cell with one
       # VM-TIER-MISSING line naming what the host lacks (scripts/vm-tier-missing).
       # A client of auto sets no client pin, so that cell runs the client's
       # automatic order on the wire (gso on Linux, msgx on macOS, iocp on
@@ -646,7 +647,11 @@ jobs:
             *) echo "TRANSPORT-MATRIX no matrix for $RUNNER_OS"; exit 1 ;;
           esac
           socket_cases="test_loopback_transport_udp test_loopback_transport_ipv6 test_transport_dual_stack_ipv4_client test_transport_env_pin_is_honoured"
-          xdp_cases="test_xdp_transport_max_size_both_ways_ipv4 test_xdp_transport_max_size_both_ways_ipv6"
+          xdp_cases="test_xdp_transport_max_size_both_ways_ipv4 test_xdp_transport_max_size_both_ways_ipv6 test_xdp_transport_keep_alive_before_first_payloads_ipv4 test_xdp_transport_keep_alive_before_first_payloads_ipv6 test_posix_hard_killed_client_xdp_ipv4_client_portable test_posix_hard_killed_client_xdp_ipv6_client_portable test_posix_send_to_closed_port_xdp_ipv4_client_portable test_posix_send_to_closed_port_xdp_ipv6_client_portable test_posix_client_server_gone_xdp_ipv4_client_portable test_posix_client_server_gone_xdp_ipv6_client_portable test_session_reconnect_isolation_xdp"
+          # every rocketnet_test_xdp_veth_runs_here row must be named in xdp_cases
+          if [ -f scripts/transport-cells-repeat ]; then
+            scripts/transport-cells-repeat --list --os linux > /dev/null || exit 1
+          fi
           cell_cases() { if [ "$1" = xdp ]; then echo "$xdp_cases"; else echo "$socket_cases"; fi; }
           uring_offered=0
           if [ "$RUNNER_OS" = Linux ] && [ "$(cat /proc/sys/kernel/io_uring_disabled 2>/dev/null || echo 0)" = 0 ]; then uring_offered=1; fi
@@ -712,6 +717,11 @@ jobs:
                 continue
               fi
               rc=$(cat "$logs/$server.$client.$case.rc")
+              if [ "$server" = xdp ] && { [ "$rc" = skipped ] || grep -E '^SKIPPED .*: rocketnet_test_xdp_veth_runs_here$' "$log"; }; then
+                echo "xdp veth case skipped in the VM tier: $case" >&2
+                failed=1
+                continue
+              fi
               if [ "$rc" = skipped ]; then
                 echo "SKIP server=$server client=$client $case: $(cat "$log")"
                 continue
@@ -751,8 +761,8 @@ jobs:
       # because libxdp 1.4 rejects zeroed ring sizes (1.6 accepts them), so
       # the same source serves every provider with no version switch. The
       # fleet's runners carry libxdp 1.6, and the transport family matrix's
-      # xdp cell (above) runs test_xdp_transport_max_size_both_ways_ipv4 and
-      # _ipv6 against it in a guest of the runner's kernel; the nightly
+      # xdp cell (above) runs every rocketnet_test_xdp_veth_runs_here case
+      # against it in a guest of the runner's kernel; the nightly
       # distro-container job builds and unit-tests the library against 22.04's
       # libbpf 0.5 and 24.04's libxdp 1.4. This step records the libxdp the
       # cell ran against and refuses one outside the tested range, so a host

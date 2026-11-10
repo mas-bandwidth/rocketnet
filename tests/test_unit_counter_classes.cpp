@@ -280,6 +280,7 @@ static const char * const counters_appended_names[] = {
     "CONNECTION_REQUEST_CLAIM_TABLE_FULL",
     "PAYLOAD_BATCH_FULL",
     "XDP_RECEIVE_FRAME_DROPPED",
+    "DISCONNECT_BURST_DROPPED",
 };
 #endif // #if ROCKETNET_DEV
 
@@ -392,6 +393,7 @@ static void test_counters_every_counter_has_a_class()
     check( rocketnet_counter_class( ROCKETNET_COUNTER_CONNECTION_REQUEST_CLAIM_TABLE_FULL ) == ROCKETNET_COUNTER_CLASS_REFUSAL );
     check( rocketnet_counter_class( ROCKETNET_COUNTER_PAYLOAD_BATCH_FULL ) == ROCKETNET_COUNTER_CLASS_REFUSAL );
     check( rocketnet_counter_class( ROCKETNET_COUNTER_XDP_RECEIVE_FRAME_DROPPED ) == ROCKETNET_COUNTER_CLASS_REFUSAL );
+    check( rocketnet_counter_class( ROCKETNET_COUNTER_DISCONNECT_BURST_DROPPED ) == ROCKETNET_COUNTER_CLASS_REFUSAL );
     check( rocketnet_counter_class( ROCKETNET_COUNTER_MESSAGE_RESENT ) == ROCKETNET_COUNTER_CLASS_PATH_LOSS );
     check( rocketnet_counter_class( ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED ) == ROCKETNET_COUNTER_CLASS_REFUSAL );
     check( rocketnet_counter_class( ROCKETNET_COUNTER_MESSAGE_STALE_CONNECTION_ENTRY ) == ROCKETNET_COUNTER_CLASS_EXPECTED );

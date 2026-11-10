@@ -518,12 +518,14 @@ def compile_pins(pins, includes):
         lines.append("    rn_pin_print( %d, ( %s ) );" % (index, pin["expr"]))
     lines += ["    return 0;", "}", ""]
     cxx = os.environ.get("CXX", "c++")
+    # a pin file may include an sdk unit for its rule functions; with asserts
+    # off the unit links without the library's assert callback
     with tempfile.TemporaryDirectory() as tmp:
         source = os.path.join(tmp, "rn_standard_pins.cpp")
         binary = os.path.join(tmp, "rn_standard_pins")
         with open(source, "w", encoding="utf-8") as handle:
             handle.write("\n".join(lines))
-        command = [cxx, "-std=c++11", "-w", "-I", os.path.join(ROOT, "sdk"), "-I", ROOT, source, "-o", binary]
+        command = [cxx, "-std=c++11", "-w", "-DROCKETNET_ASSERTS=0", "-I", os.path.join(ROOT, "sdk"), "-I", ROOT, source, "-o", binary]
         result = subprocess.run(command, capture_output=True, text=True)
         if result.returncode != 0:
             sys.stderr.write(result.stderr)

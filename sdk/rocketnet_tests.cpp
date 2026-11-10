@@ -7275,22 +7275,22 @@ void rocketnet_test_server_keyless_config_has_no_keys()
     rocketnet_check( memcmp( config.server_public_key, zero, 32 ) != 0 );
 }
 
-void rocketnet_test_transport_payload_capacity()
-{
-    // The capacity invariant that was violated, stated where it will be
-    // checked. The XDP receive path drains up to
-    // RECEIVE_PACKETS_PER_CLIENT * MAX_CLIENTS packets in one update and
-    // processes every one of them -- opening the AEAD and CONSUMING the
-    // sequence. If the payload arrays were smaller than that, the excess
-    // decrypted payloads were written to a scratch buffer and discarded,
-    // with their sequences already spent, so a retransmit would be refused
-    // as a replay. Silent, uncounted, unrecoverable, and only on the
-    // production transport. One per-update receive bound sizes the process
-    // batch and the payload batch. Each stored payload is a full received
-    // payload: the slot width is the sender's payload capacity.
+// The capacity invariant that was violated, stated where it is checked. The
+// XDP receive path drains up to RECEIVE_PACKETS_PER_CLIENT * MAX_CLIENTS
+// packets in one update and processes every one of them -- opening the AEAD
+// and CONSUMING the sequence. If the payload arrays were smaller than that,
+// the excess decrypted payloads were written to a scratch buffer and
+// discarded, with their sequences already spent, so a retransmit would be
+// refused as a replay. Silent, uncounted, unrecoverable, and only on the
+// production transport. One per-update receive bound sizes the process batch
+// and the payload batch: a created server is checked at runtime by
+// test_server_payload_batch_holds_the_receive_budget
+// (tests/test_unit_server_payload_capacity.cpp). Each stored payload is a full
+// received payload: the slot width is the sender's payload capacity, two
+// compile-time constants, so the relation is checked at compile time.
 
-    rocketnet_check( ROCKETNET_RECEIVE_PAYLOAD_BYTES == ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
-}
+static_assert( ROCKETNET_RECEIVE_PAYLOAD_BYTES == ROCKETNET_MAX_PACKET_PAYLOAD_BYTES,
+               "the receive payload slot width is the sender's payload capacity" );
 
 void rocketnet_test_client_rtt_handshake()
 {
@@ -13777,30 +13777,39 @@ void rocketnet_test_client_index_range_checked()
 
 static void rocketnet_test_protocol_id_zero_refused( void )
 {
+    // a config every build accepts: its own packet filter (a production build
+    // refuses the published test filter the default carries), production-like
+    // keys (a production build refuses the development keys), and the loopback
+    // transport, so the create opens no socket
+
     struct rocketnet_server_transport_config_t config;
-
-    // start with default config (valid values for all fields)
-
     rocketnet_server_transport_default_config( &config );
+    memset( config.packet_filter, 0x5A, sizeof( config.packet_filter ) );
+    memset( config.backend_public_key, 0x42, 32 );
+    memset( config.server_public_key, 0x43, 32 );
+    memset( config.server_secret_key, 0x44, 32 );
+    snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
+    config.loopback_hub = rocketnet_test_loopback_hub();
+    config.max_clients = 1;
 
-    // replace with production keys
-
-    memcpy( config.backend_public_key, rocketnet_test_backend_public_key, 32 );
-    memcpy( config.server_public_key, rocketnet_test_server_public_key, 32 );
-    memcpy( config.server_secret_key, rocketnet_test_server_secret_key, 32 );
-
-    // set protocol_id to 0 (should be refused with production keys)
+    // protocol_id 0 is refused for that reason and no other
 
     config.protocol_id = 0;
+    int status = -1;
+    rocketnet_check( rocketnet_server_transport_create_ex( NULL, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
+    rocketnet_check( status == ROCKETNET_STATUS_INVALID_PROTOCOL_ID );
 
-    // this should be refused: protocol_id 0 with production keys
+    // the same config with protocol_id 1 is accepted
 
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create(
-        NULL,
-        "127.0.0.1:0",
-        &config );
+    config.protocol_id = 1;
+    status = -1;
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:12345", &config, 1000.0, &status );
+    rocketnet_check( server != NULL );
+    rocketnet_check( status == ROCKETNET_STATUS_OK );
 
-    rocketnet_check( server == NULL );
+    rocketnet_server_transport_stop( server );
+    rocketnet_check( rocketnet_server_transport_stopped( server ) );
+    rocketnet_server_transport_destroy( server );
 }
 
 void rocketnet_test_token_timeout_clamped()
@@ -14132,7 +14141,6 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] = {
     { "test_swarm", rocketnet_test_swarm },
     { "test_payload_size_sweep", rocketnet_test_payload_size_sweep },
     { "test_server_keyless_config_has_no_keys", rocketnet_test_server_keyless_config_has_no_keys },
-    { "test_transport_payload_capacity", rocketnet_test_transport_payload_capacity },
     { "test_client_rtt_handshake", rocketnet_test_client_rtt_handshake },
     { "test_request_path_ordering", rocketnet_test_request_path_ordering },
     { "test_request_path_uncovered_rungs", rocketnet_test_request_path_uncovered_rungs },

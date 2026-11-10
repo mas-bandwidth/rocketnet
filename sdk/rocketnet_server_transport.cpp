@@ -5,7 +5,6 @@
 // the conformance dump includes this file under
 // ROCKETNET_CONFORMANCE_DEFAULTS_ONLY and expands the same ones.
 
-#define ROCKETNET_DEFAULT_HANDSHAKE_DEADLINE_SECONDS   5.0
 #define ROCKETNET_DEFAULT_COOKIE_LIFETIME_SECONDS      3
 #define ROCKETNET_DEFAULT_COOKIE_ROTATION_SECONDS      60
 
@@ -260,6 +259,7 @@ struct rocketnet_server_transport_t
 
     rocketnet_server_transport_io_t io;
     uint64_t transport_faults;                     // a receive count or byte count this update refused
+    uint64_t transport_faults_folded = 0;          // the part of transport_faults already added to PREFILTER_TOO_LARGE
 
     // the kernel replay marks: allocated only when the granted transport reports
     // the replay capability, written from the update walk and committed to the
@@ -3729,6 +3729,9 @@ static void rocketnet_server_transport_disconnect_client_impl( struct rocketnet_
             // work and drop only this new burst's redundant notification
             // copies. Reset wipes the mapping key without ever copying or
             // counting a packet, and the local connection still ends now.
+            rocketnet_debug( "server dropped disconnect burst for client %d: %d bursts already waiting", client_index,
+                             server_transport->disconnect_burst_count );
+            server_transport->protocol.counters->values[ROCKETNET_COUNTER_DISCONNECT_BURST_DROPPED]++;
             rocketnet_server_transport_close_client_locally( server_transport, client_index, false );
         }
 
@@ -3882,6 +3885,14 @@ const struct rocketnet_counters_t * rocketnet_server_transport_counters( struct 
 
     if ( server_transport->io.operations && server_transport->io.operations->send_failures )
         server_transport->counters.values[ROCKETNET_COUNTER_SEND_FAILED] = server_transport->io.operations->send_failures( server_transport->io.instance );
+
+    // transport_faults is the transport's own cumulative count of receive
+    // counts and byte counts it refused; its growth since the last read
+    // lands on PREFILTER_TOO_LARGE, which the protocol's own prefilter also
+    // counts into, so a driver fault reads on the public counters once
+
+    server_transport->counters.values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE] += server_transport->transport_faults - server_transport->transport_faults_folded;
+    server_transport->transport_faults_folded = server_transport->transport_faults;
     // a transport's own size pass drops before the prefilter sees a datagram:
     // its growth lands on the prefilter size counters, so one oversize
     // datagram reads PREFILTER_TOO_LARGE on every transport

@@ -235,6 +235,25 @@ static int rn_sequenced_block( rn_channels_t * channels, const rocketnet_message
 
     if ( current == RN_DESCRIPTOR_NONE )
     {
+        // A sibling fragment already accepted as code 4 and no longer live
+        // was released when this block was superseded: it can never join
+        // again, so the arriving fragment is stale, not a new anchor.
+        for ( uint32_t i = 0; i < count; i++ )
+        {
+            const uint32_t number = ( first_number + i ) & ROCKETNET_MESSAGE_U24_MASK;
+            if ( number == ( record->number & ROCKETNET_MESSAGE_U24_MASK ) )
+                continue;
+
+            const rn_receive_descriptor_t * other = &region->receive_descriptors[number & ( region->window - 1 )];
+            if ( !other->live && other->code == ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED &&
+                 ( other->number & ROCKETNET_MESSAGE_U24_MASK ) == number )
+            {
+                rn_sequenced_release_number( channels, region->receive_descriptors[slot].number );
+                rn_sequenced_count( channels, ROCKETNET_COUNTER_MESSAGE_SEQUENCED_STALE );
+                return ROCKETNET_CHANNEL_DISPATCH_STALE;
+            }
+        }
+
         *hold = slot | RN_SEQUENCED_RELIABLE_HOLD;
         *first_hold = first_number;
         anchor = &region->receive_descriptors[slot];

@@ -3706,6 +3706,7 @@ The registry of counters, in index order, is:
 | `CONNECTION_REQUEST_CLAIM_TABLE_FULL` | `refusal` | `CONNECTION_REQUEST_RECEIVED` |
 | `PAYLOAD_BATCH_FULL` | `refusal` | `none` |
 | `XDP_RECEIVE_FRAME_DROPPED` | `refusal` | `none` |
+| `DISCONNECT_BURST_DROPPED` | `refusal` | `none` |
 
 The vector below encodes the registry in index order. For each counter it holds
 the little-endian u32 FNV-1a hash of the ASCII name, the class as one byte
@@ -3810,7 +3811,8 @@ dd 1a 04 77 00 00 00 ee 4e 50 1b 00 00 00 37 af
 52 db 00 00 00 7a 31 93 22 00 00 00 79 b8 15 e7
 00 00 00 39 5f f8 12 00 00 00 a4 58 a7 b3 00 00
 00 98 21 4f fa 00 20 00 49 b0 ba 62 00 08 00 3a
-68 d4 24 00 00 00 da 28 8a a6 00 00 00
+68 d4 24 00 00 00 da 28 8a a6 00 00 00 d3 5c c1
+a1 00 00 00
 ```
 <a id="t19"></a>
 ## t19. Security considerations

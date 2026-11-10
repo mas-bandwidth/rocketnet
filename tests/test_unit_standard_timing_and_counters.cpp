@@ -15,6 +15,7 @@
 #include "rocketnet_constants.h"
 #include "rocketnet_server_protocol.h"
 #include "rocketnet_client_protocol.h"
+#include "rocketnet_config.h"
 #include "rocketnet_client_slots.h"
 #include "rocketnet_token_tables.h"
 #include "rocketnet_address.h"
@@ -67,9 +68,13 @@ static int standard_timing_and_counters_generate( const char * id, uint8_t * out
 {
     if ( strcmp( id, "t17.timing-defaults" ) == 0 )
     {
-        static const uint64_t defaults[] = {
+        // the handshake deadline default is the config table's, the one the create path reads
+        struct rocketnet_server_transport_config_t config;
+        rocketnet_server_transport_default_config_current( &config );
+
+        const uint64_t defaults[] = {
             (uint64_t) ROCKETNET_DEFAULT_SEND_RATE,
-            (uint64_t) ROCKETNET_DEFAULT_HANDSHAKE_DEADLINE_SECONDS,
+            (uint64_t) config.handshake_deadline_seconds,
             (uint64_t) ROCKETNET_HALF_OPEN_IDLE_TIMEOUT_SECONDS,
             (uint64_t) ROCKETNET_DEFAULT_COOKIE_LIFETIME_SECONDS,
             (uint64_t) ROCKETNET_DEFAULT_COOKIE_ROTATION_SECONDS,
@@ -159,7 +164,7 @@ static const rn_standard_vector_t standard_timing_and_counters_table[] = {
                         "7e014fa10000001d39f161010000ab9fe25c0000007d984f4e00000058b60b73000000f925ca2400"
                         "0000509a50f50000000a0426b7000000dd1a0477000000ee4e501b00000037af52db0000007a3193"
                         "2200000079b815e7000000395ff812000000a458a7b300000098214ffa00200049b0ba620008003a"
-                        "68d424000000da288aa6000000" ),
+                        "68d424000000da288aa6000000d35cc1a1000000" ),
 };
 
 static void test_standard_timing_and_counters_vectors()
@@ -244,6 +249,13 @@ static void timing_mint_token( uint8_t * token_data, uint64_t client_id )
                                                          rocketnet_test_backend_secret_key, token_data ) );
 }
 
+static double timing_default_handshake_deadline()
+{
+    struct rocketnet_server_transport_config_t config;
+    rocketnet_server_transport_default_config_current( &config );
+    return (double) config.handshake_deadline_seconds;
+}
+
 static void timing_server_setup( struct timing_server_fixture_t * test )
 {
     memset( test, 0, sizeof( *test ) );
@@ -260,7 +272,7 @@ static void timing_server_setup( struct timing_server_fixture_t * test )
     memcpy( server->cookie_key, rocketnet_test_cookie_key, ROCKETNET_COOKIE_KEY_BYTES );
     server->cookie_lifetime_seconds = 3;
     server->handshakes_per_update = ROCKETNET_SERVER_MAX_HANDSHAKES_PER_UPDATE;
-    server->handshake_deadline_seconds = ROCKETNET_DEFAULT_HANDSHAKE_DEADLINE_SECONDS;
+    server->handshake_deadline_seconds = timing_default_handshake_deadline();
     server->send_rate = ROCKETNET_DEFAULT_SEND_RATE;
     server->max_timeout_seconds = 0;
     server->encryption_map = rocketnet_encryption_map_create( NULL, 8 );
@@ -474,7 +486,7 @@ static void test_standard_t17_handshake_deadline_is_not_refreshed()
 
     struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( test.server.encryption_map, index );
     rocketnet_unit_check( mapping->control->established == 0 );
-    rocketnet_unit_check( mapping->control->handshake_deadline == 1000.0 + ROCKETNET_DEFAULT_HANDSHAKE_DEADLINE_SECONDS );
+    rocketnet_unit_check( mapping->control->handshake_deadline == 1000.0 + timing_default_handshake_deadline() );
     rocketnet_unit_check( mapping->control->last_receive_time == 1000.0 );
 
     const double created_deadline = mapping->control->handshake_deadline;

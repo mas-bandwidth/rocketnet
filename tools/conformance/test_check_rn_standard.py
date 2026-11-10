@@ -2,6 +2,7 @@
 
 """Regression tests for the standard's prose/citation boundary."""
 
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -148,6 +149,76 @@ class PinExpressionTests(unittest.TestCase):
         faults = []
         standard.read_pins(faults)
         self.assertEqual([text for _, text in faults if "names no sdk identifier" in text], [])
+
+
+class RulePinTests(unittest.TestCase):
+    def pins(self):
+        faults = []
+        pins, includes, unpinned = standard.read_pins(faults)
+        self.assertEqual(faults, [])
+        self.assertEqual(unpinned, [])
+        return pins, includes
+
+    def sdk(self, name):
+        return (Path(standard.ROOT) / "sdk" / name).read_text(encoding="utf-8")
+
+    def define(self, name):
+        match = re.search(r"^#define " + name + r"\s+(.+?)\s*$", self.sdk("rocketnet_wire.h"), re.M)
+        self.assertIsNotNone(match, name)
+        return match.group(1)
+
+    def test_t5_pins_name_the_prefilter_constants(self):
+        pins = {pin["name"]: pin for pin in self.pins()[0]}
+        self.assertEqual(pins["packet type field width"]["expr"], "ROCKETNET_PACKET_TYPE_FIELD_BYTES")
+        self.assertEqual(pins["filter epoch field width"]["expr"], "ROCKETNET_FILTER_EPOCH_FIELD_BYTES")
+        self.assertEqual(pins["first keyed filter epoch"]["expr"], "ROCKETNET_FILTER_EPOCH_KEYED_FIRST")
+        self.assertEqual(pins["keyed filter input width"]["expr"], "ROCKETNET_KEYED_FILTER_INPUT_BYTES")
+
+    def test_keyed_filter_input_is_its_named_fields(self):
+        # the packet type, the u16 packet length, then the 4 bytes after the
+        # prefilter header: never the filter value's width or a bare number
+        self.assertEqual(self.define("ROCKETNET_KEYED_FILTER_INPUT_BYTES"),
+                         "( ROCKETNET_PACKET_TYPE_FIELD_BYTES + ROCKETNET_KEYED_FILTER_LENGTH_BYTES + "
+                         "ROCKETNET_KEYED_FILTER_PAYLOAD_BYTES )")
+        self.assertEqual(self.define("ROCKETNET_KEYED_FILTER_MIN_PACKET_BYTES"),
+                         "( ROCKETNET_PREFILTER_BYTES + ROCKETNET_KEYED_FILTER_PAYLOAD_BYTES )")
+        pins = [{"expr": expr} for expr in ("ROCKETNET_KEYED_FILTER_LENGTH_BYTES",
+                                            "ROCKETNET_KEYED_FILTER_PAYLOAD_BYTES",
+                                            "ROCKETNET_KEYED_FILTER_MIN_PACKET_BYTES")]
+        self.assertEqual(standard.compile_pins(pins, []), {0: ("n", 2), 1: ("n", 4), 2: ("n", 10)})
+
+    def test_record_header_geometry_is_written_once(self):
+        # the one-record limits reach the function that writes record headers,
+        # never a copy of its geometry in a header the pins compile
+        for path in sorted((Path(standard.ROOT) / "sdk").glob("*.h")):
+            text = path.read_text(encoding="utf-8")
+            self.assertNotIn("3 + 3 + 3", text, path.name)
+            self.assertIsNone(re.search(r"\brocketnet_max_unfragmented_message_bytes\s*\([^;]*\)\s*\{", text), path.name)
+        self.assertRegex(self.sdk("rocketnet_message.cpp"),
+                         r"\nint rocketnet_max_unfragmented_message_bytes\s*\(")
+        self.assertNotIn("rocketnet_standard_pins.h", standard.BASE_INCLUDES)
+
+    def test_m2_limits_pin_the_real_rule_functions(self):
+        pins, includes = self.pins()
+        self.assertIn('#include "rocketnet_message.cpp"', includes)
+        limits = [pin for pin in pins if pin["name"].endswith("record limit") or pin["name"].endswith("record limit, WIDE")]
+        self.assertEqual(len({pin["name"] for pin in limits}), 7)
+        for pin in limits:
+            self.assertRegex(pin["expr"], r"^(rocketnet_max_unfragmented_message_bytes|rocketnet_message_max_unfragmented_bytes"
+                                          r"|rn_endpoint_unreliable_record_limit)\(")
+        self.assertTrue(any(pin["expr"].startswith("rn_endpoint_unreliable_record_limit(") for pin in limits))
+        values = standard.compile_pins(limits, includes)
+        for index, pin in enumerate(limits):
+            self.assertEqual(values[index], standard.parse_value(pin["value"]))
+
+    def test_unreliable_record_rule_is_over_exactly_above_the_limit(self):
+        _, includes = self.pins()
+        expression = ("rn_endpoint_unreliable_over_record_capacity( "
+                      "ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, "
+                      "ROCKETNET_MESSAGE_WIDE_CHANNEL, %d, "
+                      "ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )")
+        pins = [{"expr": expression % 1404}, {"expr": expression % 1405}]
+        self.assertEqual(standard.compile_pins(pins, includes), {0: ("n", 0), 1: ("n", 1)})
 
 
 if __name__ == "__main__":

@@ -1174,6 +1174,33 @@ static void test_message_config_reserve_past_32_bits_refused_by_validate_and_cre
     check( rocketnet_client_required_memory( &client_config ) == 0 );
 }
 
+// The store's large class only has to hold one chunk: a message larger than a
+// large chunk takes a span of the send spans, never the store
+// (sdk/rocketnet_allocator.h:313-315, sdk/rocketnet_allocator.cpp:1045-1048).
+// An obsolete pre-span floor demanded one large chunk per fragment of
+// max_message_bytes, so it refused the default settings with a 1 MiB send
+// store even though the span path carries the maximal message.
+
+static void test_message_config_send_store_one_mib_accepted()
+{
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    config.send_message_buffer_bytes = 1048576;
+
+    int status = -1;
+    check( rocketnet_message_validate_config_ex( &config, &status ) == 1 );
+    check( status == ROCKETNET_STATUS_OK );
+    check( rocketnet_message_connection_bytes( &config ) > 0 );
+
+#if ROCKETNET_DEV
+    mc_pair_t pair;
+    mc_pair_setup( &pair, 1, &config );
+    check( pair.server );
+    check( pair.clients[0] );
+    mc_pair_teardown( &pair );
+#endif // #if ROCKETNET_DEV
+}
+
 #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_message_config_mismatch_ends_both_connections );
 REGISTER_UNIT_TEST( test_message_config_equal_connects_and_verifies );
@@ -1187,3 +1214,4 @@ REGISTER_UNIT_TEST( test_message_config_sent_map_holds_a_window_burst );
 REGISTER_UNIT_TEST( test_message_config_resend_delay_max_zero_refused );
 REGISTER_UNIT_TEST( test_message_config_resend_delay_cross_rule_refused );
 REGISTER_UNIT_TEST( test_message_config_reserve_past_32_bits_refused_by_validate_and_create );
+REGISTER_UNIT_TEST( test_message_config_send_store_one_mib_accepted );

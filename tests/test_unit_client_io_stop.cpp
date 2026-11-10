@@ -16,6 +16,8 @@
 #include "rocketnet_client_io.h"
 #include "rocketnet_connect_token.h"
 #include "rocketnet_counters.h"
+#include "rocketnet_message_object.h"
+#include "rocketnet_test_seams.h"
 
 #include <stdint.h>
 #include <string.h>
@@ -441,4 +443,50 @@ static void test_client_io_destroy_requires_completed_stop()
     rocketnet_unit_check( h.fake.destroy_calls == 1 );
 }
 REGISTER_UNIT_TEST( test_client_io_destroy_requires_completed_stop );
+
+// Create fails after the transport worker is up. The hold seam keeps that
+// worker not-stopped and counts polls; past the ceiling the case fails, so
+// the unbounded wait does not hang and does not sleep. No socket.
+struct link_stop_wait_hold_t
+{
+    int polls;
+    int ceiling;
+    int destroyed;
+};
+
+static int link_stop_wait_hold( void * context )
+{
+    link_stop_wait_hold_t * hold = (link_stop_wait_hold_t *) context;
+    hold->polls++;
+    if ( hold->polls > hold->ceiling )
+        rocketnet_unit_check( 0 );
+    return 1;
+}
+
+static void link_stop_wait_destroy( void * transport )
+{
+    ( (link_stop_wait_hold_t *) transport )->destroyed++;
+}
+
+static void test_message_link_stop_and_wait_bounds_held_worker()
+{
+    link_stop_wait_hold_t hold = {};
+    hold.ceiling = 1001;
+
+    rocketnet_dev_set_link_stop_wait_hold_hook( link_stop_wait_hold, &hold );
+
+    rn_message_link_t link;
+    memset( &link, 0, sizeof( link ) );
+    link.transport = &hold;
+    link.destroy = link_stop_wait_destroy;
+
+    rn_message_object_t * object = rn_message_object_create( NULL, &link, 0, 0, NULL, NULL, 0, 1, 1000.0, false );
+
+    rocketnet_dev_set_link_stop_wait_hold_hook( NULL, NULL );
+
+    rocketnet_unit_check( object == NULL );
+    rocketnet_unit_check( hold.destroyed == 1 );
+    rocketnet_unit_check( hold.polls == 1001 );
+}
+REGISTER_UNIT_TEST( test_message_link_stop_and_wait_bounds_held_worker );
 #endif // #if ROCKETNET_DEV
