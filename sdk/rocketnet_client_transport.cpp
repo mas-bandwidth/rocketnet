@@ -46,6 +46,11 @@ void rocketnet_client_protocol_pick_server_address( const struct rocketnet_signe
 std::atomic<unsigned long long> g_client_ack_stats_count{ 0 };
 #endif // #if ROCKETNET_DEV
 
+// the ordinal each client's link simulator seed mixes in, so two clients on
+// the same tick do not share a loss and jitter pattern. Deterministic for a
+// given create order.
+static std::atomic<unsigned long long> g_client_link_simulator_ordinal{ 0 };
+
 #if ROCKETNET_DEV
 // The one clamp both transports share. A NaN or infinite time makes every
 // timeout comparison false and freezes a transport; a backwards step rewinds
@@ -2412,7 +2417,10 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
 
     if ( rocketnet_public_link_simulator_development() )
     {
-        client_transport->link_simulator = rocketnet_network_simulator_create( context, ROCKETNET_CLIENT_LINK_SIMULATOR_SLOTS, UINT64_C( 0x434c49454e545349 ) );
+        const uint64_t link_simulator_seed = UINT64_C( 0x434c49454e545349 ) ^
+                                             ( (uint64_t) g_client_link_simulator_ordinal.fetch_add( 1, std::memory_order_relaxed ) *
+                                               UINT64_C( 0x9e3779b97f4a7c15 ) );
+        client_transport->link_simulator = rocketnet_network_simulator_create( context, ROCKETNET_CLIENT_LINK_SIMULATOR_SLOTS, link_simulator_seed );
         if ( !client_transport->link_simulator )
         {
             if ( status )
