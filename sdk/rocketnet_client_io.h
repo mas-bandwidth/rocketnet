@@ -134,10 +134,11 @@ struct rocketnet_client_io_open_t
 // Both handoffs are rocketnet_buffer_handoff_t (proofs/tla/RNBufferHandoff.tla):
 // each ring and each receive buffer has one owner at a time, and only their
 // indices cross threads, under the transport's mutex (shared in development
-// builds only with rocketnet_network_simulator_reconfigure and
-// rocketnet_network_simulator_take_setting, which acquire it blocking when a
-// simulator setting is handed over). For buffer handoffs the main thread only
-// try-acquires it; the I/O thread acquires it.
+// builds only with rocketnet_network_simulator_reconfigure, which acquires it
+// blocking to hand a simulator setting over, and
+// rocketnet_network_simulator_take_setting, which only try-acquires it and
+// leaves a pending setting for the next uncontended pass). For buffer
+// handoffs the main thread only try-acquires it; the I/O thread acquires it.
 
 struct rocketnet_client_io_t
 {
