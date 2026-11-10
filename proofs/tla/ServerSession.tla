@@ -21,9 +21,10 @@
 \* it: kept through the slot's reset, cleared when the slot's next client is
 \* established, NONE while STOPPED and NONE again at each start.
 \*
-\* A message send to a slot that is not CONNECTED, on a running or a stopped
-\* server, is dropped (ServerDropSend): it changes no slot field and nothing
-\* of it is held for a later send (standard/MESSAGES.md m1.5). The ghost
+\* A message send to a slot that is not CONNECTED, or while the server is
+\* not running (STOPPED or STOPPING), is dropped (ServerDropSend): it
+\* changes no slot field and nothing of it is held for a later send
+\* (standard/MESSAGES.md m1.5). The ghost
 \* droppedIn holds the slot state of the drop the last step made, {} after
 \* any other step.
 \*
@@ -463,12 +464,14 @@ ServerSend(i) ==
     /\ UNCHANGED <<state, kept, env, lastEnd, established, estTokens, doubleTok,
                    crossDelivered, collateral, silentEnd, startFrom, priorTokens, readmitted>>
 
-\* Message start to slot i when it is not CONNECTED, or on a stopped server
-\* (rocketnet_server_start_message returns NULL, counted in
-\* NOT_CONNECTED_DROPS): dropped, never queued. No slot field changes; the
-\* slot's state is recorded in the ghost.
+\* Message start to slot i when it is not CONNECTED, or while the server
+\* is not running. rocketnet_server_stop clears server->running and the
+\* transport stays STOPPING until the workers exit;
+\* rocketnet_server_start_message then returns NULL and counts
+\* NOT_CONNECTED_DROPS, the same drop as STOPPED. Dropped, never queued.
+\* No slot field changes; the slot's state is recorded in the ghost.
 ServerDropSend(i) ==
-    /\ \/ state = "STOPPED"
+    /\ \/ state \in {"STOPPED", "STOPPING"}
        \/ state = "RUNNING" /\ slot[i].st # "CONNECTED"
     /\ droppedIn' = {slot[i].st}
     /\ UNCHANGED <<state, slot, kept, env, lastEnd, established, estTokens, doubleTok,
