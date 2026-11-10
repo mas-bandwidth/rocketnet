@@ -2542,6 +2542,12 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
     // proofs/tla/RNClientIoShutdown.tla TakeRing and FinishRing: the worker takes the
     // handed-off ring and marks it sent when every slot left.
 
+    // the BASE receive path counts its too-large byte counts in client_io too,
+    // and update folds them as it does the I/O core's (rocketnet_client_io_init
+    // clears the pointer, so the I/O core sets it again below)
+
+    client_transport->client_io.prefilter_too_large = &client_transport->counters.values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE];
+
     if ( client_transport->io_thread || client_transport->step_in_update )
     {
         rocketnet_client_io_ring_view_t views[ROCKETNET_CLIENT_IO_NUM_RINGS];
@@ -3217,6 +3223,7 @@ void rocketnet_client_transport_update( rocketnet_client_transport_t * client_tr
             rocketnet_client_receive_packets( client_transport );
 #endif // #if ROCKETNET_DEV
         num_legacy_exposed = rocketnet_client_update_expose_legacy_receive( client_transport, legacy_exposed );
+        rocketnet_client_io_fold_counters( &client_transport->client_io );
         for ( int i = 0; i < num_legacy_exposed; i++ )
             receive_buffers[i] = &client_transport->receive_buffer[legacy_exposed[i]];
 
@@ -4080,6 +4087,8 @@ static void rocketnet_client_receive_packets( rocketnet_client_transport_t * cli
         const int packet_bytes = client_transport->io.operations->receive( client_transport->io.instance, &from, scratch, ROCKETNET_RECEIVE_PACKET_BYTES );
         if ( packet_bytes < 0 || packet_bytes > ROCKETNET_TRANSPORT_MAX_DATAGRAM_BYTES )
             client_transport->client_io.transport_faults++;
+        if ( packet_bytes > ROCKETNET_TRANSPORT_MAX_DATAGRAM_BYTES )
+            client_transport->client_io.receive_too_large.store( client_transport->client_io.receive_too_large.load( std::memory_order_relaxed ) + 1, std::memory_order_relaxed );
 
         if ( packet_bytes <= 0 || packet_bytes > ROCKETNET_TRANSPORT_MAX_DATAGRAM_BYTES )
         {
