@@ -70,10 +70,11 @@ the compiler, so the table cannot drift from the code without a red check.
 
 [RN-1 t4 Wire encoding primitives](TRANSPORT.md#t4)
 Every primitive here is chosen so that an implementation reads and writes bytes without
-guessing: little-endian integers everywhere, packed fields with no implicit padding, and
-a variable-length form whose shortest encoding is the only accepted one. A wire format
+guessing: little-endian integers everywhere, packed fields with no implicit padding, a
+fixed 32-bit sequence low half reconstructed against the expected 64-bit sequence, and
+fixed-width IPv4 and IPv6 address encodings selected by the family byte. A wire format
 that permits two encodings of one value forces every receiver to canonicalise and every
-vector to test both, so the standard admits exactly one encoding for each value.
+vector to test both, so the standard admits one encoding for each value.
 
 <a id="t5"></a>
 ## t5. Prefilter header
@@ -152,13 +153,14 @@ generation, so the unkeyed meaning of epoch 0 is unambiguous forever and a wrap 
 silently turn a keyed deployment into an unkeyed one.
 
 [RN-1 t5 Prefilter header](TRANSPORT.md#t5)
-**A receiver must accept at least two live generations**, so that a rotation does not
-break packets already in flight, and must drop any epoch outside that window. *How many
-beyond two, and how long a generation lasts, are deployment choices rather than
-interoperability ones: a sender always uses the epoch it was most recently given, and a
-receiver's window is purely local policy — widening it accepts older packets and narrows
-nothing.* The window must be small enough that a captured packet stops being replayable
-quickly, which is the property rotation exists to buy.
+**Under the pending keyed extension ([RN-1 t5.1 Keyed epochs (optional extension)](TRANSPORT.md#t5.1)),
+holding both the current and the previous generation** lets a rotation proceed without
+breaking packets already in flight, while epochs outside the active window are dropped.
+*How many generations a receiver accepts at once, and how long a generation lasts, are
+deployment choices rather than interoperability ones: a sender uses the epoch it was
+most recently given, and a receiver's window is purely local policy — widening it
+accepts older packets and narrows nothing.* Keeping the window small ensures a captured
+packet stops being replayable quickly once keys rotate.
 
 [RN-1 t5 Prefilter header](TRANSPORT.md#t5)
 **A receiver must not treat epoch 0 as keyed**, and a deployment that has adopted the
@@ -784,9 +786,9 @@ not the signature bytes. Signature malleability means an implementation that doe
 enforce canonical Ed25519 verification would see a mangled copy of the same token as a
 new one, and an attacker could mint unbounded distinct identifiers from one captured
 request. Hashing the signed data has no such freedom, and is smaller per entry.)*
-Token-identifier equality comparisons must be constant time. This requirement
-applies to each fixed-size comparison, not to hash-table traversal or the whole
-request path. * **A server should apply a failed-signature budget
+The reference implementation compares 16-byte token identifiers in constant time for
+each fixed-size comparison, rather than across table traversal or the whole request
+path. * **A server should apply a failed-signature budget
 before the verify: at most 90 failed signature verifications per 10-second window by
 default.** Once the budget is spent, a request from a source that has already failed
 this window is refused before the verify. A refused request sees no answer, and the
@@ -992,8 +994,9 @@ whether the client received its keep-alive; the paragraph below states why it ca
 [RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13)
 **What the flag does not decide.** The confirmed flag says a sealed packet arrived from
 this client. It does **not** say the client holds its client index: the session keys
-exist from the challenge, so a client can legally seal before it is _connected_ — indeed
-[RN-1 t15 Acknowledgement](TRANSPORT.md#t15) permits one to send a standalone ack from _sending connection response_.
+exist from the challenge, so a client holds the keys to seal a session packet before it
+is _connected_ (though under [RN-1 t15 Acknowledgement](TRANSPORT.md#t15) a conforming
+client sends standalone acks only once _connected_).
 **Keep-alive generation therefore does not read this flag**; it reads the acknowledgment
 test below. The flag keeps its own job, which is telling the server whether it has heard
 from a slot at all.
@@ -1153,16 +1156,13 @@ coming, and that no traffic pattern can stop it.
 [RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13)
 **What it costs.** A client whose keep-alive has not yet been acknowledged receives
 keep-alives on the send rate's pacing in addition to whatever the application sends it.
-The window is one round trip in the ordinary case. **The bound is the client's
-behaviour, not either of the server's deadlines**, and it is worth being exact about
-why. The handshake deadline governs only a mapping that has not established, and a slot
-is assigned at establishment, so such a slot is already past it. The connection timeout
-does not close the window on its own either: a retransmitted connection response
-refreshes the slot's last-received time even though the response itself is ignored as
-already connected. So the window lasts as long as the client keeps retransmitting
-without ever acknowledging a keep-alive, and for a client that follows this document
-that is its own total connect deadline — the token lifetime — after which it stops and
-the connection timeout fires.
+The window is one round trip in the ordinary case, and the server's connection timeout
+bounds it if the client never acknowledges. The handshake deadline governs only a
+mapping that has not established, and a slot is assigned at establishment, so such a
+slot is already past it. A retransmitted connection response is ignored as already
+connected and does not refresh the slot's last-received time ([RN-1 t12 Handshake: server](TRANSPORT.md#t12) rule 14), so a client that only retransmits connection
+responses without sending an opened session packet does not extend the window past the
+connection timeout.
 
 [RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13)
 **Establishment on the client.** A client transitions to _connected_ on the first
@@ -1691,12 +1691,12 @@ attempt does; the challenge is the type 2 sealed vector above in its full framin
 sequence 1.
 
 [RN-1 ta Appendix A: test vectors](TRANSPORT.md#ta)
-**The frozen connect token** above is not reproducible byte-for-byte — sealing draws
-randomness — so its vector runs the other way: a conforming server-side implementation
-verifies its signature against the test backend public key, opens its sealed block with
-the test server keypair, and recovers exactly the private fields listed in the fixed
-inputs. The token identifier printed above is the 16-byte unkeyed `crypto_generichash`
-of its first 576 bytes and is deterministic.
+**The frozen connect token** is reproducible byte-for-byte from its published minting
+inputs, including the fixed ephemeral secret that replaces the random draw ([RN-1 t6.5 Token string and published vectors](TRANSPORT.md#t6.5) rule 5), and a conforming
+server-side implementation also verifies its signature against the test backend public
+key, opens its sealed block with the test server keypair, and recovers the private
+fields listed in the fixed inputs. The token identifier printed above is the 16-byte
+unkeyed `crypto_generichash` of its first 576 bytes and is deterministic.
 
 <a id="tb"></a>
 ## tb. Appendix B: changes from netcode 1.02
