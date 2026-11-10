@@ -1424,8 +1424,8 @@ endif()
 configure_package_config_file(cmake/RocketNetConfig.cmake.in
     "${CMAKE_CURRENT_BINARY_DIR}/RocketNetConfig.cmake"
     INSTALL_DESTINATION ${ROCKETNET_PACKAGE_DIR})
-# find_package compares numbers, so the package version is 1.0.0; the label
-# v1.0.0 rides beside it as RocketNet_VERSION_STRING; the prerelease string
+# find_package compares numbers, so the package version is 1.0.1; the label
+# v1.0.1 rides beside it as RocketNet_VERSION_STRING; the prerelease string
 # is empty for this release (cmake/RocketNetConfig.cmake.in).
 write_basic_package_version_file("${CMAKE_CURRENT_BINARY_DIR}/RocketNetConfigVersion.cmake"
     VERSION ${PROJECT_VERSION} COMPATIBILITY SameMajorVersion)

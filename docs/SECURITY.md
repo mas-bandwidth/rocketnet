@@ -28,8 +28,7 @@ keep it inside the private report.
 ## Versions that receive fixes
 
 The newest tagged minor release line receives security fixes in a patch release;
-the first line is 1.0.x. Until v1.0.0 is tagged there is no supported
-release. Previews such as v1.0.0-preview-1, the development branch and untagged
+the first line is 1.0.x, starting with the v1.0.0 tag. Previews such as v1.0.0-preview-1, the development branch and untagged
 commits are not supported for production use. Older minor lines are not maintained: a fix ships in the newest
 line and upgrading is the remedy. An advisory always names the affected versions
 and the first fixed version.

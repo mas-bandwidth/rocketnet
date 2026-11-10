@@ -22,7 +22,7 @@ Advancing a label alone neither tags nor publishes a release.
 The numeric `ROCKETNET_VERSION`, CMake project `VERSION` and installed
 `RocketNetConfigVersion.cmake` remain numeric. CMake reads the full label
 from the header and checks that its numeric portion matches the project
-version. It exports `RocketNet_VERSION_STRING` as `v1.0.0` and
+version. It exports `RocketNet_VERSION_STRING` as `v1.0.1` and
 `RocketNet_VERSION_PRERELEASE` as an empty string. There is no separate public
 prerelease macro.
 
