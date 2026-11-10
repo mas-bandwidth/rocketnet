@@ -95,10 +95,11 @@ RetryBound == 2
 (* a full socket's rest is dropped while the server runs: the reversed    *)
 (* witness MCRNGsoHandoffBrokenDropBeforeShutdown.cfg violates            *)
 (* DroppedOnlyAfterShutdown.  BoundOnQuitOnly counts refusals only once   *)
-(* send_quit is set, the v1.0.0 shape: with the stop request waiting for  *)
-(* send_idle, a socket that stays full holds a bank for ever and the stop *)
-(* is never requested; MCRNGsoHandoffBrokenBoundOnQuitOnly.cfg violates   *)
-(* ShutdownCompletes.  Both FALSE in the passing run.                     *)
+(* send_quit is set, a retry bound keyed on send_quit alone: with the     *)
+(* stop request waiting for send_idle, a socket that stays full holds a   *)
+(* bank for ever and the stop is never requested;                         *)
+(* MCRNGsoHandoffBrokenBoundOnQuitOnly.cfg violates ShutdownCompletes.    *)
+(* Both FALSE in the passing run.                                         *)
 DropBeforeShutdown == FALSE
 BoundOnQuitOnly == FALSE
 
@@ -402,11 +403,11 @@ TxSend ==
 (* taken, the final producer ends the worker.  The model folds TxSendFail  *)
 (* with the following TxRetry or TxDropTail into one step.                 *)
 (* DropBeforeShutdown counts refusals before shutdown too; BoundOnQuitOnly *)
-(* counts them only once send_quit is set (the v1.0.0 shape, while the     *)
-(* stop request waits for send_idle).  FullDrops instead drops d packets   *)
-(* after the prefix, the rest of the refused batch, and goes on;           *)
-(* CarryBehind queues the bank behind the ready banks instead of keeping   *)
-(* it                                                                      *)
+(* counts them only once send_quit is set (a retry bound keyed on          *)
+(* send_quit alone, while the stop request waits for send_idle).           *)
+(* FullDrops instead drops d packets after the prefix, the rest of the     *)
+(* refused batch, and goes on; CarryBehind queues the bank behind the      *)
+(* ready banks instead of keeping it                                       *)
 Counting ==
     IF BoundOnQuitOnly THEN quit ELSE ( shut.on \/ DropBeforeShutdown )
 
