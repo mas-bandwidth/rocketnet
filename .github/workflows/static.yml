@@ -90,7 +90,7 @@ jobs:
   # and fails the job if its reason is missing, if it duplicates a baseline
   # entry, or if its site no longer produces the finding (stale). No check
   # is disabled and no baseline grows to hold a disposition. The fleet
-  # runners carry clang-tidy-18 and cppcheck 2.13; a runner without them
+  # runners carry clang-tidy-18 and cppcheck 2.19; a runner without them
   # prints a TOOL-MISSING line and fails rather than passing unanalyzed.
   tidy:
     name: static analysis (clang-tidy, cppcheck)

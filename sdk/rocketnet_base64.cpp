@@ -129,7 +129,9 @@ int rocketnet_base64_decode_data( const char * input, uint8_t * output, size_t o
     if ( output_length > (size_t) INT_MAX )
         return 0;       // the decoded length would not fit the int return
 
-    size_t j = 0;
+    // validate the whole input before writing anything, so a refusal returns
+    // 0 and leaves the output buffer untouched
+
     uint32_t accumulator = 0;
     int bits = 0;
 
@@ -142,16 +144,30 @@ int rocketnet_base64_decode_data( const char * input, uint8_t * output, size_t o
         accumulator = ( accumulator << 6 ) | (uint32_t) value;
         bits += 6;
         if ( bits >= 8 )
-        {
             bits -= 8;
-            output[j++] = (uint8_t) ( ( accumulator >> bits ) & 0xFF );
-        }
     }
 
     // leftover bits must be zero (otherwise "AB" and "AC" decode alike)
 
     if ( bits > 0 && ( accumulator & ( ( 1u << bits ) - 1 ) ) != 0 )
         return 0;
+
+    size_t j = 0;
+    accumulator = 0;
+    bits = 0;
+
+    for ( size_t i = 0; i < data_length; i++ )
+    {
+        const int value = rocketnet_base64_char_value( input[i] );
+
+        accumulator = ( accumulator << 6 ) | (uint32_t) value;
+        bits += 6;
+        if ( bits >= 8 )
+        {
+            bits -= 8;
+            output[j++] = (uint8_t) ( ( accumulator >> bits ) & 0xFF );
+        }
+    }
 
     rocketnet_assert( j == output_length );
 

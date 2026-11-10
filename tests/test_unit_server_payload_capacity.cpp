@@ -12,6 +12,7 @@
 #include "test_unit_registry.h"
 
 #include "rocketnet_internal.h"
+#include "rocketnet_message_object.h"
 #include "rocketnet_wire.h"
 #include "rocketnet_protocol.h"
 #include "rocketnet_constants.h"
@@ -191,4 +192,137 @@ static void test_server_payload_capacity_uses_live_session_path()
     rocketnet_encryption_map_destroy( server.encryption_map );
 }
 
+// ---------------------------------------------------------------------------
+// the send write pass honours the frame's reported payload capacity
+// ---------------------------------------------------------------------------
+
+#define PC_PAYLOAD_INDEX 32
+#define PC_CAPACITY      64
+#define PC_GUARD         0xA5
+#define PC_FRAME_BYTES   ( PC_PAYLOAD_INDEX + ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + PC_CAPACITY )
+#define PC_MESSAGE_BYTES 1000
+
+struct pc_endpoint_t
+{
+    uint8_t frame[PC_FRAME_BYTES];
+    bool used;
+    uint64_t next_id;
+    int starts;
+    int aborts;
+    int finishes;
+};
+
+static int pc_max_payload_bytes( void * transport )
+{
+    (void) transport;
+    return ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
+}
+
+static uint8_t * pc_start_packet( void * transport, int client_index, int request_bytes, rocketnet_packet_context_t * context )
+{
+    pc_endpoint_t * end = (pc_endpoint_t *) transport;
+    (void) client_index;
+    memset( context, 0, sizeof( *context ) );
+    if ( request_bytes < 1 || request_bytes > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES || end->used )
+        return NULL;
+
+    end->used = true;
+    memset( end->frame, PC_GUARD, sizeof( end->frame ) );
+    context->frame = end->frame;
+    context->payload_index = PC_PAYLOAD_INDEX;
+    context->payload_capacity = PC_CAPACITY;
+    context->packet_id = ++end->next_id;
+    end->starts++;
+
+    return end->frame;
+}
+
+static int pc_finish_packet( void * transport, rocketnet_packet_context_t * context, int payload_bytes )
+{
+    pc_endpoint_t * end = (pc_endpoint_t *) transport;
+    (void) context;
+    if ( !end->used )
+        return 0;
+
+    end->used = false;
+    end->finishes++;
+
+    return payload_bytes > 0 ? payload_bytes + 64 : 0;
+}
+
+static void pc_abort_packet( void * transport, rocketnet_packet_context_t * context )
+{
+    pc_endpoint_t * end = (pc_endpoint_t *) transport;
+    (void) context;
+    if ( end->used )
+    {
+        end->used = false;
+        end->aborts++;
+    }
+}
+
+static void pc_send_packets( void * transport )
+{
+    (void) transport;
+}
+
+static uint64_t pc_connection( void * transport, int client_index )
+{
+    (void) transport;
+    (void) client_index;
+    return 1;
+}
+
+static int pc_state( void * transport )
+{
+    (void) transport;
+    return ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED;
+}
+
+static void test_write_pass_honours_transport_payload_capacity()
+{
+    pc_endpoint_t endpoint = {};
+    endpoint.next_id = 1;
+
+    rn_message_link_t link;
+    memset( &link, 0, sizeof( link ) );
+    link.transport = &endpoint;
+    link.max_payload_bytes = pc_max_payload_bytes;
+    link.start_packet = pc_start_packet;
+    link.finish_packet = pc_finish_packet;
+    link.abort_packet = pc_abort_packet;
+    link.send_packets = pc_send_packets;
+    link.connection = pc_connection;
+    link.state = pc_state;
+
+    struct rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    config.num_channels = 4;
+    config.packets_per_update = 8;
+
+    struct rn_message_object_t * object = rn_message_object_create( NULL, &link, 0, 1, &config, NULL, 0, 1, 1000.0 );
+    rocketnet_unit_check( object != NULL );
+    if ( !object )
+        return;
+
+    uint8_t * pointer = rn_message_object_start( object, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, PC_MESSAGE_BYTES );
+    rocketnet_unit_check( pointer != NULL );
+    if ( pointer )
+        memset( pointer, 0x5a, PC_MESSAGE_BYTES );
+    rocketnet_unit_check( rn_message_object_finish( object, 0, PC_MESSAGE_BYTES ) != 0 );
+
+    const int starts_before = endpoint.starts;
+    rn_message_object_send_packets( object );
+    rocketnet_unit_check( endpoint.starts > starts_before );
+
+    // the frame reports 64 bytes, less than the requested 1,415: the write
+    // pass must not write at or past the reported capacity
+
+    for ( int i = PC_CAPACITY; i < PC_FRAME_BYTES - PC_PAYLOAD_INDEX; i++ )
+        rocketnet_unit_check( endpoint.frame[PC_PAYLOAD_INDEX + i] == PC_GUARD );
+
+    rn_message_object_destroy( object );
+}
+
 REGISTER_UNIT_TEST( test_server_payload_capacity_uses_live_session_path );
+REGISTER_UNIT_TEST( test_write_pass_honours_transport_payload_capacity );

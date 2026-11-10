@@ -84,17 +84,15 @@ struct replay_window_ref_t
         return (int) ( s % ROCKETNET_REPLAY_WINDOW_BITS );
     }
 
-    // AlreadyReceived (proofs/tla/ReplayWindow.tla); the code's
-    // rocketnet_replay_already_received.
-    // TRANSPORT.md t14 Replay protection.
+    // Refused below the window floor or already recorded. standard/TRANSPORT.md
+    // t14, on the received set: s + W <= highest, or s is in received.
+    // Not the ring's three bit-window tests.
     int already_received( uint64_t s ) const
     {
-        if ( s > highest )
-            return 0;
-        if ( highest >= (uint64_t) ROCKETNET_REPLAY_WINDOW_BITS && s <= highest - ROCKETNET_REPLAY_WINDOW_BITS )
+        const uint64_t width = (uint64_t) ROCKETNET_REPLAY_WINDOW_BITS;
+        if ( s + width <= highest )
             return 1;
-        int b = bit_of( s );
-        return (int) ( ( window[b / 64] >> ( b % 64 ) ) & 1 );
+        return received.count( s ) != 0;
     }
 
     void clear_bit( uint64_t s )
