@@ -578,6 +578,7 @@ static void test_transport_results_server_faults_fold_into_public_counter()
 
     rn_test_server_transport_stop_and_destroy( server );
 }
+
 REGISTER_UNIT_TEST( test_transport_results_server_faults_fold_into_public_counter );
 // A staged transport's receive view is checked like a batch count: a NULL view,
 // a count past the view's capacity, and a byte count that is negative or past
