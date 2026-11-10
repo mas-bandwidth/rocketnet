@@ -71,3 +71,6 @@ t15.1	The ack block names only sequences a slot processed.	AckReportsOnlyProcess
 t14	Everything that opened is refused thereafter.	ReceivedIsRefused	sdk/rocketnet_replay.cpp:rocketnet_replay_already_received	proofs/tla/MCReplayWindowBrokenReceived.cfg	model
 t14	Below the retained floor every sequence is refused as too old.	BelowFloorIsRefused	sdk/rocketnet_replay.cpp:rocketnet_replay_already_received	proofs/tla/MCReplayWindowBrokenBelowFloor.cfg	model
 t15.1	The high-water mark is itself received and marked.	HighestIsReceived	sdk/rocketnet_ack.cpp:rocketnet_ack_block_build	proofs/tla/MCReplayWindowBrokenHighest.cfg	model
+tc	A packet staged before a main-thread receive claim is in that claim's view	StagedBeforeClaimInView	sdk/rocketnet_server_gso_linux.cpp:rocketnet_server_gso_claim_receive	proofs/tla/MCRNGsoHandoff.cfg	model
+tc	The old worker-publish handoff defers a packet staged after the publish to a later claim	StagedBeforeClaimInView	sdk/rocketnet_server_gso_linux.cpp:rocketnet_server_gso_claim_receive	proofs/tla/MCRNGsoHandoffBrokenClaimStale.cfg	model
+tc	A full socket after stop leaves the held bank's unsent rest and the worker still exits	StopCompletes	sdk/rocketnet_server_gso_linux.cpp:rocketnet_server_gso_send_worker	proofs/tla/MCRNGsoHandoff.cfg	model
