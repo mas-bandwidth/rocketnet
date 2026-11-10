@@ -227,6 +227,13 @@ bool rocketnet_server_gso_test_send_full_keeps_rest();
 // One receive drain fed endless discards returns within its read budget.
 bool rocketnet_server_gso_test_drain_budget();
 bool rocketnet_server_gso_test_drain_room();
+// No socket, no thread and no clock. num_queues receive queues and the real
+// per-update budget. NULL when the fixture cannot be built.
+struct rocketnet_server_gso_t * rocketnet_server_gso_test_open( int num_queues );
+void rocketnet_server_gso_test_close( struct rocketnet_server_gso_t * gso );
+// Publish packets on one queue, each byte set to marker. false when a ready
+// buffer already waits, or the queue index or count is out of range.
+bool rocketnet_server_gso_test_publish_marked( struct rocketnet_server_gso_t * gso, int queue_index, uint8_t marker, uint32_t packets );
 #endif // #if ROCKETNET_DEV
 
 #endif // ROCKETNET_SDK_ROCKETNET_SERVER_GSO_H
