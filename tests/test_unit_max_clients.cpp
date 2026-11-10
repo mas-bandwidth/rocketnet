@@ -31,13 +31,33 @@
 #include "rocketnet_xdp_replay_marks.h"
 #include "rocketnet_slots.h"
 #include "rocketnet_client_slots.h"
+#include "rocketnet_test_seams.h"
 
 #include <limits.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 #include "loopback_hub.h"
 
+#if ROCKETNET_DEV
+
+// the client slot cases seed the slots' SipHash keys (sdk/rocketnet_test_seams.h);
+// a failing check prints the seed its case set, so the layout it failed on is
+// reproducible. The condition is evaluated once.
+#define check( condition )                                                                               \
+do                                                                                                       \
+{                                                                                                        \
+    const bool check_passed = ( condition );                                                             \
+    if ( !check_passed && rocketnet_dev_hash_key_seed() != 0 )                                           \
+        printf( "hash key seed 0x%016llx\n", (unsigned long long) rocketnet_dev_hash_key_seed() );       \
+    rocketnet_unit_check( check_passed && #condition );                                                  \
+} while ( 0 )
+
+#else // #if ROCKETNET_DEV
+
 #define check rocketnet_unit_check
+
+#endif // #if ROCKETNET_DEV
 
 static void test_max_clients_derived_limits()
 {
@@ -240,6 +260,8 @@ REGISTER_UNIT_TEST( test_server_create_at_max_clients );
 
 static void test_client_slots_hostile_collision_and_stale_generation()
 {
+    rocketnet_dev_set_hash_key_seed( UINT64_C( 0x5EED0000000000B1 ) );
+
     const int capacity = 32;
     const int collision_count = 16;
     const uint64_t probe_bound = (uint64_t) capacity * 2;
@@ -322,6 +344,7 @@ static void test_client_slots_hostile_collision_and_stale_generation()
     check( rocketnet_client_slots_num_connected( slots ) == 0 );
     check( rocketnet_client_slots_num_free( slots ) == capacity );
     rocketnet_client_slots_destroy( slots );
+    rocketnet_dev_set_hash_key_seed( 0 );
 }
 
 REGISTER_UNIT_TEST( test_client_slots_hostile_collision_and_stale_generation );
@@ -404,6 +427,10 @@ REGISTER_UNIT_TEST( test_client_slots_erase_shifts_across_wrap );
 
 static void test_client_slots_full_capacity_reuse_and_full_width_ids()
 {
+#if ROCKETNET_DEV
+    rocketnet_dev_set_hash_key_seed( UINT64_C( 0x5EED0000000000B2 ) );
+#endif // #if ROCKETNET_DEV
+
     const int capacity = ROCKETNET_MAX_CLIENTS;
     struct rocketnet_client_slots_t * slots = rocketnet_client_slots_create( NULL, capacity );
     check( slots != NULL );
@@ -462,6 +489,10 @@ static void test_client_slots_full_capacity_reuse_and_full_width_ids()
     check( rocketnet_client_slots_num_connected( slots ) == capacity );
     check( rocketnet_client_slots_num_free( slots ) == 0 );
     rocketnet_client_slots_destroy( slots );
+
+#if ROCKETNET_DEV
+    rocketnet_dev_set_hash_key_seed( 0 );
+#endif // #if ROCKETNET_DEV
 }
 
 REGISTER_UNIT_TEST( test_client_slots_full_capacity_reuse_and_full_width_ids );
