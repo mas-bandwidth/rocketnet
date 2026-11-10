@@ -668,9 +668,11 @@ bool rn_region_ring_span_valid( const rn_region_t * region, uint64_t offset, uin
 
 struct rn_arena_t;
 
+#if ROCKETNET_DEV
 // the one allocation: num_regions regions, each laid out, pointed and
 // carved. NULL (allocating nothing) for a refused config or count.
 rn_arena_t * rn_arena_create( void * context, const rocketnet_message_config_t * config, int num_regions, rocketnet_counters_t * counters );
+#endif // #if ROCKETNET_DEV
 
 // the exact bytes of an arena of num_regions regions at config: its header,
 // its region structs and its regions. 0 for a refused config or count.
