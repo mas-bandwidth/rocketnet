@@ -403,7 +403,7 @@ static void test_standard_t17_handshake_retransmits_at_send_rate()
                                                  response, &response_bytes,
                                                  payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
     rocketnet_unit_check( rocketnet_client_protocol_process_packet( &client, response, response_bytes, t0 + 0.101,
-                                                                   payload, sizeof( payload ), &payload_bytes ) == 1 );
+                                                                    payload, sizeof( payload ), &payload_bytes ) == 1 );
     rocketnet_unit_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST );
 
     rocketnet_client_protocol_update( &client, t0 + 0.152, packet, &packet_bytes );
@@ -422,7 +422,7 @@ static void test_standard_t17_handshake_retransmits_at_send_rate()
                                                  response, &response_bytes,
                                                  payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
     rocketnet_unit_check( rocketnet_client_protocol_process_packet( &client, response, response_bytes, t0 + 0.305,
-                                                                   payload, sizeof( payload ), &payload_bytes ) == 1 );
+                                                                    payload, sizeof( payload ), &payload_bytes ) == 1 );
     rocketnet_unit_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE );
 
     rocketnet_client_protocol_update( &client, t0 + 0.356, packet, &packet_bytes );
