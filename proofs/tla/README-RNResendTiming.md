@@ -177,14 +177,15 @@ The unit test `test_ordered_chunk_timeout_runs_from_its_own_first_send`
 sent 12 s after its block's first chunk is not timed out until 10 s after its
 own first send, and an unsent oldest number has no clock.
 
-`MCRNResendTimingRefused.cfg` lets each record's first send be refused for
-18 ticks (9 s) after it is offered. A refused first send stays never sent, so
+`MCRNResendTimingRefused.cfg` lets the record's first send be refused for
+18 ticks (9 s) after it is offered (one record: with the chunk beside it the
+run passes the 110-second budget). A refused first send stays never sent, so
 the timeout runs from the one real first send and every invariant holds. The
 reversed witness `MCRNResendTimingBrokenRefusedClock.cfg` is the code before
 the fix (`StampRefused`): the refusal at tick 0 records the first send and
-stamps the due-now sentinel, the record is refused until tick 18 and then
-sent, and at tick 20 it has one send where four are owed:
-`AttemptsBeforeTimeout` fails. The unit test
+stamps the due-now sentinel, the record is refused to tick 7 and then sent at
+8, 12 and 16, and at tick 20 it has three sends where four are owed:
+`AttemptsBeforeTimeout` fails, exit 12. The unit test
 `test_ordered_refused_first_send_starts_no_clock`
 (`test_unit_channel_ordered.cpp`) replays it against the code: a refused first
 send leaves `last_send` never sent and no clock, no timeout past
