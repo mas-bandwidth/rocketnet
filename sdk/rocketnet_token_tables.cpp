@@ -39,6 +39,7 @@ struct rocketnet_token_table_t
     uint8_t ( *identifier )[ROCKETNET_TOKEN_IDENTIFIER_BYTES];
     struct rocketnet_address_t * address;
     uint64_t * expire_timestamp;        // bindings
+    uint64_t expire_floor;              // bindings: no live binding expires before this (a lower bound)
     double * claim_deadline;            // claims
     uint64_t * ticket;                  // zero means unoccupied
 
@@ -127,6 +128,7 @@ static struct rocketnet_token_table_t * rn_token_table_create( void * context, i
     table->capacity = capacity;
     table->index_capacity = capacity * 2;
     table->next_ticket = 1;
+    table->expire_floor = UINT64_MAX;
     table->claims = claims;
     randombytes_buf( table->hash_key, sizeof( table->hash_key ) );
 #if ROCKETNET_DEV
@@ -309,7 +311,11 @@ static void rn_token_slot_insert( struct rocketnet_token_table_t * table,
     if ( table->claims )
         table->claim_deadline[slot] = claim_deadline;
     else
+    {
         table->expire_timestamp[slot] = expire_timestamp;
+        if ( expire_timestamp < table->expire_floor )
+            table->expire_floor = expire_timestamp;
+    }
 
     table->ticket[slot] = table->next_ticket++;
 
@@ -384,10 +390,14 @@ static void rn_token_order_push( struct rocketnet_token_table_t * table, int slo
 
 // Bindings take a free slot, otherwise an expired one, otherwise the oldest
 // insertion. The oldest insertion is read from the head of the order ring;
-// when it has expired it is taken in O(1). Only when it is live while a
-// later insertion has already expired (tokens with different lifetimes) does
-// the selection scan for the first expired physical slot, so a live binding
-// is never evicted while an expired one remains.
+// when it has expired it is taken in O(1). When it is live, expire_floor (no
+// live binding expires before it: an insertion lowers it, an eviction leaves
+// it a lower bound) says in O(1) whether any binding can have expired; only
+// when the clock has reached the floor does the selection scan for the first
+// expired physical slot, so a live binding is never evicted while an expired
+// one remains. A scan that finds none sets the floor to the earliest live
+// expiry, so a table of unexpired bindings pays at most one scan for each
+// time the clock passes the floor.
 // proofs/tla/RNSecurityTables.tla HistoryRecord: any expired victim, else the oldest
 static int rn_token_binding_select_slot( struct rocketnet_token_table_t * table,
                                          uint64_t current_timestamp )
@@ -401,8 +411,9 @@ static int rn_token_binding_select_slot( struct rocketnet_token_table_t * table,
         return -1;
 
     int slot = oldest;
-    if ( table->expire_timestamp[oldest] > current_timestamp )
+    if ( table->expire_timestamp[oldest] > current_timestamp && table->expire_floor <= current_timestamp )
     {
+        uint64_t floor = UINT64_MAX;
         for ( int scan = 0; scan < table->capacity; ++scan )
         {
             RN_TOKEN_COUNT( table, slot_steps, 1 );
@@ -413,7 +424,13 @@ static int rn_token_binding_select_slot( struct rocketnet_token_table_t * table,
                 slot = scan;
                 break;
             }
+
+            if ( table->expire_timestamp[scan] < floor )
+                floor = table->expire_timestamp[scan];
         }
+
+        if ( slot == oldest )
+            table->expire_floor = floor;
     }
 
     rn_token_slot_retire( table, slot );

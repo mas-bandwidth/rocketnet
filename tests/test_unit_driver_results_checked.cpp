@@ -553,12 +553,11 @@ static void test_transport_results_server_receive_checks_counts()
 }
 REGISTER_UNIT_TEST( test_transport_results_server_receive_checks_counts );
 
-// A transport result outside the contract (here a negative receive count)
-// is a transport fault. The update counts it on the transport alone; reading
-// the public counters folds it once into PREFILTER_TOO_LARGE, so a driver
-// fault is visible outside the transport.
+// A transport result outside the contract is a transport fault, counted on the
+// transport. A negative receive count leaves PREFILTER_TOO_LARGE alone; a byte
+// count past the UDP size limit reads it once, however often it is read.
 
-static void test_transport_results_server_faults_fold_into_public_counter()
+static void test_transport_results_server_faults_count_only_too_large()
 {
     transport_results_server_lie_t lie = {};
     rocketnet_server_transport_io_operations_t operations;
@@ -570,12 +569,14 @@ static void test_transport_results_server_faults_fold_into_public_counter()
     lie.calls = 0;
     rocketnet_server_transport_update( server, 1000.0 );
     rocketnet_unit_check( server->transport_faults == 1 );
-    rocketnet_unit_check( server->counters.values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE] == too_large_before );
+    rocketnet_unit_check( rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE] == too_large_before );
 
+    lie.mode = 3;
+    lie.calls = 0;
+    rocketnet_server_transport_update( server, 1000.0 );
+    rocketnet_unit_check( server->transport_faults == 2 );
     rocketnet_unit_check( rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE] == too_large_before + 1 );
-
     rocketnet_unit_check( rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE] == too_large_before + 1 );
-
     rn_test_server_transport_stop_and_destroy( server );
 }
 
@@ -955,4 +956,4 @@ static void test_gso_transport_io_results_gro_cmsg_is_checked()
 REGISTER_UNIT_TEST( test_gso_transport_io_results_gro_cmsg_is_checked );
 
 #endif // #if defined(__linux__)
-REGISTER_UNIT_TEST( test_transport_results_server_faults_fold_into_public_counter );
+REGISTER_UNIT_TEST( test_transport_results_server_faults_count_only_too_large );

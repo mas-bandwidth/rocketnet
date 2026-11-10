@@ -220,44 +220,71 @@ void rocketnet_dev_set_link_stop_wait_hold_hook( rocketnet_dev_link_stop_wait_ho
 // so the same budget is repeated here.
 static const double RN_MESSAGE_LINK_STOP_WAIT_SECONDS = 1.0;
 
+// The wait's clock, sleep and stopped query. A build reads the platform clock
+// and sleeps; with the DEV hold set, the clock is a counter the sleep
+// advances, and the hold answers for the worker, so a unit test runs this
+// same loop with no real time.
+struct rn_link_stop_wait_t
+{
+    const struct rn_message_link_t * link;
+    double now;                                     // the counter clock, held only
+    bool held;
+};
+
+static double rn_link_stop_wait_time( struct rn_link_stop_wait_t * wait )
+{
+    return wait->held ? wait->now : rocketnet_platform_time();
+}
+
+static void rn_link_stop_wait_sleep( struct rn_link_stop_wait_t * wait, double seconds )
+{
+    if ( wait->held )
+        wait->now += seconds;
+    else
+        rocketnet_platform_sleep( seconds );
+}
+
+static bool rn_link_stop_wait_stopped( const struct rn_link_stop_wait_t * wait )
+{
+#if ROCKETNET_DEV
+    if ( wait->held )
+        return !rn_link_stop_wait_hold( rn_link_stop_wait_hold_context );
+#endif // #if ROCKETNET_DEV
+    return !wait->link->stopped || wait->link->stopped( wait->link->transport );
+}
+
 // stops an owned transport and steps it until it reports stopped, or the
-// budget above runs out. The wait used to sleep 1 ms with no deadline.
-static void rn_message_link_stop_and_wait( const struct rn_message_link_t * link )
+// budget above runs out. The wait used to sleep 1 ms with no deadline. On the
+// deadline it logs once and returns false: the worker still owns the
+// transport, so the caller keeps it rather than destroy it.
+static bool rn_message_link_stop_and_wait( const struct rn_message_link_t * link )
 {
     if ( link->stop )
         link->stop( link->transport );
 
+    struct rn_link_stop_wait_t wait = { link, 0.0, false };
 #if ROCKETNET_DEV
-    if ( rn_link_stop_wait_hold )
-    {
-        double now = 0.0;
-        const double deadline = now + RN_MESSAGE_LINK_STOP_WAIT_SECONDS;
-        for ( ;; )
-        {
-            if ( !rn_link_stop_wait_hold( rn_link_stop_wait_hold_context ) )
-                break;
-            if ( link->update )
-                link->update( link->transport, 0.0 ); // stopping updates do not read game time
-            if ( now >= deadline )
-                break;
-            now += 0.001;
-        }
-        return;
-    }
+    wait.held = rn_link_stop_wait_hold != NULL;
 #endif // #if ROCKETNET_DEV
 
-    const double deadline = rocketnet_platform_time() + RN_MESSAGE_LINK_STOP_WAIT_SECONDS;
-    while ( link->stopped && !link->stopped( link->transport ) )
+    const double deadline = rn_link_stop_wait_time( &wait ) + RN_MESSAGE_LINK_STOP_WAIT_SECONDS;
+    while ( !rn_link_stop_wait_stopped( &wait ) )
     {
         if ( link->update )
             link->update( link->transport, 0.0 ); // stopping updates do not read game time
-        if ( !link->stopped( link->transport ) )
+        if ( !rn_link_stop_wait_stopped( &wait ) )
         {
-            if ( rocketnet_platform_time() >= deadline )
-                break;
-            rocketnet_platform_sleep( 0.001 );
+            if ( rn_link_stop_wait_time( &wait ) >= deadline )
+            {
+                rocketnet_error( "message transport stop: the worker has not exited after %.1f seconds; the transport is kept, not freed",
+                                 RN_MESSAGE_LINK_STOP_WAIT_SECONDS );
+                return false;
+            }
+            rn_link_stop_wait_sleep( &wait, 0.001 );
         }
     }
+
+    return true;
 }
 
 static void rn_message_link_abort_create( const struct rn_message_link_t * link )
@@ -265,8 +292,8 @@ static void rn_message_link_abort_create( const struct rn_message_link_t * link 
     if ( !link || !link->destroy )
         return;
 
-    rn_message_link_stop_and_wait( link );
-    link->destroy( link->transport );
+    if ( rn_message_link_stop_and_wait( link ) )
+        link->destroy( link->transport );
 }
 
 struct rn_message_object_t * rn_message_object_create( void * context, const struct rn_message_link_t * link, int is_server, int num_connections,
@@ -480,12 +507,13 @@ void rn_message_object_destroy( struct rn_message_object_t * object )
     // logged and counted, and destroy finishes the shutdown itself, so the
     // transport, its threads and the block are released all the same
 
+    bool transport_stopped = true;
     if ( object->link.destroy && object->link.stopped && !object->link.stopped( object->link.transport ) )
     {
         rocketnet_error( "message %s destroy: the transport is not stopped; stop it and poll stopped before destroy. Stopping it now",
                          object->is_server ? "server" : "client" );
         rocketnet_api_misuse_record();
-        rn_message_link_stop_and_wait( &object->link );
+        transport_stopped = rn_message_link_stop_and_wait( &object->link );
     }
 
     if ( object->in_place > 0 )
@@ -494,7 +522,7 @@ void rn_message_object_destroy( struct rn_message_object_t * object )
     for ( int i = 0; i < object->num_connections; ++i )
         rn_message_flush_unreliable( object, i, true );
 
-    if ( object->link.destroy )
+    if ( object->link.destroy && transport_stopped )
         object->link.destroy( object->link.transport );
 
     rn_arena_destroy( object->arena );
