@@ -1822,7 +1822,11 @@ static int rn_blaster_execute( const rn_blaster_options_t & options, const rn_bl
     printf( "RUNTIME endpoint_config=default clients=%u arena_required_bytes=%" PRIu64 "\n",
             options.plan.clients, arena_required );
     rocketnet_counters_t message_counters = {};
-    rn_arena_t * message_arena = rn_arena_create( NULL, &message_config, (int) options.plan.clients, &message_counters );
+    std::vector<uint8_t> message_arena_storage( (size_t) arena_required + ROCKETNET_ALLOCATION_ALIGNMENT );
+    uint8_t * message_arena_block = (uint8_t *) ( ( (uintptr_t) message_arena_storage.data() + ROCKETNET_ALLOCATION_ALIGNMENT - 1 ) &
+                                                  ~(uintptr_t) ( ROCKETNET_ALLOCATION_ALIGNMENT - 1 ) );
+    rn_arena_t * message_arena = rn_arena_create_in_block( message_arena_block, arena_required, &message_config,
+                                                           (int) options.plan.clients, &message_counters );
     std::vector<rn_blaster_session_t> sessions( options.plan.clients );
     bool sessions_ok = true;
     uint32_t initialized_sessions = 0;
