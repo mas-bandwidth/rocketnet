@@ -156,6 +156,9 @@ struct rocketnet_network_simulator_t
     uint64_t * shard_occupancy;             // shard_count * occupancy_words
     uint64_t * shard_summary;               // shard_count * summary_words
     double * shard_min_delivery_time;       // lower bound on the shard's earliest delivery
+    double min_delivery_time;               // lower bound on the earliest delivery in any slot
+    int receive_any_hint;                   // first slot not known not-due at receive_any_hint_time
+    double receive_any_hint_time;
     int free_hint;                          // every slot below this one is occupied
     struct rocketnet_network_simulator_index_stats_t index_stats;
 };
@@ -267,6 +270,9 @@ struct rocketnet_network_simulator_t * rocketnet_network_simulator_create( void 
     simulator->capacity = capacity;
     simulator->rng_state = seed ? seed : 1;
     simulator->free_hint = 0;
+    simulator->min_delivery_time = DBL_MAX;
+    simulator->receive_any_hint = 0;
+    simulator->receive_any_hint_time = 0.0;
     simulator->shard_count = shard_count;
     simulator->shard_mask = shard_count - 1;
     simulator->occupancy_words = occupancy_words;
@@ -693,18 +699,47 @@ int rocketnet_network_simulator_receive_any( struct rocketnet_network_simulator_
     rocketnet_assert( out_to );
     rocketnet_assert( out_packet );
 
+    if ( simulator->min_delivery_time > current_time )
+        return 0;
+
+    int start = 0;
+    if ( simulator->receive_any_hint_time == current_time )
+        start = simulator->receive_any_hint;
+    else
+        simulator->receive_any_hint = 0;
+
+    simulator->receive_any_hint_time = current_time;
+
     int slot = -1;
-    for ( int i = 0; i < simulator->capacity; i++ )
+    uint64_t scanned = 0;
+    double minimum = DBL_MAX;
+    for ( int i = start; i < simulator->capacity; i++ )
     {
-        if ( simulator->used[i] && simulator->delivery_time[i] <= current_time )
+        scanned++;
+        if ( !simulator->used[i] )
+            continue;
+        if ( simulator->delivery_time[i] <= current_time )
         {
             slot = i;
             break;
         }
+        if ( simulator->delivery_time[i] < minimum )
+            minimum = simulator->delivery_time[i];
     }
 
+    simulator->index_stats.receive_any_slots += scanned;
+    if ( scanned > simulator->index_stats.max_receive_any_slots )
+        simulator->index_stats.max_receive_any_slots = scanned;
+
     if ( slot < 0 )
+    {
+        simulator->receive_any_hint = simulator->capacity;
+        if ( start == 0 )
+            simulator->min_delivery_time = minimum;
         return 0;
+    }
+
+    simulator->receive_any_hint = slot + 1;
 
     const int bytes = simulator->packet_bytes[slot];
     *out_from = simulator->from[slot];
@@ -963,6 +998,10 @@ static int rocketnet_simulator_insert( struct rocketnet_network_simulator_t * si
         memcpy( simulator->packet_data + (size_t) i * ROCKETNET_RECEIVE_CEILING, packet_data, (size_t) packet_bytes );
 
         rocketnet_simulator_index_add( simulator, i );
+        if ( simulator->delivery_time[i] < simulator->min_delivery_time )
+            simulator->min_delivery_time = simulator->delivery_time[i];
+        if ( i < simulator->receive_any_hint && simulator->delivery_time[i] <= simulator->receive_any_hint_time )
+            simulator->receive_any_hint = i;
         simulator->free_hint = i + 1;
         rocketnet_platform_atomic_add_u64( &simulator->held_count, 1 );
 
