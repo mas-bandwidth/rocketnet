@@ -1187,12 +1187,15 @@ ROCKETNET_EXPORT void rocketnet_sleep( double seconds );
 ///
 /// Create allocates the hub as one block through the configured allocator:
 /// one server endpoint and max_clients client endpoints, each with its full
-/// datagram queue. Server start and client connect register an endpoint and
-/// allocate nothing; stop, disconnect and destroy unregister it. Traffic never
-/// allocates. A server or client past the hub's capacity is refused at start
-/// or connect. Create it once rocketnet_init has run, and destroy it with the
-/// same library copy that created it, after every server and client that uses
-/// it is destroyed and before rocketnet_term.
+/// datagram queue. Each client endpoint's queue is 2048 slots of 1476 bytes,
+/// 2048 * 1476 bytes. At max_clients 1000 the block is about 3.05 GB. It sits
+/// outside rocketnet_client_required_memory and
+/// rocketnet_server_required_memory. Server start and client connect register
+/// an endpoint and allocate nothing; stop, disconnect and destroy unregister
+/// it. Traffic never allocates. A server or client past the hub's capacity is
+/// refused at start or connect. Create it once rocketnet_init has run, and
+/// destroy it with the same library copy that created it, after every server
+/// and client that uses it is destroyed and before rocketnet_term.
 ///
 /// Thread: create and destroy on any thread. The endpoints may use the hub
 /// from any thread at once; a mutex in the hub guards it.
