@@ -542,6 +542,14 @@ SealWaiting(s) ==
 \* The drain's step, whole: one update's seal.
 SealStep(s) == SealWaiting(s) /\ droppedIn' = {} /\ allBefore' = {} /\ readIn' = readIn /\ admitIn' = admitIn /\ held' = held
 
+\* The end of a run: the object destroyed and no create left. Every other
+\* state has a step (STOPPED drops a send, RUNNING stops, STOPPING
+\* completes, a session's client can always send or lose a packet), so a
+\* run that halts anywhere else is a deadlock.
+Done ==
+    /\ state = "NONE" /\ creates = MaxCreates
+    /\ UNCHANGED vars
+
 \* disconnect_client(i) leaves its burst waiting (the immediate seal of a
 \* burst the allowance holds is this step and its SealWaiting steps); stop
 \* seals every waiting packet on the shutdown path and destroy wipes the
@@ -581,6 +589,7 @@ Next ==
     \/ \E i \in Slots : ServerDropSend(i) /\ allBefore' = {} /\ readIn' = readIn /\ admitIn' = admitIn /\ held' = held /\ UNCHANGED drain
     \/ DisconnectAll
     \/ \E s \in Sessions : SealStep(s)
+    \/ Done
 
 Spec == Init /\ [][Next]_vars
 \* Fair delivery of the handshake's response and the timers; the server's

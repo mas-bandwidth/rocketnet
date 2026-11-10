@@ -259,6 +259,8 @@ IoStopped ==
 
 \* STOPPED is the end of the run, a stutter here (a later start builds a new
 \* transport and a new ring).
+Done == phase = "STOPPED" /\ UNCHANGED vars
+
 Next ==
     \/ \E i \in Slots : Connect(i) \/ Kick(i)
     \/ Stop
@@ -268,7 +270,7 @@ Next ==
     \/ \E s \in Sessions : LoseRoute(s) \/ FindRoute(s)
     \/ RequestIoStop
     \/ IoStopped
-    \/ phase = "STOPPED" /\ UNCHANGED vars
+    \/ Done
 
 Spec == Init /\ [][Next]_vars
 

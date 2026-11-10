@@ -148,8 +148,8 @@ case, one for witnesses, 110-second cap per case):
 - `MCClientSession.cfg`: `MaxSessions = 3` (three connections over the run), `MaxCreates = 2`
   (destroy and create again once), `Defect = "none"`, `SPECIFICATION LiveSpec`.
 - The witnesses: `MaxSessions = 2`, `MaxCreates = 1`, `SPECIFICATION Spec`.
-- Deadlock is not checked (`ignore-terminal`): a run ends when the sessions and creates are
-  spent.
+- Deadlock is checked: a run ends in the `Done` terminal stutter, the object destroyed with its
+  creates spent; a run that halts in any other state is reported as a deadlock.
 - The link is a set of session tags (at most one packet per session in flight). The handshake
   is three abstract steps; its packets, cookies, keys and replay rules are
   `proofs/tla/ClientConnection.tla`'s. Client packets to the server are not modelled here (the server's
