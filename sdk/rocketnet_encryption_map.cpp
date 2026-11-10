@@ -25,12 +25,13 @@ struct rocketnet_encryption_map_t
     uint64_t next_generation;
     uint8_t hash_key[crypto_shorthash_KEYBYTES];
 
-    uint32_t * index;                                        // capacity: public slot index or empty
+    uint32_t * index;                                        // index_cells: public slot index or empty
     uint32_t * free_indices;                                 // capacity: dense LIFO, no link ownership
     uint64_t * generation;                                   // capacity: full-width live slot generation
     struct rocketnet_address_t * address;                    // hot: full key; NONE is the free state
     struct rocketnet_encryption_mapping_control_t * control; // hot: timeout walk
     struct rocketnet_encryption_mapping_t * mapping;        // cold: same index
+    int index_cells;                                         // 2 * capacity: load factor <= 0.5
 #if ROCKETNET_DEV
     mutable uint64_t test_hashes;                           // keyed hashes computed, for the unit suite
     mutable uint64_t test_probes;                           // flat index cells inspected by bounded DEV oracles
@@ -93,7 +94,7 @@ uint64_t rocketnet_encryption_map_allocation_bytes( int capacity )
 
     const uint64_t n = (uint64_t) capacity;
     return rocketnet_memory_allocations( { sizeof( rocketnet_encryption_map_t ),
-                                           n * sizeof( uint32_t ), n * sizeof( uint32_t ), n * sizeof( uint64_t ), n * sizeof( rocketnet_address_t ),
+                                           2 * n * sizeof( uint32_t ), n * sizeof( uint32_t ), n * sizeof( uint64_t ), n * sizeof( rocketnet_address_t ),
                                            n * sizeof( rocketnet_encryption_mapping_control_t ), n * sizeof( rocketnet_encryption_mapping_t ) } );
 }
 
@@ -116,6 +117,7 @@ struct rocketnet_encryption_map_t * rocketnet_encryption_map_create( void * cont
 
     map->context = context;
     map->capacity = capacity;
+    map->index_cells = 2 * capacity;
     map->next_generation = 1;
     randombytes_buf( map->hash_key, sizeof( map->hash_key ) );
 
@@ -123,7 +125,7 @@ struct rocketnet_encryption_map_t * rocketnet_encryption_map_create( void * cont
     (void) rocketnet_dev_session_sequence_start();          // the seam's one read, here at create
 #endif // #if ROCKETNET_DEV
 
-    map->index = (uint32_t *) rocketnet_malloc( context, sizeof( uint32_t ) * (size_t) capacity );
+    map->index = (uint32_t *) rocketnet_malloc( context, sizeof( uint32_t ) * (size_t) map->index_cells );
     map->free_indices = (uint32_t *) rocketnet_malloc( context, sizeof( uint32_t ) * (size_t) capacity );
     map->generation = (uint64_t *) rocketnet_malloc( context, sizeof( uint64_t ) * (size_t) capacity );
     map->address = (struct rocketnet_address_t *) rocketnet_malloc( context, sizeof( struct rocketnet_address_t ) * (size_t) capacity );
@@ -142,9 +144,11 @@ struct rocketnet_encryption_map_t * rocketnet_encryption_map_create( void * cont
         return NULL;
     }
 
+    for ( int i = 0; i < map->index_cells; i++ )
+        map->index[i] = ROCKETNET_ENCRYPTION_INDEX_EMPTY;
+
     for ( int i = 0; i < capacity; i++ )
     {
-        map->index[i] = ROCKETNET_ENCRYPTION_INDEX_EMPTY;
         map->generation[i] = 0;
         map->address[i].type = ROCKETNET_ADDRESS_NONE;
 
@@ -224,16 +228,16 @@ static int rocketnet_encryption_map_lookup( const struct rocketnet_encryption_ma
                                             int * insertion_position )
 {
     // returns the stable public slot index, or -1. insertion_position receives
-    // the first empty cell for an absent key. A table with fewer than capacity
-    // live entries always has an empty cell. At full capacity, an absent lookup
-    // examines all cells and stops. This keeps the old metadata budget exactly:
-    // the keyed index, dense free sequence and full-width generation tags
-    // together occupy the old bucket/next/live bytes.
+    // the first empty cell for an absent key. The index has two cells per
+    // mapping slot, so even at full capacity at least half its cells are
+    // empty (load factor <= 0.5, as the token tables and client slots) and an
+    // absent lookup stops at a nearby empty cell; index_cells is only the hard
+    // bound on the loop.
 
-    const int home = (int) ( hash % (uint64_t) map->capacity );
-    for ( int probe = 0; probe < map->capacity; ++probe )
+    const int home = (int) ( hash % (uint64_t) map->index_cells );
+    for ( int probe = 0; probe < map->index_cells; ++probe )
     {
-        const int position = (int) ( ( (uint64_t) home + (uint64_t) probe ) % (uint64_t) map->capacity );
+        const int position = (int) ( ( (uint64_t) home + (uint64_t) probe ) % (uint64_t) map->index_cells );
         const uint32_t candidate = map->index[position];
 
 #if ROCKETNET_DEV
@@ -268,23 +272,28 @@ static int rocketnet_encryption_map_lookup( const struct rocketnet_encryption_ma
 
 // proofs/tla/RNOpenAddress.tla EraseStart and EraseStep (ClearLast FALSE): the hole
 // clears first, then the scan moves back each entry whose home is not
-// cyclically in (hole, scan]; EraseBound: it examines at most capacity cells
+// cyclically in (hole, scan]; EraseBound: it examines at most index_cells cells
 static void rocketnet_encryption_map_erase_index( struct rocketnet_encryption_map_t * map, int hole )
 {
     // backward-shift deletion (as in rocketnet_client_slots.cpp): clearing the
     // hole and shifting every later entry whose home is not cyclically in
     // (hole, scan] back into the hole keeps every surviving probe cluster
-    // searchable and leaves no tombstone. The scan does not count as a lookup
-    // probe. A full table has no empty cell, so the hole itself, cleared first,
-    // is the empty cell the scan stops at.
+    // searchable and leaves no tombstone. Each scanned cell counts in the DEV
+    // probe counter. The index has two cells per mapping slot, so the scan
+    // meets an empty cell at the end of the hole's probe cluster; the hole
+    // itself, cleared first, bounds it at index_cells.
 
     map->index[hole] = ROCKETNET_ENCRYPTION_INDEX_EMPTY;
 
     int scan = hole;
-    for ( int step = 0; step < map->capacity; ++step )
+    for ( int step = 0; step < map->index_cells; ++step )
     {
-        scan = scan + 1 == map->capacity ? 0 : scan + 1;
+        scan = scan + 1 == map->index_cells ? 0 : scan + 1;
         const uint32_t candidate = map->index[scan];
+
+#if ROCKETNET_DEV
+        map->test_probes++;
+#endif // #if ROCKETNET_DEV
         if ( candidate == ROCKETNET_ENCRYPTION_INDEX_EMPTY )
             break;
 
@@ -292,7 +301,7 @@ static void rocketnet_encryption_map_erase_index( struct rocketnet_encryption_ma
             continue;
 
         const int slot = (int) candidate;
-        const int home = (int) ( rocketnet_encryption_map_hash_value( map, &map->address[slot] ) % (uint64_t) map->capacity );
+        const int home = (int) ( rocketnet_encryption_map_hash_value( map, &map->address[slot] ) % (uint64_t) map->index_cells );
         const bool stays = hole <= scan ? ( hole < home && home <= scan )
                                         : ( hole < home || home <= scan );
         if ( stays )
@@ -493,7 +502,7 @@ uint64_t rocketnet_encryption_map_test_probes( const struct rocketnet_encryption
 uint64_t rocketnet_encryption_map_test_probe_bound( const struct rocketnet_encryption_map_t * map )
 {
     rocketnet_assert( map );
-    return (uint64_t) map->capacity;
+    return (uint64_t) map->index_cells;
 }
 
 int rocketnet_encryption_map_test_home( const struct rocketnet_encryption_map_t * map,
@@ -501,7 +510,7 @@ int rocketnet_encryption_map_test_home( const struct rocketnet_encryption_map_t 
 {
     rocketnet_assert( map );
     rocketnet_assert( address );
-    return (int) ( rocketnet_encryption_map_hash( map, address ) % (uint64_t) map->capacity );
+    return (int) ( rocketnet_encryption_map_hash( map, address ) % (uint64_t) map->index_cells );
 }
 
 bool rocketnet_encryption_map_test_handle( const struct rocketnet_encryption_map_t * map, int index,
