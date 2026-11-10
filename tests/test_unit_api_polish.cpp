@@ -532,6 +532,141 @@ static void test_api_polish_server_abort_message_without_start_is_a_no_op()
     rn_test_server_stop_and_destroy( server );
 }
 REGISTER_UNIT_TEST( test_api_polish_server_abort_message_without_start_is_a_no_op );
+
+// --- a client call from the state change callback is refused and counted ------
+
+// rocketnet_client_config_t.state_change_callback: a call that changes the
+// client, made from the callback (destroy included), returns at once with the
+// client untouched and counts one api_misuse; it never asserts, frees the
+// client under its caller, or waits on the worker. The client stays usable
+// once the callback returns.
+
+struct api_polish_reentry_t
+{
+    rocketnet_client_t * client;
+    int calls;
+};
+
+static api_polish_reentry_t g_polish_reentry;
+
+static void api_polish_reentry_state_change( void * context, enum rocketnet_client_state_t previous_state, enum rocketnet_client_state_t current_state )
+{
+    (void) context;
+    (void) previous_state;
+
+    api_polish_reentry_t * r = &g_polish_reentry;
+    rocketnet_client_t * client = r->client;
+    r->calls++;
+
+    // each refused call counts exactly one misuse and leaves the state as reported
+
+    uint64_t misuses = rocketnet_api_misuse_count();
+#define API_POLISH_REENTRY_REFUSED()                                  \
+    do                                                                \
+    {                                                                 \
+        check( rocketnet_api_misuse_count() == misuses + 1 );         \
+        check( rocketnet_client_state( client ) == current_state );   \
+        misuses = rocketnet_api_misuse_count();                       \
+    } while ( 0 )
+
+    rocketnet_client_update( client, 2000.0 );
+    API_POLISH_REENTRY_REFUSED();
+    rocketnet_client_send_packets( client );
+    API_POLISH_REENTRY_REFUSED();
+    check( rocketnet_client_connect( client, "not a token" ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+    API_POLISH_REENTRY_REFUSED();
+    rocketnet_client_disconnect( client );
+    API_POLISH_REENTRY_REFUSED();
+    check( rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE, 16 ) == NULL );
+    API_POLISH_REENTRY_REFUSED();
+    check( rocketnet_client_finish_message( client, 4 ) == 0 );
+    API_POLISH_REENTRY_REFUSED();
+    rocketnet_client_abort_message( client );
+    API_POLISH_REENTRY_REFUSED();
+    check( rocketnet_client_receive_messages( client ) == NULL );
+    API_POLISH_REENTRY_REFUSED();
+    struct rocketnet_receipt_t receipts[4];
+    check( rocketnet_client_receipts( client, receipts, 4 ) == 0 );
+    API_POLISH_REENTRY_REFUSED();
+    check( rocketnet_client_set_send_kbps( client, 256 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+    API_POLISH_REENTRY_REFUSED();
+    rocketnet_client_network_simulator( client, 0, 0, 0, 0 );
+    API_POLISH_REENTRY_REFUSED();
+    rocketnet_client_destroy( client );
+    API_POLISH_REENTRY_REFUSED();
+
+#undef API_POLISH_REENTRY_REFUSED
+}
+
+static void test_api_polish_state_callback_reentry_is_refused()
+{
+    rocketnet_quiet( true );
+    rocketnet_assert_function( api_polish_count_assert );
+    g_polish_asserts = 0;
+    g_polish_index_now = 1000.0;
+    memset( &g_polish_reentry, 0, sizeof( g_polish_reentry ) );
+
+    uint8_t seed[32];
+    for ( int i = 0; i < 32; i++ )
+    {
+        seed[i] = (uint8_t) ( 0x6D ^ i );
+    }
+
+    uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
+    uint8_t backend_secret[RN_TEST_BACKEND_SECRET_KEY_BYTES];
+    check( rocketnet_generate_backend_keypair_from_seed( seed, backend_public, backend_secret ) == ROCKETNET_STATUS_OK );
+
+    uint8_t server_public[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
+    uint8_t server_secret[RN_TEST_SERVER_SECRET_KEY_BYTES];
+    check( rocketnet_generate_server_keypair( server_public, server_secret ) == ROCKETNET_STATUS_OK );
+
+    const char * addresses[] = { "127.0.0.1:40000" };
+    char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+    check( rn_test_production_token_string( backend_secret, server_public, API_POLISH_INDEX_PROTOCOL, addresses, 1,
+                                            0x6D, 1000, 1ULL << 40, 300, NULL, token ) == ROCKETNET_STATUS_OK );
+
+    struct rocketnet_client_config_t client_config;
+    check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
+    client_config.transport = "loopback";
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
+    client_config.step_driven = 1;
+    client_config.time_callback = api_polish_index_clock;
+    client_config.state_change_callback = api_polish_reentry_state_change;
+
+    rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL );
+    check( client != NULL );
+    g_polish_reentry.client = client;
+
+    // connect reports DISCONNECTED -> REQUESTING_COOKIE: every call the callback makes is refused
+
+    check( rocketnet_client_connect( client, token ) == ROCKETNET_STATUS_OK );
+    check( g_polish_reentry.calls == 1 );
+    check( rocketnet_client_state( client ) > ROCKETNET_CLIENT_STATE_DISCONNECTED );
+
+    // the flag is clear once the callback returns: the same calls from outside count nothing
+
+    const uint64_t before = rocketnet_api_misuse_count();
+    rocketnet_client_update( client, g_polish_index_now );
+    rocketnet_client_send_packets( client );
+    check( rocketnet_api_misuse_count() == before );
+
+    // disconnect reports the change to DISCONNECTED; the destroy the callback makes is refused again
+
+    rocketnet_client_disconnect( client );
+    check( g_polish_reentry.calls == 2 );
+    check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
+    check( g_polish_asserts == 0 );
+
+    g_polish_reentry.client = NULL;
+    rn_test_client_wait_disconnected( client );
+    rocketnet_client_destroy( client );
+    check( rocketnet_api_misuse_count() == before );
+    check( g_polish_asserts == 0 );
+
+    rocketnet_assert_function( NULL );
+    rocketnet_quiet( false );
+}
+REGISTER_UNIT_TEST( test_api_polish_state_callback_reentry_is_refused );
 #endif // #if ROCKETNET_DEV
 
 // --- the production minter refuses a token no server accepts -------------------
