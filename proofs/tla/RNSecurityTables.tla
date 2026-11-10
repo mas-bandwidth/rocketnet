@@ -600,7 +600,7 @@ PreviousBoundedToOnePeriod ==
 InFlightCookieSurvivesRotation ==
     [][(CookieLife < RotatePeriod /\ gen' # gen /\ clock' - clock <= CookieLife)
         => gen \in LiveGens']_vars
-VerifyBudgetRespected == CapVerifyBudget => verifies <= VerifyBudget
+VerifyBudgetRespected == verifies <= VerifyBudget
 
 \* The request-claim table (sdk/rocketnet_token_tables.cpp).  Every slot is
 \* on exactly one of the free list or the order list, and neither list

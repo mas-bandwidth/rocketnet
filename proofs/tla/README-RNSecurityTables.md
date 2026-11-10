@@ -245,7 +245,7 @@ Each reversed witness has a committed configuration registered in
 | `AdmitExpired.cfg` | `AdmitExpiredAtResponse = TRUE` | `SafetyInvariants` (`ExpiredNeverAdmitted`) |
 | `EvictLiveHistory.cfg` | `EvictLiveHistory = TRUE` | `SafetyInvariants` (`NoLiveHistoryEviction`) |
 | `DeniedConsumesToken.cfg` | `DeniedConsumesToken = TRUE` (with `HoldUntilExpire = TRUE`: only a set entry can be consumed) | `DeniedTokenStaysUsable` |
-| `NoVerifyCap.cfg` | `CapVerifyBudget = FALSE` | `SafetyInvariants` (`TypeOK` verify bound) |
+| `NoVerifyCap.cfg` | `CapVerifyBudget = FALSE` | `VerifyBudgetRespected` |
 | `NoPrevious.cfg` | `AcceptPrevious = FALSE` | `InFlightCookieSurvivesRotation` |
 | `PreviousOutlivesWindow.cfg` | `PreviousOutlivesWindow = TRUE` | `PreviousBoundedToOnePeriod` |
 | `BrokenGlobalLockout.cfg` | `RefuseUnremembered <- MCRefuseUnremembered` (`TRUE`), FloodSpec | `HonestConnectsUnderFlood` |
