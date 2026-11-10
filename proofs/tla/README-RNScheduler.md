@@ -7,7 +7,7 @@ scheduler functions names the action it implements. The model was written
 before the code.
 
 `proofs/tla/MCRNScheduler.tla` and `proofs/tla/MCRNScheduler.cfg` are the small instance.
-The two `proofs/tla/MCRNSchedulerBroken*.cfg` files are the reversed witnesses. The
+The three `proofs/tla/MCRNSchedulerBroken*.cfg` files are the reversed witnesses. The
 cases are rows of `proofs/tla/CASES.tsv` (group `rnscheduler`) with measured records
 in `proofs/tla/RUNS.tsv`.
 
@@ -31,9 +31,10 @@ Three orders nest, outermost first.
 3. **Round robin across channels inside a level**, one item per turn,
    starting after the channel the last item came from.
 
-**Channel FIFO.** Within a class only a channel's head (its earliest queued
-item) is offered, at the best priority among the channel's queued items: a
-priority boosts the whole channel and never reorders it.
+**Channel FIFO.** Within each reliable class, only a channel's head (its earliest
+item in that class) is offered, at the best priority among the channel's items
+in that class. This applies to retransmits as well as new reliable items: a
+priority boosts the whole channel group and never reorders it.
 
 **The window stall.** A new reliable item takes a message number when it is
 first written, and at most W numbers are outstanding. A full window holds the
@@ -73,6 +74,7 @@ Properties:
 | `FirstWriteInOrderPerChannel` | invariant | within each channel, first writes follow the ordering |
 | `UnreliableNotBlockedByWindow` | invariant | a closed window never stops an unreliable item that has budget |
 | `ClassOrderBeforePriority` | invariant | no write took a class while a higher class had an item it could write |
+| `RtxHeadBoost` | invariant | each retransmit channel offers only its earliest lost item at the best level among its lost items |
 | `NoStarvation` | liveness | every queued reliable item is eventually first-written |
 
 Fairness: weak fairness on `Queue`, `Write`, `Tick` and every `Ack(i)`.
@@ -84,7 +86,8 @@ Two channels. Channel 0 queues a LOW item and then an IMMEDIATE item (the
 boost case); channel 1 queues one HIGH item. Unreliable items are IMMEDIATE,
 so the class order is checked against the most urgent priority. A window of
 2 numbers, a budget of 1 item per update, one unreliable item arriving with
-every update, and 1 transport loss.
+every update, and 2 transport losses, allowing both channel 0 items to await
+retransmission together.
 
 ## Reversed witnesses
 
@@ -92,13 +95,14 @@ every update, and 1 transport loss.
 |---|---|---|---|
 | `MCRNSchedulerBrokenPerMessagePriority.cfg` | `ChannelFIFO = FALSE`: every queued item offered at its own level | invariant `FirstWriteInOrderPerChannel` | 4 states: channel 0 queues LOW (ordering 0) and IMMEDIATE (ordering 1); the first write takes ordering 1. The code offers only channel 0's head, at the boosted level, so it writes ordering 0 first (`test_rnscheduler_witness_replays`, `test_channel_fifo_kept_per_channel`). |
 | `MCRNSchedulerBrokenUnreliableStarvesOrdered.cfg` | `UnreliableLast = FALSE`: the unreliable class offered first | temporal `NoStarvation` | a lasso: all three reliable items queued, then every update writes its one arriving unreliable item and ticks, forever. The code takes classes in the budget's order, so the three reliable items go in the first three updates and the unreliable class gets the budget only after (`test_rnscheduler_witness_replays`, `test_budget_class_order_still_rules`). `ClassOrderBeforePriority` is the safety face of the same flaw and is left out of this case, so the failure checked is the liveness one. |
+| `MCRNSchedulerBrokenRtxPerMessage.cfg` | `ChannelFIFO = FALSE`: retransmits offered independently | invariant `RtxHeadBoost` | after both channel 0 items are lost, the second lost item appears as another candidate at its own priority instead of boosting the first lost item. |
 
 ## Action-to-function map
 
 | Action / operator | Function in `sdk/rocketnet_packet_builder.cpp` |
 |---|---|
 | `Init`, `Seeds` | `rn_packet_builder_init` -> `rn_builder_reset_clocks`; `round_robin = num_channels - 1`, so the first turn is channel 0's |
-| `IsHead`, `Boost` | `rn_builder_plan`: once per call, stable radix passes group the full 16-bit channel and class into contiguous ranges while preserving caller order; a reverse pass stores every position's suffix priority minimum, so each range cursor is `IsHead` and its suffix minimum is `Boost`; `rn_builder_take_head` advances only that cursor |
+| `IsHead`, `Boost`, `RtxHead`, `RtxBoost` | `rn_builder_plan`: once per call, stable radix passes group the full 16-bit channel and class into contiguous ranges while preserving caller order; a reverse pass stores every position's suffix priority minimum, so each range cursor is its class's head and its suffix minimum is its class's boost; `rn_builder_take_head` advances only that cursor |
 | `PickLevel`, `PickIn` | `rn_builder_next_in_class`, one selection operation per current channel/class range head (with `rn_builder_effective_clock`, the pull-forward); every flat entry, built afresh on the call's stack, validates its caller item index and group; `test_packet_builder_matches_reference_order` holds it to the quadratic scan it replaced, take for take |
 | `Write` (class order, clock step, `rr'`) | `rn_packet_builder_write`'s class loop, `rn_builder_take_level` |
 | `Tick`'s clock reset | the end of `rn_packet_builder_write`: every item taken -> `rn_builder_reset_clocks` |

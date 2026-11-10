@@ -18,11 +18,11 @@
 (*      seeds.                                                             *)
 (*   3. Round robin across channels inside a level, one item per turn.     *)
 (*                                                                         *)
-(* Channel FIFO: a channel's new reliable items are first written in the   *)
-(* order the application queued them.  Only a channel's head is offered,   *)
-(* at the best priority among the channel's queued items: per-send         *)
-(* priority boosts the whole channel (17.3 item 3).                        *)
-(* The implementation refines IsHead/Boost into one stable flat sequence  *)
+(* Channel FIFO: within each reliable class, only a channel's head is      *)
+(* offered, at the best priority among that class's channel items. The     *)
+(* initial writes and retransmits preserve their respective channel order. *)
+(* Per-send priority boosts the whole channel (17.3 item 3).               *)
+(* The implementation refines the head and boost into one flat sequence    *)
 (* per call: contiguous channel/class ranges, with the suffix priority     *)
 (* minimum at each range position. The plan is zeroed on the call's stack *)
 (* each call, so no earlier call's entry adds a candidate to Cands, and    *)
@@ -127,10 +127,21 @@ Boost(c) == CHOOSE l \in Levels :
                 /\ \E j \in Ids : st[j] = "queued" /\ Msgs[j].ch = c /\ Msgs[j].lv = l
                 /\ \A j \in Ids : (st[j] = "queued" /\ Msgs[j].ch = c) => l <= Msgs[j].lv
 
+\* retransmits have their own per-channel head and boost within the rtx class
+RtxHead(i) == st[i] = "lost" /\
+              \A j \in Ids : (j < i /\ Msgs[j].ch = Msgs[i].ch) => st[j] # "lost"
+RtxBoost(c) == CHOOSE l \in Levels :
+                   /\ \E j \in Ids : st[j] = "lost" /\ Msgs[j].ch = c /\ Msgs[j].lv = l
+                   /\ \A j \in Ids : (st[j] = "lost" /\ Msgs[j].ch = c) => l <= Msgs[j].lv
+
 \* the items class c may write now, as [id, ch, lv]; id 0 is an unreliable item
 Cands(c) ==
     CASE c = "rtx" ->
-            { [id |-> i, ch |-> Msgs[i].ch, lv |-> Msgs[i].lv] : i \in { j \in Ids : st[j] = "lost" } }
+            IF ChannelFIFO
+            THEN { [id |-> i, ch |-> Msgs[i].ch, lv |-> RtxBoost(Msgs[i].ch)] :
+                   i \in { j \in Ids : RtxHead(j) } }
+            ELSE { [id |-> i, ch |-> Msgs[i].ch, lv |-> Msgs[i].lv] :
+                   i \in { j \in Ids : st[j] = "lost" } }
       [] c = "rel" ->
             IF ~WindowOpen THEN {}
             ELSE IF ChannelFIFO
@@ -138,6 +149,11 @@ Cands(c) ==
                  ELSE { [id |-> i, ch |-> Msgs[i].ch, lv |-> Msgs[i].lv] : i \in { j \in Ids : st[j] = "queued" } }
       [] c = "unrel" ->
             IF unrelQ > 0 THEN { [id |-> 0, ch |-> 0, lv |-> ULevel] } ELSE {}
+
+\* source contract: a retransmit group offers only its head at its best level
+RtxHeadBoost ==
+    Cands("rtx") = { [id |-> i, ch |-> Msgs[i].ch, lv |-> RtxBoost(Msgs[i].ch)] :
+                     i \in { j \in Ids : RtxHead(j) } }
 
 HasItem(c) == Cands(c) # {}
 
