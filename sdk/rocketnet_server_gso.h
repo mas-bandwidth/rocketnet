@@ -133,8 +133,7 @@ static inline int rocketnet_server_gso_recv_vlen( int num_packets, bool gro )
 
 // One destination refusing UDP_SEGMENT is not the transport. Segmentation
 // stays on until this many segmented sends are refused in a row (EINVAL,
-// EIO or EOPNOTSUPP) with no accepted segmented send between them. The
-// io_uring transport uses the same threshold.
+// EIO or EOPNOTSUPP) with no accepted segmented send between them.
 #define ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD                  8
 
 // create flags: force a probe result off, so the degraded paths are testable
