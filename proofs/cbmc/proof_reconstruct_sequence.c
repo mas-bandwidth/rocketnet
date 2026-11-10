@@ -10,23 +10,32 @@
     or more, and refuses a negative one as behind). Both SDK files are
     included below, never copied.
 
-    Both satisfy |result - reference| <= 2^(k-1), and every in-window value
-    round-trips, including values whose low k bits sit across the modulus
-    boundary. The 32-bit tie goes to the larger candidate, so the strictly
-    lower value at distance 2^31 is outside the round-trip window. The 24-bit
-    tie goes to the lower value, so the strictly upper value at distance
-    2^23 is outside it.
+    The 32-bit result is the nearest non-negative candidate with the wire's
+    low 32 bits, the larger on a tie; from expected >= 2^31 on it is within
+    2^31 of the reference. The 24-bit result is reference + delta, within
+    2^23 of the reference. Every in-window non-negative value round-trips,
+    including values whose low k bits sit across the modulus boundary. The
+    32-bit tie goes to the larger candidate, so the strictly lower value at
+    distance 2^31 is outside the round-trip window. The 24-bit tie goes to
+    the lower value, so the strictly upper value at distance 2^23 is outside
+    it.
 
-    The 32-bit proof assumes the expected value sits where both neighbouring
-    epochs exist and the above-candidate add does not wrap:
-    2^32 <= expected < 2^64 - 2^32. The 24-bit proof assumes
-    2^23 <= reference <= 2^64 - 2^23, so a negative delta does not underflow
-    and a positive delta does not overflow. The uint64 floor and ceiling
-    outside those bounds are not proved.
+    The first lap is proved, with no floor assumed: expected < 2^32 for the
+    32-bit reconstruction (where every new connection starts, and no
+    candidate below zero exists), and reference < 2^23 for the 24-bit one.
+    There a negative delta whose behind value would sit below zero is the
+    one rn_window_receive_accept refuses as behind without subtracting; the
+    proof shows the only non-negative candidates for it lie at least 2^23
+    ahead, outside the window.
+
+    The ceilings stay assumed: expected < 2^64 - 2^32 for 32 bits and
+    reference <= 2^64 - 2^23 for 24 bits. The uint64 ceiling above those
+    bounds is not proved.
 
     Flags: --bounds-check --pointer-check --signed-overflow-check
            --unsigned-overflow-check --div-by-zero-check
     Unwinding: 1. The reconstructions are straight-line.
+    Entry: harness_reconstruct_sequence (main calls it, for the Makefile).
 */
 
 #define thread_local
@@ -79,7 +88,26 @@ static uint64_t abs_diff( uint64_t a, uint64_t b )
     return a > b ? a - b : b - a;
 }
 
-int main( void )
+/* The candidates sit 2^32 apart and the distance to expected falls then
+   rises along them, so the two neighbours of the result decide the nearest:
+   the one above must be strictly farther (the tie goes to the larger), the
+   one below, when it is non-negative, no nearer. */
+static void assert_nearest_32( uint32_t wire, uint64_t expected, uint64_t result )
+{
+    __CPROVER_assert( ( result & 0xFFFFFFFFULL ) == (uint64_t) wire,
+                      "32-bit result keeps the wire low bits" );
+    if ( result <= UINT64_MAX - U32_MOD )
+        __CPROVER_assert( abs_diff( result + U32_MOD, expected ) > abs_diff( result, expected ),
+                          "32-bit candidate above is strictly farther" );
+    if ( result >= U32_MOD )
+        __CPROVER_assert( abs_diff( result - U32_MOD, expected ) >= abs_diff( result, expected ),
+                          "32-bit candidate below is no nearer" );
+    if ( expected >= U32_HALF )
+        __CPROVER_assert( abs_diff( result, expected ) <= U32_HALF,
+                          "32-bit |result - reference| <= 2^31" );
+}
+
+void harness_reconstruct_sequence( void )
 {
     uint32_t wire;
     uint64_t expected;
@@ -89,18 +117,15 @@ int main( void )
     unsigned char neg;
     uint64_t n;
     uint64_t reference;
+    int32_t delta;
 
     // --- 32-bit nearest candidate, every wire value ---
     wire = nondet_uint32();
     expected = nondet_uint64();
-    __CPROVER_assume( expected >= U32_MOD );
     __CPROVER_assume( expected < 0xFFFFFFFF00000000ULL );
 
     result = rocketnet_reconstruct_near( wire, expected );
-    __CPROVER_assert( ( result & 0xFFFFFFFFULL ) == (uint64_t) wire,
-                      "32-bit result keeps the wire low bits" );
-    __CPROVER_assert( abs_diff( result, expected ) <= U32_HALF,
-                      "32-bit |result - reference| <= 2^31" );
+    assert_nearest_32( wire, expected, result );
 
     /* Round-trip every in-window value. neg selects the lower side.
        Distance 2^31 is included only on the upper side (the tie winner). */
@@ -117,16 +142,12 @@ int main( void )
 
     // --- rocketnet_reconstruct_sequence, reference = highest_opened + 1 ---
     highest = nondet_uint64();
-    __CPROVER_assume( highest >= U32_MOD - 1 );
     __CPROVER_assume( highest < 0xFFFFFFFEFFFFFFFFULL );
     expected = highest + 1;
 
     wire = nondet_uint32();
     result = rocketnet_reconstruct_sequence( wire, highest );
-    __CPROVER_assert( ( result & 0xFFFFFFFFULL ) == (uint64_t) wire,
-                      "reconstruct_sequence keeps the wire low bits" );
-    __CPROVER_assert( abs_diff( result, expected ) <= U32_HALF,
-                      "reconstruct_sequence |result - reference| <= 2^31" );
+    assert_nearest_32( wire, expected, result );
 
     mag = nondet_uint64();
     neg = nondet_uchar();
@@ -141,15 +162,30 @@ int main( void )
 
     // --- 24-bit signed half range ---
     reference = nondet_uint64();
-    __CPROVER_assume( reference >= U24_HALF );
     __CPROVER_assume( reference <= UINT64_MAX - ( U24_HALF - 1 ) );
 
     wire = nondet_uint32();
-    result = reconstruct_u24( wire, reference );
-    __CPROVER_assert( ( result & U24_MASK ) == ( (uint64_t) wire & U24_MASK ),
-                      "24-bit result keeps the wire low bits" );
-    __CPROVER_assert( abs_diff( result, reference ) <= U24_HALF,
-                      "24-bit |result - reference| <= 2^23" );
+    delta = rocketnet_message_u24_delta( wire, reference );
+    if ( delta < 0 && (uint64_t) ( 0 - (int64_t) delta ) > reference )
+    {
+        /* first lap: the behind value would sit below zero, and
+           rn_window_receive_accept refuses it as behind. The nearest
+           non-negative candidate lies at least 2^23 ahead, outside the
+           window. */
+        result = reference + ( U24_MASK + 1 ) - (uint64_t) ( 0 - (int64_t) delta );
+        __CPROVER_assert( ( result & U24_MASK ) == ( (uint64_t) wire & U24_MASK ),
+                          "24-bit first-lap candidate keeps the wire low bits" );
+        __CPROVER_assert( result - reference >= U24_HALF,
+                          "24-bit first-lap behind value has no non-negative candidate in the window" );
+    }
+    else
+    {
+        result = reconstruct_u24( wire, reference );
+        __CPROVER_assert( ( result & U24_MASK ) == ( (uint64_t) wire & U24_MASK ),
+                          "24-bit result keeps the wire low bits" );
+        __CPROVER_assert( abs_diff( result, reference ) <= U24_HALF,
+                          "24-bit |result - reference| <= 2^23" );
+    }
 
     mag = nondet_uint64();
     neg = nondet_uchar();
@@ -165,5 +201,10 @@ int main( void )
 #if defined( REACHABILITY_CONTROL )
     __CPROVER_assert( 0, "reconstruct reachability control" );
 #endif // #if defined( REACHABILITY_CONTROL )
+}
+
+int main( void )
+{
+    harness_reconstruct_sequence();
     return 0;
 }
