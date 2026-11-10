@@ -88,8 +88,48 @@ class CheckTlaRecordsTest(unittest.TestCase):
             write_tsv(cases_path, check_tla_records.CASES_COLUMNS, cases)
             write_tsv(runs_path, check_tla_records.RUNS_COLUMNS, runs)
             out = io.StringIO()
-            code = check_tla_records.check(cases_path, runs_path, out)
+            code = check_tla_records.check(cases_path, runs_path, out, forbid_stale=False)
             return code, out.getvalue()
+
+    def stale_fixture(self, edit):
+        """A current record of MCEx.cfg, then edit(tla_dir), then the default check."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tla = Path(tmp)
+            (tla / "MCEx.cfg").write_text("SPECIFICATION Spec\n", encoding="utf-8")
+            (tla / "MCEx.tla").write_text(
+                "---- MODULE MCEx ----\nEXTENDS Base, Naturals\n\\* INSTANCE NotRead\nSpec == Init\n====\n",
+                encoding="utf-8",
+            )
+            (tla / "Base.tla").write_text("---- MODULE Base ----\nInit == TRUE\n====\n", encoding="utf-8")
+            write_tsv(tla / "CASES.tsv", check_tla_records.CASES_COLUMNS, [case_row("MCEx.cfg", "MCEx.tla")])
+            digest, files = check_tla_records.fingerprint(tla, "MCEx.cfg")
+            row = run_row("MCEx.cfg", "MCEx.tla")
+            row["input_sha256"], row["input_files"] = digest, str(files)
+            write_tsv(tla / "RUNS.tsv", check_tla_records.RUNS_COLUMNS, [row])
+            edit(tla)
+            out = io.StringIO()
+            code = check_tla_records.check(tla / "CASES.tsv", tla / "RUNS.tsv", out)
+            return code, out.getvalue(), files
+
+    def test_current_record_passes_stale_check(self):
+        code, text, files = self.stale_fixture(lambda tla: None)
+        self.assertEqual(code, 0, text)
+        # MCEx.cfg, MCEx.tla, Base.tla, the CASES.tsv row and the four runner files
+        self.assertEqual(files, 8)
+
+    def test_edited_module_makes_record_stale(self):
+        def edit(tla):
+            (tla / "Base.tla").write_text("---- MODULE Base ----\nInit == FALSE\n====\n", encoding="utf-8")
+        code, text, _ = self.stale_fixture(edit)
+        self.assertEqual(code, 1)
+        self.assertIn("MCEx.cfg: stale record", text)
+
+    def test_edited_config_makes_record_stale(self):
+        def edit(tla):
+            (tla / "MCEx.cfg").write_text("SPECIFICATION Spec\nCHECK_DEADLOCK FALSE\n", encoding="utf-8")
+        code, text, _ = self.stale_fixture(edit)
+        self.assertEqual(code, 1)
+        self.assertIn("MCEx.cfg: stale record", text)
 
     def test_committed_ledgers_pass(self):
         out = io.StringIO()

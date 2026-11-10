@@ -23,6 +23,27 @@ provides the local commands and prerequisites.
 | [Release checks](../.github/workflows/release-check.yml) | Version consistency and declaration of unreleased wire changes |
 | [MemorySanitizer](../.github/workflows/msan.yml) | Instrumented portable unit-suite results; this workflow remains advisory under the release policy |
 
+### CI hosts
+
+CI runs on self-hosted runners only: Linux jobs on `self-hosted, Linux, X64,
+fleet` (Ubuntu 26.04, libxdp 1.6), macOS jobs on `self-hosted, macOS, ARM64,
+fleet`, Windows jobs on `rocketnet-windows`. Ubuntu 22.04 LTS and 24.04 LTS
+are built and unit-tested nightly in a podman container of each release on a
+Linux runner (`ci.yml`, job `distro-container`); [LINUX.md, section 1](LINUX.md#1-build)
+lists the tested distributions and libxdp versions. A Linux runner provides,
+besides the build dependencies each job checks by name:
+
+- the VM tier for the xdp cell: `vng` (virtme-ng), `qemu-system-x86_64`, a
+  `/dev/kvm` the runner user can write, `~/vm-kernels/vmlinuz-$(uname -r)`
+  readable by the runner user, and the running kernel's modules;
+  `scripts/vm-tier-missing` prints what is absent, and the cell fails with
+  that line (`VM-TIER-MISSING`);
+- a locked-memory limit that covers the io_uring cases ([LINUX.md, section 8](LINUX.md#8-limits-for-1000-clients));
+- for `big endian s390x`: the s390x cross compilers, the s390x multiarch
+  libsodium, libbpf, libxdp and libstdc++, and `qemu-s390x` or
+  `qemu-s390x-static`;
+- for `distro-container`: rootless podman.
+
 ### Static-analysis evidence limit
 
 The GCC wrapper (`tools/run_static.py`) analyzes its selected translation

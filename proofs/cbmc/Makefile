@@ -7,7 +7,7 @@
 # range.
 #
 # Arithmetic leaves:
-#   replay-delta-1-3   the quick per-commit instance of harness_replay_near,
+#   replay-delta-1-3   the quick nightly instance of harness_replay_near,
 #                      admitting deltas 1, 2, and 3.
 #   replay-near-4096   the full declared instance of the same source-bound
 #                      harness, admitting deltas 1..4095. It first proves that
@@ -101,7 +101,7 @@ XDP_FRAME_SIZE := $(call deployed_literal,ROCKETNET_XDP_FRAME_SIZE,rocketnet_con
 all: replay-delta-1-3 replay-far reconstruct \
      read-write message-read xdp-free-list proofs-packet_open
 
-# The quick per-commit instance remains explicit about its reduced bound.
+# The quick nightly instance remains explicit about its reduced bound.
 replay-delta-1-3: proof_replay_advance.c
 	@echo "replay-delta-1-3 bound delta 1..3 deployed ROCKETNET_REPLAY_WINDOW_BITS=$(REPLAY_WINDOW_BITS); deltas 4..$(shell expr $(REPLAY_WINDOW_BITS) - 1) are not proved by this target"
 	$(CBMC) $(CBMC_FLAGS) --unwind $(REPLAY_UNWIND) -I$(SDK) \
@@ -279,7 +279,7 @@ xdp-free-list: proof_xdp_free_list.c
 	@echo "xdp-free-list bound capacity 3 frames deployed ROCKETNET_XDP_NUM_FRAMES=$(XDP_NUM_FRAMES) frames of $(XDP_FRAME_SIZE) bytes"
 	$(CBMC) $(CBMC_FLAGS) --unwind 5 -I$(SDK) proof_xdp_free_list.c
 
-# Paired reachability controls. Each per-commit target above has a
+# Paired reachability controls. Each nightly target above has a
 # `<target>-reachability` partner that recompiles the same harness with a
 # guarded __CPROVER_assert(0) after the production call(s). The control
 # passes only when CBMC reports exactly one failure, on the named control
@@ -302,7 +302,7 @@ endef
 .PHONY: controls replay-delta-1-3-reachability replay-far-reachability reconstruct-reachability \
         read-write-reachability message-read-reachability xdp-free-list-reachability
 
-# The per-commit set runs every control beside its proof: a harness whose
+# The nightly set runs every control beside its proof: a harness whose
 # assumptions became unsatisfiable proves anything, and only its control,
 # which must reach the code past them, can go red.
 
@@ -336,8 +336,8 @@ clean:
 
 # Nightly proofs. Each reader directory holds a proof.mk that appends its
 # target to NIGHTLY, so a CBMC card adds a reader without editing a shared
-# file. The `all` target above is the per-commit set and is unchanged; the
-# nightly target runs the longer proofs that are not part of CI.
+# file. The `all` target above is the nightly set run by cbmc.yml; the
+# `nightly` target runs the longer proofs that are not in the default target.
 
 NIGHTLY :=
 
