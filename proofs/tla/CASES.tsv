@@ -724,3 +724,4 @@ MCRNUringSendPhasesBrokenRemainder.cfg	MCRNUringSendPhases.tla	invariant	Pending
 MCRNIocpSendLeaseCap4.cfg	MCRNIocpSendLease.tla	pass	-	ignore-terminal	rniocpsendlease	required	-
 MCRNIocpSendLeaseStalledPop.cfg	MCRNIocpSendLease.tla	pass	-	ignore-terminal	rniocpsendlease	required	-
 MCRNIocpSendLeaseBrokenRetireRefused.cfg	MCRNIocpSendLease.tla	invariant	RetiredOnlyAtGenMax	ignore-terminal	rniocpsendlease	required	-
+MCClientSessionSilentExhaust.cfg	MCClientSession.tla	invariant	CallbackReportsPublicState	ignore-terminal	clientsession	required	-
