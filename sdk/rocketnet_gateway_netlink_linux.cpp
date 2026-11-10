@@ -634,6 +634,27 @@ int rocketnet_gateway_netlink_neighbor( int family, int interface_index, const u
     return rocketnet_gateway_netlink_neighbor_with( &rocketnet_gateway_netlink_libc, family, interface_index, gateway, mac, error );
 }
 
+int rocketnet_gateway_netlink_discover_with( const rocketnet_gateway_netlink_system_t * system, int family, int interface_index,
+                                             uint8_t * gateway, bool * gateway_known, uint8_t * mac, int * error )
+{
+    rocketnet_assert( gateway_known );
+
+    *gateway_known = false;
+
+    const int route = rocketnet_gateway_netlink_route_with( system, family, interface_index, gateway, error );
+    if ( route != ROCKETNET_GATEWAY_NETLINK_FOUND )
+        return route;
+
+    *gateway_known = true;
+
+    return rocketnet_gateway_netlink_neighbor_with( system, family, interface_index, gateway, mac, error );
+}
+
+int rocketnet_gateway_netlink_discover( int family, int interface_index, uint8_t * gateway, bool * gateway_known, uint8_t * mac, int * error )
+{
+    return rocketnet_gateway_netlink_discover_with( &rocketnet_gateway_netlink_libc, family, interface_index, gateway, gateway_known, mac, error );
+}
+
 int rocketnet_gateway_netlink_refresh_with( const rocketnet_gateway_netlink_system_t * system, int family, int interface_index,
                                             uint8_t * gateway, bool * gateway_known, uint8_t * mac, int * error )
 {

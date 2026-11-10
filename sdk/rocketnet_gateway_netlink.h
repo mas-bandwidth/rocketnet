@@ -81,6 +81,15 @@ int rocketnet_gateway_netlink_route( int family, int interface_index, uint8_t * 
 
 int rocketnet_gateway_netlink_neighbor( int family, int interface_index, const uint8_t * gateway, uint8_t * mac, int * error );
 
+// create-time discovery of one family's gateway MAC, and the gateway IP it
+// records for the refresh: the route query writes gateway and sets
+// *gateway_known, then the neighbour query asks that gateway's entry. FOUND
+// writes mac. DONE with *gateway_known false means no default route; DONE
+// with *gateway_known true means the route was found but its neighbour entry
+// was not usable. Any other outcome is returned and keeps gateway.
+
+int rocketnet_gateway_netlink_discover( int family, int interface_index, uint8_t * gateway, bool * gateway_known, uint8_t * mac, int * error );
+
 // the periodic refresh of one family's gateway MAC. With *gateway_known, the
 // neighbour entry of gateway is asked directly, and FOUND is the answer.
 // Otherwise, or when that query does not answer FOUND, the route dump runs:
@@ -110,6 +119,9 @@ int rocketnet_gateway_netlink_route_with( const struct rocketnet_gateway_netlink
 
 int rocketnet_gateway_netlink_neighbor_with( const struct rocketnet_gateway_netlink_system_t * system, int family, int interface_index,
                                              const uint8_t * gateway, uint8_t * mac, int * error );
+
+int rocketnet_gateway_netlink_discover_with( const struct rocketnet_gateway_netlink_system_t * system, int family, int interface_index,
+                                             uint8_t * gateway, bool * gateway_known, uint8_t * mac, int * error );
 
 int rocketnet_gateway_netlink_refresh_with( const struct rocketnet_gateway_netlink_system_t * system, int family, int interface_index,
                                             uint8_t * gateway, bool * gateway_known, uint8_t * mac, int * error );
