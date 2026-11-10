@@ -119,6 +119,12 @@ static inline int rocketnet_server_gso_recv_vlen( int num_packets, bool gro )
 #define ROCKETNET_SERVER_GSO_FEATURE_GRO                        (1<<1)      // UDP_GRO enabled: receives arrive coalesced
 #define ROCKETNET_SERVER_GSO_FEATURE_REUSEPORT                  (1<<2)      // SO_REUSEPORT group bound: receives shard across queues
 
+// One destination refusing UDP_SEGMENT is not the transport. Segmentation
+// stays on until this many segmented sends are refused in a row (EINVAL,
+// EIO or EOPNOTSUPP) with no accepted segmented send between them. The
+// io_uring transport uses the same threshold.
+#define ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD                  8
+
 // create flags: force a probe result off, so the degraded paths are testable
 // on kernels where the real probe would say yes -- the fallback tier must
 // never be the untested tier
@@ -227,6 +233,21 @@ bool rocketnet_server_gso_test_send_full_keeps_rest();
 // One receive drain fed endless discards returns within its read budget.
 bool rocketnet_server_gso_test_drain_budget();
 bool rocketnet_server_gso_test_drain_room();
+
+#if defined( __linux__ )
+struct mmsghdr;
+
+// A fixture with no socket and no thread. set_send is the sendmmsg seam.
+// set_features installs the probe bits. flush_staged publishes the staged
+// bank and sends it on this thread.
+struct rocketnet_server_gso_t * rocketnet_server_gso_test_open();
+void rocketnet_server_gso_test_close( struct rocketnet_server_gso_t * gso );
+void rocketnet_server_gso_test_set_send( struct rocketnet_server_gso_t * gso,
+                                          int ( *send )( struct mmsghdr * messages, unsigned int count, void * user ),
+                                          void * user );
+void rocketnet_server_gso_test_set_features( struct rocketnet_server_gso_t * gso, int features );
+bool rocketnet_server_gso_test_flush_staged( struct rocketnet_server_gso_t * gso );
+#endif // #if defined( __linux__ )
 #endif // #if ROCKETNET_DEV
 
 #endif // ROCKETNET_SDK_ROCKETNET_SERVER_GSO_H

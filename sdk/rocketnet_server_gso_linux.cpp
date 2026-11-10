@@ -31,8 +31,11 @@
 // the next tier down rather than an error: no UDP_SEGMENT -> per-packet
 // sendmmsg entries; no UDP_GRO -> plain recvmmsg; and a kernel that accepts
 // the UDP_SEGMENT probe but refuses a live GSO send (offload edge cases
-// exist) flips the feature off and resends that flush's remainder plain --
-// the degradation is per-send lossless, not a dropped batch.
+// exist) resends that run plain and leaves segmentation on. Segmentation
+// turns off for the transport only after
+// ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD refused segmented sends
+// in a row, with no accepted segmented send between them. That degradation
+// resends the remainder plain and drops nothing.
 
 #include "rocketnet_server_gso.h"
 #include "rocketnet_constants.h"
@@ -215,6 +218,8 @@ struct rocketnet_server_gso_t
     std::atomic<uint64_t> counter_send_syscalls{ 0 };
     std::atomic<uint64_t> counter_send_dropped{ 0 };
     std::atomic<uint64_t> counter_gso_sends{ 0 };
+    // TX worker only. An accepted segmented send resets it. A plain send does not.
+    int segment_consecutive_refusals = 0;
     uint64_t counter_packets_received;
     uint64_t counter_receive_syscalls;
     uint64_t counter_receive_dropped_size;
@@ -395,8 +400,9 @@ static void rocketnet_server_gso_return_send( rocketnet_server_gso_t * gso, int 
 static int rocketnet_server_gso_flush( rocketnet_server_gso_t * gso,
                                        rocketnet_server_gso_send_buffer_t * bank, int first_slot, int num_slots, bool * disable_gso, bool * full );
 
-// proofs/tla/RNGsoHandoff.tla TxSend: send a held bank from *slot. A live GSO
-// refusal turns segmentation off and resends from the refused message.
+// proofs/tla/RNGsoHandoff.tla TxSend: send a held bank from *slot. One live
+// GSO refusal resends that run plain. The consecutive-refusal threshold
+// turns segmentation off and resends from the refused message.
 // proofs/tla/RNGsoHandoff.tla TxSendFull: a full socket stops the bank at its
 // first unsent slot and returns false, the rest kept in order in the held bank
 // for the next attempt.
@@ -1471,12 +1477,85 @@ void rocketnet_server_gso_abort_packet( struct rocketnet_server_gso_t * gso, uin
     gso->send_banks[gso->send_producer].info[slot].packet_bytes = 0;
 }
 
+static bool rocketnet_server_gso_segment_refused( int error )
+{
+    return error == EINVAL || error == EIO || error == EOPNOTSUPP;
+}
+
+static int rocketnet_server_gso_invoke_send( struct rocketnet_server_gso_t * gso, int fd, struct mmsghdr * messages, unsigned int count )
+{
+#if ROCKETNET_DEV
+    int pending = gso->test_fail_sends.load( std::memory_order_acquire );
+    if ( pending > 0 && gso->test_fail_sends.compare_exchange_strong( pending, pending - 1 ) )
+    {
+        errno = gso->test_fail_send_error.load( std::memory_order_relaxed );
+        return -1;
+    }
+
+    if ( gso->test_send )
+        return gso->test_send( messages, count, gso->test_send_user );
+#else
+    (void) gso;
+#endif // #if ROCKETNET_DEV
+
+    return sendmmsg( fd, messages, count, 0 );
+}
+
+// one plain datagram per packet of a refused segmented run. same destination,
+// no UDP_SEGMENT cmsg. a full socket stops at the first unsent packet; a hard
+// error drops that packet and the run continues.
+static int rocketnet_server_gso_resend_plain( struct rocketnet_server_gso_t * gso, int fd, const struct mmsghdr * segmented, int first_slot, int run_packets, bool * full )
+{
+    struct mmsghdr plain[ROCKETNET_GSO_MAX_SEGMENTS];
+    struct iovec iov[ROCKETNET_GSO_MAX_SEGMENTS];
+
+    rocketnet_assert( run_packets > 0 && run_packets <= ROCKETNET_GSO_MAX_SEGMENTS );
+
+    for ( int i = 0; i < run_packets; i++ )
+    {
+        memset( &plain[i], 0, sizeof( plain[i] ) );
+        iov[i] = segmented->msg_hdr.msg_iov[i];
+        plain[i].msg_hdr.msg_name = segmented->msg_hdr.msg_name;
+        plain[i].msg_hdr.msg_namelen = segmented->msg_hdr.msg_namelen;
+        plain[i].msg_hdr.msg_iov = &iov[i];
+        plain[i].msg_hdr.msg_iovlen = 1;
+    }
+
+    int sent = 0;
+    while ( sent < run_packets )
+    {
+        const int result = rocketnet_server_gso_invoke_send( gso, fd, &plain[sent], (unsigned int) ( run_packets - sent ) );
+        if ( result > 0 )
+        {
+            gso->counter_send_syscalls++;
+            gso->counter_packets_sent += (uint64_t) result;
+            sent += result;
+            continue;
+        }
+
+        gso->counter_send_syscalls++;
+
+        if ( errno == EAGAIN || errno == EWOULDBLOCK || errno == ENOBUFS || errno == ENOMEM || errno == EINTR )
+        {
+            *full = true;
+            return first_slot + sent;
+        }
+
+        gso->counter_send_dropped++;
+        sent++;
+    }
+
+    return first_slot + run_packets;
+}
+
 // one flush pass: walk the staged slots once, build sendmmsg batches,
 // coalescing adjacent same-destination runs into GSO super-datagrams where
-// the feature is on. returns the first unconsumed slot, so a live GSO refusal
-// can flip the feature off and resume plain from exactly where it stopped,
-// and a full socket (*full) can resume from its first unsent message later.
-// A slot this pass dropped is cleared, so a resumed pass skips it uncounted.
+// the feature is on. returns the first unconsumed slot. below the
+// consecutive-refusal threshold a refused segmented run is resent plain and
+// the batch continues; at the threshold the caller flips the feature off and
+// resumes plain from this message. a full socket (*full) resumes from its
+// first unsent message later. A slot this pass dropped is cleared, so a
+// resumed pass skips it uncounted.
 
 static int rocketnet_server_gso_flush( struct rocketnet_server_gso_t * gso, rocketnet_server_gso_send_buffer_t * bank, int first_slot, int num_slots, bool * disable_gso, bool * full )
 {
@@ -1626,19 +1705,7 @@ static int rocketnet_server_gso_flush( struct rocketnet_server_gso_t * gso, rock
         int sent = 0;
         while ( sent < num_messages )
         {
-            int result;
-#if ROCKETNET_DEV
-            int pending = gso->test_fail_sends.load( std::memory_order_acquire );
-            if ( pending > 0 && gso->test_fail_sends.compare_exchange_strong( pending, pending - 1 ) )
-            {
-                result = -1;
-                errno = gso->test_fail_send_error.load( std::memory_order_relaxed );
-            }
-            else if ( gso->test_send )
-                result = gso->test_send( &gso->send_headers[sent], (unsigned int) ( num_messages - sent ), gso->test_send_user );
-            else
-#endif
-                result = sendmmsg( fd, &gso->send_headers[sent], (unsigned int) ( num_messages - sent ), 0 );
+            const int result = rocketnet_server_gso_invoke_send( gso, fd, &gso->send_headers[sent], (unsigned int) ( num_messages - sent ) );
 
             if ( result > 0 )
             {
@@ -1648,7 +1715,10 @@ static int rocketnet_server_gso_flush( struct rocketnet_server_gso_t * gso, rock
                 {
                     gso->counter_packets_sent += (uint64_t) message_num_packets[i];
                     if ( message_is_gso[i] )
+                    {
                         gso->counter_gso_sends++;
+                        gso->segment_consecutive_refusals = 0;
+                    }
                 }
 
                 sent += result;
@@ -1657,16 +1727,31 @@ static int rocketnet_server_gso_flush( struct rocketnet_server_gso_t * gso, rock
 
             gso->counter_send_syscalls++;
 
-            if ( message_is_gso[sent] && ( errno == EINVAL || errno == EIO || errno == EOPNOTSUPP ) )
+            if ( message_is_gso[sent] && rocketnet_server_gso_segment_refused( errno ) )
             {
-                // the kernel accepted the UDP_SEGMENT probe but refused a
-                // live GSO send. flip the tier and resend everything from
-                // this message's first slot as plain packets -- degradation
-                // is lossless, not a dropped batch.
+                // the kernel accepted the UDP_SEGMENT probe but refused this
+                // segmented send. one destination is not the transport: resend
+                // that run plain and keep later messages segmented. the tier
+                // turns off only after the consecutive-refusal threshold, and
+                // then the bank resends from this message with nothing dropped.
 
-                rocketnet_warn( "gso transport: live GSO send refused (%s). degrading to plain sendmmsg", strerror( errno ) );
-                *disable_gso = true;
-                return message_first_slot[sent];
+                const int error = errno;
+                gso->segment_consecutive_refusals++;
+
+                if ( gso->segment_consecutive_refusals >= ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD )
+                {
+                    rocketnet_warn( "gso transport: live GSO send refused (%s). %d consecutive refusals, degrading to plain sendmmsg", strerror( error ), gso->segment_consecutive_refusals );
+                    *disable_gso = true;
+                    return message_first_slot[sent];
+                }
+
+                rocketnet_warn( "gso transport: live GSO send refused (%s). resending that run plain", strerror( error ) );
+                const int resume = rocketnet_server_gso_resend_plain( gso, fd, &gso->send_headers[sent], message_first_slot[sent], message_num_packets[sent], full );
+                if ( *full )
+                    return resume;
+
+                sent++;
+                continue;
             }
 
             // a full socket (or a signal): the socket cannot take more now.
@@ -2356,6 +2441,55 @@ bool rocketnet_server_gso_test_send_full_keeps_rest()
     rocketnet_server_gso_test_destroy( gso );
 
     return valid;
+}
+
+struct rocketnet_server_gso_t * rocketnet_server_gso_test_open()
+{
+    return rocketnet_server_gso_test_create();
+}
+
+void rocketnet_server_gso_test_close( struct rocketnet_server_gso_t * gso )
+{
+    if ( gso )
+        rocketnet_server_gso_test_destroy( gso );
+}
+
+void rocketnet_server_gso_test_set_send( struct rocketnet_server_gso_t * gso,
+                                          int ( *send )( struct mmsghdr * messages, unsigned int count, void * user ),
+                                          void * user )
+{
+    rocketnet_assert( gso );
+    gso->test_send = send;
+    gso->test_send_user = user;
+}
+
+void rocketnet_server_gso_test_set_features( struct rocketnet_server_gso_t * gso, int features )
+{
+    rocketnet_assert( gso );
+    gso->features.store( features, std::memory_order_relaxed );
+}
+
+bool rocketnet_server_gso_test_flush_staged( struct rocketnet_server_gso_t * gso )
+{
+    rocketnet_assert( gso );
+
+    rocketnet_server_gso_send_packets( gso );
+
+    bool final = false;
+    const int taken = rocketnet_server_gso_take_send( gso, &final );
+    if ( taken < 0 || final )
+        return false;
+
+    rocketnet_server_gso_send_buffer_t * bank = &gso->send_banks[taken];
+    int count = bank->num_packets.load( std::memory_order_relaxed );
+    if ( count > ROCKETNET_GSO_SEND_QUEUE_SIZE )
+        count = ROCKETNET_GSO_SEND_QUEUE_SIZE;
+
+    int slot = 0;
+    const bool sent = rocketnet_server_gso_send_bank( gso, bank, &slot, count );
+    rocketnet_server_gso_return_send( gso, taken );
+
+    return sent && slot == count;
 }
 
 #endif // #if ROCKETNET_DEV
