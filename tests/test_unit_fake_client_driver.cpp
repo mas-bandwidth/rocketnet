@@ -12,6 +12,7 @@
 #include "test_unit_registry.h"
 #include "test_env_source.h"
 #include "fake_client_driver.h"
+#include "client_io_rig.h"
 #include "portable_crt.h"
 
 #include "rocketnet_address.h"
@@ -403,3 +404,59 @@ static void test_client_progress_requires_terminal_batch_before_create()
     rocketnet_unit_check( fake.destroy_calls == 1 );
 }
 REGISTER_UNIT_TEST( test_client_progress_requires_terminal_batch_before_create );
+
+// Both receive callbacks report the datagram's wire size, not the bytes
+// copied (sdk/rocketnet_driver.h), so a datagram past the UDP envelope reaches
+// the I/O step's oversize branch on the per-packet path and the batch path:
+// a transport fault, and PREFILTER_TOO_LARGE once at the fold. The fake
+// stores a prefix; the queued datagram carries the wire size. The clock
+// argument is 1000.0.
+
+static double fake_client_oversize_time( void * context )
+{
+    return *(double *) context;
+}
+
+static void test_fake_client_oversize_datagram_reads_too_large()
+{
+    const rocketnet_client_transport_io_operations_t * tables[] = {
+        &rocketnet_fake_client_operations_base,
+        &rocketnet_fake_client_operations_batch
+    };
+
+    for ( int i = 0; i < 2; i++ )
+    {
+        rocketnet_fake_client_transport_io_t * fake = new rocketnet_fake_client_transport_io_t();
+        rocketnet_client_transport_io_config_t config = { "fake", NULL, NULL };
+        rocketnet_address_t bind = {};
+        rocketnet_client_transport_io_t transport = {};
+        rocketnet_unit_check( rocketnet_client_transport_io_open( tables[i], fake, &config, &bind, &transport ) );
+
+        uint8_t prefix[ROCKETNET_RECEIVE_PACKET_BYTES] = {};
+        rocketnet_address_t from = {};
+        rocketnet_address_load_ipv4( &from, 0x7f000001, 404 );
+        rocketnet_fake_client_push( fake, &from, prefix, (int) sizeof( prefix ) );
+        fake->inbound[fake->inbound_head].bytes = ROCKETNET_TRANSPORT_MAX_DATAGRAM_BYTES + 1;
+
+        rocketnet_client_io_rig_t * rig = rocketnet_client_io_rig_create();
+        double now = 1000.0;
+        rocketnet_client_io_t io = {};
+        rocketnet_client_io_rig_init( rig, &io, &transport, fake_client_oversize_time, &now );
+
+        uint64_t too_large = 0;
+        io.prefilter_too_large = &too_large;
+
+        rocketnet_client_io_step( &io, false );
+        rocketnet_unit_check( fake->inbound_count == 0 );
+        rocketnet_unit_check( io.transport_faults == 1 );
+
+        rocketnet_client_io_expose( &io );
+        rocketnet_client_io_fold_counters( &io );
+        rocketnet_unit_check( too_large == 1 );
+
+        rocketnet_client_transport_io_close( &transport );
+        rocketnet_client_io_rig_destroy( rig );
+        delete fake;
+    }
+}
+REGISTER_UNIT_TEST( test_fake_client_oversize_datagram_reads_too_large );

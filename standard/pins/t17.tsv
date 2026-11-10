@@ -4,6 +4,7 @@
 #include "rocketnet_constants.h"
 #include "rocketnet_counters.h"
 #include "rocketnet_server.h"
+send rate	ROCKETNET_DEFAULT_SEND_RATE	10
 half-open idle deadline	ROCKETNET_HALF_OPEN_IDLE_TIMEOUT_SECONDS	10
 handshake work budget	ROCKETNET_DEFAULT_SERVER_HANDSHAKES_PER_UPDATE	16
 failed-signature budget	ROCKETNET_SIGNATURE_VERIFY_FAILURE_BUDGET	90
