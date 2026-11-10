@@ -701,10 +701,26 @@ Tick ==
     /\ slot' = [i \in Slots |-> IF slot[i].used /\ TimedOut(smap[slot[i].addr]) THEN FreeSlot ELSE slot[i]]
     /\ UNCHANGED <<cstate, cAtt, cTok, cAddr, cCookieAddr, cKeys, cMoves, cDiscPending, cDiscPkt,
                    cLostKinds, cFam, bound, churnDenied, sDiscPending, sDiscPkt, sLostKinds>>
-    /\ vars' # vars   \* EXPERIMENT: time passing must change something
+    \* a tick that changes nothing (every clock saturated or off) is left to
+    \* Done, so a run that halts early is a deadlock, not a Tick self-loop
+    /\ vars' # vars
 
 C2SEnvironment == C2S!Environment /\ UNCHANGED <<clientVars, serverVars, s2cVars>>
 S2CEnvironment == S2C!Environment /\ UNCHANGED <<clientVars, serverVars, c2sVars>>
+
+\* the end of a run: a terminal stutter.  Either every client is idle with
+\* its attempts spent (or its create refused), every burst sent and both
+\* wires drained, and whatever the server still holds is left to its
+\* timers (saturated or off) and to the liveness properties; or the request
+\* at the head of C2S would open a mapping and the model's nonce pool is
+\* spent, so it is never taken (the code's nonce is 64 random bits and
+\* never runs out: a bound of the harness, not of the protocol).
+Done ==
+    /\ \/ /\ \A c \in Clients : /\ cstate[c] \in {-1, 0} /\ cDiscPending[c] = 0
+                                /\ (cAtt[c] = MaxAttempts \/ ~CreateSucceeds(c))
+          /\ c2sWire = <<>> /\ s2cWire = <<>> /\ sDiscPending = 0
+       \/ FreshNonce = {} /\ c2sWire # <<>> /\ Head(c2sWire).pkt.type = "request"
+    /\ UNCHANGED vars
 
 Next ==
     \/ \E c \in Clients : ClientConnect(c) \/ ClientAppDisconnect(c) \/ ClientVanish(c)
@@ -716,6 +732,7 @@ Next ==
     \/ ServerDiscCopy
     \/ Tick
     \/ C2SEnvironment \/ S2CEnvironment
+    \/ Done
 
 (***************************************************************************)
 (* Fairness, as ClientConnection states it: time passes, the scheduled     *)
