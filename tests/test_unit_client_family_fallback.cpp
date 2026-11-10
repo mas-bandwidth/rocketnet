@@ -346,10 +346,60 @@ static void test_client_family_fallback_out_of_memory_is_fatal()
     }
 }
 
+// both families granted and no server answering: the client races both
+// families, polling the second socket faster than the guard. When the
+// attempt ends without a cookie, the race commits to the token's family, so
+// the reading thread closes the second socket and an idle step waits with
+// the guard timeout again, not the race's poll.
+
+static void test_client_family_fallback_race_ends_without_cookie()
+{
+    family_fallback_case_t c = {};
+    c.fake = new rocketnet_fake_client_transport_io_t();
+
+    family_fallback_create( &c, family_fallback_both, NULL );
+    rocketnet_unit_check( c.transport != NULL );
+    rocketnet_unit_check( c.status == ROCKETNET_STATUS_OK );
+    rocketnet_unit_check( c.fake->create_calls == 2 );
+
+    rocketnet_client_io_t * io = rocketnet_client_transport_client_io( c.transport );
+    rocketnet_unit_check( io != NULL );
+
+    // racing: an idle step polls below the guard
+
+    rocketnet_client_io_step( io, true );
+    rocketnet_client_io_step( io, true );
+    rocketnet_unit_check( c.fake->last_wait_timeout < ROCKETNET_CLIENT_IO_GUARD_TIMEOUT_SECONDS );
+    rocketnet_unit_check( c.fake->close_calls == 0 );
+
+    for ( int i = 0; i < 200 && rocketnet_client_transport_state( c.transport ) > ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED; i++, c.now += 0.1 )
+    {
+        rocketnet_client_io_step( io, false );
+        rocketnet_client_transport_update( c.transport, c.now );
+        rocketnet_client_io_step( io, false );
+    }
+
+    rocketnet_unit_check( rocketnet_client_transport_state( c.transport ) == ROCKETNET_CLIENT_TRANSPORT_STATE_COOKIE_REQUEST_TIMED_OUT );
+
+    // ended: the next idle steps close the second socket and wait with the guard
+
+    const int waits_before = c.fake->wait_calls;
+    rocketnet_client_io_step( io, true );
+    rocketnet_client_io_step( io, true );
+    rocketnet_unit_check( c.fake->wait_calls > waits_before );
+    rocketnet_unit_check( c.fake->last_wait_timeout == ROCKETNET_CLIENT_IO_GUARD_TIMEOUT_SECONDS );
+    rocketnet_unit_check( c.fake->close_calls == 1 );
+
+    rn_test_client_transport_stop_and_destroy( c.transport );
+    rocketnet_unit_check( c.fake->destroy_calls == 2 );
+    delete c.fake;
+}
+
 REGISTER_UNIT_TEST( test_client_family_fallback_ipv6_connect_refused_auto );
 REGISTER_UNIT_TEST( test_client_family_fallback_ipv6_connect_refused_each_pin );
 REGISTER_UNIT_TEST( test_client_family_fallback_ipv6_open_refused );
 REGISTER_UNIT_TEST( test_client_family_fallback_ipv4_refused_keeps_ipv6 );
 REGISTER_UNIT_TEST( test_client_family_fallback_both_refused_exhausts );
 REGISTER_UNIT_TEST( test_client_family_fallback_out_of_memory_is_fatal );
+REGISTER_UNIT_TEST( test_client_family_fallback_race_ends_without_cookie );
 #endif // #if ROCKETNET_DEV
