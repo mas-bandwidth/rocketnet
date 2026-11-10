@@ -203,7 +203,7 @@ On 2026-11-10 the bounded stop-drain model ran all fourteen required cases
 on amd-2 (native Linux) with the pinned `tlacheck` built from the commit
 `.github/workflows/tlc.yml` names and the pinned TLC jar, one shard per case.
 All six healthy cases passed; the eight witnesses produced exactly the
-properties listed above. The longest case was about 21.5 s, within the
+properties listed above. The longest case was 26.8 s, within the
 110 s budget. `RUNS.tsv` records the inputs and results of that run. The
 existing configurations keep their constants and expected properties and
 add `DrainBatch = 2`, `StopDrainWaits = 2`, `InlineStop = FALSE`,
