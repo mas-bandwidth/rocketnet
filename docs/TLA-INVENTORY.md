@@ -15,9 +15,11 @@ This is a navigation inventory, not a claim that every model matches every
 current implementation detail. In particular, `RNOutgoingBuild` describes the
 earlier one-message-per-frame design; its recorded results do not qualify the
 current [unreliable aggregation path](OUTGOING-BUILD.md#evidence-and-scope).
-`RNMessageViews` models internal view ownership; the public receive API has no
-release call. Check each model's abstraction and recorded inputs at the source
-revision under review.
+`RNRioDriver` describes the earlier caller-driven two-phase RIO design; its
+recorded results are historical, and the shipped worker is modeled by
+`RNRioWorker`. `RNMessageViews` models internal view ownership; the public
+receive API has no release call. Check each model's abstraction and recorded
+inputs at the source revision under review.
 
 | Concern | Main modules | Required property |
 | --- | --- | --- |
@@ -50,7 +52,7 @@ revision under review.
 | protocol tables' free stacks | `RNOpenAddress`, `RNFreeStackLayout` | each stack holds exactly the slots not live, each once; a map generation never reissued and never 0 |
 | wire sequence reconstruction | `AckBlockWrap`, `RNReconstructLayout` | the three-candidate arithmetic chooses the nearest candidate, the larger on a tie |
 | transport bank queues | `RNPortableRx`, `RNPortableTx`, `RNGsoHandoff`, `RNGsoRecvFill`, `RNBufferHandoff`, `RNRioWorker`, `RNClientIocp`, `RNBankFifoLayout`, `RNMsgxPause` | every bank in exactly one place read through the free and ready arrays, the ready ring in publish order, no position outside an array, for FIFO and stack free queues, both initializers and the iocp client's ring of num_receives |
-| RIO send slots | `RNRioDriver`, `RNRioWorker`, `RNRioSendSlotLayout` | a reservation returns only a free slot at the counter's own width, the send_ready ring the handed phases in order |
+| RIO send slots | `RNRioWorker`, `RNRioSendSlotLayout` | a reservation returns only a free slot at the counter's own width, the send_ready ring the handed phases in order |
 | IOCP server queues and send leases | `RNIocpRefQueue`, `RNIocpRetryStop`, `RNIocpRunRing`, `RNIocpSendLease` | bounded MPMC reference queue, stop-ticketed receive retry queue, USO run-ticket ring and generation-tagged send operation leases |
 | client I/O compaction | `RNClientIoDecrypt`, `RNClientIoCompactLayout` | every record names the slot holding its datagram after the in-place compaction, records dense from slot 0 |
 | kernel replay pending buffer | `RNXdpReplay`, `RNXdpReplayMarksLayout` | no write past the buffer, the arrays' prefixes exactly the pending forgets and marks in order across each in-place compaction, the kept prefix naming each key once |
