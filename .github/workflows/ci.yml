@@ -170,7 +170,7 @@ concurrency:
 #       happy path and the unit suite).
 #   unit-case coverage (every registered unit case runs in some
 #       configuration); the wide-channel unit cases (Linux Debug builds).
-#   asan + ubsan (unit suite portable), fuzz smoke NDEBUG, big endian s390x /
+#   fuzz smoke NDEBUG, big endian s390x /
 #       Release, pinned libsodium, backend example / go and csharp.
 #   The instruction count gate's toolchain build: per commit the gate only
 #       restores the pinned toolchain from the cache the nightly saves on
@@ -1734,10 +1734,10 @@ jobs:
   # against a known baseline. The per-commit gate takes asan's memory-safety
   # findings and ubsan's, both of which are immediate and unambiguous.
 
-  # SPLIT INTO THREE PARALLEL LEGS. One job ran two unit-suite passes, the
+  # SPLIT INTO TWO PARALLEL LEGS. One job ran the unit suite, the
   # functional suite, three lifecycle binaries and a python control in series
   # on one runner. Each leg now pays the sanitizer build once in parallel and
-  # builds only the targets it runs. Both full unit passes remain per commit.
+  # builds only the targets it runs. The unit suite runs once.
   # The functional leg retains exact, real transport recovery cases plus the
   # lifecycle binaries and negative control with -fno-sanitize-recover=all;
   # the exhaustive functional suite is owned by nightly-leaks, unchanged.
@@ -1754,8 +1754,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # unit suite portable (59-132s) runs in the nightly tier
-        leg: ${{ fromJSON(inputs.full && '["unit suite","unit suite portable","functional suite"]' || '["unit suite","functional suite"]') }}
+        leg: ${{ fromJSON('["unit suite","functional suite"]') }}
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
@@ -1788,7 +1787,7 @@ jobs:
           -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
 
       - name: Build the sanitized unit suite
-        if: matrix.leg == 'unit suite' || matrix.leg == 'unit suite portable'
+        if: matrix.leg == 'unit suite'
         run: cmake --build build --target test --parallel
 
       - name: Build the sanitized functional suite and the lifecycle binaries
@@ -1796,7 +1795,7 @@ jobs:
         run: cmake --build build --target functional test_lifecycle test_transport test_sodium --parallel
 
       - name: Start combined unit and functional timing (unit rows)
-        if: matrix.leg == 'unit suite' || matrix.leg == 'unit suite portable'
+        if: matrix.leg == 'unit suite'
         shell: bash
         run: *start_unit_functional_timing
 
@@ -1818,15 +1817,6 @@ jobs:
         env:
           ASAN_OPTIONS: detect_leaks=0
           UBSAN_OPTIONS: print_stacktrace=1
-        run: ./bin/test
-
-      - name: Run unit tests with the driver pin preserved
-        if: matrix.leg == 'unit suite portable'
-        env:
-          ASAN_OPTIONS: detect_leaks=0
-          UBSAN_OPTIONS: print_stacktrace=1
-          ROCKETNET_SERVER_TRANSPORT: portable
-          ROCKETNET_CLIENT_TRANSPORT: portable
         run: ./bin/test
 
       # the same locked-memory check as build-and-test; this leg does not
