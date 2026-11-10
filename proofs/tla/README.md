@@ -161,7 +161,7 @@ model's README for its current controls, witnesses and configured bounds.
 | `rnclientiodecrypt` | Decrypt on the client I/O thread. |
 | `sessionacks` | Session ACK window and retained sent-ring bitmaps. |
 | `rnxdpreplay` | Kernel replay high-water map, reconnects, refused operations and held replies (README-RNXdpReplay.md). |
-| `rnxdpgatewayrefresh` | The XDP server's gateway refresh and the handoff of the gateway MAC to the fill threads, a MAC in two halves (RNXdpGatewayRefresh.tla). |
+| `rnxdpgatewayrefresh` | The XDP server's gateway refresh on the platform monotonic clock, its netlink resolve of the known gateway's neighbour entry, and the handoff of the gateway MAC to the fill threads, a MAC in two halves (RNXdpGatewayRefresh.tla). |
 | `rnriodriver` | Historical caller-driven RIO transport design (README-RNRioDriver.md); current worker behavior is RNRioWorker. |
 | `rnlivefleetrun` | Live fleet run lifecycle (docs/LIVE-XDP.md). |
 | `rnoutgoingbuild` | The outgoing build (docs/OUTGOING-BUILD.md). |
