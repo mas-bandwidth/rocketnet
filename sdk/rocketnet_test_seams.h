@@ -50,6 +50,18 @@ void rocketnet_dev_set_sequence_taken_hook( rocketnet_dev_sequence_taken_functio
 
 void rocketnet_dev_session_sequence_taken( uint64_t sequence );
 
+// The link stop-and-wait hold. While set, rn_message_link_stop_and_wait
+// (sdk/rocketnet_message_server.cpp) treats the transport worker as not
+// stopped and calls this once per poll instead of sleeping. Return 1 to
+// keep polling, 0 when the worker has stopped. A unit test counts polls
+// and fails at its own ceiling, so a wait with no deadline cannot hang
+// the suite and does not sleep. NULL is the transport's own stopped().
+// Per process, null by default. Defined in sdk/rocketnet_message_server.cpp.
+
+typedef int rocketnet_dev_link_stop_wait_hold_function_t( void * context );
+
+void rocketnet_dev_set_link_stop_wait_hold_hook( rocketnet_dev_link_stop_wait_hold_function_t * function, void * context );
+
 #endif // #if ROCKETNET_DEV
 
 #endif // ROCKETNET_SDK_ROCKETNET_TEST_SEAMS_H
