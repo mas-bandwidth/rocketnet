@@ -369,6 +369,20 @@ WriteAny(e)  == \E S \in SUBSET Due(e), Us \in SUBSET unrelQ[e] :
 \* head: the same steps as \E p \in Pkts, without enumerating Pkts.
 OpenAny(e)   == WireInto(e) # <<>> /\ OnPayload(e, Head(WireInto(e)).pkt)
 
+\* the end of a run: both wires are empty, and each end is in error (the
+\* object disconnects it) or has sent all N messages, written its
+\* unreliable records, had every reliable record acked, sent its acks, and
+\* taken the remote CONFIG (with an unreliable CONFIG, ConfigReliable =
+\* FALSE, a lost one is never resent and the end stays without it)
+Done ==
+    /\ abWire = <<>> /\ baWire = <<>>
+    /\ \A e \in E :
+         \/ ~Live(e)
+         \/ /\ nextMsg[e] = N + 1 /\ unrelQ[e] = {} /\ Unacked(e) = {}
+            /\ pendAck[e] = {}
+            /\ remoteCfg[e] # NoCfg \/ ~ConfigReliable
+    /\ UNCHANGED vars
+
 Next ==
     \/ \E e \in E :
          \/ Send(e)
@@ -379,6 +393,7 @@ Next ==
          \/ Tick(e)
     \/ ABEnvironment
     \/ BAEnvironment
+    \/ Done
 
 (***************************************************************************)
 (* Fairness, for liveness only.  The application sends; the oldest unacked *)
