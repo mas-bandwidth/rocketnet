@@ -3463,6 +3463,9 @@ static void rocketnet_server_transport_defer_disconnect_burst( struct rocketnet_
 // refusal ends the drain; what is left waits for the next update or stop step.
 // proofs/tla/RNDisconnectBurstRing.tla SealStep: the cursor restarts at count
 // (SealOnlyLive) and falls with each pop at the head (SealedFallFromHead).
+// proofs/tla/RNDisconnectBurstRing.tla Abandon marks the burst complete when
+// this destination is refused with room left, and PassOver steps the cursor
+// past a complete entry without sealing it.
 static void rocketnet_server_transport_drain_disconnect_bursts( struct rocketnet_server_transport_t * server_transport, int max_seals, bool shutdown )
 {
     struct rocketnet_server_protocol_t * protocol = &server_transport->protocol;
