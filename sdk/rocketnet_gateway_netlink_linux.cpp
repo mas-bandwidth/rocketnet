@@ -387,8 +387,11 @@ int rocketnet_gateway_netlink_parse_neighbor( const uint8_t * data, size_t bytes
 
 typedef int ( *rocketnet_gateway_netlink_parse_t )( const uint8_t * data, size_t bytes, uint32_t sequence, uint32_t port_id, void * context, int * error );
 
-// one dump on a fresh socket
+// one query on a fresh socket: RTM_GETROUTE is a dump of the family's
+// routes; RTM_GETNEIGH asks for the one neighbour entry of neighbor on
+// interface_index (no NLM_F_DUMP), whose single reply is the answer
 static int rocketnet_gateway_netlink_dump_once( const rocketnet_gateway_netlink_system_t * system, uint16_t request_type, int family,
+                                                int interface_index, const uint8_t * neighbor,
                                                 rocketnet_gateway_netlink_parse_t parse, void * context, int * error )
 {
     *error = 0;
@@ -430,22 +433,25 @@ static int rocketnet_gateway_netlink_dump_once( const rocketnet_gateway_netlink_
     }
 
     // the request: a header and the family's rtmsg or ndmsg, every other
-    // field zero, the dump filtered by the parse
+    // field zero; the route dump is filtered by the parse, the neighbour
+    // query names its interface and its NDA_DST
 
-    uint8_t request[NLMSG_SPACE( sizeof( struct rtmsg ) > sizeof( struct ndmsg ) ? sizeof( struct rtmsg ) : sizeof( struct ndmsg ) )];
+    uint8_t request[NLMSG_SPACE( sizeof( struct rtmsg ) > sizeof( struct ndmsg ) ? sizeof( struct rtmsg ) : sizeof( struct ndmsg ) ) + RTA_SPACE( 16 )];
     memset( request, 0, sizeof( request ) );
 
-    const size_t body_bytes = request_type == RTM_GETROUTE ? sizeof( struct rtmsg ) : sizeof( struct ndmsg );
+    const bool dump = request_type == RTM_GETROUTE;
+    const size_t body_bytes = dump ? sizeof( struct rtmsg ) : sizeof( struct ndmsg );
+    const size_t address_bytes = rocketnet_gateway_netlink_address_bytes( family );
 
     struct nlmsghdr header;
     memset( &header, 0, sizeof( header ) );
-    header.nlmsg_len = (uint32_t) NLMSG_LENGTH( body_bytes );
+    header.nlmsg_len = (uint32_t) ( dump ? NLMSG_LENGTH( body_bytes ) : NLMSG_SPACE( body_bytes ) + RTA_LENGTH( address_bytes ) );
     header.nlmsg_type = request_type;
-    header.nlmsg_flags = NLM_F_REQUEST | NLM_F_DUMP;
+    header.nlmsg_flags = (uint16_t) ( dump ? NLM_F_REQUEST | NLM_F_DUMP : NLM_F_REQUEST );
     header.nlmsg_seq = ROCKETNET_GATEWAY_NETLINK_SEQUENCE;
     memcpy( request, &header, sizeof( header ) );
 
-    if ( request_type == RTM_GETROUTE )
+    if ( dump )
     {
         struct rtmsg message;
         memset( &message, 0, sizeof( message ) );
@@ -457,7 +463,14 @@ static int rocketnet_gateway_netlink_dump_once( const rocketnet_gateway_netlink_
         struct ndmsg message;
         memset( &message, 0, sizeof( message ) );
         message.ndm_family = (unsigned char) family;
+        message.ndm_ifindex = interface_index;
         memcpy( request + NLMSG_HDRLEN, &message, sizeof( message ) );
+
+        struct rtattr attribute;
+        attribute.rta_len = (unsigned short) RTA_LENGTH( address_bytes );
+        attribute.rta_type = NDA_DST;
+        memcpy( request + NLMSG_SPACE( body_bytes ), &attribute, sizeof( attribute ) );
+        memcpy( request + NLMSG_SPACE( body_bytes ) + RTA_LENGTH( 0 ), neighbor, address_bytes );
     }
 
     struct sockaddr_nl kernel;
@@ -521,6 +534,14 @@ static int rocketnet_gateway_netlink_dump_once( const rocketnet_gateway_netlink_
         if ( result != ROCKETNET_GATEWAY_NETLINK_MORE )
             break;
 
+        // the neighbour query's one reply held no usable entry: nothing more comes
+
+        if ( !dump )
+        {
+            result = ROCKETNET_GATEWAY_NETLINK_DONE;
+            break;
+        }
+
         result = ROCKETNET_GATEWAY_NETLINK_SYSTEM;
         *error = E2BIG;
     }
@@ -530,8 +551,9 @@ static int rocketnet_gateway_netlink_dump_once( const rocketnet_gateway_netlink_
     return result;
 }
 
-// the dump, asked again on a fresh socket while it answers interrupted
+// the query, asked again on a fresh socket while it answers interrupted
 static int rocketnet_gateway_netlink_dump( const rocketnet_gateway_netlink_system_t * system, uint16_t request_type, int family,
+                                           int interface_index, const uint8_t * neighbor,
                                            rocketnet_gateway_netlink_parse_t parse, void * context, int * error )
 {
     rocketnet_assert( system );
@@ -539,7 +561,7 @@ static int rocketnet_gateway_netlink_dump( const rocketnet_gateway_netlink_syste
     int result = ROCKETNET_GATEWAY_NETLINK_SYSTEM;
     for ( int attempt = 0; attempt < ROCKETNET_GATEWAY_NETLINK_DUMP_ATTEMPTS; attempt++ )
     {
-        result = rocketnet_gateway_netlink_dump_once( system, request_type, family, parse, context, error );
+        result = rocketnet_gateway_netlink_dump_once( system, request_type, family, interface_index, neighbor, parse, context, error );
         if ( result != ROCKETNET_GATEWAY_NETLINK_ERROR || *error != EINTR )
             break;
     }
@@ -567,7 +589,7 @@ int rocketnet_gateway_netlink_route_with( const rocketnet_gateway_netlink_system
 {
     rocketnet_assert( error );
     rocketnet_gateway_netlink_route_context_t query = { family, interface_index, gateway };
-    return rocketnet_gateway_netlink_dump( system, RTM_GETROUTE, family, rocketnet_gateway_netlink_route_parse, &query, error );
+    return rocketnet_gateway_netlink_dump( system, RTM_GETROUTE, family, interface_index, NULL, rocketnet_gateway_netlink_route_parse, &query, error );
 }
 
 int rocketnet_gateway_netlink_route( int family, int interface_index, uint8_t * gateway, int * error )
@@ -594,12 +616,46 @@ int rocketnet_gateway_netlink_neighbor_with( const rocketnet_gateway_netlink_sys
 {
     rocketnet_assert( error );
     rocketnet_gateway_netlink_neighbor_query_t query = { family, interface_index, gateway, mac };
-    return rocketnet_gateway_netlink_dump( system, RTM_GETNEIGH, family, rocketnet_gateway_netlink_neighbor_parse, &query, error );
+    const int result = rocketnet_gateway_netlink_dump( system, RTM_GETNEIGH, family, interface_index, gateway, rocketnet_gateway_netlink_neighbor_parse, &query, error );
+
+    // the kernel answers ENOENT when it has no entry for the gateway
+
+    if ( result == ROCKETNET_GATEWAY_NETLINK_ERROR && *error == ENOENT )
+    {
+        *error = 0;
+        return ROCKETNET_GATEWAY_NETLINK_DONE;
+    }
+
+    return result;
 }
 
 int rocketnet_gateway_netlink_neighbor( int family, int interface_index, const uint8_t * gateway, uint8_t * mac, int * error )
 {
     return rocketnet_gateway_netlink_neighbor_with( &rocketnet_gateway_netlink_libc, family, interface_index, gateway, mac, error );
+}
+
+int rocketnet_gateway_netlink_refresh_with( const rocketnet_gateway_netlink_system_t * system, int family, int interface_index,
+                                            uint8_t * gateway, bool * gateway_known, uint8_t * mac, int * error )
+{
+    rocketnet_assert( gateway_known );
+
+    if ( *gateway_known && rocketnet_gateway_netlink_neighbor_with( system, family, interface_index, gateway, mac, error ) == ROCKETNET_GATEWAY_NETLINK_FOUND )
+        return ROCKETNET_GATEWAY_NETLINK_FOUND;
+
+    const int route = rocketnet_gateway_netlink_route_with( system, family, interface_index, gateway, error );
+    if ( route == ROCKETNET_GATEWAY_NETLINK_DONE )
+        *gateway_known = false;
+    if ( route != ROCKETNET_GATEWAY_NETLINK_FOUND )
+        return route;
+
+    *gateway_known = true;
+
+    return rocketnet_gateway_netlink_neighbor_with( system, family, interface_index, gateway, mac, error );
+}
+
+int rocketnet_gateway_netlink_refresh( int family, int interface_index, uint8_t * gateway, bool * gateway_known, uint8_t * mac, int * error )
+{
+    return rocketnet_gateway_netlink_refresh_with( &rocketnet_gateway_netlink_libc, family, interface_index, gateway, gateway_known, mac, error );
 }
 
 const char * rocketnet_gateway_netlink_result_name( int result )

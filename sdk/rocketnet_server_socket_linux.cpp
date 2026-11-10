@@ -291,11 +291,16 @@ struct rocketnet_server_socket_t
     // the gateway refresh (rocketnet_xdp_frame.h GATEWAY REFRESH): main
     // thread only, in the receive call. resolve is rtnetlink unless a test
     // replaces it; failing holds, per family, whether the last resolve failed,
-    // so a failing resolve warns once rather than every period
+    // so a failing resolve warns once rather than every period. address is
+    // each family's gateway IP the last route dump found, so the refresh
+    // asks its neighbour entry directly rather than dumping every period
+    // (rocketnet_gateway_netlink_refresh)
     struct rocketnet_xdp_gateway_refresh_t gateway_refresh;
     rocketnet_xdp_gateway_resolve_t gateway_resolve;
     void * gateway_resolve_context;
     bool gateway_resolve_failing[2];
+    uint8_t gateway_address[2][16];
+    bool gateway_address_known[2];
     char interface_name[IF_NAMESIZE];
 
     int interface_index;
@@ -394,10 +399,11 @@ static bool get_interface_mac_address( const char * interface_name, uint8_t * ma
 // on the interface, then that next hop's neighbour entry. No default route
 // on the interface returns true with *found_route false, the one case the
 // server starts without a gateway; a gateway with no usable neighbour entry
-// carrying a link-layer address refuses, and nothing resolves it. loud logs
-// each failure; the periodic refresh passes false and warns once itself.
+// carrying a link-layer address refuses, and nothing resolves it. Each
+// failure is logged; the periodic refresh resolves through
+// rocketnet_server_socket_resolve_gateway instead.
 
-static bool get_gateway_mac_address_netlink( const char * interface_name, int interface_index, int address_type, uint8_t * mac_address, bool * found_route, bool loud )
+static bool get_gateway_mac_address_netlink( const char * interface_name, int interface_index, int address_type, uint8_t * mac_address, bool * found_route )
 {
     *found_route = false;
 
@@ -414,9 +420,8 @@ static bool get_gateway_mac_address_netlink( const char * interface_name, int in
         return true;
     if ( route != ROCKETNET_GATEWAY_NETLINK_FOUND )
     {
-        if ( loud )
-            rocketnet_error( "%s gateway discovery: route query on %s failed: %s (%s)", family_name, interface_name,
-                             rocketnet_gateway_netlink_result_name( route ), strerror( error ) );
+        rocketnet_error( "%s gateway discovery: route query on %s failed: %s (%s)", family_name, interface_name,
+                         rocketnet_gateway_netlink_result_name( route ), strerror( error ) );
         return false;
     }
 
@@ -429,8 +434,6 @@ static bool get_gateway_mac_address_netlink( const char * interface_name, int in
     const int neighbor = rocketnet_gateway_netlink_neighbor( family, interface_index, gateway, mac_address, &error );
     if ( neighbor == ROCKETNET_GATEWAY_NETLINK_FOUND )
         return true;
-    if ( !loud )
-        return false;
     if ( neighbor == ROCKETNET_GATEWAY_NETLINK_DONE )
     {
         rocketnet_error( "%s gateway discovery: no neighbor entry with a link-layer address for %s on %s", family_name, gateway_ip_string, interface_name );
@@ -479,7 +482,7 @@ static bool get_gateway_mac_address( const char * interface_name, int interface_
     else
     {
         bool found_route = false;
-        if ( !get_gateway_mac_address_netlink( interface_name, interface_index, address_type, mac_address, &found_route, true ) )
+        if ( !get_gateway_mac_address_netlink( interface_name, interface_index, address_type, mac_address, &found_route ) )
             return false;
         if ( !found_route )
             return true;
@@ -500,15 +503,24 @@ static bool get_gateway_mac_address( const char * interface_name, int interface_
 
 #define INVALID_FRAME UINT64_MAX
 
-// the refresh's resolve: rtnetlink, quiet. A failure warns once per failing
-// streak, and the table keeps the gateway it has.
+// the refresh's resolve: rtnetlink, quiet, on the main update thread, so the
+// known gateway's neighbour entry is asked directly and the routes are dumped
+// only when no gateway is known or that entry is not found
+// (rocketnet_gateway_netlink_refresh). No default route resolves with *found
+// false. A failure warns once per failing streak, and the table keeps the
+// gateway it has.
 
 static bool rocketnet_server_socket_resolve_gateway( void * context, int address_type, uint8_t * mac, bool * found )
 {
     rocketnet_server_socket_t * server_socket = (rocketnet_server_socket_t *) context;
     const int family_index = ( address_type == ROCKETNET_ADDRESS_IPV6 ) ? 1 : 0;
 
-    const bool resolved = get_gateway_mac_address_netlink( server_socket->interface_name, server_socket->interface_index, address_type, mac, found, false );
+    int error = 0;
+    const int result = rocketnet_gateway_netlink_refresh( family_index ? AF_INET6 : AF_INET, server_socket->interface_index,
+                                                          server_socket->gateway_address[family_index], &server_socket->gateway_address_known[family_index],
+                                                          mac, &error );
+    *found = result == ROCKETNET_GATEWAY_NETLINK_FOUND;
+    const bool resolved = *found || ( result == ROCKETNET_GATEWAY_NETLINK_DONE && !server_socket->gateway_address_known[family_index] );
     if ( !resolved && !server_socket->gateway_resolve_failing[family_index] )
         rocketnet_warn( "%s gateway refresh on %s failed: replies keep the gateway mac address they have",
                         family_index ? "ipv6" : "ipv4", server_socket->interface_name );
