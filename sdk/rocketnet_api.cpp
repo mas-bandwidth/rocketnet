@@ -1401,7 +1401,7 @@ static enum rocketnet_status_t rn_client_connect( struct rocketnet_client_t * cl
 
     const uint64_t epoch = client->transport.token_epoch_unix_seconds;
     const double caller_time = client->update_timed && client->update_time > 0.0 ? client->update_time : 0.0;
-    const uint64_t token_timestamp = epoch != 0 ? epoch + (uint64_t) caller_time : 0;
+    const uint64_t token_timestamp = epoch != 0 ? rocketnet_platform_token_clock( epoch, caller_time ) : 0;
 
     int status = ROCKETNET_STATUS_OK;
     client->connection = rocketnet_message_client_create_resolved( client->context, connect_token, &client->transport, &client->message,

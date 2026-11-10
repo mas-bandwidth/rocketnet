@@ -1950,7 +1950,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
     client_transport->time = time;
     client_transport->last_state = client_transport->protocol.state;
 
-    const uint64_t connect_timestamp = token_timestamp ? token_timestamp : rocketnet_platform_token_epoch( config->token_epoch_unix_seconds, time ) + (uint64_t) time;
+    const uint64_t connect_timestamp = token_timestamp ? token_timestamp : rocketnet_platform_token_clock( rocketnet_platform_token_epoch( config->token_epoch_unix_seconds, time ), time );
 
     if ( !rocketnet_client_protocol_connect( &client_transport->protocol, connect_token, time, connect_timestamp ) )
     {

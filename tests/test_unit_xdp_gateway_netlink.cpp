@@ -27,6 +27,7 @@
 #include "rocketnet_gateway_netlink.h"
 
 #include <errno.h>
+#include <limits.h>
 #include <string.h>
 #include <vector>
 #include <netinet/in.h>
@@ -858,6 +859,27 @@ static void test_xdp_transport_gateway_netlink_error_message()
     check( error == EINTR );
 }
 
+// an error code of INT_MIN, the one negative int with no positive
+// counterpart, is no errno: NLMSG_ERROR and NLMSG_DONE carrying it refuse
+
+static void test_xdp_transport_gateway_netlink_error_code_int_min()
+{
+    uint8_t gateway[16];
+    int error = 0;
+
+    netlink_datagram_t refused;
+    netlink_error( &refused, INT_MIN );
+    check( parse_route( refused, AF_INET, gateway, &error ) == ROCKETNET_GATEWAY_NETLINK_MALFORMED );
+
+    uint8_t mac[6];
+    check( parse_neighbor( refused, AF_INET, gateway_ipv4, mac, &error ) == ROCKETNET_GATEWAY_NETLINK_MALFORMED );
+
+    netlink_datagram_t done;
+    netlink_done( &done, INT_MIN );
+    check( parse_route( done, AF_INET, gateway, &error ) == ROCKETNET_GATEWAY_NETLINK_MALFORMED );
+    check( parse_neighbor( done, AF_INET, gateway_ipv4, mac, &error ) == ROCKETNET_GATEWAY_NETLINK_MALFORMED );
+}
+
 // a dump in several datagrams: each ahead of the answer reads MORE, and the
 // one carrying NLMSG_DONE ends it
 
@@ -1393,6 +1415,7 @@ REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_neighbor_other_family );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_truncated_message );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_attribute_past_the_end );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_error_message );
+REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_error_code_int_min );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_multipart_with_done );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_skips_other_requests );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_interrupted_dump_retried );

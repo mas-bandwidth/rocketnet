@@ -2768,9 +2768,9 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
         server_transport->token_epoch_unix_seconds = rocketnet_platform_token_epoch( 0, current_time );
 
 #if ROCKETNET_DEV
-    const uint64_t current_timestamp = server_transport->test_timestamp ? server_transport->test_timestamp : server_transport->token_epoch_unix_seconds + (uint64_t) current_time;
+    const uint64_t current_timestamp = server_transport->test_timestamp ? server_transport->test_timestamp : rocketnet_platform_token_clock( server_transport->token_epoch_unix_seconds, current_time );
 #else // #if ROCKETNET_DEV
-    const uint64_t current_timestamp = server_transport->token_epoch_unix_seconds + (uint64_t) current_time;
+    const uint64_t current_timestamp = rocketnet_platform_token_clock( server_transport->token_epoch_unix_seconds, current_time );
 #endif // #if ROCKETNET_DEV
 
     server_transport->payloads.num_payloads = 0;

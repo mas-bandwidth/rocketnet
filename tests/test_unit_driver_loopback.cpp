@@ -86,6 +86,71 @@ static void test_loopback_transport_io_binds_and_discovers_a_port()
     rocketnet_client_transport_io_close( &cc );
 }
 
+// A hub whose endpoints outnumber the ephemeral range's ports: with the range
+// narrowed to its last three ports, a server and two clients take all three,
+// and a third client's port 0 bind is refused, never given a held port. The
+// server still receives on its port, and a port a destroy frees is given out
+// again.
+
+static void test_loopback_transport_io_refuses_a_bind_when_every_ephemeral_port_is_held()
+{
+    rocketnet_loopback_test_first_port( 65533 );
+    rocketnet_loopback_hub_t * hub = rocketnet_loopback_hub_create( NULL, 3, NULL );
+    rocketnet_unit_check( hub != NULL );
+
+    const rocketnet_transport_backend_t * backend = &rocketnet_loopback_transport;
+    rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_dev_config( &server_config );
+    server_config.loopback_hub = hub;
+
+    rocketnet_client_transport_config_t client_config;
+    rocketnet_client_transport_default_config_current( &client_config );
+    client_config.loopback_hub = hub;
+
+    const rocketnet_server_transport_io_config_t server_setup = { "loopback", &server_config, NULL, NULL };
+    const rocketnet_client_transport_io_config_t client_setup = { "loopback", &client_config, NULL };
+
+    rocketnet_address_t server_address;
+    rocketnet_unit_check( rocketnet_address_parse( &server_address, "127.0.0.1:0" ) );
+    rocketnet_server_transport_io_t server = {};
+    rocketnet_unit_check( rocketnet_server_transport_io_open( backend->server, NULL, &server_setup, &server_address, &server ) );
+    rocketnet_unit_check( server_address.port == 65533 );
+
+    rocketnet_address_t client_address[3];
+    rocketnet_client_transport_io_t client[3] = {};
+    for ( int i = 0; i < 3; ++i )
+        rocketnet_unit_check( rocketnet_address_parse( &client_address[i], "127.0.0.1:0" ) );
+
+    rocketnet_unit_check( rocketnet_client_transport_io_open( backend->client, NULL, &client_setup, &client_address[0], &client[0] ) );
+    rocketnet_unit_check( client_address[0].port == 65534 );
+    rocketnet_unit_check( rocketnet_client_transport_io_open( backend->client, NULL, &client_setup, &client_address[1], &client[1] ) );
+    rocketnet_unit_check( client_address[1].port == 65535 );
+
+    rocketnet_unit_check( !rocketnet_client_transport_io_open( backend->client, NULL, &client_setup, &client_address[2], &client[2] ) );
+    rocketnet_unit_check( rocketnet_loopback_endpoints_live( hub ) == 3 );
+
+    const uint8_t data[] = { 1, 2, 3, 4 };
+    rocketnet_address_t to = server_address;
+    client[0].operations->send( client[0].instance, &to, data, sizeof( data ) );
+
+    rocketnet_address_t from;
+    uint8_t buf[64];
+    int bytes = 0;
+    rocketnet_unit_check( server.operations->receive_batch( server.instance, &from, buf, 64, &bytes, 1 ) == 1 );
+    rocketnet_unit_check( from.port == 65534 );
+
+    rocketnet_client_transport_io_close( &client[1] );
+    rocketnet_unit_check( rocketnet_address_parse( &client_address[2], "127.0.0.1:0" ) );
+    rocketnet_unit_check( rocketnet_client_transport_io_open( backend->client, NULL, &client_setup, &client_address[2], &client[2] ) );
+    rocketnet_unit_check( client_address[2].port == 65535 );
+
+    rn_test_server_io_stop_and_close( &server );
+    rocketnet_client_transport_io_close( &client[0] );
+    rocketnet_client_transport_io_close( &client[2] );
+    rocketnet_unit_check( rocketnet_loopback_hub_destroy( hub ) == ROCKETNET_STATUS_OK );
+    rocketnet_loopback_test_first_port( 0 );
+}
+
 static void test_loopback_transport_io_exchanges_both_ways()
 {
     const rocketnet_transport_backend_t * backend = &rocketnet_loopback_transport;
@@ -1791,6 +1856,7 @@ REGISTER_UNIT_TEST( test_server_drains_completed_queue_to_budget );
 REGISTER_UNIT_TEST( test_loopback_queue_restarts_at_slot_zero_when_empty );
 
 REGISTER_UNIT_TEST( test_loopback_transport_io_binds_and_discovers_a_port );
+REGISTER_UNIT_TEST( test_loopback_transport_io_refuses_a_bind_when_every_ephemeral_port_is_held );
 REGISTER_UNIT_TEST( test_loopback_transport_io_exchanges_both_ways );
 REGISTER_UNIT_TEST( test_loopback_transport_io_dual_stack_serves_ipv4_and_ipv6 );
 REGISTER_UNIT_TEST( test_loopback_transport_io_dual_stack_port_is_exclusive );

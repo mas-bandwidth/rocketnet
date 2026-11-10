@@ -207,6 +207,20 @@ static void test_token_time_game_clock_refuses_after_expire()
     token_time_game_server_teardown( &t );
 }
 
+// the client transport's clock stops at the largest timestamp: an epoch five
+// seconds short of it at time 1000.0, and a time of 1e20 seconds, read as
+// UINT64_MAX and refuse the token as expired; in a development build also
+// with the epoch read from the suite's wall clock
+
+static void test_token_time_game_clock_saturates_at_the_largest_timestamp()
+{
+    check( token_time_game_client_create( 1000, 2000, UINT64_MAX - 5, GAME_CLOCK_NOW ) == ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED );
+    check( token_time_game_client_create( TOKEN_EPOCH_UNIX_SECONDS, TOKEN_EPOCH_UNIX_SECONDS + TOKEN_LIFETIME, TOKEN_EPOCH_UNIX_SECONDS, 1.0e20 ) == ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED );
+#if ROCKETNET_DEV
+    check( token_time_game_client_create( ROCKETNET_UNIT_WALL_CLOCK, ROCKETNET_UNIT_WALL_CLOCK + TOKEN_LIFETIME, 0, 1.0e20 ) == ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED );
+#endif // #if ROCKETNET_DEV
+}
+
 #if ROCKETNET_DEV
 // with the field zero the token epoch is the suite's fixed wall clock less the
 // caller's time: a token stamped from that clock is admitted, and one stamped
@@ -224,3 +238,4 @@ REGISTER_UNIT_TEST( test_token_time_game_clock_off_reads_the_suite_clock );
 
 REGISTER_UNIT_TEST( test_token_time_game_clock_admits_a_fixed_token );
 REGISTER_UNIT_TEST( test_token_time_game_clock_refuses_after_expire );
+REGISTER_UNIT_TEST( test_token_time_game_clock_saturates_at_the_largest_timestamp );
