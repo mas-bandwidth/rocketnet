@@ -3263,7 +3263,23 @@ void rocketnet_client_transport_update( rocketnet_client_transport_t * client_tr
 
     if ( state_before > ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED &&
          client_transport->protocol.state <= ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
+    {
         rocketnet_client_connection_reset( client_transport );
+
+        // an attempt that ended before any cookie commits the race to the
+        // token's family (proofs/tla/RNClientRace.tla CallerCommit), so the
+        // reading thread closes the second socket and its idle wait is the
+        // guard again, not the race's poll. The protocol's server address
+        // stays cleared by the reset.
+
+        rocketnet_client_race_t * race = rocketnet_client_race_of( client_transport );
+        if ( race && race->committed.load( std::memory_order_relaxed ) < 0 )
+        {
+            rocketnet_client_io_rebind_held( &client_transport->client_io, &race->server_address[1], &race->server_address[0] );
+            race->closed_send_failures.store( rocketnet_client_race_family_send_failures( &race->family[1] ), std::memory_order_relaxed );
+            race->committed.store( 0, std::memory_order_release );
+        }
+    }
 
     if ( io_core )
     {
