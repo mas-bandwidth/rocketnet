@@ -89,11 +89,18 @@ DEVELOPMENT_SYMBOL_PARTS = (
     "rn_message_payload_copy_count", "rocketnet_portable_rx_test_",
     "rocketnet_portable_tx_test_", "rocketnet_platform_socket_set_receive_hook",
     "rocketnet_platform_socket_send_error_hook", "rocketnet_xdp_test_",
+    "rn_arena_create",
 )
+
+# The production allocator keeps the caller-block path; only the self-allocating
+# create is development code.
+DEVELOPMENT_SYMBOL_EXCEPTIONS = ("rn_arena_create_in_block",)
 
 
 def development_symbols(defined):
-    return sorted(symbol for symbol in defined if any(part in symbol for part in DEVELOPMENT_SYMBOL_PARTS))
+    return sorted(symbol for symbol in defined
+                  if any(part in symbol for part in DEVELOPMENT_SYMBOL_PARTS)
+                  and not any(part in symbol for part in DEVELOPMENT_SYMBOL_EXCEPTIONS))
 
 
 def dev_server_secret_key(source_path):

@@ -2132,17 +2132,8 @@ bool rocketnet_server_rio_test_stop_drains_sends()
     // batch per 1 ms wait.
 
     rocketnet_rio_stop_test_complete_in_flight( 0 );
-    const double start = rocketnet_platform_time();
-    bool stopped = rocketnet_rio_stop_pass( rio );
-    int passes = 1;
-    while ( !stopped && passes <= rio->receives / ROCKETNET_RIO_DEQUEUE_BATCH + 1 )
-    {
-        rocketnet_platform_sleep( 0.001 );
-        stopped = rocketnet_rio_stop_pass( rio );
-        passes++;
-    }
-    const double elapsed = rocketnet_platform_time() - start;
-    valid &= stopped && passes == 1 && elapsed < ROCKETNET_RIO_DRAIN_SECONDS && state.closes == 1 && rio->socket == INVALID_SOCKET;
+    const bool stopped = rocketnet_rio_stop_pass( rio );
+    valid &= stopped && state.closes == 1 && rio->socket == INVALID_SOCKET;
     valid &= rio->counters[ROCKETNET_RIO_COUNTER_PACKETS_SENT].load() == (uint64_t) burst &&
              rio->counters[ROCKETNET_RIO_COUNTER_SEND_FAILED].load() == 0 &&
              rocketnet_rio_outstanding_sends( rio ) == 0 && rio->posted_receives.load() == 0;

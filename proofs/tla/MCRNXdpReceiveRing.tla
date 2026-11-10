@@ -13,7 +13,11 @@
 (* RefusedRefilled <- RefusedRefilledBroken (a refused descriptor naming a *)
 (* send frame goes back to the fill ring like any dropped frame, as the    *)
 (* worker did before rocketnet_xdp_fill_return) and must fail              *)
-(* FillHoldsOnlyReceiveFrames.                                             *)
+(* FillHoldsOnlyReceiveFrames.  The reversed witness                       *)
+(* MCRNXdpReceiveRingBrokenDrainStale.cfg sets DrainStale <-               *)
+(* DrainStaleBroken (a drain leaves the last staged packet out of the      *)
+(* claim's view, as the worker-driven publish did) and must fail           *)
+(* StagedBeforeClaimInView.                                                *)
 (***************************************************************************)
 EXTENDS RNXdpReceiveRing
 
@@ -22,4 +26,6 @@ CONSTANTS F1, F2, F3
 CancelUnconsumedBroken == FALSE
 
 RefusedRefilledBroken == TRUE
+
+DrainStaleBroken == TRUE
 =============================================================================
