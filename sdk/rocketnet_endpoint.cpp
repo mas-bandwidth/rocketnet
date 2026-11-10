@@ -1277,11 +1277,16 @@ int rn_endpoint_write_packet( struct rn_endpoint_t * endpoint, uint8_t * payload
     // SendUnreliable: the ordered packet of the reliable phase, then the
     // queued unreliable records copied from their region records.
 
-    (void) capacity;
-    (void) packet_id;
-
     if ( endpoint->packet_written || !payload )
         return 0;
+
+    const int request = endpoint->packet_kind == RN_ENDPOINT_PACKET_SEQUENCED_LARGE ? endpoint->large_bytes : ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
+    if ( capacity < request )
+    {
+        // the frame is smaller than the planned packet: fail it, write nothing
+        rn_endpoint_packet_failed( endpoint, packet_id, now );
+        return 0;
+    }
 
     rn_region_t * region = endpoint->region;
 

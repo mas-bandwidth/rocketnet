@@ -51,6 +51,24 @@ tag. The job classifies a commit as wire-affecting when it touches one of these 
 - `sdk/rocketnet_protocol.cpp`
 - `sdk/rocketnet_connect_token.h`
 - `sdk/rocketnet_connect_token.cpp`
+- `sdk/rocketnet_message.cpp`
+- `sdk/rocketnet_message.h`
+- `sdk/rocketnet_ack.cpp`
+- `sdk/rocketnet_ack.h`
+- `sdk/rocketnet_client_protocol.cpp`
+- `sdk/rocketnet_client_protocol.h`
+- `sdk/rocketnet_server_protocol.cpp`
+- `sdk/rocketnet_server_protocol.h`
+- `sdk/rocketnet_channel.cpp`
+- `sdk/rocketnet_channel.h`
+- `sdk/rocketnet_channel_reliable.cpp`
+- `sdk/rocketnet_channel_sequenced.cpp`
+- `sdk/rocketnet_channel_receipts.cpp`
+- `sdk/rocketnet_keys.cpp`
+- `sdk/rocketnet_keys.h`
+- `sdk/rocketnet_read_write.h`
+- `sdk/rocketnet_layers.h`
+- `sdk/rocketnet.h`
 
 This is a path-based check: comments and explanatory edits in those files also
 match, even when no wire behavior changes. The job does not inspect semantics.
@@ -81,12 +99,13 @@ required runs are:
   the push: every per-commit job in every workflow carries a two-minute
   `timeout-minutes`, and `tools/check_ci_budget.py` (in the lint job) refuses
   one without it. The per-commit jobs:
-  - `build-and-test`, named `<os> / <build_type> / <leg>`: Ubuntu 24.04
-    Debug `unit` and `functional` (which carries the libxdp 1.4 XDP cell in
-    the runner kernel guest), Release `unit` (which also runs the `builds`
-    leg's steps), `functional` and `checks`; macOS 27 on arm64 (rows named `macos-15`) Debug `unit` and
-    Release `functional`;
-  - `happy path / <os>` (ubuntu-24.04,
+  - `build-and-test`, named `<os> / <build_type> / <leg>`: Linux (the
+    fleet's Ubuntu 26.04 runners, rows named `linux`) Debug `unit` and
+    `functional` (which carries the XDP cell in the runner kernel guest,
+    against a libxdp in the tested range 1.4 to 1.6), Release `unit` (which
+    also runs the `builds` leg's steps), `functional` and `checks`; macOS on
+    arm64 (rows named `macos`) Debug `unit` and Release `functional`;
+  - `happy path / <os>` (linux,
     windows; the Windows row is the per-commit MSVC whole-tree build);
   - `asan + ubsan (<leg>)` (`unit suite`, `functional suite`) and
     `tsan (loopback soak)`;

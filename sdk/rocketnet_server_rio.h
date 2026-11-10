@@ -37,8 +37,8 @@
 // completions wait in the queue rather than being dropped. Stop requests,
 // the worker commits deferred sends, closes the socket and drains both
 // queues; stopped reports that drain before destroy frees the region.
-// proofs/tla/RNRioWorker.tla models the design; the functions that implement a
-// model action cite it.
+// proofs/tla/RNRioWorker.tla models the design (proofs/tla/RNRioDriver.tla the earlier
+// caller-driven one); the functions that implement a model action cite it.
 //
 // The transport is built only on Windows (Windows 10 1709 or later for
 // RIOSendEx and RIOReceiveEx). Elsewhere the module is not compiled: only
