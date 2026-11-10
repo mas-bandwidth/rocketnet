@@ -18,8 +18,8 @@
 // The userspace pending-marks buffer for the kernel replay map. The transport
 // fills it once per server update -- a FORGET per slot seen connected that is
 // no longer connected or whose address changed, whether or not it held a mark,
-// then a MARK per connected slot first seen (zero included) or whose
-// highest_opened differs from its last mark -- and the transport applies every
+// then a MARK per connected slot first seen (zero included), whose
+// highest_opened fell, or whose highest_opened advanced by the mark step -- and the transport applies every
 // forget, then every mark, in one commit, then resets keeping every forget the
 // kernel refused that no applied mark for the same key superseded, so it is
 // tried again first in the next commit (proofs/tla/RNXdpReplay.tla, Commit,
@@ -77,6 +77,16 @@ static inline uint32_t rocketnet_xdp_replay_entries( int max_clients )
 // the entries at the default configuration, for storage a test declares statically
 #define ROCKETNET_XDP_REPLAY_DEFAULT_ENTRIES ( ( ROCKETNET_DEFAULT_MAX_CLIENTS + 1023 ) / 1024 * 1024 )
 
+// The distance the kernel high-water may trail a session's before the walk
+// pushes another mark: half the replay window leaves the mark below the
+// kernel's drop distance, so a reordered packet inside the window is still
+// admitted, while steady-state writes coalesce by this step.
+#define ROCKETNET_XDP_REPLAY_MARK_STEP ( ROCKETNET_XDP_REPLAY_WINDOW / 2 )
+
+// The pending-forget and kernel-high-water indexes are open-addressed at twice
+// the configured capacity, so a lookup probes at most a half-full table.
+#define ROCKETNET_XDP_REPLAY_INDEX_ENTRIES ( 2 * ROCKETNET_XDP_REPLAY_MAX_ENTRIES )
+
 struct rocketnet_xdp_replay_marks_t
 {
     struct rocketnet_server_xdp_replay_key_t * forgets;            // capacity entries each
@@ -87,6 +97,14 @@ struct rocketnet_xdp_replay_marks_t
     uint32_t mark_count;
     uint32_t kept_mark_count;           // marks [0, kept_mark_count) were refused by the last commit
     uint32_t refused;
+
+    uint32_t index_size;                // pending-forget and kernel index slots, zero when unbound
+    uint32_t forget_index[ROCKETNET_XDP_REPLAY_INDEX_ENTRIES];             // index + 1, zero empty
+    struct rocketnet_server_xdp_replay_key_t kernel_keys[ROCKETNET_XDP_REPLAY_INDEX_ENTRIES];
+    uint8_t kernel_state[ROCKETNET_XDP_REPLAY_INDEX_ENTRIES];              // zero empty, one held
+#if ROCKETNET_DEV
+    uint64_t comparisons;               // every key comparison in the indexes, for the unit cost cases
+#endif
 };
 
 // Binds the buffer to its owner's arrays of capacity entries, empty.
@@ -104,6 +122,7 @@ static inline void rocketnet_xdp_replay_marks_bind( struct rocketnet_xdp_replay_
     marks->mark_keys = mark_keys;
     marks->mark_values = mark_values;
     marks->capacity = forgets && mark_keys && mark_values ? capacity : 0;
+    marks->index_size = marks->capacity * 2;
     rocketnet_xdp_replay_marks_reset( marks );
 }
 
@@ -113,6 +132,150 @@ static inline void rocketnet_xdp_replay_marks_reset( struct rocketnet_xdp_replay
     marks->mark_count = 0;
     marks->kept_mark_count = 0;
     marks->refused = 0;
+
+    if ( marks->index_size > 0 )
+    {
+        memset( marks->forget_index, 0, marks->index_size * sizeof( marks->forget_index[0] ) );
+        memset( marks->kernel_state, 0, marks->index_size * sizeof( marks->kernel_state[0] ) );
+    }
+#if ROCKETNET_DEV
+    marks->comparisons = 0;
+#endif
+}
+
+// FNV-1a over the wire key's 20 bytes, the same key every index below uses.
+
+static inline uint32_t rocketnet_xdp_replay_key_hash( const struct rocketnet_server_xdp_replay_key_t * key )
+{
+    const uint8_t * bytes = (const uint8_t *) key;
+    uint32_t hash = 2166136261u;
+    for ( uint32_t i = 0; i < sizeof( *key ); i++ )
+    {
+        hash ^= bytes[i];
+        hash *= 16777619u;
+    }
+    return hash;
+}
+
+// The pending-forget index names the forget array position + 1, zero for an
+// empty slot. A forget never moves except in reset_keeping, which rebuilds the
+// index, so no tombstone is needed.
+
+static inline uint32_t rocketnet_xdp_replay_marks_forget_lookup( struct rocketnet_xdp_replay_marks_t * marks, const struct rocketnet_server_xdp_replay_key_t * key )
+{
+    uint32_t i = rocketnet_xdp_replay_key_hash( key ) % marks->index_size;
+    for ( ;; )
+    {
+#if ROCKETNET_DEV
+        marks->comparisons++;
+#endif
+        const uint32_t value = marks->forget_index[i];
+        if ( value == 0 )
+            return UINT32_MAX;
+        if ( memcmp( &marks->forgets[value - 1], key, sizeof( *key ) ) == 0 )
+            return value - 1;
+        if ( ++i == marks->index_size )
+            i = 0;
+    }
+}
+
+static inline void rocketnet_xdp_replay_marks_forget_insert( struct rocketnet_xdp_replay_marks_t * marks, uint32_t position )
+{
+    uint32_t i = rocketnet_xdp_replay_key_hash( &marks->forgets[position] ) % marks->index_size;
+    while ( marks->forget_index[i] != 0 )
+    {
+        if ( ++i == marks->index_size )
+            i = 0;
+    }
+    marks->forget_index[i] = position + 1;
+}
+
+// The keys the kernel map holds. A mark the kernel took inserts one; a delete
+// the kernel took removes one; a forget of a key never here is skipped in the
+// commit. Deletion shifts the rest of the probe cluster back, so the table
+// never accumulates tombstones.
+
+static inline bool rocketnet_xdp_replay_marks_kernel_holds( struct rocketnet_xdp_replay_marks_t * marks, const struct rocketnet_server_xdp_replay_key_t * key )
+{
+    if ( marks->index_size == 0 )
+        return false;
+
+    uint32_t i = rocketnet_xdp_replay_key_hash( key ) % marks->index_size;
+    for ( ;; )
+    {
+        if ( marks->kernel_state[i] == 0 )
+            return false;
+#if ROCKETNET_DEV
+        marks->comparisons++;
+#endif
+        if ( memcmp( &marks->kernel_keys[i], key, sizeof( *key ) ) == 0 )
+            return true;
+        if ( ++i == marks->index_size )
+            i = 0;
+    }
+}
+
+static inline void rocketnet_xdp_replay_marks_kernel_insert( struct rocketnet_xdp_replay_marks_t * marks, const struct rocketnet_server_xdp_replay_key_t * key )
+{
+    if ( marks->index_size == 0 )
+        return;
+
+    uint32_t i = rocketnet_xdp_replay_key_hash( key ) % marks->index_size;
+    for ( ;; )
+    {
+        if ( marks->kernel_state[i] == 0 )
+        {
+            marks->kernel_keys[i] = *key;
+            marks->kernel_state[i] = 1;
+            return;
+        }
+#if ROCKETNET_DEV
+        marks->comparisons++;
+#endif
+        if ( memcmp( &marks->kernel_keys[i], key, sizeof( *key ) ) == 0 )
+            return;
+        if ( ++i == marks->index_size )
+            i = 0;
+    }
+}
+
+static inline void rocketnet_xdp_replay_marks_kernel_erase( struct rocketnet_xdp_replay_marks_t * marks, const struct rocketnet_server_xdp_replay_key_t * key )
+{
+    if ( marks->index_size == 0 )
+        return;
+
+    const uint32_t size = marks->index_size;
+    uint32_t hole = rocketnet_xdp_replay_key_hash( key ) % size;
+    for ( ;; )
+    {
+        if ( marks->kernel_state[hole] == 0 )
+            return;
+#if ROCKETNET_DEV
+        marks->comparisons++;
+#endif
+        if ( memcmp( &marks->kernel_keys[hole], key, sizeof( *key ) ) == 0 )
+            break;
+        if ( ++hole == size )
+            hole = 0;
+    }
+
+    marks->kernel_state[hole] = 0;
+    uint32_t next = hole + 1 == size ? 0 : hole + 1;
+    while ( marks->kernel_state[next] != 0 )
+    {
+        const uint32_t home = rocketnet_xdp_replay_key_hash( &marks->kernel_keys[next] ) % size;
+        const uint32_t home_distance = ( next + size - home ) % size;
+        const uint32_t hole_distance = ( next + size - hole ) % size;
+        if ( home_distance >= hole_distance )
+        {
+            marks->kernel_keys[hole] = marks->kernel_keys[next];
+            marks->kernel_state[hole] = 1;
+            marks->kernel_state[next] = 0;
+            hole = next;
+        }
+        if ( ++next == size )
+            next = 0;
+    }
 }
 
 // The end of a commit: forget_failed[i] says the kernel refused forget i,
@@ -133,14 +296,33 @@ static inline void rocketnet_xdp_replay_marks_reset( struct rocketnet_xdp_replay
 // no entry is overwritten before it is read (LayoutIsQueue)
 static inline uint32_t rocketnet_xdp_replay_marks_reset_keeping( struct rocketnet_xdp_replay_marks_t * marks, const bool * forget_failed, const bool * mark_applied )
 {
+    const uint32_t old_forget_count = marks->forget_count;
+    const uint32_t old_mark_count = marks->mark_count;
+
+    // The kernel map's contents follow the commit's outcomes before the
+    // arrays are compacted: an applied forget removes its key, an applied mark
+    // inserts it (a same-key mark applied after its forget leaves it held).
+
+    for ( uint32_t i = 0; i < old_forget_count; i++ )
+    {
+        if ( !forget_failed[i] )
+            rocketnet_xdp_replay_marks_kernel_erase( marks, &marks->forgets[i] );
+    }
+
+    for ( uint32_t j = 0; j < old_mark_count; j++ )
+    {
+        if ( mark_applied[j] )
+            rocketnet_xdp_replay_marks_kernel_insert( marks, &marks->mark_keys[j] );
+    }
+
     uint32_t kept = 0;
-    for ( uint32_t i = 0; i < marks->forget_count; i++ )
+    for ( uint32_t i = 0; i < old_forget_count; i++ )
     {
         if ( !forget_failed[i] )
             continue;
 
         bool superseded = false;
-        for ( uint32_t j = 0; j < marks->mark_count && !superseded; j++ )
+        for ( uint32_t j = 0; j < old_mark_count && !superseded; j++ )
             superseded = mark_applied[j] && memcmp( &marks->mark_keys[j], &marks->forgets[i], sizeof( marks->forgets[i] ) ) == 0;
         if ( superseded )
             continue;
@@ -154,7 +336,7 @@ static inline uint32_t rocketnet_xdp_replay_marks_reset_keeping( struct rocketne
     marks->forget_count = kept;
 
     uint32_t kept_marks = 0;
-    for ( uint32_t j = 0; j < marks->mark_count; j++ )
+    for ( uint32_t j = 0; j < old_mark_count; j++ )
     {
         if ( mark_applied[j] )
             continue;
@@ -170,6 +352,13 @@ static inline uint32_t rocketnet_xdp_replay_marks_reset_keeping( struct rocketne
 
     marks->mark_count = kept_marks;
     marks->kept_mark_count = kept_marks;
+
+    if ( old_forget_count > 0 )
+    {
+        memset( marks->forget_index, 0, marks->index_size * sizeof( marks->forget_index[0] ) );
+        for ( uint32_t i = 0; i < marks->forget_count; i++ )
+            rocketnet_xdp_replay_marks_forget_insert( marks, i );
+    }
 
     const uint32_t refused = marks->refused;
     marks->refused = 0;
@@ -207,9 +396,7 @@ static inline bool rocketnet_xdp_replay_marks_forget( struct rocketnet_xdp_repla
     struct rocketnet_server_xdp_replay_key_t key;
     rocketnet_xdp_replay_key_from_address( address, &key );
 
-    bool pending = false;
-    for ( uint32_t i = 0; i < marks->forget_count && !pending; i++ )
-        pending = memcmp( &marks->forgets[i], &key, sizeof( key ) ) == 0;
+    const bool pending = marks->index_size > 0 && rocketnet_xdp_replay_marks_forget_lookup( marks, &key ) != UINT32_MAX;
 
     if ( !pending )
     {
@@ -219,7 +406,9 @@ static inline bool rocketnet_xdp_replay_marks_forget( struct rocketnet_xdp_repla
             return false;
         }
 
-        marks->forgets[marks->forget_count++] = key;
+        marks->forgets[marks->forget_count] = key;
+        rocketnet_xdp_replay_marks_forget_insert( marks, marks->forget_count );
+        marks->forget_count++;
     }
 
     for ( uint32_t i = 0; i < marks->kept_mark_count; i++ )
