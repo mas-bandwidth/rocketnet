@@ -750,3 +750,71 @@ static void test_server_update_ends_slot_on_ack_internal_error()
     delete f;
 }
 REGISTER_UNIT_TEST( test_server_update_ends_slot_on_ack_internal_error );
+
+static rocketnet_server_transport_t * g_stop_spread_reentry_server;
+static int g_stop_spread_reentry_slot;
+static int g_stop_spread_reentry_calls;
+
+static void stop_spread_reentry_callback( void *, enum rocketnet_log_level_t level, const char * message, size_t )
+{
+    if ( level != ROCKETNET_LOG_LEVEL_DEBUG || strstr( message, "dropped disconnect burst" ) == NULL )
+        return;
+
+    g_stop_spread_dropped_lines++;
+    if ( g_stop_spread_reentry_calls != 0 )
+        return;
+
+    g_stop_spread_reentry_calls++;
+    rocketnet_server_transport_disconnect_client( g_stop_spread_reentry_server, g_stop_spread_reentry_slot );
+}
+
+// A log callback that disconnects the slot the burst-drop line names (as in
+// test_log_callback_disconnect_reentry_does_not_repeat): the slot has already
+// closed when the line is written, so the call finds nothing to do. The drop
+// is logged and counted once and the slot is closed once.
+static void test_server_kick_at_steady_cap_log_reentry_does_not_repeat()
+{
+    stop_spread_fixture_t * f = new stop_spread_fixture_t();
+    f->capacity = 4;
+    const int clients = 2;
+
+    rocketnet_server_transport_io_operations_t operations;
+    rocketnet_server_transport_t * server = stop_spread_server( f, &operations, clients, true );
+    const uint64_t * counters = server->protocol.counters->values;
+
+    for ( int i = 0; i < clients; i++ )
+        rocketnet_server_transport_disconnect_client( server, i );
+    rocketnet_unit_check( server->disconnect_burst_count == clients );
+
+    const int again = clients - 1;
+    stop_spread_connect( server, again );
+
+    const uint64_t dropped = counters[ROCKETNET_COUNTER_DISCONNECT_BURST_DROPPED];
+    const uint64_t disconnected = counters[ROCKETNET_COUNTER_CLIENT_DISCONNECTED];
+
+    const enum rocketnet_log_level_t saved_level = rocketnet_log_level_current();
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_DEBUG );
+    g_stop_spread_dropped_lines = 0;
+    g_stop_spread_reentry_server = server;
+    g_stop_spread_reentry_slot = again;
+    g_stop_spread_reentry_calls = 0;
+    rocketnet_log_function( stop_spread_reentry_callback, NULL );
+
+    rocketnet_server_transport_disconnect_client( server, again );
+
+    rocketnet_log_function( NULL, NULL );
+    rocketnet_log_level( saved_level );
+    g_stop_spread_reentry_server = NULL;
+
+    rocketnet_unit_check( g_stop_spread_reentry_calls == 1 );
+    rocketnet_unit_check( g_stop_spread_dropped_lines == 1 );
+    rocketnet_unit_check( counters[ROCKETNET_COUNTER_DISCONNECT_BURST_DROPPED] == dropped + 1 );
+    rocketnet_unit_check( counters[ROCKETNET_COUNTER_CLIENT_DISCONNECTED] == disconnected + 1 );
+    rocketnet_unit_check( rocketnet_server_transport_num_connected_clients( server ) == 0 );
+    rocketnet_unit_check( server->disconnect_burst_count == clients );
+
+    f->capacity = 64;
+    rn_test_server_transport_stop_and_destroy( server );
+    delete f;
+}
+REGISTER_UNIT_TEST( test_server_kick_at_steady_cap_log_reentry_does_not_repeat );
