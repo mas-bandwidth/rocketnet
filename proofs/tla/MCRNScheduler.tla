@@ -9,12 +9,16 @@
 (* the LOW one); channel 1 queues one HIGH item.  Unreliable items are     *)
 (* IMMEDIATE, so the class order is checked against the most urgent        *)
 (* priority.  A window of 2 numbers, a budget of 1 item per update, one    *)
-(* unreliable item arriving with every update and 1 transport loss.  The   *)
-(* two reversed witnesses:                                                 *)
+(* unreliable item arriving with every update and 3 transport losses, so  *)
+(* both same-channel items can await retransmit together after the earlier *)
+(* one was already resent once (resend FIFO order 2, 1). The reversed      *)
+(* witnesses:                                                             *)
 (*   MCRNSchedulerBrokenPerMessagePriority.cfg    ChannelFIFO              *)
 (*                                     FirstWriteInOrderPerChannel         *)
 (*   MCRNSchedulerBrokenUnreliableStarvesOrdered.cfg  UnreliableLast       *)
 (*                                     NoStarvation                        *)
+(*   MCRNSchedulerBrokenRtxPerMessage.cfg ChannelFIFO  RtxHeadBoost       *)
+(*   MCRNSchedulerBrokenRtxById.cfg       RtxSendOrder RtxHeadBoost       *)
 (***************************************************************************)
 EXTENDS RNScheduler
 
