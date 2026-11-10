@@ -317,6 +317,22 @@ bool rocketnet_server_gso_test_receive_ready( struct rocketnet_server_gso_t * gs
     return ready;
 }
 
+// the packets the receive worker has staged in its buffer and main has not
+// yet claimed: -1 while the worker holds the receive mutex
+int rocketnet_server_gso_test_receive_staged( struct rocketnet_server_gso_t * gso, int queue_index )
+{
+    rocketnet_assert( gso );
+    rocketnet_assert( queue_index >= 0 && queue_index < gso->num_queues );
+
+    struct rocketnet_server_gso_queue_t * queue = &gso->queues[queue_index];
+    if ( !rocketnet_platform_mutex_try_acquire( &queue->receive_mutex ) )
+        return -1;
+    const int staged = queue->worker_buffer ? (int) queue->worker_buffer->num_packets : 0;
+    rocketnet_platform_mutex_release( &queue->receive_mutex );
+
+    return staged;
+}
+
 #endif // #if ROCKETNET_DEV
 
 // proofs/tla/RNGsoHandoff.tla TxMainLock and TxPublish: main's frame boundary
