@@ -996,7 +996,8 @@ static int rocketnet_simulator_insert( struct rocketnet_network_simulator_t * si
         rocketnet_simulator_index_add( simulator, i );
         if ( simulator->delivery_time[i] < simulator->min_delivery_time )
             simulator->min_delivery_time = simulator->delivery_time[i];
-        simulator->receive_any_hint = 0;
+        if ( i < simulator->receive_any_hint && simulator->delivery_time[i] <= simulator->receive_any_hint_time )
+            simulator->receive_any_hint = i;
         simulator->free_hint = i + 1;
         rocketnet_platform_atomic_add_u64( &simulator->held_count, 1 );
 

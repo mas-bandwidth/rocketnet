@@ -274,7 +274,8 @@ static void test_network_simulator_refuses_bad_sizes_and_a_full_wire()
 
 // receive_any honours a global delivery-time bound, and a drain at one time
 // resumes after the slot it last delivered: many not-yet-due packets ahead of
-// due ones must not be rescanned from slot zero for every due packet.
+// due ones must not be rescanned from slot zero for every due packet, whether
+// the due packets were queued together or arrive between drains.
 static void test_network_simulator_receive_any_bounds_its_scan()
 {
     const int capacity = 512;
@@ -316,6 +317,24 @@ static void test_network_simulator_receive_any_bounds_its_scan()
     rocketnet_network_simulator_test_reset_index_stats( simulator );
     for ( int i = 0; i < due_count; i++ )
     {
+        check( rocketnet_network_simulator_receive_any( simulator, 0.0, &received_from, &received_to, received ) == 1 );
+        check( received[0] == values[late_count + i] );
+    }
+    check( rocketnet_network_simulator_receive_any( simulator, 0.0, &received_from, &received_to, received ) == 0 );
+
+    rocketnet_network_simulator_test_index_stats( simulator, &stats );
+    check( stats.receive_any_slots <= (uint64_t) capacity );
+
+    // arrival and drain interleave: a due packet reuses the lowest free slot
+    // below the resume hint, which must lower the hint to that slot instead of
+    // restarting the next scan from zero.
+
+    rocketnet_network_simulator_test_reset_index_stats( simulator );
+    for ( int i = 0; i < due_count; i++ )
+    {
+        check( rocketnet_network_simulator_deliver_packets( simulator, &from, &to,
+                                                            packets + late_count + i, bytes + late_count + i,
+                                                            1, 0.0 ) == 1 );
         check( rocketnet_network_simulator_receive_any( simulator, 0.0, &received_from, &received_to, received ) == 1 );
         check( received[0] == values[late_count + i] );
     }
