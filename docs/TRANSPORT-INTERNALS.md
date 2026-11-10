@@ -317,8 +317,11 @@ The workers hold the mutex only to append one batch (one `recvmmsg` call's
 results on GSO, 64 descriptors on XDP), never across a syscall. Two cases
 still defer a staged packet to the next call: main still holds a retained
 tail from a budget-capped call (it swaps only once that bank is consumed,
-because the current view points into it), or main's try-acquire meets a
-worker mid-batch (main never waits on the worker).
+because the current view points into it), or main's try-acquire finds the
+worker holding the mutex (main never waits on the worker). On GSO the
+`recvmmsg` calls leave the mutex free between batches; an XDP pass under
+heavy load appends batch after batch, so there main can miss a queue for
+an update.
 
 ## Creation and shutdown
 

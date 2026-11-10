@@ -267,6 +267,7 @@ struct rocketnet_server_xdp_socket_t
     rocketnet_xdp_buffer_exchange_t<ROCKETNET_XDP_NUM_BUFFERS> receive_handoff;
     int receive_held_index = -1; // game view; swapped for the worker's bank at the next receive call
     uint32_t receive_read_index = 0;
+    std::atomic<uint32_t> receive_swaps{ 0 }; // main's bank swaps: the worker's bank was emptied
 
     uint8_t padding_6[4096];
 
@@ -3815,6 +3816,7 @@ void rocketnet_server_socket_receive_packets( rocketnet_server_socket_t * server
                 continue;
             socket->receive_held_index = socket->receive_handoff.swap_producer( socket->receive_held_index );
             socket->receive_read_index = 0;
+            socket->receive_swaps.fetch_add( 1, std::memory_order_release );
             rocketnet_platform_mutex_release( &socket->receive_mutex );
         }
         else if ( socket->receive_held_index < 0 )
@@ -3823,6 +3825,8 @@ void rocketnet_server_socket_receive_packets( rocketnet_server_socket_t * server
                 continue;
             socket->receive_held_index = socket->receive_handoff.swap_producer( -1 );
             socket->receive_read_index = 0;
+            if ( socket->receive_held_index >= 0 )
+                socket->receive_swaps.fetch_add( 1, std::memory_order_release );
             rocketnet_platform_mutex_release( &socket->receive_mutex );
         }
 
@@ -3915,10 +3919,12 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
 
     // the packets the worker last saw in its current receive bank. Main's
     // swap only hands the worker an emptied bank, so room counted from this
-    // never overstates the bank's; it is read again under the receive mutex
-    // when it says the bank is full.
+    // never overstates the bank's. Main counts its swaps in receive_swaps:
+    // a new count means the bank was emptied, read without the mutex, so a
+    // full bank costs the worker no lock until main swaps it.
 
     uint32_t receive_staged = 0;
+    uint32_t receive_swaps_seen = 0;
 
     // the descriptors staged per hold of the receive mutex
 
@@ -3972,16 +3978,17 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
         // Peek: xsk_ring_cons__peek, at most the staging room and pending storage).
         // The worker appends to its current bank under the receive mutex and
         // never publishes: main's next receive swaps this filled bank for its own.
-        // The mutex is held only to append, a batch of descriptors at a time,
-        // so main's try-acquire swap never waits on more than one batch.
+        // The mutex is held only to append, a batch of descriptors at a time.
+        // Main's swap is a try-acquire and never waits: during a heavy pass
+        // it can still miss the mutex and defer this queue to its next call.
 
         uint32_t receive_index;
 
-        if ( receive_staged >= ROCKETNET_XDP_RECV_QUEUE_SIZE )
+        const uint32_t receive_swaps = socket->receive_swaps.load( std::memory_order_acquire );
+        if ( receive_swaps != receive_swaps_seen )
         {
-            rocketnet_platform_mutex_acquire( &socket->receive_mutex );
-            receive_staged = socket->receive_buffer[socket->receive_handoff.producer].num_packets;
-            rocketnet_platform_mutex_release( &socket->receive_mutex );
+            receive_swaps_seen = receive_swaps;
+            receive_staged = 0;
         }
 
         const uint32_t receive_capacity = ROCKETNET_XDP_RECV_QUEUE_SIZE - receive_staged;
@@ -4091,6 +4098,7 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
             }
 
             receive_staged = receive_buffer->num_packets;
+            receive_swaps_seen = socket->receive_swaps.load( std::memory_order_relaxed );
             rocketnet_platform_mutex_release( &socket->receive_mutex );
 
             rocketnet_xdp_receive_ring_finish( num_packets, num_consumed, []( void * r, uint32_t n )
