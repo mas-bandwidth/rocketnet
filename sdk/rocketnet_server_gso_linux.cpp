@@ -41,6 +41,7 @@
 #include "rocketnet_constants.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_wire.h"
+#include "rocketnet_xdp_frame.h"
 
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -173,6 +174,7 @@ struct rocketnet_server_gso_t
     void * context;
 
     int num_queues;
+    int receive_start_queue = 0; // the next receive_packets call starts at this queue
     bool stopping = false;
     std::atomic<int> features{ 0 };
     bool ipv6;
@@ -1923,12 +1925,31 @@ void rocketnet_server_gso_receive_packets( struct rocketnet_server_gso_t * gso )
 
     rocketnet_server_gso_publish_send( gso ); // retry deferred TX even on idle updates
     gso->process_packets.num_packets = 0;
-    for ( int queue_index = 0; queue_index < gso->num_queues; ++queue_index )
+
+    // a rotating start: queue 0 is not served first on every call. The budget
+    // ends on filled_queue and the next call starts after it, the same rule
+    // as the xdp drain (rocketnet_xdp_drain_queue). A call that does not fill
+    // the budget still advances by one. Two full queues exhaust the per-update
+    // budget, so a walk that always starts at 0 never reaches the later ones.
+    const int num_queues = gso->num_queues;
+    int filled_queue = -1;
+    for ( int step = 0; step < num_queues; step++ )
     {
+        const int queue_index = rocketnet_xdp_drain_queue( gso->receive_start_queue, step, num_queues );
         rocketnet_server_gso_queue_t * queue = &gso->queues[queue_index];
         gso->counter_receive_syscalls += queue->receive_syscalls.exchange( 0, std::memory_order_relaxed );
-        rocketnet_server_gso_receive_from_queue( gso, queue,
-                                                 gso->process_packets.capacity - gso->process_packets.num_packets );
+
+        const int before = gso->process_packets.num_packets;
+        rocketnet_server_gso_receive_from_queue( gso, queue, gso->process_packets.capacity - before );
+        if ( filled_queue < 0 && before < gso->process_packets.capacity &&
+             gso->process_packets.num_packets >= gso->process_packets.capacity )
+            filled_queue = queue_index;
+    }
+
+    if ( num_queues > 0 )
+    {
+        const int origin = filled_queue >= 0 ? filled_queue : gso->receive_start_queue;
+        gso->receive_start_queue = rocketnet_xdp_drain_queue( origin, 1, num_queues );
     }
 }
 
@@ -2114,6 +2135,16 @@ void rocketnet_server_gso_test_close( struct rocketnet_server_gso_t * gso )
     }
     gso->send_stopped.store( true, std::memory_order_release );
     rocketnet_server_gso_destroy( gso );
+}
+
+bool rocketnet_server_gso_test_publish_marked( struct rocketnet_server_gso_t * gso, int queue_index, uint8_t marker, uint32_t packets )
+{
+    if ( !gso || queue_index < 0 || queue_index >= gso->num_queues || packets > (uint32_t) ROCKETNET_GSO_RECV_QUEUE_SIZE )
+        return false;
+
+    struct rocketnet_server_gso_queue_t * queue = &gso->queues[queue_index];
+    rocketnet_server_gso_test_fill( queue->worker_buffer, marker, packets );
+    return rocketnet_server_gso_publish_receive( queue );
 }
 
 bool rocketnet_server_gso_test_worker_handoff()

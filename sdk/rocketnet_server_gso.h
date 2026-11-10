@@ -263,6 +263,9 @@ void rocketnet_server_gso_test_set_send( struct rocketnet_server_gso_t * gso,
                                          void * user );
 void rocketnet_server_gso_test_set_features( struct rocketnet_server_gso_t * gso, int features );
 bool rocketnet_server_gso_test_flush_staged( struct rocketnet_server_gso_t * gso );
+// Publish packets on one queue, each byte set to marker. false when a ready
+// buffer already waits, or the queue index or count is out of range.
+bool rocketnet_server_gso_test_publish_marked( struct rocketnet_server_gso_t * gso, int queue_index, uint8_t marker, uint32_t packets );
 #endif // #if defined( __linux__ )
 #endif // #if ROCKETNET_DEV
 
