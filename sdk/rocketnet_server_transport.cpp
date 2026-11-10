@@ -878,6 +878,16 @@ void rocketnet_server_transport_swap_io_for_test( struct rocketnet_server_transp
     *operations = saved_operations;
     *instance = saved_instance;
 }
+
+// See rocketnet_dev_fail_disconnect_sealed_writes in rocketnet_test_seams.h.
+// The count stays put until the drain abandons the burst, so a later stop
+// step hits the same head entry and fails it again.
+static int rocketnet_dev_disconnect_sealed_write_fails = 0;
+
+void rocketnet_dev_fail_disconnect_sealed_writes( int count )
+{
+    rocketnet_dev_disconnect_sealed_write_fails = count > 0 ? count : 0;
+}
 #endif // #if ROCKETNET_DEV
 
 // Returns the number of sends the link took and marks each one in accepted[],
@@ -3448,8 +3458,9 @@ static void rocketnet_server_transport_defer_disconnect_burst( struct rocketnet_
 // destination (no link-layer address, or one the socket cannot carry) with
 // room left abandons that burst: it is marked complete, and the
 // pass passes over a complete entry until it reaches the head, so no packet
-// past a burst's sequences is ever sealed. Any other refusal ends the drain;
-// what is left waits for the next update or stop step.
+// past a burst's sequences is ever sealed. A sealed write that fails
+// abandons that burst the same way and the drain continues. Any other
+// refusal ends the drain; what is left waits for the next update or stop step.
 // proofs/tla/RNDisconnectBurstRing.tla SealStep: the cursor restarts at count
 // (SealOnlyLive) and falls with each pop at the head (SealedFallFromHead).
 static void rocketnet_server_transport_drain_disconnect_bursts( struct rocketnet_server_transport_t * server_transport, int max_seals, bool shutdown )
@@ -3500,16 +3511,30 @@ static void rocketnet_server_transport_drain_disconnect_bursts( struct rocketnet
                                                              NULL, server_transport->disconnect_burst_keys[index] );
             rocketnet_assert( bytes >= ROCKETNET_CONNECTION_DISCONNECT_MIN_WIRE_BYTES );
 
-            if ( bytes <= 0 )
+#if ROCKETNET_DEV
+            const int sealed_bytes = ( bytes > 0 && rocketnet_dev_disconnect_sealed_write_fails > 0 ) ? 0 : bytes;
+#else
+            const int sealed_bytes = bytes;
+#endif
+            if ( sealed_bytes <= 0 )
             {
+                // the same entry would fail again on the next stop step:
+                // abandon it, as an unreachable destination does, and keep
+                // draining so the stop can finish
                 rocketnet_server_abort_send_frame( server_transport, &frame );
-                break;
+                burst->sealed = ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS;
+#if ROCKETNET_DEV
+                if ( rocketnet_dev_disconnect_sealed_write_fails > 0 )
+                    rocketnet_dev_disconnect_sealed_write_fails--;
+#endif
             }
-
-            rocketnet_server_commit_send_frame( server_transport, &frame, bytes );
-            committed++;
-            server_transport->disconnect_seals++;
-            burst->sealed++;
+            else
+            {
+                rocketnet_server_commit_send_frame( server_transport, &frame, sealed_bytes );
+                committed++;
+                server_transport->disconnect_seals++;
+                burst->sealed++;
+            }
         }
 
         server_transport->disconnect_burst_cursor++;
