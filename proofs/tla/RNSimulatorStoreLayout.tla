@@ -53,8 +53,34 @@
 (*   KeepBoundLow    remove raises the bound when the removed packet was   *)
 (*                   at it                                                 *)
 (*   BumpGeneration  insert reuses a slot without bumping its generation   *)
+(*                                                                         *)
+(* rocketnet_network_simulator_receive_any (any destination) keeps its own *)
+(* state: min_delivery_time, a lower bound on every used slot's delivery   *)
+(* time (anyMin), and receive_any_hint with receive_any_hint_time          *)
+(* (anyHint, anyHintTime): every used slot below the hint is not due at   *)
+(* the hint's time.  It returns nothing at once when the bound is past     *)
+(* now; else it scans from the hint when the hint's time is now (from 0   *)
+(* otherwise), takes the first used slot due, and moves the hint past it; *)
+(* a scan that finds none sets the hint to Cap and, only when it began at *)
+(* slot 0, the bound to the minimum it saw.  rocketnet_simulator_insert    *)
+(* lowers the bound to the new delivery time and lowers the hint to the    *)
+(* slot when it is below the hint and due at the hint's time.  anyMismatch *)
+(* records a receive_any that differs from the reference rule, the lowest  *)
+(* used slot due now.  Two more rules, definitions overridden by the       *)
+(* reversed witnesses (FALSE is the bug):                                  *)
+(*   AnyHintLower    insert lowers receive_any_hint (else ...BrokenAnyHint *)
+(*                   fails AnySelectMatchesReference)                      *)
+(*   AnyBoundFull    the bound is set only from a scan from slot 0 (else   *)
+(*                   ...BrokenAnyBoundPartial fails AnyBoundBelowAll)      *)
+(* (sdk/rocketnet_network_simulator.cpp receive_any and                    *)
+(* rocketnet_simulator_insert.)                                            *)
 (***************************************************************************)
 EXTENDS Integers, FiniteSets
+
+AnyHintLower == TRUE
+AnyBoundFull == TRUE
+AnyHintLowerOff == FALSE
+AnyBoundFullOff == FALSE
 
 CONSTANTS
     Cap,            \* slots
@@ -107,10 +133,15 @@ VARIABLES
     mismatch,       \* ghost: the fast selection differed from the reference scan
     badInsert,      \* ghost: an insert took a slot that is not the lowest free one
     badDrop,        \* ghost: an insert dropped its packet with a slot free
-    staleHit        \* ghost: a stale handle retired a live packet
+    staleHit,       \* ghost: a stale handle retired a live packet
+    anyMin,         \* min_delivery_time
+    anyHint,        \* receive_any_hint
+    anyHintTime,    \* receive_any_hint_time
+    anyMismatch     \* ghost: receive_any differed from the reference rule
 
+anyVars == <<anyMin, anyHint, anyHintTime, anyMismatch>>
 vars == <<used, dt, to, gen, sis, occ, sum, minDT, hint, now, oldGen, oldValid,
-          mismatch, badInsert, badDrop, staleHit>>
+          mismatch, badInsert, badDrop, staleHit, anyMin, anyHint, anyHintTime, anyMismatch>>
 
 Init ==
     /\ used = [s \in Slots |-> FALSE]
@@ -129,6 +160,10 @@ Init ==
     /\ badInsert = FALSE
     /\ badDrop = FALSE
     /\ staleHit = FALSE
+    /\ anyMin = INF
+    /\ anyHint = 0
+    /\ anyHintTime = 0
+    /\ anyMismatch = FALSE
 
 ----------------------------------------------------------------------------
 (* rocketnet_simulator_select_reference: the lowest used slot due now and  *)
@@ -219,11 +254,13 @@ Send(d, t) ==
                /\ minDT' = IF t < minDT[sh] THEN [minDT EXCEPT ![sh] = t] ELSE minDT
                /\ hint' = i + 1
                /\ badInsert' = (badInsert \/ i # Min(FreeSlots))
+               /\ anyMin' = IF t < anyMin THEN t ELSE anyMin
+               /\ anyHint' = IF AnyHintLower /\ i < anyHint /\ t <= anyHintTime THEN i ELSE anyHint
                /\ UNCHANGED <<badDrop>>
        ELSE /\ hint' = Cap
             /\ badDrop' = (badDrop \/ FreeSlots # {})
-            /\ UNCHANGED <<used, dt, to, gen, sis, occ, sum, minDT, badInsert>>
-    /\ UNCHANGED <<now, oldGen, oldValid, mismatch, staleHit>>
+            /\ UNCHANGED <<used, dt, to, gen, sis, occ, sum, minDT, badInsert, anyMin, anyHint>>
+    /\ UNCHANGED <<now, oldGen, oldValid, mismatch, staleHit, anyHintTime, anyMismatch>>
 
 \* rocketnet_network_simulator_receive: rocketnet_simulator_select_fast (the
 \* audit compares it with rocketnet_simulator_select_reference), then
@@ -240,15 +277,36 @@ Receive(d) ==
           THEN RetireSteps(f)
           \* the code asserts the retire; a refusal here leaves the store as it is
           ELSE UNCHANGED <<used, sis, occ, sum, minDT, hint, oldGen, oldValid>>
-       /\ UNCHANGED <<dt, to, gen, now, badInsert, badDrop, staleHit>>
+       /\ UNCHANGED <<dt, to, gen, now, badInsert, badDrop, staleHit, anyVars>>
 
-\* rocketnet_network_simulator_receive_any: the lowest used slot due now,
-\* any destination, retired through its handle
+\* rocketnet_network_simulator_receive_any: the bound test, the scan from
+\* the hint (or from 0 at a new time), the first used slot due retired
+\* through its handle; the reference is the lowest used slot due now
 ReceiveAny ==
-    LET due == { s \in Slots : used[s] /\ dt[s] <= now }
-    IN /\ due # {}
-       /\ LET i == Min(due) IN RetireOK(i, gen[i]) /\ RetireSteps(i)
-       /\ UNCHANGED <<dt, to, gen, now, mismatch, badInsert, badDrop, staleHit>>
+    LET ref == { s \in Slots : used[s] /\ dt[s] <= now }
+        start == IF anyHintTime = now THEN anyHint ELSE 0
+        scan == { s \in start..(Cap - 1) : used[s] }
+        due == { s \in scan : dt[s] <= now }
+        seen == { dt[s] : s \in scan }
+    IN IF anyMin > now
+       THEN /\ anyMismatch' = (anyMismatch \/ ref # {})
+            /\ UNCHANGED <<used, dt, to, gen, sis, occ, sum, minDT, hint, now, oldGen, oldValid,
+                           mismatch, badInsert, badDrop, staleHit, anyMin, anyHint, anyHintTime>>
+       ELSE IF due = {}
+       THEN /\ anyMismatch' = (anyMismatch \/ ref # {})
+            /\ anyHint' = Cap
+            /\ anyHintTime' = now
+            /\ anyMin' = IF start = 0 \/ ~AnyBoundFull
+                         THEN (IF seen = {} THEN INF ELSE Min(seen))
+                         ELSE anyMin
+            /\ UNCHANGED <<used, dt, to, gen, sis, occ, sum, minDT, hint, now, oldGen, oldValid,
+                           mismatch, badInsert, badDrop, staleHit>>
+       ELSE LET i == Min(due) IN
+            /\ anyMismatch' = (anyMismatch \/ ref = {} \/ i # Min(ref))
+            /\ anyHint' = i + 1
+            /\ anyHintTime' = now
+            /\ RetireOK(i, gen[i]) /\ RetireSteps(i)
+            /\ UNCHANGED <<dt, to, gen, now, mismatch, badInsert, badDrop, staleHit, anyMin>>
 
 \* a caller presents the handle last retired from slot s
 \* (rocketnet_network_simulator_test_remove_handle): index_remove refuses it
@@ -259,14 +317,14 @@ StaleRetire(s) ==
        THEN /\ RetireSteps(s)
             /\ staleHit' = TRUE
        ELSE UNCHANGED <<used, sis, occ, sum, minDT, hint, oldGen, oldValid, staleHit>>
-    /\ UNCHANGED <<dt, to, gen, now, mismatch, badInsert, badDrop>>
+    /\ UNCHANGED <<dt, to, gen, now, mismatch, badInsert, badDrop, anyVars>>
 
 \* the caller's clock
 Tick ==
     /\ now < T
     /\ now' = now + 1
     /\ UNCHANGED <<used, dt, to, gen, sis, occ, sum, minDT, hint, oldGen, oldValid,
-                   mismatch, badInsert, badDrop, staleHit>>
+                   mismatch, badInsert, badDrop, staleHit, anyVars>>
 
 Next ==
     \/ \E d \in Dests, t \in Times : Send(d, t)
@@ -285,7 +343,7 @@ View ==
        [s \in Slots |-> IF used[s] THEN dt[s] ELSE 0],
        [s \in Slots |-> IF used[s] THEN to[s] ELSE 0],
        gen, sis, occ, sum, minDT, hint, now, oldGen, oldValid,
-       mismatch, badInsert, badDrop, staleHit >>
+       mismatch, badInsert, badDrop, staleHit, anyMin, anyHint, anyHintTime, anyMismatch >>
 
 ----------------------------------------------------------------------------
 
@@ -301,7 +359,10 @@ TypeOK ==
     /\ hint \in 0..Cap
     /\ now \in Times
     /\ oldGen \in [Slots -> Gens] /\ oldValid \in [Slots -> BOOLEAN]
-    /\ {mismatch, badInsert, badDrop, staleHit} \subseteq BOOLEAN
+    /\ {mismatch, badInsert, badDrop, staleHit, anyMismatch} \subseteq BOOLEAN
+    /\ anyMin \in Times \cup {INF}
+    /\ anyHint \in 0..Cap
+    /\ anyHintTime \in Times
 
 \* receive chooses the slot the selection rule names (the audit's comparison)
 SelectMatchesReference == ~mismatch
@@ -330,5 +391,15 @@ SummaryExact ==
 
 \* the shard bound is at or below every delivery time in the shard
 BoundBelowShard == \A s \in Slots : used[s] => minDT[Shard(to[s])] <= dt[s]
+
+\* receive_any takes the slot the reference rule names: the lowest used slot
+\* due now, and nothing only when none is due
+AnySelectMatchesReference == ~anyMismatch
+
+\* min_delivery_time is at or below every used slot's delivery time
+AnyBoundBelowAll == \A s \in Slots : used[s] => anyMin <= dt[s]
+
+\* every used slot below receive_any_hint is not due at the hint's time
+AnyHintBelowNotDue == \A s \in Slots : (s < anyHint /\ used[s]) => dt[s] > anyHintTime
 
 =============================================================================
