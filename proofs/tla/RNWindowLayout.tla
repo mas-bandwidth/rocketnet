@@ -7,8 +7,9 @@
 (* WireMod), reconstructs it against R by the signed half range, refuses   *)
 (* a number behind R as a duplicate and one at or past R + W as a          *)
 (* violation, finds its slot index = number & (W - 1), tests the received  *)
-(* bit at word index >> 6, bit index & 63, refuses a set bit as a          *)
-(* duplicate and a live descriptor of another number as SLOT_COLLISION,    *)
+(* bit at word index >> WordBits, bit index & (WordBits - 1) (>> 6 and     *)
+(* & 63 in the code), refuses a set bit as a duplicate and a live          *)
+(* descriptor of another number as SLOT_COLLISION,                         *)
 (* claims the descriptor (live = 1) and sets the bit, then advances R      *)
 (* past every set floor bit, clearing each one as R passes it.  A          *)
 (* violation is sticky: every later accept returns VIOLATION at once.      *)
@@ -34,23 +35,26 @@
 (* Reversed witnesses, each a rule of the code turned off:                 *)
 (*   ClearFloor = FALSE     the advance does not clear the floor bit;      *)
 (*   HalfRange = FALSE      the reconstruction has no half-range sign;     *)
-(*   CollisionTest = FALSE  the live-descriptor test is dropped.           *)
+(*   CollisionTest = FALSE  the live-descriptor test is dropped;           *)
+(*   WordShift = FALSE      the word index shifts by twice the word width. *)
 (***************************************************************************)
 EXTENDS Integers, FiniteSets
 
 CONSTANTS
     W,              \* the window, a power of two
+    WordBits,       \* bits per bitmap word: 64 in the code
     WireMod,        \* the wire number's modulus (2^24 in the code), a multiple of W, >= 2W
     MaxR,           \* the state constraint bounds R
     ClearFloor,     \* BOOLEAN: the advance clears each floor bit it passes
     HalfRange,      \* BOOLEAN: the reconstruction is signed by half range
-    CollisionTest   \* BOOLEAN: a live descriptor of another number refuses the record
+    CollisionTest,  \* BOOLEAN: a live descriptor of another number refuses the record
+    WordShift       \* BOOLEAN: the word index shifts by the word width
 
-ASSUME W >= 1 /\ WireMod % W = 0 /\ WireMod >= 2 * W
+ASSUME W >= 1 /\ WordBits >= 1 /\ WireMod % W = 0 /\ WireMod >= 2 * W
 
 NONE == -1
 Slots == 0..W-1
-Words == 0..((W - 1) \div 64)
+Words == 0..((W - 1) \div WordBits)
 Half == WireMod \div 2
 
 VARIABLES
@@ -68,8 +72,8 @@ VARIABLES
 
 vars == <<R, words, desc, violation, above, twice, lost, misread, overwrote, pastWindow>>
 
-WordOf(i) == i \div 64
-BitOf(i)  == i % 64
+WordOf(i) == i \div (IF WordShift THEN WordBits ELSE 2 * WordBits)
+BitOf(i)  == i % WordBits
 BitSet(ws, i) == BitOf(i) \in ws[WordOf(i)]
 SetBit(ws, i)   == [ws EXCEPT ![WordOf(i)] = @ \cup {BitOf(i)}]
 ClearBit(ws, i) == [ws EXCEPT ![WordOf(i)] = @ \ {BitOf(i)}]
@@ -95,7 +99,7 @@ Received == (0..R-1) \cup above
 
 TypeOK ==
     /\ R \in Nat
-    /\ words \in [Words -> SUBSET (0..63)]
+    /\ words \in [Words -> SUBSET (0..WordBits-1)]
     /\ desc \in [Slots -> [live : BOOLEAN, number : Nat]]
     /\ violation \in BOOLEAN
     /\ above \subseteq Nat
