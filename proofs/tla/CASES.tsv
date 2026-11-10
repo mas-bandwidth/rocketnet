@@ -498,6 +498,8 @@ MCRNIocpRefQueueBrokenCapacityNotPow2.cfg	MCRNIocpRefQueue.tla	invariant	NoOverw
 MCRNIocpRefQueueBrokenInitOffByOne.cfg	MCRNIocpRefQueue.tla	invariant	NoPhantom	check	rniocprefqueue	required	-
 MCRNIocpRefQueueBrokenPositionWrap.cfg	MCRNIocpRefQueue.tla	invariant	NoOverwrite	check	rniocprefqueue	required	-
 MCRNIocpRefQueueBrokenDropRefused.cfg	MCRNIocpRefQueue.tla	invariant	RefusedNeverLost	check	rniocprefqueue	required	-
+MCRNIocpRefQueueOneConsumer.cfg	MCRNIocpRefQueue.tla	pass	-	check	rniocprefqueue	required	-
+MCRNIocpRefQueueRefusedTwoConsumers.cfg	MCRNIocpRefQueue.tla	invariant	NeverRefused	check	rniocprefqueue	required	-
 MCRNIocpSendLease.cfg	MCRNIocpSendLease.tla	pass	-	ignore-terminal	rniocpsendlease	required	-
 MCRNIocpSendLeaseBrokenGenWrap.cfg	MCRNIocpSendLease.tla	invariant	StaleNeverNamesLease	ignore-terminal	rniocpsendlease	required	-
 MCRNIocpRunRing.cfg	MCRNIocpRunRing.tla	pass	-	ignore-terminal	rniocprunring	required	-
@@ -509,6 +511,7 @@ MCRNIocpRetryStopLive.cfg	MCRNIocpRetryStop.tla	pass	-	check	rniocpretrystop	req
 MCRNIocpRetryStopBrokenStopOffByOne.cfg	MCRNIocpRetryStop.tla	invariant	PassBounded	check	rniocpretrystop	required	-
 MCRNIocpRetryStopBrokenClaimBeforeStop.cfg	MCRNIocpRetryStop.tla	invariant	RetryOwned	check	rniocpretrystop	required	-
 MCRNIocpRetryStopBrokenStopWrap.cfg	MCRNIocpRetryStop.tla	invariant	PassBounded	check	rniocpretrystop	required	-
+MCRNIocpRetryStopBrokenRefuseRetires.cfg	MCRNIocpRetryStop.tla	invariant	RetiredOnlyByStop	check	rniocpretrystop	required	-
 MCRNPortableTx.cfg	MCRNPortableTx.tla	pass	-	check	rnportabletx	required	-
 MCRNPortableTxFourBanks.cfg	MCRNPortableTx.tla	pass	-	check	rnportabletx	required	-
 MCRNPortableTxBrokenFullOffByOne.cfg	MCRNPortableTx.tla	invariant	ExactSend	check	rnportabletx	required	-

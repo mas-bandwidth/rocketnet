@@ -1892,5 +1892,23 @@ static void test_iocp_release_send_yields_while_pop_stays_stalled()
 
 REGISTER_UNIT_TEST( test_iocp_release_send_yields_while_pop_stays_stalled );
 
+bool rocketnet_server_iocp_test_retry_receive_keeps_operation( bool * boundary_accepted_out, int * state_out, uint32_t * order_out );
+
+// The receive retry queue holds every receive operation at once (its
+// boundary), and a push a stalled pop refuses is retried: the operation
+// stays RETRY (5), queued behind the others, never RETIRED (6).
+static void test_iocp_retry_receive_push_survives_stalled_pop()
+{
+    bool boundary_accepted = false;
+    int state = -1;
+    uint32_t order[4] = {};
+    rocketnet_unit_check( rocketnet_server_iocp_test_retry_receive_keeps_operation( &boundary_accepted, &state, order ) );
+    rocketnet_unit_check( boundary_accepted );
+    rocketnet_unit_check( state == 5 );
+    rocketnet_unit_check( order[0] == 2 && order[1] == 3 && order[2] == 1 && order[3] == 0 );
+}
+
+REGISTER_UNIT_TEST( test_iocp_retry_receive_push_survives_stalled_pop );
+
 #include "test_unit_driver_results_checked.cpp"
 #include "test_unit_server_stop_spread.cpp"
