@@ -12,6 +12,7 @@
 #include "rocketnet_driver.h"
 #include "rocketnet_address.h"
 #include "rocketnet_internal.h"
+#include "rocketnet_test_seams.h"
 
 #include <limits.h>
 #include <stdio.h>
@@ -544,7 +545,40 @@ static void test_server_kick_at_steady_cap_counts_dropped_burst()
     delete f;
 }
 REGISTER_UNIT_TEST( test_server_kick_at_steady_cap_counts_dropped_burst );
+// One armed sealed-write failure during the stop. The burst is abandoned,
+// as an unreachable destination's is, and the drain continues: the other
+// clients' bursts leave and the transport stops. Left at the head, that
+// one failure used to make rocketnet_server_transport_stopped stay false.
+static void test_server_stop_abandons_a_burst_when_the_sealed_write_fails()
+{
+    stop_spread_fixture_t * f = new stop_spread_fixture_t();
+    f->capacity = 64;
+    const int clients = 3;
+
+    rocketnet_server_transport_io_operations_t operations;
+    rocketnet_server_transport_t * server = stop_spread_server( f, &operations, clients, true );
+
+    rocketnet_dev_fail_disconnect_sealed_writes( 1 );
+    stop_spread_stop_server( server, clients );
+
+    for ( int poll = 0; poll < 8 && !rocketnet_server_transport_stopped( server ); poll++ )
+    {
+    }
+
+    rocketnet_unit_check( rocketnet_server_transport_stopped( server ) );
+    rocketnet_unit_check( f->flushed[0] == 0 );
+    rocketnet_unit_check( f->flushed[1] == ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
+    rocketnet_unit_check( f->flushed[2] == ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
+    rocketnet_unit_check( f->refused_for_room == 0 );
+    rocketnet_unit_check( f->stops == 1 );
+
+    rocketnet_dev_fail_disconnect_sealed_writes( 0 );
+    rn_test_server_transport_stop_and_destroy( server );
+    delete f;
+}
+
 REGISTER_UNIT_TEST( test_server_stop_spreads_disconnect_bursts_across_updates );
+REGISTER_UNIT_TEST( test_server_stop_abandons_a_burst_when_the_sealed_write_fails );
 REGISTER_UNIT_TEST( test_server_stop_waits_for_flushed_sends );
 REGISTER_UNIT_TEST( test_server_refused_starts_counted_by_cause );
 REGISTER_UNIT_TEST( test_server_stop_polls_are_the_stop_steps );
