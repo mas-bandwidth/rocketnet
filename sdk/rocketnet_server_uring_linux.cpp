@@ -1082,16 +1082,17 @@ static void rocketnet_server_uring_reap_cqe( struct rocketnet_server_uring_t * u
                 // (rocketnet_server_gso.h), with no accepted segmented send
                 // between the refusals. a later success does not turn it back on.
 
+                const char * reason = strerror( -cqe->res );
                 uring->segment_consecutive_refusals++;
                 if ( uring->segment_consecutive_refusals >= ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD )
                 {
                     uring->features &= ~ROCKETNET_SERVER_URING_FEATURE_SEGMENT;
                     uring->counters[ROCKETNET_SERVER_URING_COUNTER_GSO_FALLBACKS]++;
-                    rocketnet_warn( "io_uring transport: live segmented send refused (%s). %d consecutive refusals, degrading to one SENDMSG per packet", strerror( -cqe->res ), uring->segment_consecutive_refusals );
+                    rocketnet_warn( "io_uring transport: live segmented send refused (%s). %d consecutive refusals, degrading to one SENDMSG per packet", reason, uring->segment_consecutive_refusals );
                 }
                 else
                 {
-                    rocketnet_warn( "io_uring transport: live segmented send refused (%s). counted, segmentation stays on", strerror( -cqe->res ) );
+                    rocketnet_warn( "io_uring transport: live segmented send refused (%s). counted, segmentation stays on", reason );
                 }
             }
 

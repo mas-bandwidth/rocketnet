@@ -1773,17 +1773,17 @@ static int rocketnet_server_gso_flush( struct rocketnet_server_gso_t * gso, rock
                 // turns off only after the consecutive-refusal threshold, and
                 // then the bank resends from this message with nothing dropped.
 
-                const int error = errno;
+                const char * reason = strerror( errno );
                 gso->segment_consecutive_refusals++;
 
                 if ( gso->segment_consecutive_refusals >= ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD )
                 {
-                    rocketnet_warn( "gso transport: live GSO send refused (%s). %d consecutive refusals, degrading to plain sendmmsg", strerror( error ), gso->segment_consecutive_refusals );
+                    rocketnet_warn( "gso transport: live GSO send refused (%s). %d consecutive refusals, degrading to plain sendmmsg", reason, gso->segment_consecutive_refusals );
                     *disable_gso = true;
                     return message_first_slot[sent];
                 }
 
-                rocketnet_warn( "gso transport: live GSO send refused (%s). resending that run plain", strerror( error ) );
+                rocketnet_warn( "gso transport: live GSO send refused (%s). resending that run plain", reason );
                 const int resume = rocketnet_server_gso_resend_plain( gso, fd, &gso->send_headers[sent], message_first_slot[sent], message_num_packets[sent], full );
                 if ( *full )
                     return resume;

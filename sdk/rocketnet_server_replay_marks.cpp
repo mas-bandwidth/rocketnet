@@ -105,7 +105,8 @@ uint32_t rocketnet_server_replay_marks_comparisons_for_test( const struct rocket
 
 static uint32_t * rocketnet_server_replay_marks_address_table( struct rocketnet_server_replay_marks_t * marks )
 {
-    return (uint32_t *) ( marks->slots + marks->max_clients );
+    void * table = marks->slots + marks->max_clients;
+    return static_cast<uint32_t *>( table );
 }
 
 static uint32_t rocketnet_server_replay_marks_address_size( const struct rocketnet_server_replay_marks_t * marks )
@@ -123,7 +124,8 @@ static uint32_t rocketnet_server_replay_marks_address_home( const struct rocketn
     hash ^= (uint8_t) ( address->port >> 8 );
     hash *= 16777619u;
 
-    const uint8_t * bytes = (const uint8_t *) &address->data;
+    const void * view = &address->data;
+    const uint8_t * bytes = static_cast<const uint8_t *>( view );
     const uint32_t count = address->type == ROCKETNET_ADDRESS_IPV4 ? 4 : address->type == ROCKETNET_ADDRESS_IPV6 ? 16
                                                                                                                  : 0;
     for ( uint32_t i = 0; i < count; i++ )

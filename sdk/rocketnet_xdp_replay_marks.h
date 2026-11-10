@@ -151,7 +151,8 @@ static inline void rocketnet_xdp_replay_marks_reset( struct rocketnet_xdp_replay
 
 static inline uint32_t rocketnet_xdp_replay_key_hash( const struct rocketnet_server_xdp_replay_key_t * key )
 {
-    const uint8_t * bytes = (const uint8_t *) key;
+    const void * view = key;
+    const uint8_t * bytes = static_cast<const uint8_t *>( view );
     uint32_t hash = 2166136261u;
     for ( uint32_t i = 0; i < sizeof( *key ); i++ )
     {
@@ -167,6 +168,9 @@ static inline uint32_t rocketnet_xdp_replay_key_hash( const struct rocketnet_ser
 
 static inline uint32_t rocketnet_xdp_replay_marks_forget_lookup( struct rocketnet_xdp_replay_marks_t * marks, const struct rocketnet_server_xdp_replay_key_t * key )
 {
+    if ( marks->index_size == 0 )
+        return UINT32_MAX;
+
     uint32_t i = rocketnet_xdp_replay_key_hash( key ) % marks->index_size;
     for ( ;; )
     {
@@ -185,6 +189,9 @@ static inline uint32_t rocketnet_xdp_replay_marks_forget_lookup( struct rocketne
 
 static inline void rocketnet_xdp_replay_marks_forget_insert( struct rocketnet_xdp_replay_marks_t * marks, uint32_t position )
 {
+    if ( marks->index_size == 0 )
+        return;
+
     uint32_t i = rocketnet_xdp_replay_key_hash( &marks->forgets[position] ) % marks->index_size;
     while ( marks->forget_index[i] != 0 )
     {
@@ -428,7 +435,7 @@ static inline bool rocketnet_xdp_replay_marks_forget( struct rocketnet_xdp_repla
     struct rocketnet_server_xdp_replay_key_t key;
     rocketnet_xdp_replay_key_from_address( address, &key );
 
-    const bool pending = marks->index_size > 0 && rocketnet_xdp_replay_marks_forget_lookup( marks, &key ) != UINT32_MAX;
+    const bool pending = rocketnet_xdp_replay_marks_forget_lookup( marks, &key ) != UINT32_MAX;
 
     if ( !pending )
     {
