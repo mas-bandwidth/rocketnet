@@ -1513,8 +1513,10 @@ static bool rocketnet_client_transport_open_connected( const rocketnet_client_tr
     return true;
 }
 
+// token_timestamp is the Unix time the token's expire check reads; 0 computes
+// it from the epoch and the create time
 static rocketnet_client_transport_t * rocketnet_client_transport_create_internal( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, int * status,
-                                                                                  const rocketnet_client_transport_io_operations_t * step_driven_operations, void * step_driven_transport_context, size_t config_bytes, uint64_t test_timestamp,
+                                                                                  const rocketnet_client_transport_io_operations_t * step_driven_operations, void * step_driven_transport_context, size_t config_bytes, uint64_t token_timestamp,
                                                                                   const uint64_t * resolved_memory_budget = NULL );
 
 rocketnet_client_transport_t * rocketnet_client_transport_create_ex( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, int * status )
@@ -1533,10 +1535,10 @@ rocketnet_client_transport_t * rocketnet_client_transport_create_current_ex( voi
 }
 
 rocketnet_client_transport_t * rocketnet_client_transport_create_resolved( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time,
-                                                                           uint64_t memory_budget_bytes, int * status )
+                                                                           uint64_t memory_budget_bytes, uint64_t token_timestamp, int * status )
 {
     rocketnet_assert( config );
-    return rocketnet_client_transport_create_internal( context, connect_token, config, time, status, NULL, NULL, sizeof( struct rocketnet_client_transport_config_t ), 0, &memory_budget_bytes );
+    return rocketnet_client_transport_create_internal( context, connect_token, config, time, status, NULL, NULL, sizeof( struct rocketnet_client_transport_config_t ), token_timestamp, &memory_budget_bytes );
 }
 
 #if ROCKETNET_DEV
@@ -1864,7 +1866,7 @@ static bool rocketnet_client_transport_resolve( const struct rocketnet_client_tr
 }
 
 static rocketnet_client_transport_t * rocketnet_client_transport_create_internal( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, int * status,
-                                                                                  const rocketnet_client_transport_io_operations_t * step_driven_operations, void * step_driven_transport_context, size_t config_bytes, uint64_t test_timestamp,
+                                                                                  const rocketnet_client_transport_io_operations_t * step_driven_operations, void * step_driven_transport_context, size_t config_bytes, uint64_t token_timestamp,
                                                                                   const uint64_t * resolved_memory_budget )
 {
 #if !ROCKETNET_DEV
@@ -1948,9 +1950,9 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
     client_transport->time = time;
     client_transport->last_state = client_transport->protocol.state;
 
-    const uint64_t token_timestamp = test_timestamp ? test_timestamp : rocketnet_platform_token_epoch( config->token_epoch_unix_seconds, time ) + (uint64_t) time;
+    const uint64_t connect_timestamp = token_timestamp ? token_timestamp : rocketnet_platform_token_epoch( config->token_epoch_unix_seconds, time ) + (uint64_t) time;
 
-    if ( !rocketnet_client_protocol_connect( &client_transport->protocol, connect_token, time, token_timestamp ) )
+    if ( !rocketnet_client_protocol_connect( &client_transport->protocol, connect_token, time, connect_timestamp ) )
     {
         const int connect_failure = client_transport->protocol.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECT_TOKEN_EXPIRED ? ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED : ROCKETNET_STATUS_INVALID_CONNECT_TOKEN;
 
