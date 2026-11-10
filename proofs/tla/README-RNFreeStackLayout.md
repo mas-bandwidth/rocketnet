@@ -17,7 +17,8 @@ generations 1 and 2.
 |---|---|
 | `TakeMap` | `rocketnet_encryption_map_add` (`sdk/rocketnet_encryption_map.cpp`): refused when full (`num_free == 0` or the next generation 0), pops `free_indices[--num_free]`, tags the generation, which steps from its maximum to the exhausted 0 |
 | `TakeSlots(g)` | `rocketnet_client_slots_assign` (`sdk/rocketnet_client_slots.cpp`): peeks the top, refuses a slot whose generation is already `g`, then pops |
-| `TakeClaim` | `rocketnet_used_token_history_claim_record` (`sdk/rocketnet_token_tables.cpp`): the top selected, popped while it is still the top |
+| `PeekClaim` | `rocketnet_used_token_history_claim_record` (`sdk/rocketnet_token_tables.cpp`): `rn_token_claim_select_slot` peeks the top and remembers it |
+| `PopClaim` | the same record pops that slot only while it is still the top; a release can land between the peek and the pop, and a changed top is not popped |
 | `Release(i)` | `rocketnet_encryption_map_remove_generation`, `rocketnet_client_slots_release`, `rn_token_free_push`: only a live slot is pushed |
 
 ## Invariants

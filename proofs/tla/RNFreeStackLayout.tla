@@ -15,11 +15,14 @@
 (*                slots.cpp): peeks free[count - 1], refuses a slot whose  *)
 (*                generation is already the owner's g before any state     *)
 (*                changes, then pops.                                      *)
-(*   TakeClaim    rocketnet_used_token_history_claim_record                *)
+(*   PeekClaim    rocketnet_used_token_history_claim_record                *)
 (*                (sdk/rocketnet_token_tables.cpp): rn_token_claim_select_ *)
-(*                slot peeks free[free_count - 1]; the record pops it only *)
-(*                while it is still the top.  The bindings' rn_token_free_ *)
-(*                pop is TakeMap's pop without the generation.             *)
+(*                slot peeks free[free_count - 1] and remembers it.        *)
+(*   PopClaim     the record pops that slot only while it is still the    *)
+(*                top.  A release can land between the peek and the pop;   *)
+(*                when the top has changed the slot is not popped.  The    *)
+(*                bindings' rn_token_free_pop is TakeMap's pop without     *)
+(*                the generation.                                          *)
 (*   Release(i)   rocketnet_encryption_map_remove_generation, rocketnet_   *)
 (*                client_slots_release and the token tables' release with  *)
 (*                rn_token_free_push: only a live slot, matched by its     *)
@@ -55,9 +58,12 @@ VARIABLES
     live,       \* slot -> live (address type, connected, ticket)
     gen,        \* slot -> its generation (the map's tag, the slot's owner)
     nextGen,    \* map->next_generation; 0 is exhausted
-    issued      \* ghost: every map generation handed out
+    issued,     \* ghost: every map generation handed out
+    pending     \* the slot PeekClaim selected, or NoPeek between claims
 
-vars == <<free, count, live, gen, nextGen, issued>>
+vars == <<free, count, live, gen, nextGen, issued, pending>>
+
+NoPeek == -1
 
 \* create: free[capacity - 1 - i] = i
 Init ==
@@ -67,6 +73,7 @@ Init ==
     /\ gen = [i \in Idx |-> 0]
     /\ nextGen = 1
     /\ issued = {}
+    /\ pending = NoPeek
 
 TakeMap ==
     /\ count > 0 /\ nextGen # 0
@@ -76,7 +83,7 @@ TakeMap ==
        /\ gen' = [gen EXCEPT ![i] = nextGen]
        /\ nextGen' = IF nextGen = MaxGen THEN (IF Broken = "wrapone" THEN 1 ELSE 0) ELSE nextGen + 1
        /\ issued' = issued \cup {nextGen}
-       /\ UNCHANGED free
+       /\ UNCHANGED <<free, pending>>
 
 TakeSlots(g) ==
     /\ count > 0
@@ -84,30 +91,45 @@ TakeSlots(g) ==
        IF gen[i] = g
          THEN \* refused: nothing changes, unless the pop came first
               /\ count' = IF Broken = "decfirst" THEN count - 1 ELSE count
-              /\ UNCHANGED <<free, live, gen, nextGen, issued>>
+              /\ UNCHANGED <<free, live, gen, nextGen, issued, pending>>
          ELSE /\ count' = count - 1
               /\ live' = [live EXCEPT ![i] = TRUE]
               /\ gen' = [gen EXCEPT ![i] = g]
-              /\ UNCHANGED <<free, nextGen, issued>>
+              /\ UNCHANGED <<free, nextGen, issued, pending>>
 
-TakeClaim ==
+\* rn_token_claim_select_slot peeks the top and returns. The record's pop
+\* is a later step, so Release (and the other takes) can run between them.
+PeekClaim ==
+    /\ pending = NoPeek
     /\ count > 0
-    /\ LET slot == free[count - 1] IN
-       /\ count' = IF count > 0 /\ free[count - 1] = slot THEN count - 1 ELSE count
-       /\ live' = [live EXCEPT ![slot] = TRUE]
-       /\ UNCHANGED <<free, gen, nextGen, issued>>
+    /\ pending' = free[count - 1]
+    /\ UNCHANGED <<free, count, live, gen, nextGen, issued>>
+
+\* Pop only while the peeked slot is still the top. The other branch is the
+\* code's "no longer the top" arm: --free_count is skipped. The slot stays
+\* on the stack (a release pushed a new top, or another take already popped
+\* this one) and is not marked live here.
+PopClaim ==
+    /\ pending \in Idx
+    /\ IF count > 0 /\ free[count - 1] = pending
+       THEN /\ count' = count - 1
+            /\ live' = [live EXCEPT ![pending] = TRUE]
+       ELSE /\ UNCHANGED <<count, live>>
+    /\ pending' = NoPeek
+    /\ UNCHANGED <<free, gen, nextGen, issued>>
 
 Release(i) ==
     /\ live[i] \/ (Broken = "noguard" /\ count < Cap)
     /\ live' = [live EXCEPT ![i] = FALSE]
     /\ free' = [free EXCEPT ![count] = i]
     /\ count' = count + 1
-    /\ UNCHANGED <<gen, nextGen, issued>>
+    /\ UNCHANGED <<gen, nextGen, issued, pending>>
 
 Next ==
     \/ TakeMap
     \/ \E g \in Owners : TakeSlots(g)
-    \/ TakeClaim
+    \/ PeekClaim
+    \/ PopClaim
     \/ \E i \in Idx : Release(i)
 
 Spec == Init /\ [][Next]_vars
@@ -117,6 +139,7 @@ TypeOK ==
     /\ count \in 0..Cap
     /\ live \in [Idx -> BOOLEAN]
     /\ nextGen \in 0..MaxGen
+    /\ pending \in Idx \cup {NoPeek}
 
 \* the stack below count holds every slot that is not live, each once
 StackIsFree ==
