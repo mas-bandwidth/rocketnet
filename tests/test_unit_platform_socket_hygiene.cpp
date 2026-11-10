@@ -451,8 +451,10 @@ static void test_platform_socket_hygiene_socket_is_close_on_exec()
 
 static void test_platform_socket_hygiene_creates_open_through_the_socket_call()
 {
-    // the socket create and the IPv6 probe open through the same call, so
-    // the close-on-exec open covers them; the refused call fails each cleanly
+    // the socket create opens through the same call, so the close-on-exec
+    // open covers it; the refused call fails the create cleanly. (The IPv6
+    // probe opens through it too, but the unit suite answers the probe with
+    // a fake lookup, so it is not reached here.)
 
     rocketnet_platform_set_socket_call_for_testing( platform_socket_hygiene_refused_socket );
 
@@ -460,10 +462,6 @@ static void test_platform_socket_hygiene_creates_open_through_the_socket_call()
     struct rocketnet_address_t address;
     rocketnet_unit_check( rocketnet_address_parse( &address, "127.0.0.1:0" ) );
     rocketnet_unit_check( rocketnet_platform_socket_create( NULL, &address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f, 1024, 1024 ) == NULL );
-    rocketnet_unit_check( platform_socket_hygiene_socket_calls == 1 );
-
-    platform_socket_hygiene_socket_calls = 0;
-    rocketnet_unit_check( !rocketnet_platform_client_ipv6_available() );
     rocketnet_unit_check( platform_socket_hygiene_socket_calls == 1 );
 
     rocketnet_platform_set_socket_call_for_testing( NULL );
