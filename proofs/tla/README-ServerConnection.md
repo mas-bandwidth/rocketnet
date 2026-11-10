@@ -101,7 +101,8 @@ Liveness, under the fairness described below:
 | Property | The rule |
 |---|---|
 | `Connects` | with a slot free and fair loss, every attempt reaches connected |
-| `ServerNotStranded` | a half-open mapping is established or dies; an unacknowledged slot is acknowledged or released |
+| `ServerNotStranded` | a half-open mapping is established or dies (`HalfOpenMappingDies`); an unacknowledged slot is acknowledged or released |
+| `HalfOpenMappingDies` | a half-open mapping is established or dies, even while its client keeps refreshing its idle clock: the handshake deadline is never refreshed |
 | `TimedOutSlotFreed` | a timed-out slot is freed: a slot whose client is gone (no client holds its keys in a session state) is eventually released |
 | `AbandonedMappingDies` | a half-open mapping whose client is gone dies at its deadline |
 
@@ -191,7 +192,8 @@ holds each one's measured result. Every case is on a FIFO link without duplicati
 | `MCServerConnectionBrokenOnceKeepAlive.cfg` | `Live` with `RepeatKeepAlive = FALSE` | `ServerNotStranded` | fails (temporal) |
 | `MCServerConnectionTimers.cfg` | one client that may disconnect or vanish, `Timeout = 2`, `HandshakeDeadline = 2` | `SafetyInvariants` (the timer invariants live), `TimedOutSlotFreed`, `AbandonedMappingDies`, `ServerNotStranded` | pass |
 | `MCServerConnectionBrokenNoTimeout.cfg` | `Timers` with `Timeout = 0` | `TimedOutSlotFreed` | fails (temporal) |
-| `MCServerConnectionBrokenNoDeadline.cfg` | `Timers` with `Timeout = 0`, `HandshakeDeadline = 0` | `AbandonedMappingDies` | fails (temporal) |
+| `MCServerConnectionDeadline.cfg` | two clients sharing one token (one client id), one slot, `Timeout = 2`, `HandshakeDeadline = 2` | `SafetyInvariants`, `HalfOpenMappingDies` | pass |
+| `MCServerConnectionBrokenNoDeadline.cfg` | `Deadline` with only `HandshakeDeadline = 0` | `HalfOpenMappingDies` | fails (temporal) |
 | `MCServerConnectionBrokenSweepKeepsMapping.cfg` | `Timers` with `SweepRemovesMapping = FALSE` | `SlotMappingBijection` | fails (invariant) |
 | `MCServerConnectionMove.cfg` | one client, any token, two attempts, one address change | `SafetyInvariants`, `PacketsReachOwnSlotOnly`, `SessionNeverAnswered` | pass |
 | `MCServerConnectionBrokenAddressNotIdentity.cfg` | `Move` with `AddressIsIdentity = FALSE` | `PacketsReachOwnSlotOnly` | fails (action) |
@@ -237,9 +239,18 @@ committed case. One model error was found and fixed on the way.
 3. **The timers** (`MCServerConnectionTimers.cfg` passes `TimedOutSlotFreed` and
    `AbandonedMappingDies`). `MCServerConnectionBrokenNoTimeout.cfg` turns the idle timeout
    off: the client connects and vanishes, the server keeps sending keep-alives into the
-   void, and the slot is never freed. `MCServerConnectionBrokenNoDeadline.cfg` turns off the
-   handshake deadline and the half-open idle timeout: the client disconnects with the
-   mapping half open, and the mapping lives forever. Replayed: the code's
+   void, and the slot is never freed. `MCServerConnectionBrokenNoDeadline.cfg` turns off
+   only the handshake deadline, the idle timeout staying on (with the timeout on, a client
+   that vanishes mid-handshake is removed by the half-open idle timeout alone, so
+   `AbandonedMappingDies` cannot isolate the deadline). Two clients share one token; the
+   first connects, and the second, half open, keeps re-sending its response. Each one is
+   ignored (the client id is connected) but refreshes the half-open idle clock, and
+   `HalfOpenMappingDies` fails with the lasso `ClientSend`, `ServerRecvResponse`, `Tick`:
+   the mapping lives forever. `MCServerConnectionDeadline.cfg`, the same with the deadline
+   on, passes. Replayed: `rocketnet_server_process_sealed_packet` sets
+   `last_receive_time` for a half-open mapping's response before
+   `rocketnet_server_process_connection_response` ignores it for a connected client id,
+   and only the fixed `handshake_deadline` removes the mapping. The code's
    `rocketnet_server_protocol_update` removes a half-open mapping at the earlier of its
    handshake deadline and `ROCKETNET_HALF_OPEN_IDLE_TIMEOUT_SECONDS`, and an established one
    at `timeout_seconds` with its slot (`rocketnet_server_connection_reset`); each witness
