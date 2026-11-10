@@ -317,11 +317,14 @@ ReceiveUsefulAck == ReceiveAckAny /\ acked' # acked
 SendAckThrough == SendAck /\ revWire' # revWire
 UpdateLoop == FixBatch \/ EndUpdate
 \* A connection ended for misuse is gone: nothing more is sent, delivered or
-\* acked on it (rn_message_object_kick).
-Next == ~misused /\
+\* acked on it (rn_message_object_kick). That end is the run's one terminal
+\* state, a stutter: every other state has a step (the update loop alone
+\* always does).
+Done == misused /\ UNCHANGED vars
+Next == Done \/ (~misused /\
      ( RefuseSend \/ DropUnreliableForBudget \/ Enqueue \/ NumberRecord \/ ReserveBeforeRoom \/ WriteAny \/ OpenHead
      \/ DeliverAny \/ FixBatch \/ Take \/ SendAck \/ EndUpdate \/ ReceiveAckAny
-     \/ GhostSequencedWrite \/ GhostSequencedRead \/ FwdEnvironment \/ RevEnvironment )
+     \/ GhostSequencedWrite \/ GhostSequencedRead \/ FwdEnvironment \/ RevEnvironment ))
 
 \* Same compact fairness as RNWindow: fair RTO/room/budget, packet opening,
 \* and useful transport ACKs before sent-map eviction. No application ACK.

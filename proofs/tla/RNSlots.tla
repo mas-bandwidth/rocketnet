@@ -301,7 +301,10 @@ RejectUnreleasedUpdate ==
 
 Environment == Data!Environment /\ UNCHANGED st
 Exhausted == {s \in Slots : st.state[s] = "Exhausted"}
-Next == IF st.error # "NONE" THEN FALSE
+\* A rejected update is the run's end (the fail-fast abstraction of a
+\* terminal API error), a stutter; every other state has a step.
+Done == st.error # "NONE" /\ UNCHANGED vars
+Next == IF st.error # "NONE" THEN Done
         ELSE IF Exhausted # {}
         THEN \E s \in Exhausted : Kick(s) \/ CarryOn(s)
         ELSE \/ \E s \in Slots : Connect(s) \/ (\E why \in TransportEnds : Disconnect(s, why)) \/ ResetFree(s)

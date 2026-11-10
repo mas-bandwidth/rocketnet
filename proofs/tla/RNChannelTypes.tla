@@ -347,7 +347,18 @@ OpenAny == \E pid \in Pids : OpenPacket(pid)
 AckAny == \E pid \in Pids : ReceiveAck({pid})
 LoseAny == \E pid \in Pids : LosePacket(pid)
 ArriveAny == \E m \in Messages, f \in Fragments : ArriveFragment(m,f)
-Next == MemoryExhausted \/ Enqueue \/ WriteAny \/ OpenAny \/ AckAny \/ LoseAny \/ ArriveAny
+\* The run's end, a stutter: the connection ended (memory exhausted), or the
+\* plan is spent: every message queued and sent, every packet opened or
+\* lost, every reliable record acked, every block's fragments arrived.
+Done ==
+    /\ \/ ~connected
+       \/ /\ Len(queue)=MaxMessages
+          /\ written \subseteq opened \cup lost
+          /\ \A m \in DOMAIN queue :
+               IF Block(m) THEN \A f \in Fragments : <<m,f>> \in receiver.arrived
+               ELSE Packet(m,1) \in written /\ (Reliable(Code(m)) => m \in acked)
+    /\ UNCHANGED vars
+Next == MemoryExhausted \/ Enqueue \/ WriteAny \/ OpenAny \/ AckAny \/ LoseAny \/ ArriveAny \/ Done
 SafetySpec == Init /\ [][Next]_vars
 \* All enabled actions consume a finite id/cursor. Weak fairness of this
 \* disjunction therefore drains every reliable send/arrival/packet ACK.
