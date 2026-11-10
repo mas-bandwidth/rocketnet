@@ -11,7 +11,11 @@
 (* the bank it holds, so a partially consumed retained tail is never       *)
 (* recycled under it and every packet staged before the claim is in that   *)
 (* claim's view.  Main's swap is a try-acquire: on contention it returns   *)
-(* and retries next update.                                                *)
+(* and retries next update.  A worker pass that stages nothing while a     *)
+(* datagram waits (its bank is full until main's swap, or the receive      *)
+(* failed) is a stall, and the worker sleeps 1ms before its next pass      *)
+(* instead of spinning on poll and the mutex (RxStall, RxSleep,            *)
+(* RxBacksOff).                                                            *)
 (*                                                                         *)
 (* Transmit (three banks): game threads stage into the producer bank;      *)
 (* send_packets try-publishes it into a bounded FIFO and takes a free      *)
@@ -41,7 +45,10 @@
 (* kept).  The reversed witnesses MCRNGsoHandoffBrokenPublishWhileHeld.cfg, *)
 (* MCRNGsoHandoffBrokenFullDrops.cfg and                                   *)
 (* MCRNGsoHandoffBrokenCarryBehind.cfg restore one each and violate        *)
-(* NoPublishWhileHeld, SentOrHeld and TxInOrder.                           *)
+(* NoPublishWhileHeld, SentOrHeld and TxInOrder.  The operator switches    *)
+(* ClaimStale and NoBackoff (below) are reversed by                        *)
+(* MCRNGsoHandoffBrokenClaimStale.cfg and MCRNGsoHandoffBrokenNoBackoff.cfg *)
+(* and violate StagedBeforeClaimInView and RxBacksOff.                     *)
 (***************************************************************************)
 EXTENDS Naturals, Sequences
 
@@ -61,11 +68,20 @@ RxBuffers == 0 .. 1
 Buffers == 0 .. 2
 Threads == { "main", "worker" }
 
-(* Rule switch (operator, no cfg declaration): ClaimStale makes the RX    *)
-(* claim drop the most recently staged packet instead of taking the whole *)
-(* bank, so a packet staged before the claim is not in its view. FALSE in *)
-(* the passing run; there is no declared ClaimStale reversal.             *)
+(* Rule switches (operators, overridden in a cfg with <-): ClaimStale      *)
+(* makes the RX claim drop the most recently staged packet instead of     *)
+(* taking the whole bank, so a packet staged before the claim is not in   *)
+(* its view; NoBackoff sends the RX worker straight back to poll after a  *)
+(* stalled pass instead of sleeping 1ms. FALSE in the passing run; the    *)
+(* reversed witnesses MCRNGsoHandoffBrokenClaimStale.cfg and              *)
+(* MCRNGsoHandoffBrokenNoBackoff.cfg set each TRUE and violate            *)
+(* StagedBeforeClaimInView and RxBacksOff.                                *)
 ClaimStale == FALSE
+NoBackoff == FALSE
+
+(* the 1ms sleeps one behaviour may take: enough for a stall, a sleep and *)
+(* a second stall                                                          *)
+MaxSleeps == 2
 
 VARIABLES
     lock,        \* "none", "main" or "worker": who holds the TX mutex
@@ -77,6 +93,8 @@ VARIABLES
     rxCursor,    \* packets of rxMain main has consumed (the retained tail follows)
     rxView,      \* rxMain's content as main claimed it
     rxStagedClaim, \* packets staged in the worker's buffer at the last claim
+    rxBackoff,   \* the RX worker's stall passes, its 1ms sleeps, and whether
+                 \* the last pass stalled (a sleep is owed before the next)
     arrived,     \* datagrams arrived: the next is arrived + 1
     rxConsumed,  \* packets main consumed, in order
     txProducer,  \* the TX bank main's fill threads stage into, or NONE
@@ -94,7 +112,7 @@ VARIABLES
     freed        \* destroy freed the transport storage
 
 vars == << lock, pc, pcRx, rxWorker, rxMain, rxContent, rxCursor, rxView,
-           rxStagedClaim, arrived, rxConsumed, txProducer, txFree, txReady,
+           rxStagedClaim, rxBackoff, arrived, rxConsumed, txProducer, txFree, txReady,
            txHeld, txFinal, txContent, staged, txSent, quit, rxExited,
            txExited, joined, freed >>
 
@@ -105,6 +123,7 @@ Init ==
     /\ rxWorker = 0 /\ rxMain = 1
     /\ rxContent = [ b \in RxBuffers |-> << >> ]
     /\ rxCursor = 0 /\ rxView = << >> /\ rxStagedClaim = 0
+    /\ rxBackoff = [ stalls |-> 0, sleeps |-> 0, stalled |-> FALSE ]
     /\ arrived = 0 /\ rxConsumed = << >>
     /\ txProducer = 0 /\ txFree = << 1, 2 >> /\ txReady = << >> /\ txHeld = NONE
     /\ txFinal = FALSE
@@ -115,17 +134,45 @@ Init ==
 
 (* the RX worker stages one arrived datagram into its own buffer, under the *)
 (* mutex (folded into this atomic step); a full buffer has no fill step      *)
-(* enabled, which is the queue's bounded backpressure                        *)
+(* enabled, which is the queue's bounded backpressure; after a stalled pass *)
+(* the worker sleeps (RxSleep) before its next pass                         *)
 RxFill ==
     /\ pcRx = "run" /\ ~rxExited /\ ~quit
+    /\ ~rxBackoff.stalled
     /\ Len(rxContent[rxWorker]) < RxCap
     /\ arrived < MaxRx
     /\ rxContent' = [ rxContent EXCEPT ![rxWorker] = Append( @, arrived + 1 ) ]
     /\ arrived' = arrived + 1
     /\ UNCHANGED << lock, pc, pcRx, rxWorker, rxMain, rxCursor, rxView,
-                    rxStagedClaim, rxConsumed, txProducer, txFree, txReady,
+                    rxStagedClaim, rxBackoff, rxConsumed, txProducer, txFree, txReady,
                     txHeld, txFinal, txContent, staged, txSent, quit,
                     rxExited, txExited, joined, freed >>
+
+(* a stalled pass: a datagram waits, so poll returns at once, but the pass  *)
+(* stages nothing -- the worker's bank is full (it stays full until main's  *)
+(* swap) or the receive failed. The worker then owes a 1ms sleep before its *)
+(* next pass; NoBackoff instead goes straight back to poll and the mutex,   *)
+(* the spin                                                                 *)
+RxStall ==
+    /\ pcRx = "run" /\ ~rxExited /\ ~quit
+    /\ ~rxBackoff.stalled
+    /\ arrived < MaxRx
+    /\ rxBackoff' = [ rxBackoff EXCEPT !.stalls = @ + 1, !.stalled = ~NoBackoff ]
+    /\ UNCHANGED << lock, pc, pcRx, rxWorker, rxMain, rxContent, rxCursor,
+                    rxView, rxStagedClaim, arrived, rxConsumed, txProducer,
+                    txFree, txReady, txHeld, txFinal, txContent, staged,
+                    txSent, quit, rxExited, txExited, joined, freed >>
+
+(* the 1ms sleep after a stalled pass, outside the mutex; a bounded number *)
+(* of sleeps keeps the instance finite                                     *)
+RxSleep ==
+    /\ pcRx = "run" /\ rxBackoff.stalled
+    /\ rxBackoff.sleeps < MaxSleeps
+    /\ rxBackoff' = [ rxBackoff EXCEPT !.sleeps = @ + 1, !.stalled = FALSE ]
+    /\ UNCHANGED << lock, pc, pcRx, rxWorker, rxMain, rxContent, rxCursor,
+                    rxView, rxStagedClaim, arrived, rxConsumed, txProducer,
+                    txFree, txReady, txHeld, txFinal, txContent, staged,
+                    txSent, quit, rxExited, txExited, joined, freed >>
 
 (* defect: the worker writes into the buffer main holds, as if a publish   *)
 (* landed on main's view instead of the worker's own bank                 *)
@@ -137,7 +184,7 @@ WriteHeld ==
     /\ rxContent' = [ rxContent EXCEPT ![rxMain] = Append( @, arrived + 1 ) ]
     /\ arrived' = arrived + 1
     /\ UNCHANGED << lock, pc, pcRx, rxWorker, rxMain, rxCursor, rxView,
-                    rxStagedClaim, rxConsumed, txProducer, txFree, txReady,
+                    rxStagedClaim, rxBackoff, rxConsumed, txProducer, txFree, txReady,
                     txHeld, txFinal, txContent, staged, txSent, quit,
                     rxExited, txExited, joined, freed >>
 
@@ -154,9 +201,9 @@ RxClaim ==
            /\ rxView' = taken /\ rxCursor' = 0
            /\ rxStagedClaim' = Len(rxContent[rxWorker])
            /\ rxContent' = [ rxContent EXCEPT ![rxWorker] = taken, ![rxMain] = << >> ]
-    /\ UNCHANGED << lock, pc, pcRx, arrived, rxConsumed, txProducer, txFree,
-                    txReady, txHeld, txFinal, txContent, staged, txSent,
-                    quit, rxExited, txExited, joined, freed >>
+    /\ UNCHANGED << lock, pc, pcRx, rxBackoff, arrived, rxConsumed, txProducer,
+                    txFree, txReady, txHeld, txFinal, txContent, staged,
+                    txSent, quit, rxExited, txExited, joined, freed >>
 
 (* main consumes one packet of the buffer it holds; between the first and *)
 (* the last packet the unconsumed tail stays retained in main's buffer    *)
@@ -166,7 +213,7 @@ RxConsume ==
     /\ rxConsumed' = Append( rxConsumed, rxContent[rxMain][rxCursor + 1] )
     /\ rxCursor' = rxCursor + 1
     /\ UNCHANGED << lock, pc, pcRx, rxWorker, rxMain, rxContent, rxView,
-                    rxStagedClaim, arrived, txProducer, txFree, txReady,
+                    rxStagedClaim, rxBackoff, arrived, txProducer, txFree, txReady,
                     txHeld, txFinal, txContent, staged, txSent, quit,
                     rxExited, txExited, joined, freed >>
 
@@ -179,7 +226,7 @@ TxStage ==
     /\ txContent' = [ txContent EXCEPT ![txProducer] = Append( @, staged + 1 ) ]
     /\ staged' = staged + 1
     /\ UNCHANGED << lock, pc, pcRx, rxWorker, rxMain, rxContent, rxCursor,
-                    rxView, rxStagedClaim, arrived, rxConsumed, txProducer,
+                    rxView, rxStagedClaim, rxBackoff, arrived, rxConsumed, txProducer,
                     txFree, txReady, txHeld, txFinal, txSent, quit, rxExited,
                     txExited, joined, freed >>
 
@@ -194,7 +241,7 @@ TxMainLock ==
             /\ lock' = lock
             /\ pc' = [ pc EXCEPT !["main"] = "waitlock" ]
     /\ UNCHANGED << pcRx, rxWorker, rxMain, rxContent, rxCursor, rxView,
-                    rxStagedClaim, arrived, rxConsumed, txProducer, txFree,
+                    rxStagedClaim, rxBackoff, arrived, rxConsumed, txProducer, txFree,
                     txReady, txHeld, txFinal, txContent, staged, txSent,
                     quit, rxExited, txExited, joined, freed >>
 
@@ -203,7 +250,7 @@ TxMainWait ==
     /\ lock' = "main"
     /\ pc' = [ pc EXCEPT !["main"] = "locked" ]
     /\ UNCHANGED << pcRx, rxWorker, rxMain, rxContent, rxCursor, rxView,
-                    rxStagedClaim, arrived, rxConsumed, txProducer, txFree,
+                    rxStagedClaim, rxBackoff, arrived, rxConsumed, txProducer, txFree,
                     txReady, txHeld, txFinal, txContent, staged, txSent,
                     quit, rxExited, txExited, joined, freed >>
 
@@ -219,7 +266,7 @@ TxPublish ==
        ELSE UNCHANGED << txReady, txProducer, txFree >>
     /\ pc' = [ pc EXCEPT !["main"] = "unlock" ]
     /\ UNCHANGED << pcRx, lock, rxWorker, rxMain, rxContent, rxCursor,
-                    rxView, rxStagedClaim, arrived, rxConsumed, txHeld,
+                    rxView, rxStagedClaim, rxBackoff, arrived, rxConsumed, txHeld,
                     txFinal, txContent, staged, txSent, quit, rxExited,
                     txExited, joined, freed >>
 
@@ -230,7 +277,7 @@ TxWorkerLock ==
     /\ lock' = "worker"
     /\ pc' = [ pc EXCEPT !["worker"] = "locked" ]
     /\ UNCHANGED << pcRx, rxWorker, rxMain, rxContent, rxCursor, rxView,
-                    rxStagedClaim, arrived, rxConsumed, txProducer, txFree,
+                    rxStagedClaim, rxBackoff, arrived, rxConsumed, txProducer, txFree,
                     txReady, txHeld, txFinal, txContent, staged, txSent,
                     quit, rxExited, txExited, joined, freed >>
 
@@ -248,7 +295,7 @@ TxTake ==
           /\ UNCHANGED txReady
     /\ pc' = [ pc EXCEPT !["worker"] = "unlock" ]
     /\ UNCHANGED << pcRx, lock, rxWorker, rxMain, rxContent, rxCursor,
-                    rxView, rxStagedClaim, arrived, rxConsumed, txFree,
+                    rxView, rxStagedClaim, rxBackoff, arrived, rxConsumed, txFree,
                     txContent, staged, txSent, quit, rxExited, txExited,
                     joined, freed >>
 
@@ -260,7 +307,7 @@ TxTakeNone ==
     /\ ( ~quit \/ txProducer = NONE )
     /\ pc' = [ pc EXCEPT !["worker"] = "unlock" ]
     /\ UNCHANGED << pcRx, lock, rxWorker, rxMain, rxContent, rxCursor,
-                    rxView, rxStagedClaim, arrived, rxConsumed, txProducer,
+                    rxView, rxStagedClaim, rxBackoff, arrived, rxConsumed, txProducer,
                     txFree, txReady, txHeld, txFinal, txContent, staged,
                     txSent, quit, rxExited, txExited, joined, freed >>
 
@@ -271,7 +318,7 @@ Unlock(t) ==
     /\ lock' = "none"
     /\ pc' = [ pc EXCEPT ![t] = IF t = "worker" /\ txHeld # NONE THEN "sending" ELSE "run" ]
     /\ UNCHANGED << pcRx, rxWorker, rxMain, rxContent, rxCursor, rxView,
-                    rxStagedClaim, arrived, rxConsumed, txProducer, txFree,
+                    rxStagedClaim, rxBackoff, arrived, rxConsumed, txProducer, txFree,
                     txReady, txHeld, txFinal, txContent, staged, txSent,
                     quit, rxExited, txExited, joined, freed >>
 
@@ -291,7 +338,7 @@ TxSend ==
        ELSE /\ pc' = [ pc EXCEPT !["worker"] = "run" ]
             /\ UNCHANGED << txExited, txHeld, txFinal >>
     /\ UNCHANGED << pcRx, lock, rxWorker, rxMain, rxContent, rxCursor,
-                    rxView, rxStagedClaim, arrived, rxConsumed, txProducer,
+                    rxView, rxStagedClaim, rxBackoff, arrived, rxConsumed, txProducer,
                     txFree, txReady, staged, quit, rxExited, joined, freed >>
 
 (* a full socket: it takes the first k packets of the held bank, k less   *)
@@ -317,7 +364,7 @@ TxSendFull ==
             /\ pc' = [ pc EXCEPT !["worker"] = "run" ]
        ELSE UNCHANGED << txReady, txHeld, pc >>
     /\ UNCHANGED << pcRx, lock, rxWorker, rxMain, rxContent, rxCursor,
-                    rxView, rxStagedClaim, arrived, rxConsumed, txProducer,
+                    rxView, rxStagedClaim, rxBackoff, arrived, rxConsumed, txProducer,
                     txFree, txFinal, staged, quit, rxExited, txExited,
                     joined, freed >>
 
@@ -329,7 +376,7 @@ TxReturn ==
     /\ txFree' = Append( txFree, txHeld ) /\ txHeld' = NONE
     /\ pc' = [ pc EXCEPT !["worker"] = "unlock" ]
     /\ UNCHANGED << pcRx, lock, rxWorker, rxMain, rxContent, rxCursor,
-                    rxView, rxStagedClaim, arrived, rxConsumed, txProducer,
+                    rxView, rxStagedClaim, rxBackoff, arrived, rxConsumed, txProducer,
                     txReady, txFinal, txContent, staged, txSent, quit,
                     rxExited, txExited, joined, freed >>
 
@@ -340,7 +387,7 @@ MainStop ==
     /\ quit' = TRUE
     /\ pc' = [ pc EXCEPT !["main"] = "done" ]
     /\ UNCHANGED << pcRx, lock, rxWorker, rxMain, rxContent, rxCursor,
-                    rxView, rxStagedClaim, arrived, rxConsumed, txProducer,
+                    rxView, rxStagedClaim, rxBackoff, arrived, rxConsumed, txProducer,
                     txFree, txReady, txHeld, txFinal, txContent, staged,
                     txSent, rxExited, txExited, joined, freed >>
 
@@ -351,7 +398,7 @@ RxWorkerExit ==
     /\ rxExited' = TRUE
     /\ pcRx' = "done"
     /\ UNCHANGED << lock, pc, rxWorker, rxMain, rxContent, rxCursor,
-                    rxView, rxStagedClaim, arrived, rxConsumed, txProducer,
+                    rxView, rxStagedClaim, rxBackoff, arrived, rxConsumed, txProducer,
                     txFree, txReady, txHeld, txFinal, txContent, staged,
                     txSent, quit, txExited, joined, freed >>
 
@@ -364,7 +411,7 @@ TxWorkerExitIdle ==
     /\ txExited' = TRUE
     /\ pc' = [ pc EXCEPT !["worker"] = "done" ]
     /\ UNCHANGED << pcRx, lock, rxWorker, rxMain, rxContent, rxCursor,
-                    rxView, rxStagedClaim, arrived, rxConsumed, txProducer,
+                    rxView, rxStagedClaim, rxBackoff, arrived, rxConsumed, txProducer,
                     txFree, txReady, txHeld, txFinal, txContent, staged,
                     txSent, quit, rxExited, joined, freed >>
 
@@ -375,7 +422,7 @@ Join ==
     /\ quit /\ rxExited /\ txExited /\ ~joined /\ ~freed
     /\ joined' = TRUE
     /\ UNCHANGED << lock, pc, pcRx, rxWorker, rxMain, rxContent, rxCursor,
-                    rxView, rxStagedClaim, arrived, rxConsumed, txProducer,
+                    rxView, rxStagedClaim, rxBackoff, arrived, rxConsumed, txProducer,
                     txFree, txReady, txHeld, txFinal, txContent, staged,
                     txSent, quit, rxExited, txExited, freed >>
 
@@ -383,7 +430,7 @@ Free ==
     /\ joined /\ ~freed
     /\ freed' = TRUE
     /\ UNCHANGED << lock, pc, pcRx, rxWorker, rxMain, rxContent, rxCursor,
-                    rxView, rxStagedClaim, arrived, rxConsumed, txProducer,
+                    rxView, rxStagedClaim, rxBackoff, arrived, rxConsumed, txProducer,
                     txFree, txReady, txHeld, txFinal, txContent, staged,
                     txSent, quit, rxExited, txExited, joined >>
 
@@ -394,7 +441,7 @@ Terminated ==
 
 Next ==
     \/ Terminated
-    \/ RxFill \/ WriteHeld \/ RxClaim \/ RxConsume
+    \/ RxFill \/ RxStall \/ RxSleep \/ WriteHeld \/ RxClaim \/ RxConsume
     \/ TxStage \/ TxMainLock \/ TxMainWait \/ TxPublish
     \/ TxWorkerLock \/ TxTake \/ TxTakeNone \/ TxSend \/ TxSendFull \/ TxReturn
     \/ \E t \in Threads : Unlock(t)
@@ -407,7 +454,7 @@ Spec == Init /\ [][Next]_vars
 (* worker's whole send stays enabled until it is taken (WF TxSend)        *)
 SpecFair ==
     /\ Spec
-    /\ WF_vars( RxFill ) /\ WF_vars( RxClaim )
+    /\ WF_vars( RxFill ) /\ WF_vars( RxSleep ) /\ WF_vars( RxClaim )
     /\ WF_vars( RxConsume ) /\ WF_vars( TxSend ) /\ WF_vars( TxReturn )
     /\ SF_vars( TxWorkerLock ) /\ WF_vars( TxTake ) /\ WF_vars( TxTakeNone )
     /\ \A t \in Threads : WF_vars( Unlock(t) )
@@ -422,6 +469,8 @@ TypeOK ==
     /\ pcRx \in { "run", "done" }
     /\ rxWorker \in RxBuffers /\ rxMain \in RxBuffers
     /\ rxStagedClaim \in 0 .. MaxRx
+    /\ rxBackoff.stalls \in Nat /\ rxBackoff.sleeps \in 0 .. MaxSleeps
+    /\ rxBackoff.stalled \in BOOLEAN
     /\ arrived \in 0 .. MaxRx /\ staged \in 0 .. MaxTx
     /\ txProducer \in Buffers \cup { NONE } /\ txHeld \in Buffers \cup { NONE }
 
@@ -447,6 +496,11 @@ NoPublishWhileHeld == rxContent[rxMain] = rxView
 (* every packet staged before a claim is in that claim's view: the view   *)
 (* holds exactly the packets the worker had staged when main claimed it   *)
 StagedBeforeClaimInView == Len(rxView) = rxStagedClaim
+
+(* the RX worker never spins: every stalled pass after the first is paid  *)
+(* for by a 1ms sleep, so a full bank or a failing receive cannot drive   *)
+(* poll and the receive mutex back to back                                *)
+RxBacksOff == rxBackoff.stalls <= rxBackoff.sleeps + 1
 
 (* a free bank on either side holds nothing: it was consumed or sent and  *)
 (* cleared before it was released                                         *)

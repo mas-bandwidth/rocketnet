@@ -310,7 +310,9 @@ worker appends to its current bank under the receive mutex and never
 publishes, and `receive_packets` swaps the worker's filled bank for main's
 exhausted one under the same mutex, so every packet staged before a claim is
 in that claim's view. `RNGsoHandoff.RxClaim` and `RNXdpReceiveRing.Drain`
-model this rule.
+model this rule. A GSO worker pass that finds its bank full (it stays full
+until main's swap) or whose receive fails sleeps 1 ms before the next pass
+instead of spinning on poll and the mutex (`RNGsoHandoff.RxBacksOff`).
 
 ## Creation and shutdown
 

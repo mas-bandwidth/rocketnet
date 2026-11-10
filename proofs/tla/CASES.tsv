@@ -243,6 +243,7 @@ MCRNXdpReceiveRing.cfg	MCRNXdpReceiveRing.tla	pass	-	check	rnxdpreceivering	requ
 MCRNXdpReceiveRingBrokenNoCancel.cfg	MCRNXdpReceiveRing.tla	invariant	FrameConservation	check	rnxdpreceivering	required	-
 MCRNXdpReceiveRingBrokenFillOfTheFrames.cfg	MCRNXdpReceiveRing.tla	invariant	FillNeverEmptyWhileFramesFree	check	rnxdpreceivering	required	-
 MCRNXdpReceiveRingBrokenRefusedRefilled.cfg	MCRNXdpReceiveRing.tla	invariant	FillHoldsOnlyReceiveFrames	check	rnxdpreceivering	required	-
+MCRNXdpReceiveRingBrokenDrainStale.cfg	MCRNXdpReceiveRing.tla	invariant	StagedBeforeClaimInView	check	rnxdpreceivering	required	-
 MCRNRioDriver.cfg	MCRNRioDriver.tla	pass	-	check	rnriodriver	required	-
 MCRNRioDriverBrokenSwitchWithoutDrain.cfg	MCRNRioDriver.tla	invariant	NoReserveIntoPostedPhase	check	rnriodriver	required	-
 MCRNRioDriverBrokenFreeBeforeDrain.cfg	MCRNRioDriver.tla	invariant	FreedOnlyWhenDrained	check	rnriodriver	required	-
@@ -455,7 +456,9 @@ MCRNResendGenerationsReachStale.cfg	MCRNResendGenerations.tla	invariant	NoStaleN
 MCRNResendGenerationsBrokenWindowSlack.cfg	MCRNResendGenerations.tla	invariant	WindowOwnsSlots	ignore-terminal	rnresendgenerations	required	-
 MCRNGsoHandoff.cfg	MCRNGsoHandoff.tla	pass	-	check	rngsohandoff	required	-
 MCRNGsoHandoffBrokenCarryBehind.cfg	MCRNGsoHandoff.tla	invariant	TxInOrder	check	rngsohandoff	required	-
+MCRNGsoHandoffBrokenClaimStale.cfg	MCRNGsoHandoff.tla	invariant	StagedBeforeClaimInView	check	rngsohandoff	required	-
 MCRNGsoHandoffBrokenFullDrops.cfg	MCRNGsoHandoff.tla	invariant	SentOrHeld	check	rngsohandoff	required	-
+MCRNGsoHandoffBrokenNoBackoff.cfg	MCRNGsoHandoff.tla	invariant	RxBacksOff	check	rngsohandoff	required	-
 MCRNGsoHandoffBrokenPublishWhileHeld.cfg	MCRNGsoHandoff.tla	invariant	NoPublishWhileHeld	check	rngsohandoff	required	-
 MCRNGsoRecvFill.cfg	MCRNGsoRecvFill.tla	pass	-	check	rngsorecvfill	required	-
 MCRNGsoRecvFillBrokenFullBatch.cfg	MCRNGsoRecvFill.tla	invariant	NoOverflow	check	rngsorecvfill	required	-
