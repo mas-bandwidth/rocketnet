@@ -132,8 +132,10 @@ ASSUME /\ NumClients \in Nat \ {0} /\ NumAddrs \in Nat /\ NumAddrs >= NumClients
 (* of the family the request arrived on is one it serves                   *)
 (* (AddressMatch = "either", rocketnet_server_token_address_is_advertised, *)
 (* sdk/rocketnet_server_protocol.cpp).  It does not consult the token's    *)
-(* other-family address.  The reversed witness "ipv6only" checks only the  *)
-(* IPv6 address whenever its flag is set.  These are definitions, so every *)
+(* other-family address.  A token naming no IPv4 address, whose IPv6     *)
+(* address is IPv4-mapped, is that IPv4 address.  The reversed witness    *)
+(* "ipv6only" checks only the IPv6 address whenever its flag is set.      *)
+(* These are definitions, so every                                         *)
 (* run keeps its cfg; the family runs replace them (<- in the cfg).  The   *)
 (* defaults reach the server, as every other run assumes.                  *)
 (***************************************************************************)
@@ -175,9 +177,18 @@ CommitBeforeAnswer == FALSE
 Races(c) == BothFamilies \subseteq TokenFamilies /\ BothFamilies \subseteq ClientHost(c)
 RaceFamilies(c) == IF Races(c) THEN BothFamilies ELSE {PickFamily(c)}
 TokenAddressAdvertised(arrival, tokFams) ==
-    CASE AddressMatch = "either" -> arrival \in tokFams /\ arrival \in ServedFamilies
-      [] "ipv6" \in tokFams     -> ServedFamilies = {"ipv6"}
-      [] OTHER                  -> ServedFamilies = {"ipv4"}
+    CASE AddressMatch = "either" /\ arrival \in tokFams ->
+           arrival \in ServedFamilies
+      [] AddressMatch = "either" /\ arrival = "ipv4" /\ "ipv6" \in tokFams ->
+           \* no IPv4 flag: the token's IPv6 address is IPv4-mapped, so it is
+           \* that IPv4 address (sdk/rocketnet_server_protocol.cpp:289-298)
+           "ipv4" \in ServedFamilies
+      [] AddressMatch = "either" ->
+           FALSE
+      [] "ipv6" \in tokFams ->
+           ServedFamilies = {"ipv6"}
+      [] OTHER ->
+           ServedFamilies = {"ipv4"}
 
 Clients == 1..NumClients
 Addrs   == 1..NumAddrs
@@ -260,6 +271,11 @@ NoMap == [live |-> FALSE, est |-> FALSE, salt |-> NoSalt, nonce |-> 0,
           csalt |-> NoSalt, cnonce |-> 0, tok |-> 0, slot |-> 0,
           age |-> 0, sinceRecv |-> 0, sinceKA |-> 0, acked |-> FALSE]
 
+\* a mapping born at a request: a new entry, or the replacement of a half-open one
+OpenMapping(p, n) ==
+    [NoMap EXCEPT !.live = TRUE, !.salt = p.salt, !.nonce = n,
+                  !.csalt = p.salt, !.cnonce = n, !.tok = p.tok]
+
 Mapping == [live : BOOLEAN, est : BOOLEAN, salt : Salts \cup {NoSalt}, nonce : Nonce \cup {0},
             csalt : Salts \cup {NoSalt}, cnonce : Nonce \cup {0},
             tok : Tokens \cup {0}, slot : Slots \cup {0},
@@ -332,11 +348,16 @@ WireNonces(w) == {w[i].pkt.nonce : i \in {j \in DOMAIN w : "nonce" \in DOMAIN w[
 
 PktNonce(p) == IF "nonce" \in DOMAIN p THEN {p.nonce} ELSE {}
 
-FreshNonce == Nonce \ (WireNonces(c2sWire) \cup WireNonces(s2cWire)
-                       \cup {smap[a].nonce : a \in LiveAddrs}
-                       \cup {cKeys[c] : c \in Clients}
-                       \cup UNION {PktNonce(cDiscPkt[c]) : c \in Clients}
-                       \cup PktNonce(sDiscPkt))
+\* skip is an address whose mapping leaves in this step. Its nonce may be
+\* chosen again; a new mapping skips nothing.
+HeldNonce(skip) ==
+    WireNonces(c2sWire) \cup WireNonces(s2cWire)
+    \cup {smap[a].nonce : a \in (LiveAddrs \ skip)}
+    \cup {cKeys[c] : c \in Clients}
+    \cup UNION {PktNonce(cDiscPkt[c]) : c \in Clients}
+    \cup PktNonce(sDiscPkt)
+
+FreshNonce == Nonce \ HeldNonce({})
 
 (***************************************************************************)
 (* Sending through the links, with the first-of-kind loss in front.        *)
@@ -515,11 +536,15 @@ serverRecvUnchanged == <<clientVars, sDiscPending, sDiscPkt>>
 
 \* rocketnet_server_protocol_process_connection_request, the ladder in the
 \* standard's order as far as this model sees it: a connected address is
-\* silent; a half-open mapping resends its stored challenge whatever salt
-\* the request carries; no cookie (or a cookie issued to another
-\* address) -> a cookie; an expired token is refused before cookie/decrypt;
-\* a token bound elsewhere or a connected client id is silent; history
-\* binds only when a response opens; no slot is denied; else map+challenge
+\* silent; a half-open mapping resends its stored challenge when the request
+\* carries its salt or its token, and only the same salt refreshes the idle
+\* deadline; a half-open mapping whose salt and token both differ falls
+\* through and replaces that mapping if the ladder accepts it, reusing the
+\* map entry; no cookie (or a cookie issued to another address) -> a cookie;
+\* an expired token is refused before cookie/decrypt; a token bound
+\* elsewhere or a connected client id is silent; history binds only when a
+\* response opens; a full map is silent before any slot denial; else
+\* map+challenge
 ServerRecvRequest(p) ==
     /\ p.type = "request"
     /\ C2S!Deliver(p)
@@ -530,10 +555,14 @@ ServerRecvRequest(p) ==
            fresh == Fresh(p.tok)
        IN CASE m.live /\ m.slot # 0 ->
                  ServerSilent /\ UNCHANGED <<smap, bound, churnDenied>>
-            [] m.live ->
-                 \* STANDARD.md: a mapped address always gets its original challenge.
+            [] m.live /\ (p.salt = m.salt \/ p.tok = m.tok) ->
+                 \* salt or token: the stored challenge. The idle deadline
+                 \* moves only when the salt matches
+                 \* (sdk/rocketnet_server_protocol.cpp:410-428).
                  /\ ServerSendPacket([type |-> "challenge", to |-> p.from, salt |-> m.csalt, nonce |-> m.cnonce])
-                 /\ smap' = [smap EXCEPT ![p.from].sinceRecv = 0]
+                 /\ IF p.salt = m.salt
+                      THEN smap' = [smap EXCEPT ![p.from].sinceRecv = 0]
+                      ELSE UNCHANGED smap
                  /\ UNCHANGED <<bound, churnDenied>>
             [] p.tok \in ExpiredTokens ->
                  ServerSilent /\ UNCHANGED <<smap, bound, churnDenied>>
@@ -548,19 +577,31 @@ ServerRecvRequest(p) ==
                  /\ churnDenied' = (churnDenied \/ (fresh /\ (FreeSlots > 0)))
             [] OTHER ->
                  /\ UNCHANGED bound
-                 /\ CASE FreeSlots = 0 ->
+                 /\ CASE m.live /\ FreeSlots = 0 ->
+                           \* replace branch, no free slot: denied, mapping kept
                            /\ ServerSendPacket([type |-> "denied", to |-> p.from, salt |-> p.salt, nonce |-> 0])
-                           /\ UNCHANGED smap
+                           /\ UNCHANGED <<smap, churnDenied>>
+                      [] m.live ->
+                           \* replace branch: salt and token both differ. The
+                           \* map entry is reused, so a full table is not a
+                           \* refusal (sdk/rocketnet_server_protocol.cpp:431,
+                           \* 682 and 904-909).
+                           /\ \E n \in (Nonce \ HeldNonce({p.from})) :
+                                /\ smap' = [smap EXCEPT ![p.from] = OpenMapping(p, n)]
+                                /\ ServerSendPacket([type |-> "challenge", to |-> p.from, salt |-> p.salt, nonce |-> n])
                            /\ UNCHANGED churnDenied
                       [] NumMappings = MapCap ->
+                           \* a full table is silent, and it is before any denial
+                           \* (sdk/rocketnet_server_protocol.cpp:682-688)
                            ServerSilent /\ UNCHANGED <<smap, churnDenied>>
-                       [] OTHER ->
-                            /\ \E n \in FreshNonce :
-                                 /\ smap' = [smap EXCEPT ![p.from] = [NoMap EXCEPT !.live = TRUE, !.salt = p.salt,
-                                                                                   !.nonce = n, !.csalt = p.salt,
-                                                                                   !.cnonce = n, !.tok = p.tok]]
-                                 /\ ServerSendPacket([type |-> "challenge", to |-> p.from, salt |-> p.salt, nonce |-> n])
-                            /\ UNCHANGED churnDenied
+                      [] FreeSlots = 0 ->
+                           /\ ServerSendPacket([type |-> "denied", to |-> p.from, salt |-> p.salt, nonce |-> 0])
+                           /\ UNCHANGED <<smap, churnDenied>>
+                      [] OTHER ->
+                           /\ \E n \in FreshNonce :
+                                /\ smap' = [smap EXCEPT ![p.from] = OpenMapping(p, n)]
+                                /\ ServerSendPacket([type |-> "challenge", to |-> p.from, salt |-> p.salt, nonce |-> n])
+                           /\ UNCHANGED churnDenied
     /\ UNCHANGED <<slot, serverRecvUnchanged>>
 
 \* a response that opens under the mapping's handshake keys refreshes the

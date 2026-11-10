@@ -16,6 +16,11 @@
 (*                                            EveryDatagramConsumed        *)
 (*   MCRNRioWorkerBrokenCloseCancelsSends.cfg (DrainSendsBeforeClose)      *)
 (*                                            StopSendsFinished            *)
+(* MCRNRioWorkerInlineStop.cfg is the rule on create's failure path.       *)
+(*   MCRNRioWorkerBrokenUnboundedRetry.cfg    (BoundedStopDrain)           *)
+(*                                            StopCompletes                *)
+(*   MCRNRioWorkerBrokenOneBatchPerPass.cfg   (DrainLoop)                  *)
+(*                                            LeakOnlyAfterRefusal         *)
 (* README-RNRioWorker.md gives each trace and its check against the code.  *)
 (***************************************************************************)
 EXTENDS RNRioWorker

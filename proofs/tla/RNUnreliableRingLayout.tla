@@ -33,6 +33,10 @@
 (*                 tickets from the last lap                               *)
 (*   DropPushed    the renumber keeps entries naming the pushed           *)
 (*                 descriptor (a stale one revived by its new stamp)      *)
+(*   WalkSnapshot  the walk reads from the current head instead of the    *)
+(*                 head captured at its start: after an unlink's sync     *)
+(*                 moves the head, the walk re-reads entries past the     *)
+(*                 live range and returns one descriptor twice            *)
 (***************************************************************************)
 EXTENDS Integers, Sequences, FiniteSets
 
@@ -42,10 +46,11 @@ CONSTANTS
     TicketMod,      \* the counter runs 1..TicketMod-1 (2^32 in the code)
     Renumber,       \* rn_unreliable_push renumbers after a wrap
     FreshTickets,   \* the renumber draws a fresh ticket for each survivor
-    DropPushed      \* the renumber drops every entry naming the pushed descriptor
+    DropPushed,     \* the renumber drops every entry naming the pushed descriptor
+    WalkSnapshot    \* the walk reads from the head captured at WalkBegin
 
 ASSUME Q \in Nat \ {0} /\ N >= Q + 1 /\ TicketMod >= 3
-ASSUME \A f \in {Renumber, FreshTickets, DropPushed} : f \in BOOLEAN
+ASSUME \A f \in {Renumber, FreshTickets, DropPushed, WalkSnapshot} : f \in BOOLEAN
 
 Descs == 1..Q
 Pos == 0..(N - 1)
@@ -183,18 +188,23 @@ WalkBegin ==
     /\ wseen' = << >>
     /\ UNCHANGED << ticket, next, wrapped, arr, head, count, order >>
 
-\* rn_unreliable_walk_next: the next live entry from the step, or the end
+\* rn_unreliable_walk_next: the next live entry from the step, or the end.
+\* The code reads at walk->base, the head captured by WalkBegin; the
+\* WalkSnapshot = FALSE witness reads at the current head instead, which
+\* an unlink's sync may have moved since the walk began.
+WalkBase == IF WalkSnapshot THEN wbase ELSE head
+
 RECURSIVE NextLive(_)
 NextLive(k) ==
     IF k >= wspan THEN wspan
-    ELSE IF Current(ticket, arr[Phys(wbase, k)]) THEN k ELSE NextLive(k + 1)
+    ELSE IF Current(ticket, arr[Phys(WalkBase, k)]) THEN k ELSE NextLive(k + 1)
 
 WalkNext ==
     /\ wpc = "walk"
     /\ LET k == NextLive(wstep) IN
        IF k = wspan
        THEN /\ wpc' = "idle" /\ wstep' = wspan /\ UNCHANGED wseen
-       ELSE /\ wseen' = Append(wseen, arr[Phys(wbase, k)].slot)
+       ELSE /\ wseen' = Append(wseen, arr[Phys(WalkBase, k)].slot)
             /\ wstep' = k + 1
             /\ UNCHANGED wpc
     /\ UNCHANGED << ticket, next, wrapped, arr, head, count, order, wbase, wspan, worder >>
@@ -248,7 +258,7 @@ WalkExact ==
 (* fields are dead too: WalkBegin writes them all.  The view leaves dead   *)
 (* values out, so states that differ only in them are one state.           *)
 InLive(k) == \E i \in 0..(count - 1) : Phys(head, i) = k
-InWalk(k) == wpc = "walk" /\ \E i \in 0..(wspan - 1) : Phys(wbase, i) = k
+InWalk(k) == wpc = "walk" /\ \E i \in 0..(wspan - 1) : Phys(WalkBase, i) = k
 View ==
     << ticket, next, wrapped,
        [ k \in Pos |-> IF InLive(k) \/ InWalk(k) THEN arr[k] ELSE Empty ],

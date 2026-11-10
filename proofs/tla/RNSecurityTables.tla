@@ -68,9 +68,9 @@
 (* verify and records the claim after it; RequestRefused records and then  *)
 (* releases it (a refusal past the verify, or a same-address request whose *)
 (* live claim it then releases, the release from the middle of the order   *)
-(* list); a mapping swept by Tick at its handshake deadline releases       *)
-(* nothing, its claim expires with it; ClaimRecord reuses the expired     *)
-(* order head directly.  The table keeps the order list as a ring of slots *)
+(* list). Response releases that claim, and Tick releases the claim of     *)
+(* every mapping it sweeps off, as the code does at the response and at    *)
+(* both sweep removals. The table keeps the order list as a ring of slots *)
 (* in insertion order: a release or re-claim leaves a tombstone that the  *)
 (* head skips, so the ring's live entries, in order, are orderList.       *)
 (* ClaimsSpec checks both slots independently of unrelated protocol state. *)
@@ -364,7 +364,7 @@ AdmittedAfterAdd(tk) ==
 
 Response(a) ==
     /\ Live(a)
-    /\ UNCHANGED claimVars
+    /\ SetClaimState(ClaimRelease(ClaimState, map[a], a))
     /\ LET tok == map[a] IN
        /\ a \in Holds[tok]
        /\ IF BindAtRequest THEN UNCHANGED <<history, insertOrder, evictedLive>>
@@ -406,6 +406,14 @@ Disconnect(a) == /\ \E s \in slots : s.addr = a
                  /\ UNCHANGED <<claimVars, clock, history, admitted, insertOrder, map, mapGen, mapBorn, others,
                                 gen, hasPrev, prevUntil, verifies, deniedPulse, admits, lateAdmit, evictedLive, churnDenied>>
 
+\* rocketnet_server_release_mapping_claim, one swept address at a time.
+\* A token has one claim slot, so the order of the set does not matter.
+RECURSIVE ReleaseAddrs(_, _)
+ReleaseAddrs(C, S) ==
+    IF S = {} THEN C
+    ELSE LET a == CHOOSE x \in S : TRUE
+         IN ReleaseAddrs(ClaimRelease(C, map[a], a), S \ {a})
+
 Tick ==
     /\ \/ clock' = IF clock < MaxClock THEN clock + 1 ELSE clock
        \/ (clock < NextRotate /\ NextRotate + RotatePeriod <= MaxClock
@@ -419,9 +427,11 @@ Tick ==
                           THEN hasPrev' = TRUE /\ prevUntil' = clock' + RotatePeriod
                           ELSE hasPrev' = FALSE /\ prevUntil' = 0
          ELSE UNCHANGED <<gen, hasPrev, prevUntil>>
-    /\ map' = [a \in Addrs |-> IF Live(a) /\ clock' >= mapBorn[a] + HandshakeDeadline THEN None ELSE map[a]]
+    /\ LET swept == {a \in Addrs : Live(a) /\ clock' >= mapBorn[a] + HandshakeDeadline}
+       IN /\ map' = [a \in Addrs |-> IF a \in swept THEN None ELSE map[a]]
+          /\ SetClaimState(ReleaseAddrs(ClaimState, swept))
     /\ UNCHANGED <<history, admitted, insertOrder, mapGen, mapBorn, slots, others,
-                   deniedPulse, admits, lateAdmit, evictedLive, churnDenied, claimVars>>
+                   deniedPulse, admits, lateAdmit, evictedLive, churnDenied>>
 
 Next == /\ \/ (\E a \in Addrs, tok \in Tokens, g \in Gens : Request(a, tok, g) \/ RequestRefused(a, tok, g))
            \/ (\E a \in Addrs : Response(a) \/ Disconnect(a))
@@ -435,7 +445,8 @@ SpecFair == Spec
 \* Holding the unrelated protocol state fixed, it checks all table
 \* operations, including wrong-address and repeated release, and time
 \* advancing through the handshake deadline. The integrated Spec above
-\* still checks ClaimRecord after the request verify and release on refusal.
+\* still checks ClaimRecord after the request verify, release on refusal,
+\* release on response, and release when Tick sweeps a mapping.
 ClaimControlOtherVars == <<history, admitted, insertOrder, map, mapGen, mapBorn,
     slots, others, gen, hasPrev, prevUntil, verifies, deniedPulse, admits,
     lateAdmit, evictedLive, churnDenied, floodVars>>
@@ -523,9 +534,10 @@ FloodUpdate ==
     /\ floodVerifies' = 0
     /\ UNCHANGED <<failCount, failTable, honest, fclock, windowStart, tableVars>>
 
-\* the host clock: it moves forward, or is stepped back to any earlier
-\* time (an NTP step, a VM resume).  The timestamp is the unix wall clock
-\* whenever no game clock epoch is configured
+\* the token clock the window is measured on. It moves forward, or is
+\* stepped back to any earlier time (an NTP step, a VM resume). The
+\* timestamp is the stored epoch plus the caller time; forming it does
+\* not read the wall clock
 \* (sdk/rocketnet_server_transport.cpp, rocketnet_server_transport_update).
 FloodClockForward ==
     /\ fclock < FloodMaxClock
@@ -600,7 +612,7 @@ PreviousBoundedToOnePeriod ==
 InFlightCookieSurvivesRotation ==
     [][(CookieLife < RotatePeriod /\ gen' # gen /\ clock' - clock <= CookieLife)
         => gen \in LiveGens']_vars
-VerifyBudgetRespected == CapVerifyBudget => verifies <= VerifyBudget
+VerifyBudgetRespected == verifies <= VerifyBudget
 
 \* The request-claim table (sdk/rocketnet_token_tables.cpp).  Every slot is
 \* on exactly one of the free list or the order list, and neither list

@@ -69,8 +69,22 @@
 (* AttemptsBeforeTimeout: a record still unacked at the timeout was sent   *)
 (* at least MinAttempts times (ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS).     *)
 (* attempts saturates at MinAttempts to keep the state space small.        *)
+(*                                                                         *)
+(* A refused first send (rn_window_ack_packet_failed after finish_packet   *)
+(* refuses a granted packet): WalkRefused is an update's walk in which the *)
+(* packet carrying a record never on the wire is refused.  The record      *)
+(* keeps lastSend = NeverSent (RN_SEND_NUMBER_NEVER_SENT), so no first     *)
+(* send is recorded and no timeout clock starts, and it goes back to the   *)
+(* head of its FIFO, due at the next walk.  A record may be refused for    *)
+(* RefuseFor ticks after it is first offered (0 by default: no refusals).  *)
+(* StampRefused = TRUE is the code before the fix: the refusal records the *)
+(* first send and stamps lastSend with the due-now sentinel DueNow, so the *)
+(* clock runs from the refusal (the reversed witness                       *)
+(* MCRNResendTimingBrokenRefusedClock.cfg).  A refused resend of a record  *)
+(* already on the wire (lastSend to DueNow, its clock unchanged) is not    *)
+(* modelled: it only withholds a send this module counts.                  *)
 (***************************************************************************)
-EXTENDS Naturals
+EXTENDS Integers
 
 CONSTANTS
     RtoInitial,     \* message_resend_delay_initial, in ticks
@@ -108,13 +122,23 @@ BlockClock == FALSE
 ChunkFirstLate == Timeout - 2
 BlockClockOn == TRUE
 
+\*   RefuseFor: the ticks after a record is first offered in which its
+\*            first send may be refused; 0 (never) by default.
+\*   StampRefused: FALSE leaves a refused first send never sent (the rule);
+\*            TRUE stamps it and starts its clock (the reversed witness).
+\* (RefuseFor <- RefuseForLong, StampRefused <- StampRefusedOn)
+RefuseFor == 0
+StampRefused == FALSE
+RefuseForLong == Timeout - 2
+StampRefusedOn == TRUE
+
 \*   SeedAt:  the tick the transport first reports a round trip; past the
 \*            horizon (never) by default.
 \*   SeedRto: the resend delay the seed gives, in ticks.
 \*   SeedRule: TRUE takes the seed (the rule); FALSE ignores it (the
 \*            reversed witness).
 \* (SeedAt <- SeedAtEarly, SeedRto <- SeedRtoMeasured, SeedRule <- SeedRuleOff)
-SeedAt == ChunkFirst + Timeout + 1
+SeedAt == ChunkFirst + RefuseFor + Timeout + 1
 SeedRto == RtoInitial
 SeedRule == TRUE
 SeedAtEarly == 2
@@ -125,6 +149,12 @@ Min(a, b) == IF a < b THEN a ELSE b
 Max(a, b) == IF a > b THEN a ELSE b
 
 Records == {"s", "c"}
+
+\* RN_SEND_NUMBER_NEVER_SENT and the due-now sentinel of
+\* rn_window_ack_packet_failed, -(resend_delay_max + 1): below any tick
+\* less every delay, so a record stamped DueNow is due at every tick.
+DueNow == -(RtoMax * MaxBackoff + 1)
+NeverSent == DueNow - 1
 Other(r) == IF r = "s" THEN "c" ELSE "s"
 
 \* The chunk delay's cap: MinAttempts sends fit before the timeout.
@@ -144,24 +174,28 @@ VARIABLES
     head,       \* OneFifo: the record at the head of the one FIFO
     phase,      \* "walk": acks, then the resend walk; "tick": time moves
     sampled,    \* an ack of this layer's own has given an RTT sample
-    seeded      \* the transport's round trip was taken as the first sample
+    seeded,     \* the transport's round trip was taken as the first sample
+    firstSend,  \* [Records -> send_first_sends: the tick of the first send]
+    refused     \* [Records -> the packet carrying it was refused this update]
 
-vars == <<t, lastSend, rto, backoff, attempts, acked, head, phase, sampled, seeded>>
+vars == <<t, lastSend, rto, backoff, attempts, acked, head, phase, sampled, seeded, firstSend, refused>>
 
 \* A small record waits the resend delay alone; a chunk waits it capped.
 Cap(r) == IF r = "s" THEN RtoMax ELSE ChunkCap
 
 Delay(r) == Min(rto, Cap(r)) * backoff[r]
 
+\* FirstSend(r): the tick the record is first offered to the walk.
 FirstSend(r) == IF r = "c" THEN ChunkFirst ELSE 0
-Clock(r) == IF r = "c" /\ BlockClock THEN 0 ELSE FirstSend(r)
+OnWire(r) == lastSend[r] # NeverSent
+Clock(r) == IF r = "c" /\ BlockClock THEN 0 ELSE firstSend[r]
 Deadline(r) == Clock(r) + Timeout
-Horizon == ChunkFirst + Timeout
+Horizon == ChunkFirst + RefuseFor + Timeout
 Started(r) == t >= FirstSend(r)
 
-\* rn_window_ack_check_timeout: the oldest unacked record that has been
-\* sent has stood its timeout.
-TimedOut == \E r \in Records : ~acked[r] /\ Started(r) /\ t >= Deadline(r)
+\* rn_window_ack_check_timeout: the oldest unacked record that has a first
+\* send has stood its timeout; a record never sent has no clock.
+TimedOut == \E r \in Records : ~acked[r] /\ OnWire(r) /\ t >= Deadline(r)
 
 Due(r) == ~acked[r] /\ ~TimedOut /\ Started(r) /\ (attempts[r] = 0 \/ t >= lastSend[r] + Delay(r))
 
@@ -173,7 +207,9 @@ SeedOwed == SeedRule /\ ~sampled /\ ~seeded /\ t >= SeedAt
 
 TypeOK ==
     /\ t \in 0..Horizon
-    /\ lastSend \in [Records -> 0..Horizon]
+    /\ lastSend \in [Records -> 0..Horizon \cup {DueNow, NeverSent}]
+    /\ firstSend \in [Records -> 0..Horizon \cup {NeverSent}]
+    /\ refused \in [Records -> BOOLEAN]
     /\ rto \in RtoMin..RtoMax
     /\ backoff \in [Records -> {1, 2, 4, 8}]
     /\ \A r \in Records : backoff[r] <= MaxBackoff
@@ -186,15 +222,17 @@ TypeOK ==
 
 Init ==
     /\ t = 0
-    /\ lastSend = [r \in Records |-> FirstSend(r)]
+    /\ lastSend = [r \in Records |-> IF FirstSend(r) = 0 /\ RefuseFor = 0 THEN 0 ELSE NeverSent]
+    /\ firstSend = lastSend
     /\ rto = RtoInitial
     /\ backoff = [r \in Records |-> 1]
-    /\ attempts = [r \in Records |-> IF FirstSend(r) = 0 THEN 1 ELSE 0]
+    /\ attempts = [r \in Records |-> IF FirstSend(r) = 0 /\ RefuseFor = 0 THEN 1 ELSE 0]
     /\ acked = [r \in Records |-> IF r = "c" THEN ~Chunk ELSE FALSE]
     /\ head \in (IF Chunk THEN Records ELSE {"s"})
     /\ phase = "walk"
     /\ sampled = FALSE
     /\ seeded = FALSE
+    /\ refused = [r \in Records |-> FALSE]
 
 \* The one FIFO's walk: from the head while due, stopping at the first live
 \* record that is not.
@@ -223,7 +261,37 @@ Walk ==
     /\ lastSend' = [r \in Records |-> IF Sent(r) THEN t ELSE lastSend[r]]
     /\ attempts' = [r \in Records |-> IF Sent(r) THEN Min(attempts[r] + 1, MinAttempts) ELSE attempts[r]]
     /\ backoff' = [r \in Records |-> IF Sent(r) THEN Min(backoff[r] * 2, MaxBackoff) ELSE backoff[r]]
+    /\ firstSend' = [r \in Records |-> IF Sent(r) /\ ~OnWire(r) THEN t ELSE firstSend[r]]
     /\ head' = NextHead
+    /\ refused' = [r \in Records |-> FALSE]
+    /\ phase' = "tick"
+    /\ UNCHANGED <<t, rto, acked, sampled, seeded>>
+
+\* rn_window_ack_packet_failed: the walk of Walk, but finish_packet refuses
+\* the packet carrying the records of F, each never on the wire and inside
+\* its refusal window.  Under the rule a refused record stays NeverSent with
+\* no first send and goes back to the head of its FIFO; the other due
+\* records are written as in Walk.  StampRefused: the refusal records the
+\* first send (rn_window_ack_record_first_send) and stamps DueNow, and a
+\* record stamped so is refused again as a resend of the same sentinel.
+Refusable(r) == Sent(r) /\ attempts[r] = 0 /\ t < FirstSend(r) + RefuseFor
+
+WalkRefused(F) ==
+    /\ phase = "walk"
+    /\ Live
+    /\ ~SeedOwed
+    /\ F # {}
+    /\ \A r \in F : Refusable(r)
+    /\ lastSend' = [r \in Records |->
+            IF r \in F THEN (IF StampRefused THEN DueNow ELSE lastSend[r])
+            ELSE IF Sent(r) THEN t ELSE lastSend[r]]
+    /\ firstSend' = [r \in Records |->
+            IF r \in F THEN (IF StampRefused /\ ~OnWire(r) THEN t ELSE firstSend[r])
+            ELSE IF Sent(r) /\ ~OnWire(r) THEN t ELSE firstSend[r]]
+    /\ attempts' = [r \in Records |-> IF Sent(r) /\ r \notin F THEN Min(attempts[r] + 1, MinAttempts) ELSE attempts[r]]
+    /\ backoff' = [r \in Records |-> IF Sent(r) /\ r \notin F THEN Min(backoff[r] * 2, MaxBackoff) ELSE backoff[r]]
+    /\ head' = (IF head \in F THEN head ELSE CHOOSE r \in F : TRUE)
+    /\ refused' = [r \in Records |-> r \in F]
     /\ phase' = "tick"
     /\ UNCHANGED <<t, rto, acked, sampled, seeded>>
 
@@ -234,7 +302,7 @@ Sample(x) ==
     /\ rto' = x
     /\ backoff' = [r \in Records |-> 1]
     /\ sampled' = TRUE
-    /\ UNCHANGED <<t, lastSend, attempts, acked, head, phase, seeded>>
+    /\ UNCHANGED <<t, lastSend, attempts, acked, head, phase, seeded, firstSend, refused>>
 
 \* rn_window_ack_seed_rtt from the message object's update: the transport's
 \* round trip taken as the first sample, after the update's acks and before
@@ -246,7 +314,7 @@ Seed ==
     /\ rto' = SeedRto
     /\ backoff' = [r \in Records |-> 1]
     /\ seeded' = TRUE
-    /\ UNCHANGED <<t, lastSend, attempts, acked, head, phase, sampled>>
+    /\ UNCHANGED <<t, lastSend, attempts, acked, head, phase, sampled, firstSend, refused>>
 
 \* rn_window_ack_on_ack of a packet carrying record r.
 Ack(r) ==
@@ -255,7 +323,7 @@ Ack(r) ==
     /\ ~TimedOut
     /\ attempts[r] > 0
     /\ acked' = [acked EXCEPT ![r] = TRUE]
-    /\ UNCHANGED <<t, lastSend, rto, backoff, attempts, head, phase, sampled, seeded>>
+    /\ UNCHANGED <<t, lastSend, rto, backoff, attempts, head, phase, sampled, seeded, firstSend, refused>>
 
 \* The update ends and time moves on one tick.
 Tick ==
@@ -263,7 +331,7 @@ Tick ==
     /\ Live
     /\ t' = t + 1
     /\ phase' = "walk"
-    /\ UNCHANGED <<lastSend, rto, backoff, attempts, acked, head, sampled, seeded>>
+    /\ UNCHANGED <<lastSend, rto, backoff, attempts, acked, head, sampled, seeded, firstSend, refused>>
 
 \* Every record acked, or the timeout fired: nothing more happens.
 Done ==
@@ -272,6 +340,7 @@ Done ==
 
 Next ==
     \/ Walk
+    \/ \E F \in SUBSET Records : WalkRefused(F)
     \/ \E x \in RtoMin..RtoMax : Sample(x)
     \/ Seed
     \/ \E r \in Records : Ack(r)
@@ -282,7 +351,7 @@ Spec == Init /\ [][Next]_vars
 
 \* The property the rule exists for, for each class.
 AttemptsBeforeTimeout ==
-    \A r \in Records : (~acked[r] /\ Started(r) /\ t = Deadline(r)) => attempts[r] >= MinAttempts
+    \A r \in Records : (~acked[r] /\ OnWire(r) /\ t = Deadline(r)) => attempts[r] >= MinAttempts
 
 \* Under the rule no unacked record waits more than its delay's bound for
 \* its next send while the connection is up: RtoMax for a small record,
@@ -292,9 +361,10 @@ ResendGapBounded ==
         (~acked[r] /\ ~TimedOut /\ attempts[r] > 0) => t - lastSend[r] <= Min(RtoMax, Cap(r)) * MaxBackoff
 
 \* A due record is sent in the update it falls due: no update ends with a
-\* record of either class still due, whatever the other class does.
+\* record of either class still due, whatever the other class does, but
+\* for one whose packet the transport refused.
 NoDueRecordHeld ==
-    phase = "tick" => \A r \in Records : ~Due(r)
+    phase = "tick" => \A r \in Records : ~Due(r) \/ refused[r]
 
 \* From the update the transport first reports a round trip until this
 \* layer's own first sample, no unacked record waits longer than the

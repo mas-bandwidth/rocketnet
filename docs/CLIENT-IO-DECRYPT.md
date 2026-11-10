@@ -10,6 +10,14 @@ them through bounded queues. Each accepted packet follows this order:
 4. append its payload and acknowledgement data to the bounded update batch;
 5. retire the receive buffer exactly once.
 
+A session datagram below its type's wire floor, or with sequence zero, is
+refused before authentication. The I/O thread opens a payload as soon as it
+has the live session keys, while the client may still be sending its
+connection response; update then refuses that payload on the state check,
+which accepts a payload only once connected. The I/O thread's replay window
+has therefore consumed a record update's window never will, so the model keeps
+containment of the two windows, not equality.
+
 A packet that fails any check produces no application message. Queue pressure
 cannot expose a partially opened packet or reuse storage that another stage
 still owns. The caller sees admitted messages only through the endpoint-wide
