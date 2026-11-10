@@ -345,6 +345,96 @@ static void test_xdp_transport_replay_marks_refusals_reach_the_socket()
     rocketnet_unit_check( rocketnet_xdp_replay_marks_reset_keeping( &marks, no_failures, marks_applied ) == 0 );
 }
 
+static void test_xdp_transport_replay_marks_mass_disconnect_cost()
+{
+    // A mass disconnect queues one forget per client. The pending-forget
+    // index makes the coalescing lookup O(1) per client instead of a scan of
+    // every earlier forget, and a commit deletes only keys the kernel holds:
+    // addresses that never had a pushed mark issue no delete at all.
+
+    static struct rocketnet_xdp_replay_marks_t marks;
+    replay_marks_bind( &marks );
+
+    const uint32_t clients = ROCKETNET_XDP_REPLAY_MAX_ENTRIES;
+
+    for ( uint32_t i = 0; i < clients; i++ )
+    {
+        const struct rocketnet_address_t a = replay_marks_ipv4( (uint16_t) ( 2000 + i ) );
+        rocketnet_unit_check( rocketnet_xdp_replay_marks_forget( &marks, &a ) );
+    }
+
+    rocketnet_unit_check( marks.forget_count == clients );
+    rocketnet_unit_check( marks.comparisons <= 8u * clients );
+
+    static bool forget_failed[ROCKETNET_XDP_REPLAY_MAX_ENTRIES];
+    static bool mark_applied[ROCKETNET_XDP_REPLAY_MAX_ENTRIES];
+    memset( mark_applied, 0, sizeof( mark_applied ) );
+
+    for ( uint32_t i = 0; i < clients; i++ )
+        forget_failed[i] = false;
+    rocketnet_unit_check( rocketnet_xdp_replay_marks_drop_unheld_forgets( &marks ) == 0 );
+    rocketnet_unit_check( marks.forget_count == 0 );
+    rocketnet_unit_check( marks.comparisons <= 16u * clients );
+
+    rocketnet_xdp_replay_marks_reset_keeping( &marks, forget_failed, mark_applied );
+    rocketnet_unit_check( marks.forget_count == 0 );
+
+    // Every client now pushes a mark the kernel takes. Its later disconnect
+    // must delete every one of those keys.
+
+    for ( uint32_t i = 0; i < clients; i++ )
+    {
+        const struct rocketnet_address_t a = replay_marks_ipv4( (uint16_t) ( 2000 + i ) );
+        rocketnet_unit_check( rocketnet_xdp_replay_marks_mark( &marks, &a, i ) );
+    }
+
+    for ( uint32_t i = 0; i < clients; i++ )
+        mark_applied[i] = true;
+    rocketnet_xdp_replay_marks_reset_keeping( &marks, forget_failed, mark_applied );
+    rocketnet_unit_check( marks.mark_count == 0 );
+
+    for ( uint32_t i = 0; i < clients; i++ )
+    {
+        const struct rocketnet_address_t a = replay_marks_ipv4( (uint16_t) ( 2000 + i ) );
+        rocketnet_unit_check( rocketnet_xdp_replay_marks_forget( &marks, &a ) );
+    }
+
+    const uint64_t comparisons_before = marks.comparisons;
+    for ( uint32_t i = 0; i < clients; i++ )
+        forget_failed[i] = false;
+    rocketnet_unit_check( rocketnet_xdp_replay_marks_drop_unheld_forgets( &marks ) == clients );
+    rocketnet_unit_check( marks.forget_count == clients );
+    rocketnet_unit_check( marks.comparisons - comparisons_before <= 16u * clients );
+
+    // The deletes land, so the next mass disconnect again asks for none.
+
+    rocketnet_xdp_replay_marks_reset_keeping( &marks, forget_failed, mark_applied );
+    rocketnet_unit_check( marks.forget_count == 0 );
+
+    for ( uint32_t i = 0; i < clients; i++ )
+    {
+        const struct rocketnet_address_t a = replay_marks_ipv4( (uint16_t) ( 2000 + i ) );
+        rocketnet_unit_check( rocketnet_xdp_replay_marks_forget( &marks, &a ) );
+    }
+
+    for ( uint32_t i = 0; i < clients; i++ )
+        forget_failed[i] = false;
+    rocketnet_unit_check( rocketnet_xdp_replay_marks_drop_unheld_forgets( &marks ) == 0 );
+    rocketnet_unit_check( marks.forget_count == 0 );
+    rocketnet_xdp_replay_marks_reset_keeping( &marks, forget_failed, mark_applied );
+    rocketnet_unit_check( marks.forget_count == 0 );
+}
+
+static void test_xdp_transport_replay_marks_bind_rejects_oversized_capacity()
+{
+    static struct rocketnet_xdp_replay_marks_t marks;
+    struct rocketnet_server_xdp_replay_key_t forget = {};
+    struct rocketnet_server_xdp_replay_key_t mark_key = {};
+    struct rocketnet_server_xdp_replay_value_t mark_value = {};
+    rocketnet_xdp_replay_marks_bind( &marks, &forget, &mark_key, &mark_value, ROCKETNET_XDP_REPLAY_MAX_ENTRIES + 1 );
+    rocketnet_unit_check( marks.capacity == 0 && marks.index_size == 0 );
+}
+
 // A fake kernel replay map for the integrated case: a few entries, and a
 // count of the next deletes and of the next updates it refuses. No kernel, no sockets, no real time.
 
@@ -357,6 +447,7 @@ struct replay_fake_map_t
     bool present[REPLAY_FAKE_MAP_ENTRIES];
     int delete_refusals;
     int update_refusals;
+    int delete_calls;
 };
 
 static int replay_fake_map_find( const struct replay_fake_map_t * map, const struct rocketnet_server_xdp_replay_key_t * key )
@@ -372,6 +463,7 @@ static int replay_fake_map_find( const struct replay_fake_map_t * map, const str
 
 static bool replay_fake_map_delete( struct replay_fake_map_t * map, const struct rocketnet_server_xdp_replay_key_t * key )
 {
+    map->delete_calls++;
     if ( map->delete_refusals > 0 )
     {
         map->delete_refusals--;
@@ -421,11 +513,114 @@ static void replay_fake_commit( struct rocketnet_xdp_replay_marks_t * marks, str
 {
     static bool forget_failed[ROCKETNET_XDP_REPLAY_MAX_ENTRIES];
     static bool mark_applied[ROCKETNET_XDP_REPLAY_MAX_ENTRIES];
+    rocketnet_xdp_replay_marks_drop_unheld_forgets( marks );
     for ( uint32_t i = 0; i < marks->forget_count; i++ )
         forget_failed[i] = !replay_fake_map_delete( map, &marks->forgets[i] );
     for ( uint32_t i = 0; i < marks->mark_count; i++ )
         mark_applied[i] = replay_fake_map_update( map, &marks->mark_keys[i], marks->mark_values[i].high_water );
     rocketnet_xdp_replay_marks_reset_keeping( marks, forget_failed, mark_applied );
+}
+
+// Only a key the kernel actually holds is deleted: a slot seen but never
+// marked, or never marked since its last delete, queues a forget but causes no
+// delete syscall, while a marked key's forget deletes exactly once.
+
+static void test_xdp_transport_replay_marks_forget_without_mark_skips_delete()
+{
+    static struct rocketnet_xdp_replay_marks_t marks;
+    replay_marks_bind( &marks );
+
+    struct replay_fake_map_t kernel;
+    memset( &kernel, 0, sizeof( kernel ) );
+
+    const struct rocketnet_address_t a = replay_marks_ipv4( 50000 );
+    const struct rocketnet_address_t b = replay_marks_ipv4( 50001 );
+    struct rocketnet_server_xdp_replay_key_t key_a;
+    rocketnet_xdp_replay_key_from_address( &a, &key_a );
+
+    // a seen-but-never-marked address needs no kernel delete
+
+    rocketnet_unit_check( rocketnet_xdp_replay_marks_forget( &marks, &b ) );
+    replay_fake_commit( &marks, &kernel );
+    rocketnet_unit_check( kernel.delete_calls == 0 );
+    rocketnet_unit_check( marks.forget_count == 0 );
+
+    // a mark the kernel takes is tracked, so its later forget deletes it
+
+    rocketnet_unit_check( rocketnet_xdp_replay_marks_mark( &marks, &a, 7 ) );
+    replay_fake_commit( &marks, &kernel );
+    rocketnet_unit_check( kernel.delete_calls == 0 );
+    rocketnet_unit_check( replay_fake_map_find( &kernel, &key_a ) >= 0 );
+
+    rocketnet_unit_check( rocketnet_xdp_replay_marks_forget( &marks, &b ) );
+    rocketnet_unit_check( rocketnet_xdp_replay_marks_forget( &marks, &a ) );
+    replay_fake_commit( &marks, &kernel );
+    rocketnet_unit_check( kernel.delete_calls == 1 );
+    rocketnet_unit_check( replay_fake_map_find( &kernel, &key_a ) < 0 );
+}
+
+// One forget of a key the kernel never held, among held ones, leaves the
+// held keys alone at the front of the forgets in their order, so the commit
+// still deletes them in one batch rather than one syscall per key.
+
+static void test_xdp_transport_replay_marks_unheld_forget_keeps_the_batch()
+{
+    static struct rocketnet_xdp_replay_marks_t marks;
+    replay_marks_bind( &marks );
+
+    const uint32_t held = 64;
+    static bool forget_failed[ROCKETNET_XDP_REPLAY_MAX_ENTRIES];
+    static bool mark_applied[ROCKETNET_XDP_REPLAY_MAX_ENTRIES];
+    memset( forget_failed, 0, sizeof( forget_failed ) );
+
+    for ( uint32_t i = 0; i < held; i++ )
+    {
+        const struct rocketnet_address_t a = replay_marks_ipv4( (uint16_t) ( 2000 + i ) );
+        rocketnet_unit_check( rocketnet_xdp_replay_marks_mark( &marks, &a, i ) );
+        mark_applied[i] = true;
+    }
+    rocketnet_xdp_replay_marks_reset_keeping( &marks, forget_failed, mark_applied );
+    memset( mark_applied, 0, sizeof( mark_applied ) );
+
+    // the never-marked address sits in the middle of the held ones
+
+    const struct rocketnet_address_t unheld = replay_marks_ipv4( 9000 );
+    for ( uint32_t i = 0; i < held; i++ )
+    {
+        if ( i == held / 2 )
+            rocketnet_unit_check( rocketnet_xdp_replay_marks_forget( &marks, &unheld ) );
+        const struct rocketnet_address_t a = replay_marks_ipv4( (uint16_t) ( 2000 + i ) );
+        rocketnet_unit_check( rocketnet_xdp_replay_marks_forget( &marks, &a ) );
+    }
+    rocketnet_unit_check( marks.forget_count == held + 1 );
+
+    rocketnet_unit_check( rocketnet_xdp_replay_marks_drop_unheld_forgets( &marks ) == held );
+    rocketnet_unit_check( marks.forget_count == held );
+    for ( uint32_t i = 0; i < held; i++ )
+    {
+        struct rocketnet_server_xdp_replay_key_t key;
+        const struct rocketnet_address_t a = replay_marks_ipv4( (uint16_t) ( 2000 + i ) );
+        rocketnet_xdp_replay_key_from_address( &a, &key );
+        rocketnet_unit_check( memcmp( &marks.forgets[i], &key, sizeof( key ) ) == 0 );
+    }
+
+    // the pending index follows the moved forgets: a held key is still
+    // pending once, and the dropped key queues again
+
+    const struct rocketnet_address_t last = replay_marks_ipv4( (uint16_t) ( 2000 + held - 1 ) );
+    rocketnet_unit_check( rocketnet_xdp_replay_marks_forget( &marks, &last ) );
+    rocketnet_unit_check( marks.forget_count == held );
+    rocketnet_unit_check( rocketnet_xdp_replay_marks_forget( &marks, &unheld ) );
+    rocketnet_unit_check( marks.forget_count == held + 1 );
+
+    // a buffer of only unheld forgets drops them all and its index empties
+
+    rocketnet_xdp_replay_marks_reset_keeping( &marks, forget_failed, mark_applied );
+    rocketnet_unit_check( rocketnet_xdp_replay_marks_forget( &marks, &unheld ) );
+    rocketnet_unit_check( rocketnet_xdp_replay_marks_drop_unheld_forgets( &marks ) == 0 );
+    rocketnet_unit_check( marks.forget_count == 0 );
+    rocketnet_unit_check( rocketnet_xdp_replay_marks_forget( &marks, &unheld ) );
+    rocketnet_unit_check( marks.forget_count == 1 );
 }
 
 static bool replay_fake_sink_forget( void * context, const struct rocketnet_address_t * address )
@@ -830,6 +1025,10 @@ REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_duplicate_forget_drops_kept_
 REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_released_sessions_coalesce_forgets );
 REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_failed_forgets_kept );
 REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_refusals_reach_the_socket );
+REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_mass_disconnect_cost );
+REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_bind_rejects_oversized_capacity );
+REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_forget_without_mark_skips_delete );
+REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_unheld_forget_keeps_the_batch );
 REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_stale_forget_never_deletes_a_newer_mark );
 REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_reconnect_admits_the_new_session );
 REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_refused_reconnect_mark_is_retried );
