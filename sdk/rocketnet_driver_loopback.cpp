@@ -482,8 +482,8 @@ enum rocketnet_status_t rocketnet_loopback_hub_destroy( rocketnet_loopback_hub_t
 }
 
 // proofs/tla/RNLoopbackBindLayout.tla Create: a held family port refused, a
-// port shared across families with a dual-stack wildcard refused, the record taken, a port 0 bind given the next port neither family holds, and
-// the entry written as the record index plus one
+// port shared across families with a dual-stack wildcard refused, the record taken, a port 0 bind given the next port neither family holds
+// (refused when there is none), and the entry written as the record index plus one
 static void * loopback_create( rocketnet_loopback_hub_t * hub, rocketnet_address_t * bind, bool server )
 {
     // proofs/tla/LoopbackHub.tla RegisterServer and RegisterClient: the server takes
@@ -541,8 +541,13 @@ static void * loopback_create( rocketnet_loopback_hub_t * hub, rocketnet_address
 
     if ( bind->port == 0 )
     {
+        // proofs/tla/RNLoopbackBindLayout.tla RefuseFull: one try per port of
+        // the range, and a bind refused, with nothing written, when every
+        // port is held (RefusesOnlyWhenFull)
+
         uint16_t port = hub->next_port;
-        for ( int tries = 0; tries <= 65535; ++tries )
+        bool free_port = false;
+        for ( int tries = 0; tries <= ROCKETNET_LOOPBACK_LAST_PORT - loopback_first_port(); ++tries )
         {
             bool held = false;
             for ( int i = 0; i < num_endpoints; ++i )
@@ -555,9 +560,18 @@ static void * loopback_create( rocketnet_loopback_hub_t * hub, rocketnet_address
             }
 
             if ( !held )
+            {
+                free_port = true;
                 break;
+            }
 
             port = loopback_next_port( port );
+        }
+
+        if ( !free_port )
+        {
+            rocketnet_warn( "loopback transport refused a bind: every ephemeral port is held" );
+            return NULL;
         }
 
         bind->port = port;
