@@ -56,6 +56,19 @@ static void test_standard_security_and_conformance_vectors()
     const int count = (int) ( sizeof( standard_security_and_conformance_table ) / sizeof( standard_security_and_conformance_table[0] ) );
     rocketnet_unit_check( rn_standard_vectors_walk( standard_security_and_conformance_table, count, standard_security_and_conformance_generate ) == 1 );
     rocketnet_unit_check( standard_security_and_conformance_generate( "t19.no-such-vector", 0, 0 ) == -1 );
+
+    const uint16_t request_bytes = ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES;
+    const uint16_t cookie_bytes = ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES;
+    const uint16_t challenge_bytes = ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES;
+    const uint16_t denied_bytes = ROCKETNET_CONNECTION_DENIED_WIRE_BYTES;
+    const uint16_t response_bytes = ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES;
+    const uint16_t keep_alive_min_bytes = ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES;
+
+    rocketnet_unit_check( cookie_bytes <= request_bytes );
+    rocketnet_unit_check( challenge_bytes <= request_bytes );
+    rocketnet_unit_check( denied_bytes <= request_bytes );
+    rocketnet_unit_check( keep_alive_min_bytes <= response_bytes );
+    rocketnet_unit_check( denied_bytes <= response_bytes );
 }
 
 REGISTER_UNIT_TEST( test_standard_security_and_conformance_vectors );

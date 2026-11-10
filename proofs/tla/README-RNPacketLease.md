@@ -21,7 +21,11 @@ concurrently during the fill phase. Only the joined main thread calls `reset`.
 - **Insert.** `StartInsert`, then `IUsed` (the `used` fetch-add, refusing at
   `UsedLimit`), `ITicket`, `ILoad` (skip entries of the current epoch), `ICas`
   (claim by compare-and-swap, or continue the probe), `IWrite` (the four fields
-  in any order) and `IPublish` (the release store of active).
+  in any order) and `IPublish` (the release store of active). `StartInsert`
+  refuses a frame only while an unconsumed lease of it is current or an
+  insert of it is in flight: a consumed lease (`take`, which is also finish
+  and abort) no longer holds its frame, so the same frame can be leased
+  again in the same epoch, probing past the consumed entry to another slot.
 - **Resolve and take.** `StartResolve`, `RLoad` (another epoch ends the
   chain; writing starts the spin), `RSpinWait` and `RSpinDone`, `RCmp` (read
   the fields, continue on a frame or ticket mismatch, refuse on another
@@ -105,6 +109,20 @@ had claimed it and not yet stored active. Three results:
    `InsertCompletes` with only thread 1 scheduled. A raised-priority spinner
    can no longer starve a preempted writer.
 
+## Re-leasing a consumed frame
+
+On a staged transport the write loop in `rn_message_connection_write`
+(`sdk/rocketnet_message_server.cpp`) can start a packet on a frame, abort it
+when the endpoint writes nothing, and start again on the same frame in the
+same epoch; abort and finish both consume the lease through `take`. The
+model once refused any second insert of a frame in a generation, so
+`ChainIntact`, `TakeOnce` and `NoWrongSuccess` were never checked for a
+re-leased frame. `FrameBusy` now counts only unconsumed leases: the new
+insert probes past the consumed entry (still of the current epoch) to
+another slot, both leases stay in `Published`, and the chain to the second
+lease passes the first lease's entry. `MCRNPacketLeaseRelet.cfg` is the
+reachability witness for this.
+
 ## `retired` and the reused entry
 
 `retired` reads an old entry's fields after loading its state. A concurrent
@@ -150,6 +168,7 @@ classification of a misuse, not a wrong take.
 | Config | Expected | What it shows |
 |---|---|---|
 | `MCRNPacketLease.cfg` | pass | The code's rule without `retired`, two threads (thread 1 makes two calls, thread 2 one), a four-entry table, all frames colliding, two resets, `resolve` skipping an entry being written: every invariant. |
+| `MCRNPacketLeaseRelet.cfg` | `NoRelet` | Reachability witness for re-leasing: one frame, so insert, take, insert again is the only way to spend the operations. TLC violating `NoRelet` proves a consumed frame is re-leased in the same epoch, with `ChainIntact`, `TakeOnce` and `NoWrongSuccess` checked at every state on the way. On the model before this fix it completed with no violation. |
 | `MCRNPacketLeaseRetired.cfg` | pass | The code's `retired`: atomic fields (`AtomicFields`) and the state reread after the fields (`RetiredValidates`). |
 | `MCRNPacketLeaseBrokenRetiredPlainFields.cfg` | `NoRacyRead` | `AtomicFields = FALSE`: the reread with plain fields, the race above. |
 | `MCRNPacketLeaseBrokenRetiredRace.cfg` | `NoRacyRead` | `retired` before both repairs, plain fields and no reread: the race above. |

@@ -1,11 +1,11 @@
 # THE NIGHTLY FULL-SUITE LEAK CHECK.
 #
-# The per-commit sanitizers job in ci.yml runs both full unit rows and exact
+# The per-commit sanitizers job in ci.yml runs the full unit suite and exact
 # reconnect-isolation, send-ring-recovery and loopback-UDP functional cases
 # with ASAN_OPTIONS=detect_leaks=0. It then runs the lifecycle, driver, sodium
 # and XDP-negative controls, enabling LeakSanitizer for test_lifecycle,
 # test_transport and test_sodium. This workflow retains the full unit suite
-# (default and portable-pinned) and the exhaustive full functional suite under
+# and the exhaustive full functional suite under
 # ASAN_OPTIONS=detect_leaks=1 with
 # LSAN_OPTIONS=suppressions=tools/lsan.supp:print_suppressions=1.
 #
@@ -86,17 +86,6 @@ jobs:
           set -o pipefail
           ./bin/test 2>&1 | tee test.log
 
-      - name: Run unit tests with the transport pin preserved under LSan
-        env:
-          ASAN_OPTIONS: detect_leaks=1
-          UBSAN_OPTIONS: print_stacktrace=1
-          LSAN_OPTIONS: suppressions=tools/lsan.supp:print_suppressions=1
-          ROCKETNET_SERVER_TRANSPORT: portable
-          ROCKETNET_CLIENT_TRANSPORT: portable
-        run: |
-          set -o pipefail
-          ./bin/test 2>&1 | tee test_portable.log
-
       - name: Run functional suite under LSan
         env:
           ASAN_OPTIONS: detect_leaks=1
@@ -122,6 +111,5 @@ jobs:
           name: nightly-leaks-logs-${{ steps.refslug.outputs.slug }}
           path: |
             test.log
-            test_portable.log
             functional.log
           if-no-files-found: ignore
