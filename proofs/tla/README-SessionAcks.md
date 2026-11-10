@@ -87,7 +87,9 @@ Reversed witnesses, one constant flip each (the code is `Witness = "none"`):
 | `walkskip` | the walk skips the lowest named sequence whose unacknowledged bit is set | `WalkVisitsUnacked` |
 | `staleheld` | the reconcile keeps a lapped slot's held bit | `BitsMatchRing` |
 
-`SurfacedOnce`, `BitsCoverRing` and `OpenedSurfacesOrLaps` have no reversed witness.
+`SurfacedOnce` and `BitsCoverRing` have no reversed witness.
+`MCSessionAcksBrokenLiveness.cfg` is `OpenedSurfacesOrLaps`'s reversed witness: the
+`dropfull` defect retains an opened payload without surfacing it.
 
 ## What the model abstracts away
 
@@ -185,6 +187,7 @@ instance that exercises the clear. The two bitmap witnesses use the same instanc
 | `MCSessionAcksLive.cfg` | `Spec` | the gate instance, with `OpenedSurfacesOrLaps` | pass; over the 110 s budget, `bench` debt |
 | `MCSessionAcksLiveSmall.cfg` | `Spec` | two sequences, `Capacity` 1, duplication and reordering off | pass |
 | `MCSessionAcksLiveDup.cfg` | `Spec` | one sequence, burns off, data link `"none"`, ack link `"arbitrary"` with duplication, reordering off; `OpenedSurfacesOrLaps` only | pass |
+| `MCSessionAcksBrokenLiveness.cfg` | `Spec` | two sequences, burns off, both links `"none"`, `"dropfull"`; `OpenedSurfacesOrLaps` only | temporal: `OpenedSurfacesOrLaps` |
 | `MCSessionAcksPatNone.cfg`, `PatFirst`, `PatAlternate`, `PatBurst` | `SpecSafety` | the gate instance with both links on that Link pattern | pass |
 | `MCSessionAcksBits.cfg` | `SpecSafety` | `SentRing` 2, data link `"arbitrary"`, ack link `"none"`, `Capacity` 1, duplication and reordering off | pass |
 | `MCSessionAcksWitDropfull.cfg` | `SpecSafety` | the gate instance, `"dropfull"` | `AckedMeansSurfaced` |

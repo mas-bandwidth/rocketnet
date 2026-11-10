@@ -706,6 +706,7 @@ MCSessionAcks.cfg	MCSessionAcks.tla	pass	-	check	sessionacks	required	-
 MCSessionAcksLive.cfg	MCSessionAcks.tla	pass	-	check	sessionacks	bench	committed-instance-liveness-over-budget
 MCSessionAcksLiveSmall.cfg	MCSessionAcks.tla	pass	-	check	sessionacks	required	-
 MCSessionAcksLiveDup.cfg	MCSessionAcks.tla	pass	-	check	sessionacks	required	-
+MCSessionAcksBrokenLiveness.cfg	MCSessionAcks.tla	temporal	OpenedSurfacesOrLaps	check	sessionacks	required	-
 MCSessionAcksPatNone.cfg	MCSessionAcks.tla	pass	-	check	sessionacks	required	-
 MCSessionAcksPatFirst.cfg	MCSessionAcks.tla	pass	-	check	sessionacks	required	-
 MCSessionAcksPatAlternate.cfg	MCSessionAcks.tla	pass	-	check	sessionacks	required	-

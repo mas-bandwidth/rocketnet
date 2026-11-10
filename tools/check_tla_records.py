@@ -175,6 +175,118 @@ def module_references(text):
     return names
 
 
+CFG_SECTION_KEYWORDS = {
+    "ALIAS", "CONSTANT", "CONSTANTS", "CONSTRAINT", "CONSTRAINTS",
+    "INIT", "INVARIANT", "INVARIANTS", "NEXT", "POSTCONDITION",
+    "PROPERTY", "PROPERTIES", "SPECIFICATION", "SYMMETRY", "VIEW",
+    "CHECK_DEADLOCK",
+}
+
+
+def cfg_properties(config_path):
+    """The PROPERTY entries a .cfg declares, as TLC reads them."""
+    try:
+        text = Path(config_path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    props, in_props = [], False
+    for raw in strip_comments(text).splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        keyword = line.split()[0]
+        if keyword in CFG_SECTION_KEYWORDS:
+            in_props = keyword in ("PROPERTY", "PROPERTIES")
+            if in_props:
+                rest = line[len(keyword):].lstrip("= \t")
+                if rest:
+                    props += rest.replace(",", " ").split()
+                    in_props = False
+            continue
+        if in_props:
+            props += line.replace(",", " ").split()
+    return [prop for prop in props
+            if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", prop)]
+
+
+def delivery_assumption_modules(tla_dir):
+    """Modules whose Fairness states an inline []<>... => []<>... assumption.
+
+    Such an antecedent can be vacuous, so each PROPERTY case in the module
+    needs a reversed liveness witness: a temporal case that fails the same
+    property, showing the property is not a tautology.
+    """
+    modules = set()
+    for path in Path(tla_dir).glob("*.tla"):
+        try:
+            lines = strip_comments(path.read_text(encoding="latin-1")).splitlines()
+        except OSError:
+            continue
+        for i, line in enumerate(lines):
+            if not re.match(r"^Fairness\b[^\n]*==", line):
+                continue
+            body = [line]
+            for nxt in lines[i + 1:]:
+                if re.match(r"^[A-Za-z_][A-Za-z0-9_]*\s*(?:\([^)]*\))?\s*==", nxt):
+                    break
+                body.append(nxt)
+            fairness = "\n".join(body)
+            if re.search(r"\[\]<>.{0,400}?=>.{0,400}?\[\]<>", fairness, re.DOTALL):
+                modules.add(path.name)
+                break
+    return modules
+
+
+def module_closure(module, tla_dir):
+    """A module and every local module its EXTENDS/INSTANCEs reach."""
+    tla_dir = Path(tla_dir)
+    seen, queue = set(), [module]
+    while queue:
+        name = queue.pop(0)
+        if name in seen:
+            continue
+        seen.add(name)
+        try:
+            text = (tla_dir / name).read_text(encoding="latin-1")
+        except OSError:
+            continue
+        for ref in module_references(text):
+            if (tla_dir / (ref + ".tla")).exists():
+                queue.append(ref + ".tla")
+    return seen
+
+
+def check_property_witnesses(cases, tla_dir):
+    """Every PROPERTY case in a delivery-assumption module needs a witness."""
+    errors = []
+    tla_dir = Path(tla_dir)
+    has_tla = tla_dir.is_dir() and any(tla_dir.glob("*.tla"))
+    delivery_modules = delivery_assumption_modules(tla_dir) if has_tla else set()
+    witnesses = {
+        (case["module"], case["property"])
+        for case in cases
+        if case["expected"] == "temporal"
+    }
+    for case in cases:
+        props = cfg_properties(tla_dir / case["config"])
+        if not props:
+            continue
+        module_missing = not (tla_dir / case["module"]).exists()
+        module_files = module_closure(case["module"], tla_dir)
+        if has_tla and not module_missing and not (module_files & delivery_modules):
+            continue
+        for prop in props:
+            if (case["module"], prop) in witnesses:
+                continue
+            errors.append(
+                f"{case['config']}: property {prop} has no reversed liveness witness "
+                f"in CASES.tsv; add a temporal case for {case['module']} that fails it "
+                f"(TLC: Temporal properties were violated), showing the delivery "
+                f"assumption's antecedent is satisfiable"
+            )
+    return errors
+
+
 def fingerprint(tla_dir, config):
     """(input_sha256, input_files) of a case as tlacheck computes it from tla_dir."""
     tla_dir = Path(tla_dir)
@@ -249,6 +361,8 @@ def check(cases_path=DEFAULT_CASES, runs_path=DEFAULT_RUNS, out=sys.stdout, forb
         else:
             if not prop or prop == "-":
                 errors.append(f"{cfg}: {expected} case must name a property, got {prop!r}")
+
+    errors.extend(check_property_witnesses(list(plan.values()), Path(cases_path).parent))
 
     seen_runs = set()
     for row in runs:
