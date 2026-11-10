@@ -107,6 +107,20 @@ int main( int argc, char ** argv )
     const size_t count = sizeof( source_audit_cases ) / sizeof( source_audit_cases[0] );
     int failed = 0;
 
+    // Every case the binary's registry holds must be named above, so a new
+    // source_audit_*.cpp cannot register a case that never runs.
+    const int registered = rocketnet_unit_tests_count();
+    for ( int i = 0; i < registered; i++ )
+    {
+        const char * name = rocketnet_unit_tests_name( i );
+        if ( name != NULL && !source_audit_case_named( name ) )
+        {
+            printf( "source audit: registered case %s is not in source_audit_cases\n", name );
+            fflush( stdout );
+            failed++;
+        }
+    }
+
     for ( size_t i = 0; i < count; i++ )
     {
         const int rc = rocketnet_unit_tests_run_named( source_audit_cases[i] );
