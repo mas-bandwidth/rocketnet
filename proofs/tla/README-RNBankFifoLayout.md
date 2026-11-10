@@ -83,8 +83,10 @@ which includes those orders.
 ## The instances
 
 Each control bounds the publishes (`MaxPub`, 2N + 2: every queue wraps at
-least twice) and is checked with every invariant. Terminal states are the
-harness's bound, so the deadlock check is off (`ignore-terminal`).
+least twice) and is checked with every invariant. Once the publishes are
+spent and every bank is taken and returned (or a position outside an array
+stops the model), the run ends in the `Done` terminal stutter; deadlock is
+checked, so any other state with nothing enabled fails the run.
 
 `MCRNBankFifoLayoutHandoffMaxReadyAll.cfg` answers whether `max_ready == N`
 overflows the ready ring: it passes. The producer always holds one buffer, so

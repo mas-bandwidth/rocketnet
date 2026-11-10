@@ -121,7 +121,15 @@ Publish ==
     /\ recs' = <<>>
     /\ UNCHANGED <<slot, pc, i, accepted, cnt, batch, faulty, nextId>>
 
-Next == Receive \/ Step \/ EndBatch \/ Publish
+\* every datagram delivered, its batch walked and the last buffer published:
+\* a terminal stutter
+Done ==
+    /\ pc = "idle"
+    /\ nextId > MaxIds
+    /\ fill = 0
+    /\ UNCHANGED vars
+
+Next == Receive \/ Step \/ EndBatch \/ Publish \/ Done
 
 Spec == Init /\ [][Next]_vars
 

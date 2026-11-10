@@ -226,7 +226,14 @@ Release ==
     /\ exposedCount' = 0
     /\ UNCHANGED <<producer, readyArr, readyHead, readyCount, exposed, absReady, pubs>>
 
-Next == Publish \/ (\E b \in Banks : Complete(b)) \/ Take \/ Release
+\* the publishes spent and every bank taken and returned, or a position
+\* outside an array stopped the model: a terminal stutter
+Done ==
+    /\ \/ pubs = MaxPub /\ readyCount = 0 /\ exposedCount = 0
+       \/ oob
+    /\ UNCHANGED vars
+
+Next == Publish \/ (\E b \in Banks : Complete(b)) \/ Take \/ Release \/ Done
 
 Spec == Init /\ [][Next]_vars
 

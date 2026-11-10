@@ -129,7 +129,13 @@ SealStep ==
                     ELSE ""
     /\ UNCHANGED <<bid, next>>
 
-Next == Defer \/ SealStep
+\* every disconnect made and every burst left the ring: a terminal stutter
+Done ==
+    /\ next > Bursts
+    /\ count = 0
+    /\ UNCHANGED vars
+
+Next == Defer \/ SealStep \/ Done
 
 Spec == Init /\ [][Next]_vars
 

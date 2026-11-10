@@ -54,8 +54,9 @@ how many calls that is but the stall's length.
 ## The instances
 
 `Q = 2` slots per phase, the code's three phases, at most seven calls per open
-of a phase and four hands (so the `send_ready` FIFO wraps). Terminal states are
-the harness's bound (`ignore-terminal`).
+of a phase and four hands (so the `send_ready` FIFO wraps). Once the hands and
+the last open's calls are spent and every handed phase is posted, sent and
+retired, the run ends in the `Done` terminal stutter; deadlock is checked.
 
 - **`MCRNRioSendSlotLayout.cfg`** (`Width = 0`): the counter as a 64-bit
   counter, which 2^64 calls cannot wrap in any stall. Every invariant holds.

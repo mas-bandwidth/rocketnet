@@ -172,7 +172,12 @@ Finish ==
     /\ UNCHANGED <<largest, win, maxRanges, cursor, remaining, shifted, wordBits,
                    firstRun, curGap, curRun, phase, done>>
 
-Next == Step \/ Finish
+\* the block is built: a terminal stutter
+Done ==
+    /\ pc = "end"
+    /\ UNCHANGED vars
+
+Next == Step \/ Finish \/ Done
 
 Spec == Init /\ [][Next]_vars
 

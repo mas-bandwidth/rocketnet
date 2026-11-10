@@ -152,6 +152,16 @@ Retire(p) ==
     /\ UNCHANGED <<next, slot, fill, pcount, readyArr, readyHead, readyCount, tries,
                    hands, reissued, absReady>>
 
+\* the hands and this open's calls spent, every handed phase posted, sent
+\* and retired, no slot left reserved: a terminal stutter
+Done ==
+    /\ hands = MaxHands
+    /\ tries = Tries
+    /\ readyCount = 0
+    /\ \A p \in Phases : /\ pstate[p] # "Posted"
+                         /\ \A s \in Slots : slot[p][s] \notin {"Reserved", "Posted"}
+    /\ UNCHANGED vars
+
 Next ==
     \/ Reserve
     \/ \E s \in Slots : Finish(s)
@@ -159,6 +169,7 @@ Next ==
     \/ TakeAndPost
     \/ \E p \in Phases, s \in Slots : Complete(p, s)
     \/ \E p \in Phases : Retire(p)
+    \/ Done
 
 Spec == Init /\ [][Next]_vars
 

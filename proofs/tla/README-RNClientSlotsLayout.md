@@ -65,9 +65,10 @@ Functions in `sdk/rocketnet_client_slots.cpp`.
 
 `MCRNClientSlotsLayout.cfg`: three slots, two client ids (so an id can return
 to the slot it left, the LIFO pop handing it straight back), five fresh
-generations, at most ten tenures. The configuration runs without deadlock
-checking (`ignore-terminal`): once the fresh generations are spent and every
-slot is free, the only assign left is the stale one the code refuses.
+generations, at most ten tenures. Once the fresh generations are spent and
+every slot is free, the only assign left is the stale one the code refuses:
+the run ends in the `Done` terminal stutter, and deadlock is checked, so any
+other state with nothing enabled fails the run.
 
 ## Reversed witnesses
 
