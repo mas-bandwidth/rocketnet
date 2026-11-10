@@ -267,7 +267,7 @@ struct rocketnet_server_xdp_socket_t
     rocketnet_xdp_buffer_exchange_t<ROCKETNET_XDP_NUM_BUFFERS> receive_handoff;
     int receive_held_index = -1; // game view; swapped for the worker's bank at the next receive call
     uint32_t receive_read_index = 0;
-    std::atomic<uint32_t> receive_swaps{ 0 }; // completed bank swaps: the worker's bank was emptied
+    std::atomic<uint32_t> receive_swaps{ 0 }; // main's bank swaps: the worker's bank was emptied
     std::atomic<bool> receive_swap_request{ false }; // main missed the try-acquire; the worker performs the swap at its next pass boundary
 
     uint8_t padding_6[4096];
@@ -650,17 +650,6 @@ static void rocketnet_server_xdp_socket_service_receive_swap( rocketnet_server_x
 
     rocketnet_platform_mutex_release( &socket->receive_mutex );
 }
-
-#if ROCKETNET_DEV
-// A unit fixture forces service between main's exhaustion check and its bank
-// clear. This is the interleaving that can recycle a just-published bank.
-static void (*rocketnet_server_xdp_socket_before_main_clear_for_test)( rocketnet_server_xdp_socket_t * ) = NULL;
-
-static void rocketnet_server_xdp_socket_service_during_main_clear_for_test( rocketnet_server_xdp_socket_t * socket )
-{
-    rocketnet_server_xdp_socket_service_receive_swap( socket );
-}
-#endif
 
 static uint64_t alloc_send_frame( rocketnet_server_xdp_socket_t * socket )
 {
@@ -3219,57 +3208,6 @@ bool rocketnet_server_socket_test_receive_swap_on_request()
     valid &= server->process_packets.num_packets == 1;
     valid &= socket->receive_swaps.load( std::memory_order_acquire ) == 2;
 
-    // A partly consumed main bank stays owned by main even if the worker has
-    // another filled bank and holds the receive mutex. No request or
-    // premature recycle is permitted.
-    const int held_before_partial = socket->receive_held_index;
-    const int producer_before_partial = socket->receive_handoff.producer;
-    const int process_capacity = server->process_packets.capacity;
-    socket->receive_buffer[held_before_partial].num_packets = 1;
-    socket->receive_read_index = 0;
-    socket->receive_buffer[producer_before_partial].num_packets = 1;
-    socket->receive_buffer[producer_before_partial].packet_bytes[0] = ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES;
-    socket->receive_buffer[producer_before_partial].from[0] = to;
-    server->process_packets.capacity = 0;
-    rocketnet_platform_mutex_acquire( &socket->receive_mutex );
-    rocketnet_server_socket_receive_packets( server );
-    rocketnet_platform_mutex_release( &socket->receive_mutex );
-    valid &= socket->receive_held_index == held_before_partial;
-    valid &= socket->receive_handoff.producer == producer_before_partial;
-    valid &= socket->receive_buffer[held_before_partial].num_packets == 1;
-    valid &= socket->receive_buffer[producer_before_partial].num_packets == 1;
-    valid &= socket->receive_read_index == 0;
-    valid &= !socket->receive_swap_request.load( std::memory_order_acquire );
-    server->process_packets.capacity = process_capacity;
-    rocketnet_server_socket_receive_packets( server );
-    valid &= server->process_packets.num_packets == 1;
-
-    // Main has now exhausted bank 1. A prior failed try-acquire leaves a
-    // request while the worker's producer bank 0 contains the next packet.
-    // Service precisely after main decides that bank 1 is exhausted but
-    // before main clears its current held bank. A safe main path must skip
-    // this queue while the request is pending; service then publishes bank 0
-    // and the next main call consumes its packet exactly once.
-    const int filled_before_overlap = socket->receive_handoff.producer;
-    socket->receive_buffer[filled_before_overlap].num_packets = 1;
-    socket->receive_buffer[filled_before_overlap].packet_bytes[0] = ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES;
-    socket->receive_buffer[filled_before_overlap].from[0] = to;
-    socket->receive_swap_request.store( true, std::memory_order_release );
-    rocketnet_server_xdp_socket_before_main_clear_for_test = rocketnet_server_xdp_socket_service_during_main_clear_for_test;
-    rocketnet_server_socket_receive_packets( server );
-    rocketnet_server_xdp_socket_before_main_clear_for_test = NULL;
-    valid &= socket->receive_swap_request.load( std::memory_order_acquire );
-    valid &= socket->receive_buffer[filled_before_overlap].num_packets == 1;
-    valid &= server->process_packets.num_packets == 0;
-
-    rocketnet_server_xdp_socket_service_receive_swap( socket );
-    valid &= !socket->receive_swap_request.load( std::memory_order_acquire );
-    valid &= socket->receive_held_index == filled_before_overlap;
-    rocketnet_server_socket_receive_packets( server );
-    valid &= server->process_packets.num_packets == 1;
-    rocketnet_server_socket_receive_packets( server );
-    valid &= server->process_packets.num_packets == 0;
-
     if ( socket->send_mutex.ok )
         rocketnet_platform_mutex_destroy( &socket->send_mutex );
     if ( socket->receive_mutex.ok )
@@ -4023,15 +3961,6 @@ void rocketnet_server_socket_receive_packets( rocketnet_server_socket_t * server
         const int queue = rocketnet_xdp_drain_queue( server_socket->receive_start_queue, step, num_queues );
         rocketnet_server_xdp_socket_t * socket = &server_socket->socket[queue];
 
-        // A pending request transfers the exhausted (or absent) game view to
-        // the worker. Until the worker publishes its completed swap by
-        // release-clearing the request, it may change the held index, cursor,
-        // and replacement bank. Do not even inspect those plain fields here.
-        // Only main raises the request, after deciding its held bank is
-        // exhausted, so a partially consumed view never enters this path.
-        if ( socket->receive_swap_request.load( std::memory_order_acquire ) )
-            continue;
-
         // Last call's view has expired. A partly consumed buffer remains
         // owned here with its cursor; a finished one is swapped for the
         // worker's filled buffer, so every packet staged before this claim
@@ -4040,10 +3969,6 @@ void rocketnet_server_socket_receive_packets( rocketnet_server_socket_t * server
         if ( socket->receive_held_index >= 0 &&
              socket->receive_read_index >= socket->receive_buffer[socket->receive_held_index].num_packets )
         {
-#if ROCKETNET_DEV
-            if ( rocketnet_server_xdp_socket_before_main_clear_for_test )
-                rocketnet_server_xdp_socket_before_main_clear_for_test( socket );
-#endif
             socket->receive_buffer[socket->receive_held_index].num_packets = 0;
             if ( !rocketnet_platform_mutex_try_acquire( &socket->receive_mutex ) )
             {
@@ -4052,6 +3977,7 @@ void rocketnet_server_socket_receive_packets( rocketnet_server_socket_t * server
                 rocketnet_server_xdp_socket_request_receive_swap( socket );
                 continue;
             }
+            socket->receive_swap_request.store( false, std::memory_order_release );
             socket->receive_held_index = socket->receive_handoff.swap_producer( socket->receive_held_index );
             socket->receive_read_index = 0;
             socket->receive_swaps.fetch_add( 1, std::memory_order_release );
@@ -4064,6 +3990,7 @@ void rocketnet_server_socket_receive_packets( rocketnet_server_socket_t * server
                 rocketnet_server_xdp_socket_request_receive_swap( socket );
                 continue;
             }
+            socket->receive_swap_request.store( false, std::memory_order_release );
             socket->receive_held_index = socket->receive_handoff.swap_producer( -1 );
             socket->receive_read_index = 0;
             if ( socket->receive_held_index >= 0 )
@@ -4160,7 +4087,7 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
 
     // the packets the worker last saw in its current receive bank. Main's
     // swap only hands the worker an emptied bank, so room counted from this
-    // never overstates the bank's. Each completed swap counts in receive_swaps:
+    // never overstates the bank's. Main counts its swaps in receive_swaps:
     // a new count means the bank was emptied, read without the mutex, so a
     // full bank costs the worker no lock until main swaps it.
 

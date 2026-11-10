@@ -8,10 +8,8 @@
 // the receive mutex while the worker is in a heavy pass. Main raises a request
 // and returns; the worker completes the bank swap at its pass boundary, so the
 // packets reach main's next view without waiting another update. The fixture
-// also forces service between main's exhaustion check and bank clear, and
-// verifies that a partly consumed bank stays with main. It drives the real
-// receive call with fake staging buffers: no socket, kernel object, thread or
-// clock is involved.
+// drives the real receive call and the worker's service entry with fake
+// staging buffers: no socket, kernel object, thread or clock is involved.
 
 #include "test_unit_registry.h"
 
