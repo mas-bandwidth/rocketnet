@@ -61,6 +61,13 @@ void rocketnet_dev_session_sequence_taken( uint64_t sequence );
 typedef int rocketnet_dev_link_stop_wait_hold_function_t( void * context );
 
 void rocketnet_dev_set_link_stop_wait_hold_hook( rocketnet_dev_link_stop_wait_hold_function_t * function, void * context );
+// The server keygen failure seam: while set, rocketnet_server_create fails
+// its X25519 key generation / derivation step as if
+// rocketnet_generate_server_keypair / crypto_scalarmult_base had failed, so
+// a unit case can reach the create failure path without a broken sodium.
+// Per process, false by default. Defined in sdk/rocketnet_api.cpp.
+
+void rocketnet_dev_set_server_keygen_failure( bool fail );
 
 // The disconnect-drain sealed-write seam. While count is positive, the next
 // seal of a deferred disconnect burst fails: rocketnet_write_sealed_packet
