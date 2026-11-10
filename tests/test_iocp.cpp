@@ -6,6 +6,7 @@
 #include "rocketnet_server_rio.h"
 #include "rocketnet_memory.h"
 #include <ws2tcpip.h>
+#include <mswsock.h>
 #include <malloc.h>
 #include <atomic>
 #include <thread>
@@ -841,6 +842,312 @@ static void test_receive_boundaries()
     rn_native_backend_stop_and_destroy( transport, rocketnet_server_iocp_stop, rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy );
     closesocket( client );
     printf( "test_iocp_transport_receive_boundaries\n" );
+}
+
+// A receive posted while an oversized datagram already waits in the socket:
+// held completions take every posted receive with a small datagram, then
+// oversized ones (a normal 1472-byte UDP payload and the 65507-byte IPv4
+// maximum) queue behind them, so each repost meets one inline. Every repost
+// is accepted, each oversized datagram is counted dropped and too large once,
+// the depth stays exact, the datagrams behind them arrive, and the stop
+// drains pending to exactly zero: no receive is posted twice on one operation.
+
+static void receive_oversize_queued_at_post( int flags )
+{
+    rocketnet_address_t bind = address( "127.0.0.1:0" );
+    rocketnet_server_iocp_t * transport = rocketnet_server_iocp_create( NULL, &bind, 1, ROCKETNET_DEFAULT_MAX_CLIENTS, 0, flags );
+    CHECK( transport );
+    CHECK( rocketnet_server_iocp_pending( transport ) == ROCKETNET_IOCP_RECEIVES_PER_WORKER );
+
+    SOCKET client = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+    CHECK( client != INVALID_SOCKET );
+    int send_buffer = 4 * 1024 * 1024;
+    CHECK( setsockopt( client, SOL_SOCKET, SO_SNDBUF, (const char *) &send_buffer, sizeof( send_buffer ) ) == 0 );
+
+    sockaddr_in to = {};
+    to.sin_family = AF_INET;
+    to.sin_port = htons( bind.port );
+    to.sin_addr.s_addr = htonl( INADDR_LOOPBACK );
+
+    static char oversized[65507];
+    memset( oversized, 0x5A, sizeof( oversized ) );
+    const int sizes[] = { 1472, 65507 };
+    const int per_size = 8;
+    const int num_oversized = per_size * 2;
+    const int num_after = 16;
+
+    rocketnet_server_iocp_test_hold_completions( transport, true );
+    for ( int i = 0; i < ROCKETNET_IOCP_RECEIVES_PER_WORKER; ++i )
+        CHECK( sendto( client, "fill", 4, 0, (sockaddr *) &to, sizeof( to ) ) == 4 );
+    for ( int i = 0; i < num_oversized; ++i )
+    {
+        const int bytes = sizes[i % 2];
+        CHECK( sendto( client, oversized, bytes, 0, (sockaddr *) &to, sizeof( to ) ) == bytes );
+    }
+    for ( int i = 0; i < num_after; ++i )
+        CHECK( sendto( client, "good", 4, 0, (sockaddr *) &to, sizeof( to ) ) == 4 );
+    rocketnet_server_iocp_test_hold_completions( transport, false );
+
+    int fills = 0;
+    int goods = 0;
+    uint64_t counters[ROCKETNET_IOCP_NUM_COUNTERS] = {};
+    const double deadline = rocketnet_platform_time() + 5.0;
+    while ( rocketnet_platform_time() < deadline )
+    {
+        rocketnet_server_iocp_receive_packets( transport );
+
+        rocketnet_server_socket_process_packets_t * batch = rocketnet_server_iocp_process_packets( transport );
+        for ( int i = 0; i < batch->num_packets; ++i )
+        {
+            CHECK( batch->packet_bytes[i] == 4 );
+            if ( memcmp( batch->packet_data[i], "fill", 4 ) == 0 )
+                ++fills;
+            else if ( memcmp( batch->packet_data[i], "good", 4 ) == 0 )
+                ++goods;
+            else
+                CHECK( false );
+        }
+
+        rocketnet_server_iocp_counters( transport, counters );
+        if ( fills == ROCKETNET_IOCP_RECEIVES_PER_WORKER && goods == num_after &&
+             counters[ROCKETNET_IOCP_RECEIVE_DROPPED] >= (uint64_t) num_oversized &&
+             rocketnet_server_iocp_pending( transport ) == ROCKETNET_IOCP_RECEIVES_PER_WORKER )
+            break;
+        rocketnet_platform_sleep( 0.001 );
+    }
+
+    // one more pass of the worker, so a late completion is counted too
+    rocketnet_server_iocp_test_hold_completions( transport, true );
+    rocketnet_server_iocp_test_hold_completions( transport, false );
+    rocketnet_server_iocp_counters( transport, counters );
+    printf( "  flags=%d fills=%d goods=%d dropped=%llu too_large=%llu repost_failed=%llu pending=%d\n", flags, fills, goods,
+            (unsigned long long) counters[ROCKETNET_IOCP_RECEIVE_DROPPED], (unsigned long long) counters[ROCKETNET_IOCP_RECEIVE_TOO_LARGE],
+            (unsigned long long) counters[ROCKETNET_IOCP_RECEIVE_REPOST_FAILED], rocketnet_server_iocp_pending( transport ) );
+
+    CHECK( fills == ROCKETNET_IOCP_RECEIVES_PER_WORKER && goods == num_after );
+    CHECK( counters[ROCKETNET_IOCP_RECEIVE_REPOST_FAILED] == 0 );
+    CHECK( counters[ROCKETNET_IOCP_RECEIVE_DROPPED] == (uint64_t) num_oversized );
+    CHECK( counters[ROCKETNET_IOCP_RECEIVE_TOO_LARGE] == (uint64_t) num_oversized );
+    CHECK( rocketnet_server_iocp_pending( transport ) == ROCKETNET_IOCP_RECEIVES_PER_WORKER );
+    wait_stopped( transport );
+    rn_native_backend_stop_and_destroy( transport, rocketnet_server_iocp_stop, rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy );
+    closesocket( client );
+}
+
+static void test_receive_oversize_queued_at_post()
+{
+    receive_oversize_queued_at_post( ROCKETNET_IOCP_DISABLE_URO );
+    receive_oversize_queued_at_post( 0 );
+    printf( "test_iocp_transport_receive_oversize_queued_at_post\n" );
+}
+
+// What Windows does with an overlapped receive posted onto a datagram that
+// already waits in the socket and is longer than the receive's buffer, on a
+// socket bound to a completion port. The call returns SOCKET_ERROR with
+// WSAEMSGSIZE at once; whether a completion is queued for it as well decides
+// what rocketnet_iocp_post_receive and the iocp client's post do with that
+// return. Four cells: WSARecvFrom and WSARecvMsg, each with and without
+// FILE_SKIP_COMPLETION_PORT_ON_SUCCESS (the transports never set it). Each
+// cell posts the receive the way the transport does (no byte count argument,
+// a ROCKETNET_RECEIVE_CEILING + 1 buffer), drains the port for a fixed time
+// and prints what it saw, then sends a small datagram and posts a second
+// receive to see whether the first is still in the kernel.
+
+struct oversize_post_receive_t
+{
+    OVERLAPPED overlapped;
+    WSABUF buffer;
+    WSAMSG message;
+    sockaddr_storage from;
+    int from_bytes;
+    DWORD flags;
+    char control[64];
+    char data[ROCKETNET_RECEIVE_CEILING + 1];
+};
+
+struct oversize_post_tally_t
+{
+    int count[2];
+    OVERLAPPED_ENTRY entry[2];
+};
+
+#define OVERSIZE_POST_DRAIN_SECONDS 0.25
+
+static unsigned long windows_build_number()
+{
+    typedef LONG( WINAPI * rtl_get_version_t )( OSVERSIONINFOW * );
+    HMODULE ntdll = GetModuleHandleW( L"ntdll.dll" );
+    CHECK( ntdll );
+    rtl_get_version_t rtl_get_version = (rtl_get_version_t) (void ( * )( void )) GetProcAddress( ntdll, "RtlGetVersion" );
+    CHECK( rtl_get_version );
+    OSVERSIONINFOW version = {};
+    version.dwOSVersionInfoSize = sizeof( version );
+    CHECK( rtl_get_version( &version ) == 0 );
+    return version.dwBuildNumber;
+}
+
+static int oversize_post_receive( SOCKET socket, LPFN_WSARECVMSG receive_message, oversize_post_receive_t * receive, int * error )
+{
+    memset( receive, 0, sizeof( *receive ) );
+    receive->buffer.buf = receive->data;
+    receive->buffer.len = (ULONG) sizeof( receive->data );
+    receive->from_bytes = (int) sizeof( receive->from );
+
+    int result;
+    if ( receive_message )
+    {
+        receive->message.name = (LPSOCKADDR) &receive->from;
+        receive->message.namelen = (INT) sizeof( receive->from );
+        receive->message.lpBuffers = &receive->buffer;
+        receive->message.dwBufferCount = 1;
+        receive->message.Control.buf = receive->control;
+        receive->message.Control.len = (ULONG) sizeof( receive->control );
+        result = receive_message( socket, &receive->message, NULL, &receive->overlapped, NULL );
+    }
+    else
+    {
+        result = WSARecvFrom( socket, &receive->buffer, 1, NULL, &receive->flags,
+                              (sockaddr *) &receive->from, &receive->from_bytes, &receive->overlapped, NULL );
+    }
+
+    *error = result == 0 ? 0 : WSAGetLastError();
+    return result;
+}
+
+// every completion the port delivers within the drain time, counted per receive
+static void oversize_post_drain( HANDLE port, oversize_post_receive_t * receives, oversize_post_tally_t * tally )
+{
+    memset( tally, 0, sizeof( *tally ) );
+
+    const double deadline = rocketnet_platform_time() + OVERSIZE_POST_DRAIN_SECONDS;
+    for ( ;; )
+    {
+        const double left = deadline - rocketnet_platform_time();
+        if ( left <= 0.0 )
+            break;
+
+        OVERLAPPED_ENTRY entries[8];
+        ULONG count = 0;
+        if ( !GetQueuedCompletionStatusEx( port, entries, 8, &count, (DWORD) ( left * 1000.0 ) + 1, FALSE ) )
+        {
+            CHECK( GetLastError() == WAIT_TIMEOUT );
+            break;
+        }
+
+        for ( ULONG i = 0; i < count; ++i )
+            for ( int k = 0; k < 2; ++k )
+                if ( entries[i].lpOverlapped == &receives[k].overlapped )
+                {
+                    tally->entry[k] = entries[i];
+                    tally->count[k]++;
+                }
+    }
+}
+
+struct oversize_post_seen_t
+{
+    int result;            // the first receive call's return, posted onto the queued oversized datagram
+    int error;             // its WSAGetLastError, 0 when the call returned 0
+    int completions;       // completions the port then delivered for it
+    int later_completions; // further completions for it after the small datagram and the second receive
+};
+
+// The kernel writes a receive record until its completion, so each cell keeps
+// its two records for the life of the process.
+static oversize_post_receive_t oversize_post_receives[4][2];
+
+static void oversize_post_cell( int cell, bool message_api, bool skip_on_success, oversize_post_seen_t * seen )
+{
+    oversize_post_receive_t * receives = oversize_post_receives[cell];
+
+    SOCKET server = WSASocketW( AF_INET, SOCK_DGRAM, IPPROTO_UDP, NULL, 0, WSA_FLAG_OVERLAPPED );
+    CHECK( server != INVALID_SOCKET );
+
+    sockaddr_in to = {};
+    to.sin_family = AF_INET;
+    to.sin_addr.s_addr = htonl( INADDR_LOOPBACK );
+    CHECK( bind( server, (sockaddr *) &to, sizeof( to ) ) == 0 );
+    int to_bytes = sizeof( to );
+    CHECK( getsockname( server, (sockaddr *) &to, &to_bytes ) == 0 );
+
+    HANDLE port = CreateIoCompletionPort( (HANDLE) server, NULL, 0, 1 );
+    CHECK( port );
+    if ( skip_on_success )
+        CHECK( SetFileCompletionNotificationModes( (HANDLE) server, FILE_SKIP_COMPLETION_PORT_ON_SUCCESS ) );
+
+    LPFN_WSARECVMSG receive_message = NULL;
+    if ( message_api )
+    {
+        GUID guid = WSAID_WSARECVMSG;
+        DWORD returned = 0;
+        CHECK( WSAIoctl( server, SIO_GET_EXTENSION_FUNCTION_POINTER, &guid, sizeof( guid ), &receive_message,
+                         sizeof( receive_message ), &returned, NULL, NULL ) == 0 );
+        CHECK( receive_message );
+    }
+
+    SOCKET client = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+    CHECK( client != INVALID_SOCKET );
+
+    // a full-size UDP payload: 20 bytes longer than the receive ceiling
+    static char datagram[1472];
+    static_assert( sizeof( datagram ) > ROCKETNET_RECEIVE_CEILING + 1, "the datagram is longer than the receive buffer" );
+    CHECK( sendto( client, datagram, (int) sizeof( datagram ), 0, (sockaddr *) &to, sizeof( to ) ) == (int) sizeof( datagram ) );
+    wait_until( "the oversized datagram to queue", [&]()
+                {
+        u_long available = 0;
+        return ioctlsocket( server, (long) FIONREAD, &available ) == 0 && available > 0; } );
+
+    oversize_post_tally_t tally;
+    seen->result = oversize_post_receive( server, receive_message, &receives[0], &seen->error );
+    oversize_post_drain( port, receives, &tally );
+    seen->completions = tally.count[0];
+
+    DWORD transferred = 0;
+    DWORD result_flags = 0;
+    int overlapped_error = 0;
+    if ( tally.count[0] > 0 && !WSAGetOverlappedResult( server, &receives[0].overlapped, &transferred, FALSE, &result_flags ) )
+        overlapped_error = WSAGetLastError();
+
+    printf( "  oversize at post: api=%s skip_on_success=%d: result=%d error=%d completions=%d status=0x%llx bytes=%lu overlapped_error=%d message_flags=0x%lx\n",
+            message_api ? "WSARecvMsg" : "WSARecvFrom", skip_on_success ? 1 : 0, seen->result, seen->error, tally.count[0],
+            (unsigned long long) tally.entry[0].Internal, (unsigned long) tally.entry[0].dwNumberOfBytesTransferred, overlapped_error,
+            (unsigned long) receives[0].message.dwFlags );
+
+    // a small datagram and a second receive: a first receive still in the
+    // kernel would take the datagram and complete now
+
+    CHECK( sendto( client, "good", 4, 0, (sockaddr *) &to, sizeof( to ) ) == 4 );
+    wait_until( "the small datagram to queue or be taken", [&]()
+                {
+        u_long available = 0;
+        return ( ioctlsocket( server, (long) FIONREAD, &available ) == 0 && available > 0 ) || HasOverlappedIoCompleted( &receives[0].overlapped ); } );
+
+    int second_error = 0;
+    const int second_result = oversize_post_receive( server, receive_message, &receives[1], &second_error );
+    oversize_post_drain( port, receives, &tally );
+    seen->later_completions = tally.count[0];
+
+    printf( "    then 4 bytes and a second receive: result=%d error=%d completions=%d status=0x%llx bytes=%lu; further completions for the first receive=%d\n",
+            second_result, second_error, tally.count[1], (unsigned long long) tally.entry[1].Internal,
+            (unsigned long) tally.entry[1].dwNumberOfBytesTransferred, tally.count[0] );
+
+    // closing aborts whatever is still posted; its completions are drained before the port closes
+
+    closesocket( client );
+    closesocket( server );
+    oversize_post_drain( port, receives, &tally );
+    CloseHandle( port );
+}
+
+static void test_windows_oversize_receive_at_post()
+{
+    printf( "  windows build %lu\n", windows_build_number() );
+
+    oversize_post_seen_t seen[4];
+    for ( int cell = 0; cell < 4; ++cell )
+        oversize_post_cell( cell, ( cell & 2 ) != 0, ( cell & 1 ) != 0, &seen[cell] );
+
+    printf( "test_windows_oversize_receive_at_post\n" );
 }
 
 // ---------------------------------------------------------------------------
@@ -2378,6 +2685,8 @@ static const fault_case_t fault_cases[] = {
     { "test_iocp_transport_send_completion_fails", test_iocp_send_completion_fails },
     { "test_iocp_transport_send_post_fails", test_iocp_send_post_fails },
     { "test_iocp_transport_receive_completion_fails", test_iocp_receive_completion_fails },
+    { "test_windows_oversize_receive_at_post", test_windows_oversize_receive_at_post },
+    { "test_iocp_transport_receive_oversize_queued_at_post", test_receive_oversize_queued_at_post },
     { "test_iocp_transport_send_queue_full_recovers", test_iocp_send_queue_full_recovers },
     { "test_iocp_transport_destroy_never_hangs", test_iocp_destroy_never_hangs },
     { "test_rio_transport_completion_queue_full", test_rio_completion_queue_full },
