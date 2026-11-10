@@ -560,7 +560,8 @@ enum rocketnet_disconnect_reason_t
 
     ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH = -1,
 
-    /// The client sent what the protocol forbids.
+    /// The client sent what the protocol forbids, or the server found its own
+    /// state for the client inconsistent, a fault no packet can cause.
 
     ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION = -2,
 
@@ -2729,9 +2730,8 @@ ROCKETNET_EXPORT size_t rocketnet_server_required_memory( const struct rocketnet
 /// ROCKETNET_STATUS_LOOPBACK_HUB_MISSING or
 /// ROCKETNET_STATUS_LOOPBACK_HUB_MISMATCH for a list naming loopback,
 /// ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION,
-/// ROCKETNET_STATUS_CRYPTO_INIT_FAILED when the server keypair could not be
-/// generated, or its public key derived from a supplied server_secret_key,
-/// ROCKETNET_STATUS_OUT_OF_MEMORY.
+/// ROCKETNET_STATUS_OUT_OF_MEMORY, or ROCKETNET_STATUS_CRYPTO_INIT_FAILED when
+/// the server keypair cannot be made or derived.
 /// An unavailable OS random source aborts the process after one error line
 /// while the server key is made (rocketnet_init installs the line; a
 /// ROCKETNET_USE_SYSTEM_SODIUM build has none).
