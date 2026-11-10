@@ -909,7 +909,11 @@ inline void rocketnet_platform_spin_lock_u64( volatile uint64_t * value )
 #if defined( _MSC_VER )
     while ( _InterlockedCompareExchange64( (volatile long long *) value, 1, 0 ) != 0 )
     {
+#if defined( _M_ARM64 )
+        __yield();
+#else
         _mm_pause();
+#endif // #if defined( _M_ARM64 )
         if ( ++spins >= ROCKETNET_PLATFORM_SPIN_YIELD_AFTER )
         {
             SwitchToThread();
