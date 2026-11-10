@@ -1938,6 +1938,7 @@ REGISTER_UNIT_TEST( test_client_invalid_token_retries_without_disconnect );
 struct lifecycle_poison_allocator_t
 {
     int live;
+    int allocations;
 };
 
 static void * lifecycle_poison_allocate( void * context, size_t bytes )
@@ -1947,6 +1948,7 @@ static void * lifecycle_poison_allocate( void * context, size_t bytes )
         return NULL;
     memset( p, 0xA5, bytes );
     ( (lifecycle_poison_allocator_t *) context )->live++;
+    ( (lifecycle_poison_allocator_t *) context )->allocations++;
     return p;
 }
 
@@ -1958,7 +1960,7 @@ static void lifecycle_poison_release( void * context, void * p )
 
 static void test_client_refused_create_cleans_a_poisoned_transport_block()
 {
-    lifecycle_poison_allocator_t allocator = { 0 };
+    lifecycle_poison_allocator_t allocator = { 0, 0 };
     check( rocketnet_test_loopback_hub_release() );
     check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
     int status = -1;
@@ -1975,8 +1977,16 @@ static void test_client_refused_create_cleans_a_poisoned_transport_block()
     char invalid[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
     memset( invalid, 'A', sizeof( invalid ) - 1 );
     invalid[sizeof( invalid ) - 1] = '\0';
+
+    // the token decodes, so the transport block is allocated and constructed
+    // before the protocol refuses it, and abort_create frees all of it
+
+    const int live = allocator.live;
+    const int allocations = allocator.allocations;
     check( rocketnet_client_connect( client, invalid ) == ROCKETNET_STATUS_INVALID_CONNECT_TOKEN );
     check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_INVALID_CONNECT_TOKEN );
+    check( allocator.allocations > allocations );
+    check( allocator.live == live );
 
     rn_test_client_stop_and_destroy( client );
     check( rocketnet_test_loopback_hub_release() );
