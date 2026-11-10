@@ -68,12 +68,10 @@ static void rocketnet_session_server_setup_clients( struct rocketnet_session_ser
                                                          owner_generation, user_data ) == 0 );
 }
 
-#if ROCKETNET_DEV
 static void rocketnet_session_server_setup( struct rocketnet_session_server_t * test )
 {
     rocketnet_session_server_setup_clients( test, 1 );
 }
-#endif // #if ROCKETNET_DEV
 
 static void rocketnet_session_server_teardown( struct rocketnet_session_server_t * test )
 {
@@ -82,7 +80,6 @@ static void rocketnet_session_server_teardown( struct rocketnet_session_server_t
     rocketnet_encryption_map_destroy( test->server.encryption_map );
 }
 
-#if ROCKETNET_DEV
 static int rocketnet_session_keep_alive_due( struct rocketnet_session_server_t * test, double now )
 {
     uint8_t packet[ROCKETNET_SEND_BUDGET];
@@ -91,9 +88,15 @@ static int rocketnet_session_keep_alive_due( struct rocketnet_session_server_t *
 
 static void rocketnet_session_send_payload( struct rocketnet_session_server_t * test, double now )
 {
-    uint8_t packet[ROCKETNET_SEND_BUDGET];
+    struct rocketnet_address_t to;
+    uint64_t sequence = 0;
+    alignas( 16 ) uint8_t frame[ROCKETNET_FRAME_STRIDE] = {};
     const uint8_t data[4] = { 1, 2, 3, 4 };
-    rocketnet_unit_check( rocketnet_server_protocol_write_payload( &test->server, 0, data, 4, now, packet ) > 0 );
+    memcpy( frame + ROCKETNET_FRAME_PAYLOAD_OFFSET, data, sizeof( data ) );
+    rocketnet_unit_check( rocketnet_server_protocol_start_payload( &test->server, 0, &to, &sequence ) == 1 );
+    rocketnet_unit_check( rocketnet_server_protocol_seal_payload_frame( &test->server, 0, sequence, sequence,
+                                                                        frame + ROCKETNET_FRAME_WIRE_OFFSET,
+                                                                        (int) sizeof( data ), now ) > 0 );
 }
 
 static int rocketnet_session_generate( const char * id, uint8_t * out, int capacity )
@@ -144,7 +147,6 @@ static void test_standard_session_vectors()
 }
 
 REGISTER_UNIT_TEST( test_standard_session_vectors );
-#endif // #if ROCKETNET_DEV
 
 // A connected slot may hold mapping index -1: rocketnet_client_slots_assign
 // stores any index it is given. Accepting a payload for such a slot must

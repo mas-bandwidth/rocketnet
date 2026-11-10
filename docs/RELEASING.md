@@ -51,6 +51,24 @@ tag. The job classifies a commit as wire-affecting when it touches one of these 
 - `sdk/rocketnet_protocol.cpp`
 - `sdk/rocketnet_connect_token.h`
 - `sdk/rocketnet_connect_token.cpp`
+- `sdk/rocketnet_message.cpp`
+- `sdk/rocketnet_message.h`
+- `sdk/rocketnet_ack.cpp`
+- `sdk/rocketnet_ack.h`
+- `sdk/rocketnet_client_protocol.cpp`
+- `sdk/rocketnet_client_protocol.h`
+- `sdk/rocketnet_server_protocol.cpp`
+- `sdk/rocketnet_server_protocol.h`
+- `sdk/rocketnet_channel.cpp`
+- `sdk/rocketnet_channel.h`
+- `sdk/rocketnet_channel_reliable.cpp`
+- `sdk/rocketnet_channel_sequenced.cpp`
+- `sdk/rocketnet_channel_receipts.cpp`
+- `sdk/rocketnet_keys.cpp`
+- `sdk/rocketnet_keys.h`
+- `sdk/rocketnet_read_write.h`
+- `sdk/rocketnet_layers.h`
+- `sdk/rocketnet.h`
 
 This is a path-based check: comments and explanatory edits in those files also
 match, even when no wire behavior changes. The job does not inspect semantics.
