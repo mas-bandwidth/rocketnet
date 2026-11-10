@@ -734,11 +734,7 @@ struct rocketnet_platform_mutex_t
 #include "Windows/MinWindows.h"
 #endif // #if !ROCKETNET_UNREAL_ENGINE
 
-#if _WIN64
 typedef uint64_t rocketnet_platform_socket_handle_t;
-#else
-typedef _W64 unsigned int rocketnet_platform_socket_handle_t;
-#endif // #if _WIN64
 
 struct rocketnet_platform_socket_t
 {
@@ -810,29 +806,13 @@ inline uint64_t rocketnet_platform_atomic_add_u64( volatile uint64_t * value, ui
     // relaxed ordering
 inline uint64_t rocketnet_platform_atomic_load_u64( volatile uint64_t * value )
 {
-#if defined( _M_IX86 )
-        // 32-bit x86 has no single-instruction 64-bit load; CAS with the
-        // observed value (a self-write) retries until it reads consistent.
-    long long observed = *(volatile long long *) value;
-    while ( _InterlockedCompareExchange64( (volatile long long *) value, observed, observed ) != observed )
-        observed = *(volatile long long *) value;
-    return (uint64_t) observed;
-#else
     return (uint64_t) _InterlockedCompareExchange64( (volatile long long *) value, 0, 0 );
-#endif // #if defined( _M_IX86 )
 }
 
     // relaxed ordering
 inline void rocketnet_platform_atomic_store_u64( volatile uint64_t * value, uint64_t store )
 {
-#if defined( _M_IX86 )
-        // 32-bit x86 has no _InterlockedExchange64; emulate with a CAS loop
-    long long expected = *(volatile long long *) value;
-    while ( _InterlockedCompareExchange64( (volatile long long *) value, (long long) store, expected ) != expected )
-        expected = *(volatile long long *) value;
-#else // #if defined(_M_IX86)
     _InterlockedExchange64( (volatile long long *) value, (long long) store );
-#endif // #if defined(_M_IX86)
 }
 
     // relaxed ordering
