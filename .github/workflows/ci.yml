@@ -1043,6 +1043,31 @@ jobs:
         if: runner.os == 'Linux' && matrix.leg == 'checks'
         run: bash scripts/rocketnet-provision selftest
 
+  # Development-only unit files are in ./bin/test only when ROCKETNET_DEV=ON.
+  # The Debug unit row runs them at -O0. This job runs the same suite from a
+  # Release build, on its own runner, so the optimizer sees those cases on
+  # every commit. timeout-minutes stays inside the two-minute per-commit
+  # bound. The three compilers run the same binary in nightly-dst.yml.
+  release-dev-unit:
+    name: ubuntu-24.04 / Release / ROCKETNET_DEV=ON / unit
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: ${{ inputs.full && 7200 || 2 }}
+    steps:
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: ./.github/actions/ccache
+
+      - name: Build the unit suite (Release, ROCKETNET_DEV=ON, GCC)
+        env:
+          CC: gcc
+          CXX: g++
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DROCKETNET_DEV=ON
+          cmake --build build --target test --parallel
+
+      - name: Run unit tests (Release, ROCKETNET_DEV=ON)
+        run: ./bin/test
+
   # The windows leg (#81's baseline doctrine): the portable driver built with
   # MSVC — the first machine ever to compile the windows arm — and the full
   # test suite run on the runner, Debug and Release. /fp:precise comes from

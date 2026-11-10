@@ -32,6 +32,12 @@
 # The fixed range 1-2050 adds about 270 s on Linux, 180 s on macOS and 430 s on
 # Windows at those rates. These measurements size the finite seed workload;
 # they do not cap how long a nightly run may take.
+#
+# The Release build is ROCKETNET_DEV=ON, so ./bin/test contains the
+# development-only unit files. x86-64 GCC (dst-linux), x86-64 Clang
+# (dst-linux-clang) and arm64 Clang (dst-macos) run that binary with no
+# --run filter. The seed comparison on the existing legs is unchanged.
+# Windows does not run the full unit suite.
 
 name: nightly-dst
 
@@ -67,8 +73,11 @@ jobs:
         with:
           ref: ${{ matrix.ref }}
 
-      - name: Build (Release)
-        run: make
+      - name: Build (Release, ROCKETNET_DEV=ON, GCC)
+        env:
+          CC: gcc
+          CXX: g++
+        run: make ROCKETNET_DEV=ON
 
       - name: The test_dst_ unit cases
         shell: bash
@@ -88,6 +97,12 @@ jobs:
             test_dst_budget_queued_sequenced_seed_84959 test_dst_budget_queued_sequenced_seed_93289; do
             "$DST_BIN/test$DST_EXE" --run "$c"
           done
+
+      - name: Run the unit suite (Release, ROCKETNET_DEV=ON)
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$DST_BIN/test$DST_EXE"
 
       - name: Seeds 1-50 print the reference trace
         shell: bash
@@ -211,8 +226,11 @@ jobs:
         with:
           ref: ${{ matrix.ref }}
 
-      - name: Build (Release)
-        run: make
+      - name: Build (Release, ROCKETNET_DEV=ON, Clang)
+        env:
+          CC: clang
+          CXX: clang++
+        run: make ROCKETNET_DEV=ON
 
       - name: The test_dst_ unit cases
         shell: bash
@@ -232,6 +250,12 @@ jobs:
             test_dst_budget_queued_sequenced_seed_84959 test_dst_budget_queued_sequenced_seed_93289; do
             "$DST_BIN/test$DST_EXE" --run "$c"
           done
+
+      - name: Run the unit suite (Release, ROCKETNET_DEV=ON)
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$DST_BIN/test$DST_EXE"
 
       - name: Seeds 1-50 print the reference trace
         shell: bash
@@ -336,6 +360,34 @@ jobs:
           echo "seeds=$sweep took $(( $(date +%s) - start ))s on $RUNNER_OS"
           if grep -q '^FAIL' dst-sweep.log; then echo "dst printed a FAIL line on $RUNNER_OS"; exit 1; fi
           tail -n 1 dst-sweep.log | grep -q '^PASS seeds='
+
+  dst-linux-clang:
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 7200
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+    env:
+      DST_BIN: ./bin
+      DST_EXE: ""
+    steps:
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          ref: ${{ matrix.ref }}
+
+      - name: Build (Release, ROCKETNET_DEV=ON, Clang)
+        env:
+          CC: clang
+          CXX: clang++
+        run: make ROCKETNET_DEV=ON
+
+      - name: Run the unit suite (Release, ROCKETNET_DEV=ON)
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$DST_BIN/test$DST_EXE"
 
   dst-windows:
     runs-on: [self-hosted, Windows, X64, rocketnet-windows]
