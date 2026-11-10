@@ -199,7 +199,9 @@ opened record unconsumed, an open on the I/O thread after `RetireKeys` and
 before the I/O thread reads retired, a fill thread reading a nonzero mark, a
 zero-sequence record refused by `IoCheck`, a wrong-size record refused by
 `IoCheck`, and a payload opened on the I/O thread while the session is still
-sending the connection response and refused by `update` (`earlyRefused`). A
+sending the connection response and refused by `update` (`earlyRefused`), and
+a `RetireKeys` while the session is still sending the connection response,
+with nothing accepted and the integrity limit not reached. A
 raw genuine session record while connected is not reachable (the scratch run
 of that negation passes): the arrival rule above is what keeps genuine
 traffic off the main thread's AEAD.
@@ -219,7 +221,7 @@ invariant, so on no earlier one in the configuration's list.
 ### `MCRNClientIoDecryptBrokenOpenBeforeReplay.cfg`
 
 `OpenBeforeReplay = TRUE`: `IoCheck` skips the replay check and `IoOpen`
-runs it after the AEAD. TLC exits 12: **`Invariant CheapRefusalsFirst is violated`** (32,214 states generated, 16,720 distinct).
+runs it after the AEAD. TLC exits 12: **`Invariant CheapRefusalsFirst is violated`** (103,381 states generated, 45,283 distinct).
 
 - **The trace:**
   1. The challenge arrives, passes the I/O thread raw and is published;
@@ -245,8 +247,8 @@ runs it after the AEAD. TLC exits 12: **`Invariant CheapRefusalsFirst is violate
 ### `MCRNClientIoDecryptBrokenSharedWindow.cfg`
 
 `SharedWindow = TRUE`: the I/O thread's open also advances `replay_session`
-(`mainWin`). TLC exits 12: **`Invariant SingleWriter is violated`** (5,189
-states generated, 3,524 distinct).
+(`mainWin`). TLC exits 12: **`Invariant SingleWriter is violated`** (9,693
+states generated, 6,228 distinct).
 
 - **The trace:**
   1. The challenge, `PublishKeys`, and the I/O thread takes its copy, as
@@ -266,14 +268,14 @@ states generated, 3,524 distinct).
 ### `MCRNClientIoDecryptBrokenNoRetire.cfg`
 
 `NoRetire = TRUE`: `IoDropKeys` reads retired and keeps the copy. TLC exits
-12: **`Invariant NoOpenWithoutKeys is violated`** (17,958 states generated,
-9,249 distinct).
+12: **`Invariant NoOpenWithoutKeys is violated`** (4,026 states generated,
+2,421 distinct).
 
 - **The trace:**
-  1. The challenge, `PublishKeys`, the I/O thread takes its copy, and a
-     keep-alive connects the client.
-  2. `update` disconnects (`RetireKeys`): the epoch retired, the session
-     ended, the wake set.
+  1. The challenge, `PublishKeys`, and the I/O thread takes its copy; the
+     session is still sending the connection response.
+  2. `update` disconnects before the first keep-alive (`RetireKeys`): the
+     epoch retired, the session ended, the wake set.
   3. The I/O thread wakes, reads retired at the top of the drain, and keeps
      its copy.
 - **Against the design, by hand:** the design's table row for the open key
@@ -288,7 +290,7 @@ states generated, 3,524 distinct).
 ### `MCRNClientIoDecryptBrokenCountOnIo.cfg`
 
 `CountOnIo = TRUE`: the I/O thread counts its own replay refusal. TLC exits
-12: **`Invariant SingleWriter is violated`** (3,377 states generated, 2,179
+12: **`Invariant SingleWriter is violated`** (4,685 states generated, 2,885
 distinct).
 
 - **The trace:**
