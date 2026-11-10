@@ -2224,13 +2224,21 @@ static void test_iocp_transport_socket_sets_dont_fragment()
         CHECK( transport && bind.port != 0 );
 
         const SOCKET socket = (SOCKET) rocketnet_server_iocp_test_socket( transport );
-        int enabled = 0;
-        int bytes = (int) sizeof( enabled );
-        CHECK( getsockopt( socket, family == 0 ? IPPROTO_IP : IPPROTO_IPV6,
-                           family == 0 ? IP_DONTFRAGMENT : IPV6_DONTFRAG, (char *) &enabled, &bytes ) == 0 );
-        CHECK( bytes == (int) sizeof( enabled ) );
-        printf( "test_iocp_transport_socket_sets_dont_fragment %s value=%d\n", binds[family], enabled );
-        enabled_for_both = enabled_for_both && enabled == 1;
+        int ipv4_enabled = 0;
+        int bytes = (int) sizeof( ipv4_enabled );
+        CHECK( getsockopt( socket, IPPROTO_IP, IP_DONTFRAGMENT, (char *) &ipv4_enabled, &bytes ) == 0 );
+        CHECK( bytes == (int) sizeof( ipv4_enabled ) );
+        int ipv6_enabled = 1;
+        if ( family == 1 )
+        {
+            ipv6_enabled = 0;
+            bytes = (int) sizeof( ipv6_enabled );
+            CHECK( getsockopt( socket, IPPROTO_IPV6, IPV6_DONTFRAG, (char *) &ipv6_enabled, &bytes ) == 0 );
+            CHECK( bytes == (int) sizeof( ipv6_enabled ) );
+        }
+        printf( "test_iocp_transport_socket_sets_dont_fragment %s ipv4=%d ipv6=%d\n",
+                binds[family], ipv4_enabled, ipv6_enabled );
+        enabled_for_both = enabled_for_both && ipv4_enabled == 1 && ipv6_enabled == 1;
         rn_native_backend_stop_and_destroy( transport, rocketnet_server_iocp_stop,
                                             rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy );
         CHECK( live_allocations.load() == baseline );
@@ -2252,13 +2260,21 @@ static void test_rio_transport_socket_sets_dont_fragment()
         CHECK( transport && bind.port != 0 );
 
         const SOCKET socket = (SOCKET) rocketnet_server_rio_test_socket( transport );
-        int enabled = 0;
-        int bytes = (int) sizeof( enabled );
-        CHECK( getsockopt( socket, family == 0 ? IPPROTO_IP : IPPROTO_IPV6,
-                           family == 0 ? IP_DONTFRAGMENT : IPV6_DONTFRAG, (char *) &enabled, &bytes ) == 0 );
-        CHECK( bytes == (int) sizeof( enabled ) );
-        printf( "test_rio_transport_socket_sets_dont_fragment %s value=%d\n", binds[family], enabled );
-        enabled_for_both = enabled_for_both && enabled == 1;
+        int ipv4_enabled = 0;
+        int bytes = (int) sizeof( ipv4_enabled );
+        CHECK( getsockopt( socket, IPPROTO_IP, IP_DONTFRAGMENT, (char *) &ipv4_enabled, &bytes ) == 0 );
+        CHECK( bytes == (int) sizeof( ipv4_enabled ) );
+        int ipv6_enabled = 1;
+        if ( family == 1 )
+        {
+            ipv6_enabled = 0;
+            bytes = (int) sizeof( ipv6_enabled );
+            CHECK( getsockopt( socket, IPPROTO_IPV6, IPV6_DONTFRAG, (char *) &ipv6_enabled, &bytes ) == 0 );
+            CHECK( bytes == (int) sizeof( ipv6_enabled ) );
+        }
+        printf( "test_rio_transport_socket_sets_dont_fragment %s ipv4=%d ipv6=%d\n",
+                binds[family], ipv4_enabled, ipv6_enabled );
+        enabled_for_both = enabled_for_both && ipv4_enabled == 1 && ipv6_enabled == 1;
         rn_native_backend_stop_and_destroy( transport, rocketnet_server_rio_stop,
                                             rocketnet_server_rio_stopped, rocketnet_server_rio_destroy );
         CHECK( live_allocations.load() == baseline );

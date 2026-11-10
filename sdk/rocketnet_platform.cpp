@@ -1304,6 +1304,33 @@ static int rocketnet_platform_reserve_ipv4_port( const rocketnet_address_t * add
 }
 #endif // #if defined( __APPLE__ )
 
+void rocketnet_platform_socket_apply_dont_fragment( bool ipv6, void ( *set_option )( void * user, int level, int option_name, int value ), void * user )
+{
+    if ( ipv6 )
+    {
+#if defined( __linux__ )
+        set_option( user, IPPROTO_IPV6, IPV6_MTU_DISCOVER, IPV6_PMTUDISC_DO );
+#elif defined( IPV6_DONTFRAG )
+        set_option( user, IPPROTO_IPV6, IPV6_DONTFRAG, 1 );
+#endif // #if defined( __linux__ )
+    }
+
+#if defined( __linux__ )
+    set_option( user, IPPROTO_IP, IP_MTU_DISCOVER, IP_PMTUDISC_DO );
+#elif defined( IP_DONTFRAG )
+    set_option( user, IPPROTO_IP, IP_DONTFRAG, 1 );
+#else
+    (void) set_option;
+    (void) user;
+#endif // #if defined( __linux__ )
+}
+
+static void rocketnet_platform_socket_set_dont_fragment_option( void * user, int level, int option_name, int value )
+{
+    const int handle = *(const int *) user;
+    setsockopt( handle, level, option_name, &value, sizeof( value ) );
+}
+
 // batch_pump false suppresses the darwin batch pump for this socket (a pinned
 // "portable" transport). Nothing is read at create: the first real batch call
 // is the probe and delivers what it reads.
@@ -1485,25 +1512,8 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
     // don't fragment: linux through PMTU discovery, everything else through
     // the RFC 3542 options where the system has them. A refusal is tolerated.
 
-    int dont_fragment = 1;
-    if ( address->type == ROCKETNET_ADDRESS_IPV6 )
-    {
-#if defined( __linux__ )
-        dont_fragment = IPV6_PMTUDISC_DO;
-        setsockopt( socket->handle, IPPROTO_IPV6, IPV6_MTU_DISCOVER, &dont_fragment, sizeof( dont_fragment ) );
-#elif defined( IPV6_DONTFRAG )
-        setsockopt( socket->handle, IPPROTO_IPV6, IPV6_DONTFRAG, &dont_fragment, sizeof( dont_fragment ) );
-#endif // #if defined( __linux__ )
-    }
-    else
-    {
-#if defined( __linux__ )
-        dont_fragment = IP_PMTUDISC_DO;
-        setsockopt( socket->handle, IPPROTO_IP, IP_MTU_DISCOVER, &dont_fragment, sizeof( dont_fragment ) );
-#elif defined( IP_DONTFRAG )
-        setsockopt( socket->handle, IPPROTO_IP, IP_DONTFRAG, &dont_fragment, sizeof( dont_fragment ) );
-#endif // #if defined( __linux__ )
-    }
+    rocketnet_platform_socket_apply_dont_fragment( address->type == ROCKETNET_ADDRESS_IPV6,
+                                                   rocketnet_platform_socket_set_dont_fragment_option, &socket->handle );
 
 #if defined( __APPLE__ ) && TARGET_OS_OSX
 #if ROCKETNET_DEV
@@ -4032,20 +4042,25 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
         }
     }
 
-    // set don't fragment bit
+    // set don't fragment bit (including IPv4 DF on dual-stack IPv6 sockets)
 
     if ( address->type == ROCKETNET_ADDRESS_IPV6 )
     {
         int val = 1;
         setsockopt( s->handle, IPPROTO_IPV6, IPV6_DONTFRAG, (const char *) &val, sizeof( val ) );
     }
-    else
-    {
-        int val = 1;
-        setsockopt( s->handle, IPPROTO_IP, IP_DONTFRAGMENT, (const char *) &val, sizeof( val ) );
-    }
+
+    int val = 1;
+    setsockopt( s->handle, IPPROTO_IP, IP_DONTFRAGMENT, (const char *) &val, sizeof( val ) );
 
     return s;
+}
+
+void rocketnet_platform_socket_apply_dont_fragment( bool ipv6, void ( *set_option )( void * user, int level, int option_name, int value ), void * user )
+{
+    if ( ipv6 )
+        set_option( user, IPPROTO_IPV6, IPV6_DONTFRAG, 1 );
+    set_option( user, IPPROTO_IP, IP_DONTFRAGMENT, 1 );
 }
 
 // false only when the lifecycle tracker refused the close: the handle is

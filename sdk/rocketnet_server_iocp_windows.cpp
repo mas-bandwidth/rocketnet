@@ -1325,8 +1325,9 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
         goto failed;
     // Match the portable socket's don't-fragment rule, tolerating option refusal.
 
-    setsockopt( iocp->socket, iocp->ipv6 ? IPPROTO_IPV6 : IPPROTO_IP,
-                iocp->ipv6 ? IPV6_DONTFRAG : IP_DONTFRAGMENT, (const char *) &enabled, sizeof( enabled ) );
+    if ( iocp->ipv6 )
+        setsockopt( iocp->socket, IPPROTO_IPV6, IPV6_DONTFRAG, (const char *) &enabled, sizeof( enabled ) );
+    setsockopt( iocp->socket, IPPROTO_IP, IP_DONTFRAGMENT, (const char *) &enabled, sizeof( enabled ) );
     // both ICMP reset reports off; a refusal is logged once and the receive
     // paths skip the statuses
 

@@ -968,8 +968,9 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
         goto failed;
     // Match the portable socket's don't-fragment rule, tolerating option refusal.
 
-    setsockopt( rio->socket, rio->ipv6 ? IPPROTO_IPV6 : IPPROTO_IP,
-                rio->ipv6 ? IPV6_DONTFRAG : IP_DONTFRAGMENT, (const char *) &enabled, sizeof( enabled ) );
+    if ( rio->ipv6 )
+        setsockopt( rio->socket, IPPROTO_IPV6, IPV6_DONTFRAG, (const char *) &enabled, sizeof( enabled ) );
+    setsockopt( rio->socket, IPPROTO_IP, IP_DONTFRAGMENT, (const char *) &enabled, sizeof( enabled ) );
     // both ICMP reset reports off; a refusal is logged once and the receive
     // path skips the statuses
 
