@@ -97,7 +97,7 @@ MCClientConnectionBrokenCommitEarly.cfg	MCClientConnection.tla	invariant	Commits
 MCReceiveOrder.cfg	MCReceiveOrder.tla	pass	-	check	receiveorder	required	-
 MCReceiveOrderBrokenSlotsAfterKeypair.cfg	MCReceiveOrder.tla	invariant	CheapRefusalsFirst	check	receiveorder	required	-
 MCReceiveOrderBrokenVersionNotFirst.cfg	MCReceiveOrder.tla	invariant	CheapRefusalsFirst	check	receiveorder	required	-
-MCReceiveOrderBrokenTokenManyAddresses.cfg	MCReceiveOrder.tla	invariant	OneLiveMappingPerToken	check	receiveorder	required	-
+MCReceiveOrderBrokenTokenManyAddresses.cfg	MCReceiveOrder.tla	invariant	OneUnexpiredMappingPerToken	check	receiveorder	required	-
 MCReceiveOrderBrokenClaimBeforeSignature.cfg	MCReceiveOrder.tla	invariant	ClaimOnlyAfterSignature	check	receiveorder	required	-
 MCReceiveOrderBrokenClaimOutlivesMapping.cfg	MCReceiveOrder.tla	invariant	ClaimHasMapping	check	receiveorder	required	-
 MCRNDriverSendStaging.cfg	MCRNDriverSendStaging.tla	pass	-	check	rndriversendstaging	required	-
@@ -442,7 +442,7 @@ MCLoopbackQueue.cfg	MCLoopbackQueue.tla	pass	-	check	loopbackqueue	required	-
 MCLoopbackQueueBrokenNoRestart.cfg	MCLoopbackQueue.tla	invariant	TouchedWithinBacklog	check	loopbackqueue	required	-
 MCRNUpdateClock.cfg	MCRNUpdateClock.tla	pass	-	check	rnupdateclock	required	-
 MCRNUpdateClockBrokenStall.cfg	MCRNUpdateClock.tla	invariant	ResumeAdvances	check	rnupdateclock	required	-
-MCReceiveOrderBrokenClaimOutlivesBinding.cfg	MCReceiveOrder.tla	invariant	BoundHasNoClaim	check	receiveorder	required	-
+MCReceiveOrderBrokenClaimOutlivesBinding.cfg	MCReceiveOrder.tla	invariant	BoundHasNoOwnClaim	check	receiveorder	required	-
 MCReceiveOrderBrokenWorkBudgetAtCookie.cfg	MCReceiveOrder.tla	invariant	WorkBudgetOnlyForVerify	check	receiveorder	required	-
 MCReceiveOrderBrokenReplaceKeepsClaim.cfg	MCReceiveOrder.tla	invariant	ClaimHasMapping	check	receiveorder	required	-
 MCReceiveOrderBrokenReplaceBeforeVerify.cfg	MCReceiveOrder.tla	invariant	RefusalKeepsHalfOpen	check	receiveorder	required	-
@@ -745,3 +745,5 @@ MCRNRioWorkerBrokenUnboundedRetry.cfg	MCRNRioWorker.tla	temporal	StopCompletes	c
 MCRNRioWorkerBrokenOneBatchPerPass.cfg	MCRNRioWorker.tla	invariant	LeakOnlyAfterRefusal	check	rnrioworker	required	-
 MCRNSchedulerBrokenRtxById.cfg	MCRNScheduler.tla	invariant	RtxHeadBoost	check	rnscheduler	required	-
 MCRNUnreliableRingLayoutBrokenWalkFromHead.cfg	MCRNUnreliableRingLayout.tla	invariant	WalkExact	check	rnunreliableringlayout	required	-
+MCReceiveOrderDeadlineWindow.cfg	MCReceiveOrder.tla	invariant	OneLiveMappingPerToken	check	receiveorder	required	-
+MCReceiveOrderDeadlineWindowBound.cfg	MCReceiveOrder.tla	invariant	BoundHasNoClaim	check	receiveorder	required	-
