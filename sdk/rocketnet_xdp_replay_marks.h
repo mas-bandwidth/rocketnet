@@ -125,7 +125,7 @@ static inline void rocketnet_xdp_replay_marks_bind( struct rocketnet_xdp_replay_
     marks->forgets = forgets;
     marks->mark_keys = mark_keys;
     marks->mark_values = mark_values;
-    marks->capacity = forgets && mark_keys && mark_values ? capacity : 0;
+    marks->capacity = forgets && mark_keys && mark_values && capacity <= ROCKETNET_XDP_REPLAY_MAX_ENTRIES ? capacity : 0;
     marks->index_size = marks->capacity * 2;
     rocketnet_xdp_replay_marks_reset( marks );
 }

@@ -20,6 +20,7 @@
 */
 #define ROCKETNET_SERVER_REPLAY_SLOT_MARK_LAYOUT_FIELDS( X ) \
     X( marked_value, uint32_t marked_value )                       \
+    X( observed_value, uint64_t observed_value )                   \
     X( seen_address, struct rocketnet_address_t seen_address )     \
     X( has_mark, uint8_t has_mark )                                \
     X( seen, uint8_t seen )                                        \
@@ -151,6 +152,9 @@ static void rocketnet_server_replay_marks_address_erase_at( struct rocketnet_ser
     uint32_t next = rocketnet_server_replay_marks_address_step( marks, hole );
     while ( table[next] != 0 )
     {
+#if ROCKETNET_DEV
+        marks->comparisons++;
+#endif // #if ROCKETNET_DEV
         const uint32_t home = rocketnet_server_replay_marks_address_home( marks, &marks->slots[table[next] - 1].seen_address );
         if ( ( next + size - home ) % size >= ( next + size - hole ) % size )
         {
@@ -188,7 +192,12 @@ static void rocketnet_server_replay_marks_address_insert( struct rocketnet_serve
     uint32_t * table = rocketnet_server_replay_marks_address_table( marks );
     uint32_t position = rocketnet_server_replay_marks_address_home( marks, &marks->slots[index].seen_address );
     while ( table[position] != 0 )
+    {
+#if ROCKETNET_DEV
+        marks->comparisons++;
+#endif // #if ROCKETNET_DEV
         position = rocketnet_server_replay_marks_address_step( marks, position );
+    }
     table[position] = (uint32_t) index + 1;
 }
 
@@ -299,7 +308,7 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
     }
 
     // then the marks -- every connected slot first seen (zero included),
-    // whose highest_opened fell below its last mark, or whose highest_opened
+    // whose highest_opened fell below its last observation, or whose highest_opened
     // advanced by the mark step. Every connected slot with a
     // mapping is seen at its address, marked or not, so that the forget pass
     // can drop the reply MAC of a slot that left before it ever marked.
@@ -326,7 +335,7 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
             continue;
 
         // proofs/tla/RNXdpReplay.tla Marks, NewSessionNeverDroppedByOldMark: a slot
-        // first seen, or whose highest_opened fell below its mark (a new
+        // first seen, or whose highest_opened fell below its last observation (a new
         // session in the slot), is marked even at zero, so the commit before
         // its first keep-alive leaves overwrites any older session's entry
         // for the address, whether or not that session's forget has landed.
@@ -350,7 +359,8 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
 
         const uint32_t high_water = (uint32_t) highest_opened;
         const uint32_t last_marked = slot->has_mark ? slot->marked_value : 0;
-        const bool decreased = high_water < last_marked;
+        const bool decreased = !first_seen && ( highest_opened < slot->observed_value || high_water < last_marked );
+        slot->observed_value = highest_opened;
 
         if ( !first_seen && !mark_owed && !decreased && high_water - last_marked < ROCKETNET_XDP_REPLAY_MARK_STEP )
             continue;
@@ -398,6 +408,7 @@ bool rocketnet_server_replay_marks_inventory_matches_for_test( char * failure, s
     // members, and their RESET decisions are listed here so that every member
     // of the struct has one and the inventory covers the whole struct.
     static const rocketnet_reset_member_t decisions[] = { ROCKETNET_SERVER_REPLAY_MARK_FIELDS( MARK_DECISION )
+                                                              MARK_DECISION( RESET, observed_value )
                                                               MARK_DECISION( RESET, seen )
                                                                   MARK_DECISION( RESET, seen_address )
                                                                       MARK_DECISION( RESET, mark_owed ) };

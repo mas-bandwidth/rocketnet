@@ -370,14 +370,11 @@ static void test_xdp_transport_replay_marks_mass_disconnect_cost()
     static bool mark_applied[ROCKETNET_XDP_REPLAY_MAX_ENTRIES];
     memset( mark_applied, 0, sizeof( mark_applied ) );
 
-    int deletes = 0;
     for ( uint32_t i = 0; i < clients; i++ )
-    {
         forget_failed[i] = false;
-        if ( rocketnet_xdp_replay_marks_kernel_holds( &marks, &marks.forgets[i] ) )
-            deletes++;
-    }
-    rocketnet_unit_check( deletes == 0 );
+    rocketnet_unit_check( rocketnet_xdp_replay_marks_drop_unheld_forgets( &marks ) == 0 );
+    rocketnet_unit_check( marks.forget_count == 0 );
+    rocketnet_unit_check( marks.comparisons <= 16u * clients );
 
     rocketnet_xdp_replay_marks_reset_keeping( &marks, forget_failed, mark_applied );
     rocketnet_unit_check( marks.forget_count == 0 );
@@ -402,14 +399,12 @@ static void test_xdp_transport_replay_marks_mass_disconnect_cost()
         rocketnet_unit_check( rocketnet_xdp_replay_marks_forget( &marks, &a ) );
     }
 
-    deletes = 0;
+    const uint64_t comparisons_before = marks.comparisons;
     for ( uint32_t i = 0; i < clients; i++ )
-    {
         forget_failed[i] = false;
-        if ( rocketnet_xdp_replay_marks_kernel_holds( &marks, &marks.forgets[i] ) )
-            deletes++;
-    }
-    rocketnet_unit_check( deletes == (int) clients );
+    rocketnet_unit_check( rocketnet_xdp_replay_marks_drop_unheld_forgets( &marks ) == clients );
+    rocketnet_unit_check( marks.forget_count == clients );
+    rocketnet_unit_check( marks.comparisons - comparisons_before <= 16u * clients );
 
     // The deletes land, so the next mass disconnect again asks for none.
 
@@ -422,16 +417,22 @@ static void test_xdp_transport_replay_marks_mass_disconnect_cost()
         rocketnet_unit_check( rocketnet_xdp_replay_marks_forget( &marks, &a ) );
     }
 
-    int skipped = 0;
     for ( uint32_t i = 0; i < clients; i++ )
-    {
         forget_failed[i] = false;
-        if ( !rocketnet_xdp_replay_marks_kernel_holds( &marks, &marks.forgets[i] ) )
-            skipped++;
-    }
-    rocketnet_unit_check( skipped == (int) clients );
+    rocketnet_unit_check( rocketnet_xdp_replay_marks_drop_unheld_forgets( &marks ) == 0 );
+    rocketnet_unit_check( marks.forget_count == 0 );
     rocketnet_xdp_replay_marks_reset_keeping( &marks, forget_failed, mark_applied );
     rocketnet_unit_check( marks.forget_count == 0 );
+}
+
+static void test_xdp_transport_replay_marks_bind_rejects_oversized_capacity()
+{
+    static struct rocketnet_xdp_replay_marks_t marks;
+    struct rocketnet_server_xdp_replay_key_t forget = {};
+    struct rocketnet_server_xdp_replay_key_t mark_key = {};
+    struct rocketnet_server_xdp_replay_value_t mark_value = {};
+    rocketnet_xdp_replay_marks_bind( &marks, &forget, &mark_key, &mark_value, ROCKETNET_XDP_REPLAY_MAX_ENTRIES + 1 );
+    rocketnet_unit_check( marks.capacity == 0 && marks.index_size == 0 );
 }
 
 // A fake kernel replay map for the integrated case: a few entries, and a
@@ -1025,6 +1026,7 @@ REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_released_sessions_coalesce_f
 REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_failed_forgets_kept );
 REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_refusals_reach_the_socket );
 REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_mass_disconnect_cost );
+REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_bind_rejects_oversized_capacity );
 REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_forget_without_mark_skips_delete );
 REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_unheld_forget_keeps_the_batch );
 REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_stale_forget_never_deletes_a_newer_mark );
