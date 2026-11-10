@@ -47,8 +47,8 @@ records in `proofs/tla/RUNS.tsv`.
 
 Two records, `"s"` (single-packet) and `"c"` (a chunk), both first sent at
 tick 0 in either order. Variables: `t` (ticks since the first send), and per
-record `lastSend`, `backoff`, `attempts` (saturating at `MinAttempts`) and
-`acked`; `resend_delay`; `head`, the record at the head of the one FIFO of the broken
+record `lastSend`, `firstSend`, `backoff`, `attempts` (saturating at
+`MinAttempts`), `acked` and `refused`; `resend_delay`; `head`, the record at the head of the one FIFO of the broken
 shape; `phase`, the step of the update; and `sampled` and `seeded`, whether
 an own ack or the transport's round trip has given the estimator a sample
 (the code's `has_rtt` is their disjunction).
@@ -76,6 +76,14 @@ Actions:
   class every due record is sent; with `OneFifo` the walk goes from `head`
   and stops at the first live record that is not due. A sent record moves to
   its FIFO's tail and its back-off doubles up to `MaxBackoff`.
+- `WalkRefused(F)`: the walk of `Walk`, but `finish_packet` refuses the
+  packet carrying the records of `F`, each never on the wire and inside
+  `RefuseFor` ticks of its first offer (`rn_window_ack_packet_failed`). A
+  refused record keeps `lastSend = NeverSent` (`RN_SEND_NUMBER_NEVER_SENT`),
+  records no `firstSend` (`send_first_sends`), so its timeout has no clock,
+  and goes back to the head of its FIFO; `refused` marks it for
+  `NoDueRecordHeld`. A refused resend of a record already on the wire is
+  not modelled. `RefuseFor` is 0 (no refusals) except in the refusal cases.
 - `Tick`: the update ends and time moves one tick.
 - `Done`: every record acked, or the timeout fired; a stutter, so the end is
   not a deadlock.
@@ -168,3 +176,16 @@ The unit test `test_ordered_chunk_timeout_runs_from_its_own_first_send`
 (`test_unit_channel_ordered.cpp`) replays it against the code: a chunk first
 sent 12 s after its block's first chunk is not timed out until 10 s after its
 own first send, and an unsent oldest number has no clock.
+
+`MCRNResendTimingRefused.cfg` lets each record's first send be refused for
+18 ticks (9 s) after it is offered. A refused first send stays never sent, so
+the timeout runs from the one real first send and every invariant holds. The
+reversed witness `MCRNResendTimingBrokenRefusedClock.cfg` is the code before
+the fix (`StampRefused`): the refusal at tick 0 records the first send and
+stamps the due-now sentinel, the record is refused until tick 18 and then
+sent, and at tick 20 it has one send where four are owed:
+`AttemptsBeforeTimeout` fails. The unit test
+`test_ordered_refused_first_send_starts_no_clock`
+(`test_unit_channel_ordered.cpp`) replays it against the code: a refused first
+send leaves `last_send` never sent and no clock, no timeout past
+`reliable_timeout`, and the real send starts the clock at its own time.

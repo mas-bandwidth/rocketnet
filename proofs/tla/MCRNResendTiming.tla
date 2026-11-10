@@ -15,7 +15,10 @@
 (* (2 s initial and maximum delay, the transport's round trip reported at  *)
 (* 200 ms giving a 300 ms delay) and MCRNResendTimingBrokenUnseeded.cfg    *)
 (* its reversed witness, the transport's round trip ignored: it must fail  *)
-(* SeededGapBounded.                                                       *)
+(* SeededGapBounded.  MCRNResendTimingRefused.cfg lets a first send be     *)
+(* refused for 9 s and MCRNResendTimingBrokenRefusedClock.cfg is its       *)
+(* reversed witness, the refusal starting the clock: it must fail          *)
+(* AttemptsBeforeTimeout.                                                  *)
 (***************************************************************************)
 EXTENDS RNResendTiming
 =============================================================================
