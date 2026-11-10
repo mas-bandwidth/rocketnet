@@ -66,7 +66,11 @@
 // stood for, which was 45056 bytes of replay tables that are gone again
 // (a 2 * 1024 * 20-byte kernel key table and a 2 * 1024 * 2-byte
 // pending-forget index).
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110339347ULL )
+// The used-token history's two token tables (bindings and claims) each carry
+// expire_floor, the bindings' lower bound on a live expiry, adding 16 bytes
+// (sdk/rocketnet_token_tables.cpp, struct rocketnet_token_table_t); the probe's
+// actual= line is 3111387939.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110339363ULL )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14146994 )
 #endif // #if defined( _WIN32 )
 
