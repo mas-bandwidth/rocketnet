@@ -159,6 +159,25 @@ jobs:
             -dict="${{ fromJSON(matrix.leg).dict }}" \
             -max_total_time="$T" -print_final_stats=1 -rss_limit_mb=4096 -timeout=25
 
+      # The two bounded mutation passes that used to run per commit live here,
+      # on the nightly tier: a copy of the committed seed corpus, a fixed seed
+      # and a few seconds, so a slow night still turns a crash into a verdict.
+      - name: Bounded mutation pass (time-boxed, fixed seed)
+        if: fromJSON(matrix.leg).target == 'rocketnet_fuzz'
+        env:
+          ASAN_OPTIONS: detect_leaks=0
+        run: |
+          cp -r tests/fuzz/corpus "$RUNNER_TEMP/fuzz-corpus"
+          ./bin/rocketnet_fuzz "$RUNNER_TEMP/fuzz-corpus" -seed=1 -max_total_time=5 -timeout=10 -rss_limit_mb=2048 -print_final_stats=1
+
+      - name: Bounded message mutation pass (time-boxed, fixed seed)
+        if: fromJSON(matrix.leg).target == 'rocketnet_fuzz_message'
+        env:
+          ASAN_OPTIONS: detect_leaks=0
+        run: |
+          cp -r tests/fuzz/corpus_message "$RUNNER_TEMP/fuzz-corpus_message"
+          ./bin/rocketnet_fuzz_message "$RUNNER_TEMP/fuzz-corpus_message" -seed=1 -max_total_time=5 -timeout=10 -rss_limit_mb=2048 -print_final_stats=1
+
       # libFuzzer writes a reproducer to the working dir on a crash; keep it.
       # GitHub expressions have no replace(): the artifact name's ref slug ('/' -> '-') is made here
       - name: Artifact name for the ref

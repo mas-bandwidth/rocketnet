@@ -1841,21 +1841,20 @@ jobs:
   # Discovery is the nightly's job (#124: hours, with the corpus persisted
   # between nights). What belongs on a per-commit gate is the property a
   # replay has and a hunt does not: the same inputs, in the same order, with
-  # the same verdict, every run. So the gate below is the first step -- every
-  # committed corpus file executed exactly once through the four wire-facing
-  # parsers under asan+ubsan, seconds, no randomness anywhere in it. Each
-  # file in tests/fuzz/corpus is a shape the wire can carry or a shape a defect
-  # once had, and the harness carries oracles beyond memory safety (base64
-  # round-trip, the ladder's output range),
-  # so a wrong ANSWER fails it too, not only a wrong access.
+  # the same verdict, every run. So the gate below is every committed corpus
+  # file, in every target's corpus, executed exactly once through its own
+  # fuzz_replay_ harness under asan+ubsan, seconds, no randomness anywhere in
+  # it. Each file in tests/fuzz/corpus* is a shape the wire can carry or a
+  # shape a defect once had, and the harnesses carry oracles beyond memory
+  # safety (base64 round-trip, the ladder's output range),
+  # so a wrong ANSWER fails them too, not only a wrong access.
   #
-  # The second step is a small fixed-seed mutation pass on top. It is bounded
-  # by a fixed mutation count and a failing step deadline: a slow runner
-  # must finish the count or fail visibly. It is not the gate's determinism
-  # argument -- the regression replay is.
+  # The bounded fixed-seed mutation pass that used to run here is in
+  # fuzz-nightly.yml: a per-commit gate is the deterministic replay, and
+  # mutation belongs to the nightly's duration budget.
 
   fuzz-smoke:
-    name: fuzz smoke (libFuzzer, corpus replay)
+    name: fuzz smoke (corpus replay)
     runs-on: [self-hosted, Linux, X64, fleet]   # was ubuntu-24.04, then one host's rocketnet label; the fleet's org runners (see build-and-test's note)
     timeout-minutes: ${{ inputs.full && 7200 || 2 }}
     steps:
@@ -1912,64 +1911,36 @@ jobs:
       - name: Build the instrumented library
         run: cmake --build build-fuzz --target rocketnet --parallel
 
-      - name: Build the harness
+      # THE GATE: each committed input, once, in order, through its target's
+      # replay driver. A replay driver given files runs exactly them and exits
+      # -- no mutation, no seeded randomness, no clock.
+
+      - name: Build and replay every committed fuzz corpus
+        shell: bash
+        env:
+          ASAN_OPTIONS: detect_leaks=0
         run: |
+          # the ten harnesses build in one parallel build and replay at once;
+          # each replay's exit status is checked
+          harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session"
+          targets=""
+          for harness in $harnesses; do targets="$targets fuzz_replay_$harness"; done
           mkdir -p bin
-          clang++ -g -O1 -std=c++17 \
-            -ffp-contract=off \
-            -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
-            -Isdk tests/fuzz/rocketnet_fuzz.cpp build-fuzz/librocketnet.a \
-            -lbpf -lxdp -luring -lpthread \
-            -o bin/fuzz
-
-      - name: Build the message harness
-        run: |
-          clang++ -g -O1 -std=c++17 \
-            -ffp-contract=off \
-            -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
-            -Isdk tests/fuzz/rocketnet_fuzz_message.cpp build-fuzz/librocketnet.a \
-            -lbpf -lxdp -luring -lpthread \
-            -o bin/fuzz_message
-
-      # THE GATE: each committed input, once, in order. libFuzzer given files
-      # rather than a directory runs exactly them and exits -- no mutation, no
-      # seeded randomness, no clock.
-
-      - name: Replay the regression corpus
-        env:
-          ASAN_OPTIONS: detect_leaks=0
-        run: ./bin/fuzz tests/fuzz/corpus/*
-
-      - name: Replay the message corpus
-        env:
-          ASAN_OPTIONS: detect_leaks=0
-        run: ./bin/fuzz_message tests/fuzz/corpus_message/*
+          cmake --build build-fuzz --target $targets --parallel
+          pids=""
+          for harness in $harnesses; do
+            corpus="tests/fuzz/corpus${harness#rocketnet_fuzz}"
+            "./bin/fuzz_replay_$harness" "$corpus"/* > "fuzz-replay-$harness.log" 2>&1 &
+            pids="$pids $!:$harness"
+          done
+          failed=0
+          for entry in $pids; do
+            if ! wait "${entry%%:*}"; then echo "fuzz replay failed: ${entry#*:}"; cat "fuzz-replay-${entry#*:}.log"; failed=1; fi
+          done
+          exit $failed
 
       - name: Exact-field oracle rejects memory-safe truncation
         run: python3 tools/check_fuzz_oracle.py build-fuzz
-
-      # The bounded pass: fixed seed, fixed WALL-CLOCK BUDGET, and the corpus
-      # copied out first so the source tree is not mutated. Every target gets
-      # the same few seconds, and the per-input timeout is the hang oracle that
-      # fails red if a pass cannot finish; the CI budget is one minute end to
-      # end per job. The gate's determinism argument stays the replay above --
-      # this pass only adds a few seconds of mutation on top of it.
-
-      - name: Mutation pass (time-boxed, fixed seed)
-        env:
-          ASAN_OPTIONS: detect_leaks=0
-        run: |
-          # RUNNER_TEMP, not /tmp: on a persistent self-hosted host /tmp/fuzz-corpus outlives the job and is
-          # shared by every runner on the machine, so the pass would start from another run's grown corpus
-          cp -r tests/fuzz/corpus "$RUNNER_TEMP/fuzz-corpus"
-          ./bin/fuzz "$RUNNER_TEMP/fuzz-corpus" -seed=1 -max_total_time=5 -timeout=10 -rss_limit_mb=2048 -print_final_stats=1
-
-      - name: Message mutation pass (time-boxed, fixed seed)
-        env:
-          ASAN_OPTIONS: detect_leaks=0
-        run: |
-          cp -r tests/fuzz/corpus_message "$RUNNER_TEMP/fuzz-corpus_message"
-          ./bin/fuzz_message "$RUNNER_TEMP/fuzz-corpus_message" -seed=1 -max_total_time=5 -timeout=10 -rss_limit_mb=2048 -print_final_stats=1
 
       - name: Upload crash reproducers
         if: failure()
