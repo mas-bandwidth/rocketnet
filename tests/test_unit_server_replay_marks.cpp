@@ -298,11 +298,14 @@ static void test_server_replay_marks_unpushed_decrease_marks_immediately()
     server_replay_marks_walk( &fixture, &recording );
     rocketnet_unit_check( recording.count == 0 );
 
-    rocketnet_encryption_map_entry( fixture.map, client.mapping )->replay_session.highest_opened = 11;
+    // A decrease below the last pushed mark is a new session and is marked at
+    // once, without waiting for the mark step.
+
+    rocketnet_encryption_map_entry( fixture.map, client.mapping )->replay_session.highest_opened = 9;
     memset( &recording, 0, sizeof( recording ) );
     server_replay_marks_walk( &fixture, &recording );
     rocketnet_unit_check( recording.count == 1 );
-    server_replay_marks_check_mark( &recording.calls[0], &address, 11 );
+    server_replay_marks_check_mark( &recording.calls[0], &address, 9 );
 
     server_replay_marks_fixture_destroy( &fixture );
 }

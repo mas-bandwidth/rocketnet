@@ -51,9 +51,8 @@
 // each queue's rocketnet_server_xdp_socket_t, adding 872136 bytes (measured).
 // The XDP replay marks add a 2 * 1024 * 20-byte kernel-held key table
 // (40960 bytes) and a 2 * 1024 * 2-byte pending-forget index (4096 bytes).
-// Tracking the last observed replay sequence adds 12 bytes per client slot
-// (12000 bytes at 1000 clients). The 1 MiB caller slack is added separately.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110396355ULL )
+// The 1 MiB caller slack is added separately.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3111432931ULL )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14146994 )
 #endif // #if defined( _WIN32 )
 

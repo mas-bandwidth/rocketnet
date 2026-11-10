@@ -20,7 +20,6 @@
 */
 #define ROCKETNET_SERVER_REPLAY_SLOT_MARK_LAYOUT_FIELDS( X ) \
     X( marked_value, uint32_t marked_value )                       \
-    X( observed_value, uint64_t observed_value )                   \
     X( seen_address, struct rocketnet_address_t seen_address )     \
     X( has_mark, uint8_t has_mark )                                \
     X( seen, uint8_t seen )                                        \
@@ -308,7 +307,7 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
     }
 
     // then the marks -- every connected slot first seen (zero included),
-    // whose highest_opened fell below its last observation, or whose highest_opened
+    // whose highest_opened fell below its last mark, or whose highest_opened
     // advanced by the mark step. Every connected slot with a
     // mapping is seen at its address, marked or not, so that the forget pass
     // can drop the reply MAC of a slot that left before it ever marked.
@@ -335,7 +334,7 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
             continue;
 
         // proofs/tla/RNXdpReplay.tla Marks, NewSessionNeverDroppedByOldMark: a slot
-        // first seen, or whose highest_opened fell below its last observation (a new
+        // first seen, or whose highest_opened fell below its mark (a new
         // session in the slot), is marked even at zero, so the commit before
         // its first keep-alive leaves overwrites any older session's entry
         // for the address, whether or not that session's forget has landed.
@@ -359,8 +358,7 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
 
         const uint32_t high_water = (uint32_t) highest_opened;
         const uint32_t last_marked = slot->has_mark ? slot->marked_value : 0;
-        const bool decreased = !first_seen && ( highest_opened < slot->observed_value || high_water < last_marked );
-        slot->observed_value = highest_opened;
+        const bool decreased = !first_seen && high_water < last_marked;
 
         if ( !first_seen && !mark_owed && !decreased && high_water - last_marked < ROCKETNET_XDP_REPLAY_MARK_STEP )
             continue;
@@ -408,7 +406,6 @@ bool rocketnet_server_replay_marks_inventory_matches_for_test( char * failure, s
     // members, and their RESET decisions are listed here so that every member
     // of the struct has one and the inventory covers the whole struct.
     static const rocketnet_reset_member_t decisions[] = { ROCKETNET_SERVER_REPLAY_MARK_FIELDS( MARK_DECISION )
-                                                              MARK_DECISION( RESET, observed_value )
                                                               MARK_DECISION( RESET, seen )
                                                                   MARK_DECISION( RESET, seen_address )
                                                                       MARK_DECISION( RESET, mark_owed ) };
