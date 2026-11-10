@@ -553,3 +553,43 @@ static void test_client_slots_refusals()
 }
 
 REGISTER_UNIT_TEST( test_client_slots_refusals );
+
+#if ROCKETNET_DEV
+
+// A consistent index is at most half full, so the erase scan always meets an
+// empty cell. Corrupt private state can fill every cell; the scan must still
+// end after num_buckets steps rather than spin. The seam marks every cell as
+// the one connected slot, all homed at a forced bucket near the end of the
+// table, and the release erases from that bucket: one locate probe, then
+// exactly num_buckets erase probes.
+
+extern void rocketnet_client_slots_fill_index_for_test( struct rocketnet_client_slots_t * slots, int client_index );
+
+static void test_client_slots_erase_index_full_table_terminates()
+{
+    const int capacity = 4;
+    const int num_buckets = capacity * 2;
+    struct rocketnet_client_slots_t * slots = rocketnet_client_slots_create( NULL, capacity );
+    check( slots != NULL );
+
+    uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
+    memset( user_data, 0x3C, sizeof( user_data ) );
+
+    check( rocketnet_client_slots_test_force_hash_index( slots, num_buckets - 3 ) );
+    check( rocketnet_client_slots_assign( slots, 1001, 0, 1, user_data ) == 0 );
+
+    struct rocketnet_client_slot_handle_t handle;
+    check( rocketnet_client_slots_handle( slots, 0, &handle ) );
+
+    rocketnet_client_slots_fill_index_for_test( slots, 0 );
+
+    check( rocketnet_client_slots_release_handle( slots, &handle ) );
+    check( rocketnet_client_slots_test_last_probes( slots ) == (uint64_t) num_buckets + 1 );
+    check( rocketnet_client_slots_num_connected( slots ) == 0 );
+
+    rocketnet_client_slots_destroy( slots );
+}
+
+REGISTER_UNIT_TEST( test_client_slots_erase_index_full_table_terminates );
+
+#endif // #if ROCKETNET_DEV

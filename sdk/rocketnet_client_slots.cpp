@@ -582,6 +582,16 @@ uint64_t rocketnet_client_slots_test_total_probes( const struct rocketnet_client
     rocketnet_assert( slots );
     return slots->index_table->total_probes;
 }
+
+// Corrupts the private index for a unit test: every cell names client_index,
+// so no cell is empty and only the erase scan's bound can end it.
+void rocketnet_client_slots_fill_index_for_test( struct rocketnet_client_slots_t * slots, int client_index )
+{
+    rocketnet_assert( slots );
+    int * entries = rocketnet_client_slot_index_entries( slots );
+    for ( int i = 0; i < slots->num_buckets; ++i )
+        entries[i] = client_index;
+}
 #endif // #if ROCKETNET_DEV
 
 // proofs/tla/RNDestroyWipe.tla Remove: clears the slot's user data and returns the slot to the free list.
