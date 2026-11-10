@@ -210,7 +210,11 @@ static void test_server_gso_segment_refusal_keeps_other_destinations()
     check( rocketnet_server_gso_test_flush_staged( gso ) );
 
     // the refused run left as two plain datagrams. the other destination
-    // was still one segmented send, and the tier is still on.
+    // was still one segmented send, and the tier is still on. gso's sendmmsg
+    // refuses synchronously with the bank still held, so the run is resent;
+    // io_uring's refusal arrives in a CQE after the slots are handed back, so
+    // there the run is dropped and counted (test_uring_segment_refusal_keeps_other_destinations).
+    // On both, one refusal leaves segmentation on for every destination.
     check( socket.plain_packets == 2 );
     check( socket.plain_ports_n == 2 );
     check( socket.plain_ports[0] == 40000 );

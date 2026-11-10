@@ -749,7 +749,11 @@ static void test_uring_segment_refusal_keeps_other_destinations()
     uint64_t counters[ROCKETNET_SERVER_URING_NUM_COUNTERS];
     rocketnet_server_uring_counters( uring, counters );
 
-    // the refused run is counted, and one failure does not clear segmentation
+    // the refused run is counted, and one failure does not clear segmentation.
+    // the refusal arrives in the run's CQE, which has handed its slots back,
+    // so the run cannot be resent and is dropped (rocketnet_server_uring_reap_cqe);
+    // gso, whose sendmmsg refuses with the bank still held, resends it plain
+    // (test_server_gso_segment_refusal_keeps_other_destinations)
     rocketnet_unit_check( fake.sends == 1 );
     rocketnet_unit_check( counters[ROCKETNET_SERVER_URING_COUNTER_SEND_DROPPED] == 2 );
     rocketnet_unit_check( counters[ROCKETNET_SERVER_URING_COUNTER_GSO_SENDS] == 1 );
