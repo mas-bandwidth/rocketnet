@@ -215,13 +215,13 @@ static void test_server_replay_marks_mark_connected_slots_once()
     server_replay_marks_walk( &fixture, &recording );
     rocketnet_unit_check( recording.count == 0 );
 
-    rocketnet_encryption_map_entry( fixture.map, client_a.mapping )->replay_session.highest_opened = 41 + ROCKETNET_XDP_REPLAY_MARK_STEP;
+    rocketnet_encryption_map_entry( fixture.map, client_a.mapping )->replay_session.highest_opened = 41 + ( ROCKETNET_XDP_REPLAY_WINDOW / 2 );
 
     memset( &recording, 0, sizeof( recording ) );
     server_replay_marks_walk( &fixture, &recording );
     rocketnet_unit_check( recording.count == 1 );
 
-    server_replay_marks_check_mark( &recording.calls[0], &a, 41 + ROCKETNET_XDP_REPLAY_MARK_STEP );
+    server_replay_marks_check_mark( &recording.calls[0], &a, 41 + ( ROCKETNET_XDP_REPLAY_WINDOW / 2 ) );
 
     server_replay_marks_fixture_destroy( &fixture );
 }
@@ -348,14 +348,14 @@ static void test_server_replay_marks_forget_released_slots_first()
 
     rocketnet_client_slots_release( fixture.slots, client_a.slot );
     rocketnet_encryption_map_remove_current( fixture.map, client_a.mapping );
-    rocketnet_encryption_map_entry( fixture.map, client_b.mapping )->replay_session.highest_opened = ROCKETNET_XDP_REPLAY_MARK_STEP;
+    rocketnet_encryption_map_entry( fixture.map, client_b.mapping )->replay_session.highest_opened = ( ROCKETNET_XDP_REPLAY_WINDOW / 2 );
 
     memset( &recording, 0, sizeof( recording ) );
     server_replay_marks_walk( &fixture, &recording );
     rocketnet_unit_check( recording.count == 2 );
 
     server_replay_marks_check_forget( &recording.calls[0], &a );
-    server_replay_marks_check_mark( &recording.calls[1], &b, ROCKETNET_XDP_REPLAY_MARK_STEP );
+    server_replay_marks_check_mark( &recording.calls[1], &b, ( ROCKETNET_XDP_REPLAY_WINDOW / 2 ) );
 
     memset( &recording, 0, sizeof( recording ) );
     server_replay_marks_walk( &fixture, &recording );
@@ -585,26 +585,26 @@ static void test_server_replay_marks_refused_mark_is_owed()
 
     // an advance refused twice is asked for each walk until queued
 
-    rocketnet_encryption_map_entry( fixture.map, client.mapping )->replay_session.highest_opened = ROCKETNET_XDP_REPLAY_MARK_STEP;
+    rocketnet_encryption_map_entry( fixture.map, client.mapping )->replay_session.highest_opened = ( ROCKETNET_XDP_REPLAY_WINDOW / 2 );
     memset( &recording, 0, sizeof( recording ) );
     recording.mark_refusals = 1;
     server_replay_marks_walk( &fixture, &recording );
     rocketnet_unit_check( recording.count == 1 );
 
-    server_replay_marks_check_mark( &recording.calls[0], &a, ROCKETNET_XDP_REPLAY_MARK_STEP );
+    server_replay_marks_check_mark( &recording.calls[0], &a, ( ROCKETNET_XDP_REPLAY_WINDOW / 2 ) );
 
     memset( &recording, 0, sizeof( recording ) );
     recording.mark_refusals = 1;
     server_replay_marks_walk( &fixture, &recording );
     rocketnet_unit_check( recording.count == 1 );
 
-    server_replay_marks_check_mark( &recording.calls[0], &a, ROCKETNET_XDP_REPLAY_MARK_STEP );
+    server_replay_marks_check_mark( &recording.calls[0], &a, ( ROCKETNET_XDP_REPLAY_WINDOW / 2 ) );
 
     memset( &recording, 0, sizeof( recording ) );
     server_replay_marks_walk( &fixture, &recording );
     rocketnet_unit_check( recording.count == 1 );
 
-    server_replay_marks_check_mark( &recording.calls[0], &a, ROCKETNET_XDP_REPLAY_MARK_STEP );
+    server_replay_marks_check_mark( &recording.calls[0], &a, ( ROCKETNET_XDP_REPLAY_WINDOW / 2 ) );
 
     memset( &recording, 0, sizeof( recording ) );
     server_replay_marks_walk( &fixture, &recording );
