@@ -60,8 +60,16 @@ that handle.
   bit; leaves the bound), `used` cleared, `free_hint` lowered to the slot.
   The ghost `mismatch` records a fast choice that differs from
   `rocketnet_simulator_select_reference`, which is the audit's comparison.
-- **`ReceiveAny`**: `rocketnet_network_simulator_receive_any`: the lowest
-  used slot due now, any destination, retired through its handle.
+- **`ReceiveAny`**: `rocketnet_network_simulator_receive_any`, any
+  destination: nothing at once when `min_delivery_time` (`anyMin`) is past
+  now; else a scan from `receive_any_hint` (`anyHint`) when
+  `receive_any_hint_time` (`anyHintTime`) is now, from 0 otherwise, taking
+  the first used slot due, retired through its handle, and moving the hint
+  past it; a scan that finds none sets the hint to the capacity and, only
+  when it began at slot 0, the bound to the minimum it saw. `Send` lowers
+  the bound to the new delivery time and lowers the hint to the slot when it
+  is below the hint and due at the hint's time. The ghost `anyMismatch`
+  records a result that differs from the lowest used slot due now.
 - **`StaleRetire(s)`**: a caller presents the handle last retired from slot
   `s` (`rocketnet_network_simulator_test_remove_handle`); `index_remove`
   refuses it unless the slot holds that generation again.
@@ -84,6 +92,12 @@ that handle.
   nonzero.
 - **`BoundBelowShard`**: a shard's bound is at or below every delivery time in
   the shard.
+- **`AnySelectMatchesReference`**: every `receive_any` takes the lowest used
+  slot due now, and returns nothing only when none is due.
+- **`AnyBoundBelowAll`**: `min_delivery_time` is at or below every used
+  slot's delivery time.
+- **`AnyHintBelowNotDue`**: every used slot below `receive_any_hint` is not
+  due at `receive_any_hint_time`.
 
 `SummaryExact`, `OccupancyExact` and `BoundBelowShard` are why the fast walk
 finds what the full scan finds: it visits every occupied slot of the shard in
@@ -139,6 +153,27 @@ counterexample below was checked against the C by hand.
    0 under generation 0 is received (handle `{0, 0}` retired), the next send
    reuses slot 0 still at generation 0, and `rocketnet_simulator_index_remove`
    accepts the old handle `{0, 0}` and retires the new packet.
+5. **`MCRNSimulatorStoreLayoutBrokenAnyHint.cfg`** (`AnyHintLower <-
+   AnyHintLowerOff`): `rocketnet_simulator_insert` without the
+   `receive_any_hint` lowering. Violates `AnySelectMatchesReference`: a
+   packet due at 0 in slot 0 is taken by `receive_any` at time 0 (hint 1); a
+   second packet due at 0 goes to slot 0, the hint stays 1, and the next
+   `receive_any` at time 0 scans from slot 1 and returns nothing while slot 0
+   is due.
+6. **`MCRNSimulatorStoreLayoutBrokenAnyBoundPartial.cfg`** (`AnyBoundFull <-
+   AnyBoundFullOff`): `receive_any` setting `min_delivery_time` from a scan
+   that began at the hint, without the `start == 0` test. Violates
+   `AnyBoundBelowAll`: slot 0's packet due at 0 is taken at time 0 (hint 1);
+   a packet due at 1 goes to slot 0; the next `receive_any` at time 0 scans
+   slots 1 and 2, finds nothing, and sets the bound past every time
+   (`DBL_MAX`) while slot 0 holds a packet due at 1, so a call at time 1
+   returns nothing at the bound test.
+
+These two rules were added with the bound and the hint (2026-11, the
+`rn-sim-receive-any-scan` card). With them the passing controls hold 231,690
+distinct states (2,491,295 generated; 8 to 9 s at four workers on macOS),
+up from 75,344; whether that fits the 110-second record budget at two
+workers on the Linux bench is not yet measured.
 
 ## Runs
 
