@@ -1151,6 +1151,41 @@ static void test_iocp_finish_refuses_unissued_packet_id()
     printf( "test_iocp_transport_finish_refuses_unissued_packet_id\n" );
 }
 
+// An out-of-range packet_bytes is refused in release builds too, as RIO
+// finish_packet refuses it: the slot keeps zero bytes and SEND_FAILED counts it.
+static void test_iocp_finish_refuses_bad_packet_bytes()
+{
+    const rocketnet_assert_function_t saved_assert = rn_assert_function;
+    rocketnet_assert_function( iocp_count_refused_assert );
+    iocp_refused_asserts = 0;
+
+    rocketnet_address_t bind = address( "127.0.0.1:0" );
+    rocketnet_server_iocp_t * transport = rocketnet_server_iocp_create( NULL, &bind, 1, ROCKETNET_DEFAULT_MAX_CLIENTS, 0, ROCKETNET_IOCP_DISABLE_USO );
+    CHECK( transport );
+
+    const rocketnet_address_t to = address( "127.0.0.1:40000" );
+    uint64_t id;
+    uint8_t * frame = rocketnet_server_iocp_start_packet( transport, &to, &id );
+    CHECK( frame );
+
+    const uint64_t failed = iocp_counter( transport, ROCKETNET_IOCP_SEND_FAILED );
+    const int bad_bytes[] = { 0, -1, ROCKETNET_RECEIVE_CEILING + 1 };
+    for ( int i = 0; i < 3; ++i )
+    {
+        rocketnet_server_iocp_finish_packet( transport, id, frame, bad_bytes[i] );
+        CHECK( iocp_refused_asserts == ( i + 1 ) * ROCKETNET_ASSERTS );
+        CHECK( rocketnet_server_iocp_test_packet_bytes( transport, id ) == 0 );
+        CHECK( iocp_counter( transport, ROCKETNET_IOCP_SEND_FAILED ) - failed == (uint64_t) ( i + 1 ) );
+    }
+
+    rocketnet_server_iocp_abort_packet( transport, id, frame );
+    iocp_flush( transport );
+    wait_stopped( transport );
+    rn_native_backend_stop_and_destroy( transport, rocketnet_server_iocp_stop, rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy );
+    rocketnet_assert_function( saved_assert );
+    printf( "test_iocp_transport_finish_refuses_bad_packet_bytes\n" );
+}
+
 static void test_iocp_stop_sends_published_burst()
 {
     rocketnet_address_t bind = address( "127.0.0.1:0" );
@@ -2278,6 +2313,7 @@ static const fault_case_t fault_cases[] = {
     { "test_iocp_transport_socket_sets_dont_fragment", test_iocp_transport_socket_sets_dont_fragment },
     { "test_rio_transport_socket_sets_dont_fragment", test_rio_transport_socket_sets_dont_fragment },
     { "test_iocp_transport_finish_refuses_unissued_packet_id", test_iocp_finish_refuses_unissued_packet_id },
+    { "test_iocp_transport_finish_refuses_bad_packet_bytes", test_iocp_finish_refuses_bad_packet_bytes },
     { "test_iocp_transport_stop_sends_published_burst", test_iocp_stop_sends_published_burst },
     { "test_iocp_transport_send_completion_fails", test_iocp_send_completion_fails },
     { "test_iocp_transport_send_post_fails", test_iocp_send_post_fails },
