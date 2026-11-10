@@ -56,10 +56,17 @@
 // each queue's rocketnet_server_xdp_socket_t, adding 872136 bytes (measured).
 // Each xdp queue counts the TX wakeups that failed hard
 // (send_wakeup_failures).
-// The XDP replay marks add a 2 * 1024 * 20-byte kernel-held key table
-// (40960 bytes) and a 2 * 1024 * 2-byte pending-forget index (4096 bytes).
-// The 1 MiB caller slack is added separately.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3111432971ULL )
+// The replay walk's object holds supersede_owed and, in a development build,
+// the count of records its scans read, adding 8 bytes
+// (sdk/rocketnet_server_replay_marks.cpp, struct rocketnet_server_replay_marks_t).
+// The figure is the planned peak, as on the other platforms: the probe's
+// actual= line (3111387923, Release and Debug) less the 1 MiB caller slack,
+// which the check adds back. The figure pinned before this one, 3111432971,
+// was the probe's line with the slack still in it: 1048576 over the peak it
+// stood for, which was 45056 bytes of replay tables that are gone again
+// (a 2 * 1024 * 20-byte kernel key table and a 2 * 1024 * 2-byte
+// pending-forget index).
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110339347ULL )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14146994 )
 #endif // #if defined( _WIN32 )
 
