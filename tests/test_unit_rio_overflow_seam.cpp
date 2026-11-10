@@ -139,4 +139,24 @@ static void test_rio_transport_create_failure_drain_counts_passes_not_seconds()
 
 REGISTER_UNIT_TEST( test_rio_transport_create_failure_drain_counts_passes_not_seconds );
 
+// Only a pass that made no progress counts against the drain's bound. The
+// cancelled receives here reach the queue over twenty-five waits, more than
+// ROCKETNET_RIO_DRAIN_WAITS, and every wait brings some: the drain accounts
+// for all of them and stops, where a bound on every failed pass gives up
+// after ten and leaks a region that was draining.
+static void test_rio_transport_create_failure_drain_counts_only_stalled_passes()
+{
+    bool stopped = false;
+    int closes = 0;
+    int waits = 0;
+    int longest = 0;
+
+    check( rocketnet_server_rio_test_create_failure_drain( 25, false, &stopped, &closes, &waits, &longest ) );
+    check( stopped );
+    check( closes == 1 && waits == 25 );
+    check( longest <= 50 );
+}
+
+REGISTER_UNIT_TEST( test_rio_transport_create_failure_drain_counts_only_stalled_passes );
+
 #endif // #if defined( _WIN32 )
