@@ -225,6 +225,18 @@ add_compile_definitions(
     ROCKETNET_HISTORY_PACKETS=${ROCKETNET_HISTORY_PACKETS}
     ${ROCKETNET_MEMORY_BUDGET_DEFINITIONS})
 
+# cl (MSVC, not clang-cl: the condition the floating-point floor above uses)
+# has no pthreads, so FindThreads' three pthread probes always fail there and
+# it settles on Windows threads with no flag or library. Their results are
+# given here so the configure does not compile and link them; the outcome
+# (Threads::Threads, empty) is the one the probes reach. They are plain
+# variables, not cache entries: the check macros skip a probe whose result
+# variable is defined, and a parent project's own cached results stay its own.
+if(MSVC AND NOT CMAKE_C_COMPILER_ID STREQUAL "Clang")
+    set(CMAKE_HAVE_LIBC_PTHREAD "")
+    set(CMAKE_HAVE_PTHREADS_CREATE "")
+    set(CMAKE_HAVE_PTHREAD_CREATE "")
+endif()
 include(cmake/RocketNetDependencies.cmake)
 
 if(NOT ROCKETNET_USE_SYSTEM_SODIUM)
@@ -330,8 +342,12 @@ set(ROCKETNET_SOURCE
 set(ROCKETNET_HARDEN_CONFIGS "$<CONFIG:Release,RelWithDebInfo,MinSizeRel>")
 
 if(ROCKETNET_HARDEN)
+    # cl (MSVC, not clang-cl) refuses both GCC flags, so these probes always
+    # failed there and the targets took neither; under cl they are not run.
     foreach(language C CXX)
-        if(language STREQUAL "C")
+        if(MSVC AND NOT CMAKE_C_COMPILER_ID STREQUAL "Clang")
+            break()
+        elseif(language STREQUAL "C")
             check_c_compiler_flag("-fstack-protector-strong" ROCKETNET_C_STACK_PROTECTOR)
             check_c_compiler_flag("-fcf-protection" ROCKETNET_C_CF_PROTECTION)
         else()
