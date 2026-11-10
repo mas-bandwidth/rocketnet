@@ -7460,13 +7460,25 @@ void rocketnet_test_platform_mutex()
     rocketnet_platform_mutex_t mutex;
     bool result = rocketnet_platform_mutex_create( &mutex );
     rocketnet_check( result );
+
+    // the mutex is not recursive, so while held try_acquire fails, even for
+    // the holder; once released it succeeds
+
     rocketnet_platform_mutex_acquire( &mutex );
+    rocketnet_check( !rocketnet_platform_mutex_try_acquire( &mutex ) );
+    rocketnet_platform_mutex_release( &mutex );
+
+    rocketnet_check( rocketnet_platform_mutex_try_acquire( &mutex ) );
+    rocketnet_check( !rocketnet_platform_mutex_try_acquire( &mutex ) );
     rocketnet_platform_mutex_release( &mutex );
 
     {
         rocketnet_platform_mutex_guard( &mutex );
-        // ...
+        rocketnet_check( !rocketnet_platform_mutex_try_acquire( &mutex ) );
     }
+
+    rocketnet_check( rocketnet_platform_mutex_try_acquire( &mutex ) );
+    rocketnet_platform_mutex_release( &mutex );
 
     rocketnet_platform_mutex_destroy( &mutex );
 }

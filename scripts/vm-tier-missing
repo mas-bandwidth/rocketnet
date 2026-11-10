@@ -1,0 +1,37 @@
+#!/bin/sh
+# vm-tier-missing: print what this Linux host lacks to run the xdp cell's
+# virtme-ng guest, on one line; print nothing when the VM tier is complete.
+#
+# The xdp cell (ci.yml's transport family matrix, scripts/transport-cells-repeat)
+# runs its cases as root inside a guest of the host's own kernel. It needs:
+#   vng                          virtme-ng (Ubuntu package virtme-ng)
+#   qemu-system-x86_64           the VM (Ubuntu package qemu-system-x86)
+#   a writable /dev/kvm          the runner user in the kvm group
+#   ~/vm-kernels/vmlinuz-$(uname -r)
+#                                the running kernel's image, readable by the
+#                                runner user (/boot's copy is root-only, 0600)
+#   /lib/modules/$(uname -r)     the running kernel's modules (veth), which the
+#                                guest loads from the host's root filesystem
+#
+# usage: scripts/vm-tier-missing   (exit 0 always; the caller reads stdout)
+release=$(uname -r)
+kernel="$HOME/vm-kernels/vmlinuz-$release"
+missing=""
+add() { missing="${missing:+$missing; }$1"; }
+
+command -v vng >/dev/null 2>&1 || add "vng (package virtme-ng)"
+command -v qemu-system-x86_64 >/dev/null 2>&1 || add "qemu-system-x86_64 (package qemu-system-x86)"
+if [ ! -e /dev/kvm ]; then
+    add "/dev/kvm (no KVM on this host)"
+elif [ ! -w /dev/kvm ]; then
+    add "write access to /dev/kvm for $(id -un) (add it to group $(stat -c %G /dev/kvm 2>/dev/null || echo kvm))"
+fi
+if [ ! -e "$kernel" ]; then
+    add "$kernel (a copy of /boot/vmlinuz-$release readable by $(id -un))"
+elif [ ! -r "$kernel" ]; then
+    add "read access to $kernel for $(id -un)"
+fi
+[ -d "/lib/modules/$release" ] || add "/lib/modules/$release (the running kernel's modules)"
+
+[ -z "$missing" ] || echo "needs $missing"
+exit 0
