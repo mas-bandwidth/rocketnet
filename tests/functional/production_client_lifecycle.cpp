@@ -88,6 +88,119 @@ private:
     std::string value;
 };
 
+// loopback is the built-in client transport without wait and wake: its
+// disconnect burst leaves through the I/O worker, and the server must read the
+// slot as ended by the client, not by timeout
+static void production_lifecycle_disconnect_burst( const uint8_t * backend_public, const uint8_t * backend_secret, uint64_t protocol_id, const uint8_t * packet_filter )
+{
+    enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
+    struct rocketnet_loopback_hub_t * hub = rocketnet_loopback_hub_create( NULL, 1, &status );
+    production_lifecycle_check( hub != NULL && status == ROCKETNET_STATUS_OK );
+
+    struct rocketnet_server_config_t server_config;
+    production_lifecycle_check( rocketnet_server_default_config( &server_config ) == ROCKETNET_STATUS_OK );
+    server_config.protocol_id = protocol_id;
+    server_config.max_clients = 1;
+    server_config.transport = "loopback";
+    server_config.loopback_hub = hub;
+    memcpy( server_config.backend_public_key, backend_public, sizeof( server_config.backend_public_key ) );
+    memcpy( server_config.packet_filter, packet_filter, sizeof( server_config.packet_filter ) );
+
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &status );
+    production_lifecycle_check( server != NULL && status == ROCKETNET_STATUS_OK );
+    production_lifecycle_check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
+
+    char server_address[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
+    production_lifecycle_check( rocketnet_server_ipv4_address( server, server_address, sizeof( server_address ) ) );
+
+    uint8_t server_public[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
+    rocketnet_server_public_key( server, server_public );
+
+    const char * server_addresses[] = { server_address };
+    uint8_t token_bytes[ROCKETNET_CONNECT_TOKEN_BYTES];
+    production_lifecycle_check( rocketnet_write_production_connect_token(
+                                    backend_secret, server_public, protocol_id, server_addresses, 1,
+                                    0xB0257ULL, 0, 1ULL << 40, 30, NULL,
+                                    token_bytes, sizeof( token_bytes ) ) == ROCKETNET_STATUS_OK );
+
+    char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+    production_lifecycle_check( rocketnet_base64_encode_data(
+                                    token_bytes, sizeof( token_bytes ), token, sizeof( token ) ) ==
+                                ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
+
+    struct rocketnet_client_config_t client_config;
+    production_lifecycle_check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
+    client_config.transport = "loopback";
+    client_config.loopback_hub = hub;
+    memcpy( client_config.packet_filter, packet_filter, sizeof( client_config.packet_filter ) );
+
+    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, &status );
+    production_lifecycle_check( client != NULL && status == ROCKETNET_STATUS_OK );
+    production_lifecycle_check( rocketnet_client_connect( client, token ) == ROCKETNET_STATUS_OK );
+
+    const double wall_start = rocketnet_time();
+    while ( rocketnet_time() - wall_start < 10.0 &&
+            ( rocketnet_client_state( client ) != ROCKETNET_CLIENT_STATE_CONNECTED ||
+              !rocketnet_server_client_connected( server, 0 ) ) )
+    {
+        const double now = 1000.0 + rocketnet_time() - wall_start;
+        rocketnet_client_update( client, now );
+        rocketnet_client_send_packets( client );
+        rocketnet_server_update( server, now );
+        rocketnet_server_send_packets( server );
+        rocketnet_sleep( 0.001 );
+    }
+    production_lifecycle_check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
+    production_lifecycle_check( rocketnet_server_client_connected( server, 0 ) );
+
+    rocketnet_client_disconnect( client );
+
+    // only the client's disconnect burst ends the slot: the update loop below
+    // stops the client, and the 30 second token timeout is far past the wait
+    const double disconnect_start = rocketnet_time();
+    while ( rocketnet_server_client_connected( server, 0 ) && rocketnet_time() - disconnect_start < 5.0 )
+    {
+        const double now = 1000.0 + rocketnet_time() - wall_start;
+        if ( !rocketnet_client_disconnected( client ) )
+        {
+            rocketnet_client_update( client, now );
+            rocketnet_client_send_packets( client );
+        }
+        rocketnet_server_update( server, now );
+        rocketnet_server_send_packets( server );
+        rocketnet_sleep( 0.001 );
+    }
+
+    production_lifecycle_check( !rocketnet_server_client_connected( server, 0 ) );
+    production_lifecycle_check( rocketnet_server_disconnect_reason( server, 0 ) == ROCKETNET_DISCONNECT_REASON_CLIENT_DISCONNECTED );
+
+    const double stopped_start = rocketnet_time();
+    while ( !rocketnet_client_disconnected( client ) && rocketnet_time() - stopped_start < 5.0 )
+    {
+        rocketnet_client_update( client, 1000.0 + rocketnet_time() - wall_start );
+        rocketnet_sleep( 0.001 );
+    }
+    production_lifecycle_check( rocketnet_client_disconnected( client ) );
+
+    rocketnet_client_destroy( client );
+
+    rocketnet_server_stop( server );
+    const double stop_start = rocketnet_time();
+    while ( !rocketnet_server_stopped( server ) && rocketnet_time() - stop_start < 5.0 )
+    {
+        rocketnet_server_update( server, 1000.0 + rocketnet_time() - wall_start );
+        rocketnet_server_send_packets( server );
+        rocketnet_sleep( 0.001 );
+    }
+    production_lifecycle_check( rocketnet_server_stopped( server ) );
+
+    rocketnet_server_destroy( server );
+
+    production_lifecycle_check( rocketnet_loopback_hub_destroy( hub ) == ROCKETNET_STATUS_OK );
+
+    printf( "test_production_client_lifecycle: loopback disconnect burst reaches the server PASS\n" );
+}
+
 int main()
 {
     static const uint64_t protocol_id = 0x57E9011FEC7C1E01ULL;
@@ -222,6 +335,8 @@ int main()
     production_lifecycle_check( rocketnet_server_set_send_kbps( server, 0, 4000 ) == ROCKETNET_STATUS_OK );
 
     rocketnet_server_destroy( server );
+
+    production_lifecycle_disconnect_burst( backend_public, backend_secret, protocol_id, packet_filter );
 
     production_lifecycle_check( rocketnet_term() == ROCKETNET_STATUS_OK );
 
