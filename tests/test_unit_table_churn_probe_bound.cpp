@@ -130,6 +130,113 @@ static void test_encryption_map_churn_probe_bound()
 
 REGISTER_UNIT_TEST( test_encryption_map_churn_probe_bound );
 
+// Full map probe bound: the encryption map's index has two cells per mapping
+// slot, so at num_mappings == capacity its load factor is 0.5, as the token
+// tables and client slots are. An absent lookup then averages at most 3.0
+// probes (linear probing expects 2.5 at load 0.5) and no lookup or erase scan
+// reaches 8 * log2(index cells). With one cell per slot the full index has no
+// empty cell: every absent lookup walks the whole index and every erase scan
+// walks all but one cell, and this check is red.
+//
+// An erase is a remove's lookup of the key plus its backward-shift scan; both
+// count index cells inspected. The lookup is measured by a find of the same
+// key just before the remove, so the scan is the remainder.
+
+static void test_encryption_map_full_probe_bound()
+{
+    const int capacity = 2048;
+    const int index_cells = 2 * capacity;
+    const int absent_count = 4 * capacity;
+
+    int log2_cells = 0;
+    while ( ( 1 << log2_cells ) < index_cells )
+        ++log2_cells;
+    const uint64_t probe_cap = 8 * (uint64_t) log2_cells;
+
+    struct rocketnet_encryption_map_t * map = rocketnet_encryption_map_create( NULL, capacity );
+    check( map != NULL );
+    const uint64_t index_bound = rocketnet_encryption_map_test_probe_bound( map );
+
+    static struct rocketnet_address_t live_addr[2048];
+    static int live_index[2048];
+    for ( int i = 0; i < capacity; ++i )
+    {
+        live_addr[i] = churn_map_address( 1 + i );
+        live_index[i] = rocketnet_encryption_map_add( map, &live_addr[i], 1000.0 );
+        check( live_index[i] >= 0 );
+    }
+    check( rocketnet_encryption_map_num_mappings( map ) == capacity );
+    check( rocketnet_encryption_map_full( map ) );
+
+    uint64_t absent_total = 0;
+    uint64_t absent_worst = 0;
+    for ( int i = 0; i < absent_count; ++i )
+    {
+        const struct rocketnet_address_t absent = churn_map_address( 1000000 + i );
+        const uint64_t before = rocketnet_encryption_map_test_probes( map );
+        check( rocketnet_encryption_map_find( map, &absent ) == -1 );
+        const uint64_t probes = rocketnet_encryption_map_test_probes( map ) - before;
+        absent_total += probes;
+        if ( probes > absent_worst )
+            absent_worst = probes;
+    }
+
+    // each erase runs on the full map: remove one mapping, measure, add it
+    // back. Backward-shift erase leaves the layout a fresh fill would have, and
+    // a re-added mapping is the newest, so the order matters: in fill order the
+    // measured mapping is always the oldest live one, at its home, and the
+    // lookup is always one probe. In reverse fill order every mapping filled
+    // before the measured one is untouched, so it sits where its own add put
+    // it and the lookups are the full map's real successful-search costs.
+
+    uint64_t erase_lookup_total = 0;
+    uint64_t erase_lookup_worst = 0;
+    uint64_t erase_scan_worst = 0;
+    for ( int i = capacity - 1; i >= 0; --i )
+    {
+        const uint64_t find_before = rocketnet_encryption_map_test_probes( map );
+        check( rocketnet_encryption_map_find( map, &live_addr[i] ) == live_index[i] );
+        const uint64_t lookup = rocketnet_encryption_map_test_probes( map ) - find_before;
+
+        const uint64_t remove_before = rocketnet_encryption_map_test_probes( map );
+        rocketnet_encryption_map_remove_current( map, live_index[i] );
+        const uint64_t remove = rocketnet_encryption_map_test_probes( map ) - remove_before;
+        check( remove >= lookup );
+        const uint64_t scan = remove - lookup;
+
+        erase_lookup_total += lookup;
+        if ( lookup > erase_lookup_worst )
+            erase_lookup_worst = lookup;
+        if ( scan > erase_scan_worst )
+            erase_scan_worst = scan;
+
+        check( rocketnet_encryption_map_find( map, &live_addr[i] ) == -1 );
+        live_index[i] = rocketnet_encryption_map_add( map, &live_addr[i], 1000.0 );
+        check( live_index[i] >= 0 );
+    }
+    check( rocketnet_encryption_map_num_mappings( map ) == capacity );
+    for ( int i = 0; i < capacity; ++i )
+        check( rocketnet_encryption_map_find( map, &live_addr[i] ) == live_index[i] );
+
+    const double absent_mean = (double) absent_total / (double) absent_count;
+    const double erase_lookup_mean = (double) erase_lookup_total / (double) capacity;
+
+    printf( "test_encryption_map_full_probe_bound: absent mean %.3f worst %llu, erase lookup mean %.3f worst %llu, erase scan worst %llu, cap %llu (capacity %d, index cells %d)\n",
+            absent_mean, (unsigned long long) absent_worst, erase_lookup_mean, (unsigned long long) erase_lookup_worst,
+            (unsigned long long) erase_scan_worst, (unsigned long long) probe_cap, capacity, index_cells );
+
+    rocketnet_encryption_map_destroy( map );
+
+    check( index_bound == (uint64_t) index_cells );
+    check( absent_mean <= 3.0 );
+    check( absent_worst < probe_cap );
+    check( erase_lookup_mean <= 3.0 );
+    check( erase_lookup_worst < probe_cap );
+    check( erase_scan_worst < probe_cap );
+}
+
+REGISTER_UNIT_TEST( test_encryption_map_full_probe_bound );
+
 
 
 static void churn_token_id( uint8_t * identifier, uint32_t value )

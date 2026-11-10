@@ -72,6 +72,16 @@ uint64_t rocketnet_dev_hash_key_seed( void );
 // derived from the seed and the table kind when this thread set a seed
 void rocketnet_dev_seed_hash_key( uint8_t * key, size_t key_bytes, int table_kind );
 
+// The disconnect-drain sealed-write seam. While count is positive, the next
+// seal of a deferred disconnect burst fails: rocketnet_write_sealed_packet
+// has already succeeded, and the drain treats that seal as a failed write.
+// The count falls only when that burst is abandoned, so one armed failure
+// keeps failing the same head entry on every later stop step until then.
+// Zero, the default, leaves every write alone. Defined in
+// sdk/rocketnet_server_transport.cpp.
+
+void rocketnet_dev_fail_disconnect_sealed_writes( int count );
+
 #endif // #if ROCKETNET_DEV
 
 #endif // ROCKETNET_SDK_ROCKETNET_TEST_SEAMS_H
