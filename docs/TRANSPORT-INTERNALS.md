@@ -305,6 +305,24 @@ and `RetryFlushPublishes` model this rule. Packet-slot capacity is still
 not permit an unbounded backlog. None
 of these rules sets a frame, packet-send or ACK rate.
 
+The GSO and XDP receive sides flip their banks consumer-driven: the receive
+worker appends to its current bank under the receive mutex and never
+publishes, and `receive_packets` swaps the worker's filled bank for main's
+exhausted one under the same mutex, so every packet staged before a claim is
+in that claim's view. `RNGsoHandoff.RxClaim` and `RNXdpReceiveRing.Drain`
+model this rule. A GSO worker pass that finds its bank full (it stays full
+until main's swap) or whose receive fails sleeps 1 ms before the next pass
+instead of spinning on poll and the mutex (`RNGsoHandoff.RxBacksOff`).
+The workers hold the mutex only to append one batch (one `recvmmsg` call's
+results on GSO, 64 descriptors on XDP), never across a syscall. Two cases
+still defer a staged packet to the next call: main still holds a retained
+tail from a budget-capped call (it swaps only once that bank is consumed,
+because the current view points into it), or main's try-acquire finds the
+worker holding the mutex (main never waits on the worker). On GSO the
+`recvmmsg` calls leave the mutex free between batches; an XDP pass under
+heavy load appends batch after batch, so there main can miss a queue for
+an update.
+
 ## Creation and shutdown
 
 The factory borrows resolved configuration for the call and retains only what
