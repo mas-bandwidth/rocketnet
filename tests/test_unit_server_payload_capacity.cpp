@@ -8,8 +8,13 @@
 // A fitting sealed payload is delivered byte-exact from the open buffer with
 // its live slot and connection generation, and its deferred delivery ACK is
 // accepted only when the caller explicitly accepts it. The fitting payload is
-// the full receive payload bound, so the live path proves the per-update
-// receive payload capacity at runtime.
+// the full receive payload bound, so a payload slot holds the largest payload.
+//
+// A created server's payload batch holds every packet one update drains: the
+// receive budget (rocketnet_server_receive_packets_per_update) sizes both, so
+// no payload whose sequence the open spent is discarded. A loopback client's
+// payloads are held back from the server, then one update is handed exactly
+// that budget of them, and every one is delivered in that update.
 
 #include "test_unit_registry.h"
 
@@ -24,8 +29,14 @@
 #include "rocketnet_ack.h"
 #include "rocketnet_server_protocol.h"
 #include "rocketnet_test_vectors.h"
+#include "rocketnet_layers.h"
+#include "rocketnet_driver.h"
+#include "unit_shutdown.h"
+#include "loopback_hub.h"
 
 #include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static void check_counter_delta( const struct rocketnet_counters_t * before,
@@ -295,5 +306,224 @@ static void test_write_pass_honours_transport_payload_capacity()
     rn_message_object_destroy( object );
 }
 
+// The held-back client payloads: the server's receive_batch is swapped for
+// one that reads the loopback queue into this store and hands the server
+// nothing, until release asks it to hand over that many at once.
+
+#define HELD_EXTRA 3
+
+struct held_payloads_t
+{
+    const struct rocketnet_server_transport_io_operations_t * loopback;
+    uint8_t * data;
+    int * bytes;
+    struct rocketnet_address_t * from;
+    int capacity;
+    int count;
+    int next;
+    int release;
+    int budget_seen;
+    struct rocketnet_address_t scratch_from[256];
+    int scratch_bytes[256];
+    uint8_t scratch_data[256 * ROCKETNET_RECEIVE_CEILING];
+};
+
+static struct held_payloads_t * held;
+
+static int held_receive_batch( void * instance, struct rocketnet_address_t * from, uint8_t * data, int stride, int * bytes, int capacity )
+{
+    held->budget_seen = capacity;
+
+    if ( held->release == 0 )
+    {
+        const int received = held->loopback->receive_batch( instance, held->scratch_from, held->scratch_data, ROCKETNET_RECEIVE_CEILING, held->scratch_bytes, 256 );
+        for ( int i = 0; i < received; i++ )
+        {
+            const uint8_t * packet = held->scratch_data + (size_t) i * ROCKETNET_RECEIVE_CEILING;
+            if ( packet[0] != ROCKETNET_CONNECTION_PAYLOAD_PACKET || held->count == held->capacity )
+                continue;
+            memcpy( held->data + (size_t) held->count * ROCKETNET_RECEIVE_CEILING, packet, (size_t) held->scratch_bytes[i] );
+            held->bytes[held->count] = held->scratch_bytes[i];
+            held->from[held->count] = held->scratch_from[i];
+            held->count++;
+        }
+        return 0;
+    }
+
+    int handed = 0;
+    while ( handed < held->release && handed < capacity && held->next < held->count )
+    {
+        memcpy( data + (size_t) handed * (size_t) stride, held->data + (size_t) held->next * ROCKETNET_RECEIVE_CEILING, (size_t) held->bytes[held->next] );
+        bytes[handed] = held->bytes[held->next];
+        from[handed] = held->from[held->next];
+        handed++;
+        held->next++;
+    }
+    held->release = 0;
+    return handed;
+}
+
+static double payload_capacity_clock = 1000.0;
+static double payload_capacity_time( void * ) { return payload_capacity_clock; }
+
+static void payload_capacity_step( struct rocketnet_server_transport_t * server, struct rocketnet_client_transport_t * client )
+{
+    payload_capacity_clock += 0.001;
+    rocketnet_server_transport_update( server, payload_capacity_clock );
+    rocketnet_client_transport_update( client, payload_capacity_clock );
+    rocketnet_server_transport_send_packets( server );
+    rocketnet_client_transport_send_packets( client );
+}
+
+static void test_server_payload_batch_holds_the_receive_budget()
+{
+    rocketnet_quiet( 1 );
+    payload_capacity_clock = 1000.0;
+
+    const uint64_t protocol_id = 0x7061796c6f616463ULL;
+    uint8_t backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
+    uint8_t backend_secret_key[64];
+    uint8_t server_public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
+    uint8_t server_secret_key[sizeof( rocketnet_dev_server_secret_key )];
+    rocketnet_unit_check( rocketnet_generate_backend_keypair( backend_public_key, backend_secret_key ) == ROCKETNET_STATUS_OK );
+    rocketnet_unit_check( rocketnet_generate_server_keypair( server_public_key, server_secret_key ) == ROCKETNET_STATUS_OK );
+
+    struct rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_default_config_current( &server_config );
+    server_config.protocol_id = protocol_id;
+    server_config.max_clients = 1;
+    memcpy( server_config.backend_public_key, backend_public_key, sizeof( server_config.backend_public_key ) );
+    memcpy( server_config.server_public_key, server_public_key, sizeof( server_config.server_public_key ) );
+    memcpy( server_config.server_secret_key, server_secret_key, sizeof( server_config.server_secret_key ) );
+    snprintf( server_config.transport, sizeof( server_config.transport ), "%s", "loopback" );
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
+
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_sized( NULL, "127.0.0.1:0", &server_config, sizeof( server_config ) );
+    rocketnet_unit_check( server != NULL );
+
+    char server_address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+    snprintf( server_address, sizeof( server_address ), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
+
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    const char * addresses[] = { server_address };
+    rocketnet_unit_check( rocketnet_write_production_connect_token( backend_secret_key, server_public_key, protocol_id, addresses, 1,
+                                                                    0x5eed5eed5eed5eedULL, 0, 1ULL << 40, 60, NULL,
+                                                                    token, sizeof( token ) ) == ROCKETNET_STATUS_OK );
+
+    struct rocketnet_client_transport_config_t client_config;
+    rocketnet_client_transport_default_config_current( &client_config );
+    snprintf( client_config.transport, sizeof( client_config.transport ), "%s", "loopback" );
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
+    client_config.step_driven = 1;
+    client_config.time_callback = payload_capacity_time;
+
+    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create_sized( NULL, token, &client_config, sizeof( client_config ), payload_capacity_clock );
+    rocketnet_unit_check( client != NULL );
+
+    bool connected = false;
+    for ( int i = 0; i < 400 && !connected; i++ )
+    {
+        payload_capacity_step( server, client );
+        connected = rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
+                    rocketnet_server_transport_is_client_connected( server, 0 );
+    }
+    rocketnet_unit_check( connected );
+
+    // hold the client's payloads back from the server
+
+    const int budget = rocketnet_server_receive_packets_per_update( server_config.max_clients );
+
+    held = (struct held_payloads_t *) calloc( 1, sizeof( *held ) );
+    rocketnet_unit_check( held != NULL );
+    held->capacity = budget + HELD_EXTRA;
+    held->data = (uint8_t *) malloc( (size_t) held->capacity * ROCKETNET_RECEIVE_CEILING );
+    held->bytes = (int *) calloc( (size_t) held->capacity, sizeof( int ) );
+    held->from = (struct rocketnet_address_t *) calloc( (size_t) held->capacity, sizeof( struct rocketnet_address_t ) );
+    rocketnet_unit_check( held->data && held->bytes && held->from );
+
+    struct rocketnet_server_transport_io_operations_t operations = {};
+    const struct rocketnet_server_transport_io_operations_t * swapped_operations = &operations;
+    void * swapped_instance = NULL;
+    rocketnet_server_transport_swap_io_for_test( server, &swapped_operations, &swapped_instance );
+    held->loopback = swapped_operations;
+    void * const loopback_instance = swapped_instance;
+    operations = *swapped_operations;
+    operations.receive_batch = held_receive_batch;
+    swapped_operations = &operations;
+    rocketnet_server_transport_swap_io_for_test( server, &swapped_operations, &swapped_instance );
+    rocketnet_unit_check( swapped_instance == NULL );
+    swapped_instance = loopback_instance;
+
+    int sent = 0;
+    for ( int round = 0; round < 2000 && held->count < held->capacity; round++ )
+    {
+        for ( int i = 0; i < 64; i++ )
+        {
+            struct rocketnet_packet_context_t context;
+            uint8_t * frame = rocketnet_client_transport_start_packet( client, 4, &context );
+            if ( !frame )
+                break;
+            uint8_t * payload = frame + context.payload_index;
+            payload[0] = (uint8_t) ( sent & 0xFF );
+            payload[1] = (uint8_t) ( ( sent >> 8 ) & 0xFF );
+            payload[2] = (uint8_t) ( ( sent >> 16 ) & 0xFF );
+            payload[3] = 0xA5;
+            rocketnet_unit_check( rocketnet_client_transport_finish_packet( client, &context, 4 ) > 0 );
+            sent++;
+        }
+        payload_capacity_step( server, client );
+    }
+    rocketnet_unit_check( held->count == held->capacity );
+    rocketnet_unit_check( rocketnet_server_transport_num_payloads( server ) == 0 );
+
+    // one update handed exactly the receive budget delivers every payload
+
+    const struct rocketnet_counters_t * counters = rocketnet_server_transport_counters( server );
+    const uint64_t delivered_before = counters->values[ROCKETNET_COUNTER_PAYLOAD_DELIVERED];
+
+    held->release = budget;
+    payload_capacity_clock += 0.001;
+    rocketnet_server_transport_update( server, payload_capacity_clock );
+
+    rocketnet_unit_check( held->budget_seen == budget );
+    rocketnet_unit_check( held->next == budget );
+    rocketnet_unit_check( rocketnet_server_transport_num_payloads( server ) == budget );
+    rocketnet_unit_check( counters->values[ROCKETNET_COUNTER_PAYLOAD_DELIVERED] - delivered_before == (uint64_t) budget );
+    int previous = -1;
+    for ( int i = 0; i < budget; i++ )
+    {
+        int client_index = -1;
+        int payload_bytes = 0;
+        const uint8_t * payload = rocketnet_server_transport_payload( server, i, &client_index, &payload_bytes );
+        rocketnet_unit_check( payload != NULL && client_index == 0 && payload_bytes == 4 && payload[3] == 0xA5 );
+        const int index = payload[0] | ( payload[1] << 8 ) | ( payload[2] << 16 );
+        rocketnet_unit_check( index > previous && index < sent );
+        previous = index;
+    }
+
+    // the next update delivers the rest: nothing was spent and dropped
+
+    held->release = HELD_EXTRA;
+    payload_capacity_clock += 0.001;
+    rocketnet_server_transport_update( server, payload_capacity_clock );
+    rocketnet_unit_check( rocketnet_server_transport_num_payloads( server ) == HELD_EXTRA );
+    rocketnet_unit_check( counters->values[ROCKETNET_COUNTER_PAYLOAD_DELIVERED] - delivered_before == (uint64_t) ( budget + HELD_EXTRA ) );
+    rocketnet_unit_check( counters->values[ROCKETNET_COUNTER_PAYLOAD_ALREADY_RECEIVED] == 0 );
+
+    swapped_operations = held->loopback;
+    rocketnet_server_transport_swap_io_for_test( server, &swapped_operations, &swapped_instance );
+    rocketnet_unit_check( swapped_operations == &operations );
+
+    rn_test_client_transport_stop_and_destroy( client );
+    rn_test_server_transport_stop_and_destroy( server );
+
+    free( held->from );
+    free( held->bytes );
+    free( held->data );
+    free( held );
+    held = NULL;
+}
+
 REGISTER_UNIT_TEST( test_server_payload_capacity_uses_live_session_path );
 REGISTER_UNIT_TEST( test_write_pass_honours_transport_payload_capacity );
+REGISTER_UNIT_TEST( test_server_payload_batch_holds_the_receive_budget );

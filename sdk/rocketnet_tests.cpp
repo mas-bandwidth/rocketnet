@@ -7275,39 +7275,22 @@ void rocketnet_test_server_keyless_config_has_no_keys()
     rocketnet_check( memcmp( config.server_public_key, zero, 32 ) != 0 );
 }
 
+// The capacity invariant that was violated, stated where it is checked. The
+// XDP receive path drains up to RECEIVE_PACKETS_PER_CLIENT * MAX_CLIENTS
+// packets in one update and processes every one of them -- opening the AEAD
+// and CONSUMING the sequence. If the payload arrays were smaller than that,
+// the excess decrypted payloads were written to a scratch buffer and
+// discarded, with their sequences already spent, so a retransmit would be
+// refused as a replay. Silent, uncounted, unrecoverable, and only on the
+// production transport. One per-update receive bound sizes the process batch
+// and the payload batch: a created server is checked at runtime by
+// test_server_payload_batch_holds_the_receive_budget
+// (tests/test_unit_server_payload_capacity.cpp). Each stored payload is a full
+// received payload: the slot width is the sender's payload capacity, two
+// compile-time constants, so the relation is checked at compile time.
+
 static_assert( ROCKETNET_RECEIVE_PAYLOAD_BYTES == ROCKETNET_MAX_PACKET_PAYLOAD_BYTES,
-               "the receive payload ring's slot width is the sender's payload capacity" );
-
-void rocketnet_test_transport_payload_capacity()
-{
-    // The capacity invariant that was violated, stated where it will be
-    // checked. The XDP receive path drains up to
-    // RECEIVE_PACKETS_PER_CLIENT * MAX_CLIENTS packets in one update and
-    // processes every one of them -- opening the AEAD and CONSUMING the
-    // sequence. If the payload arrays were smaller than that, the excess
-    // decrypted payloads were written to a scratch buffer and discarded,
-    // with their sequences already spent, so a retransmit would be refused
-    // as a replay. Silent, uncounted, unrecoverable, and only on the
-    // production transport. One per-update receive bound sizes the process
-    // batch and the payload batch. Each stored payload is a full received
-    // payload: the slot width is the sender's payload capacity. The
-    // constant relation is a static_assert; a created server reports the
-    // same capacity at runtime.
-
-    struct rocketnet_server_transport_config_t config;
-    rocketnet_server_transport_dev_config( &config );
-    config.max_clients = 1;
-    snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
-    config.loopback_hub = rocketnet_test_loopback_hub();
-
-    struct rocketnet_server_transport_t * server =
-        rocketnet_server_transport_create_sized( NULL, "127.0.0.1:0", &config, sizeof( config ) );
-    rocketnet_check( server != NULL );
-    rocketnet_check( rocketnet_server_transport_max_payload_bytes( server ) == ROCKETNET_RECEIVE_PAYLOAD_BYTES );
-
-    rocketnet_server_transport_stop( server );
-    rocketnet_server_transport_destroy( server );
-}
+               "the receive payload slot width is the sender's payload capacity" );
 
 void rocketnet_test_client_rtt_handshake()
 {
@@ -14149,7 +14132,6 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] = {
     { "test_swarm", rocketnet_test_swarm },
     { "test_payload_size_sweep", rocketnet_test_payload_size_sweep },
     { "test_server_keyless_config_has_no_keys", rocketnet_test_server_keyless_config_has_no_keys },
-    { "test_transport_payload_capacity", rocketnet_test_transport_payload_capacity },
     { "test_client_rtt_handshake", rocketnet_test_client_rtt_handshake },
     { "test_request_path_ordering", rocketnet_test_request_path_ordering },
     { "test_request_path_uncovered_rungs", rocketnet_test_request_path_uncovered_rungs },
