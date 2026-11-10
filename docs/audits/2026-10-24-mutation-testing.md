@@ -207,6 +207,10 @@ grouped into the 25 findings below. Findings are ordered by severity.
 | `sdk/rocketnet_window_ack.cpp:173`, `:230` | 2 | The sent index has at least two entries, and an index entry with `used == 0` never exposes its stale `entry` field. |
 | `sdk/rocketnet_ack.cpp:910` | 1 | Aggregate IDs are opaque nonzero tokens; starting at 2 instead of 1 preserves uniqueness, ordering and the ring's cycling capacity. |
 
+`tools/mutation/run_mutants.py` classifies a mutant inside a
+`rocketnet_assert` argument as non-risk, so these survivors do not fail the
+nightly mutation gate.
+
 ## Counts
 
 - bug: 0

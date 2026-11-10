@@ -2421,6 +2421,51 @@ static void test_ordered_failed_send_at_zero_is_due_next_update()
     node_free( a );
 }
 
+// A record's first packet is refused in place of the commit: nothing went on
+// the wire, so the record stays never sent and the reliable timeout has no
+// clock (m9.3). Its one real send, long after, starts the clock from there.
+
+static void test_ordered_refused_first_send_starts_no_clock()
+{
+    rocketnet_message_config_t config;
+    node_config( &config, 1024, 262144, 262144, 800000 );
+
+    node_t * a = node_new( &config, 4 );
+
+    check( send_message( a, 0, 16 ) != 0 );
+
+    alignas( 16 ) static uint8_t frames[ROCKETNET_PACKET_BUILDER_MAX_PACKETS][ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
+
+    uint8_t * pointers[ROCKETNET_PACKET_BUILDER_MAX_PACKETS];
+    pointers[0] = frames[0];
+    check( rn_ordered_write( &a->ordered, 1000.0, pointers, 1 ) == 1 );
+    rn_ordered_packet_failed( &a->ordered, 0, 1000.0 );
+
+    const rn_region_t * region = a->ordered.ack.region;
+    const uint64_t number = a->ordered.ack.send->U;
+    check( rn_send_number_never_sent( region->send_numbers[number & ( region->window - 1 )].last_send ) );
+    check( a->ordered.ack.has_oldest == 0 );
+
+    // no timeout long past the refusal
+
+    const double timeout = a->ordered.ack.reliable_timeout;
+    check( rn_window_ack_check_timeout( &a->ordered.ack, 1000.0 + timeout + 1.0 ) == 0 );
+    check( a->ordered.ack.has_oldest == 0 );
+    check( a->ordered.ack.error == ROCKETNET_DISCONNECT_REASON_NONE );
+
+    // the real first send starts the clock at its own time
+
+    const double sent = 1000.0 + timeout + 1.0;
+    wire_packet_t out[4];
+    check( write_packets( a, sent, out, 4 ) == 1 );
+    check( counter( a, ROCKETNET_COUNTER_MESSAGE_RESENT ) == 0 );
+    check( a->ordered.ack.has_oldest == 1 && a->ordered.ack.oldest_first_send == sent );
+    check( rn_window_ack_check_timeout( &a->ordered.ack, sent + 0.1 ) == 0 );
+    check( a->ordered.ack.error == ROCKETNET_DISCONNECT_REASON_NONE );
+
+    node_free( a );
+}
+
 // One reliable record is sent, then resent. That resend's packet is refused
 // in place of the commit, so it is not counted. The next update carries the
 // same record again and commits it: MESSAGE_RESENT is 1, and the update
@@ -2636,6 +2681,7 @@ static void test_ordered_chunk_timeout_runs_from_its_own_first_send()
 REGISTER_UNIT_TEST( test_ordered_record_sent_at_zero_waits_for_its_resend );
 REGISTER_UNIT_TEST( test_ordered_record_sent_at_1000_waits_for_its_resend );
 REGISTER_UNIT_TEST( test_ordered_failed_send_at_zero_is_due_next_update );
+REGISTER_UNIT_TEST( test_ordered_refused_first_send_starts_no_clock );
 REGISTER_UNIT_TEST( test_ordered_failed_resend_counted_once );
 REGISTER_UNIT_TEST( test_ordered_refused_resend_acked_before_retry_not_counted );
 REGISTER_UNIT_TEST( test_ordered_refused_resends_counted_only_when_sent );

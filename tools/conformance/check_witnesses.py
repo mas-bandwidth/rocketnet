@@ -13,8 +13,10 @@ fails when an anchor is stale -- the section id no longer resolves through
 check_rn_standard.py's resolver, the named section (or, where the standard
 keeps the rule's text only in standard/RATIONALE.md under the same section
 id, that rationale section) no longer carries the rule text, or the
-function, test or invariant is gone. That is a coverage audit, not a
-behaviour test: it never runs the tests.
+function, test or invariant is gone. A citation Module.tla:Property, or
+proofs/tla/Module.tla:Property, is stale unless that module defines
+Property; a bare name still resolves in any proofs/tla module. That is a
+coverage audit, not a behaviour test: it never runs the tests.
 
 A row whose tier is `none` names a rule with no unit or functional witness.
 The gate does NOT fail on a gap; it counts and lists the gaps, because a gap
@@ -117,6 +119,30 @@ def anchor_invariant_exists(root, name):
     return None
 
 
+def split_module_citation(invariant):
+    """Return (proofs/tla path, property) when the cell cites a module, else None."""
+    if ":" not in invariant:
+        return None
+    module, name = invariant.split(":", 1)
+    if not re.match(r"[A-Za-z][A-Za-z0-9_]*$", name):
+        return None
+    if module.startswith("proofs/tla/") and module.endswith(".tla") and ".." not in module.split("/"):
+        return module, name
+    if "/" not in module and module.endswith(".tla"):
+        return "proofs/tla/" + module, name
+    return None
+
+
+def property_defined(root, module_relpath, name):
+    """True when module_relpath defines name with ==."""
+    path = os.path.join(root, module_relpath)
+    if not os.path.isfile(path):
+        return False
+    pattern = re.compile(r"(?m)^\s*" + re.escape(name) + r"\s*==")
+    with open(path, "r", encoding="utf-8", errors="replace") as handle:
+        return pattern.search(handle.read()) is not None
+
+
 def anchor_name_exists(root, anchor):
     path, _, function = anchor.partition(":")
     if not path:
@@ -185,7 +211,13 @@ def run(root=None):
                             "the rule moved or the anchor is stale" % (where, rule))
 
         if invariant != "-":
-            if anchor_invariant_exists(root, invariant) is None:
+            cited = split_module_citation(invariant)
+            if cited is not None:
+                module_relpath, name = cited
+                if not property_defined(root, module_relpath, name):
+                    failures.append("%s: TLA+ property %r is not defined in %s"
+                                    % (where, name, module_relpath))
+            elif anchor_invariant_exists(root, invariant) is None:
                 failures.append("%s: TLA+ invariant %r is in no proofs/tla/*.tla"
                                 % (where, invariant))
 

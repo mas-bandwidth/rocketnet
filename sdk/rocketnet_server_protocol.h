@@ -19,8 +19,7 @@
 // Server-side connection request processing: the ladder from the standard,
 // every check in its exact order, each rung rejecting what it can at its own
 // cost so the expensive rung is reached only by traffic that already cleared
-// the cheap ones. The library does not own sockets yet, so processing returns
-// what to send and the caller sends it.
+// the cheap ones. Processing returns what to send and the caller sends it.
 
 // Pointer-only dependencies, deliberately incomplete here: the encryption
 // map (rocketnet_encryption_map.h), the client slots
@@ -40,12 +39,19 @@ struct rocketnet_counters_t;
 #define ROCKETNET_SERVER_TEST_FAIL_RESPONSE_DENIED_WRITER    2
 #endif // #if ROCKETNET_DEV
 
+// The outcomes of processing a connection request: IGNORED sends nothing;
+// SEND_* names the response packet written. BUDGET_EXCEEDED is the handshake
+// work budget refusal: the request was dropped unanswered before any
+// asymmetric work and counted as
+// CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED.
+
 #define ROCKETNET_SERVER_PROCESS_IGNORED            0
 #define ROCKETNET_SERVER_PROCESS_SEND_COOKIE        1
 #define ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE     2
 #define ROCKETNET_SERVER_PROCESS_SEND_DENIED        3
 #define ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE    4
 #define ROCKETNET_SERVER_PROCESS_ACCEPTED           5
+#define ROCKETNET_SERVER_PROCESS_BUDGET_EXCEEDED    6
 
 struct rocketnet_server_protocol_t
 {
@@ -138,9 +144,11 @@ double rocketnet_server_protocol_client_rtt( const struct rocketnet_server_proto
 // seconds for token and cookie checks; current_time is the server clock for
 // deadlines. On SEND_*, the response packet is in response_packet -- sized at
 // least ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES (66), the largest response
-// -- with its length in response_bytes; on IGNORED nothing is sent, ever.
-// The exact reason is counted, always, along with the arrival. It looks the
-// source up itself; process_received takes the caller's lookup instead.
+// -- with its length in response_bytes; on IGNORED nothing is sent, ever. A
+// request past the per-update handshake budget returns BUDGET_EXCEEDED with
+// nothing sent. The exact reason is counted, always, along with the arrival.
+// It looks the source up itself; process_received takes the caller's lookup
+// instead.
 
 int rocketnet_server_protocol_process_connection_request( struct rocketnet_server_protocol_t * server,
                                                           const struct rocketnet_address_t * from,

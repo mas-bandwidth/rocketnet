@@ -15,14 +15,6 @@
 // request past it is dropped before any asymmetric work and counted in
 // CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED.
 
-// returned by rocketnet_server_protocol_process_connection_request when the
-// handshake budget is exhausted: the next value after
-// ROCKETNET_SERVER_PROCESS_ACCEPTED (5). Declared here, in the same header as
-// the drop counter it causes, so the test reads the code it asserts from the
-// same header that returns it.
-/** @brief Status returned when the per-update handshake work budget is exhausted. */
-#define ROCKETNET_SERVER_PROCESS_BUDGET_EXCEEDED        6
-
 // counters, per the standard's observability section: one counter per
 // distinct reason a packet is rejected, arrival counted separately from
 // outcome, monotonic and never reset. Names are the standard's; indices are

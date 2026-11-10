@@ -553,6 +553,129 @@ static void test_transport_results_server_receive_checks_counts()
 }
 REGISTER_UNIT_TEST( test_transport_results_server_receive_checks_counts );
 
+// A staged transport's receive view is checked like a batch count: a NULL view,
+// a count past the view's capacity, and a byte count that is negative or past
+// the receive ceiling (the staged transports drop larger datagrams themselves)
+// are transport faults. None crashes update, reads past the view, or wraps
+// bytes_received.
+
+struct transport_results_staged_lie_t
+{
+    int mode;
+    rocketnet_server_socket_process_packets_t view;
+    rocketnet_address_t from[3];
+    int packet_bytes[3];
+    uint8_t * packet_data[3];
+    uint8_t data[3][ROCKETNET_TRANSPORT_MAX_DATAGRAM_BYTES + 2];
+};
+
+static uint8_t * transport_results_staged_start( void *, const rocketnet_address_t *, uint64_t * ) { return NULL; }
+static void transport_results_staged_finish( void *, uint64_t, uint8_t *, int ) {}
+static void transport_results_staged_abort( void *, uint64_t, uint8_t * ) {}
+static void transport_results_staged_flush( void * ) {}
+
+static rocketnet_server_socket_process_packets_t * transport_results_staged_receive( void * transport )
+{
+    transport_results_staged_lie_t * lie = (transport_results_staged_lie_t *) transport;
+    if ( lie->mode == 0 )
+        return NULL;
+
+    lie->view.from = lie->from;
+    lie->view.packet_bytes = lie->packet_bytes;
+    lie->view.packet_data = lie->packet_data;
+    for ( int i = 0; i < 3; i++ )
+    {
+        memset( &lie->from[i], 0, sizeof( lie->from[i] ) );
+        lie->from[i].type = ROCKETNET_ADDRESS_IPV4;
+        lie->from[i].port = 9;
+        lie->packet_bytes[i] = 4;
+        lie->packet_data[i] = lie->data[i];
+        memset( lie->data[i], 0x33, 4 );
+    }
+
+    if ( lie->mode == 1 )
+    {
+        // three packets in a view of two
+        lie->view.capacity = 2;
+        lie->view.num_packets = 3;
+    }
+    else
+    {
+        lie->view.capacity = 3;
+        lie->view.num_packets = 3;
+        lie->packet_bytes[0] = -5;
+        lie->packet_bytes[1] = ( lie->mode == 2 ) ? ROCKETNET_RECEIVE_CEILING + 1 : ROCKETNET_TRANSPORT_MAX_DATAGRAM_BYTES + 1;
+    }
+
+    lie->mode = 0;
+    return &lie->view;
+}
+
+static uint64_t transport_results_bytes_received( const rocketnet_server_transport_t * server )
+{
+    uint64_t bytes = 0;
+    for ( int i = 0; i < ROCKETNET_NUM_SERVER_STATS_FRAMES; i++ )
+        bytes += server->stats_frames[i].bytes_received;
+    return bytes;
+}
+
+static void test_transport_results_server_staged_receive_checks_the_view()
+{
+    transport_results_server_lie_t unused = {};
+    rocketnet_server_transport_io_operations_t operations;
+    rocketnet_server_transport_t * server = transport_results_make_server( &unused, &operations );
+
+    static transport_results_staged_lie_t lie;
+    memset( &lie, 0, sizeof( lie ) );
+    operations.flags = ROCKETNET_TRANSPORT_STAGED | ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE;
+    operations.start_packet = transport_results_staged_start;
+    operations.finish_packet = transport_results_staged_finish;
+    operations.abort_packet = transport_results_staged_abort;
+    operations.flush = transport_results_staged_flush;
+    operations.receive = transport_results_staged_receive;
+    server->io.instance = &lie;
+
+    const uint64_t received_before = server->counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED];
+    const uint64_t bytes_before = transport_results_bytes_received( server );
+
+    // a count past capacity: one fault, only the capacity's packets are read
+
+    lie.mode = 1;
+    rocketnet_server_transport_update( server, 1000.0 );
+    rocketnet_unit_check( server->transport_faults == 1 );
+    rocketnet_unit_check( server->counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED] == received_before + 2 );
+
+    // a negative and an oversize byte count: one fault each, skipped; the valid
+    // third packet is read, at the receive ceiling and past the UDP envelope
+
+    for ( int mode = 2; mode <= 3; mode++ )
+    {
+        const uint64_t faults = server->transport_faults;
+        const uint64_t received = server->counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED];
+        lie.mode = mode;
+        rocketnet_server_transport_update( server, 1000.0 );
+        rocketnet_unit_check( server->transport_faults == faults + 2 );
+        rocketnet_unit_check( server->counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED] == received + 1 );
+    }
+
+    // a NULL view: one fault, nothing read
+
+    const uint64_t faults_before_null = server->transport_faults;
+    const uint64_t received_before_null = server->counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED];
+    lie.mode = 0;
+    rocketnet_server_transport_update( server, 1000.0 );
+    rocketnet_unit_check( server->transport_faults == faults_before_null + 1 );
+    rocketnet_unit_check( server->counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED] == received_before_null );
+
+    // only the four valid packets were counted, so bytes_received did not wrap
+
+    const uint64_t bytes_after = transport_results_bytes_received( server );
+    rocketnet_unit_check( bytes_after >= bytes_before && bytes_after - bytes_before < 1024 );
+
+    rn_test_server_transport_stop_and_destroy( server );
+}
+REGISTER_UNIT_TEST( test_transport_results_server_staged_receive_checks_the_view );
+
 // proofs/tla/ServerSession.tla: NoReceiveUnlessRunning and NoAdmitUnlessRunning.
 // A stopping or stopped server reads no packet and admits no client.
 // rocketnet_server_update returns while !server->running

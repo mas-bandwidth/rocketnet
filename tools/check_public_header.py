@@ -14,7 +14,14 @@
     each way;
 (e) no comment cites an internal design reference (a proofs/tla/ module, a docs/
     design note, a README- note, a pull request or issue number); user
-    documents such as USAGE.md and BUILDING.md may be cited.
+    documents such as USAGE.md and BUILDING.md may be cited;
+(f) the header, and docs/ENVIRONMENT.md for the queue bound, state the
+    contract the code keeps where it once did not: the gso and io_uring queue
+    bound (read from the transports' own headers), CRYPTO_INIT_FAILED from the
+    keypair generators, the racing thread behind LIVE_ALLOCATIONS from init,
+    no sodium misuse line in a ROCKETNET_USE_SYSTEM_SODIUM build,
+    CONFIG_ENV_INVALID for an overlong transport variable, and the misuse count
+    when rocketnet_create_connect_token is given no server address.
 
 Prints one line per check and exits 0 only when every check passes.
 """
@@ -79,6 +86,65 @@ def check_no_internal_references(text):
                    (line_of(text, match.start() + hit.start()), hit.group(0)))
     if not found:
         report(True, "(e) no comment cites an internal design reference")
+
+
+# (f) -----------------------------------------------------------------------
+
+def doc_before(text, anchor, occurrence=0):
+    """The /// comment block right above the line matching anchor (the first, or the given occurrence), as one line of words."""
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        if re.search(anchor, line):
+            if occurrence:
+                occurrence -= 1
+                continue
+            block = []
+            for previous in reversed(lines[:index]):
+                stripped = previous.strip()
+                if stripped.startswith("///"):
+                    block.insert(0, stripped[3:])
+                elif stripped:
+                    break
+            return " ".join(" ".join(block).split())
+    return None
+
+
+def transport_queue_bound(header, name):
+    match = re.search(r"#define\s+%s\s+(\d+)" % name, (ROOT / "sdk" / header).read_text())
+    return int(match.group(1)) if match else None
+
+
+def check_contract_sentences(text):
+    gso = transport_queue_bound("rocketnet_server_gso.h", "ROCKETNET_GSO_MAX_QUEUES")
+    uring = transport_queue_bound("rocketnet_server_uring.h", "ROCKETNET_URING_MAX_QUEUES")
+    if gso is None or uring is None or gso != uring:
+        report(False, "(f) the gso and io_uring queue bounds read from their headers are %s and %s, not one value" % (gso, uring))
+        return
+    environment = (ROOT / "docs" / "ENVIRONMENT.md").read_text()
+    error_line_blocks = [block for block in re.findall(r"(?:^[ \t]*///[^\n]*\n)+", text, flags=re.M) if "one error line" in block]
+    facts = [
+        ("num_xdp_queues states the gso and io_uring bound of %d" % gso,
+         r"gso and io_uring refuse a value above %d\b" % gso, doc_before(text, r"\bint num_xdp_queues;")),
+        ("docs/ENVIRONMENT.md states the gso and io_uring bound of %d" % gso,
+         r"`gso` and `io_uring` refuse a value above `%d`" % gso, " ".join(environment.split())),
+        ("rocketnet_generate_backend_keypair returns CRYPTO_INIT_FAILED",
+         r"ROCKETNET_STATUS_CRYPTO_INIT_FAILED", doc_before(text, r"rocketnet_generate_backend_keypair\(")),
+        ("rocketnet_generate_server_keypair returns CRYPTO_INIT_FAILED",
+         r"ROCKETNET_STATUS_CRYPTO_INIT_FAILED", doc_before(text, r"rocketnet_generate_server_keypair\(")),
+        ("rocketnet_init's LIVE_ALLOCATIONS needs another thread allocating",
+         r"ROCKETNET_STATUS_LIVE_ALLOCATIONS only when another thread", doc_before(text, r"rocketnet_init\(")),
+        ("ROCKETNET_CLIENT_TRANSPORT too long is CONFIG_ENV_INVALID",
+         r"longer ROCKETNET_CLIENT_TRANSPORT value returns ROCKETNET_STATUS_CONFIG_ENV_INVALID", doc_before(text, r"const char \* transport;")),
+        ("ROCKETNET_SERVER_TRANSPORT too long is CONFIG_ENV_INVALID",
+         r"longer ROCKETNET_SERVER_TRANSPORT value returns ROCKETNET_STATUS_CONFIG_ENV_INVALID", doc_before(text, r"const char \* transport;", 1)),
+        ("no server address in rocketnet_create_connect_token counts as misuse",
+         r"rocketnet_create_dev_connect_token and of rocketnet_create_connect_token's config count as one required argument",
+         " ".join(re.sub(r"///", " ", text).split())),
+    ]
+    for label, pattern, where in facts:
+        report(where is not None and re.search(pattern, where) is not None, "(f) %s" % label)
+    report(bool(error_line_blocks) and all("ROCKETNET_USE_SYSTEM_SODIUM" in block for block in error_line_blocks),
+           "(f) each of the %d sodium abort error line notes names the ROCKETNET_USE_SYSTEM_SODIUM build that has none" % len(error_line_blocks))
 
 
 # (a) -----------------------------------------------------------------------
@@ -441,6 +507,7 @@ def main():
     check_includes(raw)
     check_declarations(raw)
     check_no_internal_references(raw)
+    check_contract_sentences(raw)
     if not args.no_run:
         self_contained(build, args.config, args.cc, args.cxx)
     if failures:
