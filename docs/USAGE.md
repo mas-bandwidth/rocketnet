@@ -122,6 +122,14 @@ and subtracts the caller's time to establish the epoch; see
 [Environment](ENVIRONMENT.md). Keep the token issuer and endpoints in the
 same time domain.
 
+With an epoch of 0, the server never reads the wall clock again after that
+first update until it is stopped and started again. Start the server only after
+the host's system time is synchronized (NTP or equivalent), or set
+`token_epoch_unix_seconds` explicitly. A server whose first update runs on an
+unsynchronized clock keeps that offset; once the offset exceeds the token
+lifetime or the creation skew allowance, it refuses connect tokens minted
+against the correct time as expired or not yet valid until it is restarted.
+
 ## Frame loop
 
 Run the same five steps once per frame, in this order, on the client and on
