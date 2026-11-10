@@ -734,6 +734,21 @@ ForgeCookie ==
 C2SEnvironment == C2S!Environment /\ UNCHANGED <<clientVars, serverVars, s2cVars>>
 S2CEnvironment == S2C!Environment /\ UNCHANGED <<clientVars, serverVars, c2sVars>>
 
+\* the run is over: the application's connects are spent and the last
+\* attempt has ended, both disconnect bursts are sent, both wires are empty
+\* (every packet delivered or lost), and the server holds no mapping for the
+\* client but a half-open one whose handshake deadline is off.  A terminal
+\* stutter.  Tick and the links' Age are in Next only when they change
+\* something: once every counter is saturated they are stutters too, and
+\* a state where nothing but they could happen would never be reported
+\* as a deadlock.
+Done ==
+    /\ cstate <= 0 /\ cAttempt = MaxAttempts
+    /\ cDiscPending = 0 /\ sDiscPending = 0
+    /\ c2sWire = <<>> /\ s2cWire = <<>>
+    /\ ~sMap.live \/ (~sMap.slot /\ ServerDeadline = 0)
+    /\ UNCHANGED vars
+
 Next ==
     \/ AppConnect \/ AppDisconnect
     \/ ClientSend \/ ClientDiscCopy
@@ -742,9 +757,10 @@ Next ==
     \/ \E p \in ClientPackets : ServerRecv(p)
     \/ ServerKeepAlive \/ ServerPayload \/ ServerAppDisconnect \/ ServerDiscCopy \/ ServerCrash
     \/ OtherJoins \/ OtherLeaves
-    \/ Tick
-    \/ C2SEnvironment \/ S2CEnvironment
+    \/ Tick /\ vars' # vars
+    \/ (C2SEnvironment \/ S2CEnvironment) /\ vars' # vars
     \/ ForgeCookie
+    \/ Done
 
 (***************************************************************************)
 (* Fairness: time passes, the scheduled sends go out, the application      *)
