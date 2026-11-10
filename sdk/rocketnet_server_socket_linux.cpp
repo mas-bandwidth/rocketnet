@@ -230,6 +230,12 @@ struct rocketnet_server_xdp_socket_t
     // that thread writes it
     uint64_t send_refused_overflow_warned{ 0 };
 
+    // TX wakeup (sendto) failures this queue's worker saw, and the errno of
+    // the last hard one. A hard error means the TX ring can never drain, so
+    // the stop drain gives up on this queue (rocketnet_server_socket_send_idle).
+    std::atomic<uint64_t> send_wakeup_failures{ 0 };
+    std::atomic<int> send_hard_error{ 0 };
+
     uint8_t padding_5[4096];
 
     rocketnet_xdp_buffer_exchange_t<ROCKETNET_XDP_NUM_BUFFERS> send_handoff;
@@ -2510,14 +2516,22 @@ bool rocketnet_server_socket_send_idle( struct rocketnet_server_socket_t * serve
     for ( int queue = 0; queue < server_socket->num_queues; queue++ )
     {
         rocketnet_server_xdp_socket_t * socket = &server_socket->socket[queue];
+
+        // A queue whose worker reported a hard TX wakeup error never drains
+        // its ring: give up on it before waiting on its buffers or mutex.
+
+        const int hard_send_error = socket->send_hard_error.load( std::memory_order_relaxed );
+        if ( rocketnet_xdp_send_wakeup_hard_error( hard_send_error ) )
+            continue;
+
         const int flow_index = socket->send_flow_index.load( std::memory_order_acquire );
         if ( flow_index >= 0 && socket->send_buffer[flow_index].num_packets.load( std::memory_order_relaxed ) != 0 )
             return false;
         if ( !rocketnet_platform_mutex_try_acquire( &socket->send_mutex ) )
             return false;
-        const bool idle = socket->send_handoff.ready_count == 0 && socket->send_handoff.free_count == ROCKETNET_XDP_NUM_BUFFERS - 1;
+        const bool handoff_idle = socket->send_handoff.ready_count == 0 && socket->send_handoff.free_count == ROCKETNET_XDP_NUM_BUFFERS - 1;
         rocketnet_platform_mutex_release( &socket->send_mutex );
-        if ( !idle )
+        if ( !rocketnet_xdp_send_queue_released( hard_send_error, true, handoff_idle ) )
             return false;
     }
 
@@ -3518,7 +3532,8 @@ uint64_t rocketnet_server_socket_send_failures( struct rocketnet_server_socket_t
         rocketnet_server_xdp_socket_t * socket = &server_socket->socket[queue];
         failures += socket->send_refused_length.load( std::memory_order_relaxed ) +
                     socket->send_refused_build.load( std::memory_order_relaxed ) +
-                    socket->send_refused_overflow.load( std::memory_order_relaxed );
+                    socket->send_refused_overflow.load( std::memory_order_relaxed ) +
+                    socket->send_wakeup_failures.load( std::memory_order_relaxed );
     }
 
     return failures;
@@ -3609,6 +3624,60 @@ bool rocketnet_server_socket_test_send_failures_without_mutex()
     queue->send_refused_overflow.store( 3 );
 
     const bool valid = rocketnet_server_socket_send_failures( server ) == 15;
+    queue->~rocketnet_server_xdp_socket_t();
+    rocketnet_server_socket_test_destruct( server );
+    rocketnet_free( NULL, queue_storage );
+    rocketnet_free( NULL, server_storage );
+
+    return valid;
+}
+
+bool rocketnet_server_socket_test_send_idle_hard_error()
+{
+    // A staged packet keeps the producer buffer non-empty. With no hard
+    // worker error the stop waits; once the worker reports a hard TX wakeup
+    // error the queue is released even though its TX ring still holds frames.
+    void * server_storage = rocketnet_malloc( NULL, sizeof( rocketnet_server_socket_t ) );
+    void * queue_storage = rocketnet_malloc( NULL, sizeof( rocketnet_server_xdp_socket_t ) );
+    if ( !server_storage || !queue_storage )
+    {
+        rocketnet_free( NULL, queue_storage );
+        rocketnet_free( NULL, server_storage );
+        return false;
+    }
+
+    auto * server = rocketnet_server_socket_test_construct( server_storage );
+    auto * queue = new ( queue_storage ) rocketnet_server_xdp_socket_t();
+    server->num_queues = 1;
+    server->socket = queue;
+
+    if ( !rocketnet_platform_mutex_create( &queue->send_mutex ) )
+    {
+        queue->~rocketnet_server_xdp_socket_t();
+        rocketnet_server_socket_test_destruct( server );
+        rocketnet_free( NULL, queue_storage );
+        rocketnet_free( NULL, server_storage );
+        return false;
+    }
+
+    queue->send_flow_index.store( queue->send_handoff.producer );
+    queue->send_buffer[queue->send_handoff.producer].num_packets.store( 1, std::memory_order_relaxed );
+
+    bool valid = !rocketnet_server_socket_send_idle( server );
+
+    queue->send_hard_error.store( ENETDOWN, std::memory_order_relaxed );
+    valid &= rocketnet_server_socket_send_idle( server );
+
+    queue->send_wakeup_failures.store( 3, std::memory_order_relaxed );
+    valid &= rocketnet_server_socket_send_failures( server ) == 3;
+
+    queue->send_hard_error.store( 0, std::memory_order_relaxed );
+    valid &= !rocketnet_server_socket_send_idle( server );
+
+    queue->send_buffer[queue->send_handoff.producer].num_packets.store( 0, std::memory_order_relaxed );
+    valid &= rocketnet_server_socket_send_idle( server );
+
+    rocketnet_platform_mutex_destroy( &queue->send_mutex );
     queue->~rocketnet_server_xdp_socket_t();
     rocketnet_server_socket_test_destruct( server );
     rocketnet_free( NULL, queue_storage );
@@ -3788,6 +3857,12 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
 
     bool reported_frame_pressure = false;
 
+    // the last errno each wakeup call saw, so a hard failure is logged once
+    // per contiguous run rather than every pass
+
+    int poll_error = 0;
+    int send_error = 0;
+
     for ( ;; )
     {
         const bool stopping = socket->quit.load( std::memory_order_acquire );
@@ -3795,7 +3870,25 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
         // Complete one final nonwaiting I/O pass after stop was requested.
         // busy poll the transport
 
-        poll( fds, 1, 0 );
+        if ( poll( fds, 1, 0 ) < 0 )
+        {
+            const int error = errno;
+            if ( rocketnet_xdp_send_wakeup_hard_error( error ) )
+            {
+                socket->send_wakeup_failures.fetch_add( 1, std::memory_order_relaxed );
+                socket->send_hard_error.store( error, std::memory_order_relaxed );
+            }
+            if ( rocketnet_xdp_send_wakeup_report( error, poll_error ) )
+            {
+                char reason[128];
+                rocketnet_error( "xdp queue %d poll failed: %s; the tx ring cannot drain and stop will not wait for it",
+                                 socket->queue, strerror_r( error, reason, sizeof( reason ) ) );
+            }
+        }
+        else
+        {
+            poll_error = 0;
+        }
 
         // return pending frames to the fill queue
 
@@ -4119,7 +4212,23 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
 
         if ( xsk_ring_prod__needs_wakeup( &socket->send_queue ) )
         {
-            sendto( xsk_socket__fd( socket->xsk ), NULL, 0, MSG_DONTWAIT, NULL, 0 );
+            if ( sendto( xsk_socket__fd( socket->xsk ), NULL, 0, MSG_DONTWAIT, NULL, 0 ) < 0 )
+            {
+                const int error = errno;
+                socket->send_wakeup_failures.fetch_add( 1, std::memory_order_relaxed );
+                if ( rocketnet_xdp_send_wakeup_hard_error( error ) )
+                    socket->send_hard_error.store( error, std::memory_order_relaxed );
+                if ( rocketnet_xdp_send_wakeup_report( error, send_error ) )
+                {
+                    char reason[128];
+                    rocketnet_error( "xdp queue %d tx wakeup failed: %s; the tx ring cannot drain and stop will not wait for it",
+                                     socket->queue, strerror_r( error, reason, sizeof( reason ) ) );
+                }
+            }
+            else
+            {
+                send_error = 0;
+            }
         }
 
         // The SCHED_RR worker spins on its dedicated isolated queue CPU by

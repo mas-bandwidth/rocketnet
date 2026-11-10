@@ -9,6 +9,7 @@ bool rocketnet_server_socket_test_buffer_exchange();
 bool rocketnet_server_socket_test_inactive_flow();
 bool rocketnet_server_socket_test_replay_marks();
 bool rocketnet_server_socket_test_send_failures_without_mutex();
+bool rocketnet_server_socket_test_send_idle_hard_error();
 bool rocketnet_server_socket_test_reply_mac_refreshed_at_finish();
 bool rocketnet_server_socket_test_gateway_refresh();
 
@@ -23,6 +24,7 @@ int main()
     const bool inactive_passed = rocketnet_server_socket_test_inactive_flow();
     const bool replay_passed = rocketnet_server_socket_test_replay_marks();
     const bool send_failures_passed = rocketnet_server_socket_test_send_failures_without_mutex();
+    const bool send_idle_hard_error_passed = rocketnet_server_socket_test_send_idle_hard_error();
     const bool reply_mac_passed = rocketnet_server_socket_test_reply_mac_refreshed_at_finish();
     const bool gateway_refresh_passed = rocketnet_server_socket_test_gateway_refresh();
     rocketnet_term();
@@ -58,6 +60,14 @@ int main()
     }
 
     printf( "test_xdp_transport_send_failures_without_mutex\n" );
+
+    if ( !send_idle_hard_error_passed )
+    {
+        fprintf( stderr, "native XDP send-idle hard-error check failed\n" );
+        return 1;
+    }
+
+    printf( "test_xdp_transport_send_idle_hard_error\n" );
 
     if ( !reply_mac_passed )
     {
