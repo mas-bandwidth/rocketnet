@@ -125,7 +125,10 @@ ROCKETNET_STATIC_ASSERT( (long long) ROCKETNET_XDP_UMEM_FRAMES * ROCKETNET_XDP_F
 // 1000-client server holds the same memory in the default build and in a
 // -DROCKETNET_MAX_CLIENTS=10000 build. Each owner allocates its buffers once,
 // at create, and its memory plan counts the same bytes from the same
-// functions.
+// functions. The one exception is the server packet lease table
+// (ROCKETNET_SERVER_PACKET_LEASES below): 131072 64-byte entries, 8 MiB,
+// fixed in every build because it already holds two packets per client up to
+// the 32768 build ceiling.
 //
 // The sizing count is max_clients raised to ROCKETNET_SERVER_MIN_SIZED_CLIENTS,
 // 512, the smallest ROCKETNET_MAX_CLIENTS a build allows: every relation the
