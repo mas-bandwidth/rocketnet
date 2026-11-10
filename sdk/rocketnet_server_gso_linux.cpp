@@ -838,7 +838,7 @@ static bool rocketnet_server_gso_drain( struct rocketnet_server_gso_queue_t * qu
         reads += count > 0 ? count : 1;
 
         // a failed call other than an empty socket is counted; the
-        // worker goes back to poll and tries again. an interrupted call
+        // worker sleeps 1ms and tries again. an interrupted call
         // (EINTR) is retried without counting as an error.
 
         if ( count < 0 )
