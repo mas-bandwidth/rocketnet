@@ -55,6 +55,19 @@ inline bool rocketnet_xdp_send_queue_released( int hard_send_error, bool buffer_
     return buffer_empty && handoff_idle;
 }
 
+// The worker's accounting of one TX wakeup that failed with error. Only a
+// hard error is a failed send: it counts in failures, which the public
+// SEND_FAILED counter sums, and is kept in hard_error for the stop drain.
+// Back-pressure (EAGAIN, EBUSY, ENOBUFS) leaves the descriptors queued for the
+// next wakeup and loses nothing, so it counts nothing.
+inline void rocketnet_xdp_send_wakeup_failed( int error, std::atomic<uint64_t> & failures, std::atomic<int> & hard_error )
+{
+    if ( !rocketnet_xdp_send_wakeup_hard_error( error ) )
+        return;
+    failures.fetch_add( 1, std::memory_order_relaxed );
+    hard_error.store( error, std::memory_order_relaxed );
+}
+
 // The worker logs a hard wakeup failure once per contiguous run of one errno:
 // report when it is hard and differs from last_error, and remember every
 // attempt's errno (0 for success) so the next run reports again.
