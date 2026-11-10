@@ -627,6 +627,8 @@ static void check_component_create_sweeps( allocator_state & state )
 
     // 9. rn_arena_create (sdk/rocketnet_allocator.h): 1 allocation (fail N=1, succeed N=2).
     // Refused configs and region counts allocate nothing; in-region carve/send/store allocate nothing.
+    // A production build (ROCKETNET_DEV=0) has no self-allocating arena constructor.
+#if ROCKETNET_DEV
 
     rocketnet_counters_t counters{};
     rocketnet_message_config_t msg_config{};
@@ -673,6 +675,7 @@ static void check_component_create_sweeps( allocator_state & state )
                    check( state.calls == before );
                    rn_arena_destroy( a );
                } ) == 1 );
+#endif // #if ROCKETNET_DEV
 
     // 11. The platform thread and its shim share an allocator-backed record.
 

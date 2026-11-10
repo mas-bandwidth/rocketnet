@@ -690,6 +690,33 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
             tests/test_unit_xdp_frame.cpp)
         list(TRANSFORM ROCKETNET_DEV_ONLY_SCAFFOLD_TEST_SOURCES PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
         list(REMOVE_ITEM ROCKETNET_UNIT_TEST_SOURCES ${ROCKETNET_DEV_ONLY_SCAFFOLD_TEST_SOURCES})
+        # These cases build their arena through rn_arena_create, which a
+        # production library does not carry (sdk/rocketnet_allocator.h); their
+        # arena setup needs the development constructor.
+        set(ROCKETNET_DEV_ONLY_ARENA_TEST_SOURCES
+            tests/test_unit_channel_dispatch.cpp
+            tests/test_unit_channel_held_ownership.cpp
+            tests/test_unit_channel_receipts.cpp
+            tests/test_unit_channel_reliable.cpp
+            tests/test_unit_channel_reliable_sequenced.cpp
+            tests/test_unit_channel_unreliable_sequenced.cpp
+            tests/test_unit_channel_violation_counters.cpp
+            tests/test_unit_connection_memory.cpp
+            tests/test_unit_loopback_rtt.cpp
+            tests/test_unit_message_objects.cpp
+            tests/test_unit_mutation_risk_boundaries.cpp
+            tests/test_unit_packet_builder.cpp
+            tests/test_unit_resend_fifo_bounds.cpp
+            tests/test_unit_resend_generations.cpp
+            tests/test_unit_resend_timing.cpp
+            tests/test_unit_secrets_wiped.cpp
+            tests/test_unit_send_priorities.cpp
+            tests/test_unit_sequenced_hot_cold.cpp
+            tests/test_unit_standard_channels_receipts_security.cpp
+            tests/test_unit_standard_delivery_reliable.cpp
+            tests/test_unit_standard_reliable_window.cpp)
+        list(TRANSFORM ROCKETNET_DEV_ONLY_ARENA_TEST_SOURCES PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
+        list(REMOVE_ITEM ROCKETNET_UNIT_TEST_SOURCES ${ROCKETNET_DEV_ONLY_ARENA_TEST_SOURCES})
     endif()
     # test_unit_driver_loopback.cpp compiles sdk/rocketnet_server_transport.cpp
     # into the suite, so its object goes first on the link line. lld-link loads

@@ -1448,6 +1448,7 @@ static rn_arena_t * rn_arena_build( uint8_t * memory, void * context, int owns_m
     return arena;
 }
 
+#if ROCKETNET_DEV
     // proofs/tla/RNConnectionMemory.tla, Init: every slot is Free with a carved region
 rn_arena_t * rn_arena_create( void * context, const rocketnet_message_config_t * config, int num_regions, rocketnet_counters_t * counters )
 {
@@ -1477,6 +1478,7 @@ rn_arena_t * rn_arena_create( void * context, const rocketnet_message_config_t *
 
     return rn_arena_build( memory, context, 1, config, num_regions, &layout, header, bytes, counters );
 }
+#endif // #if ROCKETNET_DEV
 
 uint64_t rn_arena_required_bytes( const rocketnet_message_config_t * config, int num_regions )
 {

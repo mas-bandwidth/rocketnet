@@ -4367,6 +4367,19 @@ bool rocketnet_server_socket_test_worker_stack()
     }
 
     auto * socket = new ( socket_storage ) rocketnet_server_xdp_socket_t();
+    const bool send_mutex_ok = rocketnet_platform_mutex_create( &socket->send_mutex );
+    const bool receive_mutex_ok = rocketnet_platform_mutex_create( &socket->receive_mutex );
+    if ( !send_mutex_ok || !receive_mutex_ok )
+    {
+        if ( send_mutex_ok )
+            rocketnet_platform_mutex_destroy( &socket->send_mutex );
+        if ( receive_mutex_ok )
+            rocketnet_platform_mutex_destroy( &socket->receive_mutex );
+        socket->~rocketnet_server_xdp_socket_t();
+        rocketnet_free( NULL, socket_storage );
+        munmap( map, map_bytes );
+        return false;
+    }
     socket->num_os_cpus = CPU_SETSIZE;
     socket->quit = true;
 
@@ -4427,6 +4440,8 @@ bool rocketnet_server_socket_test_worker_stack()
         valid = false;
     }
 
+    rocketnet_platform_mutex_destroy( &socket->send_mutex );
+    rocketnet_platform_mutex_destroy( &socket->receive_mutex );
     socket->~rocketnet_server_xdp_socket_t();
     rocketnet_free( NULL, socket_storage );
     munmap( map, map_bytes );

@@ -246,7 +246,7 @@ void rocketnet_server_gso_test_close( struct rocketnet_server_gso_t * gso );
 // worker pass would. false when that buffer has no room for them (main has
 // not swapped it out since it was filled), or the queue index or count is
 // out of range.
-bool rocketnet_server_gso_test_stage_marked(struct rocketnet_server_gso_t * gso, int queue_index, uint8_t marker, uint32_t packets );
+bool rocketnet_server_gso_test_stage_marked( struct rocketnet_server_gso_t * gso, int queue_index, uint8_t marker, uint32_t packets );
 #endif // #if ROCKETNET_DEV
 
 #endif // ROCKETNET_SDK_ROCKETNET_SERVER_GSO_H
