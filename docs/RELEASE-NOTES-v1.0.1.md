@@ -56,6 +56,15 @@ end, `DISCONNECT_BURST_DROPPED`; no existing counter moves.
   `ROCKETNET_STATUS_CRYPTO_INIT_FAILED` when the server keypair cannot be
   generated, or its public key cannot be derived from a supplied
   `server_secret_key`. Nothing is created. This refusal writes no error line.
+- **Client token expiry at connect.** With a nonzero
+  `token_epoch_unix_seconds`, `rocketnet_client_connect` checks the token's
+  expiry against that epoch plus the time of the client's most recent update
+  (zero if it has never been updated; on reconnect, the time the ended
+  connection handed back), and never reads the wall clock. A connect before
+  the client's first update is checked against the epoch alone, so a game
+  whose clock does not start at zero updates the client once before
+  connecting; a normal frame loop does. An epoch of 0 still reads the wall
+  clock once, at connect ([SECURITY.md](SECURITY.md)).
 - **`rocketnet_client_index`.** A connected client's index is the slot the
   server assigned. A debug build no longer asserts when that index is at or
   past the client build's `ROCKETNET_MAX_CLIENTS`.
