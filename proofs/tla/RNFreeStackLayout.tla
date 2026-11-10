@@ -19,8 +19,9 @@
 (*                (sdk/rocketnet_token_tables.cpp): rn_token_claim_select_ *)
 (*                slot peeks free[free_count - 1] and remembers it.        *)
 (*   PopClaim     the record pops that slot only while it is still the    *)
-(*                top.  A release can land between the peek and the pop;   *)
-(*                when the top has changed the slot is not popped.  The    *)
+(*                top.  No other table operation runs between these       *)
+(*                steps under the endpoint's caller serialization.  The   *)
+(*                interleaved-release witness reverses this assumption.   *)
 (*                bindings' rn_token_free_pop is TakeMap's pop without     *)
 (*                the generation.                                          *)
 (*   Release(i)   rocketnet_encryption_map_remove_generation, rocketnet_   *)
@@ -38,6 +39,8 @@
 (*               so a refused take loses the slot (StackIsFree);           *)
 (*   "wrapone"   the generation steps from its maximum to 1, not to the    *)
 (*               exhausted 0 (GenerationNeverReissued).                    *)
+(*   "interleaveclaim" a release runs between a free-slot peek and pop   *)
+(*               (StackIsFree).                                            *)
 (***************************************************************************)
 EXTENDS Integers, FiniteSets
 
@@ -48,7 +51,7 @@ CONSTANTS
     Broken      \* "none", or the reversed witness
 
 ASSUME /\ Cap \in Nat \ {0} /\ MaxGen \in Nat \ {0} /\ Owners \subseteq Nat \ {0}
-       /\ Broken \in {"none", "noguard", "decfirst", "wrapone"}
+       /\ Broken \in {"none", "noguard", "decfirst", "wrapone", "interleaveclaim"}
 
 Idx == 0..Cap-1
 
@@ -76,6 +79,7 @@ Init ==
     /\ pending = NoPeek
 
 TakeMap ==
+    /\ pending = NoPeek
     /\ count > 0 /\ nextGen # 0
     /\ LET i == free[count - 1] IN
        /\ count' = count - 1
@@ -86,6 +90,7 @@ TakeMap ==
        /\ UNCHANGED <<free, pending>>
 
 TakeSlots(g) ==
+    /\ pending = NoPeek
     /\ count > 0
     /\ LET i == free[count - 1] IN
        IF gen[i] = g
@@ -97,28 +102,29 @@ TakeSlots(g) ==
               /\ gen' = [gen EXCEPT ![i] = g]
               /\ UNCHANGED <<free, nextGen, issued, pending>>
 
-\* rn_token_claim_select_slot peeks the top and returns. The record's pop
-\* is a later step, so Release (and the other takes) can run between them.
+\* rn_token_claim_select_slot peeks the top. PopClaim is the next table
+\* operation under caller serialization; the witness permits Release between.
 PeekClaim ==
     /\ pending = NoPeek
     /\ count > 0
     /\ pending' = free[count - 1]
     /\ UNCHANGED <<free, count, live, gen, nextGen, issued>>
 
-\* Pop only while the peeked slot is still the top. The other branch is the
-\* code's "no longer the top" arm: --free_count is skipped. The slot stays
-\* on the stack (a release pushed a new top, or another take already popped
-\* this one) and is not marked live here.
+\* Pop only while the peeked slot is still the top. In the reversed witness,
+\* a release changes the top. The code's else arm skips --free_count, then
+\* retires and inserts pending, so it ends live while count is unchanged.
 PopClaim ==
     /\ pending \in Idx
     /\ IF count > 0 /\ free[count - 1] = pending
        THEN /\ count' = count - 1
             /\ live' = [live EXCEPT ![pending] = TRUE]
-       ELSE /\ UNCHANGED <<count, live>>
+       ELSE /\ count' = count
+            /\ live' = [live EXCEPT ![pending] = TRUE]
     /\ pending' = NoPeek
     /\ UNCHANGED <<free, gen, nextGen, issued>>
 
 Release(i) ==
+    /\ (pending = NoPeek \/ Broken = "interleaveclaim")
     /\ live[i] \/ (Broken = "noguard" /\ count < Cap)
     /\ live' = [live EXCEPT ![i] = FALSE]
     /\ free' = [free EXCEPT ![count] = i]

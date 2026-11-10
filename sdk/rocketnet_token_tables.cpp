@@ -522,8 +522,9 @@ int rocketnet_used_token_history_claim_check( const struct rocketnet_used_token_
 
 // proofs/tla/RNFreeStackLayout.tla PeekClaim: rn_token_claim_select_slot peeks
 // free_slots[free_count - 1]. PopClaim: the record pops that slot only while it
-// is still the top (--free_count). When the top changed, it does not pop and
-// retires the slot instead (rn_token_slot_retire).
+// is still the top (--free_count). The endpoint's serialized caller prevents
+// another table operation in this gap. With no free slot, selection returns
+// an expired live slot and the else arm retires it (rn_token_slot_retire).
 int rocketnet_used_token_history_claim_record( struct rocketnet_used_token_history_t * history,
                                                const uint8_t * token_identifier,
                                                const struct rocketnet_address_t * address,
