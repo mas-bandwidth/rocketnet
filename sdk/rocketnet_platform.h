@@ -817,6 +817,10 @@ inline uint64_t rocketnet_platform_atomic_load_u64( volatile uint64_t * value )
     while ( _InterlockedCompareExchange64( (volatile long long *) value, observed, observed ) != observed )
         observed = *(volatile long long *) value;
     return (uint64_t) observed;
+#elif defined( _M_X64 ) || defined( _M_ARM64 )
+        // 64-bit MSVC has a single-instruction 64-bit load; a relaxed load
+        // must not be a locked read-modify-write that dirties the cache line.
+    return (uint64_t) __iso_volatile_load64( (volatile long long *) value );
 #else
     return (uint64_t) _InterlockedCompareExchange64( (volatile long long *) value, 0, 0 );
 #endif // #if defined( _M_IX86 )

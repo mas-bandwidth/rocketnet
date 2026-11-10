@@ -3853,7 +3853,7 @@ void rocketnet_platform_count_receive_reset()
 
 uint64_t rocketnet_platform_receive_resets()
 {
-    return (uint64_t) InterlockedCompareExchange64( &rocketnet_platform_receive_reset_count, 0, 0 );
+    return rocketnet_platform_atomic_load_u64( (volatile uint64_t *) &rocketnet_platform_receive_reset_count );
 }
 
 int rocketnet_platform_socket_receive_buffer_bytes( rocketnet_platform_socket_t * socket )
