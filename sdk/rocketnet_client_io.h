@@ -41,6 +41,10 @@ void rocketnet_client_io_wipe( void * data, size_t bytes );
 // so an idle client wakes at most 20 times a second. At 1 ms, 1000 clients on
 // one host woke 340,000 times a second and starved threads for seconds.
 #define ROCKETNET_CLIENT_IO_GUARD_TIMEOUT_SECONDS 0.05    // a guard, never a cadence
+// The retry wait when a transient send refusal (EAGAIN/ENOBUFS) leaves
+// committed slots unsent: brief enough that the filling ring does not
+// overflow while the kernel send buffer drains.
+#define ROCKETNET_CLIENT_IO_SEND_RETRY_TIMEOUT_SECONDS 0.002
 
 // The receive buffers: the I/O thread fills one, one waits ready, update
 // holds one (the triple buffer of proofs/tla/RNBufferHandoff.tla, MaxReady 1).
@@ -893,7 +897,14 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
     if ( block && !worked && !quitting && io->transport->operations->wait )
     {
         const bool readable = io->fill_slots < ROCKETNET_NUM_CLIENT_PACKETS;
-        io->transport->operations->wait( io->transport->instance, readable, io->guard_timeout_seconds );
+        // Unsent committed slots mean the kernel refused a send transiently
+        // (EAGAIN/ENOBUFS): retry in 1-2 ms instead of after the idle guard,
+        // or the filling ring overflows while no inbound traffic wakes us.
+        const bool send_pending = io->send_ring >= 0 && io->send_slot < io->committed[io->send_ring];
+        double timeout = io->guard_timeout_seconds;
+        if ( send_pending && ROCKETNET_CLIENT_IO_SEND_RETRY_TIMEOUT_SECONDS < timeout )
+            timeout = ROCKETNET_CLIENT_IO_SEND_RETRY_TIMEOUT_SECONDS;
+        io->transport->operations->wait( io->transport->instance, readable, timeout );
     }
 
     return worked ? ROCKETNET_CLIENT_IO_WORKED : ROCKETNET_CLIENT_IO_IDLE;

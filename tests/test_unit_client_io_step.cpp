@@ -601,6 +601,54 @@ static void test_client_io_step_retains_partial_send_prefix()
 }
 REGISTER_UNIT_TEST( test_client_io_step_retains_partial_send_prefix );
 
+// A transient send refusal (the progress callback consuming nothing, as the
+// platform does on EAGAIN/ENOBUFS) leaves committed slots unsent with no
+// inbound packets: the blocked step must retry after 1-2 ms, not after the
+// 50 ms idle guard, or the filling ring overflows with SEND_RING_FULL.
+
+static void test_client_io_step_unsent_send_waits_with_retry_timeout()
+{
+    rocketnet_fake_client_transport_io_t fake = {};
+    rocketnet_client_transport_io_operations_t operations = rocketnet_fake_client_operations_io;
+    operations.send_batch = rocketnet_fake_client_send_batch;
+    operations.send_batch_progress = client_io_progress_send;
+    rocketnet_client_transport_io_t transport = {};
+    client_io_step_test_open( &fake, &operations, &transport );
+
+    rocketnet_client_io_rig_t * rig = rocketnet_client_io_rig_create();
+    rig->counts[0][0] = 5;
+    for ( int i = 0; i < 5; i++ )
+    {
+        rocketnet_client_io_rig_slot( rig, 0, 0 )[i] = (uint8_t) ( 0x30 + i );
+    }
+
+    client_io_step_test_clock_t clock = { 1000.0 };
+    rocketnet_client_io_t io = {};
+    rocketnet_client_io_rig_init( rig, &io, &transport, client_io_step_test_time, &clock );
+
+    rocketnet_address_t to = {};
+    rocketnet_address_load_ipv4( &to, 0x7f000001, 9500 );
+
+    rocketnet_unit_check( rocketnet_client_io_hand_off( &io, 1, &to ) == ROCKETNET_CLIENT_RINGS_HANDED_OFF );
+
+    client_io_progress_calls = 0;
+    client_io_progress_allow = 0;
+    rocketnet_unit_check( rocketnet_client_io_step( &io, true ) == ROCKETNET_CLIENT_IO_IDLE );
+    rocketnet_unit_check( io.send_ring == 0 && io.send_slot < io.committed[io.send_ring] );
+    rocketnet_unit_check( fake.num_sent == 0 );
+    rocketnet_unit_check( fake.inbound_count == 0 );
+    rocketnet_unit_check( fake.wait_calls == 1 );
+    rocketnet_unit_check( fake.last_wait_timeout >= 0.001 && fake.last_wait_timeout <= 0.002 );
+
+    client_io_progress_allow = 1;
+    rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_WORKED );
+    rocketnet_unit_check( fake.num_sent == 1 );
+
+    rocketnet_client_transport_io_close( &transport );
+    rocketnet_client_io_rig_destroy( rig );
+}
+REGISTER_UNIT_TEST( test_client_io_step_unsent_send_waits_with_retry_timeout );
+
 // Quit attempts only the remaining suffix once through the terminal callback,
 // even when the running callback would refuse forever.
 static void test_client_io_stop_finishes_only_unconsumed_suffix()
