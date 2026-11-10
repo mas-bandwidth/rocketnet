@@ -34,6 +34,11 @@
 // The figures are the planned peak; required_memory adds a fixed 1 MiB of
 // slack on top for the caller's heap (sdk/rocketnet_api.cpp
 // rn_required_memory_slack_bytes), so each check adds it back.
+// On every platform the encryption map index has 2 * capacity uint32_t cells
+// (sdk/rocketnet_encryption_map.cpp, index_cells), and the development
+// endpoint's link simulator carries the receive_any delivery bound and hint
+// and two receive_any scan counters (sdk/rocketnet_network_simulator.h,
+// 40 bytes).
 #define LIGHT_REQUIRED_MEMORY_SLACK_BYTES ( (size_t) 1024 * 1024 )
 #if defined( _WIN32 )
 // Windows x64, MSVC, Release.
@@ -49,6 +54,8 @@
 // 64-byte head-block alignment, as measured on main, adding 64 bytes.
 // The xdp worker's two receive frame arrays moved from its thread stack into
 // each queue's rocketnet_server_xdp_socket_t, adding 872136 bytes (measured).
+// Each xdp queue counts the TX wakeups that failed hard
+// (send_wakeup_failures).
 // The XDP replay marks add a 2 * 1024 * 20-byte kernel-held key table
 // (40960 bytes) and a 2 * 1024 * 2-byte pending-forget index (4096 bytes).
 // The 1 MiB caller slack is added separately.
