@@ -43,9 +43,10 @@
 // way waits for the receive queue's notification, at most
 // ROCKETNET_RIO_DRAIN_NOTIFY_MILLISECONDS so a lost notification cannot hold
 // create. A pass that cannot close the socket has nothing on its way and is
-// run again at once. After ROCKETNET_RIO_DRAIN_WAITS failed passes the
-// transport leaks rather than freeing memory the kernel may still write, as
-// the iocp client's destroy does.
+// run again at once. A pass that dequeued a cancelled receive made progress
+// and is not counted. After ROCKETNET_RIO_DRAIN_WAITS + 1 passes that made
+// none the transport leaks rather than freeing memory the kernel may still
+// write, as the iocp client's destroy does.
 #define ROCKETNET_RIO_DRAIN_WAITS 10
 #define ROCKETNET_RIO_DRAIN_NOTIFY_MILLISECONDS 50
 
@@ -930,19 +931,25 @@ static void rocketnet_rio_create_drain_wait( rocketnet_server_rio_t * rio )
 
 // proofs/tla/RNRioWorker.tla Stop, then WStop to WDrainReceive inline
 // (InlineStop) with PassFails between them: create's failure path, before
-// the worker exists. False after ROCKETNET_RIO_DRAIN_WAITS failed passes
-// (WLeak): something is still kernel owned.
+// the worker exists. Only a stalled pass counts against the bound, one
+// during which posted_receives did not fall (CountStalledOnly): a drain
+// that keeps accounting for cancelled receives runs until it has them all,
+// however many waits they arrive over. False after
+// ROCKETNET_RIO_DRAIN_WAITS + 1 stalled passes (WLeak): something is still
+// kernel owned and nothing is coming.
 static bool rocketnet_rio_create_failed_drain( rocketnet_server_rio_t * rio )
 {
     rocketnet_server_rio_stop( rio );
-    bool stopped = rocketnet_server_rio_stopped( rio );
-    for ( int i = 0; i < ROCKETNET_RIO_DRAIN_WAITS && !stopped; ++i )
-    {
-        rocketnet_rio_create_drain_wait( rio );
-        stopped = rocketnet_server_rio_stopped( rio );
-    }
 
-    return stopped;
+    for ( int stalled = 0;; )
+    {
+        const int posted = rio->posted_receives.load( std::memory_order_relaxed );
+        if ( rocketnet_server_rio_stopped( rio ) )
+            return true;
+        if ( rio->posted_receives.load( std::memory_order_relaxed ) >= posted && ++stalled > ROCKETNET_RIO_DRAIN_WAITS )
+            return false;
+        rocketnet_rio_create_drain_wait( rio );
+    }
 }
 
 rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_address_t * bind_address, int max_clients

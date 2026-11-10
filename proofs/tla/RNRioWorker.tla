@@ -38,8 +38,9 @@
 (* back short.  A pass that cannot finish (a refused commit, a refused     *)
 (* closesocket, sends in flight) fails and the pass is run again.  The     *)
 (* worker repeats it without bound.  InlineStop is create's failure path,  *)
-(* before the worker exists: there the pass runs at most StopDrainWaits+1  *)
-(* times and then leaks the region rather than freeing memory the kernel   *)
+(* before the worker exists: there the drain gives up after                *)
+(* StopDrainWaits+1 failed passes that dequeued no receive completion,     *)
+(* and then leaks the region rather than freeing memory the kernel         *)
 (* may still write.  Destroy frees the registered region only after        *)
 (* stopped.  No fairness says a refused commit or close later succeeds.    *)
 (*                                                                         *)
@@ -51,9 +52,18 @@
 (*   DrainSendsBeforeClose the worker closes the socket only when no       *)
 (*                  committed send is in flight                            *)
 (*   BoundedStopDrain create's inline drain gives up after                 *)
-(*                  StopDrainWaits+1 passes (FALSE: retries forever)       *)
+(*                  StopDrainWaits+1 counted passes (FALSE: retries        *)
+(*                  forever)                                               *)
 (*   DrainLoop      a stop pass dequeues again after a full batch (FALSE:  *)
 (*                  one batch per queue per pass)                          *)
+(*   CountStalledOnly create's inline drain counts a failed pass against   *)
+(*                  its bound only when the pass dequeued no receive       *)
+(*                  completion (FALSE: every failed pass counts)           *)
+(* Either of the last two keeps a draining region from leaking: with      *)
+(* both FALSE, passes that each dequeue a batch use up the bound and the   *)
+(* region leaks after a closesocket that succeeded                         *)
+(* (MCRNRioWorkerBrokenOneBatchPerPass.cfg); with CountStalledOnly alone   *)
+(* the same passes drain it (MCRNRioWorkerInlineStopBatchPerPass.cfg).     *)
 (***************************************************************************)
 EXTENDS Naturals, Sequences, FiniteSets
 
@@ -67,13 +77,13 @@ CONSTANTS Slices,          \* receives: rocketnet_server_rio_receives( max_clien
           StopDrainWaits,  \* ROCKETNET_RIO_DRAIN_WAITS: waits of create's inline drain
           InlineStop,      \* TRUE: create's failure path, stop before any worker
           SwitchOnIdle, BoundedDequeue, DrainBeforeExit, WakeOnReturn, DropHanded,
-          DrainSendsBeforeClose, BoundedStopDrain, DrainLoop
+          DrainSendsBeforeClose, BoundedStopDrain, DrainLoop, CountStalledOnly
 
 ASSUME Slices >= 1 /\ NumBanks >= 2 /\ Cap >= 1 /\ View >= Cap
 ASSUME MaxDatagrams \in Nat /\ MaxSends \in Nat
 ASSUME DrainBatch >= 1 /\ StopDrainWaits >= 1
 ASSUME {InlineStop, SwitchOnIdle, BoundedDequeue, DrainBeforeExit, WakeOnReturn, DropHanded,
-        DrainSendsBeforeClose, BoundedStopDrain, DrainLoop} \subseteq BOOLEAN
+        DrainSendsBeforeClose, BoundedStopDrain, DrainLoop, CountStalledOnly} \subseteq BOOLEAN
 
 Banks == 1..NumBanks
 Ids == 1..MaxDatagrams
@@ -416,22 +426,27 @@ WWait ==
 \* every loop once stopping is set; create's failure path runs it inline
 \* through rocketnet_server_rio_stopped (InlineStop).
 
-\* create's inline drain: its first pass runs before the loop, and the loop
-\* `for ( i = 0; i < ROCKETNET_RIO_DRAIN_WAITS && !stopped; ++i )` runs one
-\* more pass per wait.  stopwaits counts the failed passes, so a pass may
-\* start while at most StopDrainWaits have failed: StopDrainWaits + 1
-\* passes in all.  The worker's loop has no bound.
+\* create's inline drain, rocketnet_rio_create_failed_drain: it runs the
+\* pass, and after a failed pass waits and runs it again.  stopwaits is its
+\* `stalled`: the failed passes during which posted_receives did not fall,
+\* that is, that dequeued no receive completion (CountStalledOnly).  A pass
+\* may start while at most StopDrainWaits have stalled, so the drain gives
+\* up at StopDrainWaits + 1 stalled passes, and a pass that made progress
+\* costs nothing: a drain that keeps accounting for cancelled receives runs
+\* until it has them all.  CountStalledOnly FALSE is the drain before that
+\* rule, which counted every failed pass.  The worker's loop has no bound.
 Bounded == InlineStop /\ BoundedStopDrain
 PassMayStart == ~Bounded \/ stopwaits <= StopDrainWaits
 
-\* the pass returned false.  The worker waits 1 ms on the notification
+\* the pass returned false; fell says whether it dequeued a receive
+\* completion.  The worker waits 1 ms on the notification
 \* event and runs it again; create (rocketnet_rio_create_drain_wait) waits
 \* on that event for at most ROCKETNET_RIO_DRAIN_NOTIFY_MILLISECONDS when
 \* the socket is closed and receives are still counted posted, not at all
 \* otherwise, and runs it again.  Neither wait changes the model's state.
-PassFails ==
+PassFails(fell) ==
     /\ wpc' = "stop"
-    /\ stopwaits' = IF Bounded THEN stopwaits + 1 ELSE stopwaits
+    /\ stopwaits' = IF Bounded /\ ~(CountStalledOnly /\ fell) THEN stopwaits + 1 ELSE stopwaits
 
 \* Under the mutex: post every handed phase and the finished fill phase
 \* through WPost and WCommit, then go to the close.  DropHanded retains the
@@ -481,18 +496,18 @@ WClose ==
                   /\ stoprefused' = FALSE
                   /\ UNCHANGED stopwaits
                \/ /\ UNCHANGED <<pend, infl>>
-                  /\ PassFails
+                  /\ PassFails(FALSE)
                   /\ stoprefused' = TRUE
             /\ UNCHANGED <<closed, posted, rcq, scq, done>>
        ELSE IF DrainSendsBeforeClose /\ ~closed /\ SendsInFlight
        THEN /\ done' = done \o [i \in 1..Len(scq) |-> scq[i][2]]
             /\ scq' = <<>>
-            /\ PassFails
+            /\ PassFails(FALSE)
             /\ UNCHANGED <<closed, posted, rcq, pend, infl, stoprefused>>
        ELSE IF closed
        THEN /\ wpc' = "drains"
             /\ UNCHANGED <<closed, posted, rcq, scq, done, pend, infl, stopwaits, stoprefused>>
-       ELSE \/ /\ PassFails
+       ELSE \/ /\ PassFails(FALSE)
                /\ stoprefused' = TRUE
                /\ UNCHANGED <<closed, posted, rcq, scq, done, pend, infl>>
             \/ /\ rcq' = rcq \o [i \in 1..posted |-> 0]
@@ -526,26 +541,30 @@ WDrainSend ==
 
 \* then the receive completion queue.  After its last call the pass returns
 \* true only when no send is outstanding (deferred, in flight or queued)
-\* and no receive is posted or queued; the worker then sets exited.
+\* and no receive is posted or queued; the worker then sets exited.  The
+\* pass's place in its dequeue loop is "drainr" before any call returned a
+\* completion and "drainrp" after a full batch, so a pass that fails knows
+\* whether it dequeued one: posted_receives fell during it.
 WDrainReceive ==
-    /\ wpc = "drainr"
+    /\ wpc \in {"drainr", "drainrp"}
     /\ LET n == Taken(rcq)
+           fell == n > 0 \/ wpc = "drainrp"
        IN /\ rcq' = SubSeq(rcq, n + 1, Len(rcq))
           /\ retired' = retired + n
           /\ IF DrainLoop /\ n = DrainBatch
-             THEN /\ wpc' = "drainr"
+             THEN /\ wpc' = "drainrp"
                   /\ UNCHANGED <<exited, stopwaits>>
              ELSE IF posted = 0 /\ rcq' = <<>> /\ scq = <<>> /\ ~KernelOwnsSend
                   THEN /\ wpc' = "exited"
                        /\ exited' = TRUE
                        /\ UNCHANGED stopwaits
-                  ELSE /\ PassFails
+                  ELSE /\ PassFails(fell)
                        /\ UNCHANGED exited
     /\ UNCHANGED <<arrived, accepted, posted, retry, data, fill, free, ready, exposed, view, consumed>>
     /\ UNCHANGED svars
     /\ UNCHANGED <<wake, evt, armed, stopping, closed, freed, progress, stoprefused>>
 
-\* create's failure path after StopDrainWaits + 1 failed passes: it leaks
+\* create's failure path after StopDrainWaits + 1 counted passes: it leaks
 \* the transport instead of freeing memory the kernel may still write.
 WLeak ==
     /\ Bounded

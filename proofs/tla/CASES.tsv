@@ -750,6 +750,7 @@ MCRNSequencingWrapBrokenDrainGapUnmasked.cfg	MCRNSequencingWrap.tla	invariant	Ne
 MCRNRioWorkerInlineStop.cfg	MCRNRioWorker.tla	pass	-	check	rnrioworker	required	-
 MCRNRioWorkerBrokenUnboundedRetry.cfg	MCRNRioWorker.tla	temporal	StopCompletes	check	rnrioworker	required	-
 MCRNRioWorkerBrokenOneBatchPerPass.cfg	MCRNRioWorker.tla	invariant	LeakOnlyAfterRefusal	check	rnrioworker	required	-
+MCRNRioWorkerInlineStopBatchPerPass.cfg	MCRNRioWorker.tla	pass	-	check	rnrioworker	required	-
 MCRNSchedulerBrokenRtxById.cfg	MCRNScheduler.tla	invariant	RtxHeadBoost	check	rnscheduler	required	-
 MCRNUnreliableRingLayoutBrokenWalkFromHead.cfg	MCRNUnreliableRingLayout.tla	invariant	WalkExact	check	rnunreliableringlayout	required	-
 MCReceiveOrderDeadlineWindow.cfg	MCReceiveOrder.tla	invariant	OneLiveMappingPerToken	check	receiveorder	required	-
