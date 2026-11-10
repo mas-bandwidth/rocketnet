@@ -119,6 +119,11 @@ double rocketnet_platform_time( void );
 // otherwise the wall clock read once now, less the caller's time
 uint64_t rocketnet_platform_token_epoch( uint64_t configured, double time );
 
+// the connect token clock: epoch plus the whole seconds of time, stopping at
+// UINT64_MAX, where every token has expired; a time that is not positive
+// adds nothing
+uint64_t rocketnet_platform_token_clock( uint64_t epoch, double time );
+
 // Windows treats non-positive and NaN as a yield; POSIX returns at once for
 // them, and otherwise nanosleeps to a monotonic deadline, resuming after a
 // signal interrupts it
