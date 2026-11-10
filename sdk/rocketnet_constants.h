@@ -52,11 +52,13 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_FRAME_SIZE >= 16 + ROCKETNET_RECEIVE_CEILING,
 // A portable or msgx server's send bank holds this many packets per configured
 // client (never fewer than rocketnet_server_send_batch_packets), as its receive
 // banks hold ROCKETNET_RECEIVE_PACKETS_PER_CLIENT. One worker drains a bank
-// with one socket call per packet batch, measured at about 18 us per packet on
-// macOS at 1000 clients: about 80% of that worker at 45,000 packets a second,
-// so a burst backs up for tens of milliseconds and three banks of 1000 ran
-// out. A bank of 16 per client holds that backlog: memory is cheap, a packet
-// dropped for want of a bank is not.
+// with one socket call per packet batch; at about 18 us per packet on macOS at
+// 1000 clients, about 80% of that worker at 45,000 packets a second, so a
+// burst backs up for tens of milliseconds and three banks of 1000 ran out.
+// Those figures are not recorded in docs/runs/, so this size is a chosen
+// design value, not a measured result. A bank of 16 per client is chosen to
+// hold that backlog: memory is cheap, a packet dropped for want of a bank is
+// not.
 #define ROCKETNET_SEND_PACKETS_PER_CLIENT                                   16
 
 // The XDP frame size is defined on every platform: the frame codec in
@@ -125,7 +127,10 @@ ROCKETNET_STATIC_ASSERT( (long long) ROCKETNET_XDP_UMEM_FRAMES * ROCKETNET_XDP_F
 // 1000-client server holds the same memory in the default build and in a
 // -DROCKETNET_MAX_CLIENTS=10000 build. Each owner allocates its buffers once,
 // at create, and its memory plan counts the same bytes from the same
-// functions.
+// functions. The one exception is the server packet lease table
+// (ROCKETNET_SERVER_PACKET_LEASES below): 131072 64-byte entries, 8 MiB,
+// fixed in every build because it already holds two packets per client up to
+// the 32768 build ceiling.
 //
 // The sizing count is max_clients raised to ROCKETNET_SERVER_MIN_SIZED_CLIENTS,
 // 512, the smallest ROCKETNET_MAX_CLIENTS a build allows: every relation the

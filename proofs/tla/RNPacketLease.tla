@@ -154,9 +154,15 @@ Init ==
     /\ racy = FALSE
     /\ exhausted = FALSE
 
-\* a lease of the current generation holds this frame, or an insert is in flight on it
+\* a lease of the current generation that has not been consumed holds this
+\* frame, or an insert is in flight on it.  A consumed lease no longer holds
+\* it: take is also finish and abort, so after an aborted or finished frame
+\* the code starts the same frame again in the same epoch (the loop in
+\* rn_message_connection_write, sdk/rocketnet_message_server.cpp, starts a
+\* packet, aborts it and starts again).  The new insert probes past the
+\* consumed entry, which is still of the current epoch, to another slot.
 FrameBusy(f) ==
-    \/ \E k \in Tickets : issued[k] # NoLease /\ issued[k].gen = gen /\ issued[k].f = f
+    \/ \E k \in Tickets : issued[k] # NoLease /\ issued[k].gen = gen /\ issued[k].f = f /\ takes[k] = 0
     \/ \E u \in Threads : pc[u] \in {"i_used", "i_ticket", "i_load", "i_cas", "i_w"} /\ af[u] = f
 
 \* ------------------------------------------------------------------------
@@ -504,6 +510,23 @@ ChainIntact ==
         LET s == issued[k].slot
             h == Hash(issued[k].f)
         IN \A i \in 0..((s - h + Capacity) % Capacity) : EpochOf(st[(h + i) % Capacity]) = epoch
+
+\* a frame has been re-leased in the current generation: two leases of it in
+\* this generation, at least one of them consumed.  The second lease could
+\* only be issued once the first was consumed, so this state is reachable
+\* only when StartInsert no longer treats a consumed lease as busy.
+Relet ==
+    \E k, j \in Tickets :
+        /\ k # j
+        /\ issued[k] # NoLease /\ issued[j] # NoLease
+        /\ issued[k].gen = gen /\ issued[j].gen = gen
+        /\ issued[k].f = issued[j].f
+        /\ (takes[k] = 1 \/ takes[j] = 1)
+
+\* the reachability witness's negation: MCRNPacketLeaseRelet.cfg must violate
+\* this, which proves its state space reaches a re-lease while ChainIntact,
+\* TakeOnce and NoWrongSuccess are checked at every state on the way.
+NoRelet == ~Relet
 
 ProbeBound ==
     epoch # 0 => Cardinality({s \in Slots : EpochOf(st[s]) = epoch}) <= Capacity \div 2
