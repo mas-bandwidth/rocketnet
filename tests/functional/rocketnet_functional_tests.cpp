@@ -7073,8 +7073,10 @@ void rocketnet_test_server_gso_held_receive_view()
 
     rocketnet_check( held_view );
 
-    // The worker must publish a second packet without touching the main-held
-    // first view. This condition poll observes ownership, not elapsed sleep.
+    // The worker must stage a second packet into its own bank without touching
+    // the main-held first view. This condition poll observes ownership, not
+    // elapsed sleep. Once staged, the consumer-driven flip delivers it in the
+    // very next receive_packets call, not one update later.
 
     rocketnet_platform_socket_send_packet( client_socket, &server_address, second, sizeof( second ) );
 

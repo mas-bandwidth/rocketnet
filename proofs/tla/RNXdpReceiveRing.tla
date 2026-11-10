@@ -12,8 +12,11 @@
 (* all-or-zero flush).  The staging buffer holds a copy of each packet's   *)
 (* bytes, never a frame. This single-buffer frame-lifecycle abstraction   *)
 (* serializes fill and drain; it does not model the exact bank handoff.    *)
-(* In the SDK the mutex protects publication/claim/recycle, and the main  *)
-(* thread drains its owned bank outside that mutex.                       *)
+(* In the SDK the mutex protects the consumer-driven bank swap: the worker *)
+(* appends to its current bank under the mutex and never publishes, and    *)
+(* main swaps that filled bank for its own exhausted one, so every packet  *)
+(* staged before a claim is in that claim's view (Drain drains the whole   *)
+(* staged buffer; the reversed DrainStale leaves one behind).              *)
 (*                                                                         *)
 (* The fill ring is the kernel's too: fq is its entries from the consumer  *)
 (* index the kernel has published to the producer index.  The kernel       *)
@@ -80,6 +83,13 @@ CancelUnconsumed == TRUE
 (***************************************************************************)
 RefusedRefilled == FALSE
 
+(***************************************************************************)
+(*   DrainStale: a drain leaves the most recently staged packet behind, as *)
+(*     the worker-driven publish did (a packet staged before the claim was *)
+(*     not in that claim's view). FALSE in the design.                     *)
+(***************************************************************************)
+DrainStale == FALSE
+
 (* The frame a defective descriptor names: one the model does not own for  *)
 (* receive (a send-region frame).  An untyped model value Frames holds is  *)
 (* never equal to it.                                                      *)
@@ -100,9 +110,10 @@ VARIABLES
     pending,   \* the frames the worker holds: taken, awaiting the fill ring
     staged,    \* the packets in the staging buffer (copies, not frames)
     took,      \* ghost: the current pass has taken a descriptor
+    deferred,  \* ghost: a drain left a staged packet behind (DrainStale)
     defect     \* the kernel has posted a descriptor naming SendFrame
 
-vars == <<fq, kcache, kused, ring, ahead, phase, start, peeked, taken, pending, staged, took, defect>>
+vars == <<fq, kcache, kused, ring, ahead, phase, start, peeked, taken, pending, staged, took, deferred, defect>>
 
 Range(s) == {s[i] : i \in DOMAIN s}
 
@@ -130,6 +141,7 @@ TypeOK ==
     /\ pending \subseteq AllFrames
     /\ staged \in 0..StageCap
     /\ took \in BOOLEAN
+    /\ deferred \in Nat
     /\ defect \in BOOLEAN
 
 Init ==
@@ -145,6 +157,7 @@ Init ==
     /\ pending = {}
     /\ staged = 0
     /\ took = FALSE
+    /\ deferred = 0
     /\ defect = FALSE
 
 (* KernelReceive: a packet lands in the next frame of the kernel's batch,  *)
@@ -155,7 +168,7 @@ KernelReceive ==
     /\ Len(ring) < RingSize
     /\ kused' = kused + 1
     /\ ring' = Append(ring, fq[kused + 1])
-    /\ UNCHANGED <<fq, kcache, ahead, phase, start, peeked, taken, pending, staged, took, defect>>
+    /\ UNCHANGED <<fq, kcache, ahead, phase, start, peeked, taken, pending, staged, took, deferred, defect>>
 
 (* KernelMisdeliver: a driver or kernel defect posts a descriptor naming a *)
 (* frame outside the receive region, once.                                 *)
@@ -164,7 +177,7 @@ KernelMisdeliver ==
     /\ Len(ring) < RingSize
     /\ ring' = Append(ring, SendFrame)
     /\ defect' = TRUE
-    /\ UNCHANGED <<fq, kcache, kused, ahead, phase, start, peeked, taken, pending, staged, took>>
+    /\ UNCHANGED <<fq, kcache, kused, ahead, phase, start, peeked, taken, pending, staged, took, deferred>>
 
 (* KernelRefresh: a packet finds the batch used up.  The kernel publishes  *)
 (* its consumer (the taken entries' slots go back to the user) and peeks   *)
@@ -176,7 +189,7 @@ KernelRefresh ==
     /\ fq' = SubSeq(fq, kused + 1, Len(fq))
     /\ kused' = 0
     /\ kcache' = Len(fq) - kused
-    /\ UNCHANGED <<ring, ahead, phase, start, peeked, taken, pending, staged, took, defect>>
+    /\ UNCHANGED <<ring, ahead, phase, start, peeked, taken, pending, staged, took, deferred, defect>>
 
 (* Peek: xsk_ring_cons__peek from the cached consumer, at most PeekMax;    *)
 (* begin the modeled fill pass. A peek of zero is no step.                 *)
@@ -189,7 +202,7 @@ Peek ==
     /\ peeked' = n
     /\ taken' = 0
     /\ phase' = "taking"
-    /\ UNCHANGED <<fq, kcache, kused, ring, pending, staged, took, defect>>
+    /\ UNCHANGED <<fq, kcache, kused, ring, pending, staged, took, deferred, defect>>
 
 (* Take: the staging buffer has room; read descriptor start + taken + 1    *)
 (* (rx_desc at the peek's index + i) and hold its frame.  A descriptor     *)
@@ -205,7 +218,7 @@ Take ==
     /\ taken' = taken + 1
     /\ staged' = IF d \in Frames THEN staged + 1 ELSE staged
     /\ took' = TRUE
-    /\ UNCHANGED <<fq, kcache, kused, ring, ahead, phase, start, peeked, defect>>
+    /\ UNCHANGED <<fq, kcache, kused, ring, ahead, phase, start, peeked, deferred, defect>>
 
 (* Finish: every peeked descriptor taken, or the staging buffer full.      *)
 (* Cancel the rest (CancelUnconsumed), end the fill pass, release the      *)
@@ -227,7 +240,7 @@ Finish ==
           THEN /\ fq' = fq \o SetSeq(pending)
                /\ pending' = {}
           ELSE UNCHANGED <<fq, pending>>
-    /\ UNCHANGED <<kcache, kused, staged, defect>>
+    /\ UNCHANGED <<kcache, kused, staged, deferred, defect>>
 
 (* Refill: the flush again at the top of the worker's next pass; a         *)
 (* reservation of zero is this step not yet taken.                         *)
@@ -237,13 +250,19 @@ Refill ==
     /\ FlushFits
     /\ fq' = fq \o SetSeq(pending)
     /\ pending' = {}
-    /\ UNCHANGED <<kcache, kused, ring, ahead, phase, start, peeked, taken, staged, took, defect>>
+    /\ UNCHANGED <<kcache, kused, ring, ahead, phase, start, peeked, taken, staged, took, deferred, defect>>
 
 (* Drain: consume the staged bytes in the single-buffer abstraction.      *)
+(* Every packet staged before the claim is in that claim's view; the      *)
+(* reversed DrainStale leaves the most recently staged packet behind.     *)
 Drain ==
     /\ phase = "idle"
     /\ staged > 0
-    /\ staged' = 0
+    /\ IF DrainStale
+       THEN /\ staged' = staged - 1
+            /\ deferred' = deferred + 1
+       ELSE /\ staged' = 0
+            /\ deferred' = deferred
     /\ UNCHANGED <<fq, kcache, kused, ring, ahead, phase, start, peeked, taken, pending, took, defect>>
 
 Next ==
@@ -295,6 +314,10 @@ ConsumerNotBehind == phase = "idle" => ahead = 0
 (* Between passes the worker holds no frame: every flush fits, because the *)
 (* ring has a slot for each frame beyond the kernel's unpublished batch.   *)
 PendingReturnedEachPass == phase = "idle" => pending = {}
+
+(* Every packet staged before a claim is in that claim's view: a drain    *)
+(* never leaves a staged packet behind (the reversed DrainStale does).    *)
+StagedBeforeClaimInView == deferred = 0
 
 (* The kernel finds the fill ring empty (no entry it has not taken, so a   *)
 (* refresh peeks nothing) only while no frame is free: none is waiting in  *)
