@@ -303,18 +303,27 @@ StateReported ==
     ELSE /\ reported' = ReportedView(st')
          /\ lastReport' = IF ReportedView(st') # reported THEN <<reported, ReportedView(st')>> ELSE <<>>
 
+\* The end of a run: the object destroyed and no create left. Every other
+\* state has a step (outside NONE and CONNECTED a send is dropped, CONNECTED
+\* times out, a session's server can always send or lose a packet), so a
+\* run that halts anywhere else is a deadlock.
+Done ==
+    /\ st = "NONE" /\ creates = MaxCreates
+    /\ UNCHANGED vars
+
 \* Every step but a drop clears droppedIn (the two fair actions also say so
 \* themselves, so that their fairness conditions name a whole step).
 Next ==
-    /\ \/ /\ \/ Create \/ Destroy
-             \/ \E tok \in Tokens : Connect(tok)
-             \/ RetryPending \/ WorkerComplete
-             \/ HandshakeStep \/ Deny \/ TokenExpires \/ Timer \/ ServerDisconnect
-             \/ ClientDisconnect \/ DisconnectFromError \/ Send
-             \/ \E s \in Sessions : ServerSend(s) \/ Deliver(s) \/ Lose(s)
-          /\ droppedIn' = {}
-       \/ DropSend
-    /\ StateReported
+    \/ Done
+    \/ /\ \/ /\ \/ Create \/ Destroy
+                \/ \E tok \in Tokens : Connect(tok)
+                \/ RetryPending \/ WorkerComplete
+                \/ HandshakeStep \/ Deny \/ TokenExpires \/ Timer \/ ServerDisconnect
+                \/ ClientDisconnect \/ DisconnectFromError \/ Send
+                \/ \E s \in Sessions : ServerSend(s) \/ Deliver(s) \/ Lose(s)
+             /\ droppedIn' = {}
+          \/ DropSend
+       /\ StateReported
 
 Spec == Init /\ [][Next]_vars
 \* Fair delivery of the server's handshake replies, and the timers; each fair

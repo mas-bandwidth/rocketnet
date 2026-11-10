@@ -212,8 +212,8 @@ case, one for witnesses, 110-second cap per case):
   `MCServerSessionBrokenAdmitWhileStopping.cfg` and `MCServerSessionBrokenConnIdPerRun.cfg`, which
   use `MaxStarts = 2` (a stop and a later start, or a read or an admit while STOPPING after a
   start).
-- Deadlock is not checked (`ignore-terminal`): a run ends when sessions, starts and creates are
-  spent.
+- Deadlock is checked: a run ends in the `Done` terminal stutter, the object destroyed with its
+  creates spent; a run that halts in any other state is reported as a deadlock.
 - The link is a set of session tags (at most one packet per session in flight). The handshake
   is a mapping opening and one response; its packets, cookies, keys, the encryption map and the
   client-id check are `proofs/tla/ServerConnection.tla`'s. Server packets to clients are not modelled

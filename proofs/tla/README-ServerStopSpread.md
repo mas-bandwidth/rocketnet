@@ -69,7 +69,7 @@ control) against a staging of three, so it spreads across steps.
 | `MCServerStopSpreadBrokenRingSmall.cfg` | `RingHolds` violated |
 | `MCServerStopSpreadBrokenSteadyCapOffByOne.cfg` | `RingHolds` violated |
 | `MCServerStopSpreadBrokenNoSkip.cfg` | `SealedWithinBurst` violated |
-| `MCServerStopSpreadBrokenUnreachableStalls.cfg` | `StopFinishes` violated (deadlock check off: the stall is a stuck state) |
+| `MCServerStopSpreadBrokenUnreachableStalls.cfg` | `StopFinishes` violated (deadlock checked: the run ends in the `Done` stutter at STOPPED, and the stall is a STOPPING state the drain never leaves) |
 | `MCServerStopSpreadBrokenStopInFlight.cfg` | `NoSendCutAtStop` violated |
 
 ## The reversed witnesses

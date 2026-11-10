@@ -216,7 +216,16 @@ Tick ==
     /\ now' = now + 1
     /\ UNCHANGED <<firstConnect, connectedAt, server, phaseStart, shard, step, deadline, reason, acked, goAcked, msg>>
 
+\* The end of a run: the time bound spent and nothing due now (every arrival
+\* at MaxTime handled, every expired window acted on, every release sent).
+\* Before MaxTime a state with nothing due ticks, so a run that halts
+\* anywhere else is a deadlock.
+Done ==
+    /\ now = MaxTime /\ ~Urgent
+    /\ UNCHANGED vars
+
 Next ==
+    \/ Done
     \/ \E s \in Shards :
         \/ Connect(s) \/ ShardArm(s) \/ ShardGo(s) \/ ShardRun(s)
         \/ ServerAck(s) \/ ServerGoAck(s) \/ ShardEnded(s) \/ ShardTimeout(s)
