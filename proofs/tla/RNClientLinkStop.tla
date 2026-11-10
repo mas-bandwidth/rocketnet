@@ -83,7 +83,13 @@ ServerReceive ==
     /\ wire' = wire - 1 /\ received' = received + 1 /\ freed' = TRUE
     /\ UNCHANGED <<path, phase, sealed, due, held, lost>>
 
-Next == Disconnect \/ Tick \/ Drain \/ Stop \/ WorkerComplete \/ ServerReceive
+\* The run's end, a terminal stutter: the transport stopped and the server
+\* read every copy on the wire (copies a defect stranded stay staged).
+Done ==
+    /\ phase = "stopped" /\ wire = 0
+    /\ UNCHANGED vars
+
+Next == Disconnect \/ Tick \/ Drain \/ Stop \/ WorkerComplete \/ ServerReceive \/ Done
 
 Spec == Init /\ [][Next]_vars
 \* The caller keeps updating while running, the worker completes, and the

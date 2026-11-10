@@ -137,11 +137,22 @@ CompactDone ==
     /\ pending' = NONE
     /\ UNCHANGED <<ticket, next, order, i, kept>>
 
+\* the run's end, a terminal stutter: the tickets are spent, no compaction
+\* is running, every slot is released and the head has popped every stale
+\* entry, so the ring is empty
+Done ==
+    /\ next > MaxTicket
+    /\ pc = "idle"
+    /\ \A s \in Slots : ~Live(s)
+    /\ count = 0
+    /\ UNCHANGED vars
+
 Next ==
     \/ \E s \in Slots : Insert(s) \/ Reinsert(s) \/ Release(s)
     \/ PopStale
     \/ CompactStep
     \/ CompactDone
+    \/ Done
 
 Spec == Init /\ [][Next]_vars
 

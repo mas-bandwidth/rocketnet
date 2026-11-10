@@ -121,9 +121,18 @@ Take(r) ==
           /\ runs' = { IF x.id = r.id THEN [ x EXCEPT !.live = FALSE ] ELSE x : x \in runs }
     /\ UNCHANGED << slotRef, slotTicket, next, attempts, overwrite >>
 
+(* the run's end, a terminal stutter: every allocation attempt is spent   *)
+(* and every run issued has been taken, except, under a defect, a run an  *)
+(* overwrite or a stale take destroyed, whose completion is refused       *)
+Done ==
+    /\ attempts = MaxRuns
+    /\ \A r \in runs : r.live => ( overwrite \/ staleTake )
+    /\ UNCHANGED vars
+
 Next ==
     \/ \E c \in 2 .. MaxSeg : Allocate(c)
     \/ \E r \in runs : Take(r)
+    \/ Done
 
 Spec == Init /\ [][Next]_vars
 
