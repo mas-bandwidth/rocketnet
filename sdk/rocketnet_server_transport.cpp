@@ -2914,6 +2914,19 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
         server_transport->maintenance_next_client = i;
         if ( !rocketnet_client_slots_connected( server_transport->protocol.client_slots, i ) )
             continue;
+
+        // a sent-stats scan that found no survivor (rocketnet_ack.cpp) is an
+        // internal fault: the slot ends as a kick ends it, and its reason is
+        // PROTOCOL_VIOLATION, as the message layer's sent index names one
+
+        if ( acks->endpoints[i].internal_error )
+        {
+            rocketnet_server_transport_disconnect_client( server_transport, i );
+            server_transport->protocol.end_reasons[i] = ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION;
+            server_transport->maintenance_next_client = ( i + 1 ) % max_clients;
+            continue;
+        }
+
         if ( !rocketnet_server_protocol_maintenance_due( &server_transport->protocol, i, current_time ) )
         {
             server_transport->maintenance_next_client = ( i + 1 ) % max_clients;

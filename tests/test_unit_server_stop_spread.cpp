@@ -717,3 +717,36 @@ REGISTER_UNIT_TEST( test_server_send_capacity_reports_staged_room );
 #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_server_stop_sends_burst_staged_in_link_simulator );
 #endif // #if ROCKETNET_DEV
+
+// The sent-stats scan of a slot's ack endpoint that finds no survivor sets
+// internal_error (sdk/rocketnet_ack.cpp). The next update ends that slot as a
+// kick does, with its disconnect burst, and names PROTOCOL_VIOLATION as the
+// reason; the other slot stays connected.
+static void test_server_update_ends_slot_on_ack_internal_error()
+{
+    stop_spread_fixture_t * f = new stop_spread_fixture_t();
+    f->capacity = 64;
+    const int clients = 2;
+
+    rocketnet_server_transport_io_operations_t operations;
+    rocketnet_server_transport_t * server = stop_spread_server( f, &operations, clients, true );
+
+    for ( int i = 0; i < clients; i++ )
+    {
+        const int index = rocketnet_client_slots_mapping_index( server->protocol.client_slots, i );
+        rocketnet_encryption_map_entry( server->protocol.encryption_map, index )->control->last_receive_time = 1000.0;
+    }
+
+    server->protocol.acks->endpoints[1].internal_error = 1;
+    rocketnet_server_transport_update( server, 1000.0 + 1.0 / 60.0 );
+
+    rocketnet_unit_check( rocketnet_client_slots_connected( server->protocol.client_slots, 0 ) );
+    rocketnet_unit_check( !rocketnet_client_slots_connected( server->protocol.client_slots, 1 ) );
+    rocketnet_unit_check( rocketnet_server_transport_client_end_reason( server, 1 ) == ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION );
+    rocketnet_unit_check( f->staged[1] + f->flushed[1] == ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
+    rocketnet_unit_check( server->protocol.acks->endpoints[1].internal_error == 0 );
+
+    rn_test_server_transport_stop_and_destroy( server );
+    delete f;
+}
+REGISTER_UNIT_TEST( test_server_update_ends_slot_on_ack_internal_error );
