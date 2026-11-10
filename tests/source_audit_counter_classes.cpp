@@ -511,8 +511,13 @@ static void test_server_process_outcomes_budget_exceeded_with_siblings()
         printf( "ROCKETNET_SERVER_PROCESS_BUDGET_EXCEEDED is not defined in sdk/rocketnet_server_protocol.h\n" );
     check( define_line >= 0 );
 
-    int value = -1;
-    check( sscanf( protocol_lines[(size_t) define_line].c_str(), "#define ROCKETNET_SERVER_PROCESS_BUDGET_EXCEEDED %d", &value ) == 1 );
+    const char * const define_text = protocol_lines[(size_t) define_line].c_str();
+    const char * const name = strstr( define_text, "ROCKETNET_SERVER_PROCESS_BUDGET_EXCEEDED" );
+    check( name != NULL );
+    const char * const after_name = name + strlen( "ROCKETNET_SERVER_PROCESS_BUDGET_EXCEEDED" );
+    char * after_value = NULL;
+    const long value = strtol( after_name, &after_value, 10 );
+    check( after_value != after_name );
     check( value == 6 );
 
     // it is no longer in the counters header
