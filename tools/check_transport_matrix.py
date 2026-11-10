@@ -13,7 +13,11 @@ Each matrix block must also sit in a step that runs the three family cases
 and test_transport_env_pin_is_honoured, and every expected-fail mark must name a
 case it runs and a card. An xdp cell needs root, a namespace and a veth
 pair, so its step must run the xdp family cases inside a virtme-ng guest
-(vng). Exits 0 with one OK line, or 1 naming each gap.
+(vng). Each matrix step's script is also run on a fake functional binary:
+a cell that dies before writing its result files must fail the step by
+name, and an io_uring cell the kernel gates off must be reported as an
+explicit SKIP with its reason; an unrun cell is never dropped silently.
+Exits 0 with one OK line, or 1 naming each gap.
 
 Also renders the auto order per platform and endpoint from
 sdk/rocketnet_drivers.inc (server development, server production and client;
@@ -197,6 +201,68 @@ def matrix_blocks(text):
     return blocks
 
 
+FAKE_FUNCTIONAL = """#!/usr/bin/env bash
+# the matrix step's functional binary, faked: it passes every case it is run
+# with, except that a server of $FAKE_CRASH_SERVER kills its cell's subshell
+# before the cell can write a result file, as a crashing cell would
+if [ "$ROCKETNET_SERVER_TRANSPORT" = "${FAKE_CRASH_SERVER:-}" ]; then kill -9 "$PPID"; exit 1; fi
+echo "$2"
+"""
+
+
+def step_script(step):
+    """The run: | script of a matrix step, dedented, or None."""
+    lines = step.split("\n")
+    for i, line in enumerate(lines):
+        m = re.match(r"^(\s*)run:\s*\|\s*$", line)
+        if not m:
+            continue
+        body = []
+        for later in lines[i + 1:]:
+            if later.strip() and len(later) - len(later.lstrip()) <= len(m.group(1)):
+                break
+            body.append(later)
+        indent = min(len(b) - len(b.lstrip()) for b in body if b.strip())
+        return "\n".join(b[indent:] for b in body) + "\n"
+    return None
+
+
+def run_step(script, matrix, uring_disabled, crash_server=""):
+    """Run a matrix step's script on a fake functional binary; (exit, output)."""
+    import subprocess
+    import tempfile
+    with tempfile.TemporaryDirectory() as work:
+        for path in ("bin/functional", "bin/Release/functional.exe"):
+            os.makedirs(os.path.dirname(os.path.join(work, path)), exist_ok=True)
+            with open(os.path.join(work, path), "w", encoding="utf-8") as f:
+                f.write(FAKE_FUNCTIONAL)
+            os.chmod(os.path.join(work, path), 0o755)
+        uring = os.path.join(work, "io_uring_disabled")
+        with open(uring, "w", encoding="utf-8") as f:
+            f.write("2\n" if uring_disabled else "0\n")
+        env = dict(os.environ, RUNNER_OS="Linux", FAKE_CRASH_SERVER=crash_server,
+                   TRANSPORT_MATRIX_LINUX=matrix, TRANSPORT_MATRIX_MACOS=matrix, TRANSPORT_MATRIX_WINDOWS=matrix)
+        done = subprocess.run(["bash", "-c", script.replace("/proc/sys/kernel/io_uring_disabled", uring)],
+                              cwd=work, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        return done.returncode, done.stdout
+
+
+def check_unrun_cells(os_name, step, problems):
+    """An unrun cell is never dropped from the verdict: a cell that dies before
+    writing its result files fails the step, and a gated io_uring cell is
+    reported as an explicit skip with its reason."""
+    script = step_script(step)
+    if script is None or "/proc/sys/kernel/io_uring_disabled" not in script:
+        problems.append(f"TRANSPORT_MATRIX_{os_name}: its step has no run: script reading /proc/sys/kernel/io_uring_disabled for this check to drive")
+        return
+    rc, out = run_step(script, "portable portable\ngso gso\n", uring_disabled=False, crash_server="gso")
+    if rc == 0 or "server=gso client=gso" not in out or "PASS server=portable client=portable" not in out:
+        problems.append(f"TRANSPORT_MATRIX_{os_name}: a cell that died before writing its result files was not failed by name (exit {rc}): {out.strip()!r}")
+    rc, out = run_step(script, "portable portable\nio_uring portable\n", uring_disabled=True)
+    if rc != 0 or not re.search(r"^SKIP server=io_uring client=portable \S+: .*io_uring", out, re.M):
+        problems.append(f"TRANSPORT_MATRIX_{os_name}: an io_uring cell gated off by the kernel was not reported as an explicit SKIP with its reason (exit {rc}): {out.strip()!r}")
+
+
 def main():
     rows = transport_rows(read("sdk/rocketnet_drivers.inc"))
     blocks = matrix_blocks(read(".github/workflows/ci.yml"))
@@ -205,6 +271,7 @@ def main():
     if not rows:
         problems.append("no ROCKETNET_TRANSPORT rows read from sdk/rocketnet_drivers.inc")
 
+    driven = set()
     for os_name in sorted(blocks):
         if os_name not in OSES:
             problems.append(f"TRANSPORT_MATRIX_{os_name} names no OS CI builds")
@@ -220,6 +287,9 @@ def main():
                         problems.append(f"TRANSPORT_MATRIX_{os_name}: it has an xdp cell but its step does not run {case}")
                 if "vng --run" not in step:
                     problems.append(f"TRANSPORT_MATRIX_{os_name}: it has an xdp cell but its step does not run it inside a virtme-ng guest (vng --run)")
+            if step not in driven:
+                driven.add(step)
+                check_unrun_cells(os_name, step, problems)
             for cell in cells:
                 if len(cell) < 2:
                     problems.append(f"TRANSPORT_MATRIX_{os_name}: cell '{' '.join(cell)}' names no client transport")

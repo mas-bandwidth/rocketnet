@@ -654,7 +654,11 @@ jobs:
           while read -r server client expected; do
             [ -n "$server" ] || continue
             if [ "$server" = io_uring ] && [ "$uring_offered" = 0 ]; then
-              echo "TRANSPORT-MATRIX $server/$client [SKIPPED this kernel disables io_uring]"
+              # an explicit skip with its reason, never a dropped cell
+              for case in $socket_cases; do
+                echo "this kernel disables io_uring" > "$logs/$server.$client.$case.log"
+                echo skipped > "$logs/$server.$client.$case.rc"
+              done
               continue
             fi
             if [ "$server" = xdp ]; then
@@ -694,12 +698,21 @@ jobs:
           wait
           failed=0
           while read -r server client expected; do
-            [ -n "$server" ] && [ -d "$logs" ] || continue
+            [ -n "$server" ] || continue
             cases=$(cell_cases "$server")
-            [ -f "$logs/$server.$client.${cases##* }.rc" ] || continue
             for case in $cases; do
               log="$logs/$server.$client.$case.log"
+              # a cell that died before writing its result file fails by name
+              if [ ! -f "$logs/$server.$client.$case.rc" ]; then
+                echo "MISSING server=$server client=$client $case: no result file; its cell died before writing one"
+                failed=1
+                continue
+              fi
               rc=$(cat "$logs/$server.$client.$case.rc")
+              if [ "$rc" = skipped ]; then
+                echo "SKIP server=$server client=$client $case: $(cat "$log")"
+                continue
+              fi
               card=""
               for x in $expected; do [ "${x%%=*}" = "$case" ] && card=${x#*=}; done
               ok=1
@@ -1424,7 +1437,11 @@ jobs:
           while read -r server client expected; do
             [ -n "$server" ] || continue
             if [ "$server" = io_uring ] && [ "$uring_offered" = 0 ]; then
-              echo "TRANSPORT-MATRIX $server/$client [SKIPPED this kernel disables io_uring]"
+              # an explicit skip with its reason, never a dropped cell
+              for case in $cases; do
+                echo "this kernel disables io_uring" > "$logs/$server.$client.$case.log"
+                echo skipped > "$logs/$server.$client.$case.rc"
+              done
               continue
             fi
             (
@@ -1437,11 +1454,20 @@ jobs:
           wait
           failed=0
           while read -r server client expected; do
-            [ -n "$server" ] && [ -d "$logs" ] || continue
-            [ -f "$logs/$server.$client.test_transport_env_pin_is_honoured.rc" ] || continue
+            [ -n "$server" ] || continue
             for case in $cases; do
               log="$logs/$server.$client.$case.log"
+              # a cell that died before writing its result file fails by name
+              if [ ! -f "$logs/$server.$client.$case.rc" ]; then
+                echo "MISSING server=$server client=$client $case: no result file; its cell died before writing one"
+                failed=1
+                continue
+              fi
               rc=$(cat "$logs/$server.$client.$case.rc")
+              if [ "$rc" = skipped ]; then
+                echo "SKIP server=$server client=$client $case: $(cat "$log")"
+                continue
+              fi
               card=""
               for x in $expected; do [ "${x%%=*}" = "$case" ] && card=${x#*=}; done
               ok=1
