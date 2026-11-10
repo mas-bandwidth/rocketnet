@@ -2,7 +2,7 @@
 #
 # ci.yml's sanitizers and tsan jobs, msan.yml and nightly-leaks.yml all run on
 # the Linux fleet with gcc. This workflow runs the same suites on the fleet's
-# darwin member (macOS arm64, label rocketnet-macos) with Apple clang, the
+# darwin member (macOS arm64, labels macOS, ARM64, fleet) with Apple clang, the
 # system toolchain (/usr/bin/clang, not ~/sdk/llvm), in three legs, each in
 # its own build directory and its own job:
 #
@@ -27,10 +27,12 @@
 #               binary of the functional suite runs under it too. Red on any
 #               leak.
 #
-# Each leg runs ./bin/test and ./bin/functional once per transport pin:
-# ROCKETNET_SERVER_TRANSPORT and ROCKETNET_CLIENT_TRANSPORT both msgx, then
-# both portable (the macOS transports of ci.yml's TRANSPORT_MATRIX_MACOS). Every
-# run step runs even when an earlier one is red, so a night shows all four.
+# Each leg runs ./bin/test once, then ./bin/functional once per transport pin
+# (ROCKETNET_SERVER_TRANSPORT and ROCKETNET_CLIENT_TRANSPORT both msgx, then
+# both portable, the macOS transports of ci.yml's TRANSPORT_MATRIX_MACOS).
+# The unit binary clears both pins before any case, so the suite is not run
+# again under the portable pin. Every run step runs even when an earlier one
+# is red.
 # No suppression file, no skipped case and no changed bound: a finding is a
 # defect with its own card. Nightly execution has no repository wall-clock cap;
 # the scenarios, sanitizer checks and per-commit bounds remain unchanged.
@@ -53,7 +55,7 @@ env:
 jobs:
   sanitizers-macos:
     name: macOS ${{ matrix.leg }}
-    runs-on: [self-hosted, macOS, ARM64, rocketnet-macos]
+    runs-on: [self-hosted, macOS, ARM64, fleet]
     timeout-minutes: 7200
     strategy:
       fail-fast: false
@@ -163,17 +165,6 @@ jobs:
           if [ "${{ matrix.leg }}" = leaks ]; then bash "$RUNNER_TEMP/leaks_cases.sh" ./bin/test logs/unit-msgx 2>&1 | tee unit-msgx.log
           else ./bin/test 2>&1 | tee unit-msgx.log; fi
 
-      - name: Unit suite, portable
-        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-        shell: bash
-        env:
-          ROCKETNET_SERVER_TRANSPORT: portable
-          ROCKETNET_CLIENT_TRANSPORT: portable
-        run: |
-          set -o pipefail
-          if [ "${{ matrix.leg }}" = leaks ]; then bash "$RUNNER_TEMP/leaks_cases.sh" ./bin/test logs/unit-portable 2>&1 | tee unit-portable.log
-          else ./bin/test 2>&1 | tee unit-portable.log; fi
-
       - name: Functional suite, msgx
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         shell: bash
@@ -219,7 +210,6 @@ jobs:
           name: nightly-macos-sanitizers-logs-${{ steps.slug.outputs.slug }}
           path: |
             unit-msgx.log
-            unit-portable.log
             functional-msgx.log
             functional-portable.log
             logs/

@@ -16,6 +16,7 @@
 #include "rocketnet.h"
 #include "rocketnet_internal.h"
 
+#include <stdio.h>
 #include <string.h>
 #include <type_traits>
 
@@ -87,3 +88,106 @@ static void test_api_polish_followups()
     check( api_polish_followups_asserts == 0 );
 }
 REGISTER_UNIT_TEST( test_api_polish_followups );
+
+// Every public entry point that takes an enum by value, called from C
+// (tests/c_caller.c) with an int outside its enum, -1000 and 1000: a name
+// lookup says "UNKNOWN", the log level in force stays, the one-record limit
+// is 0, and on a connected pair a start is refused with NULL and the room
+// query answers false. None of these is API misuse, none asserts, and the
+// connection carries on.
+
+extern "C" void rocketnet_test_c_caller_log_level( int level );
+extern "C" const char * rocketnet_test_c_caller_log_level_name( int level );
+extern "C" const char * rocketnet_test_c_caller_status_name( int status );
+extern "C" const char * rocketnet_test_c_caller_client_state_name( int state );
+extern "C" const char * rocketnet_test_c_caller_disconnect_reason_name( int reason );
+extern "C" int rocketnet_test_c_caller_max_unfragmented_message_bytes( int reliability, int channel );
+extern "C" uint8_t * rocketnet_test_c_caller_client_start_message( struct rocketnet_client_t * client, int channel, int reliability, int max_bytes );
+extern "C" uint8_t * rocketnet_test_c_caller_server_start_message( struct rocketnet_server_t * server, uint64_t destination_id, int channel, int reliability, int max_bytes );
+extern "C" bool rocketnet_test_c_caller_client_can_send_message( const struct rocketnet_client_t * client, int channel, int reliability, int max_bytes );
+extern "C" bool rocketnet_test_c_caller_server_can_send_message( const struct rocketnet_server_t * server, int client_index, int channel, int reliability, int max_bytes );
+
+#if ROCKETNET_DEV
+#include "public_step_pair.h"
+#endif // #if ROCKETNET_DEV
+
+static void test_api_polish_followups_c_caller_enums_out_of_range()
+{
+    const int out_of_range[] = { -1000, 1000 };
+
+    rocketnet_assert_function( api_polish_followups_assert );
+    api_polish_followups_asserts = 0;
+
+    const enum rocketnet_log_level_t saved = rocketnet_log_level_current();
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_WARN );
+
+    const uint64_t before = rocketnet_api_misuse_count();
+
+    for ( size_t i = 0; i < sizeof( out_of_range ) / sizeof( out_of_range[0] ); i++ )
+    {
+        const int value = out_of_range[i];
+
+        rocketnet_test_c_caller_log_level( value );
+        check( rocketnet_log_level_current() == ROCKETNET_LOG_LEVEL_WARN );
+        check( strcmp( rocketnet_test_c_caller_log_level_name( value ), "UNKNOWN" ) == 0 );
+        check( strcmp( rocketnet_test_c_caller_status_name( value ), "UNKNOWN" ) == 0 );
+        check( strcmp( rocketnet_test_c_caller_client_state_name( value ), "UNKNOWN" ) == 0 );
+        check( strcmp( rocketnet_test_c_caller_disconnect_reason_name( value ), "UNKNOWN" ) == 0 );
+        check( rocketnet_test_c_caller_max_unfragmented_message_bytes( value, 0 ) == 0 );
+    }
+
+    // the wrappers pass an in-range value through unchanged
+
+    check( strcmp( rocketnet_test_c_caller_status_name( ROCKETNET_STATUS_OK ), "OK" ) == 0 );
+    check( strcmp( rocketnet_test_c_caller_client_state_name( ROCKETNET_CLIENT_STATE_CONNECTED ), "CONNECTED" ) == 0 );
+    check( strcmp( rocketnet_test_c_caller_disconnect_reason_name( ROCKETNET_DISCONNECT_REASON_NONE ), "NONE" ) == 0 );
+    check( rocketnet_test_c_caller_max_unfragmented_message_bytes( ROCKETNET_RELIABILITY_RELIABLE, 0 ) ==
+           rocketnet_max_unfragmented_message_bytes( ROCKETNET_RELIABILITY_RELIABLE, 0 ) );
+
+    check( rocketnet_api_misuse_count() == before );
+    rocketnet_log_level( saved );
+
+#if ROCKETNET_DEV
+
+    public_step_identity_t identity;
+    public_step_identity( &identity );
+
+    public_step_pair_t pair;
+    public_step_pair_create( &pair, &identity );
+    public_step_connect( &pair );
+
+    const uint64_t connected = rocketnet_api_misuse_count();
+
+    for ( size_t i = 0; i < sizeof( out_of_range ) / sizeof( out_of_range[0] ); i++ )
+    {
+        const int value = out_of_range[i];
+
+        check( rocketnet_test_c_caller_client_start_message( pair.client, 0, value, 4 ) == NULL );
+        check( rocketnet_test_c_caller_server_start_message( pair.server, 0, 0, value, 4 ) == NULL );
+        check( !rocketnet_test_c_caller_client_can_send_message( pair.client, 0, value, 4 ) );
+        check( !rocketnet_test_c_caller_server_can_send_message( pair.server, 0, 0, value, 4 ) );
+    }
+
+    check( rocketnet_api_misuse_count() == connected );
+    check( rocketnet_client_state( pair.client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
+    check( rocketnet_server_client_connected( pair.server, 0 ) );
+
+    // an in-range reliability through the same wrappers is given room
+
+    check( rocketnet_test_c_caller_client_can_send_message( pair.client, 0, ROCKETNET_RELIABILITY_RELIABLE, 4 ) );
+    check( rocketnet_test_c_caller_server_can_send_message( pair.server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE, 4 ) );
+    check( rocketnet_test_c_caller_client_start_message( pair.client, 0, ROCKETNET_RELIABILITY_RELIABLE, 4 ) != NULL );
+    rocketnet_client_abort_message( pair.client );
+    check( rocketnet_test_c_caller_server_start_message( pair.server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE, 4 ) != NULL );
+    rocketnet_server_abort_message( pair.server );
+    check( rocketnet_api_misuse_count() == connected );
+
+    public_step_pair_destroy( &pair );
+    rocketnet_quiet( false );
+
+#endif // #if ROCKETNET_DEV
+
+    check( api_polish_followups_asserts == 0 );
+    rocketnet_assert_function( NULL );
+}
+REGISTER_UNIT_TEST( test_api_polish_followups_c_caller_enums_out_of_range );
