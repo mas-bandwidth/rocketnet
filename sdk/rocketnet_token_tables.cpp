@@ -612,6 +612,11 @@ extern "C" uint64_t rocketnet_dev_token_claim_slot_steps( const struct rocketnet
     return history->claims->slot_steps;
 }
 
+extern "C" uint64_t rocketnet_dev_token_binding_slot_steps( const struct rocketnet_used_token_history_t * history )
+{
+    return history->bindings->slot_steps;
+}
+
 extern "C" int rocketnet_dev_token_claim_index_start( const struct rocketnet_used_token_history_t * history,
                                                       const uint8_t * token_identifier )
 {
