@@ -2708,8 +2708,34 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
 
         const int stats_index = server_transport->current_stats_index;
 
-        for ( int i = 0; i < received->num_packets; i++ )
+        // a missing view, a negative count or one past the view's capacity,
+        // or a byte count that is negative or past the receive ceiling (a
+        // staged transport drops larger datagrams itself) is a transport
+        // fault, not a received packet
+
+        int num_received = 0;
+        if ( !received || received->num_packets < 0 )
         {
+            server_transport->transport_faults++;
+        }
+        else if ( received->num_packets > received->capacity )
+        {
+            server_transport->transport_faults++;
+            num_received = received->capacity;
+        }
+        else
+        {
+            num_received = received->num_packets;
+        }
+
+        for ( int i = 0; i < num_received; i++ )
+        {
+            if ( received->packet_bytes[i] < 0 || received->packet_bytes[i] > ROCKETNET_RECEIVE_CEILING )
+            {
+                server_transport->transport_faults++;
+                continue;
+            }
+
             server_transport->stats_frames[stats_index].packets_received++;
             server_transport->stats_frames[stats_index].bytes_received += (uint64_t) ( received->packet_bytes[i] + rocketnet_wire_header_bytes( received->from[i].type ) );
 
