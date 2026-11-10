@@ -142,12 +142,25 @@ required runs are:
 - **TLC records** ([.github/workflows/tlc.yml](../.github/workflows/tlc.yml)):
   `Model records are current`, a nightly workflow: run it with
   workflow_dispatch on the release commit
-  (`gh workflow run tlc.yml --ref main`). It runs every case of a stale group
-  that is not timeout debt, requires every committed record to be current,
-  and requires every unfinished record to be declared timeout debt with its
-  reason; it does not run the timeout-debt cases. A dispatched run is never
-  replaced or cancelled by a scheduled one. Release Check enforces this on the
-  tag push.
+  (`gh workflow run tlc.yml --ref main`). A green run proves these, and only
+  these: the model coverage rows are true
+  (`tools/check_tla_coverage.py --all --actions-strict`); the coverage
+  checker's tests, the case planner's controls and the records checker's
+  tests pass; the TLC adapter's controls pass (they run real TLC on the
+  adapter's own control specs); every committed record in
+  [proofs/tla/RUNS.tsv](../proofs/tla/RUNS.tsv) is valid and current (the
+  pinned tlacheck finds no stale group, and `tools/check_tla_records.py`
+  refuses a record measured on other inputs, on another JAR, or not
+  bounded); every non-PASS record is a `gate=bench` case declaring timeout
+  debt with a bounded FAIL/124 record; and the TLA ledgers merge clean
+  (`tools/check_tla_ledger_merge.py`). It runs no model from CASES.tsv
+  itself: a green run has no stale group, so each model's result is the
+  record committed when it was checked. The timeout-debt cases (11 at this
+  commit) are checked only to that bounded record: their full results are
+  not part of a release, and their evidence is the weekly
+  [tlc-debt.yml](../.github/workflows/tlc-debt.yml) run. A dispatched run is
+  never replaced or cancelled by a scheduled one. Release Check enforces
+  this on the tag push.
 - **docs** ([.github/workflows/docs.yml](../.github/workflows/docs.yml)):
   `docs (MrDocs HTML reference build)`.
 - **Release Check** ([.github/workflows/release-check.yml](../.github/workflows/release-check.yml)):
