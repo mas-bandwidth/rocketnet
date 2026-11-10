@@ -116,6 +116,9 @@ VARIABLES st, cur, conn, kept, link, nextSess, creates,
 \* link: the session tags of server packets in flight to this client (lossy)
 \* nextSess, creates: the environment's counters
 \* observed, crossDelivered, connectFrom, queuedIn, droppedIn, silentEnd: ghosts
+\*   (connectFrom: the states outside RestartStates a connect started from;
+\*   a terminal source is not recorded, so the thirteen error states do not
+\*   multiply the ghost's subsets)
 \* reported, lastReport: the state change callback (StateReported)
 vars == <<st, cur, conn, kept, link, nextSess, creates,
           observed, crossDelivered, connectFrom, queuedIn, droppedIn,
@@ -200,7 +203,7 @@ Connect(tok) ==
        /\ badReuse' = (badReuse \/ (owner \in {"running", "stopping"}))
        /\ pending' = FALSE
        /\ refusedPending' = FALSE
-       /\ connectFrom' = connectFrom \cup {st}
+       /\ connectFrom' = connectFrom \cup ({st} \ RestartStates)
        /\ IF tok = "valid"
           THEN /\ nextSess <= MaxSessions
                /\ st' = "REQUESTING_COOKIE" /\ cur' = nextSess /\ nextSess' = nextSess + 1
