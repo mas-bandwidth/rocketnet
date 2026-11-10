@@ -109,9 +109,24 @@ uint64_t rocketnet_platform_token_epoch( uint64_t configured, double time )
         return configured;
 
     const uint64_t wall = rocketnet_platform_wall_clock();
-    const uint64_t elapsed = time > 0.0 ? (uint64_t) time : 0;
+    const uint64_t elapsed = rocketnet_platform_token_clock( 0, time );
 
     return wall > elapsed ? wall - elapsed : 1;
+}
+
+uint64_t rocketnet_platform_token_clock( uint64_t epoch, double time )
+{
+    // a time of 2^64 seconds or more has no uint64_t value to cast to
+
+    if ( !( time > 0.0 ) )
+        return epoch;
+
+    if ( time >= 18446744073709551616.0 )
+        return UINT64_MAX;
+
+    const uint64_t seconds = (uint64_t) time;
+
+    return seconds > UINT64_MAX - epoch ? UINT64_MAX : epoch + seconds;
 }
 
 #if ROCKETNET_DEV

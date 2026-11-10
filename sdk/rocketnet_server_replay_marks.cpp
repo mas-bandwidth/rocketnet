@@ -8,7 +8,6 @@
 #include "rocketnet_internal.h"
 #include "rocketnet_connection_reset.h"
 #include "rocketnet_memory.h"
-#include "rocketnet_xdp_replay_marks.h"
 
 #include <string.h>
 
@@ -19,11 +18,11 @@
     no decision is named in test_connection_reset_inventory_covers_every_field.
 */
 #define ROCKETNET_SERVER_REPLAY_SLOT_MARK_LAYOUT_FIELDS( X ) \
+    X( has_mark, int has_mark )                                    \
     X( marked_value, uint32_t marked_value )                       \
+    X( seen, int seen )                                            \
     X( seen_address, struct rocketnet_address_t seen_address )     \
-    X( has_mark, uint8_t has_mark )                                \
-    X( seen, uint8_t seen )                                        \
-    X( mark_owed, uint8_t mark_owed )
+    X( mark_owed, int mark_owed )
 
 struct rocketnet_server_replay_slot_mark_t
 {
@@ -32,28 +31,16 @@ struct rocketnet_server_replay_slot_mark_t
 #undef ROCKETNET_SERVER_REPLAY_SLOT_MARK_LAYOUT_FIELDS_DECLARE
 };
 
-// The seen slots are indexed by their address in an open-addressed table of
-// two entries per slot, so a forget finds the other records of its address
-// without a scan of every slot. The table follows the slots in their one
-// allocation: each entry is a slot index + 1, zero empty, and the table is at
-// most half full, since each slot is in it at most once.
-
-#define ROCKETNET_SERVER_REPLAY_ADDRESS_ENTRIES_PER_SLOT 2
-
 struct rocketnet_server_replay_marks_t
 {
     void * context;
     int max_clients;
+    bool supersede_owed;                // the last walk left a refused forget: two records may name one address
 #if ROCKETNET_DEV
-    uint32_t comparisons;               // every address table probe, for the unit cost cases
+    uint32_t comparisons;               // every record a supersede scan reads, for the unit cost case
 #endif // #if ROCKETNET_DEV
     struct rocketnet_server_replay_slot_mark_t * slots;
 };
-
-static uint64_t rocketnet_server_replay_marks_storage_bytes( int max_clients )
-{
-    return ( sizeof( struct rocketnet_server_replay_slot_mark_t ) + ROCKETNET_SERVER_REPLAY_ADDRESS_ENTRIES_PER_SLOT * sizeof( uint32_t ) ) * (uint64_t) max_clients;
-}
 
 uint64_t rocketnet_server_replay_marks_allocation_bytes( int max_clients )
 {
@@ -61,7 +48,7 @@ uint64_t rocketnet_server_replay_marks_allocation_bytes( int max_clients )
         return 0;
 
     return rocketnet_memory_allocations( { sizeof( struct rocketnet_server_replay_marks_t ),
-                                           rocketnet_server_replay_marks_storage_bytes( max_clients ) } );
+                                           sizeof( struct rocketnet_server_replay_slot_mark_t ) * (uint64_t) max_clients } );
 }
 
 struct rocketnet_server_replay_marks_t * rocketnet_server_replay_marks_create( void * context, int max_clients )
@@ -76,7 +63,7 @@ struct rocketnet_server_replay_marks_t * rocketnet_server_replay_marks_create( v
 
     marks->context = context;
     marks->max_clients = max_clients;
-    marks->slots = (struct rocketnet_server_replay_slot_mark_t *) rocketnet_malloc( context, (size_t) rocketnet_server_replay_marks_storage_bytes( max_clients ) );
+    marks->slots = (struct rocketnet_server_replay_slot_mark_t *) rocketnet_malloc( context, sizeof( struct rocketnet_server_replay_slot_mark_t ) * (size_t) max_clients );
 
     if ( !marks->slots )
     {
@@ -84,7 +71,7 @@ struct rocketnet_server_replay_marks_t * rocketnet_server_replay_marks_create( v
         return NULL;
     }
 
-    memset( marks->slots, 0, (size_t) rocketnet_server_replay_marks_storage_bytes( max_clients ) );
+    memset( marks->slots, 0, sizeof( struct rocketnet_server_replay_slot_mark_t ) * (size_t) max_clients );
 
     return marks;
 }
@@ -103,109 +90,6 @@ uint32_t rocketnet_server_replay_marks_comparisons_for_test( const struct rocket
 }
 #endif // #if ROCKETNET_DEV
 
-static uint32_t * rocketnet_server_replay_marks_address_table( struct rocketnet_server_replay_marks_t * marks )
-{
-    return (uint32_t *) ( marks->slots + marks->max_clients );
-}
-
-static uint32_t rocketnet_server_replay_marks_address_size( const struct rocketnet_server_replay_marks_t * marks )
-{
-    return (uint32_t) marks->max_clients * ROCKETNET_SERVER_REPLAY_ADDRESS_ENTRIES_PER_SLOT;
-}
-
-static uint32_t rocketnet_server_replay_marks_address_home( const struct rocketnet_server_replay_marks_t * marks, const struct rocketnet_address_t * address )
-{
-    uint32_t hash = 2166136261u;
-    hash ^= address->type;
-    hash *= 16777619u;
-    hash ^= (uint8_t) address->port;
-    hash *= 16777619u;
-    hash ^= (uint8_t) ( address->port >> 8 );
-    hash *= 16777619u;
-
-    const uint8_t * bytes = (const uint8_t *) &address->data;
-    const uint32_t count = address->type == ROCKETNET_ADDRESS_IPV4 ? 4 : address->type == ROCKETNET_ADDRESS_IPV6 ? 16
-                                                                                                                 : 0;
-    for ( uint32_t i = 0; i < count; i++ )
-    {
-        hash ^= bytes[i];
-        hash *= 16777619u;
-    }
-    return hash % rocketnet_server_replay_marks_address_size( marks );
-}
-
-static uint32_t rocketnet_server_replay_marks_address_step( const struct rocketnet_server_replay_marks_t * marks, uint32_t position )
-{
-    return position + 1 == rocketnet_server_replay_marks_address_size( marks ) ? 0 : position + 1;
-}
-
-// Empties table position hole and shifts the rest of its probe run back, so
-// the table never holds a tombstone.
-
-static void rocketnet_server_replay_marks_address_erase_at( struct rocketnet_server_replay_marks_t * marks, uint32_t hole )
-{
-    uint32_t * table = rocketnet_server_replay_marks_address_table( marks );
-    const uint32_t size = rocketnet_server_replay_marks_address_size( marks );
-
-    table[hole] = 0;
-    uint32_t next = rocketnet_server_replay_marks_address_step( marks, hole );
-    while ( table[next] != 0 )
-    {
-#if ROCKETNET_DEV
-        marks->comparisons++;
-#endif // #if ROCKETNET_DEV
-        const uint32_t home = rocketnet_server_replay_marks_address_home( marks, &marks->slots[table[next] - 1].seen_address );
-        if ( ( next + size - home ) % size >= ( next + size - hole ) % size )
-        {
-            table[hole] = table[next];
-            table[next] = 0;
-            hole = next;
-        }
-        next = rocketnet_server_replay_marks_address_step( marks, next );
-    }
-}
-
-static void rocketnet_server_replay_marks_address_remove( struct rocketnet_server_replay_marks_t * marks, int index )
-{
-    if ( !marks->slots[index].seen )
-        return;
-
-    const uint32_t * table = rocketnet_server_replay_marks_address_table( marks );
-    uint32_t position = rocketnet_server_replay_marks_address_home( marks, &marks->slots[index].seen_address );
-    while ( table[position] != 0 )
-    {
-#if ROCKETNET_DEV
-        marks->comparisons++;
-#endif // #if ROCKETNET_DEV
-        if ( table[position] == (uint32_t) index + 1 )
-        {
-            rocketnet_server_replay_marks_address_erase_at( marks, position );
-            return;
-        }
-        position = rocketnet_server_replay_marks_address_step( marks, position );
-    }
-}
-
-static void rocketnet_server_replay_marks_address_insert( struct rocketnet_server_replay_marks_t * marks, int index )
-{
-    uint32_t * table = rocketnet_server_replay_marks_address_table( marks );
-    uint32_t position = rocketnet_server_replay_marks_address_home( marks, &marks->slots[index].seen_address );
-    while ( table[position] != 0 )
-    {
-#if ROCKETNET_DEV
-        marks->comparisons++;
-#endif // #if ROCKETNET_DEV
-        position = rocketnet_server_replay_marks_address_step( marks, position );
-    }
-    table[position] = (uint32_t) index + 1;
-}
-
-static void rocketnet_server_replay_marks_clear_slot( struct rocketnet_server_replay_marks_t * marks, int index )
-{
-    rocketnet_server_replay_marks_address_remove( marks, index );
-    memset( &marks->slots[index], 0, sizeof( marks->slots[index] ) );
-}
-
 // proofs/tla/RNServerReplaySlots.tla Walk (MarkSupersedes, ForgetSupersedes): a
 // queued forget or mark of an address clears every other slot's record of that
 // address. Such a record is a refused forget left by a slot that is no longer
@@ -218,25 +102,14 @@ static void rocketnet_server_replay_marks_supersede( struct rocketnet_server_rep
                                                      int keep,
                                                      const struct rocketnet_address_t * address )
 {
-    // a cleared record leaves its position, and the erase shifts the rest of
-    // the probe run back into it, so that position is read again
-
-    const uint32_t * table = rocketnet_server_replay_marks_address_table( marks );
-    uint32_t position = rocketnet_server_replay_marks_address_home( marks, address );
-    while ( table[position] != 0 )
+    for ( int i = 0; i < marks->max_clients; i++ )
     {
 #if ROCKETNET_DEV
         marks->comparisons++;
 #endif // #if ROCKETNET_DEV
-        const int i = (int) table[position] - 1;
         struct rocketnet_server_replay_slot_mark_t * slot = &marks->slots[i];
-        if ( i != keep && rocketnet_address_equal( &slot->seen_address, address ) )
-        {
-            rocketnet_server_replay_marks_address_erase_at( marks, position );
+        if ( i != keep && slot->seen && rocketnet_address_equal( &slot->seen_address, address ) )
             memset( slot, 0, sizeof( *slot ) );
-            continue;
-        }
-        position = rocketnet_server_replay_marks_address_step( marks, position );
     }
 }
 
@@ -296,8 +169,18 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
             const struct rocketnet_address_t forgotten = slot->seen_address;
             if ( sink->forget( sink->context, &forgotten ) )
             {
-                rocketnet_server_replay_marks_clear_slot( marks, i );
-                rocketnet_server_replay_marks_supersede( marks, i, &forgotten );
+                memset( slot, 0, sizeof( *slot ) );
+
+                // proofs/tla/RNServerReplaySlots.tla Walk (supOwed,
+                // DistinctUnlessOwed): two records name one address only
+                // after a walk that left a refused forget. Any other walk
+                // ends with every record at its own connected slot's address,
+                // and those are distinct, so there is nothing to clear and
+                // the scan of every slot is skipped: a mass disconnect reads
+                // each slot once.
+
+                if ( marks->supersede_owed )
+                    rocketnet_server_replay_marks_supersede( marks, i, &forgotten );
             }
             else
             {
@@ -306,9 +189,9 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
         }
     }
 
-    // then the marks -- every connected slot first seen (zero included),
-    // whose highest_opened fell below its last mark, or whose highest_opened
-    // advanced by the mark step. Every connected slot with a
+    // then the marks -- every connected slot whose highest_opened differs
+    // from what it last marked (none counting as zero), and every slot first
+    // seen, zero included. Every connected slot with a
     // mapping is seen at its address, marked or not, so that the forget pass
     // can drop the reply MAC of a slot that left before it ever marked.
 
@@ -342,25 +225,13 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
         const bool first_seen = !slot->seen;
         const bool mark_owed = slot->mark_owed != 0;
 
-        // a seen slot is here only at the address it was seen at, which the
-        // address table already holds
-
-        if ( first_seen )
-        {
-            slot->seen = 1;
-            slot->seen_address = *address;
-            rocketnet_server_replay_marks_address_insert( marks, i );
-        }
-
-        // A steady advance coalesces until it reaches the mark step. A fall
-        // is a new session in the slot and is marked at once, as a first-seen
-        // slot is, so its first keep-alive cannot meet the old session's entry.
+        slot->seen = 1;
+        slot->seen_address = *address;
 
         const uint32_t high_water = (uint32_t) highest_opened;
         const uint32_t last_marked = slot->has_mark ? slot->marked_value : 0;
-        const bool decreased = !first_seen && high_water < last_marked;
 
-        if ( !first_seen && !mark_owed && !decreased && high_water - last_marked < ROCKETNET_XDP_REPLAY_MARK_STEP )
+        if ( !first_seen && !mark_owed && high_water == last_marked )
             continue;
 
         // proofs/tla/RNXdpReplay.tla Walk, AdvanceOnQueueRefusal = FALSE: a mark the
@@ -384,6 +255,12 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
         if ( refused_forgets > 0 )
             rocketnet_server_replay_marks_supersede( marks, i, address );
     }
+
+    // proofs/tla/RNServerReplaySlots.tla Walk (supOwed'): a forget refused in
+    // this walk may leave its record beside a newer one of the same address,
+    // so the next walk's forget pass owes the scan
+
+    marks->supersede_owed = refused_forgets > 0;
 }
 
 #if ROCKETNET_DEV

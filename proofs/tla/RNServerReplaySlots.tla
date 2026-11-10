@@ -15,7 +15,10 @@
 (*                    connected at another address, asks the sink to       *)
 (*                    forget seen_address; only an accepted forget clears  *)
 (*                    the record (the memset), and it clears every other   *)
-(*                    slot's record of that address too                    *)
+(*                    slot's record of that address too (the code looks    *)
+(*                    only when supersede_owed says the walk before left   *)
+(*                    a refused forget, the one way two records come to    *)
+(*                    name one address: DistinctUnlessOwed)                *)
 (*   the mark pass    every connected slot: a slot whose record still      *)
 (*                    names another address is skipped (its forget is      *)
 (*                    owed first); otherwise the record is seen at the     *)
@@ -52,6 +55,13 @@
 (*                  address, keeps a mark the kernel no longer holds       *)
 (*   ForgetSupersedes  a queued forget leaves another slot's record of its *)
 (*                  address, whose mark the commit deletes                 *)
+(*   OweOnRefusal   a walk that leaves a refused forget does not raise     *)
+(*                  supersede_owed, so the next walk's forget pass skips   *)
+(*                  the scan although two records name one address         *)
+(*                                                                         *)
+(* ScanWhenOwedOnly FALSE is not a bug: it is the v1.0.0 forget pass, which *)
+(* scanned for every queued forget.  Its control reaches the same states,  *)
+(* since the scan the code skips clears nothing (DistinctUnlessOwed).      *)
 (***************************************************************************)
 EXTENDS Integers, FiniteSets
 
@@ -64,10 +74,12 @@ CONSTANTS
     ForgetRefusable,\* the sink may refuse a forget (its array full)
     MarkSupersedes, \* a queued mark clears every other slot's record of its address
     ForgetSupersedes,\* a queued forget clears every other slot's record of its address
+    OweOnRefusal,   \* a walk that leaves a refused forget raises supersede_owed
+    ScanWhenOwedOnly,\* the forget pass scans only while supersede_owed is set (FALSE: for every queued forget, as v1.0.0)
     NONE            \* no kernel entry, no address (a model value)
 
 ASSUME MaxHigh \in Nat
-ASSUME \A f \in {SkipWhileOwed, ClearOnAccept, ForgetRefusable, MarkSupersedes, ForgetSupersedes} : f \in BOOLEAN
+ASSUME \A f \in {SkipWhileOwed, ClearOnAccept, ForgetRefusable, MarkSupersedes, ForgetSupersedes, OweOnRefusal, ScanWhenOwedOnly} : f \in BOOLEAN
 
 Highs == 0..MaxHigh
 Clear == [ seen |-> FALSE, at |-> NONE, has |-> FALSE, marked |-> 0, owes |-> FALSE ]
@@ -76,14 +88,16 @@ VARIABLES
     conn,           \* conn[i]: the slot's connection, [on, at, high]
     rec,            \* rec[i]: the slot's record, [seen, at (seen_address), has (has_mark), marked (marked_value), owes (mark_owed)]
     kernel,         \* kernel[a]: the replay map's entry for a, NONE for none
+    supOwed,        \* supersede_owed: the last walk left a refused forget
     owed            \* ghost: the <<slot, address>> pairs whose forget is owed
 
-vars == <<conn, rec, kernel, owed>>
+vars == <<conn, rec, kernel, supOwed, owed>>
 
 Init ==
     /\ conn = [ i \in Slots |-> [ on |-> FALSE, at |-> NONE, high |-> 0 ] ]
     /\ rec = [ i \in Slots |-> Clear ]
     /\ kernel = [ a \in Addrs |-> NONE ]
+    /\ supOwed = FALSE
     /\ owed = {}
 
 \* a client connects in a free slot, at an address no connected slot holds,
@@ -92,27 +106,30 @@ Connect(i, a) ==
     /\ ~conn[i].on
     /\ \A j \in Slots : conn[j].on => conn[j].at # a
     /\ conn' = [ conn EXCEPT ![i] = [ on |-> TRUE, at |-> a, high |-> 0 ] ]
-    /\ UNCHANGED <<rec, kernel, owed>>
+    /\ UNCHANGED <<rec, kernel, supOwed, owed>>
 
 \* a genuine session packet raises highest_opened
 Open(i) ==
     /\ conn[i].on
     /\ conn[i].high < MaxHigh
     /\ conn' = [ conn EXCEPT ![i].high = @ + 1 ]
-    /\ UNCHANGED <<rec, kernel, owed>>
+    /\ UNCHANGED <<rec, kernel, supOwed, owed>>
 
 \* the slot is released
 Release(i) ==
     /\ conn[i].on
     /\ conn' = [ conn EXCEPT ![i] = [ on |-> FALSE, at |-> NONE, high |-> 0 ] ]
-    /\ UNCHANGED <<rec, kernel, owed>>
+    /\ UNCHANGED <<rec, kernel, supOwed, owed>>
 
 \* rocketnet_server_replay_marks_walk, then the transport's commit
 Walk ==
     LET F == { i \in Slots : rec[i].seen /\ (~conn[i].on \/ conn[i].at # rec[i].at) }
     IN \E fAcc \in IF ForgetRefusable THEN SUBSET F ELSE {F} :
-       LET \* the other slots whose record names an address forgotten now
-           FSup == { k \in Slots : ForgetSupersedes /\ rec[k].seen /\
+       LET \* the forgets the sink refused in this walk (refused_forgets > 0)
+           refusedAny == (F \ fAcc) # {}
+           \* the other slots whose record names an address forgotten now:
+           \* the code scans for them only while supersede_owed is set
+           FSup == { k \in Slots : ForgetSupersedes /\ (supOwed \/ ~ScanWhenOwedOnly) /\ rec[k].seen /\
                                     \E i \in fAcc : i # k /\ rec[i].at = rec[k].at }
            r1 == [ i \in Slots |->
                      IF i \in fAcc \/ i \in FSup \/ (i \in F /\ ~ClearOnAccept) THEN Clear ELSE rec[i] ]
@@ -123,8 +140,9 @@ Walk ==
            Wants == { i \in Cand : ~r1[i].seen \/ r1[i].owes \/ conn[i].high # last(i) }
        IN \E mAcc \in SUBSET Wants :
           LET \* the other slots whose record names an address marked now:
-              \* each owes a forget of it, which the queued mark supersedes
-              Sup == { k \in Slots : MarkSupersedes /\ k \notin Cand /\ r1[k].seen /\
+              \* each owes a forget of it, which the queued mark supersedes;
+              \* the code scans for them only when a forget of this walk was refused
+              Sup == { k \in Slots : MarkSupersedes /\ refusedAny /\ k \notin Cand /\ r1[k].seen /\
                                      \E i \in mAcc : i # k /\ r1[k].at = conn[i].at }
               r2 == [ i \in Slots |->
                         IF i \in Sup THEN Clear
@@ -142,6 +160,7 @@ Walk ==
                               ELSE kernel[a] ]
              /\ owed' = ((owed \ { <<i, rec[i].at>> : i \in fAcc \cup FSup }) \ { <<k, r1[k].at>> : k \in Sup })
                           \cup { <<i, conn[i].at>> : i \in Cand }
+             /\ supOwed' = (OweOnRefusal /\ refusedAny)
     /\ UNCHANGED conn
 
 Next ==
@@ -157,6 +176,14 @@ TypeOK ==
     /\ conn \in [ Slots -> [ on : BOOLEAN, at : Addrs \cup {NONE}, high : Highs ] ]
     /\ rec \in [ Slots -> [ seen : BOOLEAN, at : Addrs \cup {NONE}, has : BOOLEAN, marked : Highs, owes : BOOLEAN ] ]
     /\ kernel \in [ Addrs -> Highs \cup {NONE} ]
+    /\ supOwed \in BOOLEAN
+
+\* what the forget pass's skipped scan rests on: unless the last walk left a
+\* refused forget, no two slots' records name one address, so a queued
+\* forget has no other record to clear
+DistinctUnlessOwed ==
+    ~supOwed => \A i, k \in Slots :
+                    (i # k /\ rec[i].seen /\ rec[k].seen) => rec[i].at # rec[k].at
 
 \* a forget owed for an address a slot was seen at is never lost: the
 \* slot's record keeps naming that address until the sink accepts it

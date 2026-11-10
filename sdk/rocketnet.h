@@ -43,7 +43,7 @@
     /// The SDK version as text. Development builds use "dev" and 255 for each
     /// numeric component.
 
-#define ROCKETNET_VERSION_FULL                    "v1.0.0"
+#define ROCKETNET_VERSION_FULL                    "v1.0.1"
 
     /// The major component of the SDK version.
 
@@ -55,7 +55,7 @@
 
     /// The patch component of the SDK version.
 
-#define ROCKETNET_VERSION_PATCH                                    0
+#define ROCKETNET_VERSION_PATCH                                    1
 
 #else // !ROCKETNET_DEV
 
@@ -241,7 +241,8 @@ enum rocketnet_status_t
     /// start, and the library stays uninitialized. The connect token makers
     /// return it when a token could not be sealed; nothing is created. The
     /// keypair generators return it when the crypto library did not start.
-    /// Retrying will not help unless the cause is corrected. An unavailable OS
+    /// rocketnet_server_create returns it when the server's key could not be
+    /// made; nothing is created. Retrying will not help unless the cause is corrected. An unavailable OS
     /// random source is not a status: the crypto library aborts the process,
     /// after one error line once rocketnet_init has run (no line in a
     /// ROCKETNET_USE_SYSTEM_SODIUM build).
@@ -559,7 +560,8 @@ enum rocketnet_disconnect_reason_t
 
     ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH = -1,
 
-    /// The client sent what the protocol forbids.
+    /// The client sent what the protocol forbids, or the server found its own
+    /// state for the client inconsistent, a fault nothing the client sends can cause.
 
     ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION = -2,
 
@@ -1356,9 +1358,10 @@ struct rocketnet_client_config_t
     int max_message_bytes;
 
     /// ROCKETNET_CLIENT_SEND_MESSAGE_BUFFER_BYTES sets queued message bytes.
-    /// Range is 12288 .. 268435456, and it must hold one max_message_bytes
-    /// message whole: a third of it holds 1152-byte fragments, so a little
-    /// over three times max_message_bytes. Default is 4194304.
+    /// Range is 12288 .. 268435456. It holds queued messages of up to 1152
+    /// bytes; a larger message is held in send space sized from
+    /// receive_message_buffer_bytes, so this field has no size relation to
+    /// max_message_bytes. Default is 4194304.
 
     int send_message_buffer_bytes;
 
@@ -1452,13 +1455,18 @@ struct rocketnet_client_config_t
     bool step_driven;
 
     /// ROCKETNET_CLIENT_TOKEN_EPOCH_UNIX_SECONDS is the Unix time, in seconds,
-    /// at zero of the time the caller passes to rocketnet_client_update. The connect
-    /// token's create and expire checks read this epoch plus that time, in
-    /// whole seconds, and never read the wall clock, so pausing the caller's
-    /// clock (a breakpoint during the handshake, a debug clock) pauses token
-    /// expiry. 0 reads the wall clock once, at connect, and takes the epoch as that
-    /// Unix time less the caller's time. Production builds may set it.
-    /// Default is 0.
+    /// at zero of the time the caller passes to rocketnet_client_update. The
+    /// client checks the connect token's expiry once, at connect, against this
+    /// epoch plus the time of the client's most recent update (zero if it has
+    /// never been updated), in whole seconds, and never reads the wall clock.
+    /// A connect before the client's first update is checked against the
+    /// epoch alone, so a game whose clock does not start at zero updates the
+    /// client at least once before connect (a normal frame loop does). During
+    /// the handshake the client measures the token's lifetime on the caller's
+    /// clock, so pausing that clock (a breakpoint during the handshake, a
+    /// debug clock) pauses it. The client makes no check of the token's create
+    /// time against now; the server makes one. 0 reads the wall clock once, at
+    /// connect. Production builds may set it. Default is 0.
 
     uint64_t token_epoch_unix_seconds;
 };
@@ -1586,10 +1594,10 @@ struct rocketnet_server_config_t
     int max_message_bytes;
 
     /// ROCKETNET_SERVER_SEND_MESSAGE_BUFFER_BYTES sets queued message bytes
-    /// per client. Range is 12288 .. 268435456, and it must hold one
-    /// max_message_bytes message whole: a third of it holds 1152-byte
-    /// fragments, so a little over three times max_message_bytes. Default is
-    /// 4194304.
+    /// per client. Range is 12288 .. 268435456. It holds queued messages of
+    /// up to 1152 bytes; a larger message is held in send space sized from
+    /// receive_message_buffer_bytes, so this field has no size relation to
+    /// max_message_bytes. Default is 4194304.
 
     int send_message_buffer_bytes;
 
@@ -2727,7 +2735,8 @@ ROCKETNET_EXPORT size_t rocketnet_server_required_memory( const struct rocketnet
 /// ROCKETNET_STATUS_LOOPBACK_HUB_MISSING or
 /// ROCKETNET_STATUS_LOOPBACK_HUB_MISMATCH for a list naming loopback,
 /// ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION,
-/// ROCKETNET_STATUS_OUT_OF_MEMORY.
+/// ROCKETNET_STATUS_OUT_OF_MEMORY, or ROCKETNET_STATUS_CRYPTO_INIT_FAILED when
+/// the server keypair cannot be made or derived.
 /// An unavailable OS random source aborts the process after one error line
 /// while the server key is made (rocketnet_init installs the line; a
 /// ROCKETNET_USE_SYSTEM_SODIUM build has none).

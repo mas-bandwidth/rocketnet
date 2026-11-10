@@ -86,6 +86,71 @@ static void test_loopback_transport_io_binds_and_discovers_a_port()
     rocketnet_client_transport_io_close( &cc );
 }
 
+// A hub whose endpoints outnumber the ephemeral range's ports: with the range
+// narrowed to its last three ports, a server and two clients take all three,
+// and a third client's port 0 bind is refused, never given a held port. The
+// server still receives on its port, and a port a destroy frees is given out
+// again.
+
+static void test_loopback_transport_io_refuses_a_bind_when_every_ephemeral_port_is_held()
+{
+    rocketnet_loopback_test_first_port( 65533 );
+    rocketnet_loopback_hub_t * hub = rocketnet_loopback_hub_create( NULL, 3, NULL );
+    rocketnet_unit_check( hub != NULL );
+
+    const rocketnet_transport_backend_t * backend = &rocketnet_loopback_transport;
+    rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_dev_config( &server_config );
+    server_config.loopback_hub = hub;
+
+    rocketnet_client_transport_config_t client_config;
+    rocketnet_client_transport_default_config_current( &client_config );
+    client_config.loopback_hub = hub;
+
+    const rocketnet_server_transport_io_config_t server_setup = { "loopback", &server_config, NULL, NULL };
+    const rocketnet_client_transport_io_config_t client_setup = { "loopback", &client_config, NULL };
+
+    rocketnet_address_t server_address;
+    rocketnet_unit_check( rocketnet_address_parse( &server_address, "127.0.0.1:0" ) );
+    rocketnet_server_transport_io_t server = {};
+    rocketnet_unit_check( rocketnet_server_transport_io_open( backend->server, NULL, &server_setup, &server_address, &server ) );
+    rocketnet_unit_check( server_address.port == 65533 );
+
+    rocketnet_address_t client_address[3];
+    rocketnet_client_transport_io_t client[3] = {};
+    for ( int i = 0; i < 3; ++i )
+        rocketnet_unit_check( rocketnet_address_parse( &client_address[i], "127.0.0.1:0" ) );
+
+    rocketnet_unit_check( rocketnet_client_transport_io_open( backend->client, NULL, &client_setup, &client_address[0], &client[0] ) );
+    rocketnet_unit_check( client_address[0].port == 65534 );
+    rocketnet_unit_check( rocketnet_client_transport_io_open( backend->client, NULL, &client_setup, &client_address[1], &client[1] ) );
+    rocketnet_unit_check( client_address[1].port == 65535 );
+
+    rocketnet_unit_check( !rocketnet_client_transport_io_open( backend->client, NULL, &client_setup, &client_address[2], &client[2] ) );
+    rocketnet_unit_check( rocketnet_loopback_endpoints_live( hub ) == 3 );
+
+    const uint8_t data[] = { 1, 2, 3, 4 };
+    rocketnet_address_t to = server_address;
+    client[0].operations->send( client[0].instance, &to, data, sizeof( data ) );
+
+    rocketnet_address_t from;
+    uint8_t buf[64];
+    int bytes = 0;
+    rocketnet_unit_check( server.operations->receive_batch( server.instance, &from, buf, 64, &bytes, 1 ) == 1 );
+    rocketnet_unit_check( from.port == 65534 );
+
+    rocketnet_client_transport_io_close( &client[1] );
+    rocketnet_unit_check( rocketnet_address_parse( &client_address[2], "127.0.0.1:0" ) );
+    rocketnet_unit_check( rocketnet_client_transport_io_open( backend->client, NULL, &client_setup, &client_address[2], &client[2] ) );
+    rocketnet_unit_check( client_address[2].port == 65535 );
+
+    rn_test_server_io_stop_and_close( &server );
+    rocketnet_client_transport_io_close( &client[0] );
+    rocketnet_client_transport_io_close( &client[2] );
+    rocketnet_unit_check( rocketnet_loopback_hub_destroy( hub ) == ROCKETNET_STATUS_OK );
+    rocketnet_loopback_test_first_port( 0 );
+}
+
 static void test_loopback_transport_io_exchanges_both_ways()
 {
     const rocketnet_transport_backend_t * backend = &rocketnet_loopback_transport;
@@ -1791,6 +1856,7 @@ REGISTER_UNIT_TEST( test_server_drains_completed_queue_to_budget );
 REGISTER_UNIT_TEST( test_loopback_queue_restarts_at_slot_zero_when_empty );
 
 REGISTER_UNIT_TEST( test_loopback_transport_io_binds_and_discovers_a_port );
+REGISTER_UNIT_TEST( test_loopback_transport_io_refuses_a_bind_when_every_ephemeral_port_is_held );
 REGISTER_UNIT_TEST( test_loopback_transport_io_exchanges_both_ways );
 REGISTER_UNIT_TEST( test_loopback_transport_io_dual_stack_serves_ipv4_and_ipv6 );
 REGISTER_UNIT_TEST( test_loopback_transport_io_dual_stack_port_is_exclusive );
@@ -1807,7 +1873,8 @@ REGISTER_UNIT_TEST( test_server_shape_check_first_on_the_portable_loop );
 REGISTER_UNIT_TEST( test_loopback_transport_server_batch_drops_packet_larger_than_stride );
 REGISTER_UNIT_TEST( test_loopback_transport_io_refusals );
 
-bool rocketnet_server_iocp_test_release_send_retries_stalled_pop( bool * released_out, int * state_out, bool * send_idle_out );
+bool rocketnet_server_iocp_test_release_send_retries_stalled_pop( int refusals, bool * released_out, int * state_out, bool * send_idle_out,
+                                                                  uint64_t * yields_out );
 
 static bool test_iocp_stop_step_send_idle_flag = false;
 static int test_iocp_stop_step_io_stops = 0;
@@ -1831,10 +1898,12 @@ static void test_iocp_release_send_retries_while_pop_sequence_store_stalls()
     bool released = false;
     int state = -1;
     bool send_idle = false;
-    rocketnet_unit_check( rocketnet_server_iocp_test_release_send_retries_stalled_pop( &released, &state, &send_idle ) );
+    uint64_t yields = 0;
+    rocketnet_unit_check( rocketnet_server_iocp_test_release_send_retries_stalled_pop( 1, &released, &state, &send_idle, &yields ) );
     rocketnet_unit_check( released );
     rocketnet_unit_check( state == 1 );
     rocketnet_unit_check( send_idle );
+    rocketnet_unit_check( yields == 0 );
 
     auto * transport = rocketnet_server_transport_allocate( NULL, ROCKETNET_DEFAULT_MAX_CLIENTS );
     rocketnet_unit_check( transport != NULL );
@@ -1862,6 +1931,80 @@ static void test_iocp_release_send_retries_while_pop_sequence_store_stalls()
 }
 
 REGISTER_UNIT_TEST( test_iocp_release_send_retries_while_pop_sequence_store_stalls );
+
+// A release whose push stays refused (the popper is descheduled between its
+// CAS and its sequence store) never spins on empty: it gives up the processor
+// once per ROCKETNET_PLATFORM_SPIN_YIELD_AFTER refusals, so the popper can run
+// there, and still queues the operation once the store lands. The stall is a
+// count of refused pushes: no thread and no clock. The count is a development
+// counter kept beside the SwitchToThread call, not by it: this checks when the
+// retry yields, not that the call is made.
+static void test_iocp_release_send_yields_while_pop_stays_stalled()
+{
+    const int cases[] = { ROCKETNET_PLATFORM_SPIN_YIELD_AFTER - 1, ROCKETNET_PLATFORM_SPIN_YIELD_AFTER,
+                          3 * ROCKETNET_PLATFORM_SPIN_YIELD_AFTER + 5 };
+
+    for ( int refusals : cases )
+    {
+        bool released = false;
+        int state = -1;
+        bool send_idle = false;
+        uint64_t yields = 0;
+        rocketnet_unit_check( rocketnet_server_iocp_test_release_send_retries_stalled_pop( refusals, &released, &state, &send_idle, &yields ) );
+        rocketnet_unit_check( released );
+        rocketnet_unit_check( state == 1 );
+        rocketnet_unit_check( send_idle );
+        rocketnet_unit_check( yields == (uint64_t) ( refusals / ROCKETNET_PLATFORM_SPIN_YIELD_AFTER ) );
+    }
+}
+
+REGISTER_UNIT_TEST( test_iocp_release_send_yields_while_pop_stays_stalled );
+
+bool rocketnet_server_iocp_test_retry_receive_keeps_operation( bool * boundary_accepted_out, int * state_out, uint32_t * order_out );
+
+// The receive retry queue holds every receive operation at once (its
+// boundary), and a push a stalled pop refuses is retried: the operation
+// stays RETRY (5), queued behind the others, never RETIRED (6).
+static void test_iocp_retry_receive_push_survives_stalled_pop()
+{
+    bool boundary_accepted = false;
+    int state = -1;
+    uint32_t order[4] = {};
+    rocketnet_unit_check( rocketnet_server_iocp_test_retry_receive_keeps_operation( &boundary_accepted, &state, order ) );
+    rocketnet_unit_check( boundary_accepted );
+    rocketnet_unit_check( state == 5 );
+    rocketnet_unit_check( order[0] == 2 && order[1] == 3 && order[2] == 1 && order[3] == 0 );
+}
+
+REGISTER_UNIT_TEST( test_iocp_retry_receive_push_survives_stalled_pop );
+
+#if defined( _WIN32 )
+
+bool rocketnet_server_iocp_test_post_receive_retries_refused_push( int * state_out, int * pending_out, uint64_t * repost_failed_out,
+                                                                   int * queued_out );
+
+// The same refusal through rocketnet_iocp_post_receive itself, the trace of
+// proofs/tla/MCRNIocpRetryStopBrokenRefuseRetires.cfg: every post is refused
+// by the fault seam, no socket is opened, and the repost of the second
+// operation pushes onto the cell a stalled pop still holds. The operation is
+// RETRY (5) and queued, not RETIRED (6); nothing is left pending, and all
+// three refusals are counted.
+static void test_iocp_post_receive_retries_push_a_stalled_pop_refuses()
+{
+    int state = -1;
+    int pending = -1;
+    uint64_t repost_failed = 0;
+    int queued = -1;
+    rocketnet_unit_check( rocketnet_server_iocp_test_post_receive_retries_refused_push( &state, &pending, &repost_failed, &queued ) );
+    rocketnet_unit_check( state == 5 );
+    rocketnet_unit_check( pending == 0 );
+    rocketnet_unit_check( repost_failed == 3 );
+    rocketnet_unit_check( queued == 1 );
+}
+
+REGISTER_UNIT_TEST( test_iocp_post_receive_retries_push_a_stalled_pop_refuses );
+
+#endif // #if defined( _WIN32 )
 
 #include "test_unit_driver_results_checked.cpp"
 #include "test_unit_server_stop_spread.cpp"

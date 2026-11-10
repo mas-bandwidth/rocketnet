@@ -1,4 +1,10 @@
-# Nightly selected stale/debt cases have no project elapsed-time cutoff.
+# The release gate on the TLA+ records. It runs every case of a stale group
+# that is not timeout debt, with no project elapsed-time cutoff, then requires
+# every committed record to be current and every non-PASS record to be
+# declared timeout debt with its reason (tools/check_tla_records.py). It never
+# runs a timeout-debt case: those have taken up to 87 hours each (run
+# 41337755290), so with them the gate could not finish. They run in
+# tlc-debt.yml, a watch that is not a release gate.
 # Finite models, configured properties, pinned engine/JAR, worker/heap limits
 # and bounded committed RUNS.tsv records are unchanged. Separate nightly JSON
 # evidence records outcomes; it must never be merged as a bounded measurement.
@@ -13,8 +19,11 @@ on:
 permissions:
   contents: read
 
+# A group holds one running and one pending run, and a newer run replaces the
+# pending one. Every dispatched run (a release's) has a group of its own, so no
+# scheduled run can replace or cancel it; scheduled runs share one group.
 concurrency:
-  group: tlc-records
+  group: tlc-records-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event_name }}
   cancel-in-progress: false
 
 jobs:
@@ -68,7 +77,7 @@ jobs:
           "$job/tlacheck" groups --root proofs --stale > "$job/stale.json"
           cat "$job/stale.json"
           plan="$job/plan"
-          python3 tools/plan_tlc_nightly.py --stale "$job/stale.json" > "$plan"
+          python3 tools/plan_tlc_nightly.py --stale "$job/stale.json" --select stale > "$plan"
           # the pinned JAR, from the fleet's tla play
           jar=/opt/tla/tla2tools.jar
           want=936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88
@@ -87,7 +96,7 @@ jobs:
           (cd "$job/runner" && go test -timeout=0 -count=1 -v "$GITHUB_WORKSPACE/tools/tlc_nightly.go" "$GITHUB_WORKSPACE/tools/tlc_nightly_test.go") | tee "$job/adapter-controls.log"
           (cd "$job/runner" && go build -ldflags "-X main.adapterSHA=$adapter_sha" -o "$job/tlc-nightly" "$GITHUB_WORKSPACE/tools/tlc_nightly.go")
           if [ ! -s "$plan" ]; then
-            echo "TLC-PLAN no stale cases or recorded timeout debt"
+            echo "TLC-PLAN no stale case outside the timeout debt (tlc-debt.yml runs the debt)"
             exit 0
           fi
 
@@ -109,7 +118,10 @@ jobs:
             grep -h '^CASE FAIL' "$job"/run-*.log
             exit 1
           fi
-          echo "TLC-PASS every selected stale/debt case reached its declared result; separate nightly evidence, bounded records unchanged"
+          echo "TLC-PASS every selected stale case reached its declared result; separate nightly evidence, bounded records unchanged"
+      # A timeout-debt case is not run here: its record must still be the
+      # bounded FAIL/124 of a CASES.tsv bench row that declares the debt and
+      # its reason, and check_tla_records.py refuses any other non-PASS record.
       - name: Check required outcomes and explicit timeout debt
         shell: bash
         run: |

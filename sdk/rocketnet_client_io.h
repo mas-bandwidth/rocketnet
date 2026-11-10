@@ -134,10 +134,11 @@ struct rocketnet_client_io_open_t
 // Both handoffs are rocketnet_buffer_handoff_t (proofs/tla/RNBufferHandoff.tla):
 // each ring and each receive buffer has one owner at a time, and only their
 // indices cross threads, under the transport's mutex (shared in development
-// builds only with rocketnet_network_simulator_reconfigure and
-// rocketnet_network_simulator_take_setting, which acquire it blocking when a
-// simulator setting is handed over). For buffer handoffs the main thread only
-// try-acquires it; the I/O thread acquires it.
+// builds only with rocketnet_network_simulator_reconfigure, which acquires it
+// blocking to hand a simulator setting over, and
+// rocketnet_network_simulator_take_setting, which only try-acquires it and
+// leaves a pending setting for the next uncontended pass). For buffer
+// handoffs the main thread only try-acquires it; the I/O thread acquires it.
 
 struct rocketnet_client_io_t
 {
@@ -171,8 +172,9 @@ struct rocketnet_client_io_t
     std::atomic<bool> quit;
     std::atomic<bool> stopped; // released only after the final core access
     struct rocketnet_client_io_open_t open;
-    std::atomic<uint64_t> transport_faults;     // written by the I/O thread only: a receive count or byte count this step refused
-    uint64_t transport_faults_folded;           // main thread only: the part of transport_faults already added to prefilter_too_large
+    std::atomic<uint64_t> transport_faults;     // written by the I/O thread only: a send result, receive count or byte count this step refused
+    std::atomic<uint64_t> receive_too_large;    // written by the receiving thread only: byte counts refused as past the UDP size limit
+    uint64_t receive_too_large_folded;          // main thread only: the part of receive_too_large already added to prefilter_too_large
     uint64_t * prefilter_too_large;             // main thread only, optional: the PREFILTER_TOO_LARGE counter rocketnet_client_io_fold_counters adds to
 };
 
@@ -232,25 +234,28 @@ inline void rocketnet_client_io_init( rocketnet_client_io_t * io, const rocketne
     memset( &io->open.replay, 0, sizeof( io->open.replay ) );
     io->open.loaded_epoch = ROCKETNET_CLIENT_IO_EPOCH_NONE;
     io->transport_faults.store( 0, std::memory_order_relaxed );
-    io->transport_faults_folded = 0;
+    io->receive_too_large.store( 0, std::memory_order_relaxed );
+    io->receive_too_large_folded = 0;
     io->prefilter_too_large = NULL;
 }
 
 // Main thread, at update after the expose. The I/O thread counts every
-// receive count or byte count it refuses in its own field, the too-large
-// byte-count refusals included; this adds the growth since the last call to
-// the PREFILTER_TOO_LARGE counter, which the main thread's prefilter also
-// counts into, so one oversize datagram reads PREFILTER_TOO_LARGE wherever it
-// is refused and every other transport fault is counted once too.
+// transport fault in transport_faults, and the byte counts past the UDP size
+// limit in receive_too_large too; this adds the growth of receive_too_large
+// since the last call to the PREFILTER_TOO_LARGE counter, which the main
+// thread's prefilter also counts into, so one oversize datagram reads
+// PREFILTER_TOO_LARGE wherever it is refused. No public counter names the
+// other faults (a send result out of range, a receive count, a negative byte
+// count): they stay in transport_faults.
 
 inline void rocketnet_client_io_fold_counters( rocketnet_client_io_t * io )
 {
-    const uint64_t faults = io->transport_faults.load( std::memory_order_relaxed );
+    const uint64_t too_large = io->receive_too_large.load( std::memory_order_relaxed );
 
     if ( io->prefilter_too_large )
-        *io->prefilter_too_large += faults - io->transport_faults_folded;
+        *io->prefilter_too_large += too_large - io->receive_too_large_folded;
 
-    io->transport_faults_folded = faults;
+    io->receive_too_large_folded = too_large;
 }
 
 // proofs/tla/RNClientIoDecrypt.tla PublishKeys; main thread, where the challenge
@@ -757,11 +762,13 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
 
     // proofs/tla/RNClientIo.tla IoReceive: drains datagrams into the buffer the I/O thread holds.
     // proofs/tla/RNClientIoDecrypt.tla IoReceive: each of those datagrams is opened before the buffer is published.
-    // Every received datagram becomes a record, a runt or an oversize one
-    // too: the main thread's prefilter (sdk/rocketnet_client_protocol.cpp,
-    // sizes checked in sdk/rocketnet_protocol.cpp) refuses it and counts
-    // PREFILTER_TOO_SHORT or PREFILTER_TOO_LARGE. One clock read per
-    // transport call.
+    // Every received datagram within the UDP size limit becomes a record, a
+    // runt or an oversize one too: the main thread's prefilter
+    // (sdk/rocketnet_client_protocol.cpp, sizes checked in
+    // sdk/rocketnet_protocol.cpp) refuses it and counts PREFILTER_TOO_SHORT or
+    // PREFILTER_TOO_LARGE. A byte count past that limit is dropped here as a
+    // transport fault and reaches PREFILTER_TOO_LARGE through the fold. One
+    // clock read per transport call.
 
     rocketnet_client_receive_buffer_t * buffer = io->buffer[io->receive_fill];
 
@@ -815,6 +822,8 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
                 if ( packet_bytes[i] < 0 || packet_bytes[i] > ROCKETNET_TRANSPORT_MAX_DATAGRAM_BYTES )
                 {
                     io->transport_faults++;
+                    if ( packet_bytes[i] > ROCKETNET_TRANSPORT_MAX_DATAGRAM_BYTES )
+                        io->receive_too_large.store( io->receive_too_large.load( std::memory_order_relaxed ) + 1, std::memory_order_relaxed );
                     continue;
                 }
 
@@ -848,6 +857,8 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
             if ( bytes < 0 || bytes > ROCKETNET_TRANSPORT_MAX_DATAGRAM_BYTES )
             {
                 io->transport_faults++;
+                if ( bytes > ROCKETNET_TRANSPORT_MAX_DATAGRAM_BYTES )
+                    io->receive_too_large.store( io->receive_too_large.load( std::memory_order_relaxed ) + 1, std::memory_order_relaxed );
                 break;
             }
 

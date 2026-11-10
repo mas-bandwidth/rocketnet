@@ -290,31 +290,38 @@ static void test_server_transport_create_ex_reports_every_status()
 }
 
 REGISTER_UNIT_TEST( test_server_transport_create_ex_reports_every_status );
+#endif // !ROCKETNET_DEV: a development build accepts what this checks is refused
 
-// sdk/rocketnet_tests.cpp is not linked into this binary. The same case:
-// a config this build accepts, protocol_id 0 refused with
-// INVALID_PROTOCOL_ID, then protocol_id 1 on that config accepted.
+// Registered in every build. A config every build accepts: its own packet
+// filter (a production build refuses the published test filter the default
+// carries), production-like keys (a production build refuses the development
+// keys), and the loopback transport, so the create opens no socket.
+// protocol_id 0 is refused with INVALID_PROTOCOL_ID, then protocol_id 1 on
+// that config is accepted.
 static void test_protocol_id_zero_refused( void )
 {
     struct rocketnet_server_transport_config_t config;
-    production_config( &config );
+    rocketnet_server_transport_default_config( &config );
+    memset( config.packet_filter, 0x5A, sizeof( config.packet_filter ) );
+    memset( config.backend_public_key, 0x42, 32 );
+    memset( config.server_public_key, 0x43, 32 );
+    memset( config.server_secret_key, 0x44, 32 );
     snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
     config.loopback_hub = rocketnet_test_loopback_hub();
     config.max_clients = 1;
 
     config.protocol_id = 0;
     int status = -1;
-    check( rocketnet_server_transport_create_ex( NULL, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
-    check( status == ROCKETNET_STATUS_INVALID_PROTOCOL_ID );
+    rocketnet_unit_check( rocketnet_server_transport_create_ex( NULL, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
+    rocketnet_unit_check( status == ROCKETNET_STATUS_INVALID_PROTOCOL_ID );
 
     config.protocol_id = 1;
     status = -1;
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:12345", &config, 1000.0, &status );
-    check( server != NULL );
-    check( status == ROCKETNET_STATUS_OK );
+    rocketnet_unit_check( server != NULL );
+    rocketnet_unit_check( status == ROCKETNET_STATUS_OK );
 
     rn_test_server_transport_stop_and_destroy( server );
 }
 
 REGISTER_UNIT_TEST( test_protocol_id_zero_refused );
-#endif // !ROCKETNET_DEV: a development build accepts what this checks is refused

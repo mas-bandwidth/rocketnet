@@ -108,7 +108,10 @@ static std::string platform_nits_read_repo_file( const char * relative )
     return text;
 }
 
-static void test_platform_spin_lock_acquire_release_under_contention()
+// One acquire and release, and the backoff the acquire loop carries. The
+// contended case (four threads) is functional: tests/functional/platform_primitives.cpp.
+
+static void test_platform_spin_lock_acquire_release_and_backoff()
 {
     volatile uint64_t lock = 0;
     rocketnet_platform_spin_lock_u64( &lock );
@@ -139,7 +142,7 @@ static void test_platform_spin_lock_acquire_release_under_contention()
     rocketnet_unit_check( release.find( "_InterlockedCompareExchange64" ) == std::string::npos );
 }
 
-REGISTER_UNIT_TEST( test_platform_spin_lock_acquire_release_under_contention );
+REGISTER_UNIT_TEST( test_platform_spin_lock_acquire_release_and_backoff );
 
 // A relaxed 64-bit load must not be a locked read-modify-write. On 64-bit MSVC
 // the word is readable with the volatile load intrinsic, so the load path and

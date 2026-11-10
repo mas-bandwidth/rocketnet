@@ -37,8 +37,8 @@ inline int rocketnet_xdp_send_claim( std::atomic<uint64_t> & num_packets, int li
 
 // An AF_XDP TX wakeup (sendto on the socket fd) fails hard when no retry can
 // clear it: the interface is down (ENETDOWN), the device is gone (ENXIO), or
-// the descriptor is no longer valid (EBADF). A queue that saw one can never
-// drain its TX ring, so the server stop must not wait for it.
+// the descriptor is no longer valid (EBADF). A queue whose last wakeup failed
+// so cannot drain its TX ring, so the server stop must not wait for it.
 inline bool rocketnet_xdp_send_wakeup_hard_error( int error )
 {
     return error == ENETDOWN || error == ENXIO || error == EBADF;
@@ -53,6 +53,40 @@ inline bool rocketnet_xdp_send_queue_released( int hard_send_error, bool buffer_
     if ( rocketnet_xdp_send_wakeup_hard_error( hard_send_error ) )
         return true;
     return buffer_empty && handoff_idle;
+}
+
+// The worker's accounting of one TX wakeup that failed with error, into
+// failures, which the public SEND_FAILED counter sums (unit: datagrams).
+// EBUSY is one datagram lost: in copy mode the kernel answers it when the
+// device dropped the frame it had just taken off the TX ring ("SKB completed
+// but not sent", xsk_generic_xmit in net/xdp/xsk.c, Linux 5.15 and 6.8), so
+// each one counts. A hard error loses nothing by itself, the descriptors stay
+// on the ring, and it repeats on every wakeup while it lasts: it counts once,
+// when it differs from the one kept in hard_error for the stop drain (a
+// wakeup that succeeds clears that). EAGAIN and ENOBUFS are back-pressure:
+// the descriptors stay queued for the next wakeup, and they count nothing.
+inline void rocketnet_xdp_send_wakeup_failed( int error, std::atomic<uint64_t> & failures, std::atomic<int> & hard_error )
+{
+    if ( error == EBUSY )
+    {
+        failures.fetch_add( 1, std::memory_order_relaxed );
+        return;
+    }
+    if ( !rocketnet_xdp_send_wakeup_hard_error( error ) )
+        return;
+    if ( hard_error.load( std::memory_order_relaxed ) == error )
+        return;
+    failures.fetch_add( 1, std::memory_order_relaxed );
+    hard_error.store( error, std::memory_order_relaxed );
+}
+
+// A TX wakeup that succeeded shows the ring can drain: a hard error kept from
+// an interface that went down and came back up no longer holds, and the stop
+// drain waits for this queue again. The store is skipped while there is none.
+inline void rocketnet_xdp_send_wakeup_succeeded( std::atomic<int> & hard_error )
+{
+    if ( hard_error.load( std::memory_order_relaxed ) != 0 )
+        hard_error.store( 0, std::memory_order_relaxed );
 }
 
 // The worker logs a hard wakeup failure once per contiguous run of one errno:

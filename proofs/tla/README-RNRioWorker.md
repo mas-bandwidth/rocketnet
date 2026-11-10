@@ -56,9 +56,11 @@ every RIO call after create.
   5. A refused commit, a refused `closesocket` or a send still in flight
      fails the pass, and the pass runs again. The worker retries without
      bound. On create's failure path, before the worker exists, the pass
-     runs inline at most `ROCKETNET_RIO_DRAIN_WAITS + 1` times, then the
+     runs inline (`InlineStop`). A failed pass that dequeued a receive
+     completion made progress and is not counted; after
+     `ROCKETNET_RIO_DRAIN_WAITS + 1` failed passes that dequeued none, the
      transport leaks instead of freeing a region the kernel may still
-     write (`InlineStop`).
+     write (`CountStalledOnly`).
   6. Only after a pass succeeds does the worker set `exited`, which
      `stopped` reports. Destroy joins the worker and frees the registered
      region.
@@ -116,10 +118,13 @@ every RIO call after create.
   the pass exits only when no send is outstanding and no receive is posted
   or queued; otherwise it fails. A failed pass returns to `WStop`. The
   worker retries it without bound. With `InlineStop`, `stopwaits` is the
-  create loop's index: a pass may start while at most `StopDrainWaits`
-  passes have failed, and after `StopDrainWaits + 1` failures `WLeak`
-  leaks the transport. `stoprefused` records whether the last stop commit or
-  `closesocket` was refused.
+  create drain's `stalled` count: the failed passes that dequeued no receive
+  completion, so `posted_receives` did not fall during them
+  (`CountStalledOnly`; `WDrainReceive` remembers a full batch in its place
+  `"drainrp"`). A pass may start while at most `StopDrainWaits` have
+  stalled, and after `StopDrainWaits + 1` `WLeak` leaks the transport.
+  `stoprefused` records whether the last stop commit or `closesocket` was
+  refused.
 - **Receive stop interleaving.** The source checks `stopping` once before
   its whole retry loop, then separately for each completion after copying
   the datagram. `WDequeue` remains an aggregate action. `stopDuring` summarizes
@@ -194,10 +199,15 @@ every RIO call after create.
 | `MCRNRioWorkerBrokenCloseCancelsSends.cfg` | `StopSendsFinished` | `DrainSendsBeforeClose = FALSE` keeps the stop pass that closes with sends in flight. |
 | `MCRNRioWorkerInlineStop.cfg` | pass | Create's failure path: five posted slices, one datagram, `DrainBatch = 2`, `StopDrainWaits = 1`, every `closesocket` refusable; invariants, `LeakOnlyAfterRefusal`, `StopCompletes`. |
 | `MCRNRioWorkerBrokenUnboundedRetry.cfg` | `StopCompletes` | `BoundedStopDrain = FALSE`: the old create loop retries forever. |
-| `MCRNRioWorkerBrokenOneBatchPerPass.cfg` | `LeakOnlyAfterRefusal` | `DrainLoop = FALSE`: the old pass dequeues one batch per queue. |
+| `MCRNRioWorkerBrokenOneBatchPerPass.cfg` | `LeakOnlyAfterRefusal` | `DrainLoop = FALSE` and `CountStalledOnly = FALSE`: one batch per queue per pass, and every failed pass counted. Passes that make progress use up the bound. |
+| `MCRNRioWorkerInlineStopBatchPerPass.cfg` | pass | That witness with `CountStalledOnly = TRUE`: the passes that dequeue a batch are not counted, the drain finishes, and it leaks only after a refused `closesocket`; invariants, `LeakOnlyAfterRefusal`, `StopCompletes`. |
 
 The liveness controls are split by direction so each run fits the 110 s
 budget at two TLC workers.
+
+The stalled-pass rule (`CountStalledOnly`) was added after that run, and all
+fifteen cases were run again on a Linux bench with the same pinned runner
+and jar; `RUNS.tsv` holds those records.
 
 On 2026-11-10 the bounded stop-drain model ran all fourteen required cases
 on amd-2 (native Linux) with the pinned `tlacheck` built from the commit
@@ -270,18 +280,23 @@ Each reversed witness was read against the code by hand (2026-10-22):
   - In the code before rn-rio-stop-drain-bound, the failure path ran
     `while ( !rocketnet_server_rio_stopped( rio ) ) rocketnet_platform_sleep( 0.001 );`,
     and `rocketnet_rio_close_socket` returns false when
-    `rocketnet_rio_close_call` fails. The landed loop runs the pass at most
-    `ROCKETNET_RIO_DRAIN_WAITS + 1` times, then logs and returns NULL
-    without `rocketnet_server_rio_destroy`.
+    `rocketnet_rio_close_call` fails. `rocketnet_rio_create_failed_drain`
+    gives up after `ROCKETNET_RIO_DRAIN_WAITS + 1` passes that dequeued no
+    receive completion, then create logs and returns NULL without
+    `rocketnet_server_rio_destroy`.
 - **OneBatchPerPass** (checked 2026-11-10).
   - In the trace, the first pass is refused at `closesocket`. The second
     closes the socket, which cancels all five slices; it dequeues one batch
-    of two and fails with three still queued. The bound is spent, and the
-    transport leaks after a close that succeeded.
+    of two and fails with three still queued. Both passes are counted, the
+    bound is spent, and the transport leaks after a close that succeeded.
   - In the code before rn-rio-stop-drain-bound, each queue had "exactly one
     available batch" per pass. The landed pass loops while a call returns
     a full `ROCKETNET_RIO_DEQUEUE_BATCH`, so the second pass drains two, two
-    and one and stops.
+    and one and stops. The drain as first bounded counted every failed
+    pass; `rocketnet_rio_create_failed_drain` now compares `posted_receives`
+    before and after each pass and counts only a pass that did not lower it,
+    so even a pass that takes one batch is free
+    (`MCRNRioWorkerInlineStopBatchPerPass.cfg`).
 
 The worker's stop pass has no deadline: like the IOCP transport, which
 keeps its socket open until `pending` is zero, it waits for the kernel to

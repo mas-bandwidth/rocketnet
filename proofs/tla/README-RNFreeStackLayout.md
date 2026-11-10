@@ -17,8 +17,8 @@ generations 1 and 2.
 |---|---|
 | `TakeMap` | `rocketnet_encryption_map_add` (`sdk/rocketnet_encryption_map.cpp`): refused when full (`num_free == 0` or the next generation 0), pops `free_indices[--num_free]`, tags the generation, which steps from its maximum to the exhausted 0 |
 | `TakeSlots(g)` | `rocketnet_client_slots_assign` (`sdk/rocketnet_client_slots.cpp`): peeks the top, refuses a slot whose generation is already `g`, then pops |
-| `PeekClaim` | `rocketnet_used_token_history_claim_record` (`sdk/rocketnet_token_tables.cpp`): `rn_token_claim_select_slot` peeks the top and remembers it |
-| `PopClaim` | the same record pops that slot only while it is still the top; a release can land between the peek and the pop, and a changed top is not popped |
+| `PeekClaim` | `rocketnet_used_token_history_claim_record` (`sdk/rocketnet_token_tables.cpp`): `rn_token_claim_select_slot` selects the top while `free_count > 0`, else the oldest claim whose deadline has passed (a live slot; any live slot here, since the model keeps no deadlines or order) |
+| `PopClaim` | the rest of the same call: `--free_count` only when `free_count > 0` and the slot is the top; else `rn_token_slot_retire` and the insert, so the slot stays live and the stack is untouched |
 | `Release(i)` | `rocketnet_encryption_map_remove_generation`, `rocketnet_client_slots_release`, `rn_token_free_push`: only a live slot is pushed |
 
 ## Invariants
@@ -35,13 +35,15 @@ generations 1 and 2.
 | `MCRNFreeStackLayoutBrokenNoGuard.cfg` | a release of a slot that is not live is pushed | `StackIsFree` |
 | `MCRNFreeStackLayoutBrokenDecFirst.cfg` | the client-slots take pops before the generation test | `StackIsFree` |
 | `MCRNFreeStackLayoutBrokenWrapOne.cfg` | the generation steps from its maximum to 1 | `GenerationNeverReissued` |
-| `MCRNFreeStackLayoutBrokenInterleaveClaim.cfg` | a release changes the stack top between a free-slot peek and pop | `StackIsFree` |
+| `MCRNFreeStackLayoutBrokenPopExpired.cfg` | the claim pops the stack for the expired live slot it reuses, not only for a slot taken from it | `StackIsFree` |
 
 Each counterexample was checked against the C by hand: no-guard takes slot 0
 and releases slot 1, which is pushed twice; dec-first takes and releases slot
 0 under generation 1, then a take with owner 1 is refused after the pop, and
 slot 0 is neither live nor free; wrap-one hands out 1 to 4 and then 1 again.
-The interleaved-claim witness takes slot 0, peeks free slot 1, releases slot
-0, then follows the code's else arm: slot 1 becomes live without leaving the
-free stack. In the passing control, the endpoint's serialized caller makes
-PeekClaim and PopClaim adjacent table operations.
+Pop-expired takes slots 0, 1 and 2, so the stack is empty; a claim then
+selects live slot 0 (the code's oldest expired claim) and pops anyway:
+`count = -1`, where `rocketnet_used_token_history_claim_record` takes its else
+arm (`free_count > 0` is false) and retires the slot without touching
+`free_count`. PeekClaim and PopClaim are the two halves of that one call, so
+no other operation runs between them in either case.

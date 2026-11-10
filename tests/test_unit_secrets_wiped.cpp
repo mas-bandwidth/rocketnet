@@ -37,6 +37,7 @@
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
+#include "unit_arena.h"
 #if ROCKETNET_DEV
 #include "test_env_source.h"
 #endif // #if ROCKETNET_DEV
@@ -512,7 +513,6 @@ static void secrets_wiped_pair_exchange( secrets_wiped_pair_t * pair, const uint
 
     check( at_server == 1 && at_client == 1 );
 }
-#endif // #if ROCKETNET_DEV
 
 // the allocator's block that holds p (rocketnet_malloc places the object
 // past its own header, inside the block the allocator returned)
@@ -524,7 +524,6 @@ static void * secrets_wiped_containing( const void * p )
     return NULL;
 }
 
-#if ROCKETNET_DEV
 static void secrets_wiped_watch( const void * object, int ( *spans )( const void *, size_t *, size_t *, int ) )
 {
     check( object != NULL );
@@ -801,7 +800,9 @@ static void secrets_wiped_plant_in_arena( rn_arena_t * arena )
 }
 
 // An owned arena: destroy frees the block without writing it, so the
-// planted message is still there at the free.
+// planted message is still there at the free. rn_arena_create, the one owned
+// arena, is development-only.
+#if ROCKETNET_DEV
 static void test_secrets_wiped_arena_destroy_owned_writes_nothing()
 {
     check( rocketnet_test_loopback_hub_release() );
@@ -849,6 +850,7 @@ static void test_secrets_wiped_arena_destroy_owned_writes_nothing()
     check( watched_frees == 1 );
     check( watched_pattern == 1 );
 }
+#endif // #if ROCKETNET_DEV
 
 // An arena in a caller's block: destroy hands the block back unwritten.
 static void test_secrets_wiped_arena_destroy_in_block_writes_nothing()
@@ -922,7 +924,9 @@ REGISTER_UNIT_TEST( test_secrets_wiped_user_data_after_client_leaves );
 REGISTER_UNIT_TEST( test_secrets_wiped_user_data_with_client_connected );
 #endif // #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_secrets_wiped_user_data_at_slots_and_map_destroy );
+#if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_secrets_wiped_arena_destroy_owned_writes_nothing );
+#endif // #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_secrets_wiped_arena_destroy_in_block_writes_nothing );
 
 #if ROCKETNET_DEV

@@ -1939,3 +1939,26 @@ rather than an interpretation.
 ## rh. Revision history
 
 Revision 1.0 ships with v1.0.0-preview-1.
+
+Revision 1.0 as shipped with v1.0.1 keeps the version and changes no byte on the wire.
+It differs from the text shipped with v1.0.0 in these places:
+
+- [RN-1 t18 Error handling and counters](TRANSPORT.md#t18): the counter
+  `DISCONNECT_BURST_DROPPED` is appended to the registry, and the registry vector grows by
+  its entry. No existing counter moves.
+- [RN-1 t3 Constants and registries](TRANSPORT.md#t3) and
+  [RN-1 t17 Timing and defaults](TRANSPORT.md#t17): the `send rate` row moves from the
+  first table to the second with the same value, and the rules that use it name its new
+  place.
+- [RN-1 t8 Packet formats](TRANSPORT.md#t8): the packet type sentence counts the nine
+  assigned types and names the row `first reserved packet type`, as the registry rules
+  already did.
+- [RN-2 m7.3 Code 4, RELIABLE_SEQUENCED](MESSAGES.md#m7.3): a code 4 record any distance
+  ahead of its epoch is held and never refused for its distance, which
+  [RN-2 m7.5 Vectors](MESSAGES.md#m7.5) already showed; a late fragment of a code 4
+  block that a newer record superseded is dropped as stale rather than kept live.
+- [RN-1 t10 Receive processing](TRANSPORT.md#t10), rule 2, and
+  [RN-1 t1.2 Scope](TRANSPORT.md#t1.2): a server's transport may drop a datagram for its
+  size before the shared checks, counted as `PREFILTER_TOO_SHORT` or
+  `PREFILTER_TOO_LARGE`, or in the kernel counters of a transport that drops it in the
+  kernel.

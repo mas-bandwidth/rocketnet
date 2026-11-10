@@ -108,15 +108,21 @@ static inline int rocketnet_server_gso_recv_vlen( int num_packets, bool gro )
 
 // a full socket keeps the TX worker's bank for the next update; this is how
 // long the worker waits for main's wake before it tries the socket again.
-// once stop is requested that wait is not repeated: a socket that stays full
-// must not keep rocketnet_server_gso_stopped false.
+// before shutdown the worker retries without limit and drops nothing.
 
 #define ROCKETNET_GSO_SEND_RETRY_SECONDS                                 0.001
 
-// after stop, a full socket is tried this many further times and then the
-// worker leaves the bank. zero is the bound: the attempt that just failed
-// is the last one.
-#define ROCKETNET_GSO_SEND_RETRIES_AFTER_QUIT                               0
+// once shutdown has begun (rocketnet_server_gso_begin_shutdown, called when
+// the server starts to stop and before its disconnect packets drain, or
+// rocketnet_server_gso_stop), a full socket is tried this many further times;
+// then the worker drops the bank's unsent tail, counts it in SEND_DROPPED and
+// returns the bank. a socket that stays full then cannot keep send_idle false
+// (the server asks for stop only once it is true) or the transport from
+// reporting stopped. each retry waits for main's wake or the retry
+// timeout, so a socket that stays full holds a bank at most about 100 ms;
+// a transient refusal (a disconnect burst meeting a busy socket) is sent.
+// the value is unmeasured: chosen, not derived from a measured drain time.
+#define ROCKETNET_GSO_SEND_RETRIES_AFTER_QUIT                             100
 
 // feature bits reported by rocketnet_server_gso_features: what the runtime
 // probe found and the transport is actually using
@@ -127,8 +133,7 @@ static inline int rocketnet_server_gso_recv_vlen( int num_packets, bool gro )
 
 // One destination refusing UDP_SEGMENT is not the transport. Segmentation
 // stays on until this many segmented sends are refused in a row (EINVAL,
-// EIO or EOPNOTSUPP) with no accepted segmented send between them. The
-// io_uring transport uses the same threshold.
+// EIO or EOPNOTSUPP) with no accepted segmented send between them.
 #define ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD                  8
 
 // create flags: force a probe result off, so the degraded paths are testable
@@ -205,11 +210,10 @@ int rocketnet_server_gso_send_room( struct rocketnet_server_gso_t * gso );
 // thread; a send mutex held by the worker reads as not idle.
 bool rocketnet_server_gso_send_idle( struct rocketnet_server_gso_t * gso );
 
-// Receive workers stage into a per-queue current bank off main, and main
-// swaps its exhausted bank for the worker's filled one under the receive
-// mutex once per update; unconsumed tails stay main-owned until a later
-// receive call. process_packets exposes stable views valid until the next
-// receive_packets call.
+// Receive workers stage into per-queue producer/ready/main banks off main.
+// receive_packets try-swaps ownership and gathers within the caller budget;
+// unconsumed tails stay main-owned until a later receive call. process_packets
+// exposes stable views valid until the next receive_packets call.
 
 void rocketnet_server_gso_receive_packets( struct rocketnet_server_gso_t * gso );
 
@@ -224,8 +228,7 @@ struct rocketnet_server_socket_process_packets_t * rocketnet_server_gso_process_
 void rocketnet_server_gso_test_force_create_flags( int flags );
 void rocketnet_server_gso_test_fail_receives( struct rocketnet_server_gso_t * gso, int count, int error );
 void rocketnet_server_gso_test_fail_sends( struct rocketnet_server_gso_t * gso, int count, int error );
-// Observe the worker's current bank without consuming it; returns false on
-// lock contention. True once the worker staged a packet main has not claimed.
+// Observe publication without consuming it; returns false on lock contention.
 bool rocketnet_server_gso_test_receive_ready( struct rocketnet_server_gso_t * gso, int queue_index );
 // Main thread: no staged packet, no ready bank, no bank held by the TX worker.
 bool rocketnet_server_gso_test_send_idle( struct rocketnet_server_gso_t * gso );
@@ -254,11 +257,6 @@ struct mmsghdr;
 // the staged bank and sends it on this thread.
 struct rocketnet_server_gso_t * rocketnet_server_gso_test_open( int num_queues );
 void rocketnet_server_gso_test_close( struct rocketnet_server_gso_t * gso );
-// Stage packets into one queue's worker buffer, each byte set to marker, as a
-// worker pass would. false when that buffer has no room for them (main has
-// not swapped it out since it was filled), or the queue index or count is
-// out of range.
-bool rocketnet_server_gso_test_stage_marked( struct rocketnet_server_gso_t * gso, int queue_index, uint8_t marker, uint32_t packets );
 void rocketnet_server_gso_test_set_send( struct rocketnet_server_gso_t * gso,
                                          int ( *send )( struct mmsghdr * messages, unsigned int count, void * user ),
                                          void * user );

@@ -81,8 +81,16 @@
 (* first send and stamps lastSend with the due-now sentinel DueNow, so the *)
 (* clock runs from the refusal (the reversed witness                       *)
 (* MCRNResendTimingBrokenRefusedClock.cfg).  A refused resend of a record  *)
-(* already on the wire (lastSend to DueNow, its clock unchanged) is not    *)
-(* modelled: it only withholds a send this module counts.                  *)
+(* already on the wire is not modelled.  In the code it goes back to the   *)
+(* head of its FIFO with last_send at a second due-now sentinel,           *)
+(* -(resend_delay_max + 2) (rn_packet_builder_packet_failed), and its      *)
+(* send_first_sends entry, so its timeout clock, unchanged; it is due at   *)
+(* the next walk.  Nothing is sent, so AttemptsBeforeTimeout and           *)
+(* ResendGapBounded are claims for a transport that refuses no resend:    *)
+(* resends refused for long enough leave fewer than MinAttempts sends     *)
+(* before the timeout (by reading; not checked here).  NoDueRecordHeld's  *)
+(* exception for a refused packet is the code's behaviour; see its        *)
+(* comment.                                                                *)
 (***************************************************************************)
 EXTENDS Integers
 
@@ -362,7 +370,19 @@ ResendGapBounded ==
 
 \* A due record is sent in the update it falls due: no update ends with a
 \* record of either class still due, whatever the other class does, but
-\* for one whose packet the transport refused.
+\* for one whose packet the transport refused.  The exception is the code's
+\* behaviour, not a loosening: rn_window_ack_packet_failed pushes every
+\* unacked number of the refused packet back to the head of its FIFO and
+\* leaves it due at once (a number never on the wire keeps
+\* RN_SEND_NUMBER_NEVER_SENT, so attempts = 0; a resend gets a negative
+\* due-now sentinel, -(resend_delay_max + 2) after
+\* rn_packet_builder_packet_failed), so after the walk in which its packet
+\* was refused the record is due by construction and waits for the next
+\* walk.  refused[r] is set only by WalkRefused and only for a record that
+\* walk offered (Refusable implies Sent), and every walk clears it, so a
+\* record that falls due and is not offered still fails this invariant.
+\* No sentinel value can remove the exception: the sentinel exists to make
+\* the record due.
 NoDueRecordHeld ==
     phase = "tick" => \A r \in Records : ~Due(r) \/ refused[r]
 

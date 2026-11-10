@@ -140,7 +140,7 @@ struct portable_server_t
     int ready_index[PORTABLE_TX_BANKS] = {};
     int ready_head = 0;
     int ready_count = 0;
-    int tx_consumer = -1; // TX worker only: retained until its complete prefix is consumed
+    int tx_consumer = -1; // TX worker writes it under the mutex, main reads it there: retained until its complete prefix is consumed
     int tx_cursor = 0;   // TX worker only: first unconsumed entry of that bank
     portable_tx_bank_t bank[PORTABLE_TX_BANKS];
     int tx_capacity = 0;
@@ -424,9 +424,11 @@ static portable_tx_step_t portable_tx_step( portable_server_t * server )
     // ( free_head + free_count ) % PORTABLE_TX_BANKS under the mutex.
 
     bank->count = 0;
-    server->tx_consumer = -1;
     server->tx_cursor = 0;
     rocketnet_platform_mutex_acquire( &server->mutex );
+    // main reads tx_consumer under the mutex when a publish finds no free
+    // bank, so it is cleared under the mutex, as WTake sets it
+    server->tx_consumer = -1;
     // proofs/tla/RNBankFifoLayout.tla Release: the bank returns at the free tail.
     server->free_index[( server->free_head + server->free_count ) % PORTABLE_TX_BANKS] = index;
     server->free_count++;
@@ -2106,6 +2108,8 @@ extern const rocketnet_transport_backend_t rocketnet_msgx_transport = { &portabl
 // the native transports' drop counts behind send_failures and receive_drops,
 // defined as rocketnet_server_gso_receive_drops (sdk/rocketnet_server_gso_linux.cpp) and rocketnet_server_socket_send_failures (sdk/rocketnet_server_socket_linux.cpp)
 void rocketnet_server_gso_receive_drops( struct rocketnet_server_gso_t * gso, uint64_t * too_short, uint64_t * too_large );
+// gso's begin_shutdown hook, rocketnet_server_gso_begin_shutdown in sdk/rocketnet_server_gso_linux.cpp
+void rocketnet_server_gso_begin_shutdown( struct rocketnet_server_gso_t * gso );
 
 #if ROCKETNET_XDP
 uint64_t rocketnet_server_socket_send_failures( struct rocketnet_server_socket_t * server_socket );
@@ -2146,11 +2150,13 @@ static void gso_receive_drops( void * transport, uint64_t * too_short, uint64_t 
     rocketnet_server_gso_receive_drops( (rocketnet_server_gso_t *) transport, too_short, too_large );
 }
 
+static void gso_begin_shutdown( void * transport ) { rocketnet_server_gso_begin_shutdown( (rocketnet_server_gso_t *) transport ); }
+
 static const rocketnet_server_transport_io_operations_t gso_operations = {
     ROCKETNET_TRANSPORT_STAGED | ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE | ROCKETNET_TRANSPORT_REFLUSHES,
     gso_create, gso_destroy, gso_stop, gso_stopped,
     gso_start, gso_finish, gso_abort, gso_flush, gso_receive, NULL, NULL,
-    NULL, NULL, NULL, NULL, NULL, gso_send_failures, NULL, gso_send_room, gso_send_idle, NULL
+    NULL, NULL, NULL, NULL, NULL, gso_send_failures, NULL, gso_send_room, gso_send_idle, gso_begin_shutdown
 };
 
 // the client side: sendmmsg with UDP_SEGMENT, recvmmsg (sdk/rocketnet_client_gso_linux.cpp)

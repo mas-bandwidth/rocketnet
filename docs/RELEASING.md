@@ -12,7 +12,7 @@ The version lives in `sdk/rocketnet.h`, in two branches selected by
 The shipping branch carries `ROCKETNET_VERSION_FULL` and the integer macros
 `ROCKETNET_VERSION_MAJOR`, `ROCKETNET_VERSION_MINOR` and
 `ROCKETNET_VERSION_PATCH`. At this revision, the full label is
-`"v1.0.0"` and the integers are `1.0.0`. The development branch uses
+`"v1.0.1"` and the integers are `1.0.1`. The development branch uses
 `"dev"` and the integer sentinel `255.255.255`.
 
 The header label does not identify the current checkout as a release. Check
@@ -22,7 +22,7 @@ Advancing a label alone neither tags nor publishes a release.
 The numeric `ROCKETNET_VERSION`, CMake project `VERSION` and installed
 `RocketNetConfigVersion.cmake` remain numeric. CMake reads the full label
 from the header and checks that its numeric portion matches the project
-version. It exports `RocketNet_VERSION_STRING` as `v1.0.0` and
+version. It exports `RocketNet_VERSION_STRING` as `v1.0.1` and
 `RocketNet_VERSION_PRERELEASE` as an empty string. There is no separate public
 prerelease macro.
 
@@ -104,9 +104,13 @@ required runs are:
     `functional` (which carries the XDP cell in the runner kernel guest,
     against a libxdp in the tested range 1.4 to 1.6), Release `unit` (which
     also runs the `builds` leg's steps), `functional` and `checks`; macOS on
-    arm64 (rows named `macos`) Debug `unit` and Release `functional`;
+    arm64 (rows named `macos`) Debug `unit`, Release `functional` (the
+    development suite) and Release `functional_production` (the production
+    library's suite);
   - `happy path / <os>` (linux,
-    windows; the Windows row is the per-commit MSVC whole-tree build);
+    windows; the Windows row is the per-commit MSVC whole-tree build) and
+    `windows / Release / unit (<i>/2)` (the unit suite under MSVC, in two
+    shards that together run every case);
   - `asan + ubsan (<leg>)` (`unit suite`, `functional suite`) and
     `tsan (loopback soak)`;
   - `fuzz smoke (libFuzzer, corpus replay)`, `big endian s390x / Debug`,
@@ -138,8 +142,25 @@ required runs are:
 - **TLC records** ([.github/workflows/tlc.yml](../.github/workflows/tlc.yml)):
   `Model records are current`, a nightly workflow: run it with
   workflow_dispatch on the release commit
-  (`gh workflow run tlc.yml --ref main`). Release Check enforces this on the
-  tag push.
+  (`gh workflow run tlc.yml --ref main`). A green run proves these, and only
+  these: the model coverage rows are true
+  (`tools/check_tla_coverage.py --all --actions-strict`); the coverage
+  checker's tests, the case planner's controls and the records checker's
+  tests pass; the TLC adapter's controls pass (they run real TLC on the
+  adapter's own control specs); every committed record in
+  [proofs/tla/RUNS.tsv](../proofs/tla/RUNS.tsv) is valid and current (the
+  pinned tlacheck finds no stale group, and `tools/check_tla_records.py`
+  refuses a record measured on other inputs, on another JAR, or not
+  bounded); every non-PASS record is a `gate=bench` case declaring timeout
+  debt with a bounded FAIL/124 record; and the TLA ledgers merge clean
+  (`tools/check_tla_ledger_merge.py`). It runs no model from CASES.tsv
+  itself: a green run has no stale group, so each model's result is the
+  record committed when it was checked. The timeout-debt cases (11 at this
+  commit) are checked only to that bounded record: their full results are
+  not part of a release, and their evidence is the weekly
+  [tlc-debt.yml](../.github/workflows/tlc-debt.yml) run. A dispatched run is
+  never replaced or cancelled by a scheduled one. Release Check enforces
+  this on the tag push.
 - **docs** ([.github/workflows/docs.yml](../.github/workflows/docs.yml)):
   `docs (MrDocs HTML reference build)`.
 - **Release Check** ([.github/workflows/release-check.yml](../.github/workflows/release-check.yml)):
@@ -157,8 +178,14 @@ also applies to release qualification: the gate covers its selected translation
 units and compares findings with the baseline. Required green jobs do not
 override a known failure in the checks they are intended to run.
 
-The other `nightly*.yml` workflows and the fuzz-nightly workflow are watches,
-not release gates. The `msan` workflow (`MemorySanitizer`) is advisory: its
+The other `nightly*.yml` workflows, the fuzz-nightly workflow and
+[tlc-debt.yml](../.github/workflows/tlc-debt.yml) (weekly, each timeout-debt
+case run to its declared result as its own job, with its own 96-hour deadline
+and its own evidence artifact, two cases at a time; at the case times measured
+so far, in run 41337755290 and a 213-second MCRNClientIoDecrypt run, a run in
+plan order takes about 89 hours, against 87 for its longest case alone) are
+watches, not
+release gates. The `msan` workflow (`MemorySanitizer`) is advisory: its
 job is `continue-on-error`. The release commit must also be the commit the tag
 points at, not a later merge.
 

@@ -13,6 +13,7 @@
 // application code, channel, length and bytes.
 
 #include "test_unit_standard.h"
+#include "unit_arena.h"
 
 #include "../sdk/rocketnet_allocator.h"
 #include "../sdk/rocketnet_channel.h"
@@ -118,7 +119,7 @@ static int trace_run( const delivery_step_t * steps, int count, uint8_t * out, i
     rocketnet_counters_t counters;
     memset( &counters, 0, sizeof( counters ) );
 
-    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+    rn_arena_t * arena = rn_unit_arena_create( &config, 1, &counters );
     if ( !arena )
         return -1;
     rn_region_t * region = rn_arena_region( arena, 0 );
@@ -128,7 +129,7 @@ static int trace_run( const delivery_step_t * steps, int count, uint8_t * out, i
 
     if ( !rn_channels_init( &channels, region, (uint32_t) config.num_channels, 0 ) )
     {
-        rn_arena_destroy( arena );
+        rn_unit_arena_destroy( arena );
         return -1;
     }
 
@@ -175,14 +176,14 @@ static int trace_run( const delivery_step_t * steps, int count, uint8_t * out, i
 
         if ( !rocketnet_message_writer_add( &writer, &record ) )
         {
-            rn_arena_destroy( arena );
+            rn_unit_arena_destroy( arena );
             return -1;
         }
 
         const int payload_bytes = rocketnet_message_writer_finish( &writer );
         if ( payload_bytes < 1 )
         {
-            rn_arena_destroy( arena );
+            rn_unit_arena_destroy( arena );
             return -1;
         }
 
@@ -237,7 +238,7 @@ static int trace_run( const delivery_step_t * steps, int count, uint8_t * out, i
              !trace_append_u8( out, capacity, &used, (uint8_t) connection_violation ) ||
              !trace_append_u8( out, capacity, &used, (uint8_t) deliveries ) )
         {
-            rn_arena_destroy( arena );
+            rn_unit_arena_destroy( arena );
             return -1;
         }
 
@@ -249,7 +250,7 @@ static int trace_run( const delivery_step_t * steps, int count, uint8_t * out, i
                  !trace_append_u16( out, capacity, &used, (uint16_t) delivery->bytes ) ||
                  !trace_append( out, capacity, &used, delivery->data, delivery->bytes ) )
             {
-                rn_arena_destroy( arena );
+                rn_unit_arena_destroy( arena );
                 return -1;
             }
         }
@@ -257,7 +258,7 @@ static int trace_run( const delivery_step_t * steps, int count, uint8_t * out, i
         rn_channels_end_update( &channels );
     }
 
-    rn_arena_destroy( arena );
+    rn_unit_arena_destroy( arena );
 
     return used;
 }

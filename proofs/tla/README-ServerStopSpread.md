@@ -19,7 +19,10 @@ its Stop step; this model is the stop as a state machine across steps.
 | `sent`, `owed`, `abandoned`, `refused`, `overflow` | ghosts | |
 
 `Room` is `BankSize - staged - inflight`: the transport's `send_room`
-operation as `send_capacity_available` returns it.
+operation as `send_capacity_available` returns it. On a buffered (unstaged)
+transport `rocketnet_server_transport_io_send_room` subtracts the frames
+committed to the send buffer and not yet flushed (`staged`); before that
+change the code reported room that `staged` had already spent.
 
 | Action | Code |
 |---|---|
@@ -27,11 +30,11 @@ operation as `send_capacity_available` returns it.
 | `Stop` | `rocketnet_server_stop`: every connected slot's burst appended (`rocketnet_server_transport_disconnect_client_shutdown`), then STOPPING |
 | `SealOne` | one position of the drain's pass: a complete entry passed over, an unreachable start abandoning its burst, or one packet sealed while `Room > 0`; a completed head leaves with the cursor |
 | `Flush` | the stop step's or the update's flush |
-| `RequestIoStop` | the stop step that finds the ring empty, its seals flushed and the transport's `send_idle` true (every flushed send finished) calls `rocketnet_server_transport_io_stop` |
+| `RequestIoStop` | the stop step that finds the ring empty, its seals flushed and the transport's `send_idle` true (every flushed send finished) calls `rocketnet_server_transport_io_stop`; with the development link simulator the step also drains it (`rocketnet_server_link_drain` with `shutdown`) and waits until it holds nothing, so a packet the simulator holds is a flushed send not yet finished (`inflight`) and its drain is `Complete` |
 | `IoStopped` | the workers exit; `rocketnet_server_stopped` is true |
 | `Connect(i)` | environment: a client takes a free slot |
 | `Complete` | environment: the kernel or worker finishes a flushed frame |
-| `LoseRoute(s)`, `FindRoute(s)` | environment: a destination loses or regains its link-layer address (the XDP reply MAC), or the transport refuses it with room left (an address its socket cannot carry); either refusal abandons the burst |
+| `LoseRoute(s)`, `FindRoute(s)` | environment: a destination loses or regains its link-layer address (the XDP reply MAC), or the transport refuses it with room left (an address its socket cannot carry); either refusal abandons the burst. A sealed write that fails after its start (the code abandons that burst and keeps draining since the `rn-server-stop-sim-burst` merge) is the same step: `LoseRoute(s)` then the abandon branch of `SealOne`, which needs the same room and stages nothing |
 
 ## Properties
 

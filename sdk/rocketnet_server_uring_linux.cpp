@@ -210,7 +210,6 @@ struct rocketnet_server_uring_t
     int send_pending[ROCKETNET_URING_SEND_PHASES];      // per phase: its sends submitted with no CQE reaped
     int fill_bank;                              // the bank receive CQEs are copied into; the other is exposed
     int features;                               // ROCKETNET_SERVER_URING_FEATURE_*: UDP_SEGMENT in use now
-    int segment_consecutive_refusals = 0;       // main thread only. An accepted segmented send resets it. A plain send does not.
 
     // the run builder's view of the slots ahead, main thread only: the
     // bytes, destination and wire pointer of at most a run's worth of slots
@@ -422,13 +421,19 @@ static socklen_t rocketnet_server_uring_address_to_sockaddr( const rocketnet_add
 // one reuseport socket, bound as the gso transport binds its group: family from
 // the bind address, dual stack when ipv6, the configured buffer sizes
 // requested and the grant reported, the first socket discovering an
-// ephemeral port the rest join, non-blocking, don't-fragment.
+// ephemeral port the rest join, non-blocking, don't-fragment, close-on-exec.
+
+static void rocketnet_server_uring_set_socket_option( void * user, int level, int option_name, int value )
+{
+    const int fd = *(const int *) user;
+    setsockopt( fd, level, option_name, &value, sizeof( value ) );
+}
 
 static int rocketnet_server_uring_open_socket( const rocketnet_address_t * bind_address, int queue_index, int max_clients, uint16_t * bound_port )
 {
     const bool ipv6 = bind_address->type == ROCKETNET_ADDRESS_IPV6;
 
-    int fd = socket( ipv6 ? AF_INET6 : AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+    int fd = socket( ipv6 ? AF_INET6 : AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, IPPROTO_UDP );
     if ( fd < 0 )
     {
         rocketnet_error( "io_uring transport: failed to create socket: %s", strerror( errno ) );
@@ -559,16 +564,7 @@ static int rocketnet_server_uring_open_socket( const rocketnet_address_t * bind_
         return -1;
     }
 
-    if ( ipv6 )
-    {
-        int df = 1;
-        setsockopt( fd, IPPROTO_IPV6, IPV6_DONTFRAG, &df, sizeof( df ) );
-    }
-    else
-    {
-        int pmtud = IP_PMTUDISC_DO;
-        setsockopt( fd, IPPROTO_IP, IP_MTU_DISCOVER, &pmtud, sizeof( pmtud ) );
-    }
+    rocketnet_platform_socket_apply_dont_fragment( ipv6, rocketnet_server_uring_set_socket_option, &fd );
 
     return fd;
 }
@@ -1076,32 +1072,20 @@ static void rocketnet_server_uring_reap_cqe( struct rocketnet_server_uring_t * u
             {
                 // the kernel accepted the UDP_SEGMENT probe but refused a live
                 // segmented send. unlike the gso transport's sendmmsg the run
-                // cannot be resent: its CQE has handed the slots back. the run
-                // is dropped and counted. one refusal leaves segmentation on.
-                // the tier turns off only after the consecutive-refusal threshold
-                // (rocketnet_server_gso.h), with no accepted segmented send
-                // between the refusals. a later success does not turn it back on.
+                // cannot be resent: its CQE has handed the slots back, and a
+                // resend would put them in the kernel again after this call
+                // may reset the index. so the run is dropped, counted, and
+                // every later flush sends plain, one SENDMSG per slot
 
-                uring->segment_consecutive_refusals++;
-                if ( uring->segment_consecutive_refusals >= ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD )
-                {
-                    uring->features &= ~ROCKETNET_SERVER_URING_FEATURE_SEGMENT;
-                    uring->counters[ROCKETNET_SERVER_URING_COUNTER_GSO_FALLBACKS]++;
-                    rocketnet_warn( "io_uring transport: live segmented send refused (%s). %d consecutive refusals, degrading to one SENDMSG per packet", strerror( -cqe->res ), uring->segment_consecutive_refusals );
-                }
-                else
-                {
-                    rocketnet_warn( "io_uring transport: live segmented send refused (%s). counted, segmentation stays on", strerror( -cqe->res ) );
-                }
+                uring->features &= ~ROCKETNET_SERVER_URING_FEATURE_SEGMENT;
+                uring->counters[ROCKETNET_SERVER_URING_COUNTER_GSO_FALLBACKS]++;
+                rocketnet_warn( "io_uring transport: live segmented send refused (%s). degrading to one SENDMSG per packet", strerror( -cqe->res ) );
             }
 
             uring->counters[ROCKETNET_SERVER_URING_COUNTER_SEND_DROPPED] += (uint64_t) run_packets;
         }
         else
         {
-            if ( run_packets > 1 )
-                uring->segment_consecutive_refusals = 0;
-
             uring->counters[ROCKETNET_SERVER_URING_COUNTER_PACKETS_SENT] += (uint64_t) run_packets;
         }
 

@@ -2351,19 +2351,30 @@ duplicate; it is never delivered and is not a violation.
    index. Only an ordered delivery advances the next ordering index.
 3. A code 4 record in its epoch whose sequencing index is behind the
    watermark MUST be dropped and counted as stale; it is not a violation.
-4. A code 4 record ahead of its epoch by fewer than the window count MUST be
-   held in the receive ring at the ring offset the sender chose. The receiver
-   MUST keep at most one held code 4 record per channel, the newest by
-   ordering index and then sequencing index; a newer record replaces the held
-   one, and an older or equal one MUST be dropped and counted as superseded.
+4. A code 4 record ahead of its epoch MUST be held in the receive ring at the
+   ring offset the sender chose. The receiver MUST keep at most one held code
+   4 record per channel, the newest by ordering index and then sequencing
+   index; a newer record replaces the held one, and an older or equal one MUST
+   be dropped and counted as superseded.
 5. A code 4 record behind its epoch in 24-bit half-range order MUST be
    dropped and counted as stale; it is not a violation.
-6. An ordering index ahead of the next index by the window count or more is a
-   violation.
+6. A receiver MUST NOT refuse a code 4 record for how far ahead of its epoch
+   its ordering index is: the sender takes it from the channel's ordered write
+   index, which runs ahead of the next ordering index by the sender's ordered
+   backlog, a bound the receiver does not know. A record ahead of its epoch is
+   held under rule 4.
 7. When an ordered delivery opens an epoch, the drain MUST first release the
    held code 4 record for that epoch if its sequencing index is not behind the
    watermark, then continue with the held ordered records. An ordered
    delivery sets the sequencing watermark to zero.
+8. A fragment of a code 4 block that arrives when no block state exists for
+   it on the channel ([m8 Blocks](#m8)) MUST be dropped and counted as stale,
+   and its number MUST NOT be kept live, when another number of the same
+   block was already accepted as code 4 and is no longer live, its descriptor
+   at that number modulo the window count still naming that number. It is not
+   a violation: the block was released when a newer record superseded it and
+   can never complete, and a fragment kept live for it would make a later
+   honest number a `MESSAGE_SLOT_COLLISION` violation.
 
 <a id="m7.4"></a>
 ### m7.4. Outcomes

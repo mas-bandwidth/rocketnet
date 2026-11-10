@@ -413,6 +413,17 @@ int rocketnet_client_gso_receive_batch( rocketnet_client_gso_t * gso, rocketnet_
             continue;
         }
 
+        // a completion the kernel cut short would split into a plausible but
+        // short final segment -- corruption, not loss -- so it is dropped
+        // whole, as the server's receive and io_uring's decode drop it
+
+        if ( header->msg_flags & MSG_TRUNC )
+        {
+            if ( ++skipped >= max_packets )
+                return total;
+            continue;
+        }
+
         rocketnet_address_t source;
         if ( !gso->syscalls->read_address( gso->syscall_context, &gso->receive_name, &source ) )
         {

@@ -14,7 +14,6 @@
 
 #if defined( __linux__ ) && ROCKETNET_DEV
 
-bool rocketnet_server_gso_test_receive_backoff();
 #include <errno.h>
 #include <string.h>
 #include <netinet/in.h>
@@ -23,6 +22,8 @@ bool rocketnet_server_gso_test_receive_backoff();
 #ifndef UDP_SEGMENT
 #define UDP_SEGMENT 103
 #endif // #ifndef UDP_SEGMENT
+
+bool rocketnet_server_gso_test_receive_backoff();
 
 // The GSO worker's handoffs (proofs/tla/RNGsoHandoff.tla), stepped on this thread
 // with a faked transport: no socket, no worker thread, no clock.
@@ -61,6 +62,39 @@ static void test_server_gso_send_retry_quit()
 
 REGISTER_UNIT_TEST( test_server_gso_send_retry_quit );
 
+// A full socket once shutdown has begun, before stop: the server asks for
+// stop only when send_idle is true, so the TX worker must give up on the
+// full socket without send_quit and go on to the next bank.
+bool rocketnet_server_gso_test_send_shutdown_full();
+
+static void test_server_gso_send_shutdown_full()
+{
+    check( rocketnet_server_gso_test_send_shutdown_full() );
+}
+
+REGISTER_UNIT_TEST( test_server_gso_send_shutdown_full );
+
+// The bounded retry once shutdown has begun: a socket that refuses fewer
+// times than ROCKETNET_GSO_SEND_RETRIES_AFTER_QUIT allows takes the whole
+// bank, nothing dropped; one that refuses past it loses only the unsent tail,
+// which is counted in SEND_DROPPED, and stop completes.
+bool rocketnet_server_gso_test_send_shutdown_within_bound();
+bool rocketnet_server_gso_test_send_shutdown_past_bound();
+
+static void test_server_gso_send_shutdown_within_bound()
+{
+    check( rocketnet_server_gso_test_send_shutdown_within_bound() );
+}
+
+REGISTER_UNIT_TEST( test_server_gso_send_shutdown_within_bound );
+
+static void test_server_gso_send_shutdown_past_bound()
+{
+    check( rocketnet_server_gso_test_send_shutdown_past_bound() );
+}
+
+REGISTER_UNIT_TEST( test_server_gso_send_shutdown_past_bound );
+
 // The receive drain's read budget: full batches of zero-length, refused-source
 // and undersized datagrams, far more than the budget, through the receive
 // seam; each drain returns after ROCKETNET_GSO_RECV_QUEUE_SIZE messages.
@@ -80,15 +114,13 @@ static void test_server_gso_drain_room()
 
 REGISTER_UNIT_TEST( test_server_gso_drain_room );
 
-// A full worker buffer (it stays full until main swaps it out) or a failed
-// receive backs the worker off instead of spinning on poll and the mutex
-// (proofs/tla/RNGsoHandoff.tla RxBacksOff); after main's swap it reads again.
 static void test_server_gso_receive_backoff()
 {
     check( rocketnet_server_gso_test_receive_backoff() );
 }
 
 REGISTER_UNIT_TEST( test_server_gso_receive_backoff );
+
 // one segmented sendmmsg to one destination returns EINVAL. that run leaves
 // as plain datagrams. segmentation stays on for a later destination, and
 // turns off only after the consecutive-refusal threshold with no accepted
@@ -198,7 +230,11 @@ static void test_server_gso_segment_refusal_keeps_other_destinations()
     check( rocketnet_server_gso_test_flush_staged( gso ) );
 
     // the refused run left as two plain datagrams. the other destination
-    // was still one segmented send, and the tier is still on.
+    // was still one segmented send, and the tier is still on. gso's sendmmsg
+    // refuses synchronously with the bank still held, so the run is resent;
+    // io_uring's refusal arrives in a CQE after the slots are handed back, so
+    // there the run is dropped and counted, and segmentation is off from then
+    // on (test_uring_segment_refusal_sends_plain_after).
     check( socket.plain_packets == 2 );
     check( socket.plain_ports_n == 2 );
     check( socket.plain_ports[0] == 40000 );
@@ -260,7 +296,7 @@ REGISTER_UNIT_TEST( test_server_gso_segment_refusal_keeps_other_destinations );
 
 // Four full receive queues, and the real per-update budget, which two queues
 // exhaust (8192 + 8192 is past 16000). The queues the first update consumes
-// are staged full again: a walk that always starts at 0 then stays on 0
+// are published full again: a walk that always starts at 0 then stays on 0
 // and 1, and queues 2 and 3 never deliver. Across two updates every queue
 // must. No socket, no thread, no clock.
 static void test_server_gso_receive_queue_rotation()
@@ -276,7 +312,7 @@ static void test_server_gso_receive_queue_rotation()
     int seen[4] = { 0, 0, 0, 0 };
 
     for ( int q = 0; q < queues; q++ )
-        check( rocketnet_server_gso_test_stage_marked( gso, q, (uint8_t) ( q + 1 ), (uint32_t) ROCKETNET_GSO_RECV_QUEUE_SIZE ) );
+        check( rocketnet_server_gso_test_publish_marked( gso, q, (uint8_t) ( q + 1 ), (uint32_t) ROCKETNET_GSO_RECV_QUEUE_SIZE ) );
 
     rocketnet_server_gso_receive_packets( gso );
     check( view->num_packets == view->capacity );
@@ -291,12 +327,12 @@ static void test_server_gso_receive_queue_rotation()
     check( seen[2] == 0 );
     check( seen[3] == 0 );
 
-    // 0 and 1 have an empty worker buffer again; 2 and 3 still hold the full
-    // buffer the first update did not swap out.
-    check( rocketnet_server_gso_test_stage_marked( gso, 0, (uint8_t) 1, (uint32_t) ROCKETNET_GSO_RECV_QUEUE_SIZE ) );
-    check( rocketnet_server_gso_test_stage_marked( gso, 1, (uint8_t) 2, (uint32_t) ROCKETNET_GSO_RECV_QUEUE_SIZE ) );
-    check( !rocketnet_server_gso_test_stage_marked( gso, 2, (uint8_t) 3, (uint32_t) ROCKETNET_GSO_RECV_QUEUE_SIZE ) );
-    check( !rocketnet_server_gso_test_stage_marked( gso, 3, (uint8_t) 4, (uint32_t) ROCKETNET_GSO_RECV_QUEUE_SIZE ) );
+    // 0 and 1 have a free buffer again; 2 and 3 still hold the ready buffer
+    // the first update did not claim.
+    check( rocketnet_server_gso_test_publish_marked( gso, 0, (uint8_t) 1, (uint32_t) ROCKETNET_GSO_RECV_QUEUE_SIZE ) );
+    check( rocketnet_server_gso_test_publish_marked( gso, 1, (uint8_t) 2, (uint32_t) ROCKETNET_GSO_RECV_QUEUE_SIZE ) );
+    check( !rocketnet_server_gso_test_publish_marked( gso, 2, (uint8_t) 3, (uint32_t) ROCKETNET_GSO_RECV_QUEUE_SIZE ) );
+    check( !rocketnet_server_gso_test_publish_marked( gso, 3, (uint8_t) 4, (uint32_t) ROCKETNET_GSO_RECV_QUEUE_SIZE ) );
 
     rocketnet_server_gso_receive_packets( gso );
     check( view->num_packets == view->capacity );

@@ -453,6 +453,55 @@ void rocketnet_test_ack_endpoints_independent_across_threads()
     rocketnet_check( results[1].acked == rounds * 16 );
 }
 
+// rocketnet_platform_spin_lock_u64 under real contention: four threads take
+// and release one lock around a plain counter, so a lost update means two
+// holders at once. Real threads are refused in the unit suite
+// (tools/check_unit_purity.py), so the contended case runs here; the unit
+// case in tests/test_unit_platform_nits.cpp checks one acquire and release.
+
+void rocketnet_test_platform_spin_lock_acquire_release_under_contention()
+{
+    enum
+    {
+        THREADS = 4,
+        ITERATIONS = 20000
+    };
+
+    volatile uint64_t lock = 0;
+    uint64_t guarded = 0;               // ordered by the lock alone, not atomic
+    std::atomic<int> ready{ 0 };
+    std::atomic<bool> go{ false };
+
+    std::thread threads[THREADS];
+    for ( int i = 0; i < THREADS; i++ )
+    {
+        threads[i] = std::thread( [&lock, &guarded, &ready, &go]()
+                                  {
+            ready.fetch_add( 1, std::memory_order_release );
+            while ( !go.load( std::memory_order_acquire ) )
+            {
+            }
+
+            for ( int n = 0; n < ITERATIONS; n++ )
+            {
+                rocketnet_platform_spin_lock_u64( &lock );
+                guarded++;
+                rocketnet_platform_spin_unlock_u64( &lock );
+            } } );
+    }
+
+    while ( ready.load( std::memory_order_acquire ) != THREADS )
+    {
+    }
+    go.store( true, std::memory_order_release );
+
+    for ( int i = 0; i < THREADS; i++ )
+        threads[i].join();
+
+    rocketnet_check( guarded == (uint64_t) THREADS * ITERATIONS );
+    rocketnet_check( lock == 0 );
+}
+
 
 
 #if defined( ROCKETNET_PLATFORM_PRIMITIVES_STANDALONE )

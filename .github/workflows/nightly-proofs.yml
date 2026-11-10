@@ -65,6 +65,13 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
+      # The fleet installs ESBMC only in ~/sdk/bin, which is not on the runner
+      # service's PATH. Append it (never prepend) for this job's later steps,
+      # so a system tool always wins over a copy there.
+      - name: Append the fleet sdk tools to the end of PATH
+        shell: bash
+        run: echo "PATH=$PATH:$HOME/sdk/bin" >> "$GITHUB_ENV"
+
       - name: Check the pinned tools are present
         shell: bash
         run: |

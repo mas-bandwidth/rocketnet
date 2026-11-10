@@ -407,6 +407,8 @@ static int rn_sequenced_in_turn( rn_channels_t * channels, const rocketnet_messa
 // proofs/tla/RNSequencingWrap.tla Arrive: delta against the 32-bit read index and the
 // future hold's gap are masked to the wire and stale at or past the half range
 // (MCRNSequencingWrapBrokenDeltaUnmasked.cfg, ...DeltaBoundary.cfg and ...HoldGapUnmasked.cfg)
+// proofs/tla/RNSequencedSlot.tla Receive: the dispatch half of Receive (Dispatch,
+// DispatchSeq, DispatchOrd); its accept half is rn_window_receive_accept.
 int rn_channels_dispatch_sequenced( struct rn_channels_t * channels, const struct rocketnet_message_record_t * record, struct rn_delivery_t * out )
 {
     if ( !channels || !record || !out )
@@ -659,6 +661,8 @@ bool rn_channels_drain_sequenced( struct rn_channels_t * channels, uint32_t chan
 }
 
 // proofs/tla/RNSequencedHoldPool.tla EndUpdate: the delivered list returns to the free stack
+// proofs/tla/RNSequencedSlot.tla EndUpdate: rn_channels_end_update calls this after
+// rn_channels_release has freed each delivery's descriptors (ReleaseAll).
 void rn_channels_end_update_sequenced( struct rn_channels_t * channels )
 {
     if ( !channels )

@@ -1664,7 +1664,9 @@ struct rocketnet_message_client_t * rocketnet_message_client_create_sized( void 
 
 // a NULL client is a counted no-op. Stop the client's transport and poll it
 // stopped first; a destroy before then logs an error, counts a misuse, and
-// stops the transport itself, waiting for it, before it frees everything
+// stops the transport itself, waiting up to about one second for its worker
+// to exit. If the worker has exited it frees everything; if not, it logs an
+// error and keeps the transport's memory
 void rocketnet_message_client_destroy( struct rocketnet_message_client_t * client );
 
 // the client's transport, for its stats and state; never its batches. a NULL client is a counted no-op that returns NULL
@@ -1789,7 +1791,9 @@ struct rocketnet_message_server_t * rocketnet_message_server_create_sized( void 
 
 // a NULL server is a counted no-op. Stop the server's transport and poll it
 // stopped first; a destroy before then logs an error, counts a misuse, and
-// stops the transport itself, waiting for it, before it frees everything
+// stops the transport itself, waiting up to about one second for its worker
+// to exit. If the worker has exited it frees everything; if not, it logs an
+// error and keeps the transport's memory
 void rocketnet_message_server_destroy( struct rocketnet_message_server_t * server );
 
 // the server's transport, for its port, stats and stop; never its batches. a NULL server is a counted no-op that returns NULL

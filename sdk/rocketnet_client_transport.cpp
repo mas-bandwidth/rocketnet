@@ -1513,8 +1513,10 @@ static bool rocketnet_client_transport_open_connected( const rocketnet_client_tr
     return true;
 }
 
+// token_timestamp is the Unix time the token's expire check reads; 0 computes
+// it from the epoch and the create time
 static rocketnet_client_transport_t * rocketnet_client_transport_create_internal( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, int * status,
-                                                                                  const rocketnet_client_transport_io_operations_t * step_driven_operations, void * step_driven_transport_context, size_t config_bytes, uint64_t test_timestamp,
+                                                                                  const rocketnet_client_transport_io_operations_t * step_driven_operations, void * step_driven_transport_context, size_t config_bytes, uint64_t token_timestamp,
                                                                                   const uint64_t * resolved_memory_budget = NULL );
 
 rocketnet_client_transport_t * rocketnet_client_transport_create_ex( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, int * status )
@@ -1533,10 +1535,10 @@ rocketnet_client_transport_t * rocketnet_client_transport_create_current_ex( voi
 }
 
 rocketnet_client_transport_t * rocketnet_client_transport_create_resolved( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time,
-                                                                           uint64_t memory_budget_bytes, int * status )
+                                                                           uint64_t memory_budget_bytes, uint64_t token_timestamp, int * status )
 {
     rocketnet_assert( config );
-    return rocketnet_client_transport_create_internal( context, connect_token, config, time, status, NULL, NULL, sizeof( struct rocketnet_client_transport_config_t ), 0, &memory_budget_bytes );
+    return rocketnet_client_transport_create_internal( context, connect_token, config, time, status, NULL, NULL, sizeof( struct rocketnet_client_transport_config_t ), token_timestamp, &memory_budget_bytes );
 }
 
 #if ROCKETNET_DEV
@@ -1864,7 +1866,7 @@ static bool rocketnet_client_transport_resolve( const struct rocketnet_client_tr
 }
 
 static rocketnet_client_transport_t * rocketnet_client_transport_create_internal( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, int * status,
-                                                                                  const rocketnet_client_transport_io_operations_t * step_driven_operations, void * step_driven_transport_context, size_t config_bytes, uint64_t test_timestamp,
+                                                                                  const rocketnet_client_transport_io_operations_t * step_driven_operations, void * step_driven_transport_context, size_t config_bytes, uint64_t token_timestamp,
                                                                                   const uint64_t * resolved_memory_budget )
 {
 #if !ROCKETNET_DEV
@@ -1948,9 +1950,9 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
     client_transport->time = time;
     client_transport->last_state = client_transport->protocol.state;
 
-    const uint64_t token_timestamp = test_timestamp ? test_timestamp : rocketnet_platform_token_epoch( config->token_epoch_unix_seconds, time ) + (uint64_t) time;
+    const uint64_t connect_timestamp = token_timestamp ? token_timestamp : rocketnet_platform_token_clock( rocketnet_platform_token_epoch( config->token_epoch_unix_seconds, time ), time );
 
-    if ( !rocketnet_client_protocol_connect( &client_transport->protocol, connect_token, time, token_timestamp ) )
+    if ( !rocketnet_client_protocol_connect( &client_transport->protocol, connect_token, time, connect_timestamp ) )
     {
         const int connect_failure = client_transport->protocol.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECT_TOKEN_EXPIRED ? ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED : ROCKETNET_STATUS_INVALID_CONNECT_TOKEN;
 
@@ -2541,6 +2543,12 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
     // and wakes, and exits once quit is stored.
     // proofs/tla/RNClientIoShutdown.tla TakeRing and FinishRing: the worker takes the
     // handed-off ring and marks it sent when every slot left.
+
+    // the BASE receive path counts its too-large byte counts in client_io too,
+    // and update folds them as it does the I/O core's (rocketnet_client_io_init
+    // clears the pointer, so the I/O core sets it again below)
+
+    client_transport->client_io.prefilter_too_large = &client_transport->counters.values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE];
 
     if ( client_transport->io_thread || client_transport->step_in_update )
     {
@@ -3217,6 +3225,7 @@ void rocketnet_client_transport_update( rocketnet_client_transport_t * client_tr
             rocketnet_client_receive_packets( client_transport );
 #endif // #if ROCKETNET_DEV
         num_legacy_exposed = rocketnet_client_update_expose_legacy_receive( client_transport, legacy_exposed );
+        rocketnet_client_io_fold_counters( &client_transport->client_io );
         for ( int i = 0; i < num_legacy_exposed; i++ )
             receive_buffers[i] = &client_transport->receive_buffer[legacy_exposed[i]];
 
@@ -4080,6 +4089,8 @@ static void rocketnet_client_receive_packets( rocketnet_client_transport_t * cli
         const int packet_bytes = client_transport->io.operations->receive( client_transport->io.instance, &from, scratch, ROCKETNET_RECEIVE_PACKET_BYTES );
         if ( packet_bytes < 0 || packet_bytes > ROCKETNET_TRANSPORT_MAX_DATAGRAM_BYTES )
             client_transport->client_io.transport_faults++;
+        if ( packet_bytes > ROCKETNET_TRANSPORT_MAX_DATAGRAM_BYTES )
+            client_transport->client_io.receive_too_large.store( client_transport->client_io.receive_too_large.load( std::memory_order_relaxed ) + 1, std::memory_order_relaxed );
 
         if ( packet_bytes <= 0 || packet_bytes > ROCKETNET_TRANSPORT_MAX_DATAGRAM_BYTES )
         {

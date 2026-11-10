@@ -10,6 +10,7 @@
 #include <string.h>
 
 #include "test_unit_registry.h"
+#include "unit_arena.h"
 
 #include "../sdk/rocketnet.h"
 #include "../sdk/rocketnet_allocator.h"
@@ -28,7 +29,7 @@ static rn_region_t * dispatch_region()
 {
     if ( !dispatch_arena )
     {
-        dispatch_arena = rn_arena_create( NULL, NULL, 1, &dispatch_counters );
+        dispatch_arena = rn_unit_arena_create( NULL, 1, &dispatch_counters );
     }
     return dispatch_arena ? rn_arena_region( dispatch_arena, 0 ) : NULL;
 }
@@ -698,7 +699,7 @@ static rn_arena_t * schedule_arena( rocketnet_message_config_t * config )
     rocketnet_message_default_config( config );
     config->client_send_kbps = 0;
     config->server_send_kbps = 0;
-    return rn_arena_create( NULL, config, 1, NULL );
+    return rn_unit_arena_create( config, 1, NULL );
 }
 
 static bool schedule_enqueue( rn_channels_t * channels, uint32_t channel, uint32_t bytes )
@@ -740,7 +741,7 @@ static void test_channel_queue_fill_exhausts_the_region()
     }
     rocketnet_unit_check( filled == region->queue );
     rocketnet_unit_check( rn_region_exhausted( region ) );
-    rn_arena_destroy( arena );
+    rn_unit_arena_destroy( arena );
 }
 
 static void test_channel_config_front_ready_rotation_and_work()
@@ -787,7 +788,7 @@ static void test_channel_config_front_ready_rotation_and_work()
     rocketnet_unit_check( channels->ready_tail == 0 );
     rocketnet_unit_check( region->channel_send[0].ready_ticket != region->channel_send[1].ready_ticket );
     rocketnet_unit_check( region->channel_send[0].ready_ticket != 0 && region->channel_send[1].ready_ticket != 0 );
-    rn_arena_destroy( arena );
+    rn_unit_arena_destroy( arena );
 
     arena = schedule_arena( &config );
     region = rn_arena_region( arena, 0 );
@@ -815,7 +816,7 @@ static void test_channel_config_front_ready_rotation_and_work()
     rocketnet_unit_check( region->send_descriptors[wrapped_next[2]].ordering == 0x1000000u );
     rocketnet_unit_check( ( region->send_descriptors[wrapped_next[2]].ordering & 0xFFFFFFu ) == 0 );
     rocketnet_unit_check( region->channel_send[0].ordered_write == 0x1000001u );
-    rn_arena_destroy( arena );
+    rn_unit_arena_destroy( arena );
 }
 
 REGISTER_UNIT_TEST( test_channel_queue_fill_exhausts_the_region );

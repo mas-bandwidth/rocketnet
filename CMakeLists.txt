@@ -5,10 +5,10 @@ cmake_minimum_required(VERSION 3.20)
 if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
     set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Minimum supported macOS version" FORCE)
 endif()
-# CMake's VERSION holds numbers only, so it is the 1.0.0 of v1.0.0;
+# CMake's VERSION holds numbers only, so it is the 1.0.1 of v1.0.1;
 # the release label, prerelease included, is ROCKETNET_VERSION_STRING below,
 # read from sdk/rocketnet.h, and the installed package carries both.
-project(rocketnet VERSION 1.0.0 LANGUAGES C CXX)
+project(rocketnet VERSION 1.0.1 LANGUAGES C CXX)
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/sdk/rocketnet.h" ROCKETNET_VERSION_FULL_LINE
     REGEX "^ *#define ROCKETNET_VERSION_FULL +\"v[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?\"$")
 list(LENGTH ROCKETNET_VERSION_FULL_LINE ROCKETNET_VERSION_FULL_COUNT)
@@ -225,6 +225,18 @@ add_compile_definitions(
     ROCKETNET_HISTORY_PACKETS=${ROCKETNET_HISTORY_PACKETS}
     ${ROCKETNET_MEMORY_BUDGET_DEFINITIONS})
 
+# cl (MSVC, not clang-cl: the condition the floating-point floor above uses)
+# has no pthreads, so FindThreads' three pthread probes always fail there and
+# it settles on Windows threads with no flag or library. Their results are
+# given here so the configure does not compile and link them; the outcome
+# (Threads::Threads, empty) is the one the probes reach. They are plain
+# variables, not cache entries: the check macros skip a probe whose result
+# variable is defined, and a parent project's own cached results stay its own.
+if(MSVC AND NOT CMAKE_C_COMPILER_ID STREQUAL "Clang")
+    set(CMAKE_HAVE_LIBC_PTHREAD "")
+    set(CMAKE_HAVE_PTHREADS_CREATE "")
+    set(CMAKE_HAVE_PTHREAD_CREATE "")
+endif()
 include(cmake/RocketNetDependencies.cmake)
 
 if(NOT ROCKETNET_USE_SYSTEM_SODIUM)
@@ -330,8 +342,12 @@ set(ROCKETNET_SOURCE
 set(ROCKETNET_HARDEN_CONFIGS "$<CONFIG:Release,RelWithDebInfo,MinSizeRel>")
 
 if(ROCKETNET_HARDEN)
+    # cl (MSVC, not clang-cl) refuses both GCC flags, so these probes always
+    # failed there and the targets took neither; under cl they are not run.
     foreach(language C CXX)
-        if(language STREQUAL "C")
+        if(MSVC AND NOT CMAKE_C_COMPILER_ID STREQUAL "Clang")
+            break()
+        elseif(language STREQUAL "C")
             check_c_compiler_flag("-fstack-protector-strong" ROCKETNET_C_STACK_PROTECTOR)
             check_c_compiler_flag("-fcf-protection" ROCKETNET_C_CF_PROTECTION)
         else()
@@ -690,33 +706,6 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
             tests/test_unit_xdp_frame.cpp)
         list(TRANSFORM ROCKETNET_DEV_ONLY_SCAFFOLD_TEST_SOURCES PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
         list(REMOVE_ITEM ROCKETNET_UNIT_TEST_SOURCES ${ROCKETNET_DEV_ONLY_SCAFFOLD_TEST_SOURCES})
-        # These cases build their arena through rn_arena_create, which a
-        # production library does not carry (sdk/rocketnet_allocator.h); their
-        # arena setup needs the development constructor.
-        set(ROCKETNET_DEV_ONLY_ARENA_TEST_SOURCES
-            tests/test_unit_channel_dispatch.cpp
-            tests/test_unit_channel_held_ownership.cpp
-            tests/test_unit_channel_receipts.cpp
-            tests/test_unit_channel_reliable.cpp
-            tests/test_unit_channel_reliable_sequenced.cpp
-            tests/test_unit_channel_unreliable_sequenced.cpp
-            tests/test_unit_channel_violation_counters.cpp
-            tests/test_unit_connection_memory.cpp
-            tests/test_unit_loopback_rtt.cpp
-            tests/test_unit_message_objects.cpp
-            tests/test_unit_mutation_risk_boundaries.cpp
-            tests/test_unit_packet_builder.cpp
-            tests/test_unit_resend_fifo_bounds.cpp
-            tests/test_unit_resend_generations.cpp
-            tests/test_unit_resend_timing.cpp
-            tests/test_unit_secrets_wiped.cpp
-            tests/test_unit_send_priorities.cpp
-            tests/test_unit_sequenced_hot_cold.cpp
-            tests/test_unit_standard_channels_receipts_security.cpp
-            tests/test_unit_standard_delivery_reliable.cpp
-            tests/test_unit_standard_reliable_window.cpp)
-        list(TRANSFORM ROCKETNET_DEV_ONLY_ARENA_TEST_SOURCES PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
-        list(REMOVE_ITEM ROCKETNET_UNIT_TEST_SOURCES ${ROCKETNET_DEV_ONLY_ARENA_TEST_SOURCES})
     endif()
     # test_unit_driver_loopback.cpp compiles sdk/rocketnet_server_transport.cpp
     # into the suite, so its object goes first on the link line. lld-link loads
@@ -1424,8 +1413,8 @@ endif()
 configure_package_config_file(cmake/RocketNetConfig.cmake.in
     "${CMAKE_CURRENT_BINARY_DIR}/RocketNetConfig.cmake"
     INSTALL_DESTINATION ${ROCKETNET_PACKAGE_DIR})
-# find_package compares numbers, so the package version is 1.0.0; the label
-# v1.0.0 rides beside it as RocketNet_VERSION_STRING; the prerelease string
+# find_package compares numbers, so the package version is 1.0.1; the label
+# v1.0.1 rides beside it as RocketNet_VERSION_STRING; the prerelease string
 # is empty for this release (cmake/RocketNetConfig.cmake.in).
 write_basic_package_version_file("${CMAKE_CURRENT_BINARY_DIR}/RocketNetConfigVersion.cmake"
     VERSION ${PROJECT_VERSION} COMPATIBILITY SameMajorVersion)

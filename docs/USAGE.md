@@ -46,12 +46,16 @@ lookup and time calls are thread-safe, and client and server objects are not.
   `rocketnet_init` can run on a network thread and must be thread-safe. The log
   function installed with `rocketnet_log_function` runs on the thread that
   logs, which can be a network thread, so it must be thread-safe and must not
-  call `rocketnet_log_function`. The assert function installed with
+  call any rocketnet function. The assert function installed with
   `rocketnet_assert_function` runs on the thread that fires the assert, in
   debug builds only. A client's `state_change_callback` reports each change of
   `rocketnet_client_state` once; it runs on the caller's thread, during
   connect, update, disconnect, destroy and a start message that ends the
-  connection, and must not call client functions.
+  connection, and must not call client functions: a call that changes the
+  client (connect, destroy, update, send_packets, disconnect, the message,
+  receipt and send rate calls, network_simulator) made from it is refused at
+  once, leaves the client as it was, and counts one `api_misuses`. A destroy
+  refused this way does not free the client.
 - **Process-wide setup is serialized with application work.** Never race
   `rocketnet_init` with `rocketnet_term`, call `rocketnet_term` only while no other
   library call runs, and install the assert function before concurrent
@@ -112,15 +116,22 @@ time, and keep it finite and non-decreasing.
 The protocol advances using the time passed to `rocketnet_client_update` and
 `rocketnet_server_update`, so the game owns simulation time and a test can
 hold it still. Background I/O and profiling can still use platform clocks.
-Token time is the caller's too: the token create and expire checks read
+Token time is the caller's too: the token checks read
 `token_epoch_unix_seconds` (config field, or
 `ROCKETNET_CLIENT_TOKEN_EPOCH_UNIX_SECONDS` /
-`ROCKETNET_SERVER_TOKEN_EPOCH_UNIX_SECONDS`) plus the time passed to update,
-so a paused caller clock pauses token expiry. An epoch of 0 reads the host wall
-clock once (the client at connect, the server at its first update after start)
-and subtracts the caller's time to establish the epoch; see
-[Environment](ENVIRONMENT.md). Keep the token issuer and endpoints in the
-same time domain.
+`ROCKETNET_SERVER_TOKEN_EPOCH_UNIX_SECONDS`) plus the time passed to update.
+The server checks a token's create and expire times at each request against
+its epoch plus its update time. The client checks only the expire time, once,
+at connect, against its epoch plus the time of its most recent update (zero if
+it has never been updated). A connect before the client's first update is
+checked against the epoch alone, so a game with a configured epoch and a clock
+that does not start at zero updates the client at least once before connect,
+as a normal frame loop already does. During the handshake the client measures the
+token's lifetime on the caller's clock, so a paused caller clock pauses token
+expiry. An epoch of 0 reads the host wall clock once (the client at connect,
+the server at its first update after start; the server subtracts the caller's
+time to establish its epoch); see [Environment](ENVIRONMENT.md). Keep the
+token issuer and endpoints in the same time domain.
 
 With an epoch of 0, the server never reads the wall clock again after that
 first update until it is stopped and started again. Start the server only after

@@ -135,14 +135,16 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create_current(
 // the creates behind public connect and start: config is the one the public
 // create resolved (DEFAULT < STRUCT < ENV, rn_client_split and
 // rn_server_split in sdk/rocketnet_api.cpp) and memory_budget_bytes the
-// operator budget it read then, so neither reads the environment again
-struct rocketnet_client_transport_t * rocketnet_client_transport_create_resolved( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, uint64_t memory_budget_bytes, int * status );
+// operator budget it read then, so neither reads the environment again.
+// token_timestamp is the Unix time the token's expire check reads at connect
+// (rn_client_connect); 0 reads it as an internal create does
+struct rocketnet_client_transport_t * rocketnet_client_transport_create_resolved( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, uint64_t memory_budget_bytes, uint64_t token_timestamp, int * status );
 struct rocketnet_server_transport_t * rocketnet_server_transport_create_resolved( void * context, const char * address, const struct rocketnet_server_transport_config_t * config, uint64_t memory_budget_bytes, int * status );
 struct rocketnet_message_client_t * rocketnet_message_client_create_resolved( void * context, const uint8_t * connect_token,
                                                                               const struct rocketnet_client_transport_config_t * transport_config,
                                                                               const struct rocketnet_message_config_t * message_config,
                                                                               void * memory, uint64_t memory_bytes, uint32_t send_kbps, int * status, int reserve_unlimited,
-                                                                              uint64_t memory_budget_bytes );
+                                                                              uint64_t memory_budget_bytes, uint64_t token_timestamp );
 struct rocketnet_message_server_t * rocketnet_message_server_create_resolved( void * context, const char * address,
                                                                               const struct rocketnet_server_transport_config_t * transport_config,
                                                                               const struct rocketnet_message_config_t * message_config,

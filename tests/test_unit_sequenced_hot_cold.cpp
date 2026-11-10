@@ -1,6 +1,7 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 
 #include "test_unit_registry.h"
+#include "unit_arena.h"
 #include "../sdk/rocketnet_allocator.h"
 #include "../sdk/rocketnet_channel.h"
 #include "../sdk/rocketnet_counters.h"
@@ -41,7 +42,7 @@ static void test_sequenced_hot_cold_layout_and_reset()
         rocketnet_unit_check( rn_region_layout( &config, &layout ) );
         rocketnet_unit_check( layout.bytes[RN_PART_SEQUENCED_HOLDS] == (uint64_t) count * 1440 );
 
-        rn_arena_t * arena = rn_arena_create( NULL, &config, 1, NULL );
+        rn_arena_t * arena = rn_unit_arena_create( &config, 1, NULL );
         rocketnet_unit_check( arena != NULL );
 
         rn_region_t * region = rn_arena_region( arena, 0 );
@@ -83,7 +84,7 @@ static void test_sequenced_hot_cold_layout_and_reset()
             }
         }
 
-        rn_arena_destroy( arena );
+        rn_unit_arena_destroy( arena );
     }
 }
 
@@ -92,7 +93,7 @@ static void test_sequenced_hot_cold_view_lifetime()
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
     config.sequenced_messages_held = 1;
-    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, NULL );
+    rn_arena_t * arena = rn_unit_arena_create( &config, 1, NULL );
     rocketnet_unit_check( arena != NULL );
 
     rn_region_t * region = rn_arena_region( arena, 0 );
@@ -138,7 +139,7 @@ static void test_sequenced_hot_cold_view_lifetime()
     rocketnet_unit_check( region->sequenced_messages_held[0].used == 1 );
     rocketnet_unit_check( region->sequenced_message_payloads[0].data[0] == next );
 
-    rn_arena_destroy( arena );
+    rn_unit_arena_destroy( arena );
 }
 
 static void test_sequenced_hot_cold_payload_slots_are_independent()
@@ -146,7 +147,7 @@ static void test_sequenced_hot_cold_payload_slots_are_independent()
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
     config.sequenced_messages_held = 3;
-    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, NULL );
+    rn_arena_t * arena = rn_unit_arena_create( &config, 1, NULL );
     rocketnet_unit_check( arena != NULL );
 
     rn_region_t * region = rn_arena_region( arena, 0 );
@@ -187,7 +188,7 @@ static void test_sequenced_hot_cold_payload_slots_are_independent()
         }
     }
 
-    rn_arena_destroy( arena );
+    rn_unit_arena_destroy( arena );
 }
 
 static void test_sequenced_hold_pool_constant_time()
@@ -208,7 +209,7 @@ static void test_sequenced_hold_pool_constant_time()
     config.packets_in_flight = 8192;
 
     rocketnet_counters_t counters = {};
-    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+    rn_arena_t * arena = rn_unit_arena_create( &config, 1, &counters );
     rocketnet_unit_check( arena != NULL );
 
     rn_region_t * region = rn_arena_region( arena, 0 );
@@ -296,7 +297,7 @@ static void test_sequenced_hold_pool_constant_time()
     rocketnet_unit_check( rn_channels_dispatch( &channels, &record, &delivery ) == ROCKETNET_CHANNEL_DISPATCH_HELD );
     rocketnet_unit_check( g_sequenced_hold_visit_count == 0 );
 #endif // #if ROCKETNET_DEV
-    rn_arena_destroy( arena );
+    rn_unit_arena_destroy( arena );
 }
 
 REGISTER_UNIT_TEST( test_sequenced_hold_pool_constant_time );

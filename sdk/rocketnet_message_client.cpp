@@ -146,30 +146,30 @@ static struct rocketnet_message_client_t * rn_message_client_create( void * cont
                                                                      const struct rocketnet_client_transport_config_t * transport_config,
                                                                      const struct rocketnet_message_config_t * message_config,
                                                                      void * memory, uint64_t memory_bytes, uint32_t send_kbps, int * status, int reserve_unlimited,
-                                                                     const uint64_t * resolved_memory_budget );
+                                                                     const uint64_t * resolved_memory_budget, uint64_t token_timestamp );
 
 struct rocketnet_message_client_t * rocketnet_message_client_create_ex( void * context, const uint8_t * connect_token,
                                                                         const struct rocketnet_client_transport_config_t * transport_config,
                                                                         const struct rocketnet_message_config_t * message_config,
                                                                         void * memory, uint64_t memory_bytes, uint32_t send_kbps, int * status, int reserve_unlimited )
 {
-    return rn_message_client_create( context, connect_token, transport_config, message_config, memory, memory_bytes, send_kbps, status, reserve_unlimited, NULL );
+    return rn_message_client_create( context, connect_token, transport_config, message_config, memory, memory_bytes, send_kbps, status, reserve_unlimited, NULL, 0 );
 }
 
 struct rocketnet_message_client_t * rocketnet_message_client_create_resolved( void * context, const uint8_t * connect_token,
                                                                               const struct rocketnet_client_transport_config_t * transport_config,
                                                                               const struct rocketnet_message_config_t * message_config,
                                                                               void * memory, uint64_t memory_bytes, uint32_t send_kbps, int * status, int reserve_unlimited,
-                                                                              uint64_t memory_budget_bytes )
+                                                                              uint64_t memory_budget_bytes, uint64_t token_timestamp )
 {
-    return rn_message_client_create( context, connect_token, transport_config, message_config, memory, memory_bytes, send_kbps, status, reserve_unlimited, &memory_budget_bytes );
+    return rn_message_client_create( context, connect_token, transport_config, message_config, memory, memory_bytes, send_kbps, status, reserve_unlimited, &memory_budget_bytes, token_timestamp );
 }
 
 static struct rocketnet_message_client_t * rn_message_client_create( void * context, const uint8_t * connect_token,
                                                                      const struct rocketnet_client_transport_config_t * transport_config,
                                                                      const struct rocketnet_message_config_t * message_config,
                                                                      void * memory, uint64_t memory_bytes, uint32_t send_kbps, int * status, int reserve_unlimited,
-                                                                     const uint64_t * resolved_memory_budget )
+                                                                     const uint64_t * resolved_memory_budget, uint64_t token_timestamp )
 {
     int ignored = ROCKETNET_STATUS_OK;
     if ( !status )
@@ -222,13 +222,15 @@ static struct rocketnet_message_client_t * rn_message_client_create( void * cont
         return NULL;
     }
 
-    // create takes no time: the transport is seeded at 0.0, and the object
-    // hands it time relative to the first update (clock_from_first_update),
-    // so the connect attempt's timers and the token's lifetime start at the
-    // first update, whatever the game's clock reads then. time comes in only
-    // through update.
+    // the transport is seeded at 0.0, and the object hands it time relative
+    // to the first update (clock_from_first_update), so the connect attempt's
+    // timers and the token's lifetime start at the first update, whatever the
+    // game's clock reads then. The one time create takes is token_timestamp,
+    // the Unix time public connect's token expire check reads (epoch plus the
+    // caller's time, rn_client_connect); 0 leaves it to the transport, which
+    // reads the configured epoch plus 0.0, or the wall clock if the epoch is 0.
 
-    rocketnet_client_transport_t * transport = ( resolved_memory_budget && transport_config ) ? rocketnet_client_transport_create_resolved( context, connect_token, transport_config, 0.0, *resolved_memory_budget, status ) : rocketnet_client_transport_create_current_ex( context, connect_token, transport_config, 0.0, status );
+    rocketnet_client_transport_t * transport = ( resolved_memory_budget && transport_config ) ? rocketnet_client_transport_create_resolved( context, connect_token, transport_config, 0.0, *resolved_memory_budget, token_timestamp, status ) : rocketnet_client_transport_create_current_ex( context, connect_token, transport_config, 0.0, status );
     if ( !transport )
     {
         if ( *status == ROCKETNET_STATUS_OK )

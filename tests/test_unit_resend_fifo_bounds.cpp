@@ -15,6 +15,7 @@
 #include <string.h>
 
 #include "test_unit_registry.h"
+#include "unit_arena.h"
 #include "../sdk/rocketnet.h"
 #include "../sdk/rocketnet_allocator.h"
 #include "../sdk/rocketnet_message.h"
@@ -35,7 +36,7 @@ struct resend_bounds_fixture_t
 static void resend_bounds_open( resend_bounds_fixture_t * f )
 {
     check( rocketnet_message_validate_config( &f->config ) );
-    f->arena = rn_arena_create( NULL, &f->config, 1, NULL );
+    f->arena = rn_unit_arena_create( &f->config, 1, NULL );
     check( f->arena != NULL );
     f->region = rn_arena_region( f->arena, 0 );
     rn_region_carve( f->region );
@@ -76,7 +77,7 @@ static void test_resend_fifo_corrupt_link_is_bounded()
         check( f.ordered.ack.error == ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION );
         check( f.ordered.ack.resend_count == count );
         check( rn_ordered_decide( &f.ordered ) == ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION );
-        rn_arena_destroy( f.arena );
+        rn_unit_arena_destroy( f.arena );
     }
 
     // an insert behind a slot whose next link is out of range changes nothing
@@ -95,7 +96,7 @@ static void test_resend_fifo_corrupt_link_is_bounded()
 
         check( f.ordered.ack.error == ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION );
         check( f.ordered.ack.resend_count == count );
-        rn_arena_destroy( f.arena );
+        rn_unit_arena_destroy( f.arena );
     }
 }
 

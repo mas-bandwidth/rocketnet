@@ -590,8 +590,6 @@ static void test_platform_msgx_receive_weather_drain_is_bounded()
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC && ROCKETNET_DEV
 
-void rocketnet_platform_socket_apply_dont_fragment( bool ipv6, void ( *set_option )( void * user, int level, int option_name, int value ), void * user );
-
 struct platform_socket_hygiene_options_t
 {
     int levels[4];

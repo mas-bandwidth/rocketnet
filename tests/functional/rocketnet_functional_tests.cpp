@@ -7073,10 +7073,8 @@ void rocketnet_test_server_gso_held_receive_view()
 
     rocketnet_check( held_view );
 
-    // The worker must stage a second packet into its own bank without touching
-    // the main-held first view. This condition poll observes ownership, not
-    // elapsed sleep. Once staged, the consumer-driven flip delivers it in the
-    // very next receive_packets call, not one update later.
+    // The worker must publish a second packet without touching the main-held
+    // first view. This condition poll observes ownership, not elapsed sleep.
 
     rocketnet_platform_socket_send_packet( client_socket, &server_address, second, sizeof( second ) );
 
@@ -11914,6 +11912,8 @@ void rocketnet_test_linux_uring_receive_cqe_errors();
 void rocketnet_test_linux_uring_send_cqe_errors();
 void rocketnet_test_linux_gso_refuses_explicit_port_in_use();
 void rocketnet_test_linux_uring_refuses_explicit_port_in_use();
+void rocketnet_test_linux_gso_socket_hygiene();
+void rocketnet_test_linux_uring_socket_hygiene();
 #if ROCKETNET_XDP
 void rocketnet_test_linux_xdp_receive_weather_ipv4();
 void rocketnet_test_linux_xdp_receive_weather_ipv6();
@@ -12491,6 +12491,7 @@ extern void rocketnet_test_bundled_rng_opens_once_under_concurrent_keygen_on_mac
 #endif // #if defined(__APPLE__) && !defined(ROCKETNET_USE_SYSTEM_SODIUM)
 extern void rocketnet_test_connect_token_mint_concurrent();
 extern void rocketnet_test_ack_endpoints_independent_across_threads();
+extern void rocketnet_test_platform_spin_lock_acquire_release_under_contention();
 extern void test_api_polish_dev_token_string();
 extern void test_dev_connect_token_timeout_is_the_named_constant();
 extern void test_dev_token_minting_absent_in_release();
@@ -12710,6 +12711,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_loopback_hub_two_shared_objects", test_loopback_hub_two_shared_objects, rocketnet_test_no_transport_pin_is_set },
 #endif // #if ROCKETNET_DEV
     { "test_ack_endpoints_independent_across_threads", rocketnet_test_ack_endpoints_independent_across_threads, NULL },
+    { "test_platform_spin_lock_acquire_release_under_contention", rocketnet_test_platform_spin_lock_acquire_release_under_contention, NULL },
     { "test_server_refuses_keyless_config", rocketnet_test_server_refuses_keyless_config, NULL },
     { "test_server_async_delivery_with_max_clients", rocketnet_test_server_async_delivery_with_max_clients, NULL },
     { "test_server_receive_buffer_sized_from_max_clients", rocketnet_test_server_receive_buffer_sized_from_max_clients, NULL },
@@ -12831,6 +12833,8 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_io_uring_transport_linux_send_cqe_errors", rocketnet_test_linux_uring_send_cqe_errors, rocketnet_server_uring_available },
     { "test_gso_server_refuses_explicit_port_in_use", rocketnet_test_linux_gso_refuses_explicit_port_in_use, NULL },
     { "test_uring_server_refuses_explicit_port_in_use", rocketnet_test_linux_uring_refuses_explicit_port_in_use, NULL },
+    { "test_gso_server_socket_hygiene", rocketnet_test_linux_gso_socket_hygiene, NULL },
+    { "test_uring_server_socket_hygiene", rocketnet_test_linux_uring_socket_hygiene, rocketnet_server_uring_available },
 #if ROCKETNET_XDP
     { "test_xdp_transport_linux_receive_weather_ipv4", rocketnet_test_linux_xdp_receive_weather_ipv4, rocketnet_test_linux_xdp_weather_runs_here },
     { "test_xdp_transport_linux_receive_weather_ipv6", rocketnet_test_linux_xdp_receive_weather_ipv6, rocketnet_test_linux_xdp_weather_runs_here },

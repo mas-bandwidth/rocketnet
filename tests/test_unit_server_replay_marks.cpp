@@ -14,15 +14,16 @@
 #include "../sdk/rocketnet_client_slots.h"
 #include "../sdk/rocketnet_encryption_map.h"
 #include "../sdk/rocketnet_server_replay_marks.h"
-#include "../sdk/rocketnet_xdp_limits.h"
-#include "../sdk/rocketnet_xdp_replay_marks.h"
 
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
-// every address probe the walk makes, counted in development builds only
-// (sdk/rocketnet_server_replay_marks.cpp)
+#if ROCKETNET_DEV
+// every record the walk's supersede scans read, counted in development
+// builds only (sdk/rocketnet_server_replay_marks.cpp)
 uint32_t rocketnet_server_replay_marks_comparisons_for_test( const struct rocketnet_server_replay_marks_t * marks );
+#endif // #if ROCKETNET_DEV
 
 #define ROCKETNET_REPLAY_MARKS_TEST_HANDSHAKE_DEADLINE 1005.0
 #define ROCKETNET_REPLAY_MARKS_TEST_MAX_CALLS 16
@@ -142,24 +143,6 @@ static bool server_replay_marks_record_mark( void * context, const struct rocket
     return false;
 }
 
-struct server_replay_marks_counts_t
-{
-    int forgets;
-    int marks;
-};
-
-static bool server_replay_marks_count_forget( void * context, const struct rocketnet_address_t * )
-{
-    ( (struct server_replay_marks_counts_t *) context )->forgets++;
-    return true;
-}
-
-static bool server_replay_marks_count_mark( void * context, const struct rocketnet_address_t *, uint32_t )
-{
-    ( (struct server_replay_marks_counts_t *) context )->marks++;
-    return true;
-}
-
 static void server_replay_marks_walk( struct server_replay_marks_fixture_t * fixture,
                                       struct server_replay_marks_recording_t * recording )
 {
@@ -219,169 +202,13 @@ static void test_server_replay_marks_mark_connected_slots_once()
     server_replay_marks_walk( &fixture, &recording );
     rocketnet_unit_check( recording.count == 0 );
 
-    rocketnet_encryption_map_entry( fixture.map, client_a.mapping )->replay_session.highest_opened = 41 + ( ROCKETNET_XDP_REPLAY_WINDOW / 2 );
+    rocketnet_encryption_map_entry( fixture.map, client_a.mapping )->replay_session.highest_opened = 42;
 
     memset( &recording, 0, sizeof( recording ) );
     server_replay_marks_walk( &fixture, &recording );
     rocketnet_unit_check( recording.count == 1 );
 
-    server_replay_marks_check_mark( &recording.calls[0], &a, 41 + ( ROCKETNET_XDP_REPLAY_WINDOW / 2 ) );
-
-    server_replay_marks_fixture_destroy( &fixture );
-}
-
-// Steady state: the walk coalesces mark writes by a high-water step. A
-// one-sequence advance does not write the kernel map, the threshold-sized
-// advance does, and a reset or sequence decrease marks at once.
-
-static void test_server_replay_marks_steady_state_marks_coalesce()
-{
-    struct server_replay_marks_fixture_t fixture;
-    server_replay_marks_fixture_init( &fixture, 2 );
-
-    const struct rocketnet_address_t a = server_replay_marks_address( "198.51.100.7:50000" );
-    const struct server_replay_marks_client_t client = server_replay_marks_add_client( &fixture, &a, 100, 10 );
-    const uint32_t step = ROCKETNET_XDP_REPLAY_WINDOW / 2;
-
-    struct server_replay_marks_recording_t recording;
-    memset( &recording, 0, sizeof( recording ) );
-
-    server_replay_marks_walk( &fixture, &recording );
-    rocketnet_unit_check( recording.count == 1 );
-    server_replay_marks_check_mark( &recording.calls[0], &a, 10 );
-
-    rocketnet_encryption_map_entry( fixture.map, client.mapping )->replay_session.highest_opened = 11;
-
-    memset( &recording, 0, sizeof( recording ) );
-    server_replay_marks_walk( &fixture, &recording );
-    rocketnet_unit_check( recording.count == 0 );
-
-    rocketnet_encryption_map_entry( fixture.map, client.mapping )->replay_session.highest_opened = 10 + step - 1;
-
-    memset( &recording, 0, sizeof( recording ) );
-    server_replay_marks_walk( &fixture, &recording );
-    rocketnet_unit_check( recording.count == 0 );
-
-    rocketnet_encryption_map_entry( fixture.map, client.mapping )->replay_session.highest_opened = 10 + step;
-
-    memset( &recording, 0, sizeof( recording ) );
-    server_replay_marks_walk( &fixture, &recording );
-    rocketnet_unit_check( recording.count == 1 );
-    server_replay_marks_check_mark( &recording.calls[0], &a, 10 + step );
-
-    rocketnet_encryption_map_entry( fixture.map, client.mapping )->replay_session.highest_opened = 3;
-
-    memset( &recording, 0, sizeof( recording ) );
-    server_replay_marks_walk( &fixture, &recording );
-    rocketnet_unit_check( recording.count == 1 );
-    server_replay_marks_check_mark( &recording.calls[0], &a, 3 );
-
-    server_replay_marks_fixture_destroy( &fixture );
-}
-
-static void test_server_replay_marks_unpushed_decrease_marks_immediately()
-{
-    struct server_replay_marks_fixture_t fixture;
-    server_replay_marks_fixture_init( &fixture, 1 );
-
-    const struct rocketnet_address_t address = server_replay_marks_address( "198.51.100.7:50000" );
-    const struct server_replay_marks_client_t client = server_replay_marks_add_client( &fixture, &address, 100, 10 );
-    struct server_replay_marks_recording_t recording;
-    memset( &recording, 0, sizeof( recording ) );
-
-    server_replay_marks_walk( &fixture, &recording );
-    rocketnet_unit_check( recording.count == 1 );
-    server_replay_marks_check_mark( &recording.calls[0], &address, 10 );
-
-    rocketnet_encryption_map_entry( fixture.map, client.mapping )->replay_session.highest_opened = 12;
-    memset( &recording, 0, sizeof( recording ) );
-    server_replay_marks_walk( &fixture, &recording );
-    rocketnet_unit_check( recording.count == 0 );
-
-    // A decrease below the last pushed mark is a new session and is marked at
-    // once, without waiting for the mark step.
-
-    rocketnet_encryption_map_entry( fixture.map, client.mapping )->replay_session.highest_opened = 9;
-    memset( &recording, 0, sizeof( recording ) );
-    server_replay_marks_walk( &fixture, &recording );
-    rocketnet_unit_check( recording.count == 1 );
-    server_replay_marks_check_mark( &recording.calls[0], &address, 9 );
-
-    server_replay_marks_fixture_destroy( &fixture );
-}
-
-static void test_server_replay_marks_low_word_wrap_marks_immediately()
-{
-    struct server_replay_marks_fixture_t fixture;
-    server_replay_marks_fixture_init( &fixture, 1 );
-
-    const struct rocketnet_address_t address = server_replay_marks_address( "198.51.100.7:50000" );
-    const struct server_replay_marks_client_t client = server_replay_marks_add_client( &fixture, &address, 100, UINT32_MAX );
-    struct server_replay_marks_recording_t recording;
-    memset( &recording, 0, sizeof( recording ) );
-
-    server_replay_marks_walk( &fixture, &recording );
-    rocketnet_unit_check( recording.count == 1 );
-    server_replay_marks_check_mark( &recording.calls[0], &address, UINT32_MAX );
-
-    rocketnet_encryption_map_entry( fixture.map, client.mapping )->replay_session.highest_opened = (uint64_t) UINT32_MAX + 1;
-    memset( &recording, 0, sizeof( recording ) );
-    server_replay_marks_walk( &fixture, &recording );
-    rocketnet_unit_check( recording.count == 1 );
-    server_replay_marks_check_mark( &recording.calls[0], &address, 0 );
-
-    server_replay_marks_fixture_destroy( &fixture );
-}
-
-// A mass disconnect walks every slot once: every marked slot's forget is
-// queued and the address table clears the other records of its address
-// without a scan of the rest.
-
-static void test_server_replay_marks_mass_disconnect_is_linear()
-{
-    const int clients = ROCKETNET_MAX_CLIENTS;
-
-    struct server_replay_marks_fixture_t fixture;
-    memset( &fixture, 0, sizeof( fixture ) );
-    fixture.map = rocketnet_encryption_map_create( NULL, clients );
-    fixture.slots = rocketnet_client_slots_create( NULL, clients );
-    fixture.marks = rocketnet_server_replay_marks_create( NULL, clients );
-    rocketnet_unit_check( fixture.map && fixture.slots && fixture.marks );
-
-    static struct server_replay_marks_client_t records[ROCKETNET_MAX_CLIENTS];
-
-    for ( int i = 0; i < clients; i++ )
-    {
-        struct rocketnet_address_t address = server_replay_marks_address( "198.51.100.7:2000" );
-        address.port = (uint16_t) ( 2000 + i );
-        records[i] = server_replay_marks_add_client( &fixture, &address, (uint64_t) ( 1000 + i ), (uint64_t) i );
-    }
-
-    struct server_replay_marks_counts_t counts;
-    memset( &counts, 0, sizeof( counts ) );
-    struct rocketnet_server_replay_sink_t sink = { &counts, server_replay_marks_count_forget, server_replay_marks_count_mark };
-
-    rocketnet_server_replay_marks_walk( fixture.marks, fixture.slots, fixture.map, &sink );
-    rocketnet_unit_check( counts.marks == clients && counts.forgets == 0 );
-
-    for ( int i = 0; i < clients; i++ )
-    {
-        rocketnet_client_slots_release( fixture.slots, records[i].slot );
-        rocketnet_encryption_map_remove_current( fixture.map, records[i].mapping );
-    }
-
-    // every queued forget clears the other records of its address: a
-    // constant number of address comparisons each, never a scan of every slot
-
-    const uint32_t comparisons_before = rocketnet_server_replay_marks_comparisons_for_test( fixture.marks );
-    memset( &counts, 0, sizeof( counts ) );
-    rocketnet_server_replay_marks_walk( fixture.marks, fixture.slots, fixture.map, &sink );
-    rocketnet_unit_check( counts.forgets == clients && counts.marks == 0 );
-    rocketnet_unit_check( rocketnet_server_replay_marks_comparisons_for_test( fixture.marks ) - comparisons_before <= 8u * (uint32_t) clients );
-
-    memset( &counts, 0, sizeof( counts ) );
-    rocketnet_server_replay_marks_walk( fixture.marks, fixture.slots, fixture.map, &sink );
-    rocketnet_unit_check( counts.forgets == 0 && counts.marks == 0 );
+    server_replay_marks_check_mark( &recording.calls[0], &a, 42 );
 
     server_replay_marks_fixture_destroy( &fixture );
 }
@@ -412,14 +239,14 @@ static void test_server_replay_marks_forget_released_slots_first()
 
     rocketnet_client_slots_release( fixture.slots, client_a.slot );
     rocketnet_encryption_map_remove_current( fixture.map, client_a.mapping );
-    rocketnet_encryption_map_entry( fixture.map, client_b.mapping )->replay_session.highest_opened = ( ROCKETNET_XDP_REPLAY_WINDOW / 2 );
+    rocketnet_encryption_map_entry( fixture.map, client_b.mapping )->replay_session.highest_opened = 9;
 
     memset( &recording, 0, sizeof( recording ) );
     server_replay_marks_walk( &fixture, &recording );
     rocketnet_unit_check( recording.count == 2 );
 
     server_replay_marks_check_forget( &recording.calls[0], &a );
-    server_replay_marks_check_mark( &recording.calls[1], &b, ( ROCKETNET_XDP_REPLAY_WINDOW / 2 ) );
+    server_replay_marks_check_mark( &recording.calls[1], &b, 9 );
 
     memset( &recording, 0, sizeof( recording ) );
     server_replay_marks_walk( &fixture, &recording );
@@ -649,26 +476,26 @@ static void test_server_replay_marks_refused_mark_is_owed()
 
     // an advance refused twice is asked for each walk until queued
 
-    rocketnet_encryption_map_entry( fixture.map, client.mapping )->replay_session.highest_opened = ( ROCKETNET_XDP_REPLAY_WINDOW / 2 );
+    rocketnet_encryption_map_entry( fixture.map, client.mapping )->replay_session.highest_opened = 9;
     memset( &recording, 0, sizeof( recording ) );
     recording.mark_refusals = 1;
     server_replay_marks_walk( &fixture, &recording );
     rocketnet_unit_check( recording.count == 1 );
 
-    server_replay_marks_check_mark( &recording.calls[0], &a, ( ROCKETNET_XDP_REPLAY_WINDOW / 2 ) );
+    server_replay_marks_check_mark( &recording.calls[0], &a, 9 );
 
     memset( &recording, 0, sizeof( recording ) );
     recording.mark_refusals = 1;
     server_replay_marks_walk( &fixture, &recording );
     rocketnet_unit_check( recording.count == 1 );
 
-    server_replay_marks_check_mark( &recording.calls[0], &a, ( ROCKETNET_XDP_REPLAY_WINDOW / 2 ) );
+    server_replay_marks_check_mark( &recording.calls[0], &a, 9 );
 
     memset( &recording, 0, sizeof( recording ) );
     server_replay_marks_walk( &fixture, &recording );
     rocketnet_unit_check( recording.count == 1 );
 
-    server_replay_marks_check_mark( &recording.calls[0], &a, ( ROCKETNET_XDP_REPLAY_WINDOW / 2 ) );
+    server_replay_marks_check_mark( &recording.calls[0], &a, 9 );
 
     memset( &recording, 0, sizeof( recording ) );
     server_replay_marks_walk( &fixture, &recording );
@@ -934,11 +761,177 @@ static void test_server_replay_marks_queued_forget_supersedes_a_held_mark()
     server_replay_marks_fixture_destroy( &fixture );
 }
 
+struct server_replay_marks_counts_t
+{
+    int forgets;
+    int marks;
+};
+
+static bool server_replay_marks_count_forget( void * context, const struct rocketnet_address_t * )
+{
+    ( (struct server_replay_marks_counts_t *) context )->forgets++;
+    return true;
+}
+
+static bool server_replay_marks_count_mark( void * context, const struct rocketnet_address_t *, uint32_t )
+{
+    ( (struct server_replay_marks_counts_t *) context )->marks++;
+    return true;
+}
+
+// A mass disconnect reads each slot once. Every slot's forget is queued, and
+// with no forget refused in the walk before, no two records name one address
+// (proofs/tla/RNServerReplaySlots.tla DistinctUnlessOwed), so no queued forget
+// scans the other slots for a record to clear. Scanning for each forget, as
+// v1.0.0 did, reads max_clients records per forget: 1,000,000 at 1000 clients.
+
+static void test_server_replay_marks_mass_disconnect_is_linear()
+{
+    const int clients = ROCKETNET_MAX_CLIENTS;
+
+    struct server_replay_marks_fixture_t fixture;
+    memset( &fixture, 0, sizeof( fixture ) );
+    fixture.map = rocketnet_encryption_map_create( NULL, clients );
+    fixture.slots = rocketnet_client_slots_create( NULL, clients );
+    fixture.marks = rocketnet_server_replay_marks_create( NULL, clients );
+    rocketnet_unit_check( fixture.map && fixture.slots && fixture.marks );
+
+    static struct server_replay_marks_client_t records[ROCKETNET_MAX_CLIENTS];
+
+    for ( int i = 0; i < clients; i++ )
+    {
+        struct rocketnet_address_t address = server_replay_marks_address( "198.51.100.7:2000" );
+        address.port = (uint16_t) ( 2000 + i );
+        records[i] = server_replay_marks_add_client( &fixture, &address, (uint64_t) ( 1000 + i ), (uint64_t) i );
+    }
+
+    struct server_replay_marks_counts_t counts;
+    memset( &counts, 0, sizeof( counts ) );
+    struct rocketnet_server_replay_sink_t sink = { &counts, server_replay_marks_count_forget, server_replay_marks_count_mark };
+
+    rocketnet_server_replay_marks_walk( fixture.marks, fixture.slots, fixture.map, &sink );
+    rocketnet_unit_check( counts.marks == clients && counts.forgets == 0 );
+
+    for ( int i = 0; i < clients; i++ )
+    {
+        rocketnet_client_slots_release( fixture.slots, records[i].slot );
+        rocketnet_encryption_map_remove_current( fixture.map, records[i].mapping );
+    }
+
+    memset( &counts, 0, sizeof( counts ) );
+    rocketnet_server_replay_marks_walk( fixture.marks, fixture.slots, fixture.map, &sink );
+    rocketnet_unit_check( counts.forgets == clients && counts.marks == 0 );
+
+#if ROCKETNET_DEV
+    const uint32_t comparisons = rocketnet_server_replay_marks_comparisons_for_test( fixture.marks );
+    if ( comparisons != 0 )
+    {
+        printf( "mass disconnect of %d clients: supersede scans read %u records, expected 0\n", clients, comparisons );
+    }
+    rocketnet_unit_check( comparisons == 0 );
+#endif // #if ROCKETNET_DEV
+
+    memset( &counts, 0, sizeof( counts ) );
+    rocketnet_server_replay_marks_walk( fixture.marks, fixture.slots, fixture.map, &sink );
+    rocketnet_unit_check( counts.forgets == 0 && counts.marks == 0 );
+
+    server_replay_marks_fixture_destroy( &fixture );
+}
+
+// proofs/tla/RNServerReplaySlots.tla Walk, supOwed: the forget pass scans the
+// other slots for a record of the forgotten address only in the walk after
+// one that left a refused forget, the one way two records come to name one
+// address. The sequence is the one of
+// test_server_replay_marks_queued_forget_supersedes_a_held_mark, with the
+// records each walk's scans read counted (development builds).
+
+static void test_server_replay_marks_refused_forget_owes_the_next_scan()
+{
+    struct server_replay_marks_fixture_t fixture;
+    server_replay_marks_fixture_init( &fixture, 2 );
+
+    const struct rocketnet_address_t a = server_replay_marks_address( "198.51.100.7:50000" );
+    const struct rocketnet_address_t c = server_replay_marks_address( "198.51.100.9:50000" );
+    const struct rocketnet_address_t d = server_replay_marks_address( "198.51.100.10:50000" );
+
+    const struct server_replay_marks_client_t first = server_replay_marks_add_client( &fixture, &a, 100, 0 );
+    const struct server_replay_marks_client_t other = server_replay_marks_add_client( &fixture, &c, 200, 0 );
+    rocketnet_unit_check( first.slot == 0 && other.slot == 1 );
+
+    // nothing refused yet: the first walk marks both and scans nothing
+
+    struct server_replay_marks_recording_t recording;
+    memset( &recording, 0, sizeof( recording ) );
+    server_replay_marks_walk( &fixture, &recording );
+    rocketnet_unit_check( recording.count == 2 );
+#if ROCKETNET_DEV
+    rocketnet_unit_check( rocketnet_server_replay_marks_comparisons_for_test( fixture.marks ) == 0 );
+#endif // #if ROCKETNET_DEV
+
+    rocketnet_client_slots_release( fixture.slots, first.slot );
+    rocketnet_encryption_map_remove_current( fixture.map, first.mapping );
+    rocketnet_client_slots_release( fixture.slots, other.slot );
+    rocketnet_encryption_map_remove_current( fixture.map, other.mapping );
+
+    const struct server_replay_marks_client_t second = server_replay_marks_add_client( &fixture, &a, 300, 0 );
+    rocketnet_unit_check( second.slot == 1 );
+
+    // slot 0's forget of A is refused and slot 1's forget of C queued with no
+    // scan owed; slot 1's mark of A is refused, so it clears nothing: slot 0
+    // and slot 1 both name A, and the walk owes the next one its scan
+
+    memset( &recording, 0, sizeof( recording ) );
+    recording.forget_refusals = 1;
+    recording.mark_refusals = 1;
+    server_replay_marks_walk( &fixture, &recording );
+    rocketnet_unit_check( recording.count == 3 );
+    server_replay_marks_check_forget( &recording.calls[0], &a );
+    server_replay_marks_check_forget( &recording.calls[1], &c );
+    server_replay_marks_check_mark( &recording.calls[2], &a, 0 );
+#if ROCKETNET_DEV
+    rocketnet_unit_check( rocketnet_server_replay_marks_comparisons_for_test( fixture.marks ) == 0 );
+#endif // #if ROCKETNET_DEV
+
+    // slot 1 leaves A for D and slot 0 comes back to A: slot 1's queued
+    // forget of A scans both records and clears slot 0's, which is first seen
+    // again and marked
+
+    rocketnet_client_slots_release( fixture.slots, second.slot );
+    rocketnet_encryption_map_remove_current( fixture.map, second.mapping );
+    const struct server_replay_marks_client_t moved = server_replay_marks_add_client( &fixture, &d, 400, 0 );
+    rocketnet_unit_check( moved.slot == 1 );
+    const struct server_replay_marks_client_t back = server_replay_marks_add_client( &fixture, &a, 500, 0 );
+    rocketnet_unit_check( back.slot == 0 );
+
+    memset( &recording, 0, sizeof( recording ) );
+    server_replay_marks_walk( &fixture, &recording );
+    rocketnet_unit_check( recording.count == 3 );
+    server_replay_marks_check_forget( &recording.calls[0], &a );
+    server_replay_marks_check_mark( &recording.calls[1], &a, 0 );
+    server_replay_marks_check_mark( &recording.calls[2], &d, 0 );
+#if ROCKETNET_DEV
+    rocketnet_unit_check( rocketnet_server_replay_marks_comparisons_for_test( fixture.marks ) == 2 );
+#endif // #if ROCKETNET_DEV
+
+    // that walk refused nothing, so the next forget scans nothing
+
+    rocketnet_client_slots_release( fixture.slots, back.slot );
+    rocketnet_encryption_map_remove_current( fixture.map, back.mapping );
+
+    memset( &recording, 0, sizeof( recording ) );
+    server_replay_marks_walk( &fixture, &recording );
+    rocketnet_unit_check( recording.count == 1 );
+    server_replay_marks_check_forget( &recording.calls[0], &a );
+#if ROCKETNET_DEV
+    rocketnet_unit_check( rocketnet_server_replay_marks_comparisons_for_test( fixture.marks ) == 2 );
+#endif // #if ROCKETNET_DEV
+
+    server_replay_marks_fixture_destroy( &fixture );
+}
+
 REGISTER_UNIT_TEST( test_server_replay_marks_mark_connected_slots_once );
-REGISTER_UNIT_TEST( test_server_replay_marks_steady_state_marks_coalesce );
-REGISTER_UNIT_TEST( test_server_replay_marks_unpushed_decrease_marks_immediately );
-REGISTER_UNIT_TEST( test_server_replay_marks_low_word_wrap_marks_immediately );
 REGISTER_UNIT_TEST( test_server_replay_marks_mass_disconnect_is_linear );
+REGISTER_UNIT_TEST( test_server_replay_marks_refused_forget_owes_the_next_scan );
 REGISTER_UNIT_TEST( test_server_replay_marks_refused_mark_is_owed );
 REGISTER_UNIT_TEST( test_server_replay_marks_forget_released_slots_first );
 REGISTER_UNIT_TEST( test_server_replay_marks_follow_an_address_change );

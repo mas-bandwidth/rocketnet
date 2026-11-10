@@ -5,7 +5,11 @@ The owner's rule: unit tests use no real time, no sleep, no threads, no
 network and no resolver. This check scans the unit suite's sources and fails,
 naming file and line, on any call that would force a real platform primitive:
 a sleep, a wall-clock read, a thread start, a hostname resolution, the C
-library's time(), a std::thread, or a process-environment mutation.
+library's time(), a std::thread, or a process-environment mutation. The OS
+and standard-library forms count too: std::this_thread, usleep, nanosleep,
+std::chrono clocks, clock_gettime, gettimeofday, QueryPerformanceCounter,
+mach_absolute_time, pthread_create, std::async, and the socket(), sendto,
+recvfrom and sendmsg/recvmsg family.
 
 The scanned code is every tests/test_unit_*.cpp and sdk/rocketnet_tests.cpp
 (the unit-registered cases live there); every tests/*.h helper they include,
@@ -43,6 +47,18 @@ PATTERNS = [
     ("_putenv_s", re.compile(r'(?<![A-Za-z0-9_])_putenv_s\s*\(')),
     ("SetEnvironmentVariable", re.compile(r'(?<![A-Za-z0-9_])SetEnvironmentVariable(?:A|W)?\s*\(')),
     ("rocketnet_platform_thread_join", re.compile(r'(?<![A-Za-z0-9_])rocketnet_platform_thread_join\s*\(')),
+    ("std::this_thread", re.compile(r'std::this_thread\s*::')),
+    ("usleep", re.compile(r'(?<![A-Za-z0-9_])usleep\s*\(')),
+    ("nanosleep", re.compile(r'(?<![A-Za-z0-9_])nanosleep\s*\(')),
+    ("std::chrono clock", re.compile(r'std::chrono\s*::\s*\w*clock')),
+    ("clock_gettime", re.compile(r'(?<![A-Za-z0-9_])clock_gettime\s*\(')),
+    ("gettimeofday", re.compile(r'(?<![A-Za-z0-9_])gettimeofday\s*\(')),
+    ("QueryPerformanceCounter", re.compile(r'(?<![A-Za-z0-9_])QueryPerformanceCounter\s*\(')),
+    ("mach_absolute_time", re.compile(r'(?<![A-Za-z0-9_])mach_absolute_time\s*\(')),
+    ("pthread_create", re.compile(r'(?<![A-Za-z0-9_])pthread_create\s*\(')),
+    ("std::async", re.compile(r'std::async\s*\(')),
+    ("socket(", re.compile(r'(?<![A-Za-z0-9_])socket\s*\(')),
+    ("sendto/recvfrom", re.compile(r'(?<![A-Za-z0-9_])(?:sendto|recvfrom|sendmsg|recvmsg|sendmmsg|recvmmsg)\s*\(')),
 ]
 
 # a wake wait is a real OS wait unless its timeout is zero (a poll)
@@ -177,6 +193,13 @@ def self_test():
         ("fixture timed wait", clean_fixture.replace("0.0 )", "0.1 )"), "static inline int helper_value() { return 1; }\n", 1),
         ("helper sleep", clean_fixture, "static inline int helper_value() { rocketnet_platform_sleep( 0.01 ); return 1; }\n", 1),
     ]
+    for call in ("std::this_thread::sleep_for( std::chrono::milliseconds( 1 ) )", "usleep( 1000 )",
+                 "nanosleep( &t, NULL )", "std::chrono::steady_clock::now()", "clock_gettime( CLOCK_MONOTONIC, &t )",
+                 "gettimeofday( &v, NULL )", "QueryPerformanceCounter( &c )", "mach_absolute_time()",
+                 "pthread_create( &p, NULL, f, NULL )", "std::async( f )", "socket( AF_INET, SOCK_DGRAM, 0 )",
+                 "sendto( s, b, n, 0, a, l )", "recvfrom( s, b, n, 0, a, &l )", "sendmmsg( s, m, n, 0 )"):
+        cases.append(("helper " + call.split("(")[0].strip(), clean_fixture,
+                      "static inline int helper_value() { %s; return 1; }\n" % call, 1))
     for label, fixture, helper, expected in cases:
         with tempfile.TemporaryDirectory() as root:
             os.mkdir(os.path.join(root, "tests"))

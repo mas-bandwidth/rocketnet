@@ -13,7 +13,9 @@
 (* the first free client record, and for a bind to                         *)
 (* port 0 searches from hub->next_port for a port neither family holds,    *)
 (* stepping with loopback_next_port, which wraps from the range's last     *)
-(* port (65535) to its first (49152); then it writes the entry.            *)
+(* port (65535) to its first (49152), at most once round the range; when   *)
+(* every port of the range is held it refuses the bind (RefuseFull), and   *)
+(* otherwise it writes the entry.                                          *)
 (* loopback_destroy clears the entry only when it names the destroyed      *)
 (* record.  loopback_find_destination reads the datagram family's entry    *)
 (* (a live endpoint bound to the wildcard or to the exact address), and    *)
@@ -32,6 +34,7 @@
 (*   WrapToFirst    loopback_next_port as port + 1, wrapping to 0          *)
 (*   BothFamilies   the search tests only the bind's own family            *)
 (*   DualCheck      create without the cross-family dual-stack refusal     *)
+(*   FullCheck      create without the refusal when no port is free       *)
 (* A destroy that clears the entry without testing that it names the      *)
 (* record is not a witness: DestroyFindsOwnEntry shows the test is always  *)
 (* true under the code's create, so the unguarded clear is equivalent.     *)
@@ -47,13 +50,13 @@ CONSTANTS
     BindCheck,      \* loopback_create refuses a family port already held
     WrapToFirst,    \* loopback_next_port wraps Last to First
     BothFamilies,   \* the search skips a port either family holds
-    DualCheck       \* loopback_create refuses a port shared with a dual-stack wildcard
+    DualCheck,      \* loopback_create refuses a port shared with a dual-stack wildcard
+    FullCheck       \* loopback_create refuses a port 0 bind when the search finds no free port
 
 ASSUME Records \in Nat \ {0}
 ASSUME First \in Nat \ {0} /\ Last \in Nat /\ First <= Last
-ASSUME Records < Last - First + 1          \* assumed, not enforced by the code: a free ephemeral port exists
 ASSUME BindPorts \subseteq 0..Last /\ 0 \in BindPorts
-ASSUME \A f \in {PlusOne, BindCheck, WrapToFirst, BothFamilies, DualCheck} : f \in BOOLEAN
+ASSUME \A f \in {PlusOne, BindCheck, WrapToFirst, BothFamilies, DualCheck, FullCheck} : f \in BOOLEAN
 
 Recs == 0..(Records - 1)
 Ports == 0..Last
@@ -72,10 +75,10 @@ VARIABLES
     registered,     \* hub->registered
     pickedOut,      \* ghost: a search picked a port outside First..Last
     pickedHeld,     \* ghost: a search picked a port some live endpoint holds
-    searchStuck,    \* ghost: a search found no port within its bound
+    refusedFree,    \* ghost: a bind was refused while a port of the range was free
     otherCleared    \* ghost: a destroy met an entry naming another record
 
-vars == <<live, fam, addr, port, bound, nextPort, registered, pickedOut, pickedHeld, searchStuck, otherCleared>>
+vars == <<live, fam, addr, port, bound, nextPort, registered, pickedOut, pickedHeld, refusedFree, otherCleared>>
 
 \* the entry written for record r, and the record an entry names (NONE for none)
 Encode(r) == IF PlusOne THEN r + 1 ELSE r
@@ -89,11 +92,17 @@ NextPort(p) == IF WrapToFirst
 Held(f, p) == bound[f][p] # 0
 PortFree(f, p) == IF BothFamilies THEN ~Held(4, p) /\ ~Held(6, p) ELSE ~Held(f, p)
 
-\* the while loop of loopback_create from p, at most Last + 1 steps
+\* the search loop of loopback_create from p, one try per port of the range:
+\* SearchFinds when a try finds a free port, and SearchFrom the port the loop
+\* leaves on, the free port or, when none is, the port after its last try
+Tries == Last - First + 1
+
+RECURSIVE SearchFinds(_, _, _)
+SearchFinds(f, p, fuel) == fuel > 0 /\ (PortFree(f, p) \/ SearchFinds(f, NextPort(p), fuel - 1))
+
 RECURSIVE SearchFrom(_, _, _)
 SearchFrom(f, p, fuel) ==
-    IF fuel = 0 THEN -1
-    ELSE IF PortFree(f, p) THEN p
+    IF fuel = 0 \/ PortFree(f, p) THEN p
     ELSE SearchFrom(f, NextPort(p), fuel - 1)
 
 \* the record create takes: the server's, or the first free client record
@@ -121,7 +130,7 @@ Init ==
     /\ registered = 0
     /\ pickedOut = FALSE
     /\ pickedHeld = FALSE
-    /\ searchStuck = FALSE
+    /\ refusedFree = FALSE
     /\ otherCleared = FALSE
 
 \* loopback_create: the held-port and dual-stack refusals, the record, the
@@ -129,24 +138,32 @@ Init ==
 Create(server, f, a, bp) ==
     /\ ~(BindCheck /\ Held(f, bp))
     /\ ~(DualCheck /\ DualConflict(f, a, bp))
+    /\ ~(FullCheck /\ bp = 0 /\ ~SearchFinds(f, nextPort, Tries))
     /\ LET r == FreeRecord(server)
-           found == SearchFrom(f, nextPort, Last + 1)
-           p == IF bp = 0 THEN found ELSE bp
+           p == IF bp = 0 THEN SearchFrom(f, nextPort, Tries) ELSE bp
        IN /\ r # NONE
-          /\ IF bp = 0 /\ found = -1
-             THEN /\ searchStuck' = TRUE
-                  /\ UNCHANGED <<live, fam, addr, port, bound, nextPort, registered, pickedOut, pickedHeld>>
-             ELSE /\ live' = [live EXCEPT ![r] = TRUE]
-                  /\ fam' = [fam EXCEPT ![r] = f]
-                  /\ addr' = [addr EXCEPT ![r] = a]
-                  /\ port' = [port EXCEPT ![r] = p]
-                  /\ bound' = [bound EXCEPT ![f][p] = Encode(r)]
-                  /\ nextPort' = IF bp = 0 THEN NextPort(p) ELSE nextPort
-                  /\ registered' = registered + 1
-                  /\ pickedOut' = (pickedOut \/ (bp = 0 /\ (p < First \/ p > Last)))
-                  /\ pickedHeld' = (pickedHeld \/ (bp = 0 /\ HeldByAny(p)))
-                  /\ UNCHANGED searchStuck
-    /\ UNCHANGED otherCleared
+          /\ live' = [live EXCEPT ![r] = TRUE]
+          /\ fam' = [fam EXCEPT ![r] = f]
+          /\ addr' = [addr EXCEPT ![r] = a]
+          /\ port' = [port EXCEPT ![r] = p]
+          /\ bound' = [bound EXCEPT ![f][p] = Encode(r)]
+          /\ nextPort' = IF bp = 0 THEN NextPort(p) ELSE nextPort
+          /\ registered' = registered + 1
+          /\ pickedOut' = (pickedOut \/ (bp = 0 /\ (p < First \/ p > Last)))
+          /\ pickedHeld' = (pickedHeld \/ (bp = 0 /\ HeldByAny(p)))
+    /\ UNCHANGED <<refusedFree, otherCleared>>
+
+\* loopback_create's refusal of a bind to port 0 whose search finds no free
+\* port: past the held-port and dual-stack refusals and with a record free,
+\* nothing is written
+RefuseFull(server, f, a) ==
+    /\ FullCheck
+    /\ ~(BindCheck /\ Held(f, 0))
+    /\ ~(DualCheck /\ DualConflict(f, a, 0))
+    /\ FreeRecord(server) # NONE
+    /\ ~SearchFinds(f, nextPort, Tries)
+    /\ refusedFree' = (refusedFree \/ \E p \in First..Last : ~HeldByAny(p))
+    /\ UNCHANGED <<live, fam, addr, port, bound, nextPort, registered, pickedOut, pickedHeld, otherCleared>>
 
 \* loopback_destroy: the entry cleared only when it names this record
 Destroy(r) ==
@@ -161,10 +178,11 @@ Destroy(r) ==
     /\ addr' = [addr EXCEPT ![r] = "wild"]
     /\ port' = [port EXCEPT ![r] = 0]
     /\ registered' = registered - 1
-    /\ UNCHANGED <<nextPort, pickedOut, pickedHeld, searchStuck>>
+    /\ UNCHANGED <<nextPort, pickedOut, pickedHeld, refusedFree>>
 
 Next ==
     \/ \E server \in BOOLEAN, f \in Families, a \in BindAddrs, bp \in BindPorts : Create(server, f, a, bp)
+    \/ \E server \in BOOLEAN, f \in Families, a \in BindAddrs : RefuseFull(server, f, a)
     \/ \E r \in Recs : Destroy(r)
 
 Spec == Init /\ [][Next]_vars
@@ -212,10 +230,11 @@ BoundExact ==
 LookupIsWalk ==
     \A f \in Families, a \in ToAddrs, p \in 1..Last : TableFind(f, a, p) = WalkFind(f, a, p)
 
-\* an ephemeral port is in the range, free in both families when picked, and always found
+\* an ephemeral port is in the range and free in both families when picked,
+\* and a bind is refused only when every port of the range is held
 EphemeralInRange == ~pickedOut
 EphemeralPortFree == ~pickedHeld
-SearchEnds == ~searchStuck
+RefusesOnlyWhenFull == ~refusedFree
 
 \* no live endpoint holds port 0, and next_port stays in the range
 NoPortZero == \A r \in Recs : live[r] => port[r] # 0

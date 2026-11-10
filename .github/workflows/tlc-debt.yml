@@ -1,0 +1,207 @@
+# The TLA+ timeout debt, worked weekly. A watch, not a release gate.
+#
+# Each case CASES.tsv declares as timeout debt (gate=bench, a debt reason, a
+# bounded FAIL/124 record) runs here to its declared result with the pinned
+# engine, JAR, workers and heap, as the TLC records gate once ran them. They
+# left that gate (tlc.yml) because it could not finish with them: in run
+# 41337755290 (2026-11-01 to 11-05) MCClientConnectionSArbitrary alone took
+# 313091 s (87 h), and every later run was ended from outside before its last
+# case. tlc.yml still requires each one to stay declared as debt with its
+# reason.
+#
+# The plan job lists the debt cases; each case is then its own job, two at a
+# time (max-parallel), on its own runner, with its own deadline of 96 hours (TLC_DEBT_SECONDS, above the
+# longest measured case) inside a job bound of 100 hours, and its own evidence
+# artifact (tlc-debt-<config>). A runner that dies loses that one case; the
+# others still report. A case still running at its deadline is recorded as
+# UNFINISHED with its elapsed time and makes its job red, as does any result
+# but PASS. Like tlc.yml's, the evidence is separate from the bounded records
+# in RUNS.tsv and is never merged into them.
+
+name: TLC timeout debt
+
+on:
+  schedule:
+    - cron: "0 6 * * 6"   # weekly, Saturday 06:00 UTC: a run can take four days
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tlc-debt
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: Timeout debt plan
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 60
+    outputs:
+      cases: ${{ steps.plan.outputs.cases }}
+      count: ${{ steps.plan.outputs.count }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Nightly case planner controls pass
+        shell: bash
+        run: python3 tools/test_plan_tlc_nightly.py
+      - name: Check the fleet's Go is on PATH
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The pinned runner's go.mod says go 1.26.6: that is a minimum, not an exact version (tlacheck records no Go
+          # version in any fingerprint), so any Go at or above 1.26.6 builds it; the fleet declares its own patch.
+          if ! command -v go >/dev/null 2>&1; then
+            echo "TOOL-MISSING go >= 1.26.6 (missing) on $RUNNER_NAME"
+            exit 1
+          fi
+          got="$(go version)"
+          echo "$got"
+          minor="$(echo "$got" | sed -n 's/.* go1\.\([0-9][0-9]*\)\.\([0-9][0-9]*\)[ -].*/\1/p')"
+          patch="$(echo "$got" | sed -n 's/.* go1\.\([0-9][0-9]*\)\.\([0-9][0-9]*\)[ -].*/\2/p')"
+          if [ -z "$minor" ] || [ "$minor" -lt 26 ] || { [ "$minor" -eq 26 ] && [ "$patch" -lt 6 ]; }; then
+            echo "TOOL-MISSING go >= 1.26.6 $got on $RUNNER_NAME"; exit 1
+          fi
+      - name: List the timeout-debt cases
+        id: plan
+        shell: bash
+        env:
+          GIT_TERMINAL_PROMPT: '0'
+          GOFLAGS: -mod=readonly
+        run: |
+          set -euo pipefail
+          job=$(mktemp -d "$RUNNER_TEMP/rocketnet-tlc-debt-plan.XXXXXX")
+          git -c credential.helper= clone --filter=blob:none --no-checkout https://github.com/mas-bandwidth/nova-tools.git "$job/runner"
+          git -C "$job/runner" checkout --detach 0c97d5958bf2b3cb1ad24e6e1b58f5b04e70347a
+          (cd "$job/runner" && go build -o "$job/tlacheck" ./tools/tlacheck)
+          "$job/tlacheck" groups --root proofs --stale > "$job/stale.json"
+          cat "$job/stale.json"
+          python3 tools/plan_tlc_nightly.py --stale "$job/stale.json" --select debt > "$job/plan" 2> "$job/plan.log"
+          cat "$job/plan.log"
+          # One matrix entry per case, from the planner's own lines:
+          # TLC-PLAN <reason> <config> (<group> shard <i>/<n>)
+          python3 - "$job/plan.log" "$job/plan" >> "$GITHUB_OUTPUT" <<'EOF'
+          import json, re, sys
+          line = re.compile(r"^TLC-PLAN \S+ (\S+) \((\S+) shard (\d+)/(\d+)\)$")
+          cases = []
+          for text in open(sys.argv[1], encoding="utf-8"):
+              m = line.match(text.strip())
+              if m:
+                  cases.append({"config": m[1], "group": m[2], "shard": m[3], "shards": m[4]})
+          planned = [l.split() for l in open(sys.argv[2], encoding="utf-8") if l.strip()]
+          if [[c["group"], c["shards"], c["shard"]] for c in cases] != planned:
+              sys.exit("TLC-DEBT the plan and its log disagree")
+          print("cases=" + json.dumps(cases))
+          print(f"count={len(cases)}")
+          EOF
+          rm -rf -- "$job"
+
+  case:
+    name: ${{ matrix.case.config }}
+    needs: plan
+    if: needs.plan.outputs.count != '0'
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 6000  # 100 h: the 96 h case deadline plus the build
+    strategy:
+      fail-fast: false
+      # Two cases at once, so the debt never holds more than two of the
+      # fleet's Linux runners for days and per-commit CI keeps the rest.
+      max-parallel: 2
+      matrix:
+        case: ${{ fromJSON(needs.plan.outputs.cases) }}
+    env:
+      TLC_DEBT_SECONDS: '345600'  # 96 h
+      CASE_CONFIG: ${{ matrix.case.config }}
+      CASE_GROUP: ${{ matrix.case.group }}
+      CASE_SHARD: ${{ matrix.case.shard }}
+      CASE_SHARDS: ${{ matrix.case.shards }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Run the case to its declared result
+        shell: bash
+        env:
+          GIT_TERMINAL_PROMPT: '0'
+          GOFLAGS: -mod=readonly
+        run: |
+          set -euo pipefail
+          job=$(mktemp -d "$RUNNER_TEMP/rocketnet-tlc-debt.XXXXXX")
+          echo "TLC_EVIDENCE=$job" >> "$GITHUB_ENV"
+          git rev-parse HEAD > "$job/source-revision.txt"
+          git -c credential.helper= clone --filter=blob:none --no-checkout https://github.com/mas-bandwidth/nova-tools.git "$job/runner"
+          git -C "$job/runner" checkout --detach 0c97d5958bf2b3cb1ad24e6e1b58f5b04e70347a
+          # the pinned JAR, from the fleet's tla play
+          jar=/opt/tla/tla2tools.jar
+          want=936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88
+          if [ ! -f "$jar" ] || [ "$(sha256sum "$jar" | cut -d' ' -f1)" != "$want" ]; then
+            echo "TOOL-MISSING tla2tools.jar sha256 $want at $jar on $RUNNER_NAME"
+            exit 1
+          fi
+          if ! command -v java >/dev/null 2>&1; then
+            echo "TOOL-MISSING java on $RUNNER_NAME"
+            exit 1
+          fi
+          if ! command -v go >/dev/null 2>&1; then
+            echo "TOOL-MISSING go on $RUNNER_NAME"
+            exit 1
+          fi
+
+          adapter_sha=$(sha256sum tools/tlc_nightly.go | cut -d' ' -f1)
+          echo "$adapter_sha" > "$job/adapter-source-sha256.txt"
+          export TLC_NIGHTLY_TEST_JAR="$jar" TLC_NIGHTLY_TEST_EVIDENCE="$job/controls"
+          (cd "$job/runner" && go test -timeout=0 -count=1 -v "$GITHUB_WORKSPACE/tools/tlc_nightly.go" "$GITHUB_WORKSPACE/tools/tlc_nightly_test.go") | tee "$job/adapter-controls.log"
+          (cd "$job/runner" && go build -ldflags "-X main.adapterSHA=$adapter_sha" -o "$job/tlc-nightly" "$GITHUB_WORKSPACE/tools/tlc_nightly.go")
+
+          # The case keeps its group index/cardinality and exact oracle, under
+          # its own deadline; timeout signals the adapter and its TLC.
+          dir="$job/run"
+          start=$(date +%s)
+          rc=0
+          timeout --kill-after=60 "$TLC_DEBT_SECONDS" "$job/tlc-nightly" --root proofs --jar "$jar" \
+            --group "$CASE_GROUP" --shards "$CASE_SHARDS" --shard "$CASE_SHARD" --dir "$dir" > "$job/case.log" 2>&1 || rc=$?
+          seconds=$(( $(date +%s) - start ))
+          echo "$rc $seconds" > "$job/case.status"
+          cat "$job/case.log"
+          if [ "$rc" = 124 ] || [ "$rc" = 137 ]; then
+            line="CASE UNFINISHED config=$CASE_CONFIG seconds=$seconds deadline=${TLC_DEBT_SECONDS}s"
+          else
+            line=$(grep -h '^CASE' "$job/case.log" || true)
+            [ -n "$line" ] || line="CASE NO-RESULT config=$CASE_CONFIG seconds=$seconds exit=$rc"
+          fi
+          echo "$line" | tee "$job/outcome.txt"
+          {
+            echo "### TLC timeout debt: $CASE_CONFIG at $(cat "$job/source-revision.txt")"
+            echo
+            echo "    $line"
+          } >> "$GITHUB_STEP_SUMMARY"
+          case "$line" in
+            "CASE PASS "*) [ "$rc" = 0 ] || { echo "TLC-DEBT $CASE_CONFIG printed PASS but exited $rc"; exit 1; } ;;
+            *) echo "TLC-DEBT $CASE_CONFIG did not reach its declared result by its deadline"; exit 1 ;;
+          esac
+          echo "TLC-DEBT $CASE_CONFIG reached its declared result; separate evidence, bounded records unchanged"
+
+      - name: Upload the case's evidence
+        id: debt-evidence
+        if: always() && env.TLC_EVIDENCE != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: tlc-debt-${{ matrix.case.config }}
+          path: |
+            ${{ env.TLC_EVIDENCE }}/outcome.txt
+            ${{ env.TLC_EVIDENCE }}/case.status
+            ${{ env.TLC_EVIDENCE }}/*-revision.txt
+            ${{ env.TLC_EVIDENCE }}/*-sha256.txt
+            ${{ env.TLC_EVIDENCE }}/*.log
+            ${{ env.TLC_EVIDENCE }}/run/result.json
+            ${{ env.TLC_EVIDENCE }}/run/tlc.log
+            ${{ env.TLC_EVIDENCE }}/controls/**/result.json
+            ${{ env.TLC_EVIDENCE }}/controls/**/tlc.log
+          if-no-files-found: ignore
+
+      - name: Remove temporary proof state after preserving evidence
+        if: always() && env.TLC_EVIDENCE != '' && steps.debt-evidence.outcome == 'success'
+        shell: bash
+        run: rm -rf -- "$TLC_EVIDENCE"

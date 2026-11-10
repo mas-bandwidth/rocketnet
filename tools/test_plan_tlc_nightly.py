@@ -3,7 +3,7 @@
 
 import unittest
 
-from plan_tlc_nightly import plan
+from plan_tlc_nightly import choose, plan
 
 
 def case(config, group="alpha", gate="required", debt="-"):
@@ -65,6 +65,20 @@ class PlannerTests(unittest.TestCase):
             plan([case("a")], [], ["typo"])
         with self.assertRaisesRegex(ValueError, "undeclared records"):
             plan([case("a")], [run("typo")], [])
+
+    def test_gate_runs_stale_cases_and_never_debt(self):
+        cases = [case("debt", gate="bench", debt="over-budget"), case("other"),
+                 case("idle-debt", "beta", gate="bench", debt="over-budget")]
+        runs = [run("debt", "FAIL", "124"), run("idle-debt", "FAIL", "124")]
+        self.assertEqual(choose(plan(cases, runs, ["alpha"]), "stale"), [
+            ("alpha", 2, 1, "other", "stale")])
+
+    def test_debt_watch_runs_every_debt_case_and_nothing_else(self):
+        cases = [case("debt", gate="bench", debt="over-budget"), case("other"),
+                 case("idle-debt", "beta", gate="bench", debt="over-budget")]
+        runs = [run("debt", "FAIL", "124"), run("idle-debt", "FAIL", "124")]
+        self.assertEqual(choose(plan(cases, runs, ["alpha"]), "debt"), [
+            ("alpha", 2, 0, "debt", "stale+debt"), ("beta", 1, 0, "idle-debt", "debt")])
 
     def test_malformed_stale_list_is_refused(self):
         for stale in ["alpha", {}, [None]]:

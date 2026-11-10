@@ -11,6 +11,7 @@
 #include <string.h>
 
 #include "test_unit_registry.h"
+#include "unit_arena.h"
 
 #include "../sdk/rocketnet.h"
 #include "../sdk/rocketnet_allocator.h"
@@ -68,7 +69,7 @@ static void valid_base_record( struct rocketnet_message_record_t * record, int c
 #if ROCKETNET_DEV
 static void test_small_records_packed_several_per_packet()
 {
-    rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &builder_counters );
+    rn_arena_t * arena = rn_unit_arena_create( NULL, 1, &builder_counters );
     rocketnet_unit_check( arena != NULL );
 
     rn_region_t * region = rn_arena_region( arena, 0 );
@@ -134,7 +135,7 @@ static void test_small_records_packed_several_per_packet()
     rocketnet_unit_check( numbers != NULL );
     rocketnet_unit_check( count == 0 );
 
-    rn_arena_destroy( arena );
+    rn_unit_arena_destroy( arena );
 }
 #endif // #if ROCKETNET_DEV
 
@@ -145,7 +146,7 @@ static void test_small_records_packed_several_per_packet()
 
 static void test_builder_obeys_budget_and_class_order()
 {
-    rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &builder_counters );
+    rn_arena_t * arena = rn_unit_arena_create( NULL, 1, &builder_counters );
     rocketnet_unit_check( arena != NULL );
 
     rn_region_t * region = rn_arena_region( arena, 0 );
@@ -232,7 +233,7 @@ static void test_builder_obeys_budget_and_class_order()
     rocketnet_unit_check( reliable.taken == 0 );
     rocketnet_unit_check( poor.bytes_spent == 0 );                       // nothing was spent: the item waits
 
-    rn_arena_destroy( arena );
+    rn_unit_arena_destroy( arena );
 }
 
 // R2's acceptance: a counting allocator is installed, the connection is
@@ -246,7 +247,7 @@ static void test_packet_builder_no_allocation_after_create()
 
     builder_allocs = 0;
 
-    rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &builder_counters );
+    rn_arena_t * arena = rn_unit_arena_create( NULL, 1, &builder_counters );
     rocketnet_unit_check( arena != NULL );
 
     const size_t after_create = builder_allocs;
@@ -299,7 +300,7 @@ static void test_packet_builder_no_allocation_after_create()
 
     rocketnet_unit_check( builder_allocs == after_create );
 
-    rn_arena_destroy( arena );
+    rn_unit_arena_destroy( arena );
     rocketnet_term();
     rocketnet_unit_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
@@ -721,7 +722,7 @@ static void plan_fill( int num_items, uint32_t channels )
 
 static void test_packet_builder_matches_reference_order()
 {
-    rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &builder_counters );
+    rn_arena_t * arena = rn_unit_arena_create( NULL, 1, &builder_counters );
     rocketnet_unit_check( arena != NULL );
 
     rn_region_t * region = rn_arena_region( arena, 0 );
@@ -809,7 +810,7 @@ static void test_packet_builder_matches_reference_order()
         }
     }
 
-    rn_arena_destroy( arena );
+    rn_unit_arena_destroy( arena );
 }
 
 // the builder's plan cost is linear: one item scan, six stable radix touches,
@@ -820,7 +821,7 @@ static void test_packet_builder_matches_reference_order()
 #if ROCKETNET_DEV
 static void test_packet_builder_operations_bounded()
 {
-    rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &builder_counters );
+    rn_arena_t * arena = rn_unit_arena_create( NULL, 1, &builder_counters );
     rocketnet_unit_check( arena != NULL );
 
     rn_region_t * region = rn_arena_region( arena, 0 );
@@ -894,7 +895,7 @@ static void test_packet_builder_operations_bounded()
         }
     }
 
-    rn_arena_destroy( arena );
+    rn_unit_arena_destroy( arena );
 }
 #endif // #if ROCKETNET_DEV
 
@@ -905,7 +906,7 @@ static void test_packet_builder_operations_bounded()
 
 static void test_packet_builder_flat_plan_tags_ranges_and_bounds()
 {
-    rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &builder_counters );
+    rn_arena_t * arena = rn_unit_arena_create( NULL, 1, &builder_counters );
     rocketnet_unit_check( arena != NULL );
 
     rn_region_t * region = rn_arena_region( arena, 0 );
@@ -977,7 +978,7 @@ static void test_packet_builder_flat_plan_tags_ranges_and_bounds()
         rocketnet_unit_check( !over[i].taken );
     }
 
-    rn_arena_destroy( arena );
+    rn_unit_arena_destroy( arena );
 }
 
 #if ROCKETNET_DEV

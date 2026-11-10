@@ -28,6 +28,7 @@
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
+#include "unit_arena.h"
 #include "portable_crt.h"
 
 #include "rocketnet_internal.h"
@@ -342,7 +343,7 @@ static void test_max_resend_delay_payload_reserve_without_acks()
         rocketnet_counters_t counters;
         memset( &counters, 0, sizeof( counters ) );
 
-        rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+        rn_arena_t * arena = rn_unit_arena_create( &config, 1, &counters );
         rocketnet_unit_check( arena != NULL );
 
         rn_region_t * region = rn_arena_region( arena, 0 );
@@ -370,7 +371,7 @@ static void test_max_resend_delay_payload_reserve_without_acks()
                 budgets[side], (unsigned long long) budget,
                 (unsigned long long) rocketnet_message_connection_bytes( &config ),
                 (unsigned long long) rocketnet_message_connection_bytes( &config ) * 1000 );
-        rn_arena_destroy( arena );
+        rn_unit_arena_destroy( arena );
     }
 }
 REGISTER_UNIT_TEST( test_max_resend_delay_payload_reserve_without_acks );
