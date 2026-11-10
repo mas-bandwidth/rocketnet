@@ -592,7 +592,7 @@ static void standard_receive_processing_counters()
         standard_client_teardown( &client );
     }
 
-    // the server slot gate, after the replay mark and before the open
+    // the server slot gate, after the replay check and before the open
     {
         static struct standard_server_t server;
         standard_server_setup( &server, true, false );
@@ -715,6 +715,7 @@ static void standard_receive_processing_counters()
         int bytes = standard_receive_processing_generate( "t10.reserved-type", packet, (int) sizeof( packet ) );
         standard_client_process( &client, packet, bytes );
         rocketnet_unit_check( client.counters.values[ROCKETNET_COUNTER_RESERVED_TYPE] == 1 );
+        rocketnet_unit_check( client.counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED] == 1 );
 
         standard_client_teardown( &client );
     }
