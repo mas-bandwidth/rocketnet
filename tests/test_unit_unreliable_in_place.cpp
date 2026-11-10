@@ -80,7 +80,7 @@ struct ip_net_t;
 // The bytes of ip_end_t after frames, used through refuse_start: no member
 // there needs padding before it, so a tail_pad of the rest to 16 leaves the
 // compiler none to add (MSVC C4324).
-#define IP_END_TAIL_BYTES ( sizeof( bool ) * IP_FRAMES + sizeof( uint64_t ) * IP_FRAMES + 13 * sizeof( std::vector<int> ) + 2 * sizeof( bool ) )
+#define IP_END_TAIL_BYTES ( sizeof( bool ) * IP_FRAMES + sizeof( uint64_t ) * IP_FRAMES + sizeof( uint64_t ) + 13 * sizeof( std::vector<int> ) + 2 * sizeof( bool ) )
 
 struct ip_end_t
 {
@@ -90,6 +90,7 @@ struct ip_end_t
     alignas( 16 ) uint8_t frames[IP_FRAMES][IP_PAYLOAD_INDEX + IP_ARENA_BYTES];
     bool used[IP_FRAMES];
     uint64_t frame_id[IP_FRAMES];
+    uint64_t refused_start;             // the transport's refusal count, as SEND_RING_FULL counts it
 
     std::vector<ip_buffer_t> handed;    // every frame start_packet handed out
     std::vector<ip_buffer_t> finished;  // every frame finish_packet was given
@@ -198,7 +199,11 @@ static uint8_t * ip_start_packet( void * transport, int client_index, int reques
     ip_end_t * e = (ip_end_t *) transport;
     memset( context, 0, sizeof( *context ) );
     if ( request_bytes < 1 || request_bytes > IP_ARENA_BYTES || e->refuse_start || !e->connected )
+    {
+        if ( e->refuse_start )
+            e->refused_start++;
         return NULL;
+    }
 
     for ( int f = 0; f < IP_FRAMES; f++ )
     {
@@ -1260,6 +1265,44 @@ static void test_start_past_packet_allowance_falls_back_to_the_region()
     ip_pair_teardown( &pair );
 }
 
+// One fitting unreliable send the transport refuses for want of a frame (a
+// full send ring or lease table) is one refused frame: the transport's refusal
+// counter moves by one, the send falls back to the region and is counted once,
+// and it is delivered.
+static void test_unreliable_refused_start_counts_once()
+{
+    ip_pair_t pair;
+    ip_pair_setup( &pair );
+    ip_step( &pair, NULL, NULL );
+    ip_step( &pair, NULL, NULL );                         // settle the initial CONFIG exchange
+
+    ip_end_t * client = &pair.net->client;
+    rn_message_connection_t * connection = rn_message_object_connection( &pair.client->object, 0 );
+    const rocketnet_counters_t * counters = rocketnet_message_client_counters( pair.client );
+    const uint64_t fallback_before = ip_counter( counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK );
+    const uint64_t refused_before = client->refused_start;
+
+    client->refuse_start = true;
+
+    uint8_t * p = rocketnet_message_client_start( pair.client, 1, ROCKETNET_RELIABILITY_UNRELIABLE, 64 );
+
+    client->refuse_start = false;
+
+    check( p != NULL && rn_region_contains( connection->region, p, 64 ) );
+    check( client->refused_start == refused_before + 1 );
+    check( ip_counter( counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK ) == fallback_before + 1 );
+
+    ip_fill( p, 400, 64 );
+    check( rocketnet_message_client_finish( pair.client, 64 ) != 0 );
+
+    std::vector<ip_received_t> server_got;
+    ip_step( &pair, &server_got, NULL );
+    ip_step( &pair, &server_got, NULL );
+    check( ip_got( server_got, 0, 400, 64 ) );
+
+    ip_pair_teardown( &pair );
+}
+
 // Abort and short finish must reuse the uncommitted suffix without moving the
 // committed prefix. Verify the final frame identity as well as delivery.
 static void test_unreliable_packing_abort_and_short_finish()
@@ -1438,3 +1481,4 @@ REGISTER_UNIT_TEST( test_repeated_fill_flush_respects_packet_cap );
 REGISTER_UNIT_TEST( test_reliable_not_starved_by_in_place );
 REGISTER_UNIT_TEST( test_message_burst_start_finish_delivers_every_message );
 REGISTER_UNIT_TEST( test_start_past_packet_allowance_falls_back_to_the_region );
+REGISTER_UNIT_TEST( test_unreliable_refused_start_counts_once );

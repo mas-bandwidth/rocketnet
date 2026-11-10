@@ -169,6 +169,47 @@ and reports the `#error`. Configure checks the macro and leaves
 `ROCKETNET_IO_URING` unset in that case (cmake/RocketNetDependencies.cmake),
 so no CMake build reaches the directive.
 
+## cppcheck 2.19 on the fleet runners
+
+Added 2026-11-09. The static-analysis job runs on the fleet's Ubuntu 26.04
+runners, whose cppcheck is 2.19.0 (this triage was made with 2.13.0). No sdk
+source changed; on the same code 2.19 reports 123 findings that are in no
+baseline, and no longer reports three baselined ones. Each new finding was read
+at its site and none is a defect, so each is a line in
+`tools/tidy_dispositions.txt` with its reason. The baseline did not grow.
+
+A finding's key does not carry its line: identical messages in one file are
+numbered in order. Every `dangerousTypeCast` in a file has the same message,
+so its disposition reason names every cast that file has, with their lines.
+
+| file | check | count | verdict |
+|---|---|---:|---|
+| `rocketnet_allocator.cpp` | `dangerousTypeCast` | 21 | Typed carves of one 64-aligned block at aligned part offsets; element sizes are static_asserted. |
+| `rocketnet_server_transport.cpp` | `dangerousTypeCast` | 16 | Carves at `rocketnet_carve` offsets in the transport's block; one byte-pointer difference for a secret span's offset. |
+| `rocketnet_tests.cpp` | `dangerousTypeCast` | 12 | Byte views for memcmp and byte checks. |
+| `rocketnet_server_socket_linux.cpp` | `dangerousTypeCast` | 11 | Carves in the sized allocation; `ifr_data` as `char *` for SIOCETHTOOL; one byte view. |
+| `rocketnet_platform.cpp` | `dangerousTypeCast` | 9 | `sockaddr_storage` viewed by family; `char *` buffers for the portable socket calls. |
+| `rocketnet_server_gso_linux.cpp` | `dangerousTypeCast` | 8 | `sockaddr_storage` viewed by family: the sockets API idiom. |
+| `rocketnet_api.cpp` | `dangerousTypeCast` | 5 | Objects at the start of their own block; a standard-layout wrapper; receipt structs static_asserted identical. |
+| `rocketnet_client_slots.cpp` | `dangerousTypeCast` | 5 | Byte arithmetic to the int entries after an 8-multiple header; one byte view. |
+| `rocketnet_driver_builtin.cpp` | `dangerousTypeCast` | 5 | Bank arrays carved in order from one block, each aligned for its type. |
+| `rocketnet_message_server.cpp` | `dangerousTypeCast` | 5 | Object and connection arrays at 64-aligned offsets; a standard-layout wrapper. |
+| `rocketnet_driver_loopback.cpp` | `dangerousTypeCast` | 4 | Hub, endpoints, counters and queues at aligned offsets. |
+| `rocketnet_gateway_netlink_linux.cpp` | `dangerousTypeCast` | 3 | `sockaddr_nl` as `struct sockaddr *`. |
+| `rocketnet_address.cpp`, `rocketnet_client_transport.cpp`, `rocketnet_packet_batch.h` | `dangerousTypeCast` | 2 each | Byte views; two `rocketnet_carve` carves. |
+| `rocketnet.cpp`, `rocketnet_message_client.cpp`, `rocketnet_network_simulator.cpp`, `rocketnet_xdp_frame.h`, `rocketnet_xdp_replay_marks.h` | `dangerousTypeCast` | 1 each | The allocation header read back at the address and type it was written; a standard-layout wrapper; byte views. |
+| `rocketnet_channel_sequenced.cpp` | `nullPointer` | 4 | `descriptor` is set exactly when `reliable` and `hold` exactly when not; each is read only under the condition that set it. |
+| `rocketnet_client_transport.cpp` | `uninitvar` | 1 | `legacy_exposed` goes out with a count of 0 on the io-core path, and the callee returns at 0 and otherwise reads only the entries expose wrote. |
+| `rocketnet_platform.cpp` | `intToPointerCast` | 1 | The documented non-NULL placeholder handle of the non-Windows waitable-timer entry; never dereferenced. |
+| `rocketnet_platform.h` | `dangerousTypeCast`, `invalidPointerCast` | 2 | The atomic double store: memcpy'd bits stored as one relaxed 64-bit atomic. The `invalidPointerCast` is the baselined 2.13 finding `0ba34feccc9ec3a8` at the same site under a new key (2.19 names the pointers volatile). |
+
+The three baselined findings 2.19 no longer reports were deleted from
+`tools/cppcheck_baseline.txt`: `rocketnet_message_server.cpp`
+`returnDanglingLifetime` `836086b94ddd7683`, `rocketnet_platform.h`
+`invalidPointerCast` `0ba34feccc9ec3a8` (re-keyed above) and
+`rocketnet_tests.cpp` `incorrectStringBooleanError` `17af8ccfa68d434b`. They
+disappeared without a source change.
+
 ## Baseline shrinkage
 
 The clang-tidy baseline shrank from 390 to 333 findings. The removed entries

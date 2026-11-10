@@ -147,7 +147,7 @@ model's README for its current controls, witnesses and configured bounds.
 |---|---|
 | `link` | Shared lossy-link abstraction and loss patterns. |
 | `clientconnection` | Client connection state machine, safety/liveness cases and explicit timeout debt. |
-| `replaywindow` | Control, mid-scale bench control, the long-skip `WindowIsTruth` witness, the open-before-gate `NoOpenBeforeConnect` witness and the advance-before-gate `NoAdvanceBeforeConnect` witness |
+| `replaywindow` | Control, mid-scale bench control and a reversed witness for every safety rule: `WindowIsTruth`, `GenuineIsAccepted`, `AckReportsOnlyReceived`, `NoOpenBeforeConnect`, `NoAdvanceBeforeConnect`, `AckReportsOnlyProcessed`, `ReceivedIsRefused`, `BelowFloorIsRefused` and `HighestIsReceived` |
 | `rnsendstore` | One store class, abstractly (README-RNSendStore.md). |
 | `rnsendstorelayout` | The send store and the descriptor free stack at the code's layout, three chunks and four descriptors (README-RNSendStoreLayout.md). |
 | `rnupdateclock` | The update clock of the client transport, the server transport and the message object (README-RNUpdateClock.md). |
@@ -183,7 +183,7 @@ model's README for its current controls, witnesses and configured bounds.
 | `rnresendgenerations` | The names a transport ack follows into the resend FIFO, at the slot layout with W = 4, six numbers and two descriptors, the links carrying no generation (README-RNResendGenerations.md). |
 | `rnsentringlayout` | The sent-packet ring, the reference ring, the receipt ring and the receipt serial at the code's layout (README-RNSentRingLayout.md). |
 | `rnsendrotation` | The server send loop over the endpoint write pass under the transport's per-flush capacity (README-RNSendRotation.md). |
-| `rniocprefqueue` | The IOCP server's MPMC reference queue as laid out (RNIocpRefQueue.tla). |
+| `rniocprefqueue` | The IOCP server's MPMC reference queue as laid out, and the push a stalled pop refuses (README-RNIocpRefQueue.md). |
 | `rniocpsendlease` | The IOCP send operations' generation tags (RNIocpSendLease.tla). |
 | `rniocprunring` | The IOCP USO run-ticket ring (RNIocpRunRing.tla). |
 | `rniocpretrystop` | The IOCP receive retry queue and its stop-ticketed pass (RNIocpRetryStop.tla). |

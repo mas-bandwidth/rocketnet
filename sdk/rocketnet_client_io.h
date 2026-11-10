@@ -30,17 +30,23 @@
 // so the header needs no sodium include.
 void rocketnet_client_io_wipe( void * data, size_t bytes );
 
-// The client I/O step of docs/CLIENT-IO.md _The I/O step_ and _The wake_, and
-// the RNClientIo actions it names. The thread loop is one call per iteration;
+// The client I/O step (rocketnet_client_io_step) and wake (the transport's operations->wake),
+// and the proofs/tla/RNClientIo.tla actions it names. The thread loop is one call per iteration;
 // unit tests call it directly, with a fake transport and a test clock, on the
 // test's thread.
 
 #define ROCKETNET_CLIENT_IO_BATCH 64
 // The idle wait's timeout. The I/O thread wakes on its socket or its wake
 // (proofs/tla/RNClientIo.tla IoWake needs no timeout); this only bounds a lost wake,
-// so an idle client wakes at most 20 times a second. At 1 ms, 1000 clients on
-// one host woke 340,000 times a second and starved threads for seconds.
+// so an idle client wakes at most 20 times a second. The 1 ms comparison is
+// an unrecorded observation (1000 clients on one host woke 340,000 times a
+// second and starved threads for seconds), not a docs/runs/ measurement;
+// 0.05 s is a chosen design value.
 #define ROCKETNET_CLIENT_IO_GUARD_TIMEOUT_SECONDS 0.05    // a guard, never a cadence
+// The retry wait when a transient send refusal (EAGAIN/ENOBUFS) leaves
+// committed slots unsent: brief enough that the filling ring does not
+// overflow while the kernel send buffer drains.
+#define ROCKETNET_CLIENT_IO_SEND_RETRY_TIMEOUT_SECONDS 0.002
 
 // The receive buffers: the I/O thread fills one, one waits ready, update
 // holds one (the triple buffer of proofs/tla/RNBufferHandoff.tla, MaxReady 1).
@@ -83,7 +89,7 @@ struct rocketnet_client_io_ring_view_t
 
 // Each record carries the I/O thread's verdict (ROCKETNET_CLIENT_IO_VERDICT_*,
 // sdk/rocketnet_client_protocol.h) and, when opened, the reconstructed 64-bit
-// session sequence (docs/CLIENT-IO-DECRYPT.md, If decrypt moves). An opened
+// session sequence (rocketnet_client_io_decrypt_datagram, proofs/tla/RNClientIoDecrypt.tla IoCheck, IoOpen). An opened
 // record keeps its wire header and its wire byte count; the plaintext replaces
 // the ciphertext behind the header.
 
@@ -125,13 +131,16 @@ struct rocketnet_client_io_open_t
 
 // Both handoffs are rocketnet_buffer_handoff_t (proofs/tla/RNBufferHandoff.tla):
 // each ring and each receive buffer has one owner at a time, and only their
-// indices cross threads, under the transport's mutex, which covers nothing
-// else. The main thread only try-acquires it; the I/O thread acquires it.
+// indices cross threads, under the transport's mutex (shared in development
+// builds only with rocketnet_network_simulator_reconfigure and
+// rocketnet_network_simulator_take_setting, which acquire it blocking when a
+// simulator setting is handed over). For buffer handoffs the main thread only
+// try-acquires it; the I/O thread acquires it.
 
 struct rocketnet_client_io_t
 {
     const rocketnet_client_transport_io_t * transport;
-    rocketnet_platform_mutex_t * mutex;         // the handoff mutex: index exchanges only
+    rocketnet_platform_mutex_t * mutex;         // the handoff mutex: index exchanges (and dev simulator settings)
     rocketnet_client_io_ring_view_t ring_view[ROCKETNET_CLIENT_IO_NUM_RINGS];
 
     // send: game threads fill send_fill; a published ring's committed count
@@ -160,9 +169,8 @@ struct rocketnet_client_io_t
     std::atomic<bool> quit;
     std::atomic<bool> stopped; // released only after the final core access
     struct rocketnet_client_io_open_t open;
-    uint64_t transport_faults;                     // a receive count or byte count this step refused
-    std::atomic<uint64_t> receive_too_large;    // written by the I/O thread only: datagrams the byte-count check refused as too large
-    uint64_t receive_too_large_folded;          // main thread only: the part of receive_too_large already added to prefilter_too_large
+    std::atomic<uint64_t> transport_faults;     // written by the I/O thread only: a receive count or byte count this step refused
+    uint64_t transport_faults_folded;           // main thread only: the part of transport_faults already added to prefilter_too_large
     uint64_t * prefilter_too_large;             // main thread only, optional: the PREFILTER_TOO_LARGE counter rocketnet_client_io_fold_counters adds to
 };
 
@@ -221,26 +229,26 @@ inline void rocketnet_client_io_init( rocketnet_client_io_t * io, const rocketne
 
     memset( &io->open.replay, 0, sizeof( io->open.replay ) );
     io->open.loaded_epoch = ROCKETNET_CLIENT_IO_EPOCH_NONE;
-    io->transport_faults = 0;
-    io->receive_too_large.store( 0, std::memory_order_relaxed );
-    io->receive_too_large_folded = 0;
+    io->transport_faults.store( 0, std::memory_order_relaxed );
+    io->transport_faults_folded = 0;
     io->prefilter_too_large = NULL;
 }
 
-// Main thread, at update after the expose. The I/O thread counts the
-// datagrams its byte-count check refuses as too large in its own field; this
-// adds the growth since the last call to the PREFILTER_TOO_LARGE counter,
-// which the main thread's prefilter also counts into, so one oversize datagram
-// reads PREFILTER_TOO_LARGE wherever it is refused.
+// Main thread, at update after the expose. The I/O thread counts every
+// receive count or byte count it refuses in its own field, the too-large
+// byte-count refusals included; this adds the growth since the last call to
+// the PREFILTER_TOO_LARGE counter, which the main thread's prefilter also
+// counts into, so one oversize datagram reads PREFILTER_TOO_LARGE wherever it
+// is refused and every other transport fault is counted once too.
 
 inline void rocketnet_client_io_fold_counters( rocketnet_client_io_t * io )
 {
-    const uint64_t too_large = io->receive_too_large.load( std::memory_order_relaxed );
+    const uint64_t faults = io->transport_faults.load( std::memory_order_relaxed );
 
     if ( io->prefilter_too_large )
-        *io->prefilter_too_large += too_large - io->receive_too_large_folded;
+        *io->prefilter_too_large += faults - io->transport_faults_folded;
 
-    io->receive_too_large_folded = too_large;
+    io->transport_faults_folded = faults;
 }
 
 // proofs/tla/RNClientIoDecrypt.tla PublishKeys; main thread, where the challenge
@@ -446,8 +454,8 @@ inline void rocketnet_client_io_stop( rocketnet_client_io_t * io, uint64_t commi
 // proofs/tla/RNClientIo.tla HandOffTo: publishes the filling ring and names the next filling ring.
 // proofs/tla/RNClientIo.tla DeferTo: leaves the committed slots in the filling ring when the exchange cannot run.
 // proofs/tla/RNBufferHandoff.tla ProducerExchange: try-acquires the mutex and swaps the producer index.
-// A LATE result is the deferred hand-off of docs/CLIENT-IO.md _Reuse only
-// after sent_: no ring is free, or the I/O thread holds the mutex this
+// A LATE result is the deferred hand-off (rocketnet_client_io_hand_off,
+// proofs/tla/RNClientIo.tla DeferTo, NoReuseBeforeSent): no ring is free, or the I/O thread holds the mutex this
 // instant, so the committed slots stay in the Filling ring and leave with the
 // next hand-off. This function never waits, spins or retries: it try-acquires
 // the mutex for one index exchange, and wakes the I/O thread after releasing
@@ -801,8 +809,6 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
                 if ( packet_bytes[i] < 0 || packet_bytes[i] > ROCKETNET_TRANSPORT_MAX_DATAGRAM_BYTES )
                 {
                     io->transport_faults++;
-                    if ( packet_bytes[i] > ROCKETNET_FRAME_SIZE )
-                        io->receive_too_large.store( io->receive_too_large.load( std::memory_order_relaxed ) + 1, std::memory_order_relaxed );
                     continue;
                 }
 
@@ -836,8 +842,6 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
             if ( bytes < 0 || bytes > ROCKETNET_TRANSPORT_MAX_DATAGRAM_BYTES )
             {
                 io->transport_faults++;
-                if ( bytes > ROCKETNET_RECEIVE_PACKET_BYTES )
-                    io->receive_too_large.store( io->receive_too_large.load( std::memory_order_relaxed ) + 1, std::memory_order_relaxed );
                 break;
             }
 
@@ -893,7 +897,14 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
     if ( block && !worked && !quitting && io->transport->operations->wait )
     {
         const bool readable = io->fill_slots < ROCKETNET_NUM_CLIENT_PACKETS;
-        io->transport->operations->wait( io->transport->instance, readable, io->guard_timeout_seconds );
+        // Unsent committed slots mean the kernel refused a send transiently
+        // (EAGAIN/ENOBUFS): retry in 1-2 ms instead of after the idle guard,
+        // or the filling ring overflows while no inbound traffic wakes us.
+        const bool send_pending = io->send_ring >= 0 && io->send_slot < io->committed[io->send_ring];
+        double timeout = io->guard_timeout_seconds;
+        if ( send_pending && ROCKETNET_CLIENT_IO_SEND_RETRY_TIMEOUT_SECONDS < timeout )
+            timeout = ROCKETNET_CLIENT_IO_SEND_RETRY_TIMEOUT_SECONDS;
+        io->transport->operations->wait( io->transport->instance, readable, timeout );
     }
 
     return worked ? ROCKETNET_CLIENT_IO_WORKED : ROCKETNET_CLIENT_IO_IDLE;
