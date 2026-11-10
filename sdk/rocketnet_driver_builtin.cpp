@@ -140,7 +140,7 @@ struct portable_server_t
     int ready_index[PORTABLE_TX_BANKS] = {};
     int ready_head = 0;
     int ready_count = 0;
-    int tx_consumer = -1; // TX worker only: retained until its complete prefix is consumed
+    int tx_consumer = -1; // TX worker writes it under the mutex, main reads it there: retained until its complete prefix is consumed
     int tx_cursor = 0;   // TX worker only: first unconsumed entry of that bank
     portable_tx_bank_t bank[PORTABLE_TX_BANKS];
     int tx_capacity = 0;
@@ -424,9 +424,11 @@ static portable_tx_step_t portable_tx_step( portable_server_t * server )
     // ( free_head + free_count ) % PORTABLE_TX_BANKS under the mutex.
 
     bank->count = 0;
-    server->tx_consumer = -1;
     server->tx_cursor = 0;
     rocketnet_platform_mutex_acquire( &server->mutex );
+    // main reads tx_consumer under the mutex when a publish finds no free
+    // bank, so it is cleared under the mutex, as WTake sets it
+    server->tx_consumer = -1;
     // proofs/tla/RNBankFifoLayout.tla Release: the bank returns at the free tail.
     server->free_index[( server->free_head + server->free_count ) % PORTABLE_TX_BANKS] = index;
     server->free_count++;
