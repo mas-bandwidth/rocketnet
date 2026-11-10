@@ -96,10 +96,9 @@ remaining gaps; earlier-head evidence is not a current-build pass.
 
 ## Roadmap
 
-Planned work lives in `docs/roadmap.sexp`; `ROADMAP.md` is generated from it.
-A pull request edits only `docs/roadmap.sexp` and never edits or regenerates
-`ROADMAP.md`. On a pull request the roadmap workflow runs `make roadmap-check`
-(the file parses and every id is unique); on each push to main that changes
-the sexp it runs `make roadmap` and commits `ROADMAP.md`. Keep exactly one
+Planned work lives in `docs/roadmap.sexp`, the committed roadmap ledger;
+`ROADMAP.md` is not committed. A pull request edits only `docs/roadmap.sexp`.
+On a pull request the roadmap workflow runs `make roadmap-check`
+(the file parses and every id is unique). Keep exactly one
 blank line between items, and remove an item by deleting its lines only, so
 pull requests that remove neighboring items merge without conflict.
