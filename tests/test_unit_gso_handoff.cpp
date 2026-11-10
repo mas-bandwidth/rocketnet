@@ -42,6 +42,15 @@ static void test_server_gso_send_full_keeps_rest()
 
 REGISTER_UNIT_TEST( test_server_gso_send_full_keeps_rest );
 
+// A full socket after stop: the TX worker must leave its EAGAIN retry once
+// send_quit is set, or the transport never reports stopped.
+static void test_server_gso_send_retry_quit()
+{
+    check( rocketnet_server_gso_test_send_retry_quit() );
+}
+
+REGISTER_UNIT_TEST( test_server_gso_send_retry_quit );
+
 // The receive drain's read budget: full batches of zero-length, refused-source
 // and undersized datagrams, far more than the budget, through the receive
 // seam; each drain returns after ROCKETNET_GSO_RECV_QUEUE_SIZE messages.

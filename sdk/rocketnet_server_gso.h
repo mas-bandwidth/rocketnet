@@ -107,10 +107,16 @@ static inline int rocketnet_server_gso_recv_vlen( int num_packets, bool gro )
 #define ROCKETNET_GSO_MAX_SUPER_BYTES                                    65000
 
 // a full socket keeps the TX worker's bank for the next update; this is how
-// long the worker waits for main's wake before it tries the socket again
-// anyway (a stopping server publishes no more updates)
+// long the worker waits for main's wake before it tries the socket again.
+// once stop is requested that wait is not repeated: a socket that stays full
+// must not keep rocketnet_server_gso_stopped false.
 
 #define ROCKETNET_GSO_SEND_RETRY_SECONDS                                 0.001
+
+// after stop, a full socket is tried this many further times and then the
+// worker leaves the bank. zero is the bound: the attempt that just failed
+// is the last one.
+#define ROCKETNET_GSO_SEND_RETRIES_AFTER_QUIT                               0
 
 // feature bits reported by rocketnet_server_gso_features: what the runtime
 // probe found and the transport is actually using
@@ -224,6 +230,9 @@ bool rocketnet_server_gso_test_send_refusals();
 // unsent message, drops nothing, and the next attempt sends the rest in
 // order without counting an earlier dropped run twice.
 bool rocketnet_server_gso_test_send_full_keeps_rest();
+// A full socket after stop. The TX worker's EAGAIN retry must notice
+// send_quit and leave, so the transport reports stopped. No socket, no sleep.
+bool rocketnet_server_gso_test_send_retry_quit();
 // One receive drain fed endless discards returns within its read budget.
 bool rocketnet_server_gso_test_drain_budget();
 bool rocketnet_server_gso_test_drain_room();
