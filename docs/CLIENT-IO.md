@@ -10,9 +10,12 @@ socket send and receive. Datagrams cross between that thread and the caller
 thread in preallocated buffers: three send rings and three receive buffers,
 each owned by one side at a time (`sdk/rocketnet_buffer_handoff.h`,
 `proofs/tla/RNBufferHandoff.tla`). Only buffer indices move, under a mutex held for
-that exchange alone. `update` and `send_packets` only try that mutex: when the
-I/O thread holds it, the exchange waits for the next call, so they never wait
-on the I/O thread. Sends then leave with the next hand-off
+that exchange (and, in development builds, for a pending network-simulator
+setting hand-over via `rocketnet_network_simulator_reconfigure` and
+`rocketnet_network_simulator_take_setting`). For buffer exchanges `update` and
+`send_packets` only try-acquire that mutex (a pending development simulator
+setting takes it blocking): when the I/O thread holds it, the exchange waits
+for the next call, so buffer hand-offs never wait on the I/O thread. Sends then leave with the next hand-off
 (`CLIENT_SEND_DEFERRED`) and received datagrams with the next update. In a
 development library only, the client config's `step_driven` (or
 `ROCKETNET_CLIENT_STEP_DRIVEN=1`) lets deterministic
@@ -27,19 +30,31 @@ and returns their indices in the same update. A busy return keeps those cleared
 buffers caller-owned until the next successful exchange; no packet is processed
 twice or overwritten. Batches beyond the budget remain READY in order.
 
-Stop transfers the development link simulator to the worker using the quit
-publication. The worker drains delayed packets before reporting completion;
-step-driven transports drain in their explicit shutdown step. Stop and polling
-perform no backend work, and reconfiguration after stop is refused.
+On the legacy path (a connection created with an active development link
+simulator or without wait/wake), `stop` transfers the simulator to the worker
+using the `quit` publication without calling the backend's `send`, and the
+worker drains delayed packets before reporting completion; step-driven
+transports drain in their explicit shutdown step. On the I/O-core path (when a
+development link-simulator setting was applied live after create), the I/O
+worker never owns the link simulator, so `rocketnet_client_transport_stop`
+drains queued simulator packets on the caller's thread via
+`rocketnet_client_link_drain( client_transport, DBL_MAX )` (invoking the
+backend's `send`) before publishing `quit` (`proofs/tla/RNClientLinkStop.tla`
+`Stop`). Polling (`stopped`) performs no backend work, and reconfiguration
+after stop is refused.
 
-Custom BASE drivers without wait/wake retain caller-thread per-packet sends;
-this compatibility path does not provide the built-in send offload guarantee.
+Custom BASE drivers without wait/wake retain caller-thread per-packet sends for
+normal traffic, while the disconnect burst is sent from the library's receive
+worker thread (`rocketnet_client_transport_flush_disconnect`); this
+compatibility path does not provide the built-in send offload guarantee, and a
+custom `BASE` driver's `send` callback can be called on the library's thread.
 Built-in loopback uses the same I/O core and bounded worker-side idle polling.
 The optional development link simulator is also an explicit exception to the
 built-in worker-offload guarantee: while running, its frame work and backend
-sends remain caller-owned. Its shutdown drain transfers to the worker as
-described above. This exception is development-only and does not change the
-normal built-in transport handoff contract.
+sends remain caller-owned, and its shutdown drain runs either on the legacy
+worker or during `stop` on the I/O-core path as described above. This exception
+is development-only and does not change the normal built-in transport handoff
+contract.
 
 Each built-in client transport fills the same operations
 (`rocketnet_client_transport_io_operations_t`, `sdk/rocketnet_driver.h`) and
@@ -58,8 +73,13 @@ The `gso` transport
 (`sdk/rocketnet_client_gso_linux.cpp`, the Linux `auto` choice) sends each run of
 equal-sized datagrams as one `UDP_SEGMENT` message and falls back to plain
 messages without loss when the kernel refuses (TRANSPORTS.md, UDP
-coalescing). Its send batch is one synchronous call that returns with every
-datagram sent or counted dropped, so it adds no state to `proofs/tla/RNClientIo.tla`.
+coalescing). It owns GSO send state (`rocketnet_client_gso_t`) and registers
+`send_batch_progress` (`rocketnet_client_gso_send_batch_progress`): when the
+socket is connected, `rocketnet_client_gso_send_batch` completes synchronously
+in one call, whereas an unconnected socket delegates to
+`rocketnet_platform_socket_send_packets_mmsg_progress`, which can return a
+consumed prefix and leave the unsent suffix at the I/O core's `send_slot`
+cursor.
 On macOS, `msgx` uses `sendmsg_x` and `recvmsg_x`. On Windows, `iocp`
 (`sdk/rocketnet_client_iocp_windows.cpp`, the Windows `auto` choice) waits on a completion
 port of its own: wait is `GetQueuedCompletionStatusEx`, wake posts one wake
@@ -71,7 +91,7 @@ dequeued, a state RNClientIo does not have; `proofs/tla/RNClientIocp.tla` models
 (Post, Complete, Dequeue, Drain, Wake, Close, Free): a buffer is never copied
 while posted, destroy frees only when every posted receive is drained, and
 after Close every posted receive completes and drains. Its sends are
-synchronous, as `gso`'s are, and add nothing to RNClientIo.
+synchronous and add nothing to RNClientIo.
 
 The client's `auto` order is the native client first and `portable` last:
 `gso` then `portable` on Linux, `msgx` then `portable` on macOS, and `iocp`
@@ -121,10 +141,13 @@ Keep the allocator context, callback context, and transport memory alive through
 completion and synchronous destroy; requesting stop does not transfer ownership.
 
 The development client link simulator belongs to the caller during normal
-updates. Stop publishes the quit request and transfers its queue to the worker;
-the worker drains surviving packets, including delayed disconnect copies,
-before publishing stopped. Stop itself does not send. Explicit step-driven
-transports perform this drain in their shutdown step. Simulator reconfiguration
-is refused after stop. `test_client_simulator_stop_defers_backend_send` and
+updates. On the legacy path, `stop` publishes the `quit` request without
+sending and transfers the simulator queue to the worker, which drains surviving
+packets, including delayed disconnect copies, before publishing `stopped`
+(explicit step-driven transports perform this drain in their shutdown step); on
+the I/O-core path, `rocketnet_client_transport_stop` drains the simulator queue
+directly on the caller's thread via `rocketnet_client_link_drain` before
+publishing `quit` (`proofs/tla/RNClientLinkStop.tla` `Stop`). Simulator
+reconfiguration is refused after stop. `test_client_simulator_stop_defers_backend_send` and
 `test_client_legacy_receive_handoff_and_backpressure` exercise these boundaries
 without threads, sleeps, or wall-clock deadlines.

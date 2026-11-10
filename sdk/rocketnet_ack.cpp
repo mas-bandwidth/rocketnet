@@ -454,7 +454,7 @@ static inline void rocketnet_ack_stats_prefetch( const void * address )
 {
 #if defined( __GNUC__ ) || defined( __clang__ )
     __builtin_prefetch( address );
-#elif defined( _MSC_VER ) && ( defined( _M_X64 ) || defined( _M_IX86 ) )
+#elif defined( _MSC_VER ) && defined( _M_X64 )
     _mm_prefetch( (const char *) address, _MM_HINT_T0 );
 #else
     (void) address;
@@ -634,12 +634,30 @@ static void rocketnet_ack_stats_sent_advance( struct rocketnet_ack_endpoint_t * 
         {
             if ( endpoint->stats_sent_low < base )
             {
+                // counted survivors lie in [base, old_top], at most ring/2 of them.
+                // nothing present there is an internal error, not a walk past old_top.
                 uint64_t sequence = base;
-                while ( !rocketnet_ack_stats_sent_present( endpoint, sequence ) )
-                    sequence++;
+                bool found = false;
+                for ( uint64_t step = 0; step < ring / 2 && sequence <= old_top; step++ )
+                {
+                    if ( rocketnet_ack_stats_sent_present( endpoint, sequence ) )
+                    {
+                        found = true;
+                        break;
+                    }
 
-                endpoint->stats_sent_low = sequence;
-                endpoint->stats_sent_low_time = endpoint->sent[sequence % ring].send_time;
+                    sequence++;
+                }
+
+                if ( !found )
+                    endpoint->internal_error = 1;
+                else
+                {
+                    endpoint->stats_sent_low = sequence;
+                    endpoint->stats_sent_low_time = endpoint->sent[sequence % ring].send_time;
+                }
+
+                rocketnet_assert( found );
             }
 
             if ( endpoint->stats_acked_count == 0 )

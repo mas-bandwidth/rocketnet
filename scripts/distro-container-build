@@ -1,0 +1,66 @@
+#!/bin/bash
+# distro-container-build: the Ubuntu LTS build check, run inside a container of
+# that release (ci.yml, job distro-container; the fleet's runners are a newer
+# Ubuntu, so the older releases are tested in a container on them).
+#
+# usage (inside docker.io/library/ubuntu:<release>, the repository at the
+# working directory): scripts/distro-container-build <release>
+#
+# It installs exactly the packages docs/BUILDING.md ("Linux") tells a user to
+# install on that release, plus python3 for the check scripts, then does what
+# docs/DEPLOYING.md ("Ubuntu 22.04 build compatibility") qualifies: the
+# ordinary CMake build with its AF_XDP provider checked from the configure
+# output, the unit suite, the legacy adapter checks on 22.04, and relocated C
+# and C++ consumers of both installed libraries. The container is the guest:
+# nothing is installed on the runner.
+#
+#   22.04  AF_XDP from stock libbpf 0.5 (no libxdp-dev); configure must print
+#          "XDP: using legacy AF_XDP APIs from libbpf (Ubuntu 22.04)".
+#   24.04  libxdp-dev (1.4); configure must enable XDP without the legacy path.
+#
+# Exit 0 when every check passes; otherwise the failing check's own output and
+# one DISTRO-BUILD-FAIL line naming it.
+set -euo pipefail
+
+release=${1:-}
+case "$release" in
+    22.04) xdp_packages="libbpf-dev" ;;
+    24.04) xdp_packages="libbpf-dev libxdp-dev" ;;
+    *) echo "distro-container-build: release must be 22.04 or 24.04, got '$release'" >&2; exit 2 ;;
+esac
+
+fail() { echo "DISTRO-BUILD-FAIL ubuntu $release: $*"; exit 1; }
+
+. /etc/os-release
+[ "$VERSION_ID" = "$release" ] || fail "the container is $PRETTY_NAME, not Ubuntu $release"
+
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -qq || fail "apt-get update"
+# shellcheck disable=SC2086
+apt-get install -y -qq cmake build-essential clang $xdp_packages liburing-dev xxd python3 > /dev/null \
+    || fail "apt-get install of the docs/BUILDING.md packages"
+
+echo "ubuntu $release: libbpf $(dpkg-query -W -f '${Version}' libbpf-dev)" \
+     "libxdp $(dpkg-query -W -f '${Version}' libxdp-dev 2>/dev/null || echo none)" \
+     "liburing $(dpkg-query -W -f '${Version}' liburing-dev)" \
+     "cmake $(dpkg-query -W -f '${Version}' cmake) clang $(dpkg-query -W -f '${Version}' clang)"
+
+build="build-ubuntu-$release"
+cmake -S . -B "$build" -DCMAKE_BUILD_TYPE=Release | tee "$build.configure.log" || fail "configure"
+if grep -q 'XDP off' "$build.configure.log"; then fail "configure compiled XDP out (an XDP-off build does not qualify)"; fi
+if [ "$release" = 22.04 ]; then
+    grep -q 'XDP: using legacy AF_XDP APIs from libbpf (Ubuntu 22.04)' "$build.configure.log" \
+        || fail "configure did not select the legacy libbpf AF_XDP provider"
+else
+    if grep -q 'XDP: using legacy AF_XDP APIs' "$build.configure.log"; then fail "configure selected the legacy provider though libxdp is installed"; fi
+fi
+
+cmake --build "$build" --parallel "$(nproc)" || fail "build"
+
+if [ "$release" = 22.04 ]; then
+    ./bin/test_xdp_compat || fail "./bin/test_xdp_compat"
+fi
+./bin/test || fail "./bin/test (the unit suite)"
+python3 tools/check_package.py "$build" || fail "tools/check_package.py $build"
+
+echo "DISTRO-BUILD-PASS ubuntu $release"

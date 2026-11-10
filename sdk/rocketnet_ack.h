@@ -323,7 +323,7 @@ struct rocketnet_ack_endpoint_t
 #endif // #if ROCKETNET_DEV
     double stats_rtt_sum;                       // sum and count of the positive rtt samples
     uint32_t stats_rtt_count;
-    uint32_t stats_pad;
+    uint32_t internal_error;                    // sticky: the sent-stats low scan found nothing in [base, old_top]
 
     // bit (slot) set: the record at slot was written since the reset. The two
     // record rings are never zeroed (176 KiB a connection at the default
