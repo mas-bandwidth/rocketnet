@@ -140,6 +140,20 @@ func TestCommittedCasesCheckDeadlock(t *testing.T) {
 			t.Errorf("case does not check deadlock: %s", line)
 		}
 	}
+	// A configuration's CHECK_DEADLOCK FALSE switches the check off whatever the row says.
+	cfgs, err := filepath.Glob(filepath.Join(filepath.Dir(self), "..", "proofs", "tla", "*.cfg"))
+	if err != nil || len(cfgs) == 0 {
+		t.Fatalf("no configurations found: %v", err)
+	}
+	for _, cfg := range cfgs {
+		raw, err := os.ReadFile(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(raw), "CHECK_DEADLOCK FALSE") {
+			t.Errorf("configuration switches deadlock checking off: %s", filepath.Base(cfg))
+		}
+	}
 }
 
 func TestNonProofExitsCannotPass(t *testing.T) {
