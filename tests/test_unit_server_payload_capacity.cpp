@@ -29,6 +29,7 @@
 #include "rocketnet_ack.h"
 #include "rocketnet_server_protocol.h"
 #include "rocketnet_test_vectors.h"
+#include "rocketnet_config.h"
 #include "rocketnet_layers.h"
 #include "rocketnet_driver.h"
 #include "unit_shutdown.h"
