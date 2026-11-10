@@ -1735,7 +1735,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         }
     }
     else if ( !get_gateway_mac_address( interface_name, server_socket->interface_index, public_address.type, server_socket->gateway_ethernet_address, &server_socket->gateway_known,
-                                       server_socket->gateway_address[gateway_family_index], &server_socket->gateway_address_known[gateway_family_index] ) )
+                                        server_socket->gateway_address[gateway_family_index], &server_socket->gateway_address_known[gateway_family_index] ) )
     {
         rocketnet_error( "server could not get gateway mac address" );
         rocketnet_server_socket_abort_create( server_socket );
