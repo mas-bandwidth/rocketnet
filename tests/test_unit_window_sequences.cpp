@@ -923,3 +923,43 @@ static void test_window_ring_operation_sequences()
 }
 
 REGISTER_UNIT_TEST( test_window_ring_operation_sequences );
+
+// A live number is acknowledged once. The same number again, the number just
+// before U, and next are refused, and those three refusals leave U and U' still.
+
+static void test_window_send_mark_acked_refuses_duplicate_and_out_of_window()
+{
+    world_synth( &g_world, 8, 4096, 1 );
+    action_begin();
+
+    seq_check( world_write_single( &g_world, 16 ) );
+    seq_check( world_write_single( &g_world, 16 ) );
+
+    const uint64_t live = g_world.send.next - 1;
+    seq_check( live > g_world.send.U );
+    seq_check( live < g_world.send.next );
+
+    const int accepted = rn_window_send_mark_acked( &g_world.send, live );
+    rocketnet_unit_check( accepted == 1 );
+
+    const uint64_t u = g_world.send.U;
+    const uint64_t uprime = g_world.send.U_prime;
+    const uint64_t ahead = g_world.send.next;
+
+    const int duplicate = rn_window_send_mark_acked( &g_world.send, live );
+    rocketnet_unit_check( duplicate == 0 );
+    rocketnet_unit_check( g_world.send.U == u );
+    rocketnet_unit_check( g_world.send.U_prime == uprime );
+
+    const int before = rn_window_send_mark_acked( &g_world.send, u - 1 );
+    rocketnet_unit_check( before == 0 );
+    rocketnet_unit_check( g_world.send.U == u );
+    rocketnet_unit_check( g_world.send.U_prime == uprime );
+
+    const int at_next = rn_window_send_mark_acked( &g_world.send, ahead );
+    rocketnet_unit_check( at_next == 0 );
+    rocketnet_unit_check( g_world.send.U == u );
+    rocketnet_unit_check( g_world.send.U_prime == uprime );
+}
+
+REGISTER_UNIT_TEST( test_window_send_mark_acked_refuses_duplicate_and_out_of_window );

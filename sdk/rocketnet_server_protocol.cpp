@@ -1944,7 +1944,7 @@ static int rocketnet_server_keep_alive_due( const struct rocketnet_server_protoc
                                             const struct rocketnet_encryption_mapping_t * mapping,
                                             int client_index, double current_time )
 {
-    const double send_rate = server->send_rate > 0.0 ? server->send_rate : 10.0;
+    const double send_rate = server->send_rate > 0.0 ? server->send_rate : ROCKETNET_DEFAULT_SEND_RATE;
     const int acknowledged = server->acks && client_index >= 0
                                  ? (int) server->acks->endpoints[client_index].keep_alive_acked
                                  : 0;
@@ -2208,11 +2208,11 @@ void rocketnet_server_protocol_disconnect_client( struct rocketnet_server_protoc
     // release the slot and destroy the mapping immediately, exactly as when
     // a client-sent disconnect arrives
 
-    rocketnet_debug( "server disconnected client %d", client_index );
     counters[ROCKETNET_COUNTER_SERVER_DISCONNECTED_CLIENT]++;
     counters[ROCKETNET_COUNTER_CLIENT_DISCONNECTED]++;
 
     rocketnet_server_connection_reset( server, client_index, ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED );
+    rocketnet_debug( "server disconnected client %d", client_index );
 }
 
 void rocketnet_server_protocol_accept_payload( struct rocketnet_server_protocol_t * server, int client_index, uint64_t connection_id, uint64_t sequence )
