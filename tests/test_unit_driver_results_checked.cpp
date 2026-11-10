@@ -553,6 +553,32 @@ static void test_transport_results_server_receive_checks_counts()
 }
 REGISTER_UNIT_TEST( test_transport_results_server_receive_checks_counts );
 
+// A transport result outside the contract (here a negative receive count)
+// is a transport fault. The update counts it on the transport alone; reading
+// the public counters folds it once into PREFILTER_TOO_LARGE, so a driver
+// fault is visible outside the transport.
+
+static void test_transport_results_server_faults_fold_into_public_counter()
+{
+    transport_results_server_lie_t lie = {};
+    rocketnet_server_transport_io_operations_t operations;
+    rocketnet_server_transport_t * server = transport_results_make_server( &lie, &operations );
+
+    const uint64_t too_large_before = rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE];
+
+    lie.mode = 1;
+    lie.calls = 0;
+    rocketnet_server_transport_update( server, 1000.0 );
+    rocketnet_unit_check( server->transport_faults == 1 );
+    rocketnet_unit_check( server->counters.values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE] == too_large_before );
+
+    rocketnet_unit_check( rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE] == too_large_before + 1 );
+
+    rocketnet_unit_check( rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE] == too_large_before + 1 );
+
+    rn_test_server_transport_stop_and_destroy( server );
+}
+REGISTER_UNIT_TEST( test_transport_results_server_faults_fold_into_public_counter );
 // A staged transport's receive view is checked like a batch count: a NULL view,
 // a count past the view's capacity, and a byte count that is negative or past
 // the receive ceiling (the staged transports drop larger datagrams themselves)
