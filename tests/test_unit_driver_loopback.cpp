@@ -1808,7 +1808,7 @@ REGISTER_UNIT_TEST( test_loopback_transport_server_batch_drops_packet_larger_tha
 REGISTER_UNIT_TEST( test_loopback_transport_io_refusals );
 
 bool rocketnet_server_iocp_test_release_send_retries_stalled_pop( int refusals, bool * released_out, int * state_out, bool * send_idle_out,
-                                                                  uint64_t * yields_out, bool * os_yield_out );
+                                                                  uint64_t * yields_out );
 
 static bool test_iocp_stop_step_send_idle_flag = false;
 static int test_iocp_stop_step_io_stops = 0;
@@ -1833,8 +1833,7 @@ static void test_iocp_release_send_retries_while_pop_sequence_store_stalls()
     int state = -1;
     bool send_idle = false;
     uint64_t yields = 0;
-    bool os_yield = false;
-    rocketnet_unit_check( rocketnet_server_iocp_test_release_send_retries_stalled_pop( 1, &released, &state, &send_idle, &yields, &os_yield ) );
+    rocketnet_unit_check( rocketnet_server_iocp_test_release_send_retries_stalled_pop( 1, &released, &state, &send_idle, &yields ) );
     rocketnet_unit_check( released );
     rocketnet_unit_check( state == 1 );
     rocketnet_unit_check( send_idle );
@@ -1871,9 +1870,9 @@ REGISTER_UNIT_TEST( test_iocp_release_send_retries_while_pop_sequence_store_stal
 // CAS and its sequence store) never spins on empty: it gives up the processor
 // once per ROCKETNET_PLATFORM_SPIN_YIELD_AFTER refusals, so the popper can run
 // there, and still queues the operation once the store lands. The stall is a
-// count of refused pushes: no thread and no clock. The seam stands in for the
-// yield the retry calls and counts each call, and reports that the yield it
-// replaced is the operating system's (SwitchToThread on Windows).
+// count of refused pushes: no thread and no clock. The count is a development
+// counter kept beside the SwitchToThread call, not by it: this checks when the
+// retry yields, not that the call is made.
 static void test_iocp_release_send_yields_while_pop_stays_stalled()
 {
     const int cases[] = { ROCKETNET_PLATFORM_SPIN_YIELD_AFTER - 1, ROCKETNET_PLATFORM_SPIN_YIELD_AFTER,
@@ -1885,13 +1884,11 @@ static void test_iocp_release_send_yields_while_pop_stays_stalled()
         int state = -1;
         bool send_idle = false;
         uint64_t yields = 0;
-        bool os_yield = false;
-        rocketnet_unit_check( rocketnet_server_iocp_test_release_send_retries_stalled_pop( refusals, &released, &state, &send_idle, &yields, &os_yield ) );
+        rocketnet_unit_check( rocketnet_server_iocp_test_release_send_retries_stalled_pop( refusals, &released, &state, &send_idle, &yields ) );
         rocketnet_unit_check( released );
         rocketnet_unit_check( state == 1 );
         rocketnet_unit_check( send_idle );
         rocketnet_unit_check( yields == (uint64_t) ( refusals / ROCKETNET_PLATFORM_SPIN_YIELD_AFTER ) );
-        rocketnet_unit_check( os_yield );
     }
 }
 

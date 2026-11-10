@@ -73,6 +73,7 @@ struct rocketnet_iocp_ref_queue_t
     uint64_t stalled_pop_sequence = 0;
     bool stall_next_pop = false;
     int stalled_pop_holds = 0;                  // refused pushes the stalled pop outlasts before its store lands
+    std::atomic<uint64_t> yields{ 0 };          // times a retried push gave up the processor
 #endif // #if ROCKETNET_DEV
 };
 
@@ -186,29 +187,6 @@ static bool rocketnet_iocp_queue_pop( rocketnet_iocp_ref_queue_t * queue, rocket
     return true;
 }
 
-// How a retried push gives up the processor: SwitchToThread itself on
-// Windows, which runs a ready thread of any priority on this processor. The
-// portable build of this half, the unit suite elsewhere, has no thread to
-// yield to. The yield is called through a pointer so the unit seam can stand
-// in for it and count each one; only that seam ever writes it.
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-typedef BOOL( WINAPI * rocketnet_iocp_yield_t )( void );
-#define ROCKETNET_IOCP_OS_YIELD SwitchToThread
-#else
-typedef int ( *rocketnet_iocp_yield_t )( void );
-
-static int rocketnet_iocp_no_yield( void )
-{
-    return 0;
-}
-#define ROCKETNET_IOCP_OS_YIELD rocketnet_iocp_no_yield
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-#if ROCKETNET_DEV
-static rocketnet_iocp_yield_t rocketnet_iocp_yield = ROCKETNET_IOCP_OS_YIELD;
-#else
-static const rocketnet_iocp_yield_t rocketnet_iocp_yield = ROCKETNET_IOCP_OS_YIELD;
-#endif // #if ROCKETNET_DEV
-
 // proofs/tla/RNIocpRefQueue.tla PushRead's refusal branch: a refused push
 // keeps its operation and tries again (RefusedNeverLost); giving up would
 // lose the operation for good (MCRNIocpRefQueueBrokenDropRefused.cfg). Each
@@ -236,7 +214,12 @@ static void rocketnet_iocp_queue_push_retry( rocketnet_iocp_ref_queue_t * queue,
         }
 
         refusals = 0;
-        rocketnet_iocp_yield();
+#if ROCKETNET_DEV
+        queue->yields.fetch_add( 1, std::memory_order_relaxed );
+#endif // #if ROCKETNET_DEV
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+        SwitchToThread();
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     }
 }
 
@@ -273,27 +256,12 @@ static bool rocketnet_iocp_queue_send_idle( const rocketnet_iocp_ref_queue_t * f
 }
 
 #if ROCKETNET_DEV
-static uint64_t rocketnet_iocp_test_yields = 0;
-
-// stands in for the processor yield and counts it
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-static BOOL WINAPI rocketnet_iocp_test_yield( void )
-#else
-static int rocketnet_iocp_test_yield( void )
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-{
-    ++rocketnet_iocp_test_yields;
-    return 1;
-}
-
 // A pop stalls between its CAS and its sequence store and outlasts refusals
 // refused pushes of the release that needs its cell (one or more). Reports
 // the release, the operation's state, send_idle once both operations are
-// back, how many times the retried release called the processor yield, and
-// whether the yield it would have called outside this seam is the operating
-// system's (SwitchToThread on Windows; elsewhere there is none to name).
+// back, and how many times the retried release gave up the processor.
 bool rocketnet_server_iocp_test_release_send_retries_stalled_pop( int refusals, bool * released_out, int * state_out, bool * send_idle_out,
-                                                                  uint64_t * yields_out, bool * os_yield_out )
+                                                                  uint64_t * yields_out )
 {
     const uint64_t capacity = 4;
     alignas( rocketnet_iocp_ref_cell_t ) uint8_t storage[capacity * sizeof( rocketnet_iocp_ref_cell_t )];
@@ -323,27 +291,16 @@ bool rocketnet_server_iocp_test_release_send_retries_stalled_pop( int refusals, 
     states[ref1.index] = ROCKETNET_IOCP_OPERATION_STAGED;
     ref1.generation = 1;
 
-    const rocketnet_iocp_yield_t os_yield = rocketnet_iocp_yield;
-    rocketnet_iocp_test_yields = 0;
-    rocketnet_iocp_yield = rocketnet_iocp_test_yield;
-
     free_sends.stalled_pop_holds = refusals - 1;
     const bool released1 = rocketnet_iocp_queue_release_send( &free_sends, ref1, &states[ref1.index] );
     const bool released0 = rocketnet_iocp_queue_release_send( &free_sends, ref0, &states[ref0.index] );
-
-    rocketnet_iocp_yield = os_yield;
     if ( !released0 )
         return false;
 
     *released_out = released1;
     *state_out = states[ref1.index];
     *send_idle_out = rocketnet_iocp_queue_send_idle( &free_sends, 0, (int) capacity );
-    *yields_out = rocketnet_iocp_test_yields;
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    *os_yield_out = os_yield == SwitchToThread;
-#else
-    *os_yield_out = os_yield == rocketnet_iocp_no_yield;
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    *yields_out = free_sends.yields.load( std::memory_order_relaxed );
     return true;
 }
 
