@@ -75,7 +75,9 @@ static void test_rio_transport_reservation_does_not_wrap()
 REGISTER_UNIT_TEST( test_rio_transport_reservation_does_not_wrap );
 // Stop keeps the socket open while committed sends are in flight
 // (proofs/tla/RNRioWorker.tla WClose), so closesocket cancels none of the stop
-// burst: a fake kernel, no socket, no worker thread, no clock.
+// burst, and it drains all 4,096 cancelled receives in that pass rather than
+// one 256 completion batch per 1 ms wait: a fake kernel, no socket, no worker
+// thread, no clock.
 static void test_rio_transport_stop_drains_sends()
 {
     check( rocketnet_server_rio_test_stop_drains_sends() );

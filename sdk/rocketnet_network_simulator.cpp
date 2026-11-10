@@ -443,7 +443,10 @@ bool rocketnet_network_simulator_take_setting( struct rocketnet_network_simulato
     // whether the setting in force changes the packets.  A zero setting is a
     // pass-through: it adds no latency and copies nothing.  With nothing handed
     // over the answer is read from the setting word and no lock is taken, so an
-    // inactive simulator puts no mutex on the send path.
+    // inactive simulator puts no mutex on the send path.  When a setting is
+    // waiting and the mutex is not free, the pending record stays and the call
+    // returns the setting already in force.  The next uncontended pass applies
+    // it.  A send path must not wait.
 
     rocketnet_assert( simulator );
     rocketnet_assert( mutex );
@@ -452,7 +455,8 @@ bool rocketnet_network_simulator_take_setting( struct rocketnet_network_simulato
     if ( !( word & ROCKETNET_SIMULATOR_SETTING_PENDING ) )
         return ( word & ROCKETNET_SIMULATOR_SETTING_ACTIVE ) != 0;
 
-    rocketnet_platform_mutex_acquire( mutex );
+    if ( !rocketnet_platform_mutex_try_acquire( mutex ) )
+        return ( word & ROCKETNET_SIMULATOR_SETTING_ACTIVE ) != 0;
 
     if ( simulator->config_pending )
     {

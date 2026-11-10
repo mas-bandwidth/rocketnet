@@ -985,6 +985,14 @@ static void test_endpoint_stalled_window_requests_no_frame()
     rn_endpoint_begin_flush( &endpoint );
     check( rn_endpoint_next_packet_bytes( &endpoint, 1000.001 ) == 0 );
 
+    // acknowledging the blocking numbers moves U' and clears the stall
+
+    check( endpoint.ordered.send.stalled == 1 );
+    for ( uint64_t id = 1; id < packet_id; id++ )
+        rn_endpoint_on_acked( &endpoint, id, 1000.002 );
+    check( endpoint.ordered.send.U_prime == (uint64_t) config.reliable_messages_in_flight );
+    check( endpoint.ordered.send.stalled == 0 );
+
     rn_arena_destroy( arena );
 }
 

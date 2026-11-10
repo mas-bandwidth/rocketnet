@@ -116,6 +116,8 @@ jobs:
           set -euo pipefail
           python3 tools/test_check_tla_records.py -v
           python3 tools/check_tla_records.py
+          # The pinned tlacheck agrees: no committed record is stale.
+          [ "$(cat "$TLC_EVIDENCE/stale.json")" = "[]" ] || { echo "TLC-STALE committed records: $(cat "$TLC_EVIDENCE/stale.json")"; exit 1; }
       - name: TLA ledgers merge clean
         shell: bash
         run: |
