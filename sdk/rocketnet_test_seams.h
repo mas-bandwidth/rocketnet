@@ -17,6 +17,7 @@
 
 #if ROCKETNET_DEV
 
+#include <stddef.h>
 #include <stdint.h>
 
 // ROCKETNET_DEV_SESSION_SEQUENCE_START: the first session-phase sequence
@@ -68,6 +69,26 @@ void rocketnet_dev_set_link_stop_wait_hold_hook( rocketnet_dev_link_stop_wait_ho
 // Per process, false by default. Defined in sdk/rocketnet_api.cpp.
 
 void rocketnet_dev_set_server_keygen_failure( bool fail );
+// The hash-key seed seam: the client slots, the token tables and the
+// encryption map draw their SipHash keys from OS entropy at create. A unit
+// case that depends on a table's layout sets a nonzero seed here, and every
+// table it then creates on this thread derives its key from that seed and the
+// table's kind instead, so the case is reproducible from the seed it prints.
+// Per thread, zero (OS entropy, the production draw) by default; a production
+// build has no seam and always draws from OS entropy. Defined in
+// sdk/rocketnet_encryption_map.cpp.
+
+#define ROCKETNET_DEV_HASH_KEY_CLIENT_SLOTS   1
+#define ROCKETNET_DEV_HASH_KEY_TOKEN_TABLE    2
+#define ROCKETNET_DEV_HASH_KEY_ENCRYPTION_MAP 3
+
+void rocketnet_dev_set_hash_key_seed( uint64_t seed );
+
+uint64_t rocketnet_dev_hash_key_seed( void );
+
+// called by each create after its OS entropy draw: replaces the key with one
+// derived from the seed and the table kind when this thread set a seed
+void rocketnet_dev_seed_hash_key( uint8_t * key, size_t key_bytes, int table_kind );
 
 // The disconnect-drain sealed-write seam. While count is positive, the next
 // seal of a deferred disconnect burst fails: rocketnet_write_sealed_packet
