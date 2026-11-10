@@ -81,12 +81,13 @@ required runs are:
   the push: every per-commit job in every workflow carries a two-minute
   `timeout-minutes`, and `tools/check_ci_budget.py` (in the lint job) refuses
   one without it. The per-commit jobs:
-  - `build-and-test`, named `<os> / <build_type> / <leg>`: Ubuntu 24.04
-    Debug `unit` and `functional` (which carries the libxdp 1.4 XDP cell in
-    the runner kernel guest), Release `unit` (which also runs the `builds`
-    leg's steps), `functional` and `checks`; macOS 27 on arm64 (rows named `macos-15`) Debug `unit` and
-    Release `functional`;
-  - `happy path / <os>` (ubuntu-24.04,
+  - `build-and-test`, named `<os> / <build_type> / <leg>`: Linux (the
+    fleet's Ubuntu 26.04 runners, rows named `linux`) Debug `unit` and
+    `functional` (which carries the XDP cell in the runner kernel guest,
+    against a libxdp in the tested range 1.4 to 1.6), Release `unit` (which
+    also runs the `builds` leg's steps), `functional` and `checks`; macOS on
+    arm64 (rows named `macos`) Debug `unit` and Release `functional`;
+  - `happy path / <os>` (linux,
     windows; the Windows row is the per-commit MSVC whole-tree build);
   - `asan + ubsan (<leg>)` (`unit suite`, `functional suite`) and
     `tsan (loopback soak)`;
