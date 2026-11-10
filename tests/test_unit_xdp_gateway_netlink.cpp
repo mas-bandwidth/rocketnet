@@ -1316,6 +1316,64 @@ static void test_xdp_transport_gateway_netlink_refresh_never_dumps_in_steady_sta
     fake_netlink = NULL;
 }
 
+// create-time discovery records the route's gateway IP and marks it known, so
+// the first periodic refresh asks that gateway's neighbour entry directly:
+// it does not dump the routes again just because create only kept the MAC
+static void test_xdp_transport_gateway_netlink_create_seeds_gateway_for_refresh()
+{
+    uint8_t gateway[16];
+    memset( gateway, 0, sizeof( gateway ) );
+    bool gateway_known = false;
+    uint8_t mac[6];
+    int error = -1;
+
+    // create: the route dump finds the gateway, then its neighbour answers
+
+    {
+        fake_netlink_t fake;
+        fake_netlink = &fake;
+        fake.script.push_back( default_route_datagram() );
+        fake.script.push_back( neighbor_reply( AF_INET ) );
+        memset( mac, 0, sizeof( mac ) );
+        check( rocketnet_gateway_netlink_discover_with( &fake_netlink_system, AF_INET, server_interface, gateway, &gateway_known, mac, &error ) == ROCKETNET_GATEWAY_NETLINK_FOUND );
+        check( gateway_known );
+        check( memcmp( gateway, gateway_ipv4, 4 ) == 0 );
+        check( memcmp( mac, gateway_mac, 6 ) == 0 );
+        check( fake.requests.size() == 2 && fake_dumps( fake ) == 1 );
+    }
+
+    // the first periodic refresh: create's gateway is known, so one direct
+    // neighbour query, no route dump
+
+    {
+        fake_netlink_t fake;
+        fake_netlink = &fake;
+        fake.script.push_back( neighbor_reply( AF_INET ) );
+        memset( mac, 0, sizeof( mac ) );
+        check( rocketnet_gateway_netlink_refresh_with( &fake_netlink_system, AF_INET, server_interface, gateway, &gateway_known, mac, &error ) == ROCKETNET_GATEWAY_NETLINK_FOUND );
+        check( memcmp( mac, gateway_mac, 6 ) == 0 );
+        check( fake.requests.size() == 1 && fake_dumps( fake ) == 0 );
+        uint16_t type = 0;
+        check( !request_is_dump( fake.requests[0], &type ) && type == RTM_GETNEIGH );
+    }
+
+    // no default route at create: no gateway IP is recorded, so the first
+    // refresh will dump the routes to see whether a default route appears
+
+    {
+        gateway_known = true;
+        netlink_datagram_t empty;
+        netlink_done( &empty );
+        fake_netlink_t fake;
+        fake_netlink = &fake;
+        fake.script.push_back( empty );
+        check( rocketnet_gateway_netlink_discover_with( &fake_netlink_system, AF_INET, server_interface, gateway, &gateway_known, mac, &error ) == ROCKETNET_GATEWAY_NETLINK_DONE );
+        check( !gateway_known );
+    }
+
+    fake_netlink = NULL;
+}
+
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_ipv4_default_route_found );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_ipv4_default_route_not_on_this_interface );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_ipv4_no_default_route );
@@ -1344,5 +1402,6 @@ REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_short_local_address );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_neighbor_asked_directly );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_neighbor_missing_entry );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_refresh_never_dumps_in_steady_state );
+REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_create_seeds_gateway_for_refresh );
 
 #endif // #if ROCKETNET_XDP
