@@ -114,9 +114,11 @@ static inline int rocketnet_server_gso_recv_vlen( int num_packets, bool gro )
 #define ROCKETNET_GSO_SEND_RETRY_SECONDS                                 0.001
 
 // after stop, a full socket is tried this many further times and then the
-// worker leaves the bank. zero is the bound: the attempt that just failed
-// is the last one.
-#define ROCKETNET_GSO_SEND_RETRIES_AFTER_QUIT                               0
+// worker leaves the bank. each retry waits for main's wake or the retry
+// timeout, so a socket that stays full holds a bank at most about 100 ms;
+// a transient refusal (a disconnect burst meeting a busy socket) is sent.
+// the value is unmeasured: chosen, not derived from a measured drain time.
+#define ROCKETNET_GSO_SEND_RETRIES_AFTER_QUIT                             100
 
 // feature bits reported by rocketnet_server_gso_features: what the runtime
 // probe found and the transport is actually using
