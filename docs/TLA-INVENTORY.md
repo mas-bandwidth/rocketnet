@@ -12,9 +12,11 @@ sources); and `tools/check_tla_coverage.py` validates module, action, symbol
 and citation coverage in `proofs/tla/COVERAGE.tsv`.
 
 This is a navigation inventory, not a claim that every model matches every
-current implementation detail. In particular, `RNOutgoingBuild` describes the
-earlier one-message-per-frame design; its recorded results do not qualify the
-current [unreliable aggregation path](OUTGOING-BUILD.md#evidence-and-scope).
+current implementation detail. `RNOutgoingBuild` models the shipped packed
+design of the [unreliable aggregation path](OUTGOING-BUILD.md#evidence-and-scope)
+(records appended to one open frame per connection); its six cases were run on
+2026-10-24 (`proofs/tla/RUNS.tsv`), and its abstractions from the code are
+listed in `proofs/tla/README-RNOutgoingBuild.md`.
 `RNMessageViews` models internal view ownership; the public receive API has no
 release call. Check each model's abstraction and recorded inputs at the source
 revision under review.
