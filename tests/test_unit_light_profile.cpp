@@ -49,7 +49,10 @@
 // 64-byte head-block alignment, as measured on main, adding 64 bytes.
 // The xdp worker's two receive frame arrays moved from its thread stack into
 // each queue's rocketnet_server_xdp_socket_t, adding 872136 bytes (measured).
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110339339ULL )
+// The XDP replay marks add a 2 * 1024 * 20-byte kernel-held key table
+// (40960 bytes) and a 2 * 1024 * 2-byte pending-forget index (4096 bytes).
+// The 1 MiB caller slack is added separately.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3111432971ULL )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14146994 )
 #endif // #if defined( _WIN32 )
 
