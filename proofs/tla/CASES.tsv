@@ -707,3 +707,5 @@ MCRNUringSendPhasesLateReap.cfg	MCRNUringSendPhases.tla	pass	-	check	rnuringsend
 MCRNUringSendPhasesBrokenOnePhase.cfg	MCRNUringSendPhases.tla	invariant	NeverRefusedUnderLateReap	check	rnuringsendphases	required	-
 MCRNUringSendPhasesBrokenNoBase.cfg	MCRNUringSendPhases.tla	invariant	NoWriteWhileKernelOwned	check	rnuringsendphases	required	-
 MCRNUringSendPhasesBrokenRemainder.cfg	MCRNUringSendPhases.tla	invariant	PendingMatches	check	rnuringsendphases	required	-
+MCRNClientSendCursorLayout.cfg	MCRNClientSendCursorLayout.tla	pass	-	check	rnclientsendcursorlayout	required	-
+MCRNClientSendCursorLayoutBrokenPlus.cfg	MCRNClientSendCursorLayout.tla	invariant	AtMostOnce	check	rnclientsendcursorlayout	required	-
