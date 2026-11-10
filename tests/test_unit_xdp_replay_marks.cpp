@@ -523,6 +523,44 @@ static void replay_fake_commit( struct rocketnet_xdp_replay_marks_t * marks, str
     rocketnet_xdp_replay_marks_reset_keeping( marks, forget_failed, mark_applied );
 }
 
+// Only a key the kernel actually holds is deleted: a slot seen but never
+// marked, or never marked since its last delete, queues a forget but causes no
+// delete syscall, while a marked key's forget deletes exactly once.
+
+static void test_xdp_transport_replay_marks_forget_without_mark_skips_delete()
+{
+    static struct rocketnet_xdp_replay_marks_t marks;
+    replay_marks_bind( &marks );
+
+    struct replay_fake_map_t kernel;
+    memset( &kernel, 0, sizeof( kernel ) );
+
+    const struct rocketnet_address_t a = replay_marks_ipv4( 50000 );
+    const struct rocketnet_address_t b = replay_marks_ipv4( 50001 );
+    struct rocketnet_server_xdp_replay_key_t key_a;
+    rocketnet_xdp_replay_key_from_address( &a, &key_a );
+
+    // a seen-but-never-marked address needs no kernel delete
+
+    rocketnet_unit_check( rocketnet_xdp_replay_marks_forget( &marks, &b ) );
+    replay_fake_commit( &marks, &kernel );
+    rocketnet_unit_check( kernel.delete_calls == 0 );
+    rocketnet_unit_check( marks.forget_count == 0 );
+
+    // a mark the kernel takes is tracked, so its later forget deletes it
+
+    rocketnet_unit_check( rocketnet_xdp_replay_marks_mark( &marks, &a, 7 ) );
+    replay_fake_commit( &marks, &kernel );
+    rocketnet_unit_check( kernel.delete_calls == 0 );
+    rocketnet_unit_check( replay_fake_map_find( &kernel, &key_a ) >= 0 );
+
+    rocketnet_unit_check( rocketnet_xdp_replay_marks_forget( &marks, &b ) );
+    rocketnet_unit_check( rocketnet_xdp_replay_marks_forget( &marks, &a ) );
+    replay_fake_commit( &marks, &kernel );
+    rocketnet_unit_check( kernel.delete_calls == 1 );
+    rocketnet_unit_check( replay_fake_map_find( &kernel, &key_a ) < 0 );
+}
+
 static bool replay_fake_sink_forget( void * context, const struct rocketnet_address_t * address )
 {
     return rocketnet_xdp_replay_marks_forget( (struct rocketnet_xdp_replay_marks_t *) context, address );
@@ -926,6 +964,7 @@ REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_released_sessions_coalesce_f
 REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_failed_forgets_kept );
 REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_refusals_reach_the_socket );
 REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_mass_disconnect_cost );
+REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_forget_without_mark_skips_delete );
 REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_stale_forget_never_deletes_a_newer_mark );
 REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_reconnect_admits_the_new_session );
 REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_refused_reconnect_mark_is_retried );
