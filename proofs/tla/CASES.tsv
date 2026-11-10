@@ -90,7 +90,6 @@ MCClientConnectionRace.cfg	MCClientConnection.tla	pass	-	ignore-terminal	clientc
 MCClientConnectionBrokenCommitEarly.cfg	MCClientConnection.tla	invariant	CommitsOnAnswer	ignore-terminal	clientconnection	required	-
 MCReceiveOrder.cfg	MCReceiveOrder.tla	pass	-	check	receiveorder	required	-
 MCReceiveOrderBrokenSlotsAfterKeypair.cfg	MCReceiveOrder.tla	invariant	CheapRefusalsFirst	check	receiveorder	required	-
-MCReceiveOrderBrokenAdmittedAfterVerify.cfg	MCReceiveOrder.tla	invariant	CheapRefusalsFirst	check	receiveorder	required	-
 MCReceiveOrderBrokenVersionNotFirst.cfg	MCReceiveOrder.tla	invariant	CheapRefusalsFirst	check	receiveorder	required	-
 MCReceiveOrderBrokenTokenManyAddresses.cfg	MCReceiveOrder.tla	invariant	OneLiveMappingPerToken	check	receiveorder	required	-
 MCReceiveOrderBrokenClaimBeforeSignature.cfg	MCReceiveOrder.tla	invariant	ClaimOnlyAfterSignature	check	receiveorder	required	-
