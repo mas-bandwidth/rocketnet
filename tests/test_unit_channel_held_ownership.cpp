@@ -369,6 +369,88 @@ static void test_held_insert_refuses_the_window_plus_first_entry()
 
 REGISTER_UNIT_TEST( test_held_insert_refuses_the_window_plus_first_entry );
 
+// in-turn code-3 messages on a channel from ordering `from` up to `to`, each one its own number
+
+static void ho_deliver_turns( ho_node_t * node, uint32_t channel, uint32_t from, uint32_t to, uint32_t * number )
+{
+    const uint8_t trigger = 7;
+    for ( uint32_t ordering = from; ordering < to; ordering++ )
+        check( ho_receive( node, ho_record( ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, ( *number )++, channel, ordering, 0, &trigger, 1, 0 ) ) ==
+               ROCKETNET_CHANNEL_DISPATCH_DELIVERED );
+}
+
+static bool ho_delivered( const ho_node_t * node, uint32_t channel, const uint8_t * held, int bytes )
+{
+    for ( uint32_t i = 0; i < node->ordered.channels.deliveries; i++ )
+    {
+        const rn_delivery_t & delivery = node->region->deliveries[i];
+        if ( delivery.channel == channel && delivery.bytes == bytes && memcmp( delivery.data, held, (size_t) bytes ) == 0 )
+            return true;
+    }
+    return false;
+}
+
+// A probe cluster across the index's wrap: (3, 8) and (19, 8) both have home
+// cell 127 and (16, 7) has home 0, so they sit in cells 127, 0 and 1. Draining
+// (3, 8) erases cell 127: (19, 8) shifts back across the wrap into 127 and
+// (16, 7) back into its home 0, cell 1 empties, and both are still found and
+// delivered on their turns (proofs/tla/RNOpenAddress.tla EraseStep).
+
+static void test_held_erase_shifts_back_across_the_wrap()
+{
+    ho_node_t node;
+    ho_init( &node );
+
+    rn_region_t * region = node.region;
+    const uint8_t first[4] = { 0xA1, 0xA2, 0xA3, 0xA4 };
+    const uint8_t second[4] = { 0xB1, 0xB2, 0xB3, 0xB4 };
+    const uint8_t third[4] = { 0xC1, 0xC2, 0xC3, 0xC4 };
+    const uint64_t key_first = ( (uint64_t) 3 << 32 ) | 8;
+    const uint64_t key_second = ( (uint64_t) 19 << 32 ) | 8;
+    const uint64_t key_third = ( (uint64_t) 16 << 32 ) | 7;
+    const uint32_t last = region->held_entries - 1;
+
+    check( ho_receive( &node, ho_record( ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 0, 3, 8, 0, first, 4, 100 ) ) == ROCKETNET_CHANNEL_DISPATCH_HELD );
+    check( ho_receive( &node, ho_record( ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 1, 19, 8, 0, second, 4, 110 ) ) == ROCKETNET_CHANNEL_DISPATCH_HELD );
+    check( ho_receive( &node, ho_record( ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 2, 16, 7, 0, third, 4, 120 ) ) == ROCKETNET_CHANNEL_DISPATCH_HELD );
+    rn_ordered_end_update( &node.ordered );
+
+    // the cluster wraps: homes 127, 127, 0 in cells 127, 0, 1
+
+    check( region->held_index[last].used && region->held_index[last].key == key_first );
+    check( region->held_index[0].used && region->held_index[0].key == key_second );
+    check( region->held_index[1].used && region->held_index[1].key == key_third );
+    check( !region->held_index[2].used );
+
+    uint32_t number = 3;
+    ho_deliver_turns( &node, 3, 0, 8, &number );
+    check( ho_delivered( &node, 3, first, 4 ) );
+    rn_ordered_end_update( &node.ordered );
+
+    if ( !( region->held_index[last].key == key_second && region->held_index[0].key == key_third ) )
+        printf( "the erase at cell %u left the wrapped cluster misplaced\n", last );
+
+    check( region->held_index[last].used && region->held_index[last].key == key_second );
+    check( region->held_index[0].used && region->held_index[0].key == key_third );
+    check( !region->held_index[1].used );
+    check( ho_held_used( &node ) == 2 );
+
+    ho_deliver_turns( &node, 19, 0, 8, &number );
+    check( ho_delivered( &node, 19, second, 4 ) );
+    rn_ordered_end_update( &node.ordered );
+
+    ho_deliver_turns( &node, 16, 0, 7, &number );
+    check( ho_delivered( &node, 16, third, 4 ) );
+    rn_ordered_end_update( &node.ordered );
+
+    check( ho_held_used( &node ) == 0 );
+    check( node.ordered.channels.error == 0 );
+
+    rn_arena_destroy( node.arena );
+}
+
+REGISTER_UNIT_TEST( test_held_erase_shifts_back_across_the_wrap );
+
 // A multi-fragment code-4 block superseded in the future slot: its first
 // fragment (number 1) is released when a newer future message supersedes
 // it. Its remaining fragment (number 2) arriving after its epoch opens must

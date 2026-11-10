@@ -24,9 +24,11 @@
 // table is fixed-capacity with bound-first eviction for bindings, no
 // eviction of a live claim, and entries that expire with their deadlines.
 // Lookup uses a full-identifier open-addressed index under a per-run SipHash,
-// with at most twice capacity probes. Free slots are a dense array stack; the
-// claim table also keeps a generation-tagged chronological array, so its
-// common free-or-expired capacity query reads only the stack or oldest claim.
+// with at most twice capacity probes. Free slots are a dense array stack; each
+// table also keeps a generation-tagged chronological array, so the common
+// free-or-expired query reads only the stack or the oldest entry; a binding
+// scans for an expired slot only when its oldest is live and a later one has
+// expired.
 // Releasing a claim is O(1): its ticket clears and its chronological entry
 // becomes a tombstone. A record into a full chronological array compacts it,
 // copying at most capacity live entries. The
