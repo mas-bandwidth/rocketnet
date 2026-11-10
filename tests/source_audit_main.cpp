@@ -29,6 +29,7 @@ static const char * const source_audit_cases[] = {
 #endif // #if ROCKETNET_DEV
     "test_counters_every_counter_is_named_by_a_test",
     "test_counters_every_outcome_in_at_most_one_family",
+    "test_server_process_outcomes_budget_exceeded_with_siblings",
     "test_tools_never_cast_public_client_to_internal",
     "test_xdp_transport_host_every_counter_has_a_case",
     "test_example_send_safety_every_example_and_snippet",
@@ -105,6 +106,20 @@ int main( int argc, char ** argv )
 
     const size_t count = sizeof( source_audit_cases ) / sizeof( source_audit_cases[0] );
     int failed = 0;
+
+    // Every case the binary's registry holds must be named above, so a new
+    // source_audit_*.cpp cannot register a case that never runs.
+    const int registered = rocketnet_unit_tests_count();
+    for ( int i = 0; i < registered; i++ )
+    {
+        const char * name = rocketnet_unit_tests_name( i );
+        if ( name != NULL && !source_audit_case_named( name ) )
+        {
+            printf( "source audit: registered case %s is not in source_audit_cases\n", name );
+            fflush( stdout );
+            failed++;
+        }
+    }
 
     for ( size_t i = 0; i < count; i++ )
     {

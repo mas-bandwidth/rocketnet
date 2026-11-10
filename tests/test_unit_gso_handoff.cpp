@@ -14,6 +14,8 @@
 
 #if defined( __linux__ ) && ROCKETNET_DEV
 
+bool rocketnet_server_gso_test_receive_backoff();
+
 // The GSO worker's handoffs (proofs/tla/RNGsoHandoff.tla), stepped on this thread
 // with a faked transport: no socket, no worker thread, no clock.
 static void test_server_gso_worker_handoff()
@@ -42,6 +44,15 @@ static void test_server_gso_send_full_keeps_rest()
 
 REGISTER_UNIT_TEST( test_server_gso_send_full_keeps_rest );
 
+// A full socket after stop: the TX worker must leave its EAGAIN retry once
+// send_quit is set, or the transport never reports stopped.
+static void test_server_gso_send_retry_quit()
+{
+    check( rocketnet_server_gso_test_send_retry_quit() );
+}
+
+REGISTER_UNIT_TEST( test_server_gso_send_retry_quit );
+
 // The receive drain's read budget: full batches of zero-length, refused-source
 // and undersized datagrams, far more than the budget, through the receive
 // seam; each drain returns after ROCKETNET_GSO_RECV_QUEUE_SIZE messages.
@@ -60,5 +71,74 @@ static void test_server_gso_drain_room()
 }
 
 REGISTER_UNIT_TEST( test_server_gso_drain_room );
+
+// A full worker buffer (it stays full until main swaps it out) or a failed
+// receive backs the worker off instead of spinning on poll and the mutex
+// (proofs/tla/RNGsoHandoff.tla RxBacksOff); after main's swap it reads again.
+static void test_server_gso_receive_backoff()
+{
+    check( rocketnet_server_gso_test_receive_backoff() );
+}
+
+REGISTER_UNIT_TEST( test_server_gso_receive_backoff );
+
+// Four full receive queues, and the real per-update budget, which two queues
+// exhaust (8192 + 8192 is past 16000). The queues the first update consumes
+// are staged full again: a walk that always starts at 0 then stays on 0
+// and 1, and queues 2 and 3 never deliver. Across two updates every queue
+// must. No socket, no thread, no clock.
+static void test_server_gso_receive_queue_rotation()
+{
+    const int queues = 4;
+    struct rocketnet_server_gso_t * gso = rocketnet_server_gso_test_open( queues );
+    check( gso );
+
+    struct rocketnet_server_socket_process_packets_t * view = rocketnet_server_gso_process_packets( gso );
+    check( view->capacity > ROCKETNET_GSO_RECV_QUEUE_SIZE );
+    check( view->capacity < 2 * ROCKETNET_GSO_RECV_QUEUE_SIZE );
+
+    int seen[4] = { 0, 0, 0, 0 };
+
+    for ( int q = 0; q < queues; q++ )
+        check( rocketnet_server_gso_test_stage_marked( gso, q, (uint8_t) ( q + 1 ), (uint32_t) ROCKETNET_GSO_RECV_QUEUE_SIZE ) );
+
+    rocketnet_server_gso_receive_packets( gso );
+    check( view->num_packets == view->capacity );
+    for ( int i = 0; i < view->num_packets; i++ )
+    {
+        const int marker = (int) view->packet_data[i][0];
+        check( marker >= 1 && marker <= queues );
+        seen[marker - 1]++;
+    }
+    check( seen[0] > 0 );
+    check( seen[1] > 0 );
+    check( seen[2] == 0 );
+    check( seen[3] == 0 );
+
+    // 0 and 1 have an empty worker buffer again; 2 and 3 still hold the full
+    // buffer the first update did not swap out.
+    check( rocketnet_server_gso_test_stage_marked( gso, 0, (uint8_t) 1, (uint32_t) ROCKETNET_GSO_RECV_QUEUE_SIZE ) );
+    check( rocketnet_server_gso_test_stage_marked( gso, 1, (uint8_t) 2, (uint32_t) ROCKETNET_GSO_RECV_QUEUE_SIZE ) );
+    check( !rocketnet_server_gso_test_stage_marked( gso, 2, (uint8_t) 3, (uint32_t) ROCKETNET_GSO_RECV_QUEUE_SIZE ) );
+    check( !rocketnet_server_gso_test_stage_marked( gso, 3, (uint8_t) 4, (uint32_t) ROCKETNET_GSO_RECV_QUEUE_SIZE ) );
+
+    rocketnet_server_gso_receive_packets( gso );
+    check( view->num_packets == view->capacity );
+    for ( int i = 0; i < view->num_packets; i++ )
+    {
+        const int marker = (int) view->packet_data[i][0];
+        check( marker >= 1 && marker <= queues );
+        seen[marker - 1]++;
+    }
+
+    check( seen[0] > 0 );
+    check( seen[1] > 0 );
+    check( seen[2] > 0 );
+    check( seen[3] > 0 );
+
+    rocketnet_server_gso_test_close( gso );
+}
+
+REGISTER_UNIT_TEST( test_server_gso_receive_queue_rotation );
 
 #endif

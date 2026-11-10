@@ -205,8 +205,8 @@ bounded per receive call by the read budget below.
 
 GSO's three send banks are shared across all sockets. Only its current
 producer bank can be filled; the transmit worker consumes published banks.
-io_uring likewise has one shared send array, and an incomplete send continues
-to occupy its slot. `num_xdp_queues` adds receive queues and changes socket
+io_uring likewise has two shared 2048-slot send phases, and an incomplete send
+continues to occupy its phase. `num_xdp_queues` adds receive queues and changes socket
 rotation; it does not multiply the 4096-slot GSO or 2048-slot io_uring send
 capacity (`sdk/rocketnet_server_gso_linux.cpp`,
 `sdk/rocketnet_server_uring_linux.cpp`).
@@ -238,7 +238,7 @@ budget is its `max_packets`; a single-packet call's is `ROCKETNET_PLATFORM_RECEI
 generic batch pump and the Windows per-packet loop (`sdk/rocketnet_platform.cpp`).
 The Linux GSO server worker's drain (`rocketnet_server_gso_drain`,
 `sdk/rocketnet_server_gso_linux.cpp`) counts each message and interrupted call
-against `ROCKETNET_GSO_RECV_QUEUE_SIZE` (4096). It checks that threshold before
+against `ROCKETNET_GSO_RECV_QUEUE_SIZE` (8192). It checks that threshold before
 each receive batch; the final batch can take the count past it by at most
 `ROCKETNET_GSO_RECV_BATCH - 1` (63).
 The Linux GSO client's plain fallback uses the platform helpers; its GRO path
@@ -296,14 +296,32 @@ Start/finish/abort may run on concurrent fill threads, with one producer per
 frame. Join them before update, receive, flush, stop or destroy. Flush is called
 for staged work; the backend retains ownership until it can safely reuse
 that storage. XDP retries a flush on each `send_packets` call, including when
-no new commit advances the transport counter. With two staging buffers,
-`rocketnet_xdp_buffer_exchange_t::publish` queues at most one and keeps the other
-for producers until the worker retires the queued generation. The next flush
+no new commit advances the transport counter. With three staging buffers (`ROCKETNET_XDP_NUM_BUFFERS`),
+`rocketnet_xdp_buffer_exchange_t::publish` queues at most two and keeps the remaining
+buffer for producers until the worker retires the queued generations. The next flush
 publishes the retained work. `RNDriverSendStaging.Publish`, `WorkerRetire`
 and `RetryFlushPublishes` model this rule. Packet-slot capacity is still
 `ROCKETNET_XDP_SEND_QUEUE_SIZE` per buffer; retaining producer storage does
 not permit an unbounded backlog. None
 of these rules sets a frame, packet-send or ACK rate.
+
+The GSO and XDP receive sides flip their banks consumer-driven: the receive
+worker appends to its current bank under the receive mutex and never
+publishes, and `receive_packets` swaps the worker's filled bank for main's
+exhausted one under the same mutex, so every packet staged before a claim is
+in that claim's view. `RNGsoHandoff.RxClaim` and `RNXdpReceiveRing.Drain`
+model this rule. A GSO worker pass that finds its bank full (it stays full
+until main's swap) or whose receive fails sleeps 1 ms before the next pass
+instead of spinning on poll and the mutex (`RNGsoHandoff.RxBacksOff`).
+The workers hold the mutex only to append one batch (one `recvmmsg` call's
+results on GSO, 64 descriptors on XDP), never across a syscall. Two cases
+still defer a staged packet to the next call: main still holds a retained
+tail from a budget-capped call (it swaps only once that bank is consumed,
+because the current view points into it), or main's try-acquire finds the
+worker holding the mutex (main never waits on the worker). On GSO the
+`recvmmsg` calls leave the mutex free between batches; an XDP pass under
+heavy load appends batch after batch, so there main can miss a queue for
+an update.
 
 ## Creation and shutdown
 

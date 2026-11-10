@@ -107,10 +107,16 @@ static inline int rocketnet_server_gso_recv_vlen( int num_packets, bool gro )
 #define ROCKETNET_GSO_MAX_SUPER_BYTES                                    65000
 
 // a full socket keeps the TX worker's bank for the next update; this is how
-// long the worker waits for main's wake before it tries the socket again
-// anyway (a stopping server publishes no more updates)
+// long the worker waits for main's wake before it tries the socket again.
+// once stop is requested that wait is not repeated: a socket that stays full
+// must not keep rocketnet_server_gso_stopped false.
 
 #define ROCKETNET_GSO_SEND_RETRY_SECONDS                                 0.001
+
+// after stop, a full socket is tried this many further times and then the
+// worker leaves the bank. zero is the bound: the attempt that just failed
+// is the last one.
+#define ROCKETNET_GSO_SEND_RETRIES_AFTER_QUIT                               0
 
 // feature bits reported by rocketnet_server_gso_features: what the runtime
 // probe found and the transport is actually using
@@ -193,10 +199,11 @@ int rocketnet_server_gso_send_room( struct rocketnet_server_gso_t * gso );
 // thread; a send mutex held by the worker reads as not idle.
 bool rocketnet_server_gso_send_idle( struct rocketnet_server_gso_t * gso );
 
-// Receive workers stage into per-queue producer/ready/main banks off main.
-// receive_packets try-swaps ownership and gathers within the caller budget;
-// unconsumed tails stay main-owned until a later receive call. process_packets
-// exposes stable views valid until the next receive_packets call.
+// Receive workers stage into a per-queue current bank off main, and main
+// swaps its exhausted bank for the worker's filled one under the receive
+// mutex once per update; unconsumed tails stay main-owned until a later
+// receive call. process_packets exposes stable views valid until the next
+// receive_packets call.
 
 void rocketnet_server_gso_receive_packets( struct rocketnet_server_gso_t * gso );
 
@@ -211,7 +218,8 @@ struct rocketnet_server_socket_process_packets_t * rocketnet_server_gso_process_
 void rocketnet_server_gso_test_force_create_flags( int flags );
 void rocketnet_server_gso_test_fail_receives( struct rocketnet_server_gso_t * gso, int count, int error );
 void rocketnet_server_gso_test_fail_sends( struct rocketnet_server_gso_t * gso, int count, int error );
-// Observe publication without consuming it; returns false on lock contention.
+// Observe the worker's current bank without consuming it; returns false on
+// lock contention. True once the worker staged a packet main has not claimed.
 bool rocketnet_server_gso_test_receive_ready( struct rocketnet_server_gso_t * gso, int queue_index );
 // Main thread: no staged packet, no ready bank, no bank held by the TX worker.
 bool rocketnet_server_gso_test_send_idle( struct rocketnet_server_gso_t * gso );
@@ -224,9 +232,21 @@ bool rocketnet_server_gso_test_send_refusals();
 // unsent message, drops nothing, and the next attempt sends the rest in
 // order without counting an earlier dropped run twice.
 bool rocketnet_server_gso_test_send_full_keeps_rest();
+// A full socket after stop. The TX worker's EAGAIN retry must notice
+// send_quit and leave, so the transport reports stopped. No socket, no sleep.
+bool rocketnet_server_gso_test_send_retry_quit();
 // One receive drain fed endless discards returns within its read budget.
 bool rocketnet_server_gso_test_drain_budget();
 bool rocketnet_server_gso_test_drain_room();
+// No socket, no thread and no clock. num_queues receive queues and the real
+// per-update budget. NULL when the fixture cannot be built.
+struct rocketnet_server_gso_t * rocketnet_server_gso_test_open( int num_queues );
+void rocketnet_server_gso_test_close( struct rocketnet_server_gso_t * gso );
+// Stage packets into one queue's worker buffer, each byte set to marker, as a
+// worker pass would. false when that buffer has no room for them (main has
+// not swapped it out since it was filled), or the queue index or count is
+// out of range.
+bool rocketnet_server_gso_test_stage_marked(struct rocketnet_server_gso_t * gso, int queue_index, uint8_t marker, uint32_t packets );
 #endif // #if ROCKETNET_DEV
 
 #endif // ROCKETNET_SDK_ROCKETNET_SERVER_GSO_H

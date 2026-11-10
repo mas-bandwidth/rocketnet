@@ -46,7 +46,9 @@ void rocketnet_xdp_receive_ring_finish( uint32_t num_packets, uint32_t num_consu
 #include <linux/if_xdp.h>
 #include <sys/eventfd.h>
 #include <sys/ioctl.h>
+#include <sys/mman.h>
 #include <sys/stat.h>
+#include <pthread.h>
 #include <linux/ethtool.h>
 #include <linux/sockios.h>
 #include <errno.h>
@@ -131,6 +133,9 @@ struct rocketnet_server_socket_receive_buffer_t
 // buffer remains owned by its consumer until recycle().
 // proofs/tla/RNBankFifoLayout.tla Init (the constructor's loop), Publish (publish), Take (claim) and
 // Release (recycle); MCRNBankFifoLayoutLoopFour.cfg checks them at N = 4.
+// The receive side uses swap_producer instead (the consumer-driven flip,
+// not in RNBankFifoLayout): main exchanges the producer for its exhausted
+// buffer, taking a spare only for its first claim.
 template <int N> struct rocketnet_xdp_buffer_exchange_t
 {
     static_assert( N >= 3, "producer, consumer and spare XDP buffers" );
@@ -169,6 +174,26 @@ template <int N> struct rocketnet_xdp_buffer_exchange_t
         ready_head = ( ready_head + 1 ) % N;
         --ready_count;
         return index;
+    }
+
+    // The consumer-driven receive handoff: main takes the worker's filled
+    // producer buffer and hands the worker an empty one in its place.
+    // replacement < 0 takes a spare from the free list; otherwise the
+    // caller's exhausted buffer becomes the new producer. Returns the filled
+    // buffer, or -1 when no buffer is available.
+    int swap_producer( int replacement )
+    {
+        if ( replacement < 0 )
+        {
+            if ( free_count == 0 )
+                return -1;
+            replacement = free_index[free_head];
+            free_head = ( free_head + 1 ) % N;
+            --free_count;
+        }
+        const int old = producer;
+        producer = replacement;
+        return old;
     }
 
     void recycle( int index )
@@ -230,12 +255,19 @@ struct rocketnet_server_xdp_socket_t
     // that thread writes it
     uint64_t send_refused_overflow_warned{ 0 };
 
+    // TX wakeup (sendto) failures this queue's worker saw, and the errno of
+    // the last hard one. A hard error means the TX ring can never drain, so
+    // the stop drain gives up on this queue (rocketnet_server_socket_send_idle).
+    std::atomic<uint64_t> send_wakeup_failures{ 0 };
+    std::atomic<int> send_hard_error{ 0 };
+
     uint8_t padding_5[4096];
 
     rocketnet_xdp_buffer_exchange_t<ROCKETNET_XDP_NUM_BUFFERS> send_handoff;
     rocketnet_xdp_buffer_exchange_t<ROCKETNET_XDP_NUM_BUFFERS> receive_handoff;
-    int receive_held_index = -1; // game view; returned at the next receive call
+    int receive_held_index = -1; // game view; swapped for the worker's bank at the next receive call
     uint32_t receive_read_index = 0;
+    std::atomic<uint32_t> receive_swaps{ 0 }; // main's bank swaps: the worker's bank was emptied
 
     uint8_t padding_6[4096];
 
@@ -257,6 +289,13 @@ struct rocketnet_server_xdp_socket_t
     struct rocketnet_server_socket_receive_buffer_t receive_buffer[ROCKETNET_XDP_NUM_BUFFERS];
 
     struct rocketnet_server_socket_send_buffer_t send_buffer[ROCKETNET_XDP_NUM_BUFFERS];
+
+    // the xdp thread's receive frames: those a pass hands back to the fill
+    // queue, and those a full fill reservation still holds. Only that thread
+    // touches them; they live here, not on its stack, so it fits a 128 KiB
+    // thread stack (musl's default)
+    uint64_t receive_frames[ROCKETNET_XDP_RECV_QUEUE_SIZE];
+    rocketnet_pending_frames_t<ROCKETNET_XDP_RECV_QUEUE_SIZE> pending_return;
 
     uint8_t padding_7[4096];
 };
@@ -291,11 +330,16 @@ struct rocketnet_server_socket_t
     // the gateway refresh (rocketnet_xdp_frame.h GATEWAY REFRESH): main
     // thread only, in the receive call. resolve is rtnetlink unless a test
     // replaces it; failing holds, per family, whether the last resolve failed,
-    // so a failing resolve warns once rather than every period
+    // so a failing resolve warns once rather than every period. address is
+    // each family's gateway IP the last route dump found, so the refresh
+    // asks its neighbour entry directly rather than dumping every period
+    // (rocketnet_gateway_netlink_refresh)
     struct rocketnet_xdp_gateway_refresh_t gateway_refresh;
     rocketnet_xdp_gateway_resolve_t gateway_resolve;
     void * gateway_resolve_context;
     bool gateway_resolve_failing[2];
+    uint8_t gateway_address[2][16];
+    bool gateway_address_known[2];
     char interface_name[IF_NAMESIZE];
 
     int interface_index;
@@ -394,10 +438,12 @@ static bool get_interface_mac_address( const char * interface_name, uint8_t * ma
 // on the interface, then that next hop's neighbour entry. No default route
 // on the interface returns true with *found_route false, the one case the
 // server starts without a gateway; a gateway with no usable neighbour entry
-// carrying a link-layer address refuses, and nothing resolves it. loud logs
-// each failure; the periodic refresh passes false and warns once itself.
+// carrying a link-layer address refuses, and nothing resolves it. Each
+// failure is logged; the periodic refresh resolves through
+// rocketnet_server_socket_resolve_gateway instead.
 
-static bool get_gateway_mac_address_netlink( const char * interface_name, int interface_index, int address_type, uint8_t * mac_address, bool * found_route, bool loud )
+static bool get_gateway_mac_address_netlink( const char * interface_name, int interface_index, int address_type, uint8_t * mac_address, bool * found_route,
+                                             uint8_t * gateway_address, bool * gateway_address_known )
 {
     *found_route = false;
 
@@ -405,41 +451,41 @@ static bool get_gateway_mac_address_netlink( const char * interface_name, int in
     const int family = ipv6 ? AF_INET6 : AF_INET;
     const char * family_name = ipv6 ? "ipv6" : "ipv4";
 
-    uint8_t gateway[16];
-    memset( gateway, 0, sizeof( gateway ) );
-
     int error = 0;
-    const int route = rocketnet_gateway_netlink_route( family, interface_index, gateway, &error );
-    if ( route == ROCKETNET_GATEWAY_NETLINK_DONE )
-        return true;
-    if ( route != ROCKETNET_GATEWAY_NETLINK_FOUND )
+    const int result = rocketnet_gateway_netlink_discover( family, interface_index, gateway_address, gateway_address_known, mac_address, &error );
+    if ( result == ROCKETNET_GATEWAY_NETLINK_DONE )
     {
-        if ( loud )
+        if ( !*gateway_address_known )
+            return true;
+
+        char gateway_ip_string[INET6_ADDRSTRLEN];
+        if ( !inet_ntop( family, gateway_address, gateway_ip_string, sizeof( gateway_ip_string ) ) )
+            strcpy( gateway_ip_string, "?" );
+        rocketnet_error( "%s gateway discovery: no neighbor entry with a link-layer address for %s on %s", family_name, gateway_ip_string, interface_name );
+        return false;
+    }
+
+    if ( result != ROCKETNET_GATEWAY_NETLINK_FOUND )
+    {
+        if ( *gateway_address_known )
+        {
+            char gateway_ip_string[INET6_ADDRSTRLEN];
+            if ( !inet_ntop( family, gateway_address, gateway_ip_string, sizeof( gateway_ip_string ) ) )
+                strcpy( gateway_ip_string, "?" );
+            rocketnet_error( "%s gateway discovery: neighbor query for %s on %s failed: %s (%s)", family_name, gateway_ip_string, interface_name,
+                             rocketnet_gateway_netlink_result_name( result ), strerror( error ) );
+        }
+        else
+        {
             rocketnet_error( "%s gateway discovery: route query on %s failed: %s (%s)", family_name, interface_name,
-                             rocketnet_gateway_netlink_result_name( route ), strerror( error ) );
+                             rocketnet_gateway_netlink_result_name( result ), strerror( error ) );
+        }
         return false;
     }
 
     *found_route = true;
 
-    char gateway_ip_string[INET6_ADDRSTRLEN];
-    if ( !inet_ntop( family, gateway, gateway_ip_string, sizeof( gateway_ip_string ) ) )
-        strcpy( gateway_ip_string, "?" );
-
-    const int neighbor = rocketnet_gateway_netlink_neighbor( family, interface_index, gateway, mac_address, &error );
-    if ( neighbor == ROCKETNET_GATEWAY_NETLINK_FOUND )
-        return true;
-    if ( !loud )
-        return false;
-    if ( neighbor == ROCKETNET_GATEWAY_NETLINK_DONE )
-    {
-        rocketnet_error( "%s gateway discovery: no neighbor entry with a link-layer address for %s on %s", family_name, gateway_ip_string, interface_name );
-        return false;
-    }
-
-    rocketnet_error( "%s gateway discovery: neighbor query for %s on %s failed: %s (%s)", family_name, gateway_ip_string, interface_name,
-                     rocketnet_gateway_netlink_result_name( neighbor ), strerror( error ) );
-    return false;
+    return true;
 }
 
 // false refuses create (a malformed, zero or multicast MAC, or a discovery
@@ -448,10 +494,12 @@ static bool get_gateway_mac_address_netlink( const char * interface_name, int in
 // without a gateway. address_type picks the family discovery asks
 // rtnetlink about.
 
-static bool get_gateway_mac_address( const char * interface_name, int interface_index, int address_type, uint8_t * mac_address, bool * found )
+static bool get_gateway_mac_address( const char * interface_name, int interface_index, int address_type, uint8_t * mac_address, bool * found,
+                                     uint8_t * gateway_address, bool * gateway_address_known )
 {
     memset( mac_address, 0, 6 );
     *found = false;
+    *gateway_address_known = false;
 
     // a parameter override under the loud-override law: not a config
     // table field (it overrides a discovered value, not a declared one),
@@ -479,7 +527,7 @@ static bool get_gateway_mac_address( const char * interface_name, int interface_
     else
     {
         bool found_route = false;
-        if ( !get_gateway_mac_address_netlink( interface_name, interface_index, address_type, mac_address, &found_route, true ) )
+        if ( !get_gateway_mac_address_netlink( interface_name, interface_index, address_type, mac_address, &found_route, gateway_address, gateway_address_known ) )
             return false;
         if ( !found_route )
             return true;
@@ -500,15 +548,24 @@ static bool get_gateway_mac_address( const char * interface_name, int interface_
 
 #define INVALID_FRAME UINT64_MAX
 
-// the refresh's resolve: rtnetlink, quiet. A failure warns once per failing
-// streak, and the table keeps the gateway it has.
+// the refresh's resolve: rtnetlink, quiet, on the main update thread, so the
+// known gateway's neighbour entry is asked directly and the routes are dumped
+// only when no gateway is known or that entry is not found
+// (rocketnet_gateway_netlink_refresh). No default route resolves with *found
+// false. A failure warns once per failing streak, and the table keeps the
+// gateway it has.
 
 static bool rocketnet_server_socket_resolve_gateway( void * context, int address_type, uint8_t * mac, bool * found )
 {
     rocketnet_server_socket_t * server_socket = (rocketnet_server_socket_t *) context;
     const int family_index = ( address_type == ROCKETNET_ADDRESS_IPV6 ) ? 1 : 0;
 
-    const bool resolved = get_gateway_mac_address_netlink( server_socket->interface_name, server_socket->interface_index, address_type, mac, found, false );
+    int error = 0;
+    const int result = rocketnet_gateway_netlink_refresh( family_index ? AF_INET6 : AF_INET, server_socket->interface_index,
+                                                          server_socket->gateway_address[family_index], &server_socket->gateway_address_known[family_index],
+                                                          mac, &error );
+    *found = result == ROCKETNET_GATEWAY_NETLINK_FOUND;
+    const bool resolved = *found || ( result == ROCKETNET_GATEWAY_NETLINK_DONE && !server_socket->gateway_address_known[family_index] );
     if ( !resolved && !server_socket->gateway_resolve_failing[family_index] )
         rocketnet_warn( "%s gateway refresh on %s failed: replies keep the gateway mac address they have",
                         family_index ? "ipv6" : "ipv4", server_socket->interface_name );
@@ -1663,14 +1720,18 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
     // Both families discover one gateway MAC each. The env override still
     // covers both, because get_gateway_mac_address reads it for either family.
 
+    const int gateway_family_index = public_address.type == ROCKETNET_ADDRESS_IPV6 ? 1 : 0;
+
     if ( serves_both )
     {
         bool ipv4_known = false;
         bool ipv6_known = false;
         uint8_t ipv4_mac[6];
         uint8_t ipv6_mac[6];
-        if ( !get_gateway_mac_address( interface_name, server_socket->interface_index, ROCKETNET_ADDRESS_IPV4, ipv4_mac, &ipv4_known ) ||
-             !get_gateway_mac_address( interface_name, server_socket->interface_index, ROCKETNET_ADDRESS_IPV6, ipv6_mac, &ipv6_known ) )
+        if ( !get_gateway_mac_address( interface_name, server_socket->interface_index, ROCKETNET_ADDRESS_IPV4, ipv4_mac, &ipv4_known,
+                                       server_socket->gateway_address[0], &server_socket->gateway_address_known[0] ) ||
+             !get_gateway_mac_address( interface_name, server_socket->interface_index, ROCKETNET_ADDRESS_IPV6, ipv6_mac, &ipv6_known,
+                                       server_socket->gateway_address[1], &server_socket->gateway_address_known[1] ) )
         {
             rocketnet_error( "server could not get gateway mac address" );
             rocketnet_server_socket_abort_create( server_socket );
@@ -1697,7 +1758,8 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
             server_socket->reply_macs.gateway_ipv6_known = true;
         }
     }
-    else if ( !get_gateway_mac_address( interface_name, server_socket->interface_index, public_address.type, server_socket->gateway_ethernet_address, &server_socket->gateway_known ) )
+    else if ( !get_gateway_mac_address( interface_name, server_socket->interface_index, public_address.type, server_socket->gateway_ethernet_address, &server_socket->gateway_known,
+                                        server_socket->gateway_address[gateway_family_index], &server_socket->gateway_address_known[gateway_family_index] ) )
     {
         rocketnet_error( "server could not get gateway mac address" );
         rocketnet_server_socket_abort_create( server_socket );
@@ -2510,14 +2572,22 @@ bool rocketnet_server_socket_send_idle( struct rocketnet_server_socket_t * serve
     for ( int queue = 0; queue < server_socket->num_queues; queue++ )
     {
         rocketnet_server_xdp_socket_t * socket = &server_socket->socket[queue];
+
+        // A queue whose worker reported a hard TX wakeup error never drains
+        // its ring: give up on it before waiting on its buffers or mutex.
+
+        const int hard_send_error = socket->send_hard_error.load( std::memory_order_relaxed );
+        if ( rocketnet_xdp_send_wakeup_hard_error( hard_send_error ) )
+            continue;
+
         const int flow_index = socket->send_flow_index.load( std::memory_order_acquire );
         if ( flow_index >= 0 && socket->send_buffer[flow_index].num_packets.load( std::memory_order_relaxed ) != 0 )
             return false;
         if ( !rocketnet_platform_mutex_try_acquire( &socket->send_mutex ) )
             return false;
-        const bool idle = socket->send_handoff.ready_count == 0 && socket->send_handoff.free_count == ROCKETNET_XDP_NUM_BUFFERS - 1;
+        const bool handoff_idle = socket->send_handoff.ready_count == 0 && socket->send_handoff.free_count == ROCKETNET_XDP_NUM_BUFFERS - 1;
         rocketnet_platform_mutex_release( &socket->send_mutex );
-        if ( !idle )
+        if ( !rocketnet_xdp_send_queue_released( hard_send_error, true, handoff_idle ) )
             return false;
     }
 
@@ -2957,19 +3027,20 @@ bool rocketnet_server_socket_test_buffer_exchange()
         valid &= socket->send_buffer[0].packet_info[0].packet_bytes == 64;
     }
 
+    // The worker stages into its current producer bank and never publishes;
+    // main's receive swaps that filled bank for its own exhausted one, so a
+    // packet staged before the claim is in that call's view.
+
     socket->receive_buffer[0].num_packets = 1;
     socket->receive_buffer[0].packet_bytes[0] = ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES;
     socket->receive_buffer[0].from[0] = to;
-    rocketnet_platform_mutex_acquire( &socket->receive_mutex );
-    valid &= socket->receive_handoff.publish();
-    rocketnet_platform_mutex_release( &socket->receive_mutex );
     rocketnet_server_socket_receive_packets( server );
     valid &= socket->receive_held_index == 0;
     valid &= server->process_packets.num_packets == 1;
     valid &= server->process_packets.packet_data[0] == socket->receive_buffer[0].packet_data[0];
 
     // A failed game-thread try-lock may clear the expired view, but it must
-    // retain ownership and retry recycling on the following call.
+    // retain ownership and retry the swap on the following call.
 
     rocketnet_platform_mutex_acquire( &socket->receive_mutex );
     rocketnet_server_socket_receive_packets( server );
@@ -2977,8 +3048,8 @@ bool rocketnet_server_socket_test_buffer_exchange()
     valid &= socket->receive_buffer[0].num_packets == 0;
     rocketnet_platform_mutex_release( &socket->receive_mutex );
     rocketnet_server_socket_receive_packets( server );
-    valid &= socket->receive_held_index == -1;
-    valid &= socket->receive_buffer[0].num_packets == 0;
+    valid &= socket->receive_held_index == 1;
+    valid &= socket->receive_buffer[1].num_packets == 0;
 
     if ( socket->send_mutex.ok )
         rocketnet_platform_mutex_destroy( &socket->send_mutex );
@@ -3518,7 +3589,8 @@ uint64_t rocketnet_server_socket_send_failures( struct rocketnet_server_socket_t
         rocketnet_server_xdp_socket_t * socket = &server_socket->socket[queue];
         failures += socket->send_refused_length.load( std::memory_order_relaxed ) +
                     socket->send_refused_build.load( std::memory_order_relaxed ) +
-                    socket->send_refused_overflow.load( std::memory_order_relaxed );
+                    socket->send_refused_overflow.load( std::memory_order_relaxed ) +
+                    socket->send_wakeup_failures.load( std::memory_order_relaxed );
     }
 
     return failures;
@@ -3616,6 +3688,60 @@ bool rocketnet_server_socket_test_send_failures_without_mutex()
 
     return valid;
 }
+
+bool rocketnet_server_socket_test_send_idle_hard_error()
+{
+    // A staged packet keeps the producer buffer non-empty. With no hard
+    // worker error the stop waits; once the worker reports a hard TX wakeup
+    // error the queue is released even though its TX ring still holds frames.
+    void * server_storage = rocketnet_malloc( NULL, sizeof( rocketnet_server_socket_t ) );
+    void * queue_storage = rocketnet_malloc( NULL, sizeof( rocketnet_server_xdp_socket_t ) );
+    if ( !server_storage || !queue_storage )
+    {
+        rocketnet_free( NULL, queue_storage );
+        rocketnet_free( NULL, server_storage );
+        return false;
+    }
+
+    auto * server = rocketnet_server_socket_test_construct( server_storage );
+    auto * queue = new ( queue_storage ) rocketnet_server_xdp_socket_t();
+    server->num_queues = 1;
+    server->socket = queue;
+
+    if ( !rocketnet_platform_mutex_create( &queue->send_mutex ) )
+    {
+        queue->~rocketnet_server_xdp_socket_t();
+        rocketnet_server_socket_test_destruct( server );
+        rocketnet_free( NULL, queue_storage );
+        rocketnet_free( NULL, server_storage );
+        return false;
+    }
+
+    queue->send_flow_index.store( queue->send_handoff.producer );
+    queue->send_buffer[queue->send_handoff.producer].num_packets.store( 1, std::memory_order_relaxed );
+
+    bool valid = !rocketnet_server_socket_send_idle( server );
+
+    queue->send_hard_error.store( ENETDOWN, std::memory_order_relaxed );
+    valid &= rocketnet_server_socket_send_idle( server );
+
+    queue->send_wakeup_failures.store( 3, std::memory_order_relaxed );
+    valid &= rocketnet_server_socket_send_failures( server ) == 3;
+
+    queue->send_hard_error.store( 0, std::memory_order_relaxed );
+    valid &= !rocketnet_server_socket_send_idle( server );
+
+    queue->send_buffer[queue->send_handoff.producer].num_packets.store( 0, std::memory_order_relaxed );
+    valid &= rocketnet_server_socket_send_idle( server );
+
+    rocketnet_platform_mutex_destroy( &queue->send_mutex );
+    queue->~rocketnet_server_xdp_socket_t();
+    rocketnet_server_socket_test_destruct( server );
+    rocketnet_free( NULL, queue_storage );
+    rocketnet_free( NULL, server_storage );
+
+    return valid;
+}
 #endif // #if ROCKETNET_DEV
 
 void rocketnet_server_socket_xdp_counters( struct rocketnet_server_socket_t * server_socket, uint64_t * counters )
@@ -3653,7 +3779,7 @@ void rocketnet_server_socket_xdp_counters( struct rocketnet_server_socket_t * se
 }
 
 // proofs/tla/RNXdpReceiveRing.tla Drain: the application takes the buffer the XDP
-// worker staged, claimed under the receive mutex
+// worker staged, swapped for its own exhausted one under the receive mutex
 
 void rocketnet_server_socket_receive_packets( rocketnet_server_socket_t * server_socket )
 {
@@ -3678,8 +3804,9 @@ void rocketnet_server_socket_receive_packets( rocketnet_server_socket_t * server
         rocketnet_server_xdp_socket_t * socket = &server_socket->socket[queue];
 
         // Last call's view has expired. A partly consumed buffer remains
-        // owned here with its cursor; a finished one may be reset outside
-        // the lock and returned before the next FIFO buffer is claimed.
+        // owned here with its cursor; a finished one is swapped for the
+        // worker's filled buffer, so every packet staged before this claim
+        // is in this call's view.
 
         if ( socket->receive_held_index >= 0 &&
              socket->receive_read_index >= socket->receive_buffer[socket->receive_held_index].num_packets )
@@ -3687,23 +3814,25 @@ void rocketnet_server_socket_receive_packets( rocketnet_server_socket_t * server
             socket->receive_buffer[socket->receive_held_index].num_packets = 0;
             if ( !rocketnet_platform_mutex_try_acquire( &socket->receive_mutex ) )
                 continue;
-            socket->receive_handoff.recycle( socket->receive_held_index );
-            socket->receive_held_index = socket->receive_handoff.claim();
+            socket->receive_held_index = socket->receive_handoff.swap_producer( socket->receive_held_index );
             socket->receive_read_index = 0;
+            socket->receive_swaps.fetch_add( 1, std::memory_order_release );
             rocketnet_platform_mutex_release( &socket->receive_mutex );
         }
         else if ( socket->receive_held_index < 0 )
         {
             if ( !rocketnet_platform_mutex_try_acquire( &socket->receive_mutex ) )
                 continue;
-            socket->receive_held_index = socket->receive_handoff.claim();
+            socket->receive_held_index = socket->receive_handoff.swap_producer( -1 );
             socket->receive_read_index = 0;
+            if ( socket->receive_held_index >= 0 )
+                socket->receive_swaps.fetch_add( 1, std::memory_order_release );
             rocketnet_platform_mutex_release( &socket->receive_mutex );
         }
 
         if ( socket->receive_held_index < 0 )
             continue;
-        // the budget already ended on an earlier queue: still recycle this
+        // the budget already ended on an earlier queue: still swap this
         // one, and take no packet from it
 
         if ( filled_queue >= 0 )
@@ -3773,7 +3902,7 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
     uint64_t batch_frames[ROCKETNET_XDP_SEND_BATCH_SIZE];
     int batch_packet_bytes[ROCKETNET_XDP_SEND_BATCH_SIZE];
 
-    rocketnet_pending_frames_t<ROCKETNET_XDP_RECV_QUEUE_SIZE> pending_return;
+    auto & pending_return = socket->pending_return;
 
     auto return_pending_frames = [&]()
     {
@@ -3788,6 +3917,25 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
 
     bool reported_frame_pressure = false;
 
+    // the packets the worker last saw in its current receive bank. Main's
+    // swap only hands the worker an emptied bank, so room counted from this
+    // never overstates the bank's. Main counts its swaps in receive_swaps:
+    // a new count means the bank was emptied, read without the mutex, so a
+    // full bank costs the worker no lock until main swaps it.
+
+    uint32_t receive_staged = 0;
+    uint32_t receive_swaps_seen = 0;
+
+    // the descriptors staged per hold of the receive mutex
+
+    const uint32_t receive_lock_batch = 64;
+
+    // the last errno each wakeup call saw, so a hard failure is logged once
+    // per contiguous run rather than every pass
+
+    int poll_error = 0;
+    int send_error = 0;
+
     for ( ;; )
     {
         const bool stopping = socket->quit.load( std::memory_order_acquire );
@@ -3795,7 +3943,25 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
         // Complete one final nonwaiting I/O pass after stop was requested.
         // busy poll the transport
 
-        poll( fds, 1, 0 );
+        if ( poll( fds, 1, 0 ) < 0 )
+        {
+            const int error = errno;
+            if ( rocketnet_xdp_send_wakeup_hard_error( error ) )
+            {
+                socket->send_wakeup_failures.fetch_add( 1, std::memory_order_relaxed );
+                socket->send_hard_error.store( error, std::memory_order_relaxed );
+            }
+            if ( rocketnet_xdp_send_wakeup_report( error, poll_error ) )
+            {
+                char reason[128];
+                rocketnet_error( "xdp queue %d poll failed: %s; the tx ring cannot drain and stop will not wait for it",
+                                 socket->queue, strerror_r( error, reason, sizeof( reason ) ) );
+            }
+        }
+        else
+        {
+            poll_error = 0;
+        }
 
         // return pending frames to the fill queue
 
@@ -3809,13 +3975,23 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
         return_pending_frames();
 
         // see if there are any packets to receive (proofs/tla/RNXdpReceiveRing.tla
-        // Peek: xsk_ring_cons__peek, at most the staging room and pending storage)
+        // Peek: xsk_ring_cons__peek, at most the staging room and pending storage).
+        // The worker appends to its current bank under the receive mutex and
+        // never publishes: main's next receive swaps this filled bank for its own.
+        // The mutex is held only to append, a batch of descriptors at a time.
+        // Main's swap is a try-acquire and never waits: during a heavy pass
+        // it can still miss the mutex and defer this queue to its next call.
 
         uint32_t receive_index;
 
-        rocketnet_server_socket_receive_buffer_t * receive_buffer =
-            &socket->receive_buffer[socket->receive_handoff.producer];
-        const uint32_t receive_capacity = ROCKETNET_XDP_RECV_QUEUE_SIZE - receive_buffer->num_packets;
+        const uint32_t receive_swaps = socket->receive_swaps.load( std::memory_order_acquire );
+        if ( receive_swaps != receive_swaps_seen )
+        {
+            receive_swaps_seen = receive_swaps;
+            receive_staged = 0;
+        }
+
+        const uint32_t receive_capacity = ROCKETNET_XDP_RECV_QUEUE_SIZE - receive_staged;
         const uint32_t receive_limit = (uint32_t) pending_return.available() < receive_capacity ? (uint32_t) pending_return.available() : receive_capacity;
         uint32_t num_packets = receive_limit ? xsk_ring_cons__peek( &socket->receive_queue, receive_limit, &receive_index ) : 0;
 
@@ -3848,13 +4024,25 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
 
             uint32_t num_returned = 0;
 
-            uint64_t frame[ROCKETNET_XDP_RECV_QUEUE_SIZE];
+            uint64_t * frame = socket->receive_frames;
 
             const uint64_t receive_region_begin = (uint64_t) ROCKETNET_XDP_NUM_FRAMES / 2 * ROCKETNET_XDP_FRAME_SIZE;
             const uint64_t receive_region_end = (uint64_t) ROCKETNET_XDP_UMEM_FRAMES * ROCKETNET_XDP_FRAME_SIZE;
 
+            rocketnet_platform_mutex_acquire( &socket->receive_mutex );
+
+            rocketnet_server_socket_receive_buffer_t * receive_buffer = &socket->receive_buffer[socket->receive_handoff.producer];
+
             for ( uint32_t i = 0; i < num_packets; i++ )
             {
+                if ( i > 0 && i % receive_lock_batch == 0 )
+                {
+                    // let main's swap in between batches; the bank may change
+                    rocketnet_platform_mutex_release( &socket->receive_mutex );
+                    rocketnet_platform_mutex_acquire( &socket->receive_mutex );
+                    receive_buffer = &socket->receive_buffer[socket->receive_handoff.producer];
+                }
+
                 rocketnet_assert( receive_buffer->num_packets < ROCKETNET_XDP_RECV_QUEUE_SIZE );
 
                 const struct xdp_desc * __restrict__ desc = xsk_ring_cons__rx_desc( &socket->receive_queue, receive_index + i );
@@ -3909,6 +4097,10 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
                 }
             }
 
+            receive_staged = receive_buffer->num_packets;
+            receive_swaps_seen = socket->receive_swaps.load( std::memory_order_relaxed );
+            rocketnet_platform_mutex_release( &socket->receive_mutex );
+
             rocketnet_xdp_receive_ring_finish( num_packets, num_consumed, []( void * r, uint32_t n )
                                                { xsk_ring_cons__cancel( (struct xsk_ring_cons *) r, n ); }, []( void * r, uint32_t n )
                                                { xsk_ring_cons__release( (struct xsk_ring_cons *) r, n ); }, &socket->receive_queue );
@@ -3932,17 +4124,6 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
             }
 
             return_pending_frames();
-        }
-
-        // The worker finished every write before publishing this buffer.
-        // If no spare exists it retains the producer and stops peeking once
-        // full; the kernel RX ring supplies backpressure without overwrites.
-
-        if ( receive_buffer->num_packets > 0 )
-        {
-            rocketnet_platform_mutex_acquire( &socket->receive_mutex );
-            socket->receive_handoff.publish();
-            rocketnet_platform_mutex_release( &socket->receive_mutex );
         }
 
         // mark any completed send packet frames as free to be reused
@@ -4119,7 +4300,23 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
 
         if ( xsk_ring_prod__needs_wakeup( &socket->send_queue ) )
         {
-            sendto( xsk_socket__fd( socket->xsk ), NULL, 0, MSG_DONTWAIT, NULL, 0 );
+            if ( sendto( xsk_socket__fd( socket->xsk ), NULL, 0, MSG_DONTWAIT, NULL, 0 ) < 0 )
+            {
+                const int error = errno;
+                socket->send_wakeup_failures.fetch_add( 1, std::memory_order_relaxed );
+                if ( rocketnet_xdp_send_wakeup_hard_error( error ) )
+                    socket->send_hard_error.store( error, std::memory_order_relaxed );
+                if ( rocketnet_xdp_send_wakeup_report( error, send_error ) )
+                {
+                    char reason[128];
+                    rocketnet_error( "xdp queue %d tx wakeup failed: %s; the tx ring cannot drain and stop will not wait for it",
+                                     socket->queue, strerror_r( error, reason, sizeof( reason ) ) );
+                }
+            }
+            else
+            {
+                send_error = 0;
+            }
         }
 
         // The SCHED_RR worker spins on its dedicated isolated queue CPU by
@@ -4137,6 +4334,107 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
 
     socket->stopped.store( true, std::memory_order_release );
 }
+
+#if ROCKETNET_DEV
+
+static void * rocketnet_server_socket_test_worker_entry( void * data )
+{
+    rocketnet_server_socket_xdp_thread_function( NULL, data );
+    return NULL;
+}
+
+// The xdp worker fits a 128 KiB thread stack, musl's default pthread stack.
+// The worker runs one pass over four empty rings on the top 128 KiB of a
+// mapping painted with a pattern; the mapping below those 128 KiB is the
+// overflow, and any byte of it changed fails the check. The pin is refused
+// (cpu past CPU_SETSIZE), so the thread keeps its affinity.
+bool rocketnet_server_socket_test_worker_stack()
+{
+    const size_t stack_bytes = size_t( 128 ) * 1024;
+    const size_t overflow_bytes = size_t( 1024 ) * 1024;
+    const size_t map_bytes = overflow_bytes + stack_bytes;
+    const uint8_t paint = 0xA5;
+
+    uint8_t * map = (uint8_t *) mmap( NULL, map_bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0 );
+    if ( map == MAP_FAILED )
+        return false;
+
+    void * socket_storage = rocketnet_malloc( NULL, sizeof( rocketnet_server_xdp_socket_t ) );
+    if ( !socket_storage )
+    {
+        munmap( map, map_bytes );
+        return false;
+    }
+
+    auto * socket = new ( socket_storage ) rocketnet_server_xdp_socket_t();
+    socket->num_os_cpus = CPU_SETSIZE;
+    socket->quit = true;
+
+    uint32_t producer[4] = {};
+    uint32_t consumer[4] = {};
+    uint32_t flags[4] = {};
+    uint64_t ring[4][4] = {};
+
+    struct xsk_ring_cons * cons[2] = { &socket->receive_queue, &socket->complete_queue };
+    struct xsk_ring_prod * prod[2] = { &socket->send_queue, &socket->fill_queue };
+    for ( int i = 0; i < 2; i++ )
+    {
+        cons[i]->mask = 3;
+        cons[i]->size = 4;
+        cons[i]->producer = &producer[i];
+        cons[i]->consumer = &consumer[i];
+        cons[i]->ring = ring[i];
+        cons[i]->flags = &flags[i];
+        prod[i]->mask = 3;
+        prod[i]->size = 4;
+        prod[i]->cached_cons = 4;
+        prod[i]->producer = &producer[2 + i];
+        prod[i]->consumer = &consumer[2 + i];
+        prod[i]->ring = ring[2 + i];
+        prod[i]->flags = &flags[2 + i];
+    }
+
+    memset( map, paint, map_bytes );
+
+    bool valid = false;
+
+    pthread_attr_t attr;
+    if ( pthread_attr_init( &attr ) == 0 )
+    {
+        pthread_t thread;
+        if ( pthread_attr_setstack( &attr, map + overflow_bytes, stack_bytes ) == 0 &&
+             pthread_create( &thread, &attr, rocketnet_server_socket_test_worker_entry, socket ) == 0 )
+        {
+            pthread_join( thread, NULL );
+            valid = socket->stopped.load();
+        }
+        pthread_attr_destroy( &attr );
+    }
+
+    size_t lowest = map_bytes;
+    for ( size_t i = 0; i < map_bytes; i++ )
+    {
+        if ( map[i] != paint )
+        {
+            lowest = i;
+            break;
+        }
+    }
+
+    if ( lowest < overflow_bytes )
+    {
+        (void) fprintf( stderr, "xdp worker used %zu bytes of stack, past its %zu\n", map_bytes - lowest, stack_bytes );
+        valid = false;
+    }
+
+    socket->~rocketnet_server_xdp_socket_t();
+    rocketnet_free( NULL, socket_storage );
+    munmap( map, map_bytes );
+
+    return valid;
+}
+
+#endif // #if ROCKETNET_DEV
 
 #else // #if ROCKETNET_XDP
 

@@ -17,7 +17,7 @@
 #
 # Hosted minutes budget:
 #   - linux-frame-budget:   0 hosted minutes (self-hosted rocketnet-quiet)
-#   - macos-frame-budget:   0 hosted minutes (self-hosted rocketnet-macos)
+#   - macos-frame-budget:   0 hosted minutes (self-hosted macOS, ARM64, fleet)
 #   - windows-frame-budget: 0 hosted minutes (self-hosted rocketnet-windows)
 
 name: Nightly Client Frame Budget
@@ -64,13 +64,13 @@ jobs:
           python3 tools/check_frame_budget.py --bin ./bin/client_main_thread_cost --transport portable
 
   macos-frame-budget:
-    name: frame budget (${{ matrix.ref }} / macos-15 msgx report-only)
+    name: frame budget (${{ matrix.ref }} / macos msgx report-only)
     # Report-only: the fleet Mac is not reserved quiet (it also carries other
     # fleet work), so the budget is recorded rather than enforced. Its one
     # runner takes one job at a time, so no other workflow job overlaps the
     # measurement, and the workflow concurrency group above keeps one run of
     # this workflow per ref.
-    runs-on: [self-hosted, macOS, ARM64, rocketnet-macos]
+    runs-on: [self-hosted, macOS, ARM64, fleet]
     timeout-minutes: 7200
     strategy:
       fail-fast: false

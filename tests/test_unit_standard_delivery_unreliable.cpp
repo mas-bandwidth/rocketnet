@@ -17,6 +17,8 @@
 #include "../sdk/rocketnet_counters.h"
 #include "../sdk/rocketnet_message.h"
 
+#include <stdlib.h>
+
 struct rn_delivery_step_t
 {
     int code;
@@ -115,9 +117,19 @@ static int run_trace( const rocketnet_message_config_t * config, const rn_delive
                       rn_delivery_trace_t * trace )
 {
     rocketnet_counters_t counters = {};
-    rn_arena_t * arena = rn_arena_create( NULL, config, 1, &counters );
-    if ( !arena )
+    const uint64_t arena_bytes = rn_arena_required_bytes( config, 1 );
+    if ( arena_bytes == 0 )
         return -1;
+    uint8_t * raw = (uint8_t *) malloc( (size_t) arena_bytes + ROCKETNET_ALLOCATION_ALIGNMENT );
+    if ( !raw )
+        return -1;
+    uint8_t * block = (uint8_t *) ( ( (uintptr_t) raw + ROCKETNET_ALLOCATION_ALIGNMENT - 1 ) & ~(uintptr_t) ( ROCKETNET_ALLOCATION_ALIGNMENT - 1 ) );
+    rn_arena_t * arena = rn_arena_create_in_block( block, arena_bytes, config, 1, &counters );
+    if ( !arena )
+    {
+        free( raw );
+        return -1;
+    }
     rn_region_t * region = rn_arena_region( arena, 0 );
     rn_channels_t channels;
     int result = rn_channels_init( &channels, region, region->num_channels, 0 ) ? 0 : -1;
@@ -127,6 +139,7 @@ static int run_trace( const rocketnet_message_config_t * config, const rn_delive
     }
 
     rn_arena_destroy( arena );
+    free( raw );
 
     return result;
 }

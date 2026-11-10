@@ -563,19 +563,19 @@ static void check_token_history_create_sweep( allocator_state & state )
 {
     const int baseline = state.live;
 
-    // rocketnet_used_token_history_create: 17 allocations (fail N=1..17,
-    // succeed N=18). One history holder, seven allocations for the
-    // response-binding table, and nine for the claim table, whose deadline
-    // and two insertion-order ring arrays replace the binding's expiry.
+    // rocketnet_used_token_history_create: 19 allocations (fail N=1..19,
+    // succeed N=20). One history holder and nine allocations for each table:
+    // the binding's expiry or the claim's deadline, and two insertion-order
+    // ring arrays in both.
 
     check( sweep_component_create<rocketnet_used_token_history_t>(
                state,
                [&]()
                { return rocketnet_used_token_history_create( &state, 16 ); },
                []( rocketnet_used_token_history_t * h )
-               { rocketnet_used_token_history_destroy( h ); } ) == 17 );
+               { rocketnet_used_token_history_destroy( h ); } ) == 19 );
     check( state.live == baseline );
-    printf( "token history allocation sweep OK: 17 allocations\n" );
+    printf( "token history allocation sweep OK: 19 allocations\n" );
 }
 
 static void check_component_create_sweeps( allocator_state & state )
@@ -627,6 +627,8 @@ static void check_component_create_sweeps( allocator_state & state )
 
     // 9. rn_arena_create (sdk/rocketnet_allocator.h): 1 allocation (fail N=1, succeed N=2).
     // Refused configs and region counts allocate nothing; in-region carve/send/store allocate nothing.
+    // A production build (ROCKETNET_DEV=0) has no self-allocating arena constructor.
+#if ROCKETNET_DEV
 
     rocketnet_counters_t counters{};
     rocketnet_message_config_t msg_config{};
@@ -673,6 +675,7 @@ static void check_component_create_sweeps( allocator_state & state )
                    check( state.calls == before );
                    rn_arena_destroy( a );
                } ) == 1 );
+#endif // #if ROCKETNET_DEV
 
     // 11. The platform thread and its shim share an allocator-backed record.
 
