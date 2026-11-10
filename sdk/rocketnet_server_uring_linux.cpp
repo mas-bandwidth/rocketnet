@@ -1939,8 +1939,10 @@ void rocketnet_server_uring_abort_packet( struct rocketnet_server_uring_t * urin
 // chunks no larger than the free submission queue space, rotated across the
 // group's sockets, each chunk submitted and followed by a reap within the
 // call's budget. A run never crosses a phase, and its SQE names its head by
-// its staging slot. Returns false when a submit took nothing, so a later
-// call submits the rest, the older phase's before the newer's.
+// its staging slot (proofs/tla/RNUringSendPhases.tla SubmitRun). An aborted
+// or unroutable slot is skipped without a send (SkipSlot). Returns false
+// when a submit took nothing, so a later call submits the rest, the older
+// phase's before the newer's (a submit pass can stop part way).
 
 static bool rocketnet_server_uring_submit_phase( struct rocketnet_server_uring_t * uring, int phase, int * budget )
 {
@@ -2071,8 +2073,9 @@ static bool rocketnet_server_uring_submit_phase( struct rocketnet_server_uring_t
 }
 
 // proofs/tla/RNUringDriver.tla Submit, Reap, SendReturn and ResetIndex, and
-// at the staging's layout proofs/tla/RNUringSendPhases.tla SendBegin, Reap
-// and SendEnd: the staged slots not yet submitted, the committed phase's
+// at the staging's layout proofs/tla/RNUringSendPhases.tla SendBegin,
+// SubmitRun, SkipSlot, Reap and SendEnd: the staged slots not yet submitted,
+// the committed phase's
 // first and then the fill phase's (rocketnet_server_uring_submit_phase); then
 // reap, at most ROCKETNET_URING_SEND_BUDGET CQEs in the whole call and after
 // no waits (receive CQEs met on the way go to the fill bank, or are held for
