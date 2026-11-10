@@ -204,7 +204,7 @@ struct rocketnet_server_uring_t
 
     std::atomic<uint64_t> packet_id{ 0 };
 
-    uint64_t send_rotation;                     // main thread only: rotates submit chunks across the group's sockets
+    uint64_t send_rotation;                     // main thread only: rotates each submitted send across the group's sockets
     int sends_pending;                          // sends submitted, by this send_packets or an earlier one, with no CQE reaped, both phases
     int send_submitted[ROCKETNET_URING_SEND_PHASES];    // per phase: its staged slots below this were submitted
     int send_pending[ROCKETNET_URING_SEND_PHASES];      // per phase: its sends submitted with no CQE reaped
@@ -1982,9 +1982,6 @@ static bool rocketnet_server_uring_submit_phase( struct rocketnet_server_uring_t
         if ( space > in_flight_room )
             space = in_flight_room;
 
-        const int queue_index = (int) ( uring->send_rotation++ % (uint64_t) uring->num_queues );
-        const int fd = uring->queues[queue_index].fd;
-
         unsigned prepared = 0;
 
         while ( slot < num_slots && prepared < space )
@@ -2046,6 +2043,9 @@ static bool rocketnet_server_uring_submit_phase( struct rocketnet_server_uring_t
                 info->message.msg_namelen = 0;
             }
 #endif // #if ROCKETNET_DEV
+
+            const int queue_index = (int) ( uring->send_rotation++ % (uint64_t) uring->num_queues );
+            const int fd = uring->queues[queue_index].fd;
 
             struct io_uring_sqe * sqe = rocketnet_server_uring_ring_get_sqe( uring );
             rocketnet_assert( sqe );
