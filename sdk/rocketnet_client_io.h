@@ -38,8 +38,10 @@ void rocketnet_client_io_wipe( void * data, size_t bytes );
 #define ROCKETNET_CLIENT_IO_BATCH 64
 // The idle wait's timeout. The I/O thread wakes on its socket or its wake
 // (proofs/tla/RNClientIo.tla IoWake needs no timeout); this only bounds a lost wake,
-// so an idle client wakes at most 20 times a second. At 1 ms, 1000 clients on
-// one host woke 340,000 times a second and starved threads for seconds.
+// so an idle client wakes at most 20 times a second. The 1 ms comparison is
+// an unrecorded observation (1000 clients on one host woke 340,000 times a
+// second and starved threads for seconds), not a docs/runs/ measurement;
+// 0.05 s is a chosen design value.
 #define ROCKETNET_CLIENT_IO_GUARD_TIMEOUT_SECONDS 0.05    // a guard, never a cadence
 
 // The receive buffers: the I/O thread fills one, one waits ready, update

@@ -1224,8 +1224,9 @@ static void rn_client_connection_counts( struct rocketnet_message_client_t * mes
 
 // An early destroy steps the retiring transport and polls its stop, sleeping
 // a millisecond between polls, for at most this long: a threaded worker
-// needs wall-clock time to see its stop and exit. One that has not exited by
-// then is left owning its memory rather than freed under it.
+// needs wall-clock time to see its stop and exit. One second is a chosen
+// design value, not a measurement recorded in docs/runs/. One that has not
+// exited by then is left owning its memory rather than freed under it.
 static const double RN_DESTROY_STOP_SECONDS = 1.0;
 
 #if ROCKETNET_DEV

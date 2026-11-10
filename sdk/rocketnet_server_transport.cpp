@@ -1,4 +1,6 @@
 // Protocol defaults and table-sizing ratios the create path assigns.
+// These values are chosen design values, not measurements from a recorded run
+// in docs/runs/.
 // One declaration: rocketnet_server_transport_create uses these macros, and
 // the conformance dump includes this file under
 // ROCKETNET_CONFORMANCE_DEFAULTS_ONLY and expands the same ones.
