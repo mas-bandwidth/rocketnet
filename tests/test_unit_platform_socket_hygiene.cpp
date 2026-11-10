@@ -469,7 +469,59 @@ static void test_platform_msgx_receive_weather_drain_is_bounded()
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC && ROCKETNET_DEV
 
+void rocketnet_platform_socket_apply_dont_fragment( bool ipv6, void ( *set_option )( void * user, int level, int option_name, int value ), void * user );
+
+struct platform_socket_hygiene_options_t
+{
+    int levels[4];
+    int names[4];
+    int values[4];
+    int count;
+};
+
+static void platform_socket_hygiene_record_option( void * user, int level, int option_name, int value )
+{
+    platform_socket_hygiene_options_t * options = (platform_socket_hygiene_options_t *) user;
+    rocketnet_unit_check( options->count < 4 );
+    options->levels[options->count] = level;
+    options->names[options->count] = option_name;
+    options->values[options->count] = value;
+    options->count++;
+}
+
+static void test_platform_socket_hygiene_dual_stack_sets_both_dont_fragment()
+{
+    platform_socket_hygiene_options_t ipv4_options;
+    memset( &ipv4_options, 0, sizeof( ipv4_options ) );
+    rocketnet_platform_socket_apply_dont_fragment( false, platform_socket_hygiene_record_option, &ipv4_options );
+
+    platform_socket_hygiene_options_t ipv6_options;
+    memset( &ipv6_options, 0, sizeof( ipv6_options ) );
+    rocketnet_platform_socket_apply_dont_fragment( true, platform_socket_hygiene_record_option, &ipv6_options );
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    rocketnet_unit_check( ipv4_options.count == 1 );
+    rocketnet_unit_check( ipv4_options.levels[0] == IPPROTO_IP && ipv4_options.names[0] == IP_DONTFRAGMENT && ipv4_options.values[0] == 1 );
+    rocketnet_unit_check( ipv6_options.count == 2 );
+    rocketnet_unit_check( ipv6_options.levels[0] == IPPROTO_IPV6 && ipv6_options.names[0] == IPV6_DONTFRAG && ipv6_options.values[0] == 1 );
+    rocketnet_unit_check( ipv6_options.levels[1] == IPPROTO_IP && ipv6_options.names[1] == IP_DONTFRAGMENT && ipv6_options.values[1] == 1 );
+#elif defined( __linux__ )
+    rocketnet_unit_check( ipv4_options.count == 1 );
+    rocketnet_unit_check( ipv4_options.levels[0] == IPPROTO_IP && ipv4_options.names[0] == IP_MTU_DISCOVER && ipv4_options.values[0] == IP_PMTUDISC_DO );
+    rocketnet_unit_check( ipv6_options.count == 2 );
+    rocketnet_unit_check( ipv6_options.levels[0] == IPPROTO_IPV6 && ipv6_options.names[0] == IPV6_MTU_DISCOVER && ipv6_options.values[0] == IPV6_PMTUDISC_DO );
+    rocketnet_unit_check( ipv6_options.levels[1] == IPPROTO_IP && ipv6_options.names[1] == IP_MTU_DISCOVER && ipv6_options.values[1] == IP_PMTUDISC_DO );
+#elif defined( IPV6_DONTFRAG ) && defined( IP_DONTFRAG )
+    rocketnet_unit_check( ipv4_options.count == 1 );
+    rocketnet_unit_check( ipv4_options.levels[0] == IPPROTO_IP && ipv4_options.names[0] == IP_DONTFRAG && ipv4_options.values[0] == 1 );
+    rocketnet_unit_check( ipv6_options.count == 2 );
+    rocketnet_unit_check( ipv6_options.levels[0] == IPPROTO_IPV6 && ipv6_options.names[0] == IPV6_DONTFRAG && ipv6_options.values[0] == 1 );
+    rocketnet_unit_check( ipv6_options.levels[1] == IPPROTO_IP && ipv6_options.names[1] == IP_DONTFRAG && ipv6_options.values[1] == 1 );
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+}
+
 REGISTER_UNIT_TEST( test_platform_socket_hygiene_mapped_source_decision );
+REGISTER_UNIT_TEST( test_platform_socket_hygiene_dual_stack_sets_both_dont_fragment );
 REGISTER_UNIT_TEST( test_platform_socket_hygiene_descriptor_valid );
 REGISTER_UNIT_TEST( test_platform_socket_hygiene_refused_source_reads_next );
 REGISTER_UNIT_TEST( test_platform_socket_hygiene_refused_source_then_drained );
