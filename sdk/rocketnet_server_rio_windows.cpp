@@ -1114,7 +1114,8 @@ failed:
     }
     if ( !stopped )
     {
-        // The kernel may still write the region: leak it, never free it.
+        // proofs/tla/RNRioWorker.tla WLeak: the bounded inline drain gave up;
+        // the kernel may still write the region, so leak it, never free it.
         rocketnet_error( "rio transport: create failed with %d receives posted; leaking the transport", rio->posted_receives.load( std::memory_order_relaxed ) );
         return NULL;
     }

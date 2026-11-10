@@ -51,8 +51,12 @@ every RIO call after create.
      still in flight, which would retire it as `SEND_FAILED` and lose the
      shutdown disconnect burst.
   4. It closes the socket, which cancels every posted receive, and drains
-     both queues.
-  5. Only then does it set `exited`, which `stopped` reports.
+     both queues in batches of at most `ROCKETNET_RIO_DEQUEUE_BATCH` (the
+     model's `DrainBatch`), a partial or full batch per pass.
+  5. Only then does it set `exited`, which `stopped` reports. On create's
+     inline path, a pass that makes no progress for
+     `ROCKETNET_RIO_DRAIN_WAITS` passes leaks the transport instead of
+     freeing a region the kernel may still write.
   6. Destroy joins the worker and frees the registered region.
 
 ## The abstraction
@@ -96,7 +100,10 @@ every RIO call after create.
   With no progress it goes to `WArm` and then `WWait`. The stop path is
   `WStop`, then `WClose` (only once committed, and under the rule only once
   no committed send is in flight; until then it retires the send completions
-  and returns to `WStop`), then `WDrain`.
+  and returns to `WStop`), then `WDrain`. `WDrain` drains at most
+  `DrainBatch` completions of each queue per pass and counts a pass that
+  makes no progress; after `StopDrainWaits` such passes `WLeak` reports the
+  transport stopped-but-leaked without freeing the region.
 - **Receive stop interleaving.** The source checks `stopping` once before
   its whole retry loop, then separately for each completion after copying
   the datagram. `WDequeue` remains an aggregate action. `stopDuring` summarizes
@@ -110,7 +117,8 @@ every RIO call after create.
   local completion-array model. It adds no fairness condition.
   A retry already in the list stays unposted and accounted through stop;
   it is not kernel-owned and does not block close or free. `WDrain` moves
-  queued receive completions into `retired`, including close cancellations.
+  queued receive completions into `retired` in `DrainBatch` steps, including
+  close cancellations.
 - **Main.** Main's steps are:
   - `Stage`, a fill thread;
   - `SendPackets` and `ReceivePackets`, each a successful try;
@@ -137,10 +145,13 @@ every RIO call after create.
 - `FreedOnlyWhenDrained`: the region is freed only when the kernel owns no
   request and every completion has been dequeued.
 - `EveryDatagramConsumed`, `EveryStagedSent` and `StopCompletes` (`stopping`
-  leads to `freed`) are the liveness properties. They are checked with no
-  wait timeout for an idle worker. The waits that are really timed in the
-  code are while sends are outstanding, a refused commit, or a refused
-  re-post; `WWait` lets those pass.
+  leads to `freed`, or to `wpc = "leaked"` when the bounded create drain
+  gives up) are the liveness properties. They are checked with no wait
+  timeout for an idle worker. The waits that are really timed in the code
+  are while sends are outstanding, a refused commit, or a refused re-post;
+  `WWait` lets those pass. The stop path itself is bounded by
+  `StopDrainWaits`, so it does not assume a refused stop commit eventually
+  succeeds.
 
 ## Cases and the checks against the code
 
@@ -166,9 +177,12 @@ native Linux with the pinned TLC jar. All five healthy cases passed; the six
 mutations produced exactly the properties listed above. The longest case was
 21.486 s, within the unchanged 110 s budget. Healthy cases used two workers
 and witnesses one. The ten existing configurations and their expected
-properties were unchanged; `RUNS.tsv` records the inputs and actual results.
-These bounded count-model checks do not establish an instruction-level
-refinement of the worker or qualify native Windows timing.
+properties were unchanged; `RUNS.tsv` records the inputs and actual results
+of that run. The later bounded stop-drain edit adds `DrainBatch` and
+`StopDrainWaits` to every configuration, so those records describe the
+previous inputs and need a fresh TLC run with the pinned jar. These bounded
+count-model checks do not establish an instruction-level refinement of the
+worker or qualify native Windows timing.
 
 Each reversed witness was read against the code by hand (2026-10-22):
 
