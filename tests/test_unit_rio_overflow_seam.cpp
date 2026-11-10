@@ -21,6 +21,8 @@ bool rocketnet_server_rio_test_worker_handoff();
 bool rocketnet_server_rio_test_reservation_wrap();
 bool rocketnet_server_rio_test_stop_drains_sends();
 bool rocketnet_server_rio_test_send_accounting();
+bool rocketnet_server_rio_test_create_failure_drain( int late_waits, bool refuse_close, bool * stopped_out, int * closes_out,
+                                                     int * waits_out, int * longest_wait_milliseconds_out );
 
 static void test_rio_transport_overflow_seam()
 {
@@ -94,5 +96,47 @@ static void test_rio_transport_send_accounting()
 }
 
 REGISTER_UNIT_TEST( test_rio_transport_send_accounting );
+
+// A create that fails with every receive slice posted drains inline
+// (proofs/tla/RNRioWorker.tla InlineStop, BoundedStopDrain): a fake kernel, no
+// socket, no worker thread, and the wait between two passes is told its bound
+// instead of waiting. The drain is bounded by counting passes and completions,
+// never by seconds: it waits only for cancelled receives still on their way
+// to the completion queue, each wait bounded by 50 ms on the queue's
+// notification, and gives up after ten failed passes
+// (ROCKETNET_RIO_DRAIN_WAITS).
+static void test_rio_transport_create_failure_drain_counts_passes_not_seconds()
+{
+    bool stopped = false;
+    int closes = 0;
+    int waits = 0;
+    int longest = 0;
+
+    // closesocket queues every cancelled receive: one pass, no wait
+
+    check( rocketnet_server_rio_test_create_failure_drain( 0, false, &stopped, &closes, &waits, &longest ) );
+    check( stopped && closes == 1 && waits == 0 );
+
+    // the cancelled receives reach the queue over two waits
+
+    check( rocketnet_server_rio_test_create_failure_drain( 2, false, &stopped, &closes, &waits, &longest ) );
+    check( stopped && closes == 1 && waits == 2 );
+    check( longest <= 50 );
+
+    // closesocket refused every time: nothing is on its way, so nothing is
+    // waited for, and the eleventh failed pass is the last
+
+    check( rocketnet_server_rio_test_create_failure_drain( 0, true, &stopped, &closes, &waits, &longest ) );
+    check( !stopped && closes == 11 );
+    check( waits == 0 );
+
+    // cancelled receives that never arrive: ten bounded waits, then it gives up
+
+    check( rocketnet_server_rio_test_create_failure_drain( 1 << 30, false, &stopped, &closes, &waits, &longest ) );
+    check( !stopped && closes == 1 && waits == 10 );
+    check( longest <= 50 );
+}
+
+REGISTER_UNIT_TEST( test_rio_transport_create_failure_drain_counts_passes_not_seconds );
 
 #endif // #if defined( _WIN32 )

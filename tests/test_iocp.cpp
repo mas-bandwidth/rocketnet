@@ -2692,6 +2692,33 @@ static void test_windows_sockets_not_inherited()
     printf( "test_windows_sockets_not_inherited\n" );
 }
 
+// A create that fails after posting receives drains them inline before it
+// frees the region: closesocket cancels the posted receives and the drain
+// accounts for every one. Stage 6 fails after the first receive is posted,
+// stage 7 after the last. Neither leaks. The waits printed are the ones the
+// drain made between passes, which is what Windows does with the cancelled
+// receives: none means closesocket queued every completion before it
+// returned.
+
+static void test_rio_create_failure_drains_posted_receives()
+{
+    const int baseline = live_allocations.load();
+
+    for ( int stage = 6; stage <= 7; ++stage )
+    {
+        rocketnet_address_t bind = address( "127.0.0.1:0" );
+        const int waits_before = rocketnet_server_rio_test_create_drain_waits();
+        const double start = rocketnet_platform_time();
+        CHECK( !rocketnet_server_rio_create( NULL, &bind, ROCKETNET_DEFAULT_MAX_CLIENTS, stage ) );
+        const double seconds = rocketnet_platform_time() - start;
+        printf( "  rio create failure stage=%d: drain waits=%d, %.1f ms\n", stage,
+                rocketnet_server_rio_test_create_drain_waits() - waits_before, seconds * 1000.0 );
+        CHECK( live_allocations.load() == baseline );
+    }
+
+    printf( "test_rio_transport_create_failure_drains_posted_receives\n" );
+}
+
 struct fault_case_t
 {
     const char * name;
@@ -2717,6 +2744,7 @@ static const fault_case_t fault_cases[] = {
     { "test_rio_transport_send_post_fails", test_rio_send_post_fails },
     { "test_rio_transport_destroy_commits_deferred_sends", test_rio_destroy_commits_deferred_sends },
     { "test_rio_transport_stop_retries_refused_deferred_commit", test_rio_stop_retries_refused_deferred_commit },
+    { "test_rio_transport_create_failure_drains_posted_receives", test_rio_create_failure_drains_posted_receives },
     { "test_windows_port_exclusive", test_windows_port_exclusive },
     { "test_windows_send_failures_counted", test_windows_send_failures_counted },
     { "test_windows_sockets_not_inherited", test_windows_sockets_not_inherited },

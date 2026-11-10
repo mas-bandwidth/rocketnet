@@ -239,6 +239,16 @@ struct rocketnet_rio_test_function_table_t
 
 static const rocketnet_rio_test_function_table_t * rocketnet_rio_test_functions = NULL;
 
+// The unit seam's stand-in for the wait between two passes of create's
+// failure drain: it is told the wait's bound and no time passes.
+static void ( *rocketnet_rio_test_drain_wait )( DWORD milliseconds ) = NULL;
+static std::atomic<int> rocketnet_rio_test_create_drain_waits{ 0 };
+
+int rocketnet_server_rio_test_create_drain_waits()
+{
+    return rocketnet_rio_test_create_drain_waits.load( std::memory_order_relaxed );
+}
+
 #endif // #if ROCKETNET_DEV
 
 // The worker's RIO calls on its queues, through the test table when a unit
@@ -891,6 +901,39 @@ bool rocketnet_server_rio_available()
 
 static void rocketnet_rio_worker( rocketnet_platform_thread_t *, void * argument );
 
+// proofs/tla/RNRioWorker.tla PassFails on create's inline drain: the wait
+// between two passes.
+static void rocketnet_rio_create_drain_wait( rocketnet_server_rio_t * rio )
+{
+    (void) rio;
+#if ROCKETNET_DEV
+    if ( rocketnet_rio_test_drain_wait )
+    {
+        rocketnet_rio_test_drain_wait( (DWORD) ( ROCKETNET_RIO_DRAIN_SECONDS * 1000.0 ) );
+        return;
+    }
+    rocketnet_rio_test_create_drain_waits.fetch_add( 1, std::memory_order_relaxed );
+#endif // #if ROCKETNET_DEV
+    rocketnet_platform_sleep( ROCKETNET_RIO_DRAIN_SECONDS );
+}
+
+// proofs/tla/RNRioWorker.tla Stop, then WStop to WDrainReceive inline
+// (InlineStop) with PassFails between them: create's failure path, before
+// the worker exists. False after ROCKETNET_RIO_DRAIN_WAITS failed passes
+// (WLeak): something is still kernel owned.
+static bool rocketnet_rio_create_failed_drain( rocketnet_server_rio_t * rio )
+{
+    rocketnet_server_rio_stop( rio );
+    bool stopped = rocketnet_server_rio_stopped( rio );
+    for ( int i = 0; i < ROCKETNET_RIO_DRAIN_WAITS && !stopped; ++i )
+    {
+        rocketnet_rio_create_drain_wait( rio );
+        stopped = rocketnet_server_rio_stopped( rio );
+    }
+
+    return stopped;
+}
+
 rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_address_t * bind_address, int max_clients
 #if ROCKETNET_DEV
                                                       ,
@@ -1085,6 +1128,10 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
             goto failed;
 #endif // #if ROCKETNET_DEV
     }
+#if ROCKETNET_DEV
+    if ( fail_stage == 7 )
+        goto failed;
+#endif // #if ROCKETNET_DEV
 
     if ( !rocketnet_rio_address_read( &address, rio->ipv6, bind_address ) )
         goto failed;
@@ -1106,14 +1153,7 @@ failed:
     rocketnet_warn( "rio transport create failed (Winsock %d, Win32 %lu)", WSAGetLastError(), GetLastError() );
 #endif
     // Partial construction remains private to this synchronous create call.
-    rocketnet_server_rio_stop( rio );
-    bool stopped = rocketnet_server_rio_stopped( rio );
-    for ( int i = 0; i < ROCKETNET_RIO_DRAIN_WAITS && !stopped; ++i )
-    {
-        rocketnet_platform_sleep( ROCKETNET_RIO_DRAIN_SECONDS );
-        stopped = rocketnet_server_rio_stopped( rio );
-    }
-    if ( !stopped )
+    if ( !rocketnet_rio_create_failed_drain( rio ) )
     {
         // proofs/tla/RNRioWorker.tla WLeak: the bounded inline drain gave up;
         // the kernel may still write the region, so leak it, never free it.
@@ -2009,6 +2049,13 @@ struct rocketnet_rio_stop_test_state_t
     LONG completed_status[ROCKETNET_RIO_TEST_SEND_QUEUE_SIZE];
     int cancelled_receives;
     int closes;
+    // create's failure drain: closesocket refused every time, or cancelled
+    // receives that reach the completion queue only over late_waits waits
+    bool refuse_close;
+    int late_waits;
+    int late_receives;
+    int waits;
+    DWORD longest_wait_milliseconds;
 };
 
 static rocketnet_rio_stop_test_state_t * rocketnet_rio_stop_test_state = NULL;
@@ -2079,9 +2126,31 @@ static int WINAPI rocketnet_rio_stop_test_close( SOCKET )
 {
     rocketnet_rio_stop_test_state_t * state = rocketnet_rio_stop_test_state;
     state->closes++;
+    if ( state->refuse_close )
+        return SOCKET_ERROR;
     rocketnet_rio_stop_test_complete_in_flight( (LONG) WSA_OPERATION_ABORTED );
-    state->cancelled_receives = ROCKETNET_RIO_TEST_RECEIVES;
+    if ( state->late_waits > 0 )
+        state->late_receives = ROCKETNET_RIO_TEST_RECEIVES;
+    else
+        state->cancelled_receives = ROCKETNET_RIO_TEST_RECEIVES;
     return 0;
+}
+
+// one wait of create's failure drain: an equal share of the late cancelled
+// receives reaches the completion queue, the remainder with the last wait
+static void rocketnet_rio_stop_test_drain_wait( DWORD milliseconds )
+{
+    rocketnet_rio_stop_test_state_t * state = rocketnet_rio_stop_test_state;
+    state->waits++;
+    if ( milliseconds > state->longest_wait_milliseconds )
+        state->longest_wait_milliseconds = milliseconds;
+    if ( state->late_waits == 0 )
+        return;
+
+    const int share = state->late_receives / state->late_waits;
+    state->late_receives -= share;
+    state->cancelled_receives += share;
+    state->late_waits--;
 }
 
 // proofs/tla/RNRioWorker.tla WClose under DrainSendsBeforeClose, stepped on one thread
@@ -2130,6 +2199,53 @@ bool rocketnet_server_rio_test_stop_drains_sends()
              rocketnet_rio_outstanding_sends( rio ) == 0 && rio->posted_receives.load() == 0;
 
     rio->have_table = false;
+    rocketnet_rio_stop_test_state = NULL;
+    rocketnet_rio_test_fixture_free( rio );
+
+    return valid;
+}
+
+// proofs/tla/RNRioWorker.tla InlineStop with BoundedStopDrain: create's
+// failure drain on one thread with a fake kernel and no clock, every receive
+// slice posted and no worker. late_waits is how many waits the cancelled
+// receives take to reach the completion queue (0: closesocket queues them
+// all); refuse_close refuses closesocket every time. Reports whether the
+// drain stopped, the closesocket calls (one a pass until it succeeds), the
+// waits between passes and the longest bound any of them was given.
+bool rocketnet_server_rio_test_create_failure_drain( int late_waits, bool refuse_close, bool * stopped_out, int * closes_out,
+                                                     int * waits_out, int * longest_wait_milliseconds_out )
+{
+    rocketnet_server_rio_t * rio = rocketnet_rio_test_fixture();
+    if ( !rio )
+        return false;
+    static rocketnet_rio_stop_test_state_t state;
+    memset( &state, 0, sizeof( state ) );
+    state.late_waits = late_waits;
+    state.refuse_close = refuse_close;
+
+    const rocketnet_rio_test_function_table_t functions = {
+        rocketnet_rio_stop_test_dequeue,
+        rocketnet_rio_stop_test_receive,
+        rocketnet_rio_stop_test_send,
+        rocketnet_rio_stop_test_close
+    };
+    rocketnet_rio_stop_test_state = &state;
+    rocketnet_rio_test_functions = &functions;
+    rocketnet_rio_test_drain_wait = rocketnet_rio_stop_test_drain_wait;
+    rio->have_table = true;
+    rio->socket = (SOCKET) 7;
+
+    *stopped_out = rocketnet_rio_create_failed_drain( rio );
+    *closes_out = state.closes;
+    *waits_out = state.waits;
+    *longest_wait_milliseconds_out = (int) state.longest_wait_milliseconds;
+
+    // a drain that stopped left nothing kernel owned; one that gave up still
+    // counts what it could not account for
+    const bool valid = *stopped_out == ( rio->socket == INVALID_SOCKET && rio->posted_receives.load() == 0 );
+
+    rio->have_table = false;
+    rocketnet_rio_test_drain_wait = NULL;
     rocketnet_rio_stop_test_state = NULL;
     rocketnet_rio_test_fixture_free( rio );
 
