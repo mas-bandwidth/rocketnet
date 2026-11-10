@@ -53,6 +53,14 @@ def plan(cases, runs, stale):
     return selected
 
 
+def choose(selected, which):
+    """Keep the cases one workflow runs: the gate's are stale and not debt
+    (tlc.yml); every debt case, stale or not, is the debt watch's
+    (tlc-debt.yml)."""
+    reasons = {"stale": ("stale",), "debt": ("debt", "stale+debt")}[which]
+    return [entry for entry in selected if entry[4] in reasons]
+
+
 def read_tsv(path):
     with path.open(newline="", encoding="utf-8") as stream:
         return list(csv.DictReader(stream, delimiter="\t"))
@@ -63,9 +71,11 @@ def main():
     parser.add_argument("--cases", type=Path, default=Path("proofs/tla/CASES.tsv"))
     parser.add_argument("--runs", type=Path, default=Path("proofs/tla/RUNS.tsv"))
     parser.add_argument("--stale", type=Path, required=True)
+    parser.add_argument("--select", choices=("stale", "debt"), required=True)
     args = parser.parse_args()
     try:
-        selected = plan(read_tsv(args.cases), read_tsv(args.runs), json.loads(args.stale.read_text()))
+        selected = choose(plan(read_tsv(args.cases), read_tsv(args.runs), json.loads(args.stale.read_text())),
+                          args.select)
     except (ValueError, KeyError, OSError) as error:
         parser.error(str(error))
     for group, count, shard, config, reason in selected:
