@@ -204,6 +204,7 @@ model's README for its current controls, witnesses and configured bounds.
 | `rnbankfifolayout` | The hand-written bank queues of the portable, gso, xdp, iocp and rio server transports, the buffer handoff and the iocp client at their layout (README-RNBankFifoLayout.md). |
 | `rnriosendslotlayout` | The RIO send slots, reservation counter and send_ready FIFO of phases at their layout (README-RNRioSendSlotLayout.md). |
 | `rnclientiocompactlayout` | The client I/O batch receive's in-place compaction at its layout (README-RNClientIoCompactLayout.md). |
+| `rnbuilderplanlayout` | The packet builder's flat plan at its layout: radix passes, group ranges, suffix minima and the refused packet's cursor undo, four items over two channels (README-RNBuilderPlanLayout.md). |
 | `rnxdpreplaymarkslayout` | The userspace pending buffer for the kernel replay map at the code's layout, three entries, two keys and two values (README-RNXdpReplayMarksLayout.md). |
 | `rnxdpreplymacslayout` | The XDP reply MAC table's open addressing, four entries, a window of two, three addresses over every home map (README-RNXdpReplyMacsLayout.md). |
 | `rndisconnectburstring` | The server transport's ring of deferred disconnect bursts at the code's layout (README-RNDisconnectBurstRing.md). |

@@ -187,6 +187,9 @@ static uint8_t rn_builder_key_byte( const struct rn_packet_item_t * items, uint3
 
 static void rn_builder_radix_pass( struct rn_packet_builder_plan_t * plan, const struct rn_packet_item_t * items, const uint8_t * input, uint8_t * output, uint32_t count, int pass )
 {
+    // proofs/tla/RNBuilderPlanLayout.tla Count, Prefix and Scatter: the count,
+    // the exclusive prefix offsets and the forward scatter, each slot written once
+
     uint8_t buckets[256];
     memset( buckets, 0, sizeof( buckets ) );
 
@@ -224,6 +227,10 @@ static bool rn_builder_plan( struct rn_packet_builder_plan_t * plan, struct rn_p
     // so it is never taken and the plan never drains.
 
     // proofs/tla/RNScheduler.tla, IsHead and Boost
+
+    // proofs/tla/RNBuilderPlanLayout.tla Filter, Group, Member, Suffix and Range:
+    // the plan's arrays at their layout, sort_indices and alternate, the groups'
+    // begin, cursor and end, sequence[] and the class group ranges
 
     uint8_t alternate[ROCKETNET_PACKET_BUILDER_MAX_ITEMS];
     uint32_t count = 0;
@@ -386,6 +393,8 @@ static uint32_t rn_builder_take_head( struct rn_packet_builder_plan_t * plan, ui
     // a head taken: advance its contiguous range. The next sequence entry already
     // carries the suffix priority of what remains.
 
+    // proofs/tla/RNBuilderPlanLayout.tla Take: the position is kept for the undo
+
     struct rn_packet_builder_group_t * group = &plan->groups[group_index];
     const uint32_t position = group->cursor;
     group->cursor++;
@@ -524,6 +533,8 @@ int rn_packet_builder_write( struct rn_packet_builder_t * builder, struct rn_pac
 
     packet_done:
 
+        // proofs/tla/RNBuilderPlanLayout.tla Stop: an empty packet ends the call
+
         const int payload_bytes = rocketnet_message_writer_finish( &writer );
         if ( payload_bytes <= 0 )
             break;                                              // an empty plan writes nothing (9.3)
@@ -545,6 +556,9 @@ int rn_packet_builder_write( struct rn_packet_builder_t * builder, struct rn_pac
             // reliable one waits for the next update and is never dropped, an
             // unreliable one is dropped and counted. Either way nothing after
             // it spends the bucket this update.
+
+            // proofs/tla/RNBuilderPlanLayout.tla Refuse and Undo: each taken
+            // position, last first, steps its group's cursor back
 
             for ( uint32_t r = records; r > 0; r-- )
             {
@@ -573,6 +587,8 @@ int rn_packet_builder_write( struct rn_packet_builder_t * builder, struct rn_pac
             refused = true;
             break;
         }
+
+        // proofs/tla/RNBuilderPlanLayout.tla Commit: the packet is written and its items stay taken
 
         auto * slot = &builder->packet[p];
         slot->count = count;

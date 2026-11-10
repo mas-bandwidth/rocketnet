@@ -725,3 +725,7 @@ MCRNIocpSendLeaseCap4.cfg	MCRNIocpSendLease.tla	pass	-	ignore-terminal	rniocpsen
 MCRNIocpSendLeaseStalledPop.cfg	MCRNIocpSendLease.tla	pass	-	ignore-terminal	rniocpsendlease	required	-
 MCRNIocpSendLeaseBrokenRetireRefused.cfg	MCRNIocpSendLease.tla	invariant	RetiredOnlyAtGenMax	ignore-terminal	rniocpsendlease	required	-
 MCClientSessionSilentExhaust.cfg	MCClientSession.tla	invariant	CallbackReportsPublicState	ignore-terminal	clientsession	required	-
+MCRNBuilderPlanLayout.cfg	MCRNBuilderPlanLayout.tla	pass	-	ignore-terminal	rnbuilderplanlayout	required	-
+MCRNBuilderPlanLayoutBrokenNoRestore.cfg	MCRNBuilderPlanLayout.tla	invariant	ChannelOrderKept	ignore-terminal	rnbuilderplanlayout	required	-
+MCRNBuilderPlanLayoutBrokenInclusivePrefix.cfg	MCRNBuilderPlanLayout.tla	invariant	NoOverlap	ignore-terminal	rnbuilderplanlayout	required	-
+MCRNBuilderPlanLayoutBrokenReverseScatter.cfg	MCRNBuilderPlanLayout.tla	invariant	PlanSorted	ignore-terminal	rnbuilderplanlayout	required	-

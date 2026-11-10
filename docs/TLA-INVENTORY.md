@@ -77,3 +77,4 @@ the production relationship being proved. A model-check result is evidence for
 its stated abstraction; unit and functional gates still verify the C++ seam.
 Deliberately broken configurations remain negative controls and are named as
 such in the run inventory.
+| packet builder plan layout | `RNScheduler`, `RNBuilderPlanLayout` | every radix scatter writes a distinct slot, the plan holds each writable item once in class, channel and caller order, the groups tile it one per class and channel with each class range exactly its groups, every suffix level the least priority to its group's end, and across a refused packet's cursor undo each channel's items written or still planned in caller order, none lost and none twice |
