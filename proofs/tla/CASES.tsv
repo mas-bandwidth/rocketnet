@@ -482,6 +482,7 @@ MCRNHeldOwnershipBrokenNoGuardsStale.cfg	MCRNHeldOwnership.tla	invariant	NoStale
 MCRNIocpRefQueue.cfg	MCRNIocpRefQueue.tla	pass	-	check	rniocprefqueue	required	-
 MCRNIocpRefQueueCap4.cfg	MCRNIocpRefQueue.tla	pass	-	check	rniocprefqueue	required	-
 MCRNIocpRefQueueStalledPop.cfg	MCRNIocpRefQueue.tla	pass	-	check	rniocprefqueue	required	-
+MCRNIocpRefQueueStalledPopCap4.cfg	MCRNIocpRefQueue.tla	pass	-	check	rniocprefqueue	required	-
 MCRNIocpRefQueueBrokenCapacityNotPow2.cfg	MCRNIocpRefQueue.tla	invariant	NoOverwrite	check	rniocprefqueue	required	-
 MCRNIocpRefQueueBrokenInitOffByOne.cfg	MCRNIocpRefQueue.tla	invariant	NoPhantom	check	rniocprefqueue	required	-
 MCRNIocpRefQueueBrokenPositionWrap.cfg	MCRNIocpRefQueue.tla	invariant	NoOverwrite	check	rniocprefqueue	required	-
