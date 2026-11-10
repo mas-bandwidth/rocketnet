@@ -19,10 +19,11 @@ Code: `sdk/rocketnet_message_server.cpp` (`rn_message_object_start`,
 `sdk/rocketnet_endpoint.cpp` (`rn_endpoint_in_place_header`,
 `rn_endpoint_in_place_affordable`, `rn_endpoint_in_place_finish`,
 `rn_endpoint_in_place_sent`). The whole-frame path the code keeps
-(`in_place == 1`, `rn_endpoint_in_place_finish`: a plain message that fits
-SINGLE but not with a record header, or a transport whose frames are smaller)
-is the model's case of a record that fills its frame: it opens a frame, fills
-it and is sealed.
+(`in_place == 1`, `rn_endpoint_in_place_finish`: a fitting message whose
+transport hands out a frame large enough for it but not a full-payload one,
+or a plain UNRELIABLE message the send budget can pay without a record header
+but not with one) is the model's case of a record that fills its frame: it
+opens a frame, fills it and is sealed (see the abstractions below for when).
 
 - Variables: the open build (`open`, its committed end `offset`, its
   committed records `frameRecs` as `[msg, off, len]`, the frame contents
@@ -82,26 +83,67 @@ it and is sealed.
   falls back to the queued path, the flush that keeps the order) or at
   send_packets or update; never at a finish, an abort, an append that fits or
   a reliable start.
-- Not modelled: the 16-receipt cap per packet (a seal like a full frame), the
-  send budget's admission at start (`rn_endpoint_in_place_affordable`; a
-  start the budget cannot pay falls back like one with no room), the fair
-  rotation's frame reserve across connections, and receipts and sequencing
-  numbers (taken at finish, as on the queued path).
+- Abstractions from the code (`sdk/rocketnet_message_server.cpp`,
+  `sdk/rocketnet_endpoint.cpp`; the queued writer is
+  `sdk/rocketnet_packet_builder.cpp`):
+  - Whole-frame route sealed at finish: the code hands the frame to the
+    transport inside `rn_message_object_finish` (`in_place == 1`,
+    `finish_packet` at once). The model has no such seal: the record fills
+    its frame and is sealed at the next start (`NextStartSeals`,
+    `offset = Cap`) or a flush, which is what `FrameClosedOnlyByFullOrFlush`
+    ("never at a finish") checks; the code's route closes the frame earlier.
+  - Trailing seal: after a packed finish, a frame with fewer than
+    `ROCKETNET_MESSAGE_RECORD_FIXED_BYTES + 1` (4) bytes of space left, form
+    byte excluded, is sealed at once in `rn_message_object_finish`. No record
+    fits there, so the model's next start would seal it; the model keeps it
+    open until then.
+  - 16-receipt cap: an UNRELIABLE_WITH_ACK_RECEIPT start when the build
+    already holds `RN_MESSAGE_RECEIPT_SERIALS_MAX` (16) receipt serials seals
+    the build first, like a full frame. The model has no receipts, and
+    receipt serials and sequencing numbers are taken at finish, as on the
+    queued path.
+  - Byte budget: the code tests the send budget
+    (`rn_endpoint_in_place_affordable`: tokens for the frame's wire bytes,
+    plus one maximum packet while reliable work is due, and none while
+    reliable work waits on the bucket) before an append (sealing the build
+    first when it fails), before opening a frame (falling back when it
+    fails), and at the seal (`rocketnet_send_budget_admit` in
+    `rn_message_flush_unreliable`). The model has no bytes budget: the seal's
+    drop is a fault bounded by `MaxFaults`, and a start the budget cannot pay
+    is a fall back like one with no room.
+  - Rotation reserve: either path opens a frame only while the transport's
+    send capacity exceeds its connected clients (`send_capacity_available`
+    above `send_connected_count`), keeping a full fair round for the rotating
+    send pass (`RNSendRotation`). The model has one connection and
+    `NumFrames` frames, a refused frame being a fault.
+  - Due work: the model's due work is a reliable message waiting for its
+    first send (`ReliableQueued`, `promised`); the code's
+    `rn_endpoint_ordered_due` counts new messages only while the send window
+    is not stalled, and also counts a resend or block chunk past its delay.
+  - Queues: the model has one queued path in finish order (`queue`,
+    `UnreliableQueued`). The code has the unreliable queue
+    (`unreliable_count`), a reliable queue per channel
+    (`channel_send[channel].queue_head`, which also takes a sequenced send
+    promoted to it) and the block-chunk resend sequence (`chunk_head`); an
+    UNRELIABLE_SEQUENCED start falls back while its channel's queue or a
+    chunk resend is pending (`rn_endpoint_in_place_header`).
+  - Sizes are units: `Cap` and `Decl[m]` (header included) stand for the
+    payload room and `header + bytes`.
 - Bounds: `MaxFaults` bounds the faults of a run together (a frame refused at
   start, an abort, an over-budget drop), so the control stays inside the
   runner's budget.
 
 | Case | Expected | Instance | Distinct states | Seconds |
 |---|---|---|---|---|
-| `MCRNOutgoingBuild.cfg` | pass | six messages (U, S, R, U, S, R) declaring 2, 2, 1, 2, 1, 1 units, two frames of 3 units, one packet per update, one ack, one fault | 1,152,441 | 33.4 |
-| `MCRNOutgoingBuildReversed.cfg` | `NoCopy` violated | the same with `CopyStep` TRUE: the build before the in-place change | 13 | 1.1 |
-| `MCRNOutgoingBuildOwnQuota.cfg` | `PacketQuota` violated | the same with `SharedQuota` FALSE: in-place packets on an allowance of their own | 426 | 1.3 |
-| `MCRNOutgoingBuildNoReserve.cfg` | `ReliableSentWithinOneUpdate` violated | the same with `Reserve` FALSE: no packet kept for due reliable work | 5,420 | 2.1 |
-| `MCRNOutgoingBuildBrokenMovesPriorRecord.cfg` | `PriorRecordsUnmoved` violated | the same with `MovePrior` TRUE: a finish moves the committed records | 93 | 1.1 |
-| `MCRNOutgoingBuildBrokenReuseCommitted.cfg` | `BytesUnchangedInPlace` violated | the same with `ReuseCommitted` TRUE: a finish leaves the committed end in place | 98 | 1.1 |
+| `MCRNOutgoingBuild.cfg` | pass | six messages (U, S, R, U, S, R) declaring 2, 2, 1, 2, 1, 1 units, two frames of 3 units, one packet per update, one ack, one fault | 1,152,441 | 13.5 |
+| `MCRNOutgoingBuildReversed.cfg` | `NoCopy` violated | the same with `CopyStep` TRUE: the build before the in-place change | 13 | 0.8 |
+| `MCRNOutgoingBuildOwnQuota.cfg` | `PacketQuota` violated | the same with `SharedQuota` FALSE: in-place packets on an allowance of their own | 426 | 0.8 |
+| `MCRNOutgoingBuildNoReserve.cfg` | `ReliableSentWithinOneUpdate` violated | the same with `Reserve` FALSE: no packet kept for due reliable work | 5,420 | 1.1 |
+| `MCRNOutgoingBuildBrokenMovesPriorRecord.cfg` | `PriorRecordsUnmoved` violated | the same with `MovePrior` TRUE: a finish moves the committed records | 93 | 0.7 |
+| `MCRNOutgoingBuildBrokenReuseCommitted.cfg` | `BytesUnchangedInPlace` violated | the same with `ReuseCommitted` TRUE: a finish leaves the committed end in place | 98 | 0.7 |
 
-States and seconds are the pinned runner's measurements in `proofs/tla/RUNS.tsv`
-(two workers for the control, one for the witnesses, 110-second budget).
+States and seconds are the pinned runner's measurements in `proofs/tla/RUNS.tsv`,
+recorded 2026-10-24 (two workers for the control, one for the witnesses, 110-second budget).
 
 The reversed witness's counterexample: message 1 (UNRELIABLE, fitting) is
 started on the queued path with no fallback reason, written into its region
