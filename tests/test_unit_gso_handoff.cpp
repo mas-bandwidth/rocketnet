@@ -61,6 +61,18 @@ static void test_server_gso_send_retry_quit()
 
 REGISTER_UNIT_TEST( test_server_gso_send_retry_quit );
 
+// A full socket once shutdown has begun, before stop: the server asks for
+// stop only when send_idle is true, so the TX worker must give up on the
+// full socket without send_quit and go on to the next bank.
+bool rocketnet_server_gso_test_send_shutdown_full();
+
+static void test_server_gso_send_shutdown_full()
+{
+    check( rocketnet_server_gso_test_send_shutdown_full() );
+}
+
+REGISTER_UNIT_TEST( test_server_gso_send_shutdown_full );
+
 // The receive drain's read budget: full batches of zero-length, refused-source
 // and undersized datagrams, far more than the budget, through the receive
 // seam; each drain returns after ROCKETNET_GSO_RECV_QUEUE_SIZE messages.

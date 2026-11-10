@@ -2106,6 +2106,8 @@ extern const rocketnet_transport_backend_t rocketnet_msgx_transport = { &portabl
 // the native transports' drop counts behind send_failures and receive_drops,
 // defined as rocketnet_server_gso_receive_drops (sdk/rocketnet_server_gso_linux.cpp) and rocketnet_server_socket_send_failures (sdk/rocketnet_server_socket_linux.cpp)
 void rocketnet_server_gso_receive_drops( struct rocketnet_server_gso_t * gso, uint64_t * too_short, uint64_t * too_large );
+// gso's begin_shutdown hook, rocketnet_server_gso_begin_shutdown in sdk/rocketnet_server_gso_linux.cpp
+void rocketnet_server_gso_begin_shutdown( struct rocketnet_server_gso_t * gso );
 
 #if ROCKETNET_XDP
 uint64_t rocketnet_server_socket_send_failures( struct rocketnet_server_socket_t * server_socket );
@@ -2146,11 +2148,13 @@ static void gso_receive_drops( void * transport, uint64_t * too_short, uint64_t 
     rocketnet_server_gso_receive_drops( (rocketnet_server_gso_t *) transport, too_short, too_large );
 }
 
+static void gso_begin_shutdown( void * transport ) { rocketnet_server_gso_begin_shutdown( (rocketnet_server_gso_t *) transport ); }
+
 static const rocketnet_server_transport_io_operations_t gso_operations = {
     ROCKETNET_TRANSPORT_STAGED | ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE | ROCKETNET_TRANSPORT_REFLUSHES,
     gso_create, gso_destroy, gso_stop, gso_stopped,
     gso_start, gso_finish, gso_abort, gso_flush, gso_receive, NULL, NULL,
-    NULL, NULL, NULL, NULL, NULL, gso_send_failures, NULL, gso_send_room, gso_send_idle, NULL
+    NULL, NULL, NULL, NULL, NULL, gso_send_failures, NULL, gso_send_room, gso_send_idle, gso_begin_shutdown
 };
 
 // the client side: sendmmsg with UDP_SEGMENT, recvmmsg (sdk/rocketnet_client_gso_linux.cpp)
