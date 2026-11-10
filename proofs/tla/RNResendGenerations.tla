@@ -144,9 +144,20 @@ Ack(n) ==
             /\ U' = AdvanceU(U, sn1)
     /\ UNCHANGED << nxt, dGen, wrote >>
 
+\* The run's end, a terminal stutter: no packet is in flight, and either
+\* every number is written and acked (U = N), or, under the off-by-one
+\* WindowSlack, the oldest unacked number lost its slot to a later write
+\* and the window can never move past it.
+Done ==
+    /\ \A n \in Nums : fly[n] = 0
+    /\ \/ U = N
+       \/ U < nxt /\ sn[SlotOf(U)].n # U
+    /\ UNCHANGED vars
+
 Next ==
     \/ \E d \in Descs : Write(d)
     \/ \E n \in Nums : Send(n) \/ Lose(n) \/ Ack(n)
+    \/ Done
 
 Spec == Init /\ [][Next]_vars
 

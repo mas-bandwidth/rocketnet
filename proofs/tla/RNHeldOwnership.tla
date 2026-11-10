@@ -28,7 +28,7 @@
 (*                                                                         *)
 (* err is the connection's sticky protocol violation (or exhaustion): the  *)
 (* connection ends there, so every action but the erase's own steps needs  *)
-(* ~err.  Ending is a terminal state, not a deadlock.                      *)
+(* ~err.  Ending is a legitimate end of run: Done, a terminal stutter.     *)
 (*                                                                         *)
 (* Invariants: ReleaseOwned (a release frees only the releasing block's    *)
 (* descriptors), HeldNamesLive (every held entry names a live descriptor   *)
@@ -233,6 +233,18 @@ EraseBound ==
     /\ err' = TRUE
     /\ UNCHANGED <<home, desc, next, block, hole, scan, scanned, foreignFreed, staleDelivered>>
 
+\* the run's end, a terminal stutter: the connection ended (err, outside
+\* an erase), or the sender's numbers are spent, every held message is
+\* drained, no block is collecting and the update's deliveries expired
+Done ==
+    /\ pc = "idle"
+    /\ \/ err
+       \/ /\ next > MaxNum
+          /\ HeldKeys = {}
+          /\ ~block.active
+          /\ \A s \in Slots : ~(desc[s].live /\ desc[s].owner = OD)
+    /\ UNCHANGED vars
+
 Next ==
     \/ Collide
     \/ \E k \in Keys : Hold(k) \/ Deliver(k)
@@ -243,6 +255,7 @@ Next ==
     \/ Supersede
     \/ EraseStep
     \/ EraseBound
+    \/ Done
 
 Spec == Init /\ [][Next]_vars
 

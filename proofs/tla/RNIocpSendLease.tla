@@ -116,9 +116,19 @@ Retire(r) ==
     /\ posted' = posted \ { r }
     /\ UNCHANGED << gen, held, stale, leases >>
 
+(* the run's end, a terminal stutter: no caller holds a lease, every post *)
+(* has completed, and either the acquisitions are spent or every         *)
+(* operation has retired at GenMax                                        *)
+Done ==
+    /\ \A t \in Callers : held[t] = NoRef
+    /\ posted = {}
+    /\ ( leases = MaxLeases \/ \A o \in Ops : state[o] = "retired" )
+    /\ UNCHANGED vars
+
 Next ==
     \/ \E t \in Callers : Acquire(t) \/ ReleaseStaged(t) \/ Post(t)
     \/ \E r \in posted : Retire(r)
+    \/ Done
 
 Spec == Init /\ [][Next]_vars
 
