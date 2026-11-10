@@ -54,12 +54,24 @@ cell is free. `RefusedNeverLost` holds every refused operation to its
 producer, a cell or a pop, and under `SpecFair` every operation released is
 queued and popped (`EveryOperationPopped`).
 
-The code does not retry yet. `rocketnet_iocp_release_send` (on
-`free_sends`) and `rocketnet_iocp_post_receive` (on `retry_receives`)
-assert the push and, when it is refused, mark the operation `RETIRED`: a
-send slot or a receive is gone for the life of the server. That is the
-reversed witness `MCRNIocpRefQueueBrokenDropRefused.cfg`, and the retry is
-owed in the code.
+The code retries the same way. `rocketnet_iocp_queue_push_retry` pushes
+until the cell is free, under `rocketnet_iocp_queue_release_send` (on
+`free_sends`) and `rocketnet_iocp_queue_retry_receive` (on
+`retry_receives`). It pauses the processor on every refusal and gives it up
+every `ROCKETNET_PLATFORM_SPIN_YIELD_AFTER` refusals, so a popper preempted
+between its CAS and its store can run there: the fairness
+`EveryOperationPopped` assumes of the consumers. Before the retry both
+callers asserted the push and marked a refused operation `RETIRED`: a send
+slot or a receive gone for the life of the server. That is the reversed
+witness `MCRNIocpRefQueueBrokenDropRefused.cfg`.
+
+With a single consumer no push is refused at all (`NeverRefused`,
+`MCRNIocpRefQueueOneConsumer.cfg`): the stalled pop is then the only pop,
+so the positions past it hold at most the other `Ops - 1` operations and
+never reach its cell again. That is `retry_receives` under one completion
+worker, the count production runs. `free_sends` has every caller thread as
+a consumer, and `retry_receives` under more workers has each of them
+(`MCRNIocpRefQueueRefusedTwoConsumers.cfg`).
 
 ## Properties
 
@@ -72,6 +84,7 @@ owed in the code.
   taken.
 - `RefusalOnlyWhilePopStalled`: with `Ops <= Cap`, a push about to be
   refused has a pop of the cell's last round claimed and not freed.
+- `NeverRefused`: no push is refused; with `Ops <= Cap` and one consumer.
 - `EveryOperationPopped` (temporal, under `SpecFair`): every operation
   released is queued and popped.
 
@@ -83,22 +96,23 @@ workers). `PosMod = 32` in every case but the wrap witness.
 
 | Case | Change | Expected | Exit | Distinct | Seconds |
 |---|---|---|---:|---:|---:|
-| `MCRNIocpRefQueue.cfg` | the code, two cells, two producers, two consumers, five operations, no bound on those live | pass | 0 | 1112080 | 15.6 |
-| `MCRNIocpRefQueueCap4.cfg` | the code, four cells, two producers, one consumer, six operations, no bound | pass | 0 | 130234 | 4.4 |
-| `MCRNIocpRefQueueStalledPop.cfg` | the code's sizing, two cells, at most two live, four operations, `SpecFair` | pass | 0 | 58768 | 7.1 |
-| `MCRNIocpRefQueueStalledPopCap4.cfg` | the code's sizing, four cells, at most four live, one producer, two consumers, six operations, `SpecFair` | pass | 0 | 8422 | 2.5 |
-| `MCRNIocpRefQueueBrokenCapacityNotPow2.cfg` | `Cap = 3` | `NoOverwrite` | 12 | 19 | 1.1 |
-| `MCRNIocpRefQueueBrokenInitOffByOne.cfg` | `InitSlack = 1`: initialize stores i + 1 in cell i | `NoPhantom` | 12 | 9 | 1.1 |
-| `MCRNIocpRefQueueBrokenPositionWrap.cfg` | `PosMod = 2 * Cap`: the counters wrap | `NoOverwrite` | 12 | 23682 | 2.2 |
-| `MCRNIocpRefQueueBrokenDropRefused.cfg` | `DropRefused = TRUE`: the caller retires a refused operation, as the code does today | `RefusedNeverLost` | 12 | 320 | 1.2 |
+| `MCRNIocpRefQueue.cfg` | the code, two cells, two producers, two consumers, five operations, no bound on those live | pass | 0 | 1112080 | 7.5 |
+| `MCRNIocpRefQueueCap4.cfg` | the code, four cells, two producers, one consumer, six operations, no bound | pass | 0 | 130234 | 2.0 |
+| `MCRNIocpRefQueueStalledPop.cfg` | the code's sizing, two cells, at most two live, four operations, `SpecFair` | pass | 0 | 58768 | 3.5 |
+| `MCRNIocpRefQueueStalledPopCap4.cfg` | the code's sizing, four cells, at most four live, one producer, two consumers, six operations, `SpecFair` | pass | 0 | 8422 | 1.4 |
+| `MCRNIocpRefQueueOneConsumer.cfg` | the code's sizing, four cells, at most four live, two producers, one consumer, six operations, `NeverRefused` checked | pass | 0 | 46874 | 1.9 |
+| `MCRNIocpRefQueueBrokenCapacityNotPow2.cfg` | `Cap = 3` | `NoOverwrite` | 12 | 19 | 0.6 |
+| `MCRNIocpRefQueueBrokenInitOffByOne.cfg` | `InitSlack = 1`: initialize stores i + 1 in cell i | `NoPhantom` | 12 | 9 | 0.7 |
+| `MCRNIocpRefQueueBrokenPositionWrap.cfg` | `PosMod = 2 * Cap`: the counters wrap | `NoOverwrite` | 12 | 23682 | 1.0 |
+| `MCRNIocpRefQueueBrokenDropRefused.cfg` | `DropRefused = TRUE`: the caller retires a refused operation, as the code did before the retry | `RefusedNeverLost` | 12 | 320 | 0.7 |
+| `MCRNIocpRefQueueRefusedTwoConsumers.cfg` | the one-consumer case with a second consumer | `NeverRefused` | 12 | 58228 | 1.8 |
 
-Checked by hand on the bench and not committed as cases: with
-`DropRefused = FALSE` at the stalled-pop sizes, an invariant `refused = {}`
-fails (the refusal is reached, so `RefusedNeverLost` and
-`RefusalOnlyWhilePopStalled` are not vacuous); `RefusalOnlyWhilePopStalled`
-without its `Ops <= Cap` guard fails at `Ops = 4`, `Cap = 2` (a full queue
-refuses with no pop stalled); and `EveryOperationPopped` fails under
-`DropRefused = TRUE`.
+`MCRNIocpRefQueueRefusedTwoConsumers.cfg` reaches the refusal, so
+`RefusedNeverLost` and `RefusalOnlyWhilePopStalled` are not vacuous. Checked
+by hand on the bench and not committed as cases:
+`RefusalOnlyWhilePopStalled` without its `Ops <= Cap` guard fails at
+`Ops = 4`, `Cap = 2` (a full queue refuses with no pop stalled); and
+`EveryOperationPopped` fails under `DropRefused = TRUE`.
 
 ## Counterexamples, checked by hand against the code
 
@@ -112,9 +126,23 @@ is released (two live: 1 and 3); its push loads `enqueue` 2, reads cell
 zero: `rocketnet_iocp_queue_push` returns false. On `free_sends` this is a
 caller thread stalled in `rocketnet_iocp_acquire_send` between its CAS and
 its store while another caller acquires the second send, sends it, and its
-completion releases it: `rocketnet_iocp_release_send` asserts the push and
-marks the send `RETIRED`, and the send slot never returns. Operation 3 is
-in no cell, no thread and no pop.
+completion releases it: before the retry `rocketnet_iocp_release_send`
+asserted the push and marked the send `RETIRED`, and the send slot never
+returned. Operation 3 is in no cell, no thread and no pop.
+
+**RefusedTwoConsumers** (`Cap = 4`, two producers, two consumers, at most
+four live): operations 1 to 4 hold positions 0 to 3, the last still being
+published. Consumer 1 claims
+position 0 and stalls before its store (cell 0 keeps sequence 1). Consumer
+2 claims position 1, takes operation 2 and stores 1 + 4 = 5 in cell 1.
+Operation 5 is released (four live); its push loads `enqueue` 4, reads cell
+4 & 3 = 0, whose sequence is still 1, and `(int64_t) ( 1 - 4 )` is below
+zero. On `retry_receives` this is two completion workers: one stalled in
+`rocketnet_iocp_queue_pop_before` between its CAS and its store while the
+other takes the next receive, is refused its repost again and pushes it
+back. `rocketnet_iocp_queue_retry_receive` retries that push; before, it
+retired the receive (RNIocpRetryStop,
+`MCRNIocpRetryStopBrokenRefuseRetires.cfg`).
 
 **BrokenCapacityNotPow2**: with three cells `position & 2` sends positions
 0 and 1 to cell 0, so the second push overwrites the first while it is
