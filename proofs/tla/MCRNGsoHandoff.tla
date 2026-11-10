@@ -21,7 +21,12 @@ ClaimStaleBroken == TRUE
 
 NoBackoffBroken == TRUE
 
-\* MCRNGsoHandoffBrokenLeaveBeforeQuit.cfg: the give-up bound before stop
-\* too; must fail LeftOnlyAfterQuit.
-LeaveBeforeQuitBroken == TRUE
+\* MCRNGsoHandoffBrokenDropBeforeShutdown.cfg: refusals count before
+\* shutdown too; must fail DroppedOnlyAfterShutdown.
+DropBeforeShutdownBroken == TRUE
+
+\* MCRNGsoHandoffBrokenBoundOnQuitOnly.cfg: refusals count only after
+\* send_quit while the stop waits for send_idle (v1.0.0); must fail
+\* ShutdownCompletes.
+BoundOnQuitOnlyBroken == TRUE
 =============================================================================

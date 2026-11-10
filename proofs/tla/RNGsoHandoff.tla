@@ -23,16 +23,23 @@
 (* the mutex is contended.  The TX worker takes banks FIFO outside the     *)
 (* mutex, sends them, and returns each bank only after its synchronous     *)
 (* sends finish.  A full socket takes a prefix of the held bank (possibly  *)
-(* none); the worker keeps the unsent rest, in order, and sends it before  *)
-(* taking any later bank, so nothing staged is dropped for lack of room.  *)
-(* Stop hands the worker the final unpublished producer                   *)
-(* after every ready bank; the worker sends it last and exits without      *)
-(* returning it.  A socket that stays full after stop gets one attempt per *)
-(* bank: a ready bank's unsent rest is given up and the bank returned, and *)
-(* the worker goes on to the later banks and the final producer, whose     *)
-(* full send ends the worker; so stop completes without waiting for the    *)
-(* socket to drain (rocketnet_server_gso_send_worker's post-quit retry     *)
-(* bound).  Packets are given up only after stop (LeftOnlyAfterQuit).      *)
+(* none); before shutdown the worker keeps the unsent rest, in order, and  *)
+(* sends it before taking any later bank, so nothing staged is dropped for *)
+(* lack of room.  The socket filling and draining is the environment       *)
+(* (SocketFills, SocketDrains); it may stay full for ever.                 *)
+(*                                                                         *)
+(* Shutdown (PR #1018, rocketnet_server_gso_begin_shutdown and the server  *)
+(* transport's stop step): BeginShutdown sets send_shutdown before the     *)
+(* last disconnect batches, which main still stages and publishes.  From   *)
+(* then on each refused send of a held bank counts; past RetryBound        *)
+(* (ROCKETNET_GSO_SEND_RETRIES_AFTER_QUIT) the unsent rest is dropped and  *)
+(* counted in SEND_DROPPED (txDropped) and the bank returned, so a socket  *)
+(* that stays full still lets send_idle become true.  The stop step       *)
+(* requests the I/O stop (MainStop, rocketnet_server_gso_stop) only once   *)
+(* send_idle holds; stop hands the worker the final, empty producer, which *)
+(* it takes after every ready bank and exits on.  Packets are dropped only *)
+(* after shutdown (DroppedOnlyAfterShutdown), and every staged packet is   *)
+(* sent, held or counted (SentOrHeld, ExitSentAll).                        *)
 (*                                                                         *)
 (* Stop and free: stop stores quit for both workers; the RX worker exits   *)
 (* after its drain, the TX worker after its drain or its one post-quit     *)
@@ -85,13 +92,20 @@ Threads == { "main", "worker" }
 ClaimStale == FALSE
 NoBackoff == FALSE
 
-(* LeaveBeforeQuit applies the send worker's give-up bound before stop as  *)
-(* well, as if rocketnet_server_gso_send_worker counted retries without    *)
-(* its send_quit test: a full socket's rest is left unsent while the       *)
-(* server runs.  FALSE in the passing run; the reversed witness            *)
-(* MCRNGsoHandoffBrokenLeaveBeforeQuit.cfg sets it TRUE and violates       *)
-(* LeftOnlyAfterQuit.                                                      *)
-LeaveBeforeQuit == FALSE
+(* RetryBound is ROCKETNET_GSO_SEND_RETRIES_AFTER_QUIT (100 in the code),  *)
+(* taken small so the instance reaches the drop.                          *)
+RetryBound == 2
+
+(* DropBeforeShutdown counts refusals without the send_shutdown test, so  *)
+(* a full socket's rest is dropped while the server runs: the reversed    *)
+(* witness MCRNGsoHandoffBrokenDropBeforeShutdown.cfg violates            *)
+(* DroppedOnlyAfterShutdown.  BoundOnQuitOnly counts refusals only once   *)
+(* send_quit is set, the v1.0.0 shape: with the stop request waiting for  *)
+(* send_idle, a socket that stays full holds a bank for ever and the stop *)
+(* is never requested; MCRNGsoHandoffBrokenBoundOnQuitOnly.cfg violates   *)
+(* ShutdownCompletes.  Both FALSE in the passing run.                     *)
+DropBeforeShutdown == FALSE
+BoundOnQuitOnly == FALSE
 
 Range(s) == { s[i] : i \in DOMAIN s }
 
@@ -117,8 +131,10 @@ VARIABLES
     txContent,   \* the packets staged in each TX bank
     staged,      \* packets staged: the next is staged + 1
     txSent,      \* packets the worker sent, in order
-    txLeft,      \* ghost: packets the post-quit bound left unsent (a cleared bank's rest)
-    quit,        \* main requested stop
+    txDropped,   \* packets the shutdown bound dropped and counted in SEND_DROPPED
+    shut,        \* [on: send_shutdown, full: the socket refuses sends (environment),
+                 \*  refusals: the held bank's refused sends since shutdown]
+    quit,        \* main requested stop (send_quit)
     rxExited,    \* the RX worker exited
     txExited,    \* the TX worker exited
     joined,      \* destroy joined both workers
@@ -126,7 +142,7 @@ VARIABLES
 
 vars == << lock, pc, pcRx, rxWorker, rxMain, rxContent, rxCursor, rxView,
            rxStagedClaim, rxBackoff, arrived, rxConsumed, txProducer, txFree, txReady,
-           txHeld, txFinal, txContent, staged, txSent, txLeft, quit, rxExited,
+           txHeld, txFinal, txContent, staged, txSent, txDropped, shut, quit, rxExited,
            txExited, joined, freed >>
 
 Init ==
@@ -141,7 +157,8 @@ Init ==
     /\ txProducer = 0 /\ txFree = << 1, 2 >> /\ txReady = << >> /\ txHeld = NONE
     /\ txFinal = FALSE
     /\ txContent = [ b \in Buffers |-> << >> ]
-    /\ staged = 0 /\ txSent = << >> /\ txLeft = << >>
+    /\ staged = 0 /\ txSent = << >> /\ txDropped = << >>
+    /\ shut = [ on |-> FALSE, full |-> FALSE, refusals |-> 0 ]
     /\ quit = FALSE /\ rxExited = FALSE /\ txExited = FALSE
     /\ joined = FALSE /\ freed = FALSE
 
@@ -158,7 +175,7 @@ RxFill ==
     /\ arrived' = arrived + 1
     /\ UNCHANGED << lock, pc, pcRx, rxWorker, rxMain, rxCursor, rxView,
                     rxStagedClaim, rxBackoff, rxConsumed, txProducer, txFree, txReady,
-                    txHeld, txFinal, txContent, staged, txSent, txLeft, quit,
+                    txHeld, txFinal, txContent, staged, txSent, txDropped, shut, quit,
                     rxExited, txExited, joined, freed >>
 
 (* a stalled pass: a datagram waits, so poll returns at once, but the     *)
@@ -177,7 +194,7 @@ RxStall ==
     /\ UNCHANGED << lock, pc, pcRx, rxWorker, rxMain, rxContent, rxCursor,
                     rxView, rxStagedClaim, arrived, rxConsumed, txProducer,
                     txFree, txReady, txHeld, txFinal, txContent, staged,
-                    txSent, txLeft, quit, rxExited, txExited, joined, freed >>
+                    txSent, txDropped, shut, quit, rxExited, txExited, joined, freed >>
 
 (* the 1ms sleep after a stalled pass, outside the mutex                    *)
 RxSleep ==
@@ -186,7 +203,7 @@ RxSleep ==
     /\ UNCHANGED << lock, pc, pcRx, rxWorker, rxMain, rxContent, rxCursor,
                     rxView, rxStagedClaim, arrived, rxConsumed, txProducer,
                     txFree, txReady, txHeld, txFinal, txContent, staged,
-                    txSent, txLeft, quit, rxExited, txExited, joined, freed >>
+                    txSent, txDropped, shut, quit, rxExited, txExited, joined, freed >>
 
 (* defect: the worker writes into the buffer main holds, as if a publish   *)
 (* landed on main's view instead of the worker's own bank                 *)
@@ -199,7 +216,7 @@ WriteHeld ==
     /\ arrived' = arrived + 1
     /\ UNCHANGED << lock, pc, pcRx, rxWorker, rxMain, rxCursor, rxView,
                     rxStagedClaim, rxBackoff, rxConsumed, txProducer, txFree, txReady,
-                    txHeld, txFinal, txContent, staged, txSent, txLeft, quit,
+                    txHeld, txFinal, txContent, staged, txSent, txDropped, shut, quit,
                     rxExited, txExited, joined, freed >>
 
 (* main claims only once the buffer it holds is fully consumed: its old    *)
@@ -220,7 +237,7 @@ RxClaim ==
            /\ rxContent' = [ rxContent EXCEPT ![rxWorker] = taken, ![rxMain] = left ]
     /\ UNCHANGED << lock, pc, pcRx, rxBackoff, arrived, rxConsumed, txProducer,
                     txFree, txReady, txHeld, txFinal, txContent, staged,
-                    txSent, txLeft, quit, rxExited, txExited, joined, freed >>
+                    txSent, txDropped, shut, quit, rxExited, txExited, joined, freed >>
 
 (* main consumes one packet of the buffer it holds; between the first and *)
 (* the last packet the unconsumed tail stays retained in main's buffer    *)
@@ -231,7 +248,7 @@ RxConsume ==
     /\ rxCursor' = rxCursor + 1
     /\ UNCHANGED << lock, pc, pcRx, rxWorker, rxMain, rxContent, rxView,
                     rxStagedClaim, rxBackoff, arrived, txProducer, txFree, txReady,
-                    txHeld, txFinal, txContent, staged, txSent, txLeft, quit,
+                    txHeld, txFinal, txContent, staged, txSent, txDropped, shut, quit,
                     rxExited, txExited, joined, freed >>
 
 (* a fill thread stages one packet into the producer bank, outside the    *)
@@ -244,7 +261,7 @@ TxStage ==
     /\ staged' = staged + 1
     /\ UNCHANGED << lock, pc, pcRx, rxWorker, rxMain, rxContent, rxCursor,
                     rxView, rxStagedClaim, rxBackoff, arrived, rxConsumed, txProducer,
-                    txFree, txReady, txHeld, txFinal, txSent, txLeft, quit, rxExited,
+                    txFree, txReady, txHeld, txFinal, txSent, txDropped, shut, quit, rxExited,
                     txExited, joined, freed >>
 
 (* main's try-acquire of the TX mutex for a publish: it takes a free mutex *)
@@ -259,7 +276,7 @@ TxMainLock ==
             /\ pc' = [ pc EXCEPT !["main"] = "waitlock" ]
     /\ UNCHANGED << pcRx, rxWorker, rxMain, rxContent, rxCursor, rxView,
                     rxStagedClaim, rxBackoff, arrived, rxConsumed, txProducer, txFree,
-                    txReady, txHeld, txFinal, txContent, staged, txSent, txLeft,
+                    txReady, txHeld, txFinal, txContent, staged, txSent, txDropped, shut,
                     quit, rxExited, txExited, joined, freed >>
 
 TxMainWait ==
@@ -268,7 +285,7 @@ TxMainWait ==
     /\ pc' = [ pc EXCEPT !["main"] = "locked" ]
     /\ UNCHANGED << pcRx, rxWorker, rxMain, rxContent, rxCursor, rxView,
                     rxStagedClaim, rxBackoff, arrived, rxConsumed, txProducer, txFree,
-                    txReady, txHeld, txFinal, txContent, staged, txSent, txLeft,
+                    txReady, txHeld, txFinal, txContent, staged, txSent, txDropped, shut,
                     quit, rxExited, txExited, joined, freed >>
 
 (* the publish exchange, mutex held: a non-empty producer joins the ready *)
@@ -284,7 +301,7 @@ TxPublish ==
     /\ pc' = [ pc EXCEPT !["main"] = "unlock" ]
     /\ UNCHANGED << pcRx, lock, rxWorker, rxMain, rxContent, rxCursor,
                     rxView, rxStagedClaim, rxBackoff, arrived, rxConsumed, txHeld,
-                    txFinal, txContent, staged, txSent, txLeft, quit, rxExited,
+                    txFinal, txContent, staged, txSent, txDropped, shut, quit, rxExited,
                     txExited, joined, freed >>
 
 (* the TX worker acquires the mutex for a take or a return                *)
@@ -295,7 +312,7 @@ TxWorkerLock ==
     /\ pc' = [ pc EXCEPT !["worker"] = "locked" ]
     /\ UNCHANGED << pcRx, rxWorker, rxMain, rxContent, rxCursor, rxView,
                     rxStagedClaim, rxBackoff, arrived, rxConsumed, txProducer, txFree,
-                    txReady, txHeld, txFinal, txContent, staged, txSent, txLeft,
+                    txReady, txHeld, txFinal, txContent, staged, txSent, txDropped, shut,
                     quit, rxExited, txExited, joined, freed >>
 
 (* the take, mutex held: the oldest ready bank first; at quit, with the   *)
@@ -311,9 +328,11 @@ TxTake ==
           /\ txFinal' = TRUE
           /\ UNCHANGED txReady
     /\ pc' = [ pc EXCEPT !["worker"] = "unlock" ]
+    \* retries_after_quit starts at 0 for each bank the worker takes
+    /\ shut' = [ shut EXCEPT !.refusals = 0 ]
     /\ UNCHANGED << pcRx, lock, rxWorker, rxMain, rxContent, rxCursor,
                     rxView, rxStagedClaim, rxBackoff, arrived, rxConsumed, txFree,
-                    txContent, staged, txSent, txLeft, quit, rxExited, txExited,
+                    txContent, staged, txSent, txDropped, quit, rxExited, txExited,
                     joined, freed >>
 
 (* the take that finds nothing, mutex held: no bank moves and the worker *)
@@ -326,7 +345,7 @@ TxTakeNone ==
     /\ UNCHANGED << pcRx, lock, rxWorker, rxMain, rxContent, rxCursor,
                     rxView, rxStagedClaim, rxBackoff, arrived, rxConsumed, txProducer,
                     txFree, txReady, txHeld, txFinal, txContent, staged,
-                    txSent, txLeft, quit, rxExited, txExited, joined, freed >>
+                    txSent, txDropped, shut, quit, rxExited, txExited, joined, freed >>
 
 (* either thread drops the mutex; a publisher wakes the worker after the  *)
 (* drop, never under it (the wake is not state this model needs)          *)
@@ -336,7 +355,7 @@ Unlock(t) ==
     /\ pc' = [ pc EXCEPT ![t] = IF t = "worker" /\ txHeld # NONE THEN "sending" ELSE "run" ]
     /\ UNCHANGED << pcRx, rxWorker, rxMain, rxContent, rxCursor, rxView,
                     rxStagedClaim, rxBackoff, arrived, rxConsumed, txProducer, txFree,
-                    txReady, txHeld, txFinal, txContent, staged, txSent, txLeft,
+                    txReady, txHeld, txFinal, txContent, staged, txSent, txDropped, shut,
                     quit, rxExited, txExited, joined, freed >>
 
 (* the worker sends the bank it holds, outside the mutex, and clears it;  *)
@@ -344,6 +363,9 @@ Unlock(t) ==
 (* returned                                                               *)
 TxSend ==
     /\ pc["worker"] = "sending" /\ txHeld # NONE
+    \* an empty bank makes no send call (send_bank's loop does not run), so
+    \* a full socket does not hold it
+    /\ ~shut.full \/ txContent[txHeld] = << >>
     /\ txSent' = txSent \o txContent[txHeld]
     /\ txContent' = [ txContent EXCEPT ![txHeld] = << >> ]
     /\ IF txFinal
@@ -356,55 +378,97 @@ TxSend ==
             /\ UNCHANGED << txExited, txHeld, txFinal >>
     /\ UNCHANGED << pcRx, lock, rxWorker, rxMain, rxContent, rxCursor,
                     rxView, rxStagedClaim, rxBackoff, arrived, rxConsumed, txProducer,
-                    txFree, txReady, staged, txLeft, quit, rxExited, joined, freed >>
+                    txFree, txReady, staged, txDropped, shut, quit, rxExited, joined, freed >>
 
-(* a full socket: it takes the first k packets of the held bank, k less   *)
-(* than the bank holds (rocketnet_server_gso_flush returning the first     *)
-(* unsent slot with full set). The worker keeps the rest in the bank and   *)
-(* stays sending (rocketnet_server_gso_send_bank's caller waits for main's *)
-(* next update, then sends from that slot). After stop, though, the        *)
-(* worker tries the held bank once and gives up its unsent rest instead of *)
-(* waiting for the socket to drain, as ROCKETNET_GSO_SEND_RETRIES_AFTER_   *)
-(* QUIT (0) bounds the retry.  For a ready bank the worker then returns    *)
-(* it (rocketnet_server_gso_return_send clears num_packets, so the rest is *)
-(* never sent: txLeft) and goes on to take the next ready bank and, last,  *)
-(* the final producer, each tried once; a full send of the final producer  *)
-(* ends the worker with that bank's rest still in it, kept until destroy.  *)
-(* LeaveBeforeQuit (below) applies the bound before stop too.  FullDrops   *)
-(* instead drops d packets after the prefix, the rest of the refused       *)
-(* batch, and goes on; CarryBehind queues the bank behind the ready banks  *)
-(* instead of keeping it                                                   *)
+(* a full socket (TxSendFail): the send takes the first k packets of the   *)
+(* held bank, k less than the bank holds (rocketnet_server_gso_flush       *)
+(* returning the first unsent slot with full set); the bank and its unsent *)
+(* rest stay with the worker.  Before shutdown the worker waits and        *)
+(* retries with no limit.  Once send_shutdown is set, each refusal counts  *)
+(* (retries_after_quit, reset only when the worker takes a bank); while    *)
+(* the count is at most RetryBound the worker retries from the unsent slot *)
+(* (TxRetry), and when it passes the bound the rest is dropped and counted *)
+(* in SEND_DROPPED (TxDropTail): a ready bank is returned and the next one *)
+(* taken, the final producer ends the worker.  The model folds TxSendFail  *)
+(* with the following TxRetry or TxDropTail into one step.                 *)
+(* DropBeforeShutdown counts refusals before shutdown too; BoundOnQuitOnly *)
+(* counts them only once send_quit is set (the v1.0.0 shape, while the     *)
+(* stop request waits for send_idle).  FullDrops instead drops d packets   *)
+(* after the prefix, the rest of the refused batch, and goes on;           *)
+(* CarryBehind queues the bank behind the ready banks instead of keeping   *)
+(* it                                                                      *)
+Counting ==
+    IF BoundOnQuitOnly THEN quit ELSE ( shut.on \/ DropBeforeShutdown )
+
 TxSendFull ==
     /\ pc["worker"] = "sending" /\ txHeld # NONE
-    /\ LET c == txContent[txHeld] IN
+    /\ shut.full
+    /\ LET c == txContent[txHeld]
+           r1 == IF Counting THEN shut.refusals + 1 ELSE shut.refusals IN
        \E k \in 0 .. Len(c) - 1 :
        \E d \in ( IF FullDrops THEN 1 .. Len(c) - k ELSE { 0 } ) :
           LET rest == SubSeq( c, k + d + 1, Len(c) ) IN
           /\ txSent' = txSent \o SubSeq( c, 1, k )
-          /\ IF ( quit \/ LeaveBeforeQuit ) /\ ~txFinal
-             THEN \* the bound breaks the retry loop; final is false, so the
-                  \* bank is returned cleared and the worker goes on
+          /\ shut' = [ shut EXCEPT !.refusals = r1 ]
+          /\ IF r1 > RetryBound
+             THEN \* TxDropTail: count - slot added to SEND_DROPPED
                   /\ txContent' = [ txContent EXCEPT ![txHeld] = << >> ]
-                  /\ txLeft' = txLeft \o rest
-                  /\ pc' = [ pc EXCEPT !["worker"] = "run" ]
-                  /\ UNCHANGED << txReady, txHeld, txFinal, txExited >>
-             ELSE /\ txContent' = [ txContent EXCEPT ![txHeld] = rest ]
-                  /\ txLeft' = txLeft
-                  /\ IF quit
-                     THEN \* the final producer: the worker exits and keeps it
-                          /\ txExited' = TRUE
+                  /\ txDropped' = txDropped \o rest
+                  /\ IF txFinal
+                     THEN /\ txExited' = TRUE
                           /\ pc' = [ pc EXCEPT !["worker"] = "done" ]
-                          /\ UNCHANGED << txReady, txHeld, txFinal >>
-                     ELSE /\ txExited' = txExited
-                          /\ txFinal' = txFinal
-                          /\ IF CarryBehind /\ ~txFinal
-                             THEN /\ txReady' = Append( txReady, txHeld )
-                                  /\ txHeld' = NONE
-                                  /\ pc' = [ pc EXCEPT !["worker"] = "run" ]
-                             ELSE UNCHANGED << txReady, txHeld, pc >>
+                     ELSE /\ pc' = [ pc EXCEPT !["worker"] = "run" ]
+                          /\ UNCHANGED txExited
+                  /\ UNCHANGED << txReady, txHeld, txFinal >>
+             ELSE \* TxRetry: the rest stays for the next attempt
+                  /\ txContent' = [ txContent EXCEPT ![txHeld] = rest ]
+                  /\ txDropped' = txDropped
+                  /\ txExited' = txExited
+                  /\ txFinal' = txFinal
+                  /\ IF CarryBehind /\ ~txFinal
+                     THEN /\ txReady' = Append( txReady, txHeld )
+                          /\ txHeld' = NONE
+                          /\ pc' = [ pc EXCEPT !["worker"] = "run" ]
+                     ELSE UNCHANGED << txReady, txHeld, pc >>
     /\ UNCHANGED << pcRx, lock, rxWorker, rxMain, rxContent, rxCursor,
                     rxView, rxStagedClaim, rxBackoff, arrived, rxConsumed, txProducer,
                     txFree, staged, quit, rxExited, joined, freed >>
+
+(* environment: the socket's send buffer fills or drains; a socket may    *)
+(* stay full for ever (no fairness on SocketDrains)                        *)
+SocketFills ==
+    /\ ~shut.full /\ ~freed
+    /\ shut' = [ shut EXCEPT !.full = TRUE ]
+    /\ UNCHANGED << lock, pc, pcRx, rxWorker, rxMain, rxContent, rxCursor,
+                    rxView, rxStagedClaim, rxBackoff, arrived, rxConsumed, txProducer,
+                    txFree, txReady, txHeld, txFinal, txContent, staged,
+                    txSent, txDropped, quit, rxExited, txExited, joined, freed >>
+
+SocketDrains ==
+    /\ shut.full /\ ~freed
+    /\ shut' = [ shut EXCEPT !.full = FALSE ]
+    /\ UNCHANGED << lock, pc, pcRx, rxWorker, rxMain, rxContent, rxCursor,
+                    rxView, rxStagedClaim, rxBackoff, arrived, rxConsumed, txProducer,
+                    txFree, txReady, txHeld, txFinal, txContent, staged,
+                    txSent, txDropped, quit, rxExited, txExited, joined, freed >>
+
+(* BeginShutdown: the server transport's stop calls                       *)
+(* rocketnet_server_gso_begin_shutdown first, once, before any disconnect *)
+(* batch is drained: send_shutdown is set (and the wake).  Main keeps      *)
+(* staging and publishing after it                                         *)
+BeginShutdown ==
+    /\ pc["main"] = "run" /\ ~shut.on
+    /\ shut' = [ shut EXCEPT !.on = TRUE ]
+    /\ UNCHANGED << lock, pc, pcRx, rxWorker, rxMain, rxContent, rxCursor,
+                    rxView, rxStagedClaim, rxBackoff, arrived, rxConsumed, txProducer,
+                    txFree, txReady, txHeld, txFinal, txContent, staged,
+                    txSent, txDropped, quit, rxExited, txExited, joined, freed >>
+
+(* rocketnet_server_gso_send_idle: the producer holds nothing, no bank is *)
+(* ready and the worker holds none (free_count = TX_BANKS - 1)             *)
+SendIdle ==
+    /\ ( txProducer = NONE \/ txContent[txProducer] = << >> )
+    /\ txReady = << >> /\ txHeld = NONE
 
 (* the return, mutex held: a sent bank rejoins the free FIFO only after   *)
 (* its sends finished (TxSend cleared it)                                 *)
@@ -415,19 +479,22 @@ TxReturn ==
     /\ pc' = [ pc EXCEPT !["worker"] = "unlock" ]
     /\ UNCHANGED << pcRx, lock, rxWorker, rxMain, rxContent, rxCursor,
                     rxView, rxStagedClaim, rxBackoff, arrived, rxConsumed, txProducer,
-                    txReady, txFinal, txContent, staged, txSent, txLeft, quit,
+                    txReady, txFinal, txContent, staged, txSent, txDropped, shut, quit,
                     rxExited, txExited, joined, freed >>
 
-(* stop: quit is stored for both workers after main's last stage and      *)
-(* publish; the final producer passes to the worker with the store        *)
+(* StopStep's stop request, rocketnet_server_gso_stop: made only once      *)
+(* shutdown has begun, the disconnect bursts are drained and send_idle     *)
+(* holds; it stores send_shutdown (already set), then quit for both        *)
+(* workers, and the final producer passes to the worker with the store     *)
 MainStop ==
     /\ pc["main"] = "run" /\ ~quit
+    /\ shut.on /\ SendIdle
     /\ quit' = TRUE
     /\ pc' = [ pc EXCEPT !["main"] = "done" ]
     /\ UNCHANGED << pcRx, lock, rxWorker, rxMain, rxContent, rxCursor,
                     rxView, rxStagedClaim, rxBackoff, arrived, rxConsumed, txProducer,
                     txFree, txReady, txHeld, txFinal, txContent, staged,
-                    txSent, txLeft, rxExited, txExited, joined, freed >>
+                    txSent, txDropped, shut, rxExited, txExited, joined, freed >>
 
 (* the RX worker exits once quit is stored; buffers it still owns are     *)
 (* simply never claimed again                                              *)
@@ -438,7 +505,7 @@ RxWorkerExit ==
     /\ UNCHANGED << lock, pc, rxWorker, rxMain, rxContent, rxCursor,
                     rxView, rxStagedClaim, rxBackoff, arrived, rxConsumed, txProducer,
                     txFree, txReady, txHeld, txFinal, txContent, staged,
-                    txSent, txLeft, quit, txExited, joined, freed >>
+                    txSent, txDropped, shut, quit, txExited, joined, freed >>
 
 (* the TX worker also exits at quit when nothing was ever staged: the     *)
 (* final producer is empty, so taking it would send nothing               *)
@@ -451,7 +518,7 @@ TxWorkerExitIdle ==
     /\ UNCHANGED << pcRx, lock, rxWorker, rxMain, rxContent, rxCursor,
                     rxView, rxStagedClaim, rxBackoff, arrived, rxConsumed, txProducer,
                     txFree, txReady, txHeld, txFinal, txContent, staged,
-                    txSent, txLeft, quit, rxExited, joined, freed >>
+                    txSent, txDropped, shut, quit, rxExited, joined, freed >>
 
 (* destroy joins both workers, and only a joined transport is freed: a    *)
 (* destroy that arrives before the workers exit joins nothing and frees   *)
@@ -462,7 +529,7 @@ Join ==
     /\ UNCHANGED << lock, pc, pcRx, rxWorker, rxMain, rxContent, rxCursor,
                     rxView, rxStagedClaim, rxBackoff, arrived, rxConsumed, txProducer,
                     txFree, txReady, txHeld, txFinal, txContent, staged,
-                    txSent, txLeft, quit, rxExited, txExited, freed >>
+                    txSent, txDropped, shut, quit, rxExited, txExited, freed >>
 
 Free ==
     /\ joined /\ ~freed
@@ -470,7 +537,7 @@ Free ==
     /\ UNCHANGED << lock, pc, pcRx, rxWorker, rxMain, rxContent, rxCursor,
                     rxView, rxStagedClaim, rxBackoff, arrived, rxConsumed, txProducer,
                     txFree, txReady, txHeld, txFinal, txContent, staged,
-                    txSent, txLeft, quit, rxExited, txExited, joined >>
+                    txSent, txDropped, shut, quit, rxExited, txExited, joined >>
 
 (* the behaviour ends once the transport is freed                         *)
 Terminated ==
@@ -482,19 +549,23 @@ Next ==
     \/ RxFill \/ RxStall \/ RxSleep \/ WriteHeld \/ RxClaim \/ RxConsume
     \/ TxStage \/ TxMainLock \/ TxMainWait \/ TxPublish
     \/ TxWorkerLock \/ TxTake \/ TxTakeNone \/ TxSend \/ TxSendFull \/ TxReturn
+    \/ SocketFills \/ SocketDrains \/ BeginShutdown
     \/ \E t \in Threads : Unlock(t)
     \/ MainStop \/ RxWorkerExit \/ TxWorkerExitIdle \/ Join \/ Free
 
 Spec == Init /\ [][Next]_vars
 
-(* the worker runs whenever it can, main keeps updating and finishes what *)
-(* it started, and stop is never forced; a full socket before stop is     *)
-(* retried until its send succeeds (WF TxSend), while the post-quit bound *)
-(* in TxSendFull lets the worker exit without a drain                     *)
+(* the worker runs whenever it can and retries a held bank on its timer   *)
+(* whatever the socket does (SF TxSend and SF TxSendFull: a socket that    *)
+(* drains and fills for ever still meets one of them), main keeps updating *)
+(* and finishes what it started, and once shutdown has begun the stop      *)
+(* step keeps polling (SF MainStop); shutdown itself and the socket are    *)
+(* never forced                                                            *)
 SpecFair ==
     /\ Spec
     /\ WF_vars( RxFill ) /\ WF_vars( RxSleep ) /\ WF_vars( RxClaim )
-    /\ WF_vars( RxConsume ) /\ WF_vars( TxSend ) /\ WF_vars( TxReturn )
+    /\ WF_vars( RxConsume ) /\ SF_vars( TxSend ) /\ SF_vars( TxSendFull )
+    /\ SF_vars( MainStop ) /\ WF_vars( TxReturn )
     /\ SF_vars( TxWorkerLock ) /\ WF_vars( TxTake ) /\ WF_vars( TxTakeNone )
     /\ \A t \in Threads : WF_vars( Unlock(t) )
     /\ SF_vars( TxMainLock ) /\ WF_vars( TxPublish ) /\ WF_vars( TxMainWait )
@@ -511,6 +582,7 @@ TypeOK ==
     /\ rxBackoff \in [ owed : BOOLEAN, spun : BOOLEAN ]
     /\ arrived \in 0 .. MaxRx /\ staged \in 0 .. MaxTx
     /\ txProducer \in Buffers \cup { NONE } /\ txHeld \in Buffers \cup { NONE }
+    /\ shut \in [ on : BOOLEAN, full : BOOLEAN, refusals : 0 .. RetryBound + 1 ]
 
 (* the two receive buffers are held by exactly one owner each             *)
 RxOneOwner == rxWorker # rxMain
@@ -547,24 +619,29 @@ RxBacksOff == ~rxBackoff.spun
 FreeIsEmpty ==
     /\ \A i \in 1 .. Len(txFree) : txContent[txFree[i]] = << >>
 
-(* nothing staged is lost: every staged packet was sent, is still in a    *)
-(* bank (a full socket's unsent rest included), or was given up by the     *)
-(* post-quit bound (txLeft, empty before stop: LeftOnlyAfterQuit)          *)
+(* nothing staged is lost uncounted: every staged packet was sent, is      *)
+(* still in a bank (a full socket's unsent rest included), or was dropped *)
+(* and counted in SEND_DROPPED (txDropped, empty before shutdown:          *)
+(* DroppedOnlyAfterShutdown)                                               *)
 SentOrHeld ==
     Len(txSent) + Len(txContent[0]) + Len(txContent[1]) + Len(txContent[2])
-        + Len(txLeft) = staged
+        + Len(txDropped) = staged
 
-(* the send worker gives up packets only after stop                       *)
-LeftOnlyAfterQuit == txLeft # << >> => quit
+(* the send worker drops packets only after shutdown has begun            *)
+DroppedOnlyAfterShutdown == txDropped # << >> => shut.on
+
+(* the refusal count never passes the bound by more than the one refusal  *)
+(* that drops the tail                                                     *)
+RefusalsBounded == shut.refusals <= RetryBound + 1
 
 (* packets are consumed and sent once each, in the order they arrived;    *)
 (* the sent packets rise, and every packet below one sent was sent or     *)
-(* given up after stop (with txLeft empty this is txSent[i] = i)          *)
+(* dropped and counted (with txDropped empty this is txSent[i] = i)       *)
 RxInOrder == \A i \in 1 .. Len(rxConsumed) : rxConsumed[i] = i
 TxInOrder ==
     /\ \A i \in 1 .. Len(txSent) - 1 : txSent[i] < txSent[i + 1]
     /\ \A i \in 1 .. Len(txSent) : \A n \in 1 .. txSent[i] :
-          n \in Range(txSent) \cup Range(txLeft)
+          n \in Range(txSent) \cup Range(txDropped)
 
 (* main never waits on the worker's mutex                                 *)
 MainNeverWaits == pc["main"] # "waitlock"
@@ -575,13 +652,17 @@ StopJoinsBeforeFree ==
     /\ ( joined => ( rxExited /\ txExited ) )
     /\ ( freed => joined )
 
-(* once the TX worker exits, everything staged was sent or remains in a   *)
-(* bank the exited worker keeps until destroy                             *)
-ExitSentAll == txExited => Len(txSent) + Len(txContent[0]) + Len(txContent[1]) + Len(txContent[2])
-                              + Len(txLeft) = staged
+(* once the TX worker exits, every staged packet was sent or dropped and   *)
+(* counted: no bank still holds one                                        *)
+ExitSentAll == txExited => Len(txSent) + Len(txDropped) = staged
 
 (* a stop completes even when a full socket leaves banks unsent: both     *)
 (* workers exit, destroy joins and storage is freed                       *)
 StopCompletes == quit ~> freed
+
+(* a shutdown completes even on a socket that stays full: each bank is    *)
+(* held for at most RetryBound + 1 refusals after shutdown, so send_idle   *)
+(* becomes true, the stop is requested and the transport is freed          *)
+ShutdownCompletes == shut.on ~> freed
 
 =============================================================================
