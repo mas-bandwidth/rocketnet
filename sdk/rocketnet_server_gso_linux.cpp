@@ -2472,7 +2472,11 @@ bool rocketnet_server_gso_test_receive_backoff()
     struct rocketnet_server_gso_test_source_t source = { ROCKETNET_SERVER_GSO_TEST_VALID, 1000, 0, 0 };
     gso->test_receive_user = &source;
 
-    queue->ready_buffer = &queue->buffers[1];
+    // A full worker buffer with a published bank main has not claimed and no
+    // free buffer cannot be published: every pass reads nothing, leaves the
+    // buffer as it is and asks the worker to sleep.
+
+    queue->ready_buffer = &queue->buffers[2];
     queue->free_buffer = NULL;
     buffer->num_packets = ROCKETNET_GSO_RECV_QUEUE_SIZE;
     buffer->dropped_size = 0;
@@ -2487,21 +2491,23 @@ bool rocketnet_server_gso_test_receive_backoff()
         waits += rocketnet_server_gso_worker_step( queue ) ? 1 : 0;
 
     valid = valid && waits == 1000 && source.delivered == 0 &&
-            buffer->num_packets == ROCKETNET_GSO_RECV_QUEUE_SIZE && queue->ready_buffer == &queue->buffers[1];
+            buffer->num_packets == ROCKETNET_GSO_RECV_QUEUE_SIZE && queue->ready_buffer == &queue->buffers[2];
 
-    buffer->num_packets = 0;
-    buffer->dropped_size = 0;
-    buffer->dropped_overflow = 0;
-    buffer->dropped_source = 0;
-    buffer->gro_batches = 0;
-    buffer->gro_cmsg_faults = 0;
-    buffer->receive_errors = 0;
-    queue->ready_buffer = NULL;
-    queue->free_buffer = &queue->buffers[2];
+    // Main's claim frees a buffer: the next pass publishes the full buffer and
+    // does not back off, and the pass after it reads the waiting packets.
+
+    rocketnet_server_gso_receive_from_queue( gso, queue, 8 );
+    valid = valid && queue->main_buffer == &queue->buffers[2] && queue->free_buffer == &queue->buffers[1];
+    valid = valid && !rocketnet_server_gso_worker_step( queue );
+    valid = valid && queue->ready_buffer == buffer && queue->worker_buffer == &queue->buffers[1];
+    valid = valid && !rocketnet_server_gso_worker_step( queue );
+    valid = valid && source.delivered == 1000 && queue->worker_buffer->num_packets == 1000;
+
+    // A failed receive backs off too, though the buffer is not full.
 
     rocketnet_server_gso_test_fail_receives( gso, 1, EIO );
     valid = valid && rocketnet_server_gso_worker_step( queue );
-    valid = valid && buffer->receive_errors == 1;
+    valid = valid && queue->worker_buffer->receive_errors == 1;
 
     gso->test_receive = NULL;
     gso->test_receive_user = NULL;
