@@ -239,10 +239,12 @@ enum rocketnet_status_t
 
     /// The crypto library failed. Init returns it when the library did not
     /// start, and the library stays uninitialized. The connect token makers
-    /// return it when a token could not be sealed; nothing is created.
+    /// return it when a token could not be sealed; nothing is created. The
+    /// keypair generators return it when the crypto library did not start.
     /// Retrying will not help unless the cause is corrected. An unavailable OS
     /// random source is not a status: the crypto library aborts the process,
-    /// after one error line once rocketnet_init has run.
+    /// after one error line once rocketnet_init has run (no line in a
+    /// ROCKETNET_USE_SYSTEM_SODIUM build).
 
     ROCKETNET_STATUS_CRYPTO_INIT_FAILED = -5,
 
@@ -998,12 +1000,14 @@ ROCKETNET_EXPORT uint32_t rocketnet_version( void );
 ///
 /// Returns ROCKETNET_STATUS_OK, ROCKETNET_STATUS_INVALID_ARGUMENT,
 /// ROCKETNET_STATUS_ALREADY_INITIALIZED,
-/// ROCKETNET_STATUS_LIVE_ALLOCATIONS when the allocator changes while
-/// allocations are live, ROCKETNET_STATUS_PLATFORM_INIT_FAILED, or
+/// ROCKETNET_STATUS_LIVE_ALLOCATIONS only when another thread calls into the
+/// library while init installs a different allocator,
+/// ROCKETNET_STATUS_PLATFORM_INIT_FAILED, or
 /// ROCKETNET_STATUS_CRYPTO_INIT_FAILED when sodium_init cannot take its own
 /// lock. Init installs a sodium misuse handler that logs one error line
 /// before sodium aborts the process; sodium aborts when the OS random source
-/// is unavailable (its first read is inside init).
+/// is unavailable (its first read is inside init). A
+/// ROCKETNET_USE_SYSTEM_SODIUM build installs no handler and logs no line.
 ///
 /// ROCKETNET_LOG_LEVEL sets the maximum level before init logs. Values are
 /// 0 .. 5, from ROCKETNET_LOG_LEVEL_NONE to ROCKETNET_LOG_LEVEL_SPAM. Other
@@ -1092,8 +1096,8 @@ ROCKETNET_EXPORT void rocketnet_thread_priority( bool enabled );
 ROCKETNET_EXPORT const char * rocketnet_log_level_name( enum rocketnet_log_level_t level );
 
 /// Receives one formatted log line on the thread that logs it. This may be a
-/// network thread, so the callback must be thread-safe. It must not call
-/// rocketnet_log_function. context is the installed pointer. message is
+/// network thread, so the callback must be thread-safe. It must not call any
+/// rocketnet function. context is the installed pointer. message is
 /// NUL-terminated and length excludes the NUL. The message is at most 1023
 /// bytes and is valid only until the callback returns.
 
@@ -1116,7 +1120,8 @@ ROCKETNET_EXPORT void rocketnet_log_function( rocketnet_log_function_t function,
 /// The stats structs' api_misuses field counts these errors.
 ///
 /// - A required argument is NULL. Both server addresses of
-///   rocketnet_create_dev_connect_token count as one required argument.
+///   rocketnet_create_dev_connect_token and of rocketnet_create_connect_token's
+///   config count as one required argument.
 /// - A client index or destination id is outside 0 .. max_clients - 1. This
 ///   includes a destination id with ROCKETNET_FLOW_ID_BIT set.
 /// - Create runs before rocketnet_init, or init refuses its allocator: one
@@ -1187,12 +1192,15 @@ ROCKETNET_EXPORT void rocketnet_sleep( double seconds );
 ///
 /// Create allocates the hub as one block through the configured allocator:
 /// one server endpoint and max_clients client endpoints, each with its full
-/// datagram queue. Server start and client connect register an endpoint and
-/// allocate nothing; stop, disconnect and destroy unregister it. Traffic never
-/// allocates. A server or client past the hub's capacity is refused at start
-/// or connect. Create it once rocketnet_init has run, and destroy it with the
-/// same library copy that created it, after every server and client that uses
-/// it is destroyed and before rocketnet_term.
+/// datagram queue. Each client endpoint's queue is 2048 slots of 1476 bytes,
+/// 2048 * 1476 bytes. At max_clients 1000 the block is about 3.05 GB. It sits
+/// outside rocketnet_client_required_memory and
+/// rocketnet_server_required_memory. Server start and client connect register
+/// an endpoint and allocate nothing; stop, disconnect and destroy unregister
+/// it. Traffic never allocates. A server or client past the hub's capacity is
+/// refused at start or connect. Create it once rocketnet_init has run, and
+/// destroy it with the same library copy that created it, after every server
+/// and client that uses it is destroyed and before rocketnet_term.
 ///
 /// Thread: create and destroy on any thread. The endpoints may use the hub
 /// from any thread at once; a mutex in the hub guards it.
@@ -1285,7 +1293,9 @@ struct rocketnet_client_config_t
 
     /// ROCKETNET_CLIENT_TRANSPORT sets the candidate list. NULL means "auto".
     /// The list is at most 63 characters; a longer one is refused at create
-    /// with ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE. Default is NULL.
+    /// with ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE, and a longer
+    /// ROCKETNET_CLIENT_TRANSPORT value returns
+    /// ROCKETNET_STATUS_CONFIG_ENV_INVALID. Default is NULL.
 
     const char * transport;
 
@@ -1294,7 +1304,11 @@ struct rocketnet_client_config_t
     /// public state, the negative ones included. NULL disables the callback.
     /// It runs on the caller thread at the end of connect, update,
     /// disconnect (the one an early destroy makes included), and a start
-    /// message whose memory exhaustion ends the connection. Do not call client functions from it. Default is NULL.
+    /// message whose memory exhaustion ends the connection. Do not call client
+    /// functions from it: a call that changes the client (connect, destroy,
+    /// update, send_packets, disconnect, the message, receipt and send rate
+    /// calls, network_simulator) made from it is refused at once, leaves the
+    /// client as it was, and counts one api_misuse. Default is NULL.
 
     void ( *state_change_callback )( void * context, enum rocketnet_client_state_t previous_state, enum rocketnet_client_state_t current_state );
 
@@ -1501,7 +1515,8 @@ struct rocketnet_server_config_t
     uint8_t backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
 
     /// ROCKETNET_SERVER_NUM_XDP_QUEUES applies to xdp, gso and io_uring.
-    /// Zero, the default, selects the transport's own. Range is 1 .. 1024.
+    /// Zero, the default, selects the transport's own. Range is 1 .. 1024;
+    /// gso and io_uring refuse a value above 32.
     /// The Windows iocp transport ignores it and always runs one completion
     /// worker plus one send worker; the Windows rio transport ignores it and
     /// runs one I/O worker.
@@ -1526,7 +1541,9 @@ struct rocketnet_server_config_t
 
     /// ROCKETNET_SERVER_TRANSPORT sets the candidate list. NULL means "auto".
     /// The list is at most 63 characters; a longer one is refused at create
-    /// with ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE. Every transport serves IPv4,
+    /// with ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE, and a longer
+    /// ROCKETNET_SERVER_TRANSPORT value returns
+    /// ROCKETNET_STATUS_CONFIG_ENV_INVALID. Every transport serves IPv4,
     /// IPv6, or both. Default is NULL.
 
     const char * transport;
@@ -1784,9 +1801,11 @@ struct rocketnet_receipt_t
 /// @param secret_key Receives ROCKETNET_BACKEND_SECRET_KEY_BYTES. Wipe it
 /// when done.
 /// An unavailable OS random source aborts the process after one error line
-/// (rocketnet_init installs the line).
-/// @return ROCKETNET_STATUS_OK, or ROCKETNET_STATUS_INVALID_ARGUMENT for a
-/// NULL buffer.
+/// (rocketnet_init installs the line; a ROCKETNET_USE_SYSTEM_SODIUM build has
+/// none).
+/// @return ROCKETNET_STATUS_OK, ROCKETNET_STATUS_INVALID_ARGUMENT for a
+/// NULL buffer, or ROCKETNET_STATUS_CRYPTO_INIT_FAILED when the crypto
+/// library did not start.
 
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_generate_backend_keypair( uint8_t * public_key, uint8_t * secret_key );
 
@@ -1801,9 +1820,11 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_generate_backend_keypair( uin
 /// @param secret_key Receives ROCKETNET_SERVER_SECRET_KEY_BYTES. Wipe it
 /// when done.
 /// An unavailable OS random source aborts the process after one error line
-/// (rocketnet_init installs the line).
-/// @return ROCKETNET_STATUS_OK, or ROCKETNET_STATUS_INVALID_ARGUMENT for a
-/// NULL buffer.
+/// (rocketnet_init installs the line; a ROCKETNET_USE_SYSTEM_SODIUM build has
+/// none).
+/// @return ROCKETNET_STATUS_OK, ROCKETNET_STATUS_INVALID_ARGUMENT for a
+/// NULL buffer, or ROCKETNET_STATUS_CRYPTO_INIT_FAILED when the crypto
+/// library did not start.
 
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_generate_server_keypair( uint8_t * public_key, uint8_t * secret_key );
 
@@ -2708,7 +2729,8 @@ ROCKETNET_EXPORT size_t rocketnet_server_required_memory( const struct rocketnet
 /// ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION,
 /// ROCKETNET_STATUS_OUT_OF_MEMORY.
 /// An unavailable OS random source aborts the process after one error line
-/// while the server key is made (rocketnet_init installs the line).
+/// while the server key is made (rocketnet_init installs the line; a
+/// ROCKETNET_USE_SYSTEM_SODIUM build has none).
 
 ROCKETNET_EXPORT struct rocketnet_server_t * rocketnet_server_create( void * context, const char * ipv4_address, const char * ipv6_address, const struct rocketnet_server_config_t * config, enum rocketnet_status_t * status );
 
