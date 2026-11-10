@@ -43,52 +43,169 @@ static void stats_ack( rocketnet_ack_endpoint_t * endpoint, uint64_t sequence, d
 
 #if ROCKETNET_DEV
 
-// Project an endpoint into the independent history scan. Projection happens
-// only in this unit oracle; the worker uses its history directly and performs
-// no endpoint reconstruction.
+// The test-local oracle: the six statistics recomputed from the contract in
+// sdk/rocketnet_ack.h, never by calling rocketnet_ack_stats_history_compute,
+// so a defect in the library's recompute cannot also be in its reference.
+// A sequence is held when its slot's written bit is set and the slot holds
+// that sequence. The held sequences of a window's older half are found by
+// visiting every slot, then folded in sequence order, the order the first
+// record's time needs (a NaN first time poisons the span; a later NaN does
+// not move it). The arithmetic is the contract's, term for term, so the same
+// history gives the same bits.
+
+struct stats_oracle_span_t
+{
+    uint64_t bytes;
+    double start;
+    double finish;
+    bool have;
+};
+
+static void stats_oracle_span_add( stats_oracle_span_t * span, uint32_t bytes, double time )
+{
+    span->bytes += bytes;
+    if ( !span->have )
+    {
+        span->start = time;
+        span->finish = time;
+        span->have = true;
+        return;
+    }
+    if ( time < span->start )
+        span->start = time;
+    if ( time > span->finish )
+        span->finish = time;
+}
+
+static float stats_oracle_kbps( const stats_oracle_span_t & span )
+{
+    if ( !span.have || !( span.finish > span.start ) )
+        return 0.0f;
+    return (float) ( (double) span.bytes / ( span.finish - span.start ) * 8.0 / 1000.0 );
+}
+
+static bool stats_oracle_written( const uint64_t * written, uint64_t slot )
+{
+    return ( written[slot / 64] >> ( slot % 64 ) ) & 1;
+}
+
+// The first sequence of a ring's window older half: the window is the ring's
+// worth of sequences ending at the highest, starting no lower than 1.
+
+static uint64_t stats_oracle_base( uint64_t highest, uint64_t ring )
+{
+    return highest >= ring ? highest - ring + 1 : 1;
+}
+
+static bool stats_oracle_in_older_half( uint64_t sequence, uint64_t highest, uint64_t ring )
+{
+    const uint64_t base = stats_oracle_base( highest, ring );
+    return sequence >= base && sequence <= highest && sequence - base < ring / 2;
+}
 
 static void stats_history_result( const rocketnet_ack_endpoint_t * endpoint,
                                   rocketnet_ack_stats_result_t * result )
 {
-    auto * history = new rocketnet_ack_stats_history_t;
-    memset( history, 0, sizeof( *history ) );
-    history->highest_sent = endpoint->highest_sequence;
-    history->highest_received = endpoint->highest_received_sequence;
-    memcpy( history->rtt_history, endpoint->rtt_history, sizeof( history->rtt_history ) );
-
-    // a record the endpoint has not written since its reset is the empty
-    // record, as its written bits say: the projection leaves it zero
-
-    for ( int i = 0; i < ROCKETNET_SENT_PACKET_BUFFER_SIZE; ++i )
-    {
-        if ( !( ( endpoint->sent_written[i / 64] >> ( i % 64 ) ) & 1 ) )
-            continue;
-        history->sent[i].sequence = endpoint->sent[i].sequence;
-        history->sent[i].send_time = endpoint->sent[i].send_time;
-        history->sent[i].wire_bytes = endpoint->sent[i].wire_bytes;
-        history->sent[i].acked = endpoint->sent[i].acked;
-    }
-
-    for ( int i = 0; i < ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE; ++i )
-    {
-        if ( !( ( endpoint->received_written[i / 64] >> ( i % 64 ) ) & 1 ) )
-            continue;
-        history->received[i].sequence = endpoint->received[i].sequence;
-        history->received[i].receive_time = endpoint->received[i].receive_time;
-        history->received[i].wire_bytes = endpoint->received[i].wire_bytes;
-    }
-
     memset( result, 0, sizeof( *result ) );
-    rocketnet_ack_stats_history_compute( history, result );
-    delete history;
+
+    // rtt: the smallest positive sample; jitter: the mean of the positive
+    // samples' distance above it
+
+    float smallest = 0.0f;
+    for ( int i = 0; i < ROCKETNET_RTT_HISTORY_SIZE; ++i )
+    {
+        const float sample = endpoint->rtt_history[i];
+        if ( sample > 0.0f && ( smallest == 0.0f || sample < smallest ) )
+            smallest = sample;
+    }
+    result->rtt = smallest;
+
+    float above = 0.0f;
+    int samples = 0;
+    for ( int i = 0; i < ROCKETNET_RTT_HISTORY_SIZE; ++i )
+    {
+        const float sample = endpoint->rtt_history[i];
+        if ( sample > 0.0f )
+        {
+            above += sample - smallest;
+            ++samples;
+        }
+    }
+    result->jitter = samples > 0 ? above / (float) samples : 0.0f;
+
+    // sent: every held send of the older half enters the sent bandwidth, and
+    // the acked ones the acked bandwidth, both timed by send time. Loss counts
+    // only sends at least half a ring below the highest: the newer half's
+    // acks are still in flight.
+
+    const uint64_t S = ROCKETNET_SENT_PACKET_BUFFER_SIZE;
+    const uint64_t highest_sent = endpoint->highest_sequence;
+    const uint64_t sent_base = stats_oracle_base( highest_sent, S );
+    auto ** sent = new const rocketnet_sent_packet_record_t *[S / 2]();
+    for ( uint64_t slot = 0; slot < S; ++slot )
+    {
+        const rocketnet_sent_packet_record_t * record = &endpoint->sent[slot];
+        if ( stats_oracle_written( endpoint->sent_written, slot ) && record->sequence % S == slot &&
+             stats_oracle_in_older_half( record->sequence, highest_sent, S ) )
+            sent[record->sequence - sent_base] = record;
+    }
+
+    stats_oracle_span_t sent_span = {};
+    stats_oracle_span_t acked_span = {};
+    int eligible = 0;
+    int lost = 0;
+    for ( uint64_t offset = 0; offset < S / 2; ++offset )
+    {
+        const rocketnet_sent_packet_record_t * record = sent[offset];
+        if ( !record )
+            continue;
+        stats_oracle_span_add( &sent_span, record->wire_bytes, record->send_time );
+        if ( record->acked )
+            stats_oracle_span_add( &acked_span, record->wire_bytes, record->send_time );
+        if ( highest_sent - record->sequence >= S / 2 )
+        {
+            ++eligible;
+            if ( !record->acked )
+                ++lost;
+        }
+    }
+    delete[] sent;
+
+    result->packet_loss = eligible > 0 ? (float) lost / (float) eligible * 100.0f : 0.0f;
+    result->sent_kbps = stats_oracle_kbps( sent_span );
+    result->acked_kbps = stats_oracle_kbps( acked_span );
+
+    // received: every held receive of the older half, timed by receive time
+
+    const uint64_t R = ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE;
+    const uint64_t highest_received = endpoint->highest_received_sequence;
+    const uint64_t received_base = stats_oracle_base( highest_received, R );
+    auto ** received = new const rocketnet_received_packet_record_t *[R / 2]();
+    for ( uint64_t slot = 0; slot < R; ++slot )
+    {
+        const rocketnet_received_packet_record_t * record = &endpoint->received[slot];
+        if ( stats_oracle_written( endpoint->received_written, slot ) && record->sequence % R == slot &&
+             stats_oracle_in_older_half( record->sequence, highest_received, R ) )
+            received[record->sequence - received_base] = record;
+    }
+
+    stats_oracle_span_t received_span = {};
+    for ( uint64_t offset = 0; offset < R / 2; ++offset )
+    {
+        if ( received[offset] )
+            stats_oracle_span_add( &received_span, received[offset]->wire_bytes, received[offset]->receive_time );
+    }
+    delete[] received;
+
+    result->received_kbps = stats_oracle_kbps( received_span );
 }
 
 #endif // ROCKETNET_DEV
 
-// Compare both typed recompute entry points at every existing manual numeric
-// edge assertion in DEV=1, while keeping the production recompute and numeric
-// assertions active in DEV=0. This intentionally updates endpoint; the received
-// live aggregate cases below use a separate non-mutating oracle.
+// Compare the library's recompute with the test-local oracle at every existing
+// manual numeric edge assertion in DEV=1, while keeping the production
+// recompute and numeric assertions active in DEV=0. This intentionally updates
+// endpoint; the received live aggregate cases below compare without updating.
 
 static void stats_update_and_compare_history( rocketnet_ack_endpoint_t * endpoint )
 {
@@ -98,8 +215,8 @@ static void stats_update_and_compare_history( rocketnet_ack_endpoint_t * endpoin
 #endif // #if ROCKETNET_DEV
     rocketnet_ack_endpoint_update_stats( endpoint );
 #if ROCKETNET_DEV
-    // equal inputs must retain the exact float operation order, not merely
-    // approximate a six-field result after the scratch removal
+    // the oracle uses the contract's float operations, so equal histories
+    // must give exactly equal fields
 
     rocketnet_unit_check( result.rtt == endpoint->rtt );
     rocketnet_unit_check( result.jitter == endpoint->jitter );
@@ -246,8 +363,8 @@ static void test_ack_stats_client_uses_outbound_history()
 
 REGISTER_UNIT_TEST( test_ack_stats_client_uses_outbound_history );
 
-// The getter copies the ACK recompute. The history scan is the oracle the
-// other tests in this file already compare against. No second loss formula.
+// The getter copies the ACK recompute, checked against the test-local oracle
+// the other tests in this file compare against.
 
 static void stats_client_getter_matches_ack_history( const rocketnet_ack_endpoint_t * endpoint )
 {
