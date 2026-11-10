@@ -200,18 +200,63 @@ void rocketnet_message_server_delivery_capture( struct rocketnet_message_server_
 //                     create and destroy
 // ---------------------------------------------------------------
 
-// stops an owned transport and steps it until it reports stopped
+#if ROCKETNET_DEV
+// A unit test holds the worker not-stopped here and counts polls. NULL
+// leaves the transport's own stopped() in charge. The test fails at its
+// ceiling, so a wait with no deadline cannot hang the suite, and this
+// path does not sleep. Per process, null by default.
+static rocketnet_dev_link_stop_wait_hold_function_t * rn_link_stop_wait_hold;
+static void * rn_link_stop_wait_hold_context;
+
+void rocketnet_dev_set_link_stop_wait_hold_hook( rocketnet_dev_link_stop_wait_hold_function_t * function, void * context )
+{
+    rn_link_stop_wait_hold = function;
+    rn_link_stop_wait_hold_context = context;
+}
+#endif // #if ROCKETNET_DEV
+
+// rocketnet_client_destroy polls a worker for RN_DESTROY_STOP_SECONDS
+// (sdk/rocketnet_api.cpp, 1.0). That constant is private to the api file,
+// so the same budget is repeated here.
+static const double RN_MESSAGE_LINK_STOP_WAIT_SECONDS = 1.0;
+
+// stops an owned transport and steps it until it reports stopped, or the
+// budget above runs out. The wait used to sleep 1 ms with no deadline.
 static void rn_message_link_stop_and_wait( const struct rn_message_link_t * link )
 {
     if ( link->stop )
         link->stop( link->transport );
 
+#if ROCKETNET_DEV
+    if ( rn_link_stop_wait_hold )
+    {
+        double now = 0.0;
+        const double deadline = now + RN_MESSAGE_LINK_STOP_WAIT_SECONDS;
+        for ( ;; )
+        {
+            if ( !rn_link_stop_wait_hold( rn_link_stop_wait_hold_context ) )
+                break;
+            if ( link->update )
+                link->update( link->transport, 0.0 ); // stopping updates do not read game time
+            if ( now >= deadline )
+                break;
+            now += 0.001;
+        }
+        return;
+    }
+#endif // #if ROCKETNET_DEV
+
+    const double deadline = rocketnet_platform_time() + RN_MESSAGE_LINK_STOP_WAIT_SECONDS;
     while ( link->stopped && !link->stopped( link->transport ) )
     {
         if ( link->update )
             link->update( link->transport, 0.0 ); // stopping updates do not read game time
         if ( !link->stopped( link->transport ) )
+        {
+            if ( rocketnet_platform_time() >= deadline )
+                break;
             rocketnet_platform_sleep( 0.001 );
+        }
     }
 }
 
