@@ -381,9 +381,11 @@ requirements to each configuration group:
   - `receive_message_buffer_bytes` is a multiple of 16 in `4096 .. 1048576`,
     and `max_message_bytes <= receive_message_buffer_bytes`.
   - `12288 <= send_message_buffer_bytes <= 268435456`.
-  - The send buffer's large-slab share must hold all 1,152-byte fragments of
-    one `max_message_bytes` block, and that fragment count must not exceed
-    `reliable_messages_in_flight`.
+  - The number of 1,152-byte fragments of one `max_message_bytes` block must
+    not exceed `reliable_messages_in_flight`. `send_message_buffer_bytes` has
+    no size relation to `max_message_bytes`: a message larger than one
+    1,152-byte slab is held in the send spans (`SR`), which are sized from
+    `receive_message_buffer_bytes`.
   - Violating any of these bounds causes `rocketnet_client_create` or
     `rocketnet_server_create` to return `ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE`
     (and `rocketnet_*_required_memory` to return `0`).
