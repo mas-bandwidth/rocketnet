@@ -965,6 +965,7 @@ static void test_claim_compaction_write_cursor_wraps()
     rocketnet_dev_token_table_reset_operation_counts( history );
     check( rocketnet_used_token_history_claim_record( history, ids[P], &holder, deadline[P], 1000.0 ) == 1 );
     check( rocketnet_dev_token_claim_slot_steps( history ) == 8 );
+    check( rocketnet_used_token_history_claim_can_record( history, ids[FRESH], 1000.0 ) == 0 );
 
     // each expiry reuses exactly the oldest live claim, and the newer claims stay held
 
