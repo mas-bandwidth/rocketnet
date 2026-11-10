@@ -15,6 +15,8 @@
 // no sockets, no real time.
 
 #include "test_unit_registry.h"
+#include "client_io_rig.h"
+#include "fake_client_driver.h"
 
 #include "rocketnet_internal.h"
 #include "rocketnet_wire.h"
@@ -1059,3 +1061,73 @@ static void test_client_ignores_payloads_before_connected()
 }
 
 REGISTER_UNIT_TEST( test_client_ignores_payloads_before_connected );
+
+// A transport result outside the contract (here a negative receive byte count)
+// is a transport fault. The I/O step refuses it and counts it on its own;
+// the fold at update adds it once to the public PREFILTER_TOO_LARGE counter,
+// so a driver fault is visible outside the I/O state.
+
+struct rcr_transport_fault_t
+{
+    int receive_calls;
+};
+
+static void rcr_transport_fault_destroy( void * transport )
+{
+    (void) transport;
+}
+
+static int rcr_transport_fault_receive( void * transport, rocketnet_address_t * from, uint8_t * data, int capacity )
+{
+    rcr_transport_fault_t * fault = (rcr_transport_fault_t *) transport;
+    (void) data;
+    (void) capacity;
+    fault->receive_calls++;
+    if ( fault->receive_calls > 1 )
+        return 0;
+    memset( from, 0, sizeof( *from ) );
+    from->type = ROCKETNET_ADDRESS_IPV4;
+    from->port = 1;
+    return -1;
+}
+
+static double rcr_transport_fault_time( void * context )
+{
+    return *(const double *) context;
+}
+
+static void test_client_transport_faults_fold_into_public_counter()
+{
+    rcr_transport_fault_t fault = {};
+    rocketnet_client_transport_io_operations_t operations = rocketnet_fake_client_operations_base;
+    operations.destroy = rcr_transport_fault_destroy;
+    operations.receive = rcr_transport_fault_receive;
+
+    rocketnet_client_transport_io_config_t config = { "fake", NULL, NULL };
+    rocketnet_address_t bind = {};
+    rocketnet_client_transport_io_t transport = {};
+    check( rocketnet_client_transport_io_open( &operations, &fault, &config, &bind, &transport ) );
+
+    rocketnet_client_io_rig_t * rig = rocketnet_client_io_rig_create();
+    double now = 1000.0;
+    rocketnet_client_io_t io = {};
+    rocketnet_client_io_rig_init( rig, &io, &transport, rcr_transport_fault_time, &now );
+
+    struct rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof( counters ) );
+    io.prefilter_too_large = &counters.values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE];
+
+    check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_IDLE );
+    check( io.transport_faults == 1 );
+    check( counters.values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE] == 0 );
+
+    rocketnet_client_io_fold_counters( &io );
+    check( counters.values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE] == 1 );
+
+    rocketnet_client_io_fold_counters( &io );
+    check( counters.values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE] == 1 );
+
+    rocketnet_client_transport_io_close( &transport );
+    rocketnet_client_io_rig_destroy( rig );
+}
+REGISTER_UNIT_TEST( test_client_transport_faults_fold_into_public_counter );
