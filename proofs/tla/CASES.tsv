@@ -85,6 +85,9 @@ MCRNWindowBrokenSameUpdateReply.cfg	MCRNWindow.tla	invariant	NoSlotCollision	che
 MCRNWindowBrokenHalfRange.cfg	MCRNWindow.tla	invariant	WireNumberReconstructs	check	rnwindow	required	-
 MCRNWindowBrokenHoldOrdered.cfg	MCRNWindow.tla	invariant	OrderedDeliveredInOrder	check	rnwindow	required	-
 MCRNWindowBrokenDropDuplicates.cfg	MCRNWindow.tla	invariant	DeliveredOnce	check	rnwindow	required	-
+MCRNSequencedSlotW4.cfg	MCRNSequencedSlot.tla	pass	-	ignore-terminal	rnsequencedslot	required	-
+MCRNSequencedSlotW8.cfg	MCRNSequencedSlot.tla	pass	-	ignore-terminal	rnsequencedslot	required	-
+MCRNSequencedSlotBrokenSpan.cfg	MCRNSequencedSlot.tla	invariant	NoSlotCollision	ignore-terminal	rnsequencedslot	required	-
 MCClientConnectionCookieTrust.cfg	MCClientConnection.tla	pass	-	ignore-terminal	clientconnection	required	-
 MCClientConnectionBrokenCookieRefreshes.cfg	MCClientConnection.tla	action	OnlyAuthenticatedRefreshes	ignore-terminal	clientconnection	required	-
 MCClientConnectionForgedCookie.cfg	MCClientConnection.tla	pass	-	ignore-terminal	clientconnection	required	-
