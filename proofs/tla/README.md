@@ -147,7 +147,7 @@ model's README for its current controls, witnesses and configured bounds.
 |---|---|
 | `link` | Shared lossy-link abstraction and loss patterns. |
 | `clientconnection` | Client connection state machine, safety/liveness cases and explicit timeout debt. |
-| `replaywindow` | Control, mid-scale bench control, the long-skip `WindowIsTruth` witness, the open-before-gate `NoOpenBeforeConnect` witness and the advance-before-gate `NoAdvanceBeforeConnect` witness |
+| `replaywindow` | Control, mid-scale bench control and a reversed witness for every safety rule: `WindowIsTruth`, `GenuineIsAccepted`, `AckReportsOnlyReceived`, `NoOpenBeforeConnect`, `NoAdvanceBeforeConnect`, `AckReportsOnlyProcessed`, `ReceivedIsRefused`, `BelowFloorIsRefused` and `HighestIsReceived` |
 | `rnsendstore` | One store class, abstractly (README-RNSendStore.md). |
 | `rnsendstorelayout` | The send store and the descriptor free stack at the code's layout, three chunks and four descriptors (README-RNSendStoreLayout.md). |
 | `rnupdateclock` | The update clock of the client transport, the server transport and the message object (README-RNUpdateClock.md). |

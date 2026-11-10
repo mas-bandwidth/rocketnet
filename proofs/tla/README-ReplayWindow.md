@@ -71,6 +71,8 @@ is built from it, and nothing here speaks for it.
 | `MaxSeq` | the highest sequence explored | `36`, three windows | same |
 | `GateBeforeAdvance` | the server checks the slot before advancing | `TRUE` (the rule, and the code) | `FALSE` (the reversed witness, with `GateBeforeOpen = FALSE`) |
 | `GateBeforeOpen` | the server checks the slot before the AEAD open | `TRUE` (the rule, and the code) | `FALSE` (the reversed witnesses) |
+| `MarkOnAdvance` | the advance sets the bit for `s` | `TRUE` (the rule, and the code) | `FALSE` (`ReceivedIsRefused`, `HighestIsReceived`: the mark moves but its bit is not set) |
+| `RefuseBelowFloor` | at or below `highest - W` the sequence is too old | `TRUE` (the rule, and the code) | `FALSE` (`BelowFloorIsRefused`: the too-old check is omitted) |
 
 The advance follows the open, so a gate before the open is a gate before the
 advance: the module assumes `GateBeforeOpen => GateBeforeAdvance`, and the
@@ -125,21 +127,33 @@ java -cp /path/to/tla2tools.jar tlc2.TLC -workers 4 -cleanup -config MCReplayWin
 ```
 
 `MCReplayWindow.cfg` is the committed run: the rule on every count (`ClearedWords = 6`,
-`GateBeforeAdvance = TRUE`, `GateBeforeOpen = TRUE`), checking every invariant above and `Monotone`. It finishes
-in a few seconds: 958,503 states, 53,249 distinct, depth 16.
+`GateBeforeAdvance = TRUE`, `GateBeforeOpen = TRUE`, `MarkOnAdvance = TRUE`,
+`RefuseBelowFloor = TRUE`), checking every invariant above and `Monotone`. It finishes
+in a few seconds: 1,917,003 states generated, 53,249 distinct, depth 16.
 
 The reversed witnesses are the same file with one constant changed to the defective
 order the code no longer uses and `INVARIANTS` cut to the one rule under test, so TLC names that rule:
 
 | Run | Edit | `INVARIANTS` | Expected |
 |---|---|---|---|
-| committed | none | all | passes |
-| w-longskip-window | `ClearedWords = 4` | `WindowIsTruth` | **fails**: the 5-state trace below |
-| w-longskip-genuine | `ClearedWords = 4` | `GenuineIsAccepted` | **fails**: 6 states, same shape |
-| w-longskip-ack | `ClearedWords = 4` | `AckReportsOnlyReceived` | **fails**: 5 states, same shape |
-| w-gate (`MCReplayWindowBrokenGate.cfg`) | `GateBeforeAdvance = FALSE`, `GateBeforeOpen = FALSE` | `NoAdvanceBeforeConnect` | **fails**: 2-state trace below |
-| w-gate-processed | `GateBeforeAdvance = FALSE`, `GateBeforeOpen = FALSE` | `AckReportsOnlyProcessed` | **fails**: the same 2 states |
-| open-before-gate (`MCReplayWindowBrokenOpenBeforeGate.cfg`) | `GateBeforeOpen = FALSE` | `NoOpenBeforeConnect` | **fails**: 2 states, below |
+| `MCReplayWindow.cfg` | none | all | passes |
+| `MCReplayWindowBrokenLongSkip.cfg` | `ClearedWords = 4` | `WindowIsTruth` | **fails**: the 5-state trace below |
+| `MCReplayWindowBrokenGenuine.cfg` | `ClearedWords = 4` | `GenuineIsAccepted` | **fails**: 6 states, same shape |
+| `MCReplayWindowBrokenAck.cfg` | `ClearedWords = 4` | `AckReportsOnlyReceived` | **fails**: 5 states, same shape |
+| `MCReplayWindowBrokenGate.cfg` | `GateBeforeAdvance = FALSE`, `GateBeforeOpen = FALSE` | `NoAdvanceBeforeConnect` | **fails**: 2-state trace below |
+| `MCReplayWindowBrokenProcessed.cfg` | `GateBeforeAdvance = FALSE`, `GateBeforeOpen = FALSE` | `AckReportsOnlyProcessed` | **fails**: the same 2 states |
+| `MCReplayWindowBrokenOpenBeforeGate.cfg` | `GateBeforeOpen = FALSE` | `NoOpenBeforeConnect` | **fails**: 2 states, below |
+| `MCReplayWindowBrokenReceived.cfg` | `MarkOnAdvance = FALSE` | `ReceivedIsRefused` | **fails**: 3 states (after `Connect`, `Receive(1)`) |
+| `MCReplayWindowBrokenBelowFloor.cfg` | `RefuseBelowFloor = FALSE` | `BelowFloorIsRefused` | **fails**: 3 states (after `Connect`, `Receive(14)`) |
+| `MCReplayWindowBrokenHighest.cfg` | `MarkOnAdvance = FALSE` | `HighestIsReceived` | **fails**: 3 states (after `Connect`, `Receive(1)`) |
+
+The two `MarkOnAdvance = FALSE` traces are one `Receive` after `Connect`: the
+advance moves `highest` to 1 and records 1 in `received`, but the bit for 1 stays
+clear, so `AlreadyReceived(1)` is false (`ReceivedIsRefused`) and
+`window[Bit(highest)]` is false (`HighestIsReceived`). The `RefuseBelowFloor = FALSE`
+trace is `Receive(14)` after `Connect`: the long skip clears the ring and sets
+bit `14 % 12 = 2`, so the range is `3..14`, and sequence 1 is below the floor
+with bit 1 clear, so it is read from the ring instead of refused.
 
 The open-before-gate witness is the order before 2026-10-21: the slot check
 after the AEAD open. TLC's trace is the initial state, then one `Receive` on
@@ -258,7 +272,7 @@ PR merged first). `GateBeforeAdvance = TRUE`, the committed run, is that rule.
 
 ## RUNS.tsv
 
-Six models landed in parallel; this PR does not edit `proofs/tla/RUNS.tsv`. The rows it owes,
+Six models landed in parallel; that PR did not edit `proofs/tla/RUNS.tsv`. The rows it owed,
 tab-separated, bench hetzner2, 2026-10-13:
 
 ```
@@ -283,6 +297,17 @@ recorded as its bounded run, which ends at the budget as the bench row
 declares (see below). An earlier captain measurement of the mid case under a
 1500 s manual budget passed: 69,206,063 generated / 3,145,729 distinct states
 in 303.298 s, exit 0.
+
+### 2026-11-10: six safety-property witnesses
+
+This change adds the `MarkOnAdvance` and `RefuseBelowFloor` switches and the six
+committed reversed witnesses for the remaining `ReplayWindow` safety rules.
+`ReplayWindow.tla` changed, so all eleven `replaywindow` cases were re-measured
+on Linux (pinned jar, one shard per case, `mode = bounded`, 110 s budget) and
+joined with `tlacheck merge --keep proofs/tla/RUNS.tsv`: `MCReplayWindow.cfg`
+passes (1,917,003 generated / 53,249 distinct), each reversed witness reaches
+the invariant named in its configuration, and the mid case again records its
+bounded timeout as the bench row declares.
 
 ## Mid-scale instance
 

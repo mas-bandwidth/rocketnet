@@ -71,10 +71,16 @@ CONSTANTS
     MaxSeq,            \* the highest sequence this instance explores
     GateBeforeAdvance, \* BOOLEAN: the server checks the slot before it
                        \* advances (the rule, and what the code does) or after
-    GateBeforeOpen     \* BOOLEAN: the server checks the slot before the
+    GateBeforeOpen,    \* BOOLEAN: the server checks the slot before the
                        \* AEAD open (the rule, and what the code does) or after;
                        \* the advance follows the open, so a gate before the
                        \* open is a gate before the advance as well
+    MarkOnAdvance,     \* BOOLEAN: the advance sets the bit for s (the rule,
+                       \* and what the code does) or leaves the ring alone; the
+                       \* ghost still records that s opened
+    RefuseBelowFloor   \* BOOLEAN: a sequence at or below highest - W is refused
+                       \* as too old (the rule, and what the code does) or the
+                       \* too-old check is omitted and the ring speaks for it
 
 W == Words * WordBits  \* ROCKETNET_REPLAY_WINDOW_BITS (sdk/rocketnet_replay.h)
 
@@ -85,6 +91,8 @@ ASSUME /\ Words \in Nat \ {0}
        /\ GateBeforeAdvance \in BOOLEAN
        /\ GateBeforeOpen \in BOOLEAN
        /\ GateBeforeOpen => GateBeforeAdvance
+       /\ MarkOnAdvance \in BOOLEAN
+       /\ RefuseBelowFloor \in BOOLEAN
 
 VARIABLES
     highest,    \* highest_opened: the high-water mark, 0 before any open
@@ -122,7 +130,7 @@ InRange(s) == s >= Floor /\ s <= highest
 (***************************************************************************)
 AlreadyReceived(s) ==
     IF s > highest THEN FALSE
-    ELSE IF highest >= W /\ s <= highest - W THEN TRUE
+    ELSE IF highest >= W /\ RefuseBelowFloor /\ s <= highest - W THEN TRUE
     ELSE window[Bit(s)]
 
 (***************************************************************************)
@@ -140,7 +148,7 @@ AckReports(s) == InRange(s) /\ window[Bit(s)]
 (* so a sequence far ahead does not inherit bits from the previous lap:    *)
 (* a skip shorter than W clears each skipped sequence's bit; a skip of W   *)
 (* or more clears the whole ring (ClearedWords = Words).  Then the bit for *)
-(* s is set.                                                               *)
+(* s is set when MarkOnAdvance is TRUE.                                    *)
 (*                                                                         *)
 (* The ghost follows the truth: s joins received, and whatever has left    *)
 (* the retained range is forgotten -- the window can no longer speak for   *)
@@ -156,9 +164,13 @@ Cleared(s) ==
 Advance(s) ==
     /\ ~AlreadyReceived(s)                  \* the assert in rocketnet_replay_advance; the caller checked
     /\ IF s > highest
-         THEN /\ window'  = [Cleared(s) EXCEPT ![Bit(s)] = TRUE]
+         THEN /\ window'  = IF MarkOnAdvance
+                            THEN [Cleared(s) EXCEPT ![Bit(s)] = TRUE]
+                            ELSE Cleared(s)
               /\ highest' = s
-         ELSE /\ window'  = [window EXCEPT ![Bit(s)] = TRUE]
+         ELSE /\ window'  = IF MarkOnAdvance
+                            THEN [window EXCEPT ![Bit(s)] = TRUE]
+                            ELSE window
               /\ highest' = highest
     /\ received' = {t \in received \cup {s} : t + W > highest'}
 
