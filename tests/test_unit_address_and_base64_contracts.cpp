@@ -45,20 +45,21 @@ struct base64_decode_case_t
 {
     const char * input;     // the input string, never NULL
     size_t output_size;     // the output buffer capacity
+    bool refused;           // an invalid input: returns 0 and touches nothing
     const char * what;      // the case, for a failing line
 };
 
 static const struct base64_decode_case_t k_decode_cases[] = {
-    { "", 8, "empty input" },
-    { "AAAA", 8, "valid whole group" },
-    { "AA==", 8, "valid two-pad group" },
-    { "AAA=", 8, "valid one-pad group" },
-    { "!!!!", 8, "all-invalid characters" },
-    { "AA*A", 8, "one invalid character" },
-    { "AAA", 8, "mis-padded length, not a multiple of four" },
-    { "AA=", 8, "mis-padded length, one pad and short" },
-    { "A===", 8, "too many pad characters" },
-    { "AAAA", 2, "over-long for the output buffer" },
+    { "", 8, false, "empty input" },
+    { "AAAA", 8, false, "valid whole group" },
+    { "AA==", 8, false, "valid two-pad group" },
+    { "AAA=", 8, false, "valid one-pad group" },
+    { "!!!!", 8, true, "all-invalid characters" },
+    { "AA*A", 8, true, "one invalid character" },
+    { "AAA", 8, true, "mis-padded length, not a multiple of four" },
+    { "AA=", 8, true, "mis-padded length, one pad and short" },
+    { "A===", 8, true, "too many pad characters" },
+    { "AAAA", 2, true, "over-long for the output buffer" },
 };
 
 static void test_base64_decode_data_never_returns_negative()
@@ -66,20 +67,37 @@ static void test_base64_decode_data_never_returns_negative()
     const int count = (int) ( sizeof( k_decode_cases ) / sizeof( k_decode_cases[0] ) );
     for ( int i = 0; i < count; ++i )
     {
+        const struct base64_decode_case_t & c = k_decode_cases[i];
+
         uint8_t output[16];
         memset( output, 0xEE, sizeof( output ) );
 
-        const int result = rocketnet_base64_decode_data( k_decode_cases[i].input,
-                                                         output,
-                                                         k_decode_cases[i].output_size );
+        const int result = rocketnet_base64_decode_data( c.input, output, c.output_size );
         if ( result < 0 )
         {
-            printf( "base64 decode case %d (%s) returned %d, negative\n",
-                    i, k_decode_cases[i].what, result );
+            printf( "base64 decode case %d (%s) returned %d, negative\n", i, c.what, result );
             fflush( stdout );
         }
 
         rocketnet_unit_check( result >= 0 );
+
+        if ( c.refused )
+        {
+            rocketnet_unit_check( result == 0 );
+
+            bool untouched = true;
+            for ( size_t b = 0; b < sizeof( output ); ++b )
+            {
+                if ( output[b] != 0xEE )
+                {
+                    printf( "base64 decode case %d (%s) wrote 0x%02X at output[%zu], expected the 0xEE sentinel\n",
+                            i, c.what, output[b], b );
+                    fflush( stdout );
+                    untouched = false;
+                }
+            }
+            rocketnet_unit_check( untouched );
+        }
     }
 }
 

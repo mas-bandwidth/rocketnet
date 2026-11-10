@@ -125,7 +125,7 @@ with tempfile.TemporaryDirectory(prefix='rocketnet-drift-') as tmp:
     drift_check(False, '::error::HEAD carries 1 wire-affecting commit(s) past v1.0.0-preview-1 and the shipping version is still v1.0.0-preview-1')
     print('Drift: wire commit with the label unbumped rejected')
     commit('sdk/rocketnet.h', fixture('v1.0.0-preview-2'), 'bump to v1.0.0-preview-2')
-    drift_check(True, '::warning::HEAD carries 1 wire-affecting commit(s) past v1.0.0-preview-1. The version is already bumped to v1.0.0-preview-2')
+    drift_check(True, '::warning::HEAD carries 2 wire-affecting commit(s) past v1.0.0-preview-1. The version is already bumped to v1.0.0-preview-2')
     print('Drift: wire commit with the label bumped accepted with a warning')
 
 # The newest tag: a final release sorts above its own prereleases, and
@@ -169,4 +169,41 @@ with tempfile.TemporaryDirectory(prefix='rocketnet-newest-') as tmp:
     if result.returncode == 0 or expect not in result.stdout:
         raise AssertionError(f'drift past v1.0.0: exit {result.returncode}\n{result.stdout}\n{result.stderr}')
     print('Drift: wire commit past v1.0.0 with the label unbumped rejected')
-print('27 release version fixtures passed')
+
+# The wire-change gate must watch every wire-defining SDK file: a change to
+# any of them can alter bytes on the wire, so it must require a version bump.
+WIRE_PATHS = [
+    'standard/TRANSPORT.md',
+    'standard/MESSAGES.md',
+    'sdk/rocketnet_wire.h',
+    'sdk/rocketnet_protocol.h',
+    'sdk/rocketnet_protocol.cpp',
+    'sdk/rocketnet_connect_token.h',
+    'sdk/rocketnet_connect_token.cpp',
+    'sdk/rocketnet_message.cpp',
+    'sdk/rocketnet_message.h',
+    'sdk/rocketnet_ack.cpp',
+    'sdk/rocketnet_ack.h',
+    'sdk/rocketnet_client_protocol.cpp',
+    'sdk/rocketnet_client_protocol.h',
+    'sdk/rocketnet_server_protocol.cpp',
+    'sdk/rocketnet_server_protocol.h',
+    'sdk/rocketnet_channel.cpp',
+    'sdk/rocketnet_channel.h',
+    'sdk/rocketnet_channel_reliable.cpp',
+    'sdk/rocketnet_channel_sequenced.cpp',
+    'sdk/rocketnet_channel_receipts.cpp',
+    'sdk/rocketnet_keys.cpp',
+    'sdk/rocketnet_keys.h',
+    'sdk/rocketnet_read_write.h',
+    'sdk/rocketnet_layers.h',
+    'sdk/rocketnet.h',
+]
+wire_gate = workflow[workflow.index('wire_log=$(git log'):workflow.index('if [ -z "$wire_log" ]')]
+releasing = (ROOT / 'docs/RELEASING.md').read_text()
+wire_rule = releasing[releasing.index('## The wire-change rule'):releasing.index('This is a path-based check')]
+for path in WIRE_PATHS:
+    assert path in wire_gate, f'release-check.yml wire-change gate does not watch {path}'
+    assert path in wire_rule, f'docs/RELEASING.md wire-change rule does not list {path}'
+print('Wire paths: release-check.yml and RELEASING.md watch all', len(WIRE_PATHS), 'wire-defining paths')
+print('28 release version fixtures passed')

@@ -466,8 +466,8 @@ enum rocketnet_status_t rocketnet_loopback_hub_destroy( rocketnet_loopback_hub_t
     return ROCKETNET_STATUS_OK;
 }
 
-// proofs/tla/RNLoopbackBindLayout.tla Create: a held family port refused, the
-// record taken, a port 0 bind given the next port neither family holds, and
+// proofs/tla/RNLoopbackBindLayout.tla Create: a held family port refused, a
+// port shared across families with a dual-stack wildcard refused, the record taken, a port 0 bind given the next port neither family holds, and
 // the entry written as the record index plus one
 static void * loopback_create( rocketnet_loopback_hub_t * hub, rocketnet_address_t * bind, bool server )
 {
