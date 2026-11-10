@@ -243,8 +243,8 @@ struct mmsghdr;
 struct rocketnet_server_gso_t * rocketnet_server_gso_test_open();
 void rocketnet_server_gso_test_close( struct rocketnet_server_gso_t * gso );
 void rocketnet_server_gso_test_set_send( struct rocketnet_server_gso_t * gso,
-                                          int ( *send )( struct mmsghdr * messages, unsigned int count, void * user ),
-                                          void * user );
+                                         int ( *send )( struct mmsghdr * messages, unsigned int count, void * user ),
+                                         void * user );
 void rocketnet_server_gso_test_set_features( struct rocketnet_server_gso_t * gso, int features );
 bool rocketnet_server_gso_test_flush_staged( struct rocketnet_server_gso_t * gso );
 #endif // #if defined( __linux__ )

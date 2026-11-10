@@ -2455,8 +2455,8 @@ void rocketnet_server_gso_test_close( struct rocketnet_server_gso_t * gso )
 }
 
 void rocketnet_server_gso_test_set_send( struct rocketnet_server_gso_t * gso,
-                                          int ( *send )( struct mmsghdr * messages, unsigned int count, void * user ),
-                                          void * user )
+                                         int ( *send )( struct mmsghdr * messages, unsigned int count, void * user ),
+                                         void * user )
 {
     rocketnet_assert( gso );
     gso->test_send = send;
