@@ -707,3 +707,4 @@ MCRNUringSendPhasesLateReap.cfg	MCRNUringSendPhases.tla	pass	-	check	rnuringsend
 MCRNUringSendPhasesBrokenOnePhase.cfg	MCRNUringSendPhases.tla	invariant	NeverRefusedUnderLateReap	check	rnuringsendphases	required	-
 MCRNUringSendPhasesBrokenNoBase.cfg	MCRNUringSendPhases.tla	invariant	NoWriteWhileKernelOwned	check	rnuringsendphases	required	-
 MCRNUringSendPhasesBrokenRemainder.cfg	MCRNUringSendPhases.tla	invariant	PendingMatches	check	rnuringsendphases	required	-
+MCSessionAcksWitDropfullLive.cfg	MCSessionAcks.tla	temporal	OpenedSurfacesOrLaps	check	sessionacks	required	-

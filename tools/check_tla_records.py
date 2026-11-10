@@ -27,6 +27,7 @@ Rules enforced:
 
 import argparse
 import csv
+import re
 import sys
 from pathlib import Path
 
@@ -75,6 +76,86 @@ EXPECTED_PASS_EXIT = {
     "action": "13",
     "temporal": "13",
 }
+
+
+_CFG_KEYWORDS = frozenset({
+    "SPECIFICATION",
+    "INVARIANT",
+    "INVARIANTS",
+    "PROPERTY",
+    "PROPERTIES",
+    "CONSTANT",
+    "CONSTANTS",
+    "SYMMETRY",
+    "VIEW",
+    "CONSTRAINT",
+    "CONSTRAINTS",
+    "ACTION_CONSTRAINT",
+    "ACTION_CONSTRAINTS",
+    "CHECK_DEADLOCK",
+    "ALIAS",
+    "POSTCONDITION",
+})
+
+_FAIRNESS_DEF_RE = re.compile(
+    r"^[A-Za-z0-9_]*Fairness[A-Za-z0-9_]*\s*==(.*?)(?=\n[A-Za-z0-9_]+\s*(?:\([^)]*\))?\s*==|\n====)",
+    re.M | re.S,
+)
+
+
+def strip_tla_comments(text):
+    text = re.sub(r"\(\*.*?\*\)", "", text, flags=re.S)
+    return re.sub(r"\\\*.*$", "", text, flags=re.M)
+
+
+def parse_cfg_properties(cfg_path):
+    path = Path(cfg_path)
+    if not path.is_file():
+        return []
+    cleaned = strip_tla_comments(path.read_text(encoding="utf-8", errors="replace"))
+    props = []
+    in_prop = False
+    for line in cleaned.splitlines():
+        tokens = line.split()
+        if not tokens:
+            continue
+        head = tokens[0]
+        if head in ("PROPERTY", "PROPERTIES"):
+            in_prop = True
+            props.extend(tokens[1:])
+        elif head in _CFG_KEYWORDS:
+            in_prop = False
+        elif in_prop:
+            props.extend(tokens)
+    return props
+
+
+def module_requires_temporal_witness(tla_dir, module_name):
+    tla_dir = Path(tla_dir)
+    root_path = tla_dir / module_name
+    if not root_path.is_file():
+        return True
+    queue = [root_path]
+    seen = set()
+    has_any_def = False
+    while queue:
+        curr = queue.pop(0)
+        if curr in seen or not curr.is_file():
+            continue
+        seen.add(curr)
+        cleaned = strip_tla_comments(curr.read_text(encoding="utf-8", errors="replace"))
+        if "==" in cleaned:
+            has_any_def = True
+        for match in _FAIRNESS_DEF_RE.finditer(cleaned):
+            body = match.group(1)
+            if "[]<>" in body and "=>" in body:
+                return True
+        for ext_match in re.finditer(r"^EXTENDS\s+(.+)$", cleaned, flags=re.M):
+            for name in ext_match.group(1).split(","):
+                dep = name.strip()
+                if dep:
+                    queue.append(tla_dir / f"{dep}.tla")
+    return not has_any_def
 
 
 def positive_int_field(value):
@@ -179,6 +260,39 @@ def check(cases_path=DEFAULT_CASES, runs_path=DEFAULT_RUNS, out=sys.stdout):
     for cfg in plan:
         if cfg not in seen_runs:
             errors.append(f"{cfg}: present in CASES.tsv but missing from RUNS.tsv")
+
+    tla_dir = Path(cases_path).parent
+    verified_temporal = set()
+    for row in runs:
+        case = plan.get(row["config"])
+        if (
+            case is not None
+            and case["expected"] == "temporal"
+            and row["expected"] == "temporal"
+            and row["property"] == case["property"]
+            and row["result"] == "PASS"
+            and row["exit"] == EXPECTED_PASS_EXIT["temporal"]
+            and positive_int_field(row["generated"])
+            and positive_int_field(row["distinct"])
+        ):
+            verified_temporal.add((case["module"], case["property"]))
+
+    requires_cache = {}
+    for case in cases:
+        cfg = case["config"]
+        mod = case["module"]
+        props = parse_cfg_properties(tla_dir / cfg)
+        if not props:
+            continue
+        if mod not in requires_cache:
+            requires_cache[mod] = module_requires_temporal_witness(tla_dir, mod)
+        if not requires_cache[mod]:
+            continue
+        for prop in props:
+            if (mod, prop) not in verified_temporal:
+                errors.append(
+                    f"{cfg}: temporal property {prop!r} has no reversed temporal witness in CASES.tsv/RUNS.tsv"
+                )
 
     if errors:
         for err in errors:

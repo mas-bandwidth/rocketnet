@@ -223,5 +223,77 @@ class CheckTlaRecordsTest(unittest.TestCase):
         self.assertIn("MCPass.cfg: PASS row requires positive generated/distinct state counts", text)
 
 
+    def test_cfg_property_requires_reversed_temporal_witness(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            (tmp_dir / "MCPass.tla").write_text(
+                "---- MODULE MCPass ----\n"
+                "Fairness == ([]<> <<Send>>_vars) => ([]<> <<Recv>>_vars)\n"
+                "====\n",
+                encoding="utf-8",
+            )
+            (tmp_dir / "MCPass.cfg").write_text(
+                "SPECIFICATION Spec\nPROPERTY EventuallyDone\n",
+                encoding="utf-8",
+            )
+            (tmp_dir / "MCTempWitness.cfg").write_text(
+                "SPECIFICATION Spec\nPROPERTY EventuallyDone\n",
+                encoding="utf-8",
+            )
+            cases_path = tmp_dir / "CASES.tsv"
+            runs_path = tmp_dir / "RUNS.tsv"
+
+            write_tsv(
+                cases_path,
+                check_tla_records.CASES_COLUMNS,
+                [case_row("MCPass.cfg", "MCPass.tla", "pass", "-")],
+            )
+            write_tsv(
+                runs_path,
+                check_tla_records.RUNS_COLUMNS,
+                [run_row("MCPass.cfg", "MCPass.tla", "pass", "-", "0", "PASS")],
+            )
+            out = io.StringIO()
+            code = check_tla_records.check(cases_path, runs_path, out)
+            self.assertEqual(code, 1)
+            self.assertIn(
+                "MCPass.cfg: temporal property 'EventuallyDone' has no reversed temporal witness in CASES.tsv/RUNS.tsv",
+                out.getvalue(),
+            )
+
+            write_tsv(
+                cases_path,
+                check_tla_records.CASES_COLUMNS,
+                [
+                    case_row("MCPass.cfg", "MCPass.tla", "pass", "-"),
+                    case_row("MCTempWitness.cfg", "MCPass.tla", "temporal", "EventuallyDone"),
+                ],
+            )
+            write_tsv(
+                runs_path,
+                check_tla_records.RUNS_COLUMNS,
+                [
+                    run_row("MCPass.cfg", "MCPass.tla", "pass", "-", "0", "PASS"),
+                    run_row("MCTempWitness.cfg", "MCPass.tla", "temporal", "EventuallyDone", "13", "PASS"),
+                ],
+            )
+            out = io.StringIO()
+            code = check_tla_records.check(cases_path, runs_path, out)
+            self.assertEqual(code, 0, out.getvalue())
+
+    def test_session_acks_and_rnchannel_inventory_delivery_assumptions(self):
+        inventory = (check_tla_records.ROOT / "docs" / "TLA-INVENTORY.md").read_text(encoding="utf-8")
+        acks_lines = [line for line in inventory.splitlines() if "`SessionAcks`" in line]
+        chan_lines = [line for line in inventory.splitlines() if "`RNChannel`" in line]
+        self.assertEqual(len(acks_lines), 1)
+        self.assertEqual(len(chan_lines), 1)
+        self.assertIn("([]<> <<Flush>>_vars) => ([]<> <<RecvData>>_vars)", acks_lines[0])
+        self.assertIn(
+            r"([]<> <<SendAck>>_vars) => ([]<> <<RecvAck /\ Head(r2dWire).pkt = Block>>_vars)",
+            acks_lines[0],
+        )
+        self.assertIn("([]<> <<SendAckThrough>>_vars) => ([]<> <<ReceiveUsefulAck>>_vars)", chan_lines[0])
+
+
 if __name__ == "__main__":
     unittest.main()
