@@ -463,6 +463,7 @@ MCRNResendGenerationsBrokenWindowSlack.cfg	MCRNResendGenerations.tla	invariant	W
 MCRNGsoHandoff.cfg	MCRNGsoHandoff.tla	pass	-	check	rngsohandoff	required	-
 MCRNGsoHandoffBrokenCarryBehind.cfg	MCRNGsoHandoff.tla	invariant	TxInOrder	check	rngsohandoff	required	-
 MCRNGsoHandoffBrokenClaimStale.cfg	MCRNGsoHandoff.tla	invariant	StagedBeforeClaimInView	check	rngsohandoff	required	-
+MCRNGsoHandoffBrokenLeaveBeforeQuit.cfg	MCRNGsoHandoff.tla	invariant	LeftOnlyAfterQuit	check	rngsohandoff	required	-
 MCRNGsoHandoffBrokenFullDrops.cfg	MCRNGsoHandoff.tla	invariant	SentOrHeld	check	rngsohandoff	required	-
 MCRNGsoHandoffBrokenNoBackoff.cfg	MCRNGsoHandoff.tla	invariant	RxBacksOff	check	rngsohandoff	required	-
 MCRNGsoHandoffBrokenPublishWhileHeld.cfg	MCRNGsoHandoff.tla	invariant	NoPublishWhileHeld	check	rngsohandoff	required	-

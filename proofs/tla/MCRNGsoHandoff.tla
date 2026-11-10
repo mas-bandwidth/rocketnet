@@ -20,4 +20,8 @@ EXTENDS RNGsoHandoff
 ClaimStaleBroken == TRUE
 
 NoBackoffBroken == TRUE
+
+\* MCRNGsoHandoffBrokenLeaveBeforeQuit.cfg: the give-up bound before stop
+\* too; must fail LeftOnlyAfterQuit.
+LeaveBeforeQuitBroken == TRUE
 =============================================================================
