@@ -1326,6 +1326,10 @@ static void stats_plant_present( rocketnet_ack_endpoint_t * endpoint, uint64_t s
     endpoint->sent[slot].sequence = sequence;
 }
 
+static void stats_quiet_assert( const char *, const char *, const char *, int )
+{
+}
+
 static void stats_slide_one_past_ring( rocketnet_ack_endpoint_t * endpoint )
 {
     const uint64_t ring = ROCKETNET_SENT_PACKET_BUFFER_SIZE;
@@ -1334,8 +1338,11 @@ static void stats_slide_one_past_ring( rocketnet_ack_endpoint_t * endpoint )
     endpoint->stats_sent_low = 1;
     endpoint->stats_sent_high = 0;
     endpoint->internal_error = 0;
+    const rocketnet_assert_function_t saved_assert = rn_assert_function;
+    rocketnet_assert_function( stats_quiet_assert );
     rocketnet_unit_check( rocketnet_ack_endpoint_record_sent_classified( endpoint, ring + 1, 100, 0, 0, 1000.0 ) !=
                           ROCKETNET_ACK_SENT_REFUSED_STALE );
+    rocketnet_assert_function( saved_assert );
 }
 
 static void test_ack_stats_sent_low_scan_far_record_not_in_window()
