@@ -738,19 +738,24 @@ int rocketnet_server_transport_send_capacity_available( const rocketnet_server_t
 // its room) is a full staging, SEND_RING_FULL; any
 // other is the transport refusing that one frame (an address its socket
 // cannot carry), which the transport counts in its own send_failures,
-// SEND_FAILED. None is ever sent or counted as sent.
-static uint8_t * rocketnet_server_transport_io_start_packet( rocketnet_server_transport_t * transport, const rocketnet_address_t * to, uint64_t * id )
+// SEND_FAILED. None is ever sent or counted as sent. An uncounted start (the
+// receive path's speculative response frame) is counted by its caller, and
+// only when a response was there to send.
+static void rocketnet_server_transport_io_count_refused( rocketnet_server_transport_t * transport, uint64_t id )
+{
+    if ( id == ROCKETNET_TRANSPORT_PACKET_UNREACHABLE )
+        rocketnet_platform_atomic_add_u64( &transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_NO_LINK_ADDRESS], 1 );
+    else if ( rocketnet_server_transport_io_refused_full( transport ) )
+        rocketnet_platform_atomic_add_u64( &transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_RING_FULL], 1 );
+}
+static uint8_t * rocketnet_server_transport_io_start_packet( rocketnet_server_transport_t * transport, const rocketnet_address_t * to, uint64_t * id, bool counted = true )
 {
     *id = 0;
 
     uint8_t * frame = transport->io.operations->start_packet( transport->io.instance, to, id );
-    if ( frame )
-        return frame;
-    if ( *id == ROCKETNET_TRANSPORT_PACKET_UNREACHABLE )
-        rocketnet_platform_atomic_add_u64( &transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_NO_LINK_ADDRESS], 1 );
-    else if ( rocketnet_server_transport_io_refused_full( transport ) )
-        rocketnet_platform_atomic_add_u64( &transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_RING_FULL], 1 );
-    return NULL;
+    if ( !frame && counted )
+        rocketnet_server_transport_io_count_refused( transport, *id );
+    return frame;
 }
 static void rocketnet_server_transport_io_finish_packet( rocketnet_server_transport_t * transport, uint64_t id, uint8_t * frame, int bytes )
 {
@@ -1034,10 +1039,12 @@ struct rocketnet_server_frame_t
 };
 
 // proofs/tla/RNDriverSendStaging.tla Reserve and FailedSend: reserves a frame in the
-// transport's staging, or returns NULL and drops the frame when the staging is full
+// transport's staging, or returns NULL and drops the frame when the staging is full;
+// an uncounted reserve leaves counting a refusal to the caller
 static uint8_t * rocketnet_server_reserve_send_frame( struct rocketnet_server_transport_t * server_transport,
                                                       const rocketnet_address_t * to,
-                                                      struct rocketnet_server_frame_t * frame, bool shutdown = false )
+                                                      struct rocketnet_server_frame_t * frame, bool shutdown = false,
+                                                      bool counted = true )
 {
     frame->to = *to;
     frame->client_index = -1;
@@ -1045,7 +1052,7 @@ static uint8_t * rocketnet_server_reserve_send_frame( struct rocketnet_server_tr
 
     if ( rocketnet_server_transport_staged( server_transport ) )
     {
-        frame->data = rocketnet_server_transport_io_start_packet( server_transport, to, &frame->packet_id );
+        frame->data = rocketnet_server_transport_io_start_packet( server_transport, to, &frame->packet_id, counted );
         if ( !frame->data )
         {
             rocketnet_spam( "server transport send staging full. packet dropped" );
@@ -2587,7 +2594,9 @@ static void rocketnet_server_receive_one( struct rocketnet_server_transport_t * 
     struct rocketnet_server_frame_t frame;
     frame.data = NULL;
 
-    uint8_t * response = shape_valid ? rocketnet_server_reserve_send_frame( server_transport, from, &frame ) : NULL;
+    // the response frame is reserved before the packet is processed, so its
+    // refusal is counted below only when there was a response to send
+    uint8_t * response = shape_valid ? rocketnet_server_reserve_send_frame( server_transport, from, &frame, false, false ) : NULL;
     uint8_t response_overflow[ROCKETNET_RECEIVE_CEILING];
     int response_bytes = 0;
 
@@ -2622,6 +2631,8 @@ static void rocketnet_server_receive_one( struct rocketnet_server_transport_t * 
         else
             rocketnet_server_abort_send_frame( server_transport, &frame );
     }
+    else if ( response_bytes > 0 )
+        rocketnet_server_transport_io_count_refused( server_transport, frame.packet_id );
 
     if ( payload_slot_free && payload && payload_bytes > 0 )
     {
