@@ -109,7 +109,8 @@ required runs are:
     library's suite);
   - `happy path / <os>` (linux,
     windows; the Windows row is the per-commit MSVC whole-tree build) and
-    `windows / Release / unit` (the unit suite under MSVC);
+    `windows / Release / unit (<i>/2)` (the unit suite under MSVC, in two
+    shards that together run every case);
   - `asan + ubsan (<leg>)` (`unit suite`, `functional suite`) and
     `tsan (loopback soak)`;
   - `fuzz smoke (libFuzzer, corpus replay)`, `big endian s390x / Debug`,

@@ -719,15 +719,78 @@ inline int suite_uring_slots( long limit_kib, long case_kib, int jobs )
 
 inline int suite_usage( char ** argv )
 {
-    fprintf( stderr, "usage: %s [--run <case> | --list | --enforce-rss]\n", argv[0] );
+    fprintf( stderr, "usage: %s [--run <case> | --list [--shard <i>/<n>] | --enforce-rss | --shard <i>/<n>]\n", argv[0] );
     return 2;
 }
 
-inline int suite_list_registered_cases( int ( *count )(), const char * ( *name_at )(int) )
+// --shard i/n runs (or with --list, lists) only the cases whose shard is i,
+// for 0 <= i < n. A case's shard is a function of its name alone (FNV-1a of
+// the name, mod n), so it is the same in every build and run of the suite:
+// each case is in exactly one shard, and shards 0 to n-1 together are the
+// unsharded suite.
+
+inline int suite_shard_of( const char * name, int shards )
+{
+    uint32_t hash = 2166136261u;
+    for ( const char * p = name; *p; p++ )
+    {
+        hash ^= (uint32_t) (unsigned char) *p;
+        hash *= 16777619u;
+    }
+    return (int) ( hash % (uint32_t) shards );
+}
+
+// Reads "<i>/<n>" into index and shards; false unless 0 <= i < n <= 64.
+
+inline bool suite_parse_shard( const char * text, int * index, int * shards )
+{
+    int i = 0;
+    int n = 0;
+    const char * p = text;
+    if ( *p < '0' || *p > '9' )
+        return false;
+    while ( *p >= '0' && *p <= '9' && i <= 64 )
+        i = i * 10 + ( *p++ - '0' );
+    if ( *p++ != '/' || *p < '0' || *p > '9' )
+        return false;
+    while ( *p >= '0' && *p <= '9' && n <= 64 )
+        n = n * 10 + ( *p++ - '0' );
+    if ( *p != '\0' || n < 1 || n > 64 || i >= n )
+        return false;
+    *index = i;
+    *shards = n;
+    return true;
+}
+
+// Removes a trailing "--shard <i>/<n>" from argv. Returns false (after the
+// usage line) when the option is malformed; shards stays 0 without it.
+
+inline bool suite_take_shard_option( int * argc, char ** argv, int * index, int * shards )
+{
+    *index = 0;
+    *shards = 0;
+    for ( int i = 1; i < *argc; i++ )
+    {
+        if ( std::strcmp( argv[i], "--shard" ) != 0 )
+            continue;
+        if ( i != *argc - 2 || !suite_parse_shard( argv[i + 1], index, shards ) )
+        {
+            suite_usage( argv );
+            return false;
+        }
+        *argc -= 2;
+        return true;
+    }
+    return true;
+}
+
+inline int suite_list_registered_cases( int ( *count )(), const char * ( *name_at )(int), int shard_index = 0, int shards = 0 )
 {
     const int n = count ? count() : 0;
     for ( int i = 0; i < n; i++ )
     {
+        if ( shards > 0 && suite_shard_of( name_at( i ), shards ) != shard_index )
+            continue;
         printf( "%s\n", name_at( i ) );
     }
     fflush( stdout );
@@ -968,6 +1031,32 @@ inline bool suite_collect( std::vector<suite_case> & pending, std::vector<suite_
     return true;
 }
 
+// Keeps the collected cases of shard index of shards (suite_shard_of), in
+// suite order, and prints how many of the collected cases that is.
+
+inline void suite_keep_shard( std::vector<suite_case> & pending, std::vector<suite_result> & results, int index, int shards )
+{
+    if ( shards == 0 )
+        return;
+    const size_t collected = pending.size();
+    size_t kept = 0;
+    for ( size_t i = 0; i < collected; i++ )
+    {
+        if ( suite_shard_of( pending[i].name.c_str(), shards ) != index )
+            continue;
+        if ( kept != i )
+        {
+            std::swap( pending[kept], pending[i] );
+            std::swap( results[kept], results[i] );
+        }
+        kept++;
+    }
+    pending.resize( kept );
+    results.resize( kept );
+    printf( "shard %d/%d: %zu of %zu cases\n", index, shards, kept, collected );
+    fflush( stdout );
+}
+
 // Rows a suite omitted because their runs_here predicate is false on this
 // host. A suite that filters its table by predicate (the functional suite)
 // notes each omitted row here; suite_finish then prints one SKIPPED line
@@ -1173,8 +1262,16 @@ inline int suite_main( int argc, char ** argv,
                        bool bound_io_uring = false,
                        bool enforce_case_rss = true )
 {
-    if ( argc == 2 && std::strcmp( argv[1], "--list" ) == 0 )
-        return suite_list_registered_cases( count, name_at );
+    int shard_index;
+    int shards;
+    if ( !suite_take_shard_option( &argc, argv, &shard_index, &shards ) )
+        return 2;
+    const bool list = argc == 2 && std::strcmp( argv[1], "--list" ) == 0;
+    if ( shards > 0 && argc != 1 && !list )
+        return suite_usage( argv );
+
+    if ( list )
+        return suite_list_registered_cases( count, name_at, shard_index, shards );
 
     if ( argc == 2 && std::strcmp( argv[1], "--enforce-rss" ) == 0 )
     {
@@ -1220,6 +1317,7 @@ inline int suite_main( int argc, char ** argv,
     std::vector<suite_result> results;
     if ( !suite_collect( pending, results, count, name_at, execs, nexecs, group_of, suite_directory_of( self ), "" ) )
         return 1;
+    suite_keep_shard( pending, results, shard_index, shards );
 
     const int jobs = max_jobs > 0 ? ( std::min )( suite_job_count(), max_jobs ) : suite_job_count();
     double limit_s = case_limit_s;
@@ -1560,8 +1658,16 @@ inline int suite_main( int argc, char ** argv,
 {
     suite_no_dialogs();
 
-    if ( argc == 2 && std::strcmp( argv[1], "--list" ) == 0 )
-        return suite_list_registered_cases( count, name_at );
+    int shard_index;
+    int shards;
+    if ( !suite_take_shard_option( &argc, argv, &shard_index, &shards ) )
+        return 2;
+    const bool list = argc == 2 && std::strcmp( argv[1], "--list" ) == 0;
+    if ( shards > 0 && argc != 1 && !list )
+        return suite_usage( argv );
+
+    if ( list )
+        return suite_list_registered_cases( count, name_at, shard_index, shards );
 
     if ( argc == 2 && std::strcmp( argv[1], "--enforce-rss" ) == 0 )
     {
@@ -1594,6 +1700,7 @@ inline int suite_main( int argc, char ** argv,
     std::vector<suite_result> results;
     if ( !suite_collect( pending, results, count, name_at, execs, nexecs, group_of, suite_directory_of( self ), ".exe" ) )
         return 1;
+    suite_keep_shard( pending, results, shard_index, shards );
 
     const int jobs = max_jobs > 0 ? ( std::min )( suite_job_count(), max_jobs ) : suite_job_count();
     double limit_s = case_limit_s;
