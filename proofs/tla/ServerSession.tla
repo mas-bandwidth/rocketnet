@@ -21,11 +21,20 @@
 \* it: kept through the slot's reset, cleared when the slot's next client is
 \* established, NONE while STOPPED and NONE again at each start.
 \*
-\* A message send to a slot that is not CONNECTED, on a running or a stopped
-\* server, is dropped (ServerDropSend): it changes no slot field and nothing
-\* of it is held for a later send (standard/MESSAGES.md m1.5). The ghost
-\* droppedIn holds the slot state of the drop the last step made, {} after
-\* any other step.
+\* A message send to a slot that is not CONNECTED, on a running, stopping or
+\* stopped server, is dropped (ServerDropSend): it changes no slot field and
+\* nothing of it is held for a later send (standard/MESSAGES.md m1.5). The
+\* ghost droppedIn holds the slot state of the drop the last step made, {}
+\* after any other step.
+\*
+\* The message layer also ends a CONNECTED slot on its own while the server
+\* is RUNNING (MessageEnd): an update that finds a delivery the application
+\* never took (MESSAGE_NOT_RECEIVED) or an endpoint error (CONFIG_MISMATCH,
+\* PROTOCOL_VIOLATION, RELIABLE_TIMED_OUT), or a send whose connection
+\* exhausted its message memory (MESSAGE_MEMORY_EXHAUSTED). The kick records
+\* its reason and calls link.disconnect, which sends a connected slot its
+\* disconnect burst. The ghost messageIn holds the slot state of every
+\* message-layer end; {} in a run that never ends a slot there.
 \*
 \* Reversed witnesses, one constant: Defect = "unresetslot" makes Reset(i)
 \* skip the field UnresetField; "stopleavesclient" makes stop skip the last
@@ -33,7 +42,8 @@
 \* "resetclearshistory" makes Reset(i) empty the used-token history;
 \* "sendbeforeconnected" lets ServerSend(i) write a slot that is not
 \* CONNECTED, a send held for a client not yet connected;
-\* "reasonacrossrestart" makes stop and start keep each slot's reason (stop
+\* "messageendbeforeconnected" lets MessageEnd(i) end a slot that is not
+\* CONNECTED; "reasonacrossrestart" makes stop and start keep each slot's reason (stop
 \* writes SERVER_STOPPED into an occupied slot), the rule this model held
 \* before it followed the code; "disconnectallleavesclient" makes
 \* DisconnectAll leave slot 1 connected; "receivewhilestopping" lets the
@@ -69,7 +79,8 @@ ASSUME Defect \in {"none", "unresetslot", "stopleavesclient", "touchesotherslot"
                    "resetclearshistory", "sendbeforeconnected", "destroysilent",
                    "reasonacrossrestart", "disconnectallleavesclient",
                    "receivewhilestopping", "admitwhilestopping",
-                   "disconnectallunbounded", "connidperrun"}
+                   "disconnectallunbounded", "connidperrun",
+                   "messageendbeforeconnected"}
 
 \* The burst is one packet at the model's scale. SealsPerUpdate and the
 \* finite DisconnectQueueCapacity are checked constants, standing for the
@@ -105,8 +116,10 @@ Tags == 0..MaxSessions
 Tokens == 1..MaxTokens
 ServerStates == {"NONE", "STOPPED", "STOPPING", "RUNNING"}
 SlotStates == {"FREE", "HANDSHAKE", "CONNECTED"}
+MessageReasons == {"CONFIG_MISMATCH", "PROTOCOL_VIOLATION", "RELIABLE_TIMED_OUT",
+                   "MESSAGE_MEMORY_EXHAUSTED", "MESSAGE_NOT_RECEIVED"}
 Reasons == {"NONE", "CLIENT_DISCONNECTED", "TIMED_OUT", "DENIED",
-            "SERVER_DISCONNECTED", "SERVER_STOPPED"}
+            "SERVER_DISCONNECTED", "SERVER_STOPPED"} \cup MessageReasons
 
 InitRec == [f \in Fields |-> 0]
 EmptySlot == [st |-> "FREE", sess |-> 0, rec |-> InitRec, reason |-> "NONE"]
@@ -127,7 +140,7 @@ Reset(v, i, why) ==
 
 VARIABLES state, slot, kept, link, held, nextSess, home, tokOf, starts, creates,
           lastEnd, established, estTokens, doubleTok, observed, crossDelivered,
-          collateral, silentEnd, startFrom, queuedIn, priorTokens, readmitted, droppedIn,
+          collateral, silentEnd, startFrom, queuedIn, messageIn, priorTokens, readmitted, droppedIn,
           allBefore, readIn, admitIn, waiting, discarded, overspent
 \* state, slot, kept: the server object
 \* waiting: the disconnect packets each ended session still waits to have
@@ -141,18 +154,19 @@ VARIABLES state, slot, kept, link, held, nextSess, home, tokOf, starts, creates,
 \* nextSess, home, tokOf, starts, creates: the environment (home[s] is the
 \*   slot session s connected into, tokOf[s] the token it presented)
 \* the rest: ghosts (estTokens: the tokens established in this run;
+\*   messageIn: the slot states of every message-layer end;
 \*   priorTokens: those established in earlier runs of this object;
 \*   readmitted: a token of an earlier run was established again;
 \*   allBefore: the slots before the last DisconnectAll, {} after any other
 \*   step)
 vars == <<state, slot, kept, link, held, nextSess, home, tokOf, starts, creates,
           lastEnd, established, estTokens, doubleTok, observed, crossDelivered,
-          collateral, silentEnd, startFrom, queuedIn, priorTokens, readmitted, droppedIn,
+          collateral, silentEnd, startFrom, queuedIn, messageIn, priorTokens, readmitted, droppedIn,
           allBefore, readIn, admitIn, waiting, discarded, overspent>>
 drain == <<waiting, discarded, overspent>>
 NoneWaiting == [s \in Sessions |-> 0]
 env == <<link, nextSess, home, tokOf, starts, creates>>
-ghosts == <<estTokens, doubleTok, observed, crossDelivered, collateral, silentEnd, startFrom, queuedIn,
+ghosts == <<estTokens, doubleTok, observed, crossDelivered, collateral, silentEnd, startFrom, queuedIn, messageIn,
             priorTokens, readmitted>>
 
 \* The public connection id (rocketnet_server_client_connection_id,
@@ -178,7 +192,7 @@ Init ==
     /\ tokOf = [s \in Sessions |-> 0] /\ starts = 0 /\ creates = 0
     /\ lastEnd = [i \in Slots |-> "NONE"] /\ established = 0 /\ estTokens = {}
     /\ doubleTok = FALSE /\ observed = {} /\ crossDelivered = {} /\ collateral = {}
-    /\ silentEnd = FALSE /\ startFrom = {} /\ queuedIn = {}
+    /\ silentEnd = FALSE /\ startFrom = {} /\ queuedIn = {} /\ messageIn = {}
     /\ priorTokens = {} /\ readmitted = FALSE /\ droppedIn = {} /\ allBefore = {}
     /\ waiting = NoneWaiting /\ discarded = {} /\ overspent = FALSE
 
@@ -211,7 +225,7 @@ Create ==
     /\ lastEnd' = [i \in Slots |-> "NONE"] /\ established' = 0 /\ estTokens' = {}
     /\ priorTokens' = {}
     /\ UNCHANGED <<link, nextSess, home, tokOf, doubleTok, observed, crossDelivered,
-                   collateral, silentEnd, startFrom, queuedIn, readmitted>>
+                   collateral, silentEnd, startFrom, queuedIn, messageIn, readmitted>>
 
 \* Destroy models the successful completion branch of rocketnet_server_destroy
 \* (sdk/rocketnet_api.cpp). The API's normal precondition is STOPPED;
@@ -231,7 +245,7 @@ Destroy ==
     /\ silentEnd' = (silentEnd \/ (\E i \in Slots : slot[i].st = "CONNECTED" /\ Defect = "destroysilent"))
     /\ priorTokens' = {}
     /\ held' = {}
-    /\ UNCHANGED <<env, doubleTok, observed, crossDelivered, collateral, startFrom, queuedIn,
+    /\ UNCHANGED <<env, doubleTok, observed, crossDelivered, collateral, startFrom, queuedIn, messageIn,
                    readmitted>>
 
 \* start: refused with a status code unless STOPPED (a stutter). A start
@@ -257,7 +271,7 @@ Start ==
     /\ lastEnd' = [i \in Slots |-> "NONE"]
     /\ UNCHANGED <<link, nextSess, home, tokOf, creates,
                    established, doubleTok, observed, crossDelivered,
-                   collateral, silentEnd, queuedIn, readmitted>>
+                   collateral, silentEnd, queuedIn, messageIn, readmitted>>
 
 \* stop: one call, RUNNING to STOPPING (rocketnet_server_stop,
 \* sdk/rocketnet_api.cpp). Each connected client is disconnected at
@@ -350,7 +364,7 @@ DisconnectAll ==
     /\ droppedIn' = {}
     /\ readIn' = readIn /\ admitIn' = admitIn /\ held' = held
     /\ UNCHANGED <<state, kept, env, established, estTokens, doubleTok, observed,
-                   crossDelivered, collateral, silentEnd, startFrom, queuedIn,
+                   crossDelivered, collateral, silentEnd, startFrom, queuedIn, messageIn,
                    priorTokens, readmitted>>
 
 \* A client's request with token t opens a mapping into free slot i: a new
@@ -396,7 +410,7 @@ Establish(i) ==
                                          f \in StaleIn(slot[i].rec, EstablishReads, s)}
     /\ admitIn' = admitIn \cup {state}
     /\ readIn' = readIn /\ held' = held
-    /\ UNCHANGED <<state, env, lastEnd, crossDelivered, collateral, silentEnd, startFrom, queuedIn,
+    /\ UNCHANGED <<state, env, lastEnd, crossDelivered, collateral, silentEnd, startFrom, queuedIn, messageIn,
                    priorTokens>>
 
 \* A denial during the handshake (the token taken meanwhile, no slot, a
@@ -409,7 +423,7 @@ Deny(i) ==
     /\ EndSlot(slot, i, "DENIED", FALSE)
     /\ readIn' = readIn /\ admitIn' = admitIn /\ held' = held
     /\ UNCHANGED <<state, env, established, estTokens, doubleTok,
-                   observed, crossDelivered, startFrom, queuedIn, priorTokens, readmitted>>
+                   observed, crossDelivered, startFrom, queuedIn, messageIn, priorTokens, readmitted>>
 
 \* The idle sweep ends the slot: the transport's reset records TIMED_OUT
 \* (rocketnet_server_protocol_update, sdk/rocketnet_server_protocol.cpp),
@@ -426,7 +440,7 @@ SlotTimeout(i) ==
     /\ EndSlot(slot, i, "TIMED_OUT", FALSE)
     /\ readIn' = readIn /\ admitIn' = admitIn /\ held' = held
     /\ UNCHANGED <<state, env, established, estTokens, doubleTok,
-                   observed, crossDelivered, startFrom, queuedIn, priorTokens, readmitted>>
+                   observed, crossDelivered, startFrom, queuedIn, messageIn, priorTokens, readmitted>>
 
 \* The client's own disconnect packet arrives: the transport's reset records
 \* CLIENT_DISCONNECTED (sdk/rocketnet_server_protocol.cpp), which the
@@ -436,7 +450,7 @@ ClientLeaves(i) ==
     /\ slot[i].st = "CONNECTED"
     /\ EndSlot(slot, i, "CLIENT_DISCONNECTED", FALSE)
     /\ UNCHANGED <<state, env, established, estTokens, doubleTok,
-                   observed, crossDelivered, startFrom, queuedIn, priorTokens, readmitted>>
+                   observed, crossDelivered, startFrom, queuedIn, messageIn, priorTokens, readmitted>>
 
 \* disconnect_client(i): the disconnect burst, then Reset(i), and the ended
 \* slot reads the reason SERVER_DISCONNECTED: rocketnet_server_disconnect_client
@@ -449,7 +463,7 @@ DisconnectClient(i) ==
     /\ EndSlot([slot EXCEPT ![i].rec = Write(@, DisconnectFields, slot[i].sess)], i,
                "SERVER_DISCONNECTED", TRUE)
     /\ UNCHANGED <<state, env, established, estTokens, doubleTok,
-                   observed, crossDelivered, startFrom, queuedIn, priorTokens, readmitted>>
+                   observed, crossDelivered, startFrom, queuedIn, messageIn, priorTokens, readmitted>>
 
 \* Message start/finish to slot i: only while it is connected. The defect
 \* lets a send to a FREE or HANDSHAKE slot write the slot's send state.
@@ -461,18 +475,39 @@ ServerSend(i) ==
           /\ slot' = [slot EXCEPT ![i].rec = Write(@, SendFields, s)]
     /\ queuedIn' = queuedIn \cup {slot[i].st}
     /\ UNCHANGED <<state, kept, env, lastEnd, established, estTokens, doubleTok,
-                   crossDelivered, collateral, silentEnd, startFrom, priorTokens, readmitted>>
+                   crossDelivered, collateral, silentEnd, startFrom, messageIn, priorTokens, readmitted>>
 
-\* Message start to slot i when it is not CONNECTED, or on a stopped server
-\* (rocketnet_server_start_message returns NULL, counted in
+\* The message layer ends a CONNECTED slot on its own, from an update (a
+\* delivery the application never took, or an endpoint error) or from a send
+\* whose connection exhausted its message memory. rn_message_object_kick
+\* records the reason and calls link.disconnect
+\* (sdk/rocketnet_message_server.cpp:582), which on the server is
+\* rocketnet_server_transport_disconnect_client
+\* (sdk/rocketnet_server_transport.cpp:3765): a connected slot is sent its
+\* disconnect burst, so sendDisc is TRUE. The kick is enabled only while the
+\* server is RUNNING and the slot CONNECTED: the update returns before the
+\* message layer while stopped or stopping (rocketnet_server_update,
+\* sdk/rocketnet_api.cpp:2856), and a send with no running block is dropped
+\* (rocketnet_server_start_message, sdk/rocketnet_api.cpp:3076). The defect
+\* "messageendbeforeconnected" lets it end a slot that is not CONNECTED.
+MessageEnd(i) ==
+    /\ state = "RUNNING"
+    /\ (slot[i].st = "CONNECTED" \/ Defect = "messageendbeforeconnected")
+    /\ \E why \in MessageReasons : EndSlot(slot, i, why, TRUE)
+    /\ messageIn' = messageIn \cup {slot[i].st}
+    /\ UNCHANGED <<state, env, established, estTokens, doubleTok,
+                   observed, crossDelivered, startFrom, queuedIn, priorTokens, readmitted>>
+
+\* Message start to slot i when it is not CONNECTED, or on a stopping or
+\* stopped server (rocketnet_server_start_message returns NULL, counted in
 \* NOT_CONNECTED_DROPS): dropped, never queued. No slot field changes; the
 \* slot's state is recorded in the ghost.
 ServerDropSend(i) ==
-    /\ \/ state = "STOPPED"
+    /\ \/ state \in {"STOPPED", "STOPPING"}
        \/ state = "RUNNING" /\ slot[i].st # "CONNECTED"
     /\ droppedIn' = {slot[i].st}
     /\ UNCHANGED <<state, slot, kept, env, lastEnd, established, estTokens, doubleTok,
-                   observed, crossDelivered, collateral, silentEnd, startFrom, queuedIn,
+                   observed, crossDelivered, collateral, silentEnd, startFrom, queuedIn, messageIn,
                    priorTokens, readmitted>>
 
 \* The client of any session ever started may still send, also after its
@@ -517,7 +552,7 @@ Deliver(s) ==
           ELSE UNCHANGED <<slot, observed, crossDelivered>>
     /\ UNCHANGED <<state, kept, link, nextSess, home, tokOf, starts, creates, lastEnd,
                    established, estTokens, doubleTok, collateral, silentEnd,
-                   startFrom, queuedIn, priorTokens, readmitted>>
+                   startFrom, queuedIn, messageIn, priorTokens, readmitted>>
 
 Lose(s) ==
     /\ s \in link
@@ -549,7 +584,7 @@ SealStep(s) == SealWaiting(s) /\ droppedIn' = {} /\ allBefore' = {} /\ readIn' =
 Next ==
     \/ /\ \/ Create \/ Start \/ StopCompletes
           \/ \E i \in Slots : \/ Deny(i) \/ SlotTimeout(i)
-                              \/ ClientLeaves(i) \/ ServerSend(i)
+                              \/ ClientLeaves(i) \/ ServerSend(i) \/ MessageEnd(i)
           \/ \E s \in Sessions : ClientSend(s) \/ Lose(s)
        /\ UNCHANGED drain
        /\ droppedIn' = {}
@@ -608,6 +643,7 @@ TypeOK ==
     /\ crossDelivered \subseteq [from : Sessions, to : Tags]
     /\ collateral \subseteq Slots /\ silentEnd \in BOOLEAN
     /\ startFrom \subseteq ServerStates /\ queuedIn \subseteq SlotStates
+    /\ messageIn \subseteq SlotStates
     /\ priorTokens \subseteq Tokens /\ readmitted \in BOOLEAN
     /\ droppedIn \subseteq SlotStates
     /\ readIn \subseteq ServerStates /\ admitIn \subseteq ServerStates
@@ -646,6 +682,11 @@ DropLeavesNothing ==
     /\ droppedIn \subseteq {"FREE", "HANDSHAKE"}
     /\ \A i \in Slots : slot[i].st # "CONNECTED" =>
            \A f \in SendFields \ RecvFields : slot[i].rec[f] = 0
+
+\* A message-layer end happens only to a CONNECTED slot; MessageEnd itself is
+\* enabled only while the server is RUNNING. MCServerSessionBrokenMessageEnd
+\* expects TLC to violate it.
+MessageEndOnlyConnected == messageIn \subseteq {"CONNECTED"}
 
 \* A free slot's per-connection fields are all Init; the used-token history
 \* holds every token established in this run (kept by every reset, fresh at
