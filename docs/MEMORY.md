@@ -427,6 +427,16 @@ row. On macOS, msgx and the portable server also have one receive worker and
 one transmit worker. These server counts do not include client objects; each
 normal client adds its own one background network thread.
 
+On Windows the plan is committed at create. Windows charges memory against
+the machine's commit limit (RAM plus the page file) when it is allocated, not
+when it is touched, and every block of the plan, the RIO registered region
+included, is allocated by create. A default 1000-client server therefore
+commits its whole `rocketnet_server_required_memory` (about 19.4 GB) at once
+though far less is ever resident; Linux and macOS commit pages only as they
+are touched. A create that the host cannot commit fails with `OUT_OF_MEMORY`.
+Count the plan of every server and client in the process against the commit
+limit, not against free RAM ([WINDOWS.md](WINDOWS.md#limits-for-1000-clients)).
+
 Multiply the total stacks by the host's default stack reserve. Use the probe
 below for byte totals from the exact build and configured geometry; allocator
 sizes also depend on platform layout and compile-time limits.

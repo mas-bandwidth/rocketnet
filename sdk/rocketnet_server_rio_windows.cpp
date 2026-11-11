@@ -745,7 +745,7 @@ bool rocketnet_server_rio_stopped( rocketnet_server_rio_t * rio )
 }
 
 // proofs/tla/RNRioWorker.tla Destroy: the registered region is freed only after stopped.
-// RIOCloseCompletionQueue, RIODeregisterBuffer and VirtualFree once every request
+// RIOCloseCompletionQueue, RIODeregisterBuffer and rocketnet_free once every request
 // is accounted for, then the transport itself is freed and nothing of it runs again.
 void rocketnet_server_rio_destroy( rocketnet_server_rio_t * rio )
 {
