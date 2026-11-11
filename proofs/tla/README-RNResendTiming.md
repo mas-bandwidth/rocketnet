@@ -225,7 +225,7 @@ a packet per due record.
 
 `MCRNResendTimingPacedRefused.cfg` is `MCRNResendTimingPacedSmall.cfg` with
 `RefuseResends`: any call whose packet carries a record on the wire may be
-refused, in any update, and four pending chunks (`PendingShort`; the full
+refused, in any update, and two pending chunks (`PendingShort`; the full
 `2 · Timeout + 2` run past the TLC budget with refusals). It checks `TypeOK` and `RetryPlanned`; the three
 timing invariants are not claims about refused resends (a resend refused
 until the timeout is never sent). The unit tests
