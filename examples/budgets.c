@@ -30,7 +30,9 @@ static void send_burst( struct rocketnet_client_t * client, int channel, enum ro
         // burst policy: skip a message when there is no room; the budget drop counters still show the over-budget burst
 
         if ( !rocketnet_client_can_send_message( client, channel, reliability, MESSAGE_BYTES ) )
+        {
             continue;
+        }
 
         uint8_t * p = rocketnet_client_start_message( client, channel, reliability, MESSAGE_BYTES );
         if ( p )
@@ -215,10 +217,12 @@ int main( void )
         }
 
         while ( ( batch = rocketnet_server_receive_messages( server ) ) != NULL )
+        {
             for ( int i = 0; i < batch->num_messages; i++ )
             {
                 reliable_received += batch->channel[i] == 1;
             }
+        }
 
         if ( !bursts_sent && rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
         {

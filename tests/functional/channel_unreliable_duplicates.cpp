@@ -28,7 +28,9 @@ static const char * dup_names[DUP_KINDS] = { "unreliable", "unreliable_sequenced
 static void dup_check( bool condition, const char * label )
 {
     if ( condition )
+    {
         return;
+    }
     printf( "unreliable at most once failed: %s\n", label );
     fflush( stdout );
     exit( 1 );

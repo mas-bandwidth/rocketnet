@@ -399,7 +399,9 @@ static void test_sealed_packet_at_max_size_opens()
         {
             mapping = rocketnet_encryption_map_entry( pair.server.encryption_map, iterator );
             if ( mapping->control->client_index == 0 )
+            {
                 break;
+            }
         }
     }
 
@@ -520,10 +522,14 @@ static void test_receive_ceiling_refuses_one_byte_over()
 
         int received = 0;
         if ( direction == 0 )
+        {
             check( max_payload_to_server( &pair, packet, wire_bytes, output, &received ) == ROCKETNET_SERVER_PROCESS_ACCEPTED );
+        }
         else
+        {
             check( rocketnet_client_protocol_process_packet( &pair.client, packet, wire_bytes, pair.time,
                                                              output, (int) sizeof( output ), &received ) );
+        }
         check( received == ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
 
         // a datagram at exactly the receive ceiling passes the size check (it
@@ -535,17 +541,25 @@ static void test_receive_ceiling_refuses_one_byte_over()
         struct rocketnet_counters_t * counters = direction == 0 ? &pair.server_counters : &pair.client_counters;
         const uint64_t too_large = counters->values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE];
         if ( direction == 0 )
+        {
             (void) max_payload_to_server( &pair, packet, ROCKETNET_RECEIVE_CEILING, output, &received );
+        }
         else
+        {
             (void) rocketnet_client_protocol_process_packet( &pair.client, packet, ROCKETNET_RECEIVE_CEILING, pair.time,
                                                              output, (int) sizeof( output ), &received );
+        }
         check( counters->values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE] == too_large );
 
         if ( direction == 0 )
+        {
             check( max_payload_to_server( &pair, packet, ROCKETNET_RECEIVE_CEILING + 1, output, &received ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+        }
         else
+        {
             check( !rocketnet_client_protocol_process_packet( &pair.client, packet, ROCKETNET_RECEIVE_CEILING + 1, pair.time,
                                                               output, (int) sizeof( output ), &received ) );
+        }
         check( received == 0 );
         check( counters->values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE] == too_large + 1 );
     }
@@ -707,7 +721,9 @@ static bool wp_aead_field( const wycheproof_test_t & test, const char * name, st
 {
     std::map<std::string, std::string>::const_iterator it = test.fields.find( name );
     if ( it == test.fields.end() )
+    {
         return false;
+    }
     return wycheproof_hex( it->second, out );
 }
 
@@ -878,13 +894,17 @@ static void test_wycheproof_chacha20_poly1305_vectors()
     {
         const wycheproof_test_t & test = tests[i];
         if ( test.result != "valid" )
+        {
             continue;
+        }
 
         std::vector<uint8_t> key, msg;
         check( wp_aead_field( test, "key", key ) );
         check( wp_aead_field( test, "msg", msg ) );
         if ( msg.size() < 1 || msg.size() > 1024 )
+        {
             continue;
+        }
 
         const uint64_t sequence = 1000 + (uint64_t) sdk_vectors;
         sdk_vectors++;

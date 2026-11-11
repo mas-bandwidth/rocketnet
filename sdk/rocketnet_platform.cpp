@@ -97,7 +97,9 @@ static uint64_t rocketnet_platform_wall_clock()
 #if ROCKETNET_DEV
     uint64_t ( *wall_clock )( void ) = rocketnet_platform_wall_clock_override.load( std::memory_order_acquire );
     if ( wall_clock )
+    {
         return wall_clock();
+    }
 #endif // #if ROCKETNET_DEV
     const time_t now = ::time( NULL );
     return now > 0 ? (uint64_t) now : 0;
@@ -106,7 +108,9 @@ static uint64_t rocketnet_platform_wall_clock()
 uint64_t rocketnet_platform_token_epoch( uint64_t configured, double time )
 {
     if ( configured != 0 )
+    {
         return configured;
+    }
 
     const uint64_t wall = rocketnet_platform_wall_clock();
     const uint64_t elapsed = rocketnet_platform_token_clock( 0, time );
@@ -119,10 +123,14 @@ uint64_t rocketnet_platform_token_clock( uint64_t epoch, double time )
     // a time of 2^64 seconds or more has no uint64_t value to cast to
 
     if ( !( time > 0.0 ) )
+    {
         return epoch;
+    }
 
     if ( time >= 18446744073709551616.0 )
+    {
         return UINT64_MAX;
+    }
 
     const uint64_t seconds = (uint64_t) time;
 
@@ -170,7 +178,9 @@ void rocketnet_platform_test_environment_reset()
 static bool rocketnet_platform_test_environment_getenv( const char * name, char * buffer, size_t size, int * result )
 {
     if ( !rocketnet_platform_test_environment_installed )
+    {
         return false;
+    }
     buffer[0] = '\0';
     const std::map<std::string, std::string> & environment = rocketnet_platform_test_environment();
     const std::map<std::string, std::string>::const_iterator entry = environment.find( name );
@@ -221,20 +231,30 @@ rocketnet_platform_sleep_plan_t rocketnet_platform_sleep_plan( double time )
     plan.due_time = 0;
     plan.fallback_milliseconds = 0;
     if ( plan.yield_only )
+    {
         return plan;
+    }
 
     double units = ceil( time * 10000000.0 - 0.000001 );
     if ( units < 1.0 )
+    {
         units = 1.0;
+    }
     if ( units > ROCKETNET_PLATFORM_SLEEP_MAX_DUE_UNITS )
+    {
         units = ROCKETNET_PLATFORM_SLEEP_MAX_DUE_UNITS;
+    }
     plan.due_time = -(int64_t) units;
 
     double milliseconds = ceil( time * 1000.0 - 0.000001 );
     if ( milliseconds < 1.0 )
+    {
         milliseconds = 1.0;
+    }
     if ( milliseconds > (double) ROCKETNET_PLATFORM_SLEEP_MAX_FALLBACK_MILLISECONDS )
+    {
         milliseconds = (double) ROCKETNET_PLATFORM_SLEEP_MAX_FALLBACK_MILLISECONDS;
+    }
     plan.fallback_milliseconds = (uint32_t) milliseconds;
 
     return plan;
@@ -297,7 +317,9 @@ const rocketnet_platform_priority_calls_t * rocketnet_platform_priority_calls_cu
 void rocketnet_platform_thread_priority_reset_logged_for_testing()
 {
     for ( int i = 0; i < ROCKETNET_PLATFORM_PRIORITY_CALL_COUNT; ++i )
+    {
         rocketnet_platform_thread_priority_logged[i].store( false, std::memory_order_relaxed );
+    }
 }
 #endif // #if ROCKETNET_DEV
 
@@ -321,9 +343,13 @@ void rocketnet_platform_thread_priority_refused( int kind, const char * prefix, 
 {
     rocketnet_platform_thread_priority_refusal_count.fetch_add( 1, std::memory_order_relaxed );
     if ( kind < 0 || kind >= ROCKETNET_PLATFORM_PRIORITY_CALL_COUNT )
+    {
         return;
+    }
     if ( rocketnet_platform_thread_priority_logged[kind].exchange( true, std::memory_order_relaxed ) )
+    {
         return;
+    }
     rocketnet_warn( "%s: %s refused (%s); %s", prefix, call, reason, effect );
 }
 
@@ -376,7 +402,9 @@ static int rocketnet_platform_real_mutex_init( rocketnet_platform_mutex_t * mute
     int result = pthread_mutex_init( &mutex->handle, &attr );
     pthread_mutexattr_destroy( &attr );
     if ( result != 0 )
+    {
         return result;
+    }
     mutex->ok = true;
 
     return 0;
@@ -428,9 +456,13 @@ int rocketnet_platform_network_thread_rr_priority()
     const int highest = sched_get_priority_max( SCHED_RR );
     int priority = 32;
     if ( priority < lowest )
+    {
         priority = lowest;
+    }
     if ( priority > highest )
+    {
         priority = highest;
+    }
     return priority;
 #else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     int priority = sched_get_priority_min( SCHED_RR );
@@ -440,7 +472,9 @@ int rocketnet_platform_network_thread_rr_priority()
     {
         struct sched_param param;
         if ( pthread_attr_getschedparam( &attr, &param ) == 0 && param.sched_priority > priority )
+        {
             priority = param.sched_priority;
+        }
         pthread_attr_destroy( &attr );
     }
 
@@ -453,7 +487,9 @@ static void rocketnet_platform_network_thread_priority( rocketnet_platform_threa
     rocketnet_assert( thread );
 
     if ( !rocketnet_platform_thread_priority_enabled() )
+    {
         return;
+    }
     const int priority = rocketnet_platform_network_thread_rr_priority();
     const int result = ROCKETNET_PLATFORM_PRIORITY_CALL( set_sched )( thread, SCHED_RR, priority );
     if ( result != 0 )
@@ -503,31 +539,55 @@ uint64_t rocketnet_platform_socket_send_replay_failures( rocketnet_platform_sock
 int rocketnet_platform_send_errno_kind( int error )
 {
     if ( error == 0 )
+    {
         return ROCKETNET_PLATFORM_SEND_ERRNO_NONE;
+    }
     if ( error == EAGAIN || error == EWOULDBLOCK )
+    {
         return ROCKETNET_PLATFORM_SEND_ERRNO_EAGAIN;
+    }
     if ( error == ENOBUFS )
+    {
         return ROCKETNET_PLATFORM_SEND_ERRNO_ENOBUFS;
+    }
     if ( error == EHOSTUNREACH )
+    {
         return ROCKETNET_PLATFORM_SEND_ERRNO_EHOSTUNREACH;
+    }
     if ( error == ENETUNREACH )
+    {
         return ROCKETNET_PLATFORM_SEND_ERRNO_ENETUNREACH;
+    }
     if ( error == ECONNREFUSED )
+    {
         return ROCKETNET_PLATFORM_SEND_ERRNO_ECONNREFUSED;
+    }
 #if defined( EHOSTDOWN )
     if ( error == EHOSTDOWN )
+    {
         return ROCKETNET_PLATFORM_SEND_ERRNO_EHOSTDOWN;
+    }
 #endif // #if defined( EHOSTDOWN )
     if ( error == ENETDOWN )
+    {
         return ROCKETNET_PLATFORM_SEND_ERRNO_ENETDOWN;
+    }
     if ( error == EMSGSIZE )
+    {
         return ROCKETNET_PLATFORM_SEND_ERRNO_EMSGSIZE;
+    }
     if ( error == EADDRNOTAVAIL )
+    {
         return ROCKETNET_PLATFORM_SEND_ERRNO_EADDRNOTAVAIL;
+    }
     if ( error == EPERM || error == EACCES )
+    {
         return ROCKETNET_PLATFORM_SEND_ERRNO_EPERM;
+    }
     if ( error == EINTR )
+    {
         return ROCKETNET_PLATFORM_SEND_ERRNO_EINTR;
+    }
     return ROCKETNET_PLATFORM_SEND_ERRNO_OTHER;
 }
 
@@ -538,7 +598,9 @@ const char * rocketnet_platform_send_errno_kind_name( int kind )
         "ENETDOWN", "EMSGSIZE", "EADDRNOTAVAIL", "EPERM", "EINTR", "other"
     };
     if ( kind < 0 || kind >= ROCKETNET_PLATFORM_SEND_ERRNO_KINDS )
+    {
         return "unknown";
+    }
     return names[kind];
 }
 
@@ -546,7 +608,9 @@ const char * rocketnet_platform_send_call_name( int call )
 {
     static const char * const names[ROCKETNET_PLATFORM_SEND_CALLS] = { "sendto", "sendmsg_x", "replay sendto" };
     if ( call < 0 || call >= ROCKETNET_PLATFORM_SEND_CALLS )
+    {
         return "unknown";
+    }
     return names[call];
 }
 
@@ -558,7 +622,9 @@ bool rocketnet_platform_send_errnos_count( rocketnet_platform_send_errnos_t * er
     const int kind = rocketnet_platform_send_errno_kind( error );
     const bool first = rocketnet_platform_atomic_add_u64( &errnos->counts[call][kind], 1 ) == 0;
     if ( first && kind == ROCKETNET_PLATFORM_SEND_ERRNO_OTHER )
+    {
         rocketnet_platform_atomic_add_u64( &errnos->other_error, (uint64_t) (unsigned int) error );
+    }
     return first;
 }
 
@@ -566,7 +632,9 @@ uint64_t rocketnet_platform_send_errnos_read( rocketnet_platform_send_errnos_t *
 {
     rocketnet_assert( errnos );
     if ( call < 0 || call >= ROCKETNET_PLATFORM_SEND_CALLS || kind < 0 || kind >= ROCKETNET_PLATFORM_SEND_ERRNO_KINDS )
+    {
         return 0;
+    }
     return rocketnet_platform_atomic_load_u64( &errnos->counts[call][kind] );
 }
 
@@ -576,7 +644,9 @@ int rocketnet_platform_send_errnos_format( rocketnet_platform_send_errnos_t * er
     rocketnet_assert( buffer );
 
     if ( size == 0 )
+    {
         return 0;
+    }
     buffer[0] = '\0';
 
     size_t used = 0;
@@ -588,7 +658,9 @@ int rocketnet_platform_send_errnos_format( rocketnet_platform_send_errnos_t * er
         {
             const uint64_t count = rocketnet_platform_send_errnos_read( errnos, call, kind );
             if ( count == 0 )
+            {
                 continue;
+            }
             const int result = snprintf( buffer + used, size - used, "%s%s %s=%llu", written ? " " : "",
                                          rocketnet_platform_send_call_name( call ), rocketnet_platform_send_errno_kind_name( kind ),
                                          (unsigned long long) count );
@@ -629,7 +701,9 @@ void rocketnet_platform_socket_set_receive_hook( rocketnet_platform_socket_t * s
 static bool rocketnet_platform_receive_hooked( rocketnet_platform_socket_t * socket, void * packet_data, int max_packet_size, struct sockaddr_storage * from, size_t from_bytes, int * result )
 {
     if ( rocketnet_platform_receive_hook_function == NULL || socket != rocketnet_platform_receive_hook_socket )
+    {
         return false;
+    }
     memset( from, 0, from_bytes );
     *result = rocketnet_platform_receive_hook_function( rocketnet_platform_receive_hook_user, packet_data, max_packet_size, from );
 
@@ -689,7 +763,9 @@ static void rocketnet_platform_test_recount_armed()
 {
     int armed = 0;
     for ( int i = 0; i < rocketnet_platform_test_num_sockets; i++ )
+    {
         armed += rocketnet_platform_test_sockets[i].fail_remaining;
+    }
     __atomic_store_n( &rocketnet_platform_test_armed, armed, __ATOMIC_RELAXED );
 }
 
@@ -718,9 +794,13 @@ static void rocketnet_platform_test_unregister( rocketnet_platform_socket_t * so
     for ( int i = 0; i < rocketnet_platform_test_num_sockets; i++ )
     {
         if ( rocketnet_platform_test_sockets[i].socket != socket )
+        {
             continue;
+        }
         for ( int j = i + 1; j < rocketnet_platform_test_num_sockets; j++ )
+        {
             rocketnet_platform_test_sockets[j - 1] = rocketnet_platform_test_sockets[j];
+        }
         rocketnet_platform_test_num_sockets--;
         break;
     }
@@ -735,7 +815,9 @@ int rocketnet_platform_sockets_for_testing( rocketnet_platform_socket_t ** socke
 
     int count = 0;
     for ( int i = 0; i < rocketnet_platform_test_num_sockets && count < max_sockets; i++ )
+    {
         sockets[count++] = rocketnet_platform_test_sockets[i].socket;
+    }
     rocketnet_platform_test_release();
 
     return count;
@@ -748,7 +830,9 @@ void rocketnet_platform_socket_fail_next_sends( rocketnet_platform_socket_t * so
     for ( int i = 0; i < rocketnet_platform_test_num_sockets; i++ )
     {
         if ( rocketnet_platform_test_sockets[i].socket != socket )
+        {
             continue;
+        }
         rocketnet_platform_test_sockets[i].fail_remaining = count > 0 ? count : 0;
         rocketnet_platform_test_sockets[i].fail_error = error;
 #if defined( __linux__ )
@@ -765,8 +849,12 @@ int rocketnet_platform_socket_send_failures_remaining_for_testing( rocketnet_pla
     rocketnet_platform_test_acquire();
     int remaining = 0;
     for ( int i = 0; i < rocketnet_platform_test_num_sockets; i++ )
+    {
         if ( rocketnet_platform_test_sockets[i].socket == socket )
+        {
             remaining = rocketnet_platform_test_sockets[i].fail_remaining;
+        }
+    }
     rocketnet_platform_test_release();
     return remaining;
 }
@@ -782,7 +870,9 @@ void rocketnet_platform_socket_fail_mmsg_after_packets( rocketnet_platform_socke
     {
         rocketnet_platform_test_socket_t * entry = &rocketnet_platform_test_sockets[i];
         if ( entry->socket != socket )
+        {
             continue;
+        }
         entry->fail_remaining = 1;
         entry->fail_error = error;
         entry->mmsg_before_failure = accepted_packets;
@@ -798,14 +888,18 @@ void rocketnet_platform_socket_fail_mmsg_after_packets( rocketnet_platform_socke
 static int rocketnet_platform_test_mmsg_count( rocketnet_platform_socket_t * socket, int count )
 {
     if ( __atomic_load_n( &rocketnet_platform_test_armed, __ATOMIC_RELAXED ) == 0 )
+    {
         return count;
+    }
     rocketnet_platform_test_acquire();
 
     for ( int i = 0; i < rocketnet_platform_test_num_sockets; i++ )
     {
         const rocketnet_platform_test_socket_t * entry = &rocketnet_platform_test_sockets[i];
         if ( entry->socket == socket && entry->fail_remaining > 0 && entry->mmsg_before_failure > 0 && entry->mmsg_before_failure < count )
+        {
             count = entry->mmsg_before_failure;
+        }
     }
 
     rocketnet_platform_test_release();
@@ -815,14 +909,18 @@ static int rocketnet_platform_test_mmsg_count( rocketnet_platform_socket_t * soc
 static void rocketnet_platform_test_mmsg_accepted( rocketnet_platform_socket_t * socket, int accepted )
 {
     if ( __atomic_load_n( &rocketnet_platform_test_armed, __ATOMIC_RELAXED ) == 0 )
+    {
         return;
+    }
     rocketnet_platform_test_acquire();
 
     for ( int i = 0; i < rocketnet_platform_test_num_sockets; i++ )
     {
         rocketnet_platform_test_socket_t * entry = &rocketnet_platform_test_sockets[i];
         if ( entry->socket != socket || entry->mmsg_before_failure <= 0 )
+        {
             continue;
+        }
         entry->mmsg_before_failure = accepted < entry->mmsg_before_failure ? entry->mmsg_before_failure - accepted : 0;
     }
 
@@ -847,7 +945,9 @@ void rocketnet_platform_set_create_receive_hook( rocketnet_platform_create_recei
 static bool rocketnet_platform_send_failure_should_inject( rocketnet_platform_socket_t * socket, int * error )
 {
     if ( __atomic_load_n( &rocketnet_platform_test_armed, __ATOMIC_RELAXED ) == 0 )
+    {
         return false;
+    }
     bool inject = false;
     rocketnet_platform_test_acquire();
 
@@ -855,10 +955,14 @@ static bool rocketnet_platform_send_failure_should_inject( rocketnet_platform_so
     {
         rocketnet_platform_test_socket_t * entry = &rocketnet_platform_test_sockets[i];
         if ( entry->socket != socket || entry->fail_remaining <= 0 )
+        {
             continue;
+        }
 #if defined( __linux__ )
         if ( entry->mmsg_before_failure > 0 )
+        {
             continue;
+        }
 #endif // #if defined( __linux__ )
         entry->fail_remaining--;
         *error = entry->fail_error;
@@ -891,12 +995,18 @@ int rocketnet_server_receive_buffer_bytes( int max_clients, int receive_kbps_per
     const uint64_t scale = bytes_per_second_per_kbps * (uint64_t) ROCKETNET_SERVER_RECEIVE_BUFFER_MARGIN;
     const uint64_t rate = clients * kbps; // both below 2^31: no overflow
     if ( rate > UINT64_MAX / scale )
+    {
         return INT_MAX;
+    }
     uint64_t bytes = ( rate * scale + hz - 1u ) / hz;
     if ( bytes < (uint64_t) ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE )
+    {
         bytes = (uint64_t) ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE;
+    }
     if ( bytes > (uint64_t) INT_MAX )
+    {
         bytes = (uint64_t) INT_MAX;
+    }
     return (int) bytes;
 }
 
@@ -908,10 +1018,14 @@ int rocketnet_server_receive_buffer_request( int max_clients )
 int rocketnet_server_transport_receive_buffer_request( const char * transport, int max_clients )
 {
     if ( !transport )
+    {
         return 0;
+    }
     if ( strcmp( transport, "portable" ) == 0 || strcmp( transport, "msgx" ) == 0 || strcmp( transport, "gso" ) == 0 ||
          strcmp( transport, "io_uring" ) == 0 || strcmp( transport, "iocp" ) == 0 || strcmp( transport, "rio" ) == 0 )
+    {
         return rocketnet_server_receive_buffer_request( max_clients );
+    }
     return 0;
 }
 
@@ -1073,7 +1187,9 @@ bool rocketnet_platform_init()
 {
 #if ROCKETNET_DEV
     if ( ROCKETNET_PLATFORM_PRIORITY_CALL( platform_start )() != 0 )
+    {
         return false;
+    }
 #endif // #if ROCKETNET_DEV
 
 #if defined( __APPLE__ )
@@ -1105,7 +1221,9 @@ int rocketnet_platform_getenv( const char * var, char * buffer, size_t size )
 #if ROCKETNET_DEV
     int test_result = 0;
     if ( rocketnet_platform_test_environment_getenv( var, buffer, size, &test_result ) )
+    {
         return test_result;
+    }
 #endif // #if ROCKETNET_DEV
     buffer[0] = '\0';
 
@@ -1117,10 +1235,14 @@ int rocketnet_platform_getenv( const char * var, char * buffer, size_t size )
     const char * value = getenv( var );
 #endif
     if ( !value )
+    {
         return 0;
+    }
     const size_t length = strlen( value );
     if ( length >= size )
+    {
         return -1;
+    }
     memcpy( buffer, value, length + 1 );
 
     return 1;
@@ -1145,7 +1267,9 @@ bool rocketnet_platform_client_dual_stack()
 double rocketnet_platform_time()
 {
     if ( !clock_ready.load( std::memory_order_acquire ) )
+    {
         return 0.0;
+    }
 #if defined( __APPLE__ )
     uint64_t current = mach_absolute_time();
     return ( (double) ( current - time_start ) ) * ( (double) timebase_info.numer ) / ( (double) timebase_info.denom ) / 1000000000.0;
@@ -1162,7 +1286,9 @@ double rocketnet_platform_time()
 void rocketnet_platform_sleep( double time )
 {
     if ( !( time > 0.0 ) )
+    {
         return;
+    }
 
     const time_t whole = (time_t) time;
     struct timespec deadline;
@@ -1180,7 +1306,9 @@ void rocketnet_platform_sleep( double time )
         struct timespec now;
         clock_gettime( CLOCK_MONOTONIC, &now );
         if ( now.tv_sec > deadline.tv_sec || ( now.tv_sec == deadline.tv_sec && now.tv_nsec >= deadline.tv_nsec ) )
+        {
             return;
+        }
 
         struct timespec remaining;
         remaining.tv_sec = deadline.tv_sec - now.tv_sec;
@@ -1230,14 +1358,18 @@ static bool rocketnet_platform_set_socket_buffer_size( int handle, int option, i
 {
     int size = requested_bytes;
     if ( setsockopt( handle, SOL_SOCKET, option, (char *) ( &size ), sizeof( int ) ) == 0 )
+    {
         return true;
+    }
     while ( size > 1 )
     {
         size /= 2;
         if ( setsockopt( handle, SOL_SOCKET, option, (char *) ( &size ), sizeof( int ) ) == 0 )
         {
             if ( warn )
+            {
                 rocketnet_warn( "socket %s buffer request of %d refused by the kernel, granted %d", direction, requested_bytes, size );
+            }
             return true;
         }
     }
@@ -1248,11 +1380,15 @@ static bool rocketnet_platform_set_socket_buffer_size( int handle, int option, i
 int rocketnet_platform_socket_receive_buffer_bytes( rocketnet_platform_socket_t * socket )
 {
     if ( !socket )
+    {
         return 0;
+    }
     int granted = 0;
     socklen_t length = sizeof( granted );
     if ( getsockopt( socket->handle, SOL_SOCKET, SO_RCVBUF, (char *) ( &granted ), &length ) != 0 )
+    {
         return 0;
+    }
 #if defined( __linux__ )
     // linux doubles the request for its bookkeeping and reports the double
     granted /= 2;
@@ -1326,11 +1462,15 @@ int rocketnet_platform_socket_open_for_testing( int domain )
 static int rocketnet_platform_reserve_ipv4_port( const rocketnet_address_t * address, uint16_t * bind_port )
 {
     if ( address->type != ROCKETNET_ADDRESS_IPV6 )
+    {
         return -1;
+    }
     for ( int i = 0; i < 8; i++ )
     {
         if ( address->data.ipv6[i] != 0 )
+        {
             return -1;
+        }
     }
 
     const int reservation = rocketnet_platform_socket_open( AF_INET );
@@ -1386,7 +1526,9 @@ void rocketnet_platform_socket_apply_dont_fragment( bool ipv6, void ( *set_optio
     // darwin refuses IP_DONTFRAG on an AF_INET6 socket (EINVAL), and
     // IPV6_DONTFRAG already keeps its v4-mapped datagrams whole
     if ( !ipv6 )
+    {
         set_option( user, IPPROTO_IP, IP_DONTFRAG, 1 );
+    }
 #elif defined( IP_DONTFRAG )
     set_option( user, IPPROTO_IP, IP_DONTFRAG, 1 );
 #else
@@ -1515,19 +1657,25 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
         bind_address.port = address->port;
         ipv4_port_reservation = rocketnet_platform_reserve_ipv4_port( address, &bind_address.port );
         if ( ipv4_port_reservation == -2 )
+        {
             break;
+        }
 
         const socklen_t bind_bytes = (socklen_t) rocketnet_platform_sockaddr_from_address( &bind_address, &bind_storage );
         bind_result = bind( socket->handle, (sockaddr *) &bind_storage, bind_bytes );
         if ( bind_result >= 0 || ipv4_port_reservation < 0 || address->port != 0 || errno != EADDRINUSE ||
              num_held == ROCKETNET_PLATFORM_DUAL_STACK_BIND_ATTEMPTS - 1 )
+        {
             break;
+        }
 
         held[num_held++] = ipv4_port_reservation;
     }
 
     for ( int i = 0; i < num_held; i++ )
+    {
         close( held[i] );
+    }
 
     if ( ipv4_port_reservation == -2 )
     {
@@ -1539,7 +1687,9 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
     {
         close( ipv4_port_reservation );
         if ( bind_result >= 0 )
+        {
             address->port = bind_address.port;
+        }
     }
 #else // #if defined( __APPLE__ )
     const socklen_t bind_bytes = (socklen_t) rocketnet_platform_sockaddr_from_address( &bind_address, &bind_storage );
@@ -1588,7 +1738,9 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
 #if defined( __APPLE__ ) && TARGET_OS_OSX
 #if ROCKETNET_DEV
     if ( rocketnet_platform_create_receive_hook )
+    {
         rocketnet_platform_create_receive_hook( socket->handle );
+    }
 #endif // #if ROCKETNET_DEV
     socket->msgx = batch_pump && rocketnet_sendmsg_x && rocketnet_recvmsg_x && socket_type == ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING;
 #else // #if defined( __APPLE__ ) && TARGET_OS_OSX
@@ -1648,7 +1800,9 @@ void rocketnet_platform_socket_destroy( rocketnet_platform_socket_t * socket )
 static inline ssize_t rocketnet_platform_sendto( rocketnet_platform_socket_t * socket, const void * packet_data, int packet_bytes, const sockaddr * to, socklen_t to_bytes )
 {
     if ( socket->connected )
+    {
         return send( socket->handle, packet_data, (size_t) packet_bytes, 0 );
+    }
     return sendto( socket->handle, packet_data, (size_t) packet_bytes, 0, to, to_bytes );
 }
 
@@ -1663,7 +1817,9 @@ bool rocketnet_platform_socket_connect( rocketnet_platform_socket_t * socket, co
     sockaddr_storage storage;
     const socklen_t storage_bytes = (socklen_t) rocketnet_platform_sockaddr_for( socket->ipv6, to, &storage );
     if ( storage_bytes == 0 )
+    {
         return false;
+    }
 
     if ( connect( socket->handle, (const sockaddr *) &storage, storage_bytes ) != 0 )
     {
@@ -1724,7 +1880,9 @@ static void rocketnet_platform_send_one( rocketnet_platform_socket_t * socket, c
 #endif // #if ROCKETNET_DEV
     {
         if ( rocketnet_platform_sendto( socket, packet_data, packet_bytes, (const sockaddr *) &storage, storage_bytes ) >= 0 )
+        {
             return;
+        }
         error = errno;
     }
 
@@ -1794,7 +1952,9 @@ static int rocketnet_platform_take_receive_errno_for_testing()
     while ( remaining > 0 )
     {
         if ( rocketnet_platform_receive_errno_count_for_testing.compare_exchange_weak( remaining, remaining - 1 ) )
+        {
             return rocketnet_platform_receive_errno_for_testing.load();
+        }
     }
 
     return 0;
@@ -1858,7 +2018,9 @@ static int rocketnet_platform_socket_receive_packet_into( rocketnet_platform_soc
     for ( ;; )
     {
         if ( *reads_remaining <= 0 )
+        {
             return 0;
+        }
         --*reads_remaining;
 
         sockaddr_storage sockaddr_from;
@@ -1874,15 +2036,21 @@ static int rocketnet_platform_socket_receive_packet_into( rocketnet_platform_soc
             {
                 const int error = errno;
                 if ( rocketnet_platform_receive_weather( error ) )
+                {
                     continue;
+                }
                 if ( error != EAGAIN && error != EWOULDBLOCK )
+                {
                     rocketnet_debug( "recvfrom failed with error %d", error );
+                }
                 return 0;
             }
         }
 
         if ( result < 0 )
+        {
             return 0;
+        }
 
         // a zero-length datagram is legal UDP carrying nothing the protocol
         // admits, and a dropped source is spoofed chaff: skip both, counted,
@@ -1898,7 +2066,9 @@ static int rocketnet_platform_socket_receive_packet_into( rocketnet_platform_soc
         {
             rocketnet_assert( sockaddr_from.ss_family == AF_INET6 );
             if ( sockaddr_from.ss_family != AF_INET6 )
+            {
                 return 0;
+            }
             rocketnet_platform_count_receive_refused_source();
             continue;
         }
@@ -1916,7 +2086,9 @@ static int rocketnet_platform_socket_receive_packet_into( rocketnet_platform_soc
 static bool rocketnet_platform_receive_batch_hooked( rocketnet_platform_socket_t * socket, uint8_t * packet_data, int packet_stride, struct sockaddr_storage * addresses, int count, int * sizes, int * result )
 {
     if ( rocketnet_platform_receive_hook_function == NULL || socket != rocketnet_platform_receive_hook_socket )
+    {
         return false;
+    }
 
     int read = 0;
     while ( read < count )
@@ -1924,7 +2096,9 @@ static bool rocketnet_platform_receive_batch_hooked( rocketnet_platform_socket_t
         int bytes = -1;
         rocketnet_platform_receive_hooked( socket, packet_data + (size_t) read * (size_t) packet_stride, packet_stride, &addresses[read], sizeof( addresses[read] ), &bytes );
         if ( bytes < 0 )
+        {
             break;
+        }
         sizes[read++] = bytes;
     }
 
@@ -1978,7 +2152,9 @@ static int rocketnet_platform_sendmmsg( rocketnet_platform_socket_t * socket, st
     const int result = sendmmsg( socket->handle, msg, (unsigned int) count, 0 );
 #if ROCKETNET_DEV
     if ( result > 0 )
+    {
         rocketnet_platform_test_mmsg_accepted( socket, result );
+    }
 #endif // #if ROCKETNET_DEV
     return result;
 }
@@ -2048,7 +2224,9 @@ void rocketnet_platform_socket_send_packets_mmsg( rocketnet_platform_socket_t * 
             const int error = errno;
 
             if ( error == EINTR )
+            {
                 continue;
+            }
 
             // a full socket: drop the unsent tail, as the per-packet path would
 
@@ -2109,7 +2287,9 @@ int rocketnet_platform_socket_send_packets_mmsg_progress( rocketnet_platform_soc
             rocketnet_assert( send->packet_bytes > 0 );
             const socklen_t sockaddr_bytes = (socklen_t) rocketnet_platform_sockaddr_for( socket->ipv6, send->to, &addresses[count] );
             if ( sockaddr_bytes == 0 )
+            {
                 break;
+            }
 
             memset( &msg[count], 0, sizeof( msg[count] ) );
             iov[count].iov_base = const_cast<uint8_t *>( send->packet_data );
@@ -2141,9 +2321,13 @@ int rocketnet_platform_socket_send_packets_mmsg_progress( rocketnet_platform_soc
 
             const int error = errno;
             if ( error == EINTR )
+            {
                 continue;
+            }
             if ( error == EAGAIN || error == EWOULDBLOCK || error == ENOBUFS )
+            {
                 return base + sent;
+            }
 
             char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
             rocketnet_address_to_string( sends[base + sent].to, address_string );
@@ -2180,7 +2364,9 @@ int rocketnet_platform_socket_receive_packets_mmsg( rocketnet_platform_socket_t 
         const int chunk_base = total;
         int want = reads_remaining;
         if ( want > ROCKETNET_MSS_BATCH )
+        {
             want = ROCKETNET_MSS_BATCH;
+        }
 
         sockaddr_storage addresses[ROCKETNET_MSS_BATCH];
         struct iovec iov[ROCKETNET_MSS_BATCH];
@@ -2207,7 +2393,9 @@ int rocketnet_platform_socket_receive_packets_mmsg( rocketnet_platform_socket_t 
         if ( rocketnet_platform_receive_batch_hooked( socket, packet_data + (size_t) chunk_base * (size_t) packet_stride, packet_stride, addresses, want, hooked_sizes, &result ) )
         {
             for ( int i = 0; i < result; i++ )
+            {
                 msg[i].msg_len = (unsigned int) hooked_sizes[i];
+            }
         }
         else
 #endif // #if ROCKETNET_DEV
@@ -2222,12 +2410,16 @@ int rocketnet_platform_socket_receive_packets_mmsg( rocketnet_platform_socket_t 
                 continue;
             }
             if ( error != EAGAIN && error != EWOULDBLOCK )
+            {
                 rocketnet_debug( "recvmmsg failed with error %d", error );
+            }
             return total;
         }
 
         if ( result == 0 )
+        {
             return total;
+        }
 
         reads_remaining -= result;
 
@@ -2253,7 +2445,9 @@ int rocketnet_platform_socket_receive_packets_mmsg( rocketnet_platform_socket_t 
             const uint8_t * source = packet_data + (size_t) ( chunk_base + i ) * (size_t) packet_stride;
             uint8_t * target = packet_data + (size_t) ( chunk_base + kept ) * (size_t) packet_stride;
             if ( target != source )
+            {
                 memmove( target, source, (size_t) copy_bytes );
+            }
             from[chunk_base + kept] = parsed;
             packet_bytes[chunk_base + kept] = bytes;
             kept++;
@@ -2262,7 +2456,9 @@ int rocketnet_platform_socket_receive_packets_mmsg( rocketnet_platform_socket_t 
         total += kept;
 
         if ( result < want )
+        {
             return total;
+        }
     }
 
     return total;
@@ -2311,10 +2507,14 @@ const char * rocketnet_platform_socket_pump( rocketnet_platform_socket_t * socke
     rocketnet_assert( socket );
 
     if ( !socket->msgx )
+    {
         return "portable";
+    }
     const double down_until = rocketnet_msgx_down_until( socket );
     if ( down_until > 0.0 && rocketnet_platform_time() < down_until )
+    {
         return "portable";
+    }
     return "msgx";
 }
 
@@ -2330,15 +2530,21 @@ static thread_local void ( *rocketnet_msgx_before_expiry_clear )( rocketnet_plat
 static bool rocketnet_msgx_active( rocketnet_platform_socket_t * socket )
 {
     if ( !socket->msgx )
+    {
         return false;
+    }
     double down_until = rocketnet_msgx_down_until( socket );
     while ( down_until > 0.0 )
     {
         if ( rocketnet_platform_time() < down_until )
+        {
             return false;
+        }
 #if ROCKETNET_DEV
         if ( rocketnet_msgx_before_expiry_clear )
+        {
             rocketnet_msgx_before_expiry_clear( socket );
+        }
 #endif // #if ROCKETNET_DEV
         double cleared = 0.0;
         if ( __atomic_compare_exchange( &socket->msgx_down_until, &down_until, &cleared, false, __ATOMIC_RELAXED, __ATOMIC_RELAXED ) )
@@ -2440,7 +2646,9 @@ void rocketnet_platform_socket_send_packets( rocketnet_platform_socket_t * socke
             int injected_error = 0;
 #if ROCKETNET_DEV
             if ( rocketnet_platform_send_failure_should_inject( socket, &injected_error ) )
+            {
                 errno = injected_error;
+            }
             else
 #endif // #if ROCKETNET_DEV
                 result = rocketnet_sendmsg_x( socket->handle, msg + offset, (u_int) ( count - offset ), 0 );
@@ -2466,11 +2674,17 @@ void rocketnet_platform_socket_send_packets( rocketnet_platform_socket_t * socke
             const int error = errno;
 
             if ( result == 0 && error == 0 )
+            {
                 rocketnet_debug( "sendmsg_x accepted nothing. chunk finishes per-packet" );
+            }
             else if ( rocketnet_msgx_send_weather( error ) )
+            {
                 rocketnet_debug( "sendmsg_x error (%s). chunk finishes per-packet", strerror( error ) );
+            }
             else
+            {
                 rocketnet_msgx_pause( socket, "sendmsg_x", error );
+            }
 
             rocketnet_platform_send_failed( socket, &socket->send_failures, ROCKETNET_PLATFORM_SEND_CALL_SENDMSG_X, error );
 
@@ -2489,7 +2703,9 @@ void rocketnet_platform_socket_send_packets( rocketnet_platform_socket_t * socke
     // a paused pump, or a pause that landed mid-call: the rest goes per-packet
 
     for ( int i = base; i < num_packets; i++ )
+    {
         rocketnet_platform_socket_send_packet( socket, sends[i].to, sends[i].packet_data, sends[i].packet_bytes );
+    }
 }
 
 int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * socket, rocketnet_address_t * from, uint8_t * packet_data, int packet_stride, int * packet_bytes, int max_packets )
@@ -2516,7 +2732,9 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
     {
         int want = reads_remaining;
         if ( want > ROCKETNET_MSGX_BATCH )
+        {
             want = ROCKETNET_MSGX_BATCH;
+        }
 
         const int chunk_base = total;
 
@@ -2553,7 +2771,9 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
         {
             result = hooked_result;
             for ( int i = 0; i < hooked_result; i++ )
+            {
                 msg[i].msg_datalen = (size_t) hooked_sizes[i];
+            }
         }
         else
 #endif // #if ROCKETNET_DEV
@@ -2563,7 +2783,9 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
         {
             const int error = errno;
             if ( error == EAGAIN || error == EWOULDBLOCK )
+            {
                 return total;
+            }
 
             // weather: skip it and stay on the batch pump, up to the budget
 
@@ -2581,7 +2803,9 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
         }
 
         if ( result == 0 )
+        {
             return total;
+        }
 
         reads_remaining -= (int) result;
 
@@ -2606,25 +2830,33 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
             uint8_t * target = packet_data + (size_t) total * (size_t) packet_stride;
             const int copy_bytes = bytes < packet_stride ? bytes : packet_stride;
             if ( target != written )
+            {
                 memmove( target, written, (size_t) copy_bytes );
+            }
             from[total] = parsed;
             packet_bytes[total] = bytes;
             total++;
         }
 
         if ( result < want )
+        {
             return total;
+        }
     }
 
     if ( batch )
+    {
         return total;
+    }
 
     while ( total < max_packets )
     {
         const int bytes = rocketnet_platform_socket_receive_packet_into( socket, &from[total], packet_data + (size_t) total * (size_t) packet_stride, packet_stride,
                                                                          overflow, sizeof( overflow ), &reads_remaining );
         if ( bytes == 0 )
+        {
             break;
+        }
         packet_bytes[total] = bytes;
         total++;
     }
@@ -2704,7 +2936,9 @@ bool rocketnet_platform_wake_close( rocketnet_platform_wake_t * wake )
 {
     rocketnet_assert( wake );
     if ( wake->kq >= 0 )
+    {
         close( wake->kq );
+    }
     wake->kq = -1;
     return true;
 }
@@ -2714,7 +2948,9 @@ bool rocketnet_platform_wake_wait( rocketnet_platform_wake_t * wake, bool readab
     rocketnet_assert( wake );
 
     if ( readable && wake->socket_fd < 0 )
+    {
         return false;
+    }
 
     struct kevent change;
     int num_changes = 0;
@@ -2733,13 +2969,17 @@ bool rocketnet_platform_wake_wait( rocketnet_platform_wake_t * wake, bool readab
         timeout.tv_sec = (time_t) timeout_seconds;
         timeout.tv_nsec = (long) ( ( timeout_seconds - (double) timeout.tv_sec ) * 1000000000.0 );
         if ( timeout.tv_nsec >= 1000000000L )
+        {
             timeout.tv_nsec = 999999999L;
+        }
     }
 
     struct kevent events[2];
     const int result = kevent( wake->kq, num_changes ? &change : NULL, num_changes, events, 2, &timeout );
     if ( result <= 0 )
+    {
         return false;
+    }
 
     bool woken = false;
     for ( int i = 0; i < result; i++ )
@@ -2749,7 +2989,9 @@ bool rocketnet_platform_wake_wait( rocketnet_platform_wake_t * wake, bool readab
             // a refused read filter change keeps the old state, so the next
             // wait carries the change again
             if ( events[i].filter == EVFILT_READ && events[i].data != 0 )
+            {
                 wake->read_enabled = !readable;
+            }
             continue;
         }
         woken = true;
@@ -2803,7 +3045,9 @@ rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rock
 {
 #if !defined( __linux__ )
     if ( socket )
+    {
         return NULL;
+    }
 #endif // #if !defined( __linux__ )
 
     rocketnet_platform_wake_t * wake = (rocketnet_platform_wake_t *) rocketnet_malloc( context, sizeof( rocketnet_platform_wake_t ) );
@@ -2848,9 +3092,13 @@ bool rocketnet_platform_wake_close( rocketnet_platform_wake_t * wake )
 {
     rocketnet_assert( wake );
     if ( wake->read_fd >= 0 )
+    {
         close( wake->read_fd );
+    }
     if ( wake->write_fd >= 0 && wake->write_fd != wake->read_fd )
+    {
         close( wake->write_fd );
+    }
     wake->read_fd = -1;
     wake->write_fd = -1;
     return true;
@@ -2861,7 +3109,9 @@ bool rocketnet_platform_wake_wait( rocketnet_platform_wake_t * wake, bool readab
     rocketnet_assert( wake );
 
     if ( readable && wake->socket_fd < 0 )
+    {
         return false;
+    }
 
     struct pollfd fds[2];
     int nfds = 0;
@@ -2879,7 +3129,9 @@ bool rocketnet_platform_wake_wait( rocketnet_platform_wake_t * wake, bool readab
 
     const int timeout_ms = timeout_seconds > 0.0 ? (int) ceil( timeout_seconds * 1000.0 ) : 0;
     if ( poll( fds, (nfds_t) nfds, timeout_ms ) <= 0 )
+    {
         return false;
+    }
 
     if ( fds[0].revents & POLLIN )
     {
@@ -2903,7 +3155,9 @@ bool rocketnet_platform_wake_wait_writable( rocketnet_platform_wake_t * wake, do
     rocketnet_assert( wake );
 
     if ( wake->socket_fd < 0 )
+    {
         return rocketnet_platform_wake_wait( wake, false, timeout_seconds );
+    }
 
     struct pollfd fds[2];
     fds[0].fd = wake->read_fd;
@@ -2915,7 +3169,9 @@ bool rocketnet_platform_wake_wait_writable( rocketnet_platform_wake_t * wake, do
 
     const int timeout_ms = timeout_seconds > 0.0 ? (int) ceil( timeout_seconds * 1000.0 ) : 0;
     if ( poll( fds, (nfds_t) 2, timeout_ms ) <= 0 )
+    {
         return false;
+    }
 
     if ( fds[0].revents & POLLIN )
     {
@@ -2998,13 +3254,17 @@ static bool rocketnet_platform_thread_wake_init( rocketnet_platform_thread_t * t
 #if defined( __APPLE__ )
     semaphore_t semaphore = MACH_PORT_NULL;
     if ( semaphore_create( mach_task_self(), &semaphore, SYNC_POLICY_FIFO, 0 ) != KERN_SUCCESS )
+    {
         return false;
+    }
     thread->wake_semaphore = semaphore;
     return true;
 #else // #if defined( __APPLE__ )
     pthread_condattr_t attr;
     if ( pthread_condattr_init( &attr ) != 0 )
+    {
         return false;
+    }
     if ( pthread_condattr_setclock( &attr, CLOCK_MONOTONIC ) != 0 )
     {
         pthread_condattr_destroy( &attr );
@@ -3013,7 +3273,9 @@ static bool rocketnet_platform_thread_wake_init( rocketnet_platform_thread_t * t
     const int cond_result = pthread_cond_init( &thread->wake_cond, &attr );
     pthread_condattr_destroy( &attr );
     if ( cond_result != 0 )
+    {
         return false;
+    }
     if ( pthread_mutex_init( &thread->wake_mutex, NULL ) != 0 )
     {
         pthread_cond_destroy( &thread->wake_cond );
@@ -3094,16 +3356,22 @@ void rocketnet_platform_thread_wait( rocketnet_platform_thread_t * thread, doubl
     // conversion overflows a 32-bit long
 
     if ( !( time > 0.0 ) )
+    {
         time = 0.0;
+    }
     if ( time > 86400.0 )
+    {
         time = 86400.0;
+    }
 
 #if defined( __APPLE__ )
     // woken is stored before the semaphore is signalled: a wake that lands
     // before this check ends the wait here, one that lands after it ends the
     // semaphore wait
     if ( __atomic_load_n( &thread->woken, __ATOMIC_ACQUIRE ) )
+    {
         return;
+    }
     const unsigned int whole_seconds = (unsigned int) time;
     mach_timespec_t relative;
     relative.tv_sec = whole_seconds;
@@ -3126,7 +3394,9 @@ void rocketnet_platform_thread_wait( rocketnet_platform_thread_t * thread, doubl
     while ( !thread->woken )
     {
         if ( pthread_cond_timedwait( &thread->wake_cond, &thread->wake_mutex, &deadline ) != 0 )
+        {
             break;
+        }
     }
     pthread_mutex_unlock( &thread->wake_mutex );
 #endif // #if defined( __APPLE__ )
@@ -3279,7 +3549,9 @@ void rocketnet_lifecycle_track_end()
 uint64_t rocketnet_lifecycle_track_open( unsigned kind, uintptr_t raw, const char * site )
 {
     if ( !rocketnet_lifecycle_enabled.load( std::memory_order_acquire ) )
+    {
         return 0;
+    }
     if ( kind >= ROCKETNET_LIFECYCLE_RESOURCE_KINDS || !raw )
     {
         rocketnet_lifecycle_errors.fetch_add( 1, std::memory_order_relaxed );
@@ -3316,7 +3588,9 @@ uint64_t rocketnet_lifecycle_track_open( unsigned kind, uintptr_t raw, const cha
 bool rocketnet_lifecycle_track_close_begin( unsigned kind, uintptr_t raw, uint64_t generation )
 {
     if ( generation == 0 )
+    {
         return true; // created before this case was armed
+    }
     for ( unsigned i = 0; i < ROCKETNET_LIFECYCLE_MAX_LIVE; ++i )
     {
         uint64_t live = rocketnet_lifecycle_state( generation, 2 );
@@ -3325,7 +3599,9 @@ bool rocketnet_lifecycle_track_close_begin( unsigned kind, uintptr_t raw, uint64
         {
             if ( rocketnet_lifecycle_slots[i].kind.load( std::memory_order_relaxed ) == kind &&
                  rocketnet_lifecycle_slots[i].raw.load( std::memory_order_relaxed ) == raw )
+            {
                 return true;
+            }
             rocketnet_lifecycle_slots[i].state.store( live, std::memory_order_release );
             break;
         }
@@ -3339,21 +3615,29 @@ bool rocketnet_lifecycle_track_close_begin( unsigned kind, uintptr_t raw, uint64
 void rocketnet_lifecycle_track_close_end( uint64_t generation, bool success )
 {
     if ( generation == 0 )
+    {
         return;
+    }
     for ( unsigned i = 0; i < ROCKETNET_LIFECYCLE_MAX_LIVE; ++i )
     {
         uint64_t closing = rocketnet_lifecycle_state( generation, 3 );
         if ( rocketnet_lifecycle_slots[i].state.load( std::memory_order_acquire ) != closing )
+        {
             continue;
+        }
         const unsigned kind = rocketnet_lifecycle_slots[i].kind.load( std::memory_order_relaxed );
 
         if ( rocketnet_lifecycle_slots[i].state.compare_exchange_strong( closing,
                                                                          success ? 0 : rocketnet_lifecycle_state( generation, 2 ), std::memory_order_acq_rel ) )
         {
             if ( success )
+            {
                 rocketnet_lifecycle_closed[kind].fetch_add( 1, std::memory_order_relaxed );
+            }
             else
+            {
                 rocketnet_lifecycle_errors.fetch_add( 1, std::memory_order_relaxed );
+            }
             return;
         }
     }
@@ -3364,7 +3648,9 @@ void rocketnet_lifecycle_track_close_end( uint64_t generation, bool success )
 bool rocketnet_lifecycle_track_read( rocketnet_lifecycle_resources_t * result )
 {
     if ( !result )
+    {
         return false;
+    }
     memset( result, 0, sizeof( *result ) );
     result->latest_generation = rocketnet_lifecycle_next_generation.load( std::memory_order_acquire ) - 1;
     result->errors = rocketnet_lifecycle_errors.load( std::memory_order_acquire );
@@ -3379,7 +3665,9 @@ bool rocketnet_lifecycle_track_read( rocketnet_lifecycle_resources_t * result )
     {
         const uint64_t state = rocketnet_lifecycle_slots[i].state.load( std::memory_order_acquire );
         if ( !state )
+        {
             continue;
+        }
         if ( ( state & 3 ) != 2 )
         {
             result->errors++;
@@ -3392,21 +3680,35 @@ bool rocketnet_lifecycle_track_read( rocketnet_lifecycle_resources_t * result )
         resource.kind = rocketnet_lifecycle_slots[i].kind.load( std::memory_order_relaxed );
         resource.site = rocketnet_lifecycle_slots[i].site.load( std::memory_order_relaxed );
         if ( rocketnet_lifecycle_slots[i].state.load( std::memory_order_acquire ) != state )
+        {
             result->errors++;
+        }
     }
 
     for ( unsigned i = 0; i < result->live_count; ++i )
+    {
         for ( unsigned j = i + 1; j < result->live_count; ++j )
+        {
             if ( result->live[i].kind == result->live[j].kind && result->live[i].raw == result->live[j].raw )
+            {
                 result->errors++;
+            }
+        }
+    }
     for ( unsigned kind = 0; kind < ROCKETNET_LIFECYCLE_RESOURCE_KINDS; ++kind )
     {
         unsigned live = 0;
         for ( unsigned i = 0; i < result->live_count; ++i )
+        {
             if ( result->live[i].kind == kind )
+            {
                 live++;
+            }
+        }
         if ( result->created[kind] < result->closed[kind] || result->created[kind] - result->closed[kind] != live )
+        {
             result->errors++;
+        }
     }
 
     return result->errors == 0;
@@ -3512,7 +3814,9 @@ static void rocketnet_platform_network_thread_priority( rocketnet_platform_threa
     rocketnet_assert( thread );
 
     if ( !rocketnet_platform_thread_priority_enabled() )
+    {
         return;
+    }
     if ( !ROCKETNET_PLATFORM_PRIORITY_CALL( set_thread_priority )( thread, THREAD_PRIORITY_TIME_CRITICAL ) )
     {
         char reason[32];
@@ -3528,7 +3832,9 @@ static bool timer_period_begun = false;
 static void rocketnet_platform_timer_period_end()
 {
     if ( !timer_period_begun )
+    {
         return;
+    }
     timer_period_begun = false;
 
     const unsigned int result = ROCKETNET_PLATFORM_PRIORITY_CALL( time_end_period )( 1 );
@@ -3588,7 +3894,9 @@ int rocketnet_platform_getenv( const char * var, char * buffer, size_t size )
 #if ROCKETNET_DEV
     int test_result = 0;
     if ( rocketnet_platform_test_environment_getenv( var, buffer, size, &test_result ) )
+    {
         return test_result;
+    }
 #endif // #if ROCKETNET_DEV
     buffer[0] = '\0';
 
@@ -3597,9 +3905,13 @@ int rocketnet_platform_getenv( const char * var, char * buffer, size_t size )
 
     size_t required = 0;
     if ( getenv_s( &required, NULL, 0, var ) != 0 || required == 0 )
+    {
         return 0;
+    }
     if ( required > size )
+    {
         return -1;
+    }
     if ( getenv_s( &required, buffer, size, var ) != 0 )
     {
         buffer[0] = '\0';
@@ -3650,7 +3962,9 @@ static HANDLE rocketnet_platform_sleep_timer_create();
 static void rocketnet_platform_thread_sleep_timer_close( rocketnet_platform_thread_t * thread )
 {
     if ( !thread->sleep_timer )
+    {
         return;
+    }
 #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( rocketnet_lifecycle_track_close_begin( ROCKETNET_LIFECYCLE_TIMER, (uintptr_t) thread->sleep_timer, thread->sleep_timer_generation ) )
     {
@@ -3686,7 +4000,9 @@ rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, 
     thread->sleep_timer = rocketnet_platform_sleep_timer_create();
 #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( thread->sleep_timer )
+    {
         thread->sleep_timer_generation = rocketnet_lifecycle_track_open( ROCKETNET_LIFECYCLE_TIMER, (uintptr_t) thread->sleep_timer, "platform thread sleep timer" );
+    }
 #endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 
     if ( ROCKETNET_PLATFORM_PRIORITY_CALL( thread_start )( thread, record ) != 0 )
@@ -3713,7 +4029,9 @@ void rocketnet_platform_thread_destroy( rocketnet_platform_thread_t * thread )
     rocketnet_assert( thread );
 #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( !rocketnet_lifecycle_track_close_begin( ROCKETNET_LIFECYCLE_THREAD, (uintptr_t) thread->handle, thread->lifecycle_generation ) )
+    {
         return;
+    }
 #endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     const BOOL closed = CloseHandle( thread->handle );
@@ -3778,7 +4096,9 @@ void rocketnet_platform_mutex_destroy( rocketnet_platform_mutex_t * mutex )
     rocketnet_assert( mutex );
 
     if ( mutex->ok )
+    {
         memset( mutex, 0, sizeof( rocketnet_platform_mutex_t ) );
+    }
 }
 
 // time
@@ -3824,7 +4144,9 @@ static bool rocketnet_platform_sleep_on_timer( HANDLE handle, const rocketnet_pl
     LARGE_INTEGER due;
     due.QuadPart = plan.due_time;
     if ( !SetWaitableTimer( handle, &due, 0, NULL, NULL, FALSE ) || WaitForSingleObject( handle, INFINITE ) != WAIT_OBJECT_0 )
+    {
         return false;
+    }
 
     const double elapsed_units = (double) -plan.due_time;
     const double counts = ceil( elapsed_units * (double) frequency.QuadPart / 10000000.0 );
@@ -3850,7 +4172,9 @@ static bool rocketnet_platform_sleep_on_timer( HANDLE handle, const rocketnet_pl
 static void rocketnet_platform_sleep_on( HANDLE timer, const rocketnet_platform_sleep_plan_t & plan )
 {
     if ( timer && rocketnet_platform_sleep_on_timer( timer, plan ) )
+    {
         return;
+    }
 
     // the 1 ms timer period, when the priority calls are enabled, is the
     // process's from rocketnet_platform_init; the fallback makes no timer
@@ -3872,7 +4196,9 @@ void rocketnet_platform_sleep( double time )
     const HANDLE timer = rocketnet_platform_sleep_timer_create();
     rocketnet_platform_sleep_on( timer, plan );
     if ( timer )
+    {
         CloseHandle( timer );
+    }
 }
 
 void rocketnet_platform_thread_sleep( rocketnet_platform_thread_t * thread, double time )
@@ -3898,7 +4224,9 @@ void rocketnet_platform_thread_wait( rocketnet_platform_thread_t * thread, doubl
 double rocketnet_platform_time()
 {
     if ( !clock_ready.load( std::memory_order_acquire ) )
+    {
         return 0.0;
+    }
     LARGE_INTEGER now;
     QueryPerformanceCounter( &now );
     return ( (double) ( now.QuadPart - timer_start.QuadPart ) ) / ( (double) ( timer_frequency.QuadPart ) );
@@ -3947,7 +4275,9 @@ bool rocketnet_platform_socket_disable_udp_resets( uintptr_t handle )
         {
             disabled = false;
             if ( InterlockedExchange( &rocketnet_platform_udp_reset_refusal_logged, 1 ) == 0 )
+            {
                 rocketnet_warn( "%s refused (Winsock %d): receive paths skip reset statuses instead", names[i], WSAGetLastError() );
+            }
         }
     }
 
@@ -3990,11 +4320,15 @@ uint64_t rocketnet_platform_receive_resets()
 int rocketnet_platform_socket_receive_buffer_bytes( rocketnet_platform_socket_t * socket )
 {
     if ( !socket )
+    {
         return 0;
+    }
     int granted = 0;
     int length = sizeof( granted );
     if ( getsockopt( socket->handle, SOL_SOCKET, SO_RCVBUF, (char *) ( &granted ), &length ) != 0 )
+    {
         return 0;
+    }
     return granted;
 }
 
@@ -4180,7 +4514,9 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
 void rocketnet_platform_socket_apply_dont_fragment( bool ipv6, void ( *set_option )( void * user, int level, int option_name, int value ), void * user )
 {
     if ( ipv6 )
+    {
         set_option( user, IPPROTO_IPV6, IPV6_DONTFRAG, 1 );
+    }
     set_option( user, IPPROTO_IP, IP_DONTFRAGMENT, 1 );
 }
 
@@ -4196,7 +4532,9 @@ bool rocketnet_platform_socket_close( rocketnet_platform_socket_t * socket )
 #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
         if ( !rocketnet_lifecycle_track_close_begin( ROCKETNET_LIFECYCLE_SOCKET, (uintptr_t) socket->handle,
                                                      socket->lifecycle_generation ) )
+        {
             return false;
+        }
         const int closed = closesocket( socket->handle );
         rocketnet_lifecycle_track_close_end( socket->lifecycle_generation, closed == 0 );
 #else
@@ -4211,7 +4549,9 @@ bool rocketnet_platform_socket_close( rocketnet_platform_socket_t * socket )
 void rocketnet_platform_socket_destroy( rocketnet_platform_socket_t * socket )
 {
     if ( !rocketnet_platform_socket_close( socket ) )
+    {
         return;
+    }
     rocketnet_free( socket->context, socket );
 }
 
@@ -4229,7 +4569,9 @@ static void rocketnet_platform_windows_send_failed( rocketnet_platform_socket_t 
     const DWORD length = FormatMessageA( FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, NULL, (DWORD) error,
                                          MAKELANGID( LANG_NEUTRAL, SUBLANG_DEFAULT ), error_string, (DWORD) sizeof( error_string ), NULL );
     for ( DWORD i = length; i > 0 && ( error_string[i - 1] == '\r' || error_string[i - 1] == '\n' || error_string[i - 1] == ' ' ); --i )
+    {
         error_string[i - 1] = '\0';
+    }
     rocketnet_debug( "sendto (%s) failed: WSA error %d: %s", address_string, error, error_string );
 }
 
@@ -4239,7 +4581,9 @@ static void rocketnet_platform_windows_send_failed( rocketnet_platform_socket_t 
 static int rocketnet_platform_sendto( rocketnet_platform_socket_t * socket, const void * packet_data, int packet_bytes, const sockaddr * to, int to_bytes )
 {
     if ( socket->connected )
+    {
         return send( socket->handle, (const char *) packet_data, packet_bytes, 0 );
+    }
     return sendto( socket->handle, (const char *) packet_data, packet_bytes, 0, to, to_bytes );
 }
 
@@ -4255,7 +4599,9 @@ bool rocketnet_platform_socket_connect( rocketnet_platform_socket_t * socket, co
     sockaddr_storage storage;
     const int storage_bytes = rocketnet_platform_sockaddr_for( socket->ipv6, input_to, &storage );
     if ( storage_bytes == 0 )
+    {
         return false;
+    }
 
     if ( connect( socket->handle, (const sockaddr *) &storage, storage_bytes ) == SOCKET_ERROR )
     {
@@ -4294,7 +4640,9 @@ void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket
     {
         rocketnet_address_t to = *input_to;
         if ( socket->ipv6 && to.type == ROCKETNET_ADDRESS_IPV4 )
+        {
             rocketnet_address_convert_ipv4_to_ipv6( &to );
+        }
         rocketnet_platform_windows_send_failed( socket, &to, WSAGetLastError() );
     }
 }
@@ -4335,7 +4683,9 @@ receive_again:
     for ( ;; )
     {
         if ( *reads_remaining <= 0 )
+        {
             return -1;
+        }
         --*reads_remaining;
 
         from_length = sizeof( sockaddr_from );
@@ -4348,9 +4698,13 @@ receive_again:
         {
             // Preserve the drained sentinel so batch receive cannot manufacture empty packets.
             if ( result < 0 )
+            {
                 return -1;
+            }
             if ( result == 0 )
+            {
                 continue;
+            }
             break;
         }
 #endif // #if ROCKETNET_DEV
@@ -4493,8 +4847,10 @@ rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rock
     wake->wake_event = CreateEvent( NULL, socket ? TRUE : FALSE, FALSE, NULL );
 #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( wake->wake_event )
+    {
         wake->wake_generation = rocketnet_lifecycle_track_open( ROCKETNET_LIFECYCLE_EVENT, (uintptr_t) wake->wake_event,
                                                                 "platform wake event" );
+    }
 #endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( wake->wake_event == NULL )
     {
@@ -4536,7 +4892,9 @@ bool rocketnet_platform_wake_close( rocketnet_platform_wake_t * wake )
         wake->socket_handle = (rocketnet_platform_socket_handle_t) INVALID_SOCKET;
 #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
         if ( !rocketnet_lifecycle_track_close_begin( ROCKETNET_LIFECYCLE_EVENT, (uintptr_t) wake->read_event, wake->read_generation ) )
+        {
             return false;
+        }
         const BOOL read_closed = WSACloseEvent( wake->read_event );
         rocketnet_lifecycle_track_close_end( wake->read_generation, read_closed != 0 );
 #else
@@ -4549,7 +4907,9 @@ bool rocketnet_platform_wake_close( rocketnet_platform_wake_t * wake )
     {
 #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
         if ( !rocketnet_lifecycle_track_close_begin( ROCKETNET_LIFECYCLE_EVENT, (uintptr_t) wake->wake_event, wake->wake_generation ) )
+        {
             return false;
+        }
         const BOOL closed = CloseHandle( wake->wake_event );
         rocketnet_lifecycle_track_close_end( wake->wake_generation, closed != 0 );
 #else
@@ -4564,7 +4924,9 @@ bool rocketnet_platform_wake_close( rocketnet_platform_wake_t * wake )
 void rocketnet_platform_wake_destroy( rocketnet_platform_wake_t * wake )
 {
     if ( !rocketnet_platform_wake_close( wake ) )
+    {
         return;
+    }
     rocketnet_free( wake->context, wake );
 }
 
@@ -4579,7 +4941,9 @@ bool rocketnet_platform_wake_wait( rocketnet_platform_wake_t * wake, bool readab
     rocketnet_assert( wake );
 
     if ( readable && wake->read_event == WSA_INVALID_EVENT )
+    {
         return false;
+    }
     DWORD timeout_ms = 0;
 
     if ( timeout_seconds > 0.0 )
@@ -4603,7 +4967,9 @@ bool rocketnet_platform_wake_wait( rocketnet_platform_wake_t * wake, bool readab
     if ( result == WAIT_OBJECT_0 )
     {
         if ( wake->read_event != WSA_INVALID_EVENT )
+        {
             ResetEvent( wake->wake_event );
+        }
         return true;
     }
 
@@ -4666,7 +5032,9 @@ bool rocketnet_platform_inet_pton4( const char * address_string, uint32_t * addr
     // A failed parse writes nothing: only hand back the address on success.
 
     if ( success )
+    {
         *address_out = sockaddr4.sin_addr.s_addr;
+    }
     return success;
 }
 
@@ -4737,17 +5105,23 @@ bool rocketnet_platform_client_ipv6_available()
 {
 #if ROCKETNET_DEV
     if ( !rocketnet_platform_ipv6_socket_available_for_testing )
+    {
         return false;
+    }
 
     const rocketnet_platform_network_lookups_t * lookups = rocketnet_platform_network_lookups_override.load( std::memory_order_acquire );
     if ( lookups )
+    {
         return lookups->ipv6_available();
+    }
 #endif // #if ROCKETNET_DEV
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     SOCKET probe = WSASocketW( AF_INET6, SOCK_DGRAM, IPPROTO_UDP, NULL, 0, WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT );
     if ( probe == INVALID_SOCKET )
+    {
         return false;
+    }
 #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     const uint64_t probe_generation = rocketnet_lifecycle_track_open( ROCKETNET_LIFECYCLE_SOCKET, (uintptr_t) probe,
                                                                       "platform IPv6 probe socket" );
@@ -4755,7 +5129,9 @@ bool rocketnet_platform_client_ipv6_available()
     rocketnet_platform_socket_disable_udp_resets( (uintptr_t) probe );
 #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( !rocketnet_lifecycle_track_close_begin( ROCKETNET_LIFECYCLE_SOCKET, (uintptr_t) probe, probe_generation ) )
+    {
         return false;
+    }
     const int closed = closesocket( probe );
     rocketnet_lifecycle_track_close_end( probe_generation, closed == 0 );
 #else
@@ -4765,7 +5141,9 @@ bool rocketnet_platform_client_ipv6_available()
 #else
     int probe = rocketnet_platform_socket_open( AF_INET6 );
     if ( probe < 0 )
+    {
         return false;
+    }
     ::close( probe );
     return true;
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
@@ -4776,12 +5154,16 @@ int rocketnet_platform_client_bind_family( int server_address_type, bool ipv6_av
     if ( !ipv6_available )
     {
         if ( server_address_type == ROCKETNET_ADDRESS_IPV6 )
+        {
             return ROCKETNET_ADDRESS_NONE;
+        }
         return ROCKETNET_ADDRESS_IPV4;
     }
 
     if ( server_address_type == ROCKETNET_ADDRESS_IPV6 || dual_stack )
+    {
         return ROCKETNET_ADDRESS_IPV6;
+    }
 
     return ROCKETNET_ADDRESS_IPV4;
 }
@@ -4824,7 +5206,9 @@ void rocketnet_platform_address_to_sockaddr_in6( const struct rocketnet_address_
     memset( out, 0, sizeof( struct sockaddr_in6 ) );
     out->sin6_family = AF_INET6;
     for ( int i = 0; i < 8; ++i )
+    {
         ( (uint16_t *) &out->sin6_addr )[i] = rocketnet_platform_htons( address->data.ipv6[i] );
+    }
     out->sin6_port = rocketnet_platform_htons( address->port );
 }
 
@@ -4836,7 +5220,9 @@ void rocketnet_platform_sockaddr_in6_to_address( const struct sockaddr_in6 * in,
     memset( address, 0, sizeof( struct rocketnet_address_t ) );
     address->type = ROCKETNET_ADDRESS_IPV6;
     for ( int i = 0; i < 8; ++i )
+    {
         address->data.ipv6[i] = rocketnet_platform_ntohs( ( (const uint16_t *) &in->sin6_addr )[i] );
+    }
     address->port = rocketnet_platform_ntohs( in->sin6_port );
 }
 
@@ -4866,9 +5252,13 @@ int rocketnet_platform_sockaddr_for( bool ipv6, const struct rocketnet_address_t
     if ( ipv6 )
     {
         if ( to.type == ROCKETNET_ADDRESS_IPV4 )
+        {
             rocketnet_address_convert_ipv4_to_ipv6( &to );
+        }
         if ( to.type != ROCKETNET_ADDRESS_IPV6 )
+        {
             return 0;
+        }
     }
     else if ( to.type != ROCKETNET_ADDRESS_IPV4 )
     {
@@ -4944,13 +5334,17 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
         // it vanishing here
         int bytes = rocketnet_platform_socket_receive_datagram( socket, &from[num_packets], packet_data + (size_t) num_packets * (size_t) packet_stride, packet_stride, true, &reads_remaining );
         if ( bytes < 0 )
+        {
             break;
+        }
 #else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
         uint8_t overflow[1];
         int bytes = rocketnet_platform_socket_receive_packet_into( socket, &from[num_packets], packet_data + (size_t) num_packets * (size_t) packet_stride, packet_stride,
                                                                    overflow, sizeof( overflow ), &reads_remaining );
         if ( bytes == 0 )
+        {
             break;
+        }
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
         packet_bytes[num_packets] = bytes;
         num_packets++;
@@ -5053,7 +5447,9 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create_with_pump( void *
 
     rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create_internal( context, address, socket_type, timeout_seconds, send_buffer_size, receive_buffer_size, !force_portable, status );
     if ( !socket )
+    {
         return NULL;
+    }
 
     if ( require_msgx && !socket->msgx )
     {

@@ -172,13 +172,20 @@ static void test_unreliable_packing_interleaved_clients_and_stop()
     rocketnet_client_t * clients[2] = { server_disconnected_client_create(), server_disconnected_client_create() };
     int slots[2];
     for ( int c = 0; c < 2; ++c )
+    {
         slots[c] = server_disconnected_connect( &identity, server, clients[c], 0x6A00 + (uint64_t) c, 300,
                                                 ROCKETNET_CLIENT_STATE_DISCONNECTED, &time );
+    }
     for ( int i = 0; i < 4; ++i )
+    {
         for ( int c = 0; c < 2; ++c )
+        {
             server_disconnected_pump( server, clients[c], &time );
+        }
+    }
     rn_message_object_t * object = &rocketnet_server_message_server( server )->object;
     for ( int i = 0; i < 32; ++i )
+    {
         for ( int c = 0; c < 2; ++c )
         {
             uint8_t * p = rocketnet_server_start_message( server, (uint64_t) slots[c], 0, ROCKETNET_RELIABILITY_UNRELIABLE, 2 );
@@ -189,6 +196,7 @@ static void test_unreliable_packing_interleaved_clients_and_stop()
 
             check( rocketnet_server_finish_message( server, 2 ) );
         }
+    }
 
     const auto & a = object->connections[slots[0]].unreliable_build;
     const auto & b = object->connections[slots[1]].unreliable_build;
@@ -199,12 +207,14 @@ static void test_unreliable_packing_interleaved_clients_and_stop()
 
     uint32_t seen[2] = {};
     for ( int i = 0; i < 10; ++i )
+    {
         for ( int c = 0; c < 2; ++c )
         {
             server_disconnected_pump( server, clients[c], &time );
 
             const rocketnet_message_batch_t * batch;
             while ( ( batch = rocketnet_client_receive_messages( clients[c] ) ) != NULL )
+            {
                 for ( int j = 0; j < batch->num_messages; ++j )
                 {
                     check( batch->bytes[j] == 2 && batch->data[j][0] == c && batch->data[j][1] < 32 );
@@ -214,7 +224,9 @@ static void test_unreliable_packing_interleaved_clients_and_stop()
 
                     seen[c] |= bit;
                 }
+            }
         }
+    }
 
     check( seen[0] == UINT32_MAX && seen[1] == UINT32_MAX );
 
@@ -312,9 +324,13 @@ static void test_server_disconnect_sets_server_disconnected_reason()
         // kept until the next connect, which ends it and starts a handshake
 
         if ( how == SERVER_DISCONNECTED_BY_STOP )
+        {
             check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
+        }
         else if ( how == SERVER_DISCONNECTED_BY_STOP_THEN_DESTROY )
+        {
             server = server_disconnected_server_create( &identity );
+        }
         server_disconnected_connect( &identity, server, client, 0x5D10 + (uint64_t) h, 300,
                                      ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED, &time );
 
@@ -399,7 +415,9 @@ static void server_disconnected_reason_kept( rocketnet_server_t * server, rocket
     check( !rocketnet_server_client_connected( server, index ) );
     check( rocketnet_server_disconnect_reason( server, index ) == reason );
     for ( int i = 0; i < 4; i++ )
+    {
         server_disconnected_pump( server, client, time );
+    }
     check( rocketnet_server_disconnect_reason( server, index ) == reason );
 }
 
@@ -449,7 +467,9 @@ static void test_server_reason_names_timeout_and_client_disconnect()
     rocketnet_client_disconnect( client );
     rn_test_client_wait_disconnected( client );
     for ( int i = 0; i < 10 && rocketnet_server_client_connected( server, reused ); i++ )
+    {
         server_disconnected_pump( server, client, &time );
+    }
     check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
     server_disconnected_reason_kept( server, client, reused, ROCKETNET_DISCONNECT_REASON_CLIENT_DISCONNECTED, &time );
 
@@ -634,9 +654,13 @@ static void server_disconnect_now_case( bool all )
     const uint64_t drops = rn_server_stats_of( server ).messages_dropped_not_connected;
 
     if ( all )
+    {
         rocketnet_server_disconnect_all_clients( server );
+    }
     else
+    {
         rocketnet_server_disconnect_client( server, index );
+    }
 
     // before the next update
 
@@ -683,7 +707,9 @@ static void server_disconnect_now_case( bool all )
     }
 
     for ( int i = 0; i < 4; i++ )
+    {
         server_disconnected_pump( server, client, &time );
+    }
     check( !rocketnet_server_client_connected( server, index ) );
     check( !rocketnet_server_client_connected( server, other_index ) );
     check( rocketnet_server_num_connected_clients( server ) == 0 );
@@ -691,7 +717,9 @@ static void server_disconnect_now_case( bool all )
     check( rocketnet_server_disconnect_reason( server, other_index ) == ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED );
 
     if ( other )
+    {
         rn_test_client_stop_and_destroy( other );
+    }
     rn_test_client_stop_and_destroy( client );
     rn_test_server_stop_and_destroy( server );
 }

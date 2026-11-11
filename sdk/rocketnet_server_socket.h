@@ -51,7 +51,9 @@ inline bool rocketnet_xdp_send_wakeup_hard_error( int error )
 inline bool rocketnet_xdp_send_queue_released( int hard_send_error, bool buffer_empty, bool handoff_idle )
 {
     if ( rocketnet_xdp_send_wakeup_hard_error( hard_send_error ) )
+    {
         return true;
+    }
     return buffer_empty && handoff_idle;
 }
 
@@ -73,9 +75,13 @@ inline void rocketnet_xdp_send_wakeup_failed( int error, std::atomic<uint64_t> &
         return;
     }
     if ( !rocketnet_xdp_send_wakeup_hard_error( error ) )
+    {
         return;
+    }
     if ( hard_error.load( std::memory_order_relaxed ) == error )
+    {
         return;
+    }
     failures.fetch_add( 1, std::memory_order_relaxed );
     hard_error.store( error, std::memory_order_relaxed );
 }
@@ -86,7 +92,9 @@ inline void rocketnet_xdp_send_wakeup_failed( int error, std::atomic<uint64_t> &
 inline void rocketnet_xdp_send_wakeup_succeeded( std::atomic<int> & hard_error )
 {
     if ( hard_error.load( std::memory_order_relaxed ) != 0 )
+    {
         hard_error.store( 0, std::memory_order_relaxed );
+    }
 }
 
 // The worker logs a hard wakeup failure once per contiguous run of one errno:

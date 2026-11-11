@@ -29,7 +29,9 @@ static int live_verify_in_list( const uint32_t * list, int n, uint32_t value )
     for ( int i = 0; i < n; i++ )
     {
         if ( list[i] == value )
+        {
             return 1;
+        }
     }
 
     return 0;
@@ -115,8 +117,12 @@ static void live_verify_boundary_list()
         const int n = rocketnet_live_boundaries( &config, mode, list );
         rocketnet_unit_check( n > 0 && n <= ROCKETNET_LIVE_MAX_BOUNDARIES );
         for ( int i = 0; i < n; i++ )
+        {
             for ( int j = i + 1; j < n; j++ )
+            {
                 rocketnet_unit_check( list[i] != list[j] );
+            }
+        }
         rocketnet_unit_check( rocketnet_live_sequences_per_stream( &config, mode ) == 32u * ( ( (uint32_t) n + 31u ) / 32u ) );
     }
 }
@@ -174,6 +180,7 @@ static void live_verify_length_rule()
 
         const int channels = ( mode == 1 || mode == 3 || mode == 4 || mode == 7 ) ? 31 : 32;
         for ( int channel = 0; channel < channels; channel++ )
+        {
             for ( uint32_t s = 0; s < per; s++ )
             {
                 const uint32_t length = rocketnet_live_length( &config, mode, channel, s );
@@ -181,9 +188,12 @@ static void live_verify_length_rule()
                 for ( int i = 0; i < nb; i++ )
                 {
                     if ( list[i] == length && ( ( s + (uint32_t) channel ) % 32u ) == 0 )
+                    {
                         covered[i] = 1;
+                    }
                 }
             }
+        }
         for ( int i = 0; i < nb; i++ )
         {
             rocketnet_unit_check( covered[i] );
@@ -245,8 +255,11 @@ static void live_verify_generate_and_check()
     rocketnet_unit_check( rocketnet_live_generate( &config, 0, 3, 0, 0, 30, buffer, 100 ) == 0 );
 
     for ( int direction = 0; direction < 2; direction++ )
+    {
         for ( int mode = 0; mode < 8; mode++ )
+        {
             for ( int channel = 0; channel < 32; channel += 7 )
+            {
                 for ( uint32_t sequence = 0; sequence < 64; sequence++ )
                 {
                     const int l = rocketnet_live_generate( &config, direction, mode, channel, 2, sequence, buffer, (int) sizeof( buffer ) );
@@ -254,6 +267,9 @@ static void live_verify_generate_and_check()
                     rocketnet_unit_check( rocketnet_live_check( &config, buffer, l, direction, mode, channel, 2, -1, NULL ) == ROCKETNET_LIVE_OK );
                     rocketnet_unit_check( rocketnet_live_check( &config, buffer, l, direction, mode, channel, 2, sequence, NULL ) == ROCKETNET_LIVE_OK );
                 }
+            }
+        }
+    }
 }
 
 // section 3, messages under 7 bytes carry the first L bytes of the header

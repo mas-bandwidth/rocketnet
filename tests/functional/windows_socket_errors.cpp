@@ -49,7 +49,9 @@ uint16_t rocketnet_client_transport_test_bound_port( struct rocketnet_client_tra
 static void windows_socket_errors_check( bool condition, const char * expression, int line )
 {
     if ( condition )
+    {
         return;
+    }
     printf( "windows_socket_errors check failed: %s at line %d\n", expression, line );
     fflush( stdout );
     exit( 1 );
@@ -245,7 +247,9 @@ static void windows_socket_errors_tick( windows_socket_errors_session_t * sessio
     for ( int client_index = 0; client_index < 4; client_index++ )
     {
         if ( !rocketnet_server_transport_is_client_connected( session->server, client_index ) )
+        {
             continue;
+        }
         memset( payload, 0x5a, WINDOWS_SOCKET_ERRORS_PAYLOAD_BYTES );
         rocketnet_server_transport_send_packet( session->server, client_index, payload, WINDOWS_SOCKET_ERRORS_PAYLOAD_BYTES );
     }
@@ -328,10 +332,12 @@ static uint64_t windows_socket_errors_refusals( const struct rocketnet_counters_
     uint64_t sum = 0;
 
     for ( int i = 0; i < ROCKETNET_NUM_COUNTERS; i++ )
+    {
         if ( rocketnet_counter_class( i ) == ROCKETNET_COUNTER_CLASS_REFUSAL )
         {
             sum += rocketnet_counter_value( counters, i );
         }
+    }
 
     return sum;
 }
@@ -382,9 +388,13 @@ static int windows_socket_errors_pending( windows_socket_errors_session_t * sess
     void * instance = rocketnet_server_transport_io_name_for_testing( session->server );
 
     if ( strcmp( session->transport.transport, "iocp" ) == 0 )
+    {
         return rocketnet_server_iocp_pending( (rocketnet_server_iocp_t *) instance );
+    }
     if ( strcmp( session->transport.transport, "rio" ) == 0 )
+    {
         return rocketnet_server_rio_pending( (rocketnet_server_rio_t *) instance );
+    }
 
     return -1;
 }
@@ -395,9 +405,13 @@ static int windows_socket_errors_pending( windows_socket_errors_session_t * sess
 static int windows_socket_errors_full_pending( windows_socket_errors_session_t * session )
 {
     if ( strcmp( session->transport.transport, "iocp" ) == 0 )
+    {
         return ROCKETNET_IOCP_DEFAULT_WORKERS * ROCKETNET_IOCP_RECEIVES_PER_WORKER;
+    }
     if ( strcmp( session->transport.transport, "rio" ) == 0 )
+    {
         return rocketnet_server_rio_receives( session->max_clients );
+    }
 
     return -1;
 }
@@ -525,7 +539,9 @@ static void windows_server_counts_prefilter_size( const windows_socket_errors_tr
         windows_socket_errors_tick( &session );
         counted = rocketnet_counter_value( rocketnet_server_transport_counters( session.server ), counter ) - before;
         if ( counted == datagrams.size() )
+        {
             break;
+        }
     }
 
     printf( "%s %s: sent %llu, prefilter size counter %llu\n", name, windows_socket_errors_label( transport ),
@@ -669,7 +685,9 @@ static void windows_client_drops_oversize_and_garbage( bool ipv6 )
     for ( size_t i = 0; i < datagrams.size(); i++ )
     {
         if ( datagrams[i].bytes.empty() )
+        {
             continue;
+        }
         rocketnet_platform_socket_send_packet( server_socket, &client_address, &datagrams[i].bytes[0], (int) datagrams[i].bytes.size() );
         windows_socket_errors_prefilter_classify( &datagrams[i], &expect );
         sent_from_server++;
@@ -793,7 +811,9 @@ static void windows_per_packet_receive_counts_empty_datagram( bool ipv6 )
     {
         first = rocketnet_platform_socket_receive_packet( socket, &from, packet, (int) sizeof( packet ) );
         if ( first == 0 )
+        {
             rocketnet_platform_sleep( 0.001 );
+        }
     }
     const uint64_t empties = rocketnet_platform_receive_empties() - empties_before;
     const int second = rocketnet_platform_socket_receive_packet( socket, &from, packet, (int) sizeof( packet ) );

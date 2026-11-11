@@ -50,7 +50,9 @@
 static void rocketnet_fuzz_require( bool condition, const char * property )
 {
     if ( condition )
+    {
         return;
+    }
     fprintf( stderr, "fuzz oracle failed: %s\n", property );
     abort();
 }
@@ -72,7 +74,9 @@ static const int fuzz_xdp_served[3] = { ROCKETNET_ADDRESS_IPV4, ROCKETNET_ADDRES
 static int fuzz_xdp_run( const uint8_t * data, size_t size )
 {
     if ( size < 1 || size - 1 > (size_t) ROCKETNET_XDP_FRAME_SIZE )
+    {
         return FUZZ_XDP_IGNORED;
+    }
 
     const int address_type = fuzz_xdp_served[data[0] % 3];
     const uint8_t * f = data + 1;
@@ -159,11 +163,17 @@ static int fuzz_xdp_run( const uint8_t * data, size_t size )
     rocketnet_fuzz_require( ( drops.not_ip == 1 ) == !names_ip, "not_ip counts exactly the frames that name no IP ethertype" );
 
     if ( drops.not_ip )
+    {
         return FUZZ_XDP_NOT_IP;
+    }
     if ( drops.ipv6_extension )
+    {
         return FUZZ_XDP_IPV6_EXTENSION;
+    }
     if ( drops.other_family )
+    {
         return FUZZ_XDP_OTHER_FAMILY;
+    }
     return FUZZ_XDP_MALFORMED;
 }
 
@@ -273,7 +283,9 @@ static int fuzz_xdp_seed_build( const fuzz_xdp_seed_t * seed, uint8_t * out )
 
     int bytes = rocketnet_xdp_frame_build( f, (size_t) capacity, fuzz_server_mac, fuzz_gateway_mac, &source, &destination, seed->payload_bytes );
     if ( bytes <= 0 )
+    {
         return 0;
+    }
 
     const int udp_length = ROCKETNET_UDP_HEADER_BYTES + seed->payload_bytes;
     switch ( seed->change )

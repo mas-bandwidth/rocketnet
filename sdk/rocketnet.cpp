@@ -73,7 +73,9 @@ void rocketnet_log_level( enum rocketnet_log_level_t level )
     memcpy( &value, &level, sizeof( value ) );
 
     if ( value < ROCKETNET_LOG_LEVEL_NONE || value > ROCKETNET_LOG_LEVEL_SPAM )
+    {
         return;
+    }
 
     log_level.store( value, std::memory_order_relaxed );
 }
@@ -244,10 +246,14 @@ ROCKETNET_PRINTF_FORMAT( 2, 0 )
 static void rocketnet_log_v( int level, const char * format, va_list args )
 {
     if ( log_quiet.load( std::memory_order_relaxed ) )
+    {
         return;
+    }
     if ( level != ROCKETNET_LOG_LEVEL_NONE &&
          level > log_level.load( std::memory_order_relaxed ) )
+    {
         return;
+    }
 
     char buffer[1024];
     int n = vsnprintf( buffer, sizeof( buffer ), format, args );
@@ -261,15 +267,21 @@ static void rocketnet_log_v( int level, const char * format, va_list args )
     rocketnet_platform_spin_unlock_u64( &rocketnet_log_sink_lock );
 
     if ( cb )
+    {
         cb( ctx, (enum rocketnet_log_level_t) level, buffer, length );
+    }
     else
+    {
         default_log_callback( NULL, (enum rocketnet_log_level_t) level, buffer, length );
+    }
 }
 
 void rocketnet_printf( int level, const char * format, ... )
 {
     if ( !rocketnet_api_null_guard( format ) )
+    {
         return;
+    }
 
     va_list args;
     va_start( args, format );
@@ -282,7 +294,9 @@ void rocketnet_printf( int level, const char * format, ... )
 void rocketnet_info( const char * format, ... )
 {
     if ( !rocketnet_api_null_guard( format ) )
+    {
         return;
+    }
 
     va_list args;
     va_start( args, format );
@@ -295,7 +309,9 @@ void rocketnet_info( const char * format, ... )
 void rocketnet_warn( const char * format, ... )
 {
     if ( !rocketnet_api_null_guard( format ) )
+    {
         return;
+    }
 
     va_list args;
     va_start( args, format );
@@ -308,7 +324,9 @@ void rocketnet_warn( const char * format, ... )
 void rocketnet_error( const char * format, ... )
 {
     if ( !rocketnet_api_null_guard( format ) )
+    {
         return;
+    }
 
     va_list args;
     va_start( args, format );
@@ -321,7 +339,9 @@ void rocketnet_error( const char * format, ... )
 void rocketnet_debug( const char * format, ... )
 {
     if ( !rocketnet_api_null_guard( format ) )
+    {
         return;
+    }
 
     va_list args;
     va_start( args, format );
@@ -334,7 +354,9 @@ void rocketnet_debug( const char * format, ... )
 void rocketnet_spam( const char * format, ... )
 {
     if ( !rocketnet_api_null_guard( format ) )
+    {
         return;
+    }
 
     va_list args;
     va_start( args, format );
@@ -482,7 +504,9 @@ static void rn_allocator_call_step( int step )
 {
     void ( *hook )( int step ) = rocketnet_allocator_call_hook.load( std::memory_order_relaxed );
     if ( hook )
+    {
         hook( step );
+    }
 }
 #endif // #if ROCKETNET_DEV
 
@@ -491,7 +515,9 @@ static void rn_allocator_call_step( int step )
 static int rn_allocator_install_locked( void * ( *malloc_function )( void * context, size_t bytes ), void ( *free_function )( void * context, void * p ) )
 {
     if ( ( malloc_function == NULL ) != ( free_function == NULL ) )
+    {
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
+    }
 
     if ( !malloc_function )
     {
@@ -500,10 +526,14 @@ static int rn_allocator_install_locked( void * ( *malloc_function )( void * cont
     }
 
     if ( rocketnet_initialized || rocketnet_transitioning )
+    {
         return ROCKETNET_STATUS_ALREADY_INITIALIZED;
+    }
     const rocketnet_allocator_pair_t * installed = rocketnet_allocator_pair.load( std::memory_order_seq_cst );
     if ( malloc_function == installed->allocate && free_function == installed->release )
+    {
         return ROCKETNET_STATUS_OK;
+    }
 
     // proofs/tla/RNAllocatorInstall.tla InstallBegin, InstallCheck and
     // InstallPublish: the door closes, the count is read, then the pair goes
@@ -521,7 +551,9 @@ static int rn_allocator_install_locked( void * ( *malloc_function )( void * cont
 
 #if ROCKETNET_DEV
     if ( rocketnet_allocator_install_hook )
+    {
         rocketnet_allocator_install_hook();
+    }
 #endif // #if ROCKETNET_DEV
 
     rocketnet_allocator_pair_t * next = &rocketnet_allocator_pairs[installed == &rocketnet_allocator_pairs[0] ? 1 : 0];
@@ -539,7 +571,9 @@ static bool rn_allocator_installed_locked( void * ( *malloc_function )( void * c
 {
     const rocketnet_allocator_pair_t * installed = rocketnet_allocator_pair.load( std::memory_order_seq_cst );
     if ( !malloc_function && !free_function )
+    {
         return installed->allocate == rocketnet_default_malloc_function && installed->release == rocketnet_default_free_function;
+    }
 
     return malloc_function == installed->allocate && free_function == installed->release;
 }
@@ -579,7 +613,9 @@ void * rocketnet_malloc( void * context, size_t bytes )
     const size_t alignment = ROCKETNET_ALLOCATION_ALIGNMENT;
     const size_t overhead = (size_t) rocketnet_allocation_overhead();
     if ( bytes > SIZE_MAX - overhead )
+    {
         return NULL;
+    }
 
     // counted first, so install and term see the call in flight, then the
     // pair read and copied whole, with no lock; an install in progress is
@@ -628,7 +664,9 @@ void rocketnet_free( void * context, void * p )
     (void) context;
 
     if ( !p )
+    {
         return;
+    }
 
     const rocketnet_allocation_header_t allocation = *(rocketnet_allocation_header_t *) ( (uint8_t *) p - sizeof( rocketnet_allocation_header_t ) );
 
@@ -648,9 +686,13 @@ double rocketnet_time()
 double rocketnet_sleep_clamp( double seconds )
 {
     if ( !( seconds > 0.0 ) )
+    {
         return 0.0;
+    }
     if ( seconds > ROCKETNET_SLEEP_MAX_SECONDS )
+    {
         return ROCKETNET_SLEEP_MAX_SECONDS;
+    }
 
     return seconds;
 }
@@ -707,7 +749,9 @@ uint64_t rocketnet_random_uint64()
 void rocketnet_random_bytes( uint8_t * data, size_t bytes )
 {
     if ( !rocketnet_api_null_guard( data ) )
+    {
         return;
+    }
 
     randombytes_buf( data, bytes );
 }
@@ -734,9 +778,13 @@ static int rocketnet_crypto_holders = 0;
 static bool rocketnet_crypto_open_locked()
 {
     if ( rocketnet_crypto_open )
+    {
         return true;
+    }
     if ( sodium_init() < 0 )
+    {
         return false;
+    }
     randombytes_stir();
     rocketnet_crypto_open = true;
     return true;
@@ -756,7 +804,9 @@ bool rocketnet_crypto_acquire()
     rocketnet_crypto_changed.wait( lock, []()
                                    { return !rocketnet_crypto_closing; } );
     if ( !rocketnet_crypto_open_locked() )
+    {
         return false;
+    }
     rocketnet_crypto_holders++;
     return true;
 }
@@ -767,7 +817,9 @@ void rocketnet_crypto_release()
     std::lock_guard<std::mutex> lock( rocketnet_crypto_mutex );
     rocketnet_crypto_holders--;
     if ( rocketnet_crypto_holders == 0 )
+    {
         rocketnet_crypto_changed.notify_all();
+    }
 }
 
 // proofs/tla/RNCryptoSource.tla Term: the bundled sodium keeps /dev/urandom
@@ -793,11 +845,17 @@ static void rocketnet_crypto_close()
 size_t rocketnet_copy_string( char * dest, const char * source, size_t dest_size )
 {
     if ( !rocketnet_api_null_guard( dest ) )
+    {
         return 0;
+    }
     if ( !rocketnet_api_null_guard( source ) )
+    {
         return 0;
+    }
     if ( dest_size == 0 )
+    {
         return 0;
+    }
 
     memset( dest, 0, dest_size );
 
@@ -805,7 +863,9 @@ size_t rocketnet_copy_string( char * dest, const char * source, size_t dest_size
     for ( ; i < dest_size - 1; i++ )
     {
         if ( source[i] == '\0' )
+        {
             break;
+        }
 
         dest[i] = source[i];
     }
@@ -869,15 +929,21 @@ bool rocketnet_init_ex( void * context, void * ( *malloc_function )( void * cont
 
         refused = rn_allocator_install_locked( malloc_function, free_function );
         if ( refused == ROCKETNET_STATUS_OK )
+        {
             rocketnet_transitioning = true;
+        }
         else if ( refused == ROCKETNET_STATUS_ALREADY_INITIALIZED )
+        {
             other_allocator = !rn_allocator_installed_locked( malloc_function, free_function );
+        }
     }
 
     if ( refused != ROCKETNET_STATUS_OK )
     {
         if ( status )
+        {
             *status = refused;
+        }
 
         if ( refused == ROCKETNET_STATUS_ALREADY_INITIALIZED && other_allocator )
         {
@@ -888,7 +954,9 @@ bool rocketnet_init_ex( void * context, void * ( *malloc_function )( void * cont
             rocketnet_api_misuse_record();
         }
         else if ( refused == ROCKETNET_STATUS_ALREADY_INITIALIZED )
+        {
             rocketnet_error( "rocketnet_init: rocketnet is already initialized" );
+        }
         else if ( refused == ROCKETNET_STATUS_INVALID_ARGUMENT )
         {
             rocketnet_error( "rocketnet_init: pass both allocator functions, or NULL for both" );
@@ -914,14 +982,18 @@ bool rocketnet_init_ex( void * context, void * ( *malloc_function )( void * cont
     // the key generators that need no init
 #if defined( ROCKETNET_BUNDLED_SODIUM )
     if ( platform_ready )
+    {
         (void) sodium_set_misuse_handler( rocketnet_sodium_misuse );
+    }
 #endif // #if defined( ROCKETNET_BUNDLED_SODIUM )
 
     const bool sodium_ready = platform_ready && rocketnet_crypto_open_source();
     if ( !sodium_ready )
     {
         if ( platform_ready )
+        {
             rocketnet_platform_term();
+        }
 
         {
             rn_lifecycle_lock_t lock;
@@ -930,7 +1002,9 @@ bool rocketnet_init_ex( void * context, void * ( *malloc_function )( void * cont
         }
 
         if ( status )
+        {
             *status = platform_ready ? ROCKETNET_STATUS_CRYPTO_INIT_FAILED : ROCKETNET_STATUS_PLATFORM_INIT_FAILED;
+        }
 
         rocketnet_error( platform_ready ? "failed to initialize sodium" : "failed to initialize platform" );
         return false;
@@ -940,7 +1014,9 @@ bool rocketnet_init_ex( void * context, void * ( *malloc_function )( void * cont
 
     char log_level_override[ROCKETNET_PLATFORM_GETENV_MAX_BYTES];
     if ( rocketnet_platform_getenv( "ROCKETNET_LOG_LEVEL", log_level_override, sizeof( log_level_override ) ) != 0 )
+    {
         rocketnet_log_level_override_apply( log_level_override );
+    }
 
     rocketnet_info( "rocketnet version is %s", ROCKETNET_VERSION_FULL );
     rocketnet_info( "platform is %s", rocketnet_platform_name( rocketnet_platform_id() ) );
@@ -953,7 +1029,9 @@ bool rocketnet_init_ex( void * context, void * ( *malloc_function )( void * cont
     }
 
     if ( status )
+    {
         *status = ROCKETNET_STATUS_OK;
+    }
 
     return true;
 }
@@ -972,12 +1050,16 @@ int rocketnet_term_ex()
         rn_lifecycle_lock_t lock;
 
         if ( !rocketnet_initialized || rocketnet_transitioning )
+        {
             not_initialized = true;
+        }
         else
         {
             live_allocations = rocketnet_allocations.load( std::memory_order_acquire ) != 0;
             if ( !live_allocations )
+            {
                 rocketnet_transitioning = true;
+            }
         }
     }
 
@@ -1013,7 +1095,9 @@ uint64_t rocketnet_next_packet_lease_id()
     while ( ticket != UINT64_MAX )
     {
         if ( next.compare_exchange_weak( ticket, ticket + 1, std::memory_order_relaxed ) )
+        {
             return ticket;
+        }
     }
 
     return 0;

@@ -265,9 +265,13 @@ static void test_client_forged_cookie_never_displaces_kept_cookie()
     {
         client_trusts_next_request_mac( &client, &time, mac );
         if ( memcmp( mac, fresh_mac, sizeof( mac ) ) == 0 )
+        {
             fresh_mac_sent++;
+        }
         else
+        {
             check( memcmp( mac, server_mac, sizeof( mac ) ) == 0 );
+        }
     }
     check( fresh_mac_sent == 1 );
 }

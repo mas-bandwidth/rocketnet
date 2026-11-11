@@ -79,13 +79,21 @@ inline enum rocketnet_unit_file_register_result_t rocketnet_unit_file_register(
     const char * name, void ( *function )(), const char * expected_fail_card )
 {
     for ( int i = 0; i < registry->count; i++ )
+    {
         if ( strcmp( registry->tests[i].name, name ) == 0 )
+        {
             return ROCKETNET_UNIT_FILE_DUPLICATE;
+        }
+    }
     if ( registry->count == capacity )
+    {
         return ROCKETNET_UNIT_FILE_FULL;
+    }
     if ( registry->count > 0 )
+    {
         memmove( &registry->tests[1], &registry->tests[0],
                  (size_t) registry->count * sizeof( registry->tests[0] ) );
+    }
     registry->tests[0].name = name;
     registry->tests[0].function = function;
     registry->tests[0].expected_fail_card = expected_fail_card;
@@ -183,8 +191,12 @@ inline struct rocketnet_unit_file_test_t * rocketnet_unit_file_find( const char 
 {
     struct rocketnet_unit_file_registry_t * registry = rocketnet_unit_file_registry();
     for ( int i = 0; i < registry->count; i++ )
+    {
         if ( strcmp( registry->tests[i].name, name ) == 0 )
+        {
             return &registry->tests[i];
+        }
+    }
     return NULL;
 }
 
@@ -196,7 +208,9 @@ inline int rocketnet_unit_tests_run_named( const char * name )
 {
     struct rocketnet_unit_file_test_t * test = rocketnet_unit_file_find( name );
     if ( test == NULL )
+    {
         return 2;
+    }
 
     printf( "%s\n", test->name );
     fflush( stdout );

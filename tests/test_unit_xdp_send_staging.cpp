@@ -99,7 +99,9 @@ static bool xdp_stop_scenario( int hard_error, bool buffer_empty, bool handoff_i
 
     bool stopped = rocketnet_server_transport_stopped( server );
     for ( int poll = 0; !stopped && poll < polls; ++poll )
+    {
         stopped = rocketnet_server_transport_stopped( server );
+    }
 
     *stopped_after = stopped;
 
@@ -331,9 +333,13 @@ static void test_xdp_transport_send_claim_counts_each_refusal()
     {
         const int index = rocketnet_xdp_send_claim( num_packets, limit, refused );
         if ( i < limit )
+        {
             rocketnet_unit_check( index == i );
+        }
         else
+        {
             rocketnet_unit_check( index == -1 );
+        }
     }
 
     rocketnet_unit_check( refused.load( std::memory_order_relaxed ) == 5 );
@@ -347,9 +353,13 @@ static void test_xdp_transport_send_claim_counts_each_refusal()
     {
         const int index = rocketnet_xdp_send_claim( num_packets, limit, refused );
         if ( i < limit )
+        {
             rocketnet_unit_check( index == i );
+        }
         else
+        {
             rocketnet_unit_check( index == -1 );
+        }
     }
 
     rocketnet_unit_check( refused.load( std::memory_order_relaxed ) == 5 );

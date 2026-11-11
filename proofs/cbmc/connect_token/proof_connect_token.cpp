@@ -80,7 +80,9 @@ int crypto_box_seal_open( unsigned char * m,
     int ok = nondet_int();
     __CPROVER_assume( ok == 0 || ok == -1 );
     if ( ok != 0 )
+    {
         return -1;
+    }
 
     PROOF_HAVOC( m, ROCKETNET_PRIVATE_BLOCK_BYTES );
 

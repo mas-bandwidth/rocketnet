@@ -10,7 +10,9 @@
 static void reliable_receipt_check( int condition, const char * what, int line )
 {
     if ( condition )
+    {
         return;
+    }
     printf( "reliable receipts failed at line %d: %s\n", line, what );
     fflush( stdout );
     exit( 1 );
@@ -29,7 +31,9 @@ static void reliable_receipt_check( int condition, const char * what, int line )
 static int receipt_receiver_has_whole( int matched, const uint8_t * seen )
 {
     if ( matched < 3 )
+    {
         return seen[matched];
+    }
     return seen[matched] || ( matched > 3 && !seen[matched - 1] );
 }
 
@@ -79,7 +83,9 @@ void reliable_receipts_over_lossy_link()
         // jitter and duplicates, but stop dropping after five simulated seconds.
         // The default ten-second protocol timeout remains unchanged.
         if ( step == 60 * 5 )
+        {
             rocketnet_channel_harness_set_link( &h, 0.02, 0.05, 0.0f, 5.0f );
+        }
 
         check_receipt( rocketnet_channel_harness_pump( &h, 1.0 / 60.0 ) );
 
@@ -89,10 +95,12 @@ void reliable_receipts_over_lossy_link()
             int matched = -1;
 
             for ( int i = 0; i < messages; i++ )
+            {
                 if ( delivery.bytes == lengths[i] && memcmp( delivery.data, to_server[i], (size_t) lengths[i] ) == 0 )
                 {
                     matched = i;
                 }
+            }
 
             check_receipt( matched >= 0 && !server_seen[matched] );
             if ( matched >= 3 )
@@ -109,10 +117,12 @@ void reliable_receipts_over_lossy_link()
             int matched = -1;
 
             for ( int i = 0; i < messages; i++ )
+            {
                 if ( delivery.bytes == lengths[i] && memcmp( delivery.data, to_client[i], (size_t) lengths[i] ) == 0 )
                 {
                     matched = i;
                 }
+            }
 
             check_receipt( matched >= 0 && !client_seen[matched] );
             if ( matched >= 3 )
@@ -132,10 +142,12 @@ void reliable_receipts_over_lossy_link()
             int matched = -1;
 
             for ( int i = 0; i < messages; i++ )
+            {
                 if ( events[j].serial == client_serial[i] )
                 {
                     matched = i;
                 }
+            }
 
             check_receipt( matched >= 0 && !client_receipt[matched] && events[j].status == ROCKETNET_RECEIPT_STATUS_ACKED );
             check_receipt( receipt_receiver_has_whole( matched, server_seen ) );
@@ -149,10 +161,12 @@ void reliable_receipts_over_lossy_link()
             int matched = -1;
 
             for ( int i = 0; i < messages; i++ )
+            {
                 if ( events[j].serial == server_serial[i] )
                 {
                     matched = i;
                 }
+            }
 
             check_receipt( matched >= 0 && !server_receipt[matched] && events[j].status == ROCKETNET_RECEIPT_STATUS_ACKED );
             check_receipt( receipt_receiver_has_whole( matched, client_seen ) );
@@ -167,7 +181,9 @@ void reliable_receipts_over_lossy_link()
         }
 
         if ( complete == messages )
+        {
             break;
+        }
     }
 
     for ( int i = 0; i < messages; i++ )

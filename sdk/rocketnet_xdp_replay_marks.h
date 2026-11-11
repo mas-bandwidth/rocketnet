@@ -70,7 +70,9 @@ static inline void rocketnet_xdp_replay_key_from_address( const struct rocketnet
 static inline uint32_t rocketnet_xdp_replay_entries( int max_clients )
 {
     if ( max_clients < 1 || max_clients > ROCKETNET_MAX_CLIENTS )
+    {
         return 0;
+    }
     return (uint32_t) ( max_clients + 1023 ) / 1024 * 1024;
 }
 
@@ -137,16 +139,24 @@ static inline uint32_t rocketnet_xdp_replay_marks_reset_keeping( struct rocketne
     for ( uint32_t i = 0; i < marks->forget_count; i++ )
     {
         if ( !forget_failed[i] )
+        {
             continue;
+        }
 
         bool superseded = false;
         for ( uint32_t j = 0; j < marks->mark_count && !superseded; j++ )
+        {
             superseded = mark_applied[j] && memcmp( &marks->mark_keys[j], &marks->forgets[i], sizeof( marks->forgets[i] ) ) == 0;
+        }
         if ( superseded )
+        {
             continue;
+        }
 
         if ( kept != i )
+        {
             marks->forgets[kept] = marks->forgets[i];
+        }
 
         kept++;
     }
@@ -157,7 +167,9 @@ static inline uint32_t rocketnet_xdp_replay_marks_reset_keeping( struct rocketne
     for ( uint32_t j = 0; j < marks->mark_count; j++ )
     {
         if ( mark_applied[j] )
+        {
             continue;
+        }
 
         if ( kept_marks != j )
         {
@@ -209,7 +221,9 @@ static inline bool rocketnet_xdp_replay_marks_forget( struct rocketnet_xdp_repla
 
     bool pending = false;
     for ( uint32_t i = 0; i < marks->forget_count && !pending; i++ )
+    {
         pending = memcmp( &marks->forgets[i], &key, sizeof( key ) ) == 0;
+    }
 
     if ( !pending )
     {
@@ -294,7 +308,9 @@ static inline bool rocketnet_xdp_replay_marks_holding_greetings( const struct ro
     for ( uint32_t i = 0; i < marks->kept_mark_count; i++ )
     {
         if ( marks->mark_values[i].high_water == 0 )
+        {
             return true;
+        }
     }
 
     return false;
@@ -310,7 +326,9 @@ static inline bool rocketnet_xdp_replay_marks_holds_greeting( const struct rocke
     for ( uint32_t i = 0; i < marks->kept_mark_count; i++ )
     {
         if ( marks->mark_values[i].high_water == 0 && memcmp( &marks->mark_keys[i], &key, sizeof( key ) ) == 0 )
+        {
             return true;
+        }
     }
 
     return false;

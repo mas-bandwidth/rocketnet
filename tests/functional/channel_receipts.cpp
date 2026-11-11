@@ -10,7 +10,9 @@
 static void receipt_functional_check( int condition, const char * what, int line )
 {
     if ( condition )
+    {
         return;
+    }
     printf( "channel receipts failed at line %d: %s\n", line, what );
     fflush( stdout );
     exit( 1 );
@@ -21,8 +23,12 @@ static void receipt_functional_check( int condition, const char * what, int line
 static int receipt_find_serial( const uint32_t * serials, int count, uint32_t serial )
 {
     for ( int i = 0; i < count; i++ )
+    {
         if ( serials[i] == serial )
+        {
             return i;
+        }
+    }
     return -1;
 }
 
@@ -36,7 +42,9 @@ static void unreliable_receipts_settle_config( rocketnet_channel_harness_t * h )
         if ( client_endpoint->ordered.config_received && server_endpoint->ordered.config_received &&
              client_endpoint->ordered.send.U >= client_endpoint->ordered.send.next &&
              server_endpoint->ordered.send.U >= server_endpoint->ordered.send.next )
+        {
             return;
+        }
         receipt_check( rocketnet_channel_harness_pump( h, 1.0 / 60.0 ) );
     }
 }
@@ -137,7 +145,9 @@ void unreliable_receipts_over_lossy_link()
         }
 
         if ( step >= messages && client_acked + client_lost == messages && server_acked + server_lost == messages )
+        {
             break;
+        }
     }
 
     for ( int i = 0; i < messages; i++ )
@@ -218,10 +228,12 @@ void promoted_receipts_over_lossy_reliable_blocks()
             int matched = -1;
 
             for ( int i = 0; i < 3; i++ )
+            {
                 if ( delivery.bytes == lengths[i] && memcmp( delivery.data, to_server[i], (size_t) lengths[i] ) == 0 )
                 {
                     matched = i;
                 }
+            }
 
             receipt_check( matched >= 0 && !server_seen[matched] );
             server_seen[matched] = 1;
@@ -232,10 +244,12 @@ void promoted_receipts_over_lossy_reliable_blocks()
             int matched = -1;
 
             for ( int i = 0; i < 3; i++ )
+            {
                 if ( delivery.bytes == lengths[i] && memcmp( delivery.data, to_client[i], (size_t) lengths[i] ) == 0 )
                 {
                     matched = i;
                 }
+            }
 
             receipt_check( matched >= 0 && !client_seen[matched] );
             client_seen[matched] = 1;
@@ -262,7 +276,9 @@ void promoted_receipts_over_lossy_reliable_blocks()
 
         if ( client_receipt[0] && client_receipt[1] && client_receipt[2] &&
              server_receipt[0] && server_receipt[1] && server_receipt[2] )
+        {
             break;
+        }
     }
 
     for ( int i = 0; i < 3; i++ )

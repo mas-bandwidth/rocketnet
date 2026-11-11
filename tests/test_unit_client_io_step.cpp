@@ -540,7 +540,9 @@ static int client_io_progress_send( void * instance, const rocketnet_platform_se
     client_io_progress_calls++;
     const int consumed = count < client_io_progress_allow ? count : client_io_progress_allow;
     if ( consumed > 0 )
+    {
         rocketnet_fake_client_send_batch( instance, sends, consumed );
+    }
     return consumed;
 }
 

@@ -89,13 +89,17 @@ template <size_t Capacity> struct rocketnet_packet_leases_t
         // (MCRNPacketLeaseInsertWaitFree.cfg).
 
         if ( !epoch || used.fetch_add( 1, std::memory_order_relaxed ) >= Capacity / 2 )
+        {
             return false;
+        }
 
         // proofs/tla/RNPacketLease.tla ITicket: a ticket, then the probe from the frame's hash.
 
         const uint64_t ticket = rocketnet_next_packet_lease_id();
         if ( !ticket )
+        {
             return false;
+        }
 
         const uint64_t writing = ( epoch << 2 ) | 1;
         size_t slot = hash( context.frame );
@@ -107,7 +111,9 @@ template <size_t Capacity> struct rocketnet_packet_leases_t
 
             uint64_t state = entry.state.load( std::memory_order_acquire );
             if ( ( state >> 2 ) == epoch )
+            {
                 continue;
+            }
 
             // proofs/tla/RNPacketLease.tla ICas: the claim is a compare-and-swap; a lost race
             // continues the probe (MCRNPacketLeaseBrokenNoCas.cfg).
@@ -137,7 +143,9 @@ template <size_t Capacity> struct rocketnet_packet_leases_t
         // proofs/tla/RNPacketLease.tla StartResolve: probe from the supplied frame's hash.
 
         if ( !epoch || !supplied.frame )
+        {
             return false;
+        }
 
         size_t slot = hash( supplied.frame );
         for ( size_t probe = 0; probe < Capacity; ++probe, slot = ( slot + 1 ) & ( Capacity - 1 ) )
@@ -148,7 +156,9 @@ template <size_t Capacity> struct rocketnet_packet_leases_t
 
             uint64_t state = entry.state.load( std::memory_order_acquire );
             if ( ( state >> 2 ) != epoch )
+            {
                 return false;
+            }
 
             // proofs/tla/RNPacketLease.tla RLoad (OnWriting = "skip"): an entry in the writing
             // phase belongs to an insert that has not returned, so it is never the lease a
@@ -159,28 +169,36 @@ template <size_t Capacity> struct rocketnet_packet_leases_t
             // MCRNPacketLeaseBrokenReadWhileWriting.cfg.
 
             if ( ( state & 3 ) == 1 )
+            {
                 continue;
+            }
 
             // proofs/tla/RNPacketLease.tla RCmp: a frame or ticket mismatch continues the
             // probe; any other field mismatch refuses.
 
             if ( entry.frame.load( std::memory_order_relaxed ) != supplied.frame ||
                  entry.packet_id.load( std::memory_order_relaxed ) != supplied.packet_id )
+            {
                 continue;
+            }
 
             const rocketnet_packet_context_t owned = entry.load();
 
             if ( owned.sequence != supplied.sequence ||
                  owned.client_index != supplied.client_index || owned.payload_index != supplied.payload_index ||
                  owned.payload_capacity != supplied.payload_capacity )
+            {
                 return false;
+            }
 
             // proofs/tla/RNPacketLease.tla RCommit: take swaps active to consumed, so a lease is
             // consumed once (MCRNPacketLeaseBrokenConsumeNoCas.cfg); resolve only tests it.
 
             uint64_t active = ( epoch << 2 ) | 2;
             if ( consume ? !entry.state.compare_exchange_strong( active, ( epoch << 2 ) | 3, std::memory_order_acq_rel ) : state != active )
+            {
                 return false;
+            }
 
             trusted = owned;
             backend_id = entry.backend_id;
@@ -219,7 +237,9 @@ template <size_t Capacity> struct rocketnet_packet_leases_t
         // after take refused, which is caller misuse.
 
         if ( !epoch || !supplied.frame || !supplied.packet_id )
+        {
             return false;
+        }
 
         size_t slot = hash( supplied.frame );
         for ( size_t probe = 0; probe < Capacity; ++probe, slot = ( slot + 1 ) & ( Capacity - 1 ) )
@@ -228,10 +248,14 @@ template <size_t Capacity> struct rocketnet_packet_leases_t
             const uint64_t state = entry.state.load( std::memory_order_acquire );
             const uint64_t entry_epoch = state >> 2;
             if ( entry_epoch == 0 )
+            {
                 return false;
+            }
 
             if ( entry_epoch == epoch || ( state & 3 ) != 2 )
+            {
                 continue;
+            }
 
             const rocketnet_packet_context_t owned = entry.load();
             const bool match = owned.frame == supplied.frame && owned.packet_id == supplied.packet_id &&
@@ -239,10 +263,14 @@ template <size_t Capacity> struct rocketnet_packet_leases_t
                                owned.payload_index == supplied.payload_index && owned.payload_capacity == supplied.payload_capacity;
 
             if ( entry.state.fetch_add( 0, std::memory_order_release ) != state )
+            {
                 continue;
+            }
 
             if ( match )
+            {
                 return true;
+            }
         }
 
         return false;

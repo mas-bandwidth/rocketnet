@@ -51,7 +51,9 @@ static const rn_standard_vector_t standard_packet_protection_table[] = {
 static int standard_packet_protection_ad( uint8_t * out, int capacity, uint8_t packet_type )
 {
     if ( capacity < ROCKETNET_AD_WITH_EPHEMERAL_BYTES )
+    {
         return -1;
+    }
 
     const uint8_t * client_ephemeral = ( packet_type == ROCKETNET_CONNECTION_CHALLENGE_PACKET ||
                                          packet_type == ROCKETNET_CONNECTION_RESPONSE_PACKET )
@@ -72,13 +74,17 @@ static int standard_packet_protection_sealed( uint8_t * out, int capacity, uint8
                                                      ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt,
                                                      client_ephemeral, key );
     if ( bytes <= 0 )
+    {
         return -1;
+    }
 
     const int header_bytes = ROCKETNET_PREFILTER_BYTES + ROCKETNET_SEQUENCE_BYTES +
                              ( session_nonce ? ROCKETNET_SESSION_NONCE_BYTES : 0 );
     const int sealed_bytes = bytes - header_bytes;
     if ( sealed_bytes < 0 || capacity < sealed_bytes )
+    {
         return -1;
+    }
     memcpy( out, packet + header_bytes, (size_t) sealed_bytes );
     return sealed_bytes;
 }
@@ -86,19 +92,33 @@ static int standard_packet_protection_sealed( uint8_t * out, int capacity, uint8
 static int standard_packet_protection_tamper( const char * id, uint8_t * out, int capacity )
 {
     if ( standard_packet_protection_ad( out, capacity, ROCKETNET_CONNECTION_CHALLENGE_PACKET ) != ROCKETNET_AD_WITH_EPHEMERAL_BYTES )
+    {
         return -1;
+    }
     if ( strcmp( id, "t9.version-tampered" ) == 0 )
+    {
         out[0] ^= 0x01;
+    }
     else if ( strcmp( id, "t9.protocol-id-tampered" ) == 0 )
+    {
         out[4] ^= 0x01;
+    }
     else if ( strcmp( id, "t9.packet-type-tampered" ) == 0 )
+    {
         out[12] = ROCKETNET_CONNECTION_RESPONSE_PACKET;
+    }
     else if ( strcmp( id, "t9.connection-salt-tampered" ) == 0 )
+    {
         out[13] ^= 0x01;
+    }
     else if ( strcmp( id, "t9.client-ephemeral-tampered" ) == 0 )
+    {
         out[21] ^= 0x01;
+    }
     else
+    {
         return -1;
+    }
 
     return ROCKETNET_AD_WITH_EPHEMERAL_BYTES;
 }
@@ -108,53 +128,81 @@ static int standard_packet_protection_generate( const char * id, uint8_t * out, 
     const uint8_t response_plaintext[ROCKETNET_RESPONSE_PADDING_BYTES] = { 0 };
 
     if ( strcmp( id, "t9.challenge-ad" ) == 0 )
+    {
         return standard_packet_protection_ad( out, capacity, ROCKETNET_CONNECTION_CHALLENGE_PACKET );
+    }
     if ( strcmp( id, "t9.denied-ad" ) == 0 )
+    {
         return standard_packet_protection_ad( out, capacity, ROCKETNET_CONNECTION_DENIED_PACKET );
+    }
     if ( strcmp( id, "t9.response-ad" ) == 0 )
+    {
         return standard_packet_protection_ad( out, capacity, ROCKETNET_CONNECTION_RESPONSE_PACKET );
+    }
     if ( strcmp( id, "t9.keepalive-ad" ) == 0 )
+    {
         return standard_packet_protection_ad( out, capacity, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET );
+    }
     if ( strcmp( id, "t9.payload-ad" ) == 0 )
+    {
         return standard_packet_protection_ad( out, capacity, ROCKETNET_CONNECTION_PAYLOAD_PACKET );
+    }
     if ( strcmp( id, "t9.disconnect-ad" ) == 0 )
+    {
         return standard_packet_protection_ad( out, capacity, ROCKETNET_CONNECTION_DISCONNECT_PACKET );
+    }
     if ( strcmp( id, "t9.ack-ad" ) == 0 )
+    {
         return standard_packet_protection_ad( out, capacity, ROCKETNET_CONNECTION_ACK_PACKET );
+    }
 
     if ( strcmp( id, "t9.challenge-sealed" ) == 0 )
+    {
         return standard_packet_protection_sealed( out, capacity, ROCKETNET_CONNECTION_CHALLENGE_PACKET, 1,
                                                   rocketnet_test_session_nonce, rocketnet_test_server_eph_public,
                                                   ROCKETNET_KEY_BYTES, rocketnet_test_client_eph_public,
                                                   rocketnet_test_handshake_s2c_key );
+    }
     if ( strcmp( id, "t9.denied-sealed" ) == 0 )
+    {
         return standard_packet_protection_sealed( out, capacity, ROCKETNET_CONNECTION_DENIED_PACKET, 2,
                                                   rocketnet_test_session_nonce, NULL, 0, NULL,
                                                   rocketnet_test_handshake_s2c_key );
+    }
     if ( strcmp( id, "t9.response-sealed" ) == 0 )
+    {
         return standard_packet_protection_sealed( out, capacity, ROCKETNET_CONNECTION_RESPONSE_PACKET, 1,
                                                   NULL, response_plaintext, ROCKETNET_RESPONSE_PADDING_BYTES,
                                                   rocketnet_test_client_eph_public, rocketnet_test_handshake_c2s_key );
+    }
     if ( strcmp( id, "t9.keepalive-sealed" ) == 0 )
+    {
         return standard_packet_protection_sealed( out, capacity, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, 1,
                                                   NULL, rocketnet_test_keepalive_plaintext,
                                                   (int) sizeof( rocketnet_test_keepalive_plaintext ), NULL,
                                                   rocketnet_test_session_s2c_key );
+    }
     if ( strcmp( id, "t9.payload-sealed" ) == 0 )
+    {
         return standard_packet_protection_sealed( out, capacity, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 3,
                                                   NULL, rocketnet_test_payload_plaintext,
                                                   (int) sizeof( rocketnet_test_payload_plaintext ), NULL,
                                                   rocketnet_test_session_c2s_key );
+    }
     if ( strcmp( id, "t9.disconnect-sealed" ) == 0 )
+    {
         return standard_packet_protection_sealed( out, capacity, ROCKETNET_CONNECTION_DISCONNECT_PACKET, 4,
                                                   NULL, rocketnet_test_disconnect_plaintext,
                                                   (int) sizeof( rocketnet_test_disconnect_plaintext ), NULL,
                                                   rocketnet_test_session_c2s_key );
+    }
     if ( strcmp( id, "t9.ack-sealed" ) == 0 )
+    {
         return standard_packet_protection_sealed( out, capacity, ROCKETNET_CONNECTION_ACK_PACKET, 5,
                                                   NULL, rocketnet_test_ack_plaintext,
                                                   (int) sizeof( rocketnet_test_ack_plaintext ), NULL,
                                                   rocketnet_test_session_c2s_key );
+    }
 
     return standard_packet_protection_tamper( id, out, capacity );
 }

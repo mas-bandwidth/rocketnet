@@ -46,9 +46,13 @@ static inline enum rocketnet_status_t rn_test_production_token_string( const uin
                                                                                client_id, create_timestamp, expire_timestamp,
                                                                                timeout_seconds, user_data, token, sizeof( token ) );
     if ( status != ROCKETNET_STATUS_OK )
+    {
         return status;
+    }
     if ( !rn_test_token_to_string( token, token_string ) )
+    {
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
+    }
 
     return ROCKETNET_STATUS_OK;
 }

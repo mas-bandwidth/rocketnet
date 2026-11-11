@@ -68,33 +68,49 @@ static int run_windows_child( const char * value )
     PROCESS_INFORMATION process = { 0 };
     const int value_chars = MultiByteToWideChar( CP_ACP, 0, value, -1, NULL, 0 );
     if ( !inherited || value_chars == 0 )
+    {
         goto cleanup;
+    }
     for ( const wchar_t * entry = inherited; *entry; entry += wcslen( entry ) + 1 )
+    {
         count++;
+    }
     entries = (struct child_environment_entry_t *) calloc( (size_t) count + 1, sizeof( *entries ) );
     variable = (wchar_t *) malloc( ( prefix_chars + (size_t) value_chars ) * sizeof( wchar_t ) );
     if ( !entries || !variable )
+    {
         goto cleanup;
+    }
     memcpy( variable, name, prefix_chars * sizeof( wchar_t ) );
     if ( MultiByteToWideChar( CP_ACP, 0, value, -1, variable + prefix_chars, value_chars ) == 0 )
+    {
         goto cleanup;
+    }
 
     // Keep all inherited strings, including any hidden per-drive entries.
     for ( const wchar_t * entry = inherited; *entry; entry += wcslen( entry ) + 1 )
+    {
         if ( wcslen( entry ) < prefix_chars ||
              CompareStringOrdinal( entry, (int) prefix_chars, name, (int) prefix_chars, TRUE ) != CSTR_EQUAL )
+        {
             entries[used++].text = entry;
+        }
+    }
     entries[used++].text = variable;
     for ( int i = 0; i < used; i++ )
     {
         const size_t chars = wcslen( entries[i].text ) + 1;
         if ( chars > SIZE_MAX / sizeof( wchar_t ) - block_chars )
+        {
             goto cleanup;
+        }
         block_chars += chars;
         // A hidden drive entry's second '=' separates its name and value.
         const wchar_t * equals = wcschr( entries[i].text + ( entries[i].text[0] == L'=' ), L'=' );
         if ( !equals )
+        {
             goto cleanup;
+        }
         entries[i].name_chars = (int) ( equals - entries[i].text );
     }
 
@@ -105,13 +121,19 @@ static int run_windows_child( const char * value )
     // The Windows maximum path fits this bound; truncation is a failure.
     module = (wchar_t *) malloc( 32768 * sizeof( wchar_t ) );
     if ( !block || !module )
+    {
         goto cleanup;
+    }
     module_chars = GetModuleFileNameW( NULL, module, 32768 );
     if ( module_chars == 0 || module_chars >= 32768 )
+    {
         goto cleanup;
+    }
     quoted = (wchar_t *) malloc( ( (size_t) module_chars + 3 ) * sizeof( wchar_t ) );
     if ( !quoted )
+    {
         goto cleanup;
+    }
     {
         wchar_t * next = block;
         for ( int i = 0; i < used; i++ )
@@ -133,7 +155,9 @@ static int run_windows_child( const char * value )
         const HANDLE handle = GetStdHandle( standard_ids[i] );
         if ( handle && handle != INVALID_HANDLE_VALUE &&
              !DuplicateHandle( GetCurrentProcess(), handle, GetCurrentProcess(), &handles[i], 0, TRUE, DUPLICATE_SAME_ACCESS ) )
+        {
             goto cleanup;
+        }
     }
     startup.cb = sizeof( startup );
     startup.dwFlags = STARTF_USESTDHANDLES;
@@ -145,24 +169,36 @@ static int run_windows_child( const char * value )
         DWORD exit_code = 1;
         if ( WaitForSingleObject( process.hProcess, INFINITE ) == WAIT_OBJECT_0 &&
              GetExitCodeProcess( process.hProcess, &exit_code ) && exit_code == 0 )
+        {
             result = 0;
+        }
         if ( !CloseHandle( process.hThread ) )
+        {
             result = 1;
+        }
         if ( !CloseHandle( process.hProcess ) )
+        {
             result = 1;
+        }
     }
 
 cleanup:
     for ( int i = 0; i < 3; i++ )
+    {
         if ( handles[i] && !CloseHandle( handles[i] ) )
+        {
             result = 1;
+        }
+    }
     free( entries );
     free( variable );
     free( quoted );
     free( module );
     free( block );
     if ( inherited && !FreeEnvironmentStringsW( inherited ) )
+    {
         result = 1;
+    }
     return result;
 }
 #endif // #if defined( _WIN32 )
@@ -176,14 +212,18 @@ static int rerun_with_max_clients( char * program, const char * value )
     (void) program; // Windows resolves this executable independently of argv[0].
     const int result = run_windows_child( value );
     if ( result != 0 )
+    {
         printf( "FAIL: the run with ROCKETNET_SERVER_MAX_CLIENTS=%s did not exit 0\n", value );
+    }
     return result;
 #else
     static const char name[] = "ROCKETNET_SERVER_MAX_CLIENTS=";
 
     int count = 0;
     while ( child_environ[count] )
+    {
         count++;
+    }
 
     char ** environment = (char **) calloc( (size_t) count + 2, sizeof( char * ) );
     char * variable = (char *) malloc( sizeof( name ) + strlen( value ) );
@@ -199,8 +239,12 @@ static int rerun_with_max_clients( char * program, const char * value )
 
     int used = 0;
     for ( int i = 0; i < count; i++ )
+    {
         if ( strncmp( child_environ[i], name, sizeof( name ) - 1 ) != 0 )
+        {
             environment[used++] = child_environ[i];
+        }
+    }
 
     memcpy( variable, name, sizeof( name ) - 1 );
     memcpy( variable + sizeof( name ) - 1, value, strlen( value ) + 1 );
@@ -215,11 +259,15 @@ static int rerun_with_max_clients( char * program, const char * value )
     {
         int wait_status = 0;
         if ( waitpid( pid, &wait_status, 0 ) == pid && WIFEXITED( wait_status ) && WEXITSTATUS( wait_status ) == 0 )
+        {
             result = 0;
+        }
     }
 
     if ( result != 0 )
+    {
         printf( "FAIL: the run with ROCKETNET_SERVER_MAX_CLIENTS=%s did not exit 0\n", value );
+    }
 
     free( variable );
     free( environment );

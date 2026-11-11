@@ -105,7 +105,9 @@ static void family_fallback_create( family_fallback_case_t * c, uint8_t address_
     config.time_callback = family_fallback_time;
     memcpy( config.packet_filter, rocketnet_test_filter_value, ROCKETNET_FILTER_VALUE_BYTES );
     if ( transport )
+    {
         snprintf( config.transport, sizeof( config.transport ), "%s", transport );
+    }
 
     c->now = family_fallback_start;
     c->status = ROCKETNET_STATUS_OK;
@@ -130,7 +132,9 @@ static void family_fallback_check_sends_only_to( family_fallback_case_t * c, con
 
     rocketnet_unit_check( c->fake->num_sent > 0 );
     for ( int i = 0; i < c->fake->num_sent; i++ )
+    {
         rocketnet_unit_check( rocketnet_address_equal( &c->fake->sent[i].address, server ) );
+    }
 }
 
 static void family_fallback_servers( rocketnet_address_t * ipv4_server, rocketnet_address_t * ipv6_server )
@@ -167,7 +171,9 @@ static void family_fallback_expect_ipv4_after_ipv6_connect_refused( const char *
     rocketnet_unit_check( rocketnet_address_equal( &c.fake->connected_to, &ipv4_server ) );
     rocketnet_unit_check( c.fake->destroy_calls == 1 );
     if ( transport )
+    {
         rocketnet_unit_check( strcmp( rocketnet_client_transport_io_name( c.transport ), transport ) == 0 );
+    }
 
     family_fallback_check_sends_only_to( &c, &ipv4_server );
 
@@ -192,7 +198,9 @@ static void test_client_family_fallback_ipv6_connect_refused_each_pin()
     rocketnet_unit_check( num_available > 0 );
 
     for ( int i = 0; i < num_available; i++ )
+    {
         family_fallback_expect_ipv4_after_ipv6_connect_refused( rocketnet_transport_name( available[i] ) );
+    }
 }
 
 // the IPv6 socket refused at open (a host that makes IPv6 sockets and

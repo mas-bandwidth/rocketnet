@@ -60,7 +60,9 @@ static int standard_config_record_payload( const struct rocketnet_message_config
     struct rocketnet_message_writer_t writer;
     rocketnet_message_writer_begin( &writer, out, capacity );
     if ( !rocketnet_message_writer_add( &writer, &record ) )
+    {
         return -1;
+    }
     return rocketnet_message_writer_finish( &writer );
 }
 
@@ -73,21 +75,37 @@ static int standard_config_record_generate( const char * id, uint8_t * out, int 
     {
     }
     else if ( strcmp( id, "m11.version-mismatch" ) == 0 )
+    {
         body.version = 2;
+    }
     else if ( strcmp( id, "m11.enabled-mismatch" ) == 0 )
+    {
         body.enabled = 1;
+    }
     else if ( strcmp( id, "m11.num-channels-mismatch" ) == 0 )
+    {
         body.num_channels = 16;
+    }
     else if ( strcmp( id, "m11.window-messages-mismatch" ) == 0 )
+    {
         body.reliable_messages_in_flight = 512;
+    }
     else if ( strcmp( id, "m11.receive-ring-bytes-mismatch" ) == 0 )
+    {
         body.receive_message_buffer_bytes = 131072;
+    }
     else if ( strcmp( id, "m11.max-message-bytes-mismatch" ) == 0 )
+    {
         body.max_message_bytes = 131072;
+    }
     else if ( strcmp( id, "m11.fragment-bytes-mismatch" ) == 0 )
+    {
         body.fragment_bytes = 1024;
+    }
     else
+    {
         return -1;
+    }
 
     return standard_config_record_payload( &body, out, capacity );
 }
@@ -125,19 +143,25 @@ static void test_standard_config_record_vectors()
         const int payload_bytes = standard_config_record_generate( standard_config_record_table[i].id, payload, (int) sizeof( payload ) );
         rocketnet_unit_check( payload_bytes == ROCKETNET_MESSAGE_CONFIG_BYTES + 7 );
         if ( payload_bytes != ROCKETNET_MESSAGE_CONFIG_BYTES + 7 )
+        {
             continue;
+        }
 
         struct rocketnet_message_reader_t reader;
         const int reader_violation = rocketnet_message_reader_begin( &reader, payload, payload_bytes, &limits );
         rocketnet_unit_check( reader_violation == ROCKETNET_MESSAGE_VIOLATION_NONE );
         if ( reader_violation != ROCKETNET_MESSAGE_VIOLATION_NONE )
+        {
             continue;
+        }
 
         struct rocketnet_message_record_t record;
         const int has_record = rocketnet_message_reader_next( &reader, &record );
         rocketnet_unit_check( has_record );
         if ( !has_record )
+        {
             continue;
+        }
         rocketnet_unit_check( record.code == ROCKETNET_MESSAGE_CODE_RELIABLE && record.control && record.number == 0 );
         rocketnet_unit_check( record.bytes == ROCKETNET_MESSAGE_CONFIG_BYTES );
 
@@ -145,24 +169,40 @@ static void test_standard_config_record_vectors()
         const int body_violation = rocketnet_message_read_config_body( record.data, record.bytes, &decoded );
         rocketnet_unit_check( body_violation == ROCKETNET_MESSAGE_VIOLATION_NONE );
         if ( body_violation != ROCKETNET_MESSAGE_VIOLATION_NONE )
+        {
             continue;
+        }
 
         struct rocketnet_message_config_body_t expected;
         standard_config_record_default_body( &expected );
         if ( strcmp( standard_config_record_table[i].id, "m11.version-mismatch" ) == 0 )
+        {
             expected.version = 2;
+        }
         else if ( strcmp( standard_config_record_table[i].id, "m11.enabled-mismatch" ) == 0 )
+        {
             expected.enabled = 1;
+        }
         else if ( strcmp( standard_config_record_table[i].id, "m11.num-channels-mismatch" ) == 0 )
+        {
             expected.num_channels = 16;
+        }
         else if ( strcmp( standard_config_record_table[i].id, "m11.window-messages-mismatch" ) == 0 )
+        {
             expected.reliable_messages_in_flight = 512;
+        }
         else if ( strcmp( standard_config_record_table[i].id, "m11.receive-ring-bytes-mismatch" ) == 0 )
+        {
             expected.receive_message_buffer_bytes = 131072;
+        }
         else if ( strcmp( standard_config_record_table[i].id, "m11.max-message-bytes-mismatch" ) == 0 )
+        {
             expected.max_message_bytes = 131072;
+        }
         else if ( strcmp( standard_config_record_table[i].id, "m11.fragment-bytes-mismatch" ) == 0 )
+        {
             expected.fragment_bytes = 1024;
+        }
         rocketnet_unit_check( standard_config_record_body_equal( &decoded, &expected ) );
         rocketnet_unit_check( !rocketnet_message_reader_next( &reader, &record ) );
     }

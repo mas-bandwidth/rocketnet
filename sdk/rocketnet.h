@@ -1929,7 +1929,9 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_connect_token_default_config_
 static inline enum rocketnet_status_t rocketnet_connect_token_default_config( struct rocketnet_connect_token_config_t * config )
 {
     if ( config )
+    {
         config->config_bytes = sizeof( *config );
+    }
 
     return rocketnet_connect_token_default_config_internal( config );
 }
@@ -2034,7 +2036,9 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_default_config_interna
 static inline enum rocketnet_status_t rocketnet_client_default_config( struct rocketnet_client_config_t * config )
 {
     if ( config )
+    {
         config->config_bytes = sizeof( *config );
+    }
 
     return rocketnet_client_default_config_internal( config );
 }
@@ -2066,7 +2070,9 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_light_config_internal(
 static inline enum rocketnet_status_t rocketnet_client_light_config( struct rocketnet_client_config_t * config )
 {
     if ( config )
+    {
         config->config_bytes = sizeof( *config );
+    }
 
     return rocketnet_client_light_config_internal( config );
 }
@@ -2639,7 +2645,9 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_default_config_interna
 static inline enum rocketnet_status_t rocketnet_server_default_config( struct rocketnet_server_config_t * config )
 {
     if ( config )
+    {
         config->config_bytes = sizeof( *config );
+    }
 
     return rocketnet_server_default_config_internal( config );
 }
@@ -2672,7 +2680,9 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_light_config_internal(
 static inline enum rocketnet_status_t rocketnet_server_light_config( struct rocketnet_server_config_t * config )
 {
     if ( config )
+    {
         config->config_bytes = sizeof( *config );
+    }
 
     return rocketnet_server_light_config_internal( config );
 }

@@ -75,11 +75,15 @@ static long rng_lifecycle_fd_count()
 {
     const int bytes = proc_pidinfo( getpid(), PROC_PIDLISTFDS, 0, NULL, 0 );
     if ( bytes <= 0 )
+    {
         return -1;
+    }
 
     void * entries = malloc( (size_t) bytes );
     if ( !entries )
+    {
         return -1;
+    }
 
     const int used = proc_pidinfo( getpid(), PROC_PIDLISTFDS, 0, entries, bytes );
     free( entries );
@@ -192,7 +196,9 @@ void rocketnet_test_bundled_rng_opens_once_under_concurrent_keygen_on_mac()
         bool ok[RNG_CONCURRENT_THREADS];
         std::thread threads[RNG_CONCURRENT_THREADS];
         for ( int i = 0; i < RNG_CONCURRENT_THREADS; i++ )
+        {
             threads[i] = std::thread( rng_concurrent_keygen, &ok[i] );
+        }
         while ( rng_concurrent_waiting.load() < RNG_CONCURRENT_THREADS )
         {
         }
@@ -232,8 +238,9 @@ void rocketnet_test_bundled_rng_opens_once_under_concurrent_keygen_on_mac()
             {
                 uint8_t public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
                 uint8_t secret_key[32];
-                if ( rocketnet_generate_server_keypair( public_key, secret_key ) != ROCKETNET_STATUS_OK )
+                if ( rocketnet_generate_server_keypair( public_key, secret_key ) != ROCKETNET_STATUS_OK ){
                     failures++;
+}
             } } );
     }
 
@@ -252,7 +259,9 @@ void rocketnet_test_bundled_rng_opens_once_under_concurrent_keygen_on_mac()
 
     stop = true;
     for ( int i = 0; i < 4; i++ )
+    {
         minters[i].join();
+    }
     rocketnet_check( failures.load() == 0 );
 
     // with no generator running, the last term left nothing open
@@ -394,7 +403,9 @@ static void rocketnet_test_ack_endpoint_thread( int rounds, struct rocketnet_ack
     struct rocketnet_ack_endpoint_t * endpoint = (struct rocketnet_ack_endpoint_t *)
         rocketnet_malloc( NULL, sizeof( struct rocketnet_ack_endpoint_t ) );
     if ( !endpoint )
+    {
         return;
+    }
     rocketnet_ack_endpoint_reset( endpoint );
 
     uint64_t acked[64];
@@ -496,7 +507,9 @@ void rocketnet_test_platform_spin_lock_acquire_release_under_contention()
     go.store( true, std::memory_order_release );
 
     for ( int i = 0; i < THREADS; i++ )
+    {
         threads[i].join();
+    }
 
     rocketnet_check( guarded == (uint64_t) THREADS * ITERATIONS );
     rocketnet_check( lock == 0 );
@@ -688,7 +701,9 @@ static void rocketnet_platform_primitives_capture( void *, rocketnet_log_level_t
 {
     if ( level == rocketnet_platform_primitives_capture_level && rocketnet_platform_primitives_capture_prefix &&
          strstr( message, rocketnet_platform_primitives_capture_prefix ) )
+    {
         ++rocketnet_platform_primitives_matching_lines;
+    }
 }
 static void rocketnet_platform_primitives_capture_begin( const char * prefix, rocketnet_log_level_t level = ROCKETNET_LOG_LEVEL_ERROR )
 {
@@ -1052,7 +1067,9 @@ static void rocketnet_platform_primitives_priority_note( rocketnet_platform_thre
     }
     record->calls++;
     if ( refused )
+    {
         record->refused++;
+    }
 }
 
 static int rocketnet_platform_primitives_record_set_sched( rocketnet_platform_thread_t * thread, int policy, int priority )

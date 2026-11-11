@@ -136,7 +136,9 @@ static int live_matrix_promoted( int mode, uint32_t length )
 static int live_matrix_complete( int mode, uint32_t length )
 {
     if ( mode == 5 || mode == 0 )
+    {
         return length > ROCKETNET_LIVE_UNRELIABLE_LIMIT;     // promoted to a reliable block
+    }
     return mode == 2 || mode == 3 || mode == 6 || mode == 7;
 }
 
@@ -282,7 +284,9 @@ static int live_matrix_room_admits( struct live_matrix_t * m, int direction, uin
     // would permanently starve the new 1 MiB default's largest messages.
 
     if ( !fits || *free_bytes < (uint64_t) length || *pool_bytes < (uint64_t) length || *free_messages < 1 )
+    {
         return 0;
+    }
 
     const uint64_t reserve = (uint64_t) length > *pool_bytes / 2 ? *pool_bytes - length : *pool_bytes / 2;
     return *free_bytes - length >= reserve;
@@ -300,9 +304,13 @@ static struct live_matrix_receipt_entry_t * live_matrix_receipt_slot( struct liv
     {
         struct live_matrix_receipt_entry_t * e = &d->receipts[index];
         if ( e->serial == serial )
+        {
             return e;
+        }
         if ( e->serial == 0 )
+        {
             return insert ? e : NULL;
+        }
         index = ( index + 1 ) & ( LIVE_MATRIX_RECEIPT_TABLE - 1 );
     }
 
@@ -393,25 +401,37 @@ static int live_matrix_num_probes;
 static int live_matrix_take_probe_copy( struct live_matrix_t * m, int direction, int receive_channel, const uint8_t * data, int bytes )
 {
     if ( bytes < LIVE_MATRIX_TINY || rocketnet_live_sequence( data, bytes ) < LIVE_MATRIX_PROBE_BASE )
+    {
         return 0;
+    }
 
     const uint32_t sequence = rocketnet_live_sequence( data, bytes );
     for ( int i = 0; i < live_matrix_num_probes; i++ )
     {
         struct live_matrix_probe_t * probe = &live_matrix_probes[i];
         if ( probe->direction != direction || probe->sequence != sequence || data[0] != rocketnet_live_tag( direction, probe->mode ) )
+        {
             continue;
+        }
 
         const int want_channel = live_matrix_carries_channel( probe->mode ) ? probe->channel : 0;
         const int result = rocketnet_live_check( &m->live, data, bytes, direction, probe->mode, probe->channel, m->cycle, -1, NULL );
         if ( result != ROCKETNET_LIVE_OK )
+        {
             live_matrix_fail( m, "edge", direction, probe->mode, probe->channel, sequence, rocketnet_live_result_name( result ), bytes );
+        }
         else if ( receive_channel != want_channel )
+        {
             live_matrix_fail( m, "edge", direction, probe->mode, probe->channel, sequence, "receive-channel", bytes );
+        }
         else if ( probe->copies_received >= probe->copies_sent )
+        {
             live_matrix_fail( m, "edge", direction, probe->mode, probe->channel, sequence, "duplicate", bytes );
+        }
         else
+        {
             probe->copies_received++;
+        }
 
         return 1;
     }
@@ -430,7 +450,9 @@ static void live_matrix_arrival( struct live_matrix_t * m, int direction, int re
     // a late copy of an edge probe is the probe's, never the matrix's
 
     if ( live_matrix_take_probe_copy( m, direction, receive_channel, data, bytes ) )
+    {
         return;
+    }
 
     if ( bytes < 1 || ( data[0] & ROCKETNET_LIVE_TAG_MASK ) != ROCKETNET_LIVE_TAG_BASE || ( ( data[0] >> 3 ) & 1 ) != direction )
     {
@@ -554,7 +576,9 @@ static uint32_t live_matrix_start_finish( struct live_matrix_t * m, int directio
     uint8_t * p = direction == 0 ? rocketnet_message_client_start( m->client, channel, mode, (int) length )
                                  : rocketnet_message_server_start( m->server, 0, channel, mode, (int) length );
     if ( !p )
+    {
         return 0;
+    }
 
     const int written = rocketnet_live_generate( &m->live, direction, mode, channel, m->cycle, sequence, p, (int) length );
     if ( written != (int) length )
@@ -587,14 +611,20 @@ static int64_t live_matrix_next_sequence( struct live_matrix_direction_t * d, in
 {
     const struct live_matrix_stream_t * s = &d->streams[mode][channel];
     if ( !s->active )
+    {
         return -1;
+    }
     if ( s->next < s->total )
+    {
         return s->next;
+    }
 
     // section 5: mode 4's closing message follows the channel's last ordered send
 
     if ( mode == 4 && s->next <= s->closing && live_matrix_ordered_done( d, channel ) )
+    {
         return s->closing;
+    }
 
     return -1;
 }
@@ -703,9 +733,15 @@ static void live_matrix_send( struct live_matrix_t * m, int direction )
 static int live_matrix_sends_done( struct live_matrix_direction_t * d )
 {
     for ( int mode = 0; mode < LIVE_MATRIX_MODES; mode++ )
+    {
         for ( int channel = 0; channel < LIVE_MATRIX_CHANNELS; channel++ )
+        {
             if ( live_matrix_next_sequence( d, mode, channel ) >= 0 )
+            {
                 return 0;
+            }
+        }
+    }
 
     return 1;
 }
@@ -723,7 +759,9 @@ static uint64_t live_matrix_owed( struct live_matrix_t * m, int direction, int r
         {
             const struct live_matrix_stream_t * s = &d->streams[mode][channel];
             if ( !s->active )
+            {
                 continue;
+            }
 
             for ( uint32_t q = 0; q < s->next && q < LIVE_MATRIX_MAX_SEQUENCES; q++ )
             {
@@ -745,7 +783,9 @@ static uint64_t live_matrix_owed( struct live_matrix_t * m, int direction, int r
         for ( int length = 1; length < LIVE_MATRIX_TINY; length++ )
         {
             if ( !live_matrix_complete( mode, (uint32_t) length ) || live_matrix_ordered( mode ) )
+            {
                 continue;           // the ordered modes check a tiny message against the sequence due
+            }
 
             if ( d->tiny_received[mode][length] < d->tiny_sent[mode][length] )
             {
@@ -815,9 +855,13 @@ static void live_matrix_connect( struct live_matrix_t * m )
         live_matrix_pump( m );
         live_matrix_flush( m );
         if ( live_matrix_up( m ) )
+        {
             break;
+        }
         if ( rocketnet_message_client_state( m->client ) <= ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
+        {
             break;
+        }
         rocketnet_platform_sleep( LIVE_MATRIX_WAIT_SLEEP );
     }
 
@@ -940,7 +984,9 @@ static uint32_t live_matrix_probe_sequence( struct live_matrix_t * m, int mode, 
     for ( uint32_t q = after; q < after + 32u * 2u * ROCKETNET_LIVE_MAX_BOUNDARIES; q++ )
     {
         if ( ( q + (uint32_t) channel ) % 32u == 0 && rocketnet_live_length( &m->live, mode, channel, q ) == length )
+        {
             return q;
+        }
     }
 
     return 0;
@@ -1002,7 +1048,9 @@ static void live_matrix_probe_verdicts( struct live_matrix_t * m )
     {
         const struct live_matrix_probe_t * probe = &live_matrix_probes[i];
         if ( probe->copies_received > 0 )
+        {
             continue;
+        }
 
         live_matrix_fail( m, "edge", probe->direction, probe->mode, probe->channel, probe->sequence, "never-arrived", (int) probe->length );
         m->failures--;
@@ -1227,7 +1275,9 @@ static void live_matrix_window( struct live_matrix_t * m, double deadline )
         }
 
         if ( m->failures > 0 )
+        {
             break;
+        }
         live_matrix_send( m, 0 );
         live_matrix_send( m, 1 );
         live_matrix_flush( m );
@@ -1236,9 +1286,13 @@ static void live_matrix_window( struct live_matrix_t * m, double deadline )
 
         if ( tail < 0 && live_matrix_sends_done( &live_matrix_directions[0] ) && live_matrix_sends_done( &live_matrix_directions[1] ) &&
              live_matrix_owed( m, 0, 0 ) == 0 && live_matrix_owed( m, 1, 0 ) == 0 )
+        {
             tail = 50;          // a short tail, so a late duplicate is still seen
+        }
         if ( tail > 0 && --tail == 0 )
+        {
             break;
+        }
 
         if ( rocketnet_platform_time() > deadline )
         {
@@ -1258,7 +1312,9 @@ static void live_matrix_window( struct live_matrix_t * m, double deadline )
         for ( int mode = 0; mode < LIVE_MATRIX_MODES; mode++ )
         {
             if ( mode != 0 && mode != 1 && mode != 4 )
+            {
                 continue;
+            }
 
             int64_t sent = 0;
             int64_t received = 0;
@@ -1317,7 +1373,9 @@ static void live_matrix_window( struct live_matrix_t * m, double deadline )
     }
 
     if ( !live_matrix_verbose && m->failures == 0 && m->edge_failures == 0 )
+    {
         return;
+    }
 
     printf( "window %u: %.3f s, %llu iterations, c2s %llu messages %llu bytes, s2c %llu messages %llu bytes, receipts c2s %u acked %u lost, s2c %u acked %u lost, sequenced stale %llu superseded %llu, sends held back for room c2s %llu s2c %llu\n",
             m->cycle, rocketnet_platform_time() - window_start, (unsigned long long) iterations,
@@ -1356,7 +1414,9 @@ static void live_matrix_print_table()
 
     printf( "\n" );
     for ( int direction = 0; direction < LIVE_MATRIX_DIRECTIONS; direction++ )
+    {
         for ( int mode = 0; mode < LIVE_MATRIX_MODES; mode++ )
+        {
             for ( int channel = 0; channel < LIVE_MATRIX_CHANNELS; channel++ )
             {
                 uint32_t any = 0;
@@ -1367,7 +1427,9 @@ static void live_matrix_print_table()
                 }
 
                 if ( !any )
+                {
                     continue;
+                }
                 printf( "%3d %4d %2d", direction, mode, channel );
 
                 for ( int b = 0; b < ROCKETNET_LIVE_NUM_BUCKETS; b++ )
@@ -1379,6 +1441,8 @@ static void live_matrix_print_table()
 
                 printf( "\n" );
             }
+        }
+    }
 }
 
 // ---------------------------------------------------------------
@@ -1531,11 +1595,17 @@ void live_message_matrix_late_probes()
     {
         int waiting = 0;
         for ( int i = 0; i < live_matrix_num_probes; i++ )
+        {
             waiting += live_matrix_probes[i].copies_received == 0;
+        }
         for ( int direction = 0; direction < LIVE_MATRIX_DIRECTIONS; direction++ )
+        {
             waiting += live_matrix_directions[direction].receipts_seen < live_matrix_directions[direction].receipts_expected;
+        }
         if ( waiting == 0 || m->failures != 0 || rocketnet_platform_time() - start >= 5.0 )
+        {
             break;
+        }
 
         live_matrix_flush( m );
         live_matrix_pump( m );
@@ -1547,8 +1617,10 @@ void live_message_matrix_late_probes()
 
     live_matrix_probe_verdicts( m );
     if ( m->failures != 0 || m->edge_failures != 0 )
+    {
         printf( "test_loopback_transport_live_message_matrix_late_probes: failures=%llu edge_failures=%llu probes=%d\n",
                 (unsigned long long) m->failures, (unsigned long long) m->edge_failures, live_matrix_num_probes );
+    }
     live_matrix_check( m->failures == 0 );
     live_matrix_check( m->edge_failures == 0 );
 

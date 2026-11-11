@@ -68,9 +68,13 @@ static void test_ack_loss_threshold_exact_boundary()
         const enum rocketnet_ack_sent_result_t result = rocketnet_ack_endpoint_record_sent_classified(
             endpoint, base + ROCKETNET_SENT_PACKET_BUFFER_SIZE, 100, 0, 0, 1000.2 );
         if ( delta == ROCKETNET_LOSS_PACKET_THRESHOLD )
+        {
             check( result == ROCKETNET_ACK_SENT_EVICTED_LOST );
+        }
         else
+        {
             check( result == ROCKETNET_ACK_SENT_EVICTED_UNKNOWN );
+        }
         rocketnet_free( NULL, endpoint );
     }
 }

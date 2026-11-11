@@ -53,7 +53,9 @@ static void test_allocator_malloc_and_free_take_no_lock()
     }
 
     for ( int i = 0; i < 16; i++ )
+    {
         rocketnet_free( NULL, blocks[i] );
+    }
 
     // a refusal by the installed allocator, and a size past the header overhead
 

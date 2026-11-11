@@ -178,7 +178,9 @@ static bool message_limit_send_and_receive( rocketnet_server_t * server, rocketn
 {
     uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE, payload );
     if ( !out )
+    {
         return false;
+    }
 
     for ( int i = 0; i < payload; i++ )
     {
@@ -186,7 +188,9 @@ static bool message_limit_send_and_receive( rocketnet_server_t * server, rocketn
     }
 
     if ( rocketnet_client_finish_message( client, payload ) == 0 )
+    {
         return false;
+    }
 
     bool received_whole = false;
     for ( int tick = 0; tick < 4000 && !received_whole; tick++ )
@@ -199,12 +203,18 @@ static bool message_limit_send_and_receive( rocketnet_server_t * server, rocketn
             for ( int i = 0; i < batch->num_messages; i++ )
             {
                 if ( batch->bytes[i] != payload )
+                {
                     continue;
+                }
 
                 bool same = true;
                 for ( int j = 0; j < payload; j++ )
+                {
                     if ( batch->data[i][j] != (uint8_t) ( j * 7 ) )
+                    {
                         same = false;
+                    }
+                }
                 if ( same )
                 {
                     received_whole = true;

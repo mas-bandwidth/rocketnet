@@ -163,7 +163,9 @@ static std::vector<uint8_t> xdp_host_frame_bytes( const xdp_host_frame_t & f )
         const uint8_t * destination = f.destination ? f.destination : xdp_host_server_ipv4;
         out.insert( out.end(), destination, destination + 4 );
         for ( int i = 20; i < header_bytes; i++ )
+        {
             out.push_back( 0x00 );      // option bytes: end of options list
+        }
     }
     else
     {
@@ -304,7 +306,9 @@ static void xdp_host_apply_config( const xdp_host_config_t & c )
     struct rocketnet_server_xdp_config_t config;
     memset( &config, 0, sizeof( config ) );
     if ( !c.any_ipv4 )
+    {
         memcpy( &config.public_address, xdp_host_server_ipv4, 4 );      // network order, as stored
+    }
     const uint8_t port_bytes[2] = { (uint8_t) ( c.port >> 8 ), (uint8_t) ( c.port & 0xff ) };
     memcpy( &config.public_port, port_bytes, 2 );                       // network order, as stored
     memcpy( config.packet_filter, xdp_host_filter_value, 4 );
@@ -1075,9 +1079,13 @@ static xdp_host_row_t xdp_host_fragment_row( const char * label, int family, int
 {
     xdp_host_row_t row = xdp_host_row( label, family );
     if ( family == 4 )
+    {
         row.frame.ipv4_frag_off = (uint16_t) ( ( more ? 0x2000 : 0 ) | ( offset_units & 0x1fff ) );
+    }
     else
+    {
         row.frame.ipv6_fragment = ( offset_units << 3 ) | ( more ? 1 : 0 );
+    }
     return row;
 }
 
@@ -1665,11 +1673,17 @@ static void test_xdp_transport_host_type_and_size_sweep_matches_the_standard()
                 int want_verdict = XDP_HOST_DROP;
                 int want_counter;
                 if ( bytes < floor )
+                {
                     want_counter = XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_SMALL );
+                }
                 else if ( bytes > ceiling )
+                {
                     want_counter = XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_LARGE );
+                }
                 else if ( !valid )
+                {
                     want_counter = XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_INVALID_TYPE );
+                }
                 else
                 {
                     want_verdict = XDP_HOST_REDIRECT;
@@ -1731,9 +1745,13 @@ static xdp_host_row_t xdp_host_replay_row( const char * label, int family, uint8
     row.frame.packet_type = type;
     row.frame.sequence = sequence;
     if ( type == ROCKETNET_CONNECTION_REQUEST_PACKET )
+    {
         row.frame.payload_bytes = ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES;
+    }
     else if ( type == ROCKETNET_CONNECTION_RESPONSE_PACKET )
+    {
         row.frame.payload_bytes = ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES;
+    }
     row.replay_entry = true;
     row.replay_high_water = high_water;
     return row;
@@ -1770,8 +1788,10 @@ static void xdp_host_replay_rows( int family, std::vector<xdp_host_row_t> & rows
         { ROCKETNET_CONNECTION_DISCONNECT_PACKET, "disconnect a window behind the high-water" },
     };
     for ( size_t i = 0; i < sizeof( session ) / sizeof( session[0] ); i++ )
+    {
         rows.push_back( xdp_host_expect( xdp_host_replay_row( session[i].label, family, session[i].type, xdp_host_replay_behind( window ), high_water ),
                                          XDP_HOST_DROP, replayed ) );
+    }
 
     // the handshake types are not checked
 

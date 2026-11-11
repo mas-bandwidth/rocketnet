@@ -86,7 +86,9 @@ static void test_server_transport_receive_buffer_request()
     for ( const char * transport : transports )
     {
         for ( const int max_clients : client_counts )
+        {
             check( rocketnet_server_transport_receive_buffer_request( transport, max_clients ) == rocketnet_server_receive_buffer_request( max_clients ) );
+        }
 
         // at 1000 clients: 25,000,000 bytes per socket, not the 1,000,000
         // floor (ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE), in every build
@@ -127,7 +129,9 @@ static void test_server_host_estimate_charges_the_receive_request()
 
                 struct rocketnet_host_memory_estimate_t estimate;
                 if ( !rocketnet_server_transport_host_memory_estimate( &config, transport, &estimate ) )
+                {
                     continue;
+                }
 
                 estimated++;
 

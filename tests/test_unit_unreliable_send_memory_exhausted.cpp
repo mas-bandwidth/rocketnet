@@ -60,7 +60,9 @@ static void run_unreliable_exhaust_case( enum rocketnet_reliability_t probe_reli
 {
     uint8_t seed[32];
     for ( int i = 0; i < 32; i++ )
+    {
         seed[i] = (uint8_t) ( 0x4D ^ i );
+    }
     uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
     uint8_t backend_secret[RN_TEST_BACKEND_SECRET_KEY_BYTES];
     check( rocketnet_generate_backend_keypair_from_seed( seed, backend_public, backend_secret ) == ROCKETNET_STATUS_OK );
@@ -109,7 +111,9 @@ static void run_unreliable_exhaust_case( enum rocketnet_reliability_t probe_reli
         if ( rocketnet_client_state( clients[0] ) == ROCKETNET_CLIENT_STATE_CONNECTED &&
              rocketnet_client_state( clients[1] ) == ROCKETNET_CLIENT_STATE_CONNECTED &&
              rocketnet_server_num_connected_clients( server ) == 2 )
+        {
             break;
+        }
         unreliable_exhaust_frame( server, clients, 2 );
     }
     check( rocketnet_client_state( clients[0] ) == ROCKETNET_CLIENT_STATE_CONNECTED );
@@ -165,7 +169,9 @@ static void run_unreliable_exhaust_case( enum rocketnet_reliability_t probe_reli
     check( !rocketnet_server_can_send_message( server, server_slot, 0, probe_reliability, probe_bytes ) );
 
     for ( int i = 0; i < 2; i++ )
+    {
         rn_test_client_stop_and_destroy( clients[i] );
+    }
     rn_test_server_stop_and_destroy( server );
 }
 

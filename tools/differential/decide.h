@@ -119,7 +119,9 @@ static int differential_handshake( struct rocketnet_server_protocol_t * server,
         rocketnet_server_protocol_update( server, time );
         rocketnet_client_protocol_update( client, time, packet, &packet_bytes );
         if ( client->state <= ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
+        {
             break;
+        }
 
         if ( packet_bytes > 0 )
         {
@@ -128,12 +130,16 @@ static int differential_handshake( struct rocketnet_server_protocol_t * server,
                                                       response, &response_bytes,
                                                       payload, &payload_bytes, &payload_client_index );
             if ( response_bytes > 0 )
+            {
                 rocketnet_client_protocol_process_packet( client, response, response_bytes, time,
                                                           payload, sizeof( payload ), &payload_bytes );
+            }
         }
 
         if ( rocketnet_client_slots_num_connected( server->client_slots ) > connected_before )
+        {
             return 1;
+        }
     }
 
     return 0;
@@ -493,7 +499,9 @@ extern "C" int netcode_log_sink( const char * fmt, ... )
 static void nc_pipe_push( struct nc_pipe_t * pipe, const uint8_t * data, int bytes )
 {
     if ( pipe->count >= NC_PIPE_SLOTS || bytes <= 0 || bytes > NC_PIPE_BYTES )
+    {
         return;
+    }
     memcpy( pipe->packets[pipe->count].data, data, (size_t) bytes );
     pipe->packets[pipe->count].bytes = bytes;
     pipe->count++;
@@ -571,7 +579,9 @@ static struct netcode_server_t * nc_open_server( const char * address, int max_c
 
     server = netcode_server_create( address, &config, 0.0 );
     if ( !server )
+    {
         return NULL;
+    }
     netcode_server_start( server, max_clients );
     if ( !netcode_server_running( server ) )
     {
@@ -597,9 +607,13 @@ static int nc_capture_request( struct netcode_client_t * client, uint8_t * out, 
     g_from_client.count = 0;
     netcode_client_update( client, 0.0 );
     if ( g_from_client.count < 1 )
+    {
         return 0;
+    }
     if ( g_from_client.packets[0].bytes <= 0 || g_from_client.packets[0].bytes > NC_PIPE_BYTES )
+    {
         return 0;
+    }
     memcpy( out, g_from_client.packets[0].data, (size_t) g_from_client.packets[0].bytes );
     *out_bytes = g_from_client.packets[0].bytes;
 
@@ -656,7 +670,9 @@ static void nc_feed( struct netcode_server_t * server, struct netcode_address_t 
     uint8_t copy[NC_PIPE_BYTES];
 
     if ( bytes <= 0 || bytes > NC_PIPE_BYTES )
+    {
         return;
+    }
     memcpy( copy, packet, (size_t) bytes );
     g_netcode_log[0] = 0;
     g_from_server.count = 0;
@@ -684,7 +700,9 @@ static int nc_occupy_one_slot( struct netcode_server_t * server, const uint8_t *
     snprintf( occupant_address, sizeof( occupant_address ), "198.51.100.%d:41000", 20 + ( idx % 180 ) );
     client = nc_open_client( occupant_address );
     if ( !client )
+    {
         return 0;
+    }
 
     if ( !nc_mint( token, NC_SERVER_ADDRESS, 60, 15, 0x0ccULL + (uint64_t) idx,
                    NC_PROTOCOL_ID, private_key ) )
@@ -866,9 +884,13 @@ static const char * verdict( const struct decision_t * rocketnet, const char * n
 {
     int netcode_accept = strncmp( netcode, "accept", 6 ) == 0;
     if ( rocketnet->accept == netcode_accept )
+    {
         return "agree";
+    }
     if ( !netcode_accept && rocketnet->accept )
+    {
         return "rocketnet-weaker";
+    }
     return "rocketnet-stricter";
 }
 
@@ -880,9 +902,13 @@ static const char * verdict( const struct decision_t * rocketnet, const char * n
 static inline int stricter_class_permitted( const char * reason )
 {
     if ( strcmp( reason, "timeout" ) == 0 )
+    {
         return 1;
+    }
     if ( strcmp( reason, "future" ) == 0 )
+    {
         return 1;
+    }
 
     return 0;
 }

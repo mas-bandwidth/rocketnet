@@ -60,7 +60,9 @@ namespace wyj
         inline void skip_ws( const std::string & s, size_t & i )
         {
             while ( i < s.size() && ( s[i] == ' ' || s[i] == '\t' || s[i] == '\n' || s[i] == '\r' ) )
+            {
                 i++;
+            }
         }
 
         inline bool hex_digit( char c, int & v )
@@ -88,7 +90,9 @@ namespace wyj
         bool parse_string( const std::string & s, size_t & i, std::string & out )
         {
             if ( i >= s.size() || s[i] != '"' )
+            {
                 return false;
+            }
             i++;
             out.clear();
             while ( i < s.size() )
@@ -103,7 +107,9 @@ namespace wyj
                 {
                     i++;
                     if ( i >= s.size() )
+                    {
                         return false;
+                    }
                     char e = s[i];
                     switch ( e )
                     {
@@ -143,17 +149,23 @@ namespace wyj
                         {
                             i++;
                             if ( i + 4 > s.size() )
+                            {
                                 return false;
+                            }
                             int value = 0;
                             for ( size_t k = 0; k < 4; k++ )
                             {
                                 int v;
                                 if ( !hex_digit( s[i + k], v ) )
+                                {
                                     return false;
+                                }
                                 value = ( value << 4 ) | v;
                             }
                             if ( value >= 0x80 )
+                            {
                                 return false;
+                            }
                             out += (char) value;
                             i += 4;
                             break;
@@ -164,7 +176,9 @@ namespace wyj
                     continue;
                 }
                 if ( c < 0x20 || c >= 0x80 )
+                {
                     return false;
+                }
                 out += (char) c;
                 i++;
             }
@@ -175,11 +189,17 @@ namespace wyj
         {
             size_t start = i;
             if ( i < s.size() && s[i] == '-' )
+            {
                 i++;
+            }
             if ( i >= s.size() || s[i] < '0' || s[i] > '9' )
+            {
                 return false;
+            }
             while ( i < s.size() && s[i] >= '0' && s[i] <= '9' )
+            {
                 i++;
+            }
             out.type = NODE_INT;
             out.text = s.substr( start, i - start );
             return true;
@@ -188,10 +208,14 @@ namespace wyj
         bool parse_object( const std::string & s, size_t & i, node_t & out, int depth )
         {
             if ( depth + 1 > k_max_depth )
+            {
                 return false;
+            }
             depth++;
             if ( i >= s.size() || s[i] != '{' )
+            {
                 return false;
+            }
             i++;
             node_t o;
             o.type = NODE_OBJ;
@@ -207,22 +231,34 @@ namespace wyj
                 skip_ws( s, i );
                 std::string key;
                 if ( !parse_string( s, i, key ) )
+                {
                     return false;
+                }
                 for ( size_t k = 0; k < o.obj.size(); k++ )
+                {
                     if ( o.obj[k].first == key )
+                    {
                         return false;
+                    }
+                }
                 skip_ws( s, i );
                 if ( i >= s.size() || s[i] != ':' )
+                {
                     return false;
+                }
                 i++;
                 skip_ws( s, i );
                 node_t value;
                 if ( !parse_value( s, i, value, depth ) )
+                {
                     return false;
+                }
                 o.obj.push_back( std::make_pair( key, value ) );
                 skip_ws( s, i );
                 if ( i >= s.size() )
+                {
                     return false;
+                }
                 if ( s[i] == ',' )
                 {
                     i++;
@@ -241,10 +277,14 @@ namespace wyj
         bool parse_array( const std::string & s, size_t & i, node_t & out, int depth )
         {
             if ( depth + 1 > k_max_depth )
+            {
                 return false;
+            }
             depth++;
             if ( i >= s.size() || s[i] != '[' )
+            {
                 return false;
+            }
             i++;
             node_t o;
             o.type = NODE_ARR;
@@ -260,11 +300,15 @@ namespace wyj
                 skip_ws( s, i );
                 node_t value;
                 if ( !parse_value( s, i, value, depth ) )
+                {
                     return false;
+                }
                 o.arr.push_back( value );
                 skip_ws( s, i );
                 if ( i >= s.size() )
+                {
                     return false;
+                }
                 if ( s[i] == ',' )
                 {
                     i++;
@@ -283,23 +327,33 @@ namespace wyj
         bool parse_value( const std::string & s, size_t & i, node_t & out, int depth )
         {
             if ( i >= s.size() )
+            {
                 return false;
+            }
             char c = s[i];
             if ( c == '{' )
+            {
                 return parse_object( s, i, out, depth );
+            }
             if ( c == '[' )
+            {
                 return parse_array( s, i, out, depth );
+            }
             if ( c == '"' )
             {
                 std::string text;
                 if ( !parse_string( s, i, text ) )
+                {
                     return false;
+                }
                 out.type = NODE_STR;
                 out.text = text;
                 return true;
             }
             if ( c == '-' || ( c >= '0' && c <= '9' ) )
+            {
                 return parse_int( s, i, out );
+            }
             if ( s.compare( i, 4, "true" ) == 0 )
             {
                 out.type = NODE_TRUE;
@@ -324,10 +378,16 @@ namespace wyj
         const node_t * find_member( const node_t & o, const std::string & key )
         {
             if ( o.type != NODE_OBJ )
+            {
                 return NULL;
+            }
             for ( size_t k = 0; k < o.obj.size(); k++ )
+            {
                 if ( o.obj[k].first == key )
+                {
                     return &o.obj[k].second;
+                }
+            }
             return NULL;
         }
 
@@ -338,10 +398,14 @@ namespace wyj
         size_t i = 0;
         skip_ws( s, i );
         if ( !parse_value( s, i, root, 0 ) )
+        {
             return false;
+        }
         skip_ws( s, i );
         if ( i != s.size() )
+        {
             return false;
+        }
         return true;
     }
 
@@ -362,12 +426,16 @@ inline bool wycheproof_hex( const std::string & text, std::vector<uint8_t> & out
 {
     out.clear();
     if ( text.size() % 2 != 0 )
+    {
         return false;
+    }
     for ( size_t i = 0; i < text.size(); i += 2 )
     {
         int hi, lo;
         if ( !wyj::hex_digit( text[i], hi ) || !wyj::hex_digit( text[i + 1], lo ) )
+        {
             return false;
+        }
         out.push_back( (uint8_t) ( ( hi << 4 ) | lo ) );
     }
 
@@ -390,7 +458,9 @@ inline bool wycheproof_read_file( const char * file_name, std::string & out )
     size_t bytes = 0;
     const unsigned char * data = rocketnet_test_fixture( path.c_str(), &bytes );
     if ( !data )
+    {
         return false;
+    }
     out.assign( reinterpret_cast<const char *>( data ), bytes );
 
     return true;
@@ -411,8 +481,12 @@ inline void wycheproof_fill_group_map( const wyj::node_t & g, std::map<std::stri
         else if ( v.type == wyj::NODE_OBJ )
         {
             for ( size_t j = 0; j < v.obj.size(); j++ )
+            {
                 if ( v.obj[j].second.type == wyj::NODE_STR )
+                {
                     m[key + "." + v.obj[j].first] = v.obj[j].second.text;
+                }
+            }
         }
     }
 }
@@ -422,9 +496,13 @@ inline bool wycheproof_fill_test( const wyj::node_t & t, wycheproof_test_t & tes
     const wyj::node_t * id = wyj::find_member( t, "tcId" );
     const wyj::node_t * res = wyj::find_member( t, "result" );
     if ( !id || !res )
+    {
         return false;
+    }
     if ( id->type != wyj::NODE_INT || res->type != wyj::NODE_STR )
+    {
         return false;
+    }
     test.tc_id = std::atoi( id->text.c_str() );
     test.result = res->text;
     test.comment.clear();
@@ -437,9 +515,15 @@ inline bool wycheproof_fill_test( const wyj::node_t & t, wycheproof_test_t & tes
     test.flags.clear();
     const wyj::node_t * flags = wyj::find_member( t, "flags" );
     if ( flags && flags->type == wyj::NODE_ARR )
+    {
         for ( size_t i = 0; i < flags->arr.size(); i++ )
+        {
             if ( flags->arr[i].type == wyj::NODE_STR )
+            {
                 test.flags.push_back( flags->arr[i].text );
+            }
+        }
+    }
     test.fields.clear();
 
     for ( size_t i = 0; i < t.obj.size(); i++ )
@@ -447,7 +531,9 @@ inline bool wycheproof_fill_test( const wyj::node_t & t, wycheproof_test_t & tes
         const std::string & key = t.obj[i].first;
         const wyj::node_t & v = t.obj[i].second;
         if ( key == "result" || key == "comment" )
+        {
             continue;
+        }
 
         if ( v.type == wyj::NODE_STR )
         {
@@ -469,17 +555,25 @@ inline bool wycheproof_load( const char * file_name,
 
     std::string text;
     if ( !wycheproof_read_file( file_name, text ) )
+    {
         return false;
+    }
 
     wyj::node_t root;
     if ( !wyj::parse_text( text, root ) )
+    {
         return false;
+    }
     if ( root.type != wyj::NODE_OBJ )
+    {
         return false;
+    }
 
     const wyj::node_t * groups_node = wyj::find_member( root, "testGroups" );
     if ( !groups_node || groups_node->type != wyj::NODE_ARR )
+    {
         return false;
+    }
 
     const size_t num_groups = groups_node->arr.size();
     int total = 0;
@@ -489,22 +583,30 @@ inline bool wycheproof_load( const char * file_name,
     {
         const wyj::node_t & g = groups_node->arr[gi];
         if ( g.type != wyj::NODE_OBJ )
+        {
             return false;
+        }
 
         std::map<std::string, std::string> group_map;
         wycheproof_fill_group_map( g, group_map );
         const wyj::node_t * tg = wyj::find_member( g, "tests" );
         if ( !tg || tg->type != wyj::NODE_ARR )
+        {
             return false;
+        }
         for ( size_t ti = 0; ti < tg->arr.size(); ti++ )
         {
             const wyj::node_t & t = tg->arr[ti];
             if ( t.type != wyj::NODE_OBJ )
+            {
                 return false;
+            }
 
             wycheproof_test_t test;
             if ( !wycheproof_fill_test( t, test ) )
+            {
                 return false;
+            }
             test.group = group_map;
             tests.push_back( test );
             total++;
@@ -515,9 +617,13 @@ inline bool wycheproof_load( const char * file_name,
 
     const wyj::node_t * nt = wyj::find_member( root, "numberOfTests" );
     if ( nt && nt->type == wyj::NODE_INT )
+    {
         *number_of_tests = std::atoi( nt->text.c_str() );
+    }
     else
+    {
         *number_of_tests = (int) tests.size();
+    }
 
     return true;
 }

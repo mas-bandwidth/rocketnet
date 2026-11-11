@@ -10,7 +10,9 @@
 void rn_slots_init( struct rn_slots_t * slots, int max_clients, uint64_t * connection_id, uint8_t * changed )
 {
     if ( !slots )
+    {
         return;
+    }
 
     // an out-of-range count, or no storage for it, is refused as zero slots,
     // never clamped to a working machine of the wrong size
@@ -37,7 +39,9 @@ void rn_slots_init( struct rn_slots_t * slots, int max_clients, uint64_t * conne
 int rn_slots_observe( struct rn_slots_t * slots, int slot, uint64_t connection_id )
 {
     if ( !slots || slot < 0 || slot >= slots->max_clients )
+    {
         return RN_SLOTS_NONE;
+    }
 
     if ( slots->connection_id[slot] == connection_id )
     {
@@ -54,11 +58,15 @@ int rn_slots_observe( struct rn_slots_t * slots, int slot, uint64_t connection_i
 int rn_slots_admit( const struct rn_slots_t * slots, int slot, uint64_t entry_connection_id )
 {
     if ( !slots || slot < 0 || slot >= slots->max_clients )
+    {
         return RN_SLOTS_DISCARD;
+    }
 
     const uint64_t bound = slots->connection_id[slot];
     if ( bound == 0 || entry_connection_id != bound )
+    {
         return RN_SLOTS_DISCARD;
+    }
 
     return RN_SLOTS_APPLY;
 }

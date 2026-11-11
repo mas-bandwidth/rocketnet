@@ -123,7 +123,9 @@ static void rocketnet_fuzz_build_base_token()
     if ( !rocketnet_write_connect_token( &signed_fields, &private_fields,
                                          rocketnet_dev_backend_secret_key,
                                          rocketnet_fuzz_base_token ) )
+    {
         abort();
+    }
 }
 
 // the server-side ladder over one 768-byte buffer, with the oracle switches
@@ -327,7 +329,9 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
     rocketnet_fuzz_connect_coverage = 0;
 
     if ( size < 2 )
+    {
         return 0;
+    }
 
     // byte 0 selects the half; byte 1 selects the client's clock against the
     // token's fixed validity window, covering not-yet-valid, valid and
@@ -524,7 +528,9 @@ static size_t rocketnet_fuzz_connect_build_seed( int kind, uint8_t * output, siz
          kind == ROCKETNET_FUZZ_CONNECT_SEED_CLEAR )
     {
         if ( capacity < 5 )
+        {
             return 0;
+        }
         output[0] = 0;
         output[1] = 0;
 
@@ -547,7 +553,9 @@ static size_t rocketnet_fuzz_connect_build_seed( int kind, uint8_t * output, siz
     }
 
     if ( capacity < 2 + ROCKETNET_CONNECT_TOKEN_BYTES )
+    {
         return 0;
+    }
     output[0] = 1;
     output[1] = 0;
 
@@ -607,12 +615,16 @@ static int rocketnet_fuzz_connect_generate_seed_dir( const char * directory )
     {
         const struct rocketnet_fuzz_connect_seed_spec_t * spec = &rocketnet_fuzz_connect_seed_specs[index];
         if ( have_withheld && strcmp( withheld, spec->name ) == 0 )
+        {
             continue;
+        }
 
         uint8_t data[2 + ROCKETNET_CONNECT_TOKEN_BYTES];
         const size_t size = rocketnet_fuzz_connect_build_seed( spec->kind, data, sizeof( data ) );
         if ( size == 0 )
+        {
             return 0;
+        }
 
         rocketnet_fuzz_connect_coverage = 0;
         LLVMFuzzerTestOneInput( data, size );
@@ -633,23 +645,31 @@ static int rocketnet_fuzz_connect_generate_seed_dir( const char * directory )
     {
         const struct rocketnet_fuzz_connect_seed_spec_t * spec = &rocketnet_fuzz_connect_seed_specs[index];
         if ( have_withheld && strcmp( withheld, spec->name ) == 0 )
+        {
             continue;
+        }
 
         uint8_t data[2 + ROCKETNET_CONNECT_TOKEN_BYTES];
         const size_t size = rocketnet_fuzz_connect_build_seed( spec->kind, data, sizeof( data ) );
         if ( size == 0 )
+        {
             return 0;
+        }
 
         char path[1024];
         snprintf( path, sizeof( path ), "%s/%s", directory, spec->name );
 
         FILE * f = rocketnet_test_fopen( path, "wb" );
         if ( !f )
+        {
             return 0;
+        }
 
         const size_t written = fwrite( data, 1, size, f );
         if ( fclose( f ) != 0 || written != size )
+        {
             return 0;
+        }
     }
 
     return 1;

@@ -168,10 +168,14 @@ static const rn_standard_vector_t standard_handshake_client_table[] = {
 static int standard_handshake_client_generate( const char * id, uint8_t * out, int capacity )
 {
     if ( strcmp( id, "t11.client-transcript" ) != 0 )
+    {
         return -1;
+    }
 
     if ( capacity < 4 * ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES + ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES )
+    {
         return -1;
+    }
 
     struct rocketnet_client_protocol_t client;
     struct rocketnet_counters_t counters;

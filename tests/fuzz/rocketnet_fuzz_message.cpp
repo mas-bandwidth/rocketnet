@@ -119,7 +119,9 @@ static uint64_t rocketnet_fuzz_message_counters[ROCKETNET_FUZZ_MESSAGE_TYPE_COUN
 static int rocketnet_fuzz_message_violation_type( int violation )
 {
     if ( violation < 0 || violation >= ROCKETNET_FUZZ_MESSAGE_TYPE_COUNT )
+    {
         return -1;
+    }
     return violation;
 }
 
@@ -127,7 +129,9 @@ static int rocketnet_fuzz_message_violation_type( int violation )
 static int rocketnet_fuzz_message_code_type( int code )
 {
     if ( code < 0 || code >= ROCKETNET_MESSAGE_NUM_CODES )
+    {
         return -1;
+    }
     return ROCKETNET_FUZZ_MESSAGE_CODE_UNRELIABLE + code;
 }
 
@@ -138,7 +142,9 @@ static void rocketnet_fuzz_message_run( const uint8_t * data, size_t size );
 static void rocketnet_fuzz_require( bool condition, const char * property )
 {
     if ( condition )
+    {
         return;
+    }
     fprintf( stderr, "fuzz oracle failed: %s\n", property );
     abort();
 }
@@ -269,7 +275,9 @@ static void rocketnet_fuzz_message_config( const uint8_t * data, int bytes )
     rocketnet_fuzz_require( violation_type >= 0, "a named violation has a type" );
     rocketnet_fuzz_message_counters[violation_type]++;
     if ( violation != ROCKETNET_MESSAGE_VIOLATION_NONE )
+    {
         return;
+    }
     rocketnet_fuzz_require( bytes == ROCKETNET_MESSAGE_CONFIG_BYTES, "an accepted CONFIG body is 28 bytes" );
 
     if ( body.version == ROCKETNET_MESSAGE_CONFIG_VERSION )
@@ -372,7 +380,9 @@ static int rocketnet_fuzz_message_record( uint8_t * out, int at, uint8_t flags, 
 static int rocketnet_fuzz_message_seed_build( int type, uint8_t * out, int capacity )
 {
     if ( capacity < ROCKETNET_FUZZ_MESSAGE_SEED_MAX )
+    {
         return 0;
+    }
 
     switch ( type )
     {
@@ -535,7 +545,9 @@ static int rocketnet_fuzz_message_seed_build( int type, uint8_t * out, int capac
 static bool rocketnet_fuzz_message_type_withheld( const char * list, const char * name )
 {
     if ( !list || !list[0] )
+    {
         return false;
+    }
 
     const size_t length = strlen( name );
     const char * at = list;
@@ -544,9 +556,13 @@ static bool rocketnet_fuzz_message_type_withheld( const char * list, const char 
         const char * end = strchr( at, ',' );
         const size_t span = end ? (size_t) ( end - at ) : strlen( at );
         if ( span == length && memcmp( at, name, length ) == 0 )
+        {
             return true;
+        }
         if ( !end )
+        {
             break;
+        }
         at = end + 1;
     }
 
@@ -635,7 +651,9 @@ static bool rocketnet_fuzz_message_generate( const char * dir )
 static void rocketnet_fuzz_message_run( const uint8_t * data, size_t size )
 {
     if ( size < 1 || size > 1 << 20 )
+    {
         return;
+    }
 
     const uint8_t * body = data + 1;
     const int body_size = (int) ( size - 1 );

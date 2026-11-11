@@ -98,11 +98,13 @@ static void test_transport_registry()
     const auto * fields = rocketnet_server_transport_config_fields( &field_count );
     bool found_queues = false;
     for ( int i = 0; i < field_count; ++i )
+    {
         if ( strcmp( fields[i].name, "num_xdp_queues" ) == 0 )
         {
             CHECK( fields[i].max_value == ROCKETNET_XDP_MAX_QUEUES );
             found_queues = true;
         }
+    }
     CHECK( found_queues ); // The BPF map must cover every admitted queue index.
     CHECK( ROCKETNET_TRANSPORT_PORTABLE == 0 && ROCKETNET_TRANSPORT_GSO == 1 &&
            ROCKETNET_TRANSPORT_XDP == 2 && ROCKETNET_TRANSPORT_MSGX == 3 && ROCKETNET_TRANSPORT_IOCP == 4 &&
@@ -142,19 +144,27 @@ static void test_transport_registry()
     CHECK( portable_rank == ( ROCKETNET_DEV ? 30 : 50 ) );
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     if ( rocketnet_transport_definition( ROCKETNET_TRANSPORT_IO_URING )->backend )
+    {
         CHECK( count == 5 && servers[0] == ROCKETNET_TRANSPORT_XDP && servers[1] == ROCKETNET_TRANSPORT_GSO &&
                servers[2] == ROCKETNET_TRANSPORT_IO_URING && servers[3] == ROCKETNET_TRANSPORT_PORTABLE && servers[4] == ROCKETNET_TRANSPORT_LOOPBACK );
+    }
     else
+    {
         CHECK( count == 4 && servers[0] == ROCKETNET_TRANSPORT_XDP && servers[1] == ROCKETNET_TRANSPORT_GSO && servers[2] == ROCKETNET_TRANSPORT_PORTABLE && servers[3] == ROCKETNET_TRANSPORT_LOOPBACK );
+    }
 #elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     CHECK( count == 3 && servers[0] == ROCKETNET_TRANSPORT_MSGX && servers[1] == ROCKETNET_TRANSPORT_PORTABLE && servers[2] == ROCKETNET_TRANSPORT_LOOPBACK );
 #elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( ROCKETNET_DEV )
+    {
         CHECK( count == 4 && servers[0] == ROCKETNET_TRANSPORT_PORTABLE && servers[1] == ROCKETNET_TRANSPORT_IOCP &&
                servers[2] == ROCKETNET_TRANSPORT_RIO && servers[3] == ROCKETNET_TRANSPORT_LOOPBACK );
+    }
     else
+    {
         CHECK( count == 4 && servers[0] == ROCKETNET_TRANSPORT_IOCP && servers[1] == ROCKETNET_TRANSPORT_RIO &&
                servers[2] == ROCKETNET_TRANSPORT_PORTABLE && servers[3] == ROCKETNET_TRANSPORT_LOOPBACK );
+    }
 #else
     CHECK( count == 2 && servers[0] == ROCKETNET_TRANSPORT_PORTABLE && servers[1] == ROCKETNET_TRANSPORT_LOOPBACK );
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
@@ -179,16 +189,24 @@ static void test_transport_pin_only()
 {
     CHECK( rocketnet_transport_pin_only( ROCKETNET_TRANSPORT_LOOPBACK ) );
     for ( int i = 0; i < ROCKETNET_NUM_TRANSPORTS; ++i )
+    {
         if ( i != ROCKETNET_TRANSPORT_LOOPBACK )
+        {
             CHECK( !rocketnet_transport_pin_only( i ) );
+        }
+    }
 
     int num;
     const int * servers = rocketnet_server_transport_io_availability( &num );
     struct rocketnet_transport_ladder_t ladder;
     int auto_count = 0;
     for ( int i = 0; i < num; ++i )
+    {
         if ( !rocketnet_transport_pin_only( servers[i] ) )
+        {
             ++auto_count;
+        }
+    }
 
     CHECK( rocketnet_transport_ladder_parse( "auto", servers, num, &ladder ) );
     CHECK( ladder.num_candidates == auto_count );
@@ -199,8 +217,12 @@ static void test_transport_pin_only()
 
     int ai = 0;
     for ( int i = 0; i < num; ++i )
+    {
         if ( !rocketnet_transport_pin_only( servers[i] ) )
+        {
             CHECK( ladder.candidates[ai++] == servers[i] );
+        }
+    }
 
     CHECK( rocketnet_transport_ladder_parse( NULL, servers, num, &ladder ) );
     CHECK( ladder.num_candidates == auto_count );

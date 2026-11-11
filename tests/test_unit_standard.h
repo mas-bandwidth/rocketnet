@@ -50,11 +50,17 @@ typedef int ( *rn_standard_vector_generator_t )( const char * id, uint8_t * out,
 inline int rn_standard_hex_nibble( char c )
 {
     if ( c >= '0' && c <= '9' )
+    {
         return c - '0';
+    }
     if ( c >= 'a' && c <= 'f' )
+    {
         return c - 'a' + 10;
+    }
     if ( c >= 'A' && c <= 'F' )
+    {
         return c - 'A' + 10;
+    }
 
     return -1;
 }
@@ -68,10 +74,14 @@ inline int rn_standard_hex_decode( const char * hex, uint8_t * out, int capacity
     for ( const char * p = hex; *p; p++ )
     {
         if ( *p == ' ' )
+        {
             continue;
+        }
         const int nibble = rn_standard_hex_nibble( *p );
         if ( nibble < 0 )
+        {
             return -1;
+        }
 
         if ( high < 0 )
         {
@@ -80,7 +90,9 @@ inline int rn_standard_hex_decode( const char * hex, uint8_t * out, int capacity
         }
 
         if ( count >= capacity )
+        {
             return -1;
+        }
         out[count++] = (uint8_t) ( ( high << 4 ) | nibble );
         high = -1;
     }
@@ -95,8 +107,12 @@ inline int rn_standard_first_difference( const uint8_t * expected, int expected_
 {
     const int n = expected_bytes < actual_bytes ? expected_bytes : actual_bytes;
     for ( int i = 0; i < n; i++ )
+    {
         if ( expected[i] != actual[i] )
+        {
             return i;
+        }
+    }
     return expected_bytes == actual_bytes ? -1 : n;
 }
 
@@ -111,18 +127,24 @@ inline int rn_standard_vectors_walk( const rn_standard_vector_t * table, int cou
     {
         const int expected_bytes = rn_standard_hex_decode( table[i].hex, expected, RN_STANDARD_VECTOR_MAX_BYTES );
         if ( expected_bytes < 0 )
+        {
             printf( "vector %s: its twin's hex does not decode\n", table[i].id );
+        }
         rocketnet_unit_check( expected_bytes >= 0 );
 
         const int actual_bytes = generator( table[i].id, actual, RN_STANDARD_VECTOR_MAX_BYTES );
         if ( actual_bytes < 0 )
+        {
             printf( "vector %s: no generator for this id\n", table[i].id );
+        }
         rocketnet_unit_check( actual_bytes >= 0 );
 
         const int first = rn_standard_first_difference( expected, expected_bytes, actual, actual_bytes );
         if ( first >= 0 )
+        {
             printf( "vector %s: first difference at byte %d (twin %d bytes, regenerated %d bytes)\n",
                     table[i].id, first, expected_bytes, actual_bytes );
+        }
         rocketnet_unit_check( first < 0 );
     }
 

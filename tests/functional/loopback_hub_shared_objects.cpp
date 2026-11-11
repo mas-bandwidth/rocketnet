@@ -59,7 +59,9 @@ static void loopback_hub_env_pin_clear( loopback_hub_env_pin_t * pin, const char
 #if defined( _WIN32 )
     size_t required = 0;
     if ( getenv_s( &required, pin->saved, sizeof( pin->saved ), name ) == 0 && required > 0 )
+    {
         pin->was_set = true;
+    }
     _putenv_s( name, "" );
 #else // #if defined( _WIN32 )
     const char * value = getenv( name );
@@ -78,9 +80,13 @@ static void loopback_hub_env_pin_restore( const loopback_hub_env_pin_t * pin )
     _putenv_s( pin->name, pin->was_set ? pin->saved : "" );
 #else // #if defined( _WIN32 )
     if ( pin->was_set )
+    {
         setenv( pin->name, pin->saved, 1 );
+    }
     else
+    {
         unsetenv( pin->name );
+    }
 #endif // #if defined( _WIN32 )
 }
 
@@ -91,13 +97,17 @@ static void * loopback_hub_module_open( const char * path )
 #if defined( _WIN32 )
     void * module = (void *) LoadLibraryA( path );
     if ( !module )
+    {
         printf( "LoadLibrary %s: error %lu\n", path, (unsigned long) GetLastError() );
+    }
 #else // #if defined( _WIN32 )
     // RTLD_LOCAL: the module's symbols never join the global scope, so each
     // module resolves the library through its own copy
     void * module = dlopen( path, RTLD_NOW | RTLD_LOCAL );
     if ( !module )
+    {
         printf( "dlopen %s: %s\n", path, dlerror() );
+    }
 #endif // #if defined( _WIN32 )
     return module;
 }
@@ -124,7 +134,9 @@ static void * loopback_hub_module_symbol( void * module, const char * name )
 {
     void * symbol = loopback_hub_module_lookup( module, name );
     if ( !symbol )
+    {
         printf( "missing export %s\n", name );
+    }
     rocketnet_check( symbol != NULL );
     return symbol;
 }

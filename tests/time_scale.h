@@ -61,12 +61,16 @@ static inline int rocketnet_test_case_env_time_scale( double * scale )
 
     char value[64];
     if ( !rocketnet_test_getenv( "ROCKETNET_TEST_CASE_TIME_SCALE", value, sizeof( value ) ) || value[0] == '\0' )
+    {
         return 1;
+    }
 
     char * end = NULL;
     const double parsed = strtod( value, &end );
     if ( end == value || *end != '\0' || !( parsed > 0.0 && parsed <= 1000.0 ) )
+    {
         return 0;
+    }
     *scale = parsed;
 
     return 1;

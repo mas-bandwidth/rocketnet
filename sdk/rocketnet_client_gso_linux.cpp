@@ -232,7 +232,9 @@ static void rocketnet_client_gso_send_chunk( rocketnet_client_gso_t * gso, const
             // the socket cannot take more now: the unsent tail is lost on the wire, counted, never resent (the per-packet path's drop)
 
             for ( int i = sent; i < num_messages; i++ )
+            {
                 gso->packet_send_failures.fetch_add( (uint64_t) gso->message_num_packets[i], std::memory_order_relaxed );
+            }
 
             rocketnet_debug( "gso client sendmmsg failed: %s. %d messages dropped", strerror( error ), num_messages - sent );
             return;
@@ -367,7 +369,9 @@ int rocketnet_client_gso_receive_batch( rocketnet_client_gso_t * gso, rocketnet_
         // kernel's segment count: past the first slot, one is read only while
         // all of it fits, and the rest wait in the socket for the next call
         if ( total > 0 && max_packets - total < ROCKETNET_CLIENT_GSO_RECEIVE_MAX_SEGMENTS )
+        {
             break;
+        }
 
         struct msghdr * header = &gso->receive_message.msg_hdr;
 
@@ -391,15 +395,21 @@ int rocketnet_client_gso_receive_batch( rocketnet_client_gso_t * gso, rocketnet_
         {
             const int error = errno;
             if ( rocketnet_client_gso_receive_weather( error ) && weather++ < ROCKETNET_CLIENT_GSO_RECEIVE_WEATHER_RETRIES )
+            {
                 continue;
+            }
             if ( error != EAGAIN && error != EWOULDBLOCK )
+            {
                 rocketnet_debug( "gso client recvmmsg failed with error %d", error );
+            }
 
             return total;
         }
 
         if ( result == 0 )
+        {
             return total;
+        }
 
         // a zero-length datagram or a source the socket does not speak is not
         // delivered, as the platform's batch receive has it; a stream of them
@@ -409,7 +419,9 @@ int rocketnet_client_gso_receive_batch( rocketnet_client_gso_t * gso, rocketnet_
         if ( message_bytes <= 0 )
         {
             if ( ++skipped >= max_packets )
+            {
                 return total;
+            }
             continue;
         }
 
@@ -420,7 +432,9 @@ int rocketnet_client_gso_receive_batch( rocketnet_client_gso_t * gso, rocketnet_
         if ( header->msg_flags & MSG_TRUNC )
         {
             if ( ++skipped >= max_packets )
+            {
                 return total;
+            }
             continue;
         }
 
@@ -428,7 +442,9 @@ int rocketnet_client_gso_receive_batch( rocketnet_client_gso_t * gso, rocketnet_
         if ( !gso->syscalls->read_address( gso->syscall_context, &gso->receive_name, &source ) )
         {
             if ( ++skipped >= max_packets )
+            {
                 return total;
+            }
             continue;
         }
 
@@ -516,14 +532,18 @@ static void * rocketnet_client_gso_create( void * context, const rocketnet_clien
     bool probe_segment = true;
 #if ROCKETNET_DEV
     if ( rocketnet_client_gso_test_disable_segment.load( std::memory_order_relaxed ) )
+    {
         probe_segment = false;
+    }
 #endif // #if ROCKETNET_DEV
     const bool segment = rocketnet_client_gso_init( &client->gso, &rocketnet_client_gso_kernel_syscalls, client->socket, client->socket->handle, probe_segment );
 
     bool probe_gro = true;
 #if ROCKETNET_DEV
     if ( rocketnet_client_gso_test_disable_gro.load( std::memory_order_relaxed ) )
+    {
         probe_gro = false;
+    }
 #endif // #if ROCKETNET_DEV
     const bool gro = rocketnet_client_gso_init_receive( &client->gso, probe_gro );
     rocketnet_info( "gso client: UDP_SEGMENT %s, UDP_GRO %s", segment ? "yes" : "no (plain sendmmsg)", gro ? "yes" : "no (plain recvmmsg)" );
@@ -549,7 +569,9 @@ static void rocketnet_client_gso_destroy( void * transport )
 {
     rocketnet_client_gso_io_t * client = (rocketnet_client_gso_io_t *) transport;
     if ( !client )
+    {
         return;
+    }
 
     void * context = client->context;
 
@@ -595,7 +617,9 @@ static int rocketnet_client_gso_send_batch_progress( void * transport, const roc
 {
     rocketnet_client_gso_io_t * client = (rocketnet_client_gso_io_t *) transport;
     if ( !client->socket->connected )
+    {
         return rocketnet_platform_socket_send_packets_mmsg_progress( client->socket, sends, num_packets );
+    }
 
     // The connected GSO path retains its existing synchronous contract.
     rocketnet_client_gso_send_batch( &client->gso, sends, num_packets );
@@ -613,7 +637,9 @@ static int rocketnet_client_gso_receive_batch_operation( void * transport, rocke
 {
     rocketnet_client_gso_io_t * client = (rocketnet_client_gso_io_t *) transport;
     if ( client->gso.gro )
+    {
         return rocketnet_client_gso_receive_batch( &client->gso, from, packet_data, packet_stride, packet_bytes, max_packets );
+    }
 
     return rocketnet_platform_socket_receive_packets_mmsg( client->socket, from, packet_data, packet_stride, packet_bytes, max_packets );
 }

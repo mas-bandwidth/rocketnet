@@ -94,11 +94,15 @@ static void * transport_oom_allocate( void * context, size_t bytes )
     transport_oom_allocator_t * state = (transport_oom_allocator_t *) context;
     const int call = ++state->calls;
     if ( state->fail_at == call || call <= state->refuse_through )
+    {
         return NULL;
+    }
 
     void * base = malloc( bytes + 128 );
     if ( !base )
+    {
         return NULL;
+    }
 
     uintptr_t address = ( ( (uintptr_t) base + sizeof( void * ) + 63 ) & ~(uintptr_t) 63 ) + 16;
     memcpy( (void *) ( address - sizeof( void * ) ), &base, sizeof( base ) );
@@ -162,7 +166,9 @@ static bool transport_oom_refuse = false;
 static void * transport_oom_create( void * context, int * status )
 {
     if ( transport_oom_refuse )
+    {
         return NULL;
+    }
 
     transport_oom_instance_t * instance = (transport_oom_instance_t *) rocketnet_malloc( context, sizeof( transport_oom_instance_t ) );
     if ( !instance )

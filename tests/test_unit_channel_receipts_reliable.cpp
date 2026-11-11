@@ -56,7 +56,9 @@ static uint8_t * reliable_link_start( void * context, int, int bytes, rocketnet_
 {
     reliable_receipt_transport_t * t = (reliable_receipt_transport_t *) context;
     if ( bytes > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
+    {
         return NULL;
+    }
     memset( packet, 0, sizeof( *packet ) );
     packet->frame = t->frame;
     packet->payload_index = 16;

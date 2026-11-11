@@ -94,7 +94,9 @@ static bool loopback_transport_pair_setup( struct loopback_transport_pair_t * pa
     pair->server = rocketnet_server_transport_create_sized( NULL, "127.0.0.1:0", &server_config, sizeof( server_config ) );
     check( pair->server != NULL );
     if ( !pair->server )
+    {
         return false;
+    }
 
     char server_address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
     snprintf( server_address, sizeof( server_address ), "127.0.0.1:%d", rocketnet_server_transport_port( pair->server ) );
@@ -136,7 +138,9 @@ static bool loopback_transport_pair_connect( struct loopback_transport_pair_t * 
     {
         if ( rocketnet_client_transport_state( pair->client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
              rocketnet_server_transport_is_client_connected( pair->server, 0 ) )
+        {
             return true;
+        }
         loopback_transport_pair_step( pair, 0.01 );
     }
 
@@ -240,7 +244,9 @@ static void loopback_print_trace( const char * name, const struct loopback_trace
 {
     char print_trace[256];
     if ( !rocketnet_test_getenv( "ROCKETNET_LOOPBACK_PRINT_TRACE", print_trace, sizeof( print_trace ) ) )
+    {
         return;
+    }
     printf( "TRACE %s { %llu, %llu, %llu, %llu, %llu, %llu, %llu, %llu, UINT64_C( 0x%016llx ), UINT64_C( 0x%016llx ), %d }\n", name,
             (unsigned long long) t->client_packets_sent, (unsigned long long) t->client_packets_received,
             (unsigned long long) t->client_bytes_sent, (unsigned long long) t->client_bytes_received,
@@ -486,17 +492,23 @@ static void test_loopback_transport_payload_batch_full_is_counted()
     rocketnet_server_transport_set_payload_batch_capacity_for_test( 0 );
 
     if ( server_count != 2 || client_count != 3 || server_full != 1 )
+    {
         printf( "test_loopback_transport_payload_batch_full_is_counted: server %d payloads, PAYLOAD_BATCH_FULL %llu; client %d payloads\n",
                 server_count, (unsigned long long) server_full, client_count );
+    }
 
     check( server_count == 2 && client_count == 3 );
     check( server_full == 1 );
 
     for ( int i = 0; i < 2 && i < server_count; i++ )
+    {
         check( server_payload_bytes[i] == 1 && server_payloads[i][0] == (uint8_t) ( i + 1 ) );
+    }
 
     for ( int i = 0; i < 3 && i < client_count; i++ )
+    {
         check( client_payload_bytes[i] == 1 && client_payloads[i][0] == (uint8_t) ( i + 1 ) );
+    }
 
     loopback_transport_pair_teardown( &pair );
 }
@@ -556,7 +568,9 @@ static void test_loopback_transport_reliable_ordered_survives_loss_and_reorder()
             {
                 uint8_t * out = rn_message_object_start( client, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 );
                 if ( !out )
+                {
                     break;
+                }
 
                 const uint32_t seq = (uint32_t) sent;
                 memcpy( out, &seq, sizeof( seq ) );
@@ -608,7 +622,9 @@ static void test_loopback_transport_reliable_ordered_survives_loss_and_reorder()
         rocketnet_server_transport_stats( pair.server, &sstats );
         if ( sstats.packets_received == cstats.packets_sent - cstats.packets_sent / 7 &&
              cstats.packets_received == sstats.packets_sent - sstats.packets_sent / 7 )
+        {
             break;
+        }
     }
 
     check( sstats.packets_received == cstats.packets_sent - cstats.packets_sent / 7 );
@@ -635,7 +651,9 @@ static const char * loopback_error_field = NULL;
 static void loopback_error_capture( void *, enum rocketnet_log_level_t level, const char * message, size_t )
 {
     if ( level != ROCKETNET_LOG_LEVEL_ERROR )
+    {
         return;
+    }
     loopback_error_lines++;
     if ( loopback_error_field && strstr( message, loopback_error_field ) )
     {

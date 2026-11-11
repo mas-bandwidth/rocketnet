@@ -168,7 +168,9 @@ static uint64_t ep_counter( const ep_side_t * side, int counter )
 static bool ep_send_next( ep_side_t * from, ep_side_t * to, uint64_t * random )
 {
     if ( from->next_index >= EP_MESSAGES )
+    {
         return false;
+    }
 
     const uint32_t index = from->next_index;
     const uint64_t pick = ep_random( random ) % 10;
@@ -190,7 +192,9 @@ static bool ep_send_next( ep_side_t * from, ep_side_t * to, uint64_t * random )
 
     const uint32_t serial = rn_endpoint_send( &from->endpoint, data, bytes, reliability, ROCKETNET_PRIORITY_MEDIUM, channel, 0 );
     if ( serial == 0 )
+    {
         return false;                                           // the window or the queue is full: try again later
+    }
     check( rn_endpoint_error( &from->endpoint ) == ROCKETNET_DISCONNECT_REASON_NONE );
     from->kind_of[index] = kind;
     from->channel_of[index] = channel;
@@ -216,7 +220,9 @@ static void ep_deliver( ep_side_t * side, ep_side_t * remote, const rn_delivery_
     const int kind = delivery->data[4];
     check( kind == remote->kind_of[index] );
     if ( kind == EP_KIND_ORDERED )
+    {
         check( (int) delivery->channel == remote->channel_of[index] );   // codes 0 and 2 carry no channel on the wire (9.1)
+    }
     for ( int i = 8; i < delivery->bytes; i++ )
     {
         check( delivery->data[i] == (uint8_t) ( index + (uint32_t) i ) );
@@ -255,7 +261,9 @@ static void ep_update( ep_side_t * side, ep_side_t * remote, double now, uint64_
             side->acks.erase( side->acks.begin() + (long) k );
         }
         else
+        {
             k++;
+        }
     }
 
     rn_endpoint_tick( endpoint, now );
@@ -266,18 +274,28 @@ static void ep_update( ep_side_t * side, ep_side_t * remote, double now, uint64_
     {
         int best = -1;
         for ( size_t k = 0; k < side->inbound.size(); k++ )
+        {
             if ( side->inbound[k].arrive <= now && ( best < 0 || side->inbound[k].arrive < side->inbound[(size_t) best].arrive ) )
+            {
                 best = (int) k;
+            }
+        }
         if ( best < 0 )
+        {
             break;
+        }
         side->batch.push_back( side->inbound[(size_t) best] );
         side->inbound.erase( side->inbound.begin() + best );
         const ep_packet_t & packet = side->batch.back();
 
         bool seen = false;
         for ( size_t k = 0; k < side->opened.size(); k++ )
+        {
             if ( side->opened[k] == packet.id )
+            {
                 seen = true;
+            }
+        }
 
         if ( seen )
         {
@@ -291,7 +309,9 @@ static void ep_update( ep_side_t * side, ep_side_t * remote, double now, uint64_
         // P2: the transport acks what it opened, over a lossy path
 
         if ( ep_random( random ) % 100 < 25 )
+        {
             stats->acks_lost++;
+        }
         else
         {
             ep_ack_t ack;
@@ -316,8 +336,12 @@ static void ep_update( ep_side_t * side, ep_side_t * remote, double now, uint64_
     // the application sends a few
 
     for ( int i = 0; i < 3; i++ )
+    {
         if ( !ep_send_next( side, remote, random ) )
+        {
             break;
+        }
+    }
 
     // RNEndpoint WritePacket, PacketFailed: the write pass into frames the
     // stand-in transport supplies, under ids it assigns
@@ -326,7 +350,9 @@ static void ep_update( ep_side_t * side, ep_side_t * remote, double now, uint64_
     {
         const int request = rn_endpoint_next_packet_bytes( endpoint, now );
         if ( request == 0 )
+        {
             break;
+        }
         check( request > 0 && request <= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
 
         ep_packet_t packet;
@@ -334,7 +360,9 @@ static void ep_update( ep_side_t * side, ep_side_t * remote, double now, uint64_
 
         const int bytes = rn_endpoint_write_packet( endpoint, packet.data, (int) sizeof( packet.data ), packet.id, now );
         if ( bytes == 0 )
+        {
             continue;
+        }
         check( bytes > 0 && bytes <= request );
         packet.bytes = bytes;
         ep_hash( &stats->trace, packet.data, (size_t) bytes );
@@ -379,10 +407,16 @@ static bool ep_done( const ep_side_t * side, const ep_side_t * remote )
     // nothing in flight
 
     if ( side->next_index < EP_MESSAGES || remote->next_index < EP_MESSAGES )
+    {
         return false;
+    }
     for ( int k = 0; k < EP_MESSAGES; k++ )
+    {
         if ( remote->kind_of[k] != EP_KIND_UNRELIABLE && side->delivered[k] != 1 )
+        {
             return false;
+        }
+    }
 
     return side->endpoint.ordered.send.U == side->endpoint.ordered.send.next;
 }
@@ -409,7 +443,9 @@ static int ep_back_to_back( ep_side_t * a, ep_side_t * b, uint64_t seed, ep_stat
         ep_update( a, b, now, &random, stats );
         ep_update( b, a, now, &random, stats );
         if ( ep_done( a, b ) && ep_done( b, a ) )
+        {
             break;
+        }
     }
 
     return step;
@@ -429,11 +465,15 @@ static void ep_check_properties( const ep_side_t * side, const ep_side_t * remot
             unreliable_delivered += side->delivered[k];
         }
         else
+        {
             check( side->delivered[k] == 1 );                   // ReliableExactlyOnce
+        }
     }
 
     for ( int c = 0; c < EP_ORDERED_CHANNELS; c++ )
+    {
         check( side->ordered_next[c] == side->ordered_order[c].size() );   // OrderedInOrder, all of them
+    }
     check( unreliable_sent > 0 );
     check( unreliable_delivered > 0 );
     check( unreliable_delivered < unreliable_sent );            // the array lost some
@@ -671,22 +711,32 @@ static void test_endpoint_uncapped_large_sequenced_skips_the_bucket()
     {
         const int request = rn_endpoint_next_packet_bytes( &endpoint, now );
         if ( request == 0 )
+        {
             break;
+        }
         check( request > 0 && request <= (int) sizeof( frame ) );
 
         const int written = rn_endpoint_write_packet( &endpoint, frame, (int) sizeof( frame ), packet_id, now );
         if ( written > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
+        {
             large_written++;
+        }
         else if ( written > 0 )
+        {
             bounded_packets_written++;
+        }
 
         // an oversized code-1 send has been promoted and fragmented across
         // ordinary bounded reliable packets; uncapped budget still charges none
 
         if ( written > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
+        {
             rn_endpoint_packet_sent( &endpoint, packet_id, written + 64, now );
+        }
         else if ( written > 0 )
+        {
             rn_endpoint_packet_sent( &endpoint, packet_id, rocketnet_send_budget_wire_bytes( ROCKETNET_ACK_BLOCK_MIN_BYTES, written ), now );
+        }
         packet_id++;
     }
 
@@ -972,7 +1022,9 @@ static void test_endpoint_stalled_window_requests_no_frame()
     {
         const int bytes = rn_endpoint_write_packet( &endpoint, frame, sizeof( frame ), packet_id, 1000.0 );
         if ( bytes > 0 )
+        {
             rn_endpoint_packet_sent( &endpoint, packet_id++, rocketnet_send_budget_wire_bytes( ROCKETNET_ACK_BLOCK_MIN_BYTES, bytes ), 1000.0 );
+        }
     }
 
     check( endpoint.ordered.send.stalled );
@@ -989,7 +1041,9 @@ static void test_endpoint_stalled_window_requests_no_frame()
 
     check( endpoint.ordered.send.stalled == 1 );
     for ( uint64_t id = 1; id < packet_id; id++ )
+    {
         rn_endpoint_on_acked( &endpoint, id, 1000.002 );
+    }
     check( endpoint.ordered.send.U_prime == (uint64_t) config.reliable_messages_in_flight );
     check( endpoint.ordered.send.stalled == 0 );
 
@@ -1037,7 +1091,9 @@ static void test_endpoint_ended_pass_stays_ended_until_the_next_flush()
     const int spent = rn_endpoint_write_packet( &endpoint, frame, sizeof( frame ), 1, 1000.0 );
     check( spent > 0 );
     if ( spent > 0 )
+    {
         rn_endpoint_packet_sent( &endpoint, 1, rocketnet_send_budget_wire_bytes( ROCKETNET_ACK_BLOCK_MIN_BYTES, spent ), 1000.0 );
+    }
     check( rn_endpoint_next_packet_bytes( &endpoint, 1000.0 ) == 0 );
 
     uint8_t * reliable = rn_endpoint_start( &endpoint, 0, ROCKETNET_RELIABILITY_RELIABLE, 1000, endpoint_config.max_payload_bytes );
@@ -1090,12 +1146,16 @@ static int ep_count_records( const uint8_t * payload, int bytes, const rocketnet
 
     rocketnet_message_reader_t reader;
     if ( rocketnet_message_reader_begin( &reader, payload, bytes, &limits ) != ROCKETNET_MESSAGE_VIOLATION_NONE )
+    {
         return -1;
+    }
 
     int records = 0;
     rocketnet_message_record_t record;
     while ( rocketnet_message_reader_next( &reader, &record ) )
+    {
         records++;
+    }
 
     return records;
 }
@@ -1105,7 +1165,9 @@ static uint32_t ep_send_unreliable( rn_endpoint_t * endpoint, int channel, int b
     uint8_t * message = rn_endpoint_start( endpoint, channel, ROCKETNET_RELIABILITY_UNRELIABLE, bytes, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
     check( message != NULL );
     if ( !message )
+    {
         return RN_DESCRIPTOR_NONE;
+    }
 
     memset( message, fill, (size_t) bytes );
     check( rn_endpoint_finish( endpoint, bytes, 0 ) != 0 );
@@ -1161,7 +1223,9 @@ static void test_endpoint_unreliable_tombstone_never_revives_after_ticket_wrap()
     {
         const rn_unreliable_entry_t * entry = &region->unreliable_ring[( endpoint.unreliable_ring_head + i ) % region->unreliable_ring_entries];
         if ( entry->descriptor == c )
+        {
             tombstone_ticket = entry->ticket;
+        }
     }
     check( tombstone_ticket != 0 );
 
@@ -1169,9 +1233,13 @@ static void test_endpoint_unreliable_tombstone_never_revives_after_ticket_wrap()
     // tombstone's ticket: forward to the end of the lap, then one by one
 
     if ( region->schedule_ticket_next < UINT32_MAX - 1 )
+    {
         region->schedule_ticket_next = UINT32_MAX - 1;
+    }
     for ( int i = 0; i < 16 && region->schedule_ticket_next != tombstone_ticket; i++ )
+    {
         rn_region_schedule_ticket( region );
+    }
     check( region->schedule_ticket_next == tombstone_ticket );
 
     // the next send takes the freed descriptor back: it is the tombstone's

@@ -287,7 +287,9 @@ void rocketnet_api_misuse_record( void );
 static inline bool rocketnet_api_null_guard( const void * p )
 {
     if ( p != NULL )
+    {
         return true;
+    }
 
     rocketnet_api_misuse_record();
     rocketnet_assert( p );
@@ -695,7 +697,9 @@ void rocketnet_server_transport_disconnect_client_shutdown( struct rocketnet_ser
 static inline void rocketnet_create_status( int * status, int value )
 {
     if ( status && *status != ROCKETNET_STATUS_OUT_OF_MEMORY )
+    {
         *status = value;
+    }
 }
 
 #if ROCKETNET_DEV

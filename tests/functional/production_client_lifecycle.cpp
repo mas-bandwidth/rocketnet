@@ -59,9 +59,13 @@ public:
     ~production_environment_guard_t()
     {
         if ( present )
+        {
             set( value.c_str() );
+        }
         else
+        {
             clear();
+        }
     }
 
     void set( const char * current )
@@ -97,7 +101,9 @@ int main()
 
     uint8_t seed[32];
     for ( int i = 0; i < 32; ++i )
+    {
         seed[i] = (uint8_t) ( 0xA7 ^ i );
+    }
 
     uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
     uint8_t backend_secret[64];

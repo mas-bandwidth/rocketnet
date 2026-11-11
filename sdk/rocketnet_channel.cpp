@@ -17,7 +17,9 @@
 static void rn_channels_count( rocketnet_counters_t * counters, int counter )
 {
     if ( counters )
+    {
         rocketnet_platform_atomic_add_u64( (volatile uint64_t *) &counters->values[counter], 1 );
+    }
 }
 
 static inline uint32_t rn_u24( uint32_t value )
@@ -48,7 +50,9 @@ bool rn_block_shape_valid( const rn_channels_t * channels, const struct rocketne
 
     if ( count < 2 || count > max_count || count > region->window || index >= count ||
          ( last ? ( record->bytes < 1 || (uint32_t) record->bytes > F ) : (uint32_t) record->bytes != F ) )
+    {
         return false;
+    }
 
     *out_base_units = (int64_t) record->ring - (int64_t) index * ( F / 16 );
 
@@ -77,7 +81,9 @@ static rn_delivery_t * rn_channels_append_delivery( rn_channels_t * channels )
 bool rn_channels_delivery_room( rn_channels_t * channels )
 {
     if ( channels->deliveries < channels->delivery_capacity )
+    {
         return true;
+    }
 
     rn_region_exhaust( channels->region );
 
@@ -87,7 +93,9 @@ bool rn_channels_delivery_room( rn_channels_t * channels )
 static rn_delivery_t * rn_channels_reliable_delivery( rn_channels_t * channels )
 {
     if ( !rn_channels_delivery_room( channels ) )
+    {
         return NULL;
+    }
 
     return rn_channels_append_delivery( channels );
 }
@@ -133,9 +141,13 @@ static uint32_t rn_held_find( const rn_region_t * region, uint64_t key )
     {
         const rn_held_entry_t * entry = &region->held_index[i];
         if ( !entry->used )
+        {
             return RN_DESCRIPTOR_NONE;
+        }
         if ( entry->key == key )
+        {
             return i;
+        }
 
         i = ( i + 1 ) & ( entries - 1 );
     }
@@ -151,7 +163,9 @@ static rn_receive_descriptor_t * rn_held_descriptor( rn_region_t * region, uint3
     const rn_held_entry_t * entry = &region->held_index[held];
     rn_receive_descriptor_t * descriptor = &region->receive_descriptors[entry->number & ( region->window - 1 )];
     if ( !descriptor->live || (uint32_t) descriptor->number != entry->number )
+    {
         return NULL;
+    }
 
     return descriptor;
 }
@@ -162,7 +176,9 @@ static rn_receive_descriptor_t * rn_held_descriptor( rn_region_t * region, uint3
 static bool rn_held_insert( rn_region_t * region, uint64_t key, uint64_t number, uint32_t used )
 {
     if ( region->held_count >= region->window )
+    {
         return false;
+    }
 
     const uint32_t entries = region->held_entries;
     uint32_t i = rn_held_home( key, entries );
@@ -215,7 +231,9 @@ static bool rn_held_erase( rn_region_t * region, uint32_t index )
 
         const bool stays = i <= j ? ( i < home && home <= j ) : ( i < home || home <= j );
         if ( stays )
+        {
             continue;
+        }
 
         region->held_index[i] = region->held_index[j];
         i = j;
@@ -226,7 +244,9 @@ static bool rn_held_erase( rn_region_t * region, uint32_t index )
     region->held_index[i].used = 0;
 
     if ( region->held_count > 0 )
+    {
         region->held_count--;
+    }
 
     return ended;
 }
@@ -244,7 +264,9 @@ rn_receive_descriptor_t * rn_channels_descriptor( rn_channels_t * channels, cons
     if ( descriptor->live )
     {
         if ( rn_u24( (uint32_t) descriptor->number ) != record->number )
+        {
             return NULL;
+        }
     }
     else
     {
@@ -270,12 +292,16 @@ static int rn_channels_dispatch_chunk( rn_channels_t * channels, const struct ro
 bool rn_channels_init( struct rn_channels_t * channels, struct rn_region_t * region, uint32_t num_channels, uint32_t enabled_types )
 {
     if ( !channels )
+    {
         return false;
+    }
 
     memset( channels, 0, sizeof( *channels ) );
 
     if ( !region || num_channels < 1 || num_channels > region->num_channels )
+    {
         return false;
+    }
 
     channels->region = region;
     channels->num_channels = num_channels;
@@ -321,7 +347,9 @@ bool rn_channels_set_payload_capacity( struct rn_channels_t * channels, uint32_t
 
     const uint32_t least = ROCKETNET_MESSAGE_FRAGMENT_BYTES + ROCKETNET_MESSAGE_RECORD_MAX_HEADER_BYTES + 1;
     if ( !channels || payload_capacity < least || payload_capacity > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
+    {
         return false;
+    }
 
     channels->payload_capacity = payload_capacity;
 
@@ -331,7 +359,9 @@ bool rn_channels_set_payload_capacity( struct rn_channels_t * channels, uint32_t
 uint32_t rn_channels_small_limit( const struct rn_channels_t * channels )
 {
     if ( !channels || channels->payload_capacity < ROCKETNET_CHANNEL_ORDERED_HEADER_BYTES + 2 )
+    {
         return 0;
+    }
 
     return channels->payload_capacity - 1 - ROCKETNET_CHANNEL_ORDERED_HEADER_BYTES;
 }
@@ -344,10 +374,14 @@ uint32_t rn_channels_enabled_codes( const struct rn_channels_t * channels )
 int rn_channels_send_allowed( const struct rn_channels_t * channels, int type, uint32_t channel )
 {
     if ( !channels || type < 0 || type >= ROCKETNET_CHANNEL_NUM_TYPES || channel >= channels->num_channels )
+    {
         return ROCKETNET_CHANNEL_SEND_BAD_ARGUMENT;
+    }
 
     if ( ( channels->enabled_types & ( 1u << type ) ) == 0 )
+    {
         return ROCKETNET_CHANNEL_SEND_TYPE_NOT_ENABLED;
+    }
 
     return ROCKETNET_CHANNEL_SEND_OK;
 }
@@ -360,7 +394,9 @@ int rn_channels_send_check( struct rn_channels_t * channels, int type, uint32_t 
     // counted, never queued.
 
     if ( result == ROCKETNET_CHANNEL_SEND_TYPE_NOT_ENABLED )
+    {
         rn_channels_count( channels->region->counters, ROCKETNET_COUNTER_MESSAGE_SEND_TYPE_NOT_ENABLED );
+    }
 
     return result;
 }
@@ -370,7 +406,9 @@ int rn_channels_send_check( struct rn_channels_t * channels, int type, uint32_t 
 uint32_t rn_channels_send_ordered( struct rn_channels_t * channels, uint32_t channel )
 {
     if ( !channels || channel >= channels->num_channels )
+    {
         return 0;
+    }
 
     // RNChannel!Enqueue: ordered_write' = ordered_write + 1, and
     // sequenced_write' = 0 on the same channel. The reset runs although no
@@ -390,14 +428,18 @@ uint32_t rn_channels_send_ordered( struct rn_channels_t * channels, uint32_t cha
 uint32_t rn_channels_send_sequenced( struct rn_channels_t * channels, uint32_t channel, uint32_t * out_ordering )
 {
     if ( !channels || channel >= channels->num_channels )
+    {
         return 0;
+    }
 
     // RNChannel!Enqueue: ordering = ordered_write, sequenced_write' = @ + 1
 
     rn_channel_send_t * send = channels->region->channel_send + channel;
 
     if ( out_ordering )
+    {
         *out_ordering = send->ordered_write;
+    }
 
     const uint32_t sequencing = send->sequenced_write;
     send->sequenced_write = sequencing + 1;
@@ -410,7 +452,9 @@ uint32_t rn_channels_send_sequenced( struct rn_channels_t * channels, uint32_t c
 void rn_channels_deliver_ordered( struct rn_channels_t * channels, uint32_t channel, uint32_t ordering )
 {
     if ( !channels || channel >= channels->num_channels )
+    {
         return;
+    }
 
     // RNChannel!DeliverMessage: ordered_read' = ordering + 1, and sequenced_watermark' = 0. Both steps, one function, one path (7.1).
 
@@ -424,7 +468,9 @@ void rn_channels_deliver_ordered( struct rn_channels_t * channels, uint32_t chan
 bool rn_channels_deliver_sequenced( struct rn_channels_t * channels, uint32_t channel, uint32_t ordering, uint32_t sequencing )
 {
     if ( !channels || channel >= channels->num_channels )
+    {
         return false;
+    }
 
     // RNChannel!DeliverMessage, the sequenced guard: only in this epoch
 
@@ -432,7 +478,9 @@ bool rn_channels_deliver_sequenced( struct rn_channels_t * channels, uint32_t ch
     const uint32_t sequence_gap = ( sequencing - receive->sequenced_watermark ) & ROCKETNET_MESSAGE_U24_MASK;
     if ( ( ordering & ROCKETNET_MESSAGE_U24_MASK ) != ( receive->ordered_read & ROCKETNET_MESSAGE_U24_MASK ) ||
          sequence_gap >= ROCKETNET_MESSAGE_HALF_RANGE )
+    {
         return false;
+    }
 
     rn_channel_receive_t * slot = channels->region->channel_receive + channel;
     slot->sequenced_watermark = ( sequencing + 1 ) & ROCKETNET_MESSAGE_U24_MASK;
@@ -494,12 +542,16 @@ static_assert( rn_violation_counter( ROCKETNET_MESSAGE_VIOLATION_SLOT_COLLISION 
 void rn_channels_count_violation( struct rn_channels_t * channels, int counter )
 {
     if ( !channels )
+    {
         return;
+    }
 
     channels->violations++;
 
     if ( counter != ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION )
+    {
         rn_channels_count( channels->region->counters, counter );
+    }
 
     // 17.3 item 11: a wire violation ends the connection. The owner reads
     // rn_ordered_decide and disconnects the other side of the connection; counted once per connection.
@@ -517,7 +569,9 @@ void rn_channels_count_violation( struct rn_channels_t * channels, int counter )
 int rn_channels_dispatch( struct rn_channels_t * channels, const struct rocketnet_message_record_t * record, struct rn_delivery_t * out )
 {
     if ( !channels || !record || !out || record->bytes < 1 || !record->data )
+    {
         return ROCKETNET_CHANNEL_DISPATCH_NONE;
+    }
 
     // The receipt variants travel as their base codes, so a wire code 5, 6 or
     // 7 is a violation and a receipt type is dispatched under its base
@@ -610,7 +664,9 @@ void rn_channels_drain( struct rn_channels_t * channels, uint32_t channel )
     // RNChannel!DeliverMessage, once per message.
 
     if ( !channels || channel >= channels->num_channels )
+    {
         return;
+    }
 
     rn_region_t * region = channels->region;
     rn_channel_receive_t * rx = region->channel_receive + channel;
@@ -622,7 +678,9 @@ void rn_channels_drain( struct rn_channels_t * channels, uint32_t channel )
 
         const uint32_t held = rn_held_find( region, rn_held_key( channel, rx->ordered_read ) );
         if ( held == RN_DESCRIPTOR_NONE || region->held_index[held].used != RN_HELD_COMPLETE )
+        {
             break;                                              // not here yet, or a block still short of fragments
+        }
 
         // proofs/tla/RNHeldOwnership.tla Deliver: the entry's descriptor is live
         // under its number and is this channel's code-3 message at this
@@ -638,7 +696,9 @@ void rn_channels_drain( struct rn_channels_t * channels, uint32_t channel )
         }
 
         if ( !rn_channels_delivery_room( channels ) )           // rn_channels_reliable_delivery's refusal, before the entry leaves
+        {
             break;
+        }
 
         const uint32_t slot = region->held_index[held].number & ( region->window - 1 );
         if ( !rn_held_erase( region, held ) )
@@ -666,7 +726,9 @@ void rn_channels_drain( struct rn_channels_t * channels, uint32_t channel )
 int rn_channels_dispatch_ordered( struct rn_channels_t * channels, const struct rocketnet_message_record_t * record, struct rn_delivery_t * out )
 {
     if ( !channels || !record || !out )
+    {
         return ROCKETNET_CHANNEL_DISPATCH_NONE;
+    }
 
     rn_region_t * region = channels->region;
 
@@ -700,7 +762,9 @@ int rn_channels_dispatch_ordered( struct rn_channels_t * channels, const struct 
     }
 
     if ( record->block )
+    {
         return rn_channels_dispatch_chunk( channels, record, out, delta );
+    }
 
     uint32_t slot = 0;
     rn_receive_descriptor_t * descriptor = rn_channels_descriptor( channels, record, &slot );
@@ -726,7 +790,9 @@ int rn_channels_dispatch_ordered( struct rn_channels_t * channels, const struct 
 
         rn_delivery_t * delivery = rn_channels_reliable_delivery( channels );
         if ( !delivery )
+        {
             return ROCKETNET_CHANNEL_DISPATCH_NONE;
+        }
 
         delivery->data = record->data;
         delivery->bytes = record->bytes;
@@ -856,7 +922,9 @@ void rn_channels_block_settle( rn_channels_t * channels, uint32_t held, rn_recei
     rn_region_t * region = channels->region;
     rn_receive_descriptor_t * first = &region->receive_descriptors[first_slot];
     if ( anchor != first )
+    {
         anchor->block_count = 0;
+    }
 
     first->block_count = (uint16_t) count;                      // released together at the update's end
     first->block_have = (uint16_t) count;
@@ -944,10 +1012,14 @@ static int rn_channels_dispatch_chunk( rn_channels_t * channels, const struct ro
     rn_receive_descriptor_t * anchor = rn_channels_block_collect( channels, record, record->channel, record->ordering, slot,
                                                                   first_number, base_units, &held );
     if ( !anchor )
+    {
         return ROCKETNET_CHANNEL_DISPATCH_NONE;
+    }
 
     if ( anchor->block_have < count )
+    {
         return ROCKETNET_CHANNEL_DISPATCH_HELD;                 // never a partial delivery
+    }
 
     // every chunk is in. The block is one contiguous message in the ring.
 
@@ -965,7 +1037,9 @@ static int rn_channels_dispatch_chunk( rn_channels_t * channels, const struct ro
     rn_channels_block_settle( channels, held, anchor, first_slot, count, total, (uint32_t) base_units, true );
 
     if ( delta != 0 )
+    {
         return ROCKETNET_CHANNEL_DISPATCH_HELD;                 // complete, waiting for its turn
+    }
 
     // Its turn: delivered whole, in place, a view of the ring (no reassembly
     // buffer, no second copy), then the coupling and the drain.
@@ -973,7 +1047,9 @@ static int rn_channels_dispatch_chunk( rn_channels_t * channels, const struct ro
     // OneOrderingSlotPerBlock).
 
     if ( !rn_channels_delivery_room( channels ) )               // rn_channels_reliable_delivery's refusal, before the entry leaves
+    {
         return ROCKETNET_CHANNEL_DISPATCH_NONE;
+    }
 
     if ( !rn_held_erase( region, held ) )
     {
@@ -1005,7 +1081,9 @@ uint32_t rn_channels_feed_acks( struct rn_window_ack_t * ack, const uint64_t * p
     // RNChannel!ReceiveAck, R1's one path: the transport's packet ids into layer 3's sent map, keyed by the id the transport assigned
 
     if ( !ack || !packet_ids || count == 0 )
+    {
         return 0;
+    }
 
     return rn_window_ack_on_acks( ack, packet_ids, count, now );
 }
@@ -1018,12 +1096,16 @@ static void rn_channels_release( rn_channels_t * channels, uint32_t slot )
 {
     rn_region_t * region = channels->region;
     if ( slot >= region->window )
+    {
         return;
+    }
 
     const uint64_t number = region->receive_descriptors[slot].number;
 
     if ( !region->receive_descriptors[slot].live )
+    {
         return;
+    }
 
     const uint32_t count = region->receive_descriptors[slot].block_count > 0 ? region->receive_descriptors[slot].block_count : 1;
     for ( uint32_t i = 0; i < count; i++ )
@@ -1046,7 +1128,9 @@ static void rn_channels_release( rn_channels_t * channels, uint32_t slot )
 void rn_channels_end_update( struct rn_channels_t * channels )
 {
     if ( !channels )
+    {
         return;
+    }
 
     // RNChannel!EndUpdate: the batch's views are gone and the update's deliveries expire, so their numbers stop being live, and the per-update counts start over
 
@@ -1054,7 +1138,9 @@ void rn_channels_end_update( struct rn_channels_t * channels )
     {
         const uint32_t slot = channels->region->deliveries[i].descriptor;
         if ( slot != RN_DESCRIPTOR_NONE )
+        {
             rn_channels_release( channels, slot );
+        }
     }
 
     rn_channels_end_update_sequenced( channels );
@@ -1090,9 +1176,13 @@ static void rn_channel_queue_append( rn_region_t * region, uint32_t channel, uin
     rn_channel_send_t * send = region->channel_send + channel;
     region->send_descriptors[d].queue_next = RN_DESCRIPTOR_NONE;
     if ( send->queue_tail != RN_DESCRIPTOR_NONE )
+    {
         region->send_descriptors[send->queue_tail].queue_next = d;
+    }
     else
+    {
         send->queue_head = d;
+    }
     send->queue_tail = d;
 }
 
@@ -1102,7 +1192,9 @@ static void rn_channel_queue_push_front( rn_region_t * region, uint32_t channel,
     region->send_descriptors[d].queue_next = send->queue_head;
     send->queue_head = d;
     if ( send->queue_tail == RN_DESCRIPTOR_NONE )
+    {
         send->queue_tail = d;
+    }
 }
 
 static void rn_channel_queue_pop( rn_region_t * region, uint32_t channel )
@@ -1112,7 +1204,9 @@ static void rn_channel_queue_pop( rn_region_t * region, uint32_t channel )
     send->queue_head = region->send_descriptors[d].queue_next;
     region->send_descriptors[d].queue_next = RN_DESCRIPTOR_NONE;
     if ( send->queue_head == RN_DESCRIPTOR_NONE )
+    {
         send->queue_tail = RN_DESCRIPTOR_NONE;
+    }
 }
 
 static uint32_t rn_channel_head_generation( const rn_channels_t * channels, uint32_t channel )
@@ -1131,11 +1225,15 @@ static void rn_ready_link( rn_channels_t * channels, uint32_t channel, bool fron
 {
     rn_channel_send_t * send = channels->region->channel_send;
     if ( send[channel].ready_ticket != 0 )
+    {
         return;
+    }
 
     const uint32_t ticket = channels->ready_ticket_next++;
     if ( channels->ready_ticket_next == 0 )
+    {
         channels->ready_ticket_next = 1;
+    }
 
     send[channel].ready_ticket = ticket;
     send[channel].ready_generation = rn_channel_head_generation( channels, channel );
@@ -1145,9 +1243,13 @@ static void rn_ready_link( rn_channels_t * channels, uint32_t channel, bool fron
         send[channel].ready_prev = RN_DESCRIPTOR_NONE;
         send[channel].ready_next = channels->ready_head;
         if ( channels->ready_head != RN_DESCRIPTOR_NONE )
+        {
             send[channels->ready_head].ready_prev = channel;
+        }
         else
+        {
             channels->ready_tail = channel;
+        }
         channels->ready_head = channel;
     }
     else
@@ -1155,9 +1257,13 @@ static void rn_ready_link( rn_channels_t * channels, uint32_t channel, bool fron
         send[channel].ready_next = RN_DESCRIPTOR_NONE;
         send[channel].ready_prev = channels->ready_tail;
         if ( channels->ready_tail != RN_DESCRIPTOR_NONE )
+        {
             send[channels->ready_tail].ready_next = channel;
+        }
         else
+        {
             channels->ready_head = channel;
+        }
         channels->ready_tail = channel;
     }
 }
@@ -1173,18 +1279,28 @@ static bool rn_ready_remove_named( rn_channels_t * channels, uint32_t channel, u
 {
     rn_channel_send_t * send = channels->region->channel_send;
     if ( ticket == 0 || send[channel].ready_ticket != ticket || send[channel].ready_generation != generation )
+    {
         return false;
+    }
 
     const uint32_t prev = send[channel].ready_prev;
     const uint32_t next = send[channel].ready_next;
     if ( prev != RN_DESCRIPTOR_NONE )
+    {
         send[prev].ready_next = next;
+    }
     else
+    {
         channels->ready_head = next;
+    }
     if ( next != RN_DESCRIPTOR_NONE )
+    {
         send[next].ready_prev = prev;
+    }
     else
+    {
         channels->ready_tail = prev;
+    }
 
     send[channel].ready_prev = RN_DESCRIPTOR_NONE;
     send[channel].ready_next = RN_DESCRIPTOR_NONE;
@@ -1206,7 +1322,9 @@ static void rn_ready_push_front( rn_channels_t * channels, uint32_t channel )
 uint8_t * rn_channels_start( struct rn_channels_t * channels, uint32_t channel, int type, uint32_t bytes )
 {
     if ( !channels || channels->pending != RN_DESCRIPTOR_NONE )
+    {
         return NULL;                                            // one start at a time, like the transport's start_packet
+    }
 
     rn_region_t * region = channels->region;
 
@@ -1217,18 +1335,24 @@ uint8_t * rn_channels_start( struct rn_channels_t * channels, uint32_t channel, 
     if ( rn_channels_send_check( channels, type, channel ) != ROCKETNET_CHANNEL_SEND_OK ||
          ( type != ROCKETNET_CHANNEL_TYPE_RELIABLE && type != ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED &&
            type != ROCKETNET_CHANNEL_TYPE_RELIABLE_SEQUENCED && receipt_base < 0 ) )
+    {
         return NULL;
+    }
 
     // an exhausted connection sends nothing more: the owner kicks it (R5)
 
     if ( rn_region_exhausted( region ) || bytes < 1 || bytes > region->max_message_bytes )
+    {
         return NULL;
+    }
 
     // the room is the region's, one descriptor and its bytes; no room exhausts it
 
     const uint32_t d = rn_region_send_take( region, (int) bytes );
     if ( d == RN_DESCRIPTOR_NONE )
+    {
         return NULL;
+    }
 
     channels->pending = d;
     channels->pending_bytes = bytes;
@@ -1240,7 +1364,9 @@ uint8_t * rn_channels_start( struct rn_channels_t * channels, uint32_t channel, 
     region->send_descriptors[d].reliability = (uint8_t) ( receipt_base >= 0 ? receipt_base : type );
 
     if ( receipt_base >= 0 )
+    {
         region->send_descriptors[d].flags |= RN_SEND_FLAG_RECEIPT_RELIABLE;
+    }
 
     return rn_region_send_write_pointer( region, d );
 }
@@ -1251,20 +1377,26 @@ uint8_t * rn_channels_start( struct rn_channels_t * channels, uint32_t channel, 
 bool rn_channels_finish( struct rn_channels_t * channels, uint32_t bytes )
 {
     if ( !channels || channels->pending == RN_DESCRIPTOR_NONE )
+    {
         return false;
+    }
 
     rn_region_t * region = channels->region;
     const uint32_t d = channels->pending;
     const uint32_t channel = channels->pending_channel;
 
     if ( bytes < 1 || bytes > channels->pending_bytes )
+    {
         return false;                                           // the start stays pending
+    }
 
     rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
     const uint8_t type = descriptor->reliability;
     if ( type != ROCKETNET_CHANNEL_TYPE_RELIABLE && type != ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED &&
          type != ROCKETNET_CHANNEL_TYPE_RELIABLE_SEQUENCED )
+    {
         return false;
+    }
 
     channels->pending = RN_DESCRIPTOR_NONE;
 
@@ -1294,11 +1426,17 @@ bool rn_channels_finish( struct rn_channels_t * channels, uint32_t bytes )
     descriptor->priority = ROCKETNET_PRIORITY_MEDIUM;
 
     if ( type == ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED )
+    {
         descriptor->ordering = rn_channels_send_ordered( channels, channel );
+    }
     else if ( type == ROCKETNET_CHANNEL_TYPE_RELIABLE_SEQUENCED )
+    {
         descriptor->sequencing = rn_channels_send_sequenced( channels, channel, &descriptor->ordering );
+    }
     else
+    {
         descriptor->ordering = 0;
+    }
 
     rn_descriptor_enqueue_stamp( region, descriptor );
 
@@ -1312,7 +1450,9 @@ bool rn_channels_finish( struct rn_channels_t * channels, uint32_t bytes )
     rn_channel_queue_append( region, channel, d );
 
     if ( was_empty )
+    {
         rn_ready_push( channels, channel );
+    }
 
     return true;
 }
@@ -1320,7 +1460,9 @@ bool rn_channels_finish( struct rn_channels_t * channels, uint32_t bytes )
 bool rn_channels_cancel( struct rn_channels_t * channels )
 {
     if ( !channels || channels->pending == RN_DESCRIPTOR_NONE )
+    {
         return false;
+    }
 
     rn_region_send_free( channels->region, channels->pending );
 
@@ -1342,7 +1484,9 @@ bool rn_channels_cancel( struct rn_channels_t * channels )
 bool rn_ordered_announce_config( struct rn_ordered_t * ordered, const struct rocketnet_message_config_t * config )
 {
     if ( !ordered || !ordered->channels.region || ordered->config_announced )
+    {
         return false;
+    }
 
     rocketnet_message_config_t defaults;
 
@@ -1369,11 +1513,15 @@ bool rn_ordered_announce_config( struct rn_ordered_t * ordered, const struct roc
     body->fragment_bytes = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
 
     if ( rn_region_exhausted( region ) )
+    {
         return false;
+    }
 
     const uint32_t d = rn_region_send_alloc( region, ROCKETNET_MESSAGE_CONFIG_BYTES );
     if ( d == RN_DESCRIPTOR_NONE )
+    {
         return false;                                           // no room: the region is exhausted, the owner kicks (R5)
+    }
 
     rocketnet_message_write_config_body( rn_region_send_write_pointer( region, d ), body );
 
@@ -1397,7 +1545,9 @@ bool rn_ordered_announce_config( struct rn_ordered_t * ordered, const struct roc
     rn_channel_queue_push_front( region, 0, d );
 
     if ( send->ready_ticket != 0 )
+    {
         rn_ready_remove_named( channels, 0, send->ready_ticket, send->ready_generation );
+    }
 
     rn_ready_push_front( channels, 0 );
 
@@ -1412,7 +1562,9 @@ bool rn_ordered_announce_config( struct rn_ordered_t * ordered, const struct roc
 int rn_ordered_take_config( struct rn_ordered_t * ordered, const struct rocketnet_message_record_t * record )
 {
     if ( !ordered || !record )
+    {
         return ROCKETNET_DISCONNECT_REASON_NONE;
+    }
 
     rn_channels_t * channels = &ordered->channels;
 
@@ -1444,7 +1596,9 @@ int rn_ordered_take_config( struct rn_ordered_t * ordered, const struct rocketne
     for ( size_t i = 0; i < sizeof( fields ) / sizeof( fields[0] ); i++ )
     {
         if ( fields[i].own == fields[i].remote )
+        {
             continue;
+        }
 
         if ( channels->error == ROCKETNET_DISCONNECT_REASON_NONE )
         {
@@ -1469,12 +1623,16 @@ bool rn_ordered_init( struct rn_ordered_t * ordered, struct rn_region_t * region
                       struct rocketnet_send_budget_t * budget, int packets_per_update, int payload_capacity )
 {
     if ( !ordered )
+    {
         return false;
+    }
 
     memset( ordered, 0, sizeof( *ordered ) );
 
     if ( !region || payload_capacity < 1 )
+    {
         return false;
+    }
 
     if ( !rn_channels_init( &ordered->channels, region, region->num_channels, 0 ) ||
          !rn_channels_set_payload_capacity( &ordered->channels, (uint32_t) payload_capacity ) )
@@ -1517,16 +1675,22 @@ static bool rn_ordered_item( const rn_ordered_t * ordered, const rn_send_number_
 {
     const rn_region_t * region = ordered->channels.region;
     if ( slot->descriptor == RN_DESCRIPTOR_NONE || slot->descriptor >= region->queue )
+    {
         return false;
+    }
 
     const rn_send_descriptor_t * descriptor = &region->send_descriptors[slot->descriptor];
     if ( !descriptor->in_use )
+    {
         return false;
+    }
 
     uint32_t bytes = 0;
     const uint8_t * data = rn_region_send_data( region, slot->descriptor, slot->fragment, &bytes );
     if ( !data || bytes == 0 )
+    {
         return false;
+    }
 
     memset( item, 0, sizeof( *item ) );
     item->data = data;
@@ -1596,13 +1760,19 @@ static bool rn_ordered_walk( rn_ordered_t * ordered, bool chunk, double now, rn_
 
         const bool unsent = rn_send_number_unsent_due( slot->last_send );
         if ( !unsent && !( now >= slot->last_send + delay ) )
+        {
             return true;
+        }
 
         if ( plan->count >= ROCKETNET_ORDERED_MAX_ITEMS || plan->planned >= plan->room )
+        {
             return false;                                       // more is due than this update can write
+        }
 
         if ( unsent )
+        {
             *last_unsent = cursor;
+        }
 
         rn_packet_item_t * item = &plan->items[plan->count];
         if ( rn_ordered_item( ordered, slot, unsent ? ROCKETNET_SEND_CLASS_ORDERED_PROGRESS : ROCKETNET_SEND_CLASS_RETRANSMIT, item ) )
@@ -1625,7 +1795,9 @@ static bool rn_ordered_walk( rn_ordered_t * ordered, bool chunk, double now, rn_
 int rn_ordered_write( struct rn_ordered_t * ordered, double now, uint8_t ** payloads, int num_payloads )
 {
     if ( !ordered || !payloads || num_payloads < 1 )
+    {
         return 0;
+    }
 
     rn_channels_t * channels = &ordered->channels;
     rn_region_t * region = channels->region;
@@ -1638,10 +1810,14 @@ int rn_ordered_write( struct rn_ordered_t * ordered, double now, uint8_t ** payl
     // an exhausted or ended connection does nothing but be kicked (R5), and a reliable message past its timeout ends it (6.4 "Giving up")
 
     if ( rn_region_exhausted( region ) || channels->error != ROCKETNET_DISCONNECT_REASON_NONE || rn_window_ack_check_timeout( ack, now ) )
+    {
         return 0;
+    }
 
     if ( ordered->budget )
+    {
         rocketnet_send_budget_begin_update( ordered->budget, now );
+    }
 
     const int packet_limit = builder->packets_per_update < num_payloads ? builder->packets_per_update : num_payloads;
     const uint32_t capacity = channels->payload_capacity;
@@ -1701,12 +1877,18 @@ int rn_ordered_write( struct rn_ordered_t * ordered, double now, uint8_t ** payl
         // contiguous span, fragment i at p + i * F, admitted once.
 
         if ( descriptor->fragments > 1 )
+        {
             numbers = rn_window_send_first_write_block( &ordered->send, descriptor->reliability, descriptor->bytes, d, &first, &ring_start );
+        }
         else if ( rn_window_send_first_write( &ordered->send, descriptor->reliability, descriptor->bytes, d, &first, &ring_start ) == RN_WINDOW_SEND_NUMBERED )
+        {
             numbers = 1;
+        }
 
         if ( numbers == 0 )
+        {
             break;                                              // stalled: the window counted it
+        }
 
         // Rotate off the ready list before the dequeue, while the membership
         // still names the generation captured at join (proofs/tla/RNChannelQueues.tla Rotate).
@@ -1714,12 +1896,16 @@ int rn_ordered_write( struct rn_ordered_t * ordered, double now, uint8_t ** payl
         const uint32_t ready_ticket = send->ready_ticket;
         const uint32_t ready_generation = send->ready_generation;
         if ( !rn_ready_remove_named( channels, channel, ready_ticket, ready_generation ) && send->ready_ticket != 0 )
+        {
             rn_ready_remove_named( channels, channel, send->ready_ticket, send->ready_generation );
+        }
 
         // dequeue: the descriptor leaves its channel's FIFO
 
         if ( region->send_descriptors[d].priority < 4 && send->queued[region->send_descriptors[d].priority] > 0 )
+        {
             send->queued[region->send_descriptors[d].priority]--;
+        }
 
         rn_channel_queue_pop( region, channel );
         region->send_descriptors[d].enqueue_ticket = 0;
@@ -1728,7 +1914,9 @@ int rn_ordered_write( struct rn_ordered_t * ordered, double now, uint8_t ** payl
         // channels take turns: this one rejoins the back if it has more
 
         if ( send->queue_head != RN_DESCRIPTOR_NONE )
+        {
             rn_ready_push( channels, channel );
+        }
 
         // every number of the message joins the resend set, due now; the ones
         // this update has room for are also planned into packets now
@@ -1753,7 +1941,9 @@ int rn_ordered_write( struct rn_ordered_t * ordered, double now, uint8_t ** payl
     }
 
     if ( plan.count == 0 )
+    {
         return 0;
+    }
 
     // 3. Packets (9.3), under the send budget (R6)
     // 4. A resend is counted when the packet carrying it is sent, at
@@ -1767,13 +1957,17 @@ int rn_ordered_write( struct rn_ordered_t * ordered, double now, uint8_t ** payl
 void rn_ordered_commit( struct rn_ordered_t * ordered, int packet_index, uint64_t packet_id, double now )
 {
     if ( ordered )
+    {
         rn_packet_builder_commit( &ordered->builder, packet_index, packet_id, now );
+    }
 }
 
 void rn_ordered_packet_failed( struct rn_ordered_t * ordered, int packet_index, double now )
 {
     if ( ordered )
+    {
         rn_packet_builder_packet_failed( &ordered->builder, packet_index, now );
+    }
 }
 
 bool rn_ordered_settle( struct rn_ordered_t * ordered, int packet_index, int actual_wire_bytes )
@@ -1784,7 +1978,9 @@ bool rn_ordered_settle( struct rn_ordered_t * ordered, int packet_index, int act
 uint32_t rn_ordered_acks( struct rn_ordered_t * ordered, const uint64_t * packet_ids, uint32_t count, double now )
 {
     if ( !ordered )
+    {
         return 0;
+    }
 
     return rn_channels_feed_acks( &ordered->ack, packet_ids, count, now );
 }
@@ -1797,17 +1993,23 @@ uint32_t rn_ordered_acks( struct rn_ordered_t * ordered, const uint64_t * packet
 static uint32_t rn_receive_delivery_reservation( const rn_channels_t * channels, const rocketnet_message_record_t * record )
 {
     if ( record->control )
+    {
         return 0;
+    }
 
     uint32_t needed = 1;
 
     if ( record->code != ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED || record->channel >= channels->num_channels )
+    {
         return needed;
+    }
 
     const rn_region_t * region = channels->region;
     const rn_channel_receive_t * rx = &region->channel_receive[record->channel];
     if ( rn_u24( record->ordering ) != rn_u24( rx->ordered_read ) )
+    {
         return needed;
+    }
 
     // at most one sequenced hold can be released by this channel's drain,
     // and it needs a slot only when its release can take one: a code-4 hold
@@ -1820,7 +2022,9 @@ static uint32_t rn_receive_delivery_reservation( const rn_channels_t * channels,
     {
         const bool reliable_hold = ( rx->held_sequenced & RN_SEQUENCED_RELIABLE_HOLD ) != 0;
         if ( reliable_hold || channels->unreliable_delivered < region->delivery_entries - region->window )
+        {
             needed++;
+        }
     }
 
     uint32_t ordering = rn_u24( record->ordering + 1 );
@@ -1828,7 +2032,9 @@ static uint32_t rn_receive_delivery_reservation( const rn_channels_t * channels,
     {
         const uint32_t held = rn_held_find( region, rn_held_key( record->channel, ordering ) );
         if ( held == RN_DESCRIPTOR_NONE || region->held_index[held].used != RN_HELD_COMPLETE )
+        {
             break;
+        }
 
         needed++;
     }
@@ -1839,14 +2045,18 @@ static uint32_t rn_receive_delivery_reservation( const rn_channels_t * channels,
 int rn_ordered_receive( struct rn_ordered_t * ordered, const uint8_t * payload, int bytes )
 {
     if ( !ordered || !payload )
+    {
         return ROCKETNET_MESSAGE_VIOLATION_BAD_FORM;
+    }
 
     rn_channels_t * channels = &ordered->channels;
 
     // an ended or exhausted connection takes nothing more
 
     if ( channels->error != ROCKETNET_DISCONNECT_REASON_NONE || rn_region_exhausted( channels->region ) )
+    {
         return ROCKETNET_MESSAGE_VIOLATION_NONE;
+    }
 
     struct rocketnet_message_reader_t reader;
     const int violation = rocketnet_message_reader_begin( &reader, payload, bytes, &ordered->limits );
@@ -1866,12 +2076,16 @@ int rn_ordered_receive( struct rn_ordered_t * ordered, const uint8_t * payload, 
         {
             const uint32_t needed = rn_receive_delivery_reservation( channels, &record );
             if ( channels->deliveries > channels->delivery_capacity || needed > channels->delivery_capacity - channels->deliveries )
+            {
                 return ROCKETNET_CHANNEL_RECEIVE_DEFERRED;
+            }
 
             uint32_t slot = RN_DESCRIPTOR_NONE;
             const int accepted = rn_window_receive_accept( &ordered->receive, &record, &slot );
             if ( accepted == RN_WINDOW_RECEIVE_DUPLICATE )
+            {
                 continue;                                       // counted by layer 3; normal after a resend
+            }
 
             if ( accepted == RN_WINDOW_RECEIVE_VIOLATION )
             {
@@ -1889,11 +2103,17 @@ int rn_ordered_receive( struct rn_ordered_t * ordered, const uint8_t * payload, 
         // (10.3); its number is already released by the dispatch
 
         if ( record.control && record.code == ROCKETNET_MESSAGE_CODE_RELIABLE )
+        {
             rn_ordered_take_config( ordered, &record );
+        }
         if ( channels->error != ROCKETNET_DISCONNECT_REASON_NONE )
+        {
             return ROCKETNET_CHANNEL_VIOLATION;
+        }
         if ( rn_region_exhausted( channels->region ) )
+        {
             return ROCKETNET_MESSAGE_VIOLATION_NONE;
+        }
     }
 
     return ROCKETNET_MESSAGE_VIOLATION_NONE;
@@ -1907,22 +2127,30 @@ uint32_t rn_ordered_deliveries( const struct rn_ordered_t * ordered )
 void rn_ordered_end_update( struct rn_ordered_t * ordered )
 {
     if ( ordered )
+    {
         rn_channels_end_update( &ordered->channels );
+    }
 }
 
 int rn_ordered_decide( const struct rn_ordered_t * ordered )
 {
     if ( !ordered || !ordered->channels.region )
+    {
         return ROCKETNET_DISCONNECT_REASON_NONE;
+    }
 
     // proofs/tla/RNConnectionMemory.tla, Kick: exhaustion first; then the other side of the connection broke
     // the wire (17.3 item 11); then a reliable message went unacked too long
 
     const int memory = rn_connection_memory_decide( ordered->channels.region );
     if ( memory != ROCKETNET_DISCONNECT_REASON_NONE )
+    {
         return memory;
+    }
     if ( ordered->channels.error != ROCKETNET_DISCONNECT_REASON_NONE )
+    {
         return ordered->channels.error;
+    }
 
     return ordered->ack.error;
 }

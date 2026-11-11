@@ -49,7 +49,9 @@ static int write_one( const rocketnet_message_record_t * record, uint8_t * out, 
     rocketnet_message_writer_t writer;
     rocketnet_message_writer_begin( &writer, out, capacity );
     if ( !rocketnet_message_writer_add( &writer, record ) )
+    {
         return -1;
+    }
     return rocketnet_message_writer_finish( &writer );
 }
 
@@ -62,7 +64,9 @@ static int standard_receiver_checks_generate( const char * id, uint8_t * out, in
     if ( strcmp( id, "m4.check-1-bad-form" ) == 0 )
     {
         if ( capacity < 1 )
+        {
             return -1;
+        }
         out[0] = 2;
         return 1;
     }
@@ -70,7 +74,9 @@ static int standard_receiver_checks_generate( const char * id, uint8_t * out, in
     if ( strcmp( id, "m4.check-2-truncated" ) == 0 )
     {
         if ( capacity < 2 )
+        {
             return -1;
+        }
         out[0] = 0;
         return emit_records( out, 1 );
     }
@@ -79,7 +85,9 @@ static int standard_receiver_checks_generate( const char * id, uint8_t * out, in
     {
         const uint8_t bytes[] = { 0x05, 0x01, 0x00, 0xAA, 0x01 };
         if ( capacity < (int) sizeof( bytes ) )
+        {
             return -1;
+        }
         memcpy( out, bytes, sizeof( bytes ) );
         return (int) sizeof( bytes );
     }
@@ -88,7 +96,9 @@ static int standard_receiver_checks_generate( const char * id, uint8_t * out, in
     {
         const uint8_t bytes[] = { 0x00, 0x00, 0x00, 0x01 };
         if ( capacity < (int) sizeof( bytes ) )
+        {
             return -1;
+        }
         memcpy( out, bytes, sizeof( bytes ) );
         return (int) sizeof( bytes );
     }
@@ -96,7 +106,9 @@ static int standard_receiver_checks_generate( const char * id, uint8_t * out, in
     if ( strcmp( id, "m4.check-9-over-maximum" ) == 0 )
     {
         if ( capacity < 1417 )
+        {
             return -1;
+        }
         memset( out, 0, 1416 );
         return rocketnet_message_single_finish( out, capacity, 1416 );
     }
@@ -105,7 +117,9 @@ static int standard_receiver_checks_generate( const char * id, uint8_t * out, in
     {
         const uint8_t bytes[] = { 0x0A, 0x01, 0x00, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xAA, 0x01 };
         if ( capacity < (int) sizeof( bytes ) )
+        {
             return -1;
+        }
         memcpy( out, bytes, sizeof( bytes ) );
         return (int) sizeof( bytes );
     }
@@ -176,9 +190,13 @@ static int standard_receiver_check_run( const char * id, const uint8_t * payload
     standard_receiver_check_limits( &limits, 0x1F );
 
     if ( strcmp( id, "m4.check-6-type-not-enabled" ) == 0 )
+    {
         limits.enabled_codes = 1u << ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED;
+    }
     if ( strcmp( id, "m4.check-9-over-maximum" ) == 0 )
+    {
         limits.max_message_bytes = ROCKETNET_MESSAGE_SINGLE_BYTES;          // the configurable floor, 1415
+    }
 
     rocketnet_message_reader_t reader;
     rocketnet_message_record_t record;
@@ -284,8 +302,10 @@ static void test_standard_receiver_checks_vectors()
 
         const int actual = standard_receiver_check_run( expected[i].id, payload, bytes );
         if ( actual != expected[i].violation )
+        {
             printf( "vector %s: counter %s, expected %s\n", expected[i].id,
                     rocketnet_message_violation_name( actual ), rocketnet_message_violation_name( expected[i].violation ) );
+        }
         rocketnet_unit_check( actual == expected[i].violation );
     }
 }

@@ -57,7 +57,9 @@ int main( int argc, char ** argv )
         {
             client_index = rocketnet_client_transport_client_index( client );
             if ( rocketnet_server_transport_is_client_connected( server, client_index ) )
+            {
                 break;
+            }
         }
 
         rocketnet_sleep( 0.001 );
@@ -94,10 +96,12 @@ int main( int argc, char ** argv )
             // move the timing. It is caller work, never a production SDK branch.
 
             if ( plant )
+            {
                 for ( int j = 0; j < 4096; ++j )
                 {
                     plant_state = plant_state * 1664525 + 1013904223;
                 }
+            }
 
             const int bytes = rocketnet_server_transport_finish_packet( server, &context, payload_bytes );
             CHECK( bytes > payload_bytes );
@@ -150,9 +154,11 @@ int main( int argc, char ** argv )
             transport, payload_bytes, (unsigned long long) batches * batch_size, elapsed_ns / ( batches * batch_size ),
             (unsigned long long) wire_bytes, (unsigned long long) received_packets, plant, (unsigned long long) plant_state );
     if ( drain )
+    {
         printf( "drain transport=%s bytes=%d drained=%llu drain_ns=%.3f\n",
                 transport, payload_bytes, (unsigned long long) drained_packets,
                 drained_packets ? drain_ns / (double) drained_packets : 0.0 );
+    }
     rn_native_client_transport_stop_and_destroy( client );
     rn_native_server_transport_stop_and_destroy( server );
     rocketnet_term();

@@ -57,7 +57,9 @@ uint64_t rocketnet_functional_token_timestamp( uint64_t token_epoch_unix_seconds
 static void posix_check_impl( bool condition, const char * text, const char * file, int line )
 {
     if ( condition )
+    {
         return;
+    }
     printf( "check failed: ( %s ), file %s, line %d\n", text, file, line );
     fflush( stdout );
     exit( 1 );
@@ -102,9 +104,13 @@ static int posix_native_kind( const char * server_transport_io )
 {
 #if defined( __linux__ )
     if ( strcmp( server_transport_io, "gso" ) == 0 )
+    {
         return POSIX_NATIVE_GSO;
+    }
     if ( strcmp( server_transport_io, "io_uring" ) == 0 )
+    {
         return POSIX_NATIVE_URING;
+    }
 #else
     (void) server_transport_io;
 #endif // #if defined( __linux__ )
@@ -251,7 +257,9 @@ static uint16_t posix_local_port( rocketnet_platform_socket_t * socket )
     socklen_t bytes = sizeof( storage );
     posix_check( getsockname( socket->handle, (struct sockaddr *) &storage, &bytes ) == 0 );
     if ( storage.ss_family == AF_INET6 )
+    {
         return ntohs( ( (struct sockaddr_in6 *) &storage )->sin6_port );
+    }
     return ntohs( ( (struct sockaddr_in *) &storage )->sin_port );
 }
 
@@ -369,8 +377,10 @@ static void posix_pair_create( struct posix_pair_t * pair, int ipv6, const char 
     }
 #if defined( __linux__ )
     if ( pair->native == POSIX_NATIVE_GSO && posix_gso_forced_plain )
+    {
         posix_check( ( rocketnet_server_gso_features( (struct rocketnet_server_gso_t *) pair->transport ) &
                        ( ROCKETNET_SERVER_GSO_FEATURE_SEGMENT | ROCKETNET_SERVER_GSO_FEATURE_GRO ) ) == 0 );
+    }
 #endif // #if defined( __linux__ )
 
     char server_address[64];
@@ -410,7 +420,9 @@ static void posix_pair_create( struct posix_pair_t * pair, int ipv6, const char 
         connect_updates++;
         if ( rocketnet_client_transport_state( pair->client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
              rocketnet_server_transport_num_connected_clients( pair->server ) == 1 )
+        {
             break;
+        }
         rocketnet_platform_sleep( 0.001 );
     }
 
@@ -485,13 +497,17 @@ static void posix_send_datagram( int sender, const struct sockaddr_storage * to,
 
     posix_check( sent == bytes );
     if ( !expect )
+    {
         return;
+    }
 #if defined( __linux__ )
     // a zero-length datagram: the portable pump skips it uncounted; the gso
     // worker and the io_uring receive count it in their size pass
 
     if ( bytes == 0 && posix_weather_native == POSIX_NATIVE_NONE )
+    {
         return;
+    }
 
     if ( posix_weather_native != POSIX_NATIVE_NONE && ( bytes < ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES || bytes > ROCKETNET_RECEIVE_CEILING ) )
     {
@@ -710,7 +726,9 @@ static void posix_weather_cell( int ipv6, int at_server, const char * server_tra
             struct posix_expect_t now;
             posix_counters_read( posix_pair_counters( &pair, at_server ), &now );
             if ( posix_expect_equal( &now, &expect ) && valid_seen == valid_sent )
+            {
                 break;
+            }
 
             const bool short_now = rocketnet_platform_time() >= deadline;
             if ( short_now )
@@ -983,7 +1001,9 @@ static void posix_create_probe_hook( int handle )
         socklen_t queued_bytes = sizeof( queued );
         posix_check( getsockopt( handle, SOL_SOCKET, SO_NUMRCVPKT, &queued, &queued_bytes ) == 0 );
         if ( queued == 1 )
+        {
             break;
+        }
         posix_check( rocketnet_platform_time() < deadline );
         rocketnet_platform_sleep( 0.0002 );
     }
@@ -1157,7 +1177,9 @@ static void posix_server_sends_drained( struct posix_pair_t * pair )
 {
     const char * name = rocketnet_server_transport_io_name( pair->server );
     if ( strcmp( name, "portable" ) != 0 && strcmp( name, "msgx" ) != 0 )
+    {
         return;
+    }
 
     void * transport = rocketnet_server_transport_io_name_for_testing( pair->server );
     bool drained = rocketnet_portable_tx_test_drained( transport );
@@ -1175,7 +1197,9 @@ static void posix_wait_for_send_refusal( rocketnet_platform_socket_t * socket, i
 {
     const double deadline = rocketnet_platform_time() + 5.0;
     while ( rocketnet_platform_socket_send_failures_remaining_for_testing( socket ) == armed && rocketnet_platform_time() < deadline )
+    {
         rocketnet_platform_sleep( 0.0005 );
+    }
     posix_check( rocketnet_platform_socket_send_failures_remaining_for_testing( socket ) < armed );
 }
 
@@ -1226,7 +1250,9 @@ static void posix_transport_send_seam_cell( int ipv6, const char * server_transp
             posix_check( rocketnet_platform_socket_send_failures( pair.server_socket ) == failures_before );
         }
         else
+        {
             posix_server_sends_drained( &pair );
+        }
         rocketnet_platform_socket_fail_next_sends( pair.server_socket, 0, 0 );
         posix_server_sends_drained( &pair );
 
@@ -1277,7 +1303,9 @@ static void posix_transport_send_seam_cell( int ipv6, const char * server_transp
                     const int index = payload[1];
                     posix_check( index < 8 && !seen[index] );
                     for ( int j = 2; j < 16; j++ )
+                    {
                         posix_check( payload[j] == 0xdd );
+                    }
                     seen[index] = true;
                     arrived++;
                 }
@@ -1517,7 +1545,9 @@ static void posix_mmsg_log( void * context, enum rocketnet_log_level_t level, co
     {
         posix_mmsg_lines++;
         if ( strstr( message, strerror( EAGAIN ) ) != NULL )
+        {
             posix_mmsg_lines_eagain++;
+        }
     }
 
     errno = EBADF;
@@ -1594,10 +1624,14 @@ static void posix_mmsg_progress_log( void * context, enum rocketnet_log_level_t 
         const char * diagnostic = strstr( message, "failed: errno " );
         int logged_error = 0;
         if ( diagnostic && sscanf( diagnostic, "failed: errno %d", &logged_error ) == 1 && logged_error == log->error )
+        {
             log->matching_errno++;
+        }
     }
     if ( strstr( message, "invalid address. could not send packet" ) != NULL )
+    {
         log->invalid++;
+    }
     errno = EBADF;
 }
 
@@ -1631,7 +1665,9 @@ static void test_mmsg_progress_retries_original_suffix( int ipv6, int error, int
         if ( !refused_address[i] )
         {
             if ( accepted_before == prefix )
+            {
                 refusal_index = i;
+            }
             accepted_before++;
         }
         memset( packets[i], i + 1, sizeof( packets[i] ) );
@@ -1705,7 +1741,9 @@ static void test_mmsg_progress_retries_original_suffix( int ipv6, int error, int
     // while reporting it consumed must fail the actual receive oracle.
     posix_check( received == expected );
     for ( int i = 0; i < num_packets; i++ )
+    {
         posix_check( seen[i] == ( !refused_address[i] && !( terminal && i == refusal_index ) ) );
+    }
     rocketnet_platform_sleep( 0.01 );
     rocketnet_address_t from;
     uint8_t extra[64];
@@ -1722,7 +1760,9 @@ static void test_mmsg_progress_retries_original_suffix( int ipv6, int error, int
         posix_check( second == 0 );
         int preceding_invalid = 0;
         for ( int i = 0; i < refusal_index; i++ )
+        {
             preceding_invalid += refused_address[i];
+        }
         posix_check( invalid_after_first == preceding_invalid );
         posix_check( invalid_after_second == preceding_invalid );
     }
@@ -1779,7 +1819,9 @@ static void posix_burst_take( struct posix_burst_drain_t * drain, const uint8_t 
         memcpy( &sender, packet, sizeof( sender ) );
         memcpy( &sequence, packet + sizeof( sender ), sizeof( sequence ) );
         if ( sender == 0xffffffffu )
+        {
             continue;   // a send-buffer probe
+        }
         posix_check( sender < POSIX_BURST_SENDERS );
         posix_check( sequence < POSIX_BURST_PACKETS );
         if ( drain->seen[sender][sequence] )
@@ -1939,7 +1981,9 @@ void rocketnet_test_posix_send_burst()
         {
             const int count = rocketnet_platform_socket_receive_packets( server, from, data, POSIX_BURST_BYTES, bytes, 64 );
             if ( count == 0 )
+            {
                 break;
+            }
             posix_burst_take( &drain, data, bytes, count );
         }
     }
@@ -2086,8 +2130,10 @@ static void posix_linux_bounded_flush( struct posix_pair_t * pair, int gso_dropp
     }
 
     if ( flush.done.load() == 0 )
+    {
         printf( "failing flush did not return within 5 seconds: dropped %llu so far, a slot or frame never came back\n",
                 (unsigned long long) posix_native_counter( pair->native, pair->transport, gso_dropped, uring_dropped ) );
+    }
     posix_check( flush.done.load() == 1 );
     rocketnet_platform_thread_join( thread );
     rocketnet_platform_thread_destroy( thread );
@@ -2102,9 +2148,13 @@ static void posix_linux_bounded_flush( struct posix_pair_t * pair, int gso_dropp
 static bool posix_linux_send_idle( struct posix_pair_t * pair )
 {
     if ( pair->native == POSIX_NATIVE_GSO )
+    {
         return rocketnet_server_gso_test_send_idle( (struct rocketnet_server_gso_t *) pair->transport );
+    }
     if ( pair->native == POSIX_NATIVE_URING )
+    {
         return rocketnet_server_uring_test_send_idle( (struct rocketnet_server_uring_t *) pair->transport );
+    }
 
     return true;
 }
@@ -2350,7 +2400,9 @@ static void posix_linux_gso_receive_cell( int ipv6, int plain )
         syscalls = posix_native_counter( pair.native, pair.transport, ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_SYSCALLS, 0 ) - syscalls_before;
         errors = posix_native_counter( pair.native, pair.transport, ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_ERRORS, 0 ) - errors_before;
         if ( syscalls >= 64 && errors >= 64 )
+        {
             break;
+        }
         posix_pair_update( &pair );
         rocketnet_platform_sleep( 0.001 );
     }
@@ -2391,7 +2443,9 @@ static void posix_linux_gso_receive_cell( int ipv6, int plain )
     {
         eintr_syscalls = posix_native_counter( pair.native, pair.transport, ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_SYSCALLS, 0 ) - eintr_syscalls_before;
         if ( eintr_syscalls >= 64 )
+        {
             break;
+        }
         posix_pair_update( &pair );
         rocketnet_platform_sleep( 0.001 );
     }
@@ -2467,7 +2521,9 @@ void rocketnet_test_linux_uring_receive_cqe_errors()
                 posix_pair_update( &pair );
                 rearms = posix_native_counter( pair.native, uring, 0, ROCKETNET_SERVER_URING_COUNTER_RECEIVE_REARMS ) - rearms_before;
                 if ( rearms >= (uint64_t) queues )
+                {
                     break;
+                }
                 rocketnet_platform_sleep( 0.001 );
             }
 
@@ -2643,7 +2699,9 @@ static int posix_port_server_drain( int kind, void * server )
 static int posix_port_socket_drain( int s )
 {
     if ( s < 0 )
+    {
         return 0;
+    }
 
     int received = 0;
     uint8_t data[2048];
@@ -2823,7 +2881,9 @@ static bool posix_hygiene_udp_socket( int fd )
 {
     struct stat info;
     if ( fstat( fd, &info ) != 0 || !S_ISSOCK( info.st_mode ) )
+    {
         return false;
+    }
 
     int type = 0;
     socklen_t type_bytes = sizeof( type );
@@ -2859,7 +2919,9 @@ static void posix_native_socket_hygiene( int kind, int ipv6 )
     for ( int fd = 0; fd < POSIX_HYGIENE_MAX_FDS; fd++ )
     {
         if ( before[fd] || !posix_hygiene_udp_socket( fd ) )
+        {
             continue;
+        }
 
         const int flags = fcntl( fd, F_GETFD );
         posix_check( flags >= 0 && ( flags & FD_CLOEXEC ) != 0 );
@@ -2981,7 +3043,9 @@ static bool posix_xdp_inside_virtme()
 {
     FILE * file = fopen( "/proc/cmdline", "r" );
     if ( !file )
+    {
         return false;
+    }
 
     char line[4096];
     const bool read = fgets( line, sizeof( line ), file ) != NULL;
@@ -3030,19 +3094,23 @@ static uint64_t posix_xdp_frag_creates( int ipv6 )
             int index = 0;
             char * save = NULL;
             for ( char * token = strtok_r( names, " \n", &save ); token; token = strtok_r( NULL, " \n", &save ), index++ )
+            {
                 if ( strcmp( token, "FragCreates" ) == 0 )
                 {
                     column = index;
                 }
+            }
 
             index = 0;
             save = NULL;
             for ( char * token = strtok_r( line, " \n", &save ); token; token = strtok_r( NULL, " \n", &save ), index++ )
+            {
                 if ( index == column )
                 {
                     value = strtoull( token, NULL, 10 );
                     found = true;
                 }
+            }
         }
     }
 
@@ -3258,7 +3326,9 @@ static void posix_xdp_weather( int ipv6 )
         posix_xdp_update( server, client );
         if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
              rocketnet_server_transport_num_connected_clients( server ) == 1 )
+        {
             break;
+        }
         rocketnet_platform_sleep( 0.001 );
     }
 
@@ -3440,7 +3510,9 @@ static void posix_xdp_weather( int ipv6 )
             }
 
             if ( posix_xdp_equal( &now, &expect ) && valid_seen == valid_sent && ( round != 0 || other_received_bytes >= 0 ) )
+            {
                 break;
+            }
 
             if ( rocketnet_platform_time() >= deadline )
             {

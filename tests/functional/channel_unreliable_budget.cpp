@@ -8,7 +8,9 @@
 static void unreliable_budget_check_impl( bool condition, const char * label, int line )
 {
     if ( condition )
+    {
         return;
+    }
     printf( "unreliable receive budget failed: %s at line %d\n", label, line );
     fflush( stdout );
     exit( 1 );

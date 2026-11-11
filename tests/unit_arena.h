@@ -18,15 +18,21 @@ static inline rn_arena_t * rn_unit_arena_create( const rocketnet_message_config_
 {
     const uint64_t bytes = rn_arena_required_bytes( config, num_regions );
     if ( bytes == 0 || bytes > (uint64_t) SIZE_MAX )
+    {
         return NULL;
+    }
 
     void * block = rocketnet_malloc( NULL, (size_t) bytes );
     if ( !block )
+    {
         return NULL;
+    }
 
     rn_arena_t * arena = rn_arena_create_in_block( block, bytes, config, num_regions, counters );
     if ( !arena )
+    {
         rocketnet_free( NULL, block );
+    }
 
     return arena;
 }
@@ -34,7 +40,9 @@ static inline rn_arena_t * rn_unit_arena_create( const rocketnet_message_config_
 static inline void rn_unit_arena_destroy( rn_arena_t * arena )
 {
     if ( !arena )
+    {
         return;
+    }
 
     rn_arena_destroy( arena );
     rocketnet_free( NULL, arena );

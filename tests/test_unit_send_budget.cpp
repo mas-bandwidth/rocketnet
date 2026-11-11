@@ -138,7 +138,9 @@ static void test_never_exceeds_budget_per_window()
         for ( int update = 0; update < 1000000; update++ )
         {
             if ( now >= arrivals_end && reliable_backlog == 0 )
+            {
                 break;
+            }
 
             // uneven update spacing: mostly about 16 ms, sometimes a stall
 
@@ -163,7 +165,9 @@ static void test_never_exceeds_budget_per_window()
                 const int decision = rocketnet_send_budget_admit( &budget, ROCKETNET_SEND_CLASS_NEW_RELIABLE, bytes );
                 check( decision == ROCKETNET_SEND_BUDGET_SEND || decision == ROCKETNET_SEND_BUDGET_WAIT );
                 if ( decision != ROCKETNET_SEND_BUDGET_SEND )
+                {
                     break;
+                }
                 reliable_backlog--;
                 reliable_sent++;
                 sent_this_update += bytes;
@@ -393,7 +397,9 @@ static void test_reliable_waits_unreliable_drops()
         now += 0.5;
         rocketnet_send_budget_begin_update( &slow, now );
         if ( rocketnet_send_budget_admit( &slow, ROCKETNET_SEND_CLASS_RETRANSMIT, ROCKETNET_SEND_BUDGET ) == ROCKETNET_SEND_BUDGET_SEND )
+        {
             break;
+        }
         waits++;
         check( waits < 100 );
     }
@@ -551,8 +557,12 @@ static void test_wire_bytes_match_the_transport()
     // a receive history with gaps, so the ack block carries ranges
 
     for ( uint64_t s = 1; s <= 200; s++ )
+    {
         if ( s % 7 != 0 )
+        {
             rocketnet_replay_advance( &g_replay, s );
+        }
+    }
 
     const int payloads[] = { 1, 17, 100, 600, 1000, 1150, ROCKETNET_SEND_BUDGET - ROCKETNET_PACKET_OVERHEAD_BYTES - ROCKETNET_ACK_BLOCK_MIN_BYTES };
     uint64_t sequence = 1;

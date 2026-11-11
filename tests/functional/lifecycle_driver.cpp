@@ -45,11 +45,15 @@ static void * allocate( void * context, size_t bytes )
 
     const int call = ++state.calls;
     if ( state.fail_at == call )
+    {
         return NULL;
+    }
 
     void * base = malloc( bytes + 128 );
     if ( !base )
+    {
         return NULL;
+    }
     static_assert( alignof( max_align_t ) <= 16, "test allocator needs a wider alignment offset" );
 
     uintptr_t address = ( ( (uintptr_t) base + sizeof( void * ) + 63 ) & ~(uintptr_t) 63 ) + 16;
@@ -133,7 +137,9 @@ void rocketnet_test_lifecycle_transport()
 
         check( state.live == baseline );
         if ( client_success )
+        {
             break;
+        }
     }
 
     check( client_success );
@@ -162,7 +168,9 @@ void rocketnet_test_lifecycle_transport()
 
         check( state.live == baseline );
         if ( server_success )
+        {
             break;
+        }
     }
 
     check( server_success );

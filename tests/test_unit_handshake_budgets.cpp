@@ -477,7 +477,9 @@ static void test_handshake_refused_source_spends_no_work_budget()
 
     int index = 0;
     for ( int i = 0; i < ROCKETNET_SIGNATURE_VERIFY_FAILURE_BUDGET; i++ )
+    {
         check( budgets_send_forged( &test, &forger, ++index ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    }
 
     check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_DID_NOT_VERIFY] == (uint64_t) ROCKETNET_SIGNATURE_VERIFY_FAILURE_BUDGET );
 
@@ -490,7 +492,9 @@ static void test_handshake_refused_source_spends_no_work_budget()
 
     const int flood = 4 * ROCKETNET_DEFAULT_SERVER_HANDSHAKES_PER_UPDATE;
     for ( int i = 0; i < flood; i++ )
+    {
         check( budgets_send_forged( &test, &forger, ++index ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    }
 
     check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT] == (uint64_t) flood );
     check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_DID_NOT_VERIFY] == (uint64_t) ROCKETNET_SIGNATURE_VERIFY_FAILURE_BUDGET );
@@ -539,7 +543,9 @@ static int budgets_send_request( struct budgets_server_t * test, const struct ro
                                                                              ROCKETNET_TEST_CREATE_TS, current_time,
                                                                              response, response_bytes );
     if ( result != ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE )
+    {
         check( *response_bytes == 0 );
+    }
 
     return result;
 }

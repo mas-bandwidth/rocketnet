@@ -87,11 +87,15 @@ static int standard_timing_and_counters_generate( const char * id, uint8_t * out
         };
         const int count = (int) ( sizeof( defaults ) / sizeof( defaults[0] ) );
         if ( capacity < count * 8 )
+        {
             return -1;
+        }
 
         int at = 0;
         for ( int i = 0; i < count; i++ )
+        {
             standard_put_u64le( out, at, defaults[i] );
+        }
         return at;
     }
 
@@ -99,7 +103,9 @@ static int standard_timing_and_counters_generate( const char * id, uint8_t * out
     {
         const int count = ROCKETNET_NUM_COUNTERS;
         if ( capacity < count * 7 )
+        {
             return -1;
+        }
 
         int at = 0;
         for ( int i = 0; i < count; i++ )
@@ -359,7 +365,9 @@ static void timing_check_family_sums( const struct rocketnet_counters_t * counte
                     (unsigned long long) counters->values[received], (unsigned long long) outcomes );
         }
         if ( is_family )
+        {
             rocketnet_unit_check( counters->values[received] == outcomes );
+        }
     }
 }
 

@@ -38,11 +38,15 @@ static void * allocate( void * context, size_t bytes )
     allocator_state * state = (allocator_state *) context;
     const int call = ++state->calls;
     if ( state->fail_at == call )
+    {
         return NULL;
+    }
 
     void * base = malloc( bytes + 128 );
     if ( !base )
+    {
         return NULL;
+    }
     uintptr_t address = ( ( (uintptr_t) base + sizeof( void * ) + 63 ) & ~(uintptr_t) 63 ) + 16;
     memcpy( (void *) ( address - sizeof( void * ) ), &base, sizeof( base ) );
     memset( (void *) address, 0xA5, bytes );

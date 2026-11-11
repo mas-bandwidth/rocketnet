@@ -80,7 +80,9 @@ static void test_portable_tx_sweep_spends_room_per_control_frame()
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_sized( NULL, "127.0.0.1:0", &config, sizeof( config ) );
     rocketnet_unit_check( server != NULL );
     if ( !server )
+    {
         return;
+    }
     rocketnet_unit_check( rocketnet_server_transport_seat_clients_for_test( server, clients ) );
 
     const struct rocketnet_server_transport_io_operations_t * operations = NULL;

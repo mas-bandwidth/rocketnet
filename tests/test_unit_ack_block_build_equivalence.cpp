@@ -38,11 +38,15 @@ static int base_ack_block_build_bit_walk( uint8_t * output, int capacity, const 
     {
         uint64_t floor_sequence = 1;
         if ( block.largest >= ROCKETNET_REPLAY_WINDOW_BITS )
+        {
             floor_sequence = block.largest - ROCKETNET_REPLAY_WINDOW_BITS + 1;
+        }
 
         int max_ranges = ( capacity - ROCKETNET_ACK_BLOCK_MIN_BYTES ) / 4;
         if ( max_ranges > ROCKETNET_ACK_BLOCK_MAX_RANGES )
+        {
             max_ranges = ROCKETNET_ACK_BLOCK_MAX_RANGES;
+        }
 
         uint64_t s = block.largest;
 
@@ -51,7 +55,9 @@ static int base_ack_block_build_bit_walk( uint8_t * output, int capacity, const 
         {
             first_run++;
             if ( s == 1 )
+            {
                 break;
+            }
             s--;
         }
         block.first_range_length = first_run;
@@ -65,12 +71,16 @@ static int base_ack_block_build_bit_walk( uint8_t * output, int capacity, const 
             {
                 gap++;
                 if ( next_high == 1 )
+                {
                     break;
+                }
                 next_high--;
             }
 
             if ( next_high < floor_sequence || base_replay_bit( replay, next_high ) == 0 )
+            {
                 break;
+            }
 
             uint32_t run = 0;
             while ( next_high >= floor_sequence && base_replay_bit( replay, next_high ) && run < 0xFFFF )
@@ -85,14 +95,18 @@ static int base_ack_block_build_bit_walk( uint8_t * output, int capacity, const 
             }
 
             if ( run == 0 )
+            {
                 break;
+            }
 
             block.range_gap[block.num_ranges] = (uint16_t) gap;
             block.range_length[block.num_ranges] = (uint16_t) run;
             block.num_ranges++;
 
             if ( next_high == 0 )
+            {
                 break;
+            }
         }
     }
 
@@ -124,8 +138,10 @@ static void equiv_compare( const struct rocketnet_replay_protection_t * replay, 
     const int expected_bytes = base_ack_block_build_bit_walk( expected, capacity, replay );
     const int actual_bytes = rocketnet_ack_block_build( actual, capacity, replay );
     if ( expected_bytes != actual_bytes || memcmp( expected, actual, (size_t) expected_bytes ) != 0 )
+    {
         printf( "ack block equivalence: mismatch highest=%llu capacity=%d expected=%d actual=%d\n",
                 (unsigned long long) replay->highest_opened, capacity, expected_bytes, actual_bytes );
+    }
     check( expected_bytes == actual_bytes );
     check( memcmp( expected, actual, (size_t) expected_bytes ) == 0 );
 }
@@ -135,22 +151,34 @@ static void equiv_fill_pattern( struct rocketnet_replay_protection_t * replay, u
     memset( replay, 0, sizeof( *replay ) );
     replay->highest_opened = highest;
     if ( highest == 0 )
+    {
         return;
+    }
     uint64_t floor_sequence = 1;
     if ( highest >= ROCKETNET_REPLAY_WINDOW_BITS )
+    {
         floor_sequence = highest - ROCKETNET_REPLAY_WINDOW_BITS + 1;
+    }
     equiv_rng_state = seed;
     for ( uint64_t s = floor_sequence; s <= highest; s++ )
     {
         int received;
         if ( alternating )
+        {
             received = ( ( s & 1 ) == ( highest & 1 ) );
+        }
         else if ( percent_received >= 100 )
+        {
             received = 1;
+        }
         else
+        {
             received = ( equiv_random() % 100 ) < (uint64_t) percent_received;
+        }
         if ( received )
+        {
             equiv_set_bit( replay, s );
+        }
     }
     equiv_set_bit( replay, highest );
 }
@@ -214,9 +242,13 @@ static void test_ack_block_build_word_scan_matches_bit_walk()
             uint64_t word = equiv_random();
             // vary density by iteration so sparse and dense windows both occur
             if ( ( iter % 3 ) == 0 )
+            {
                 word &= equiv_random();
+            }
             if ( ( iter % 3 ) == 1 )
+            {
                 word |= equiv_random();
+            }
             replay.window[w] = word;
         }
         equiv_set_bit( &replay, highest );

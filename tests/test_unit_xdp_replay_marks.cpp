@@ -178,7 +178,9 @@ static void test_xdp_transport_replay_marks_duplicate_forgets_preserve_capacity(
     const struct rocketnet_address_t c = replay_marks_ipv4( 50001 );
 
     for ( int i = 0; i < 4; i++ )
+    {
         rocketnet_unit_check( rocketnet_xdp_replay_marks_forget( &marks, &a ) );
+    }
     rocketnet_unit_check( marks.forget_count == 1 && marks.refused == 0 );
 
     rocketnet_unit_check( rocketnet_xdp_replay_marks_forget( &marks, &b ) );
@@ -334,7 +336,9 @@ static void test_xdp_transport_replay_marks_refusals_reach_the_socket()
     static const bool no_failures[ROCKETNET_XDP_REPLAY_MAX_ENTRIES] = {};
     static bool marks_applied[ROCKETNET_XDP_REPLAY_MAX_ENTRIES];
     for ( uint32_t i = 0; i < ROCKETNET_XDP_REPLAY_MAX_ENTRIES; i++ )
+    {
         marks_applied[i] = true;
+    }
     rocketnet_unit_check( rocketnet_xdp_replay_marks_reset_keeping( &marks, no_failures, marks_applied ) == 2 );
     rocketnet_unit_check( marks.refused == 0 );
     rocketnet_unit_check( marks.mark_count == 0 );
@@ -364,7 +368,9 @@ static int replay_fake_map_find( const struct replay_fake_map_t * map, const str
     for ( int i = 0; i < REPLAY_FAKE_MAP_ENTRIES; i++ )
     {
         if ( map->present[i] && memcmp( &map->keys[i], key, sizeof( *key ) ) == 0 )
+        {
             return i;
+        }
     }
 
     return -1;
@@ -405,7 +411,9 @@ static bool replay_fake_map_update( struct replay_fake_map_t * map, const struct
     }
 
     if ( i < 0 )
+    {
         return false;
+    }
     map->keys[i] = *key;
     map->high_water[i] = high_water;
     map->present[i] = true;
@@ -422,9 +430,13 @@ static void replay_fake_commit( struct rocketnet_xdp_replay_marks_t * marks, str
     static bool forget_failed[ROCKETNET_XDP_REPLAY_MAX_ENTRIES];
     static bool mark_applied[ROCKETNET_XDP_REPLAY_MAX_ENTRIES];
     for ( uint32_t i = 0; i < marks->forget_count; i++ )
+    {
         forget_failed[i] = !replay_fake_map_delete( map, &marks->forgets[i] );
+    }
     for ( uint32_t i = 0; i < marks->mark_count; i++ )
+    {
         mark_applied[i] = replay_fake_map_update( map, &marks->mark_keys[i], marks->mark_values[i].high_water );
+    }
     rocketnet_xdp_replay_marks_reset_keeping( marks, forget_failed, mark_applied );
 }
 
@@ -591,7 +603,9 @@ static bool replay_fake_kernel_admits( const struct replay_fake_map_t * map, con
 {
     const int i = replay_fake_map_find( map, key );
     if ( i < 0 )
+    {
         return true;
+    }
     return (int32_t) ( map->high_water[i] - sequence ) < (int32_t) ROCKETNET_XDP_REPLAY_WINDOW;
 }
 

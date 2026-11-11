@@ -76,7 +76,9 @@ static float rocketnet_ordered_loss_percent( void )
 {
     char value[256];
     if ( rocketnet_test_getenv( "ROCKETNET_CHANNEL_LOSS_PERCENT", value, sizeof( value ) ) && value[0] )
+    {
         return (float) atof( value );
+    }
     return 10.0f;
 }
 
@@ -140,7 +142,9 @@ static uint32_t rocketnet_ordered_send( rocketnet_channel_harness_t * h,
                                         int bytes )
 {
     if ( client_to_server )
+    {
         return rocketnet_channel_harness_client_send( h, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, data, bytes );
+    }
     return rocketnet_channel_harness_server_send( h, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, data, bytes );
 }
 
@@ -159,7 +163,9 @@ static int rocketnet_ordered_collect( rocketnet_channel_harness_t * h,
                                       rocketnet_channel_delivery_t * delivery )
 {
     if ( client_to_server )
+    {
         return rocketnet_channel_harness_server_collect( h, 0, delivery );
+    }
     return rocketnet_channel_harness_client_collect( h, 0, delivery );
 }
 
@@ -212,12 +218,16 @@ static int rocketnet_ordered_run( const char * name, int client_to_server )
         {
             const int bytes = rocketnet_ordered_size( next_to_send );
             if ( bytes >= RN_SPAN_MIN_BYTES && !rocketnet_ordered_span_ring_empty( &h, client_to_server ) )
+            {
                 break;
+            }
             rocketnet_ordered_fill( payload, next_to_send, bytes );
 
             const uint32_t serial = rocketnet_ordered_send( &h, client_to_server, payload, bytes );
             if ( serial == 0 )
+            {
                 break;
+            }
             send_time[next_to_send] = h.now;
             next_to_send++;
         }
@@ -230,7 +240,9 @@ static int rocketnet_ordered_run( const char * name, int client_to_server )
         {
             const int expected_index = measurement.delivered;
             if ( expected_index >= rocketnet_ordered_message_count )
+            {
                 break;
+            }
 
             const int expected_bytes = rocketnet_ordered_size( expected_index );
             rocketnet_ordered_fill( payload, expected_index, expected_bytes );
@@ -257,7 +269,9 @@ static int rocketnet_ordered_run( const char * name, int client_to_server )
         }
 
         if ( next_to_send == rocketnet_ordered_message_count && measurement.delivered == rocketnet_ordered_message_count )
+        {
             break;
+        }
     }
 
     measurement.completion_seconds = h.now - start_time;

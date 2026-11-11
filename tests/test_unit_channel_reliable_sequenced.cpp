@@ -535,8 +535,10 @@ static void test_stale_numbers_released_across_ordered_epochs()
             uint32_t slot;
             const int accepted = rn_window_receive_accept( &receiver.ordered.receive, &record, &slot );
             if ( accepted != RN_WINDOW_RECEIVE_ACCEPT )
+            {
                 printf( "test_stale_numbers_released_across_ordered_epochs: number %u (epoch %u) refused by the window: accept=%d violation=%d\n",
                         number, epoch, accepted, (int) receiver.ordered.receive.violation );
+            }
             check( accepted == RN_WINDOW_RECEIVE_ACCEPT );
 
             rn_delivery_t out;
@@ -673,7 +675,9 @@ static void test_sequenced_behind_a_full_ordered_backlog_is_held()
     {
         rs_packet_t packet;
         if ( rs_write( &sender, now, &packet, 1, (uint64_t) ( 91 + update ) ) != 1 )
+        {
             break;
+        }
         check( rn_ordered_receive( &receiver.ordered, packet.data, packet.bytes ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
         delivered += (uint32_t) receiver.ordered.channels.deliveries;
         rn_ordered_end_update( &receiver.ordered );

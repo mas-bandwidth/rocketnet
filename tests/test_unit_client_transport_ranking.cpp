@@ -76,11 +76,15 @@ static int ranking_client_order( int platform, int * order )
         const rocketnet_transport_definition_t * definition = rocketnet_transport_definition( id );
         check( definition != NULL );
         if ( !( definition->platforms & ( 1u << platform ) ) )
+        {
             continue;
+        }
 
         const int rank = definition->client_preference;
         if ( rank == 0 || rank >= ROCKETNET_TRANSPORT_PIN_ONLY )
+        {
             continue;
+        }
 
         int index = count++;
         while ( index > 0 && rocketnet_transport_definition( order[index - 1] )->client_preference > rank )
@@ -168,8 +172,12 @@ static void * ranking_create( void * context, const rocketnet_client_transport_i
     check( ranking_record.num_creates < RANKING_MAX_CREATES );
     snprintf( ranking_record.creates[ranking_record.num_creates++], sizeof( ranking_record.creates[0] ), "%s", config->name );
     for ( int i = 0; i < 2; i++ )
+    {
         if ( ranking_record.refuse[i] && strcmp( ranking_record.refuse[i], config->name ) == 0 )
+        {
             return NULL;    // a refusal: no allocation failed, so the ladder falls
+        }
+    }
 
     return rocketnet_fake_client_create( context, config, bind );
 }
@@ -195,8 +203,12 @@ static int ranking_log_count( const char * text )
 {
     int count = 0;
     for ( int i = 0; i < ranking_log.num_lines; i++ )
+    {
         if ( strstr( ranking_log.lines[i], text ) )
+        {
             count++;
+        }
+    }
 
     return count;
 }
@@ -242,7 +254,9 @@ static void ranking_env_set_aside( ranking_env_t * saved )
 static void ranking_env_put_back( const ranking_env_t * saved )
 {
     if ( !saved->was_set )
+    {
         return;
+    }
     rocketnet_test_env_setenv( "ROCKETNET_CLIENT_TRANSPORT", saved->value, 1 );
 }
 

@@ -42,8 +42,12 @@ static const m5_vector_case_t * m5_vector_case( const char * id )
 {
     const int count = (int) ( sizeof( m5_vector_cases ) / sizeof( m5_vector_cases[0] ) );
     for ( int i = 0; i < count; i++ )
+    {
         if ( strcmp( m5_vector_cases[i].id, id ) == 0 )
+        {
             return &m5_vector_cases[i];
+        }
+    }
     return 0;
 }
 
@@ -51,13 +55,17 @@ static int m5_reconstruct_generate( const char * id, uint8_t * out, int capacity
 {
     const m5_vector_case_t * vector = m5_vector_case( id );
     if ( !vector )
+    {
         return -1;
+    }
 
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
     rn_arena_t * arena = rn_unit_arena_create( &config, 1, NULL );
     if ( !arena )
+    {
         return -1;
+    }
     rn_region_t * region = rn_arena_region( arena, 0 );
 
     rn_window_receive_t receive;

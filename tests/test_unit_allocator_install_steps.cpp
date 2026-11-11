@@ -57,7 +57,9 @@ static void * steps_pair_allocate( install_steps_pair_t & pair, size_t bytes )
 
     uint8_t * base = (uint8_t *) rocketnet_default_malloc_function( NULL, bytes + 16 );
     if ( !base )
+    {
         return NULL;
+    }
 
     memcpy( base, &pair.tag, sizeof( pair.tag ) );
     ++pair.live;
@@ -70,7 +72,9 @@ static void steps_pair_release( install_steps_pair_t & pair, void * pointer )
     uint64_t tag = 0;
     memcpy( &tag, base, sizeof( tag ) );
     if ( tag != pair.tag )
+    {
         ++pair.foreign_releases;
+    }
     ++pair.releases;
     --pair.live;
     rocketnet_default_free_function( NULL, base );

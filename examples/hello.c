@@ -200,10 +200,12 @@ int main( void )
             }
 
             while ( ( batch = rocketnet_server_receive_messages( server ) ) != NULL )
+            {
                 for ( int i = 0; i < batch->num_messages; i++, received++ )
                 {
                     printf( "server received: %.*s\n", batch->bytes[i], (const char *) batch->data[i] );
                 }
+            }
 
             if ( sent < messages && rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
             {

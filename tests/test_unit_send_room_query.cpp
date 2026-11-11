@@ -180,7 +180,9 @@ static void test_send_room_query_public_api_client_and_server()
         if ( rocketnet_client_state( clients[0] ) == ROCKETNET_CLIENT_STATE_CONNECTED &&
              rocketnet_client_state( clients[1] ) == ROCKETNET_CLIENT_STATE_CONNECTED &&
              rocketnet_server_num_connected_clients( server ) == 2 )
+        {
             break;
+        }
         send_room_frame( server, clients, 2 );
     }
 
@@ -242,7 +244,9 @@ static void test_send_room_query_public_api_client_and_server()
     {
         send_room_stats_unchanged_by_asking_client( clients[0], bytes );
         if ( !rocketnet_client_can_send_message( clients[0], 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, bytes ) )
+        {
             break;
+        }
         uint8_t * p = rocketnet_client_start_message( clients[0], 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, bytes );
         check( p != NULL );
 
@@ -267,7 +271,9 @@ static void test_send_room_query_public_api_client_and_server()
     {
         send_room_stats_unchanged_by_asking_server( server, server_slot, bytes );
         if ( !rocketnet_server_can_send_message( server, server_slot, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, bytes ) )
+        {
             break;
+        }
         uint8_t * p = rocketnet_server_start_message( server, (uint64_t) server_slot, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, bytes );
         check( p != NULL );
 
@@ -324,9 +330,15 @@ static int send_room_count_server_received( rocketnet_server_t * server, uint8_t
     int found = 0;
     const struct rocketnet_message_batch_t * batch;
     while ( ( batch = rocketnet_server_receive_messages( server ) ) != NULL )
+    {
         for ( int i = 0; i < batch->num_messages; i++ )
+        {
             if ( batch->bytes[i] > 0 && batch->data[i][0] == marker )
+            {
                 found++;
+            }
+        }
+    }
     return found;
 }
 
@@ -335,9 +347,15 @@ static int send_room_count_client_received( rocketnet_client_t * client, uint8_t
     int found = 0;
     const struct rocketnet_message_batch_t * batch;
     while ( ( batch = rocketnet_client_receive_messages( client ) ) != NULL )
+    {
         for ( int i = 0; i < batch->num_messages; i++ )
+        {
             if ( batch->bytes[i] > 0 && batch->data[i][0] == marker )
+            {
                 found++;
+            }
+        }
+    }
     return found;
 }
 
@@ -414,7 +432,9 @@ static void test_send_room_skip_defer_drain_retry_and_preflight_race()
     for ( ;; )
     {
         if ( !rocketnet_client_can_send_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, bytes ) )
+        {
             break;
+        }
         uint8_t * p = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, bytes );
         check( p != NULL );
         if ( p )
@@ -486,7 +506,9 @@ static void test_send_room_skip_defer_drain_retry_and_preflight_race()
     for ( ;; )
     {
         if ( !rocketnet_server_can_send_message( server, slot, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, bytes ) )
+        {
             break;
+        }
         uint8_t * p = rocketnet_server_start_message( server, (uint64_t) slot, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, bytes );
         check( p != NULL );
         if ( p )

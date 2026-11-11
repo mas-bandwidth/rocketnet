@@ -124,7 +124,9 @@ static int client_io_decrypt_push_payload_from( client_io_decrypt_fixture_t * f,
                                                      f->client.connection_salt, NULL, f->key );
     check( bytes == ROCKETNET_PACKET_OVERHEAD_BYTES + plaintext_bytes );
     if ( forge )
+    {
         packet[ROCKETNET_PREFILTER_BYTES + ROCKETNET_SEQUENCE_BYTES] ^= 0x01;   // one ciphertext byte flipped
+    }
     rocketnet_fake_client_push( &f->fake, from, packet, bytes );
 
     return bytes;

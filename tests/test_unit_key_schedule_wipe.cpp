@@ -36,9 +36,13 @@ static void witness_observe_memzero( void * p, size_t bytes )
         // are erased. The ordinary linked implementation supplies the oracle.
         check( memcmp( wipe_output, &wipe_expected, sizeof( wipe_expected ) ) == 0 );
         if ( bytes == 32 )
+        {
             wipe_shared_count++;
+        }
         else
+        {
             wipe_input_count++;
+        }
     }
     else
     {
@@ -47,7 +51,9 @@ static void witness_observe_memzero( void * p, size_t bytes )
     }
     sodium_memzero( p, bytes );
     for ( size_t i = 0; i < bytes; i++ )
+    {
         check( data[i] == 0 );
+    }
 }
 
 #undef sodium_memzero

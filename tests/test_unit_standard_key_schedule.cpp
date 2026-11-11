@@ -52,7 +52,9 @@ static int standard_key_schedule_derive( const uint8_t * remote_ephemeral_public
 static int standard_key_schedule_verify_signatures( uint8_t * out, int capacity )
 {
     if ( capacity < 5 )
+    {
         return -1;
+    }
 
     uint8_t public_key[32], signatures[3][64];
     rocketnet_unit_check( rn_standard_hex_decode( "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8", public_key, 32 ) == 32 );
@@ -62,7 +64,9 @@ static int standard_key_schedule_verify_signatures( uint8_t * out, int capacity 
 
     uint8_t token[ROCKETNET_SIGNED_CONNECT_DATA_BYTES + 64];
     for ( int i = 0; i < ROCKETNET_SIGNED_CONNECT_DATA_BYTES; i++ )
+    {
         token[i] = (uint8_t) i;
+    }
     out[0] = (uint8_t) ( rocketnet_verify_signed_connect_data( token, signatures[0], public_key ) != 0 );
     out[1] = (uint8_t) ( rocketnet_verify_signed_connect_data( token, signatures[1], public_key ) != 0 );
     rocketnet_unit_check( memcmp( signatures[0], signatures[1], 64 ) != 0 );
@@ -84,12 +88,16 @@ static int standard_key_schedule_verify_signatures( uint8_t * out, int capacity 
 static int standard_key_schedule_generate( const char * id, uint8_t * out, int capacity )
 {
     if ( strcmp( id, "t7.signature-verification" ) == 0 )
+    {
         return standard_key_schedule_verify_signatures( out, capacity );
+    }
 
     if ( strcmp( id, "t7.small-order-key-refused" ) == 0 )
     {
         if ( capacity < 1 )
+        {
             return -1;
+        }
 
         const uint8_t zero_point[32] = { 0 };
         struct rocketnet_connection_keys_t keys;
@@ -106,32 +114,54 @@ static int standard_key_schedule_generate( const char * id, uint8_t * out, int c
         SESSION_S2C
     } which;
     if ( strcmp( id, "t7.handshake-client-to-server" ) == 0 )
+    {
         which = HANDSHAKE_C2S;
+    }
     else if ( strcmp( id, "t7.handshake-server-to-client" ) == 0 )
+    {
         which = HANDSHAKE_S2C;
+    }
     else if ( strcmp( id, "t7.session-client-to-server" ) == 0 )
+    {
         which = SESSION_C2S;
+    }
     else if ( strcmp( id, "t7.session-server-to-client" ) == 0 )
+    {
         which = SESSION_S2C;
+    }
     else
+    {
         return -1;
+    }
 
     if ( capacity < 32 )
+    {
         return -1;
+    }
 
     struct rocketnet_connection_keys_t keys;
     memset( &keys, 0, sizeof( keys ) );
     if ( !standard_key_schedule_derive( rocketnet_test_server_eph_public, &keys ) )
+    {
         return -1;
+    }
 
     if ( which == HANDSHAKE_C2S )
+    {
         memcpy( out, keys.handshake_client_to_server, 32 );
+    }
     else if ( which == HANDSHAKE_S2C )
+    {
         memcpy( out, keys.handshake_server_to_client, 32 );
+    }
     else if ( which == SESSION_C2S )
+    {
         memcpy( out, keys.session_client_to_server, 32 );
+    }
     else
+    {
         memcpy( out, keys.session_server_to_client, 32 );
+    }
 
     return 32;
 }

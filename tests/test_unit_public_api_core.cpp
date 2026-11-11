@@ -234,7 +234,9 @@ static void * api_core_block_allocate( void * context, size_t bytes )
 
     void * base = malloc( bytes + 128 );
     if ( !base )
+    {
         return NULL;
+    }
 
     uintptr_t address = ( (uintptr_t) base + 2 * sizeof( void * ) + 63 ) & ~(uintptr_t) 63;
     memcpy( (void *) ( address - sizeof( void * ) ), &base, sizeof( base ) );

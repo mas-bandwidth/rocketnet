@@ -88,7 +88,9 @@ static void db_log_capture( void * context, enum rocketnet_log_level_t level, co
 {
     (void) context;
     if ( level != ROCKETNET_LOG_LEVEL_ERROR )
+    {
         return;
+    }
     db_error_lines++;
 
     const size_t copied = length < sizeof( db_last_error ) - 1 ? length : sizeof( db_last_error ) - 1;

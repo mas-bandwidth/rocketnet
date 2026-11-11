@@ -49,12 +49,16 @@ static const char * rocketnet_suite_test_name( int index )
 {
     const int units = rocketnet_unit_test_count();
     if ( index < units )
+    {
         return rocketnet_unit_test_name( index );
+    }
 
     const int channels = rocketnet_channels_test_count();
     const int cindex = index - units;
     if ( cindex < channels )
+    {
         return rocketnet_channels_test_name( cindex );
+    }
 
     return rocketnet_unit_tests_name( cindex - channels );
 }
@@ -106,11 +110,15 @@ static bool rocketnet_unit_append_config_names( std::vector<std::string> & names
     for ( int i = 0; i < count; ++i )
     {
         if ( ( fields[i].flags & ROCKETNET_CONFIG_NO_ENV ) != 0 )
+        {
             continue;
+        }
 
         char name[128];
         if ( !rocketnet_config_env_var_name_for( prefix, fields[i].name, name, sizeof( name ) ) )
+        {
             return false;
+        }
         names.push_back( name );
     }
 
@@ -123,21 +131,31 @@ static int rocketnet_unit_clear_environment()
     int count = 0;
     const rocketnet_config_field_t * fields = rocketnet_client_transport_config_fields( &count );
     if ( !rocketnet_unit_append_config_names( names, "client", fields, count ) )
+    {
         return 1;
+    }
     fields = rocketnet_server_transport_config_fields( &count );
     if ( !rocketnet_unit_append_config_names( names, "server", fields, count ) )
+    {
         return 1;
+    }
     fields = rocketnet_message_config_fields( &count );
     if ( !rocketnet_unit_append_config_names( names, "client", fields, count ) ||
          !rocketnet_unit_append_config_names( names, "server", fields, count ) )
+    {
         return 1;
+    }
 #if ROCKETNET_DEV
     fields = rocketnet_client_budget_config_fields( &count );
     if ( !rocketnet_unit_append_config_names( names, "client", fields, count ) )
+    {
         return 1;
+    }
     fields = rocketnet_server_budget_config_fields( &count );
     if ( !rocketnet_unit_append_config_names( names, "server", fields, count ) )
+    {
         return 1;
+    }
 #else // #if ROCKETNET_DEV
     // the send budget fields: the accessors are ROCKETNET_DEV code
     names.push_back( "ROCKETNET_CLIENT_SEND_KBPS" );
@@ -202,7 +220,9 @@ static int rocketnet_unit_worker( const char * name )
     if ( _setmode( _fileno( stdout ), _O_BINARY ) == -1 ||
          setvbuf( stdout, NULL, _IOFBF, 1 << 20 ) != 0 ||
          setvbuf( stderr, NULL, _IONBF, 0 ) != 0 )
+    {
         return 1;
+    }
 #else
     setvbuf( stdout, NULL, _IOLBF, 0 );
     setvbuf( stderr, NULL, _IOLBF, 0 );
@@ -212,7 +232,9 @@ static int rocketnet_unit_worker( const char * name )
     // setup is functional evidence, rather than OS-free unit evidence.
 
     if ( rocketnet_unit_clear_environment() != 0 )
+    {
         return 1;
+    }
 
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
 
@@ -248,7 +270,9 @@ static int rocketnet_unit_worker( const char * name )
     if ( step_driven_case )
     {
         if ( rocketnet_test_env_setenv( "ROCKETNET_CLIENT_STEP_DRIVEN", "1", 1 ) != 0 )
+        {
             return 1;
+        }
     }
 
     rocketnet_channels_prepare_log( name );
@@ -279,7 +303,9 @@ static int rocketnet_unit_worker( const char * name )
 int main( int argc, char ** argv )
 {
     if ( test_fp_contract_off() )
+    {
         return 1;
+    }
 
     // The unit suite runs over the loopback transport with no sockets, so a
     // transport pin in the environment must not reach it: both pins are

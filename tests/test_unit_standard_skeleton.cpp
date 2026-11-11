@@ -23,7 +23,9 @@ static int standard_skeleton_generate( const char * id, uint8_t * out, int capac
     if ( strcmp( id, "t3.token-identifier" ) == 0 )
     {
         if ( capacity < ROCKETNET_TOKEN_IDENTIFIER_BYTES )
+        {
             return -1;
+        }
         rocketnet_connect_token_identifier( out, rocketnet_test_frozen_token );
         return ROCKETNET_TOKEN_IDENTIFIER_BYTES;
     }

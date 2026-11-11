@@ -150,7 +150,9 @@ void harness_one_message_each_way_lossy()
             }
         }
         else
+        {
             break;
+        }
 
         rocketnet_channel_harness_pump( &h, 1.0 / 60.0 );
 

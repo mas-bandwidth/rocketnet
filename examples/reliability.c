@@ -251,7 +251,9 @@ int main( void )
                 for ( int i = 0; i < NUM_MESSAGES; i++ )
                 {
                     if ( stats[m].serials[i] != receipts[r].serial )
+                    {
                         continue;
+                    }
                     stats[m].acked += receipts[r].status == ROCKETNET_RECEIPT_STATUS_ACKED;
                     stats[m].lost += receipts[r].status == ROCKETNET_RECEIPT_STATUS_LOSS;
                 }
@@ -332,17 +334,29 @@ int main( void )
         int ok = s->duplicates == 0;
 
         if ( m == 0 || m == 5 )
+        {
             ok &= s->arrived == NUM_MESSAGES - 1 && !s->seen[1];      // unreliable: the dropped one is gone
+        }
         if ( sequenced )
+        {
             ok &= s->increasing && s->arrived > 0;                            // sequenced: never older than the last
+        }
         if ( m == 4 )
+        {
             ok &= last == NUM_MESSAGES;                                          // reliable sequenced: the newest arrives
+        }
         if ( m == 2 || m == 3 || m == 6 || m == 7 )
+        {
             ok &= s->arrived == NUM_MESSAGES;      // reliable: every one arrives
+        }
         if ( m == 3 || m == 7 )
+        {
             ok &= s->in_order;                                         // ordered: in the order sent
+        }
         if ( m >= 5 )
+        {
             ok &= s->acked + s->lost == NUM_MESSAGES && s->acked == s->arrived;  // receipts: one per message
+        }
         if ( !ok )
         {
             printf( "FAIL: %s\n", names[m] );

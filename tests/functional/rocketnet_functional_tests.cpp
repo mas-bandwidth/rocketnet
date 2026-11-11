@@ -214,7 +214,9 @@ void rocketnet_test_transport_disconnect_delivery()
         rocketnet_server_transport_update( server, rocketnet_platform_time() );
         rocketnet_server_transport_send_packets( server );
         if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+        {
             break;
+        }
         rocketnet_platform_sleep( 0.001 );
     }
 
@@ -229,7 +231,9 @@ void rocketnet_test_transport_disconnect_delivery()
         rocketnet_server_transport_update( server, rocketnet_platform_time() );
         rocketnet_server_transport_send_packets( server );
         if ( rocketnet_client_transport_state( client ) <= ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
+        {
             break;
+        }
         rocketnet_platform_sleep( 0.001 );
     }
 
@@ -281,7 +285,9 @@ void rocketnet_test_transport_reconnect_churn()
             rocketnet_server_transport_send_packets( server );
             if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED ||
                  rocketnet_client_transport_state( client ) < ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
+            {
                 break;
+            }
             rocketnet_platform_sleep( 0.001 );
         }
 
@@ -375,7 +381,9 @@ void rocketnet_test_client_disconnect_reports_state_change()
         rocketnet_server_transport_update( server, rocketnet_platform_time() );
         rocketnet_server_transport_send_packets( server );
         if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+        {
             break;
+        }
         rocketnet_platform_sleep( 0.001 );
     }
 
@@ -397,7 +405,9 @@ void rocketnet_test_client_disconnect_reports_state_change()
     {
         if ( recorder.previous_state[i] == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
              recorder.current_state[i] == ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
+        {
             seen++;
+        }
     }
 
     rocketnet_check( seen == 1 );
@@ -459,7 +469,9 @@ static void rocketnet_test_client_io_handoff_round_trip( const char * transport,
         rocketnet_server_transport_send_packets( server );
         if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
              rocketnet_server_transport_num_connected_clients( server ) == 1 )
+        {
             break;
+        }
         rocketnet_platform_sleep( 0.001 );
     }
 
@@ -659,7 +671,9 @@ static void rocketnet_test_client_io_handoff_round_trip( const char * transport,
         rocketnet_server_transport_update( server, rocketnet_platform_time() );
         rocketnet_server_transport_send_packets( server );
         if ( rocketnet_server_transport_num_connected_clients( server ) == 0 )
+        {
             break;
+        }
         rocketnet_platform_sleep( 0.001 );
     }
 
@@ -769,7 +783,9 @@ void rocketnet_test_transport_ring_exhaustion()
         rocketnet_server_transport_update( server, rocketnet_platform_time() );
         rocketnet_server_transport_send_packets( server );
         if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+        {
             break;
+        }
         rocketnet_platform_sleep( 0.001 );
     }
 
@@ -927,7 +943,9 @@ void rocketnet_test_transport_client_concurrent_fill()
         rocketnet_server_transport_update( server, rocketnet_platform_time() );
         rocketnet_server_transport_send_packets( server );
         if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+        {
             break;
+        }
         rocketnet_platform_sleep( 0.001 );
     }
 
@@ -1031,7 +1049,9 @@ void rocketnet_test_transport_concurrent_fill()
         rocketnet_client_transport_update( client, rocketnet_platform_time() );
         rocketnet_server_transport_update( server, rocketnet_platform_time() );
         if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+        {
             break;
+        }
         rocketnet_platform_sleep( 0.001 );
     }
 
@@ -1140,7 +1160,9 @@ void rocketnet_test_transport_wire_totals_concurrent_send_exact()
         rocketnet_client_transport_update( client, rocketnet_platform_time() );
         rocketnet_server_transport_update( server, rocketnet_platform_time() );
         if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+        {
             break;
+        }
         rocketnet_platform_sleep( 0.001 );
     }
 
@@ -1250,7 +1272,9 @@ void rocketnet_test_transport_start_finish_shape()
         rocketnet_client_transport_update( client, rocketnet_platform_time() );
         rocketnet_server_transport_update( server, rocketnet_platform_time() );
         if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+        {
             break;
+        }
         rocketnet_platform_sleep( 0.001 );
     }
 
@@ -1429,7 +1453,9 @@ void rocketnet_test_client_receive_keeps_payloads_on_bad_capacity()
         rocketnet_server_transport_update( server, rocketnet_platform_time() );
         if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
              rocketnet_server_transport_num_connected_clients( server ) == 1 )
+        {
             break;
+        }
         rocketnet_platform_sleep( 0.001 );
     }
 
@@ -1466,7 +1492,9 @@ void rocketnet_test_client_receive_keeps_payloads_on_bad_capacity()
             const uint8_t * second = first ? rocketnet_client_transport_payload( client, 1, &second_bytes ) : NULL;
             if ( first && second && first_bytes == 8 && memcmp( first, "capacity", 8 ) == 0 &&
                  second_bytes == 6 && memcmp( second, "second", 6 ) == 0 )
+            {
                 queued = true;
+            }
             else
             {
                 rocketnet_platform_sleep( 0.001 );
@@ -1556,7 +1584,9 @@ void rocketnet_test_transport_udp_loopback()
         rocketnet_server_transport_update( server, rocketnet_platform_time() );
         if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
              rocketnet_server_transport_num_connected_clients( server ) == 1 )
+        {
             break;
+        }
         rocketnet_platform_sleep( 0.001 );
     }
 
@@ -1619,7 +1649,9 @@ void rocketnet_test_transport_udp_loopback()
         }
 
         if ( server_received >= 10 && client_received >= 10 )
+        {
             break;
+        }
 
         rocketnet_platform_sleep( 0.001 );
     }
@@ -1641,7 +1673,9 @@ void rocketnet_test_transport_udp_loopback()
         rocketnet_client_transport_update( client, rocketnet_platform_time() );
         rocketnet_server_transport_update( server, rocketnet_platform_time() );
         if ( rocketnet_server_transport_num_connected_clients( server ) == 0 )
+        {
             break;
+        }
         rocketnet_platform_sleep( 0.001 );
     }
 
@@ -1735,7 +1769,9 @@ void rocketnet_test_client_ipv4_without_ipv6_stack()
         rocketnet_server_transport_update( server, rocketnet_platform_time() );
         if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
              rocketnet_server_transport_num_connected_clients( server ) == 1 )
+        {
             break;
+        }
         rocketnet_platform_sleep( 0.001 );
     }
 
@@ -1790,7 +1826,9 @@ void rocketnet_test_client_ipv4_without_ipv6_stack()
         }
 
         if ( server_received >= 10 && client_received >= 10 )
+        {
             break;
+        }
 
         rocketnet_platform_sleep( 0.001 );
     }
@@ -1872,7 +1910,9 @@ void rocketnet_test_transport_stats()
         rocketnet_server_transport_update( server, game_time );
         if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
              rocketnet_server_transport_num_connected_clients( server ) == 1 )
+        {
             break;
+        }
         rocketnet_platform_sleep( 0.001 );
     }
 
@@ -2072,7 +2112,9 @@ void rocketnet_test_client_ack_stats_computed_on_read()
         rocketnet_server_transport_update( server, game_time );
         if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
              rocketnet_server_transport_num_connected_clients( server ) == 1 )
+        {
             break;
+        }
         rocketnet_platform_sleep( 0.001 );
     }
 
@@ -2192,7 +2234,9 @@ void rocketnet_test_transport_update_time_clamped()
         rocketnet_server_transport_update( server, game_time );
         if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
              rocketnet_server_transport_num_connected_clients( server ) == 1 )
+        {
             break;
+        }
         rocketnet_platform_sleep( 0.001 );
     }
 
@@ -2223,9 +2267,13 @@ void rocketnet_test_transport_update_time_clamped()
         game_time += 1.0;
         rocketnet_server_transport_update( server, game_time );
         if ( rocketnet_server_transport_num_connected_clients( server ) == 0 )
+        {
             break;
+        }
         if ( game_time > 100.0 + 20.0 )
+        {
             break;
+        }
         rocketnet_platform_sleep( 0.001 );
     }
 
@@ -2281,14 +2329,18 @@ void rocketnet_test_transport_packet_loss_stats()
         rocketnet_server_transport_send_packets( server );
         if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
              rocketnet_server_transport_num_connected_clients( server ) == 1 )
+        {
             break;
+        }
         rocketnet_platform_sleep( 0.001 );
     }
 
     if ( rocketnet_client_transport_state( client ) != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+    {
         printf( "packet loss test connect failed: %s, server clients %d\n",
                 rocketnet_client_transport_state_name( rocketnet_client_transport_state( client ) ),
                 rocketnet_server_transport_num_connected_clients( server ) );
+    }
     rocketnet_check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
 
     uint8_t payload_data[64];
@@ -2361,9 +2413,13 @@ static void rocketnet_test_wait_socket_readable( rocketnet_platform_socket_t * s
 
         const int ready = select( (int) socket->handle + 1, &readable, NULL, NULL, &tv );
         if ( ready > 0 )
+        {
             return;
+        }
         if ( ready < 0 && errno == EINTR )
+        {
             continue;
+        }
 
         if ( ready < 0 )
         {
@@ -2471,7 +2527,9 @@ static void rocketnet_test_darwin_oversize_receive( const char * pump )
         while ( rocketnet_platform_time() - start_time < 5.0 )
         {
             if ( rocketnet_platform_socket_receive_packets( socket, &from, receive.data, sizeof( receive.data ), &packet_bytes, 1 ) > 0 )
+            {
                 break;
+            }
             rocketnet_platform_sleep( 0.001 );
         }
 
@@ -2532,7 +2590,9 @@ void rocketnet_test_receive_drops_oversize_datagram()
     {
         const int num_received = rocketnet_platform_socket_receive_packets( socket, &from, receive_data, ROCKETNET_RECEIVE_CEILING, &packet_bytes, 1 );
         if ( num_received > 0 )
+        {
             break;
+        }
         rocketnet_platform_sleep( 0.001 );
     }
 
@@ -2616,7 +2676,9 @@ void rocketnet_test_receive_drops_oversize_datagram()
         rocketnet_server_transport_send_packets( server );
         if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
              rocketnet_server_transport_num_connected_clients( server ) == 1 )
+        {
             break;
+        }
         rocketnet_platform_sleep( 0.001 );
     }
 
@@ -2639,7 +2701,9 @@ void rocketnet_test_receive_drops_oversize_datagram()
         rocketnet_server_transport_update( server, rocketnet_platform_time() );
         rocketnet_server_transport_send_packets( server );
         if ( server_counters->values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE] > before_too_large )
+        {
             break;
+        }
         rocketnet_platform_sleep( 0.001 );
     }
 
@@ -2839,13 +2903,17 @@ static int rocketnet_test_queue_accounting( rocketnet_platform_socket_t * socket
 #if defined( __APPLE__ )
     int queued = 0;
     if ( ioctl( socket->handle, FIONREAD, &queued ) != 0 )
+    {
         return -1;
+    }
     return queued;
 #elif defined( __linux__ )
     uint32_t mem[SK_MEMINFO_VARS];
     socklen_t len = sizeof( mem );
     if ( getsockopt( socket->handle, SOL_SOCKET, SO_MEMINFO, mem, &len ) != 0 )
+    {
         return -1;
+    }
     return (int) mem[SK_MEMINFO_RMEM_ALLOC];
 #else
     (void) socket;
@@ -2897,7 +2965,9 @@ static void rocketnet_test_queue_wait_datagram( rocketnet_platform_socket_t * so
 
         const int ready = select( socket->handle + 1, &readable, NULL, NULL, &tv );
         if ( ready < 0 && errno == EINTR )
+        {
             continue;
+        }
 
         if ( ready < 0 )
         {
@@ -3188,10 +3258,12 @@ void rocketnet_test_transport_acks_and_client_stats()
         rocketnet_server_transport_send_packets( server );
         all_connected = 1;
         for ( int i = 0; i < 8; i++ )
+        {
             if ( rocketnet_client_transport_state( clients[i] ) != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
             {
                 all_connected = 0;
             }
+        }
 
         rocketnet_platform_sleep( 0.001 );
     }
@@ -3466,7 +3538,9 @@ void rocketnet_test_transport_ipv6_loopback()
         rocketnet_server_transport_update( server, rocketnet_platform_time() );
         if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
              rocketnet_server_transport_num_connected_clients( server ) == 1 )
+        {
             break;
+        }
         rocketnet_platform_sleep( 0.001 );
     }
 
@@ -3519,7 +3593,9 @@ void rocketnet_test_transport_ipv6_loopback()
         }
 
         if ( server_received >= 10 && client_received >= 10 )
+        {
             break;
+        }
 
         rocketnet_platform_sleep( 0.001 );
     }
@@ -3576,7 +3652,9 @@ void rocketnet_test_transport_dual_stack_ipv4_client()
         rocketnet_server_transport_update( server, rocketnet_platform_time() );
         if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
              rocketnet_server_transport_num_connected_clients( server ) == 1 )
+        {
             break;
+        }
         rocketnet_platform_sleep( 0.001 );
     }
 
@@ -3629,7 +3707,9 @@ void rocketnet_test_transport_dual_stack_ipv4_client()
         }
 
         if ( server_received >= 10 && client_received >= 10 )
+        {
             break;
+        }
 
         rocketnet_platform_sleep( 0.001 );
     }
@@ -3686,7 +3766,9 @@ void rocketnet_test_server_serves_both_families()
         rocketnet_server_transport_update( server, rocketnet_platform_time() );
         if ( rocketnet_client_transport_state( ipv4 ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
              rocketnet_server_transport_num_connected_clients( server ) == 1 )
+        {
             break;
+        }
         rocketnet_platform_sleep( 0.001 );
     }
 
@@ -3703,7 +3785,9 @@ void rocketnet_test_server_serves_both_families()
         rocketnet_server_transport_update( server, rocketnet_platform_time() );
         if ( rocketnet_client_transport_state( ipv6 ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
              rocketnet_server_transport_num_connected_clients( server ) == 2 )
+        {
             break;
+        }
         rocketnet_platform_sleep( 0.001 );
     }
 
@@ -3781,7 +3865,9 @@ void rocketnet_test_server_serves_both_families()
         }
 
         if ( got_from_4 >= 1 && got_from_6 >= 1 && got_to_4 >= 1 && got_to_6 >= 1 )
+        {
             break;
+        }
         rocketnet_platform_sleep( 0.001 );
     }
 
@@ -4359,7 +4445,9 @@ static void rocketnet_test_transport_io_pin_exchange( const char * transport_lis
         rocketnet_server_transport_update( server, rocketnet_platform_time() );
         if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
              rocketnet_server_transport_num_connected_clients( server ) == 1 )
+        {
             break;
+        }
         rocketnet_platform_sleep( 0.001 );
     }
 
@@ -4403,7 +4491,9 @@ static void rocketnet_test_transport_io_pin_exchange( const char * transport_lis
         }
 
         if ( server_received >= 5 && client_received >= 5 )
+        {
             break;
+        }
 
         rocketnet_platform_sleep( 0.001 );
     }
@@ -4481,7 +4571,9 @@ void rocketnet_test_server_transport_io_pin_loopback()
         rocketnet_server_transport_update( server, rocketnet_platform_time() );
         if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
              rocketnet_server_transport_num_connected_clients( server ) == 1 )
+        {
             break;
+        }
         rocketnet_platform_sleep( 0.001 );
     }
 
@@ -4525,7 +4617,9 @@ void rocketnet_test_server_transport_io_pin_loopback()
         }
 
         if ( server_received >= 5 && client_received >= 5 )
+        {
             break;
+        }
 
         rocketnet_platform_sleep( 0.001 );
     }
@@ -4613,7 +4707,9 @@ void rocketnet_test_transport_env_pins_loopback()
         rocketnet_server_transport_update( server, rocketnet_platform_time() );
         if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
              rocketnet_server_transport_num_connected_clients( server ) == 1 )
+        {
             break;
+        }
         rocketnet_platform_sleep( 0.001 );
     }
 
@@ -4700,7 +4796,9 @@ static uint8_t * rocketnet_test_server_rio_start( rocketnet_server_rio_t * rio, 
     {
         uint8_t * frame = rocketnet_server_rio_start_packet( rio, to, packet_id );
         if ( frame || rocketnet_platform_time() - start >= 5.0 )
+        {
             return frame;
+        }
         ( *refused )++;
         rocketnet_server_rio_send_packets( rio );
         rocketnet_platform_sleep( 0.0005 );
@@ -4941,7 +5039,9 @@ void rocketnet_test_server_rio_wire_ipv4()
         rocketnet_server_rio_send_packets( rio );
         rocketnet_server_rio_counters( rio, counters );
         if ( counters[ROCKETNET_RIO_COUNTER_PACKETS_SENT] >= ROCKETNET_RIO_TEST_PACKETS )
+        {
             break;
+        }
         rocketnet_platform_sleep( 0.0005 );
     } while ( rocketnet_platform_time() - start < 5.0 );
 
@@ -5300,7 +5400,9 @@ static void rocketnet_test_iocp_exchange( rocketnet_server_iocp_t * iocp, const 
     {
         rocketnet_server_iocp_counters( iocp, counters );
         if ( counters[ROCKETNET_IOCP_SEND_COMPLETED] >= ROCKETNET_IOCP_TEST_PACKETS )
+        {
             break;
+        }
         rocketnet_platform_sleep( 0.001 );
     } while ( rocketnet_platform_time() - start < 5.0 );
 
@@ -5401,7 +5503,9 @@ void rocketnet_test_server_port_zero_transport()
         if ( i >= 0 )
         {
             if ( !rocketnet_transport_discovers_bound_port( available[i] ) )
+            {
                 continue;                                   // the refuse side below owns those
+            }
             list = rocketnet_transport_name( available[i] );
         }
 
@@ -5430,7 +5534,9 @@ void rocketnet_test_server_port_zero_transport()
     for ( int i = 0; i < num_available; i++ )
     {
         if ( rocketnet_transport_discovers_bound_port( available[i] ) )
+        {
             continue;
+        }
 
         const char * name = rocketnet_transport_name( available[i] );
 
@@ -5973,11 +6079,15 @@ static long rocketnet_test_port_zero_ladder_rss_bound_mb()
     for ( int i = 0; i < num_available; i++ )
     {
         if ( rocketnet_transport_pin_only( available[i] ) || !rocketnet_transport_discovers_bound_port( available[i] ) )
+        {
             continue;
+        }
 
         const uint64_t bytes = rocketnet_server_transport_required_memory( &config, rocketnet_transport_name( available[i] ) );
         if ( !bytes )
+        {
             return 0; // a grantable rung with no plan keeps the strict suite-wide bound
+        }
 
         if ( bytes > planned )
         {
@@ -5988,8 +6098,10 @@ static long rocketnet_test_port_zero_ladder_rss_bound_mb()
     const long bound = suite_rss_bound_mb( planned, 32 );
     char verbose[256];
     if ( rocketnet_test_getenv( "ROCKETNET_TEST_VERBOSE", verbose, sizeof( verbose ) ) )
+    {
         printf( "port_zero_ladder rss_budget planned_bytes=%llu margin_mb=32 bound_mb=%ld\n",
                 (unsigned long long) planned, bound );
+    }
     return bound;
 }
 
@@ -6029,10 +6141,12 @@ void rocketnet_test_transport_all_skipped_uses_auto()
     const int * available = rocketnet_server_transport_io_availability( &num_available );
     bool granted_from_auto = false;
     for ( int i = 0; i < num_available; i++ )
+    {
         if ( strcmp( rocketnet_server_transport_io_name( server ), rocketnet_transport_name( available[i] ) ) == 0 )
         {
             granted_from_auto = true;
         }
+    }
 
     rocketnet_check( granted_from_auto );
 
@@ -6113,10 +6227,12 @@ void rocketnet_test_client_transport_io()
         const int * available = rocketnet_client_transport_io_availability( &num_available );
         bool granted_from_auto = false;
         for ( int i = 0; i < num_available; i++ )
+        {
             if ( strcmp( rocketnet_client_transport_io_name( client ), rocketnet_transport_name( available[i] ) ) == 0 )
             {
                 granted_from_auto = true;
             }
+        }
 
         rocketnet_check( granted_from_auto );
     }
@@ -6165,7 +6281,9 @@ static bool rocketnet_test_gso_host_coalesces()
 {
     int fd = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
     if ( fd < 0 )
+    {
         return false;
+    }
 
     struct sockaddr_in address;
     memset( &address, 0, sizeof( address ) );
@@ -6324,7 +6442,9 @@ static void rocketnet_test_gso_wait_sends( struct rocketnet_server_gso_t * gso, 
         rocketnet_server_gso_send_packets( gso );
         rocketnet_server_gso_counters( gso, counters );
         if ( counters[counter] >= value || rocketnet_platform_time() - start >= 5.0 )
+        {
             return;
+        }
         rocketnet_platform_sleep( 0.001 );
     }
 }
@@ -6340,7 +6460,9 @@ static void rocketnet_test_gso_wait_sent_or_dropped( struct rocketnet_server_gso
         rocketnet_server_gso_counters( gso, counters );
         if ( counters[ROCKETNET_SERVER_GSO_COUNTER_PACKETS_SENT] + counters[ROCKETNET_SERVER_GSO_COUNTER_SEND_DROPPED] >= value ||
              rocketnet_platform_time() - start >= 5.0 )
+        {
             return;
+        }
         rocketnet_platform_sleep( 0.001 );
     }
 }
@@ -6730,7 +6852,9 @@ static void rocketnet_test_gso_client_wire_exchange( const char * server_bind, c
         rocketnet_server_transport_send_packets( server );
         if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
              rocketnet_server_transport_num_connected_clients( server ) == 1 )
+        {
             break;
+        }
         rocketnet_platform_sleep( 0.001 );
     }
 
@@ -6766,7 +6890,9 @@ static void rocketnet_test_gso_client_wire_exchange( const char * server_bind, c
             struct rocketnet_packet_context_t context = {};
             uint8_t * payload = rocketnet_client_transport_start_packet( client, PAYLOAD_BYTES, &context );
             if ( !payload )
+            {
                 break;
+            }
             payload[context.payload_index + 0] = (uint8_t) ( tag & 0xFF );
             payload[context.payload_index + 1] = (uint8_t) ( tag >> 8 );
 
@@ -6785,7 +6911,9 @@ static void rocketnet_test_gso_client_wire_exchange( const char * server_bind, c
             struct rocketnet_packet_context_t context;
             uint8_t * packet = rocketnet_server_transport_start_packet( server, 0, PAYLOAD_BYTES, &context );
             if ( !packet )
+            {
                 break;
+            }
             packet[context.payload_index + 0] = (uint8_t) ( tag & 0xFF );
             packet[context.payload_index + 1] = (uint8_t) ( tag >> 8 );
 
@@ -7137,7 +7265,9 @@ void rocketnet_test_server_uring_probe()
     for ( int i = 0; i < ROCKETNET_SERVER_URING_NUM_COUNTERS; i++ )
     {
         if ( i == ROCKETNET_SERVER_URING_COUNTER_SUBMIT_SYSCALLS )
+        {
             continue;                               // create submits the multishot receives
+        }
         rocketnet_check( counters[i] == 0 );
     }
 
@@ -7892,7 +8022,9 @@ void rocketnet_test_transport_acked_unfragmented_was_in_exactly_one_batch()
         rocketnet_server_transport_send_packets( server );
         if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
              rocketnet_server_transport_num_connected_clients( server ) == 1 )
+        {
             break;
+        }
         rocketnet_platform_sleep( 0.001 );
     }
 
@@ -8009,7 +8141,9 @@ void rocketnet_test_transport_acked_unfragmented_was_in_exactly_one_batch()
             for ( int i = 0; i < num_acked; i++ )
             {
                 if ( client_indices[i] != client_index )
+                {
                     continue;
+                }
                 std::unordered_map<uint64_t, int>::const_iterator it = server_id_to_sequence.find( ids[i] );
                 if ( it != server_id_to_sequence.end() && !server_acked[it->second] )
                 {
@@ -8118,7 +8252,9 @@ void rocketnet_test_transport_reply_opens_a_later_update()
         rocketnet_server_transport_send_packets( server );
         if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
              rocketnet_server_transport_num_connected_clients( server ) == 1 )
+        {
             break;
+        }
         rocketnet_platform_sleep( 0.001 );
     }
 
@@ -8290,9 +8426,13 @@ void rocketnet_test_message_objects_loopback_from_t1000()
         rocketnet_message_server_send_packets( server );
         if ( rocketnet_message_client_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
              rocketnet_message_server_client_connected( server, 0 ) )
+        {
             break;
+        }
         if ( rocketnet_message_client_state( client ) <= ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
+        {
             break;
+        }
     }
 
     rocketnet_check( rocketnet_message_client_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
@@ -8374,7 +8514,9 @@ void rocketnet_test_message_objects_loopback_from_t1000()
             {
                 rocketnet_check( bytes == 8 );
                 for ( int i = 0; i < 8; i++ )
+                {
                     rocketnet_check( data[i] == (uint8_t) ( server_got + i ) );          // in order, intact
+                }
                 server_got++;
             }
 
@@ -8404,7 +8546,9 @@ void rocketnet_test_message_objects_loopback_from_t1000()
         }
 
         if ( server_got == num_reliable && client_got == num_reliable && server_got_unreliable > 0 && client_got_unreliable > 0 )
+        {
             break;
+        }
     }
 
     rocketnet_check( server_got == num_reliable );
@@ -8433,7 +8577,9 @@ void rocketnet_test_message_objects_loopback_from_t1000()
         rocketnet_client_transport_update( rocketnet_message_client_transport( client ), now );
         rocketnet_check( rocketnet_message_server_update( server, now ) == ROCKETNET_UPDATE_OK );
         if ( !rocketnet_message_server_client_connected( server, 0 ) )
+        {
             break;
+        }
     }
 
     rocketnet_check( !rocketnet_message_server_client_connected( server, 0 ) );
@@ -8983,9 +9129,13 @@ static void rocketnet_test_max_size_packet_crosses( const char * host_env, const
     rocketnet_test_env_save( &server_guard, "ROCKETNET_SERVER_TRANSPORT" );
     rocketnet_test_env_save( &client_guard, "ROCKETNET_CLIENT_TRANSPORT" );
     if ( server_guard.was_set && strcmp( server_guard.saved, "loopback" ) == 0 )
+    {
         rocketnet_check( setenv( server_guard.name, "portable", 1 ) == 0 );
+    }
     if ( client_guard.was_set && strcmp( client_guard.saved, "loopback" ) == 0 )
+    {
         rocketnet_check( setenv( client_guard.name, "portable", 1 ) == 0 );
+    }
 
     char host_value[256];
     const char * host = host_value;
@@ -9051,7 +9201,9 @@ static void rocketnet_test_max_size_packet_crosses( const char * host_env, const
         rocketnet_server_transport_update( server, rocketnet_platform_time() );
         if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
              rocketnet_server_transport_num_connected_clients( server ) == 1 )
+        {
             break;
+        }
         rocketnet_platform_sleep( 0.001 );
     }
 
@@ -9111,7 +9263,9 @@ static void rocketnet_test_max_size_packet_crosses( const char * host_env, const
         }
 
         if ( server_received >= count && client_received >= count )
+        {
             break;
+        }
         rocketnet_platform_sleep( 0.001 );
     }
 
@@ -9264,7 +9418,9 @@ static bool rocketnet_xdp_veth_inside_virtme()
 {
     FILE * file = fopen( "/proc/cmdline", "r" );
     if ( !file )
+    {
         return false;
+    }
 
     char line[4096];
     const bool read = fgets( line, sizeof( line ), file ) != NULL;
@@ -9572,7 +9728,9 @@ static void rocketnet_xdp_max_size_both_ways( bool ipv6, const char * case_name 
         rocketnet_server_transport_send_packets( server );
         if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
              rocketnet_server_transport_num_connected_clients( server ) == 1 )
+        {
             break;
+        }
         rocketnet_platform_sleep( 0.001 );
     }
 
@@ -9657,7 +9815,9 @@ static void rocketnet_xdp_max_size_both_ways( bool ipv6, const char * case_name 
         }
 
         if ( server_received >= count && client_received >= count )
+        {
             break;
+        }
         rocketnet_platform_sleep( 0.001 );
     }
 
@@ -9860,7 +10020,9 @@ static void rocketnet_xdp_keep_alive_before_first_payloads( bool ipv6, const cha
         }
 
         if ( received == 2 )
+        {
             break;
+        }
         rocketnet_platform_sleep( 0.001 );
     }
 
@@ -10012,7 +10174,9 @@ static bool wire_totals_drain( struct rocketnet_client_transport_t * client, str
         wire_totals_client( client, &c );
         wire_totals_server( server, &s );
         if ( s.packets_sent == c.packets_received && c.packets_sent == s.packets_received )
+        {
             return true;
+        }
     }
 
     return false;
@@ -10034,7 +10198,9 @@ static bool wire_totals_drain_since( struct rocketnet_client_transport_t * clien
         wire_totals_server( server, &s );
         if ( s.packets_sent - server_before->packets_sent == c.packets_received &&
              s.packets_received - server_before->packets_received == c.packets_sent )
+        {
             return true;
+        }
     }
 
     return false;
@@ -10065,7 +10231,9 @@ static struct rocketnet_client_transport_t * wire_totals_client_create( const ch
 {
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     if ( rocketnet_write_test_connect_token( address, client_id, rocketnet_functional_token_timestamp( WIRE_TOTALS_TOKEN_EPOCH_UNIX_SECONDS, time ), token, ROCKETNET_CONNECT_TOKEN_BYTES ) != ROCKETNET_STATUS_OK )
+    {
         return NULL;
+    }
 
     struct rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config_current( &config );
@@ -10677,10 +10845,14 @@ static void * rocketnet_test_oom_sweep_allocate( void * context, size_t bytes )
     rocketnet_test_oom_sweep_allocator_t * state = (rocketnet_test_oom_sweep_allocator_t *) context;
     const int call = ++state->calls;
     if ( state->fail_at.load() == call )
+    {
         return NULL;
+    }
     void * p = malloc( bytes );
     if ( p )
+    {
         ++state->live;
+    }
     return p;
 }
 
@@ -10688,7 +10860,9 @@ static void rocketnet_test_oom_sweep_release( void * context, void * pointer )
 {
     rocketnet_test_oom_sweep_allocator_t * state = (rocketnet_test_oom_sweep_allocator_t *) context;
     if ( !pointer )
+    {
         return;
+    }
     --state->live;
     free( pointer );
 }
@@ -10707,7 +10881,9 @@ static void rocketnet_test_oom_sweep_keys( rocketnet_test_oom_sweep_keys_t * key
     keys->protocol_id = 0x57E9011FEC7C1E02ULL;
     uint8_t seed[32];
     for ( int i = 0; i < 32; ++i )
+    {
         seed[i] = (uint8_t) ( 0x5C ^ i );
+    }
     rocketnet_check( rocketnet_generate_backend_keypair_from_seed( seed, keys->backend_public, keys->backend_secret ) == ROCKETNET_STATUS_OK );
 }
 
@@ -10719,7 +10895,9 @@ static struct rocketnet_server_t * rocketnet_test_oom_sweep_server( rocketnet_te
     memcpy( config.backend_public_key, keys->backend_public, sizeof( config.backend_public_key ) );
     config.max_clients = 2;
     if ( transport )
+    {
         config.transport = transport;
+    }
 
     enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
     struct rocketnet_server_t * server = rocketnet_server_create( state, "127.0.0.1:0", NULL, &config, &status );
@@ -10732,7 +10910,9 @@ static struct rocketnet_client_t * rocketnet_test_oom_sweep_client( rocketnet_te
     struct rocketnet_client_config_t config;
     rocketnet_client_default_config( &config );
     if ( transport )
+    {
         config.transport = transport;
+    }
 
     enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
     struct rocketnet_client_t * client = rocketnet_client_create( state, &config, &status );
@@ -10763,7 +10943,9 @@ static void rocketnet_test_oom_sweep( const char * server_transport, const char 
                                ( !server_transport || strcmp( rocketnet_server_transport_name( probe ), server_transport ) == 0 );
     rn_cli_server_stop_and_destroy( probe );
     if ( !probe_granted )
+    {
         printf( "out of memory sweep: server transport %s is listed but not granted (%s)\n", name, rocketnet_status_name( probe_status ) );
+    }
     rocketnet_check( probe_granted );
 
     struct rocketnet_server_t * server = rocketnet_test_oom_sweep_server( &state, &keys, server_transport );
@@ -10782,13 +10964,17 @@ static void rocketnet_test_oom_sweep( const char * server_transport, const char 
         {
             // every allocation start makes came before the armed one
             if ( reached >= armed )
+            {
                 printf( "out of memory sweep: server transport %s started with allocation %d refused\n", name, k );
+            }
             rocketnet_check( reached < armed );
             rocketnet_check( !server_transport || strcmp( rocketnet_server_transport_name( server ), server_transport ) == 0 );
             break;
         }
         if ( start_status != ROCKETNET_STATUS_OUT_OF_MEMORY )
+        {
             printf( "out of memory sweep: server transport %s start refusal %d: %s\n", name, k, rocketnet_status_name( start_status ) );
+        }
         rocketnet_check( start_status == ROCKETNET_STATUS_OUT_OF_MEMORY );
         rocketnet_check( state.live.load() == live_before );
         start_refusals++;
@@ -10818,7 +11004,9 @@ static void rocketnet_test_oom_sweep( const char * server_transport, const char 
     rn_cli_client_stop_and_destroy( client_probe, 1000.0 );
 
     if ( !client_granted )
+    {
         printf( "out of memory sweep: client transport %s is listed but not granted (%s)\n", client_name, rocketnet_status_name( client_probe_status ) );
+    }
     rocketnet_check( client_granted );
 
     {
@@ -10838,13 +11026,17 @@ static void rocketnet_test_oom_sweep( const char * server_transport, const char 
             {
                 // every allocation connect makes came before the armed one
                 if ( reached >= armed )
+                {
                     printf( "out of memory sweep: client transport %s connected with allocation %d refused\n", client_name, k );
+                }
                 rocketnet_check( reached < armed );
                 rocketnet_check( !client_transport || strcmp( rocketnet_client_transport_name( client ), client_transport ) == 0 );
                 break;
             }
             if ( connect_status != ROCKETNET_STATUS_OUT_OF_MEMORY )
+            {
                 printf( "out of memory sweep: client transport %s connect refusal %d: %s\n", client_name, k, rocketnet_status_name( connect_status ) );
+            }
             rocketnet_check( connect_status == ROCKETNET_STATUS_OUT_OF_MEMORY );
             rocketnet_check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
             rocketnet_check( state.live.load() == live_before );
@@ -10870,12 +11062,18 @@ static void rocketnet_test_oom_sweep( const char * server_transport, const char 
 static const char * rocketnet_test_oom_sweep_not_offered( const char * transport )
 {
     if ( strcmp( transport, "loopback" ) == 0 )
+    {
         return "opens no socket and allocates nothing in its create; the unit loopback walks sweep it";
+    }
     if ( strcmp( transport, "xdp" ) == 0 )
+    {
         return "binds an explicit public port as root in a veth namespace; the xdp matrix cell runs it";
+    }
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     if ( strcmp( transport, "io_uring" ) == 0 && !rocketnet_test_posix_io_uring_offered() )
+    {
         return "this kernel disables io_uring";
+    }
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     return NULL;
 }
@@ -10908,7 +11106,9 @@ void rocketnet_test_public_start_and_connect_out_of_memory_sweep()
         for ( int j = 0; j < num_clients; j++ )
         {
             if ( clients[j] == servers[i] )
+            {
                 client_transport = server_transport;
+            }
         }
 
         rocketnet_test_oom_sweep( server_transport, client_transport );
@@ -11053,7 +11253,9 @@ static void rocketnet_test_public_client_reads_server_disconnected()
         rocketnet_server_send_packets( server );
         if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED &&
              rocketnet_server_client_connected( server, rocketnet_client_index( client ) ) )
+        {
             break;
+        }
         rocketnet_sleep( 0.005 );
     }
 
@@ -11108,7 +11310,9 @@ static void rocketnet_test_server_stop_disconnects_every_client( const char * tr
     if ( !server || rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
         if ( server )
+        {
             rn_cli_server_stop_and_destroy( server );
+        }
         printf( "    %s server transport not available here: skipped\n", transport );
         return;
     }
@@ -11177,7 +11381,9 @@ static void rocketnet_test_server_stop_disconnects_every_client( const char * tr
     }
 
     for ( int i = 0; i < num_clients; i++ )
+    {
         rocketnet_check( rocketnet_client_state( clients[i] ) == ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED );
+    }
     rocketnet_check( rocketnet_server_stopped( server ) );
 
     // A disconnect can arrive even if other copies in its burst were dropped.
@@ -11186,12 +11392,16 @@ static void rocketnet_test_server_stop_disconnects_every_client( const char * tr
     rocketnet_check( counters );
     const uint64_t send_failures_after = rocketnet_counter_value( counters, ROCKETNET_COUNTER_SEND_FAILED );
     if ( send_failures_after != send_failures_before )
+    {
         printf( "%s stop send failures: before=%llu after=%llu\n", transport,
                 (unsigned long long) send_failures_before, (unsigned long long) send_failures_after );
+    }
     rocketnet_check( send_failures_after == send_failures_before );
 
     for ( int i = 0; i < num_clients; i++ )
+    {
         rn_cli_client_stop_and_destroy( clients[i], 1000.0 + ( rocketnet_time() - wall_start ) );
+    }
     rocketnet_server_destroy( server );
 }
 
@@ -11278,9 +11488,13 @@ static void rocketnet_test_two_address_token_connects_over_ipv4()
         rocketnet_server_send_packets( server );
         if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED &&
              rocketnet_server_client_connected( server, rocketnet_client_index( client ) ) )
+        {
             break;
+        }
         if ( rocketnet_client_state( client ) < ROCKETNET_CLIENT_STATE_DISCONNECTED )
+        {
             break;
+        }
         rocketnet_sleep( 0.005 );
     }
 
@@ -11318,7 +11532,9 @@ static void * race_malloc( void * context, size_t bytes )
 {
     (void) context;
     if ( std::this_thread::get_id() != race_caller_thread )
+    {
         race_off_caller_mallocs.fetch_add( 1 );
+    }
     return malloc( bytes );
 }
 
@@ -11326,7 +11542,9 @@ static void race_free( void * context, void * p )
 {
     (void) context;
     if ( std::this_thread::get_id() != race_caller_thread )
+    {
         race_off_caller_frees.fetch_add( 1 );
+    }
     free( p );
 }
 
@@ -11337,11 +11555,13 @@ static void race_log( void * context, enum rocketnet_log_level_t level, const ch
     static const char needle[] = "client races both families";
     const size_t needle_bytes = sizeof( needle ) - 1;
     for ( size_t i = 0; i + needle_bytes <= length; i++ )
+    {
         if ( memcmp( message + i, needle, needle_bytes ) == 0 )
         {
             race_logged.fetch_add( 1 );
             return;
         }
+    }
 }
 
 static void rocketnet_test_family_race_frees_on_caller_thread()
@@ -11389,7 +11609,9 @@ static void rocketnet_test_family_race_frees_on_caller_thread()
     {
         const char * transport = rocketnet_transport_name( available[i] );
         if ( strcmp( transport, "loopback" ) == 0 )
+        {
             continue;
+        }
         race_off_caller_mallocs.store( 0 );
         race_off_caller_frees.store( 0 );
         race_logged.store( 0 );
@@ -11417,9 +11639,13 @@ static void rocketnet_test_family_race_frees_on_caller_thread()
             rocketnet_server_send_packets( server );
             if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED &&
                  rocketnet_server_client_connected( server, rocketnet_client_index( client ) ) )
+            {
                 break;
+            }
             if ( rocketnet_client_state( client ) < ROCKETNET_CLIENT_STATE_DISCONNECTED )
+            {
                 break;
+            }
             rocketnet_sleep( 0.005 );
         }
         // a few more frames, so the I/O thread reads after the commit and
@@ -11474,8 +11700,12 @@ static bool fallback_log_has( const char * message, size_t length, const char * 
 {
     const size_t needle_bytes = strlen( needle );
     for ( size_t i = 0; i + needle_bytes <= length; i++ )
+    {
         if ( memcmp( message + i, needle, needle_bytes ) == 0 )
+        {
             return true;
+        }
+    }
     return false;
 }
 
@@ -11484,9 +11714,13 @@ static void fallback_log( void * context, enum rocketnet_log_level_t level, cons
     (void) context;
     (void) level;
     if ( fallback_log_has( message, length, "refused the IPv6 server" ) )
+    {
         fallback_logged.fetch_add( 1 );
+    }
     if ( fallback_log_has( message, length, "client races both families" ) )
+    {
         fallback_raced.fetch_add( 1 );
+    }
 }
 
 static void rocketnet_test_unroutable_ipv6_falls_back_to_ipv4()
@@ -11529,7 +11763,9 @@ static void rocketnet_test_unroutable_ipv6_falls_back_to_ipv4()
     {
         const char * transport = rocketnet_transport_name( available[i] );
         if ( strcmp( transport, "loopback" ) == 0 )
+        {
             continue;
+        }
 
         for ( int h = 0; h < (int) ( sizeof( unroutable_hosts ) / sizeof( unroutable_hosts[0] ) ); h++ )
         {
@@ -11562,9 +11798,13 @@ static void rocketnet_test_unroutable_ipv6_falls_back_to_ipv4()
                 rocketnet_server_send_packets( server );
                 if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED &&
                      rocketnet_server_client_connected( server, rocketnet_client_index( client ) ) )
+                {
                     break;
+                }
                 if ( rocketnet_client_state( client ) < ROCKETNET_CLIENT_STATE_DISCONNECTED )
+                {
                     break;
+                }
                 rocketnet_sleep( 0.005 );
             }
 
@@ -11580,7 +11820,9 @@ static void rocketnet_test_unroutable_ipv6_falls_back_to_ipv4()
             // Linux refuses a UDP connect to a link-local address with no
             // interface (EINVAL), so this one always takes the fallback
             if ( strcmp( unroutable_hosts[h], "fe80::1" ) == 0 )
+            {
                 rocketnet_check( fallback_logged.load() > 0 );
+            }
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
             dialed++;
         }
@@ -11753,7 +11995,9 @@ static void rocketnet_test_public_dev_connect_token_round_trip()
             {
                 if ( batch->client_index[i] != client_index || batch->bytes[i] != (int) sizeof( client_payload ) ||
                      memcmp( batch->data[i], client_payload, sizeof( client_payload ) ) != 0 )
+                {
                     exchange_ok = 0;
+                }
                 else
                 {
                     server_received = 1;
@@ -11789,7 +12033,9 @@ static void rocketnet_test_public_dev_connect_token_round_trip()
             {
                 if ( batch->bytes[i] != (int) sizeof( server_payload ) ||
                      memcmp( batch->data[i], server_payload, sizeof( server_payload ) ) != 0 )
+                {
                     exchange_ok = 0;
+                }
                 else
                 {
                     client_received = 1;
@@ -11859,7 +12105,9 @@ void rocketnet_test_sodium_misuse_logs_before_abort()
         rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
         const enum rocketnet_status_t init = rocketnet_init( NULL, NULL, NULL );
         if ( init != ROCKETNET_STATUS_OK && init != ROCKETNET_STATUS_ALREADY_INITIALIZED )
+        {
             _exit( 2 );
+        }
         rocketnet_sodium_misuse_for_test();
         _exit( 0 );     // sodium_misuse returned: the abort never came
     }
@@ -11872,10 +12120,14 @@ void rocketnet_test_sodium_misuse_logs_before_abort()
     {
         const ssize_t got = read( pipe_fds[0], output + length, sizeof( output ) - 1 - length );
         if ( got <= 0 )
+        {
             break;
+        }
         length += (size_t) got;
         if ( length == sizeof( output ) - 1 )
+        {
             break;
+        }
     }
     output[length] = '\0';
     close( pipe_fds[0] );
@@ -11887,7 +12139,9 @@ void rocketnet_test_sodium_misuse_logs_before_abort()
     const char * first = strstr( output, line );
     const bool one_line = first != NULL && strstr( first + 1, line ) == NULL;
     if ( !WIFSIGNALED( child_status ) || WTERMSIG( child_status ) != SIGABRT || !one_line )
+    {
         printf( "sodium misuse child: status 0x%x, output [%s]\n", child_status, output );
+    }
 
     rocketnet_check( WIFSIGNALED( child_status ) && WTERMSIG( child_status ) == SIGABRT );
     rocketnet_check( one_line );
@@ -12012,7 +12266,9 @@ static void msgx_client_pair_create( struct msgx_client_pair_t * pair, const cha
         rocketnet_server_transport_send_packets( pair->server );
         if ( rocketnet_client_transport_state( pair->client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
              rocketnet_server_transport_num_connected_clients( pair->server ) == 1 )
+        {
             break;
+        }
         rocketnet_platform_sleep( 0.001 );
     }
 
@@ -12075,7 +12331,9 @@ static void msgx_client_send_and_collect( struct msgx_client_pair_t * pair, int 
             for ( int tag = 0; tag < num_packets; tag++ )
             {
                 if ( seen[tag] )
+                {
                     continue;
+                }
                 resent[tag] = resent[tag] || handed_off >= 0.0;
                 struct rocketnet_packet_context_t context = {};
                 uint8_t * payload = rocketnet_client_transport_start_packet( pair->client, MSGX_CLIENT_PAYLOAD_BYTES, &context );
@@ -12102,7 +12360,9 @@ static void msgx_client_send_and_collect( struct msgx_client_pair_t * pair, int 
             const int tag = msgx_client_payload_tag( payload, payload_bytes );
             rocketnet_check( tag < num_packets && ( !seen[tag] || resent[tag] ) );
             if ( seen[tag] )
+            {
                 continue;
+            }
             seen[tag] = true;
             received++;
         }
@@ -12138,7 +12398,9 @@ static void msgx_client_receive_from_server( struct msgx_client_pair_t * pair, i
             for ( int tag = 0; tag < num_packets; tag++ )
             {
                 if ( seen[tag] )
+                {
                     continue;
+                }
                 resent[tag] = resent[tag] || sent >= 0.0;
                 msgx_client_fill_payload( payload, tag );
                 rocketnet_server_transport_send_packet( pair->server, 0, payload, MSGX_CLIENT_PAYLOAD_BYTES );
@@ -12159,7 +12421,9 @@ static void msgx_client_receive_from_server( struct msgx_client_pair_t * pair, i
             const int tag = msgx_client_payload_tag( packet, packet_bytes );
             rocketnet_check( tag < num_packets && ( !seen[tag] || resent[tag] ) );
             if ( seen[tag] )
+            {
                 continue;
+            }
             seen[tag] = true;
             received++;
         }
@@ -12371,7 +12635,9 @@ static void iocp_client_pair_create( struct iocp_client_pair_t * pair, const cha
         rocketnet_server_transport_send_packets( pair->server );
         if ( rocketnet_client_transport_state( pair->client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
              rocketnet_server_transport_num_connected_clients( pair->server ) == 1 )
+        {
             break;
+        }
         rocketnet_platform_sleep( 0.001 );
     }
 
@@ -12406,7 +12672,9 @@ static void iocp_client_send_and_collect( struct iocp_client_pair_t * pair, int 
             for ( int tag = 0; tag < num_packets; tag++ )
             {
                 if ( seen[tag] )
+                {
                     continue;
+                }
                 resent[tag] = resent[tag] || handed_off >= 0.0;
                 struct rocketnet_packet_context_t context = {};
                 uint8_t * payload = rocketnet_client_transport_start_packet( pair->client, IOCP_CLIENT_PAYLOAD_BYTES, &context );
@@ -12433,7 +12701,9 @@ static void iocp_client_send_and_collect( struct iocp_client_pair_t * pair, int 
             const int tag = iocp_client_payload_tag( payload, payload_bytes );
             rocketnet_check( tag < num_packets && ( !seen[tag] || resent[tag] ) );
             if ( seen[tag] )
+            {
                 continue;
+            }
             seen[tag] = true;
             received++;
         }
@@ -12468,7 +12738,9 @@ static void iocp_client_receive_from_server( struct iocp_client_pair_t * pair, i
             for ( int tag = 0; tag < num_packets; tag++ )
             {
                 if ( seen[tag] )
+                {
                     continue;
+                }
                 resent[tag] = resent[tag] || sent >= 0.0;
                 iocp_client_fill_payload( payload, tag );
                 rocketnet_server_transport_send_packet( pair->server, 0, payload, IOCP_CLIENT_PAYLOAD_BYTES );
@@ -12489,7 +12761,9 @@ static void iocp_client_receive_from_server( struct iocp_client_pair_t * pair, i
             const int tag = iocp_client_payload_tag( packet, packet_bytes );
             rocketnet_check( tag < num_packets && ( !seen[tag] || resent[tag] ) );
             if ( seen[tag] )
+            {
                 continue;
+            }
             seen[tag] = true;
             received++;
         }
@@ -13230,47 +13504,81 @@ static const char * rocketnet_functional_predicate_name( bool ( *predicate )() )
 {
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     if ( predicate == rocketnet_server_uring_available )
+    {
         return "rocketnet_server_uring_available";
+    }
     if ( predicate == rocketnet_test_posix_io_uring_offered )
+    {
         return "rocketnet_test_posix_io_uring_offered";
+    }
     if ( predicate == rocketnet_test_posix_xdp_offered )
+    {
         return "rocketnet_test_posix_xdp_offered";
+    }
 #if ROCKETNET_DEV && ROCKETNET_XDP
     if ( predicate == rocketnet_test_linux_xdp_weather_runs_here )
+    {
         return "rocketnet_test_linux_xdp_weather_runs_here";
+    }
 #endif // #if ROCKETNET_DEV && ROCKETNET_XDP
     if ( predicate == rocketnet_test_server_receive_low_tick_measurement_requested )
+    {
         return "rocketnet_test_server_receive_low_tick_measurement_requested";
+    }
     if ( predicate == rocketnet_test_server_pin_allows_gso )
+    {
         return "rocketnet_test_server_pin_allows_gso";
+    }
     if ( predicate == rocketnet_test_server_pin_allows_xdp )
+    {
         return "rocketnet_test_server_pin_allows_xdp";
+    }
     if ( predicate == rocketnet_test_server_pin_allows_io_uring )
+    {
         return "rocketnet_test_server_pin_allows_io_uring";
+    }
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 #if defined( __linux__ ) && ROCKETNET_XDP
     if ( predicate == rocketnet_test_xdp_veth_runs_here )
+    {
         return "rocketnet_test_xdp_veth_runs_here";
+    }
 #endif // #if defined( __linux__ ) && ROCKETNET_XDP
     if ( predicate == rocketnet_test_server_pin_allows_portable )
+    {
         return "rocketnet_test_server_pin_allows_portable";
+    }
     if ( predicate == rocketnet_test_server_pin_allows_auto )
+    {
         return "rocketnet_test_server_pin_allows_auto";
+    }
     if ( predicate == rocketnet_test_client_pin_allows_auto )
+    {
         return "rocketnet_test_client_pin_allows_auto";
+    }
     if ( predicate == rocketnet_test_a_transport_pin_is_set )
+    {
         return "rocketnet_test_a_transport_pin_is_set";
+    }
     if ( predicate == rocketnet_test_no_transport_pin_is_set )
+    {
         return "rocketnet_test_no_transport_pin_is_set";
+    }
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( predicate == rocketnet_test_server_pin_allows_iocp )
+    {
         return "rocketnet_test_server_pin_allows_iocp";
+    }
     if ( predicate == rocketnet_test_server_pin_allows_rio )
+    {
         return "rocketnet_test_server_pin_allows_rio";
+    }
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     if ( predicate == rocketnet_test_server_pin_allows_msgx )
+    {
         return "rocketnet_test_server_pin_allows_msgx";
+    }
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     return "runs_here";
 }
@@ -13314,7 +13622,9 @@ const char * rocketnet_functional_test_name( int index )
     (void) index;
 #else
     if ( index >= rocketnet_functional_static_test_count() )
+    {
         return rocketnet_posix_hard_killed_client_test_name( index - rocketnet_functional_static_test_count() );
+    }
 #endif // #if !ROCKETNET_DEV
     return rocketnet_functional_tests[rocketnet_functional_here[index]].name;
 }
@@ -13324,7 +13634,9 @@ int rocketnet_functional_run_named( const char * name )
     for ( int i = 0; i < rocketnet_functional_num_tests; i++ )
     {
         if ( strcmp( rocketnet_functional_tests[i].name, name ) != 0 )
+        {
             continue;
+        }
 
         if ( rocketnet_functional_tests[i].runs_here && !rocketnet_functional_tests[i].runs_here() )
         {
@@ -13342,7 +13654,9 @@ int rocketnet_functional_run_named( const char * name )
     for ( int i = 0; i < rocketnet_posix_hard_killed_client_test_count(); i++ )
     {
         if ( strcmp( rocketnet_posix_hard_killed_client_test_name( i ), name ) != 0 )
+        {
             continue;
+        }
         rocketnet_test_log_ring_clear();
         rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s", name );
         fflush( stdout );

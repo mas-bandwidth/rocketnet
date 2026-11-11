@@ -79,14 +79,18 @@ static int rn_client_link_end_reason( void * transport, int client_index )
 
     const struct rocketnet_counters_t * counters = rocketnet_client_transport_counters( (rocketnet_client_transport_t *) transport );
     if ( counters && counters->values[ROCKETNET_COUNTER_CLIENT_DISCONNECT_ACCEPTED] )
+    {
         return ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED;
+    }
 
     // the AEAD integrity limit (rocketnet_client_integrity_failure) ends the
     // attempt in plain DISCONNECTED: too much received data that failed authentication
     // is a protocol violation, so the public state reads PROTOCOL_VIOLATION
 
     if ( counters && counters->values[ROCKETNET_COUNTER_INTEGRITY_LIMIT_REACHED] )
+    {
         return ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION;
+    }
     return ROCKETNET_DISCONNECT_REASON_NONE;
 }
 
@@ -99,7 +103,9 @@ void rn_message_client_link( struct rn_message_link_t * link, struct rocketnet_c
     link->accept_payload = RN_LINK_FORWARD( rocketnet_client_transport_accept_payload )::call;
 
     if ( transport )
+    {
         rocketnet_client_transport_defer_payload_acks( transport );
+    }
 
     link->acked = rn_client_link_acked;
     link->payload_connection = rn_client_link_entry_connection;
@@ -127,7 +133,9 @@ void rn_message_client_link( struct rn_message_link_t * link, struct rocketnet_c
 uint64_t rocketnet_message_client_required_memory( const struct rocketnet_message_config_t * message_config, uint32_t send_kbps )
 {
     if ( send_kbps > ROCKETNET_SEND_BUDGET_MAX_KBPS )
+    {
         return 0;
+    }
     return rn_message_object_required_bytes( message_config, 1, 0, (int32_t) send_kbps );
 }
 
@@ -173,10 +181,14 @@ static struct rocketnet_message_client_t * rn_message_client_create( void * cont
 {
     int ignored = ROCKETNET_STATUS_OK;
     if ( !status )
+    {
         status = &ignored;
+    }
     *status = ROCKETNET_STATUS_INVALID_ARGUMENT;
     if ( !rocketnet_api_null_guard( connect_token ) )
+    {
         return NULL;
+    }
 
     // R6 (standard/MESSAGES.md m9.4): 0 takes client_send_kbps from the message
     // config; a positive value overrides it for this create. The create
@@ -234,7 +246,9 @@ static struct rocketnet_message_client_t * rn_message_client_create( void * cont
     if ( !transport )
     {
         if ( *status == ROCKETNET_STATUS_OK )
+        {
             *status = ROCKETNET_STATUS_INVALID_ARGUMENT;
+        }
         return NULL;
     }
 
@@ -250,14 +264,18 @@ static struct rocketnet_message_client_t * rn_message_client_create( void * cont
 void rocketnet_message_client_destroy( struct rocketnet_message_client_t * client )
 {
     if ( !rocketnet_api_null_guard( client ) )
+    {
         return;
+    }
     rn_message_object_destroy( &client->object );
 }
 
 struct rocketnet_client_transport_t * rocketnet_message_client_transport( struct rocketnet_message_client_t * client )
 {
     if ( !rocketnet_api_null_guard( client ) )
+    {
         return NULL;
+    }
     return client->object.link.destroy == RN_LINK_FORWARD( rocketnet_client_transport_destroy )::call ? (rocketnet_client_transport_t *) client->object.link.transport : NULL;
 }
 
@@ -265,7 +283,9 @@ struct rocketnet_client_transport_t * rocketnet_message_client_transport( struct
 void rocketnet_message_client_delivery_capture( struct rocketnet_message_client_t * client, struct rocketnet_delivery_capture_t * capture )
 {
     if ( !rocketnet_api_null_guard( client ) || !rocketnet_api_null_guard( capture ) )
+    {
         return;
+    }
     rn_message_object_delivery_capture( &client->object, 0, capture );
 }
 #endif // #if ROCKETNET_DEV
@@ -273,28 +293,36 @@ void rocketnet_message_client_delivery_capture( struct rocketnet_message_client_
 int rocketnet_message_client_state( struct rocketnet_message_client_t * client )
 {
     if ( !rocketnet_api_null_guard( client ) )
+    {
         return ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED;
+    }
     return client->object.link.state( client->object.link.transport );
 }
 
 int rocketnet_message_client_update( struct rocketnet_message_client_t * client, double time )
 {
     if ( !rocketnet_api_null_guard( client ) )
+    {
         return ROCKETNET_UPDATE_OK;
+    }
     return rn_message_object_update( &client->object, time );
 }
 
 void rocketnet_message_client_send_packets( struct rocketnet_message_client_t * client )
 {
     if ( !rocketnet_api_null_guard( client ) )
+    {
         return;
+    }
     rn_message_object_send_packets( &client->object );
 }
 
 uint8_t * rocketnet_message_client_start( struct rocketnet_message_client_t * client, int channel, int reliability, int bytes )
 {
     if ( !rocketnet_api_null_guard( client ) )
+    {
         return NULL;
+    }
     return rn_message_object_start( &client->object, 0, channel, reliability, bytes );
 }
 
@@ -304,41 +332,57 @@ uint32_t rocketnet_message_client_finish( struct rocketnet_message_client_t * cl
     // build and returns 0 in a release build when no reservation is open
 
     if ( !rocketnet_api_null_guard( client ) )
+    {
         return 0;
+    }
     return rn_message_object_finish( &client->object, 0, bytes_written );
 }
 
 void rocketnet_message_client_abort( struct rocketnet_message_client_t * client )
 {
     if ( !rocketnet_api_null_guard( client ) )
+    {
         return;
+    }
     rn_message_object_abort( &client->object, 0 );
 }
 
 uint32_t rocketnet_message_client_send( struct rocketnet_message_client_t * client, int channel, int reliability, const uint8_t * data, int bytes )
 {
     if ( !rocketnet_api_null_guard( client ) )
+    {
         return 0;
+    }
     if ( !rocketnet_api_null_guard( data ) )
+    {
         return 0;
+    }
     return rn_message_object_send( &client->object, 0, channel, reliability, data, bytes );
 }
 
 int rocketnet_message_client_receive( struct rocketnet_message_client_t * client, int * channel, const uint8_t ** data, int * bytes )
 {
     if ( !rocketnet_api_null_guard( client ) )
+    {
         return 0;
+    }
     if ( !rocketnet_api_null_guard( data ) )
+    {
         return 0;
+    }
     if ( !rocketnet_api_null_guard( bytes ) )
+    {
         return 0;
+    }
     return rn_message_object_receive( &client->object, NULL, channel, data, bytes );
 }
 
 int rocketnet_message_client_receive_messages( struct rocketnet_message_client_t * client, struct rocketnet_message_batch_t * messages )
 {
     if ( !rocketnet_api_null_guard( client ) || !rocketnet_api_null_guard( messages ) )
+    {
         return 0;
+    }
     return rn_message_object_receive_messages( &client->object, messages );
 }
 
@@ -346,36 +390,48 @@ int rocketnet_message_client_receipts( struct rocketnet_message_client_t * clien
 {
     if ( !rocketnet_api_null_guard( client ) || capacity < 0 ||
          ( capacity > 0 && !rocketnet_api_null_guard( out ) ) )
+    {
         return 0;
+    }
     return rn_endpoint_take_receipts( &client->object.connections[0], out, capacity );
 }
 
 void rocketnet_message_client_release( struct rocketnet_message_client_t * client, const uint8_t * data )
 {
     if ( !rocketnet_api_null_guard( client ) )
+    {
         return;
+    }
     if ( !rocketnet_api_null_guard( data ) )
+    {
         return;
+    }
     rn_message_object_release( &client->object, data );
 }
 
 int rocketnet_message_client_set_send_kbps( struct rocketnet_message_client_t * client, int32_t kbps )
 {
     if ( !rocketnet_api_null_guard( client ) )
+    {
         return 0;
+    }
     return rn_message_object_set_send_kbps( &client->object, 0, kbps ) ? 1 : 0;
 }
 
 int rocketnet_message_client_disconnect_reason( struct rocketnet_message_client_t * client )
 {
     if ( !rocketnet_api_null_guard( client ) )
+    {
         return ROCKETNET_DISCONNECT_REASON_NONE;
+    }
     return rn_message_object_disconnect_reason( &client->object, 0 );
 }
 
 const struct rocketnet_counters_t * rocketnet_message_client_counters( struct rocketnet_message_client_t * client )
 {
     if ( !rocketnet_api_null_guard( client ) )
+    {
         return NULL;
+    }
     return &client->object.counters;
 }

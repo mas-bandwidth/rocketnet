@@ -115,7 +115,9 @@ static void epoch_connect_expect( epoch_connect_t * t, uint64_t expire, enum roc
     check( status == expected );
 
     if ( expected == ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED )
+    {
         check( rocketnet_client_state( t->client ) == ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED );
+    }
 
     if ( status == ROCKETNET_STATUS_OK )
     {

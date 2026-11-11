@@ -244,7 +244,9 @@ static int standard_receive_processing_generate( const char * id, uint8_t * out,
 {
     uint8_t plaintext[256];
     if ( capacity < ROCKETNET_PREFILTER_BYTES )
+    {
         return -1;
+    }
 
     if ( strcmp( id, "t10.prefilter-too-short" ) == 0 )
     {
@@ -256,7 +258,9 @@ static int standard_receive_processing_generate( const char * id, uint8_t * out,
     if ( strcmp( id, "t10.prefilter-too-large" ) == 0 )
     {
         if ( capacity < ROCKETNET_RECEIVE_CEILING + 1 )
+        {
             return -1;
+        }
 
         uint8_t * p = out;
         rocketnet_write_prefilter_header( &p, ROCKETNET_CONNECTION_PAYLOAD_PACKET, standard_filter );

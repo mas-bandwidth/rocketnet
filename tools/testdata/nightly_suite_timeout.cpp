@@ -4,7 +4,9 @@ static int run_case( const char * )
 {
     std::vector<char> memory;
     if ( std::getenv( "NIGHTLY_TIMEOUT_CONTROL_RSS" ) )
+    {
         memory.resize( 8 * 1024 * 1024, 1 );
+    }
     std::this_thread::sleep_for( std::chrono::milliseconds( 80 ) );
     const char * fail = std::getenv( "NIGHTLY_TIMEOUT_CONTROL_FAIL" );
     return fail ? 7 : 0;

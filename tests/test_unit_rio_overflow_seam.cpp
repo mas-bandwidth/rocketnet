@@ -51,7 +51,9 @@ static void test_rio_transport_overflow_seam()
     for ( int i = 0; i < ROCKETNET_RIO_NUM_COUNTERS; ++i )
     {
         if ( i == ROCKETNET_RIO_COUNTER_PACKETS_RECEIVED )
+        {
             continue;
+        }
         check( counters[i] == counters[ROCKETNET_RIO_NUM_COUNTERS + i] );
     }
 }

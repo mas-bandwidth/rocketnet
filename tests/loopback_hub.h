@@ -60,7 +60,9 @@ inline void rocketnet_test_loopback_hub_clients( int clients )
     }
 
     if ( clients > state->clients )
+    {
         state->clients = clients;
+    }
 }
 
 inline struct rocketnet_loopback_hub_t * rocketnet_test_loopback_hub()

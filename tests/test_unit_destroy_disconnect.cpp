@@ -87,9 +87,13 @@ struct destroy_disconnect_env_guard_t
         for ( int i = 0; i < NUM_NAMES; i++ )
         {
             if ( present[i] )
+            {
                 check( destroy_disconnect_setenv( names[i], saved[i] ) == 0 );
+            }
             else
+            {
                 check( destroy_disconnect_unsetenv( names[i] ) == 0 );
+            }
         }
     }
 };
@@ -221,7 +225,9 @@ static int destroy_disconnect_connect_client( rocketnet_server_t * server, rocke
         {
             const int slot = (int) rocketnet_client_index( client );
             if ( rocketnet_server_client_connected( server, slot ) )
+            {
                 return slot;
+            }
         }
     }
 
@@ -311,7 +317,9 @@ static uint64_t destroy_disconnect_drain( void * endpoint, uint64_t * dropped )
         rocketnet_address_t from;
         uint8_t packet[ROCKETNET_RECEIVE_CEILING];
         if ( rocketnet_loopback_transport.client->receive( endpoint, &from, packet, (int) sizeof( packet ) ) <= 0 )
+        {
             break;
+        }
         count++;
     }
 

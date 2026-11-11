@@ -43,7 +43,9 @@ static void receipts_kicked_identity( receipts_kicked_identity_t * identity )
 {
     uint8_t seed[32];
     for ( int i = 0; i < 32; i++ )
+    {
         seed[i] = (uint8_t) ( 0x3C ^ i );
+    }
     check( rocketnet_generate_backend_keypair_from_seed( seed, identity->backend_public, identity->backend_secret ) == ROCKETNET_STATUS_OK );
     check( rocketnet_generate_server_keypair( identity->server_public, identity->server_secret ) == ROCKETNET_STATUS_OK );
 }
@@ -136,15 +138,21 @@ static int receipts_kicked_connect( const receipts_kicked_identity_t * identity,
     receipts_kicked_token( identity, rocketnet_server_port( server ), client_id, token );
     check( rn_test_client_connect_after_completion( client, token ) == ROCKETNET_STATUS_OK );
     for ( int i = 0; i < 400 && rocketnet_client_state( client ) != ROCKETNET_CLIENT_STATE_CONNECTED; i++ )
+    {
         receipts_kicked_pump( server, client, time );
+    }
     check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
     const int index = rocketnet_client_index( client );
     check( index >= 0 );
     for ( int i = 0; i < 400 && !rocketnet_server_client_connected( server, index ); i++ )
+    {
         receipts_kicked_pump( server, client, time );
+    }
     check( rocketnet_server_client_connected( server, index ) );
     for ( int i = 0; i < 4; i++ )
+    {
         receipts_kicked_pump( server, client, time );
+    }
     check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
     return index;
 }
@@ -181,7 +189,9 @@ static void test_server_receipts_after_kick_same_update()
     // waits at the server's transport, not yet applied by an update
     const uint32_t acked_serial = receipts_kicked_send_receipt_message( server, index, 1 );
     for ( int i = 0; i < 4; i++ )
+    {
         receipts_kicked_pump_client_only( client, &time );
+    }
 
     // the second receipt message is never acknowledged: the client is
     // not pumped again, so its packet ack never reaches the server
@@ -229,7 +239,9 @@ static void test_server_receipts_after_disconnect_client()
 
     const uint32_t serial = receipts_kicked_send_receipt_message( server, index, 3 );
     for ( int i = 0; i < 4; i++ )
+    {
         receipts_kicked_pump_client_only( client, &time );
+    }
     // one server update records the ACKED outcome for the slot; the
     // application ends the connection before reading it
     time += 0.01;

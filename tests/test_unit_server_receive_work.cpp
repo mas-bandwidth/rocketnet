@@ -78,7 +78,9 @@ static bool server_receive_work_pair_setup( struct server_receive_work_pair_t * 
     pair->server = rocketnet_server_transport_create_sized( NULL, "127.0.0.1:0", &server_config, sizeof( server_config ) );
     check( pair->server != NULL );
     if ( !pair->server )
+    {
         return false;
+    }
 
     char server_address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
     snprintf( server_address, sizeof( server_address ), "127.0.0.1:%d", rocketnet_server_transport_port( pair->server ) );
@@ -100,13 +102,17 @@ static bool server_receive_work_pair_setup( struct server_receive_work_pair_t * 
     pair->client = rocketnet_client_transport_create_sized( NULL, token, &client_config, sizeof( client_config ), pair->time );
     check( pair->client != NULL );
     if ( !pair->client )
+    {
         return false;
+    }
 
     for ( int i = 0; i < 400; i++ )
     {
         if ( rocketnet_client_transport_state( pair->client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
              rocketnet_server_transport_is_client_connected( pair->server, 0 ) )
+        {
             return true;
+        }
         pair->time += 0.01;
         server_receive_work_clock = pair->time;
         rocketnet_server_transport_update( pair->server, pair->time );
@@ -287,7 +293,9 @@ static struct rocketnet_server_socket_process_packets_t * server_receive_work_fu
     fake->view.packet_bytes = fake->packet_bytes;
     fake->view.packet_data = fake->packet_data;
     for ( int i = 0; i < capacity; i++ )
+    {
         fake->packet_data[i] = fake->data + i * ROCKETNET_RECEIVE_CEILING;
+    }
     return &fake->view;
 }
 
@@ -394,7 +402,9 @@ static void server_receive_work_staging_finish( void * instance, uint64_t id, ui
     fake->last_finish_type = frame[ROCKETNET_FRAME_WIRE_OFFSET];
     fake->last_finish_bytes = bytes;
     if ( frame[ROCKETNET_FRAME_WIRE_OFFSET] == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET )
+    {
         fake->keep_alive_finishes++;
+    }
     const struct rocketnet_platform_send_t send = { &fake->to[id], frame + ROCKETNET_FRAME_WIRE_OFFSET, bytes };
     fake->receive.real_operations->send_batch( fake->receive.real_instance, &send, 1 );
 }

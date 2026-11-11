@@ -91,7 +91,9 @@ struct replay_window_ref_t
     {
         const uint64_t width = (uint64_t) ROCKETNET_REPLAY_WINDOW_BITS;
         if ( s + width <= highest )
+        {
             return 1;
+        }
         return received.count( s ) != 0;
     }
 
@@ -114,7 +116,9 @@ struct replay_window_ref_t
         // so the dropped entries are the smallest.
         std::set<uint64_t>::iterator it = set_.begin();
         while ( it != set_.end() && *it + (uint64_t) ROCKETNET_REPLAY_WINDOW_BITS <= highest )
+        {
             it = set_.erase( it );
+        }
     }
 
     // Advance (proofs/tla/ReplayWindow.tla); the code's rocketnet_replay_advance.
@@ -129,12 +133,16 @@ struct replay_window_ref_t
                 // Cleared (proofs/tla/ReplayWindow.tla), the long-skip branch: clear every
                 // word, ClearedWords = Words.
                 for ( int w = 0; w < cleared_words; w++ )
+                {
                     window[w] = 0;
+                }
             }
             else
             {
                 for ( uint64_t t = highest + 1; t < s; t++ )
+                {
                     clear_bit( t );
+                }
             }
             highest = s;
         }
@@ -250,7 +258,9 @@ static void replay_trace_dfs( replay_window_ref_t & model, struct rocketnet_repl
     g_replay_trace_steps++;
 
     if ( depth >= 5 )
+    {
         return;
+    }
 
     // Connect: once; it moves no window state on the real struct
 
@@ -266,7 +276,9 @@ static void replay_trace_dfs( replay_window_ref_t & model, struct rocketnet_repl
     {
         uint64_t s = k_trace_alphabet[i];
         if ( model.already_received( s ) )
+        {
             continue;
+        }
 
         replay_window_ref_t saved_model = model;
         struct rocketnet_replay_protection_t saved_real = real;

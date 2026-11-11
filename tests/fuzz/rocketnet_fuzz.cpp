@@ -44,7 +44,9 @@ static const uint8_t rocketnet_fuzz_filter_value[ROCKETNET_FILTER_VALUE_BYTES] =
 static void rocketnet_fuzz_require( bool condition, const char * property )
 {
     if ( condition )
+    {
         return;
+    }
     fprintf( stderr, "fuzz oracle failed: %s\n", property );
     abort();
 }
@@ -142,9 +144,13 @@ static uint64_t rocketnet_fuzz_type_counters[ROCKETNET_FUZZ_TYPE_COUNT];
 static int rocketnet_fuzz_prefilter_type_index( int type_byte )
 {
     if ( type_byte < 0 || type_byte > 255 )
+    {
         return -1;
+    }
     if ( type_byte < ROCKETNET_FIRST_RESERVED_PACKET_TYPE )
+    {
         return ROCKETNET_FUZZ_TYPE_PREFILTER_REQUEST + type_byte;
+    }
 
     return ROCKETNET_FUZZ_TYPE_PREFILTER_RESERVED;
 }
@@ -153,7 +159,9 @@ static uint64_t rocketnet_fuzz_type_value( int type )
 {
     const struct rocketnet_fuzz_type_info_t * t = &rocketnet_fuzz_types[type];
     if ( t->library_counter >= 0 )
+    {
         return rocketnet_counter_value( &rocketnet_fuzz_counters, t->library_counter );
+    }
     return rocketnet_fuzz_type_counters[type];
 }
 
@@ -292,8 +300,10 @@ static void rocketnet_fuzz_base64( const uint8_t * data, size_t bytes )
     }
 
     if ( wide_bytes > 0 && wide_bytes <= (int) sizeof( key_field ) )
+    {
         rocketnet_fuzz_require( key_bytes == wide_bytes && memcmp( key_field, decoded, (size_t) wide_bytes ) == 0,
                                 "base64 fitting field must preserve all bytes" );
+    }
 
     // ONE SPELLING PER KEY, as an oracle rather than a table of examples:
     // whatever these bytes are, encoding then decoding them must return
@@ -315,8 +325,10 @@ static void rocketnet_fuzz_base64( const uint8_t * data, size_t bytes )
     }
 
     if ( encoded_length > 0 && encoded_length < (int) sizeof( small_encoded ) )
+    {
         rocketnet_fuzz_require( small_encoded_length == encoded_length && memcmp( small_encoded, encoded, (size_t) encoded_length + 1 ) == 0,
                                 "base64 fitting encode must preserve bytes and terminator" );
+    }
 
     if ( encoded_length > 0 )
     {
@@ -443,7 +455,9 @@ static void rocketnet_fuzz_config( const uint8_t * data, size_t bytes )
 static int rocketnet_fuzz_seed_prefilter( uint8_t * out, int type_byte, int epoch_byte, int filter_wrong, int bytes )
 {
     if ( bytes < 1 || bytes > ROCKETNET_FUZZ_SEED_MAX )
+    {
         return 0;
+    }
     out[0] = 0;                                     // the selector: the prefilter
     out[1] = (uint8_t) type_byte;
     out[2] = (uint8_t) epoch_byte;
@@ -463,7 +477,9 @@ static int rocketnet_fuzz_seed_prefilter( uint8_t * out, int type_byte, int epoc
 static int rocketnet_fuzz_seed_build( int type, uint8_t * out, int capacity )
 {
     if ( capacity < ROCKETNET_FUZZ_SEED_MAX )
+    {
         return 0;
+    }
 
     switch ( type )
     {
@@ -567,7 +583,9 @@ static int rocketnet_fuzz_seed_build( int type, uint8_t * out, int capacity )
 static bool rocketnet_fuzz_type_withheld( const char * list, const char * name )
 {
     if ( !list || !list[0] )
+    {
         return false;
+    }
 
     const size_t length = strlen( name );
     const char * at = list;
@@ -576,9 +594,13 @@ static bool rocketnet_fuzz_type_withheld( const char * list, const char * name )
         const char * end = strchr( at, ',' );
         const size_t span = end ? (size_t) ( end - at ) : strlen( at );
         if ( span == length && memcmp( at, name, length ) == 0 )
+        {
             return true;
+        }
         if ( !end )
+        {
             break;
+        }
         at = end + 1;
     }
 
@@ -667,7 +689,9 @@ static bool rocketnet_fuzz_generate( const char * dir )
 static void rocketnet_fuzz_run( const uint8_t * data, size_t size )
 {
     if ( size < 1 )
+    {
         return;
+    }
 
     const uint8_t * body = data + 1;
     const size_t body_size = size - 1;

@@ -69,7 +69,9 @@ static bool live_link_pair_setup( struct live_link_pair_t * pair )
     pair->server = rocketnet_server_transport_create_sized( NULL, "127.0.0.1:0", &server_config, sizeof( server_config ) );
     check( pair->server != NULL );
     if ( !pair->server )
+    {
         return false;
+    }
 
     char server_address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
     snprintf( server_address, sizeof( server_address ), "127.0.0.1:%d", rocketnet_server_transport_port( pair->server ) );
@@ -107,7 +109,9 @@ static bool live_link_pair_connect( struct live_link_pair_t * pair )
     {
         if ( rocketnet_client_transport_state( pair->client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
              rocketnet_server_transport_is_client_connected( pair->server, 0 ) )
+        {
             return true;
+        }
         live_link_pair_step( pair, 0.01 );
     }
 
@@ -355,7 +359,9 @@ static void staged_fake_finish( void * instance, uint64_t, uint8_t * frame, int 
     fake->finishes++;
     fake->used++;
     if ( frame[ROCKETNET_FRAME_WIRE_OFFSET] == ROCKETNET_CONNECTION_PAYLOAD_PACKET )
+    {
         fake->payload_finishes++;
+    }
 }
 static void staged_fake_abort( void * instance, uint64_t, uint8_t * ) { ( (struct staged_fake_t *) instance )->aborts++; }
 static void staged_fake_flush( void * instance ) { ( (struct staged_fake_t *) instance )->used = 0; }
@@ -489,7 +495,9 @@ static void test_public_link_simulator_drain_spreads_within_room()
     const int payloads = 10;
     uint8_t payload[8] = { 1, 2, 3, 4, 5, 6, 7, 8 };
     for ( int i = 0; i < payloads; i++ )
+    {
         rocketnet_server_transport_send_packet( pair.server, 0, payload, sizeof( payload ) );
+    }
     check( fake->finishes == 0 && fake->aborts == payloads );
 
     double time = pair.time;
@@ -836,7 +844,9 @@ static void test_public_link_simulator_same_seed_same_schedule()
             const int b_bytes = public_link_wire_receive( &b );
             check( a_bytes == b_bytes );
             if ( a_bytes == 0 )
+            {
                 break;
+            }
             check( memcmp( a.received, b.received, (size_t) a_bytes ) == 0 );
         }
     }

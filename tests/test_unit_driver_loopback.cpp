@@ -119,7 +119,9 @@ static void test_loopback_transport_io_refuses_a_bind_when_every_ephemeral_port_
     rocketnet_address_t client_address[3];
     rocketnet_client_transport_io_t client[3] = {};
     for ( int i = 0; i < 3; ++i )
+    {
         rocketnet_unit_check( rocketnet_address_parse( &client_address[i], "127.0.0.1:0" ) );
+    }
 
     rocketnet_unit_check( rocketnet_client_transport_io_open( backend->client, NULL, &client_setup, &client_address[0], &client[0] ) );
     rocketnet_unit_check( client_address[0].port == 65534 );
@@ -437,7 +439,9 @@ static void * loopback_count_malloc( void * context, size_t bytes )
 
     uint8_t * block = (uint8_t *) rocketnet_default_malloc_function( context, bytes + LOOPBACK_COUNT_HEADER );
     if ( !block )
+    {
         return NULL;
+    }
     memcpy( block, &bytes, sizeof( bytes ) );
     g_loopback_live_bytes += bytes;
 
@@ -447,7 +451,9 @@ static void * loopback_count_malloc( void * context, size_t bytes )
 static void loopback_count_free( void * context, void * memory )
 {
     if ( !memory )
+    {
         return;
+    }
 
     uint8_t * block = (uint8_t *) memory - LOOPBACK_COUNT_HEADER;
     size_t bytes;
@@ -684,7 +690,9 @@ static uint8_t * wt_staged_start_packet( void * p, const rocketnet_address_t * t
 {
     wire_totals_staged_fixture_t * f = (wire_totals_staged_fixture_t *) p;
     if ( f->used == f->capacity )
+    {
         return NULL;
+    }
     f->reserved_to = *to;
     *id = (uint64_t) f->used;
 
@@ -969,11 +977,13 @@ static void test_loopback_transport_io_holds_max_clients_plus_server()
 
             int index = -1;
             for ( int c = 0; c < ROCKETNET_MAX_CLIENTS; ++c )
+            {
                 if ( client_addresses[c].port == froms[i].port )
                 {
                     index = c;
                     break;
                 }
+            }
             rocketnet_unit_check( index >= 0 );
             rocketnet_unit_check( !seen[index] );
             seen[index] = true;
@@ -1211,7 +1221,9 @@ static void test_server_connects_after_junk_from_many_sources()
         rocketnet_client_transport_send_packets( client );
         if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
              rocketnet_server_transport_is_client_connected( server, 0 ) )
+        {
             break;
+        }
     }
 
     rocketnet_unit_check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
@@ -1470,7 +1482,9 @@ static int shape_junk_portable_served;
 static int shape_junk_portable_receive_batch( void *, rocketnet_address_t * from, uint8_t * data, int stride, int * bytes, int count )
 {
     if ( shape_junk_portable_served )
+    {
         return 0;
+    }
     rocketnet_unit_check( count >= SHAPE_JUNK_COUNT );
 
     for ( int i = 0; i < SHAPE_JUNK_COUNT; i++ )
@@ -1619,7 +1633,9 @@ static void test_loopback_transport_io_refusals()
 
     const int bad_sizes[] = { 0, -1, ROCKETNET_RECEIVE_CEILING + 1 };
     for ( int i = 0; i < 3; ++i )
+    {
         client.operations->send( client.instance, &server_address, data, bad_sizes[i] );
+    }
 
     rocketnet_unit_check( client.operations->send_failures( client.instance ) == 0 );
     rocketnet_unit_check( rocketnet_loopback_endpoint_dropped( server.instance ) == 0 );
@@ -1640,7 +1656,9 @@ static void test_loopback_transport_io_refusals()
     rocketnet_address_t nowhere = server_address;
     nowhere.port = (uint16_t) ( server_address.port == 65535 ? 1 : server_address.port + 1 );
     if ( nowhere.port == client_address.port )
+    {
         nowhere.port = (uint16_t) ( nowhere.port + 1 );
+    }
 
     client.operations->send( client.instance, &nowhere, data, 4 );
     rocketnet_unit_check( client.operations->send_failures( client.instance ) == 1 );
@@ -1662,7 +1680,9 @@ static void test_loopback_transport_io_refusals()
 
     const int server_queue = rocketnet_loopback_server_queue_packets( ROCKETNET_TEST_LOOPBACK_HUB_CLIENTS );
     for ( int i = 0; i < server_queue + 1; ++i )
+    {
         client.operations->send( client.instance, &server_address, data, 4 );
+    }
 
     rocketnet_unit_check( rocketnet_loopback_endpoint_dropped( server.instance ) == 1 );
     rocketnet_unit_check( client.operations->send_failures( client.instance ) == 2 );
@@ -1908,7 +1928,9 @@ static void test_iocp_release_send_retries_while_pop_sequence_store_stalls()
     auto * transport = rocketnet_server_transport_allocate( NULL, ROCKETNET_DEFAULT_MAX_CLIENTS );
     rocketnet_unit_check( transport != NULL );
     if ( !transport )
+    {
         return;
+    }
 
     rocketnet_server_transport_io_operations_t operations = {};
     operations.flags = ROCKETNET_TRANSPORT_STAGED;

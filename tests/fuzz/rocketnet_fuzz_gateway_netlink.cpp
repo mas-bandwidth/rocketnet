@@ -136,7 +136,9 @@ static const uint8_t fuzz_gateway_mac[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x01 
 static void rocketnet_fuzz_require( bool condition, const char * property )
 {
     if ( condition )
+    {
         return;
+    }
     fprintf( stderr, "fuzz oracle failed: %s\n", property );
     abort();
 }
@@ -146,7 +148,9 @@ static bool fuzz_bytes_inside( const uint8_t * data, size_t bytes, const uint8_t
     for ( size_t i = 0; i + value_bytes <= bytes; ++i )
     {
         if ( memcmp( data + i, value, value_bytes ) == 0 )
+        {
             return true;
+        }
     }
 
     return false;
@@ -157,7 +161,9 @@ static bool fuzz_all( const uint8_t * data, size_t bytes, uint8_t value )
     for ( size_t i = 0; i < bytes; ++i )
     {
         if ( data[i] != value )
+        {
             return false;
+        }
     }
 
     return true;
@@ -168,7 +174,9 @@ static bool fuzz_all( const uint8_t * data, size_t bytes, uint8_t value )
 static int fuzz_netlink_run( const uint8_t * data, size_t size )
 {
     if ( size < 1 || size - 1 > (size_t) FUZZ_NETLINK_BUFFER_BYTES )
+    {
         return FUZZ_NETLINK_IGNORED;
+    }
 
 #if ROCKETNET_XDP
     const bool neighbor = ( data[0] & 1 ) != 0;
@@ -262,7 +270,9 @@ struct fuzz_datagram_t
 static void fuzz_append( fuzz_datagram_t * d, const void * data, size_t bytes )
 {
     if ( d->size + bytes > sizeof( d->bytes ) )
+    {
         abort();
+    }
     memcpy( d->bytes + d->size, data, bytes );
     d->size += bytes;
 }

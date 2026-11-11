@@ -852,7 +852,9 @@ inline void rocketnet_platform_atomic_max_u64( volatile uint64_t * value, uint64
     {
         long long previous = _InterlockedCompareExchange64( (volatile long long *) value, (long long) candidate, observed );
         if ( previous == observed )
+        {
             break;
+        }
         observed = previous;
     }
 }

@@ -50,8 +50,12 @@ static uint64_t appendix_align64( uint64_t value )
 static const struct rocketnet_config_field_t * server_field( const struct rocketnet_config_field_t * fields, int num_fields, const char * name )
 {
     for ( int i = 0; i < num_fields; i++ )
+    {
         if ( strcmp( fields[i].name, name ) == 0 )
+        {
             return &fields[i];
+        }
+    }
 
     return NULL;
 }
@@ -72,11 +76,15 @@ static int append_transport_name( char * list, int capacity, const char * name )
 {
     const int used = (int) strlen( list );
     if ( used >= capacity )
+    {
         return -1;
+    }
 
     const int wrote = snprintf( list + used, (size_t) ( capacity - used ), "%s%s", used == 0 ? "" : ",", name );
     if ( wrote < 0 || wrote >= capacity - used )
+    {
         return -1;
+    }
 
     return 0;
 }
@@ -115,7 +123,9 @@ static void check_resend_reserve( int client_kbps, int server_kbps, int delay_ms
     }
 
     if ( store < (uint64_t) send_bytes )
+    {
         store = (uint64_t) send_bytes;
+    }
 
     struct rn_region_reserve_sizes_t sizes;
     memset( &sizes, 0, sizeof( sizes ) );
@@ -220,7 +230,9 @@ static void test_standard_transport_appendices_vectors()
     };
     rocketnet_unit_check( ROCKETNET_PREFILTER_BYTES > 0 );
     for ( int i = 0; i < (int) ( sizeof( packet_bytes ) / sizeof( packet_bytes[0] ) ); i++ )
+    {
         rocketnet_unit_check( packet_bytes[i] >= ROCKETNET_PREFILTER_BYTES );
+    }
 
     // tb. Payload to an unconfirmed client: no keep-alive prefix. The challenge is its own packet.
     rocketnet_unit_check( ROCKETNET_CONNECTION_PAYLOAD_PACKET != ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET );
@@ -273,7 +285,9 @@ static void test_standard_transport_appendices_vectors()
     int available[ROCKETNET_NUM_TRANSPORTS];
     int num_available = 0;
     for ( int i = 0; i < ROCKETNET_NUM_TRANSPORTS; i++ )
+    {
         available[num_available++] = i;
+    }
     rocketnet_unit_check( num_available > 0 );
     rocketnet_unit_check( num_available <= ROCKETNET_MAX_TRANSPORT_CANDIDATES );
 
@@ -282,7 +296,9 @@ static void test_standard_transport_appendices_vectors()
     for ( int i = 0; i < num_available; i++ )
     {
         if ( rocketnet_transport_pin_only( available[i], true ) )
+        {
             continue;
+        }
         auto_ids[auto_count++] = available[i];
     }
     rocketnet_unit_check( auto_count > 0 );
@@ -322,7 +338,9 @@ static void test_standard_transport_appendices_vectors()
     rocketnet_unit_check( rocketnet_transport_ladder_parse( reversed, available, num_available, &explicit_list, true ) );
     rocketnet_unit_check( explicit_list.num_candidates == auto_count );
     for ( int i = 0; i < auto_count; i++ )
+    {
         rocketnet_unit_check( explicit_list.candidates[i] == auto_ids[auto_count - 1 - i] );
+    }
 
     // tc. Kernel prefilter: path MTU at least 1500, and the named fragment and options counters.
     rocketnet_unit_check( ROCKETNET_LINK_MTU_BYTES >= 1500 );

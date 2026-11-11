@@ -43,22 +43,34 @@ static void bench_fill( struct rocketnet_replay_protection_t * replay, uint64_t 
     memset( replay, 0, sizeof( *replay ) );
     replay->highest_opened = highest;
     if ( highest == 0 )
+    {
         return;
+    }
     uint64_t floor_sequence = 1;
     if ( highest >= ROCKETNET_REPLAY_WINDOW_BITS )
+    {
         floor_sequence = highest - ROCKETNET_REPLAY_WINDOW_BITS + 1;
+    }
     bench_rng_state = seed;
     for ( uint64_t s = floor_sequence; s <= highest; s++ )
     {
         int received;
         if ( alternating )
+        {
             received = ( ( s & 1 ) == ( highest & 1 ) );
+        }
         else if ( percent_received >= 100 )
+        {
             received = 1;
+        }
         else
+        {
             received = ( bench_random() % 100 ) < (uint64_t) percent_received;
+        }
         if ( received )
+        {
             bench_set_bit( replay, s );
+        }
     }
     bench_set_bit( replay, highest ); // largest itself is always marked received
 }
@@ -108,16 +120,22 @@ int main()
         {
             // warm-up outside the timed window
             for ( int i = 0; i < 200; i++ )
+            {
                 checksum += (uint64_t) rocketnet_ack_block_build( output, (int) sizeof( output ), &bench_shapes[shape].replay );
+            }
             const auto start = std::chrono::steady_clock::now();
             int bytes = 0;
             for ( int i = 0; i < iterations; i++ )
+            {
                 bytes = rocketnet_ack_block_build( output, (int) sizeof( output ), &bench_shapes[shape].replay );
+            }
             const auto end = std::chrono::steady_clock::now();
             const double ns = std::chrono::duration<double, std::nano>( end - start ).count() / iterations;
             median_samples[rep] = ns;
             if ( rep == 0 || ns < best )
+            {
                 best = ns;
+            }
             checksum += (uint64_t) bytes;
         }
         // median of the five repetitions (simple insertion sort)

@@ -35,7 +35,9 @@ static int standard_acks_generate( const char * id, uint8_t * out, int capacity 
     if ( strcmp( id, "t15.invalid-short" ) == 0 )
     {
         if ( capacity < 6 )
+        {
             return -1;
+        }
         memset( out, 0, 6 );
 
         struct rocketnet_ack_block_t decoded;
@@ -161,13 +163,17 @@ static int standard_acks_generate( const char * id, uint8_t * out, int capacity 
         rocketnet_replay_advance( &replay, 10 );
         rocketnet_replay_advance( &replay, 11 );
         if ( capacity < 11 )
+        {
             return -1;
+        }
 
         const int bytes = rocketnet_ack_block_build( out, 11, &replay );
         struct rocketnet_ack_block_t decoded;
         if ( bytes != 11 || rocketnet_ack_block_read( &decoded, out, bytes, 11 ) != bytes ||
              decoded.num_ranges != 1 || decoded.range_gap[0] != 1 || decoded.range_length[0] != 2 )
+        {
             return -1;
+        }
         return bytes;
     }
     else
@@ -176,16 +182,22 @@ static int standard_acks_generate( const char * id, uint8_t * out, int capacity 
     }
 
     if ( capacity < ROCKETNET_ACK_BLOCK_MAX_BYTES )
+    {
         return -1;
+    }
 
     const int bytes = rocketnet_ack_block_write( out, &block );
     const int actual_bytes = strcmp( id, "t15.invalid-geometry" ) == 0 ? bytes - 1 : bytes;
     struct rocketnet_ack_block_t decoded;
     const int parsed = rocketnet_ack_block_read( &decoded, out, actual_bytes, highest_sent );
     if ( invalid ? parsed != 0 : parsed != actual_bytes )
+    {
         return -1;
+    }
     if ( strcmp( id, "t15.sequence-wrap" ) == 0 && decoded.largest != 0x100000000ULL )
+    {
         return -1;
+    }
 
     return actual_bytes;
 }

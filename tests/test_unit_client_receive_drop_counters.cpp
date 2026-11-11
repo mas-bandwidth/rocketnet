@@ -88,9 +88,13 @@ static int drop_counters_pop( drop_counters_driver_t * driver, rocketnet_address
 
     const int written = reported < capacity ? reported : capacity;
     if ( written > 0 && driver->actual[driver->head - 1] > 0 )
+    {
         memcpy( data, driver->data[driver->head - 1], (size_t) written );
+    }
     else if ( written > 0 )
+    {
         memset( data, 0x5a, (size_t) written );
+    }
 
     return reported;
 }
@@ -103,7 +107,9 @@ static int drop_counters_receive( void * instance, rocketnet_address_t * from, u
     // never scripted on it
 
     if ( driver->head == driver->count )
+    {
         return 0;
+    }
 
     return drop_counters_pop( driver, from, data, capacity );
 }

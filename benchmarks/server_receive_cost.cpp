@@ -142,7 +142,9 @@ static double percentile( std::vector<double> samples, double p )
 
     const size_t n = samples.size();
     if ( n == 0 )
+    {
         return 0.0;
+    }
 
     const double rank = ( p / 100.0 ) * (double) n;
     size_t index = (size_t) rank;
@@ -278,10 +280,12 @@ int main( int argc, char ** argv )
         {
             const int last = std::min( num_clients, first + clients_per_group );
             for ( int i = first; i < last; i++ )
+            {
                 for ( int p = 0; p < packets_per_client; p++ )
                 {
                     rocketnet_client_transport_send_packet( clients[(size_t) i], payload, payload_bytes );
                 }
+            }
 
             receive_cost_clock += 0.0001;
             rocketnet_server_transport_update( server, receive_cost_clock );

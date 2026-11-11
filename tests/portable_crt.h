@@ -38,11 +38,15 @@ static inline int rocketnet_test_getenv( const char * name, char * buffer, size_
 #else // #if defined( _MSC_VER )
     const char * value = getenv( name );
     if ( value == NULL )
+    {
         return 0;
+    }
 
     const size_t length = strlen( value );
     if ( length + 1 > size )
+    {
         return 0;
+    }
     memcpy( buffer, value, length + 1 );
     return 1;
 #endif // #if defined( _MSC_VER )
@@ -55,7 +59,9 @@ static inline FILE * rocketnet_test_fopen( const char * path, const char * mode 
 #if defined( _MSC_VER )
     FILE * file = NULL;
     if ( fopen_s( &file, path, mode ) != 0 )
+    {
         return NULL;
+    }
     return file;
 #else // #if defined( _MSC_VER )
     return fopen( path, mode );

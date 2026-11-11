@@ -47,14 +47,18 @@ unsigned nondet_unsigned( void );
 size_t rocketnet_copy_string( char * dest, const char * source, size_t dest_size )
 {
     if ( !dest || !source || dest_size == 0 )
+    {
         return 0;
+    }
     memset( dest, 0, dest_size );
 
     size_t i = 0;
     for ( ; i < dest_size - 1; i++ )
     {
         if ( source[i] == '\0' )
+        {
             break;
+        }
         dest[i] = source[i];
     }
 

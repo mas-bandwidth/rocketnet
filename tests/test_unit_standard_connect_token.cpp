@@ -72,16 +72,22 @@ static int rn_test_seal_with_ephemeral( uint8_t * c, const uint8_t * m, unsigned
     uint8_t epk[crypto_box_PUBLICKEYBYTES];
     uint8_t nonce[crypto_box_NONCEBYTES];
     if ( crypto_scalarmult_base( epk, esk ) != 0 )
+    {
         return -1;
+    }
 
     crypto_generichash_state state;
     if ( crypto_generichash_init( &state, NULL, 0, crypto_box_NONCEBYTES ) != 0 ||
          crypto_generichash_update( &state, epk, crypto_box_PUBLICKEYBYTES ) != 0 ||
          crypto_generichash_update( &state, server_public_key, crypto_box_PUBLICKEYBYTES ) != 0 ||
          crypto_generichash_final( &state, nonce, crypto_box_NONCEBYTES ) != 0 )
+    {
         return -1;
+    }
     if ( crypto_box_easy( c + crypto_box_PUBLICKEYBYTES, m, mlen, nonce, server_public_key, esk ) != 0 )
+    {
         return -1;
+    }
     memcpy( c, epk, crypto_box_PUBLICKEYBYTES );
 
     return 0;
@@ -92,7 +98,9 @@ static int standard_connect_token_generate( const char * id, uint8_t * out, int 
     if ( strcmp( id, "t6.frozen-token" ) == 0 )
     {
         if ( capacity < ROCKETNET_CONNECT_TOKEN_BYTES )
+        {
             return -1;
+        }
         memcpy( out, rocketnet_test_frozen_token, ROCKETNET_CONNECT_TOKEN_BYTES );
         return ROCKETNET_CONNECT_TOKEN_BYTES;
     }
@@ -100,7 +108,9 @@ static int standard_connect_token_generate( const char * id, uint8_t * out, int 
     if ( strcmp( id, "t6.token-identifier" ) == 0 )
     {
         if ( capacity < ROCKETNET_TOKEN_IDENTIFIER_BYTES )
+        {
             return -1;
+        }
         rocketnet_connect_token_identifier( out, rocketnet_test_frozen_token );
         return ROCKETNET_TOKEN_IDENTIFIER_BYTES;
     }
@@ -111,7 +121,9 @@ static int standard_connect_token_generate( const char * id, uint8_t * out, int 
     if ( strcmp( id, "t6.bad-address-flags" ) == 0 )
     {
         if ( capacity < ROCKETNET_CONNECT_TOKEN_BYTES )
+        {
             return -1;
+        }
         rn_test_fill_signed( &sf );
         sf.address_flags = 0x05;
         rn_test_fill_private( &pf );
@@ -124,7 +136,9 @@ static int standard_connect_token_generate( const char * id, uint8_t * out, int 
     if ( strcmp( id, "t6.wrong-server-key" ) == 0 )
     {
         if ( capacity < ROCKETNET_CONNECT_TOKEN_BYTES )
+        {
             return -1;
+        }
         rn_test_fill_signed( &sf );
         memcpy( sf.server_public_key, rn_test_wrong_server_public_key, 32 );
         rn_test_fill_private( &pf );
@@ -137,7 +151,9 @@ static int standard_connect_token_generate( const char * id, uint8_t * out, int 
     if ( strcmp( id, "t6.sealed-mismatch" ) == 0 )
     {
         if ( capacity < ROCKETNET_CONNECT_TOKEN_BYTES )
+        {
             return -1;
+        }
 
         // a private block whose protocol id disagrees with the signed one
 
@@ -150,7 +166,9 @@ static int standard_connect_token_generate( const char * id, uint8_t * out, int 
         rocketnet_write_connect_token_private( &pf, private_block );
         if ( rn_test_seal_with_ephemeral( sf.sealed_private_block, private_block, ROCKETNET_PRIVATE_BLOCK_BYTES,
                                           rocketnet_test_server_public_key, rocketnet_test_token_vector_ephemeral_secret[3] ) != 0 )
+        {
             return -1;
+        }
 
         uint8_t signed_buffer[ROCKETNET_SIGNED_CONNECT_DATA_BYTES];
         rocketnet_write_signed_connect_data( &sf, signed_buffer );

@@ -45,7 +45,9 @@ static void contract_log( void * context, enum rocketnet_log_level_t level, cons
     (void) context;
 
     if ( level != ROCKETNET_LOG_LEVEL_ERROR )
+    {
         return;
+    }
 
     contract_errors++;
 
@@ -167,7 +169,9 @@ static void contract_state_change( void * context, enum rocketnet_client_state_t
     }
 
     if ( t->client && rocketnet_client_state( t->client ) != current_state )
+    {
         t->polled_mismatches++;
+    }
 }
 
 // every reported change chains from the one before it, and the last one is
@@ -191,8 +195,12 @@ static void contract_check_chain( rocketnet_client_t * client )
 static bool contract_saw( int previous, int current )
 {
     for ( int i = 0; i < contract_transitions.count; i++ )
+    {
         if ( contract_transitions.previous[i] == previous && contract_transitions.current[i] == current )
+        {
             return true;
+        }
+    }
     return false;
 }
 
@@ -200,7 +208,9 @@ static void contract_identity( contract_identity_t * identity )
 {
     uint8_t seed[32];
     for ( int i = 0; i < 32; i++ )
+    {
         seed[i] = (uint8_t) ( 0x3C ^ i );
+    }
 
     check( rocketnet_generate_backend_keypair_from_seed( seed, identity->backend_public, identity->backend_secret ) == ROCKETNET_STATUS_OK );
     check( rocketnet_generate_server_keypair( identity->server_public, identity->server_secret ) == ROCKETNET_STATUS_OK );
@@ -274,17 +284,23 @@ static int contract_connect( const contract_identity_t * identity, rocketnet_ser
 
     check( rocketnet_client_connect( client, token ) == ROCKETNET_STATUS_OK );
     for ( int i = 0; i < 400 && rocketnet_client_state( client ) != ROCKETNET_CLIENT_STATE_CONNECTED; i++ )
+    {
         contract_pump( server, client, time );
+    }
     check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
 
     const int index = rocketnet_client_index( client );
     check( index >= 0 );
     for ( int i = 0; i < 400 && !rocketnet_server_client_connected( server, index ); i++ )
+    {
         contract_pump( server, client, time );
+    }
     check( rocketnet_server_client_connected( server, index ) );
 
     for ( int i = 0; i < 4; i++ )
+    {
         contract_pump( server, client, time );
+    }
     check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
 
     return index;
@@ -326,11 +342,15 @@ static void test_contract_state_callback_reports_public_state()
 
     const int index = rocketnet_client_index( client );
     for ( int i = 0; i < 400 && !rocketnet_server_client_connected( server, index ); i++ )
+    {
         contract_pump( server, client, &time );
+    }
 
     rocketnet_server_disconnect_client( server, index );
     for ( int i = 0; i < 8 && rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED; i++ )
+    {
         contract_pump( server, client, &time );
+    }
 
     check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED );
     check( contract_saw( ROCKETNET_CLIENT_STATE_CONNECTED, ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED ) );
@@ -341,7 +361,9 @@ static void test_contract_state_callback_reports_public_state()
 
     const int reported = contract_transitions.count;
     for ( int i = 0; i < 4; i++ )
+    {
         contract_pump( server, client, &time );
+    }
     check( contract_transitions.count == reported );
 
     rocketnet_client_disconnect( client );
@@ -427,7 +449,9 @@ static void test_contract_message_not_received_is_misuse()
     check( rocketnet_client_finish_message( sender, 4 ) != 0 );
 
     for ( int i = 0; i < 32 && rocketnet_server_client_connected( server, slot ); i++ )
+    {
         contract_pump( server, sender, &time );
+    }
 
     check( !rocketnet_server_client_connected( server, slot ) );
     check( rocketnet_api_misuse_count() == server_before + 1 );
@@ -673,7 +697,9 @@ static void test_contract_set_send_kbps_index_counted_first()
     for ( int stopped = 0; stopped < 2; stopped++ )
     {
         if ( stopped )
+        {
             rocketnet_server_stop( server );
+        }
 
         uint64_t before = rocketnet_api_misuse_count();
         check( rocketnet_server_set_send_kbps( server, 99, 100 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
@@ -762,7 +788,9 @@ static bool witness_bytes_are_zero( const uint8_t * bytes, int count )
     for ( int i = 0; i < count; i++ )
     {
         if ( bytes[i] != 0 )
+        {
             return false;
+        }
     }
     return true;
 }
@@ -770,12 +798,16 @@ static bool witness_bytes_are_zero( const uint8_t * bytes, int count )
 static bool witness_contains_slice( const void * haystack_ptr, size_t haystack_bytes, const uint8_t * needle, size_t needle_bytes )
 {
     if ( needle_bytes == 0 || haystack_bytes < needle_bytes )
+    {
         return false;
+    }
     const uint8_t * haystack = (const uint8_t *) haystack_ptr;
     for ( size_t i = 0; i + needle_bytes <= haystack_bytes; i++ )
     {
         if ( memcmp( haystack + i, needle, needle_bytes ) == 0 )
+        {
             return true;
+        }
     }
     return false;
 }
@@ -890,7 +922,9 @@ static void witness_drive_to_sending_response( struct witness_server_t * test,
                                                       ROCKETNET_TEST_CREATE_TS, *io_time, response, &response_bytes,
                                                       payload, &payload_bytes, &payload_client_index );
             if ( response_bytes > 0 )
+            {
                 rocketnet_client_protocol_process_packet( client, response, response_bytes, *io_time, payload, sizeof( payload ), &payload_bytes );
+            }
         }
         *io_time += 0.05;
     }
@@ -919,7 +953,9 @@ static void witness_drive_to_connected( struct witness_server_t * test,
                                                       ROCKETNET_TEST_CREATE_TS, *io_time, response, &response_bytes,
                                                       payload, &payload_bytes, &payload_client_index );
             if ( response_bytes > 0 )
+            {
                 rocketnet_client_protocol_process_packet( client, response, response_bytes, *io_time, payload, sizeof( payload ), &payload_bytes );
+            }
         }
         *io_time += 0.05;
     }
@@ -1127,7 +1163,9 @@ static void test_witness_server_ephemeral_keypair_per_mapping()
                                                       ROCKETNET_TEST_CREATE_TS, time2, response, &response_bytes,
                                                       payload, &payload_bytes, &payload_client_index );
             if ( response_bytes > 0 )
+            {
                 rocketnet_client_protocol_process_packet( &c2, response, response_bytes, time2, payload, sizeof( payload ), &payload_bytes );
+            }
         }
         time2 += 0.05;
     }
@@ -1174,7 +1212,9 @@ static void test_witness_cookie_stores_last_24_bytes_and_sends_nothing()
     rocketnet_write_bytes( &p, client.connection_salt, ROCKETNET_CONNECTION_SALT_BYTES );
     uint8_t expected_24[ROCKETNET_COOKIE_FIELD_BYTES];
     for ( int i = 0; i < ROCKETNET_COOKIE_FIELD_BYTES; i++ )
+    {
         expected_24[i] = (uint8_t) ( 0xA0 + i );
+    }
     rocketnet_write_bytes( &p, expected_24, ROCKETNET_COOKIE_FIELD_BYTES );
 
     uint8_t payload[ROCKETNET_RECEIVE_CEILING];
@@ -1512,11 +1552,15 @@ static void test_witness_hash_tables_keyed_at_server_start()
         addr.data.ipv4[3] = (uint8_t) ( i + 1 );
         addr.port = (uint16_t) ( 30000 + i );
         if ( rocketnet_encryption_map_test_home( map_a, &addr ) != rocketnet_encryption_map_test_home( map_b, &addr ) )
+        {
             map_bucket_diffs++;
+        }
 
         uint64_t cid = UINT64_C( 0x100000 ) + (uint64_t) i;
         if ( rocketnet_client_slots_test_hash_index( slots_a, cid ) != rocketnet_client_slots_test_hash_index( slots_b, cid ) )
+        {
             slot_bucket_diffs++;
+        }
     }
     check( map_bucket_diffs > 0 );
     check( slot_bucket_diffs > 0 );
@@ -1743,7 +1787,9 @@ static void test_witness_endpoints_expose_state_and_end_reason()
         const char * name = rocketnet_client_transport_state_name( all_states[i] );
         check( name != NULL && strcmp( name, "???" ) != 0 );
         for ( size_t j = i + 1; j < sizeof( all_states ) / sizeof( all_states[0] ); j++ )
+        {
             check( strcmp( name, rocketnet_client_transport_state_name( all_states[j] ) ) != 0 );
+        }
     }
 
     struct witness_server_t srv;
@@ -1880,7 +1926,9 @@ static void test_witness_client_stores_and_echoes_cookie_24_bytes()
     rocketnet_write_prefilter_header( &p, ROCKETNET_CONNECTION_COOKIE_PACKET, client.packet_filter );
     rocketnet_write_bytes( &p, client.connection_salt, ROCKETNET_CONNECTION_SALT_BYTES );
     for ( int i = 0; i < 24; i++ )
+    {
         *p++ = (uint8_t) ( 0x31 + i );
+    }
 
     uint8_t payload[ROCKETNET_RECEIVE_CEILING];
     int payload_bytes = 0;
@@ -1916,7 +1964,9 @@ static void test_witness_request_comparisons_reject_every_byte_mismatch()
 
     uint8_t token_id[ROCKETNET_TOKEN_IDENTIFIER_BYTES];
     for ( int i = 0; i < ROCKETNET_TOKEN_IDENTIFIER_BYTES; i++ )
+    {
         token_id[i] = (uint8_t) ( 0x40 + i );
+    }
 
     rocketnet_used_token_history_record( history, token_id, &addr_a, 2000, 1000 );
     check( rocketnet_used_token_history_check( history, token_id, &addr_a, 1000 ) == 1 );
@@ -1996,17 +2046,23 @@ static void test_witness_used_token_history_capacity_and_oldest_eviction()
     {
         memset( ids[i], (uint8_t) ( i + 1 ), ROCKETNET_TOKEN_IDENTIFIER_BYTES );
         if ( i < capacity )
+        {
             rocketnet_used_token_history_record( history, ids[i], &addr_a, 2000, 1000 );
+        }
     }
 
     for ( int i = 0; i < capacity; i++ )
+    {
         check( rocketnet_used_token_history_check( history, ids[i], &addr_b, 1000 ) == 0 );
+    }
 
     // Recording a 9th live binding evicts the oldest entry (ids[0]) first.
     rocketnet_used_token_history_record( history, ids[8], &addr_a, 2000, 1000 );
     check( rocketnet_used_token_history_check( history, ids[0], &addr_b, 1000 ) == 1 );
     for ( int i = 1; i <= capacity; i++ )
+    {
         check( rocketnet_used_token_history_check( history, ids[i], &addr_b, 1000 ) == 0 );
+    }
 
     rocketnet_used_token_history_destroy( history );
 }

@@ -31,11 +31,15 @@ static bool sequence_audit_read( const std::string & relative, std::string & tex
     const std::string path = std::string( ROCKETNET_SOURCE_DIR ) + "/" + relative;
     FILE * file = rocketnet_test_fopen( path.c_str(), "rb" );
     if ( file == NULL )
+    {
         return false;
+    }
     char buffer[4096];
     size_t got;
     while ( ( got = fread( buffer, 1, sizeof( buffer ), file ) ) > 0 )
+    {
         text.append( buffer, got );
+    }
     fclose( file );
     return true;
 }
@@ -52,7 +56,9 @@ static std::string sequence_audit_code( const std::string & source )
         if ( c == '/' && next == '/' )
         {
             while ( i < code.size() && code[i] != '\n' )
+            {
                 code[i++] = ' ';
+            }
         }
         else if ( c == '/' && next == '*' )
         {
@@ -61,7 +67,9 @@ static std::string sequence_audit_code( const std::string & source )
             while ( i < code.size() && !( code[i] == '*' && i + 1 < code.size() && code[i + 1] == '/' ) )
             {
                 if ( code[i] != '\n' )
+                {
                     code[i] = ' ';
+                }
                 i++;
             }
             if ( i + 1 < code.size() )
@@ -77,11 +85,15 @@ static std::string sequence_audit_code( const std::string & source )
             while ( i < code.size() && code[i] != quote && code[i] != '\n' )
             {
                 if ( code[i] == '\\' && i + 1 < code.size() )
+                {
                     code[i++] = ' ';
+                }
                 code[i++] = ' ';
             }
             if ( i < code.size() && code[i] == quote )
+            {
                 code[i++] = ' ';
+            }
         }
         else
         {
@@ -104,7 +116,9 @@ static bool sequence_audit_has_token( const std::string & code, const std::strin
         const bool left = at == 0 || !sequence_audit_word( code[at - 1] );
         const bool right = at + name.size() >= code.size() || !sequence_audit_word( code[at + name.size()] );
         if ( left && right )
+        {
             return true;
+        }
     }
     return false;
 }
@@ -114,9 +128,13 @@ static std::string sequence_audit_trim( const std::string & text )
     size_t first = 0;
     size_t last = text.size();
     while ( first < last && ( text[first] == ' ' || text[first] == '`' ) )
+    {
         first++;
+    }
     while ( last > first && ( text[last - 1] == ' ' || text[last - 1] == '`' || text[last - 1] == '\r' ) )
+    {
         last--;
+    }
     return text.substr( first, last - first );
 }
 
@@ -128,7 +146,9 @@ static std::vector<std::string> sequence_audit_cells( const std::string & line )
     {
         const size_t end = line.find( '|', start + 1 );
         if ( end == std::string::npos )
+        {
             break;
+        }
         cells.push_back( line.substr( start + 1, end - start - 1 ) );
         start = end;
     }
@@ -141,24 +161,34 @@ static std::vector<std::vector<std::string>> sequence_audit_table( const std::st
     std::vector<std::vector<std::string>> rows;
     const size_t section = doc.find( std::string( "\n## " ) + heading + "\n" );
     if ( section == std::string::npos )
+    {
         return rows;
+    }
     size_t end = doc.find( "\n## ", section + 4 );
     if ( end == std::string::npos )
+    {
         end = doc.size();
+    }
     bool header = true;
     size_t at = section + 1;
     while ( at < end )
     {
         size_t eol = doc.find( '\n', at );
         if ( eol == std::string::npos || eol > end )
+        {
             eol = end;
+        }
         const std::string line = doc.substr( at, eol - at );
         if ( line.size() > 0 && line[0] == '|' )
         {
             if ( header )
+            {
                 header = false;
+            }
             else if ( line.find( "---" ) == std::string::npos )
+            {
                 rows.push_back( sequence_audit_cells( line ) );
+            }
         }
         at = eol + 1;
     }
@@ -180,10 +210,14 @@ static std::string sequence_audit_path( const std::string & cell )
     {
         const size_t at = cell.find( roots[r] );
         if ( at == std::string::npos )
+        {
             continue;
+        }
         size_t end = at;
         while ( end < cell.size() && cell[end] != ':' && cell[end] != ' ' )
+        {
             end++;
+        }
         return cell.substr( at, end - at );
     }
     return std::string();
@@ -201,11 +235,15 @@ static int sequence_audit_check_lines( const std::string & family, const std::st
     {
         const size_t close = cell.find( '`', open + 1 );
         if ( close == std::string::npos )
+        {
             break;
+        }
         const std::string symbol = cell.substr( open + 1, close - open - 1 );
         size_t at = close + 1;
         while ( at < cell.size() && cell[at] == ' ' )
+        {
             at++;
+        }
         size_t colon = std::string::npos;
         if ( at < cell.size() && cell[at] == ':' )
         {
@@ -216,19 +254,27 @@ static int sequence_audit_check_lines( const std::string & family, const std::st
             for ( size_t r = 0; r < sizeof( roots ) / sizeof( roots[0] ); r++ )
             {
                 if ( cell.compare( at, strlen( roots[r] ), roots[r] ) != 0 )
+                {
                     continue;
+                }
                 size_t end = at;
                 while ( end < cell.size() && cell[end] != ':' && cell[end] != ' ' )
+                {
                     end++;
+                }
                 path = cell.substr( at, end - at );
                 if ( end < cell.size() && cell[end] == ':' )
+                {
                     colon = end;
+                }
                 break;
             }
         }
         int line = 0;
         for ( size_t d = colon == std::string::npos ? cell.size() : colon + 1; d < cell.size() && cell[d] >= '0' && cell[d] <= '9'; d++ )
+        {
             line = line * 10 + ( cell[d] - '0' );
+        }
         if ( line > 0 )
         {
             std::string source;
@@ -245,7 +291,9 @@ static int sequence_audit_check_lines( const std::string & family, const std::st
                 {
                     start = code.find( '\n', start );
                     if ( start != std::string::npos )
+                    {
                         start++;
+                    }
                 }
                 const size_t stop = start == std::string::npos ? start : code.find( '\n', start );
                 const std::string text = start == std::string::npos ? std::string() : code.substr( start, stop == std::string::npos ? std::string::npos : stop - start );
@@ -293,15 +341,25 @@ static void test_sequence_buffers_manifest_matches_source()
         const std::string family = sequence_audit_trim( row[1] );
         const std::string status = sequence_audit_trim( row[8] );
         if ( scope == "sdk" )
+        {
             sdk_rows++;
+        }
         else if ( scope == "suite" && family == "unit registry" )
+        {
             suite_unit = true;
+        }
         else if ( scope == "suite" && family == "suite RSS bound registry" )
+        {
             suite_bound = true;
+        }
         else if ( scope == "functional" )
+        {
             functional_harness = true;
+        }
         else if ( scope == "soak" )
+        {
             soak_allocator = true;
+        }
 
         for ( int cell = 4; cell <= 7; cell++ )
         {

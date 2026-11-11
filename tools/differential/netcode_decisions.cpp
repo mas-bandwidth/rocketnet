@@ -167,25 +167,45 @@ static const int g_field_comparable[FIELD_COUNT] = { 1, 1, 0, 1, 0, 0, 0, 1, 0, 
 static int token_field( int offset )
 {
     if ( offset < ROCKETNET_SIGNED_OFFSET_PROTOCOL_ID )
+    {
         return FIELD_VERSION;
+    }
     if ( offset < ROCKETNET_SIGNED_OFFSET_CREATE )
+    {
         return FIELD_PROTOCOL;
+    }
     if ( offset < ROCKETNET_SIGNED_OFFSET_EXPIRE )
+    {
         return FIELD_CREATE;
+    }
     if ( offset < ROCKETNET_SIGNED_OFFSET_TIMEOUT )
+    {
         return FIELD_EXPIRE;
+    }
     if ( offset < ROCKETNET_SIGNED_OFFSET_ADDRESS_FLAGS )
+    {
         return FIELD_TIMEOUT;
+    }
     if ( offset < ROCKETNET_SIGNED_OFFSET_SERVER_KEY )
+    {
         return FIELD_ADDRESS;
+    }
     if ( offset < ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK )
+    {
         return FIELD_SERVER_KEY;
+    }
     if ( offset < ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK + ROCKETNET_SEALED_BLOCK_BYTES )
+    {
         return FIELD_SEALED;
+    }
     if ( offset < ROCKETNET_SIGNED_CONNECT_DATA_BYTES )
+    {
         return FIELD_SIGNED_PAD;
+    }
     if ( offset < ROCKETNET_SIGNED_CONNECT_DATA_BYTES + ROCKETNET_SIGNATURE_BYTES )
+    {
         return FIELD_SIGNATURE;
+    }
 
     return FIELD_CLEAR;
 }
@@ -246,14 +266,18 @@ static int corpus_read( const char * path, struct corpus_case_t * c )
 
     FILE * f = fopen( path, "rb" );
     if ( !f )
+    {
         return 0;
+    }
 
     uint8_t data[4096];
     const size_t size = fread( data, 1, sizeof( data ), f );
 
     fclose( f );
     if ( size < 2 )
+    {
         return 0;
+    }
 
     c->raw = data[0] & 1;
     c->clock_offset = (int64_t) (int8_t) data[1] * 60;
@@ -296,8 +320,12 @@ static int corpus_read( const char * path, struct corpus_case_t * c )
 static int corpus_comparable( const struct corpus_case_t * c )
 {
     for ( int field = 0; field < FIELD_COUNT; field++ )
+    {
         if ( ( c->touched & ( 1u << field ) ) && !g_field_comparable[field] )
+        {
             return 0;
+        }
+    }
     return 1;
 }
 
@@ -318,7 +346,9 @@ static void corpus_describe( const struct corpus_case_t * c, char * out, size_t 
         for ( int field = 0; field < FIELD_COUNT; field++ )
         {
             if ( !( c->touched & ( 1u << field ) ) )
+            {
                 continue;
+            }
 
             const size_t used = strlen( fields );
             snprintf( fields + used, sizeof( fields ) - used, "%s%s", used ? "+" : "", g_field_names[field] );
@@ -402,10 +432,12 @@ static int netcode_decide_corpus( const struct corpus_case_t * c, char * reason,
     }
 
     if ( !c->raw )
+    {
         for ( int i = ROCKETNET_SIGNED_CONNECT_DATA_BYTES + ROCKETNET_SIGNATURE_BYTES; i < ROCKETNET_CONNECT_TOKEN_BYTES; i++ )
         {
             token[NC_TOKEN_CLIENT_KEYS + ( i - ( ROCKETNET_SIGNED_CONNECT_DATA_BYTES + ROCKETNET_SIGNATURE_BYTES ) )] ^= c->delta[i];
         }
+    }
 
     netcode_client_connect( client, token );
     if ( netcode_client_state( client ) != NETCODE_CLIENT_STATE_SENDING_CONNECTION_REQUEST ||
@@ -430,7 +462,9 @@ static int netcode_decide_corpus( const struct corpus_case_t * c, char * reason,
         for ( int i = 0; i < ROCKETNET_SIGNED_CONNECT_DATA_BYTES + ROCKETNET_SIGNATURE_BYTES; i++ )
         {
             if ( !c->delta[i] )
+            {
                 continue;
+            }
 
             switch ( token_field( i ) )
             {
@@ -469,18 +503,24 @@ static void corpus_read_reference( const char * path )
 {
     FILE * f = fopen( path, "rb" );
     if ( !f )
+    {
         return;
+    }
 
     char line[512];
     while ( fgets( line, sizeof( line ), f ) && g_corpus_reference_count < 256 )
     {
         if ( line[0] == '#' || line[0] == '\n' || line[0] == '\r' )
+        {
             continue;
+        }
         line[strcspn( line, "\r\n" )] = 0;
 
         char * tab = strchr( line, '\t' );
         if ( !tab )
+        {
             continue;
+        }
         *tab++ = 0;
 
         char * tab2 = strchr( tab, '\t' );
@@ -490,7 +530,9 @@ static void corpus_read_reference( const char * path )
         {
             size_t len = strlen( line );
             if ( len >= sizeof( r->name ) )
+            {
                 len = sizeof( r->name ) - 1;
+            }
             memcpy( r->name, line, len );
             r->name[len] = 0;
         }
@@ -503,8 +545,12 @@ static void corpus_read_reference( const char * path )
 static const char * corpus_reference_for( const char * name )
 {
     for ( int i = 0; i < g_corpus_reference_count; i++ )
+    {
         if ( strcmp( g_corpus_reference[i].name, name ) == 0 )
+        {
             return g_corpus_reference[i].decision;
+        }
+    }
     return NULL;
 }
 
@@ -591,14 +637,18 @@ static int parse_case_table( const char * path )
 {
     FILE * f = fopen( path, "rb" );
     if ( !f )
+    {
         return -1;
+    }
 
     char line[512];
     int n = 0;
     while ( fgets( line, sizeof( line ), f ) )
     {
         if ( line[0] == '#' || line[0] == '\n' || line[0] == '\r' )
+        {
             continue;
+        }
 
         char * nl = strchr( line, '\n' );
         if ( nl )
@@ -615,13 +665,17 @@ static int parse_case_table( const char * path )
         char * id = line;
         char * t1 = strchr( id, '\t' );
         if ( !t1 )
+        {
             continue;
+        }
         *t1++ = 0;
 
         char * description = t1;
         char * t2 = strchr( description, '\t' );
         if ( !t2 )
+        {
             continue;
+        }
         *t2++ = 0;
 
         char * reference = t2;
@@ -667,10 +721,12 @@ int main( int argc, const char ** argv )
     int corpus_at = -1;
 
     for ( int i = 2; i + 1 < argc; i++ )
+    {
         if ( strcmp( argv[i], "--corpus" ) == 0 )
         {
             corpus_at = i;
         }
+    }
 
     rocketnet_quiet( true );
 

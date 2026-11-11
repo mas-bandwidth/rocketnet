@@ -114,7 +114,9 @@ static int standard_packet_formats_generate( const char * id, uint8_t * out, int
     }
 
     if ( capacity < ROCKETNET_SEND_BUDGET )
+    {
         return -1;
+    }
 
     const uint64_t protocol_id = 0x1122334455667788ULL;
 
@@ -126,13 +128,17 @@ static int standard_packet_formats_generate( const char * id, uint8_t * out, int
     }
 
     if ( strcmp( id, "t8.denied" ) == 0 )
+    {
         return rocketnet_write_sealed_packet( out, ROCKETNET_CONNECTION_DENIED_PACKET, standard_packet_formats_filter,
                                               1, session_nonce, NULL, 0, protocol_id, salt, NULL, handshake_s2c );
+    }
 
     if ( strcmp( id, "t8.challenge" ) == 0 )
+    {
         return rocketnet_write_sealed_packet( out, ROCKETNET_CONNECTION_CHALLENGE_PACKET, standard_packet_formats_filter,
                                               1, session_nonce, server_ephemeral, ROCKETNET_KEY_BYTES,
                                               protocol_id, salt, client_ephemeral, handshake_s2c );
+    }
 
     if ( strcmp( id, "t8.response" ) == 0 )
     {
@@ -167,14 +173,18 @@ static int standard_packet_formats_generate( const char * id, uint8_t * out, int
     }
 
     if ( strcmp( id, "t8.disconnect" ) == 0 )
+    {
         return rocketnet_write_sealed_packet( out, ROCKETNET_CONNECTION_DISCONNECT_PACKET, standard_packet_formats_filter,
                                               4, NULL, plaintext, ROCKETNET_ACK_BLOCK_MIN_BYTES,
                                               protocol_id, salt, NULL, session_c2s );
+    }
 
     if ( strcmp( id, "t8.ack" ) == 0 )
+    {
         return rocketnet_write_sealed_packet( out, ROCKETNET_CONNECTION_ACK_PACKET, standard_packet_formats_filter,
                                               5, NULL, plaintext, ROCKETNET_ACK_BLOCK_MIN_BYTES,
                                               protocol_id, salt, NULL, session_c2s );
+    }
 
     if ( strcmp( id, "t8.cookie" ) == 0 )
     {

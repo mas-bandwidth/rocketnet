@@ -148,7 +148,9 @@ static inline int rn_blaster_plan_valid( const struct rn_blaster_plan_t * plan )
          plan->source_port < RN_BLASTER_MIN_SOURCE_PORT ||
          plan->source_port > UINT16_MAX - ( plan->clients - 1u ) ||
          ( plan->address_family != 4 && plan->address_family != 6 ) )
+    {
         return 0;
+    }
     return plan->direction == RN_BLASTER_DIRECTION_CLIENT_TO_SERVER ||
            plan->direction == RN_BLASTER_DIRECTION_SERVER_TO_CLIENT ||
            plan->direction == RN_BLASTER_DIRECTION_BIDIRECTIONAL;

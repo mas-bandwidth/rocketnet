@@ -166,11 +166,15 @@ static bool soak_arena_create( size_t bytes )
     const size_t free_bytes = sizeof( struct soak_arena_free_entry_t ) * SOAK_ARENA_FREE_CAPACITY;
     if ( bytes > SIZE_MAX - 63 || class_bytes > SIZE_MAX - free_bytes ||
          class_bytes + free_bytes > SIZE_MAX - 63 || sizeof( struct soak_arena_block_t ) > 64 )
+    {
         return false;
+    }
 
     const size_t metadata_bytes = ( class_bytes + free_bytes + 63 ) & ~(size_t) 63;
     if ( metadata_bytes > bytes )
+    {
         return false;
+    }
 #if defined( __linux__ )
     // Reserve the bounded virtual arena without eagerly committing every page.
     // Used SDK records fault in pages naturally; capacity is not a RAM claim.
@@ -186,7 +190,9 @@ static bool soak_arena_create( size_t bytes )
 #else
     g_arena.allocation = malloc( bytes + 63 );
     if ( !g_arena.allocation )
+    {
         return false;
+    }
 #endif // #if defined( __linux__ )
     g_arena.base = (uint8_t *) ( ( (uintptr_t) g_arena.allocation + 63 ) & ~(uintptr_t) 63 );
     g_arena.bytes = bytes;
@@ -203,7 +209,9 @@ static void * soak_malloc( void * ctx, size_t bytes )
 {
     (void) ctx;
     if ( bytes > SIZE_MAX - 127 )
+    {
         return NULL;
+    }
 
     const size_t stride = ( ( bytes ? bytes : 1 ) + 127 ) & ~(size_t) 63;
 
@@ -240,8 +248,10 @@ static void * soak_malloc( void * ctx, size_t bytes )
     {
         block = (struct soak_arena_block_t *) ( g_arena.base + g_arena.free_entries[free_index].offset );
         if ( free_index + 1 < g_arena.free_count )
+        {
             memmove( &g_arena.free_entries[free_index], &g_arena.free_entries[free_index + 1],
                      ( g_arena.free_count - free_index - 1 ) * sizeof( g_arena.free_entries[0] ) );
+        }
         g_arena.free_count--;
     }
     else
@@ -281,7 +291,9 @@ static void soak_free( void * ctx, void * p )
 {
     (void) ctx;
     if ( !p )
+    {
         return;
+    }
     soak_alloc_lock();
 
     const uintptr_t address = (uintptr_t) p;
@@ -349,14 +361,18 @@ static int soak_arena_self_test( void )
 
     memset( &g_alloc, 0, sizeof( g_alloc ) );
     if ( !soak_arena_create( arena_bytes ) )
+    {
         return 1;
+    }
 
     void * first = soak_malloc( NULL, 1 );
     void * second = soak_malloc( NULL, 1 );
     if ( !first || !second || soak_malloc( NULL, 1 ) != NULL ||
          ( (uintptr_t) first & 63 ) != 0 || ( (uintptr_t) second & 63 ) != 0 ||
          g_arena.used != arena_bytes )
+    {
         return 1;
+    }
 
     // Two same-class blocks freed in order come back last-freed first: a FIFO
     // free sequence would hand back first here and fail.
@@ -364,31 +380,43 @@ static int soak_arena_self_test( void )
     soak_free( NULL, first );
     soak_free( NULL, second );
     if ( g_arena.free_count != 2 )
+    {
         return 1;
+    }
 
     void * reused_last = soak_malloc( NULL, 1 );
     void * reused_first = soak_malloc( NULL, 1 );
     if ( reused_last != second || reused_first != first || g_arena.free_count != 0 ||
          g_arena.used != arena_bytes )
+    {
         return 1;
+    }
     soak_free( NULL, reused_last );
     soak_free( NULL, reused_first );
 
     const struct soak_alloc_t before_reset = soak_alloc_read();
     if ( before_reset.live_allocs != 0 || before_reset.live_bytes != 0 ||
          g_arena.free_count != 2 || !soak_arena_release() )
+    {
         return 1;
+    }
 
     memset( &g_alloc, 0, sizeof( g_alloc ) );
     if ( !soak_arena_create( arena_bytes ) || g_arena.used != metadata_bytes )
+    {
         return 1;
+    }
     first = soak_malloc( NULL, 1 );
     if ( !first || (size_t) ( (uint8_t *) first - g_arena.base ) != metadata_bytes + 64 ||
          g_arena.used != metadata_bytes + 128 )
+    {
         return 1;
+    }
     soak_free( NULL, first );
     if ( !soak_arena_release() )
+    {
         return 1;
+    }
     memset( &g_alloc, 0, sizeof( g_alloc ) );
     printf( "allocator self-test: aligned exhaustion reuse accounting reset\nPASS\n" );
 
@@ -498,10 +526,12 @@ static uint64_t soak_peak_rss_bytes( void )
     if ( f )
     {
         while ( fgets( line, sizeof( line ), f ) )
+        {
             if ( strncmp( line, "VmHWM:", 6 ) == 0 )
             {
                 kb = (uint64_t) strtoull( line + 6, NULL, 10 );
             }
+        }
 
         fclose( f );
     }
@@ -528,12 +558,16 @@ static void soak_shutdown( struct rocketnet_client_t ** clients, int num_clients
     double t0 = rocketnet_time();
 
     if ( clients )
+    {
         for ( int c = 0; c < num_clients; c++ )
+        {
             if ( clients[c] )
             {
                 rn_cli_client_stop_and_destroy( clients[c], time );
                 clients[c] = NULL;
             }
+        }
+    }
 
     double t1 = rocketnet_time();
 
@@ -577,7 +611,9 @@ static bool soak_parse_int( const char * text, int min, int max, int * value )
     char * end = NULL;
     const long parsed = strtol( text, &end, 10 );
     if ( end == text || *end != '\0' || parsed < (long) min || parsed > (long) max )
+    {
         return false;
+    }
     *value = (int) parsed;
     return true;
 }
@@ -591,7 +627,9 @@ static bool soak_parse_u64( const char * text, uint64_t * value )
     errno = 0;
     const unsigned long long parsed = strtoull( text, &end, 10 );
     if ( text[0] < '0' || text[0] > '9' || *end != '\0' || errno == ERANGE )
+    {
         return false;
+    }
     *value = (uint64_t) parsed;
     return true;
 }
@@ -679,7 +717,9 @@ int main( int argc, char ** argv )
     }
 #if defined( ROCKETNET_DEV ) && ROCKETNET_DEV
     if ( allocator_self_test )
+    {
         return soak_arena_self_test();
+    }
 #endif // #if defined( ROCKETNET_DEV ) && ROCKETNET_DEV
 
     if ( pause_start )
@@ -837,13 +877,17 @@ int main( int argc, char ** argv )
     {
         int all_conn = ( rocketnet_server_num_connected_clients( server ) == num_clients );
         for ( int c = 0; all_conn && c < num_clients; c++ )
+        {
             if ( rocketnet_client_state( clients[c] ) != ROCKETNET_CLIENT_STATE_CONNECTED )
             {
                 all_conn = 0;
             }
+        }
 
         if ( all_conn )
+        {
             break;
+        }
         sim_time = connect_sim_start + ( rocketnet_time() - connect_started );
 
         for ( int base = 0; base < num_clients; base += BATCH_CLIENTS )
@@ -928,10 +972,12 @@ int main( int argc, char ** argv )
                 int nrec = rocketnet_client_receipts( clients[c], recs, SOAK_MAX_RECEIPTS );
                 CHECK( nrec >= 0 && nrec <= SOAK_MAX_RECEIPTS );
                 for ( int r = 0; r < nrec; r++ )
+                {
                     if ( recs[r].status == ROCKETNET_RECEIPT_STATUS_ACKED )
                     {
                         c2s[c].acked_events++;
                     }
+                }
 
                 // (3) simulate & (4) queue this frame's outgoing messages
 
@@ -1019,10 +1065,12 @@ int main( int argc, char ** argv )
                 int nrec = rocketnet_server_receipts( server, client_idx, recs, SOAK_MAX_RECEIPTS );
                 CHECK( nrec >= 0 && nrec <= SOAK_MAX_RECEIPTS );
                 for ( int r = 0; r < nrec; r++ )
+                {
                     if ( recs[r].status == ROCKETNET_RECEIPT_STATUS_ACKED )
                     {
                         s2c[c].acked_events++;
                     }
+                }
 
                 // (3) simulate & (4) server queue outgoing messages
 
@@ -1146,7 +1194,9 @@ int main( int argc, char ** argv )
         rocketnet_server_update( server, sim_time );
         rocketnet_server_send_packets( server );
         if ( disconnected && rocketnet_server_num_connected_clients( server ) == 0 )
+        {
             break;
+        }
         rocketnet_sleep( 0.001 );
     }
 

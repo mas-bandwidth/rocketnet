@@ -66,14 +66,20 @@ static int transport_results_lie_receive( void * transport, rocketnet_address_t 
     lie->calls++;
     lie->max_seen = capacity;
     if ( lie->calls > 1 )
+    {
         return 0;
+    }
     memset( from, 0, sizeof( *from ) );
     from->type = ROCKETNET_ADDRESS_IPV4;
     from->port = 1;
     if ( lie->mode == 2 )
+    {
         return -1;
+    }
     if ( lie->mode == 3 )
+    {
         return ROCKETNET_TRANSPORT_MAX_DATAGRAM_BYTES + 1;
+    }
     if ( data && capacity > 0 )
     {
         data[0] = 0x21;
@@ -88,7 +94,9 @@ static int transport_results_lie_receive_batch( void * transport, rocketnet_addr
     lie->calls++;
     lie->max_seen = max_packets;
     if ( lie->calls > 1 )
+    {
         return 0;
+    }
 
     if ( lie->mode == 1 )
     {
@@ -427,9 +435,13 @@ static int transport_results_server_receive_batch( void * transport, rocketnet_a
     lie->calls++;
     lie->asked = capacity;
     if ( lie->calls > 1 )
+    {
         return 0;
+    }
     if ( lie->mode == 1 )
+    {
         return -1;
+    }
 
     if ( lie->mode == 2 )
     {
@@ -608,7 +620,9 @@ static rocketnet_server_socket_process_packets_t * transport_results_staged_rece
 {
     transport_results_staged_lie_t * lie = (transport_results_staged_lie_t *) transport;
     if ( lie->mode == 0 )
+    {
         return NULL;
+    }
 
     lie->view.from = lie->from;
     lie->view.packet_bytes = lie->packet_bytes;
@@ -645,7 +659,9 @@ static uint64_t transport_results_bytes_received( const rocketnet_server_transpo
 {
     uint64_t bytes = 0;
     for ( int i = 0; i < ROCKETNET_NUM_SERVER_STATS_FRAMES; i++ )
+    {
         bytes += server->stats_frames[i].bytes_received;
+    }
     return bytes;
 }
 

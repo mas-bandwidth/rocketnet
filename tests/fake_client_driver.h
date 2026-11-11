@@ -33,7 +33,9 @@
 static inline void rocketnet_fake_client_check_room( int count, const char * queue )
 {
     if ( count < ROCKETNET_FAKE_CLIENT_MAX_DATAGRAMS )
+    {
         return;
+    }
     printf( "fake client driver: %s queue full at %d datagrams (ROCKETNET_FAKE_CLIENT_MAX_DATAGRAMS)\n", queue, ROCKETNET_FAKE_CLIENT_MAX_DATAGRAMS );
     exit( 1 );
 }
@@ -102,7 +104,9 @@ static inline void * rocketnet_fake_client_create_by_family( void * context, con
     if ( refused )
     {
         if ( fake->open_out_of_memory && config->status )
+        {
             *config->status = ROCKETNET_STATUS_OUT_OF_MEMORY;
+        }
         return NULL;
     }
 
@@ -149,7 +153,9 @@ static int rocketnet_fake_client_receive( void * transport, rocketnet_address_t 
     rocketnet_fake_client_transport_io_t * fake = (rocketnet_fake_client_transport_io_t *) transport;
     fake->receive_calls++;
     if ( fake->inbound_count == 0 )
+    {
         return 0;
+    }
 
     rocketnet_fake_client_datagram_t * dg = &fake->inbound[fake->inbound_head];
     fake->inbound_head = ( fake->inbound_head + 1 ) % ROCKETNET_FAKE_CLIENT_MAX_DATAGRAMS;
@@ -242,11 +248,17 @@ static inline bool rocketnet_fake_client_connect( void * transport, const rocket
     fake->connected_to = *server_address;
     fake->calls_before_connect = fake->send_calls + fake->send_batch_calls + fake->receive_calls + fake->receive_batch_calls;
     if ( fake->refuse_connect )
+    {
         return false;
+    }
     if ( server_address->type == ROCKETNET_ADDRESS_IPV4 && fake->refuse_connect_ipv4 )
+    {
         return false;
+    }
     if ( server_address->type == ROCKETNET_ADDRESS_IPV6 && fake->refuse_connect_ipv6 )
+    {
         return false;
+    }
     return true;
 }
 

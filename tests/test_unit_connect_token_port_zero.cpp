@@ -151,7 +151,9 @@ static bool port_zero_buffer_untouched( const void * buffer, size_t bytes )
     for ( size_t i = 0; i < bytes; ++i )
     {
         if ( view[i] != PORT_ZERO_SENTINEL )
+        {
             return false;
+        }
     }
 
     return true;

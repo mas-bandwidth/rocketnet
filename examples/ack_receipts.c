@@ -204,7 +204,9 @@ int main( void )
             for ( int update = 0; update < sent; update++ )
             {
                 if ( serials[update] != receipts[r].serial )
+                {
                     continue;
+                }
 
                 const int ok = receipts[r].status == ROCKETNET_RECEIPT_STATUS_ACKED;
                 printf( "update %d (serial %u): %s\n", update, receipts[r].serial, ok ? "ACKED" : "LOSS" );

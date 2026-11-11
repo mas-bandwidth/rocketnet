@@ -219,7 +219,9 @@ namespace
             {
                 client_index = rocketnet_client_transport_client_index( client );
                 if ( rocketnet_server_transport_is_client_connected( server, client_index ) )
+                {
                     break;
+                }
             }
         }
 
@@ -373,7 +375,9 @@ namespace
                 }
 
                 if ( all_connected )
+                {
                     break;
+                }
             }
         }
 

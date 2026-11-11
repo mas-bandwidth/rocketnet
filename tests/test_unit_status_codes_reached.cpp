@@ -180,7 +180,9 @@ static void * reached_allocate( void * context, size_t bytes )
     reached_allocator_t * state = (reached_allocator_t *) context;
     const int call = ++state->calls;
     if ( state->fail_at == call )
+    {
         return NULL;
+    }
 
     void * p = malloc( bytes );
     if ( p )
@@ -195,7 +197,9 @@ static void reached_release( void * context, void * pointer )
 {
     reached_allocator_t * state = (reached_allocator_t *) context;
     if ( !pointer )
+    {
         return;
+    }
     --state->live;
     free( pointer );
 }

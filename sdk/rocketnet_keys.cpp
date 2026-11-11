@@ -78,7 +78,9 @@ int rocketnet_derive_connection_keys( struct rocketnet_connection_keys_t * keys,
     uint8_t shared_secret[32];
     ROCKETNET_CRYPTO_TALLY( scalarmult );
     if ( crypto_scalarmult( shared_secret, own_ephemeral_secret_key, remote_ephemeral_public_key ) != 0 )
+    {
         return 0;
+    }
 
     rocketnet_derive_handshake_keys( keys, token_client_to_server_key, token_server_to_client_key, connection_salt, session_nonce );
 

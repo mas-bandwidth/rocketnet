@@ -242,7 +242,9 @@ struct fake_disconnect_env_guard_t
     ~fake_disconnect_env_guard_t() noexcept( false ) // check() throws under the expected-fail harness
     {
         for ( int i = 0; i < 2; i++ )
+        {
             rocketnet_unit_check( fake_disconnect_setenv( names[i], saved[i] ) == 0 );
+        }
     }
 };
 #endif // #if ROCKETNET_DEV

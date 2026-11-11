@@ -26,16 +26,22 @@ int loopback_hub_server_module_start( struct rocketnet_loopback_hub_t ** hub, ch
     // because nothing it holds is shared with the host's or the client's copy
 
     if ( rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK )
+    {
         return 0;
+    }
 
     enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
     module_hub = rocketnet_loopback_hub_create( NULL, 1, &status );
     if ( !module_hub || status != ROCKETNET_STATUS_OK )
+    {
         return 0;
+    }
 
     struct rocketnet_server_config_t config;
     if ( rocketnet_server_default_config( &config ) != ROCKETNET_STATUS_OK )
+    {
         return 0;
+    }
 
     const uint8_t backend_public_key[] = ROCKETNET_DEV_BACKEND_PUBLIC_KEY;
     memcpy( config.backend_public_key, backend_public_key, sizeof( backend_public_key ) );
@@ -46,13 +52,19 @@ int loopback_hub_server_module_start( struct rocketnet_loopback_hub_t ** hub, ch
 
     module_server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &config, &status );
     if ( !module_server || status != ROCKETNET_STATUS_OK )
+    {
         return 0;
+    }
 
     if ( rocketnet_server_start( module_server ) != ROCKETNET_STATUS_OK )
+    {
         return 0;
+    }
 
     if ( !rocketnet_server_ipv4_address( module_server, address, (size_t) address_bytes ) )
+    {
         return 0;
+    }
 
     rocketnet_server_public_key( module_server, public_key );
     *hub = module_hub;
@@ -106,7 +118,9 @@ int loopback_hub_server_module_stop( void )
         while ( !rocketnet_server_stopped( module_server ) )
         {
             if ( rocketnet_time() >= deadline )
+            {
                 return 0;           // keep the server: its worker still owns it
+            }
 
             rocketnet_sleep( 0.001 );
         }
@@ -118,12 +132,16 @@ int loopback_hub_server_module_stop( void )
     // after the server and the client are destroyed: no endpoint is registered
 
     if ( rocketnet_loopback_hub_destroy( module_hub ) != ROCKETNET_STATUS_OK )
+    {
         ok = 0;
+    }
 
     module_hub = NULL;
 
     if ( rocketnet_term() != ROCKETNET_STATUS_OK )
+    {
         ok = 0;
+    }
 
     return ok;
 }

@@ -85,24 +85,32 @@ static std::string platform_nits_read_repo_file( const char * relative )
     for ( size_t i = 0; i < file.size(); i++ )
     {
         if ( file[i] == '\\' )
+        {
             file[i] = '/';
+        }
     }
 
     const std::string suffix = "tests/test_unit_platform_nits.cpp";
     const size_t at = file.rfind( suffix );
     if ( at == std::string::npos )
+    {
         return std::string();
+    }
 
     const std::string path = file.substr( 0, at ) + relative;
     FILE * handle = rocketnet_test_fopen( path.c_str(), "rb" );
     if ( !handle )
+    {
         return std::string();
+    }
 
     std::string text;
     char buffer[4096];
     size_t got;
     while ( ( got = fread( buffer, 1, sizeof( buffer ), handle ) ) > 0 )
+    {
         text.append( buffer, got );
+    }
     fclose( handle );
 
     return text;

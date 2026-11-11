@@ -45,7 +45,9 @@ extern "C" int bpf_get_link_xdp_info( int index, xdp_link_info * info, size_t in
     called_index = index;
     called_flags = flags;
     if ( info_size != sizeof( *info ) )
+    {
         return -EINVAL;
+    }
     // the multi-mode shape: no single id, a native and a generic program
     info->prog_id = 0;
     info->drv_prog_id = 73;
@@ -65,7 +67,9 @@ extern "C" int bpf_set_link_xdp_fd( int index, int fd, __u32 flags )
 extern "C" int bpf_set_link_xdp_fd_opts( int index, int fd, __u32 flags, const bpf_xdp_set_link_opts * opts )
 {
     if ( !opts || opts->sz != sizeof( *opts ) )
+    {
         return -EINVAL;
+    }
     expected_fd = opts->old_fd;
     return bpf_set_link_xdp_fd( index, fd, flags );
 }

@@ -97,9 +97,13 @@ static void test_sized_config_accepts_every_known_size()
         memset( &unsized, 0xAB, sizeof( unsized ) );
         memset( &sized, 0xAB, sizeof( sized ) );
         if ( server_known_bytes[i] >= ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_4 )
+        {
             rocketnet_server_transport_default_config_current( &unsized );
+        }
         else
+        {
             rocketnet_server_transport_default_config( &unsized );
+        }
         check( rocketnet_server_transport_default_config_sized( &sized, server_known_bytes[i] ) == 1 );
         check( memcmp( &unsized, &sized, server_known_bytes[i] ) == 0 );
     }
@@ -739,8 +743,12 @@ static bool sized_config_read_doc( const char * relative_path, std::string & con
 {
     std::string path = __FILE__;
     for ( size_t i = 0; i < path.size(); i++ )
+    {
         if ( path[i] == '\\' )
+        {
             path[i] = '/';
+        }
+    }
 
     const std::string suffix = "tests/test_unit_sized_config.cpp";
     const size_t at = path.rfind( suffix );
@@ -748,13 +756,17 @@ static bool sized_config_read_doc( const char * relative_path, std::string & con
 
     FILE * file = rocketnet_test_fopen( path.c_str(), "rb" );
     if ( !file )
+    {
         return false;
+    }
 
     contents.clear();
     char buffer[4096];
     size_t n;
     while ( ( n = fread( buffer, 1, sizeof( buffer ), file ) ) > 0 )
+    {
         contents.append( buffer, n );
+    }
     fclose( file );
     return true;
 }
@@ -763,11 +775,15 @@ static std::string sized_config_doc_section( const std::string & text, const cha
 {
     const size_t start = text.find( heading );
     if ( start == std::string::npos )
+    {
         return std::string();
+    }
 
     const size_t end = text.find( next, start );
     if ( end == std::string::npos )
+    {
         return std::string();
+    }
 
     return text.substr( start, end - start );
 }

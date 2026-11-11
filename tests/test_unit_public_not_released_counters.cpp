@@ -131,7 +131,9 @@ static bool public_not_released_pair_setup( struct public_not_released_pair_t * 
 #endif // #if ROCKETNET_DEV
     check( status == ROCKETNET_STATUS_OK );
     if ( !server_transport )
+    {
         return false;
+    }
 
     char server_address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
     snprintf( server_address, sizeof( server_address ), "127.0.0.1:%d", rocketnet_server_transport_port( server_transport ) );
@@ -158,7 +160,9 @@ static bool public_not_released_pair_setup( struct public_not_released_pair_t * 
         NULL, &server_link, 1, 1, &message_config, NULL, 0, ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS, pair->time );
     check( server != NULL );
     if ( !server )
+    {
         return false;
+    }
 
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     const char * addresses[] = { server_address };
@@ -176,7 +180,9 @@ static bool public_not_released_pair_setup( struct public_not_released_pair_t * 
         NULL, token, &client_transport_config, 0.0, &public_not_released_client_operations, NULL );
     check( client_transport != NULL );
     if ( !client_transport )
+    {
         return false;
+    }
 
     struct rn_message_link_t client_link;
     rn_message_client_link( &client_link, client_transport );
@@ -184,7 +190,9 @@ static bool public_not_released_pair_setup( struct public_not_released_pair_t * 
         NULL, &client_link, 0, 1, &message_config, NULL, 0, ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, pair->time );
     check( client != NULL );
     if ( !client )
+    {
         return false;
+    }
 
     pair->server = rocketnet_server_adopt( NULL, server );
     pair->client = rocketnet_client_adopt( NULL, client );
@@ -230,7 +238,9 @@ static bool public_not_released_connect( struct public_not_released_pair_t * pai
     {
         if ( rocketnet_client_state( pair->client ) == ROCKETNET_CLIENT_STATE_CONNECTED &&
              rocketnet_server_client_connected( pair->server, 0 ) )
+        {
             return true;
+        }
         public_not_released_pump( pair );
     }
 
@@ -265,7 +275,9 @@ static bool public_not_released_receive_client( struct public_not_released_pair_
         // held across an update is taken through the client's message layer
 
         if ( rocketnet_message_client_receive( rocketnet_client_message_client( pair->client ), NULL, data, bytes ) )
+        {
             return true;
+        }
         public_not_released_pump( pair );
     }
 

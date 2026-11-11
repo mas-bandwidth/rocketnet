@@ -72,15 +72,21 @@ static void stats_oracle_span_add( stats_oracle_span_t * span, uint32_t bytes, d
         return;
     }
     if ( time < span->start )
+    {
         span->start = time;
+    }
     if ( time > span->finish )
+    {
         span->finish = time;
+    }
 }
 
 static float stats_oracle_kbps( const stats_oracle_span_t & span )
 {
     if ( !span.have || !( span.finish > span.start ) )
+    {
         return 0.0f;
+    }
     return (float) ( (double) span.bytes / ( span.finish - span.start ) * 8.0 / 1000.0 );
 }
 
@@ -116,7 +122,9 @@ static void stats_history_result( const rocketnet_ack_endpoint_t * endpoint,
     {
         const float sample = endpoint->rtt_history[i];
         if ( sample > 0.0f && ( smallest == 0.0f || sample < smallest ) )
+        {
             smallest = sample;
+        }
     }
     result->rtt = smallest;
 
@@ -147,7 +155,9 @@ static void stats_history_result( const rocketnet_ack_endpoint_t * endpoint,
         const rocketnet_sent_packet_record_t * record = &endpoint->sent[slot];
         if ( stats_oracle_written( endpoint->sent_written, slot ) && record->sequence % S == slot &&
              stats_oracle_in_older_half( record->sequence, highest_sent, S ) )
+        {
             sent[record->sequence - sent_base] = record;
+        }
     }
 
     stats_oracle_span_t sent_span = {};
@@ -158,15 +168,21 @@ static void stats_history_result( const rocketnet_ack_endpoint_t * endpoint,
     {
         const rocketnet_sent_packet_record_t * record = sent[offset];
         if ( !record )
+        {
             continue;
+        }
         stats_oracle_span_add( &sent_span, record->wire_bytes, record->send_time );
         if ( record->acked )
+        {
             stats_oracle_span_add( &acked_span, record->wire_bytes, record->send_time );
+        }
         if ( highest_sent - record->sequence >= S / 2 )
         {
             ++eligible;
             if ( !record->acked )
+            {
                 ++lost;
+            }
         }
     }
     delete[] sent;
@@ -186,14 +202,18 @@ static void stats_history_result( const rocketnet_ack_endpoint_t * endpoint,
         const rocketnet_received_packet_record_t * record = &endpoint->received[slot];
         if ( stats_oracle_written( endpoint->received_written, slot ) && record->sequence % R == slot &&
              stats_oracle_in_older_half( record->sequence, highest_received, R ) )
+        {
             received[record->sequence - received_base] = record;
+        }
     }
 
     stats_oracle_span_t received_span = {};
     for ( uint64_t offset = 0; offset < R / 2; ++offset )
     {
         if ( received[offset] )
+        {
             stats_oracle_span_add( &received_span, received[offset]->wire_bytes, received[offset]->receive_time );
+        }
     }
     delete[] received;
 
@@ -830,15 +850,21 @@ static bool stats_received_live_matches_history( const rocketnet_ack_endpoint_t 
     {
         const uint64_t sequence = base + (uint64_t) i;
         if ( sequence > endpoint->highest_received_sequence )
+        {
             break;
+        }
 
         const uint64_t slot = sequence % ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE;
         if ( !( ( endpoint->received_written[slot / 64] >> ( slot % 64 ) ) & 1 ) )
+        {
             continue;
+        }
 
         const rocketnet_received_packet_record_t * record = &endpoint->received[slot];
         if ( record->sequence != sequence )
+        {
             continue;
+        }
         bytes += record->wire_bytes;
 
         if ( count == 0 )
@@ -896,7 +922,9 @@ static void test_ack_received_stats_adversarial_sequence_is_bounded()
         stats_received_step( endpoint, sequence, 100, time );
         time += 1.0;
         if ( sequence == 1024 )
+        {
             break;
+        }
     }
 
     stats_received_step( endpoint, 3071, 200, time );
@@ -1227,14 +1255,18 @@ static void test_ack_received_stats_steady_receive_is_constant_work()
     {
         rocketnet_ack_endpoint_record_received( endpoint, sequence, 100, (double) sequence );
         if ( sequence <= N )
+        {
             continue;
+        }
 
         const uint32_t operations = endpoint->stats_received_operations;
         total += operations;
         ++receives;
         const uint64_t base = sequence - N + 1;
         if ( base % 32 != 0 && operations > inside_max )
+        {
             inside_max = operations;
+        }
     }
 
     printf( "received ACK stats steady cost: inside_generation_max=%u mean_x100=%llu\n", inside_max,
@@ -1273,35 +1305,57 @@ static void test_ack_received_stats_random_receives_match_scan()
     for ( int step = 0; step < 60000; ++step )
     {
         if ( step % 20000 == 0 )
+        {
             rocketnet_ack_endpoint_reset( endpoint );
+        }
 
         const uint64_t highest = endpoint->highest_received_sequence;
         const uint64_t roll = stats_received_random( &state ) % 100;
         const uint64_t r = stats_received_random( &state );
         uint64_t sequence;
         if ( roll < 55 || highest == 0 )
+        {
             sequence = highest + 1;                                     // in order
+        }
         else if ( roll < 70 )
+        {
             sequence = highest > 40 ? highest - r % 40 : highest + 1;   // short reorder or duplicate
+        }
         else if ( roll < 80 )
+        {
             sequence = highest + 1 + r % 64;                            // a gap
+        }
         else if ( roll < 88 )
+        {
             sequence = highest > N ? highest - N / 2 - r % ( N / 2 ) : highest + 1;    // late past the older half's top
+        }
         else if ( roll < 92 )
+        {
             sequence = highest > N ? highest - N - r % 8 : highest + 1;                // refused, or the oldest kept
+        }
         else if ( roll < 97 )
+        {
             sequence = highest + N / 2 + r % N;                         // a jump inside or past the ring
+        }
         else
+        {
             sequence = highest + 1 + r % ( 4 * N );                     // a far jump
+        }
 
         if ( sequence == 0 )
+        {
             sequence = 1;
+        }
 
         const uint64_t kind = r % 16;
         if ( kind == 0 )
+        {
             time -= 3.0;
+        }
         else if ( kind != 1 )
+        {
             time += 0.25;
+        }
         const double at = kind == 2 ? (double) NAN : time;
 
         stats_received_step( endpoint, sequence, (int) ( 40 + r % 1200 ), at );

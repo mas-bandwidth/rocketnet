@@ -57,7 +57,9 @@ static bool read_source_file( const std::string & relative_path, std::string & c
     std::string path = std::string( ROCKETNET_SOURCE_DIR ) + "/" + relative_path;
     FILE * file = rocketnet_test_fopen( path.c_str(), "rb" );
     if ( !file )
+    {
         return false;
+    }
 
     char buffer[4096];
     size_t n;
@@ -255,7 +257,9 @@ static bool scan_file( const char * relative_path, std::vector<std::string> & fa
                 for ( size_t r = 0; r < allowlist_count; r++ )
                 {
                     if ( strcmp( allowlist[r].file, relative_path ) != 0 )
+                    {
                         continue;
+                    }
 
                     if ( line.find( allowlist[r].phrase ) != std::string::npos )
                     {
@@ -322,7 +326,9 @@ static void test_client_server_say_messages_not_packets()
 
     char verbose[4096];
     if ( !rocketnet_test_getenv( "ROCKETNET_TEST_VERBOSE", verbose, sizeof( verbose ) ) )
+    {
         return;
+    }
 
     std::vector<std::string> reasons;
     std::vector<int> counts;

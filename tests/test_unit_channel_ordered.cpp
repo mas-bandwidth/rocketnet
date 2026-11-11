@@ -60,13 +60,19 @@ static void pattern_fill( uint8_t * data, uint64_t id, uint32_t bytes )
 static bool pattern_verify( const uint8_t * data, uint32_t bytes, uint64_t * out_id )
 {
     if ( bytes < 8 )
+    {
         return false;
+    }
 
     uint64_t id;
     memcpy( &id, data, 8 );
     for ( uint32_t i = 8; i < bytes; i++ )
+    {
         if ( data[i] != pattern_byte( id, i ) )
+        {
             return false;
+        }
+    }
     *out_id = id;
 
     return true;
@@ -174,7 +180,9 @@ static uint64_t send_message( node_t * node, uint32_t channel, uint32_t bytes, u
 {
     uint8_t * p = rn_channels_start( &node->ordered.channels, channel, ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED, bytes );
     if ( !p )
+    {
         return 0;
+    }
 
     const uint64_t id = node->next_message_id++;
     pattern_fill( p, id, bytes );
@@ -228,7 +236,9 @@ static int write_packets( node_t * node, double now, wire_packet_t * out, int ma
 static bool open_packet( node_t * node, const wire_packet_t * packet )
 {
     if ( !node->opened.insert( packet->id ).second )
+    {
         return false;
+    }
     node->pending_acks.push_back( packet->id );
 
     const int violation = rn_ordered_receive( &node->ordered, packet->data, packet->bytes );
@@ -386,8 +396,12 @@ static void sim_tick( sim_t * sim, node_t * nodes[2], double dt )
 static bool everything_delivered( node_t * sender, node_t * receiver )
 {
     for ( int c = 0; c < ROCKETNET_MAX_CHANNELS; c++ )
+    {
         if ( receiver->got[c].size() != sender->sent[c].size() )
+        {
             return false;
+        }
+    }
     return true;
 }
 
@@ -422,7 +436,9 @@ static void sim_drain( sim_t * sim, node_t * nodes[2], double limit_seconds )
         sim_tick( sim, nodes, 1.0 / 60.0 );
         if ( everything_delivered( nodes[0], nodes[1] ) && everything_delivered( nodes[1], nodes[0] ) &&
              nodes[0]->region->descriptors_free == nodes[0]->region->queue && nodes[1]->region->descriptors_free == nodes[1]->region->queue )
+        {
             break;
+        }
     }
 }
 
@@ -560,8 +576,12 @@ static void test_small_packed_and_resent_until_packet_acked()
 
         int which = -1;                                         // channels take turns, so numbers are not in send order
         for ( int i = 0; i < 4; i++ )
+        {
             if ( !message_seen[i] && (uint32_t) record.bytes == sizes[i] && record.channel == channels[i] )
+            {
                 which = i;
+            }
+        }
         check( which >= 0 );
         message_seen[which] = true;
         n++;
@@ -814,9 +834,13 @@ static uint64_t span_room( const node_t * node )
 {
     const rn_region_t * region = node->region;
     if ( region->span_first == RN_DESCRIPTOR_NONE )
+    {
         return region->span_bytes;
+    }
     if ( region->span_tail > region->span_head )
+    {
         return ( region->span_bytes - region->span_tail > region->span_head ) ? region->span_bytes - region->span_tail : region->span_head;
+    }
 
     return region->span_head - region->span_tail;
 }
@@ -960,8 +984,12 @@ static void ordering_wrap_leg( uint32_t start )
         wire_packet_t out[ROCKETNET_PACKET_BUILDER_MAX_PACKETS];
         const int n = write_packets( a, now, out, ROCKETNET_PACKET_BUILDER_MAX_PACKETS );
         for ( int p = 0; p < n; p++ )
+        {
             if ( ( ++packets % 2 ) == 0 )
+            {
                 open_packet( b, &out[p] );
+            }
+        }
 
         std::vector<uint64_t> acks;
         take_acks( b, &acks );
@@ -1089,7 +1117,9 @@ static void test_chunks_placed_by_index_not_arrival()
         for ( int c = 0; c < 5; c++ )
         {
             if ( !present[c] )
+            {
                 continue;
+            }
 
             const uint32_t length = c == 4 ? 500 : F;
             check( memcmp( b->region->receive_ring + (uint64_t) c * F, source + (uint64_t) c * F, length ) == 0 );
@@ -1148,11 +1178,17 @@ static void test_no_partial_delivery()
         while ( rocketnet_message_reader_next( &reader, &record ) )
         {
             if ( record.block )
+            {
                 packet_of_chunk[record.fragment] = p;
+            }
             else if ( record.ordering == 0 )
+            {
                 packet_small_first = p;
+            }
             else
+            {
                 packet_small_last = p;
+            }
         }
     }
 
@@ -1570,7 +1606,9 @@ static void test_hostile_small_at_held_ordering_is_refused_sim()
             held_before += b->region->held_index[i].used ? 1 : 0;
         }
         if ( held_before == 1 )
+        {
             break;
+        }
     }
 
     check( held_before == 1 );
@@ -1744,12 +1782,14 @@ static void test_start_pointer_is_the_frame_source()
     {
         const int count = packet_records( a, &out[p], records, 8 );
         for ( int r = 0; r < count; r++ )
+        {
             if ( records[r].block )
             {
                 check( count == 1 );
                 chunk_packet[records[r].fragment] = p;
                 check( memcmp( records[r].data, large + (uint64_t) records[r].fragment * F, (size_t) records[r].bytes ) == 0 );
             }
+        }
     }
 
     for ( int f = 0; f < 4; f++ )
@@ -1771,11 +1811,13 @@ static void test_start_pointer_is_the_frame_source()
     {
         const int count = packet_records( a, &out[p], records, 8 );
         for ( int r = 0; r < count; r++ )
+        {
             if ( records[r].block )
             {
                 check( memcmp( records[r].data, large + (uint64_t) records[r].fragment * F, (size_t) records[r].bytes ) == 0 );
                 seen++;
             }
+        }
     }
 
     check( seen == 4 );
@@ -1925,7 +1967,9 @@ static void test_ordered_no_allocation_after_create()
     for ( int round = 0; round < 6000; round++ )
     {
         if ( rounds_sent >= 150 && everything_delivered( a, b ) && a->region->descriptors_free == a->region->queue )
+        {
             break;
+        }
 
         // the application paces itself to the room the connection has (the maximal message holds all of it at first)
 
@@ -2070,8 +2114,12 @@ static const wire_packet_t * packet_carrying( model_t * m, uint32_t number )
         rocketnet_message_record_t records[8];
         const int n = packet_records( m->a, &m->packet[p], records, 8 );
         for ( int r = 0; r < n; r++ )
+        {
             if ( records[r].number == number )
+            {
                 return &m->packet[p];
+            }
+        }
     }
 
     check( false );
@@ -2133,16 +2181,24 @@ static void test_rnchannel_witness_replays_ordered()
 
         const uint64_t duplicates = counter( m.b, ROCKETNET_COUNTER_MESSAGE_DUPLICATE );
         for ( int p = 0; p < count; p++ )
+        {
             if ( again[p].bytes > 0 && again[p].id >= 6 )
+            {
                 open_packet( m.b, &again[p] );
+            }
+        }
         check( counter( m.b, ROCKETNET_COUNTER_MESSAGE_DUPLICATE ) > duplicates );
 
         // message 0 appears exactly once in channel 0's sequence
 
         int zero = 0;
         for ( size_t i = 0; i < m.b->got[0].size(); i++ )
+        {
             if ( m.b->got[0][i] == m.id[0] )
+            {
                 zero++;
+            }
+        }
         check( zero == 1 );
         check( m.b->violations == 0 );
         node_free( m.a );

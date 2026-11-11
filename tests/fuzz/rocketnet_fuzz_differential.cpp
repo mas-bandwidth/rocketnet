@@ -83,9 +83,13 @@ static uint32_t decode_u32( const uint8_t * p )
 static int64_t s64( int64_t v )
 {
     if ( v > DIFFERENTIAL_MAX_OFFSET )
+    {
         return DIFFERENTIAL_MAX_OFFSET;
+    }
     if ( v < -DIFFERENTIAL_MAX_OFFSET )
+    {
         return -DIFFERENTIAL_MAX_OFFSET;
+    }
 
     return v;
 }
@@ -94,7 +98,9 @@ static void decode_case( const uint8_t * data, size_t size, struct differential_
 {
     memset( c, 0, sizeof( *c ) );
     if ( size < 25 )
+    {
         return;
+    }
     c->address_mode = data[0] % 4;
     c->protocol_wrong = data[1] != 0;
     c->flip_authenticator = data[2] != 0;
@@ -157,7 +163,9 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
     if ( strcmp( rn.reason, "mint" ) == 0 ||
          strncmp( nc_reason, "refuse:mint", 11 ) == 0 ||
          strcmp( nc_reason, "refuse:unclassified" ) == 0 )
+    {
         return 0;
+    }
 
     const char * v = verdict( &rn, nc_reason );
     if ( strcmp( v, "rocketnet-weaker" ) == 0 )

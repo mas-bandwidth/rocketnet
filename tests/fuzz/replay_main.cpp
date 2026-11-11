@@ -128,7 +128,9 @@ int main( int argc, char ** argv )
     for ( int i = 1; i < argc; ++i )
     {
         if ( !replay_file( argv[i] ) )
+        {
             return 1;
+        }
     }
 
     printf( "replayed %d inputs\n", argc - 1 );

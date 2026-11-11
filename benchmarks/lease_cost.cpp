@@ -27,7 +27,9 @@ static void * allocate( void *, size_t bytes )
 {
     auto * block = (allocation_t *) malloc( sizeof( allocation_t ) + bytes );
     if ( !block )
+    {
         return NULL;
+    }
     block->bytes = bytes;
     live_bytes.fetch_add( bytes );
 
@@ -36,7 +38,9 @@ static void * allocate( void *, size_t bytes )
 static void release( void *, void * pointer )
 {
     if ( !pointer )
+    {
         return;
+    }
 
     auto * block = (allocation_t *) pointer - 1;
     live_bytes.fetch_sub( block->bytes );
@@ -57,8 +61,11 @@ public:
     workers_t( int count, std::function<void( int )> task ) : work( task )
     {
         if ( count == 1 )
+        {
             return;
+        }
         for ( int id = 0; id < count; ++id )
+        {
             workers.emplace_back( [this, id]()
                                   {
                 unsigned seen = 0;
@@ -68,13 +75,16 @@ public:
                 for (;;)
                 {
                     ready.wait(lock, [&] { return stopping || generation != seen; });
-                    if (stopping) return;
+                    if (stopping){ return;
+}
                     seen = generation;
                     lock.unlock();
                     work(id);
                     lock.lock();
-                    if (++completed == (int)workers.size()) done.notify_one();
+                    if (++completed == (int)workers.size()){ done.notify_one();
+}
                 } } );
+        }
     }
     void run()
     {
@@ -160,7 +170,9 @@ int main( int argc, char ** argv )
         {
             client_index = rocketnet_client_transport_client_index( client );
             if ( rocketnet_server_transport_is_client_connected( server, client_index ) )
+            {
                 break;
+            }
         }
 
         rocketnet_sleep( 0.001 );
@@ -174,13 +186,17 @@ int main( int argc, char ** argv )
             rocketnet_client_transport_counters( client ), rocketnet_server_transport_counters( server )
         };
         for ( int side = 0; side < 2; ++side )
+        {
             for ( int counter = 0; counter < rocketnet_num_counters(); ++counter )
             {
                 const uint64_t value = rocketnet_counter_value( counters[side], counter );
                 if ( value )
+                {
                     fprintf( stderr, "%s %s=%llu\n", side ? "server" : "client",
                              rocketnet_counter_name( counter ), (unsigned long long) value );
+                }
             }
+        }
 
         rn_native_client_transport_stop_and_destroy( client );
         rn_native_server_transport_stop_and_destroy( server );
@@ -211,7 +227,7 @@ int main( int argc, char ** argv )
 
                 uint8_t * payload = frame + context.payload_index;
 
-                if (access)
+                if (access){
                     for (int read = 0; read < 8; ++read)
                     {
                         int capacity = 0;
@@ -222,10 +238,12 @@ int main( int argc, char ** argv )
                         CHECK(view == payload && capacity >= payload_bytes);
                         ++local_accessed;
                     }
+}
 
                 memset(payload, 0x5a, size_t(payload_bytes));
-                if (plant)
-                    for (int j = 0; j < 4096; ++j) plant_state = plant_state * 1664525 + 1013904223;
+                if (plant){
+                    for (int j = 0; j < 4096; ++j){ plant_state = plant_state * 1664525 + 1013904223;
+}}
 
                 if (finish)
                 {
@@ -235,8 +253,10 @@ int main( int argc, char ** argv )
                     CHECK(bytes > payload_bytes);
                     ++local_committed;
                 }
-                else if (from_server) rocketnet_server_transport_abort_packet(server, &context);
-                else rocketnet_client_transport_abort_packet(client, &context);
+                else if (from_server){ rocketnet_server_transport_abort_packet(server, &context);
+}
+                else{ rocketnet_client_transport_abort_packet(client, &context);
+}
 
                 CHECK(!context.frame);
             }

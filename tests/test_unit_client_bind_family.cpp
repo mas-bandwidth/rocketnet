@@ -239,10 +239,16 @@ static void bind_family_server_teardown( struct rocketnet_server_protocol_t * se
 static bool bind_family_request_carries_cookie( const rocketnet_fake_client_datagram_t * datagram )
 {
     if ( datagram->bytes != ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES || datagram->data[0] != ROCKETNET_CONNECTION_REQUEST_PACKET )
+    {
         return false;
+    }
     for ( int i = 0; i < ROCKETNET_COOKIE_FIELD_BYTES; i++ )
+    {
         if ( datagram->data[ROCKETNET_PREFILTER_BYTES + i] != 0 )
+        {
             return true;
+        }
+    }
 
     return false;
 }
@@ -349,7 +355,9 @@ static void test_client_connect_keeps_the_family_that_answers()
             // the broken IPv6 route: nothing sent there reaches a server
 
             if ( !to_ipv4 )
+            {
                 continue;
+            }
 
             uint8_t response[ROCKETNET_RECEIVE_CEILING];
             uint8_t payload[ROCKETNET_RECEIVE_CEILING];
@@ -540,7 +548,9 @@ static void race_harness_forward( race_harness_t * h )
                                                   ROCKETNET_TEST_CREATE_TS, h->clock.now, response, &response_bytes,
                                                   payload, &payload_bytes, &payload_client_index );
         if ( response_bytes > 0 )
+        {
             rocketnet_fake_client_push( ipv4, &h->ipv4_server, response, response_bytes );
+        }
     }
 }
 
@@ -598,12 +608,18 @@ static void test_client_race_commit_rebinds_a_late_ring()
 
     int cookie_requests_to_ipv4 = 0;
     for ( int i = ipv4_sent; i < h.pair.fake[1].num_sent; i++ )
+    {
         if ( bind_family_request_carries_cookie( &h.pair.fake[1].sent[i] ) )
+        {
             cookie_requests_to_ipv4++;
+        }
+    }
 
     if ( h.pair.fake[1].num_sent - ipv4_sent != 2 || cookie_requests_to_ipv4 != 1 )
+    {
         printf( "test_client_race_commit_rebinds_a_late_ring: %d sent to IPv4, %d carrying the cookie, %d to IPv6\n",
                 h.pair.fake[1].num_sent - ipv4_sent, cookie_requests_to_ipv4, h.pair.fake[0].num_sent - ipv6_sent );
+    }
 
     rocketnet_unit_check( h.pair.fake[1].num_sent - ipv4_sent == 2 );
     rocketnet_unit_check( cookie_requests_to_ipv4 == 1 );
@@ -646,8 +662,10 @@ static void test_client_race_send_failed_holds_across_the_commit()
 
     const uint64_t at_commit = race_harness_send_failed( &h );
     if ( at_commit != before )
+    {
         printf( "test_client_race_send_failed_holds_across_the_commit: SEND_FAILED %llu before the commit, %llu after it\n",
                 (unsigned long long) before, (unsigned long long) at_commit );
+    }
     rocketnet_unit_check( at_commit == before );
 
     rocketnet_client_io_step( h.io, false );
@@ -690,6 +708,7 @@ REGISTER_UNIT_TEST( test_client_race_partial_fanout_retries_physical_copy_once )
 static void test_client_race_partial_fanout_commit_keeps_winning_copy()
 {
     for ( int blocked = 0; blocked < 2; blocked++ )
+    {
         for ( int winner = 0; winner < 2; winner++ )
         {
             race_harness_t * storage = new race_harness_t();
@@ -709,11 +728,14 @@ static void test_client_race_partial_fanout_commit_keeps_winning_copy()
             rocketnet_unit_check( h.pair.fake[1 - winner].close_calls == 1 );
             rocketnet_unit_check( io->operations->send_batch_progress( io->instance, &send, 1 ) == 1 );
             for ( int family = 0; family < 2; family++ )
+            {
                 rocketnet_unit_check( h.pair.fake[family].num_sent == ( family != blocked || family == winner ? 1 : 0 ) );
+            }
             rocketnet_unit_check( h.pair.fake[winner].sent[0].data[0] == 42 );
             race_harness_teardown( &h );
             delete storage;
         }
+    }
 }
 REGISTER_UNIT_TEST( test_client_race_partial_fanout_commit_keeps_winning_copy );
 

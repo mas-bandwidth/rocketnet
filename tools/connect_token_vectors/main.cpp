@@ -243,7 +243,9 @@ static bool ctv_generate_json( std::string & out )
 
     uint8_t backend_seed[32];
     if ( crypto_sign_ed25519_sk_to_seed( backend_seed, rocketnet_test_backend_secret_key ) != 0 )
+    {
         return false;
+    }
 
     out += "{\n";
     out += "  \"description\": \"RocketNet 768-byte connect token known answers, minted by rocketnet_write_connect_token_deterministic "

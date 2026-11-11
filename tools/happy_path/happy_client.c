@@ -227,10 +227,12 @@ int main( int argc, char ** argv )
             int receipts_complete = 1;
 
             for ( int mode = 5; mode <= 7; mode++ )
+            {
                 if ( serials[mode] != 0 && !acked[mode] )
                 {
                     receipts_complete = 0;
                 }
+            }
 
             if ( next_mode == 8 && receipts_complete && ( now - all_sent_at ) >= 0.25 )
             {

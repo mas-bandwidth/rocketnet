@@ -67,8 +67,12 @@ static int source_audit_case_named( const char * name )
 {
     const size_t count = sizeof( source_audit_cases ) / sizeof( source_audit_cases[0] );
     for ( size_t i = 0; i < count; i++ )
+    {
         if ( strcmp( source_audit_cases[i], name ) == 0 )
+        {
             return 1;
+        }
+    }
 
     return 0;
 }

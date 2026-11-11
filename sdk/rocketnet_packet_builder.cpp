@@ -18,7 +18,9 @@
 static void rn_builder_count( rocketnet_counters_t * counters, int counter )
 {
     if ( counters )
+    {
         rocketnet_platform_atomic_add_u64( (volatile uint64_t *) &counters->values[counter], 1 );
+    }
 }
 
 // The per-level stride and seed: stride (1 << p) * (p + 1) + p, seed (1 << p) * p + p.
@@ -44,7 +46,9 @@ static void rn_builder_reset_clocks( struct rn_packet_builder_t * builder )
     // proofs/tla/RNScheduler.tla, Init and Tick's clock reset
 
     for ( int p = 0; p < ROCKETNET_PACKET_BUILDER_LEVELS; p++ )
+    {
         builder->level_clock[p] = rn_builder_seed[p];
+    }
 
     builder->clock_base = 0;
 }
@@ -54,12 +58,16 @@ bool rn_packet_builder_init( struct rn_packet_builder_t * builder, struct rn_reg
     // proofs/tla/RNScheduler.tla, Init and Seeds (round_robin = num_channels - 1 so the first turn is channel 0's)
 
     if ( !builder )
+    {
         return false;
+    }
 
     memset( builder, 0, sizeof( *builder ) );
 
     if ( !region || payload_capacity < 1 || payload_capacity > ROCKETNET_MESSAGE_SINGLE_BYTES )
+    {
         return false;
+    }
 
     builder->region = region;
     builder->ack = ack;
@@ -177,10 +185,14 @@ static uint8_t rn_builder_key_byte( const struct rn_packet_item_t * items, uint3
     // maximum of 65536 channels.
 
     if ( pass == 0 )
+    {
         return (uint8_t) items[item_index].channel;
+    }
 
     if ( pass == 1 )
+    {
         return (uint8_t) ( items[item_index].channel >> 8 );
+    }
 
     return items[item_index].send_class;
 }
@@ -241,7 +253,9 @@ static bool rn_builder_plan( struct rn_packet_builder_plan_t * plan, struct rn_p
         rn_builder_plan_operation( plan );
 
         if ( !rn_builder_writable( &items[i] ) )
+        {
             continue;
+        }
 
         if ( items[i].send_class > ROCKETNET_SEND_CLASS_UNRELIABLE )
         {
@@ -305,7 +319,9 @@ static bool rn_builder_plan( struct rn_packet_builder_plan_t * plan, struct rn_p
         plan->class_group_begin[c] = (uint8_t) next_group;
 
         while ( next_group < plan->group_count && plan->groups[next_group].send_class == (uint8_t) c )
+        {
             next_group++;
+        }
 
         plan->class_group_end[c] = (uint8_t) next_group;
     }
@@ -360,11 +376,15 @@ static int rn_builder_next_in_class( struct rn_packet_builder_t * builder, struc
 
         const struct rn_packet_builder_group_t * group = &plan->groups[g];
         if ( group->cursor >= group->end )
+        {
             continue;
+        }
 
         const struct rn_packet_builder_sequence_t * entry = &plan->sequence[group->cursor];
         if ( entry->item_index >= (uint32_t) num_items || entry->group_index != g )
+        {
             continue;                                           // a stale or damaged plan slot is never an item
+        }
 
         const int i = (int) entry->item_index;
         const int level = entry->suffix_level;
@@ -418,20 +438,26 @@ int rn_packet_builder_write( struct rn_packet_builder_t * builder, struct rn_pac
     // proofs/tla/RNScheduler.tla, Write (class order, clock step, rr') and Tick's clock reset (every item taken)
 
     if ( !builder || builder->packets_per_update == 0 )
+    {
         return 0;
+    }
 
     builder->packets = 0;
     builder->unreliable_dropped = 0;
 
     if ( !items || num_items < 1 || !payloads || num_payloads < 1 )
+    {
         return 0;
+    }
 
     // the production producer's plan is capped at the same 96 items. Refuse
     // a larger direct/internal call without touching its items, rather than
     // truncate it into a different scheduler trace.
 
     if ( num_items > ROCKETNET_PACKET_BUILDER_MAX_ITEMS )
+    {
         return 0;
+    }
 
     // each class's channel groups are built once for the whole call. An item
     // advances its group's cursor only when taken; a refused packet restores
@@ -448,7 +474,9 @@ int rn_packet_builder_write( struct rn_packet_builder_t * builder, struct rn_pac
     for ( int p = 0; p < limit; p++ )
     {
         if ( !payloads[p] )
+        {
             break;
+        }
 
         struct rocketnet_message_writer_t writer;
         rocketnet_message_writer_begin( &writer, payloads[p], builder->payload_capacity );
@@ -458,7 +486,9 @@ int rn_packet_builder_write( struct rn_packet_builder_t * builder, struct rn_pac
 
         uint64_t saved_level_clock[ROCKETNET_PACKET_BUILDER_LEVELS];
         for ( int l = 0; l < ROCKETNET_PACKET_BUILDER_LEVELS; l++ )
+        {
             saved_level_clock[l] = builder->level_clock[l];
+        }
 
         const uint64_t saved_clock_base = builder->clock_base;
         const uint32_t saved_round_robin = builder->round_robin;
@@ -483,7 +513,9 @@ int rn_packet_builder_write( struct rn_packet_builder_t * builder, struct rn_pac
                 uint32_t group_index = 0;
                 const int i = rn_builder_next_in_class( builder, &plan, items, num_items, send_class, &level, &group_index );
                 if ( i < 0 )
+                {
                     break;
+                }
 
                 // a packet tracks at most MAX_RECORDS records, and at most
                 // MAX_NUMBERS reliable numbers, so every number it carries is
@@ -491,13 +523,17 @@ int rn_packet_builder_write( struct rn_packet_builder_t * builder, struct rn_pac
 
                 if ( records >= ROCKETNET_PACKET_BUILDER_MAX_RECORDS ||
                      ( items[i].number != ROCKETNET_PACKET_NUMBER_NONE && count >= ROCKETNET_PACKET_BUILDER_MAX_NUMBERS ) )
+                {
                     goto packet_done;
+                }
 
                 // an item that travels alone starts a packet and ends it
                 // (proofs/tla/RNChannel.tla: a chunk travels alone)
 
                 if ( items[i].alone && records > 0 )
+                {
                     goto packet_done;
+                }
 
                 struct rocketnet_message_record_t record;
                 rn_builder_record( &items[i], &record );
@@ -516,18 +552,24 @@ int rn_packet_builder_write( struct rn_packet_builder_t * builder, struct rn_pac
                 records++;
 
                 if ( packet_class < 0 )
+                {
                     packet_class = send_class;
+                }
 
                 // I3: an unreliable record never takes a reliable number
 
                 if ( items[i].number != ROCKETNET_PACKET_NUMBER_NONE && count < ROCKETNET_PACKET_BUILDER_MAX_NUMBERS )
+                {
                     numbers[count++] = items[i].number;
+                }
 
                 builder->round_robin = items[i].channel;
                 rn_builder_take_level( builder, level );
 
                 if ( items[i].alone )
+                {
                     goto packet_done;
+                }
             }
         }
 
@@ -537,7 +579,9 @@ int rn_packet_builder_write( struct rn_packet_builder_t * builder, struct rn_pac
 
         const int payload_bytes = rocketnet_message_writer_finish( &writer );
         if ( payload_bytes <= 0 )
+        {
             break;                                              // an empty plan writes nothing (9.3)
+        }
 
         // R6 and RNSendBudget: the packet is admitted at the class of the
         // first item it carries, at the most wire bytes its payload can take
@@ -547,7 +591,9 @@ int rn_packet_builder_write( struct rn_packet_builder_t * builder, struct rn_pac
         int decision = ROCKETNET_SEND_BUDGET_SEND;
 
         if ( builder->budget && packet_class >= 0 )
+        {
             decision = rocketnet_send_budget_admit( builder->budget, packet_class, admitted );
+        }
 
         if ( decision != ROCKETNET_SEND_BUDGET_SEND )
         {
@@ -570,7 +616,9 @@ int rn_packet_builder_write( struct rn_packet_builder_t * builder, struct rn_pac
             }
 
             for ( int l = 0; l < ROCKETNET_PACKET_BUILDER_LEVELS; l++ )
+            {
                 builder->level_clock[l] = saved_level_clock[l];
+            }
 
             builder->clock_base = saved_clock_base;
             builder->round_robin = saved_round_robin;
@@ -594,7 +642,9 @@ int rn_packet_builder_write( struct rn_packet_builder_t * builder, struct rn_pac
         slot->count = count;
 
         for ( uint32_t n = 0; n < count; n++ )
+        {
             slot->numbers[n] = numbers[n];
+        }
 
         slot->records = records;
         slot->payload_bytes = (uint32_t) payload_bytes;
@@ -610,11 +660,17 @@ int rn_packet_builder_write( struct rn_packet_builder_t * builder, struct rn_pac
 
     bool drained = !refused && !stray;
     for ( uint32_t g = 0; g < plan.group_count && drained; g++ )
+    {
         if ( plan.groups[g].cursor < plan.groups[g].end )
+        {
             drained = false;
+        }
+    }
 
     if ( drained )
+    {
         rn_builder_reset_clocks( builder );
+    }
 
 #if ROCKETNET_DEV
     rn_builder_last_plan = plan;
@@ -640,7 +696,9 @@ static bool rn_builder_sent_before( const struct rn_packet_builder_t * builder, 
     const rn_region_t * region = builder->region;
     const double last_send = region->send_numbers[(uint32_t) ( number & ( region->window - 1 ) )].last_send;
     if ( last_send >= 0.0 )
+    {
         return true;
+    }
 
     return !rn_send_number_never_sent( last_send ) && last_send < -( builder->ack->resend_delay_max + 1.5 );
 }
@@ -648,11 +706,15 @@ static bool rn_builder_sent_before( const struct rn_packet_builder_t * builder, 
 void rn_packet_builder_commit( struct rn_packet_builder_t * builder, int packet_index, uint64_t packet_id, double now )
 {
     if ( !builder || packet_index < 0 || packet_index >= (int) builder->packets || !builder->ack )
+    {
         return;
+    }
 
     const uint32_t count = builder->packet[packet_index].count;
     if ( count == 0 )
+    {
         return;                                                 // a pure-unreliable packet takes no sent-map entry
+    }
 
     // a resend is counted when the packet carrying it is sent (6.4,
     // RNResendTiming): a number this packet carries that went out before is a
@@ -662,7 +724,9 @@ void rn_packet_builder_commit( struct rn_packet_builder_t * builder, int packet_
     for ( uint32_t i = 0; i < count; i++ )
     {
         if ( rn_builder_sent_before( builder, numbers[i] ) )
+        {
             rn_builder_count( builder->region->counters, ROCKETNET_COUNTER_MESSAGE_RESENT );
+        }
     }
 
     // RNChannel!WritePacket's smap': keyed by the transport's own packet id
@@ -673,11 +737,15 @@ void rn_packet_builder_commit( struct rn_packet_builder_t * builder, int packet_
 void rn_packet_builder_packet_failed( struct rn_packet_builder_t * builder, int packet_index, double now )
 {
     if ( !builder || packet_index < 0 || packet_index >= (int) builder->packets || !builder->ack )
+    {
         return;
+    }
 
     const uint32_t count = builder->packet[packet_index].count;
     if ( count == 0 )
+    {
         return;
+    }
 
     // which numbers went out before this refused finish: the recovery below
     // makes every number due now, and these keep the mark of a resend.
@@ -685,7 +753,9 @@ void rn_packet_builder_packet_failed( struct rn_packet_builder_t * builder, int 
     const uint64_t * numbers = builder->packet[packet_index].numbers;
     bool sent_before[ROCKETNET_PACKET_BUILDER_MAX_NUMBERS];
     for ( uint32_t i = 0; i < count; i++ )
+    {
         sent_before[i] = rn_builder_sent_before( builder, numbers[i] );
+    }
 
     rn_window_ack_packet_failed( builder->ack, numbers, count, now );
 
@@ -693,18 +763,24 @@ void rn_packet_builder_packet_failed( struct rn_packet_builder_t * builder, int 
     for ( uint32_t i = 0; i < count; i++ )
     {
         if ( sent_before[i] )
+        {
             region->send_numbers[(uint32_t) ( numbers[i] & ( region->window - 1 ) )].last_send = rn_builder_refused_resend( builder->ack );
+        }
     }
 }
 
 bool rn_packet_builder_settle( struct rn_packet_builder_t * builder, int packet_index, int actual_wire_bytes )
 {
     if ( !builder || !builder->budget || packet_index < 0 || packet_index >= (int) builder->packets )
+    {
         return false;
+    }
 
     const int admitted = builder->packet[packet_index].admitted_wire_bytes;
     if ( admitted <= 0 )
+    {
         return false;
+    }
 
     return rocketnet_send_budget_settle( builder->budget, admitted, actual_wire_bytes );
 }
@@ -713,13 +789,19 @@ bool rn_packet_builder_settle( struct rn_packet_builder_t * builder, int packet_
 const uint64_t * rn_packet_builder_numbers( const struct rn_packet_builder_t * builder, int packet_index, uint32_t * out_count )
 {
     if ( out_count )
+    {
         *out_count = 0;
+    }
 
     if ( !builder || packet_index < 0 || packet_index >= (int) builder->packets )
+    {
         return NULL;
+    }
 
     if ( out_count )
+    {
         *out_count = builder->packet[packet_index].count;
+    }
 
     return builder->packet[packet_index].numbers;
 }

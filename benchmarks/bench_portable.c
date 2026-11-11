@@ -79,7 +79,9 @@ static void run_receiver( int port, double warmup, double window, int windows, i
         uint64_t batch_ns = bench_time_ns() - t0;
 
         if ( bench_window_tick( &w, batch_ns, batch_packets, batch_bytes, batch_syscalls, batch_empty, batch_fold, batch_timed ) )
+        {
             break;
+        }
 
         if ( poll_usec > 0 && batch_packets == 0 )
         {
@@ -116,7 +118,9 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
         batch_index++;
 
         if ( bench_pace_wait( start, sent, options.pace_pps ) >= deadline )
+        {
             break;
+        }
 
         if ( !skip )
         {

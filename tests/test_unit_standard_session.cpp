@@ -102,9 +102,13 @@ static void rocketnet_session_send_payload( struct rocketnet_session_server_t * 
 static int rocketnet_session_generate( const char * id, uint8_t * out, int capacity )
 {
     if ( strcmp( id, "t13.keep-alive-suppression" ) != 0 )
+    {
         return -1;
+    }
     if ( capacity < 7 )
+    {
         return -1;
+    }
 
     struct rocketnet_session_server_t test;
     rocketnet_session_server_setup( &test );

@@ -46,7 +46,9 @@ static struct rocketnet_server_xdp_replay_value_t * server_xdp_host_replay_find(
     for ( int i = 0; i < server_xdp_host_replay_count; i++ )
     {
         if ( __builtin_memcmp( &server_xdp_host_replay_keys[i], k, sizeof( struct rocketnet_server_xdp_replay_key_t ) ) == 0 )
+        {
             return &server_xdp_host_replay_values[i];
+        }
     }
 
     return NULL;
@@ -63,14 +65,22 @@ static struct rocketnet_server_xdp_replay_value_t * server_xdp_host_replay_find(
 static void * bpf_map_lookup_elem( void * map, const void * key )
 {
     if ( map == (void *) &server_xdp_replay_map )
+    {
         return (void *) server_xdp_host_replay_find( key );
+    }
     const __u32 index = *(const __u32 *) key;
     if ( index != 0 )
+    {
         return NULL;
+    }
     if ( map == (void *) &server_xdp_config_map )
+    {
         return server_xdp_host_config_lookup_fails ? NULL : (void *) &server_xdp_host_config;
+    }
     if ( map == (void *) &server_xdp_stats_map )
+    {
         return (void *) &server_xdp_host_stats;
+    }
 
     return NULL;
 }
@@ -97,12 +107,16 @@ static void * bpf_map_lookup_elem( void * map, const void * key )
 static long bpf_redirect_map( void * map, __u64 key, __u64 flags )
 {
     if ( flags & ~SERVER_XDP_HOST_ACTION_MASK )
+    {
         return XDP_ABORTED;
+    }
     server_xdp_host_redirects++;
     server_xdp_host_redirect_key = key;
     const __u32 index = (__u32) key;
     if ( map != (void *) &server_xdp_socket_map || index >= ROCKETNET_XDP_MAX_QUEUES || !server_xdp_host_slots[index] )
+    {
         return (long) ( flags & SERVER_XDP_HOST_ACTION_MASK );
+    }
 
     return XDP_REDIRECT;
 }
@@ -151,7 +165,9 @@ void rocketnet_xdp_host_set_replay_entry( const struct rocketnet_server_xdp_repl
     // table ignores a new key
 
     if ( server_xdp_host_replay_count >= ROCKETNET_XDP_REPLAY_MAX_ENTRIES )
+    {
         return;
+    }
     __builtin_memcpy( &server_xdp_host_replay_keys[server_xdp_host_replay_count], key, sizeof( struct rocketnet_server_xdp_replay_key_t ) );
     struct rocketnet_server_xdp_replay_value_t * value = &server_xdp_host_replay_values[server_xdp_host_replay_count];
     value->high_water = high_water;
@@ -163,7 +179,9 @@ int rocketnet_xdp_host_get_replay_entry( const struct rocketnet_server_xdp_repla
 {
     struct rocketnet_server_xdp_replay_value_t * entry = server_xdp_host_replay_find( key );
     if ( entry == NULL )
+    {
         return 0;
+    }
     *high_water = entry->high_water;
     return 1;
 }
@@ -171,10 +189,14 @@ int rocketnet_xdp_host_get_replay_entry( const struct rocketnet_server_xdp_repla
 int rocketnet_xdp_host_run( const uint8_t * frame, int frame_bytes, uint32_t rx_queue_index )
 {
     if ( frame == NULL || frame_bytes < 1 )
+    {
         return -1;
+    }
     unsigned char * copy = (unsigned char *) malloc( (__SIZE_TYPE__) frame_bytes );
     if ( copy == NULL )
+    {
         return -1;
+    }
     __builtin_memcpy( copy, frame, (__SIZE_TYPE__) frame_bytes );
 
     struct xdp_md ctx;
@@ -191,7 +213,9 @@ int rocketnet_xdp_host_run( const uint8_t * frame, int frame_bytes, uint32_t rx_
 uint64_t rocketnet_xdp_host_counter( int counter )
 {
     if ( counter < 0 || counter >= ROCKETNET_SERVER_XDP_NUM_COUNTERS )
+    {
         return 0;
+    }
     return server_xdp_host_stats.counters[counter];
 }
 

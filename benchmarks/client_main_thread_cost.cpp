@@ -20,7 +20,9 @@ static double percentile( std::vector<double> samples, double p )
 
     const size_t n = samples.size();
     if ( n == 0 )
+    {
         return 0.0;
+    }
 
     const double rank = ( p / 100.0 ) * (double) n;
     size_t index = (size_t) rank;
@@ -83,7 +85,9 @@ int main( int argc, char ** argv )
         {
             client_index = rocketnet_client_transport_client_index( client );
             if ( rocketnet_server_transport_is_client_connected( server, client_index ) )
+            {
                 break;
+            }
         }
 
         rocketnet_sleep( 0.001 );
@@ -125,10 +129,12 @@ int main( int argc, char ** argv )
         // move the timing. It is caller work, never a production SDK branch.
 
         if ( plant )
+        {
             for ( int j = 0; j < 4096; ++j )
             {
                 plant_state = plant_state * 1664525 + 1013904223;
             }
+        }
 
         const auto send_end = std::chrono::steady_clock::now();
 
@@ -180,7 +186,9 @@ int main( int argc, char ** argv )
             rocketnet_server_transport_send_packets( server );
             frame_payloads += num_payloads;
             if ( frame_payloads >= packets_per_frame || rocketnet_time() >= pace_deadline )
+            {
                 break;
+            }
             rocketnet_sleep( 0.0001 );
         }
 

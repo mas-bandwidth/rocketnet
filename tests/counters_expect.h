@@ -102,7 +102,9 @@ inline bool rocketnet_counters_expect_core( const struct rocketnet_counters_t * 
         const uint64_t now = after->values[i];
         const bool moved = now != was;
         if ( !moved && !is_named[i] )
+        {
             continue;
+        }
 
         const bool backwards = now < was;
         const uint64_t actual = backwards ? was - now : now - was;
@@ -114,19 +116,27 @@ inline bool rocketnet_counters_expect_core( const struct rocketnet_counters_t * 
 
         char line[256];
         if ( is_named[i] )
+        {
             snprintf( line, sizeof( line ), "  %s: expected +%llu, got %s%llu%s\n", rocketnet_counter_name( i ),
                       (unsigned long long) named[i], backwards ? "-" : "+", (unsigned long long) actual,
                       matches ? "" : "  <-- wrong delta" );
+        }
         else
+        {
             snprintf( line, sizeof( line ), "  %s: moved %s%llu and was not named  <-- unnamed move\n", rocketnet_counter_name( i ),
                       backwards ? "-" : "+", (unsigned long long) actual );
+        }
         lines += line;
     }
 
     if ( !ok && report && report_bytes > 0 )
+    {
         snprintf( report, (size_t) report_bytes, "counters did not move as named:\n%s", lines.c_str() );
+    }
     else if ( report && report_bytes > 0 )
+    {
         report[0] = '\0';
+    }
 
     return ok;
 }
@@ -175,14 +185,22 @@ inline int rocketnet_counters_refusals( const struct rocketnet_counters_t * coun
     for ( int i = 0; i < ROCKETNET_NUM_COUNTERS; i++ )
     {
         if ( rocketnet_counter_class( i ) != ROCKETNET_COUNTER_CLASS_REFUSAL || counters->values[i] == 0 )
+        {
             continue;
+        }
 
         bool explained = false;
         for ( int j = 0; allowed && allowed[j] != -1; j++ )
+        {
             if ( allowed[j] == i )
+            {
                 explained = true;
+            }
+        }
         if ( explained )
+        {
             continue;
+        }
 
         char line[128];
         snprintf( line, sizeof( line ), "  %s = %llu\n", rocketnet_counter_name( i ), (unsigned long long) counters->values[i] );

@@ -12,7 +12,9 @@
 static void sequenced_functional_check( bool condition, const char * label )
 {
     if ( condition )
+    {
         return;
+    }
     printf( "state stream failed: %s\n", label );
     fflush( stdout );
     exit( 1 );

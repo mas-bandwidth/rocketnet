@@ -155,14 +155,18 @@ static inline int64_t process_resources_count_directory( const char * path )
 {
     DIR * directory = opendir( path );
     if ( !directory )
+    {
         return -1;
+    }
 
     int64_t count = 0;
     struct dirent * entry = NULL;
     while ( ( entry = readdir( directory ) ) != NULL )
     {
         if ( strcmp( entry->d_name, "." ) == 0 || strcmp( entry->d_name, ".." ) == 0 )
+        {
             continue;
+        }
         count++;
     }
 
@@ -175,7 +179,9 @@ static inline int64_t process_resources_resident_bytes( void )
 {
     FILE * file = fopen( "/proc/self/status", "r" );
     if ( !file )
+    {
         return -1;
+    }
 
     char line[256];
     int64_t bytes = -1;
@@ -215,28 +221,40 @@ static inline int process_resources_thread_is_os( DWORD thread_id, uintptr_t * s
 
     HMODULE ntdll = GetModuleHandleW( L"ntdll.dll" );
     if ( !ntdll )
+    {
         return 0;
+    }
 
     process_resources_query_thread_t query = (process_resources_query_thread_t) (void *) GetProcAddress( ntdll, "NtQueryInformationThread" );
     if ( !query )
+    {
         return 0;
+    }
 
     HANDLE thread = OpenThread( THREAD_QUERY_INFORMATION, FALSE, thread_id );
     if ( !thread )
+    {
         return 0;
+    }
 
     void * start_address = NULL;
     const int query_set_win32_start_address = 9; // ThreadQuerySetWin32StartAddress
     const LONG status = query( thread, query_set_win32_start_address, &start_address, (ULONG) sizeof( start_address ), NULL );
     CloseHandle( thread );
     if ( status < 0 || !start_address )
+    {
         return 0;
+    }
 
     HMODULE start_module = NULL;
     if ( !GetModuleHandleExW( GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCWSTR) start_address, &start_module ) )
+    {
         return 0;
+    }
     if ( start_module != ntdll )
+    {
         return 0;
+    }
     *start_offset = (uintptr_t) start_address - (uintptr_t) ntdll;
 
     return 1;
@@ -257,7 +275,9 @@ static inline int process_resources_walk_threads( int64_t * threads, int64_t * o
 
     HANDLE thread_list = CreateToolhelp32Snapshot( TH32CS_SNAPTHREAD, 0 );
     if ( thread_list == INVALID_HANDLE_VALUE )
+    {
         return 0;
+    }
 
     THREADENTRY32 entry;
     memset( &entry, 0, sizeof( entry ) );
@@ -300,7 +320,9 @@ static inline int process_resources_walk_threads( int64_t * threads, int64_t * o
 
     CloseHandle( thread_list );
     if ( !ok )
+    {
         return 0;
+    }
     *threads = program_count;
     *os_threads = os_count;
 
@@ -373,7 +395,9 @@ static inline int process_resources_read( struct process_resources_t * resources
     for ( int i = 0; i < PROCESS_RESOURCES_COUNT; i++ )
     {
         if ( resources->values[i] < 0 )
+        {
             return 0;
+        }
     }
 
     return 1;
@@ -415,18 +439,26 @@ static inline int64_t process_resources_memory_allowance_bytes( double seconds_s
 static inline int process_resources_flat( int index, int64_t start, int64_t end, double seconds_since_start )
 {
     if ( start < 0 || end < 0 )
+    {
         return 0;
+    }
     if ( index == PROCESS_RESOURCES_MEMORY )
+    {
         return end <= start + process_resources_memory_allowance_bytes( seconds_since_start );
+    }
 
     // the handle (fd) count fails on growth only: a fall is not a leak (on
     // Windows the handles of the OS's retiring pool workers close with them)
 
     if ( index == PROCESS_RESOURCES_HANDLES )
+    {
         return end <= start;
+    }
 #if defined( _WIN32 )
     if ( index == PROCESS_RESOURCES_OS_THREADS )
+    {
         return end <= start;
+    }
 #endif // #if defined( _WIN32 )
     return end == start;
 }
@@ -457,7 +489,9 @@ static inline int64_t process_resources_touch_all( void )
 #if !defined( _WIN32 ) && !defined( __APPLE__ ) && defined( MADV_POPULATE_WRITE ) && defined( MADV_POPULATE_READ ) && !defined( PROCESS_RESOURCES_SANITIZER_SHADOW )
     FILE * file = fopen( "/proc/self/maps", "r" );
     if ( !file )
+    {
         return -1;
+    }
 
     char line[512];
     int64_t populated = 0;
@@ -470,17 +504,27 @@ static inline int64_t process_resources_touch_all( void )
 
         char perms[8] = { 0 };
         if ( sscanf( line, "%llx-%llx %7s", &start, &end, perms ) != 3 )
+        {
             continue;
+        }
         if ( perms[0] != 'r' || perms[3] != 'p' )
+        {
             continue;
+        }
         if ( strstr( line, "[vvar" ) || strstr( line, "[vdso]" ) || strstr( line, "[vsyscall]" ) )
+        {
             continue;
+        }
 
         const int advice = perms[1] == 'w' ? MADV_POPULATE_WRITE : MADV_POPULATE_READ;
         if ( madvise( (void *) (uintptr_t) start, (size_t) ( end - start ), advice ) == 0 )
+        {
             populated += (int64_t) ( end - start );
+        }
         else if ( errno == EINVAL )
+        {
             unsupported = 1;
+        }
     }
 
     fclose( file );
@@ -514,15 +558,21 @@ static inline int process_resources_smaps( int64_t * rss_bytes, int64_t * privat
 #if !defined( _WIN32 ) && !defined( __APPLE__ )
     FILE * file = fopen( "/proc/self/smaps_rollup", "r" );
     if ( !file )
+    {
         return 0;
+    }
 
     char line[256];
     while ( fgets( line, sizeof( line ), file ) )
     {
         if ( strncmp( line, "Rss:", 4 ) == 0 )
+        {
             *rss_bytes = (int64_t) strtoll( line + 4, NULL, 10 ) * 1024;
+        }
         else if ( strncmp( line, "Private_Dirty:", 14 ) == 0 )
+        {
             *private_dirty_bytes = (int64_t) strtoll( line + 14, NULL, 10 ) * 1024;
+        }
     }
 
     fclose( file );

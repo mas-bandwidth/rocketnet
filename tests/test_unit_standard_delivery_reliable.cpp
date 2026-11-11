@@ -88,7 +88,9 @@ static const rn_standard_vector_t standard_delivery_reliable_table[] = {
 static bool trace_append( uint8_t * out, int capacity, int * used, const uint8_t * bytes, int count )
 {
     if ( *used + count > capacity )
+    {
         return false;
+    }
     memcpy( out + *used, bytes, (size_t) count );
     *used += count;
     return true;
@@ -121,7 +123,9 @@ static int trace_run( const delivery_step_t * steps, int count, uint8_t * out, i
 
     rn_arena_t * arena = rn_unit_arena_create( &config, 1, &counters );
     if ( !arena )
+    {
         return -1;
+    }
     rn_region_t * region = rn_arena_region( arena, 0 );
 
     rn_channels_t channels;
@@ -212,7 +216,9 @@ static int trace_run( const delivery_step_t * steps, int count, uint8_t * out, i
                     uint32_t slot = RN_DESCRIPTOR_NONE;
                     const int accepted = rn_window_receive_accept( &receive, &parsed, &slot );
                     if ( accepted == RN_WINDOW_RECEIVE_DUPLICATE )
+                    {
                         dispatch = false;
+                    }
                     else if ( accepted == RN_WINDOW_RECEIVE_VIOLATION )
                     {
                         rn_channels_count_violation( &channels, ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION );
@@ -266,11 +272,17 @@ static int trace_run( const delivery_step_t * steps, int count, uint8_t * out, i
 static int standard_delivery_reliable_generate( const char * id, uint8_t * out, int capacity )
 {
     if ( strcmp( id, "m7.reliable-loss-reorder" ) == 0 )
+    {
         return trace_run( reliable_steps, (int) ( sizeof( reliable_steps ) / sizeof( reliable_steps[0] ) ), out, capacity );
+    }
     if ( strcmp( id, "m7.reliable-ordered-hold-drain" ) == 0 )
+    {
         return trace_run( ordered_steps, (int) ( sizeof( ordered_steps ) / sizeof( ordered_steps[0] ) ), out, capacity );
+    }
     if ( strcmp( id, "m7.reliable-sequenced-hold-drain" ) == 0 )
+    {
         return trace_run( sequenced_steps, (int) ( sizeof( sequenced_steps ) / sizeof( sequenced_steps[0] ) ), out, capacity );
+    }
 
     return -1;
 }

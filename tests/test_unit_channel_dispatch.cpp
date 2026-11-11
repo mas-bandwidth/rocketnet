@@ -82,8 +82,12 @@ static void test_dispatch_reaches_each_of_n_channels()
         // and no other channel moved
 
         for ( uint32_t k = c + 1; k < channels.num_channels; k++ )
+        {
             if ( k != c )
+            {
                 rocketnet_unit_check( region->channel_receive[k].ordered_read == 0 );
+            }
+        }
     }
 
     rn_region_reset( region );
@@ -129,7 +133,9 @@ static void test_disabled_codes_are_refused_and_counted()
     for ( int i = 0; i < 3; i++ )
     {
         if ( rn_channels_enabled_codes( &channels ) & ( 1u << codes[i] ) )
+        {
             continue;
+        }
 
         struct rocketnet_message_record_t record;
         dispatch_record( &record, codes[i], 0, payload, (int) sizeof( payload ) );
@@ -582,8 +588,10 @@ static void test_default_mask_enables_all_eight_types()
     rocketnet_unit_check( channels.enabled_types == (uint32_t) 0xFF );
 
     for ( int type = 0; type < ROCKETNET_CHANNEL_NUM_TYPES; type++ )
+    {
         rocketnet_unit_check( rn_channels_send_check( &channels, type, 0 ) ==
                               ROCKETNET_CHANNEL_SEND_OK );
+    }
     rocketnet_unit_check( dispatch_counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_TYPE_NOT_ENABLED] == 0 );
 
     rn_channels_t narrow;
@@ -706,7 +714,9 @@ static bool schedule_enqueue( rn_channels_t * channels, uint32_t channel, uint32
 {
     uint8_t * data = rn_channels_start( channels, channel, ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED, bytes );
     if ( !data )
+    {
         return false;
+    }
     memset( data, 0x5a, bytes );
 
     return rn_channels_finish( channels, bytes );
@@ -719,7 +729,9 @@ static uint32_t schedule_walk( const rn_channels_t * channels, uint32_t channel,
     const rn_region_t * region = channels->region;
     uint32_t n = 0;
     for ( uint32_t d = region->channel_send[channel].queue_head; d != RN_DESCRIPTOR_NONE && n < max_out; d = region->send_descriptors[d].queue_next )
+    {
         out[n++] = d;
+    }
 
     return n;
 }
