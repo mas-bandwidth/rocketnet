@@ -780,8 +780,7 @@ int rocketnet_server_transport_send_capacity_available( const rocketnet_server_t
 // other is the transport refusing that one frame (an address its socket
 // cannot carry), which the transport counts in its own send_failures,
 // SEND_FAILED. None is ever sent or counted as sent. An uncounted start (the
-// receive path's speculative response frame) is counted by its caller, and
-// only when a response was there to send.
+// receive path's response frame) is counted by its caller.
 static void rocketnet_server_transport_io_count_refused( rocketnet_server_transport_t * transport, uint64_t id )
 {
     if ( id == ROCKETNET_TRANSPORT_PACKET_UNREACHABLE )
@@ -2618,8 +2617,8 @@ void rocketnet_server_transport_begin_message_update( struct rocketnet_server_tr
 
 // proofs/tla/RNDriverSendStaging.tla Update
 // One received datagram, once counted: its shape and mapping, the protocol,
-// the response sealed straight into a send frame, and the payload into this
-// update's batch in arrival order.
+// the response copied into a send frame, and the payload into this update's
+// batch in arrival order.
 // view_index names the packet in a staged transport's receive view, -1 on
 // the batch path.
 // The unit seam: the payload batch's capacity for this update's receive,
@@ -2664,23 +2663,23 @@ static void rocketnet_server_receive_one( struct rocketnet_server_transport_t * 
     {
     };
 
-    // the response frame is reserved before the packet is processed, so its
-    // refusal is counted below only when there was a response to send
-    uint8_t * response = shape_valid ? rocketnet_server_reserve_send_frame( server_transport, from, &frame, false, false ) : NULL;
-    uint8_t response_overflow[ROCKETNET_RECEIVE_CEILING];
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
     int response_bytes = 0;
-
-    if ( response )
-        response += ROCKETNET_FRAME_WIRE_OFFSET;
 
     // proofs/tla/SessionAcks.tla RecvData: the replay check, then the payload opens
 
     const int outcome = rocketnet_server_protocol_process_received( &server_transport->protocol, from, mapping_index,
                                                                     packet_data, packet_bytes,
                                                                     current_timestamp, current_time,
-                                                                    response ? response : response_overflow, &response_bytes,
+                                                                    response, &response_bytes,
                                                                     opened, ROCKETNET_RECEIVE_PAYLOAD_BYTES,
                                                                     &payload, &payload_bytes, &payload_client_index );
+
+    // a send frame is reserved only for a response, so a packet with none
+    // takes no send staging; from is the receive view's own entry, which the
+    // xdp transport reads as the frame the response answers
+    if ( response_bytes > 0 )
+        rocketnet_server_reserve_send_frame( server_transport, from, &frame, false, false );
 
     // a packet that opened under a connection's keys teaches a staged
     // transport its link-layer source (the xdp reply-MAC rule, TRANSPORTS.md);
@@ -2694,12 +2693,10 @@ static void rocketnet_server_receive_one( struct rocketnet_server_transport_t * 
 
     frame.client_index = rocketnet_server_wire_client_after( server_transport, wire_client_before, mapping_index, outcome );
 
-    if ( response )
+    if ( frame.data )
     {
-        if ( response_bytes > 0 )
-            rocketnet_server_commit_send_frame( server_transport, &frame, response_bytes );
-        else
-            rocketnet_server_abort_send_frame( server_transport, &frame );
+        memcpy( frame.data + ROCKETNET_FRAME_WIRE_OFFSET, response, (size_t) response_bytes );
+        rocketnet_server_commit_send_frame( server_transport, &frame, response_bytes );
     }
     else if ( response_bytes > 0 )
         rocketnet_server_transport_io_count_refused( server_transport, frame.packet_id );
@@ -2781,7 +2778,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
 
     server_transport->protocol.acks->num_acked = 0;
 
-    // receive and process, responses sealed straight into send frames
+    // receive and process, responses copied into send frames
 
     if ( rocketnet_server_transport_staged( server_transport ) )
     {
