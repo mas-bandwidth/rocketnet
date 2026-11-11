@@ -2260,10 +2260,6 @@ bool rocketnet_server_gso_test_worker_handoff()
     return valid;
 }
 
-// A refused sendmmsg, stepped on this thread through the send-failure seam
-// with no socket and no thread: a full socket drops the rest of the batch,
-// any other errno drops the one refused message and sends the rest in
-// order, as the portable batch and the client gso do.
 // The drain's read budget, on the fixture with the receive seam: a source
 // answering full batches of one kind of discard (a zero-length datagram, a
 // refused source, a datagram below the smallest server packet) far past the
