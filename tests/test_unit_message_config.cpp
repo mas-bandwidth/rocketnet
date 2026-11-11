@@ -1201,6 +1201,72 @@ static void test_message_config_send_store_one_mib_accepted()
 #endif // #if ROCKETNET_DEV
 }
 
+// The smallest send store the table accepts (12288 bytes) with the default
+// 1 MiB max_message_bytes carries every size, each way: a message of 1152
+// bytes takes a store chunk, 1153 and the maximal message take a span
+// (sdk/rocketnet_allocator.h:313-315). Validation alone accepted this config
+// once the pre-span floor went; here the bytes cross the pair and arrive
+// equal to the bytes sent.
+
+#if ROCKETNET_DEV
+static void test_message_config_minimal_send_store_carries_maximal_message()
+{
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    config.send_message_buffer_bytes = 12288;
+    check( config.max_message_bytes == ROCKETNET_MAX_MESSAGE_BYTES );
+    check( rocketnet_message_validate_config( &config ) );
+
+    const int32_t kbps = 100000;                                // the store is the subject, not the rate: a maximal message crosses in about a tenth of a second
+
+    mc_pair_t pair;
+    mc_pair_setup( &pair, 1, &config, kbps, kbps );
+    mc_step( &pair );                                           // the server's update observes the slot's connection
+
+    const int sizes[] = { 1152, 1153, ROCKETNET_MAX_MESSAGE_BYTES };
+    std::vector<uint8_t> data( (size_t) ROCKETNET_MAX_MESSAGE_BYTES );
+
+    for ( int s = 0; s < (int) ( sizeof( sizes ) / sizeof( sizes[0] ) ); s++ )
+    {
+        const int bytes = sizes[s];
+        const uint32_t client_id = 100 + (uint32_t) s;
+        const uint32_t server_id = 200 + (uint32_t) s;
+
+        mc_fill( data.data(), client_id, (uint32_t) bytes );
+        check( rocketnet_message_client_send( pair.clients[0], 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, data.data(), bytes ) != 0 );
+        mc_fill( data.data(), server_id, (uint32_t) bytes );
+        check( rocketnet_message_server_send( pair.server, 0, 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, data.data(), bytes ) != 0 );
+
+        std::vector<mc_received_t> server_got;
+        std::vector<mc_received_t> client_got;
+        for ( int i = 0; i < 1000 && ( server_got.empty() || client_got.empty() ); i++ )
+        {
+            mc_step( &pair, &server_got, &client_got );
+        }
+
+        if ( server_got.size() != 1 || client_got.size() != 1 )
+        {
+            printf( "\nminimal send store: %d bytes, server got %d, client got %d\n", bytes, (int) server_got.size(), (int) client_got.size() );
+        }
+        check( server_got.size() == 1 );
+        check( client_got.size() == 1 );
+
+        uint32_t id = 0;
+        check( server_got[0].bytes.size() == (size_t) bytes );
+        check( mc_verify( server_got[0].bytes, &id ) );
+        check( id == client_id );
+        check( client_got[0].bytes.size() == (size_t) bytes );
+        check( mc_verify( client_got[0].bytes, &id ) );
+        check( id == server_id );
+    }
+
+    check( rocketnet_message_client_disconnect_reason( pair.clients[0] ) == ROCKETNET_DISCONNECT_REASON_NONE );
+    check( rocketnet_message_server_disconnect_reason( pair.server, 0 ) == ROCKETNET_DISCONNECT_REASON_NONE );
+
+    mc_pair_teardown( &pair );
+}
+#endif // #if ROCKETNET_DEV
+
 #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_message_config_mismatch_ends_both_connections );
 REGISTER_UNIT_TEST( test_message_config_equal_connects_and_verifies );
@@ -1215,3 +1281,6 @@ REGISTER_UNIT_TEST( test_message_config_resend_delay_max_zero_refused );
 REGISTER_UNIT_TEST( test_message_config_resend_delay_cross_rule_refused );
 REGISTER_UNIT_TEST( test_message_config_reserve_past_32_bits_refused_by_validate_and_create );
 REGISTER_UNIT_TEST( test_message_config_send_store_one_mib_accepted );
+#if ROCKETNET_DEV
+REGISTER_UNIT_TEST( test_message_config_minimal_send_store_carries_maximal_message );
+#endif // #if ROCKETNET_DEV
