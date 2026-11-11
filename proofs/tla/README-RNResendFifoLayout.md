@@ -17,7 +17,8 @@ see.
 | `hd["c"]`, `tl["c"]` | `ack->chunk_head`, `ack->chunk_tail` (block chunks) |
 | `cnt` | `ack->resend_count` |
 | `mk["s"]`, `mk["c"]` | `ack->resend_sent`, `ack->chunk_sent`: the first slot of the class on the wire, or `RN_RESEND_NONE` |
-| `sent[s]` | ghost: the slot's number is on the wire (`last_send >= 0`) |
+| `sent[s]` | ghost: the slot's number is on the wire: `last_send` is not `RN_SEND_NUMBER_NEVER_SENT` (a send time, or a refused resend's due-now sentinel) |
+| `order` | ghost: the slots on the wire in order of last send, a refused resend's sentinel below every send time |
 | `isChunk[s]` | `rn_window_ack_slot_is_chunk( ack, s )`, read off the slot's descriptor now |
 | `seq[c]` | ghost: the abstract sequence of class `c` |
 
@@ -49,14 +50,21 @@ Functions in `sdk/rocketnet_window_ack.cpp`.
   the new entry is last, the count; then the class's mark set to the slot
   when the class had none. The number is on the wire.
 - **`PushHead(s)`**: `rn_resend_fifo_push_head` from
-  `rn_window_ack_packet_failed`: `insert_after( NONE, s )`. The number is
-  not on the wire (never sent, or a refused resend at its sentinel).
+  `rn_window_ack_packet_failed` for a refused first send:
+  `insert_after( NONE, s )`. The number stays never sent (guard `~sent[s]`).
+- **`PushMark(s)`**: `rn_resend_fifo_push_mark` from
+  `rn_window_ack_packet_failed` for a refused resend: unlink, then
+  `insert_after` the mark's prev (the class's tail when it has no mark), then
+  the mark is the slot. The number stays on the wire, first in `order`: its
+  due-now sentinel is below every send time, and of two refused in one packet
+  the code's reverse loop leaves the first first.
 - **`Park(after, s)`**: `rn_window_ack_park` from `rn_ordered_write`
   (`sdk/rocketnet_channel.cpp`), with the caller's contract: `after` is
   `NONE` or linked in `s`'s class, and is not `s` (both asserted there), and
   is not on the wire (the walk's last never-sent number; stated in the header,
   not asserted, as `test_resend_fifo_corrupt_link_is_bounded` parks outside
-  it). `s` is never sent. The mark is untouched.
+  it; `ParkContract = FALSE` drops it, witness 9). `s` is never sent. The
+  mark is untouched.
 - **`SetClass(s)`**: the environment, a descriptor freed or attached.
 
 ## Invariants
@@ -74,6 +82,9 @@ Functions in `sdk/rocketnet_window_ack.cpp`.
 - **`MarkMatch`**: each class's mark is its first number on the wire (`NONE`
   when it has none), so `rn_ordered_walk` from the mark sees exactly the
   numbers on the wire, and from the head to the mark exactly the others.
+- **`Ordered`**: each class's numbers on the wire are in order of last send
+  (`order`), so the walk from the mark may stop at the first one not yet due.
+  Checked in `MCRNResendFifoLayout.cfg`.
 
 ## The instance
 
