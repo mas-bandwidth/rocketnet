@@ -16,6 +16,10 @@
 #ifndef ROCKETNET_H
 #define ROCKETNET_H
 
+// The preprocessor groups below are indented by hand, one level per #if,
+// which the format configuration cannot express (.clang-format).
+// clang-format off
+
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
@@ -23,7 +27,7 @@
 /// Disable the harmless MSVC C4514 warning for unused inline functions.
 
 #if defined( _MSC_VER )
-#pragma warning( disable : 4514 )
+    #pragma warning( disable : 4514 )
 #endif // #if defined( _MSC_VER )
 
 /// ROCKETNET_DEV is 1 by default: a development build. Development builds
@@ -35,7 +39,7 @@
 /// test packet filter. Portable clients and servers are available in both modes.
 
 #if !defined( ROCKETNET_DEV )
-#define ROCKETNET_DEV 1
+    #define ROCKETNET_DEV 1
 #endif // !defined( ROCKETNET_DEV )
 
 #if !ROCKETNET_DEV
@@ -43,30 +47,37 @@
     /// The SDK version as text. Development builds use "dev" and 255 for each
     /// numeric component.
 
-#define ROCKETNET_VERSION_FULL                    "v1.0.1"
+    #define ROCKETNET_VERSION_FULL                         "v1.0.1"
 
     /// The major component of the SDK version.
 
-#define ROCKETNET_VERSION_MAJOR                                    1
+    #define ROCKETNET_VERSION_MAJOR                        1
 
     /// The minor component of the SDK version.
 
-#define ROCKETNET_VERSION_MINOR                                    0
+    #define ROCKETNET_VERSION_MINOR                        0
 
     /// The patch component of the SDK version.
 
-#define ROCKETNET_VERSION_PATCH                                    1
+    #define ROCKETNET_VERSION_PATCH                        1
 
 #else // !ROCKETNET_DEV
 
     /// The SDK version as text: "dev" in a development build.
-#define ROCKETNET_VERSION_FULL                                 "dev"
+
+    #define ROCKETNET_VERSION_FULL                         "dev"
+
     /// The major component of the SDK version: 255 in a development build.
-#define ROCKETNET_VERSION_MAJOR                                  255
+
+    #define ROCKETNET_VERSION_MAJOR                        255
+
     /// The minor component of the SDK version: 255 in a development build.
-#define ROCKETNET_VERSION_MINOR                                  255
+
+    #define ROCKETNET_VERSION_MINOR                        255
+
     /// The patch component of the SDK version: 255 in a development build.
-#define ROCKETNET_VERSION_PATCH                                  255
+
+    #define ROCKETNET_VERSION_PATCH                        255
 
 #endif // !ROCKETNET_DEV
 
@@ -80,24 +91,24 @@
 /// define nothing. ROCKETNET_BUILDING_DLL is for library builds.
 
 #if defined( _WIN32 ) && defined( ROCKETNET_BUILDING_DLL )
-#define ROCKETNET_EXPORT __declspec(dllexport)
+    #define ROCKETNET_EXPORT __declspec(dllexport)
 #elif defined( _WIN32 ) && defined( ROCKETNET_SHARED )
-#define ROCKETNET_EXPORT __declspec(dllimport)
+    #define ROCKETNET_EXPORT __declspec(dllimport)
 #elif ( defined( ROCKETNET_SHARED ) || defined( ROCKETNET_BUILDING_DLL ) ) && ( defined( __GNUC__ ) || defined( __clang__ ) )
-#define ROCKETNET_EXPORT __attribute__((visibility("default")))
+    #define ROCKETNET_EXPORT __attribute__((visibility("default")))
 #else
     /// Marks each library function for export or import. Empty in a static
     /// build.
-#define ROCKETNET_EXPORT
+    #define ROCKETNET_EXPORT
 #endif // #if defined( _WIN32 ) && defined( ROCKETNET_BUILDING_DLL )
 
 #ifndef ROCKETNET_MAX_CLIENTS
-/// Maximum clients per server: 1000 unless the build defines another value
-/// from 512 .. 32768 (-DROCKETNET_MAX_CLIENTS=10000, or the CMake option of
-/// the same name). The limits that serve every client derive from it
-/// (BUILDING.md, "Maximum clients"). Build the library and every file that
-/// includes this header with the same value.
-#define ROCKETNET_MAX_CLIENTS                                       1000
+    /// Maximum clients per server: 1000 unless the build defines another value
+    /// from 512 .. 32768 (-DROCKETNET_MAX_CLIENTS=10000, or the CMake option of
+    /// the same name). The limits that serve every client derive from it
+    /// (BUILDING.md, "Maximum clients"). Build the library and every file that
+    /// includes this header with the same value.
+    #define ROCKETNET_MAX_CLIENTS                                   1000
 #endif // #ifndef ROCKETNET_MAX_CLIENTS
 
 // The bounds are the transports' fixed geometry: below 512 a server's
@@ -105,7 +116,7 @@
 // and above 32768 the io_uring queues cannot serve every client.
 
 #if ROCKETNET_MAX_CLIENTS < 512 || ROCKETNET_MAX_CLIENTS > 32768
-#error ROCKETNET_MAX_CLIENTS must be between 512 and 32768
+    #error ROCKETNET_MAX_CLIENTS must be between 512 and 32768
 #endif // #if ROCKETNET_MAX_CLIENTS < 512 || ROCKETNET_MAX_CLIENTS > 32768
 
 /// A destination ID is a uint64_t client index. This bit is reserved;
@@ -180,14 +191,14 @@
 #define ROCKETNET_ALLOCATION_ALIGNMENT                     64
 
 #ifndef ROCKETNET_MAX_CHANNELS
-/// Maximum channels: 32 unless the build defines another value from
-/// 1 .. 65536 before it includes this header. Build the library and every
-/// file that includes this header with the same value.
-#define ROCKETNET_MAX_CHANNELS                             32
+    /// Maximum channels: 32 unless the build defines another value from
+    /// 1 .. 65536 before it includes this header. Build the library and every
+    /// file that includes this header with the same value.
+    #define ROCKETNET_MAX_CHANNELS                         32
 #endif // #ifndef ROCKETNET_MAX_CHANNELS
 
 #if ROCKETNET_MAX_CHANNELS < 1 || ROCKETNET_MAX_CHANNELS > 65536
-#error ROCKETNET_MAX_CHANNELS must be between 1 and 65536
+    #error ROCKETNET_MAX_CHANNELS must be between 1 and 65536
 #endif // #if ROCKETNET_MAX_CHANNELS < 1 || ROCKETNET_MAX_CHANNELS > 65536
 
 /// The default client to server send budget, in kbps.
@@ -414,10 +425,10 @@ enum rocketnet_status_t
 /// receive an integer outside these named levels.
 
 #if defined( __cplusplus ) && __cplusplus >= 201103L
-#if defined( __clang__ )
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wc++98-compat"
-#endif // #if defined( __clang__ )
+    #if defined( __clang__ )
+        #pragma clang diagnostic push
+        #pragma clang diagnostic ignored "-Wc++98-compat"
+    #endif // #if defined( __clang__ )
 enum rocketnet_log_level_t : int
 #else // #if defined( __cplusplus ) && __cplusplus >= 201103L
 enum rocketnet_log_level_t
@@ -449,7 +460,7 @@ enum rocketnet_log_level_t
     ROCKETNET_LOG_LEVEL_SPAM = 5
 };
 #if defined( __cplusplus ) && __cplusplus >= 201103L && defined( __clang__ )
-#pragma clang diagnostic pop
+    #pragma clang diagnostic pop
 #endif // #if defined( __cplusplus ) && __cplusplus >= 201103L && defined( __clang__ )
 
 /// The address family of an endpoint.
@@ -474,10 +485,10 @@ enum rocketnet_address_type_t
 /// Other types accept any channel value, ignore it and use channel 0.
 
 #if defined( __cplusplus ) && __cplusplus >= 201103L
-#if defined( __clang__ )
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wc++98-compat"
-#endif // #if defined( __clang__ )
+    #if defined( __clang__ )
+        #pragma clang diagnostic push
+        #pragma clang diagnostic ignored "-Wc++98-compat"
+    #endif // #if defined( __clang__ )
 enum rocketnet_reliability_t : int
 #else // #if defined( __cplusplus ) && __cplusplus >= 201103L
 enum rocketnet_reliability_t
@@ -522,7 +533,7 @@ enum rocketnet_reliability_t
     ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT = 7
 };
 #if defined( __cplusplus ) && __cplusplus >= 201103L && defined( __clang__ )
-#pragma clang diagnostic pop
+    #pragma clang diagnostic pop
 #endif // #if defined( __cplusplus ) && __cplusplus >= 201103L && defined( __clang__ )
 
 /// A receipt's outcome, the status field of struct rocketnet_receipt_t.
@@ -929,31 +940,31 @@ struct rocketnet_server_client_stats_t
 /// Every public enum has the same size as int.
 
 #if defined( __cplusplus ) && __cplusplus >= 201103L
-#if defined( __clang__ )
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wunknown-warning-option"
-#pragma clang diagnostic ignored "-Wc++98-compat"
-#endif // #if defined( __clang__ )
+    #if defined( __clang__ )
+        #pragma clang diagnostic push
+        #pragma clang diagnostic ignored "-Wunknown-warning-option"
+        #pragma clang diagnostic ignored "-Wc++98-compat"
+    #endif // #if defined( __clang__ )
 static_assert( sizeof( enum rocketnet_status_t ) == sizeof( int ) && sizeof( enum rocketnet_log_level_t ) == sizeof( int ) &&
                    sizeof( enum rocketnet_reliability_t ) == sizeof( int ) && sizeof( enum rocketnet_receipt_status_t ) == sizeof( int ) &&
                    sizeof( enum rocketnet_disconnect_reason_t ) == sizeof( int ) && sizeof( enum rocketnet_client_state_t ) == sizeof( int ),
                "RocketNet's public enums are the size of int: build without -fshort-enums" );
-#if defined( __clang__ )
-#pragma clang diagnostic pop
-#endif // #if defined( __clang__ )
+    #if defined( __clang__ )
+        #pragma clang diagnostic pop
+    #endif // #if defined( __clang__ )
 #elif defined( __STDC_VERSION__ ) && __STDC_VERSION__ >= 201112L
-#if defined( __clang__ )
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wunknown-warning-option"
-#pragma clang diagnostic ignored "-Wpre-c11-compat"
-#endif // #if defined( __clang__ )
+    #if defined( __clang__ )
+        #pragma clang diagnostic push
+        #pragma clang diagnostic ignored "-Wunknown-warning-option"
+        #pragma clang diagnostic ignored "-Wpre-c11-compat"
+    #endif // #if defined( __clang__ )
 _Static_assert( sizeof( enum rocketnet_status_t ) == sizeof( int ) && sizeof( enum rocketnet_log_level_t ) == sizeof( int ) &&
                     sizeof( enum rocketnet_reliability_t ) == sizeof( int ) && sizeof( enum rocketnet_receipt_status_t ) == sizeof( int ) &&
                     sizeof( enum rocketnet_disconnect_reason_t ) == sizeof( int ) && sizeof( enum rocketnet_client_state_t ) == sizeof( int ),
                 "RocketNet's public enums are the size of int: build without -fshort-enums" );
-#if defined( __clang__ )
-#pragma clang diagnostic pop
-#endif // #if defined( __clang__ )
+    #if defined( __clang__ )
+        #pragma clang diagnostic pop
+    #endif // #if defined( __clang__ )
 #endif // #if defined( __cplusplus ) && __cplusplus >= 201103L
 
 /// An opaque client. rocketnet_client_create makes one and
@@ -2096,52 +2107,52 @@ ROCKETNET_EXPORT size_t rocketnet_client_required_memory( const struct rocketnet
 
 #if ROCKETNET_DEV
 
-/// The public development backend key. Use it to initialize backend_public_key.
-///
-///     static const uint8_t dev_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES] =
-///         ROCKETNET_DEV_BACKEND_PUBLIC_KEY;
-///     memcpy( config.backend_public_key, dev_key, sizeof( dev_key ) );
-///
-/// A server using this key accepts development tokens.
-/// A production server refuses it with ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION.
+    /// The public development backend key. Use it to initialize backend_public_key.
+    ///
+    ///     static const uint8_t dev_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES] =
+    ///         ROCKETNET_DEV_BACKEND_PUBLIC_KEY;
+    ///     memcpy( config.backend_public_key, dev_key, sizeof( dev_key ) );
+    ///
+    /// A server using this key accepts development tokens.
+    /// A production server refuses it with ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION.
 
-#define ROCKETNET_DEV_BACKEND_PUBLIC_KEY { 0xb0, 0xab, 0x03, 0xb3, 0xe2, 0x6e, 0xf1, 0x7c, 0x72, 0xe3, 0xbd, 0x99, 0x29, 0xa5, 0xb4, 0xbf, \
-                                           0x48, 0xbd, 0xba, 0x50, 0x57, 0x3f, 0x1b, 0x8d, 0x08, 0x4a, 0x08, 0xd8, 0x58, 0xbd, 0x24, 0x2c }
+    #define ROCKETNET_DEV_BACKEND_PUBLIC_KEY { 0xb0, 0xab, 0x03, 0xb3, 0xe2, 0x6e, 0xf1, 0x7c, 0x72, 0xe3, 0xbd, 0x99, 0x29, 0xa5, 0xb4, 0xbf, \
+                                               0x48, 0xbd, 0xba, 0x50, 0x57, 0x3f, 0x1b, 0x8d, 0x08, 0x4a, 0x08, 0xd8, 0x58, 0xbd, 0x24, 0x2c }
 
-/// The published development backend secret key, the Ed25519 secret of
-/// ROCKETNET_DEV_BACKEND_PUBLIC_KEY (its last 32 bytes are that public key).
-/// Initialize a uint8_t[ROCKETNET_BACKEND_SECRET_KEY_BYTES] with it and pass
-/// it as backend_secret_key to rocketnet_create_connect_token to mint the
-/// tokens rocketnet_create_dev_connect_token mints, from your own backend code.
-///
-/// It is printed in the standard, so a token signed with it proves nothing.
-/// A production build compiles it out and refuses it.
+    /// The published development backend secret key, the Ed25519 secret of
+    /// ROCKETNET_DEV_BACKEND_PUBLIC_KEY (its last 32 bytes are that public key).
+    /// Initialize a uint8_t[ROCKETNET_BACKEND_SECRET_KEY_BYTES] with it and pass
+    /// it as backend_secret_key to rocketnet_create_connect_token to mint the
+    /// tokens rocketnet_create_dev_connect_token mints, from your own backend code.
+    ///
+    /// It is printed in the standard, so a token signed with it proves nothing.
+    /// A production build compiles it out and refuses it.
 
-#define ROCKETNET_DEV_BACKEND_SECRET_KEY { 0x75, 0x29, 0x02, 0x15, 0xe1, 0xff, 0x4d, 0xf2, 0x09, 0x92, 0x57, 0x8a, 0x22, 0x3c, 0x7c, 0xd4, \
-                                           0x63, 0xb9, 0xa2, 0x7c, 0xf8, 0x3a, 0xa7, 0x1c, 0x7a, 0x16, 0x93, 0x1c, 0x01, 0x9b, 0x7c, 0x30, \
-                                           0xb0, 0xab, 0x03, 0xb3, 0xe2, 0x6e, 0xf1, 0x7c, 0x72, 0xe3, 0xbd, 0x99, 0x29, 0xa5, 0xb4, 0xbf, \
-                                           0x48, 0xbd, 0xba, 0x50, 0x57, 0x3f, 0x1b, 0x8d, 0x08, 0x4a, 0x08, 0xd8, 0x58, 0xbd, 0x24, 0x2c }
+    #define ROCKETNET_DEV_BACKEND_SECRET_KEY { 0x75, 0x29, 0x02, 0x15, 0xe1, 0xff, 0x4d, 0xf2, 0x09, 0x92, 0x57, 0x8a, 0x22, 0x3c, 0x7c, 0xd4, \
+                                               0x63, 0xb9, 0xa2, 0x7c, 0xf8, 0x3a, 0xa7, 0x1c, 0x7a, 0x16, 0x93, 0x1c, 0x01, 0x9b, 0x7c, 0x30, \
+                                               0xb0, 0xab, 0x03, 0xb3, 0xe2, 0x6e, 0xf1, 0x7c, 0x72, 0xe3, 0xbd, 0x99, 0x29, 0xa5, 0xb4, 0xbf, \
+                                               0x48, 0xbd, 0xba, 0x50, 0x57, 0x3f, 0x1b, 0x8d, 0x08, 0x4a, 0x08, 0xd8, 0x58, 0xbd, 0x24, 0x2c }
 
-/// The published development server public key: the X25519 public key of
-/// ROCKETNET_DEV_SERVER_SECRET_KEY. A backend under test that seals tokens
-/// to a fixed key passes it as server_public_key.
+    /// The published development server public key: the X25519 public key of
+    /// ROCKETNET_DEV_SERVER_SECRET_KEY. A backend under test that seals tokens
+    /// to a fixed key passes it as server_public_key.
 
-#define ROCKETNET_DEV_SERVER_PUBLIC_KEY { 0x3d, 0x24, 0x90, 0x88, 0x9d, 0x37, 0x4c, 0x29, 0x6f, 0xab, 0x1d, 0x57, 0x70, 0xcb, 0x71, 0x47, \
-                                          0x6a, 0x06, 0xf7, 0x4e, 0xf2, 0xf2, 0x54, 0x0c, 0xf2, 0x21, 0x5f, 0x76, 0x14, 0xf4, 0x80, 0x1c }
+    #define ROCKETNET_DEV_SERVER_PUBLIC_KEY  { 0x3d, 0x24, 0x90, 0x88, 0x9d, 0x37, 0x4c, 0x29, 0x6f, 0xab, 0x1d, 0x57, 0x70, 0xcb, 0x71, 0x47, \
+                                               0x6a, 0x06, 0xf7, 0x4e, 0xf2, 0xf2, 0x54, 0x0c, 0xf2, 0x21, 0x5f, 0x76, 0x14, 0xf4, 0x80, 0x1c }
 
-/// The published development server secret key. Copy it into the server
-/// config's server_secret_key for a server whose public key is
-/// ROCKETNET_DEV_SERVER_PUBLIC_KEY, so a backend under test can seal tokens
-/// to a key known before the server starts.
-///
-/// It is printed in the standard, so anyone can open a token sealed to it. A
-/// production build compiles it out, refuses it at server start with
-/// ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION, and refuses a token sealed to its
-/// public half at client connect with
-/// ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION.
+    /// The published development server secret key. Copy it into the server
+    /// config's server_secret_key for a server whose public key is
+    /// ROCKETNET_DEV_SERVER_PUBLIC_KEY, so a backend under test can seal tokens
+    /// to a key known before the server starts.
+    ///
+    /// It is printed in the standard, so anyone can open a token sealed to it. A
+    /// production build compiles it out, refuses it at server start with
+    /// ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION, and refuses a token sealed to its
+    /// public half at client connect with
+    /// ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION.
 
-#define ROCKETNET_DEV_SERVER_SECRET_KEY { 0x6f, 0xfb, 0x8f, 0x73, 0x37, 0xec, 0x37, 0x76, 0x97, 0xf5, 0x68, 0xde, 0x31, 0x18, 0xd8, 0x39, \
-                                          0x59, 0x56, 0x0b, 0x25, 0x92, 0x8d, 0x22, 0x70, 0x7b, 0xa2, 0x29, 0x75, 0x89, 0xd0, 0x8b, 0x97 }
+    #define ROCKETNET_DEV_SERVER_SECRET_KEY  { 0x6f, 0xfb, 0x8f, 0x73, 0x37, 0xec, 0x37, 0x76, 0x97, 0xf5, 0x68, 0xde, 0x31, 0x18, 0xd8, 0x39, \
+                                               0x59, 0x56, 0x0b, 0x25, 0x92, 0x8d, 0x22, 0x70, 0x7b, 0xa2, 0x29, 0x75, 0x89, 0xd0, 0x8b, 0x97 }
 
 /// Writes a development token for rocketnet_client_connect.
 /// The output buffer must hold ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES.
@@ -3255,8 +3266,10 @@ ROCKETNET_EXPORT void rocketnet_server_client_stats( const struct rocketnet_serv
 ///     while ( ( batch = rocketnet_server_receive_messages( server ) ) )
 ///     {
 ///         for ( int i = 0; i < batch->num_messages; i++ )
+///         {
 ///             handle( batch->client_index[i], batch->data[i],
 ///                     batch->bytes[i] );
+///         }
 ///     }
 ///
 /// The batch and its data remain valid until the next receive or update on
@@ -3296,5 +3309,7 @@ struct rocketnet_message_batch_t
 #ifdef __cplusplus
 }
 #endif // #ifdef __cplusplus
+
+// clang-format on
 
 #endif // ROCKETNET_H

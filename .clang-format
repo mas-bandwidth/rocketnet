@@ -34,7 +34,7 @@
 #   sizeof is written tight, `sizeof(buffer)` (netcode.c:130); no sizeof-only paren option, SpacesInParensOptions Other false costs 3552/7739
 #   some calls and groupings are tight, `netcode_generate_nonce(nonce)` (netcode.c:5594); the reference mixes forms, Other false costs 3552/7739
 #   function-pointer declarators are tight, `void (*f)( ... )` (netcode.c:103); Other spaces declarator parens with call parens, no separate option
-#   preprocessor lines are indented by hand, `    #if` (netcode.c:93); BeforeHash and AfterHash indent by depth everywhere and cost 796/1827 and 833/1903
+#   preprocessor lines are indented by hand, `    #if` (netcode.c:93); BeforeHash and AfterHash indent by depth everywhere and cost 796/1827 and 833/1903; with IndentPPDirectives None they are pulled to column 0, so a preprocessor group indented by hand holds only inside a clang-format off region; sdk/rocketnet.h, whose groups are indented one level per #if with their doc comments (an include guard after #pragma once is not seen as a guard, so BeforeHash would also indent the whole header), sits between one clang-format off and on pair
 #   preprocessor parens are tight, `#if defined(_WIN32)`, `#pragma warning(disable:4996)` (next.h:80, netcode.c:36); SpacesInParens has no preprocessor-only switch
 #   short unions, enums and if/else blocks sit on one line, `union { ... } data;` (next_address.h:17); Allman wrapping splits them, custom wrapping costs 801/1625
 #   byte tables keep several values per line (netcode.c:5792); a braced list ending in a comma is broken one element per line, no option keeps it
