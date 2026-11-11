@@ -10045,13 +10045,14 @@ static void rocketnet_xdp_keep_alive_before_first_payloads( bool ipv6, const cha
 // netlink sockets, so it takes the kernel's answers only if they are queued
 // when it reads them. Against a real kernel: the server starts with no
 // default route on its interface; a default route through the far end
-// appears, with a permanent neighbour entry, and then that entry's MAC
-// changes. The server takes each gateway within three refresh periods
-// (ROCKETNET_XDP_GATEWAY_REFRESH_SECONDS, five seconds), which its log says.
-// The case passes on a blocking refresh too: it shows the refresh still
-// follows the gateway, not that it never blocks (the unit case
+// appears, with a permanent neighbour entry; then that entry's MAC
+// changes; then the default route moves to another gateway IP while the old
+// gateway's entry stays usable. The server takes each gateway within three
+// refresh periods (ROCKETNET_XDP_GATEWAY_REFRESH_SECONDS, five seconds),
+// which its log says. The case passes on a blocking refresh too: it shows the
+// refresh still follows the gateway, not that it never blocks (the unit case
 // test_xdp_transport_gateway_netlink_refresh_never_blocks shows that). The
-// longest server update across both changes is printed, not checked. The
+// longest server update across the changes is printed, not checked. The
 // route takes a metric of its own, so it adds to a default route the host
 // may have rather than replacing it, and both go with the pair.
 
@@ -10060,11 +10061,13 @@ static void rocketnet_xdp_gateway_change_while_serving( const char * case_name )
     char server_address[128];
     struct rocketnet_server_transport_t * server = rocketnet_xdp_veth_start( false, case_name, server_address, sizeof( server_address ) );
 
-    static const char * const changes[2][2] = {
+    static const char * const changes[3][2] = {
         { "ip route add default via 10.77.2.2 dev " ROCKETNET_XDP_VETH_NEAR " metric 4242 && ip neigh replace 10.77.2.2 lladdr 02:00:00:00:77:a1 dev " ROCKETNET_XDP_VETH_NEAR " nud permanent",
           "ipv4 gateway ethernet address is now 02.00.00.00.77.a1" },
         { "ip neigh replace 10.77.2.2 lladdr 02:00:00:00:77:a2 dev " ROCKETNET_XDP_VETH_NEAR " nud permanent",
           "ipv4 gateway ethernet address changed from 02.00.00.00.77.a1 to 02.00.00.00.77.a2" },
+        { "ip neigh replace 10.77.2.3 lladdr 02:00:00:00:77:a3 dev " ROCKETNET_XDP_VETH_NEAR " nud permanent && ip route replace default via 10.77.2.3 dev " ROCKETNET_XDP_VETH_NEAR " metric 4242",
+          "ipv4 gateway ethernet address changed from 02.00.00.00.77.a2 to 02.00.00.00.77.a3" },
     };
 
     rocketnet_test_captured_log[0] = '\0';
@@ -10074,8 +10077,8 @@ static void rocketnet_xdp_gateway_change_while_serving( const char * case_name )
 
     double longest = 0.0;
     int updates = 0;
-    bool taken[2] = { false, false };
-    for ( int change = 0; change < 2; change++ )
+    bool taken[3] = { false, false, false };
+    for ( int change = 0; change < 3; change++ )
     {
         rocketnet_xdp_veth_run( changes[change][0] );
 
@@ -10096,13 +10099,15 @@ static void rocketnet_xdp_gateway_change_while_serving( const char * case_name )
     rocketnet_log_function( rocketnet_test_suite_log_function, NULL );
 
     printf( "%s: longest server update %.6f seconds over %d updates\n", case_name, longest, updates );
-    if ( !taken[0] || !taken[1] )
+    if ( !taken[0] || !taken[1] || !taken[2] )
     {
-        printf( "%s: FAILED: the server took the new default route's gateway %s, the changed neighbour MAC %s\n", case_name, taken[0] ? "yes" : "no", taken[1] ? "yes" : "no" );
+        printf( "%s: FAILED: the server took the new default route's gateway %s, the changed neighbour MAC %s, the new gateway IP %s\n", case_name,
+                taken[0] ? "yes" : "no", taken[1] ? "yes" : "no", taken[2] ? "yes" : "no" );
     }
 
     rocketnet_check( taken[0] );
     rocketnet_check( taken[1] );
+    rocketnet_check( taken[2] );
 
     rocketnet_xdp_veth_teardown();
 }

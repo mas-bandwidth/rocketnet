@@ -29,6 +29,7 @@
 #include <errno.h>
 #include <limits.h>
 #include <string.h>
+#include <utility>
 #include <vector>
 #include <netinet/in.h>
 #include <linux/netlink.h>
@@ -956,9 +957,50 @@ struct fake_netlink_t
     socklen_t local_bytes = sizeof( struct sockaddr_nl );
     bool nonblocking = false;                       // the last socket opened with SOCK_NONBLOCK
     int blocking_receives = 0;                      // reads that would wait for the kernel: a blocking socket, no MSG_DONTWAIT
+
+    // kernel: each request is answered from the tables below, as the kernel
+    // answers it, instead of from the script: the IPv4 default route through
+    // route_gateway, and a stale (usable) neighbour entry for each of
+    // neighbors, any other entry ENOENT
+    bool kernel = false;
+    const uint8_t * route_gateway = NULL;
+    std::vector<std::pair<const uint8_t *, const uint8_t *>> neighbors;    // IPv4 address, MAC
+    size_t answered = 0;
 };
 
 static fake_netlink_t * fake_netlink = NULL;
+
+static netlink_datagram_t fake_kernel_answer( const netlink_datagram_t & request )
+{
+    netlink_datagram_t answer;
+    struct nlmsghdr header;
+    memcpy( &header, request.bytes.data(), sizeof( header ) );
+    if ( header.nlmsg_type == RTM_GETROUTE )
+    {
+        netlink_route_t route;
+        route.gateway = fake_netlink->route_gateway;
+        netlink_route( &answer, route );
+        netlink_done( &answer );
+        return answer;
+    }
+
+    const uint8_t * asked = request.bytes.data() + NLMSG_SPACE( sizeof( struct ndmsg ) ) + RTA_LENGTH( 0 );
+    for ( size_t i = 0; i < fake_netlink->neighbors.size(); i++ )
+    {
+        if ( memcmp( asked, fake_netlink->neighbors[i].first, 4 ) == 0 )
+        {
+            netlink_neighbor_t neighbor;
+            neighbor.state = NUD_STALE;
+            neighbor.destination = fake_netlink->neighbors[i].first;
+            neighbor.lladdr = fake_netlink->neighbors[i].second;
+            netlink_neighbor( &answer, neighbor );
+            return answer;
+        }
+    }
+
+    netlink_error( &answer, -ENOENT );
+    return answer;
+}
 
 static int fake_netlink_socket( int, int type, int )
 {
@@ -1003,15 +1045,21 @@ static ssize_t fake_netlink_recvmsg( int, struct msghdr * message, int flags )
         fake_netlink->blocking_receives++;
     }
 
-    if ( fake_netlink->next >= fake_netlink->script.size() )
+    netlink_datagram_t datagram;
+    if ( fake_netlink->kernel )
     {
-        errno = EAGAIN;
-        return -1;
+        if ( fake_netlink->answered < fake_netlink->requests.size() )
+        {
+            datagram = fake_kernel_answer( fake_netlink->requests[fake_netlink->answered++] );
+        }
+    }
+    else if ( fake_netlink->next < fake_netlink->script.size() )
+    {
+        datagram = fake_netlink->script[fake_netlink->next++];
     }
 
-    // an empty datagram in the script: nothing queued for this read
+    // an empty datagram: nothing queued for this read
 
-    const netlink_datagram_t & datagram = fake_netlink->script[fake_netlink->next++];
     if ( datagram.bytes.empty() )
     {
         errno = EAGAIN;
@@ -1435,6 +1483,40 @@ static void test_xdp_transport_gateway_netlink_refresh_eagain_fails_and_keeps_th
     fake_netlink = NULL;
 }
 
+// the default route moves to a new gateway IP while the old gateway's
+// neighbour entry is still in the table and usable (stale): the next refresh
+// takes the new gateway and its MAC, as v1.0.0's refresh did by reading the
+// route every period. The fake answers each request as the kernel would.
+static void test_xdp_transport_gateway_netlink_refresh_follows_a_gateway_ip_change()
+{
+    fake_netlink_t fake;
+    fake_netlink = &fake;
+    fake.kernel = true;
+    fake.route_gateway = gateway_ipv4;
+    fake.neighbors.push_back( std::make_pair( gateway_ipv4, gateway_mac ) );
+    fake.neighbors.push_back( std::make_pair( gateway_ipv4_other, other_mac ) );
+
+    uint8_t gateway[16];
+    memset( gateway, 0, sizeof( gateway ) );
+    bool gateway_known = false;
+    uint8_t mac[6];
+    memset( mac, 0, sizeof( mac ) );
+    int error = -1;
+    check( rocketnet_gateway_netlink_refresh_with( &fake_netlink_system, AF_INET, server_interface, gateway, &gateway_known, mac, &error ) == ROCKETNET_GATEWAY_NETLINK_FOUND );
+    check( gateway_known && memcmp( gateway, gateway_ipv4, 4 ) == 0 );
+    check( memcmp( mac, gateway_mac, 6 ) == 0 );
+
+    // the router is replaced: the route names the other gateway, and the old
+    // gateway's entry stays usable
+
+    fake.route_gateway = gateway_ipv4_other;
+    check( rocketnet_gateway_netlink_refresh_with( &fake_netlink_system, AF_INET, server_interface, gateway, &gateway_known, mac, &error ) == ROCKETNET_GATEWAY_NETLINK_FOUND );
+    check( gateway_known && memcmp( gateway, gateway_ipv4_other, 4 ) == 0 );
+    check( memcmp( mac, other_mac, 6 ) == 0 );
+    check( fake.blocking_receives == 0 );
+
+    fake_netlink = NULL;
+}
 
 // create-time discovery records the route's gateway IP and marks it known, so
 // the first periodic refresh asks that gateway's neighbour entry directly:
@@ -1525,6 +1607,7 @@ REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_neighbor_missing_entry );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_refresh_never_dumps_in_steady_state );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_refresh_never_blocks );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_refresh_eagain_fails_and_keeps_the_gateway );
+REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_refresh_follows_a_gateway_ip_change );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_create_seeds_gateway_for_refresh );
 
 #endif // #if ROCKETNET_XDP
