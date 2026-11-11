@@ -280,6 +280,7 @@ struct sim_t
     rocketnet_network_simulator_t * wire;
     rocketnet_address_t address[2];
     double now;
+    bool one_payload;               // the product's shape: one packet per rn_ordered_write call
 };
 
 static void sim_setup( sim_t * sim, float loss, float duplicate, uint64_t seed )
@@ -290,6 +291,7 @@ static void sim_setup( sim_t * sim, float loss, float duplicate, uint64_t seed )
     check( rocketnet_address_parse( &sim->address[1], "127.0.0.1:40001" ) );
     rocketnet_network_simulator_config( sim->wire, 0.015, 0.03, loss, duplicate );
     sim->now = 1.0;
+    sim->one_payload = false;
 }
 
 static void sim_teardown( sim_t * sim )
@@ -335,7 +337,16 @@ static void sim_tick( sim_t * sim, node_t * nodes[2], double dt )
     for ( int side = 0; side < 2; side++ )
     {
         wire_packet_t out[ROCKETNET_PACKET_BUILDER_MAX_PACKETS];
-        const int n = write_packets( nodes[side], sim->now, out, ROCKETNET_PACKET_BUILDER_MAX_PACKETS );
+        int n = 0;
+        if ( sim->one_payload )
+        {
+            while ( n < nodes[side]->ordered.builder.packets_per_update && write_packets( nodes[side], sim->now, &out[n], 1 ) == 1 )
+                n++;
+        }
+        else
+        {
+            n = write_packets( nodes[side], sim->now, out, ROCKETNET_PACKET_BUILDER_MAX_PACKETS );
+        }
         for ( int p = 0; p < n; p++ )
         {
             sim_send_data( sim, side, &out[p] );
@@ -826,7 +837,7 @@ static bool has_room_for( node_t * node, uint32_t bytes )
     return span_room( node ) >= bytes + 64 && node->region->descriptors_free > 16;
 }
 
-static void large_between_small_leg( float loss, float duplicate, uint64_t seed )
+static void large_between_small_leg( float loss, float duplicate, uint64_t seed, bool one_payload = false )
 {
     rocketnet_message_config_t config;
     node_config( &config, 1024, 262144, 262144, 800000 );
@@ -836,6 +847,7 @@ static void large_between_small_leg( float loss, float duplicate, uint64_t seed 
     node_t * nodes[2] = { a, b };
     sim_t sim;
     sim_setup( &sim, loss, duplicate, seed );
+    sim.one_payload = one_payload;
 
     uint64_t random = seed * 2862933555777941757ULL + 3037000493ULL;
     int rounds = 0;
@@ -1027,6 +1039,16 @@ static void test_large_between_small_keeps_order()
     large_between_small_leg( 0.0f, 0.0f, 11 );
     large_between_small_leg( 15.0f, 15.0f, 12 );
     large_between_small_leg( 35.0f, 20.0f, 13 );
+}
+
+static void test_large_between_small_keeps_order_one_payload_per_write()
+{
+    // the same legs in the product's shape: rn_endpoint_write_packet asks
+    // rn_ordered_write for one packet per call, so the walk's room is one
+    // packet, where the legs above give it four
+
+    large_between_small_leg( 15.0f, 15.0f, 12, true );
+    large_between_small_leg( 35.0f, 20.0f, 13, true );
 }
 
 // ---------------------------------------------------------------------------
@@ -2678,6 +2700,181 @@ static void test_ordered_chunk_timeout_runs_from_its_own_first_send()
     node_free( a );
 }
 
+// One block paced out by the send budget, in the product's shape: one packet
+// per rn_ordered_write call (rn_endpoint_write_packet), calls until the budget
+// refuses, the reliable timeout checked every update as rn_endpoint_tick does.
+// The packet written `drop_index`-th is lost on the wire; every other is
+// opened and acked a millisecond later.
+
+struct paced_block_run_t
+{
+    bool delivered;
+    int error;                      // the sender's ack->error at the end
+    uint64_t resent;                // MESSAGE_RESENT
+    double due_at;                  // first update the lost chunk was due (its class delay passed since its send), or -1
+    double resent_at;               // first update it was resent, or -1
+    bool first_sends_in_order;      // every number's first send came after the one before it
+    uint32_t walk_visits_max;       // the most FIFO entries one rn_ordered_write call examined
+};
+
+static paced_block_run_t paced_block_run( const rocketnet_message_config_t * config, uint32_t kbps, uint32_t bytes, int drop_index )
+{
+    node_t * a = node_new( config, 1, true, kbps );
+    node_t * b = node_new( config, 1 );
+
+    check( send_message( a, 0, bytes ) != 0 );
+
+    paced_block_run_t run;
+    run.delivered = false;
+    run.error = ROCKETNET_DISCONNECT_REASON_NONE;
+    run.due_at = -1.0;
+    run.resent_at = -1.0;
+    run.first_sends_in_order = true;
+    run.walk_visits_max = 0;
+
+    const uint32_t W = a->region->window;
+    uint64_t lost = UINT64_MAX;
+    uint64_t next_first = a->ordered.send.next;                     // the block's first number
+    double now = 1000.0;
+    int written = 0;
+
+    for ( int updates = 0; b->delivered.empty() && updates < 100000; updates++ )
+    {
+        now += 1.0 / 60.0;
+
+        if ( rn_window_ack_check_timeout( &a->ordered.ack, now ) != 0 )
+            break;
+
+        if ( lost != UINT64_MAX && run.due_at < 0.0 )
+        {
+            const rn_send_number_t * slot = &a->region->send_numbers[lost & ( W - 1 )];
+            if ( !slot->acked && now >= slot->last_send + rn_window_ack_chunk_resend_delay( &a->ordered.ack ) )
+                run.due_at = now;
+        }
+
+        for ( int p = 0; p < config->packets_per_update; p++ )
+        {
+            wire_packet_t out[1];
+            const int n = write_packets( a, now, out, 1 );
+            if ( a->ordered.ack.walk_visits > run.walk_visits_max )
+                run.walk_visits_max = a->ordered.ack.walk_visits;
+            if ( n != 1 )
+                break;
+
+            check( a->ordered.builder.packet[0].count == 1 );               // a chunk travels alone
+            const uint64_t number = a->ordered.builder.packet[0].numbers[0];
+            if ( number >= next_first )
+            {
+                if ( number != next_first )
+                    run.first_sends_in_order = false;
+                next_first = number + 1;
+            }
+
+            if ( written == drop_index )
+                lost = number;                                              // lost on the wire: never opened, never acked
+            else
+                check( open_packet( b, &out[0] ) );
+            written++;
+
+            if ( run.resent_at < 0.0 && counter( a, ROCKETNET_COUNTER_MESSAGE_RESENT ) > 0 )
+                run.resent_at = now;
+        }
+
+        std::vector<uint64_t> acks;
+        take_acks( b, &acks );
+        feed_acks( a, acks, now + 0.001 );
+    }
+
+    run.delivered = b->delivered.size() == 1 && b->delivered[0].bytes == bytes;
+    run.error = a->ordered.ack.error;
+    run.resent = counter( a, ROCKETNET_COUNTER_MESSAGE_RESENT );
+
+    node_free( a );
+    node_free( b );
+
+    return run;
+}
+
+static void check_lost_chunk_resent_when_due( const rocketnet_message_config_t * config, uint32_t kbps, uint32_t bytes )
+{
+    // the lost chunk goes out at the first update at or after its last send
+    // plus its class delay that the budget lets a packet out: within one
+    // packet's refill of the budget and one update of falling due
+
+    const paced_block_run_t run = paced_block_run( config, kbps, bytes, 1 );
+    const double one_packet = (double) ROCKETNET_SEND_BUDGET_MAX_PACKET_WIRE_BYTES / ( (double) kbps * 125.0 );
+
+    check( run.error == ROCKETNET_DISCONNECT_REASON_NONE );
+    check( run.delivered );
+    check( run.resent == 1 );
+    check( run.due_at > 0.0 );
+    check( run.resent_at >= run.due_at );
+    check( run.resent_at <= run.due_at + one_packet + 1.0 / 60.0 );
+    check( run.first_sends_in_order );
+
+    // O(due): a call examines the numbers on the wire it resends and one
+    // stop, and of the hundreds of never-sent chunks only the one it plans
+    // and the one that finds the packet full
+
+    check( run.walk_visits_max <= 4 );
+}
+
+// MESSAGES m9.3: a sender MUST resend a due number at the first update whose
+// time is at least its last send plus its resend delay. A chunk of a block
+// lost on its first send is due long before the block's other chunks have had
+// their first send; the never-sent chunks have no timeout clock and wait
+// (proofs/tla/RNResendTiming.tla WriteOne, the reversed witness
+// MCRNResendTimingBrokenUnsentFirst.cfg).
+
+static void test_ordered_lost_chunk_resent_ahead_of_unsent_chunks()
+{
+    // the paced-block case below with one chunk lost: 200,000 bytes at
+    // 250 kbps against a 2 s timeout
+
+    rocketnet_message_config_t config;
+    node_config( &config, 1024, 262144, 262144, 800000 );
+    config.reliable_message_timeout_ms = 2000;
+    check_lost_chunk_resent_when_due( &config, 250, 200000 );
+}
+
+static void test_ordered_lost_chunk_resent_ahead_of_unsent_chunks_defaults()
+{
+    // the default message config, the client's default budget, one maximum message
+
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    check_lost_chunk_resent_when_due( &config, 1000, 1048576 );
+}
+
+static void test_ordered_lost_chunk_resent_ahead_of_unsent_chunks_800_kbps()
+{
+    // the default message config at a client budget of 800 kbps
+
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    check_lost_chunk_resent_when_due( &config, 800, 1048576 );
+}
+
+static void test_ordered_paced_block_first_pass_in_number_order()
+{
+    // the control: with nothing lost, the block's chunks go out once each,
+    // in number order, one to a packet, and nothing is resent
+
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    const paced_block_run_t run = paced_block_run( &config, 1000, 1048576, -1 );
+
+    check( run.error == ROCKETNET_DISCONNECT_REASON_NONE );
+    check( run.delivered );
+    check( run.resent == 0 );
+    check( run.first_sends_in_order );
+    check( run.walk_visits_max <= 4 );
+}
+
+REGISTER_UNIT_TEST( test_ordered_lost_chunk_resent_ahead_of_unsent_chunks );
+REGISTER_UNIT_TEST( test_ordered_lost_chunk_resent_ahead_of_unsent_chunks_defaults );
+REGISTER_UNIT_TEST( test_ordered_lost_chunk_resent_ahead_of_unsent_chunks_800_kbps );
+REGISTER_UNIT_TEST( test_ordered_paced_block_first_pass_in_number_order );
 REGISTER_UNIT_TEST( test_ordered_record_sent_at_zero_waits_for_its_resend );
 REGISTER_UNIT_TEST( test_ordered_record_sent_at_1000_waits_for_its_resend );
 REGISTER_UNIT_TEST( test_ordered_failed_send_at_zero_is_due_next_update );
@@ -2691,6 +2888,7 @@ REGISTER_UNIT_TEST( test_small_in_order_exactly_once_under_loss_and_reorder );
 REGISTER_UNIT_TEST( test_small_packed_and_resent_until_packet_acked );
 REGISTER_UNIT_TEST( test_large_chunked_one_per_packet_and_delivered_whole );
 REGISTER_UNIT_TEST( test_large_between_small_keeps_order );
+REGISTER_UNIT_TEST( test_large_between_small_keeps_order_one_payload_per_write );
 REGISTER_UNIT_TEST( test_reservation_counts_the_held_run_past_2_to_the_24 );
 REGISTER_UNIT_TEST( test_chunks_placed_by_index_not_arrival );
 REGISTER_UNIT_TEST( test_no_partial_delivery );
