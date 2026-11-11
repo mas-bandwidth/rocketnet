@@ -56,12 +56,12 @@
 #                             under its own per-INSTANCE random-token root
 #                             rocketnet_xdp_<token>_<pid>_<starttime>_<bootid>,
 #                             which it creates itself and never adopts). the
-#                             pre-flight verifies this read-only. crash
-#                             leftovers are the SWEEP mode's business alone:
-#                             host pid liveness is unreliable where bpffs is
-#                             shared into containers, so neither provision
-#                             nor verify touches them -- they are inert, and
-#                             a colliding create refuses loudly.
+#                             pre-flight verifies this read-only. a crashed
+#                             server's program stays ATTACHED and is NOT inert:
+#                             it drops every datagram to its port until this
+#                             script (not verify) unloads it. its pin roots are
+#                             SWEEP's alone (pid liveness is unreliable where
+#                             bpffs is shared into containers); they are inert.
 #   R4. irq pinning           each of the interface's queue IRQs pinned to
 #                             its own CPU from the isolated set, one queue
 #                             one CPU (/proc/interrupts ->

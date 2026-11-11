@@ -114,18 +114,26 @@ Cold, on a fresh box, as root:
     # 4. Run the server: the xdp rung grants only on a verified machine, and the
     #    auto ladder falls to gso with the reason named where it is not.
 
-    # 5. AFTER A CRASH (a server that died without destroy): each instance
-    #    leaves a bpffs pin root named for the instance --
+    # 5. AFTER A CRASH (a server that died without destroy): its XDP program
+    #    stays ATTACHED to the interface, and it is NOT inert: it drops every
+    #    datagram to the server's address and port, so a restart on that port
+    #    with any transport (auto falls to gso) receives nothing. The library
+    #    never unloads anyone; unload it with step 2 (provision mode runs
+    #    xdp-loader unload -a on the interface, removing every XDP program
+    #    attached to it), or by hand with xdp-loader unload -a eth0:
+    scripts/rocketnet-provision eth0 7
+    #    Each instance also leaves a bpffs pin root named for the instance --
     #    /sys/fs/bpf/rocketnet_xdp_<token>_<pid>_<starttime>_<bootid> -- and
     #    the library never adopts or removes state it did not create this
-    #    run, so crash leftovers are removed DELIBERATELY:
+    #    run, so those leftovers are removed DELIBERATELY, after the unload:
     scripts/rocketnet-provision sweep
     #    The sweep judges staleness by the metadata in each root's name
     #    (foreign boot id, dead pid, or recycled pid sweeps; a live matching
     #    instance is left; an unparseable name is left and named for manual
     #    judgment) and prints its container caveat before acting: with bpffs
     #    shared across pid namespaces, sweep from the namespace that owns
-    #    the servers. Leftovers are inert -- a colliding create refuses
+    #    the servers. The sweep removes pin roots only, never an attached
+    #    program. Pin roots alone are inert -- a colliding create refuses
     #    loudly and names this sweep.
 
     # (scripts/rocketnet-provision selftest holds the script's IRQ-name
