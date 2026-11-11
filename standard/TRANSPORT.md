@@ -256,14 +256,18 @@ ignore rules 1 to 5 and keeps rule 6.
    create, naming the fault.
 2. A name the implementation does not know MUST fail the create, listing the
    valid transport names, whatever the length of the list.
-3. A list of one name is a pin. The endpoint MUST create on that transport or
-   fail the create naming the transport and why it refused or is not
-   applicable. A pin never falls to another transport.
-4. A list of two or more transport names MUST be tried left to right, nothing
+3. A list of one applicable name is a pin. The endpoint MUST create on that
+   transport or fail the create naming the transport and why it refused. A
+   pin never falls to another transport. A list of one name that is not
+   applicable is not a pin: rule 4 applies to it as to any list that names
+   no applicable transport.
+4. A list of transport names MUST be tried left to right, nothing
    appended and nothing reordered; the first applicable transport that
    succeeds carries the endpoint. A name that is not applicable MUST be
-   skipped with one log line. When no name in the list is applicable, the
-   endpoint MUST fall to its `auto` order, with one log line saying so. When
+   skipped with one log line. When no name in the list is applicable,
+   whatever the length of the list, the endpoint MUST fall to its `auto`
+   order, with one warning naming the list and that order, so that one
+   configuration line can be deployed to endpoints it does not address. When
    at least one name is applicable and every applicable name refuses, the
    endpoint MUST fail the create, naming each refusal apart from each skip.
 5. A transport MUST NOT change machine state (kernel parameters, queue
@@ -2703,7 +2707,7 @@ list is ignored in that state.
 ```vector t12.cookie
 input: source 198.51.100.7:56789
 input: connection salt 53414c5430303031, server time 1756166400, cookie lifetime 3
-input: cookie key 102030405060708090a0b0c0d0e0f0000f1f2f3f4f5f6f7f8f9fafbfcfdfeff
+input: cookie key 102030405060708090a0b0c0d0e0f0000f1f2f3f4f5f6f7f8f9fafbfcfdfefff
 07 00 b7 59 01 00 53 41 4c 54 30 30 30 31 03 f9
 ac 68 00 00 00 00 0f b2 b2 8f 32 db d6 c9 eb 36
 4f 57 74 86 f3 e9
@@ -2971,8 +2975,28 @@ An endpoint that ends a connection deliberately MUST send the number of
 sealed disconnect packets named by the `server redundant disconnect packets`
 or `client redundant disconnect packets` row of
 [t3 Constants and registries](#t3), at consecutive session sequence numbers,
-each carrying the current ack block. It MUST then release its state
-immediately, without waiting for an acknowledgement.
+each carrying the current ack block, a server within the send limits below.
+It MUST then release its state immediately, without waiting for an
+acknowledgement.
+
+A server's burst is sent within its send limits, so it MAY leave over later
+updates and MAY be withheld; the slot reset and the release of state are
+never delayed by it. A server seals disconnect packets within a whole-server
+allowance per update (an implementation field of
+[t2.3 Configuration surface](#t2.3); the reference implementation's
+`disconnect_packets_per_update`) and within its transport's send room. When
+the whole burst does not fit in this update, or earlier bursts still wait,
+the burst waits, holding the ack block, first sequence, salt and send key
+taken at the disconnect, and later updates seal its packets at its
+consecutive sequences. A running server keeps at most `max_clients` bursts
+waiting; a burst beyond that is not sent and MUST be counted as
+`DISCONNECT_BURST_DROPPED`. A burst packet the transport refuses is counted
+under that refusal's counter of
+[t18 Error handling and counters](#t18); when it refuses the destination,
+the rest of that burst is not sent. A connected slot with no address to send
+to ends with no burst. When a server stops, every connected client's burst
+waits and each stop step seals what the send room takes. The timeout of
+[t13.2 Timeout](#t13.2) stands behind every burst that is withheld.
 
 A client MUST send the burst only when it holds session keys: from `sending connection response` and `connected`. Outside those states it releases its
 state with no packet.
@@ -3005,7 +3029,8 @@ the slot's next connection is established, so an application can read why
 the previous connection ended.
 
 When a server stops it MUST disconnect every connected client with the
-redundant burst of [t13.3 Disconnect](#t13.3) and reset every slot. A server
+redundant burst of [t13.3 Disconnect](#t13.3), within the send limits that
+section states, and reset every slot. A server
 that starts again MUST begin with every slot free, no key or sequence from
 the previous run, and a fresh used-token history.
 
@@ -4009,8 +4034,9 @@ Each note points to the section whose rule it serves.
 An implementation offers a set of transports for one endpoint role on one
 platform, and `auto` expands to its documented order for that role and
 platform. An explicit list is tried in order, nothing is appended or
-reordered, and a list of one name is a pin that refuses rather than falls.
-The endpoint reports the transport that carries it and logs each earlier
+reordered, and a list of one applicable name is a pin that refuses rather
+than falls; a list that names no applicable transport falls to `auto` with a
+warning. The endpoint reports the transport that carries it and logs each earlier
 candidate's skip or refusal. A transport never changes a byte on the wire, so
 transport selection is a deployment and diagnosis surface rather than a
 protocol one. See [t2.4 Transport selection](#t2.4).

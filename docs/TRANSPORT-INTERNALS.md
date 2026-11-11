@@ -252,9 +252,12 @@ model reads one datagram per step against its capacity
 
 ## UDP coalescing
 
-The coalescing rules live once, in `sdk/rocketnet_coalesce.h`: a receive split
-at the stride the kernel reports, and a send run of same-destination frames of
-one size with at most one shorter tail. Each coalescing transport probes its
+The coalescing rules are a receive split at the stride the kernel reports,
+and a send run of same-destination frames of one size with at most one
+shorter tail. `sdk/rocketnet_coalesce.h` holds them for the client gso, the
+io_uring server and the IOCP server; the gso server
+(`sdk/rocketnet_server_gso_linux.cpp`) keeps its own copy of both, the run
+rule in its send flush and the split in its receive worker. Each coalescing transport probes its
 offloads at create on the bound socket; a refusal is a tier, not an error, and
 the create log line names each feature as yes or no.
 
@@ -584,7 +587,7 @@ up to 64 KiB, so a provided buffer is 66 KiB (`ROCKETNET_URING_RECV_BUFFER_BYTES
 create, so a page is resident only once the kernel writes it: small datagrams
 keep about one page of each buffer resident. Each `send_packets` and `receive_packets` call reaps at most a
 fixed completion budget (`ROCKETNET_URING_SEND_BUDGET`, and the receive
-bank's size, `rocketnet_server_uring_bank_size`) and `send_packets` waits at most once, so an
+bank's size, `rocketnet_server_uring_bank_size`) and neither call waits, so an
 update returns under sustained traffic; completions past a budget stay queued
 for the next call, and a send without its completion keeps its slot until a
 later call reaps it. A queue count past

@@ -1962,3 +1962,13 @@ It differs from the text shipped with v1.0.0 in these places:
   size before the shared checks, counted as `PREFILTER_TOO_SHORT` or
   `PREFILTER_TOO_LARGE`, or in the kernel counters of a transport that drops it in the
   kernel.
+- [RN-1 t2.4 Transport selection](TRANSPORT.md#t2.4), rules 3 and 4: a list of one name
+  that is not applicable is not a pin; like a longer list that names no applicable
+  transport it falls to the `auto` order with one warning, as the reference implementation
+  has done since v1.0.0.
+- [RN-1 t13.3 Disconnect](TRANSPORT.md#t13.3) and [RN-1 t13.4 Slot reset](TRANSPORT.md#t13.4):
+  a server's disconnect burst is sent within a per-update allowance and the transport's
+  send room, so it may leave over later updates; a burst beyond the `max_clients` waiting
+  bursts is not sent and is counted as `DISCONNECT_BURST_DROPPED`, a refused destination
+  ends its burst, and the timeout stands behind every burst withheld, as the reference
+  implementation has done since v1.0.0 (the counter is new).
