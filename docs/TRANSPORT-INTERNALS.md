@@ -587,7 +587,7 @@ up to 64 KiB, so a provided buffer is 66 KiB (`ROCKETNET_URING_RECV_BUFFER_BYTES
 create, so a page is resident only once the kernel writes it: small datagrams
 keep about one page of each buffer resident. Each `send_packets` and `receive_packets` call reaps at most a
 fixed completion budget (`ROCKETNET_URING_SEND_BUDGET`, and the receive
-bank's size, `rocketnet_server_uring_bank_size`) and `send_packets` waits at most once, so an
+bank's size, `rocketnet_server_uring_bank_size`) and neither call waits, so an
 update returns under sustained traffic; completions past a budget stay queued
 for the next call, and a send without its completion keeps its slot until a
 later call reaps it. A queue count past
