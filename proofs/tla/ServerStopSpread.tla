@@ -34,6 +34,16 @@
 (* exited (IoStopped).  Complete is the environment: the kernel or worker  *)
 (* finishing a flushed frame, which returns its staging.                   *)
 (*                                                                         *)
+(* A transport can lose its send room for good (Jam: an XDP queue in hard  *)
+(* send error with a full producer): it reports no room, never finishes    *)
+(* what it holds, and its send_idle gives up on it.  No waiting packet can *)
+(* then leave, so a stop step that finds bursts waiting, no room, the      *)
+(* transport idle and still no room abandons every waiting burst, each one *)
+(* not yet complete counted once as SEND_RING_FULL (AbandonNoRoom).  The   *)
+(* room is read again after the idle check, which may itself free room     *)
+(* (the portable transport's send_idle publishes its producer, and the     *)
+(* worker may finish it before the check reads idle).                      *)
+(*                                                                         *)
 (* Reversed witnesses, one constant: Defect = "singleshot" is the stop     *)
 (* before this model: every burst staged in the stop call whatever the     *)
 (* room, a refused start dropping that packet, and the I/O told to stop    *)
@@ -43,9 +53,12 @@
 (* flushed send is unfinished (NoSendCutAtStop).  "noskip" seals an entry  *)
 (* the drain should pass over (SealedWithinBurst).  "unreachablestalls"    *)
 (* ends the drain at an unreachable start as at a full one, so the stop    *)
-(* never finishes (StopFinishes).  A ring of SteadyCap entries, the size  *)
-(* before this model, is the configuration witness                         *)
-(* MCServerStopSpreadBrokenRingSmall (RingHolds).                          *)
+(* never finishes (StopFinishes).  "noabandon" is the stop step before     *)
+(* AbandonNoRoom: a jammed transport's waiting bursts wait forever         *)
+(* (StopFinishesWithoutRoom).  "noreread" abandons without reading the     *)
+(* room again after the idle check (NoDropWhileRoomCanReturn).  A ring of  *)
+(* SteadyCap entries, the size before this model, is the configuration     *)
+(* witness MCServerStopSpreadBrokenRingSmall (RingHolds).                  *)
 (***************************************************************************)
 EXTENDS Naturals, FiniteSets
 
@@ -58,7 +71,8 @@ CONSTANTS
     SteadyCap,      \* bursts a running server keeps waiting (ROCKETNET_MAX_CLIENTS)
     Defect
 
-ASSUME Defect \in {"none", "singleshot", "steadycapoffbyone", "noskip", "unreachablestalls", "stopinflight"}
+ASSUME Defect \in {"none", "singleshot", "steadycapoffbyone", "noskip", "unreachablestalls", "stopinflight",
+                   "noabandon", "noreread"}
 ASSUME SlotCount \in Nat \ {0} /\ MaxSessions \in Nat \ {0} /\ Burst \in Nat \ {0}
 ASSUME BankSize \in Nat \ {0} /\ RingSize \in Nat \ {0} /\ SteadyCap \in Nat \ {0}
 
@@ -84,12 +98,25 @@ VARIABLES
     abandoned,      \* ghost: bursts given up at an unreachable start
     refused,        \* ghost: a start was called with no room
     overflow,       \* ghost: an append found the ring full
-    cut             \* ghost: the I/O was told to stop with a flushed send unfinished
+    cut,            \* ghost: the I/O was told to stop with a flushed send unfinished
+    jammed,         \* environment: the transport has lost its send room for good
+    dropped,        \* ghost: bursts abandoned at a stop step for want of send room
+    ringFull,       \* ghost: the SEND_RING_FULL counts those abandons added
+    early           \* ghost: a burst was abandoned while room could still return
 
 vars == <<phase, slot, nextSess, ring, head, count, cursor, staged, inflight,
-          sent, owed, unreachable, abandoned, refused, overflow, cut>>
+          sent, owed, unreachable, abandoned, refused, overflow, cut,
+          jammed, dropped, ringFull, early>>
 
-Room == BankSize - staged - inflight
+\* send_room. A jammed transport reports none, whatever it holds.
+Room == IF jammed THEN 0 ELSE BankSize - staged - inflight
+
+\* send_idle: every flushed frame finished, or the transport has given up on
+\* what it holds (an XDP queue in hard send error).
+Idle == inflight = 0 \/ jammed
+
+\* The variables only the jam and the abandon for want of room change.
+jamVars == <<jammed, dropped, ringFull, early>>
 
 LiveIdx == {(head + k) % RingSize : k \in 0..count - 1}
 
@@ -103,6 +130,7 @@ Init ==
     /\ sent = [s \in Sessions |-> 0]
     /\ owed = {} /\ unreachable = {} /\ abandoned = {}
     /\ refused = FALSE /\ overflow = FALSE /\ cut = FALSE
+    /\ jammed = FALSE /\ dropped = {} /\ ringFull = 0 /\ early = FALSE
 
 \* A client connects into a free slot.
 Connect(i) ==
@@ -113,6 +141,7 @@ Connect(i) ==
     /\ nextSess' = nextSess + 1
     /\ UNCHANGED <<phase, ring, head, count, cursor, staged, inflight, sent,
                    owed, unreachable, abandoned, refused, overflow, cut>>
+    /\ UNCHANGED jamVars
 
 \* rocketnet_server_transport_disconnect_client on a running server: the slot
 \* ends now; its burst is appended at (head + count) % RingSize while fewer
@@ -133,6 +162,7 @@ Kick(i) ==
           ELSE UNCHANGED <<ring, count, owed, overflow>>
     /\ UNCHANGED <<phase, nextSess, head, cursor, staged, inflight, sent,
                    unreachable, abandoned, refused, cut>>
+    /\ UNCHANGED jamVars
 
 \* rocketnet_server_stop: every connected slot, in slot order, ends and its
 \* burst is appended (rocketnet_server_transport_disconnect_client_shutdown);
@@ -155,6 +185,7 @@ Stop ==
     /\ phase' = "STOPPING"
     /\ UNCHANGED <<nextSess, head, cursor, staged, inflight, sent, unreachable,
                    abandoned, refused, cut>>
+    /\ UNCHANGED jamVars
 
 \* The head leaves while its burst is complete; the cursor is an offset from
 \* the head, so it moves back with it. The entry is cleared as its key is
@@ -201,6 +232,7 @@ SealOne ==
              /\ PopAfter([ring EXCEPT ![idx].sealed = @ + 1], c + 1)
              /\ UNCHANGED abandoned
     /\ UNCHANGED <<phase, slot, nextSess, inflight, owed, unreachable, overflow, cut>>
+    /\ UNCHANGED jamVars
 
 \* The step's flush hands the staged frames to the transport.
 Flush ==
@@ -209,14 +241,30 @@ Flush ==
     /\ staged' = 0
     /\ UNCHANGED <<phase, slot, nextSess, ring, head, count, cursor, sent, owed,
                    unreachable, abandoned, refused, overflow, cut>>
+    /\ UNCHANGED jamVars
 
 \* Environment: the kernel or the transport's worker finishes a flushed
-\* frame, and its staging comes back.
+\* frame, and its staging comes back. A jammed transport finishes nothing.
 Complete ==
     /\ inflight > 0
+    /\ ~jammed
     /\ inflight' = inflight - 1
     /\ UNCHANGED <<phase, slot, nextSess, ring, head, count, cursor, staged, sent,
                    owed, unreachable, abandoned, refused, overflow, cut>>
+    /\ UNCHANGED jamVars
+
+\* Environment: the transport loses its send room for good (an XDP queue
+\* whose TX wakeup failed hard, its producer full): from here it reports no
+\* room, finishes nothing it holds, and its send_idle gives up on it. The
+\* hard error can clear on a later wakeup; the stop takes send_idle's giving
+\* up as final, as the code does, so the model keeps the jam.
+Jam ==
+    /\ phase \in {"RUNNING", "STOPPING"}
+    /\ ~jammed
+    /\ jammed' = TRUE
+    /\ UNCHANGED <<phase, slot, nextSess, ring, head, count, cursor, staged, inflight,
+                   sent, owed, unreachable, abandoned, refused, overflow, cut,
+                   dropped, ringFull, early>>
 
 \* Environment: a waiting burst's destination has no link-layer address.
 LoseRoute(s) ==
@@ -224,6 +272,7 @@ LoseRoute(s) ==
     /\ unreachable' = unreachable \cup {s}
     /\ UNCHANGED <<phase, slot, nextSess, ring, head, count, cursor, staged,
                    inflight, sent, owed, abandoned, refused, overflow, cut>>
+    /\ UNCHANGED jamVars
 
 \* Environment: the destination is learned again (a reply MAC refreshed).
 \* A burst already abandoned stays abandoned: its entry is complete and the
@@ -233,22 +282,60 @@ FindRoute(s) ==
     /\ unreachable' = unreachable \ {s}
     /\ UNCHANGED <<phase, slot, nextSess, ring, head, count, cursor, staged,
                    inflight, sent, owed, abandoned, refused, overflow, cut>>
+    /\ UNCHANGED jamVars
+
+\* The stop step after its flush that finds bursts waiting and no send room
+\* (the first read), the transport's send_idle true, and still no room (the
+\* second read): no waiting packet can ever leave, so every waiting burst is
+\* abandoned, its key wiped and its entry popped from the head, the cursor
+\* reset, and each one not yet complete counted once as SEND_RING_FULL (one
+\* already complete, abandoned for its destination away from the head,
+\* leaves uncounted). The reads are not one atomic look: the transport may
+\* finish done of its flushed frames before send_idle reads idle (the
+\* portable transport's send_idle publishes its producer, and its worker may
+\* send the bank before the check), which frees room the second read sees.
+\* "noabandon" is the stop step before this action; "noreread" leaves out
+\* the second read.
+AbandonNoRoom ==
+    /\ phase = "STOPPING"
+    /\ Defect # "noabandon"
+    /\ staged = 0
+    /\ count > 0
+    /\ Room = 0
+    /\ \E done \in 0..(IF jammed THEN 0 ELSE inflight) :
+          LET left == inflight - done
+              roomAfter == IF jammed THEN 0 ELSE BankSize - left
+              waiting == {i \in LiveIdx : ring[i].sealed < Burst}
+          IN /\ left = 0 \/ jammed
+             /\ roomAfter = 0 \/ Defect = "noreread"
+             /\ inflight' = left
+             /\ ring' = [i \in Idx |-> NoEntry]
+             /\ head' = (head + count) % RingSize
+             /\ count' = 0
+             /\ cursor' = 0
+             /\ dropped' = dropped \cup {ring[i].s : i \in waiting}
+             /\ ringFull' = ringFull + Cardinality(waiting)
+             /\ early' = (early \/ roomAfter > 0 \/ (left > 0 /\ ~jammed))
+    /\ UNCHANGED <<phase, slot, nextSess, staged, sent, owed, unreachable, abandoned,
+                   refused, overflow, cut, jammed>>
 
 \* The stop step that finds the ring empty, its seals flushed and every
 \* flushed send finished (the transport's send_idle) tells the I/O to stop
 \* (rocketnet_server_transport_io_stop). The single-shot stop told it at
 \* once; "stopinflight" tells it with a flushed send unfinished, which the
 \* stopping I/O cuts off (the IOCP and RIO send workers retire a bank they
-\* find stopping).
+\* find stopping). What a jammed transport holds can never leave, so the
+\* stop cuts none of it off.
 RequestIoStop ==
     /\ phase = "STOPPING"
     /\ staged = 0
     /\ count = 0 \/ Defect = "singleshot"
-    /\ inflight = 0 \/ Defect \in {"singleshot", "stopinflight"}
+    /\ Idle \/ Defect \in {"singleshot", "stopinflight"}
     /\ phase' = "IOSTOP"
-    /\ cut' = (cut \/ inflight > 0)
+    /\ cut' = (cut \/ (inflight > 0 /\ ~jammed))
     /\ UNCHANGED <<slot, nextSess, ring, head, count, cursor, staged, inflight,
                    sent, owed, unreachable, abandoned, refused, overflow>>
+    /\ UNCHANGED jamVars
 
 \* The workers have exited: rocketnet_server_stopped reports true.
 IoStopped ==
@@ -256,6 +343,7 @@ IoStopped ==
     /\ phase' = "STOPPED"
     /\ UNCHANGED <<slot, nextSess, ring, head, count, cursor, staged, inflight,
                    sent, owed, unreachable, abandoned, refused, overflow, cut>>
+    /\ UNCHANGED jamVars
 
 \* STOPPED is the end of the run, a stutter here (a later start builds a new
 \* transport and a new ring).
@@ -265,7 +353,9 @@ Next ==
     \/ SealOne
     \/ Flush
     \/ Complete
+    \/ Jam
     \/ \E s \in Sessions : LoseRoute(s) \/ FindRoute(s)
+    \/ AbandonNoRoom
     \/ RequestIoStop
     \/ IoStopped
     \/ phase = "STOPPED" /\ UNCHANGED vars
@@ -273,11 +363,13 @@ Next ==
 Spec == Init /\ [][Next]_vars
 
 \* The caller keeps polling rocketnet_server_stopped (or updating the
-\* transport), and the transport finishes what it was handed.
+\* transport), and the transport finishes what it was handed (a jammed one
+\* finishes nothing, and the jam itself is never forced).
 Fairness ==
     /\ WF_vars(SealOne)
     /\ WF_vars(Flush)
     /\ WF_vars(Complete)
+    /\ WF_vars(AbandonNoRoom)
     /\ WF_vars(RequestIoStop)
     /\ WF_vars(IoStopped)
 FairSpec == Spec /\ Fairness
@@ -292,6 +384,8 @@ TypeOK ==
     /\ sent \in [Sessions -> 0..Burst]
     /\ owed \subseteq Sessions /\ unreachable \subseteq Sessions /\ abandoned \subseteq Sessions
     /\ refused \in BOOLEAN /\ overflow \in BOOLEAN /\ cut \in BOOLEAN
+    /\ jammed \in BOOLEAN /\ dropped \subseteq Sessions /\ ringFull \in 0..MaxSessions
+    /\ early \in BOOLEAN
 
 \* The ring never holds more than its entries: an append always finds a free one.
 RingHolds == ~overflow /\ count <= RingSize
@@ -312,7 +406,7 @@ RingIsOwed ==
     /\ \A i \in LiveIdx : ring[i].s \in owed
     /\ \A i \in LiveIdx : ring[i].s \notin abandoned => ring[i].sealed = sent[ring[i].s]
     /\ \A i, j \in LiveIdx : i # j => ring[i].s # ring[j].s
-    /\ \A s \in owed : (sent[s] < Burst /\ s \notin abandoned) => \E i \in LiveIdx : ring[i].s = s
+    /\ \A s \in owed : (sent[s] < Burst /\ s \notin abandoned /\ s \notin dropped) => \E i \in LiveIdx : ring[i].s = s
     /\ \A i \in Idx \ LiveIdx : ring[i] = NoEntry
 
 \* The head is never a finished burst: completion pops it at once.
@@ -321,14 +415,38 @@ HeadNeverDone == count > 0 => ring[head].sealed < Burst
 \* Before the server reports STOPPED, every burst it kept (every client
 \* connected at the stop, and every burst still waiting from a disconnect)
 \* has been handed whole to the transport, but for a destination the
-\* transport cannot reach.
+\* transport cannot reach or a transport that has no send room left.
 FullBurstBeforeStopped ==
-    phase \in {"IOSTOP", "STOPPED"} => \A s \in owed : sent[s] = Burst \/ s \in abandoned
+    phase \in {"IOSTOP", "STOPPED"} => \A s \in owed : sent[s] = Burst \/ s \in abandoned \/ s \in dropped
 
 \* The I/O is told to stop only once every send it was handed has finished:
 \* no flushed disconnect packet is cut off by the stop.
 NoSendCutAtStop == ~cut
 
+\* No burst is abandoned for want of room while the transport has room, or
+\* while a send staged or in flight could still finish and free some.
+NoDropWhileRoomCanReturn == ~early
+
+\* Each burst abandoned for want of room was not yet complete, was not
+\* already abandoned for its destination, and is counted as SEND_RING_FULL
+\* exactly once; once the I/O is told to stop, every burst kept is settled
+\* exactly one way: sent whole, abandoned for its destination, or abandoned
+\* for want of room.
+EachBurstSettledOnce ==
+    /\ ringFull = Cardinality(dropped)
+    /\ dropped \cap abandoned = {}
+    /\ \A s \in dropped : sent[s] < Burst
+    /\ phase \in {"IOSTOP", "STOPPED"} =>
+          \A s \in owed :
+              LET whole == sent[s] = Burst
+                  gone == s \in abandoned
+                  lost == s \in dropped
+              IN /\ whole \/ gone \/ lost
+                 /\ ~(whole /\ gone) /\ ~(whole /\ lost) /\ ~(gone /\ lost)
+
 \* A stop finishes.
 StopFinishes == phase = "STOPPING" ~> phase = "STOPPED"
+
+\* A stop finishes when the transport's room never returns.
+StopFinishesWithoutRoom == (phase = "STOPPING" /\ jammed) ~> phase = "STOPPED"
 =============================================================================

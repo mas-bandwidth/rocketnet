@@ -2428,12 +2428,13 @@ static void rocketnet_server_transport_stop_step( struct rocketnet_server_transp
     rocketnet_server_transport_flush( server_transport, true );
     rocketnet_server_link_drain( server_transport, true );
 
-    // no send room, and nothing staged or in flight whose finish could free
-    // any: no waiting packet can ever leave. Each waiting burst is abandoned,
-    // as an unreachable destination's is, and counted as a start refused for
-    // a full staging (one already complete leaves uncounted). The room is
-    // read again after send_idle, which may publish what was staged and so
-    // free room.
+    // proofs/tla/ServerStopSpread.tla AbandonNoRoom: no send room, and
+    // nothing staged or in flight whose finish could free any: no waiting
+    // packet can ever leave. Each waiting burst is abandoned, as an
+    // unreachable destination's is, and counted as a start refused for a
+    // full staging (one already complete leaves uncounted). The room is read
+    // again after send_idle, which may publish what was staged and so free
+    // room.
     if ( server_transport->disconnect_burst_count > 0 && rocketnet_server_transport_io_send_room( server_transport ) == 0 &&
          rocketnet_server_transport_io_send_idle( server_transport ) && rocketnet_server_transport_io_send_room( server_transport ) == 0 )
     {
