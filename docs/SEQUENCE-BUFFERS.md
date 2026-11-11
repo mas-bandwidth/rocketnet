@@ -75,10 +75,12 @@ here, and on a row that matches no site. Its syntactic limits still apply.
 | sdk/rocketnet_channel.cpp | rn_ready_link | ready_next | Glenn 2026-10-28: index links in the window |
 | sdk/rocketnet_channel.cpp | rn_ready_link | ready_prev | Glenn 2026-10-28: index links in the window |
 | sdk/rocketnet_channel.cpp | rn_channel_queue_push_front | queue_next | Glenn 2026-10-28: index links in the window |
+| sdk/rocketnet_channel.cpp | rn_channel_queue_append | queue_next | Glenn 2026-10-28: index links in the window |
 | tests/test_unit_channel_dispatch.cpp | schedule_walk | queue_next | Glenn 2026-10-28: index links in the window (the test reads the channel FIFO) |
+| tests/test_channels.cpp | rn_soak_queue_append | queue_next | Glenn 2026-10-28: index links in the window (the soak's copy of the channel FIFO) |
 | sdk/rocketnet_allocator.cpp | rn_span_link | span_next | Glenn 2026-10-28: index links in the window |
 
-The audit sees a link written as `x.field = head` and a walk `d = ...field`; it does not see a write through an indexed tail (`descriptors[tail].queue_next = d`), so `rn_channel_queue_append`, `rn_span_unlink`, the soak's `rn_soak_queue_append` (tests/test_channels.cpp) and the resend FIFO helpers are recorded here by hand, not enforced.
+The audit sees a link written as `x.field = head` and a walk `d = ...field`; it does not see every write through an indexed tail (`descriptors[tail].queue_next = d`), so `rn_span_unlink` and the resend FIFO helpers are recorded here by hand, not enforced. `rn_channel_queue_append` and the soak's `rn_soak_queue_append` (tests/test_channels.cpp) were recorded the same way while their tail store sat in an unbraced `if` body, which the audit does not split from its condition; with every body braced the audit sees both, and they have rows above.
 
 ## External ABI traversal sites
 
