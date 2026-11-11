@@ -25,6 +25,7 @@
 #define SPLIT_BARRIER_DEADLINE_S 15.0
 #define SPLIT_CONFIRM_GRACE_S 3.0
 #define SPLIT_MAX_DURATION_S 3600
+#define SPLIT_TOKEN_TIMEOUT_SECONDS 10                  /* the connection timeout each shard's tokens carry */
 
 /* The load mode. The default offers one message per client per second in
  * each direction, the server ticking at 100 Hz. Full load is the worst case
@@ -2327,7 +2328,7 @@ static int split_client_run( int total, int duration, uint64_t run_id, int first
         char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
         const uint32_t global = (uint32_t) ( first + i );
 
-        if ( rocketnet_create_dev_connect_token( address, NULL, key, 30, 10,
+        if ( rocketnet_create_dev_connect_token( address, NULL, key, 30, SPLIT_TOKEN_TIMEOUT_SECONDS,
                                                  (uint64_t) global + 1, LOAD_PROTOCOL_ID, token_now, NULL, token ) != ROCKETNET_STATUS_OK )
         {
             goto cleanup;
@@ -2426,9 +2427,13 @@ static int split_client_run( int total, int duration, uint64_t run_id, int first
      * interval. split_shard_start_update is ShardEnded (a client the
      * server's failed start disconnected) and ShardTimeout (the shard's own
      * deadline passing). */
+    /* The allowance for a reliable start message still in flight: the reliable
+     * timeout when one is set, else the connection timeout the tokens carry,
+     * which is then what ends a connection that stops delivering. */
+    const double start_allowance_s = config.reliable_message_timeout_ms > 0 ? (double) config.reliable_message_timeout_ms / 1000.0
+                                                                            : (double) SPLIT_TOKEN_TIMEOUT_SECONDS;
     struct split_shard_start_t start;
-    split_shard_start_begin( &start, rocketnet_time(), LOAD_CONNECT_DEADLINE_S,
-                             (double) config.reliable_message_timeout_ms / 1000.0 );
+    split_shard_start_begin( &start, rocketnet_time(), LOAD_CONNECT_DEADLINE_S, start_allowance_s );
     const double arm_start = rocketnet_time();
     enum split_start_verdict_t start_verdict = SPLIT_START_WAITING;
     int running = 0, start_disconnected = 0;

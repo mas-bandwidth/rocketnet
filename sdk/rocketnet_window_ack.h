@@ -160,7 +160,7 @@ static inline double rn_window_ack_resend_delay( const rn_window_ack_t * ack )
 static inline double rn_window_ack_chunk_resend_delay( const rn_window_ack_t * ack )
 {
     const double cap = ack->reliable_timeout / (double) ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS;
-    return ack->resend_delay < cap ? ack->resend_delay : cap;
+    return ( ack->reliable_timeout <= 0.0 || ack->resend_delay < cap ) ? ack->resend_delay : cap;
 }
 
 // Whether the number in send_numbers slot `slot_index` is a chunk of a block:

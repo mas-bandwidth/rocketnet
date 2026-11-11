@@ -4133,6 +4133,7 @@ static void test_channels_window_reliable_timeout_enters_the_error_state()
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
     config.message_resend_delay_initial_ms = 250;
+    config.reliable_message_timeout_ms = 10000;                 // opted in: the default 0 has no reliable timeout (m9.3)
 
     rocketnet_counters_t counters;
     memset( &counters, 0, sizeof( counters ) );

@@ -321,12 +321,14 @@ int rocketnet_message_validate_config_internal( const struct rocketnet_message_c
         return 0;
     }
 
-    // reserve four initial resend delays before reliable_message_timeout_ms
+    // 0 turns the reliable timeout off (the default); a nonzero value is
+    // 1000 or more and reserves four initial resend delays
 
     const int first_delay_ms = config->message_resend_delay_initial_ms;
-    if ( (int64_t) config->reliable_message_timeout_ms < (int64_t) ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS * (int64_t) first_delay_ms )
+    if ( config->reliable_message_timeout_ms != 0 &&
+         ( config->reliable_message_timeout_ms < 1000 || (int64_t) config->reliable_message_timeout_ms < (int64_t) ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS * (int64_t) first_delay_ms ) )
     {
-        rocketnet_error( "message config reliable_message_timeout_ms %d fits fewer than %d sends of message_resend_delay_initial_ms %d",
+        rocketnet_error( "message config reliable_message_timeout_ms %d is below 1000 or fits fewer than %d sends of message_resend_delay_initial_ms %d",
                          config->reliable_message_timeout_ms, ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS, config->message_resend_delay_initial_ms );
         if ( status )
         {

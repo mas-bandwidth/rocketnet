@@ -1105,7 +1105,7 @@ int rn_window_ack_check_timeout( rn_window_ack_t * ack, double now )
 
     rn_window_ack_refresh_oldest( ack );
 
-    if ( ack->has_oldest && ( now - ack->oldest_first_send ) >= ack->reliable_timeout )
+    if ( ack->reliable_timeout > 0.0 && ack->has_oldest && ( now - ack->oldest_first_send ) >= ack->reliable_timeout )
     {
         ack->error = ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT;
         return 1;

@@ -79,7 +79,10 @@ static void rocketnet_config_print_failure( const char * name, rocketnet_channel
 void config_mismatch_over_loopback()
 {
     rocketnet_channel_harness_t h;
-    if ( !rocketnet_channel_harness_create( &h ) )
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    config.reliable_message_timeout_ms = 10000;                 // the wait below is bounded by the reliable timeout: set one
+    if ( !rocketnet_channel_harness_create_with_config( &h, &config ) )
     {
         rocketnet_config_check( 0 );
         return;
@@ -175,6 +178,7 @@ void config_equal_over_lossy_loopback()
     rocketnet_channel_harness_t h;
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
+    config.reliable_message_timeout_ms = 10000;                 // the wait below is bounded by the reliable timeout: set one
     if ( !rocketnet_channel_harness_create_with_config( &h, &config ) )
     {
         rocketnet_config_check( 0 );

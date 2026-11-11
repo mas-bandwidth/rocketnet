@@ -1040,8 +1040,8 @@ enum rocketnet_status_t rocketnet_client_light_config_internal( struct rocketnet
 #define RN_LIGHT_SET( field, value ) do { if ( offsetof( struct rocketnet_client_config_t, field ) + sizeof( config->field ) <= use ) { config->field = ( value ); } } while ( 0 )
 
     // Workload: one 1500-byte MTU each way every 100 ms.
-    // 10 * 1500 * 8 = 120000 bits/s, about 120 kbps. The reliable timeout
-    // stays at its 10000 ms default, so 10 s * 10 messages/s = 100 messages.
+    // 10 * 1500 * 8 = 120000 bits/s, about 120 kbps. Sized to hold the default 10 s
+    // connection timeout of sends, so 10 s * 10 messages/s = 100 messages.
     // A message at the 1415-byte ceiling can take ceil(1415 / 1152) = 2
     // window numbers, so 200 numbers. Validation refuses values below its
     // minimums; it never clamps. These assignments stay inside those ranges.
@@ -2471,8 +2471,8 @@ enum rocketnet_status_t rocketnet_server_light_config_internal( struct rocketnet
 #define RN_LIGHT_SET( field, value ) do { if ( offsetof( struct rocketnet_server_config_t, field ) + sizeof( config->field ) <= use ) { config->field = ( value ); } } while ( 0 )
 
     // Workload: one 1500-byte MTU each way every 100 ms.
-    // 10 * 1500 * 8 = 120000 bits/s, about 120 kbps. The reliable timeout
-    // stays at its 10000 ms default, so 10 s * 10 messages/s = 100 messages.
+    // 10 * 1500 * 8 = 120000 bits/s, about 120 kbps. Sized to hold the default 10 s
+    // connection timeout of sends, so 10 s * 10 messages/s = 100 messages.
     // A message at the 1415-byte ceiling can take ceil(1415 / 1152) = 2
     // window numbers, so 200 numbers. Validation refuses values below its
     // minimums; it never clamps. These assignments stay inside those ranges.

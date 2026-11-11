@@ -44,6 +44,7 @@ struct resend_trace_fixture_t
 static void resend_trace_open( resend_trace_fixture_t * f )
 {
     rocketnet_message_default_config( &f->config );
+    f->config.reliable_message_timeout_ms = 10000;          // the vector states the 10 s reliable timeout (m9.5); the default 0 has none
     check( rocketnet_message_validate_config( &f->config ) );
 
     f->arena = rn_arena_create( NULL, &f->config, 1, NULL );

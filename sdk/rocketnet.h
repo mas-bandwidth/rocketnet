@@ -576,12 +576,13 @@ enum rocketnet_disconnect_reason_t
 
     ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION = -2,
 
-    /// A reliable message went unacknowledged past reliable_message_timeout_ms.
+    /// A reliable message went unacknowledged past reliable_message_timeout_ms
+    /// (only when the game set it nonzero; the default 0 never ends this way).
 
     ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT = -3,
 
-    /// The connection's message memory had no room for a message it must not
-    /// drop.
+    /// The connection's receive-side message memory broke its invariant (a
+    /// delivery table full). A send never ends a connection.
 
     ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED = -4,
 
@@ -631,7 +632,8 @@ enum rocketnet_client_state_t
 
     ROCKETNET_CLIENT_STATE_PROTOCOL_VIOLATION = -10,
 
-    /// A reliable message went unacknowledged past reliable_message_timeout_ms.
+    /// A reliable message went unacknowledged past reliable_message_timeout_ms
+    /// (only when the game set it nonzero; the default 0 never ends this way).
 
     ROCKETNET_CLIENT_STATE_RELIABLE_TIMED_OUT = -9,
 
@@ -1431,11 +1433,14 @@ struct rocketnet_client_config_t
 
     int message_resend_delay_max_ms;
 
-    /// ROCKETNET_CLIENT_RELIABLE_MESSAGE_TIMEOUT_MS disconnects if a reliable
-    /// message remains unacknowledged this long. Units are milliseconds.
-    /// Range is 1000 .. 600000, and at least four times
-    /// message_resend_delay_initial_ms (8000 at the default). Default is
-    /// 10000.
+    /// ROCKETNET_CLIENT_RELIABLE_MESSAGE_TIMEOUT_MS, when nonzero, disconnects
+    /// with RELIABLE_TIMED_OUT once the oldest reliable message has waited
+    /// this long since it was first sent, outage or not. Units are
+    /// milliseconds. 0 turns it off: a connection is then ended only by
+    /// silence for the connect token's timeout_seconds, and an outage shorter
+    /// than that is survived. A nonzero value is 1000 .. 600000, and at least
+    /// four times message_resend_delay_initial_ms (8000 at the default);
+    /// choose it well above the token's timeout. Default is 0 (off).
 
     int reliable_message_timeout_ms;
 
@@ -1668,11 +1673,14 @@ struct rocketnet_server_config_t
 
     int message_resend_delay_max_ms;
 
-    /// ROCKETNET_SERVER_RELIABLE_MESSAGE_TIMEOUT_MS disconnects if a reliable
-    /// message remains unacknowledged this long. Units are milliseconds.
-    /// Range is 1000 .. 600000, and at least four times
-    /// message_resend_delay_initial_ms (8000 at the default). Default is
-    /// 10000.
+    /// ROCKETNET_SERVER_RELIABLE_MESSAGE_TIMEOUT_MS, when nonzero, disconnects
+    /// the client with RELIABLE_TIMED_OUT once the oldest reliable message to
+    /// it has waited this long since it was first sent, outage or not. Units
+    /// are milliseconds. 0 turns it off: a client is then ended only by
+    /// silence for the connection timeout, and an outage shorter than that is
+    /// survived. A nonzero value is 1000 .. 600000, and at least four times
+    /// message_resend_delay_initial_ms (8000 at the default); choose it well
+    /// above the connection timeout. Default is 0 (off).
 
     int reliable_message_timeout_ms;
 

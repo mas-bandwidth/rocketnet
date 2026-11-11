@@ -1481,8 +1481,8 @@ struct rocketnet_message_config_t
     int message_resend_delay_min_ms;                     // optional resend delay floor; 0 disables; 0 .. 60000; default 0
     /** @brief Maximum resend delay in milliseconds; 10 through 60000, default 2000. */
     int message_resend_delay_max_ms;                     // 10 .. 60000; default 2000
-    /** @brief Reliable-message lifetime in milliseconds; 1000 through 600000, default 10000. */
-    int reliable_message_timeout_ms;            // 1000 .. 600000; default 10000
+    /** @brief Reliable-message lifetime in milliseconds; 0 (the default) is off, a nonzero value is 1000 through 600000. */
+    int reliable_message_timeout_ms;            // 0 off (default); else 1000 .. 600000
     /** @brief Default client send budget in kilobits per second; zero or less is uncapped, positive values may not exceed ROCKETNET_SEND_BUDGET_MAX_KBPS. */
     int client_send_kbps;                // client default budget; 0 or lower uncapped; <= ROCKETNET_SEND_BUDGET_MAX_KBPS
     /** @brief Default per-client server send budget in kilobits per second; zero or less is uncapped, positive values may not exceed ROCKETNET_SEND_BUDGET_MAX_KBPS. */
