@@ -149,6 +149,13 @@ EXTENDS Integers
 \*     after Probe ticks with none ends a silence, and an ack of a packet
 \*     sent before silence_end - srtt gives no RTT sample
 \*     (NoSampleAcrossSilence).
+\* The endpoint's due test (rn_endpoint_ordered_due) decides whether a
+\* frame is started for the walk at all; it reads each class's FIFO head
+\* and asks the walk's own hold (rn_window_ack_held), so a held head stands
+\* for U, the one number the walk may resend (FifoDue).  It reports work
+\* exactly when the walk writes some number (DueMeansWritten): a frame
+\* started for a held connection with nothing to write would be aborted and
+\* cost the transport's per-update send capacity (MESSAGES.md m1.8).
 \* Neither acts with the timeout configured.  The new state is gated so
 \* the cases above carry none of it: sinceProgress moves only with the
 \* timeout off, and quiet, sinceAck and sinceEnd only in the cases that
@@ -283,6 +290,15 @@ ProbeNoRelease == "norelease"
 ProbeHoldsU == "holdsu"
 ThirdOn == TRUE
 
+\*   DueRule: TRUE is the due test asking the walk's hold, a held head
+\*            standing for U (the rule); FALSE is the due test blind to the
+\*            hold, the code of v1.1.0: a held head past its delay reports
+\*            work the walk never writes (the reversed witness
+\*            MCRNResendTimingBrokenDueIgnoresHold.cfg).
+\* (DueRule <- DueRuleOff)
+DueRule == TRUE
+DueRuleOff == FALSE
+
 \*   Filter:  track the RTT filter (m9.2): an ack after Probe ticks with
 \*            none sets silence_end, and no RTT sample comes from a packet
 \*            sent before silence_end - srtt.  Off (FALSE) by default so
@@ -405,6 +421,28 @@ WalkProbing ==
       [] OTHER -> Probing
 Held(r) == Probing /\ OnWire(r) /\ r # U
 WalkHeld(r) == WalkProbing /\ OnWire(r) /\ (r # U \/ ProbeMode = "holdsu")
+
+\* rn_endpoint_fifo_due for one class's FIFO (s and s2 small, c a chunk).
+\* The head is a number never sent, else the oldest last send (a refused
+\* resend's due-now stamp first), s before s2 at the same tick, their
+\* numbers' order.  A head never sent is due; a head on the wire that the
+\* walk holds stands for U when U is in this class (rn_window_ack_probe_slot)
+\* and for nothing otherwise; the number it stands for is due past its
+\* delay.  DueRule = FALSE reads the head alone.
+ClassOf(r) == IF r = "c" THEN "c" ELSE "s"
+ClassLive(k) == {r \in Records : ~acked[r] /\ ClassOf(r) = k /\ Started(r)}
+Before(a, b) ==
+    \/ ~OnWire(a) /\ OnWire(b)
+    \/ /\ OnWire(a) = OnWire(b)
+       /\ \/ lastSend[a] < lastSend[b]
+          \/ lastSend[a] = lastSend[b] /\ a = "s"
+FifoHead(k) == CHOOSE r \in ClassLive(k) : \A o \in ClassLive(k) \ {r} : Before(r, o)
+FifoDue(k) ==
+    /\ ClassLive(k) # {}
+    /\ LET h == FifoHead(k)
+           x == IF DueRule /\ OnWire(h) /\ WalkHeld(h) THEN U ELSE h
+       IN ClassOf(x) = k /\ Due(x)
+ReportedDue == FifoDue("s") \/ FifoDue("c")
 
 \* rn_window_ack_seed_rtt is owed this update: the transport has a round
 \* trip and the estimator no sample (has_rtt = 0).
@@ -749,6 +787,16 @@ ProbeOnlyU ==
 \* The RTT filter (m9.2): no sample from a packet sent before
 \* silence_end - srtt, once the estimator has one.
 NoSampleAcrossSilence == ~badSample
+
+\* A frame is started only for work, and never withheld from it: at the
+\* walk, the due test reports work exactly when the walk writes a number.
+\* Checked for Walk (Room = 0) with one FIFO per class.  Under probe pacing
+\* a head the walk holds is the case this exists for: the due test blind
+\* to the hold (DueRule = FALSE) reports a held chunk or s2 past its delay
+\* due in every update while U is not, and the walk writes nothing.
+DueMeansWritten ==
+    (Room = 0 /\ ~OneFifo /\ phase = "walk" /\ Live /\ ~SeedOwed) =>
+        (ReportedDue <=> \E r \in Records : Sent(r))
 
 \* After the last bad interval every reliable number is acknowledged:
 \* probe pacing never keeps a delivering path from progress.
