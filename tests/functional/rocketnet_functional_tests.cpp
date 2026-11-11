@@ -12052,27 +12052,42 @@ static int msgx_client_payload_tag( const uint8_t * payload, int bytes )
 }
 
 // one hand-off of num_packets client payloads, then the server collects them
-// until every tag has arrived exactly once (num_packets <= 64: one client I/O
-// batch, ROCKETNET_CLIENT_IO_BATCH, so two sendmsg_x chunks of 32 at most)
-static void msgx_client_send_and_collect( struct msgx_client_pair_t * pair, int num_packets )
+// until every tag has arrived once (num_packets <= 64: one client I/O batch,
+// ROCKETNET_CLIENT_IO_BATCH, so two sendmsg_x chunks of 32 at most). A real
+// socket, even loopback, may drop a datagram, so with resend each tag not
+// seen 250 ms after a hand-off is handed off again until the deadline; a tag
+// that never arrives, or arrives wrong, still fails. Without resend the one
+// hand-off must arrive whole: the case's oracle is that the transport sent
+// every datagram of it.
+static void msgx_client_send_and_collect( struct msgx_client_pair_t * pair, int num_packets, bool resend )
 {
     rocketnet_check( num_packets > 0 && num_packets <= ROCKETNET_CLIENT_IO_BATCH );
-    for ( int tag = 0; tag < num_packets; tag++ )
-    {
-        struct rocketnet_packet_context_t context = {};
-        uint8_t * payload = rocketnet_client_transport_start_packet( pair->client, MSGX_CLIENT_PAYLOAD_BYTES, &context );
-        rocketnet_check( payload );
-        msgx_client_fill_payload( payload + context.payload_index, tag );
-        rocketnet_check( rocketnet_client_transport_finish_packet( pair->client, &context, MSGX_CLIENT_PAYLOAD_BYTES ) > MSGX_CLIENT_PAYLOAD_BYTES );
-    }
-
-    rocketnet_client_transport_send_packets( pair->client );
 
     bool seen[ROCKETNET_CLIENT_IO_BATCH] = {};
+    bool resent[ROCKETNET_CLIENT_IO_BATCH] = {};
     int received = 0;
+    double handed_off = -1.0;
     const double start = rocketnet_platform_time();
     while ( received < num_packets && rocketnet_platform_time() - start < 5.0 )
     {
+        if ( handed_off < 0.0 || ( resend && rocketnet_platform_time() - handed_off > 0.25 ) )
+        {
+            for ( int tag = 0; tag < num_packets; tag++ )
+            {
+                if ( seen[tag] )
+                    continue;
+                resent[tag] = resent[tag] || handed_off >= 0.0;
+                struct rocketnet_packet_context_t context = {};
+                uint8_t * payload = rocketnet_client_transport_start_packet( pair->client, MSGX_CLIENT_PAYLOAD_BYTES, &context );
+                rocketnet_check( payload );
+                msgx_client_fill_payload( payload + context.payload_index, tag );
+                rocketnet_check( rocketnet_client_transport_finish_packet( pair->client, &context, MSGX_CLIENT_PAYLOAD_BYTES ) > MSGX_CLIENT_PAYLOAD_BYTES );
+            }
+
+            rocketnet_client_transport_send_packets( pair->client );
+            handed_off = rocketnet_platform_time();
+        }
+
         rocketnet_client_transport_update( pair->client, rocketnet_platform_time() );
         rocketnet_server_transport_update( pair->server, rocketnet_platform_time() );
         rocketnet_server_transport_send_packets( pair->server );
@@ -12085,7 +12100,9 @@ static void msgx_client_send_and_collect( struct msgx_client_pair_t * pair, int 
             rocketnet_check( payload_client_index == 0 );
 
             const int tag = msgx_client_payload_tag( payload, payload_bytes );
-            rocketnet_check( tag < num_packets && !seen[tag] );
+            rocketnet_check( tag < num_packets && ( !seen[tag] || resent[tag] ) );
+            if ( seen[tag] )
+                continue;
             seen[tag] = true;
             received++;
         }
@@ -12101,26 +12118,36 @@ static void msgx_client_send_and_collect( struct msgx_client_pair_t * pair, int 
     rocketnet_check( received == num_packets );
 }
 
-// num_packets server payloads to the client, every one received exactly once
+// num_packets server payloads to the client, every one received once; a tag
+// not seen 250 ms after it was sent is sent again until the deadline (a real
+// socket, even loopback, may drop a datagram)
 static void msgx_client_receive_from_server( struct msgx_client_pair_t * pair, int num_packets )
 {
     rocketnet_check( num_packets > 0 && num_packets <= ROCKETNET_CLIENT_IO_BATCH );
 
     uint8_t payload[MSGX_CLIENT_PAYLOAD_BYTES];
-
-    for ( int tag = 0; tag < num_packets; tag++ )
-    {
-        msgx_client_fill_payload( payload, tag );
-        rocketnet_server_transport_send_packet( pair->server, 0, payload, MSGX_CLIENT_PAYLOAD_BYTES );
-    }
-
-    rocketnet_server_transport_send_packets( pair->server );
-
     bool seen[ROCKETNET_CLIENT_IO_BATCH] = {};
+    bool resent[ROCKETNET_CLIENT_IO_BATCH] = {};
     int received = 0;
+    double sent = -1.0;
     const double start = rocketnet_platform_time();
     while ( received < num_packets && rocketnet_platform_time() - start < 5.0 )
     {
+        if ( sent < 0.0 || rocketnet_platform_time() - sent > 0.25 )
+        {
+            for ( int tag = 0; tag < num_packets; tag++ )
+            {
+                if ( seen[tag] )
+                    continue;
+                resent[tag] = resent[tag] || sent >= 0.0;
+                msgx_client_fill_payload( payload, tag );
+                rocketnet_server_transport_send_packet( pair->server, 0, payload, MSGX_CLIENT_PAYLOAD_BYTES );
+            }
+
+            rocketnet_server_transport_send_packets( pair->server );
+            sent = rocketnet_platform_time();
+        }
+
         rocketnet_client_transport_update( pair->client, rocketnet_platform_time() );
         rocketnet_server_transport_update( pair->server, rocketnet_platform_time() );
         rocketnet_server_transport_send_packets( pair->server );
@@ -12130,7 +12157,9 @@ static void msgx_client_receive_from_server( struct msgx_client_pair_t * pair, i
         while ( ( packet_bytes = rocketnet_client_transport_receive_packet( pair->client, packet, (int) sizeof( packet ) ) ) > 0 )
         {
             const int tag = msgx_client_payload_tag( packet, packet_bytes );
-            rocketnet_check( tag < num_packets && !seen[tag] );
+            rocketnet_check( tag < num_packets && ( !seen[tag] || resent[tag] ) );
+            if ( seen[tag] )
+                continue;
             seen[tag] = true;
             received++;
         }
@@ -12171,7 +12200,7 @@ static void msgx_client_pin_selects( const char * client_transport, const char *
     msgx_client_pair_create( &pair, "portable", "127.0.0.1", "127.0.0.1", client_transport );
     rocketnet_check( strcmp( rocketnet_client_transport_io_name( pair.client ), client_transport ? client_transport : "msgx" ) == 0 );
     rocketnet_check( strcmp( rocketnet_platform_socket_pump( pair.client_socket ), pump ) == 0 );
-    msgx_client_send_and_collect( &pair, 48 );
+    msgx_client_send_and_collect( &pair, 48, true );
     msgx_client_receive_from_server( &pair, 48 );
     rocketnet_check( strcmp( rocketnet_platform_socket_pump( pair.client_socket ), pump ) == 0 );
     msgx_client_pair_destroy( &pair );
@@ -12215,15 +12244,19 @@ void rocketnet_test_msgx_client_degrades_without_loss()
 
     const uint64_t failures_before = rocketnet_platform_socket_send_failures( pair.client_socket );
 
+    // no resend here: a resend would carry what a lost replay dropped, and
+    // the darwin socket counts no sent datagrams to assert on instead, so the
+    // one hand-off arriving whole is the oracle for "without loss"
+
     rocketnet_platform_socket_fail_next_sends( pair.client_socket, 1, ENOTSUP );
-    msgx_client_send_and_collect( &pair, 48 );
+    msgx_client_send_and_collect( &pair, 48, false );
     rocketnet_platform_socket_fail_next_sends( pair.client_socket, 0, 0 );
     rocketnet_check( strcmp( rocketnet_platform_socket_pump( pair.client_socket ), "portable" ) == 0 );
     rocketnet_check( rocketnet_platform_socket_send_failures( pair.client_socket ) == failures_before + 1 );
 
     // the paused socket keeps carrying both ways on the portable loop
 
-    msgx_client_send_and_collect( &pair, 48 );
+    msgx_client_send_and_collect( &pair, 48, true );
     msgx_client_receive_from_server( &pair, 48 );
     rocketnet_check( strcmp( rocketnet_platform_socket_pump( pair.client_socket ), "portable" ) == 0 );
 
@@ -12250,7 +12283,7 @@ static void msgx_client_wire( const char * server_bind, const char * token_host 
         struct msgx_client_pair_t pair;
         msgx_client_pair_create( &pair, servers[s], server_bind, token_host, "msgx" );
         rocketnet_check( strcmp( rocketnet_client_transport_io_name( pair.client ), "msgx" ) == 0 );
-        msgx_client_send_and_collect( &pair, 64 );
+        msgx_client_send_and_collect( &pair, 64, true );
         msgx_client_receive_from_server( &pair, 64 );
         rocketnet_check( strcmp( rocketnet_platform_socket_pump( pair.client_socket ), "msgx" ) == 0 );
         msgx_client_pair_destroy( &pair );
@@ -12354,26 +12387,38 @@ static void iocp_client_pair_destroy( struct iocp_client_pair_t * pair )
     ROCKETNET_FUNCTIONAL_DESTROY_SERVER( pair->server );
 }
 
-// one hand-off of num_packets client payloads; the server collects every tag once
+// one hand-off of num_packets client payloads; the server collects every tag
+// once. A tag not seen 250 ms after a hand-off is handed off again until the
+// deadline (a real socket, even loopback, may drop a datagram)
 static void iocp_client_send_and_collect( struct iocp_client_pair_t * pair, int num_packets )
 {
     rocketnet_check( num_packets > 0 && num_packets <= ROCKETNET_CLIENT_IO_BATCH );
-    for ( int tag = 0; tag < num_packets; tag++ )
-    {
-        struct rocketnet_packet_context_t context = {};
-        uint8_t * payload = rocketnet_client_transport_start_packet( pair->client, IOCP_CLIENT_PAYLOAD_BYTES, &context );
-        rocketnet_check( payload );
-        iocp_client_fill_payload( payload + context.payload_index, tag );
-        rocketnet_check( rocketnet_client_transport_finish_packet( pair->client, &context, IOCP_CLIENT_PAYLOAD_BYTES ) > IOCP_CLIENT_PAYLOAD_BYTES );
-    }
-
-    rocketnet_client_transport_send_packets( pair->client );
 
     bool seen[ROCKETNET_CLIENT_IO_BATCH] = {};
+    bool resent[ROCKETNET_CLIENT_IO_BATCH] = {};
     int received = 0;
+    double handed_off = -1.0;
     const double start = rocketnet_platform_time();
     while ( received < num_packets && rocketnet_platform_time() - start < 5.0 )
     {
+        if ( handed_off < 0.0 || rocketnet_platform_time() - handed_off > 0.25 )
+        {
+            for ( int tag = 0; tag < num_packets; tag++ )
+            {
+                if ( seen[tag] )
+                    continue;
+                resent[tag] = resent[tag] || handed_off >= 0.0;
+                struct rocketnet_packet_context_t context = {};
+                uint8_t * payload = rocketnet_client_transport_start_packet( pair->client, IOCP_CLIENT_PAYLOAD_BYTES, &context );
+                rocketnet_check( payload );
+                iocp_client_fill_payload( payload + context.payload_index, tag );
+                rocketnet_check( rocketnet_client_transport_finish_packet( pair->client, &context, IOCP_CLIENT_PAYLOAD_BYTES ) > IOCP_CLIENT_PAYLOAD_BYTES );
+            }
+
+            rocketnet_client_transport_send_packets( pair->client );
+            handed_off = rocketnet_platform_time();
+        }
+
         rocketnet_client_transport_update( pair->client, rocketnet_platform_time() );
         rocketnet_server_transport_update( pair->server, rocketnet_platform_time() );
         rocketnet_server_transport_send_packets( pair->server );
@@ -12386,7 +12431,9 @@ static void iocp_client_send_and_collect( struct iocp_client_pair_t * pair, int 
             rocketnet_check( payload_client_index == 0 );
 
             const int tag = iocp_client_payload_tag( payload, payload_bytes );
-            rocketnet_check( tag < num_packets && !seen[tag] );
+            rocketnet_check( tag < num_packets && ( !seen[tag] || resent[tag] ) );
+            if ( seen[tag] )
+                continue;
             seen[tag] = true;
             received++;
         }
@@ -12402,26 +12449,35 @@ static void iocp_client_send_and_collect( struct iocp_client_pair_t * pair, int 
     rocketnet_check( received == num_packets );
 }
 
-// num_packets server payloads, every one received by the iocp client once
+// num_packets server payloads, every one received by the iocp client once; a
+// tag not seen 250 ms after it was sent is sent again until the deadline
 static void iocp_client_receive_from_server( struct iocp_client_pair_t * pair, int num_packets )
 {
     rocketnet_check( num_packets > 0 && num_packets <= ROCKETNET_CLIENT_IO_BATCH );
 
     uint8_t payload[IOCP_CLIENT_PAYLOAD_BYTES];
-
-    for ( int tag = 0; tag < num_packets; tag++ )
-    {
-        iocp_client_fill_payload( payload, tag );
-        rocketnet_server_transport_send_packet( pair->server, 0, payload, IOCP_CLIENT_PAYLOAD_BYTES );
-    }
-
-    rocketnet_server_transport_send_packets( pair->server );
-
     bool seen[ROCKETNET_CLIENT_IO_BATCH] = {};
+    bool resent[ROCKETNET_CLIENT_IO_BATCH] = {};
     int received = 0;
+    double sent = -1.0;
     const double start = rocketnet_platform_time();
     while ( received < num_packets && rocketnet_platform_time() - start < 5.0 )
     {
+        if ( sent < 0.0 || rocketnet_platform_time() - sent > 0.25 )
+        {
+            for ( int tag = 0; tag < num_packets; tag++ )
+            {
+                if ( seen[tag] )
+                    continue;
+                resent[tag] = resent[tag] || sent >= 0.0;
+                iocp_client_fill_payload( payload, tag );
+                rocketnet_server_transport_send_packet( pair->server, 0, payload, IOCP_CLIENT_PAYLOAD_BYTES );
+            }
+
+            rocketnet_server_transport_send_packets( pair->server );
+            sent = rocketnet_platform_time();
+        }
+
         rocketnet_client_transport_update( pair->client, rocketnet_platform_time() );
         rocketnet_server_transport_update( pair->server, rocketnet_platform_time() );
         rocketnet_server_transport_send_packets( pair->server );
@@ -12431,7 +12487,9 @@ static void iocp_client_receive_from_server( struct iocp_client_pair_t * pair, i
         while ( ( packet_bytes = rocketnet_client_transport_receive_packet( pair->client, packet, (int) sizeof( packet ) ) ) > 0 )
         {
             const int tag = iocp_client_payload_tag( packet, packet_bytes );
-            rocketnet_check( tag < num_packets && !seen[tag] );
+            rocketnet_check( tag < num_packets && ( !seen[tag] || resent[tag] ) );
+            if ( seen[tag] )
+                continue;
             seen[tag] = true;
             received++;
         }
