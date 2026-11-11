@@ -29,7 +29,7 @@ struct stop_spread_fixture_t
 {
     rocketnet_address_t reserved_to;
     int capacity;                                       // frames the staging takes per flush
-    int used;                                           // frames staged since the last flush
+    int used;                                           // frames started since the last flush
     int refused_for_room;                               // starts called with the staging full
     int unreachable_port;                               // a destination with no link-layer address, 0: none
     int refused_port;                                   // a destination the socket cannot carry, 0: none
@@ -71,15 +71,16 @@ static uint8_t * stop_spread_start_packet( void * p, const rocketnet_address_t *
         return NULL;
     }
     f->reserved_to = *to;
-    *id = (uint64_t) f->used;
+    *id = (uint64_t) f->used++;
 
     return stop_spread_frame;
 }
 
+// a started frame stays claimed until the flush, finished or aborted, as on
+// every real staged transport
 static void stop_spread_finish_packet( void * p, uint64_t, uint8_t * frame, int )
 {
     stop_spread_fixture_t * f = (stop_spread_fixture_t *) p;
-    f->used++;
     if ( frame[ROCKETNET_FRAME_WIRE_OFFSET] != ROCKETNET_CONNECTION_DISCONNECT_PACKET )
         return;
     const int client = f->reserved_to.port - 1000;
