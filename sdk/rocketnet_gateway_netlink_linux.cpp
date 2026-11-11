@@ -732,30 +732,14 @@ int rocketnet_gateway_netlink_refresh_with( const rocketnet_gateway_netlink_syst
     rocketnet_assert( gateway_known );
 
     // the refresh runs inside the update: its sockets are non-blocking, so a
-    // read finds the reply queued or fails EAGAIN, and never waits for it
+    // read finds the reply queued or fails EAGAIN, and never waits for it.
+    // It reads the default route every period, as create does, so a change
+    // of the gateway's IP address is followed at the next refresh
 
     rocketnet_gateway_netlink_system_t nonblocking = *system;
     nonblocking.socket_flags |= SOCK_NONBLOCK;
-    system = &nonblocking;
 
-    if ( *gateway_known && rocketnet_gateway_netlink_neighbor_with( system, family, interface_index, gateway, mac, error ) == ROCKETNET_GATEWAY_NETLINK_FOUND )
-    {
-        return ROCKETNET_GATEWAY_NETLINK_FOUND;
-    }
-
-    const int route = rocketnet_gateway_netlink_route_with( system, family, interface_index, gateway, error );
-    if ( route == ROCKETNET_GATEWAY_NETLINK_DONE )
-    {
-        *gateway_known = false;
-    }
-    if ( route != ROCKETNET_GATEWAY_NETLINK_FOUND )
-    {
-        return route;
-    }
-
-    *gateway_known = true;
-
-    return rocketnet_gateway_netlink_neighbor_with( system, family, interface_index, gateway, mac, error );
+    return rocketnet_gateway_netlink_discover_with( &nonblocking, family, interface_index, gateway, gateway_known, mac, error );
 }
 
 int rocketnet_gateway_netlink_refresh( int family, int interface_index, uint8_t * gateway, bool * gateway_known, uint8_t * mac, int * error )

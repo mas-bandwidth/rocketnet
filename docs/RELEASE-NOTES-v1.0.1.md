@@ -51,8 +51,7 @@ Changes compared with the `v1.0.0` tag.
 - On Linux io_uring, sends are spread across the socket pool, so a burst larger than one socket's send buffer uses its siblings.
 - On Linux xdp, `SEND_FAILED` counts each datagram the kernel dropped at a transmit wakeup, and a hard wakeup error once per run of errors, which is logged once.
 - On Linux xdp, stop no longer waits forever on a queue whose transmit wakeup keeps failing.
-- On Linux xdp, the gateway refresh asks for the known gateway's neighbour entry instead of reading the whole route and neighbour tables.
-- On Linux xdp, the gateway refresh keeps the known gateway while its neighbour entry resolves, so a change of the default gateway's IP address may need a server restart.
+- On Linux xdp, the gateway refresh asks for the default gateway's neighbour entry instead of reading the whole neighbour table; it still reads the default route every period, so it follows a change of the gateway's IP address as v1.0.0 did.
 - On Linux, the netlink reply parser rejects a reply whose error code is `INT_MIN`.
 - On the portable transport, the send worker waits for a full socket to become writable and retries within 1 ms.
 - On the Windows IOCP server, a send release or receive retry refused while its queue is briefly busy is retried, so stop completes once every operation has finished.

@@ -25,10 +25,8 @@
 //                 permanent) and carrying a 6-byte NDA_LLADDR: that is the
 //                 gateway's MAC. Nothing resolves a missing entry (ENOENT).
 //
-// The periodic refresh runs on the main update thread, so it never dumps
-// while it knows the gateway: it asks that gateway's neighbour entry
-// directly, and dumps the routes again only when no gateway is known or
-// the direct query does not find the entry.
+// The periodic refresh makes the same two queries as create, every period,
+// so it follows a change of the default route's gateway.
 //
 // The parse functions are pure: one received datagram of a dump in, an
 // outcome out, no socket and no allocation (test_unit_xdp_gateway_netlink.cpp
@@ -91,12 +89,9 @@ int rocketnet_gateway_netlink_neighbor( int family, int interface_index, const u
 
 int rocketnet_gateway_netlink_discover( int family, int interface_index, uint8_t * gateway, bool * gateway_known, uint8_t * mac, int * error );
 
-// the periodic refresh of one family's gateway MAC. With *gateway_known, the
-// neighbour entry of gateway is asked directly, and FOUND is the answer.
-// Otherwise, or when that query does not answer FOUND, the route dump runs:
-// its DONE (no default route) is DONE with *gateway_known false, any other
-// failure is its outcome and keeps gateway; a route found writes gateway,
-// sets *gateway_known, and the neighbour query's outcome is the answer.
+// the periodic refresh of one family's gateway MAC: discover's route query
+// and neighbour query, every period, with discover's outcomes, so a change
+// of the default route's gateway IP is followed at the next refresh.
 // The refresh runs inside the update, so its sockets are non-blocking and
 // it never makes a blocking netlink receive: a reply not yet queued when it
 // is read fails that query SYSTEM with EAGAIN, where a blocking read would
