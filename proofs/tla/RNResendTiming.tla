@@ -299,8 +299,8 @@ FilterOn == TRUE
 FilterRuleOff == FALSE
 
 \*   TrackQuiet: track the ticks since anything was last heard from the
-\*            peer (any ack), saturating at the largest silence timeout T
-\*            of SilenceTs, for NoEndBeforeT.  Off (FALSE) by default.
+\*            other side of the connection (any ack), saturating at the
+\*            largest silence timeout T of SilenceTs, for NoEndBeforeT.  Off (FALSE) by default.
 \*   GoodFrom: the tick the last bad interval ends: a copy sent from then
 \*            on is acknowledged (the liveness fairness, GoodAck); past the
 \*            horizon (never) by default.
@@ -355,7 +355,7 @@ VARIABLES
     sinceProgress, \* ticks since a reliable number was newly acknowledged
                 \* (ack->last_progress), saturating at Probe; Probe at the
                 \* start, so U's first send alone times the first hold
-    quiet,      \* TrackQuiet: ticks since the peer was last heard, saturating
+    quiet,      \* TrackQuiet: ticks since the other side was last heard, saturating
     sinceAck,   \* Filter: ticks since the last ack (ack->last_ack), saturating
                 \* at Probe; -1 before the first (has_last_ack = 0)
     sinceEnd,   \* Filter: ticks since silence_end, saturating at AgeMax
@@ -607,7 +607,7 @@ EndWrites ==
     /\ phase' = "tick"
     /\ UNCHANGED <<t, lastSend, rto, backoff, attempts, acked, head, sampled, seeded, firstSend, refused, pending, probeVars>>
 
-\* Anything acknowledged is the peer heard (quiet), and with the filter
+\* Anything acknowledged is the other side heard (quiet), and with the filter
 \* tracked it is an ack: rn_window_ack_on_acks sets silence_end when the
 \* last ack is Probe ticks or more ago (the timeout off; has_last_ack).
 FilterTracked == Filter /\ ~TimeoutOn
@@ -735,9 +735,10 @@ OffMeansNoStallEnd == ~TimeoutOn => ~TimedOut
 
 \* No end before T, for each small silence timeout T: whatever ends the
 \* connection here does so only after T ticks in which nothing was heard
-\* from the peer.  With the timeout off nothing ends it; the reversed
+\* from the other side.  With the timeout off nothing ends it; the reversed
 \* witness TimeoutWhenOff (the timeout from the first send, the code before
-\* v1.1.0) ends a connection whose peer acknowledged within the last tick.
+\* v1.1.0) ends a connection whose other side acknowledged within the last
+\* tick.
 NoEndBeforeT == \A T \in SilenceTs : TimedOut => quiet >= T
 
 \* Probe pacing (m9.3): while the path has acknowledged no reliable number
