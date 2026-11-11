@@ -14,13 +14,15 @@ checks that each row is backed by the workflow it names. See [docs/LINUX.md](LIN
 
 | Operating system | Architecture | Compiler | Transports | Tier | Workflow | Runner label | Per-commit functional |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Ubuntu 24.04 (Linux, CI) | x86_64 | GCC 13 | portable, gso, io_uring, xdp | supported | .github/workflows/ci.yml | Linux, X64 | full: Run functional suite |
-| Ubuntu 24.04 (Linux, cross/QEMU) | s390x | s390x-linux-gnu-gcc | portable | supported | .github/workflows/ci.yml | Linux, X64 | subset: Run the big-endian wire check |
+| Ubuntu 26.04 (Linux, CI) | x86_64 | GCC 15 | portable, gso, io_uring, xdp | supported | .github/workflows/ci.yml | Linux, X64 | full: Run functional suite |
+| Ubuntu 26.04 (Linux, cross/QEMU) | s390x | s390x-linux-gnu-gcc | portable | supported | .github/workflows/ci.yml | Linux, X64 | subset: Run the big-endian wire check |
 | [macOS 27](MACOS.md) | arm64 | Apple Clang | portable, msgx | supported | .github/workflows/ci.yml | macOS, ARM64 | full: Run functional suite |
 | [Windows 11](WINDOWS.md) | x86_64 | MSVC | portable, iocp, rio | supported | .github/workflows/ci.yml | Windows, X64 | subset: Run happy_path |
-| Ubuntu 24.04 (Linux, CI) | x86_64 | GCC | portable, gso, xdp | nightly | .github/workflows/nightly-leaks.yml | Linux, X64 | - |
-| Ubuntu 24.04 (Linux, CI) | x86_64 | Clang | portable | nightly | .github/workflows/fuzz-nightly.yml | Linux, X64 | - |
+| Ubuntu 26.04 (Linux, CI) | x86_64 | GCC | portable, gso, xdp | nightly | .github/workflows/nightly-leaks.yml | Linux, X64 | - |
+| Ubuntu 26.04 (Linux, CI) | x86_64 | Clang | portable | nightly | .github/workflows/fuzz-nightly.yml | Linux, X64 | - |
 | Ubuntu 24.04 (Linux, full-system guest) | s390x | GCC | portable | nightly | .github/workflows/nightly-bigendian-system.yml | Linux, X64 | - |
+| Ubuntu 24.04 LTS (Linux, container) | x86_64 | GCC 13 | build and unit suite: portable, gso, io_uring, xdp (libxdp 1.4) | nightly | .github/workflows/ci.yml | Linux, X64 | - |
+| Ubuntu 22.04 LTS (Linux, container) | x86_64 | GCC 11 | build and unit suite: portable, gso, xdp (libbpf 0.5); io_uring not built (liburing 2.1) | nightly | .github/workflows/ci.yml | Linux, X64 | - |
 | [macOS 27](MACOS.md) | arm64 | Apple Clang | portable, msgx | nightly | .github/workflows/nightly-soak.yml | macOS, ARM64 | - |
 | [macOS 27](MACOS.md) | arm64 | Apple Clang | portable, msgx | nightly | .github/workflows/nightly-frame-budget.yml | macOS, ARM64 | - |
 | [macOS 27](MACOS.md) | arm64 | Apple Clang | portable, msgx | nightly | .github/workflows/nightly-examples.yml | macOS, ARM64 | - |
@@ -48,6 +50,17 @@ Debug leg under the default and IOCP transports, the Release ASan leg under the
 default, IOCP and RIO transports). The s390x row is a subset for the same
 reason in kind: per commit it runs the wire and sodium checks under qemu-user,
 and the socket-crossing suite runs in the nightly full-system guest.
+
+The CI runners are Ubuntu 26.04, so the per-commit Linux row is 26.04.
+Ubuntu 22.04 LTS and 24.04 LTS remain supported releases to build and deploy
+on, and in this table's terms their CI is nightly: the `distro-container`
+job in `ci.yml` (run by `nightly-ci.yml`) installs each release's packages in
+a container of that release on a CI runner, builds the tree with its
+compiler, and runs the unit suite and the package check (and
+`test_xdp_compat` on 22.04). It runs no functional suite, and the container
+shares the runner's kernel, so it qualifies the toolchain and userspace
+libraries, not the 5.15 or 6.8 kernels. See [docs/LINUX.md](LINUX.md) for
+the distribution table.
 
 clang-cl x64 is built and tested nightly: the `windows-toolchains` job in
 `nightly.yml` builds the static and shared libraries, `test.exe` and
