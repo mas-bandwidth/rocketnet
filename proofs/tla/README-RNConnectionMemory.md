@@ -125,3 +125,35 @@ java -XX:+UseParallelGC -cp /path/to/tla2tools.jar tlc2.TLC -workers 2 -cleanup 
 
 Use `tlacheck run --group rnconnectionmemory` to measure the records, as
 proofs/tla/README.md describes.
+
+## Revision 1.1: a send with no room is refused, not an end
+
+Standard rule: MESSAGES.md m1.7. A send that finds no room in the region is
+refused and counted; the region and the connection are as they were. Only the
+receive side's exhaustion ends a connection with MESSAGE_MEMORY_EXHAUSTED.
+The new action `Refuse(s)` is the send refusal (`rn_region_send_refuse`,
+`sdk/rocketnet_allocator.cpp`); `Exhaust(s)` is now the receive placement
+only. The ghost `cause` records the side that exhausted a region.
+`SendExhausts = TRUE` is the reversed witness, v1.0's send-side kick.
+
+| Property | Kind | Claim |
+|---|---|---|
+| `SendNeverEnds` | invariant | no slot is disconnected with cause `"send"` |
+| `RefusalLeavesStateUnchanged` | action | a refused send leaves its slot's state, owner, room, exhaustion, reason and records unchanged |
+| `ExhaustionOnlyLeadsToDisconnect` | action | narrowed to the receive side's exhaustion, the only one there is |
+
+| Case | Expected | Exit | Distinct |
+|---|---|---:|---:|
+| `MCRNConnectionMemory.cfg` | pass | 0 | 151849 |
+| `MCRNConnectionMemoryBrokenExhaustOnFull.cfg` (`SendExhausts`) | `SendNeverEnds` | 12 | 538 |
+| `MCRNConnectionMemoryBrokenRefuseChanges.cfg` (`SendExhausts`) | `RefusalLeavesStateUnchanged` | 13 | 99 |
+
+Witness traces, read by hand: a client connects, its sends fill the region's
+three records, the next send is refused and, with `SendExhausts`, sets
+`exhausted` with cause `"send"`; `Kick` then disconnects the slot with
+MESSAGE_MEMORY_EXHAUSTED (ExhaustOnFull), or the refusing step itself
+changes the slot (RefuseChanges). The code before revision 1.1 did this:
+`rn_region_send_alloc` and `rn_region_send_alloc_span` called
+`rn_region_exhaust` on a failed fit, and the owner kicked the exhausted
+connection at its next decision. The code now calls `rn_region_send_refuse`,
+which counts the refusal and leaves the region as it was.
