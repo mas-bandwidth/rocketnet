@@ -280,6 +280,11 @@ struct rocketnet_client_transport_t * rocketnet_message_client_transport( struct
     return client->object.link.destroy == RN_LINK_FORWARD( rocketnet_client_transport_destroy )::call ? (rocketnet_client_transport_t *) client->object.link.transport : NULL;
 }
 
+bool rocketnet_message_client_conditions( const struct rocketnet_message_client_t * client, struct rocketnet_conditions_t * conditions )
+{
+    return rn_message_object_conditions( &client->object, 0, conditions );
+}
+
 #if ROCKETNET_DEV
 void rocketnet_message_client_delivery_capture( struct rocketnet_message_client_t * client, struct rocketnet_delivery_capture_t * capture )
 {

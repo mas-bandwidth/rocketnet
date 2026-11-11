@@ -181,6 +181,33 @@ struct rn_message_connection_t * rn_message_object_connection( struct rn_message
     return &object->connections[index];
 }
 
+bool rn_message_object_conditions( const struct rn_message_object_t * object, int index, struct rocketnet_conditions_t * conditions )
+{
+    if ( !object || index < 0 || index >= object->num_connections || object->hot_connections[index].state != RN_MESSAGE_CONNECTION_CONNECTED )
+    {
+        return false;
+    }
+    const struct rn_endpoint_t * endpoint = &object->connections[index];
+    const struct rn_ordered_t * ordered = &endpoint->ordered;
+    conditions->reliable_in_flight = ordered->send.next >= ordered->send.U ? ordered->send.next - ordered->send.U : 0;
+    conditions->send_refused = endpoint->send_refused;
+    if ( conditions->reliable_in_flight > 0 && ordered->ack.has_oldest )
+    {
+        const double from = ordered->ack.last_progress > ordered->ack.oldest_first_send ? ordered->ack.last_progress : ordered->ack.oldest_first_send;
+        conditions->seconds_since_progress = object->time - from;
+    }
+    else
+    {
+        conditions->seconds_since_progress = -1.0;
+    }
+    return true;
+}
+
+bool rocketnet_message_server_conditions( const struct rocketnet_message_server_t * server, int client_index, struct rocketnet_conditions_t * conditions )
+{
+    return rn_message_object_conditions( &server->object, client_index, conditions );
+}
+
 #if ROCKETNET_DEV
 void rn_message_object_delivery_capture( struct rn_message_object_t * object, int index, struct rocketnet_delivery_capture_t * capture )
 {

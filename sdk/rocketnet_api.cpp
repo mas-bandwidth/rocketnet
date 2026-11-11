@@ -3855,6 +3855,48 @@ const struct rocketnet_counters_t * rocketnet_client_message_counter_block( stru
 }
 #endif // #if ROCKETNET_DEV
 
+// rocketnet_conditions_t is size-revisioned: fill a full copy, then hand the
+// caller the bytes its build knows
+static bool rn_conditions_out( const struct rocketnet_conditions_t * full, bool ok, struct rocketnet_conditions_t * conditions, int conditions_bytes )
+{
+    const size_t bytes = conditions_bytes < (int) sizeof( *full ) ? (size_t) conditions_bytes : sizeof( *full );
+    static const struct rocketnet_conditions_t none = {};
+    memcpy( conditions, ok ? full : &none, bytes );
+    return ok;
+}
+
+bool rocketnet_server_client_conditions( const struct rocketnet_server_t * server, int client_index, struct rocketnet_conditions_t * conditions, int conditions_bytes )
+{
+    if ( !rocketnet_api_null_guard( conditions ) || conditions_bytes <= 0 )
+    {
+        return false;
+    }
+    struct rocketnet_conditions_t full = {};
+    int slot;
+    bool ok = rocketnet_api_null_guard( server ) && rn_server_slot( server, client_index, &slot ) && server->running &&
+              rocketnet_message_server_conditions( server->running, slot, &full );
+    if ( ok )
+    {
+        full.seconds_since_heard = rocketnet_server_transport_heard_age( rn_server_transport( server ), slot );
+    }
+    return rn_conditions_out( &full, ok, conditions, conditions_bytes );
+}
+
+bool rocketnet_client_conditions( const struct rocketnet_client_t * client, struct rocketnet_conditions_t * conditions, int conditions_bytes )
+{
+    if ( !rocketnet_api_null_guard( conditions ) || conditions_bytes <= 0 )
+    {
+        return false;
+    }
+    struct rocketnet_conditions_t full = {};
+    bool ok = rocketnet_api_null_guard( client ) && rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED && client->connection && rocketnet_message_client_conditions( client->connection, &full );
+    if ( ok )
+    {
+        full.seconds_since_heard = rocketnet_client_transport_heard_age( rocketnet_message_client_transport( client->connection ) );
+    }
+    return rn_conditions_out( &full, ok, conditions, conditions_bytes );
+}
+
 void rocketnet_server_client_stats( const struct rocketnet_server_t * server, int client_index, struct rocketnet_server_client_stats_t * stats )
 {
     if ( !rocketnet_api_null_guard( stats ) )

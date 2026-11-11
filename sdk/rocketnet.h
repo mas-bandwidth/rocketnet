@@ -939,6 +939,37 @@ struct rocketnet_server_client_stats_t
     double bandwidth_acked_kbps;
 };
 
+/// Network conditions of one connection, for the game's own policy
+/// (rocketnet_client_conditions, rocketnet_server_client_conditions). The
+/// library refuses and reports; it does not end a heard connection for these.
+/// Fields are only ever appended: pass sizeof your struct, and the library
+/// fills the fields that fit.
+
+struct rocketnet_conditions_t
+{
+    /// Seconds since the remote endpoint was last heard from; -1 when it has
+    /// not been heard from.
+
+    double seconds_since_heard;
+
+    /// Seconds since a reliable message was last acknowledged, counted from
+    /// the oldest waiting message's first send when that is later; -1 when
+    /// no reliable message is waiting for its acknowledgement.
+
+    double seconds_since_progress;
+
+    /// Reliable message pieces (a fragmented message counts once per piece)
+    /// from the oldest unacknowledged to the newest sent, acknowledged ones
+    /// above the oldest included; at most the window. Messages queued but
+    /// not yet sent are not counted.
+
+    uint64_t reliable_in_flight;
+
+    /// Starts refused on this connection because its send memory was full.
+
+    uint64_t send_refused;
+};
+
 /// Every public enum has the same size as int.
 
 #if defined( __cplusplus ) && __cplusplus >= 201103L
@@ -2529,7 +2560,9 @@ ROCKETNET_EXPORT void rocketnet_client_abort_message( struct rocketnet_client_t 
 ///
 /// Ask before a start you cannot afford to lose. Only start and update take
 /// room, so a true answer holds until the next of either. Room returns as the
-/// server acknowledges messages.
+/// server acknowledges messages. A false answer never ends the connection, and
+/// neither does the start it predicts: that start is refused and counted
+/// (rocketnet_conditions_t send_refused), and the game decides what to do.
 ///
 /// For valid arguments, changes no state, counts nothing and allocates nothing.
 /// Usually constant time; a message that needs a send store chunk scans that
@@ -2629,6 +2662,12 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_set_send_kbps( struct 
 /// nothing.
 
 ROCKETNET_EXPORT void rocketnet_client_stats( const struct rocketnet_client_t * client, struct rocketnet_client_stats_t * stats );
+
+/// Reads the client's network conditions (rocketnet_conditions_t). Zeroes
+/// conditions and returns false while not connected. Thread: not
+/// thread-safe; the caller owns the client one thread at a time.
+
+ROCKETNET_EXPORT bool rocketnet_client_conditions( const struct rocketnet_client_t * client, struct rocketnet_conditions_t * conditions, int conditions_bytes );
 
 /// Server
 
@@ -3255,6 +3294,15 @@ ROCKETNET_EXPORT void rocketnet_server_stats( const struct rocketnet_server_t * 
 /// nothing.
 
 ROCKETNET_EXPORT void rocketnet_server_client_stats( const struct rocketnet_server_t * server, int client_index, struct rocketnet_server_client_stats_t * stats );
+
+/// Reads one client's network conditions (rocketnet_conditions_t). Zeroes
+/// conditions and returns false for a slot without a connected client.
+/// Thread: not thread-safe; the caller owns the server one thread at a time.
+///
+/// @param conditions_bytes sizeof( struct rocketnet_conditions_t ) as the
+/// caller was built.
+
+ROCKETNET_EXPORT bool rocketnet_server_client_conditions( const struct rocketnet_server_t * server, int client_index, struct rocketnet_conditions_t * conditions, int conditions_bytes );
 
 /// Receiving messages
 

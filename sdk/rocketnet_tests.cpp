@@ -7941,6 +7941,7 @@ static const char * rocketnet_test_exports[] = {
     "rocketnet_client_receipts",
     "rocketnet_client_set_send_kbps",
     "rocketnet_client_stats",
+    "rocketnet_client_conditions",
     "rocketnet_server_default_config_internal",
     "rocketnet_server_light_config_internal",
     "rocketnet_server_required_memory",
@@ -7976,6 +7977,7 @@ static const char * rocketnet_test_exports[] = {
     "rocketnet_server_set_send_kbps",
     "rocketnet_server_stats",
     "rocketnet_server_client_stats",
+    "rocketnet_server_client_conditions",
 };
 
 static const char * rocketnet_test_public_null_case_exports[] = {
@@ -8003,6 +8005,7 @@ static const char * rocketnet_test_public_null_case_exports[] = {
     "rocketnet_client_receipts",
     "rocketnet_client_set_send_kbps",
     "rocketnet_client_stats",
+    "rocketnet_client_conditions",
     "rocketnet_server_default_config_internal",
     "rocketnet_server_light_config_internal",
     "rocketnet_server_create",
@@ -8036,6 +8039,7 @@ static const char * rocketnet_test_public_null_case_exports[] = {
     "rocketnet_server_set_send_kbps",
     "rocketnet_server_stats",
     "rocketnet_server_client_stats",
+    "rocketnet_server_client_conditions",
 };
 
 static const char * rocketnet_test_public_null_exempt_exports[] = {
@@ -8531,6 +8535,21 @@ void rocketnet_test_public_api_null()
         rocketnet_check( slot_stats.packets_sent == 0 && slot_stats.packets_received == 0 && slot_stats.bytes_sent == 0 && slot_stats.bytes_received == 0 );
         rocketnet_check( slot_stats.rtt_ms == 0.0 && slot_stats.jitter_ms == 0.0 && slot_stats.packet_loss_percent == 0.0 );
         rocketnet_check( slot_stats.bandwidth_sent_kbps == 0.0 && slot_stats.bandwidth_received_kbps == 0.0 && slot_stats.bandwidth_acked_kbps == 0.0 );
+    }
+
+    {
+        // conditions: a NULL struct or a NULL owner is one misuse, returns false and zeroes what it was given
+
+        // every field starts nonzero, set field by field
+        const struct rocketnet_conditions_t garbage = { 7.0, 7.0, 7, 7 };
+        struct rocketnet_conditions_t conditions = garbage;
+        RN_TEST_ONE_MISUSE( rocketnet_check( !rocketnet_client_conditions( NULL, NULL, (int) sizeof( conditions ) ) ) );
+        RN_TEST_ONE_MISUSE( rocketnet_check( !rocketnet_client_conditions( NULL, &conditions, (int) sizeof( conditions ) ) ) );
+        rocketnet_check( conditions.seconds_since_heard == 0.0 && conditions.seconds_since_progress == 0.0 && conditions.reliable_in_flight == 0 && conditions.send_refused == 0 );
+        RN_TEST_ONE_MISUSE( rocketnet_check( !rocketnet_server_client_conditions( NULL, 0, NULL, (int) sizeof( conditions ) ) ) );
+        conditions = garbage;
+        RN_TEST_ONE_MISUSE( rocketnet_check( !rocketnet_server_client_conditions( NULL, 0, &conditions, (int) sizeof( conditions ) ) ) );
+        rocketnet_check( conditions.seconds_since_heard == 0.0 && conditions.seconds_since_progress == 0.0 && conditions.reliable_in_flight == 0 && conditions.send_refused == 0 );
     }
 
     // the exempt: NULL is the defaults, or there is no pointer
