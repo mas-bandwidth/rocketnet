@@ -2777,15 +2777,26 @@ static void test_rio_create_failure_drains_posted_receives()
     printf( "test_rio_transport_create_failure_drains_posted_receives\n" );
 }
 
-// Windows refuses a transport's thread for want of commit (ERROR_COMMITMENT_LIMIT,
-// through the platform's thread start seam): the create returns NULL with
-// OUT_OF_MEMORY, which ends the transport ladder, and frees everything it made.
-// iocp is refused at its send worker, before any receive is posted; rio at its
-// worker, after every receive is posted, so its inline drain runs first.
+// Windows refuses a thread for want of memory or commit (through the
+// platform's thread start seam, which returns the Win32 error): the platform
+// thread create returns NULL with OUT_OF_MEMORY for each memory and commit
+// error and leaves the status untouched for any other (its callers then report
+// THREAD_CREATE_FAILED), with nothing live. A transport create refused so
+// returns NULL with OUT_OF_MEMORY, which ends the transport ladder, and frees
+// everything it made: iocp is refused at its send worker, before any receive
+// is posted; rio at its worker, after every receive is posted, so its inline
+// drain runs first.
 
-static int commit_refused_thread_start( struct rocketnet_platform_thread_t *, void * )
+static int refused_thread_start_error = ERROR_COMMITMENT_LIMIT;
+
+static int refused_thread_start( struct rocketnet_platform_thread_t *, void * )
 {
-    return ERROR_COMMITMENT_LIMIT;
+    return refused_thread_start_error;
+}
+
+static void never_runs( rocketnet_platform_thread_t *, void * )
+{
+    CHECK( false );
 }
 
 static void test_windows_create_refused_for_commit_is_out_of_memory()
@@ -2793,8 +2804,28 @@ static void test_windows_create_refused_for_commit_is_out_of_memory()
     const int baseline = live_allocations.load();
     const struct rocketnet_platform_priority_calls_t * saved = rocketnet_platform_priority_calls_current();
     struct rocketnet_platform_priority_calls_t fake = *saved;
-    fake.thread_start = commit_refused_thread_start;
+    fake.thread_start = refused_thread_start;
     rocketnet_platform_set_priority_calls_for_testing( &fake );
+
+    const int out_of_memory[] = { ERROR_NOT_ENOUGH_MEMORY, ERROR_OUTOFMEMORY, ERROR_COMMITMENT_LIMIT, ERROR_NO_SYSTEM_RESOURCES, WSAENOBUFS, WSA_NOT_ENOUGH_MEMORY };
+    for ( int error : out_of_memory )
+    {
+        refused_thread_start_error = error;
+        int status = ROCKETNET_STATUS_OK;
+        CHECK( rocketnet_platform_thread_create( NULL, never_runs, NULL, &status ) == NULL );
+        CHECK( status == ROCKETNET_STATUS_OUT_OF_MEMORY );
+        CHECK( live_allocations.load() == baseline );
+    }
+    const int other[] = { 1, ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER, ERROR_MAX_THRDS_REACHED };
+    for ( int error : other )
+    {
+        refused_thread_start_error = error;
+        int status = ROCKETNET_STATUS_OK;
+        CHECK( rocketnet_platform_thread_create( NULL, never_runs, NULL, &status ) == NULL );
+        CHECK( status == ROCKETNET_STATUS_OK );
+        CHECK( live_allocations.load() == baseline );
+    }
+    refused_thread_start_error = ERROR_COMMITMENT_LIMIT;
 
     rocketnet_address_t bind = address( "127.0.0.1:0" );
     int status = ROCKETNET_STATUS_OK;
