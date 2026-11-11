@@ -2666,6 +2666,13 @@ ROCKETNET_EXPORT void rocketnet_client_stats( const struct rocketnet_client_t * 
 /// Reads the client's network conditions (rocketnet_conditions_t). Zeroes
 /// conditions and returns false while not connected. Thread: not
 /// thread-safe; the caller owns the client one thread at a time.
+///
+/// @param client The client. NULL counts as API misuse and returns false.
+/// @param conditions The conditions to fill. NULL counts as API misuse,
+/// returns false and fills nothing.
+/// @param conditions_bytes sizeof( struct rocketnet_conditions_t ) as the
+/// caller was built. Zero or less returns false and fills nothing.
+/// @return True if the connected client's conditions were read.
 
 ROCKETNET_EXPORT bool rocketnet_client_conditions( const struct rocketnet_client_t * client, struct rocketnet_conditions_t * conditions, int conditions_bytes );
 
@@ -3299,8 +3306,14 @@ ROCKETNET_EXPORT void rocketnet_server_client_stats( const struct rocketnet_serv
 /// conditions and returns false for a slot without a connected client.
 /// Thread: not thread-safe; the caller owns the server one thread at a time.
 ///
+/// @param server The server. NULL counts as API misuse and returns false.
+/// @param client_index The slot, 0 to max_clients - 1. Any other index logs
+/// an error, counts as API misuse and returns false.
+/// @param conditions The conditions to fill. NULL counts as API misuse,
+/// returns false and fills nothing.
 /// @param conditions_bytes sizeof( struct rocketnet_conditions_t ) as the
-/// caller was built.
+/// caller was built. Zero or less returns false and fills nothing.
+/// @return True if a connected client's conditions were read.
 
 ROCKETNET_EXPORT bool rocketnet_server_client_conditions( const struct rocketnet_server_t * server, int client_index, struct rocketnet_conditions_t * conditions, int conditions_bytes );
 

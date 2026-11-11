@@ -3872,7 +3872,7 @@ bool rocketnet_server_client_conditions( const struct rocketnet_server_t * serve
         return false;
     }
     struct rocketnet_conditions_t full = {};
-    int slot;
+    int slot = 0;
     bool ok = rocketnet_api_null_guard( server ) && rn_server_slot( server, client_index, &slot ) && server->running &&
               rocketnet_message_server_conditions( server->running, slot, &full );
     if ( ok )
