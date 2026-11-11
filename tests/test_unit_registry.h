@@ -169,14 +169,16 @@ do                                                                              
 
 #define ROCKETNET_UNIT_TEST_JOIN_( a, b ) a##b
 #define ROCKETNET_UNIT_TEST_JOIN( a, b ) ROCKETNET_UNIT_TEST_JOIN_( a, b )
-#define ROCKETNET_UNIT_TEST_LINE_( l ) rocketnet_unit_file_registrar_##l
-#define ROCKETNET_UNIT_TEST_LINE( l ) ROCKETNET_UNIT_TEST_LINE_( l )
+// each registrar is named after its test, never its line: a unit file that
+// includes another (test_unit_driver_loopback.cpp includes
+// test_unit_server_stop_spread.cpp) can hold two registrations on one line
+// number, and a test name is registered once (tools/check_test_environment.py)
 
 #define REGISTER_UNIT_TEST( name )                                                                                \
-    static rocketnet_unit_file_registrar_t ROCKETNET_UNIT_TEST_LINE( __LINE__ )( #name, &( name ), NULL )
+    static rocketnet_unit_file_registrar_t rocketnet_unit_file_registrar_##name( #name, &( name ), NULL )
 
 #define REGISTER_UNIT_TEST_EXPECTED_FAIL( name, card )                                                            \
-    static rocketnet_unit_file_registrar_t ROCKETNET_UNIT_TEST_LINE( __LINE__ )( #name, &( name ), card )
+    static rocketnet_unit_file_registrar_t rocketnet_unit_file_registrar_##name( #name, &( name ), card )
 
 inline int rocketnet_unit_tests_count()
 {
