@@ -837,6 +837,8 @@ jobs:
   # hours and, always, the six core table and ring files. The script exits 1
   # when a risk-class mutant survives ./bin/test. --self-test does not build;
   # this step is the campaign, which is why it is not on the per-commit gate.
+  # The tool is exec'd so a cancelled step's signal reaches it; it then kills
+  # every test process it started before it exits.
 
   mutation:
     name: linux / mutation
@@ -892,4 +894,4 @@ jobs:
           done <<< "$changed"
           printf 'mutation files:\n'
           printf '  %s\n' "${files[@]}"
-          python3 tools/mutation/run_mutants.py --max-mutants 0 --files "${files[@]}"
+          exec python3 tools/mutation/run_mutants.py --max-mutants 0 --files "${files[@]}"
