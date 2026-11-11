@@ -53,8 +53,12 @@
 // uint64_t (rn_channel_send_t, 40 to 64 bytes), adding 24 bytes a channel,
 // 192 a light connection (8 channels), 192000 at 1000 clients, computed and
 // not measured on Windows.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1608801790 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22972143 )
+// The development resend gap record counts its resends in uint64_t
+// (rn_resend_gaps_t count), adding 8 bytes a connection, 8000 at 1000
+// clients, and at most 8 to the client (macOS and Linux measured 0),
+// computed and not measured on Windows.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1608809790 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22972151 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
 // The figures are the planned peak: the probe's actual= lines (server
@@ -74,7 +78,12 @@
 // adding 24 bytes a channel, 192 a light connection (8 channels), 192000 at
 // 1000 clients (measured); the probe's actual= lines are 1469445151 and
 // 15036362.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468396575 )
+// The development resend gap record counts its resends in uint64_t
+// (sdk/rocketnet_window_ack.h, rn_resend_gaps_t count), adding 8 bytes a
+// connection, 8000 at 1000 clients; the client's figure is unchanged (its
+// object's 64-byte rounding holds the 8 bytes) (measured); the probe's
+// actual= line is 1469453151.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468404575 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13987786 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Debug.
@@ -113,7 +122,12 @@
 // adding 24 bytes a channel, 192 a light connection (8 channels), 192000 at
 // 1000 clients (measured); the probe's actual= lines are 3111620715 and
 // 15195762.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110572139ULL )
+// The development resend gap record counts its resends in uint64_t
+// (sdk/rocketnet_window_ack.h, rn_resend_gaps_t count), adding 8 bytes a
+// connection, 8000 at 1000 clients; the client's figure is unchanged (its
+// object's 64-byte rounding holds the 8 bytes) (measured); the probe's
+// actual= line is 3111628715.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110580139ULL )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14147186 )
 #endif // #if defined( _WIN32 )
 

@@ -59,6 +59,7 @@
 
 #include "channel_harness.h"
 
+#include <inttypes.h>
 #include <math.h>
 
 #if !ROCKETNET_DEV
@@ -91,7 +92,7 @@ struct resend_timing_row_t
     double p99_ms;
     double p999_ms;
     double copies;
-    uint32_t gaps;                  // resends measured by the client's resend gap record
+    uint64_t gaps;                  // resends measured by the client's resend gap record
     double gap_min_ms;
     double gap_max_ms;
     double resend_delay_bound_ms;            // largest formula-derived resend delay during the run
@@ -366,7 +367,7 @@ void resend_timing_table_over_lossy_links()
             {
                 const resend_timing_row_t * row = &rows[s][r][l];
 
-                printf( "%-8s %6d %8d %6.1f %6.1f %7.1f %6.2f %8d %12.0f %7u %10.2f %10.2f %12.3f %11.3f %9d %16.2f\n",
+                printf( "%-8s %6d %8d %6.1f %6.1f %7.1f %6.2f %8d %12.0f %7" PRIu64 " %10.2f %10.2f %12.3f %11.3f %9d %16.2f\n",
                         row->schedule, row->rtt_ms, row->loss_percent, row->p50_ms, row->p99_ms, row->p999_ms,
                         row->copies, row->timeouts, s == 0 ? model_p99[r] : 0.0,
                         row->gaps, row->gaps ? row->gap_min_ms : 0.0, row->gap_max_ms, row->gaps ? row->early_min_ms : 0.0,
