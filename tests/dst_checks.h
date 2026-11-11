@@ -4,8 +4,8 @@
 
     The DST invariant checks of docs/DST.md section 4: each check mirrors an
     invariant or property a TLA+ model in proofs/tla/ already states, named below by
-    module and invariant. The checks observe deliveries, receipts, link acks,
-    transport states and counters; none changes SDK behaviour. Time is an
+    module and invariant. The checks observe deliveries, link acks, transport
+    states and counters; the run reads no receipt. None changes SDK behaviour. Time is an
     argument starting at 1000.0; nothing here reads a clock, opens a socket or
     starts a thread. A failing check records its line and the core prints:
     `FAIL seed=<n> step=<k> check=<name> what=<detail>`.
@@ -120,8 +120,8 @@ struct rocketnet_dst_check_stream_t
     uint32_t expected_generation;
     int expected_incarnation;
 
-    // receipt_one_outcome (RNReceipts::ExactlyOneOutcomePerReceiptSerial,
-    // LossOnlyForUnreliableReceipt).
+    // receipt_one_outcome: the type 5, 6 and 7 sequences delivered (not a
+    // receipt table; the run reads no receipt).
     uint8_t receipt_seen[ROCKETNET_DST_CHECK_SEQ_BYTES];
 
     // whole_message (RNChannel::WholeMessagesOnly): the size recorded when
@@ -730,9 +730,11 @@ static inline void rocketnet_dst_check_delivery( struct rocketnet_dst_check_stat
     }
 }
 
-// Mirrors RNReceipts::ExactlyOneOutcomePerReceiptSerial and
-// LossOnlyForUnreliableReceipt. A receipt serial of types 5, 6, 7 gets one
-// outcome; the delivery is the outcome this run observes.
+// Named for RNReceipts::ExactlyOneOutcomePerReceiptSerial and
+// LossOnlyForUnreliableReceipt, but it checks neither: the run reads no
+// receipt, and this row sees only a type 5, 6 or 7 delivered twice, which
+// unreliable_once or reliable_once has already failed in the same call. It
+// cannot be the verdict.
 
 static inline int rocketnet_dst_check_receipt_one_outcome( struct rocketnet_dst_check_state_t * st,
                                                            int stream, int type, uint32_t seq )
@@ -753,10 +755,10 @@ static inline int rocketnet_dst_check_receipt_one_outcome( struct rocketnet_dst_
     return 0;
 }
 
-// Mirrors RNReceipts::BlockAckedOnlyWhenAllFragmentsAcked and
-// RNChannelTypes::EveryReliableAckedAndDelivered (safety side): an ACKED
-// receipt for types 6 and 7 names a message the receiver delivered; by the last
-// step on a live session it is delivered.
+// Named for RNReceipts::BlockAckedOnlyWhenAllFragmentsAcked and
+// RNChannelTypes::EveryReliableAckedAndDelivered (safety side), but it checks
+// neither: the run reads no receipt, and this row is called on a delivery
+// right after reliable_once set the bit it reads, so it always holds.
 
 static inline int rocketnet_dst_check_receipt_acked_delivered( struct rocketnet_dst_check_state_t * st,
                                                                int stream, uint32_t seq )
