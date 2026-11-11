@@ -455,9 +455,9 @@ jobs:
         if: matrix.leg == 'checks' && ( runner.os == 'macOS' )
         shell: bash
         run: |
-          # the ten harnesses build in one parallel build and replay at once;
+          # the thirteen harnesses build in one parallel build and replay at once;
           # each replay's exit status is checked
-          harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session"
+          harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink"
           targets=""
           for harness in $harnesses; do targets="$targets fuzz_replay_$harness"; done
           cmake --build build --target $targets --parallel
@@ -484,7 +484,7 @@ jobs:
         if: matrix.leg == 'checks' && ( runner.os == 'macOS' )
         shell: bash
         run: |
-          harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session"
+          harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink"
           empty="$RUNNER_TEMP/fuzz-empty-input"
           : > "$empty"
           failed=0
@@ -1287,9 +1287,9 @@ jobs:
         if: matrix.leg != 'c'
         shell: bash
         run: |
-          # the ten harnesses build in one parallel build and replay at once;
+          # the thirteen harnesses build in one parallel build and replay at once;
           # each replay's exit status is checked
-          harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session"
+          harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink"
           targets=""
           for harness in $harnesses; do targets="$targets fuzz_replay_$harness"; done
           cmake --build build --config Release --target $targets --parallel
@@ -2084,9 +2084,9 @@ jobs:
         env:
           ASAN_OPTIONS: detect_leaks=0
         run: |
-          # the ten harnesses build in one parallel build and replay at once;
+          # the thirteen harnesses build in one parallel build and replay at once;
           # each replay's exit status is checked
-          harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session"
+          harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink"
           targets=""
           for harness in $harnesses; do targets="$targets fuzz_replay_$harness"; done
           mkdir -p bin
@@ -2185,7 +2185,8 @@ jobs:
         run: |
           for src in rocketnet_fuzz rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_message \
                    rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config \
-                   rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session; do
+                   rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session \
+                   rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink; do
             clang++ -g -O1 -std=c++17 \
               -ffp-contract=off \
               -DROCKETNET_DEV=1 -DNDEBUG \
@@ -2209,6 +2210,9 @@ jobs:
           ./bin/rocketnet_fuzz_server_transport_ndebug tests/fuzz/corpus_server_transport/*
           ./bin/rocketnet_fuzz_client_transport_ndebug tests/fuzz/corpus_client_transport/*
           ./bin/rocketnet_fuzz_session_ndebug tests/fuzz/corpus_session/*
+          ./bin/rocketnet_fuzz_xdp_frame_ndebug tests/fuzz/corpus_xdp_frame/*
+          ./bin/rocketnet_fuzz_uring_recvmsg_ndebug tests/fuzz/corpus_uring_recvmsg/*
+          ./bin/rocketnet_fuzz_gateway_netlink_ndebug tests/fuzz/corpus_gateway_netlink/*
 
       # The connect token and receive/structured targets are built only in
       # this job, so their time-boxed mutation pass lives here, after the
