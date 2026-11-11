@@ -3752,7 +3752,10 @@ void rocketnet_server_socket_xdp_counters( struct rocketnet_server_socket_t * se
         if ( !fit )
             rocketnet_error( "xdp stats not read: %d possible cpus is outside 1 .. %d; the last read stands", num_cpus, ROCKETNET_XDP_STATS_MAX_CPUS );
         else
-            rocketnet_error( "xdp stats not read: map lookup failed: %s; the last read stands", strerror( read_error ) );
+        {
+            char reason[128];
+            rocketnet_error( "xdp stats not read: map lookup failed: %s; the last read stands", strerror_r( read_error, reason, sizeof( reason ) ) );
+        }
     }
 }
 
@@ -4234,8 +4237,11 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
                 const int error = errno;
                 rocketnet_xdp_send_wakeup_failed( error, socket->send_wakeup_failures, socket->send_hard_error );
                 if ( rocketnet_xdp_send_wakeup_report( error, send_error ) )
+                {
+                    char reason[128];
                     rocketnet_error( "xdp queue %d tx wakeup failed: %s; the tx ring cannot drain and stop will not wait for it",
-                                     socket->queue, strerror( error ) );
+                                     socket->queue, strerror_r( error, reason, sizeof( reason ) ) );
+                }
             }
             else
             {
