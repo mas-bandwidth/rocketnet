@@ -64,12 +64,12 @@ one lifetime count, the not-connected drops, is not modelled.
 | `Deny`, `TokenExpires`, `Timer` | a denial during the handshake; the token expiring during the handshake; each stage's deadline and the connected timeout |
 | `ServerDisconnect`, `ClientDisconnect` | the server's disconnect; the client's disconnect from the handshake or connected |
 
-The model's end states read the reasons of `enum rocketnet_disconnect_reason_t` (`sdk/rocketnet.h:339-347`):
+The model's end states read the reasons of `enum rocketnet_disconnect_reason_t` (`sdk/rocketnet.h:350-358`):
 `ServerDisconnect`'s `SERVER_DISCONNECTED` is `ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED`
 (`6`), recorded by the message object's client terminal check
-(`sdk/rocketnet_message_server.cpp:477-478`) when the client transport counted the server's
-disconnect packet (`sdk/rocketnet_client_protocol.cpp:1202`, read by
-`sdk/rocketnet_message_client.cpp:89`). The public API carries the reason in the client
+(`sdk/rocketnet_message_server.cpp:528-529`) when the client transport counted the server's
+disconnect packet (`sdk/rocketnet_client_protocol.cpp:1252`, read by
+`sdk/rocketnet_message_client.cpp:92`). The public API carries the reason in the client
 state: `SERVER_DISCONNECTED` reads `ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED` from
 `rocketnet_client_state`, a `Timer` end reads the timed-out state, and `ClientDisconnect`'s
 `CLIENT_DISCONNECTED` returns the client to `ROCKETNET_CLIENT_STATE_DISCONNECTED`.

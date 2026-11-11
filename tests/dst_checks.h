@@ -1160,8 +1160,8 @@ static inline void rocketnet_dst_check_conservation( struct rocketnet_dst_check_
                                                      const char * end )
 {
     // "<end>: <report>" fits the check state's detail[256] (dst_checks.h:120):
-    // end is "server" or "clients" (dst_harness.h:1264-1265), and the report
-    // is one counter name and two u64 (sdk/rocketnet_counters.cpp:137)
+    // end is "server" or "clients" (dst_harness.h:1344-1345), and the report
+    // is one counter name and two u64 (sdk/rocketnet_counters.cpp:151)
 
     char report[240];
     if ( !rocketnet_counters_conserved( counters, report, sizeof( report ) ) )

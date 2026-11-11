@@ -100,7 +100,7 @@ static const struct address_case_t k_cases[] = {
     { "[::ffff:1.2.3.4]:40000", SOCKET_RAW, false, NULL, -1, "rocketnet_address.h:56-58; mapped dropped on raw" },
 
     // the zero address, port 0: a real ipv4/ipv6 address, not NONE, and equal
-    // only to itself (sdk/rocketnet_address.cpp:202-237 compares type, port and bytes).
+    // only to itself (sdk/rocketnet_address.cpp:230-271 compares type, port and bytes).
     { "0.0.0.0:0", SOCKET_V4_ONLY, true, "0.0.0.0", 2, "STANDARD.md:386-392; zero ipv4 is an ipv4 endpoint" },
     { "[::]:0", SOCKET_V6_ONLY, true, "::", 3, "STANDARD.md:386-392; zero ipv6 is an ipv6 endpoint" },
 
@@ -109,8 +109,8 @@ static const struct address_case_t k_cases[] = {
     { "1.2.3.4:0", SOCKET_DUAL_STACK, true, "1.2.3.4", 4, "STANDARD.md:342-351; port is part of the key" },
 
     // NONE is not a source and is not equal to itself or any other address
-    // (sdk/rocketnet_address.cpp:207-211 returns false for a non-ipv4/ipv6 type).
-    { NULL, SOCKET_DUAL_STACK, true, "NONE", -1, "rocketnet_address.cpp:207-211; NONE unequal to itself and all" }
+    // (sdk/rocketnet_address.cpp:235-239 returns false for a non-ipv4/ipv6 type).
+    { NULL, SOCKET_DUAL_STACK, true, "NONE", -1, "rocketnet_address.cpp:235-239; NONE unequal to itself and all" }
 };
 
 static const int k_case_count = (int) ( sizeof( k_cases ) / sizeof( k_cases[0] ) );

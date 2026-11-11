@@ -17,7 +17,7 @@
 //     truncation by returning a value >= the buffer size; a negative
 //     return is a formatting or encoding error. The longest bracketed
 //     IPv6 rendering with a port is 47 characters against a
-//     ROCKETNET_MAX_ADDRESS_STRING_LENGTH of 256 (sdk/rocketnet.h:60), so
+//     ROCKETNET_MAX_ADDRESS_STRING_LENGTH of 256 (sdk/rocketnet.h:64), so
 //     truncation is unreachable today -- but the arm must name what it
 //     checks. The longest rendering is asserted whole and in-bounds.
 //

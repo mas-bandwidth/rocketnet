@@ -43,7 +43,7 @@ The word scan is fastest where runs are long (`full_window` is 20.5x faster on L
 
 ## Planted off-by-one witness in the word mask
 
-To verify that `test_ack_block_build_word_scan_matches_bit_walk` catches a mask boundary error, an off-by-one was planted in the upper partial-word mask at `sdk/rocketnet_ack.cpp:124` (`( 1ull << offset ) - 1` instead of `( 1ull << ( offset + 1 ) ) - 1`):
+To verify that `test_ack_block_build_word_scan_matches_bit_walk` catches a mask boundary error, an off-by-one was planted in the upper partial-word mask at `sdk/rocketnet_ack.cpp:128` (`( 1ull << offset ) - 1` instead of `( 1ull << ( offset + 1 ) ) - 1`):
 
 ```diff
 --- a/sdk/rocketnet_ack.cpp
@@ -66,4 +66,4 @@ check failed: ( memcmp( expected, actual, (size_t) expected_bytes ) == 0 ), func
 WITNESS_EXIT=1
 ```
 
-Restoring `sdk/rocketnet_ack.cpp:124` (verified byte-identical via `cmp -s`) and rerunning `./bin/test --run test_ack_block_build_word_scan_matches_bit_walk` passes (`exit 0`).
+Restoring `sdk/rocketnet_ack.cpp:128` (verified byte-identical via `cmp -s`) and rerunning `./bin/test --run test_ack_block_build_word_scan_matches_bit_walk` passes (`exit 0`).

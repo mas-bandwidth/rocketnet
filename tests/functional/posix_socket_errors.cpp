@@ -73,7 +73,7 @@ static void posix_check_impl( bool condition, const char * text, const char * fi
 // protocol's prefilter and counts in the transport's own RECEIVE_DROPPED_SIZE,
 // and the transport reads the same drops into PREFILTER_TOO_SHORT and
 // PREFILTER_TOO_LARGE through the builtin transport's receive_drops hook
-// (sdk/rocketnet_server_transport.cpp:2774-2786)
+// (sdk/rocketnet_server_transport.cpp:3088-3100)
 
 void * rocketnet_server_transport_io_name_for_testing( struct rocketnet_server_transport_t * server_transport );
 
@@ -324,11 +324,11 @@ static void posix_pair_create( struct posix_pair_t * pair, int ipv6, const char 
     // each cell names the transports it tests, so a transport pin in the
     // environment (ROCKETNET_SERVER_TRANSPORT, ROCKETNET_CLIENT_TRANSPORT)
     // is lifted for the two creates below and restored after them, as
-    // posix_cell_begin does (tests/functional/posix_lifecycle_stress.cpp:492).
+    // posix_cell_begin does (tests/functional/posix_lifecycle_stress.cpp:516).
     // under a pin the ladder grants the pinned transport, and a gso or io_uring
     // cell casts pair->transport to its own transport type
-    // (posix_native_counter, tests/functional/posix_socket_errors.cpp:101;
-    // posix_linux_uring_fail_sends, tests/functional/posix_socket_errors.cpp:1309)
+    // (posix_native_counter, tests/functional/posix_socket_errors.cpp:103;
+    // posix_linux_uring_fail_sends, tests/functional/posix_socket_errors.cpp:1337)
 
     char saved_server_transport[64] = "";
     char saved_client_transport[64] = "";
@@ -569,7 +569,7 @@ static bool posix_valid_matches( int index, const uint8_t * payload, int bytes )
 }
 
 // the counters are read through the call each time: the server folds its
-// transport's own drop counts in on that call (sdk/rocketnet_server_transport.cpp:2774-2786)
+// transport's own drop counts in on that call (sdk/rocketnet_server_transport.cpp:3088-3100)
 
 static const struct rocketnet_counters_t * posix_pair_counters( struct posix_pair_t * pair, int at_server )
 {
@@ -2240,7 +2240,7 @@ static void posix_linux_dropped_flush( struct posix_pair_t * pair, void ( *fail 
     *dropped_out = dropped;
 
     // the transport's SEND_FAILED reads the transport's own send drops (its
-    // send_failures operation, sdk/rocketnet_server_transport.cpp:2771-2773), so it moves by exactly the dropped count
+    // send_failures operation, sdk/rocketnet_server_transport.cpp:3085-3087), so it moves by exactly the dropped count
 
     const uint64_t transport_failed = rocketnet_server_transport_counters( pair->server )->values[ROCKETNET_COUNTER_SEND_FAILED] - transport_failed_before;
     if ( transport_failed != dropped )
@@ -2984,7 +2984,7 @@ void rocketnet_test_linux_uring_socket_hygiene()
 #include <fcntl.h>
 
 // the xdp transport's staging entry with its queue and destination MAC named
-// (sdk/rocketnet_server_socket_linux.cpp:2133)
+// (sdk/rocketnet_server_socket_linux.cpp:2261)
 uint8_t * rocketnet_server_socket_start_packet_internal( struct rocketnet_server_socket_t * server_socket, uint64_t packet_id, int queue, const rocketnet_address_t * to, const uint8_t * destination_mac );
 #include <sched.h>
 #include <sys/vfs.h>
@@ -3596,7 +3596,7 @@ static void posix_xdp_weather( int ipv6 )
 
     // a send the xdp frame codec refuses to build (a destination of the
     // family this server does not serve) is dropped and counted in the
-    // queue's send_refused_build (sdk/rocketnet_server_socket_linux.cpp:2940), and
+    // queue's send_refused_build (sdk/rocketnet_server_socket_linux.cpp:3154), and
     // the transport's SEND_FAILED reads it through the xdp send_failures
     // operation: it moves by exactly that one datagram
 

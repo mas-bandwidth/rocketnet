@@ -1564,7 +1564,7 @@ static double onlink_now()
 }
 
 // stdin_fd is the read end of a pipe the case holds open: server.c quits when
-// its stdin reaches end of file (check_stdin_closed, server.c:150-165), and a
+// its stdin reaches end of file (check_stdin_closed, server.c:156-173), and a
 // guest started without a terminal hands the case an stdin already at end of
 // file, so the server would stop after its first frame.
 
@@ -1602,7 +1602,7 @@ static pid_t onlink_spawn( const char * program, const char * argument, const ch
     }
 
     // the case connects one client: a message object sized for the default
-    // 1000 clients does not fit the guest (server.c:872, :925)
+    // 1000 clients does not fit the guest (server.c:920, :925)
 
     if ( xdp_server )
     {
@@ -1951,7 +1951,7 @@ static bool xdp_on_link_reply_reaches_the_client( filter_t * )
 // A create that fails part way tears down what it built and nothing else.
 // The example server runs with two XDP queues on a two-queue veth and the
 // development-only seam ROCKETNET_TEST_XDP_FAIL_AT_QUEUE=1
-// (sdk/rocketnet_server_socket_linux.cpp:1809-1825, the top of the create queue loop):
+// (sdk/rocketnet_server_socket_linux.cpp:1921-1937, the top of the create queue loop):
 // queue 0 is fully built, queue 1 fails before its mutexes exist, and create
 // calls destroy. The server must report the injected failure and exit on its
 // own, never die on a signal (a Debug build aborts on the mutex assert when

@@ -95,7 +95,7 @@ extern thread_local unsigned long long g_ack_visit_count;
 #define ROCKETNET_TEST_LOG_RING_LINES 32
 #define ROCKETNET_TEST_LOG_RING_LINE_BYTES 1024
 // a slot holds "<event>: <level>: " in front of a whole captured line: the
-// level name is at most 7 bytes (sdk/rocketnet.cpp:179), so 64 bytes hold
+// level name is at most 7 bytes (sdk/rocketnet.cpp:181), so 64 bytes hold
 // the prefix for any uint64 event ordinal
 #define ROCKETNET_TEST_LOG_RING_PREFIX_BYTES 64
 #define ROCKETNET_TEST_LOG_RING_SLOT_BYTES ( ROCKETNET_TEST_LOG_RING_PREFIX_BYTES + ROCKETNET_TEST_LOG_RING_LINE_BYTES )
@@ -11660,7 +11660,7 @@ static void rocketnet_test_config_table_round_trip( const char * transport_name,
             case ROCKETNET_CONFIG_KIND_UINT64:
             {
                 // a ranged row (step_driven's 0 .. 1,
-                // sdk/rocketnet_config.cpp:88) takes its max; a 0 .. 0 row
+                // sdk/rocketnet_config.cpp:94) takes its max; a 0 .. 0 row
                 // takes any value of the full width
 
                 expected_uint64 = field->max_value > field->min_value ? (uint64_t) field->max_value : 9876543210987654321ULL;
