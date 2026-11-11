@@ -5,6 +5,7 @@
 
 #include "test_unit_registry.h"
 
+#include "../sdk/rocketnet_internal.h"
 #include "../sdk/rocketnet_server_gso.h"
 
 #include <stdint.h>
@@ -75,9 +76,10 @@ static void test_server_gso_send_shutdown_full()
 REGISTER_UNIT_TEST( test_server_gso_send_shutdown_full );
 
 // The bounded retry once shutdown has begun: a socket that refuses fewer
-// times than ROCKETNET_GSO_SEND_RETRIES_AFTER_QUIT allows takes the whole
-// bank, nothing dropped; one that refuses past it loses only the unsent tail,
-// which is counted in SEND_DROPPED, and stop completes.
+// times than ROCKETNET_GSO_SEND_RETRIES_AFTER_QUIT allows takes every
+// routable packet; one that refuses past it loses only the unsent tail, whose
+// packets (not its aborted or already-dropped slots) are counted in
+// SEND_DROPPED, and stop completes.
 bool rocketnet_server_gso_test_send_shutdown_within_bound();
 bool rocketnet_server_gso_test_send_shutdown_past_bound();
 
@@ -293,6 +295,64 @@ static void test_server_gso_segment_refusal_keeps_other_destinations()
 }
 
 REGISTER_UNIT_TEST( test_server_gso_segment_refusal_keeps_other_destinations );
+
+// a destination that refuses every segmented run, interleaved with accepted
+// segmented runs to another destination (so the consecutive count never
+// reaches the threshold): the first refusal warns, every later one is spam,
+// and segmentation stays on
+
+static int gso_refusal_warnings = 0;
+static int gso_refusal_spam = 0;
+
+static void gso_refusal_log( void * context, enum rocketnet_log_level_t level, const char * message, size_t length )
+{
+    (void) context;
+    (void) length;
+    if ( strstr( message, "live GSO send refused" ) == NULL )
+        return;
+    if ( level == ROCKETNET_LOG_LEVEL_SPAM )
+        gso_refusal_spam++;
+    else
+        gso_refusal_warnings++;
+}
+
+static void test_server_gso_segment_refusal_warns_once()
+{
+    struct rocketnet_server_gso_t * gso = rocketnet_server_gso_test_open( 1 );
+    check( gso );
+
+    rocketnet_server_gso_test_set_features( gso, ROCKETNET_SERVER_GSO_FEATURE_SEGMENT );
+
+    struct gso_segment_socket_t socket;
+    rocketnet_server_gso_test_set_send( gso, gso_segment_send, &socket );
+
+    const enum rocketnet_log_level_t saved = rocketnet_log_level_current();
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_SPAM );
+    rocketnet_log_function( gso_refusal_log, NULL );
+
+    const int rounds = 4 * ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD;
+    for ( int i = 0; i < rounds; i++ )
+    {
+        memset( &socket, 0, sizeof( socket ) );
+        socket.refuse_segment = 1;
+        gso_segment_stage( gso, 40000, 2 );
+        gso_segment_stage( gso, 40001, 2 );
+        check( rocketnet_server_gso_test_flush_staged( gso ) );
+        check( socket.plain_packets == 2 );
+        check( socket.segmented == 1 );
+        check( ( rocketnet_server_gso_features( gso ) & ROCKETNET_SERVER_GSO_FEATURE_SEGMENT ) != 0 );
+    }
+
+    check( gso_refusal_warnings == 1 );
+    check( gso_refusal_spam == rounds - 1 );
+
+    rocketnet_server_gso_test_close( gso );
+
+    rocketnet_log_function( NULL, NULL );
+    rocketnet_log_level( saved );
+}
+
+REGISTER_UNIT_TEST( test_server_gso_segment_refusal_warns_once );
 
 // Four full receive queues, and the real per-update budget, which two queues
 // exhaust (8192 + 8192 is past 16000). The queues the first update consumes

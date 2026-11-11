@@ -195,7 +195,6 @@ struct rocketnet_server_uring_t
 #if ROCKETNET_DEV
     bool test_stall_destroy;                    // test completion remains pending until explicitly released
 #endif // #if ROCKETNET_DEV
-    rocketnet_address_t bind_address;
 
     struct io_uring ring;
     uint64_t ring_mapped_bytes;                 // the submission, completion and entry rings mapped at create, in the direct allocation count
@@ -224,6 +223,12 @@ struct rocketnet_server_uring_t
     // the part of RECEIVE_DROPPED_SIZE above the receive ceiling or truncated
     // in its buffer; the rest is below the smallest packet a server reads
     uint64_t receive_dropped_too_large;
+
+    // main thread only: a multishot receive the kernel ended with an error
+    // other than -ENOBUFS or -ECANCELED is logged once per transport
+    bool logged_receive_refused = false;
+    bool logged_arm_failed = false;             // and an arm with no submission entry
+    bool logged_submit_failed = false;          // and a failed submit
 
     struct rocketnet_server_uring_send_buffer_t send;
 
@@ -832,7 +837,11 @@ static bool rocketnet_server_uring_arm( struct rocketnet_server_uring_t * uring,
     struct io_uring_sqe * sqe = rocketnet_server_uring_get_sqe( uring );
     if ( !sqe )
     {
-        rocketnet_error( "io_uring transport: no submission entry to arm queue %d", queue_index );
+        if ( !uring->logged_arm_failed )
+        {
+            uring->logged_arm_failed = true;
+            rocketnet_error( "io_uring transport: no submission entry to arm queue %d", queue_index );
+        }
         return false;
     }
 
@@ -1121,6 +1130,14 @@ static void rocketnet_server_uring_reap_cqe( struct rocketnet_server_uring_t * u
             if ( cqe->res == -ENOBUFS )
                 uring->counters[ROCKETNET_SERVER_URING_COUNTER_RECEIVE_NO_BUFFERS]++;
 
+            // a kernel that refuses multishot receive ends every arm this
+            // way and the transport hears nothing: say so, once
+            if ( cqe->res < 0 && cqe->res != -ENOBUFS && cqe->res != -ECANCELED && !uring->logged_receive_refused )
+            {
+                uring->logged_receive_refused = true;
+                rocketnet_error( "io_uring transport: the kernel refused the multishot receive on queue %d: %s (errno %d)", queue_index, strerror( -cqe->res ), -cqe->res );
+            }
+
             rocketnet_server_uring_multishot_ended( uring, queue_index );
         }
 
@@ -1180,8 +1197,11 @@ static void rocketnet_server_uring_submit( struct rocketnet_server_uring_t * uri
     const int result = rocketnet_server_uring_ring_submit( uring );
     uring->counters[ROCKETNET_SERVER_URING_COUNTER_SUBMIT_SYSCALLS]++;
 
-    if ( result < 0 && result != -EINTR && result != -EAGAIN && result != -EBUSY )
+    if ( result < 0 && result != -EINTR && result != -EAGAIN && result != -EBUSY && !uring->logged_submit_failed )
+    {
+        uring->logged_submit_failed = true;
         rocketnet_error( "io_uring transport: submit failed: %s", strerror( -result ) );
+    }
 }
 
 // wait for at least one CQE, submitting anything queued on the way
@@ -1550,7 +1570,6 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create_flags( void * co
     }
 
     bind_address->port = bound_port;
-    uring->bind_address = *bind_address;
 
     // the UDP_SEGMENT probe, the gso transport's: sends rotate across the
     // whole group, so every socket must accept it, all or nothing. the probe

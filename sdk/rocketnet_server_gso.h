@@ -80,8 +80,11 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_GSO_SEND_QUEUE_SIZE >= 2 * ROCKETNET_DEFAULT_
 #define ROCKETNET_GSO_RECV_BATCH                                            64
 #define ROCKETNET_GSO_RECV_BUFFER_BYTES                                  65536
 
-// the most segments one GRO message carries: the kernel's UDP_GRO_CNT_MAX,
-// the receive coalescing limit
+// the segments the drain makes room for per GRO message: the kernel's
+// UDP_GRO_CNT_MAX, NIC GRO's coalescing limit. a local sender's segmented
+// send can coalesce more (UDP_MAX_SEGMENTS is 128 on recent kernels): the
+// worker stages the segments that fit and counts the rest in
+// RECEIVE_DROPPED_OVERFLOW
 
 #define ROCKETNET_GSO_RECV_MAX_SEGMENTS                                     64
 
@@ -150,9 +153,9 @@ static inline int rocketnet_server_gso_recv_vlen( int num_packets, bool gro )
 #define ROCKETNET_SERVER_GSO_COUNTER_PACKETS_RECEIVED               1
 #define ROCKETNET_SERVER_GSO_COUNTER_SEND_SYSCALLS                  2
 #define ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_SYSCALLS               3
-#define ROCKETNET_SERVER_GSO_COUNTER_SEND_DROPPED                   4       // sendmmsg refused a message for its destination (a full socket drops nothing), counted never resent
+#define ROCKETNET_SERVER_GSO_COUNTER_SEND_DROPPED                   4       // packets not sent: refused for their destination (never resent), or a full socket's tail left after shutdown's bounded retries
 #define ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_SIZE           5       // segment outside [server min, receive ceiling]
-#define ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_OVERFLOW       6       // staging full: the queue could not keep up
+#define ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_OVERFLOW       6       // segments of one GRO receive past the staging's room: more than ROCKETNET_GSO_RECV_MAX_SEGMENTS
 #define ROCKETNET_SERVER_GSO_COUNTER_GSO_SENDS                      7       // sendmmsg messages that carried a UDP_SEGMENT cmsg
 #define ROCKETNET_SERVER_GSO_COUNTER_GRO_BATCHES                    8       // receive buffers that arrived GRO-coalesced (more than one segment)
 #define ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_SOURCE         9       // source address family the boundary could not convert

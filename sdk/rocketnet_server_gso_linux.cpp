@@ -126,7 +126,6 @@ struct rocketnet_server_gso_queue_t
 {
     uint8_t padding_0[4096];
 
-    int queue_index;
     int fd;
     bool ipv6;
     struct rocketnet_server_gso_t * gso;
@@ -178,7 +177,6 @@ struct rocketnet_server_gso_t
     bool stopping = false;
     std::atomic<int> features{ 0 };
     bool ipv6;
-    rocketnet_address_t bind_address;
 
     struct rocketnet_server_gso_queue_t * queues;
 
@@ -225,6 +223,7 @@ struct rocketnet_server_gso_t
     std::atomic<uint64_t> counter_gso_sends{ 0 };
     // TX worker only. An accepted segmented send resets it. A plain send does not.
     int segment_consecutive_refusals = 0;
+    bool segment_refusal_warned = false;        // TX worker only: the first refused run warns, later ones are spam
     uint64_t counter_packets_received;
     uint64_t counter_receive_syscalls;
     uint64_t counter_receive_dropped_size;
@@ -233,7 +232,6 @@ struct rocketnet_server_gso_t
     uint64_t counter_receive_dropped_source;
     uint64_t counter_receive_errors;
     uint64_t counter_gro_batches;
-    uint64_t counter_gro_cmsg_faults;           // folded from the receive buffers; not a public counter
 
     struct rocketnet_server_socket_process_packets_t process_packets;
     int max_clients;                    // the server's configured client count: sizes the view and the socket receive buffers
@@ -466,8 +464,12 @@ static void rocketnet_server_gso_send_worker( rocketnet_platform_thread_t *, voi
                 retries_after_quit++;
                 if ( retries_after_quit > ROCKETNET_GSO_SEND_RETRIES_AFTER_QUIT )
                 {
-                    // the tail the socket never took is dropped: count it
-                    gso->counter_send_dropped += (uint64_t) ( count - slot );
+                    // the tail the socket never took is dropped: count its
+                    // packets. an aborted slot, or one already counted
+                    // unroutable and cleared, holds none
+                    for ( int i = slot; i < count; i++ )
+                        if ( bank->info[i].packet_bytes > 0 )
+                            gso->counter_send_dropped++;
                     break;
                 }
             }
@@ -1131,7 +1133,6 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
     {
         struct rocketnet_server_gso_queue_t * queue = &gso->queues[i];
 
-        queue->queue_index = i;
         queue->ipv6 = gso->ipv6;
         queue->gso = gso;
 
@@ -1144,7 +1145,6 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
     }
 
     bind_address->port = bound_port;
-    gso->bind_address = *bind_address;
     gso->features |= ROCKETNET_SERVER_GSO_FEATURE_REUSEPORT;
 
     // the runtime probes, each a real setsockopt against a real socket in
@@ -1636,12 +1636,6 @@ static int rocketnet_server_gso_flush( struct rocketnet_server_gso_t * gso, rock
 
         while ( batch_end < num_slots && num_messages < ROCKETNET_GSO_SEND_BATCH )
         {
-            // close the batch while a full run still fits the iovec array:
-            // the run builder below may take up to MAX_SEGMENTS entries
-
-            if ( num_iovecs + ROCKETNET_GSO_MAX_SEGMENTS > ROCKETNET_GSO_SEND_BATCH * ROCKETNET_GSO_MAX_SEGMENTS )
-                break;
-
             struct rocketnet_server_gso_send_info_t * info = &bank->info[batch_end];
 
             if ( info->packet_bytes <= 0 )
@@ -1664,9 +1658,7 @@ static int rocketnet_server_gso_flush( struct rocketnet_server_gso_t * gso, rock
                 // packet, a different destination, or an aborted slot ends
                 // the run.
 
-                while ( batch_end < num_slots &&
-                        run_count < ROCKETNET_GSO_MAX_SEGMENTS &&
-                        num_iovecs + run_count < ROCKETNET_GSO_SEND_BATCH * ROCKETNET_GSO_MAX_SEGMENTS )
+                while ( batch_end < num_slots && run_count < ROCKETNET_GSO_MAX_SEGMENTS )
                 {
                     struct rocketnet_server_gso_send_info_t * next = &bank->info[batch_end];
 
@@ -1805,7 +1797,15 @@ static int rocketnet_server_gso_flush( struct rocketnet_server_gso_t * gso, rock
                     return message_first_slot[sent];
                 }
 
-                rocketnet_warn( "gso transport: live GSO send refused (%s). resending that run plain", reason );
+                if ( !gso->segment_refusal_warned )
+                {
+                    gso->segment_refusal_warned = true;
+                    rocketnet_warn( "gso transport: live GSO send refused (%s). resending that run plain", reason );
+                }
+                else
+                {
+                    rocketnet_spam( "gso transport: live GSO send refused (%s). resending that run plain", reason );
+                }
                 const int resume = rocketnet_server_gso_resend_plain( gso, fd, &gso->send_headers[sent], message_first_slot[sent], message_num_packets[sent], full );
                 if ( *full )
                     return resume;
@@ -1898,7 +1898,6 @@ static void rocketnet_server_gso_receive_from_queue( rocketnet_server_gso_t * gs
         gso->counter_receive_dropped_source += buffer->dropped_source;
         gso->counter_receive_errors += buffer->receive_errors;
         gso->counter_gro_batches += buffer->gro_batches;
-        gso->counter_gro_cmsg_faults += buffer->gro_cmsg_faults;
         buffer->receive_errors = 0;
         buffer->dropped_size = 0;
         buffer->dropped_too_large = 0;
@@ -2020,7 +2019,6 @@ static struct rocketnet_server_gso_t * rocketnet_server_gso_test_create()
 
     struct rocketnet_server_gso_queue_t * queue = &gso->queues[0];
     new ( queue ) rocketnet_server_gso_queue_t();
-    queue->queue_index = 0;
     queue->fd = -1;
     queue->gso = gso;
     queue->worker_buffer = &queue->buffers[0];
@@ -2105,7 +2103,6 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_test_open( int num_queues )
     {
         struct rocketnet_server_gso_queue_t * queue = &gso->queues[i];
         new ( queue ) rocketnet_server_gso_queue_t();
-        queue->queue_index = i;
         queue->fd = -1;
         queue->gso = gso;
         queue->worker_buffer = &queue->buffers[0];
@@ -2247,10 +2244,6 @@ bool rocketnet_server_gso_test_worker_handoff()
     return valid;
 }
 
-// A refused sendmmsg, stepped on this thread through the send-failure seam
-// with no socket and no thread: a full socket drops the rest of the batch,
-// any other errno drops the one refused message and sends the rest in
-// order, as the portable batch and the client gso do.
 // The drain's read budget, on the fixture with the receive seam: a source
 // answering full batches of one kind of discard (a zero-length datagram, a
 // refused source, a datagram below the smallest server packet) far past the
@@ -2632,6 +2625,9 @@ bool rocketnet_server_gso_test_send_full_keeps_rest()
     valid = valid && taken >= 0 && !final;
     if ( !valid )
     {
+        rocketnet_server_gso_stop( gso );
+        gso->queues[0].stopped.store( true, std::memory_order_release );
+        gso->send_stopped.store( true, std::memory_order_release );
         rocketnet_server_gso_test_destroy( gso );
         return false;
     }
@@ -2884,9 +2880,12 @@ bool rocketnet_server_gso_test_send_shutdown_full()
 }
 
 // the bounded retry after shutdown, from both sides. a bank holds a packet to
-// port 40000 and one to port 40002. the seam accepts 40000; 40002 meets a
-// full socket `refusals` times and is then accepted. the first refusal also
-// stops the transport, so the worker exits whatever it does with the bank.
+// port 40000 and one to port 40002, then a packet to an IPv6 destination this
+// IPv4 socket cannot carry (the first pass drops and counts it) and an
+// aborted slot: neither is a packet the tail can drop again. the seam accepts
+// 40000; 40002 meets a full socket `refusals` times and is then accepted. the
+// first refusal also stops the transport, so the worker exits whatever it
+// does with the bank.
 // a refusal past the bound's last retry means the worker kept retrying: the
 // seam then accepts so this thread is not stuck, and the test fails.
 struct rocketnet_server_gso_test_bounded_retry_t
@@ -2946,6 +2945,27 @@ static bool rocketnet_server_gso_test_bounded_retry( int refusals, uint64_t expe
 
     bool valid = rocketnet_server_gso_test_stage( gso, 40000 );
     valid = valid && rocketnet_server_gso_test_stage( gso, 40002 );
+
+    struct rocketnet_address_t to;
+    memset( &to, 0, sizeof( to ) );
+    to.type = ROCKETNET_ADDRESS_IPV6;
+    to.data.ipv6[7] = 1;
+    to.port = 40003;
+    uint64_t packet_id = 0;
+    uint8_t * packet = rocketnet_server_gso_start_packet( gso, &to, &packet_id );
+    valid = valid && packet;
+    if ( packet )
+        rocketnet_server_gso_finish_packet( gso, packet_id, packet, ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES );
+
+    memset( &to, 0, sizeof( to ) );
+    to.type = ROCKETNET_ADDRESS_IPV4;
+    to.data.ipv4[0] = 127;
+    to.data.ipv4[3] = 1;
+    to.port = 40004;
+    packet = rocketnet_server_gso_start_packet( gso, &to, &packet_id );
+    valid = valid && packet;
+    rocketnet_server_gso_abort_packet( gso, packet_id, packet );
+
     rocketnet_server_gso_send_packets( gso );
     valid = valid && gso->send_ready_count == 1;
 
@@ -2974,19 +2994,21 @@ static bool rocketnet_server_gso_test_bounded_retry( int refusals, uint64_t expe
 
 // the socket refuses the tail fewer times than the bound ends: once (one
 // transient EAGAIN), then as many times as the bound allows retries, so the
-// last allowed retry is accepted. both packets are sent, none dropped.
+// last allowed retry is accepted. both routable packets are sent; only the
+// unroutable one is dropped.
 bool rocketnet_server_gso_test_send_shutdown_within_bound()
 {
-    bool valid = rocketnet_server_gso_test_bounded_retry( 1, 2, 0 );
-    valid = valid && rocketnet_server_gso_test_bounded_retry( ROCKETNET_GSO_SEND_RETRIES_AFTER_QUIT, 2, 0 );
+    bool valid = rocketnet_server_gso_test_bounded_retry( 1, 2, 1 );
+    valid = valid && rocketnet_server_gso_test_bounded_retry( ROCKETNET_GSO_SEND_RETRIES_AFTER_QUIT, 2, 1 );
     return valid;
 }
 
 // the socket refuses the tail past the bound: the worker stops retrying, the
-// one packet it never sent is dropped and counted, and stop completes
+// one packet it never sent is dropped and counted beside the unroutable one,
+// the cleared and aborted slots behind it are not counted, and stop completes
 bool rocketnet_server_gso_test_send_shutdown_past_bound()
 {
-    return rocketnet_server_gso_test_bounded_retry( ROCKETNET_GSO_SEND_RETRIES_AFTER_QUIT + 2, 1, 1 );
+    return rocketnet_server_gso_test_bounded_retry( ROCKETNET_GSO_SEND_RETRIES_AFTER_QUIT + 2, 1, 2 );
 }
 
 #endif // #if ROCKETNET_DEV
