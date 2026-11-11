@@ -517,6 +517,22 @@ static int rocketnet_server_protocol_process_connection_request_known( struct ro
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
 
+    // the zero pad of the signed data (TRANSPORT.md t1 rule 3, t6.2) is all
+    // zero, or the request is refused here, before any work is spent on it.
+    // It is counted with the version refusal: the signed data is not a
+    // well-formed structure of this wire version.
+
+    {
+        const int pad_offset = ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK + ROCKETNET_SEALED_BLOCK_BYTES;
+
+        if ( sodium_is_zero( signed_connect_data + pad_offset, (size_t) ( ROCKETNET_SIGNED_CONNECT_DATA_BYTES - pad_offset ) ) == 0 )
+        {
+            rocketnet_debug( "server ignored connection request. signed zero pad is not zero" );
+            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_VERSION]++;
+            return ROCKETNET_SERVER_PROCESS_IGNORED;
+        }
+    }
+
     // TokenAddressAdvertised: the arrival family's token address is one
     // this server advertises. The other family in the token is not read.
 

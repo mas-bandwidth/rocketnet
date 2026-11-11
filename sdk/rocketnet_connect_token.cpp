@@ -381,7 +381,7 @@ int rocketnet_verify_signed_connect_data( const uint8_t * signed_connect_data,
 // The private block seam, compiled into the unit suite's hook library only
 // (ROCKETNET_DEV): rocketnet_open_connect_token_private
 // hands its private block staging to the hook as it enters (at_exit 0, so a
-// unit case can plant a canary in it) and on each of its two exits (at_exit
+// unit case can plant a canary in it) and on each of its three exits (at_exit
 // 1, so the case reads what the staging still holds)
 // (test_unit_secrets_wiped.cpp).
 #if ROCKETNET_DEV
@@ -409,6 +409,18 @@ int rocketnet_open_connect_token_private( struct rocketnet_connect_token_private
     {
         // the refused exit wipes the staging as the open exit does
 
+        sodium_memzero( private_block, sizeof( private_block ) );
+        ROCKETNET_TOKEN_PRIVATE_BLOCK_SEEN( private_block, (int) sizeof( private_block ), 1 );
+        return 0;
+    }
+
+    // the block opened, but its zero pad (TRANSPORT.md t1 rule 3, t6.1) is not
+    // zero: refused before any field is read, with the staging wiped
+
+    const int pad_offset = 3 * 8 + 2 * ROCKETNET_KEY_BYTES + ROCKETNET_USER_DATA_BYTES;
+
+    if ( sodium_is_zero( private_block + pad_offset, (size_t) ( ROCKETNET_PRIVATE_BLOCK_BYTES - pad_offset ) ) == 0 )
+    {
         sodium_memzero( private_block, sizeof( private_block ) );
         ROCKETNET_TOKEN_PRIVATE_BLOCK_SEEN( private_block, (int) sizeof( private_block ), 1 );
         return 0;
