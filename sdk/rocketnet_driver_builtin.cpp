@@ -1889,7 +1889,7 @@ void rocketnet_portable_tx_test_sweep_destroy( void * transport ) { portable_ser
 #endif // #if ROCKETNET_DEV
 
 #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
-// the portable client on a platform with the client I/O wake: an eight-callback
+// the portable client on a platform with the client I/O wake: a twelve-callback
 // table over the socket and its wake, so the transport runs the I/O thread of
 // docs/CLIENT-IO.md (RNClientIo) instead of the BASE receive thread.
 struct portable_io_client_t

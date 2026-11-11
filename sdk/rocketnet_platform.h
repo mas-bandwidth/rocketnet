@@ -905,9 +905,11 @@ inline void rocketnet_platform_atomic_max_u64( volatile uint64_t * value, uint64
 
 // Short critical sections for bookkeeping whose ring slots can alias under a
 // concurrent burst. Unlike the independent counters above, these order data.
-// Pause each spin so the waiter stops hammering the cache line and saves
-// power, and yield after a bounded number so a preempted holder gets the CPU
-// instead of the waiter burning its whole scheduling quantum.
+// Each spin pauses on x86 (pause) and under MSVC on arm64 (yield) so the
+// waiter eases off the cache line; elsewhere, GCC and Clang on arm64
+// included, it is only a compiler barrier. Every spin lock yields after a
+// bounded number of spins so a preempted holder gets the CPU instead of the
+// waiter burning its whole scheduling quantum.
 #define ROCKETNET_PLATFORM_SPIN_YIELD_AFTER 1024
 
 // spins until the word goes from zero to one
