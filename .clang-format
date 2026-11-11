@@ -41,7 +41,7 @@
 #   `#if` conditions continue over backslash lines (netcode.h:62); with ColumnLimit 0 they are joined, ColumnLimit 300 costs 1010/2290
 #   case bodies and values sit at a hand-chosen column (netcode.c:2797); short-case alignment pads to the longest label only
 #   continuation arguments are sometimes indented one level, not aligned (next_client.cpp:724); AlignAfterOpenBracket DontAlign gives 878/1418, worse in total
-#   declarations inside `#if` are indented (next_platform_gdk.h:22); no option indents code by preprocessor depth
+#   declarations inside `#if` are indented (next_platform_gdk.h:22); no option indents code by preprocessor depth; sdk/rocketnet.h indents the declarations and doc comments of its #if ROCKETNET_DEV block by hand, inside its off/on pair
 #   spaces are hand-padded inside lines, `>> 8  )`, `x  = y` (netcode.c:316, next_header.h:75); AlignConsecutiveAssignments costs 1039/2585, no option for padding in expressions
 #   binary operators inside an index are tight, `buffer[4*1024]` (netcode.c:129); binary operators are always spaced, no index-only option
 #   some casts have no space after, `(uint32_t)INVALID_SOCKET` (netcode.c:653); SpaceAfterCStyleCast false costs 871/1625

@@ -2154,109 +2154,109 @@ ROCKETNET_EXPORT size_t rocketnet_client_required_memory( const struct rocketnet
     #define ROCKETNET_DEV_SERVER_SECRET_KEY  { 0x6f, 0xfb, 0x8f, 0x73, 0x37, 0xec, 0x37, 0x76, 0x97, 0xf5, 0x68, 0xde, 0x31, 0x18, 0xd8, 0x39, \
                                                0x59, 0x56, 0x0b, 0x25, 0x92, 0x8d, 0x22, 0x70, 0x7b, 0xa2, 0x29, 0x75, 0x89, 0xd0, 0x8b, 0x97 }
 
-/// Writes a development token for rocketnet_client_connect.
-/// The output buffer must hold ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES.
-/// The server must use ROCKETNET_DEV_BACKEND_PUBLIC_KEY.
-///
-/// Supply the addresses returned by the server's address getters.
-/// Pass NULL for an unavailable address family. At least one is required.
-/// Supply ROCKETNET_SERVER_PUBLIC_KEY_BYTES from rocketnet_server_public_key.
-///
-/// expire_seconds is the token lifetime from unix_timestamp.
-/// timeout_seconds is the maximum time the connection may be silent.
-/// Both durations must be positive. unix_timestamp is the creation time
-/// in Unix seconds.
-/// protocol_id must be nonzero and match the server. client_id identifies the
-/// client. user_data holds ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES or is NULL
-/// for zeros.
-///
-/// Returns ROCKETNET_STATUS_OK on success. An invalid or overlong address
-/// returns ROCKETNET_STATUS_INVALID_ADDRESS. Invalid arguments return
-/// ROCKETNET_STATUS_INVALID_ARGUMENT. A crypto failure returns
-/// ROCKETNET_STATUS_CRYPTO_INIT_FAILED. Failure leaves the output unchanged.
-///
-/// Needs no client or server. Thread: any thread; it touches only its
-/// arguments.
-///
-/// @param server_address_ipv4 The server's IPv4 address as "a.b.c.d:port", or
-/// NULL.
-/// @param server_address_ipv6 The server's IPv6 address as "[v6]:port", or
-/// NULL.
-/// @param server_public_key ROCKETNET_SERVER_PUBLIC_KEY_BYTES from
-/// rocketnet_server_public_key.
-/// @param expire_seconds The token lifetime in seconds. Must be positive.
-/// @param timeout_seconds The longest silence the connection allows, in
-/// seconds. Must be positive.
-/// @param client_id The client's id, carried to the server.
-/// @param protocol_id The title's protocol id. Must be nonzero.
-/// @param unix_timestamp The creation time in Unix seconds.
-/// @param user_data ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES carried to the
-/// server, or NULL for zeros.
-/// @param connect_token Receives the NUL-terminated token string. Holds
-/// ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES.
-/// @return ROCKETNET_STATUS_OK, or one of the failures above.
+    /// Writes a development token for rocketnet_client_connect.
+    /// The output buffer must hold ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES.
+    /// The server must use ROCKETNET_DEV_BACKEND_PUBLIC_KEY.
+    ///
+    /// Supply the addresses returned by the server's address getters.
+    /// Pass NULL for an unavailable address family. At least one is required.
+    /// Supply ROCKETNET_SERVER_PUBLIC_KEY_BYTES from rocketnet_server_public_key.
+    ///
+    /// expire_seconds is the token lifetime from unix_timestamp.
+    /// timeout_seconds is the maximum time the connection may be silent.
+    /// Both durations must be positive. unix_timestamp is the creation time
+    /// in Unix seconds.
+    /// protocol_id must be nonzero and match the server. client_id identifies the
+    /// client. user_data holds ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES or is NULL
+    /// for zeros.
+    ///
+    /// Returns ROCKETNET_STATUS_OK on success. An invalid or overlong address
+    /// returns ROCKETNET_STATUS_INVALID_ADDRESS. Invalid arguments return
+    /// ROCKETNET_STATUS_INVALID_ARGUMENT. A crypto failure returns
+    /// ROCKETNET_STATUS_CRYPTO_INIT_FAILED. Failure leaves the output unchanged.
+    ///
+    /// Needs no client or server. Thread: any thread; it touches only its
+    /// arguments.
+    ///
+    /// @param server_address_ipv4 The server's IPv4 address as "a.b.c.d:port", or
+    /// NULL.
+    /// @param server_address_ipv6 The server's IPv6 address as "[v6]:port", or
+    /// NULL.
+    /// @param server_public_key ROCKETNET_SERVER_PUBLIC_KEY_BYTES from
+    /// rocketnet_server_public_key.
+    /// @param expire_seconds The token lifetime in seconds. Must be positive.
+    /// @param timeout_seconds The longest silence the connection allows, in
+    /// seconds. Must be positive.
+    /// @param client_id The client's id, carried to the server.
+    /// @param protocol_id The title's protocol id. Must be nonzero.
+    /// @param unix_timestamp The creation time in Unix seconds.
+    /// @param user_data ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES carried to the
+    /// server, or NULL for zeros.
+    /// @param connect_token Receives the NUL-terminated token string. Holds
+    /// ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES.
+    /// @return ROCKETNET_STATUS_OK, or one of the failures above.
 
-ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_create_dev_connect_token( const char * server_address_ipv4,
-                                                                             const char * server_address_ipv6,
-                                                                             const uint8_t * server_public_key,
-                                                                             int expire_seconds,
-                                                                             int timeout_seconds,
-                                                                             uint64_t client_id,
-                                                                             uint64_t protocol_id,
-                                                                             uint64_t unix_timestamp,
-                                                                             const uint8_t * user_data,
-                                                                             char * connect_token );
+    ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_create_dev_connect_token( const char * server_address_ipv4,
+                                                                                 const char * server_address_ipv6,
+                                                                                 const uint8_t * server_public_key,
+                                                                                 int expire_seconds,
+                                                                                 int timeout_seconds,
+                                                                                 uint64_t client_id,
+                                                                                 uint64_t protocol_id,
+                                                                                 uint64_t unix_timestamp,
+                                                                                 const uint8_t * user_data,
+                                                                                 char * connect_token );
 
-/// Simulates latency, jitter, packet loss and duplication on outgoing packets.
-/// latency_ms and jitter_ms range from 0 to 60000.
-/// packet_loss_percent and duplicate_percent range from 0 to 100.
-/// Set all values to zero to disable the simulator.
-///
-/// In a development build the settings apply at once to a live connection, on
-/// and off, in either direction. Every development connection owns a
-/// simulator from the start, so a zero setting costs the memory of one and
-/// neither latency nor a copy. Out-of-range values count as API misuse and
-/// leave the settings unchanged.
-///
-/// These environment variables set the values at create.
-/// ROCKETNET_DEV_CLIENT_LATENCY_MS
-/// ROCKETNET_DEV_CLIENT_JITTER_MS
-/// ROCKETNET_DEV_CLIENT_PACKET_LOSS_PERCENT
-/// ROCKETNET_DEV_CLIENT_DUPLICATE_PERCENT
-///
-/// Callable in every client state. While DISCONNECTED the settings are kept
-/// for the next connect. Thread: not thread-safe; the caller owns the client
-/// one thread at a time.
-///
-/// @param client The client whose outgoing traffic is simulated.
-/// @param latency_ms Added delay in milliseconds, 0 .. 60000.
-/// @param jitter_ms Most random extra delay in milliseconds, 0 .. 60000.
-/// @param packet_loss_percent Percentage of packets dropped, 0 .. 100.
-/// @param duplicate_percent Percentage delivered twice, 0 .. 100.
+    /// Simulates latency, jitter, packet loss and duplication on outgoing packets.
+    /// latency_ms and jitter_ms range from 0 to 60000.
+    /// packet_loss_percent and duplicate_percent range from 0 to 100.
+    /// Set all values to zero to disable the simulator.
+    ///
+    /// In a development build the settings apply at once to a live connection, on
+    /// and off, in either direction. Every development connection owns a
+    /// simulator from the start, so a zero setting costs the memory of one and
+    /// neither latency nor a copy. Out-of-range values count as API misuse and
+    /// leave the settings unchanged.
+    ///
+    /// These environment variables set the values at create.
+    /// ROCKETNET_DEV_CLIENT_LATENCY_MS
+    /// ROCKETNET_DEV_CLIENT_JITTER_MS
+    /// ROCKETNET_DEV_CLIENT_PACKET_LOSS_PERCENT
+    /// ROCKETNET_DEV_CLIENT_DUPLICATE_PERCENT
+    ///
+    /// Callable in every client state. While DISCONNECTED the settings are kept
+    /// for the next connect. Thread: not thread-safe; the caller owns the client
+    /// one thread at a time.
+    ///
+    /// @param client The client whose outgoing traffic is simulated.
+    /// @param latency_ms Added delay in milliseconds, 0 .. 60000.
+    /// @param jitter_ms Most random extra delay in milliseconds, 0 .. 60000.
+    /// @param packet_loss_percent Percentage of packets dropped, 0 .. 100.
+    /// @param duplicate_percent Percentage delivered twice, 0 .. 100.
 
-ROCKETNET_EXPORT void rocketnet_client_network_simulator( struct rocketnet_client_t * client, int latency_ms, int jitter_ms, int packet_loss_percent, int duplicate_percent );
+    ROCKETNET_EXPORT void rocketnet_client_network_simulator( struct rocketnet_client_t * client, int latency_ms, int jitter_ms, int packet_loss_percent, int duplicate_percent );
 
-/// Simulates outgoing server packets with the same ranges as the client call.
-/// In a development build the settings apply at once to a running server, on
-/// and off, in either direction. Every development server owns a simulator
-/// from the start, so a zero setting costs the memory of one and neither
-/// latency nor a copy. Invalid values count as API misuse and leave the
-/// settings unchanged.
-/// Use the ROCKETNET_DEV_SERVER_LATENCY_MS, ROCKETNET_DEV_SERVER_JITTER_MS,
-/// ROCKETNET_DEV_SERVER_PACKET_LOSS_PERCENT and
-/// ROCKETNET_DEV_SERVER_DUPLICATE_PERCENT environment variables at create.
-///
-/// Callable running or stopped. While stopped the settings are kept for the
-/// next start. Thread: not thread-safe; the caller owns the server one thread
-/// at a time.
-///
-/// @param server The server whose outgoing traffic is simulated.
-/// @param latency_ms Added delay in milliseconds, 0 .. 60000.
-/// @param jitter_ms Most random extra delay in milliseconds, 0 .. 60000.
-/// @param packet_loss_percent Percentage of packets dropped, 0 .. 100.
-/// @param duplicate_percent Percentage delivered twice, 0 .. 100.
+    /// Simulates outgoing server packets with the same ranges as the client call.
+    /// In a development build the settings apply at once to a running server, on
+    /// and off, in either direction. Every development server owns a simulator
+    /// from the start, so a zero setting costs the memory of one and neither
+    /// latency nor a copy. Invalid values count as API misuse and leave the
+    /// settings unchanged.
+    /// Use the ROCKETNET_DEV_SERVER_LATENCY_MS, ROCKETNET_DEV_SERVER_JITTER_MS,
+    /// ROCKETNET_DEV_SERVER_PACKET_LOSS_PERCENT and
+    /// ROCKETNET_DEV_SERVER_DUPLICATE_PERCENT environment variables at create.
+    ///
+    /// Callable running or stopped. While stopped the settings are kept for the
+    /// next start. Thread: not thread-safe; the caller owns the server one thread
+    /// at a time.
+    ///
+    /// @param server The server whose outgoing traffic is simulated.
+    /// @param latency_ms Added delay in milliseconds, 0 .. 60000.
+    /// @param jitter_ms Most random extra delay in milliseconds, 0 .. 60000.
+    /// @param packet_loss_percent Percentage of packets dropped, 0 .. 100.
+    /// @param duplicate_percent Percentage delivered twice, 0 .. 100.
 
-ROCKETNET_EXPORT void rocketnet_server_network_simulator( struct rocketnet_server_t * server, int latency_ms, int jitter_ms, int packet_loss_percent, int duplicate_percent );
+    ROCKETNET_EXPORT void rocketnet_server_network_simulator( struct rocketnet_server_t * server, int latency_ms, int jitter_ms, int packet_loss_percent, int duplicate_percent );
 
 #endif // ROCKETNET_DEV
 
