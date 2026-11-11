@@ -386,7 +386,7 @@ static int interop_clients( const char * address, const char * key_hex, int clie
     {
         // client ids with every byte distinct, so a field read in the wrong order cannot match
 
-        c[k].client_id = 0x0102030405060708ULL + (uint64_t) k * 0x1010101010101010ULL;
+        c[k].client_id = UINT64_C( 0x0102030405060708 ) + (uint64_t) k * UINT64_C( 0x1010101010101010 );
         c[k].index = -1;
 
         char connect_token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
