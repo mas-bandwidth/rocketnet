@@ -187,7 +187,7 @@ holds each one's measured result. Every case is on a FIFO link without duplicati
 | Case | Instance | Checks | Expected |
 |---|---|---|---|
 | `MCServerConnection.cfg` | two clients, two addresses, any token, one slot, disconnects | `SafetyInvariants`, `ChurnNeverDenied`, `ExpiredTokenNeverMapped`, `PacketsReachOwnSlotOnly`, `SessionNeverAnswered` | pass |
-| `MCServerConnectionTwoSlots.cfg` | the same with two slots | the same | pass |
+| `MCServerConnectionTwoSlots.cfg` | the same with two slots, two mappings and two session nonces | the same | pass |
 | `MCServerConnectionLive.cfg` | one client, one slot, `KindLoss = "firstkind"`, every deadline off | `SafetyInvariants`, `Connects`, `ServerNotStranded` | pass |
 | `MCServerConnectionBrokenOnceKeepAlive.cfg` | `Live` with `RepeatKeepAlive = FALSE` | `ServerNotStranded` | fails (temporal) |
 | `MCServerConnectionTimers.cfg` | one client that may disconnect or vanish, `Timeout = 2`, `HandshakeDeadline = 2` | `SafetyInvariants` (the timer invariants live), `TimedOutSlotFreed`, `AbandonedMappingDies`, `ServerNotStranded` | pass |
@@ -315,11 +315,20 @@ committed case. One model error was found and fixed on the way.
 ## Two-slot instance
 
 `MCServerConnectionTwoSlots.cfg` is the committed configuration with
-`MaxSlots = 2` and `MapCap = 2`, two clients and two tokens, every deadline
-and both application disconnects unchanged. It keeps `SafetyInvariants`,
-`ChurnNeverDenied` and `ExpiredTokenNeverMapped` and the two action
-properties. It passes: 470,755 generated / 100,278 distinct states, depth 38,
-44.315 s, exit 0, and is a required case.
+`MaxSlots = 2`, `MapCap = 2` and `MaxNonces = 2`, two clients and two tokens,
+every deadline and both application disconnects unchanged. It keeps
+`SafetyInvariants`, `ChurnNeverDenied` and `ExpiredTokenNeverMapped` and the
+two action properties. It passes: 3,797,191 generated / 766,022 distinct
+states, 64.4 s on the bench, exit 0, and is a required case.
+
+Until v1.1.2 it ran with `MaxNonces = 1`. A nonce held by a live mapping or
+by a client's keys is not fresh (`FreshNonce`), so one connected client held
+the only nonce and the second slot was never taken: an invariant
+`Cardinality(UsedSlots) <= 1` held in all 100,278 distinct states, fewer than
+the one-slot run's 105,590, and fails at once with two nonces. A wider
+instance with fewer states than the narrower one is the sign of a constant
+that keeps the extra width out of reach; compare the counts when an instance
+is widened.
 
 The deployed server has up to `ROCKETNET_MAX_CLIENTS` slots and a mapping
 table of `max_clients * 2` entries. The safety invariants are local: each
