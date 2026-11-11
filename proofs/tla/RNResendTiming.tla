@@ -198,7 +198,7 @@ SeedRuleOff == FALSE
 \*   UnsentFirst: FALSE walks each class's numbers on the wire before the
 \*            never-sent ones (the rule); TRUE walks each class from its
 \*            head, never-sent first (the reversed witness).
-\* (Room <- RoomOne or RoomTwo, Pending <- PendingLong, Small <- SmallOff,
+\* (Room <- RoomOne or RoomTwo, Pending <- PendingLong or PendingShort, Small <- SmallOff,
 \*  UnsentFirst <- UnsentFirstOn)
 Room == 0
 Pending == 0
@@ -207,6 +207,7 @@ UnsentFirst == FALSE
 RoomOne == 1
 RoomTwo == 2
 PendingLong == 2 * Timeout + 2
+PendingShort == 4
 SmallOff == FALSE
 UnsentFirstOn == TRUE
 
