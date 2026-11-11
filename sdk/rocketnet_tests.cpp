@@ -9220,24 +9220,37 @@ void rocketnet_test_ack_block_build()
     rocketnet_check( decoded.range_gap[0] == 1 && decoded.range_length[0] == 1 );
 
     // every built block is valid by construction: a randomized soak of
-    // arrival patterns, every one decoding cleanly against its own state
+    // arrival patterns, every one decoding cleanly against its own state. The
+    // patterns come from a fixed seed, printed with the trial on a failure,
+    // so a red run replays
+
+    const uint64_t ack_seed = 0x41434B424C4B5331ULL;
+    uint64_t ack_rng = ack_seed;
+#define ROCKETNET_ACK_BLOCK_RANDOM() ( ack_rng ^= ack_rng << 13, ack_rng ^= ack_rng >> 7, ack_rng ^= ack_rng << 17, ack_rng )
 
     for ( int trial = 0; trial < 100; trial++ )
     {
         memset( &replay, 0, sizeof( replay ) );
-        uint64_t s = 1 + ( rocketnet_random_uint64() % 1000 );
+        uint64_t s = 1 + ( ROCKETNET_ACK_BLOCK_RANDOM() % 1000 );
         for ( int n = 0; n < 400; n++ )
         {
             rocketnet_replay_advance( &replay, s );
-            s += (uint64_t) ( 1 + rocketnet_random_uint64() % 3 );       // skips leave holes
+            s += (uint64_t) ( 1 + ROCKETNET_ACK_BLOCK_RANDOM() % 3 );       // skips leave holes
         }
 
-        int capacity = ROCKETNET_ACK_BLOCK_MIN_BYTES + 4 * (int) ( rocketnet_random_uint64() % 64 );
+        int capacity = ROCKETNET_ACK_BLOCK_MIN_BYTES + 4 * (int) ( ROCKETNET_ACK_BLOCK_RANDOM() % 64 );
         int built_bytes = rocketnet_ack_block_build( built, capacity, &replay );
+        const int read_bytes = rocketnet_ack_block_read( &decoded, built, built_bytes, replay.highest_opened );
+        if ( built_bytes < ROCKETNET_ACK_BLOCK_MIN_BYTES || built_bytes > capacity || read_bytes != built_bytes )
+        {
+            printf( "ack block trial %d failed: seed 0x%016llx, capacity %d, built %d, read %d\n", trial, (unsigned long long) ack_seed, capacity, built_bytes, read_bytes );
+        }
         rocketnet_check( built_bytes >= ROCKETNET_ACK_BLOCK_MIN_BYTES );
         rocketnet_check( built_bytes <= capacity );
-        rocketnet_check( rocketnet_ack_block_read( &decoded, built, built_bytes, replay.highest_opened ) == built_bytes );
+        rocketnet_check( read_bytes == built_bytes );
     }
+
+#undef ROCKETNET_ACK_BLOCK_RANDOM
 }
 
 void rocketnet_test_ack_apply_skips_acked_range()
