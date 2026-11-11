@@ -15,6 +15,7 @@
 #include "rocketnet_ack.h"
 #include "rocketnet_token_tables.h"
 #include "rocketnet_server.h"
+#include "rocketnet_server_uring.h"
 
 // Server-side connection request processing: the ladder from the standard,
 // every check in its exact order, each rung rejecting what it can at its own
@@ -41,9 +42,9 @@ struct rocketnet_counters_t;
 
 // The outcomes of processing a connection request: IGNORED sends nothing;
 // SEND_* names the response packet written. BUDGET_EXCEEDED is a per-update
-// limit's refusal, the handshake work budget or a cookie reply limit: the
-// request was dropped unanswered before any asymmetric work and counted as
-// CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED.
+// limit's refusal, the handshake work budget or the one cookie reply per
+// source: the request was dropped unanswered before any asymmetric work and
+// counted as CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED.
 
 #define ROCKETNET_SERVER_PROCESS_IGNORED            0
 #define ROCKETNET_SERVER_PROCESS_SEND_COOKIE        1
@@ -53,14 +54,40 @@ struct rocketnet_counters_t;
 #define ROCKETNET_SERVER_PROCESS_ACCEPTED           5
 #define ROCKETNET_SERVER_PROCESS_BUDGET_EXCEEDED    6
 
-// The cookie reply limits of one update (standard/TRANSPORT.md t12 rule 7,
-// proofs/tla/RNCookieReplyLimits.tla): at most max_clients cookie replies,
-// and at most one to each source address and port, remembered as one bit of
-// a fixed bitmap at a keyed hash of the address. Nothing here grows with the
-// sources; a collision refuses the other source for the rest of the update.
+// The cookie reply limit of one update (standard/TRANSPORT.md t12 rule 7,
+// proofs/tla/RNCookieReplyLimits.tla): at most one cookie reply to each
+// source address and port, remembered as one bit of a bitmap at a keyed
+// hash of the address. The bitmap is allocated with the server transport,
+// sized for max_clients, and nothing a source sends grows it; a collision
+// refuses the other source for the rest of the update.
+//
+// Its size: the next power of two at or above FACTOR times the most
+// connection requests one update can process. That most is the largest
+// process view of a built-in transport, io_uring's receive bank
+// (rocketnet_server_uring_bank_packets), never smaller than the receive
+// budget the other transports and the buffered path take
+// (rocketnet_server_receive_packets_per_update, 16 x sized clients). At most
+// that many bits are set in one update, so an honest source's bit is already
+// set -- and it is refused for that update -- with probability at most 1 in
+// FACTOR, and only when a flood fills the whole bound; proportionally less
+// below it. FACTOR 16 is a chosen bound, not a measured optimum. A custom
+// staged driver whose receive view is larger than the bound raises that
+// probability in proportion (proofs/tla/RNCookieReplyLimits.tla AllocBits,
+// FalseRefusalBound).
 
-#define ROCKETNET_SERVER_COOKIE_REPLY_SOURCE_BITS   16384
+#define ROCKETNET_SERVER_COOKIE_REPLY_SOURCE_FACTOR 16
 #define ROCKETNET_SERVER_COOKIE_REPLY_KEY_BYTES     16
+
+static inline int rocketnet_server_cookie_reply_source_words( int max_clients )
+{
+    const uint64_t bits_needed = (uint64_t) ROCKETNET_SERVER_COOKIE_REPLY_SOURCE_FACTOR * (uint64_t) rocketnet_server_uring_bank_packets( max_clients );
+    uint64_t bits = 64;
+    while ( bits < bits_needed )
+    {
+        bits <<= 1;
+    }
+    return (int) ( bits / 64 );
+}
 
 struct rocketnet_server_protocol_t
 {
@@ -87,8 +114,12 @@ struct rocketnet_server_protocol_t
     int handshakes_per_update;                              // the handshake work budget, 1 .. 1024; default 16
     int32_t max_timeout_seconds;                            // clamp; <= 0 means no clamp
 
-    uint64_t cookie_replies_this_update;                    // against max_clients; cleared by update
-    uint64_t cookie_reply_sources[ROCKETNET_SERVER_COOKIE_REPLY_SOURCE_BITS / 64];   // cleared by update
+    // cookie_reply_source_words words, a power of two, carved with the server
+    // transport and cleared by update; NULL, with 0 words, only in a protocol
+    // a unit harness builds by hand without one, which then keeps no
+    // per-source limit (the transport always carves it)
+    uint64_t * cookie_reply_sources;
+    int cookie_reply_source_words;
     uint8_t cookie_reply_source_key[ROCKETNET_SERVER_COOKIE_REPLY_KEY_BYTES];        // drawn at create
 
     struct rocketnet_encryption_map_t * encryption_map;
@@ -139,9 +170,9 @@ void rocketnet_server_transport_test_receive_work( const struct rocketnet_server
 #endif // #if ROCKETNET_DEV
 
 // The bit of cookie_reply_sources that stands for from, 0 ..
-// ROCKETNET_SERVER_COOKIE_REPLY_SOURCE_BITS - 1: a SipHash of the address
-// bytes, port included, under cookie_reply_source_key; -1 for an address that
-// is not IPv4 or IPv6.
+// 64 x cookie_reply_source_words - 1: a SipHash of the address bytes, port
+// included, under cookie_reply_source_key, masked by the allocated size; -1
+// for an address that is not IPv4 or IPv6, or a protocol without the bitmap.
 
 int rocketnet_server_protocol_cookie_reply_source_index( const struct rocketnet_server_protocol_t * server, const struct rocketnet_address_t * from );
 

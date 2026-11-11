@@ -229,12 +229,10 @@ static void salt_mismatch_build_token_request( uint8_t * request, const uint8_t 
         request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES - 1] ^= 1;
 }
 
-// the cookie exchange for this request, in an update of its own (one cookie
-// per source per update), then the request with its cookie
+// the cookie exchange for this request, then the request with its cookie
 static int salt_mismatch_process_with_cookie( struct salt_mismatch_server_t * test, uint8_t * request,
                                               uint8_t * response, int * response_bytes )
 {
-    rocketnet_server_protocol_update( &test->server, 1000.0 );
     if ( salt_mismatch_process( test, request, response, response_bytes ) != ROCKETNET_SERVER_PROCESS_SEND_COOKIE )
         return -1;
 
@@ -314,7 +312,6 @@ static void test_new_token_replaces_stale_half_open_mapping()
 
     uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
     salt_mismatch_build_token_request( request, salt_mismatch_new_salt, 4, false );
-    rocketnet_server_protocol_update( &test.server, 1000.0 );
     check( salt_mismatch_process( &test, request, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
 
     memcpy( request + ROCKETNET_PREFILTER_BYTES,

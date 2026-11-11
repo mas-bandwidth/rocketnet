@@ -203,24 +203,30 @@ static int rocketnet_server_request_cookie_mac( uint8_t * mac,
 }
 
 ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_COOKIE_REPLY_KEY_BYTES == crypto_shorthash_KEYBYTES, "the cookie reply source key is a SipHash key" );
-ROCKETNET_STATIC_ASSERT( ( ROCKETNET_SERVER_COOKIE_REPLY_SOURCE_BITS & ( ROCKETNET_SERVER_COOKIE_REPLY_SOURCE_BITS - 1 ) ) == 0 &&
-                             ROCKETNET_SERVER_COOKIE_REPLY_SOURCE_BITS % 64 == 0,
-                         "the cookie reply source bitmap is a power of two bits in whole words" );
 
 // proofs/tla/RNCookieReplyLimits.tla Index
 int rocketnet_server_protocol_cookie_reply_source_index( const struct rocketnet_server_protocol_t * server, const struct rocketnet_address_t * from )
 {
+    // a power of two words of 64 bits (rocketnet_server_cookie_reply_source_words)
+    const int words = server->cookie_reply_source_words;
+    if ( !server->cookie_reply_sources || words <= 0 || ( words & ( words - 1 ) ) != 0 )
+    {
+        return -1;
+    }
+
     uint8_t address_bytes[ROCKETNET_ADDRESS_BYTES_IPV6];
     const int address_bytes_length = rocketnet_write_address_bytes( address_bytes, from );
     if ( address_bytes_length <= 0 )
+    {
         return -1;
+    }
 
     uint8_t hash[crypto_shorthash_BYTES];
     crypto_shorthash( hash, address_bytes, (unsigned long long) address_bytes_length, server->cookie_reply_source_key );
 
     uint64_t value;
     memcpy( &value, hash, 8 );
-    return (int) ( value & ( ROCKETNET_SERVER_COOKIE_REPLY_SOURCE_BITS - 1 ) );
+    return (int) ( value & ( (uint64_t) words * 64 - 1 ) );
 }
 
 // whether an address is one this server advertises. on a dual-stack server
@@ -624,32 +630,24 @@ static int rocketnet_server_protocol_process_connection_request_known( struct ro
 
         if ( !cookie_ok )
         {
-            // the cookie reply limits of this update, checked before the
-            // fresh mac so a refusal costs at most the one index hash: the
-            // max_clients cap first, then one reply per source address and
-            // port (proofs/tla/RNCookieReplyLimits.tla CookieRequest).
-            // Dropped unanswered and counted as the handshake budget's
-            // refusal; the client sends again at its send rate.
+            // the cookie reply limit of this update, checked before the fresh
+            // mac so a refusal costs at most the one index hash: one reply
+            // per source address and port (proofs/tla/RNCookieReplyLimits.tla
+            // CookieRequest). Dropped unanswered and counted as the handshake
+            // budget's refusal; the client sends again at its send rate.
 
-            int first = 0;
-            if ( server->cookie_replies_this_update < (uint64_t) rocketnet_client_slots_max_clients( server->client_slots ) )
+            if ( server->cookie_reply_sources )
             {
                 const int index = rocketnet_server_protocol_cookie_reply_source_index( server, from );
-                if ( index >= 0 && ( server->cookie_reply_sources[index >> 6] & ( 1ULL << ( index & 63 ) ) ) == 0 )
+                if ( index < 0 || ( server->cookie_reply_sources[index >> 6] & ( 1ULL << ( index & 63 ) ) ) != 0 )
                 {
-                    server->cookie_reply_sources[index >> 6] |= 1ULL << ( index & 63 );
-                    first = 1;
+                    rocketnet_debug( "server dropped connection request. cookie already sent to this source this update" );
+                    counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED]++;
+                    return ROCKETNET_SERVER_PROCESS_BUDGET_EXCEEDED;
                 }
+                server->cookie_reply_sources[index >> 6] |= 1ULL << ( index & 63 );
             }
 
-            if ( !first )
-            {
-                rocketnet_debug( "server dropped connection request. cookie reply limit reached this update" );
-                counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED]++;
-                return ROCKETNET_SERVER_PROCESS_BUDGET_EXCEEDED;
-            }
-
-            server->cookie_replies_this_update++;
             counters[cookie_reason]++;
 
             uint64_t fresh_expire = current_timestamp + (uint64_t) server->cookie_lifetime_seconds;
@@ -767,7 +765,7 @@ static int rocketnet_server_protocol_process_connection_request_known( struct ro
     // verification. A dropped client's next request is processed in a later
     // update (proofs/tla/RNSecurityTables.tla HonestRequest;
     // proofs/tla/ReceiveOrder.tla WorkBudgetOnlyForVerify). The cookie reply
-    // limits never spend it (proofs/tla/RNCookieReplyLimits.tla ValidRequest).
+    // limit never spends it (proofs/tla/RNCookieReplyLimits.tla ValidRequest).
 
     if ( server->counters->handshakes_processed_this_update >= (uint64_t) server->handshakes_per_update )
     {
@@ -1746,11 +1744,14 @@ void rocketnet_server_protocol_update( struct rocketnet_server_protocol_t * serv
     rocketnet_server_protocol_rotate_cookie_key_if_due( server, current_time );
 
     // reset this server's per-update handshake budget and cookie reply
-    // limits for the next update (proofs/tla/RNCookieReplyLimits.tla Update)
+    // bitmap, its whole allocated length, for the next update
+    // (proofs/tla/RNCookieReplyLimits.tla Update)
 
     server->counters->handshakes_processed_this_update = 0;
-    server->cookie_replies_this_update = 0;
-    memset( server->cookie_reply_sources, 0, sizeof( server->cookie_reply_sources ) );
+    if ( server->cookie_reply_sources )
+    {
+        memset( server->cookie_reply_sources, 0, (size_t) server->cookie_reply_source_words * sizeof( uint64_t ) );
+    }
 
     uint64_t * counters = server->counters->values;
 

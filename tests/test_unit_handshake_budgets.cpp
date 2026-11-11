@@ -26,6 +26,10 @@
 #include "rocketnet_server.h"
 #include "rocketnet_keys.h"
 #include "rocketnet_ack.h"
+#include "rocketnet_internal.h"
+#include "rocketnet_layers.h"
+#include "unit_shutdown.h"
+#include "loopback_hub.h"
 
 // Match the header to the sodium implementation linked into the SDK.
 #if defined( ROCKETNET_USE_SYSTEM_SODIUM )
@@ -48,6 +52,7 @@ struct budgets_server_t
     struct rocketnet_server_protocol_t server;
     struct rocketnet_counters_t counters;
     struct rocketnet_address_t client_address;
+    uint64_t cookie_reply_sources[64];          // a harness-sized bitmap: 4096 bits
 };
 
 static void budgets_fill_vector_fields( struct rocketnet_signed_connect_data_t * signed_fields,
@@ -97,6 +102,8 @@ static void budgets_server_setup( struct budgets_server_t * test )
     server->client_slots = rocketnet_client_slots_create( NULL, 4 );
     server->acks = rocketnet_server_acks_create( NULL, 4 );
     server->counters = &test->counters;
+    server->cookie_reply_sources = test->cookie_reply_sources;
+    server->cookie_reply_source_words = 64;
     check( server->encryption_map && server->used_token_history && server->client_slots &&
            server->acks );
 
@@ -1057,13 +1064,14 @@ static void test_handshake_burst_spreads_across_updates()
 
 REGISTER_UNIT_TEST( test_handshake_burst_spreads_across_updates );
 
-// The cookie reply limits (standard/TRANSPORT.md t12 rule 7;
+// The cookie reply limit (standard/TRANSPORT.md t12 rule 7;
 // proofs/tla/RNCookieReplyLimits.tla): a request that is about to be answered
 // with a fresh cookie is refused, unanswered and counted as
 // CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED, when its source address and
-// port has already had a cookie reply this update, or when the server has
-// already sent max_clients cookie replies this update. Neither limit touches
-// the handshake work budget, and the work budget touches neither.
+// port has already had a cookie reply this update. There is no limit on the
+// cookie replies of one update in all: the update's receive bound is the
+// bound. The limit does not touch the handshake work budget, and the work
+// budget does not touch it.
 
 // a first-contact request from this address: a fresh token and an all-zero
 // return cookie. returns the ladder's result; only a cookie is answered.
@@ -1132,12 +1140,14 @@ static void test_handshake_cookie_reply_once_per_source_per_update()
 
 REGISTER_UNIT_TEST( test_handshake_cookie_reply_once_per_source_per_update );
 
-// max_clients + 5 distinct sources in one update: max_clients cookies, five
-// dropped and counted. A request with a valid cookie in the same update is
-// still verified and challenged, the flood having spent none of the work
-// budget, and the next update answers new sources again.
+// sixteen times max_clients distinct sources in one update, and an honest
+// source last: every one is answered with its cookie, as v1.0.0 answered
+// them, whatever max_clients is; a cap at max_clients would refuse the honest
+// source behind the flood. A request with a valid cookie in the same update
+// is still verified and challenged, the flood having spent none of the work
+// budget.
 
-static void test_handshake_cookie_replies_capped_at_max_clients()
+static void test_handshake_cookie_replies_not_capped_by_max_clients()
 {
     struct budgets_server_t test;
     budgets_server_setup( &test );
@@ -1146,38 +1156,36 @@ static void test_handshake_cookie_replies_capped_at_max_clients()
     check( max_clients == 4 );
 
     int replies = 0;
-    for ( int i = 0; i < max_clients + 5; i++ )
+    for ( int i = 0; i < 16 * max_clients; i++ )
     {
         struct rocketnet_address_t address;
         char addr_str[64];
         snprintf( addr_str, sizeof( addr_str ), "10.5.0.%d:56789", i + 1 );
         check( rocketnet_address_parse( &address, addr_str ) );
-        const int result = budgets_send_cookieless( &test, &address, 0xA0000 + i, 1000.0 );
-        if ( result == ROCKETNET_SERVER_PROCESS_SEND_COOKIE )
+        if ( budgets_send_cookieless( &test, &address, 0xA0000 + i, 1000.0 ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE )
+        {
             replies++;
-        else
-            check( result == ROCKETNET_SERVER_PROCESS_BUDGET_EXCEEDED );
+        }
     }
 
-    check( replies == max_clients );
-    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED] == 5 );
+    struct rocketnet_address_t honest;
+    check( rocketnet_address_parse( &honest, "198.51.100.200:40000" ) );
+    check( budgets_send_cookieless( &test, &honest, 0xA0100, 1000.0 ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
+
+    // none of these 65 sources collide in the harness's 4096 bits under its
+    // zero key
+    check( replies == 16 * max_clients );
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED] == 0 );
     check( test.server.counters->handshakes_processed_this_update == 0 );
 
-    budgets_honest_challenged( &test, &test.client_address, 0xA0100, rocketnet_test_salt, 1000.0 );
+    budgets_honest_challenged( &test, &test.client_address, 0xA0200, rocketnet_test_salt, 1000.0 );
 
-    rocketnet_server_protocol_update( &test.server, 1000.1 );
-
-    struct rocketnet_address_t late;
-    check( rocketnet_address_parse( &late, "10.5.1.1:56789" ) );
-    check( budgets_send_cookieless( &test, &late, 0xA0200, 1000.1 ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
-
-    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED] == 5 );
     rocketnet_counters_assert_conserved( &test.counters );
 
     budgets_server_teardown( &test );
 }
 
-REGISTER_UNIT_TEST( test_handshake_cookie_replies_capped_at_max_clients );
+REGISTER_UNIT_TEST( test_handshake_cookie_replies_not_capped_by_max_clients );
 
 // the reverse: a spent handshake work budget refuses the next cookie-valid
 // request, and a first-contact request in the same update is still answered
@@ -1226,7 +1234,7 @@ static void test_handshake_cookie_reply_collision_refuses_one_update()
     struct rocketnet_address_t first;
     check( rocketnet_address_parse( &first, "192.0.2.1:40001" ) );
     const int first_index = rocketnet_server_protocol_cookie_reply_source_index( &test.server, &first );
-    check( first_index >= 0 && first_index < ROCKETNET_SERVER_COOKIE_REPLY_SOURCE_BITS );
+    check( first_index >= 0 && first_index < 64 * test.server.cookie_reply_source_words );
 
     struct rocketnet_address_t second;
     bool found = false;
@@ -1257,3 +1265,100 @@ static void test_handshake_cookie_reply_collision_refuses_one_update()
 }
 
 REGISTER_UNIT_TEST( test_handshake_cookie_reply_collision_refuses_one_update );
+
+// the bitmap's size: the next power of two at or above 16 times the most
+// connection requests one update can process (io_uring's receive bank, never
+// below the receive budget), so a full update sets at most 1 in 16 bits.
+// 4096 words (262144 bits, 32 KiB) at max_clients 4, 64 and 1000.
+
+static void test_handshake_cookie_reply_bitmap_sized_from_receive_bound()
+{
+    check( ROCKETNET_SERVER_COOKIE_REPLY_SOURCE_FACTOR == 16 );
+    check( rocketnet_server_cookie_reply_source_words( 4 ) == 4096 );
+    check( rocketnet_server_cookie_reply_source_words( 64 ) == 4096 );
+    if ( ROCKETNET_MAX_CLIENTS >= 1000 )
+    {
+        check( rocketnet_server_cookie_reply_source_words( 1000 ) == 4096 );
+    }
+
+    const int sizes[] = { 1, 4, 64, 512, 640, 641, 1000, ROCKETNET_MAX_CLIENTS };
+    for ( int i = 0; i < (int) ( sizeof( sizes ) / sizeof( sizes[0] ) ); i++ )
+    {
+        if ( sizes[i] > ROCKETNET_MAX_CLIENTS )
+        {
+            continue;
+        }
+        const int words = rocketnet_server_cookie_reply_source_words( sizes[i] );
+        const uint64_t bits = (uint64_t) words * 64;
+        const uint64_t bound = (uint64_t) rocketnet_server_uring_bank_packets( sizes[i] );
+        check( bound >= (uint64_t) rocketnet_server_receive_packets_per_update( sizes[i] ) );
+        check( ( bits & ( bits - 1 ) ) == 0 );
+        check( bits >= 16 * bound );
+        check( bits / 2 < 16 * bound );
+    }
+}
+
+REGISTER_UNIT_TEST( test_handshake_cookie_reply_bitmap_sized_from_receive_bound );
+
+// the update clears the bitmap's whole allocated length: a bit in its last
+// word, from an earlier update, refuses no source after the update
+
+static void test_handshake_cookie_reply_update_clears_every_word()
+{
+    struct budgets_server_t test;
+    budgets_server_setup( &test );
+
+    for ( int i = 0; i < test.server.cookie_reply_source_words; i++ )
+    {
+        test.server.cookie_reply_sources[i] = ~0ULL;
+    }
+    check( budgets_send_cookieless( &test, &test.client_address, 0xD0000, 1000.0 ) == ROCKETNET_SERVER_PROCESS_BUDGET_EXCEEDED );
+
+    rocketnet_server_protocol_update( &test.server, 1000.1 );
+
+    for ( int i = 0; i < test.server.cookie_reply_source_words; i++ )
+    {
+        check( test.server.cookie_reply_sources[i] == 0 );
+    }
+    check( budgets_send_cookieless( &test, &test.client_address, 0xD0001, 1000.1 ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
+
+    rocketnet_counters_assert_conserved( &test.counters );
+    budgets_server_teardown( &test );
+}
+
+REGISTER_UNIT_TEST( test_handshake_cookie_reply_update_clears_every_word );
+
+#if ROCKETNET_DEV
+// the transport carves the bitmap with itself, at the size for its
+// max_clients, every word clear before the first receive (a development
+// build: the loopback transport and the seam)
+
+int rocketnet_server_transport_cookie_reply_source_words_for_test( const struct rocketnet_server_transport_t * server, bool * clear );
+
+static void test_handshake_cookie_reply_bitmap_carved_with_the_transport()
+{
+    const int sizes[] = { 4, 64 };
+    for ( int i = 0; i < 2; i++ )
+    {
+        struct rocketnet_server_transport_config_t config;
+        rocketnet_server_transport_dev_config( &config );
+        config.max_clients = sizes[i];
+        snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
+        config.loopback_hub = rocketnet_test_loopback_hub();
+        struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_sized( NULL, "127.0.0.1:0", &config, sizeof( config ) );
+        check( server != NULL );
+        if ( !server )
+        {
+            return;
+        }
+
+        bool clear = false;
+        check( rocketnet_server_transport_cookie_reply_source_words_for_test( server, &clear ) == rocketnet_server_cookie_reply_source_words( sizes[i] ) );
+        check( clear );
+
+        rn_test_server_transport_stop_and_destroy( server );
+    }
+}
+
+REGISTER_UNIT_TEST( test_handshake_cookie_reply_bitmap_carved_with_the_transport );
+#endif // #if ROCKETNET_DEV

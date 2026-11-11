@@ -4292,11 +4292,9 @@ static void test_same_client_id_reconnect_in_one_update_resets_the_slot()
 
     // A and B hold tokens for one client id. Both are challenged; A's
     // response connects first, and B's responses are ignored while A holds
-    // that id, so B waits in its response state. With max_clients 1 the
-    // server sends one cookie per update, so B starts one update after A.
+    // that id, so B waits in its response state.
 
     reconnect_connect( &world, 0 );
-    reconnect_pump( &world );
     reconnect_connect( &world, 1 );
     for ( int i = 0; i < 400 && rocketnet_client_state( world.clients[0] ) != ROCKETNET_CLIENT_STATE_CONNECTED; i++ )
     {

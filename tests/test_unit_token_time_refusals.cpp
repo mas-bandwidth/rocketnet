@@ -167,9 +167,6 @@ static void token_time_accept_at( struct token_time_server_t * t, uint64_t creat
     uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
     token_time_build_request( request, create, expire );
 
-    // each probe in its own update: one cookie per source per update
-    rocketnet_server_protocol_update( &t->server, TOKEN_TIME_NOW_SECONDS );
-
     const struct rocketnet_counters_t before = t->counters;
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
     int response_bytes = -1;

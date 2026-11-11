@@ -380,6 +380,7 @@ typedef struct rocketnet_dst_world_t
     struct rocketnet_counters_t server_counters;
     struct rocketnet_counters_t client_counters;
     struct rocketnet_server_protocol_t server;
+    uint64_t server_cookie_reply_sources[64];   // a harness-sized bitmap: 4096 bits
     rocketnet_dst_endpoint_t server_endpoint;
     struct rocketnet_message_server_t * message_server;
     struct rocketnet_message_config_t message_config;
@@ -1716,6 +1717,8 @@ static inline int rocketnet_dst_world_create( rocketnet_dst_world_t * w, uint64_
     w->server.handshake_deadline_seconds = 5.0;
     w->server.advertised_ipv4 = w->server_address;
     w->server.counters = &w->server_counters;
+    w->server.cookie_reply_sources = w->server_cookie_reply_sources;
+    w->server.cookie_reply_source_words = 64;
     w->server.encryption_map = rocketnet_encryption_map_create( NULL, 16 );
     w->server.used_token_history = rocketnet_used_token_history_create( NULL, 256 );
     w->server.client_slots = rocketnet_client_slots_create( NULL, ROCKETNET_DST_MAX_CLIENTS );

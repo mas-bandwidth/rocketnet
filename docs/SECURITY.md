@@ -71,8 +71,7 @@ considerations**. Under RN-1, session traffic has forward secrecy while the hand
 not; a sealed box proves nothing about its sender; connection-request replay is a
 denial of service against one client rather than an authentication break; no
 response may be larger than the packet that provoked it, and a source that has
-not returned a cookie is sent at most one cookie per update, with at most
-`max_clients` cookies per update in all; and volumetric floods
+not returned a cookie is sent at most one cookie per update; and volumetric floods
 and attackers holding valid tokens are answered by the backend, not by this
 layer. Those sections are the authority; this file does not restate their
 reasoning.

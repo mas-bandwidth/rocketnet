@@ -5,4 +5,4 @@
 #include "rocketnet_server_protocol.h"
 token creation skew	(uint64_t) ROCKETNET_TOKEN_CREATION_SKEW_SECONDS	30
 failed-signature source table	ROCKETNET_SIGNATURE_VERIFY_TABLE_SLOTS	64
-cookie reply source bitmap	ROCKETNET_SERVER_COOKIE_REPLY_SOURCE_BITS	16384
+cookie reply source bitmap	ROCKETNET_SERVER_COOKIE_REPLY_SOURCE_FACTOR	16

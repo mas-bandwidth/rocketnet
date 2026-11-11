@@ -2395,6 +2395,7 @@ struct rocketnet_test_server_t
     struct rocketnet_server_protocol_t server;
     struct rocketnet_counters_t counters;
     struct rocketnet_address_t client_address;
+    uint64_t cookie_reply_sources[64];          // a harness-sized bitmap: 4096 bits
 };
 
 static void rocketnet_test_server_setup( struct rocketnet_test_server_t * test )
@@ -2422,6 +2423,8 @@ static void rocketnet_test_server_setup( struct rocketnet_test_server_t * test )
     server->client_slots = rocketnet_client_slots_create( NULL, 4 );
     server->acks = rocketnet_server_acks_create( NULL, 4 );
     server->counters = &test->counters;
+    server->cookie_reply_sources = test->cookie_reply_sources;
+    server->cookie_reply_source_words = 64;
 
     rocketnet_check( server->encryption_map && server->used_token_history && server->client_slots && server->acks );
 
