@@ -1,7 +1,9 @@
 # AF_XDP zero-copy qualification
 
-Verdict: HOLD. The XDP bench NIC refuses the zero-copy bind; no machine available
-to this card negotiates zero copy. The load_split ladder was not made.
+Verdict: HOLD. On 2026-10-24 the XDP bench NIC refused the zero-copy bind. On
+2026-11-11, on kernel 7.0, the same NIC bound zero copy (see the update at the
+end), but the load_split ladder has still not been made, so zero-copy operation
+is not qualified.
 
 ## Run
 
@@ -104,3 +106,23 @@ Which machine qualifies zero copy:
 
 This run leaves zero-copy behavior unqualified; it does not establish a
 zero-copy performance result.
+
+## Update, 2026-11-11: the XDP bench binds zero copy
+
+- Head: e6074670055fee0363f9a131b916144e70fa91a9, Release, `ROCKETNET_DEV=ON`.
+- Machine: the same XDP bench and X540-AT2, now on kernel 7.0.0-43-generic.
+  The driver build was not re-read for this update.
+- Run: the two-machine `load_split` delivery proof (LOAD_SPLIT.md), server
+  `ROCKETNET_SERVER_TRANSPORT=xdp` on enp9s0f1 (the uplink, 7 queues), 1000
+  portable clients in four shards on a second machine.
+- Create log: `server xdp sockets bound in zero copy mode on enp9s0f1`, the
+  first zero-copy bind on this bench.
+- Delivery proof: PASS in 4 of 5 runs; one run lost a client to
+  `RELIABLE_TIMED_OUT`. v1.0.0 on the same cell passed 3 of 4, so the cell is
+  flaky on both versions and is not a zero-copy result.
+- Timing: the merger's timing verdict failed (server update p99 13.5 ms); this
+  cell is not the timing qualification.
+
+Still not made: the load_split ladder 10/100/250/500/1000 on a dedicated
+cabled port. The bench's only cabled port is its uplink, so zero-copy
+performance stays unqualified.

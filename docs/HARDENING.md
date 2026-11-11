@@ -171,8 +171,9 @@ and limits:
 - **AF_XDP dataplane and guest runs:**
   - [AF_XDP zero-copy qualification](runs/xdp-zero-copy.md) at
     `010c8167de062d24dafcdf9153577b2b8e078760`: **HOLD** — the available Intel
-    X540-AT2 NIC refused `XDP_ZEROCOPY` bind, so zero-copy operation is not
-    qualified on that hardware.
+    X540-AT2 NIC refused `XDP_ZEROCOPY` bind on kernel 6.8; on kernel 7.0 it
+    binds zero copy, but the load_split ladder has not been made, so zero-copy
+    operation is not qualified on that hardware.
   - [XDP IPv4 and IPv6 max-size end-to-end run](runs/xdp-ipv6-end-to-end.md)
     at `3a04ed7a224b4567fc729b575b662fa275372dec`: passed inside a `virtme-ng`
     guest over a `veth` pair in copy mode (establishes guest/shim packet framing,
