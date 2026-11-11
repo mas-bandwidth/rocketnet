@@ -288,6 +288,8 @@ void rocketnet_server_uring_test_set_arm_failures( struct rocketnet_server_uring
 void rocketnet_server_uring_test_multishot_ends( struct rocketnet_server_uring_t * uring, int queue_index, bool arm_finds_no_sqe );
 bool rocketnet_server_uring_test_queue_armed( struct rocketnet_server_uring_t * uring, int queue_index );
 uint64_t rocketnet_server_uring_test_counter( struct rocketnet_server_uring_t * uring, int counter );
+// the destination port and run length a submitted send's staging slot (its tag's index) carries
+void rocketnet_server_uring_test_send_slot( struct rocketnet_server_uring_t * uring, int slot, uint16_t * port, int * run_packets );
 int rocketnet_server_uring_test_wait_calls( struct rocketnet_server_uring_t * uring );
 #endif // #if ROCKETNET_DEV
 

@@ -131,6 +131,8 @@ REGISTER_UNIT_TEST( test_server_gso_receive_backoff );
 struct gso_segment_socket_t
 {
     int refuse_segment;
+    uint16_t refuse_port;                   // nonzero: every segmented send to this port is refused, wherever it sits in the batch
+    int refusals;
     int segmented;
     int plain_packets;
     uint16_t plain_ports[8];
@@ -177,6 +179,7 @@ static int gso_segment_send( struct mmsghdr * messages, unsigned int count, void
     if ( count > 0 && gso_segment_stride( &messages[0].msg_hdr ) > 0 && socket->refuse_segment > 0 )
     {
         socket->refuse_segment--;
+        socket->refusals++;
         errno = EINVAL;
         return -1;
     }
@@ -185,6 +188,18 @@ static int gso_segment_send( struct mmsghdr * messages, unsigned int count, void
     {
         const int stride = gso_segment_stride( &messages[i].msg_hdr );
         const uint16_t port = gso_segment_port( &messages[i].msg_hdr );
+        if ( stride > 0 && socket->refuse_port != 0 && port == socket->refuse_port )
+        {
+            // sendmmsg: the messages before the refused one went; the refused
+            // one is the call's error when it is the first
+            if ( i > 0 )
+            {
+                return (int) i;
+            }
+            socket->refusals++;
+            errno = EIO;
+            return -1;
+        }
         if ( stride > 0 )
         {
             socket->segmented++;
@@ -365,6 +380,63 @@ static void test_server_gso_segment_refusal_warns_once()
 }
 
 REGISTER_UNIT_TEST( test_server_gso_segment_refusal_warns_once );
+
+// one destination refuses every segmented send (its route cannot take one:
+// an IPsec policy, say), another accepts them. the other sends one packet an
+// update, the normal game load, so no accepted segmented send lands between
+// the refusals. many updates later the accepting destination's runs are
+// still segmented, the refusing destination's packets all still leave,
+// plain, nothing is dropped, and the refusing destination paid one refusal,
+// not one a run.
+
+static void test_server_gso_segment_refusal_is_per_destination()
+{
+    struct rocketnet_server_gso_t * gso = rocketnet_server_gso_test_open( 1 );
+    check( gso );
+
+    rocketnet_server_gso_test_set_features( gso, ROCKETNET_SERVER_GSO_FEATURE_SEGMENT );
+
+    struct gso_segment_socket_t socket;
+    memset( &socket, 0, sizeof( socket ) );
+    socket.refuse_port = 40000;
+    rocketnet_server_gso_test_set_send( gso, gso_segment_send, &socket );
+
+    const int rounds = 4 * ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD;
+    for ( int i = 0; i < rounds; i++ )
+    {
+        gso_segment_stage( gso, 40000, 2 );
+        gso_segment_stage( gso, 40001, 1 );
+        check( rocketnet_server_gso_test_flush_staged( gso ) );
+    }
+
+    check( socket.refusals == 1 );
+    check( socket.plain_packets == 3 * rounds );
+    check( ( rocketnet_server_gso_features( gso ) & ROCKETNET_SERVER_GSO_FEATURE_SEGMENT ) != 0 );
+
+    uint64_t counters[ROCKETNET_SERVER_GSO_NUM_COUNTERS];
+    rocketnet_server_gso_counters( gso, counters );
+    check( counters[ROCKETNET_SERVER_GSO_COUNTER_PACKETS_SENT] == (uint64_t) ( 3 * rounds ) );
+    check( counters[ROCKETNET_SERVER_GSO_COUNTER_SEND_DROPPED] == 0 );
+
+    // the accepting destination's run is one segmented send, and the
+    // refusing destination's run in the same batch leaves plain, unrefused
+    memset( &socket, 0, sizeof( socket ) );
+    socket.refuse_port = 40000;
+    gso_segment_stage( gso, 40001, 2 );
+    gso_segment_stage( gso, 40000, 2 );
+    check( rocketnet_server_gso_test_flush_staged( gso ) );
+    check( socket.segmented == 1 );
+    check( socket.segment_port == 40001 );
+    check( socket.plain_packets == 2 );
+    check( socket.refusals == 0 );
+
+    rocketnet_server_gso_counters( gso, counters );
+    check( counters[ROCKETNET_SERVER_GSO_COUNTER_SEND_DROPPED] == 0 );
+
+    rocketnet_server_gso_test_close( gso );
+}
+
+REGISTER_UNIT_TEST( test_server_gso_segment_refusal_is_per_destination );
 
 // Four full receive queues, and the real per-update budget, which two queues
 // exhaust (8192 + 8192 is past 16000). The queues the first update consumes

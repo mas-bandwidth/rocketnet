@@ -1469,6 +1469,13 @@ uint64_t rocketnet_server_uring_test_counter( struct rocketnet_server_uring_t * 
     return uring->counters[counter];
 }
 
+void rocketnet_server_uring_test_send_slot( struct rocketnet_server_uring_t * uring, int slot, uint16_t * port, int * run_packets )
+{
+    rocketnet_assert( slot >= 0 && slot < ROCKETNET_URING_SEND_SLOTS );
+    *port = uring->send.info[slot].to.port;
+    *run_packets = uring->send.info[slot].run_packets;
+}
+
 int rocketnet_server_uring_test_wait_calls( rocketnet_server_uring_t * uring )
 {
     return uring->test_wait_calls;
