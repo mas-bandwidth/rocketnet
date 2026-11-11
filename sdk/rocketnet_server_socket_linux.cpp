@@ -3892,10 +3892,9 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
 
     bool reported_frame_pressure = false;
 
-    // the last errno each wakeup call saw, so a hard failure is logged once
+    // the last errno the tx wakeup saw, so a hard failure is logged once
     // per contiguous run rather than every pass
 
-    int poll_error = 0;
     int send_error = 0;
 
     for ( ;; )
@@ -3905,22 +3904,7 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
         // Complete one final nonwaiting I/O pass after stop was requested.
         // busy poll the transport
 
-        if ( poll( fds, 1, 0 ) < 0 )
-        {
-            const int error = errno;
-            if ( rocketnet_xdp_send_wakeup_hard_error( error ) )
-                rocketnet_xdp_send_wakeup_failed( error, socket->send_wakeup_failures, socket->send_hard_error );
-            if ( rocketnet_xdp_send_wakeup_report( error, poll_error ) )
-            {
-                char reason[128];
-                rocketnet_error( "xdp queue %d poll failed: %s; the tx ring cannot drain and stop will not wait for it",
-                                 socket->queue, strerror_r( error, reason, sizeof( reason ) ) );
-            }
-        }
-        else
-        {
-            poll_error = 0;
-        }
+        poll( fds, 1, 0 );
 
         // return pending frames to the fill queue
 
