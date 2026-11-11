@@ -282,9 +282,8 @@ REGISTER_UNIT_TEST( test_standard_connect_token_vectors );
 // receiver drops a structure whose zero[n] field is not all zero. The outer
 // pad (bytes 704..767) is checked where the client admits the token, the
 // signed pad (521..575) there too and again before the server admits the
-// request, and the address bytes of an absent family before the server
-// admits the request, and the private pad (344..383) right after the
-// sealed block opens. Each field is poked at its first and last byte; the
+// request, and the private pad (344..383) right after the sealed block
+// opens. Each field is poked at its first and last byte; the
 // signed buffer is re-signed and the private block re-sealed so every refusal
 // is the zero field's alone. Time is an argument and nothing here opens a
 // socket.
@@ -302,7 +301,8 @@ ROCKETNET_STATIC_ASSERT( RN_ZERO_PRIVATE_OFFSET + RN_ZERO_PRIVATE_BYTES == ROCKE
 
 // what the token carries: the family of its one address, and the first byte
 // to set in each zero field (-1 leaves the field zero). absent_index is a
-// byte of the absent family's address field.
+// byte of the absent family's address field, which is bytes[n] with any
+// value valid (t6.2), not a zero field.
 
 struct rn_zero_token_t
 {
@@ -537,23 +537,26 @@ static void test_standard_connect_token_zero_fields()
         spec.signed_index = signed_indices[i];
         rn_zero_mint( token, &spec );
         rocketnet_unit_check( !rn_zero_client_admits( token ) );
-        rn_zero_server_refuses( &spec, ROCKETNET_COUNTER_CONNECTION_REQUEST_BAD_ADDRESS_FLAGS );
+        rn_zero_server_refuses( &spec, ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_VERSION );
     }
 
-    // the address bytes of the absent family, first and last byte, in each family
+    // the address bytes of the absent family are bytes[n], any value valid,
+    // not a zero field: a nonzero first or last byte, in each family, is
+    // accepted by the client and the server
 
     const int absent_ipv6_indices[2] = { 0, 17 };
     const int absent_ipv4_indices[2] = { 0, 5 };
-    for ( int i = 0; i < 2; i++ )
+    for ( int i = 0; i < 4; i++ )
     {
         struct rn_zero_token_t spec = rn_zero_none;
-        spec.absent_index = absent_ipv6_indices[i];
-        rn_zero_server_refuses( &spec, ROCKETNET_COUNTER_CONNECTION_REQUEST_BAD_ADDRESS_FLAGS );
+        spec.ipv6 = i >= 2;
+        spec.absent_index = spec.ipv6 ? absent_ipv4_indices[i - 2] : absent_ipv6_indices[i];
+        rn_zero_mint( token, &spec );
+        rocketnet_unit_check( rn_zero_client_admits( token ) );
 
-        spec = rn_zero_none;
-        spec.ipv6 = 1;
-        spec.absent_index = absent_ipv4_indices[i];
-        rn_zero_server_refuses( &spec, ROCKETNET_COUNTER_CONNECTION_REQUEST_BAD_ADDRESS_FLAGS );
+        struct rocketnet_counters_t counters;
+        int response_bytes = 0;
+        rocketnet_unit_check( rn_zero_server_process( token, &counters, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
     }
 
     // the private pad, first and last byte: the sealed block opens but the

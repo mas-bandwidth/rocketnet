@@ -517,20 +517,18 @@ static int rocketnet_server_protocol_process_connection_request_known( struct ro
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
 
-    // the zero fields of the signed data (TRANSPORT.md t1 rule 3, t6.2): the
-    // pad after the sealed block, and the address bytes of a family the flags
-    // do not name, are all zero, or the request is refused here, before any
-    // work is spent on it
+    // the zero pad of the signed data (TRANSPORT.md t1 rule 3, t6.2) is all
+    // zero, or the request is refused here, before any work is spent on it.
+    // It is counted with the version refusal: the signed data is not a
+    // well-formed structure of this wire version.
 
     {
         const int pad_offset = ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK + ROCKETNET_SEALED_BLOCK_BYTES;
 
-        if ( sodium_is_zero( signed_connect_data + pad_offset, (size_t) ( ROCKETNET_SIGNED_CONNECT_DATA_BYTES - pad_offset ) ) == 0 ||
-             ( ( address_flags & ROCKETNET_ADDRESS_FLAG_IPV4 ) == 0 && sodium_is_zero( signed_connect_data + ROCKETNET_SIGNED_OFFSET_IPV4, 6 ) == 0 ) ||
-             ( ( address_flags & ROCKETNET_ADDRESS_FLAG_IPV6 ) == 0 && sodium_is_zero( signed_connect_data + ROCKETNET_SIGNED_OFFSET_IPV6, 18 ) == 0 ) )
+        if ( sodium_is_zero( signed_connect_data + pad_offset, (size_t) ( ROCKETNET_SIGNED_CONNECT_DATA_BYTES - pad_offset ) ) == 0 )
         {
-            rocketnet_debug( "server ignored connection request. signed zero field is not zero" );
-            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_BAD_ADDRESS_FLAGS]++;
+            rocketnet_debug( "server ignored connection request. signed zero pad is not zero" );
+            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_VERSION]++;
             return ROCKETNET_SERVER_PROCESS_IGNORED;
         }
     }
