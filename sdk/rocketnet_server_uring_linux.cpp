@@ -228,6 +228,8 @@ struct rocketnet_server_uring_t
     // main thread only: a multishot receive the kernel ended with an error
     // other than -ENOBUFS or -ECANCELED is logged once per transport
     bool logged_receive_refused = false;
+    bool logged_arm_failed = false;             // and an arm with no submission entry
+    bool logged_submit_failed = false;          // and a failed submit
 
     struct rocketnet_server_uring_send_buffer_t send;
 
@@ -836,7 +838,11 @@ static bool rocketnet_server_uring_arm( struct rocketnet_server_uring_t * uring,
     struct io_uring_sqe * sqe = rocketnet_server_uring_get_sqe( uring );
     if ( !sqe )
     {
-        rocketnet_error( "io_uring transport: no submission entry to arm queue %d", queue_index );
+        if ( !uring->logged_arm_failed )
+        {
+            uring->logged_arm_failed = true;
+            rocketnet_error( "io_uring transport: no submission entry to arm queue %d", queue_index );
+        }
         return false;
     }
 
@@ -1192,8 +1198,11 @@ static void rocketnet_server_uring_submit( struct rocketnet_server_uring_t * uri
     const int result = rocketnet_server_uring_ring_submit( uring );
     uring->counters[ROCKETNET_SERVER_URING_COUNTER_SUBMIT_SYSCALLS]++;
 
-    if ( result < 0 && result != -EINTR && result != -EAGAIN && result != -EBUSY )
+    if ( result < 0 && result != -EINTR && result != -EAGAIN && result != -EBUSY && !uring->logged_submit_failed )
+    {
+        uring->logged_submit_failed = true;
         rocketnet_error( "io_uring transport: submit failed: %s", strerror( -result ) );
+    }
 }
 
 // wait for at least one CQE, submitting anything queued on the way
