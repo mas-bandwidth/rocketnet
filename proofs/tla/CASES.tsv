@@ -39,6 +39,8 @@ MCClientConnectionF4Ephemeral.cfg	MCClientConnection.tla	pass	-	ignore-terminal	
 MCClientConnectionF8Terminal.cfg	MCClientConnection.tla	pass	-	ignore-terminal	clientconnection	required	-
 MCClientConnectionKeysErased.cfg	MCClientConnection.tla	pass	-	ignore-terminal	clientconnection	required	-
 MCClientConnectionBrokenDownKeepsKeys.cfg	MCClientConnection.tla	invariant	KeysErasedWhenDown	ignore-terminal	clientconnection	required	-
+MCClientConnectionConnectClock.cfg	MCClientConnection.tla	pass	-	ignore-terminal	clientconnection	required	-
+MCClientConnectionBrokenDeadlineInResponse.cfg	MCClientConnection.tla	action	NoConnectClockAfterResponse	ignore-terminal	clientconnection	required	-
 MCClientConnectionBrokenDeniedKeepsKeys.cfg	MCClientConnection.tla	invariant	KeysErasedWhenDown	ignore-terminal	clientconnection	required	-
 MCReplayWindow.cfg	MCReplayWindow.tla	pass	-	check	replaywindow	required	-
 MCReplayWindowMid.cfg	MCReplayWindow.tla	pass	-	check	replaywindow	bench	mid-window-seven-by-three-over-budget
