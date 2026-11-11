@@ -41,10 +41,10 @@ struct rocketnet_counters_t;
 #endif // #if ROCKETNET_DEV
 
 // The outcomes of processing a connection request: IGNORED sends nothing;
-// SEND_* names the response packet written. BUDGET_EXCEEDED is a per-update
-// limit's refusal, the handshake work budget or the one cookie reply per
-// source: the request was dropped unanswered before any asymmetric work and
-// counted as CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED.
+// SEND_* names the response packet written. BUDGET_EXCEEDED is the handshake
+// work budget refusal: the request was dropped unanswered before any
+// asymmetric work and counted as
+// CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED.
 
 #define ROCKETNET_SERVER_PROCESS_IGNORED            0
 #define ROCKETNET_SERVER_PROCESS_SEND_COOKIE        1

@@ -1066,9 +1066,10 @@ REGISTER_UNIT_TEST( test_handshake_burst_spreads_across_updates );
 
 // The cookie reply limit (standard/TRANSPORT.md t12 rule 7;
 // proofs/tla/RNCookieReplyLimits.tla): a request that is about to be answered
-// with a fresh cookie is refused, unanswered and counted as
-// CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED, when its source address and
-// port has already had a cookie reply this update. There is no limit on the
+// with a fresh cookie is ignored, unanswered, when its source address and
+// port has already had a cookie reply this update. It is counted only by its
+// cookie's reason (NO_COOKIE here), as v1.0.0 counted it, and never as
+// CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED. There is no limit on the
 // cookie replies of one update in all: the update's receive bound is the
 // bound. The limit does not touch the handshake work budget, and the work
 // budget does not touch it.
@@ -1098,8 +1099,9 @@ static int budgets_send_cookieless( struct budgets_server_t * test, const struct
 }
 
 // one source address and port: five first-contact requests in one update earn
-// one cookie, and the other four are dropped and counted; the next update
-// answers it again. Two ports on one IP, as behind a NAT, are two sources.
+// one cookie, and the other four are ignored, each counted once as NO_COOKIE
+// and nowhere else; the next update answers it again. Two ports on one IP,
+// as behind a NAT, are two sources.
 
 static void test_handshake_cookie_reply_once_per_source_per_update()
 {
@@ -1111,14 +1113,18 @@ static void test_handshake_cookie_reply_once_per_source_per_update()
     {
         const int result = budgets_send_cookieless( &test, &test.client_address, 0x90000 + i, 1000.0 );
         if ( result == ROCKETNET_SERVER_PROCESS_SEND_COOKIE )
+        {
             replies++;
+        }
         else
-            check( result == ROCKETNET_SERVER_PROCESS_BUDGET_EXCEEDED );
+        {
+            check( result == ROCKETNET_SERVER_PROCESS_IGNORED );
+        }
     }
 
     check( replies == 1 );
-    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_COOKIE] == 1 );
-    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED] == 4 );
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_COOKIE] == 5 );
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED] == 0 );
     check( test.server.counters->handshakes_processed_this_update == 0 );
 
     rocketnet_server_protocol_update( &test.server, 1000.1 );
@@ -1132,7 +1138,7 @@ static void test_handshake_cookie_reply_once_per_source_per_update()
     check( budgets_send_cookieless( &test, &first_port, 0x90011, 1000.1 ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
     check( budgets_send_cookieless( &test, &second_port, 0x90012, 1000.1 ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
 
-    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED] == 4 );
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED] == 0 );
     rocketnet_counters_assert_conserved( &test.counters );
 
     budgets_server_teardown( &test );
@@ -1248,13 +1254,14 @@ static void test_handshake_cookie_reply_collision_refuses_one_update()
     check( found );
 
     check( budgets_send_cookieless( &test, &first, 0xC0000, 1000.0 ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
-    check( budgets_send_cookieless( &test, &second, 0xC0001, 1000.0 ) == ROCKETNET_SERVER_PROCESS_BUDGET_EXCEEDED );
+    check( budgets_send_cookieless( &test, &second, 0xC0001, 1000.0 ) == ROCKETNET_SERVER_PROCESS_IGNORED );
 
     rocketnet_server_protocol_update( &test.server, 1000.1 );
 
     check( budgets_send_cookieless( &test, &second, 0xC0002, 1000.1 ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
-    check( budgets_send_cookieless( &test, &first, 0xC0003, 1000.1 ) == ROCKETNET_SERVER_PROCESS_BUDGET_EXCEEDED );
-    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED] == 2 );
+    check( budgets_send_cookieless( &test, &first, 0xC0003, 1000.1 ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_COOKIE] == 4 );
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED] == 0 );
 
     test.server.cookie_reply_source_key[0] ^= 1;
     check( rocketnet_server_protocol_cookie_reply_source_index( &test.server, &first ) !=
@@ -1312,7 +1319,7 @@ static void test_handshake_cookie_reply_update_clears_every_word()
     {
         test.server.cookie_reply_sources[i] = ~0ULL;
     }
-    check( budgets_send_cookieless( &test, &test.client_address, 0xD0000, 1000.0 ) == ROCKETNET_SERVER_PROCESS_BUDGET_EXCEEDED );
+    check( budgets_send_cookieless( &test, &test.client_address, 0xD0000, 1000.0 ) == ROCKETNET_SERVER_PROCESS_IGNORED );
 
     rocketnet_server_protocol_update( &test.server, 1000.1 );
 

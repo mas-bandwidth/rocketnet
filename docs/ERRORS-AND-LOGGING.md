@@ -134,9 +134,7 @@ status code and the accompanying `ERROR` log line:
        `ROCKETNET_CLIENT_STATE_CONNECTION_RESPONSE_TIMED_OUT` (`-4`): check
        `s.handshakes_dropped_over_budget` in `rocketnet_server_stats_t` (which
        increments when a connection request waits past the server's
-       `handshakes_per_update` budget, or when a request owed a cookie comes
-       from a source address and port that already had one that update;
-       raise the budget if a mass join times out) and
+       `handshakes_per_update` budget; raise it if a mass join times out) and
        check path MTU / packet loss.
      - `ROCKETNET_CLIENT_STATE_CONNECTION_DENIED` (`-1`): the server explicitly
        rejected the connection. Check `s.connections_denied_full` in

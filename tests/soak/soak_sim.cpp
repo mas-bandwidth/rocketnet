@@ -834,9 +834,7 @@ int main( int argc, char ** argv )
     // Found by running the pinned and 24 random seeds with the table empty, and
     // confirmed one fault at a time: loss alone moves only the history
     // overflow, duplication alone moves only the ALREADY_RECEIVED rows, and
-    // jitter alone moves nothing. The handshake row came with the one-cookie-
-    // per-source limit and is the DST's measurement (tests/dst_checks.h,
-    // seeds 1-200, one fault at a time), not yet a soak's.
+    // jitter alone moves nothing.
 
     static const soak_explained_refusal_t soak_explained_refusals[] = {
         { ROCKETNET_COUNTER_SEND_HISTORY_OVERFLOW, "loss: a lost keep-alive takes its acks with it, so sent packets age out of the history unacknowledged" },
@@ -845,7 +843,6 @@ int main( int argc, char ** argv )
         { ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_ALREADY_RECEIVED, "duplication: the wire delivers a keep-alive twice, the second is a replay" },
         { ROCKETNET_COUNTER_ACK_ALREADY_RECEIVED, "duplication: the wire delivers a standalone ack twice, the second is a replay" },
         { ROCKETNET_COUNTER_CLIENT_ACK_ALREADY_RECEIVED, "duplication: the wire delivers a standalone ack twice, the second is a replay" },
-        { ROCKETNET_COUNTER_CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED, "duplication: the wire delivers a request owed a cookie twice in one update, the second is past its source's one cookie reply" },
         { -1, NULL }
     };
 

@@ -775,7 +775,9 @@ refused for one update by a collision with probability at most about 1 in 16, an
 proportionally less below the bound; its client sends again. The factor 16 is a chosen
 bound, not a measured optimum. The check sits before the cookie MAC, so a refusal costs
 one hash at most, and it does not spend the handshake work budget below, so a cookie
-flood cannot starve verified requests and a spent budget does not stop cookies. * **A
+flood cannot starve verified requests and a spent budget does not stop cookies. The
+refusal has no counter of its own: the request is counted by its cookie's reason, as
+before, so no existing counter changes what it means. * **A
 server should bound the handshake work it performs in one update: at
 most 16 connection requests reaching the signature verify, per server, per update by
 default.** This check sits after the cheap rungs (the used-token lookup, the
@@ -1992,8 +1994,8 @@ It differs from the text shipped with v1.0.0 in these places:
   [RN-1 t19.1 Amplification](TRANSPORT.md#t19.1): a server sends at most one connection
   cookie to each source address and port per update, held in a bitmap under a keyed hash
   of at least 16 bits for each connection request one update can process; a request owed
-  a cookie past it is ignored and counted as `CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED`,
-  and the limit does not spend the handshake work budget.
+  a cookie past it is ignored, counted only by its cookie's reason as before, and the limit
+  does not spend the handshake work budget.
 - [RN-1 t17 Timing and defaults](TRANSPORT.md#t17), item 12: a request whose signature
   verifies and is then refused for a sealed block that does not open, sealed fields that
   disagree with the signed fields, or a small-order client key is recorded against its

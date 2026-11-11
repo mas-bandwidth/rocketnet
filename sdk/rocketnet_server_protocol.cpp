@@ -575,7 +575,6 @@ static int rocketnet_server_protocol_process_connection_request_known( struct ro
 
     {
         int cookie_ok = 0;
-        int cookie_reason = ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_COOKIE;
         const uint8_t * p = return_cookie;
         uint64_t cookie_expire = rocketnet_read_uint64( &p );
         const uint8_t * cookie_mac = p;
@@ -591,7 +590,8 @@ static int rocketnet_server_protocol_process_connection_request_known( struct ro
         static const uint8_t zero_field[ROCKETNET_COOKIE_FIELD_BYTES] = { 0 };
         if ( memcmp( return_cookie, zero_field, ROCKETNET_COOKIE_FIELD_BYTES ) == 0 )
         {
-            rocketnet_debug( "server answers with a connection cookie. request carried no cookie" );
+            rocketnet_debug( "server sent connection cookie. request carried no cookie" );
+            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_COOKIE]++;
         }
         else
         {
@@ -614,13 +614,13 @@ static int rocketnet_server_protocol_process_connection_request_known( struct ro
 
             if ( !mac_matches )
             {
-                rocketnet_debug( "server answers with a connection cookie. cookie did not verify" );
-                cookie_reason = ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_DID_NOT_VERIFY;
+                rocketnet_debug( "server sent connection cookie. cookie did not verify" );
+                counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_DID_NOT_VERIFY]++;
             }
             else if ( cookie_expire <= current_timestamp )
             {
-                rocketnet_debug( "server answers with a connection cookie. cookie expired" );
-                cookie_reason = ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_EXPIRED;
+                rocketnet_debug( "server sent connection cookie. cookie expired" );
+                counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_EXPIRED]++;
             }
             else
             {
@@ -633,22 +633,19 @@ static int rocketnet_server_protocol_process_connection_request_known( struct ro
             // the cookie reply limit of this update, checked before the fresh
             // mac so a refusal costs at most the one index hash: one reply
             // per source address and port (proofs/tla/RNCookieReplyLimits.tla
-            // CookieRequest). Dropped unanswered and counted as the handshake
-            // budget's refusal; the client sends again at its send rate.
+            // CookieRequest). Dropped unanswered; the request is counted once,
+            // by its cookie reason above, and the refusal has no counter of
+            // its own. The client sends again at its send rate.
 
             if ( server->cookie_reply_sources )
             {
                 const int index = rocketnet_server_protocol_cookie_reply_source_index( server, from );
                 if ( index < 0 || ( server->cookie_reply_sources[index >> 6] & ( 1ULL << ( index & 63 ) ) ) != 0 )
                 {
-                    rocketnet_debug( "server dropped connection request. cookie already sent to this source this update" );
-                    counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED]++;
-                    return ROCKETNET_SERVER_PROCESS_BUDGET_EXCEEDED;
+                    return ROCKETNET_SERVER_PROCESS_IGNORED;
                 }
                 server->cookie_reply_sources[index >> 6] |= 1ULL << ( index & 63 );
             }
-
-            counters[cookie_reason]++;
 
             uint64_t fresh_expire = current_timestamp + (uint64_t) server->cookie_lifetime_seconds;
             uint8_t fresh_mac[ROCKETNET_COOKIE_MAC_BYTES];
