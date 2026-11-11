@@ -2975,8 +2975,9 @@ An endpoint that ends a connection deliberately MUST send the number of
 sealed disconnect packets named by the `server redundant disconnect packets`
 or `client redundant disconnect packets` row of
 [t3 Constants and registries](#t3), at consecutive session sequence numbers,
-each carrying the current ack block. It MUST then release its state
-immediately, without waiting for an acknowledgement.
+each carrying the current ack block, a server within the send limits below.
+It MUST then release its state immediately, without waiting for an
+acknowledgement.
 
 A server's burst is sent within its send limits, so it MAY leave over later
 updates and MAY be withheld; the slot reset and the release of state are
