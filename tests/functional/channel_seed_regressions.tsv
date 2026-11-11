@@ -8,3 +8,4 @@
 test_unreliable_receipts_over_lossy_link	4879047	the server CONFIG lost on each send at the 2 s initial resend delay until the reliable timeout (the seeded resend delay, standard/MESSAGES.md m9.2)
 test_unreliable_receipts_over_lossy_link	4879943	the same, on the other of the two seeds
 test_reliable_receipts_over_lossy_link	4883729	eight consecutive losses of one fragment exhaust the real timeout; receipt completion now includes a loss-free recovery phase
+test_promoted_receipts_over_lossy_reliable_blocks	4905888	one chunk lost on each of its five sends at the 2 s resend cap until the default 10 s reliable timeout (standard/MESSAGES.md m9.3); the case now runs on a 30 s timeout matching its loop

@@ -131,7 +131,7 @@ else
     # the measurement line names the shape (budget_multiple, incomplete, ...)
     reason=$( printf "%s\n" "$out" | sed -n -E "s/^${case_name}: ([a-z_]+) .*/\1/p" | head -1 )
     if [ -z "$reason" ]; then
-        reason=$( printf "%s\n" "$out" | sed -n -E "s/^check failed: \( (.*) \), function .*/\1/p" | head -1 )
+        reason=$( printf "%s\n" "$out" | sed -n -E -e "s/^check failed: \( (.*) \), function .*/\1/p" -e "s/^[a-z ]+ failed at line [0-9]+: (.*)/\1/p" | head -1 )
     fi
     [ -n "$reason" ] || reason="exit_${status}"
 fi
