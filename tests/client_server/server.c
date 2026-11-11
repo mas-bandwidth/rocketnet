@@ -13,7 +13,7 @@
     using tests/live_verify.h (sections 3 to 5). It runs at the max_clients
     the run sets, dumps counters and resident memory each minute, exits when
     its controlling ssh or stdin closes, and refuses to start when the XDP
-    transport is pinned and the interface reports the in-tree transport (section 9).
+    transport is pinned and the interface reports the in-tree i40e (section 9).
 */
 
 #include "tests/native_shutdown.h"
@@ -77,7 +77,7 @@ static void usage( void )
         "  --counters-every S      print counters, RSS and transport stats every S seconds\n"
         "  --results PATH          where the result lines go\n"
         "  --status PATH           one line per state change, for the orchestrator\n"
-        "  --transport T           pin the transport (e.g. xdp); the in-tree transport refuses\n"
+        "  --transport T           pin the transport (e.g. xdp); the in-tree i40e refuses\n"
         "  --self-test-result FILE write a sample result file without any socket and exit\n"
         "  --help                  this message\n"
         "environment:\n"
@@ -216,8 +216,18 @@ static int interface_for_address( const char * address, char * out, size_t out_s
     (void) out_size;
     return 0;
 #else
+    // the address arrives as A:P; `ip` prints A/len, so compare the host part only
+
+    char host[64] = { 0 };
+    snprintf( host, sizeof host, "%s", address );
+    char * colon = strrchr( host, ':' );
+    if ( colon )
+    {
+        *colon = 0;
+    }
+
     char cmd[256];
-    snprintf( cmd, sizeof cmd, "ip -o -4 addr show 2>/dev/null | awk -v a=%s '$4 ~ a\"$\" {print $2; exit}'", address );
+    snprintf( cmd, sizeof cmd, "ip -o -4 addr show 2>/dev/null | awk -v a=%s '{ split( $4, p, \"/\" ); if ( p[1] == a ) { print $2; exit } }'", host );
 
     FILE * f = popen( cmd, "r" );
     if ( !f )
@@ -244,7 +254,8 @@ static int interface_for_address( const char * address, char * out, size_t out_s
 
 // Section 9: the in-tree i40e reports the running kernel's version (the same
 // string as `uname -r`); the out-of-tree build reports its own release number.
-static int in_tree_transport( const char * nic )
+// Only i40e is refused: other in-tree drivers (ixgbe) pass.
+static int in_tree_i40e( const char * nic )
 {
 #if defined( _WIN32 )
     (void) nic;
@@ -285,7 +296,7 @@ static int in_tree_transport( const char * nic )
     }
 
     pclose( u );
-    return strcmp( version, kernel ) == 0;
+    return strcmp( transport, "i40e" ) == 0 && strcmp( version, kernel ) == 0;
 #endif // #if defined( _WIN32 )
 }
 
@@ -1189,14 +1200,14 @@ int main( int argc, char ** argv )
         snprintf( config.transport, sizeof config.transport, "%s", env_transport );
     }
 
-    // section 9: when xdp is pinned, refuse the in-tree transport
+    // section 9: when xdp is pinned, refuse the in-tree i40e
 
     if ( strcmp( config.transport, "xdp" ) == 0 )
     {
         char nic[64] = { 0 };
-        if ( interface_for_address( address, nic, sizeof nic ) && in_tree_transport( nic ) )
+        if ( interface_for_address( address, nic, sizeof nic ) && in_tree_i40e( nic ) )
         {
-            fprintf( stderr, "server: refusing: interface %s reports the in-tree transport\n", nic );
+            fprintf( stderr, "server: refusing: interface %s reports the in-tree i40e\n", nic );
             rocketnet_term();
             return 1;
         }
