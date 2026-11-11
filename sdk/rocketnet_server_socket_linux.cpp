@@ -332,9 +332,8 @@ struct rocketnet_server_socket_t
     // thread only, in the receive call. resolve is rtnetlink unless a test
     // replaces it; failing holds, per family, whether the last resolve failed,
     // so a failing resolve warns once rather than every period. address is
-    // each family's gateway IP the last route dump found, so the refresh
-    // asks its neighbour entry directly rather than dumping every period
-    // (rocketnet_gateway_netlink_refresh)
+    // each family's gateway IP the last route dump found, and known says
+    // whether that dump found one (rocketnet_gateway_netlink_refresh)
     struct rocketnet_xdp_gateway_refresh_t gateway_refresh;
     rocketnet_xdp_gateway_resolve_t gateway_resolve;
     void * gateway_resolve_context;
@@ -563,11 +562,11 @@ static bool get_gateway_mac_address( const char * interface_name, int interface_
 #define INVALID_FRAME UINT64_MAX
 
 // proofs/tla/RNXdpGatewayRefresh.tla Resolve: rtnetlink, quiet, on the main
-// update thread, so the known gateway's neighbour entry is asked directly and
-// the routes are dumped only when no gateway is known or that entry is not
-// found (rocketnet_gateway_netlink_refresh), no route dump while it is known.
-// No default route resolves with *found false. A failure warns once per
-// failing streak, and the table keeps the gateway it has.
+// update thread: the default route, then its gateway's neighbour entry, every
+// period (rocketnet_gateway_netlink_refresh), so a change of the gateway's IP
+// address is followed. No default route resolves with *found false. A
+// failure warns once per failing streak, and the table keeps the gateway it
+// has.
 
 static bool rocketnet_server_socket_resolve_gateway( void * context, int address_type, uint8_t * mac, bool * found )
 {
