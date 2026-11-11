@@ -267,3 +267,38 @@ message on its channel is received; with that check, message 2 waits in
 | `Tick(e)` | `rn_endpoint_tick` | 10.3 (no CONFIG within `reliable_timeout` is `RELIABLE_TIMEOUT`); 6.4 |
 | `err` | `rn_endpoint_error` | 10.1; 12 (`ROCKETNET_DISCONNECT_REASON_*`) |
 | `WriteAck(e)`, `AckSilence(e)` | the transport (not the endpoint) | section 2, P2 and P5 |
+
+## Revision 1.1: the CONFIG wait and the reliable timeout off
+
+Standard rules: MESSAGES.md m9.3 and m11 rule 4. `reliable_message_timeout_ms`
+0 (the default) disables the reliable timeout; with it off the CONFIG wait
+and an unacked record have no clock, and only the transport's silence timeout
+ends a silent connection. The constant `TimeoutConfigured` gates `Tick`; the
+seven existing configurations set it `TRUE` and their records are unchanged.
+`ConfigWaitOnTimeout` is the reversed witness, the code before revision 1.1.
+
+New invariant `NoEndBeforeT == ~TimeoutConfigured => \A e : err[e] #
+"RELIABLE_TIMEOUT"`: with the timeout off neither end ends with the reliable
+timeout, whatever the paths lose.
+
+| Case | Gate | Exit | Distinct | Seconds |
+|---|---|---:|---:|---:|
+| `MCRNEndpointTimeoutOff.cfg` (one-way control, timeout off, every safety invariant and `NoEndBeforeT`) | required | 0 | 285095 | 50.949 |
+| `MCRNEndpointBrokenConfigWaitOnTimeout.cfg` | required | 12 (`NoEndBeforeT`) | 6 | 1.651 |
+
+Witness trace, read by hand (6 states): the endpoint is live, the remote
+CONFIG has not arrived (`remoteCfg = NoCfg`), and under the default `Tick`
+fires (the model's clock is untimed: `Tick` may fire whenever its guard
+holds): `err = "RELIABLE_TIMEOUT"`. This is the code before revision 1.1:
+`rn_endpoint_config_tick` ended the connection when `now -
+config_wait_start >= reliable_timeout` under the default 10 s, so an outage
+starting right after connect ended a connection both ends reported
+connected. Applied unchanged to the new default of 0, the same comparison is
+true at the first update after the wait starts. The code now tests
+`reliable_timeout > 0.0` first.
+
+`MCRNEndpoint.cfg` (the one-way control, `TimeoutConfigured = TRUE`) passed at
+736,909 distinct states in 99.6 s in one run on the 2026-11-11 bench, but that
+run's shard also held a case that exhausted the shard's budget, so the merged
+record is the later run's timeout (exit 124). Its record is owed a re-measure
+on a quieter bench.
