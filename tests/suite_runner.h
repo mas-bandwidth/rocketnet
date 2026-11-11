@@ -1226,6 +1226,14 @@ inline int suite_finish( const std::vector<suite_result> & results, bool passed 
     {
         return 1;
     }
+    // a run that collected no case (an empty suite or shard) is a lost
+    // registration, never a pass
+    if ( results.empty() )
+    {
+        printf( "check failed: no case ran\n" );
+        fflush( stdout );
+        return 1;
+    }
     printf( "\n*** ALL TESTS PASSED ***\n\n" );
     fflush( stdout );
 
