@@ -729,7 +729,7 @@ static void rocketnet_platform_primitives_key_warning_environment()
     int status = -1;
 
     rocketnet_platform_primitives_capture_begin( "public and not for production", ROCKETNET_LOG_LEVEL_WARN );
-    rocketnet_check( rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &config, 1000.0, &status ) == NULL );
+    rocketnet_check( rocketnet_server_transport_create_internal( NULL, "127.0.0.1:0", &config, 1000.0, &status ) == NULL );
     rocketnet_check( status == ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED );
     rocketnet_check( rocketnet_platform_primitives_matching_lines == 0 );
     rocketnet_platform_primitives_capture_end();
@@ -796,7 +796,7 @@ static void rocketnet_platform_primitives_production_status_environment()
     maximum.set( "not-a-number" );
 
     int status = -1;
-    rocketnet_check( rocketnet_server_transport_create_ex( NULL, "127.0.0.1:12345", NULL, 1000.0, &status ) == NULL );
+    rocketnet_check( rocketnet_server_transport_create_internal( NULL, "127.0.0.1:12345", NULL, 1000.0, &status ) == NULL );
     rocketnet_check( status == ROCKETNET_STATUS_CONFIG_ENV_INVALID );
     maximum.set( NULL );
 
@@ -804,7 +804,7 @@ static void rocketnet_platform_primitives_production_status_environment()
     rocketnet_platform_primitives_production_config( &config );
     budget.set( "not-a-number" );
     status = -1;
-    rocketnet_check( rocketnet_server_transport_create_ex( NULL, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
+    rocketnet_check( rocketnet_server_transport_create_internal( NULL, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
     rocketnet_check( status == ROCKETNET_STATUS_CONFIG_ENV_INVALID );
     budget.set( "1" );
 
@@ -814,7 +814,7 @@ static void rocketnet_platform_primitives_production_status_environment()
     {
         snprintf( config.transport, sizeof( config.transport ), "%s", transports[i] );
         status = -1;
-        rocketnet_check( rocketnet_server_transport_create_ex( NULL, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
+        rocketnet_check( rocketnet_server_transport_create_internal( NULL, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
         rocketnet_check( status == ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED );
     }
 }
@@ -863,7 +863,7 @@ static void rocketnet_platform_primitives_production_simulator_environment()
     int status = ROCKETNET_STATUS_OK;
 
     rocketnet_platform_primitives_capture_begin( "simulated_drop_every_nth" );
-    rocketnet_check( rocketnet_client_transport_create_ex( NULL, token, &client_config, 1000.0, &status ) == NULL );
+    rocketnet_check( rocketnet_client_transport_create_internal( NULL, token, &client_config, 1000.0, &status ) == NULL );
     rocketnet_check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
     rocketnet_check( rocketnet_platform_primitives_matching_lines == 1 );
     rocketnet_platform_primitives_capture_end();
@@ -874,7 +874,7 @@ static void rocketnet_platform_primitives_production_simulator_environment()
     rocketnet_check( rocketnet_platform_primitives_setenv( "ROCKETNET_SERVER_SIMULATED_REVERSE_WINDOW", "4" ) == 0 );
     status = ROCKETNET_STATUS_OK;
     rocketnet_platform_primitives_capture_begin( "simulated_reverse_window" );
-    rocketnet_check( rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &server_config, 1000.0, &status ) == NULL );
+    rocketnet_check( rocketnet_server_transport_create_internal( NULL, "127.0.0.1:0", &server_config, 1000.0, &status ) == NULL );
     rocketnet_check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
     rocketnet_check( rocketnet_platform_primitives_matching_lines == 1 );
     rocketnet_platform_primitives_capture_end();

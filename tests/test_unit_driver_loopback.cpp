@@ -463,7 +463,7 @@ static void loopback_count_free( void * context, void * memory )
 
 static void test_loopback_transport_io_runtime_does_not_allocate()
 {
-    rocketnet_unit_check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    rocketnet_unit_check( rocketnet_term_internal() == ROCKETNET_STATUS_OK );
     rocketnet_unit_check( rocketnet_init( NULL, loopback_count_malloc, loopback_count_free ) == ROCKETNET_STATUS_OK );
 
     const size_t overhead = (size_t) rocketnet_allocation_overhead();
@@ -586,7 +586,7 @@ static void test_loopback_transport_io_runtime_does_not_allocate()
     rocketnet_unit_check( rocketnet_loopback_hub_destroy( hub ) == ROCKETNET_STATUS_OK );
     rocketnet_unit_check( g_loopback_live_bytes == live_before );
 
-    rocketnet_unit_check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    rocketnet_unit_check( rocketnet_term_internal() == ROCKETNET_STATUS_OK );
     rocketnet_unit_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
 
@@ -725,10 +725,10 @@ static void test_wire_totals_staged_finish_counts_exactly()
 
     rocketnet_server_transport_io_operations_t operations;
     int create_status = -1;
-    rocketnet_server_transport_t * server = rocketnet_server_transport_create_current_ex( NULL, "127.0.0.1:0", &config, 1000.0, &create_status );
+    rocketnet_server_transport_t * server = rocketnet_server_transport_create_current_internal( NULL, "127.0.0.1:0", &config, 1000.0, &create_status );
     if ( !server )
     {
-        printf( "create_ex status=%d\n", create_status );
+        printf( "create_internal status=%d\n", create_status );
     }
     rocketnet_unit_check( server );
     rn_test_server_io_stop_and_close( &server->io );
@@ -862,7 +862,7 @@ static void test_server_counts_zero_length_datagram_as_too_short()
     memset( config.server_secret_key, 0xEF, 32 );
 
     int create_status = -1;
-    rocketnet_server_transport_t * server = rocketnet_server_transport_create_current_ex( NULL, "127.0.0.1:0", &config, 1000.0, &create_status );
+    rocketnet_server_transport_t * server = rocketnet_server_transport_create_current_internal( NULL, "127.0.0.1:0", &config, 1000.0, &create_status );
     rocketnet_unit_check( server );
     rn_test_server_io_stop_and_close( &server->io );
 
@@ -1166,10 +1166,10 @@ static void test_server_connects_after_junk_from_many_sources()
     memcpy( config.server_secret_key, server_secret_key, sizeof( config.server_secret_key ) );
 
     int create_status = -1;
-    rocketnet_server_transport_t * server = rocketnet_server_transport_create_current_ex( NULL, "127.0.0.1:0", &config, 1000.0, &create_status );
+    rocketnet_server_transport_t * server = rocketnet_server_transport_create_current_internal( NULL, "127.0.0.1:0", &config, 1000.0, &create_status );
     if ( !server )
     {
-        printf( "create_ex status=%d\n", create_status );
+        printf( "create_internal status=%d\n", create_status );
     }
     rocketnet_unit_check( server );
 
@@ -1360,10 +1360,10 @@ static rocketnet_server_transport_t * shape_junk_server_create()
     memset( config.server_secret_key, 0xEF, 32 );
 
     int create_status = -1;
-    rocketnet_server_transport_t * server = rocketnet_server_transport_create_current_ex( NULL, "127.0.0.1:0", &config, 1000.0, &create_status );
+    rocketnet_server_transport_t * server = rocketnet_server_transport_create_current_internal( NULL, "127.0.0.1:0", &config, 1000.0, &create_status );
     if ( !server )
     {
-        printf( "create_ex status=%d\n", create_status );
+        printf( "create_internal status=%d\n", create_status );
     }
     rocketnet_unit_check( server );
     rocketnet_server_transport_io_close( &server->io );

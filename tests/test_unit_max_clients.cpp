@@ -548,13 +548,13 @@ static void slots_allocator_install()
     memset( &slots_allocator, 0, sizeof( slots_allocator ) );
     slots_allocator.refuse_call = -1;
 
-    check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    check( rocketnet_term_internal() == ROCKETNET_STATUS_OK );
     check( rocketnet_init( NULL, slots_count_malloc, slots_count_free ) == ROCKETNET_STATUS_OK );
 }
 
 static void slots_allocator_remove()
 {
-    check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    check( rocketnet_term_internal() == ROCKETNET_STATUS_OK );
     check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
 

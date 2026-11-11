@@ -31,7 +31,7 @@ static int second_address_create_status( const char * public_address, const char
     snprintf( config.second_public_address, sizeof( config.second_public_address ), "%s", second_address );
 
     int status = ROCKETNET_STATUS_OK;
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_current_ex( NULL, public_address, &config, 0.0, &status );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_current_internal( NULL, public_address, &config, 0.0, &status );
     check( server == NULL );
 
     return status;

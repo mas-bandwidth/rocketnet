@@ -488,10 +488,10 @@ static rocketnet_server_transport_t * transport_results_make_server( transport_r
     memset( config.server_secret_key, 0xEF, 32 );
 
     int create_status = -1;
-    rocketnet_server_transport_t * server = rocketnet_server_transport_create_current_ex( NULL, "127.0.0.1:0", &config, 1000.0, &create_status );
+    rocketnet_server_transport_t * server = rocketnet_server_transport_create_current_internal( NULL, "127.0.0.1:0", &config, 1000.0, &create_status );
     if ( !server )
     {
-        printf( "create_ex status=%d\n", create_status );
+        printf( "create_internal status=%d\n", create_status );
     }
     rocketnet_unit_check( server );
     rn_test_server_io_stop_and_close( &server->io );

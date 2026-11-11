@@ -82,13 +82,13 @@ static void simulator_allocator_install()
     memset( &simulator_allocator, 0, sizeof( simulator_allocator ) );
     simulator_allocator.refuse_call = -1;
 
-    check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    check( rocketnet_term_internal() == ROCKETNET_STATUS_OK );
     check( rocketnet_init( NULL, simulator_count_malloc, simulator_count_free ) == ROCKETNET_STATUS_OK );
 }
 
 static void simulator_allocator_remove()
 {
-    check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    check( rocketnet_term_internal() == ROCKETNET_STATUS_OK );
     check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
 

@@ -136,11 +136,11 @@ struct rocketnet_message_client_t * rocketnet_message_client_create( void * cont
                                                                      const struct rocketnet_message_config_t * message_config,
                                                                      void * memory, uint64_t memory_bytes, uint32_t send_kbps )
 {
-    return rocketnet_message_client_create_ex( context, connect_token, transport_config, message_config, memory, memory_bytes, send_kbps, NULL, 0 );
+    return rocketnet_message_client_create_internal( context, connect_token, transport_config, message_config, memory, memory_bytes, send_kbps, NULL, 0 );
 }
 
 // resolved_memory_budget NULL: the transport create reads the environment
-// (rocketnet_message_client_create_ex); set: transport_config is already
+// (rocketnet_message_client_create_internal); set: transport_config is already
 // resolved and connect reads nothing (rocketnet_message_client_create_resolved)
 static struct rocketnet_message_client_t * rn_message_client_create( void * context, const uint8_t * connect_token,
                                                                      const struct rocketnet_client_transport_config_t * transport_config,
@@ -148,7 +148,7 @@ static struct rocketnet_message_client_t * rn_message_client_create( void * cont
                                                                      void * memory, uint64_t memory_bytes, uint32_t send_kbps, int * status, int reserve_unlimited,
                                                                      const uint64_t * resolved_memory_budget, uint64_t token_timestamp );
 
-struct rocketnet_message_client_t * rocketnet_message_client_create_ex( void * context, const uint8_t * connect_token,
+struct rocketnet_message_client_t * rocketnet_message_client_create_internal( void * context, const uint8_t * connect_token,
                                                                         const struct rocketnet_client_transport_config_t * transport_config,
                                                                         const struct rocketnet_message_config_t * message_config,
                                                                         void * memory, uint64_t memory_bytes, uint32_t send_kbps, int * status, int reserve_unlimited )
@@ -230,7 +230,7 @@ static struct rocketnet_message_client_t * rn_message_client_create( void * cont
     // caller's time, rn_client_connect); 0 leaves it to the transport, which
     // reads the configured epoch plus 0.0, or the wall clock if the epoch is 0.
 
-    rocketnet_client_transport_t * transport = ( resolved_memory_budget && transport_config ) ? rocketnet_client_transport_create_resolved( context, connect_token, transport_config, 0.0, *resolved_memory_budget, token_timestamp, status ) : rocketnet_client_transport_create_current_ex( context, connect_token, transport_config, 0.0, status );
+    rocketnet_client_transport_t * transport = ( resolved_memory_budget && transport_config ) ? rocketnet_client_transport_create_resolved( context, connect_token, transport_config, 0.0, *resolved_memory_budget, token_timestamp, status ) : rocketnet_client_transport_create_current_internal( context, connect_token, transport_config, 0.0, status );
     if ( !transport )
     {
         if ( *status == ROCKETNET_STATUS_OK )

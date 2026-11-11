@@ -645,7 +645,7 @@ static void rn_window_ack_commit( rn_window_ack_t * ack, uint64_t packet_id, con
     //    or the 16P-entry reference ring needs room (standard/MESSAGES.md m9.1):
     //    numbers stay in the resend FIFO, MESSAGE_SENT_MAP_EVICTED
     //    is incremented once per evicted packet entry). The config keeps
-    //    P >= W (rocketnet_message_validate_config_ex), so with the resend
+    //    P >= W (rocketnet_message_validate_config_internal), so with the resend
     //    delay above the round trip the evicted entry is never one whose ack
     //    is still on its way (proofs/tla/RNSentMap.tla NoLiveEviction).
 

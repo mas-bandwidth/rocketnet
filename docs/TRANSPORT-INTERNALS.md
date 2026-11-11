@@ -357,8 +357,8 @@ msgx, gso, xdp, io_uring, iocp, rio, loopback) reports it so; a native
 extension's create does the same. Any other NULL leaves the status OK and is a
 refusal. The transport ladder falls to the next
 candidate on a refusal, and on OUT_OF_MEMORY it stops:
-`rocketnet_server_transport_create_ex` (`sdk/rocketnet_server_transport.cpp`)
-and `rocketnet_client_transport_create_ex`
+`rocketnet_server_transport_create_internal` (`sdk/rocketnet_server_transport.cpp`)
+and `rocketnet_client_transport_create_internal`
 (`sdk/rocketnet_client_transport.cpp`) destroy what they built and return
 NULL with `ROCKETNET_STATUS_OUT_OF_MEMORY`.
 

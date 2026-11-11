@@ -1046,10 +1046,10 @@ static void secrets_wiped_transport_staging_hook( const uint8_t * secret_key, in
 }
 
 // a create with a planted secret key; every stack copy the hook sees on its
-// exit is all zero. create_ex and create_current_ex both pass the caller's
+// exit is all zero. create_internal and create_current_internal both pass the caller's
 // struct straight to the create, so the resolve's and the create's copies are
 // the only ones.
-static struct rocketnet_server_transport_t * secrets_wiped_transport_create( const char * address, bool through_create_ex, int * status )
+static struct rocketnet_server_transport_t * secrets_wiped_transport_create( const char * address, bool through_create_internal, int * status )
 {
     struct rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config( &config );
@@ -1062,7 +1062,7 @@ static struct rocketnet_server_transport_t * secrets_wiped_transport_create( con
     memset( secrets_wiped_transport_staging_seen, 0, sizeof( secrets_wiped_transport_staging_seen ) );
     rocketnet_server_transport_config_staging_hook = secrets_wiped_transport_staging_hook;
 
-    struct rocketnet_server_transport_t * server = through_create_ex ? rocketnet_server_transport_create_ex( NULL, address, &config, 1000.0, status ) : rocketnet_server_transport_create_current_ex( NULL, address, &config, 1000.0, status );
+    struct rocketnet_server_transport_t * server = through_create_internal ? rocketnet_server_transport_create_internal( NULL, address, &config, 1000.0, status ) : rocketnet_server_transport_create_current_internal( NULL, address, &config, 1000.0, status );
     rocketnet_server_transport_config_staging_hook = NULL;
 
     for ( int stage = 0; stage < ROCKETNET_SERVER_TRANSPORT_CONFIG_STAGING_COUNT; stage++ )

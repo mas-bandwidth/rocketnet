@@ -127,7 +127,7 @@ static rocketnet_server_t * destroy_disconnect_server_create( const destroy_disc
     config.loopback_hub = rocketnet_test_loopback_hub();
 
     int status = -1;
-    rocketnet_server_transport_t * transport = rocketnet_server_transport_create_current_ex( NULL, "127.0.0.1:0", &config, now, &status );
+    rocketnet_server_transport_t * transport = rocketnet_server_transport_create_current_internal( NULL, "127.0.0.1:0", &config, now, &status );
     check( transport != NULL && status == ROCKETNET_STATUS_OK );
     rocketnet_server_transport_set_test_timestamp( transport, 1000 );
 

@@ -121,7 +121,7 @@ static bool public_not_released_pair_setup( struct public_not_released_pair_t * 
 
     int status = -1;
     struct rocketnet_server_transport_t * server_transport =
-        rocketnet_server_transport_create_current_ex( NULL, "127.0.0.1:0", &server_transport_config, pair->time, &status );
+        rocketnet_server_transport_create_current_internal( NULL, "127.0.0.1:0", &server_transport_config, pair->time, &status );
 
 #if ROCKETNET_DEV
     if ( pinned )

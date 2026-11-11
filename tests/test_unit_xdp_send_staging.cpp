@@ -146,7 +146,7 @@ static bool xdp_stop_scenario( int hard_error, bool buffer_empty, bool handoff_i
 
     int create_status = -1;
     rocketnet_server_transport_t * server =
-        rocketnet_server_transport_create_current_ex( NULL, "127.0.0.1:0", &config, 1000.0, &create_status );
+        rocketnet_server_transport_create_current_internal( NULL, "127.0.0.1:0", &config, 1000.0, &create_status );
     rocketnet_unit_check( server != NULL );
 
     memset( &xdp_stop_operations, 0, sizeof( xdp_stop_operations ) );

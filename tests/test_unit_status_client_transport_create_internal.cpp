@@ -88,7 +88,7 @@ static void check_create_status( int expected, const uint8_t * token, const stru
                                  allocator_state * state, int * status )
 {
     *status = -1;
-    check( rocketnet_client_transport_create_ex( state, token, config, 1000.0, status ) == NULL );
+    check( rocketnet_client_transport_create_internal( state, token, config, 1000.0, status ) == NULL );
     check( *status == expected );
     check( state->live == 0 );
 }
@@ -123,7 +123,7 @@ static void test_client_transport_create_ex_reports_every_status()
     client_create_ex_expected_null_asserts = 0;
     rocketnet_assert_function( client_create_ex_expected_null_assert );
 #endif // #if ROCKETNET_ASSERTS
-    check( rocketnet_client_transport_create_ex( &state, NULL, NULL, 1000.0, &status ) == NULL );
+    check( rocketnet_client_transport_create_internal( &state, NULL, NULL, 1000.0, &status ) == NULL );
 #if ROCKETNET_ASSERTS
     rocketnet_assert_function( saved_assert );
 
@@ -138,11 +138,11 @@ static void test_client_transport_create_ex_reports_every_status()
     // allocator can be installed and the pre-init refusal is reachable. the
     // token is non-NULL so the refusal is the pre-init check, not C1.
 
-    check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    check( rocketnet_term_internal() == ROCKETNET_STATUS_OK );
 
     check_create_status( ROCKETNET_STATUS_NOT_INITIALIZED, token, NULL, &state, &status );
 
-    check( rocketnet_init_ex( &state, allocate, release, &status ) );
+    check( rocketnet_init_internal( &state, allocate, release, &status ) );
     check( status == ROCKETNET_STATUS_OK );
 
 #if ROCKETNET_DEV
@@ -249,9 +249,9 @@ static void test_client_transport_create_ex_reports_every_status()
 
     // a clean term, then restore the default allocator for the worker's term
 
-    check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    check( rocketnet_term_internal() == ROCKETNET_STATUS_OK );
     check( state.live == 0 );
-    check( rocketnet_allocator_ex( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_allocator_internal( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
 }
 
 REGISTER_UNIT_TEST( test_client_transport_create_ex_reports_every_status );

@@ -510,7 +510,7 @@ static int rn_allocator_install_locked( void * ( *malloc_function )( void * cont
     // back or the new one is published. A call spinning on the sentinel holds
     // a count from its add to its uncount, so it can make install refuse with
     // LIVE_ALLOCATIONS; that happens only when something allocates while init
-    // or rocketnet_allocator_ex runs.
+    // or rocketnet_allocator_internal runs.
 
     rocketnet_allocator_pair.store( &rocketnet_allocator_installing, std::memory_order_seq_cst );
     if ( rocketnet_allocations.load( std::memory_order_seq_cst ) != 0 )
@@ -553,7 +553,7 @@ bool rocketnet_allocator_installed( void * ( *malloc_function )( void * context,
     return installed != &rocketnet_allocator_installing && installed->allocate == malloc_function && installed->release == free_function;
 }
 
-int rocketnet_allocator_ex( void * ( *malloc_function )( void * context, size_t bytes ), void ( *free_function )( void * context, void * p ) )
+int rocketnet_allocator_internal( void * ( *malloc_function )( void * context, size_t bytes ), void ( *free_function )( void * context, void * p ) )
 {
     int status = ROCKETNET_STATUS_INVALID_ARGUMENT;
 
@@ -855,11 +855,11 @@ void rocketnet_sodium_misuse_for_test()
 enum rocketnet_status_t rocketnet_init( void * context, void * ( *malloc_function )( void * context, size_t bytes ), void ( *free_function )( void * context, void * p ) )
 {
     int status = ROCKETNET_STATUS_OK;
-    (void) rocketnet_init_ex( context, malloc_function, free_function, &status );
+    (void) rocketnet_init_internal( context, malloc_function, free_function, &status );
     return (enum rocketnet_status_t) status;
 }
 
-bool rocketnet_init_ex( void * context, void * ( *malloc_function )( void * context, size_t bytes ), void ( *free_function )( void * context, void * p ), int * status )
+bool rocketnet_init_internal( void * context, void * ( *malloc_function )( void * context, size_t bytes ), void ( *free_function )( void * context, void * p ), int * status )
 {
     int refused = ROCKETNET_STATUS_OK;
     bool other_allocator = false;
@@ -960,10 +960,10 @@ bool rocketnet_init_ex( void * context, void * ( *malloc_function )( void * cont
 
 enum rocketnet_status_t rocketnet_term()
 {
-    return (enum rocketnet_status_t) rocketnet_term_ex();
+    return (enum rocketnet_status_t) rocketnet_term_internal();
 }
 
-int rocketnet_term_ex()
+int rocketnet_term_internal()
 {
     bool not_initialized = false;
     bool live_allocations = false;

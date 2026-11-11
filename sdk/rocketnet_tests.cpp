@@ -7596,7 +7596,7 @@ void rocketnet_test_create_before_init_is_refused()
     // assert it is never called. both callbacks, uninitialized, nothing live.
 
     rocketnet_test_allocator_calls = 0;
-    rocketnet_check( rocketnet_allocator_ex( rocketnet_test_allocator_malloc, rocketnet_test_allocator_free ) == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_allocator_internal( rocketnet_test_allocator_malloc, rocketnet_test_allocator_free ) == ROCKETNET_STATUS_OK );
 
     const uint64_t before = rocketnet_api_misuse_count();
 
@@ -7841,9 +7841,9 @@ static const char * rocketnet_test_public_null_exempt_exports[] = {
 // here, any table name the header does not declare, and any duplicate.
 static const char * rocketnet_test_layer_exports[] = {
     "rocketnet_init",
-    "rocketnet_init_ex",
+    "rocketnet_init_internal",
     "rocketnet_term",
-    "rocketnet_term_ex",
+    "rocketnet_term_internal",
     "rocketnet_assert_function",
     "rocketnet_quiet",
     "rocketnet_log_level",
@@ -7856,7 +7856,7 @@ static const char * rocketnet_test_layer_exports[] = {
     "rocketnet_error",
     "rocketnet_debug",
     "rocketnet_spam",
-    "rocketnet_allocator_ex",
+    "rocketnet_allocator_internal",
     "rocketnet_api_misuse_count",
     "rocketnet_get_thread_priority",
     "rocketnet_get_thread_priority_refusals",
@@ -7872,7 +7872,7 @@ static const char * rocketnet_test_layer_exports[] = {
     "rocketnet_client_transport_required_memory",
     "rocketnet_client_transport_default_config_sized",
     "rocketnet_client_transport_create",
-    "rocketnet_client_transport_create_ex",
+    "rocketnet_client_transport_create_internal",
     "rocketnet_client_transport_create_sized",
     "rocketnet_client_transport_stop",
     "rocketnet_client_transport_stopped",
@@ -7902,7 +7902,7 @@ static const char * rocketnet_test_layer_exports[] = {
     "rocketnet_server_transport_required_memory",
     "rocketnet_server_transport_host_memory_estimate",
     "rocketnet_server_transport_create",
-    "rocketnet_server_transport_create_ex",
+    "rocketnet_server_transport_create_internal",
     "rocketnet_server_transport_create_sized",
     "rocketnet_server_transport_destroy",
     "rocketnet_server_transport_stop",
@@ -7939,7 +7939,7 @@ static const char * rocketnet_test_layer_exports[] = {
     "rocketnet_message_default_config",
     "rocketnet_message_default_config_sized",
     "rocketnet_message_validate_config",
-    "rocketnet_message_validate_config_ex",
+    "rocketnet_message_validate_config_internal",
     "rocketnet_message_connection_bytes",
     "rocketnet_message_connection_sizing",
     "rocketnet_message_print_connection_sizing",
@@ -8000,13 +8000,13 @@ static const char * rocketnet_test_layer_null_case_exports[] = {
     "rocketnet_error",
     "rocketnet_debug",
     "rocketnet_spam",
-    "rocketnet_allocator_ex",
+    "rocketnet_allocator_internal",
     "rocketnet_random_bytes",
     "rocketnet_copy_string",
     "rocketnet_client_transport_default_config",
     "rocketnet_client_transport_default_config_sized",
     "rocketnet_client_transport_create",
-    "rocketnet_client_transport_create_ex",
+    "rocketnet_client_transport_create_internal",
     "rocketnet_client_transport_create_sized",
     "rocketnet_client_transport_stop",
     "rocketnet_client_transport_stopped",
@@ -8035,7 +8035,7 @@ static const char * rocketnet_test_layer_null_case_exports[] = {
     "rocketnet_server_transport_dev_config",
     "rocketnet_server_transport_host_memory_estimate",
     "rocketnet_server_transport_create",
-    "rocketnet_server_transport_create_ex",
+    "rocketnet_server_transport_create_internal",
     "rocketnet_server_transport_create_sized",
     "rocketnet_server_transport_destroy",
     "rocketnet_server_transport_stop",
@@ -8112,9 +8112,9 @@ static const char * rocketnet_test_layer_null_case_exports[] = {
 
 static const char * rocketnet_test_layer_null_exempt_exports[] = {
     "rocketnet_init",
-    "rocketnet_init_ex",
+    "rocketnet_init_internal",
     "rocketnet_term",
-    "rocketnet_term_ex",
+    "rocketnet_term_internal",
     "rocketnet_assert_function",
     "rocketnet_quiet",
     "rocketnet_log_level",
@@ -8134,7 +8134,7 @@ static const char * rocketnet_test_layer_null_exempt_exports[] = {
     "rocketnet_server_transport_required_memory",
     "rocketnet_forbid_xdp_commit",
     "rocketnet_message_validate_config",
-    "rocketnet_message_validate_config_ex",
+    "rocketnet_message_validate_config_internal",
     "rocketnet_message_connection_bytes",
     "rocketnet_message_connection_sizing",
     "rocketnet_message_print_connection_sizing",
@@ -8174,7 +8174,7 @@ void rocketnet_test_public_api_null()
     char address_string[ROCKETNET_MAX_ADDRESS_STRING_BYTES] = { 0 };
 
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_init( NULL, NULL, rocketnet_default_free_function ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
-    RN_TEST_ONE_MISUSE( rocketnet_allocator_ex( NULL, NULL ) );
+    RN_TEST_ONE_MISUSE( rocketnet_allocator_internal( NULL, NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_generate_backend_keypair( NULL, token ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_generate_backend_keypair_from_seed( NULL, token, token ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_generate_server_keypair( NULL, token ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
@@ -8685,7 +8685,7 @@ void rocketnet_test_public_api_null_is_a_counted_no_op()
     rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
 
     before = rocketnet_api_misuse_count();
-    rocketnet_check( rocketnet_client_transport_create_ex( NULL, NULL, NULL, 0.0, NULL ) == NULL );
+    rocketnet_check( rocketnet_client_transport_create_internal( NULL, NULL, NULL, 0.0, NULL ) == NULL );
     rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
 
     before = rocketnet_api_misuse_count();
@@ -8718,7 +8718,7 @@ void rocketnet_test_public_api_null_is_a_counted_no_op()
     rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
 
     before = rocketnet_api_misuse_count();
-    rocketnet_check( rocketnet_allocator_ex( NULL, NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+    rocketnet_check( rocketnet_allocator_internal( NULL, NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
     rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
 
     // rocketnet_free already treats NULL p as a no-op; it is not a misuse,

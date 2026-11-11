@@ -412,7 +412,7 @@ struct rocketnet_server_transport_t * rocketnet_test_server_transport_create_on_
         int status = ROCKETNET_STATUS_OK;
 
         struct rocketnet_server_transport_t * server =
-            rocketnet_server_transport_create_ex( NULL, address, config, rocketnet_platform_time(), &status );
+            rocketnet_server_transport_create_internal( NULL, address, config, rocketnet_platform_time(), &status );
         if ( server )
             return server;
         if ( status != ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED )

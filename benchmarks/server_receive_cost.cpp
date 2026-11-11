@@ -196,7 +196,7 @@ int main( int argc, char ** argv )
     config.loopback_hub = hub;
 
     int status = 0;
-    rocketnet_server_transport_t * server = rocketnet_server_transport_create_current_ex( NULL, "127.0.0.1:0", &config, receive_cost_clock, &status );
+    rocketnet_server_transport_t * server = rocketnet_server_transport_create_current_internal( NULL, "127.0.0.1:0", &config, receive_cost_clock, &status );
     CHECK( server );
     CHECK( !rocketnet_server_transport_staged( server ) );
 

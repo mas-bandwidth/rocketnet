@@ -847,7 +847,7 @@ static void live_matrix_connect( struct live_matrix_t * m )
     rocketnet_client_transport_default_config( &client_config );
     client_config.loopback_hub = rocketnet_test_loopback_hub();
 
-    m->client = rocketnet_message_client_create_ex( NULL, token, &client_config, &m->message_config, NULL, 0, LIVE_MATRIX_SEND_KBPS, NULL, 1 );
+    m->client = rocketnet_message_client_create_internal( NULL, token, &client_config, &m->message_config, NULL, 0, LIVE_MATRIX_SEND_KBPS, NULL, 1 );
     live_matrix_check( m->client );
 
     for ( int pass = 0; pass < LIVE_MATRIX_WAIT_PASSES( 5.0 ); pass++ )
@@ -1464,7 +1464,7 @@ static struct live_matrix_t * live_matrix_open()
     server_config.max_clients = 1;
     server_config.loopback_hub = rocketnet_test_loopback_hub();
 
-    m->server = rocketnet_message_server_create_ex( NULL, "127.0.0.1", &server_config, &m->message_config, NULL, 0, LIVE_MATRIX_SEND_KBPS, NULL, 1 );
+    m->server = rocketnet_message_server_create_internal( NULL, "127.0.0.1", &server_config, &m->message_config, NULL, 0, LIVE_MATRIX_SEND_KBPS, NULL, 1 );
     live_matrix_check( m->server );
     snprintf( m->server_address, sizeof( m->server_address ), "127.0.0.1:%d", rocketnet_server_transport_port( rocketnet_message_server_transport( m->server ) ) );
 

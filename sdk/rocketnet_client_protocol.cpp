@@ -257,7 +257,7 @@ int rocketnet_client_protocol_connect( struct rocketnet_client_protocol_t * clie
 
     // the server address, IPv6 preferred when both families are present.
     // the transport selects again with the host's IPv6 capability before it
-    // binds (rocketnet_client_transport_create_internal).
+    // binds (rocketnet_client_transport_create_impl).
 
     rocketnet_client_protocol_pick_server_address( &client->signed_fields, true, &client->server_address );
 

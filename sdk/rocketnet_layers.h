@@ -354,7 +354,7 @@ int rocketnet_client_transport_default_config_sized( struct rocketnet_client_tra
  * @param connect_token [in] Non-NULL complete token of ROCKETNET_CONNECT_TOKEN_BYTES; NULL is a counted no-op and returns NULL.
  * @param config [in] Optional full configuration; NULL selects defaults.
  * @param time [in] Finite monotonic time in seconds.
- * @return A caller-owned transport or NULL on any creation failure. Use create_ex to obtain the specific refusal status.
+ * @return A caller-owned transport or NULL on any creation failure. Use create_internal to obtain the specific refusal status.
  */
 struct rocketnet_client_transport_t * rocketnet_client_transport_create( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time );
 
@@ -371,12 +371,12 @@ struct rocketnet_client_transport_t * rocketnet_client_transport_create( void * 
  * @code
  * // token, context, config, time, and status are supplied by the game.
  * rocketnet_init( NULL, NULL, NULL );
- * struct rocketnet_client_transport_t *client = rocketnet_client_transport_create_ex(context, token, config, time, &status);
+ * struct rocketnet_client_transport_t *client = rocketnet_client_transport_create_internal(context, token, config, time, &status);
  * if (client) { rocketnet_client_transport_update(client, time); rocketnet_client_transport_destroy(client); }
  * rocketnet_term();
  * @endcode
  */
-struct rocketnet_client_transport_t * rocketnet_client_transport_create_ex( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, int * status );
+struct rocketnet_client_transport_t * rocketnet_client_transport_create_internal( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, int * status );
 
 // create with a config config_bytes long: a known size is read over the
 // defaults and created as above; an unknown size is refused with a log line and
@@ -859,7 +859,7 @@ bool rocketnet_server_transport_host_memory_estimate( const struct rocketnet_ser
  * @param context [in] Caller-provided allocator context passed to allocations for this transport; NULL is allowed if supported by the configured allocator.
  * @param public_address_string [in] Non-NULL numeric address; port zero requests dynamic binding when supported by the selected transport.
  * @param config [in] Optional full configuration; NULL selects defaults and does not supply production keys.
- * @return A caller-owned transport or NULL on any creation failure. Use create_ex to obtain the specific refusal status.
+ * @return A caller-owned transport or NULL on any creation failure. Use create_internal to obtain the specific refusal status.
  */
 struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * context, const char * public_address_string, const struct rocketnet_server_transport_config_t * config );
 
@@ -879,12 +879,12 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
  * @code
  * // context, address, config, status, time, and dt are supplied by the game.
  * rocketnet_init( NULL, NULL, NULL );
- * struct rocketnet_server_transport_t *server = rocketnet_server_transport_create_ex(context, address, config, time, &status);
+ * struct rocketnet_server_transport_t *server = rocketnet_server_transport_create_internal(context, address, config, time, &status);
  * if (server) { rocketnet_server_transport_stop(server); while (rocketnet_server_transport_state(server) != ROCKETNET_SERVER_TRANSPORT_STOPPED) { time += dt; rocketnet_server_transport_update(server, time); } rocketnet_server_transport_destroy(server); }
  * rocketnet_term();
  * @endcode
  */
-struct rocketnet_server_transport_t * rocketnet_server_transport_create_ex( void * context, const char * public_address_string, const struct rocketnet_server_transport_config_t * config, double time, int * status );
+struct rocketnet_server_transport_t * rocketnet_server_transport_create_internal( void * context, const char * public_address_string, const struct rocketnet_server_transport_config_t * config, double time, int * status );
 
 // create with a config config_bytes long: a known size is read over the
 // defaults and created as above; an unknown size is refused with a log line and
@@ -1525,7 +1525,7 @@ int rocketnet_message_validate_config( const struct rocketnet_message_config_t *
  * @return 1 when accepted, otherwise 0; a refusal logs one error line naming the rule.
  * @details Allocation-free and safe before initialization. The caller owns status and config; NULL status is allowed.
  */
-int rocketnet_message_validate_config_ex( const struct rocketnet_message_config_t * config, int * status );
+int rocketnet_message_validate_config_internal( const struct rocketnet_message_config_t * config, int * status );
 
 // the exact bytes of one connection's region (docs/LOAD.md Table 3): the
 // formula plus the 64-byte alignment of each part. 0 for a refused config;
@@ -1635,7 +1635,7 @@ struct rocketnet_message_client_t * rocketnet_message_client_create( void * cont
 // OUT_OF_MEMORY when the object's block is refused.
 // reserve_unlimited is for the public zero-budget setting: keep its runtime
 // ceiling while omitting a finite create-time payload reserve
-struct rocketnet_message_client_t * rocketnet_message_client_create_ex( void * context, const uint8_t * connect_token,
+struct rocketnet_message_client_t * rocketnet_message_client_create_internal( void * context, const uint8_t * connect_token,
                                                                         const struct rocketnet_client_transport_config_t * transport_config,
                                                                         const struct rocketnet_message_config_t * message_config,
                                                                         void * memory, uint64_t memory_bytes, uint32_t send_kbps, int * status, int reserve_unlimited );
@@ -1757,12 +1757,12 @@ struct rocketnet_message_server_t * rocketnet_message_server_create( void * cont
 
 // as rocketnet_message_server_create, with the section-2.1 code written to
 // *status on every return path when status is not NULL: the transport's own
-// code for a transport that does not start (rocketnet_server_transport_create_ex),
+// code for a transport that does not start (rocketnet_server_transport_create_internal),
 // CONFIG_OUT_OF_RANGE for a refused message config or budget, OUT_OF_MEMORY
 // when the object's block is refused.
 // reserve_unlimited preserves the public unlimited-budget runtime ceiling
 // without sizing a finite payload reserve for that sentinel
-struct rocketnet_message_server_t * rocketnet_message_server_create_ex( void * context, const char * address,
+struct rocketnet_message_server_t * rocketnet_message_server_create_internal( void * context, const char * address,
                                                                         const struct rocketnet_server_transport_config_t * transport_config,
                                                                         const struct rocketnet_message_config_t * message_config,
                                                                         void * memory, uint64_t memory_bytes, uint32_t per_client_send_kbps, int * status, int reserve_unlimited );

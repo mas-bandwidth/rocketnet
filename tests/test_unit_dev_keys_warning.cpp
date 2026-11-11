@@ -188,7 +188,7 @@ static void test_dev_keys_warn_on_every_start()
         int status = -1;
         start_capture();
 
-        void * srv = rocketnet_server_transport_create_current_ex( NULL, "127.0.0.1:0", &config, 1000.0, &status );
+        void * srv = rocketnet_server_transport_create_current_internal( NULL, "127.0.0.1:0", &config, 1000.0, &status );
         check( g_dev_warn_lines == 1 );
         check( g_dev_warn_level == ROCKETNET_LOG_LEVEL_WARN );
         check( strstr( g_dev_warn_buf, DEV_KEY_WARN_PHRASE ) != NULL );

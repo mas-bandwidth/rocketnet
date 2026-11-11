@@ -864,7 +864,7 @@ static void test_xdp_transport_ipv6_pin_reaches_the_xdp_transport_at_create()
     xdp_ipv6_barrier_lines = 0;
 
     int status = -1;
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, "[2001:db8::10]:40000", &config, 1000.0, &status );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_internal( NULL, "[2001:db8::10]:40000", &config, 1000.0, &status );
 
     rocketnet_log_function( NULL, NULL );
     rocketnet_log_level( level );

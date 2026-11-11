@@ -78,13 +78,13 @@ static void direct_count_free( void * context, void * memory )
 
 static void direct_count_install()
 {
-    check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    check( rocketnet_term_internal() == ROCKETNET_STATUS_OK );
     check( rocketnet_init( NULL, direct_count_malloc, direct_count_free ) == ROCKETNET_STATUS_OK );
 }
 
 static void direct_count_uninstall()
 {
-    check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    check( rocketnet_term_internal() == ROCKETNET_STATUS_OK );
     check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
 

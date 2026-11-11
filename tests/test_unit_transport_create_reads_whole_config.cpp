@@ -1,6 +1,6 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 // Unit tests: the transport creates (rocketnet_server_transport_create and
-// _create_ex, rocketnet_client_transport_create and _create_ex) read the caller's whole config, the
+// _create_internal, rocketnet_client_transport_create and _create_internal) read the caller's whole config, the
 // struct of this header, so a field appended after the first config revision
 // (second_public_address, loopback_hub, the simulated_* fields) is honored.
 // Every endpoint is on the loopback transport in the test's hub: no socket,
@@ -53,7 +53,7 @@ static void whole_config_server( struct rocketnet_server_transport_config_t * co
     config->loopback_hub = rocketnet_test_loopback_hub();
 }
 
-// loopback_hub is past the first revision: create_ex reads it, so the
+// loopback_hub is past the first revision: create_internal reads it, so the
 // loopback server is created in the hub rather than refused for a missing one
 static void test_server_transport_create_ex_honors_loopback_hub()
 {
@@ -64,7 +64,7 @@ static void test_server_transport_create_ex_honors_loopback_hub()
     whole_config_server( &config, &keys );
 
     int status = -1;
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:40501", &config, WHOLE_CONFIG_TIME, &status );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_internal( NULL, "127.0.0.1:40501", &config, WHOLE_CONFIG_TIME, &status );
     check( server != NULL );
     check( status == ROCKETNET_STATUS_OK );
     check( strcmp( rocketnet_server_transport_io_name( server ), "loopback" ) == 0 );
@@ -72,7 +72,7 @@ static void test_server_transport_create_ex_honors_loopback_hub()
     rn_test_server_transport_stop_and_destroy( server );
 }
 
-// second_public_address is past the first revision: create_ex and create
+// second_public_address is past the first revision: create_internal and create
 // read it, so the server advertises the IPv6 address beside the IPv4 one
 static void whole_config_check_both_families( bool plain, int port )
 {
@@ -90,7 +90,7 @@ static void whole_config_check_both_families( bool plain, int port )
 
     int status = -1;
     struct rocketnet_server_transport_t * server = plain ? rocketnet_server_transport_create( NULL, ipv4, &config )
-                                                         : rocketnet_server_transport_create_ex( NULL, ipv4, &config, WHOLE_CONFIG_TIME, &status );
+                                                         : rocketnet_server_transport_create_internal( NULL, ipv4, &config, WHOLE_CONFIG_TIME, &status );
     check( server != NULL );
     check( plain || status == ROCKETNET_STATUS_OK );
 
@@ -138,14 +138,14 @@ static void test_server_transport_create_ex_refuses_a_bad_second_public_address(
         snprintf( config.second_public_address, sizeof( config.second_public_address ), "%s", refused[i] );
 
         int status = -1;
-        check( rocketnet_server_transport_create_ex( NULL, "127.0.0.1:40505", &config, WHOLE_CONFIG_TIME, &status ) == NULL );
+        check( rocketnet_server_transport_create_internal( NULL, "127.0.0.1:40505", &config, WHOLE_CONFIG_TIME, &status ) == NULL );
         check( status == ROCKETNET_STATUS_INVALID_ADDRESS );
     }
 
     rocketnet_quiet( 0 );
 }
 
-// simulated_reverse_window is past the first revision: create_ex reads it,
+// simulated_reverse_window is past the first revision: create_internal reads it,
 // so a window of 1 (the range is 2 to 64, 0 off) is refused before the
 // token is read
 static void test_client_transport_create_ex_reads_simulated_fields()
@@ -160,7 +160,7 @@ static void test_client_transport_create_ex_reads_simulated_fields()
     memset( token, 0, sizeof( token ) );
 
     int status = -1;
-    check( rocketnet_client_transport_create_ex( NULL, token, &config, WHOLE_CONFIG_TIME, &status ) == NULL );
+    check( rocketnet_client_transport_create_internal( NULL, token, &config, WHOLE_CONFIG_TIME, &status ) == NULL );
     check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
 
     rocketnet_quiet( 0 );
@@ -168,7 +168,7 @@ static void test_client_transport_create_ex_reads_simulated_fields()
 
 #if ROCKETNET_DEV
 
-// loopback_hub is past the first revision: create_ex and create read it,
+// loopback_hub is past the first revision: create_internal and create read it,
 // so the loopback client is created in the hub. step_driven runs the client
 // on the caller's thread (a development field)
 static void whole_config_check_client_hub( bool plain )
@@ -190,7 +190,7 @@ static void whole_config_check_client_hub( bool plain )
 
     int status = -1;
     struct rocketnet_client_transport_t * client = plain ? rocketnet_client_transport_create( NULL, token, &config, WHOLE_CONFIG_TIME )
-                                                         : rocketnet_client_transport_create_ex( NULL, token, &config, WHOLE_CONFIG_TIME, &status );
+                                                         : rocketnet_client_transport_create_internal( NULL, token, &config, WHOLE_CONFIG_TIME, &status );
     check( client != NULL );
     check( plain || status == ROCKETNET_STATUS_OK );
 

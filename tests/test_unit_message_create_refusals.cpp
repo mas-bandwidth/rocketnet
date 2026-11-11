@@ -203,7 +203,7 @@ static void test_message_required_memory_takes_the_create_budget()
 
         int status = ROCKETNET_TEST_STATUS_UNSET;
         const uint64_t before = mcr_mallocs;
-        check( rocketnet_message_server_create_ex( NULL, "127.0.0.1:40000", &server_config, &config, block, at_field, create_kbps, &status, 0 ) == NULL );
+        check( rocketnet_message_server_create_internal( NULL, "127.0.0.1:40000", &server_config, &config, block, at_field, create_kbps, &status, 0 ) == NULL );
         check( status == ROCKETNET_STATUS_OUT_OF_MEMORY );
         check( mcr_mallocs == before );
 
@@ -222,7 +222,7 @@ static void test_message_required_memory_takes_the_create_budget()
 
         status = ROCKETNET_TEST_STATUS_UNSET;
         const uint64_t client_before = mcr_mallocs;
-        check( rocketnet_message_client_create_ex( NULL, token, &client_config, &config, client_block, client_at_field, create_kbps, &status, 0 ) == NULL );
+        check( rocketnet_message_client_create_internal( NULL, token, &client_config, &config, client_block, client_at_field, create_kbps, &status, 0 ) == NULL );
         check( status == ROCKETNET_STATUS_OUT_OF_MEMORY );
         check( mcr_mallocs == client_before );
 

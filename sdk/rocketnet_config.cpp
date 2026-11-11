@@ -193,10 +193,10 @@ int rocketnet_message_validate_config( const struct rocketnet_message_config_t *
     // never clamps. Allocation-free, safe before init: the sizing functions an
     // application calls before connecting run it.
 
-    return rocketnet_message_validate_config_ex( config, NULL );
+    return rocketnet_message_validate_config_internal( config, NULL );
 }
 
-int rocketnet_message_validate_config_ex( const struct rocketnet_message_config_t * config, int * status )
+int rocketnet_message_validate_config_internal( const struct rocketnet_message_config_t * config, int * status )
 {
     // docs/ERRORS-AND-LOGGING.md 2.1: every refusal of the message config is
     // CONFIG_OUT_OF_RANGE, and an accepted config is OK.

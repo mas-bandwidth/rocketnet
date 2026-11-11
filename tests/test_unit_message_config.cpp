@@ -1148,13 +1148,13 @@ static void test_message_config_reserve_past_32_bits_refused_by_validate_and_cre
 
     int status = -1;
     config.client_send_kbps = last_kbps;
-    check( rocketnet_message_validate_config_ex( &config, &status ) == 1 );
+    check( rocketnet_message_validate_config_internal( &config, &status ) == 1 );
     check( status == ROCKETNET_STATUS_OK );
     check( rocketnet_message_connection_bytes( &config ) > (uint64_t) UINT32_MAX );
 
     status = -1;
     config.client_send_kbps = past_kbps;
-    check( rocketnet_message_validate_config_ex( &config, &status ) == 0 );
+    check( rocketnet_message_validate_config_internal( &config, &status ) == 0 );
     check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
     check( rocketnet_message_connection_bytes( &config ) == 0 );
     check( rocketnet_message_client_required_memory( &config, 0 ) == 0 );
@@ -1188,7 +1188,7 @@ static void test_message_config_send_store_one_mib_accepted()
     config.send_message_buffer_bytes = 1048576;
 
     int status = -1;
-    check( rocketnet_message_validate_config_ex( &config, &status ) == 1 );
+    check( rocketnet_message_validate_config_internal( &config, &status ) == 1 );
     check( status == ROCKETNET_STATUS_OK );
     check( rocketnet_message_connection_bytes( &config ) > 0 );
 

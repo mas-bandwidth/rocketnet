@@ -121,17 +121,17 @@ struct msan_scale_allocator_scope_t
     msan_scale_allocator_scope_t()
     {
         rocketnet_unit_check( rocketnet_test_loopback_hub_release() );
-        rocketnet_unit_check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+        rocketnet_unit_check( rocketnet_term_internal() == ROCKETNET_STATUS_OK );
         int status = -1;
-        rocketnet_unit_check( rocketnet_init_ex( NULL, msan_scale_allocate, msan_scale_release, &status ) );
+        rocketnet_unit_check( rocketnet_init_internal( NULL, msan_scale_allocate, msan_scale_release, &status ) );
         rocketnet_unit_check( status == ROCKETNET_STATUS_OK );
     }
 
     ~msan_scale_allocator_scope_t() noexcept( false ) // check() throws under the expected-fail harness
     {
         rocketnet_unit_check( rocketnet_test_loopback_hub_release() );
-        rocketnet_unit_check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
-        rocketnet_unit_check( rocketnet_allocator_ex( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
+        rocketnet_unit_check( rocketnet_term_internal() == ROCKETNET_STATUS_OK );
+        rocketnet_unit_check( rocketnet_allocator_internal( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
     }
 #else // #if defined( ROCKETNET_TEST_MSAN_SCALE_ALLOCATOR )
     msan_scale_allocator_scope_t() {} // user-provided, so a case's scope is never an unused variable

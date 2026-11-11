@@ -71,12 +71,12 @@ extern "C"
 #endif // #ifdef __cplusplus
 
 // returns true on success; writes the status when status is not NULL
-bool rocketnet_init_ex( void * context, void * ( *malloc_function )( void * context, size_t bytes ), void ( *free_function )( void * context, void * p ), int * status );
+bool rocketnet_init_internal( void * context, void * ( *malloc_function )( void * context, size_t bytes ), void ( *free_function )( void * context, void * p ), int * status );
 
-int rocketnet_term_ex( void );
+int rocketnet_term_internal( void );
 
 // replaces the allocator without init, for tests. both functions are required
-int rocketnet_allocator_ex( void * ( *malloc_function )( void * context, size_t bytes ), void ( *free_function )( void * context, void * p ) );
+int rocketnet_allocator_internal( void * ( *malloc_function )( void * context, size_t bytes ), void ( *free_function )( void * context, void * p ) );
 
 // the connection a public client holds (NULL while DISCONNECTED) and the
 // running message server a public server holds (NULL while stopped), for

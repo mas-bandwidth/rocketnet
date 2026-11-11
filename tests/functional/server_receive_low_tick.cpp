@@ -164,7 +164,7 @@ void rocketnet_test_server_receive_buffer_sized_from_max_clients()
 #endif // #if defined( _WIN32 ) && ROCKETNET_DEV
 
     int status = -1;
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &server_config, 1000.0, &status );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_internal( NULL, "127.0.0.1:0", &server_config, 1000.0, &status );
 #if defined( _WIN32 ) && ROCKETNET_DEV
     // A failed create can exit the test before the production helper consumes
     // the override; clear it before the fatal assertion either way.
@@ -295,7 +295,7 @@ void rocketnet_test_server_gso_receive_buffer_request()
     snprintf( server_config.transport, sizeof( server_config.transport ), "%s", "gso" );
 
     int status = -1;
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &server_config, 1000.0, &status );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_internal( NULL, "127.0.0.1:0", &server_config, 1000.0, &status );
     server_receive_low_tick_require( server != NULL );
     server_receive_low_tick_require( status == ROCKETNET_STATUS_OK );
 
@@ -513,7 +513,7 @@ void rocketnet_test_server_receive_1000_clients_256kbps_10hz()
     double time = 1000.0;
 
     int status = -1;
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &server_config, time, &status );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_internal( NULL, "127.0.0.1:0", &server_config, time, &status );
     server_receive_low_tick_require( server != NULL );
     server_receive_low_tick_require( status == ROCKETNET_STATUS_OK );
 

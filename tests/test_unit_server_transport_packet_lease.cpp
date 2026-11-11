@@ -124,7 +124,7 @@ static int lease_world_create( lease_world_t * world, uint8_t seed_tag )
     server_config.loopback_hub = rocketnet_test_loopback_hub();
 
     int status = ROCKETNET_STATUS_OK;
-    world->server = rocketnet_server_transport_create_current_ex( NULL, "127.0.0.1:0", &server_config, world->time, &status );
+    world->server = rocketnet_server_transport_create_current_internal( NULL, "127.0.0.1:0", &server_config, world->time, &status );
     check( world->server != NULL );
     check( status == ROCKETNET_STATUS_OK );
 

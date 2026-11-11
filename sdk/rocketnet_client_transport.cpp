@@ -1454,7 +1454,7 @@ uint64_t rocketnet_client_transport_required_memory( const rocketnet_client_tran
 
 rocketnet_client_transport_t * rocketnet_client_transport_create( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time )
 {
-    return rocketnet_client_transport_create_ex( context, connect_token, config, time, NULL );
+    return rocketnet_client_transport_create_internal( context, connect_token, config, time, NULL );
 }
 
 // One socket of the ladder: opens the transport bound as bind asks and
@@ -1484,30 +1484,30 @@ static bool rocketnet_client_transport_open_connected( const rocketnet_client_tr
 
 // token_timestamp is the Unix time the token's expire check reads; 0 computes
 // it from the epoch and the create time
-static rocketnet_client_transport_t * rocketnet_client_transport_create_internal( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, int * status,
+static rocketnet_client_transport_t * rocketnet_client_transport_create_impl( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, int * status,
                                                                                   const rocketnet_client_transport_io_operations_t * step_driven_operations, void * step_driven_transport_context, size_t config_bytes, uint64_t token_timestamp,
                                                                                   const uint64_t * resolved_memory_budget = NULL );
 
-rocketnet_client_transport_t * rocketnet_client_transport_create_ex( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, int * status )
+rocketnet_client_transport_t * rocketnet_client_transport_create_internal( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, int * status )
 {
-    return rocketnet_client_transport_create_internal( context, connect_token, config, time, status, NULL, NULL, sizeof( struct rocketnet_client_transport_config_t ), 0 );
+    return rocketnet_client_transport_create_impl( context, connect_token, config, time, status, NULL, NULL, sizeof( struct rocketnet_client_transport_config_t ), 0 );
 }
 
 rocketnet_client_transport_t * rocketnet_client_transport_create_current( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time )
 {
-    return rocketnet_client_transport_create_internal( context, connect_token, config, time, NULL, NULL, NULL, sizeof( struct rocketnet_client_transport_config_t ), 0 );
+    return rocketnet_client_transport_create_impl( context, connect_token, config, time, NULL, NULL, NULL, sizeof( struct rocketnet_client_transport_config_t ), 0 );
 }
 
-rocketnet_client_transport_t * rocketnet_client_transport_create_current_ex( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, int * status )
+rocketnet_client_transport_t * rocketnet_client_transport_create_current_internal( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, int * status )
 {
-    return rocketnet_client_transport_create_internal( context, connect_token, config, time, status, NULL, NULL, sizeof( struct rocketnet_client_transport_config_t ), 0 );
+    return rocketnet_client_transport_create_impl( context, connect_token, config, time, status, NULL, NULL, sizeof( struct rocketnet_client_transport_config_t ), 0 );
 }
 
 rocketnet_client_transport_t * rocketnet_client_transport_create_resolved( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time,
                                                                            uint64_t memory_budget_bytes, uint64_t token_timestamp, int * status )
 {
     rocketnet_assert( config );
-    return rocketnet_client_transport_create_internal( context, connect_token, config, time, status, NULL, NULL, sizeof( struct rocketnet_client_transport_config_t ), token_timestamp, &memory_budget_bytes );
+    return rocketnet_client_transport_create_impl( context, connect_token, config, time, status, NULL, NULL, sizeof( struct rocketnet_client_transport_config_t ), token_timestamp, &memory_budget_bytes );
 }
 
 #if ROCKETNET_DEV
@@ -1517,24 +1517,24 @@ rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven( vo
     if ( !operations )
         return NULL;
 
-    return rocketnet_client_transport_create_internal( context, connect_token, config, time, NULL, operations, transport_context, sizeof( struct rocketnet_client_transport_config_t ), 0 );
+    return rocketnet_client_transport_create_impl( context, connect_token, config, time, NULL, operations, transport_context, sizeof( struct rocketnet_client_transport_config_t ), 0 );
 }
 
 rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven_at_timestamp( void * context, const uint8_t * connect_token,
                                                                                            const struct rocketnet_client_transport_config_t * config, double time, uint64_t current_timestamp,
                                                                                            const rocketnet_client_transport_io_operations_t * operations, void * transport_context )
 {
-    return rocketnet_client_transport_create_step_driven_at_timestamp_ex( context, connect_token, config, time, current_timestamp, operations, transport_context, NULL );
+    return rocketnet_client_transport_create_step_driven_at_timestamp_internal( context, connect_token, config, time, current_timestamp, operations, transport_context, NULL );
 }
 
-rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven_at_timestamp_ex( void * context, const uint8_t * connect_token,
+rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven_at_timestamp_internal( void * context, const uint8_t * connect_token,
                                                                                               const struct rocketnet_client_transport_config_t * config, double time, uint64_t current_timestamp,
                                                                                               const rocketnet_client_transport_io_operations_t * operations, void * transport_context, int * status )
 {
     if ( !operations || current_timestamp == 0 )
         return NULL;
 
-    return rocketnet_client_transport_create_internal( context, connect_token, config, time, status, operations, transport_context,
+    return rocketnet_client_transport_create_impl( context, connect_token, config, time, status, operations, transport_context,
                                                        sizeof( struct rocketnet_client_transport_config_t ), current_timestamp );
 }
 
@@ -1545,17 +1545,17 @@ rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven_cur
     if ( !operations )
         return NULL;
 
-    return rocketnet_client_transport_create_internal( context, connect_token, config, time, NULL, operations, transport_context,
+    return rocketnet_client_transport_create_impl( context, connect_token, config, time, NULL, operations, transport_context,
                                                        sizeof( struct rocketnet_client_transport_config_t ), 0 );
 }
 
-rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven_ex( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time,
+rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven_internal( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time,
                                                                                  const rocketnet_client_transport_io_operations_t * operations, void * transport_context, int * status )
 {
     if ( !operations )
         return NULL;
 
-    return rocketnet_client_transport_create_internal( context, connect_token, config, time, status, operations, transport_context, sizeof( struct rocketnet_client_transport_config_t ), 0 );
+    return rocketnet_client_transport_create_impl( context, connect_token, config, time, status, operations, transport_context, sizeof( struct rocketnet_client_transport_config_t ), 0 );
 }
 #endif // #if ROCKETNET_DEV
 
@@ -1834,7 +1834,7 @@ static bool rocketnet_client_transport_resolve( const struct rocketnet_client_tr
     return true;
 }
 
-static rocketnet_client_transport_t * rocketnet_client_transport_create_internal( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, int * status,
+static rocketnet_client_transport_t * rocketnet_client_transport_create_impl( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, int * status,
                                                                                   const rocketnet_client_transport_io_operations_t * step_driven_operations, void * step_driven_transport_context, size_t config_bytes, uint64_t token_timestamp,
                                                                                   const uint64_t * resolved_memory_budget )
 {

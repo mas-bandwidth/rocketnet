@@ -1,7 +1,7 @@
 # The installed allocator with no lock
 
 `RNAllocatorInstall.tla` models how `rocketnet_malloc`, `rocketnet_free` and
-an allocator install (`rocketnet_init`, `rocketnet_allocator_ex`) share the
+an allocator install (`rocketnet_init`, `rocketnet_allocator_internal`) share the
 installed allocator pair and its live count without a lock
 (`sdk/rocketnet.cpp`).
 

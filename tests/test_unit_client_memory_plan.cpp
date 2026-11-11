@@ -100,17 +100,17 @@ static void test_client_memory_plan_non_step_driven()
     check( plan_bytes > 0 );
 
     plan_counting_allocator_t state = { 0, 0 };
-    check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    check( rocketnet_term_internal() == ROCKETNET_STATUS_OK );
 
     int status = -1;
-    check( rocketnet_init_ex( &state, plan_alloc, plan_free, &status ) );
+    check( rocketnet_init_internal( &state, plan_alloc, plan_free, &status ) );
     check( status == ROCKETNET_STATUS_OK );
 
     // the plan covers create alone, so the count starts here
 
     state.total_bytes = 0;
 
-    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create_ex(
+    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create_internal(
         &state, token, &config, 1000.0, &status );
     check( client != NULL );
     check( status == ROCKETNET_STATUS_OK );
@@ -118,7 +118,7 @@ static void test_client_memory_plan_non_step_driven()
     const uint64_t allocated = state.total_bytes;
     rn_test_client_transport_stop_and_destroy( client );
 
-    check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    check( rocketnet_term_internal() == ROCKETNET_STATUS_OK );
     check( state.live == 0 );
     check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 
@@ -144,17 +144,17 @@ static void test_client_memory_plan_step_driven()
     check( plan_bytes > 0 );
 
     plan_counting_allocator_t state = { 0, 0 };
-    check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    check( rocketnet_term_internal() == ROCKETNET_STATUS_OK );
 
     int status = -1;
-    check( rocketnet_init_ex( &state, plan_alloc, plan_free, &status ) );
+    check( rocketnet_init_internal( &state, plan_alloc, plan_free, &status ) );
     check( status == ROCKETNET_STATUS_OK );
 
     // the plan covers create alone, so the count starts here
 
     state.total_bytes = 0;
 
-    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create_ex(
+    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create_internal(
         &state, token, &config, 1000.0, &status );
     check( client != NULL );
     check( status == ROCKETNET_STATUS_OK );
@@ -162,7 +162,7 @@ static void test_client_memory_plan_step_driven()
     const uint64_t allocated = state.total_bytes;
     rn_test_client_transport_stop_and_destroy( client );
 
-    check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    check( rocketnet_term_internal() == ROCKETNET_STATUS_OK );
     check( state.live == 0 );
     check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 
@@ -191,7 +191,7 @@ static void test_client_legacy_stop_wakes_the_receive_thread()
     config.simulated_latency_ms = 50;
 
     int status = -1;
-    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create_current_ex(
+    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create_current_internal(
         NULL, token, &config, 1000.0, &status );
     check( client != NULL );
     check( status == ROCKETNET_STATUS_OK );

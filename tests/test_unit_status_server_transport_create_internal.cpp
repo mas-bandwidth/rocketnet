@@ -112,7 +112,7 @@ static void test_server_transport_create_ex_reports_every_status()
     // so the lifecycle refusals below are reachable
 
     check( rocketnet_test_loopback_hub_release() );
-    check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    check( rocketnet_term_internal() == ROCKETNET_STATUS_OK );
 
     // S1: a NULL public_address_string is a logged INVALID_ARGUMENT, even
     // before init (the public NULL guard runs first)
@@ -123,7 +123,7 @@ static void test_server_transport_create_ex_reports_every_status()
     server_create_ex_expected_null_asserts = 0;
     rocketnet_assert_function( server_create_ex_expected_null_assert );
 #endif // #if ROCKETNET_ASSERTS
-    check( rocketnet_server_transport_create_ex( NULL, NULL, NULL, 1000.0, &status ) == NULL );
+    check( rocketnet_server_transport_create_internal( NULL, NULL, NULL, 1000.0, &status ) == NULL );
 #if ROCKETNET_ASSERTS
     rocketnet_assert_function( saved_assert );
 
@@ -134,18 +134,18 @@ static void test_server_transport_create_ex_reports_every_status()
     // install the fault-injecting allocator while uninitialized, so every
     // allocation below goes through allocate and release
 
-    check( rocketnet_allocator_ex( allocate, release ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_allocator_internal( allocate, release ) == ROCKETNET_STATUS_OK );
 
     // not initialized: a non-NULL create before rocketnet_init is refused
 
     status = -1;
-    check( rocketnet_server_transport_create_ex( NULL, "127.0.0.1:12345", NULL, 1000.0, &status ) == NULL );
+    check( rocketnet_server_transport_create_internal( NULL, "127.0.0.1:12345", NULL, 1000.0, &status ) == NULL );
     check( status == ROCKETNET_STATUS_NOT_INITIALIZED );
 
     // init with the fault-injecting allocator's state as the context
 
     status = -1;
-    check( rocketnet_init_ex( &state, allocate, release, &status ) );
+    check( rocketnet_init_internal( &state, allocate, release, &status ) );
     check( status == ROCKETNET_STATUS_OK );
 
     // S2 environment parsing is covered by test_platform_primitives
@@ -156,7 +156,7 @@ static void test_server_transport_create_ex_reports_every_status()
         rocketnet_server_transport_default_config( &config );
         config.max_clients = 50000;
         status = -1;
-        check( rocketnet_server_transport_create_ex( &state, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
+        check( rocketnet_server_transport_create_internal( &state, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
         check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
     }
 
@@ -167,7 +167,7 @@ static void test_server_transport_create_ex_reports_every_status()
     // a production build refuses
 
     status = -1;
-    check( rocketnet_server_transport_create_ex( &state, "127.0.0.1:12345", NULL, 1000.0, &status ) == NULL );
+    check( rocketnet_server_transport_create_internal( &state, "127.0.0.1:12345", NULL, 1000.0, &status ) == NULL );
     check( status == ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION );
 
     // S6: a keyless config (the default shape with its own filter) is refused
@@ -176,7 +176,7 @@ static void test_server_transport_create_ex_reports_every_status()
         rocketnet_server_transport_default_config( &config );
         own_packet_filter( &config );
         status = -1;
-        check( rocketnet_server_transport_create_ex( &state, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
+        check( rocketnet_server_transport_create_internal( &state, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
         check( status == ROCKETNET_STATUS_MISSING_KEYS );
     }
 
@@ -186,7 +186,7 @@ static void test_server_transport_create_ex_reports_every_status()
         production_config( &config );
         config.protocol_id = 0;
         status = -1;
-        check( rocketnet_server_transport_create_ex( &state, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
+        check( rocketnet_server_transport_create_internal( &state, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
         check( status == ROCKETNET_STATUS_INVALID_PROTOCOL_ID );
     }
 
@@ -196,7 +196,7 @@ static void test_server_transport_create_ex_reports_every_status()
         production_config( &config );
         snprintf( config.transport, sizeof( config.transport ), "%s", "bogus" );
         status = -1;
-        check( rocketnet_server_transport_create_ex( &state, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
+        check( rocketnet_server_transport_create_internal( &state, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
         check( status == ROCKETNET_STATUS_INVALID_TRANSPORT_LIST );
     }
 
@@ -205,7 +205,7 @@ static void test_server_transport_create_ex_reports_every_status()
         struct rocketnet_server_transport_config_t config;
         production_config( &config );
         status = -1;
-        check( rocketnet_server_transport_create_ex( &state, "not-an-address", &config, 1000.0, &status ) == NULL );
+        check( rocketnet_server_transport_create_internal( &state, "not-an-address", &config, 1000.0, &status ) == NULL );
         check( status == ROCKETNET_STATUS_INVALID_ADDRESS );
     }
 
@@ -216,7 +216,7 @@ static void test_server_transport_create_ex_reports_every_status()
         memcpy( config.backend_public_key, rocketnet_dev_backend_public_key, 32 );
         memcpy( config.server_public_key, rocketnet_dev_server_public_key, 32 );
         status = -1;
-        check( rocketnet_server_transport_create_ex( &state, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
+        check( rocketnet_server_transport_create_internal( &state, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
         check( status == ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION );
     }
 
@@ -231,7 +231,7 @@ static void test_server_transport_create_ex_reports_every_status()
         production_config( &config );
         snprintf( config.transport, sizeof( config.transport ), "%s", "xdp" );
         status = -1;
-        check( rocketnet_server_transport_create_ex( &state, "127.0.0.1:0", &config, 1000.0, &status ) == NULL );
+        check( rocketnet_server_transport_create_internal( &state, "127.0.0.1:0", &config, 1000.0, &status ) == NULL );
         check( status == ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED );
     }
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
@@ -254,7 +254,7 @@ static void test_server_transport_create_ex_reports_every_status()
         {
             state.fail_at = state.calls + k;
             status = -1;
-            struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex(
+            struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_internal(
                 &state, "127.0.0.1:12345", &config, 1000.0, &status );
             if ( server )
             {
@@ -284,9 +284,9 @@ static void test_server_transport_create_ex_reports_every_status()
     // a clean term, then restore the default allocator for the worker's term
 
     check( rocketnet_test_loopback_hub_release() );
-    check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    check( rocketnet_term_internal() == ROCKETNET_STATUS_OK );
     check( state.live == 0 );
-    check( rocketnet_allocator_ex( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_allocator_internal( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
 }
 
 REGISTER_UNIT_TEST( test_server_transport_create_ex_reports_every_status );
@@ -312,12 +312,12 @@ static void test_protocol_id_zero_refused( void )
 
     config.protocol_id = 0;
     int status = -1;
-    rocketnet_unit_check( rocketnet_server_transport_create_ex( NULL, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
+    rocketnet_unit_check( rocketnet_server_transport_create_internal( NULL, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
     rocketnet_unit_check( status == ROCKETNET_STATUS_INVALID_PROTOCOL_ID );
 
     config.protocol_id = 1;
     status = -1;
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:12345", &config, 1000.0, &status );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_internal( NULL, "127.0.0.1:12345", &config, 1000.0, &status );
     rocketnet_unit_check( server != NULL );
     rocketnet_unit_check( status == ROCKETNET_STATUS_OK );
 

@@ -757,7 +757,7 @@ static void check_game_clock_client_create( allocator_state & state )
     memset( config.packet_filter, 0x5A, sizeof( config.packet_filter ) );
     config.token_epoch_unix_seconds = epoch;
 
-    rocketnet_client_transport_t * client = rocketnet_client_transport_create_ex( &state, token, &config, 1000.0, NULL );
+    rocketnet_client_transport_t * client = rocketnet_client_transport_create_internal( &state, token, &config, 1000.0, NULL );
     check( client != NULL );
     rn_native_client_transport_stop_and_destroy( client );
 }
@@ -935,7 +935,7 @@ static void install_release_b( void *, void * pointer ) { install_pair_release( 
 
 static int install_pair( int index )
 {
-    return index == 0 ? rocketnet_allocator_ex( install_allocate_a, install_release_a ) : rocketnet_allocator_ex( install_allocate_b, install_release_b );
+    return index == 0 ? rocketnet_allocator_internal( install_allocate_a, install_release_a ) : rocketnet_allocator_internal( install_allocate_b, install_release_b );
 }
 
 static void install_pairs_reset()
@@ -1023,7 +1023,7 @@ static void check_allocator_install_waits_out_a_call()
     rocketnet_free( NULL, block );
     install_pairs_check_clean();
 
-    check( rocketnet_allocator_ex( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_allocator_internal( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
     printf( "allocator install waits out a call: %d sentinel waits\n", sentinel_call_waits.load() );
 }
 
@@ -1162,7 +1162,7 @@ static void check_allocator_install_race()
     check( parked_installs == INSTALL_RACE_ROUNDS );
     check( operations.load() >= INSTALL_RACE_ROUNDS * INSTALL_RACE_OPERATIONS_PER_ROUND );
 
-    check( rocketnet_allocator_ex( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_allocator_internal( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
 }
 
 int main()
@@ -1175,7 +1175,7 @@ int main()
 
     allocator_state state;
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
-    rocketnet_allocator_ex( allocate, release );
+    rocketnet_allocator_internal( allocate, release );
     check( rocketnet_malloc( &state, SIZE_MAX ) == NULL );
     check( state.calls == 0 );
 
@@ -1230,7 +1230,7 @@ int main()
     }
 
     void * p = rocketnet_malloc( &state, 1 );
-    rocketnet_allocator_ex( refuse_allocation, refuse_free ); // live allocation prevents replacement
+    rocketnet_allocator_internal( refuse_allocation, refuse_free ); // live allocation prevents replacement
     rocketnet_free( &state, p );
     check( state.live == 0 );
     check( rocketnet_init( &state, allocate, release ) == ROCKETNET_STATUS_OK );
@@ -1238,7 +1238,7 @@ int main()
     check( clock_after_init >= 0.0 && clock_after_init < 3600.0 );
     check( rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK );
     rocketnet_forbid_xdp_commit();
-    rocketnet_allocator_ex( refuse_allocation, refuse_free ); // initialized library prevents replacement
+    rocketnet_allocator_internal( refuse_allocation, refuse_free ); // initialized library prevents replacement
     p = rocketnet_malloc( &state, 16 );
     check( p );
     rocketnet_term(); // live allocation prevents premature shutdown
@@ -1276,7 +1276,7 @@ int main()
     rocketnet_term();
     rocketnet_term();
     check( state.live == 0 );
-    rocketnet_allocator_ex( refuse_allocation, refuse_free );
+    rocketnet_allocator_internal( refuse_allocation, refuse_free );
     check( rocketnet_malloc( NULL, 16 ) == NULL );
     check( rocketnet_init( &state, allocate, release ) == ROCKETNET_STATUS_OK );
     rocketnet_term();

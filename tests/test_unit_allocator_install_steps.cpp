@@ -83,7 +83,7 @@ static void steps_release_b( void *, void * pointer ) { steps_pair_release( g_st
 
 static int steps_install_b()
 {
-    return rocketnet_allocator_ex( steps_allocate_b, steps_release_b );
+    return rocketnet_allocator_internal( steps_allocate_b, steps_release_b );
 }
 
 static void steps_call_hook( int step )
@@ -98,14 +98,14 @@ static void steps_call_hook( int step )
 // uninitialized with pair a installed and nothing live
 static void steps_begin()
 {
-    check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    check( rocketnet_term_internal() == ROCKETNET_STATUS_OK );
     rocketnet_quiet( true );
 
     memset( g_steps_pairs, 0, sizeof( g_steps_pairs ) );
     g_steps_pairs[0].tag = 0xA110CA7EA11CEAAAULL;
     g_steps_pairs[1].tag = 0xA110CA7EB0B0BBBBULL;
     g_steps_install_status = ROCKETNET_TEST_STATUS_UNSET;
-    check( rocketnet_allocator_ex( steps_allocate_a, steps_release_a ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_allocator_internal( steps_allocate_a, steps_release_a ) == ROCKETNET_STATUS_OK );
 }
 
 // the install refused, pair a kept: the call's block came from a and goes
@@ -131,7 +131,7 @@ static void steps_check_refused_and_finish( void * block )
 
     check( g_steps_pairs[0].foreign_releases == 0 && g_steps_pairs[1].foreign_releases == 0 );
 
-    check( rocketnet_allocator_ex( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_allocator_internal( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
     rocketnet_quiet( false );
     check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }

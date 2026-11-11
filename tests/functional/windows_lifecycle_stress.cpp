@@ -432,7 +432,7 @@ static rocketnet_server_transport_t * windows_server_create( const windows_cell_
     snprintf( config.transport, sizeof( config.transport ), "%s", cell->server_transport );
 
     int status = ROCKETNET_STATUS_OK;
-    rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, address, &config, rocketnet_platform_time(), &status );
+    rocketnet_server_transport_t * server = rocketnet_server_transport_create_internal( NULL, address, &config, rocketnet_platform_time(), &status );
     if ( !server )
     {
         printf( "server create [%s] at %s failed: %s\n", cell->name, address, rocketnet_status_name( (enum rocketnet_status_t) status ) );
@@ -505,7 +505,7 @@ static rocketnet_client_transport_t * windows_client_create( const windows_cell_
     config.time_callback = windows_client_clock_callback;
 
     int status = ROCKETNET_STATUS_OK;
-    rocketnet_client_transport_t * client = rocketnet_client_transport_create_ex( clock, token, &config, windows_client_clock_now( clock ), &status );
+    rocketnet_client_transport_t * client = rocketnet_client_transport_create_internal( clock, token, &config, windows_client_clock_now( clock ), &status );
     if ( !client )
     {
         printf( "client create [%s] to %s failed: %s\n", cell->name, server_address, rocketnet_status_name( (enum rocketnet_status_t) status ) );

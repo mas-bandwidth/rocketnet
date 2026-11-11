@@ -1,7 +1,7 @@
 # RNClientLadder
 
 `RNClientLadder.tla` models the client ladder at create
-(`rocketnet_client_transport_create_internal` in
+(`rocketnet_client_transport_create_impl` in
 `sdk/rocketnet_client_transport.cpp`, each socket opened and connected by
 `rocketnet_client_transport_open_connected`): which sockets the client
 opens, in what order, and how the create ends. It says nothing about the
@@ -80,7 +80,7 @@ handshake that follows or the family race that runs after an IPv6 grant
   token exhausts instead.
 
 Each trace was checked by hand against
-`rocketnet_client_transport_create_internal`: the fallback runs only when
+`rocketnet_client_transport_create_impl`: the fallback runs only when
 `both_families` holds and the refusal's status is not `OUT_OF_MEMORY`, on the
 candidate the ladder is on, and the race opens its second socket only when
 the grant is the IPv6 server.

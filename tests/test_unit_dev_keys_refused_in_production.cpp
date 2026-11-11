@@ -45,7 +45,7 @@ static void test_dev_keys_refused_in_production()
         production_config( &config );
         memcpy( config.backend_public_key, rocketnet_dev_backend_public_key, 32 );
         int status = -1;
-        check( rocketnet_server_transport_create_current_ex( NULL, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
+        check( rocketnet_server_transport_create_current_internal( NULL, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
         check( status == ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION );
     }
 
@@ -56,7 +56,7 @@ static void test_dev_keys_refused_in_production()
         production_config( &config );
         memcpy( config.server_public_key, rocketnet_dev_server_public_key, 32 );
         int status = -1;
-        check( rocketnet_server_transport_create_current_ex( NULL, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
+        check( rocketnet_server_transport_create_current_internal( NULL, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
         check( status == ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION );
     }
 }

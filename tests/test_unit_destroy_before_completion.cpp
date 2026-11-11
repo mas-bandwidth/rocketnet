@@ -216,8 +216,8 @@ static void test_destroy_before_completion_frees_everything()
     db_allocator_t state = { 0 };
     int status = -1;
     check( rocketnet_test_loopback_hub_release() );
-    check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
-    check( rocketnet_init_ex( &state, db_allocator_malloc, db_allocator_free, &status ) );
+    check( rocketnet_term_internal() == ROCKETNET_STATUS_OK );
+    check( rocketnet_init_internal( &state, db_allocator_malloc, db_allocator_free, &status ) );
     check( status == ROCKETNET_STATUS_OK );
 
     const int before = state.live;
@@ -234,7 +234,7 @@ static void test_destroy_before_completion_frees_everything()
     check( state.live == before );
 
     check( rocketnet_test_loopback_hub_release() );
-    check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    check( rocketnet_term_internal() == ROCKETNET_STATUS_OK );
     check( state.live == 0 );
     check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
     rocketnet_assert_function( NULL );

@@ -14,7 +14,7 @@
 // walking every allocation create makes). A NULL status is accepted on a
 // refusal and on a success. No socket, no thread, no real time. The
 // CONFIG_ENV_INVALID case sets one environment variable per side and restores
-// it before returning, as test_unit_status_client_transport_create_ex.cpp
+// it before returning, as test_unit_status_client_transport_create_internal.cpp
 // does. The explicit budget range case temporarily clears the two budget
 // variables and restores them.
 
@@ -513,10 +513,10 @@ static void test_create_reports_status_out_of_memory()
 {
     create_status_allocator_t state;
     memset( &state, 0, sizeof( state ) );
-    check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    check( rocketnet_term_internal() == ROCKETNET_STATUS_OK );
 
     int init_status = -1;
-    check( rocketnet_init_ex( &state, create_status_allocate, create_status_release, &init_status ) );
+    check( rocketnet_init_internal( &state, create_status_allocate, create_status_release, &init_status ) );
     check( init_status == ROCKETNET_STATUS_OK );
 
     struct rocketnet_client_config_t client_config;
@@ -570,7 +570,7 @@ static void test_create_reports_status_out_of_memory()
     }
 
     state.fail_at = 0;
-    check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    check( rocketnet_term_internal() == ROCKETNET_STATUS_OK );
     check( state.live == 0 );
     check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
@@ -660,10 +660,10 @@ static void test_create_out_of_memory_logs_one_error()
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
     rocketnet_log_function( create_status_count_errors, &log );
 
-    check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    check( rocketnet_term_internal() == ROCKETNET_STATUS_OK );
 
     int init_status = -1;
-    check( rocketnet_init_ex( &state, create_status_allocate, create_status_release, &init_status ) );
+    check( rocketnet_init_internal( &state, create_status_allocate, create_status_release, &init_status ) );
     check( init_status == ROCKETNET_STATUS_OK );
 
     struct rocketnet_client_config_t client_config;
@@ -706,7 +706,7 @@ static void test_create_out_of_memory_logs_one_error()
     state.fail_at = 0;
     rocketnet_log_function( NULL, NULL );
     rocketnet_log_level( saved_level );
-    check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    check( rocketnet_term_internal() == ROCKETNET_STATUS_OK );
     check( state.live == 0 );
     check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }

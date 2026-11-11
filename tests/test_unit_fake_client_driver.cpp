@@ -278,7 +278,7 @@ static void test_fake_client_disconnect_burst_keeps_server_address()
     server_config.loopback_hub = rocketnet_test_loopback_hub();
 
     int status = -1;
-    rocketnet_server_transport_t * server = rocketnet_server_transport_create_current_ex( NULL, "127.0.0.1:0", &server_config, time, &status );
+    rocketnet_server_transport_t * server = rocketnet_server_transport_create_current_internal( NULL, "127.0.0.1:0", &server_config, time, &status );
     rocketnet_unit_check( server != NULL && status == ROCKETNET_STATUS_OK );
     rocketnet_server_transport_set_test_timestamp( server, 1000 );
 

@@ -284,7 +284,7 @@ static ranking_result_t ranking_create_client( const char * transport, const cha
     result.status = -1;
     ranking_clock = 1000.0;
 
-    rocketnet_client_transport_t * client = rocketnet_client_transport_create_step_driven_ex( NULL, token, &config, ranking_clock, &operations, fake, &result.status );
+    rocketnet_client_transport_t * client = rocketnet_client_transport_create_step_driven_internal( NULL, token, &config, ranking_clock, &operations, fake, &result.status );
 
     rocketnet_log_function( NULL, NULL );
     rocketnet_log_level( saved_level );

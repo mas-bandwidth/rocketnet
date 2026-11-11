@@ -109,7 +109,7 @@ static void family_fallback_create( family_fallback_case_t * c, uint8_t address_
 
     c->now = family_fallback_start;
     c->status = ROCKETNET_STATUS_OK;
-    c->transport = rocketnet_client_transport_create_step_driven_at_timestamp_ex(
+    c->transport = rocketnet_client_transport_create_step_driven_at_timestamp_internal(
         &c->now, token, &config, c->now, ROCKETNET_TEST_CREATE_TS, &operations, c->fake, &c->status );
 }
 

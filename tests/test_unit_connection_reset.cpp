@@ -610,7 +610,7 @@ static rocketnet_message_server_t * reset_loopback_server_create( double now, co
     reset_env_pin_t pin;
     reset_env_pin_set_aside( &pin, "ROCKETNET_SERVER_TRANSPORT" );
 #endif // #if ROCKETNET_DEV
-    rocketnet_server_transport_t * transport = rocketnet_server_transport_create_current_ex( NULL, "127.0.0.1:0", &config, now, &status );
+    rocketnet_server_transport_t * transport = rocketnet_server_transport_create_current_internal( NULL, "127.0.0.1:0", &config, now, &status );
 #if ROCKETNET_DEV
     reset_env_pin_put_back( &pin );
 #endif // #if ROCKETNET_DEV
@@ -925,7 +925,7 @@ static void test_connection_reset_deferred_disconnect_does_not_charge_reused_slo
     reset_env_pin_t pin;
     reset_env_pin_set_aside( &pin, "ROCKETNET_SERVER_TRANSPORT" );
 #endif // #if ROCKETNET_DEV
-    rocketnet_server_transport_t * transport = rocketnet_server_transport_create_current_ex( NULL, "127.0.0.1:0", &server_config, now, &status );
+    rocketnet_server_transport_t * transport = rocketnet_server_transport_create_current_internal( NULL, "127.0.0.1:0", &server_config, now, &status );
 #if ROCKETNET_DEV
     reset_env_pin_put_back( &pin );
 #endif // #if ROCKETNET_DEV

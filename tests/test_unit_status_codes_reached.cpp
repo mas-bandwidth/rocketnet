@@ -7,7 +7,7 @@
 // reached through the public API with no socket, no real time and no real
 // thread, mutex or timer failure:
 //   * ROCKETNET_STATUS_PLATFORM_INIT_FAILED: a refused platform_start fails
-//     rocketnet_init_ex;
+//     rocketnet_init_internal;
 //   * ROCKETNET_STATUS_MUTEX_CREATE_FAILED: a refused mutex create fails
 //     rocketnet_client_connect;
 //   * ROCKETNET_STATUS_THREAD_CREATE_FAILED: a threaded client connect whose
@@ -108,7 +108,7 @@ static int refuse_mutex( rocketnet_platform_mutex_t * mutex )
 static void test_platform_init_failed_reached()
 {
     check( rocketnet_test_loopback_hub_release() );
-    check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    check( rocketnet_term_internal() == ROCKETNET_STATUS_OK );
 
     const struct rocketnet_platform_priority_calls_t * saved = rocketnet_platform_priority_calls_current();
     struct rocketnet_platform_priority_calls_t fake;
@@ -117,7 +117,7 @@ static void test_platform_init_failed_reached()
     rocketnet_platform_set_priority_calls_for_testing( &fake );
 
     int status = -1;
-    check( !rocketnet_init_ex( NULL, NULL, NULL, &status ) );
+    check( !rocketnet_init_internal( NULL, NULL, NULL, &status ) );
     check( status == ROCKETNET_STATUS_PLATFORM_INIT_FAILED );
 
     rocketnet_platform_set_priority_calls_for_testing( saved );

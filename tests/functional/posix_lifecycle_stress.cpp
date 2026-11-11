@@ -647,7 +647,7 @@ static rocketnet_server_transport_t * posix_server_create( const posix_cell_t * 
     snprintf( config.transport, sizeof( config.transport ), "%s", cell->server_transport_io );
 
     int status = ROCKETNET_STATUS_OK;
-    rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, address, &config, rocketnet_platform_time(), &status );
+    rocketnet_server_transport_t * server = rocketnet_server_transport_create_internal( NULL, address, &config, rocketnet_platform_time(), &status );
     if ( !server )
     {
         printf( "server create [%s] at %s failed: %s\n", cell->name, address, rocketnet_status_name( (enum rocketnet_status_t) status ) );
@@ -732,7 +732,7 @@ static rocketnet_client_transport_t * posix_client_create( const posix_cell_t * 
         const int far_ns = open( "/var/run/netns/" POSIX_XDP_NETNS, O_RDONLY );
         posix_check( self_ns >= 0 && far_ns >= 0 );
         posix_check( setns( far_ns, CLONE_NEWNET ) == 0 );
-        client = rocketnet_client_transport_create_ex( clock, token, &config, posix_client_clock_now( clock ), &status );
+        client = rocketnet_client_transport_create_internal( clock, token, &config, posix_client_clock_now( clock ), &status );
         posix_check( setns( self_ns, CLONE_NEWNET ) == 0 );
         close( self_ns );
         close( far_ns );
@@ -740,7 +740,7 @@ static rocketnet_client_transport_t * posix_client_create( const posix_cell_t * 
     else
 #endif // #if defined( __linux__ )
     {
-        client = rocketnet_client_transport_create_ex( clock, token, &config, posix_client_clock_now( clock ), &status );
+        client = rocketnet_client_transport_create_internal( clock, token, &config, posix_client_clock_now( clock ), &status );
     }
 
     if ( !client )

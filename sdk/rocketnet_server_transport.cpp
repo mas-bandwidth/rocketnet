@@ -1517,10 +1517,10 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
                                                                          const char * public_address_string,
                                                                          const struct rocketnet_server_transport_config_t * config )
 {
-    return rocketnet_server_transport_create_ex( context, public_address_string, config, 0.0, NULL );
+    return rocketnet_server_transport_create_internal( context, public_address_string, config, 0.0, NULL );
 }
 
-static struct rocketnet_server_transport_t * rocketnet_server_transport_create_internal( void * context,
+static struct rocketnet_server_transport_t * rocketnet_server_transport_create_impl( void * context,
                                                                                          const char * public_address_string,
                                                                                          const struct rocketnet_server_transport_config_t * config,
                                                                                          double time, int * status,
@@ -1538,23 +1538,23 @@ void ( *rocketnet_server_transport_config_staging_hook )( const uint8_t * secret
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_STAGING_SEEN( secret_key, stage ) do {} while ( 0 )
 #endif // #if ROCKETNET_DEV
 
-struct rocketnet_server_transport_t * rocketnet_server_transport_create_ex( void * context, const char * public_address_string,
+struct rocketnet_server_transport_t * rocketnet_server_transport_create_internal( void * context, const char * public_address_string,
                                                                             const struct rocketnet_server_transport_config_t * config,
                                                                             double time, int * status )
 {
-    return rocketnet_server_transport_create_internal( context, public_address_string, config, time, status );
+    return rocketnet_server_transport_create_impl( context, public_address_string, config, time, status );
 }
 
 struct rocketnet_server_transport_t * rocketnet_server_transport_create_current( void * context, const char * address,
                                                                                  const struct rocketnet_server_transport_config_t * config )
 {
-    return rocketnet_server_transport_create_internal( context, address, config, 0.0, NULL );
+    return rocketnet_server_transport_create_impl( context, address, config, 0.0, NULL );
 }
 
-struct rocketnet_server_transport_t * rocketnet_server_transport_create_current_ex( void * context, const char * address,
+struct rocketnet_server_transport_t * rocketnet_server_transport_create_current_internal( void * context, const char * address,
                                                                                     const struct rocketnet_server_transport_config_t * config, double time, int * status )
 {
-    return rocketnet_server_transport_create_internal( context, address, config, time, status );
+    return rocketnet_server_transport_create_impl( context, address, config, time, status );
 }
 
 struct rocketnet_server_transport_t * rocketnet_server_transport_create_resolved( void * context, const char * address,
@@ -1562,7 +1562,7 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create_resolved
                                                                                   uint64_t memory_budget_bytes, int * status )
 {
     rocketnet_assert( config );
-    return rocketnet_server_transport_create_internal( context, address, config, 0.0, status, &memory_budget_bytes );
+    return rocketnet_server_transport_create_impl( context, address, config, 0.0, status, &memory_budget_bytes );
 }
 
 // The inputs a server create starts from, resolved before anything is
@@ -2343,7 +2343,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_s
 // resolved.config carries the server_secret_key the protocol copies: it is
 // wiped on every exit of the create, failed or created
 
-static struct rocketnet_server_transport_t * rocketnet_server_transport_create_internal( void * context,
+static struct rocketnet_server_transport_t * rocketnet_server_transport_create_impl( void * context,
                                                                                          const char * public_address_string,
                                                                                          const struct rocketnet_server_transport_config_t * config,
                                                                                          double time, int * status,

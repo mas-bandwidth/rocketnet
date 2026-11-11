@@ -256,8 +256,8 @@ static void destroy_begin_counted( destroy_allocator_t * state, int * before )
     rocketnet_log_function( destroy_log_capture, NULL );
     destroy_error_lines = 0;
     int status = -1;
-    check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
-    check( rocketnet_init_ex( state, destroy_allocator_malloc, destroy_allocator_free, &status ) );
+    check( rocketnet_term_internal() == ROCKETNET_STATUS_OK );
+    check( rocketnet_init_internal( state, destroy_allocator_malloc, destroy_allocator_free, &status ) );
     check( status == ROCKETNET_STATUS_OK );
     *before = state->live;
 }
@@ -265,7 +265,7 @@ static void destroy_begin_counted( destroy_allocator_t * state, int * before )
 static void destroy_end_counted( destroy_allocator_t * state )
 {
     rocketnet_destroy_stop_seconds_for_test( -1.0 );
-    check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    check( rocketnet_term_internal() == ROCKETNET_STATUS_OK );
     check( state->live == 0 );
     check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
     rocketnet_functional_restore_log_function();

@@ -1028,7 +1028,7 @@ static enum rocketnet_status_t rn_loopback_hub_valid( const char * endpoint, con
 // The one validation behind create: the transport table's
 // ranges, the public link simulator's posture and the transport list's parse,
 // each the check connect runs on the same values
-// (rocketnet_client_transport_create_internal),
+// (rocketnet_client_transport_create_impl),
 // then the message config's rules. Each refusal logs the rule it broke.
 
 static enum rocketnet_status_t rn_client_config_valid( const struct rocketnet_client_transport_config_t * transport, const struct rocketnet_message_config_t * message )
@@ -1104,7 +1104,7 @@ static struct rocketnet_client_t * rn_client_create_current( void * context, con
 
     // the lifecycle state is read once here, before any allocation; a create
     // before rocketnet_init is refused, logged and counted, as the transport
-    // create refuses it at connect (rocketnet_client_transport_create_internal)
+    // create refuses it at connect (rocketnet_client_transport_create_impl)
 
     if ( !rocketnet_library_initialized() )
     {
@@ -2248,7 +2248,7 @@ static enum rocketnet_status_t rn_server_config_read( rocketnet_server_config_t 
 // The one validation behind create: the transport table's
 // ranges, the public link simulator's posture and the transport list's parse,
 // each the check start runs on the same values
-// (rocketnet_server_transport_create_internal),
+// (rocketnet_server_transport_create_impl),
 // then the message config's rules. The keys are not checked here; start
 // refuses a config with none. Each refusal logs the rule it broke.
 
@@ -2429,7 +2429,7 @@ static struct rocketnet_server_t * rn_server_create_current( void * context, con
 
     // the lifecycle state is read once here, before any allocation; a create
     // before rocketnet_init is refused, logged and counted, as the transport
-    // create refuses it at start (rocketnet_server_transport_create_internal)
+    // create refuses it at start (rocketnet_server_transport_create_impl)
 
     if ( !rocketnet_library_initialized() )
     {

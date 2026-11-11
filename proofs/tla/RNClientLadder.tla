@@ -1,6 +1,6 @@
 ---------------------------- MODULE RNClientLadder ----------------------------
 \* The client ladder at create with the family fallback
-\* (rocketnet_client_transport_create_internal in
+\* (rocketnet_client_transport_create_impl in
 \* sdk/rocketnet_client_transport.cpp). Candidates are tried left to right;
 \* a one-element list is a pin. On each candidate the client opens a socket
 \* for the server the token selected and connects it. A token naming both

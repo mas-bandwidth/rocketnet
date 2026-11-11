@@ -269,9 +269,9 @@ static void test_public_server_keygen_failure_leaves_the_block_unwritten()
     memset( &state, 0, sizeof( state ) );
 
     check( rocketnet_test_loopback_hub_release() );
-    check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    check( rocketnet_term_internal() == ROCKETNET_STATUS_OK );
     int init_status = -1;
-    check( rocketnet_init_ex( &state, api_core_block_allocate, api_core_block_release, &init_status ) );
+    check( rocketnet_init_internal( &state, api_core_block_allocate, api_core_block_release, &init_status ) );
     check( init_status == ROCKETNET_STATUS_OK );
     rocketnet_test_loopback_hub_context( &state );
 
@@ -291,9 +291,9 @@ static void test_public_server_keygen_failure_leaves_the_block_unwritten()
     check( state.largest_intact );
 
     check( rocketnet_test_loopback_hub_release() );
-    check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    check( rocketnet_term_internal() == ROCKETNET_STATUS_OK );
     check( state.live == 0 );
-    check( rocketnet_allocator_ex( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_allocator_internal( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
 }
 
 REGISTER_UNIT_TEST( test_public_server_keygen_failure_leaves_the_block_unwritten );

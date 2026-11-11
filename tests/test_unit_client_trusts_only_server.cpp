@@ -364,7 +364,7 @@ static void test_client_transport_refuses_when_connect_fails()
     config.time_callback = client_trusts_time;
 
     int status = ROCKETNET_STATUS_OK;
-    rocketnet_client_transport_t * transport = rocketnet_client_transport_create_step_driven_ex( &clock, token, &config, clock.now, &operations, fake, &status );
+    rocketnet_client_transport_t * transport = rocketnet_client_transport_create_step_driven_internal( &clock, token, &config, clock.now, &operations, fake, &status );
     check( transport == NULL );
     check( status == ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED );
     check( fake->connect_calls >= 1 );

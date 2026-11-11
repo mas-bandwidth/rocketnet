@@ -1816,7 +1816,7 @@ void rocketnet_test_client_ipv4_without_ipv6_stack()
     rocketnet_log_function( rocketnet_test_capture_log, NULL );
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
 
-    struct rocketnet_client_transport_t * refused = rocketnet_client_transport_create_ex( NULL, connect_token, NULL, rocketnet_platform_time(), &create_status );
+    struct rocketnet_client_transport_t * refused = rocketnet_client_transport_create_internal( NULL, connect_token, NULL, rocketnet_platform_time(), &create_status );
 
     rocketnet_log_level( saved_level );
     rocketnet_log_function( rocketnet_test_suite_log_function, NULL );
@@ -10126,7 +10126,7 @@ static struct rocketnet_server_transport_t * wire_totals_server_create( const ch
     config.loopback_hub = rocketnet_test_loopback_hub();
 
     int status = -1;
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_current_ex( NULL, public_address, &config, time, &status );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_current_internal( NULL, public_address, &config, time, &status );
     rocketnet_check( status == ROCKETNET_STATUS_OK );
 
     return server;
@@ -10361,7 +10361,7 @@ static void wire_bytes_per_family_exchange( const char * public_address, const c
     snprintf( server_config.transport, sizeof( server_config.transport ), "%s", "portable" );
 
     int server_status = -1;
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, public_address, &server_config, time, &server_status );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_internal( NULL, public_address, &server_config, time, &server_status );
     rocketnet_check( server != NULL );
     rocketnet_check( server_status == ROCKETNET_STATUS_OK );
 
@@ -12670,7 +12670,7 @@ static int rocketnet_test_token_time_wall_clock_create( uint64_t create, uint64_
     config.token_epoch_unix_seconds = 0;
 
     int status = 0;
-    struct rocketnet_client_transport_t * transport = rocketnet_client_transport_create_current_ex( NULL, token_data, &config, 1000.0, &status );
+    struct rocketnet_client_transport_t * transport = rocketnet_client_transport_create_current_internal( NULL, token_data, &config, 1000.0, &status );
     if ( transport )
     {
         rn_native_client_transport_stop_and_destroy( transport );
