@@ -819,3 +819,58 @@ static void test_server_kick_at_steady_cap_log_reentry_does_not_repeat()
     delete f;
 }
 REGISTER_UNIT_TEST( test_server_kick_at_steady_cap_log_reentry_does_not_repeat );
+
+static int g_stop_spread_not_stopped_errors;
+static int g_stop_spread_asserts;
+
+static void stop_spread_error_capture( void *, enum rocketnet_log_level_t level, const char * message, size_t )
+{
+    if ( level == ROCKETNET_LOG_LEVEL_ERROR && strstr( message, "not stopped" ) != NULL )
+        g_stop_spread_not_stopped_errors++;
+}
+
+static void stop_spread_assert_capture( const char *, const char *, const char *, int )
+{
+    g_stop_spread_asserts++;
+}
+
+// Two misuses as a release build meets them, with the debug assert captured:
+// destroy of a transport that is not stopped says so in an error and keeps
+// the transport, and a NULL user data buffer is refused and counted, never
+// written through.
+static void test_server_transport_misuse_refused_without_asserts()
+{
+    stop_spread_fixture_t * f = new stop_spread_fixture_t();
+    f->capacity = 64;
+
+    rocketnet_server_transport_io_operations_t operations;
+    rocketnet_server_transport_t * server = stop_spread_server( f, &operations, 1, true );
+
+    const rocketnet_assert_function_t saved_assert = rn_assert_function;
+    const enum rocketnet_log_level_t saved_level = rocketnet_log_level_current();
+    g_stop_spread_not_stopped_errors = 0;
+    g_stop_spread_asserts = 0;
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+    rocketnet_log_function( stop_spread_error_capture, NULL );
+    rocketnet_assert_function( stop_spread_assert_capture );
+
+    rocketnet_server_transport_destroy( server );
+    const int destroy_errors = g_stop_spread_not_stopped_errors;
+
+    const uint64_t misuse = rocketnet_api_misuse_count();
+    const bool user_data_read = rocketnet_server_transport_client_user_data( server, 0, NULL );
+
+    rocketnet_assert_function( saved_assert );
+    rocketnet_log_function( NULL, NULL );
+    rocketnet_log_level( saved_level );
+
+    rocketnet_unit_check( destroy_errors == 1 );
+    rocketnet_unit_check( !user_data_read );
+    rocketnet_unit_check( rocketnet_api_misuse_count() == misuse + 1 );
+    rocketnet_unit_check( g_stop_spread_asserts == ( ROCKETNET_ASSERTS ? 2 : 0 ) );
+    rocketnet_unit_check( rocketnet_server_transport_num_connected_clients( server ) == 1 );
+
+    rn_test_server_transport_stop_and_destroy( server );
+    delete f;
+}
+REGISTER_UNIT_TEST( test_server_transport_misuse_refused_without_asserts );

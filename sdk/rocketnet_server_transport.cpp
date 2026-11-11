@@ -2360,7 +2360,10 @@ void rocketnet_server_transport_destroy( struct rocketnet_server_transport_t * s
 
     rocketnet_assert( rocketnet_server_transport_stopped( server_transport ) );
     if ( !rocketnet_server_transport_stopped( server_transport ) )
+    {
+        rocketnet_error( "rocketnet_server_transport_destroy: the transport is not stopped; call rocketnet_server_transport_stop and poll rocketnet_server_transport_stopped before destroy" );
         return;
+    }
 
     // the server's keys: its secret key and both cookie keys. The session
     // keys are wiped with the encryption map below; nothing else here is a
@@ -3837,10 +3840,9 @@ uint64_t rocketnet_server_transport_client_id( struct rocketnet_server_transport
 
 bool rocketnet_server_transport_client_user_data( struct rocketnet_server_transport_t * server_transport, int client_index, uint8_t * user_data )
 {
-    if ( !rocketnet_api_null_guard( server_transport ) )
+    if ( !rocketnet_api_null_guard( server_transport ) || !rocketnet_api_null_guard( user_data ) )
         return false;
     rocketnet_assert( server_transport );
-    rocketnet_assert( user_data );
 
     const struct rocketnet_client_slots_t * slots = server_transport->protocol.client_slots;
     if ( !rocketnet_client_slots_connected( slots, client_index ) )
