@@ -1,4 +1,4 @@
-# RN-1: RocketNet connection layer
+| failed-signature budget | `90` | failed verifications per window | default failed Ed25519 verifications, and refusals recorded as failures by item 12, one server takes in one failed-signature window |# RN-1: RocketNet connection layer
 
 Version: 1.0<br>
 Status: normative<br>
@@ -3447,6 +3447,12 @@ an input ([t1.4 Conventions](#t1.4)).
     the budget is spent and the server can record no further sources; the
     verifications such requests cost are bounded by the handshake work budget
     of item 11.
+    A request whose signature verifies and that is then refused because its
+    sealed private block does not open, its sealed fields disagree with the
+    signed fields, or its client ephemeral key is a small-order point MUST be
+    recorded against its source as a failure, exactly as a failed
+    verification is. A request refused because its client id already holds a
+    slot, or denied because the server is full, MUST NOT be recorded.
  13. A server MUST refuse a request whose token identifier is claimed by a
      different source address, and one that finds no free
      encryption mapping slot, before any signature, seal or keypair work. The

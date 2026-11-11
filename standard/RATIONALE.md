@@ -1989,3 +1989,8 @@ It differs from the text shipped with v1.0.0 in these places:
   held in a fixed bitmap under a keyed hash; a request owed a cookie past either limit is
   ignored and counted as `CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED`, and neither limit
   spends the handshake work budget.
+- [RN-1 t17 Timing and defaults](TRANSPORT.md#t17), item 12: a request whose signature
+  verifies and is then refused for a sealed block that does not open, sealed fields that
+  disagree with the signed fields, or a small-order client key is recorded against its
+  source as a failed verification is; a client id already connected and a full server's
+  denial record nothing.

@@ -337,6 +337,7 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
                                                     const struct rocketnet_connect_token_private_t * private_data,
                                                     const uint8_t * token_identifier,
                                                     uint64_t token_expire_timestamp,
+                                                    uint64_t current_timestamp,
                                                     int32_t timeout_seconds,
                                                     double current_time,
                                                     int fail_denied_writer,
@@ -700,9 +701,12 @@ static int rocketnet_server_protocol_process_connection_request_known( struct ro
 
     // the authenticity check: the signature, and only the signature. the
     // per-source failed-verify budget gates it: a signature that fails is
-    // charged to its source, which is then refused here. a request whose
-    // signature verifies and is refused later charges nothing to its source;
-    // the per-update handshake work budget below is what bounds those.
+    // charged to its source, which is then refused here, and so is a request
+    // whose signature verifies and is then refused for what its sender chose:
+    // a sealed block that does not open, sealed fields that disagree, a
+    // small-order key (proofs/tla/RNSecurityTables.tla ChargedRefusal). a
+    // refusal the sender does not choose (a client id already connected, a
+    // full server) charges nothing; the handshake work budget bounds those.
 
     if ( !rocketnet_signature_verify_budget_allow( &server->signature_verify_budget, from, current_timestamp ) )
     {
@@ -801,6 +805,7 @@ static int rocketnet_server_protocol_process_connection_request_known( struct ro
     if ( !rocketnet_open_connect_token_private( &private_data, signed_connect_data, server->server_public_key, server->server_secret_key ) )
     {
         rocketnet_used_token_history_claim_release( server->used_token_history, token_identifier, from );
+        rocketnet_signature_verify_budget_record_failure( &server->signature_verify_budget, from, current_timestamp );
         rocketnet_debug( "server ignored connection request. could not open sealed private block" );
         counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_OPEN_SEALED_BLOCK]++;
         return ROCKETNET_SERVER_PROCESS_IGNORED;
@@ -812,7 +817,7 @@ static int rocketnet_server_protocol_process_connection_request_known( struct ro
 
     int result = rocketnet_server_process_opened_request( server, from, connection_salt, client_ephemeral_public_key,
                                                           signed_connect_data, &private_data, token_identifier,
-                                                          token_expire_timestamp, timeout_seconds,
+                                                          token_expire_timestamp, current_timestamp, timeout_seconds,
                                                           current_time, fail_denied_writer, replace_index, response_packet, response_bytes );
 
     sodium_memzero( &private_data, sizeof( private_data ) );
@@ -839,6 +844,7 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
                                                     const struct rocketnet_connect_token_private_t * private_data,
                                                     const uint8_t * token_identifier,
                                                     uint64_t token_expire_timestamp,
+                                                    uint64_t current_timestamp,
                                                     int32_t timeout_seconds,
                                                     double current_time,
                                                     int fail_denied_writer,
@@ -850,6 +856,7 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
 
     if ( !rocketnet_connect_token_private_consistent( private_data, signed_connect_data ) )
     {
+        rocketnet_signature_verify_budget_record_failure( &server->signature_verify_budget, from, current_timestamp );
         rocketnet_debug( "server ignored connection request. sealed fields disagree with signed fields" );
         counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_SEALED_MISMATCH]++;
         return ROCKETNET_SERVER_PROCESS_IGNORED;
@@ -944,6 +951,7 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
         {
             sodium_memzero( server_ephemeral_secret_key, sizeof( server_ephemeral_secret_key ) );
             sodium_memzero( &keys, sizeof( keys ) );
+            rocketnet_signature_verify_budget_record_failure( &server->signature_verify_budget, from, current_timestamp );
             rocketnet_debug( "server ignored connection request. client ephemeral key is a small order point" );
             counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_SMALL_ORDER_KEY]++;
             return ROCKETNET_SERVER_PROCESS_IGNORED;

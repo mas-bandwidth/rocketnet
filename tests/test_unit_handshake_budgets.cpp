@@ -27,6 +27,13 @@
 #include "rocketnet_keys.h"
 #include "rocketnet_ack.h"
 
+// Match the header to the sodium implementation linked into the SDK.
+#if defined( ROCKETNET_USE_SYSTEM_SODIUM )
+#include <sodium.h>
+#else
+#include "../sodium/sodium.h"
+#endif // #if defined( ROCKETNET_USE_SYSTEM_SODIUM )
+
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -519,6 +526,168 @@ static void test_handshake_refused_source_spends_no_work_budget()
 }
 
 REGISTER_UNIT_TEST( test_handshake_refused_source_spends_no_work_budget );
+
+// The refusals past the verify that the sender makes for itself charge the
+// failed-signature budget as a failed signature does (standard/TRANSPORT.md
+// t17 item 12; proofs/tla/RNSecurityTables.tla ChargedRefusal): a sealed
+// block that does not open and a small-order client key. Such a request
+// carries a token whose signature verifies, so without the charge one source
+// with one valid token spends the work budget, a verify, a sealed-box open and
+// a key exchange on every request of every update.
+
+#define BUDGETS_REFUSE_SMALL_ORDER_KEY 0
+#define BUDGETS_REFUSE_SEALED_BLOCK    1
+
+static void budgets_build_refused_request( uint8_t * request, int index, const struct rocketnet_address_t * address,
+                                           const uint8_t * cookie_key, int refusal )
+{
+    budgets_build_request( request, index, address, cookie_key );
+
+    const int key_offset = ROCKETNET_PREFILTER_BYTES + ROCKETNET_COOKIE_FIELD_BYTES + ROCKETNET_CONNECTION_SALT_BYTES;
+    uint8_t * signed_data = request + key_offset + ROCKETNET_KEY_BYTES;
+
+    if ( refusal == BUDGETS_REFUSE_SMALL_ORDER_KEY )
+    {
+        // the client's ephemeral key is outside the signed data: zero is a
+        // small-order point, refused at the key exchange
+        memset( request + key_offset, 0, ROCKETNET_KEY_BYTES );
+        return;
+    }
+
+    // a sealed block that does not open, under a signature that verifies
+    struct rocketnet_signed_connect_data_t fields;
+    rocketnet_read_signed_connect_data( &fields, signed_data );
+    fields.sealed_private_block[0] ^= 1;
+    rocketnet_write_signed_connect_data( &fields, signed_data );
+    check( crypto_sign_detached( signed_data + ROCKETNET_SIGNED_CONNECT_DATA_BYTES, NULL, signed_data,
+                                 ROCKETNET_SIGNED_CONNECT_DATA_BYTES, rocketnet_test_backend_secret_key ) == 0 );
+}
+
+static int budgets_send( struct budgets_server_t * test, const struct rocketnet_address_t * address,
+                         const uint8_t * request, uint64_t timestamp, double time, int * response_bytes )
+{
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    *response_bytes = 0;
+    return rocketnet_server_protocol_process_connection_request( &test->server, address, request,
+                                                                 ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,
+                                                                 timestamp, time, response, response_bytes );
+}
+
+static void budgets_charged_refusal_limits_its_source( int refusal )
+{
+    struct budgets_server_t test;
+    budgets_server_setup( &test );
+    test.server.handshakes_per_update = ROCKETNET_SERVER_MAX_HANDSHAKES_PER_UPDATE;
+
+    const int reason = refusal == BUDGETS_REFUSE_SMALL_ORDER_KEY ? ROCKETNET_COUNTER_CONNECTION_REQUEST_SMALL_ORDER_KEY
+                                                                 : ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_OPEN_SEALED_BLOCK;
+    const uint64_t budget = (uint64_t) ROCKETNET_SIGNATURE_VERIFY_FAILURE_BUDGET;
+    const int sent = 100;
+
+    struct rocketnet_address_t source;
+    check( rocketnet_address_parse( &source, "10.6.0.1:56789" ) );
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    budgets_build_refused_request( request, 1, &source, test.server.cookie_key, refusal );
+
+    // one window, one update: the source is verified until the window's
+    // budget is spent, then refused before the verify and the work budget
+
+    for ( int i = 0; i < sent; i++ )
+    {
+        int response_bytes = 0;
+        check( budgets_send( &test, &source, request, ROCKETNET_TEST_CREATE_TS, 1000.0, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+        check( response_bytes == 0 );
+    }
+
+    check( test.counters.values[reason] == budget );
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT] == (uint64_t) sent - budget );
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_DID_NOT_VERIFY] == 0 );
+    check( test.server.counters->handshakes_processed_this_update == budget );
+
+    // an honest source in the same update is still verified and challenged
+    {
+        uint8_t honest[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+        budgets_build_request( honest, 2, &test.client_address, test.server.cookie_key );
+        int response_bytes = 0;
+        check( budgets_send( &test, &test.client_address, honest, ROCKETNET_TEST_CREATE_TS, 1000.0, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
+        check( response_bytes == ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES );
+        check( test.server.counters->handshakes_processed_this_update == budget + 1 );
+    }
+
+    // once the window rolls over the source is verified again
+    {
+        const uint64_t later = ROCKETNET_TEST_CREATE_TS + (uint64_t) ROCKETNET_SIGNATURE_VERIFY_FAILURE_WINDOW_SECONDS;
+        // a cookie current at that time, for the same address and salt
+        uint8_t cookie_mac[ROCKETNET_COOKIE_MAC_BYTES];
+        check( rocketnet_generate_cookie_mac( cookie_mac, &source, rocketnet_test_salt, later + 3, test.server.cookie_key ) );
+        uint8_t * cookie = request + ROCKETNET_PREFILTER_BYTES;
+        rocketnet_write_uint64( &cookie, later + 3 );
+        memcpy( cookie, cookie_mac, ROCKETNET_COOKIE_MAC_BYTES );
+
+        rocketnet_server_protocol_update( &test.server, 1010.0 );
+        int response_bytes = 0;
+        check( budgets_send( &test, &source, request, later, 1010.0, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+        check( test.counters.values[reason] == budget + 1 );
+        check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT] == (uint64_t) sent - budget );
+        check( test.server.counters->handshakes_processed_this_update == 1 );
+    }
+
+    budgets_server_teardown( &test );
+}
+
+static void test_handshake_small_order_key_charges_failure_budget() { budgets_charged_refusal_limits_its_source( BUDGETS_REFUSE_SMALL_ORDER_KEY ); }
+static void test_handshake_unopened_sealed_block_charges_failure_budget() { budgets_charged_refusal_limits_its_source( BUDGETS_REFUSE_SEALED_BLOCK ); }
+REGISTER_UNIT_TEST( test_handshake_small_order_key_charges_failure_budget );
+REGISTER_UNIT_TEST( test_handshake_unopened_sealed_block_charges_failure_budget );
+
+// The refusals past the verify that the sender does not choose charge
+// nothing: a client id already connected, and a full server's denial. Sent
+// 100 times in one window from one source, neither is ever limited.
+
+static void budgets_uncharged_refusal_never_limits( int full_server )
+{
+    struct budgets_server_t test;
+    budgets_server_setup( &test );
+    test.server.handshakes_per_update = ROCKETNET_SERVER_MAX_HANDSHAKES_PER_UPDATE;
+
+    uint8_t user_data[ROCKETNET_USER_DATA_BYTES] = { 0 };
+    if ( full_server )
+    {
+        for ( int i = 0; i < 4; ++i )
+            check( rocketnet_client_slots_assign( test.server.client_slots, (uint64_t) ( 100 + i ), -1, (uint64_t) ( 100 + i ), user_data ) >= 0 );
+    }
+    else
+    {
+        check( rocketnet_client_slots_assign( test.server.client_slots, 1, -1, 1, user_data ) >= 0 );
+    }
+
+    struct rocketnet_address_t source;
+    check( rocketnet_address_parse( &source, "10.6.0.2:56789" ) );
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    budgets_build_request( request, 1, &source, test.server.cookie_key );
+
+    const int sent = 100;
+    for ( int i = 0; i < sent; i++ )
+    {
+        int response_bytes = 0;
+        const int result = budgets_send( &test, &source, request, ROCKETNET_TEST_CREATE_TS, 1000.0, &response_bytes );
+        check( result == ( full_server ? ROCKETNET_SERVER_PROCESS_SEND_DENIED : ROCKETNET_SERVER_PROCESS_IGNORED ) );
+        check( response_bytes == ( full_server ? ROCKETNET_CONNECTION_DENIED_WIRE_BYTES : 0 ) );
+    }
+
+    const int reason = full_server ? ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_SLOTS
+                                   : ROCKETNET_COUNTER_CONNECTION_REQUEST_CLIENT_ID_ALREADY_CONNECTED;
+    check( test.counters.values[reason] == (uint64_t) sent );
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT] == 0 );
+    check( test.server.signature_verify_budget.failure_count == 0 );
+
+    budgets_server_teardown( &test );
+}
+
+static void test_handshake_client_id_connected_never_limits() { budgets_uncharged_refusal_never_limits( 0 ); }
+static void test_handshake_full_server_denial_never_limits() { budgets_uncharged_refusal_never_limits( 1 ); }
+REGISTER_UNIT_TEST( test_handshake_client_id_connected_never_limits );
+REGISTER_UNIT_TEST( test_handshake_full_server_denial_never_limits );
 
 // The four other cheap refusals between the cookie and the verify spend none
 // of the handshake work budget either (standard/TRANSPORT.md t12 rule 9;

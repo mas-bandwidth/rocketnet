@@ -1,3 +1,4 @@
+| `BrokenNoCharge.cfg` | `ChargePastVerify <- MCNoChargePastVerify` (`FALSE`), ChargeSpec | `HonestConnectsUnderFlood` |
 # RNSecurityTables
 
 > STANDARD.md citations in this file are to the retired draft, kept at commit 96da6fb36107.
@@ -205,6 +206,22 @@ send rate and the arrival order of one update provide in the code.
 `test_mass_join_spreads_handshakes_across_updates` pin the code: a burst
 over the budget is spread across updates and every client is admitted.
 
+`ChargeSpec` is the refusal past the verify that charges the
+failed-signature budget: one sender with a valid token whose sealed
+block does not open, or whose key is small-order, inside one window
+(the clock is held). `ChargedRefusal` spends one unit of the work
+budget, as every verify does, and records a failure. Once the window's
+budget is spent the sender is refused before the work budget, so the
+honest request stays enabled and, under weak fairness only, connects
+(`Charge.cfg`). `BrokenNoCharge.cfg` records nothing, the code before
+2026-11-10: the sender takes the whole work budget ahead of the honest
+request in every update of the window, and `HonestConnectsUnderFlood`
+fails. `test_handshake_small_order_key_charges_failure_budget` and
+`test_handshake_unopened_sealed_block_charges_failure_budget` pin the
+code; `test_handshake_client_id_connected_never_limits` and
+`test_handshake_full_server_denial_never_limits` pin the refusals that
+charge nothing.
+
 ## Findings
 
 Each finding is verified by hand against the code. The model lists the
@@ -257,6 +274,7 @@ Each reversed witness has a committed configuration registered in
 `Flood.cfg` is FloodSpec's passing control: `FloodInvariants` (with
 `FloodWindowBounded`) and `HonestConnectsUnderFlood` hold.
 `FloodBudgetOne.cfg` is the same control at `VerifyBudget = 1`.
+`Charge.cfg` is ChargeSpec's passing control.
 
 Refresh all nineteen cases through the pinned `tlacheck` runner and merge with
 `--keep proofs/tla/RUNS.tsv` as `README.md` describes. The measured ledger contains
