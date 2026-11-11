@@ -207,7 +207,7 @@ UnsentFirst == FALSE
 RoomOne == 1
 RoomTwo == 2
 PendingLong == 2 * Timeout + 2
-PendingShort == 4
+PendingShort == 2
 SmallOff == FALSE
 UnsentFirstOn == TRUE
 
