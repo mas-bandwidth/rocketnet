@@ -44,6 +44,57 @@ besides the build dependencies each job checks by name:
   `qemu-s390x-static`;
 - for `distro-container`: rootless podman.
 
+### Big-endian checks
+
+Every big-endian run is emulated s390x. [PLATFORMS.md, Big-endian
+coverage](PLATFORMS.md#big-endian-coverage) is the claim; these are the checks
+behind it.
+
+Every commit, the `big endian s390x` leg in `ci.yml`, cross-compiled and run
+under qemu-user, with no socket:
+
+- the library and the whole unit suite compile for s390x, XDP included, and
+  the embedded XDP object must be big-endian (`cmake/CheckXdpObjectByteOrder.cmake`
+  reads its ELF data encoding and fails the build otherwise);
+- the XDP program compiles for `bpfeb` against the s390x kernel headers, its
+  object is checked by the same script, and a negative control shows the
+  script refuses the build machine's byte order;
+- `tools/bigendian/wire_check.cpp` and `test_sodium`;
+- `tools/bigendian/run_byte_cases.sh bin/test`: every case of the standard's
+  byte vectors (`tests/test_unit_standard_*.cpp`,
+  `tests/test_unit_connect_token_vectors.cpp`) and every case of the XDP
+  filter compiled as host C (`tests/test_unit_xdp_filter_host.cpp`), one
+  process each. A case named in those files but not built fails the step. The
+  host-C shim (`tests/xdp_host/`) takes the target's byte order: the kernel's
+  `<asm/byteorder.h>` for `__constant_htons` and the header bitfields, and
+  `bpf_ntohs` defined from `__BYTE_ORDER__` as libbpf defines it. About 18
+  seconds on a fleet bench.
+
+Every commit, the `lint` job runs `tools/check_byte_order.py`, which refuses
+in sdk/ (the XDP program included) a byte swap outside a byte-order
+preprocessor branch, a host-order read of wire bytes outside its reasoned
+allow list, and a network-order conversion of netlink data. `--self-test`
+holds its red and green controls.
+
+Nightly, `nightly-bigendian-system.yml` in an s390x guest under
+qemu-system-s390x: `./bin/test` (the XDP filter cases included, compiled
+natively), `./bin/functional` on the auto ladder and with portable pinned, then
+`tools/bigendian/run_interop.sh`: `bigendian_interop`
+(`tools/bigendian/interop.c`) over real sockets, a big-endian server with
+three little-endian clients on the x86-64 runner, then a little-endian server
+with three big-endian clients. Each client sends unreliable and
+reliable-ordered messages and one 48 KiB message (fragmented); the server
+checks every byte, the sender's index and the token's client id and echoes
+each message; the client checks the echoes and disconnects. A wire field
+written in host order that no byte vector covers passes between two
+big-endian ends and fails here. The default config with three clients (about
+104 MB) fits the guest; the light profile caps a message at 1415 bytes, too
+small for the fragmented message.
+
+Not covered on big-endian: the XDP data plane (no big-endian host attaches the
+program; the guest has no clang, so XDP is compiled out there), the io_uring
+rung, and real hardware.
+
 ### Static-analysis evidence limit
 
 The GCC wrapper (`tools/run_static.py`) analyzes its selected translation
