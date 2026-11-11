@@ -2978,6 +2978,25 @@ or `client redundant disconnect packets` row of
 each carrying the current ack block. It MUST then release its state
 immediately, without waiting for an acknowledgement.
 
+A server's burst is sent within its send limits, so it MAY leave over later
+updates and MAY be withheld; the slot reset and the release of state are
+never delayed by it. A server seals disconnect packets within a whole-server
+allowance per update (an implementation field of
+[t2.3 Configuration surface](#t2.3); the reference implementation's
+`disconnect_packets_per_update`) and within its transport's send room. When
+the whole burst does not fit in this update, or earlier bursts still wait,
+the burst waits, holding the ack block, first sequence, salt and send key
+taken at the disconnect, and later updates seal its packets at its
+consecutive sequences. A running server keeps at most `max_clients` bursts
+waiting; a burst beyond that is not sent and MUST be counted as
+`DISCONNECT_BURST_DROPPED`. A burst packet the transport refuses is counted
+under that refusal's counter of
+[t18 Error handling and counters](#t18); when it refuses the destination,
+the rest of that burst is not sent. A connected slot with no address to send
+to ends with no burst. When a server stops, every connected client's burst
+waits and each stop step seals what the send room takes. The timeout of
+[t13.2 Timeout](#t13.2) stands behind every burst that is withheld.
+
 A client MUST send the burst only when it holds session keys: from `sending connection response` and `connected`. Outside those states it releases its
 state with no packet.
 
@@ -3009,7 +3028,8 @@ the slot's next connection is established, so an application can read why
 the previous connection ended.
 
 When a server stops it MUST disconnect every connected client with the
-redundant burst of [t13.3 Disconnect](#t13.3) and reset every slot. A server
+redundant burst of [t13.3 Disconnect](#t13.3), within the send limits that
+section states, and reset every slot. A server
 that starts again MUST begin with every slot free, no key or sequence from
 the previous run, and a fresh used-token history.
 
