@@ -199,8 +199,9 @@ int rn_packet_builder_write( struct rn_packet_builder_t * builder, struct rn_pac
 
 void rn_packet_builder_commit( struct rn_packet_builder_t * builder, int packet_index, uint64_t packet_id, double now );
 
-// Recovers a packet the transport refused to finish (standard/MESSAGES.md m9.1): its numbers keep their assignment and go to the head of the
-// resend FIFO, due now, so the next update resends them first.
+// Recovers a packet the transport refused to finish (standard/MESSAGES.md m9.1): its numbers keep their assignment and are due now.
+// A resend goes back on the wire as its class's sent mark, so the next write plans it as that class's first retransmit;
+// a first send stays never sent, at the head of its FIFO ahead of the later first sends.
 
 void rn_packet_builder_packet_failed( struct rn_packet_builder_t * builder, int packet_index, double now );
 

@@ -101,13 +101,18 @@ struct rn_window_ack_t
     // delay class (standard/MESSAGES.md m9.3; proofs/tla/RNResendTiming.tla
     // NoDueRecordHeld): single-packet records, and the chunks of a
     // block (a record whose send descriptor has more than one fragment). Each
-    // is ordered by its entries' sequence keys and walked from its head while due.
+    // is its numbers never sent (a refused first send among them), then its
+    // numbers on the wire by last send from its sent mark, a refused resend
+    // first at its due-now stamp (proofs/tla/RNResendFifoLayout.tla MarkMatch
+    // and Ordered). The walk takes the numbers on the wire while due, then the others.
     uint32_t resend_head;           // oldest slot in the small-record sequence (0..W-1), or RN_RESEND_NONE
     uint32_t resend_tail;           // newest slot in the small-record sequence (0..W-1), or RN_RESEND_NONE
     uint32_t resend_count;          // number of slots sequenced in both resend sequences
     uint32_t chunk_head;            // oldest slot in the chunk sequence (0..W-1), or RN_RESEND_NONE
     uint32_t chunk_tail;            // newest slot in the chunk sequence (0..W-1), or RN_RESEND_NONE
-    uint32_t walk_visits;           // FIFO entries the last resend walk examined (O(due): due + one stop per FIFO)
+    uint32_t resend_sent;           // first slot of the small-record sequence on the wire, or RN_RESEND_NONE
+    uint32_t chunk_sent;            // first slot of the chunk sequence on the wire, or RN_RESEND_NONE
+    uint32_t walk_visits;           // FIFO entries the last resend walk examined (O(due): due, one stop per class on the wire, one at a full plan)
 
     uint64_t pkt_head;              // oldest live or un-reclaimed slot in sent_packets
     uint64_t pkt_tail;              // next slot to write in sent_packets (pkt_tail - pkt_head <= P)
@@ -176,10 +181,20 @@ static inline double rn_window_ack_class_delay( const rn_window_ack_t * ack, boo
 uint32_t rn_window_ack_resend_first( const rn_window_ack_t * ack, bool chunk );
 uint32_t rn_window_ack_resend_next( const rn_window_ack_t * ack, bool chunk, uint32_t slot );
 
+// The first slot of a class's resend sequence whose number is on the wire
+// (sent, or a refused resend at its due-now stamp), or RN_RESEND_NONE: every
+// slot before it is never sent and due now without a time test, every slot
+// from it on is ordered by last send, a refused resend's stamp below every
+// send time.
+uint32_t rn_window_ack_resend_sent( const rn_window_ack_t * ack, bool chunk );
+
 // Links a never-sent number into its class's resend FIFO right after `after`
 // (a slot of the same FIFO), or at that FIFO's head when `after` is
 // RN_RESEND_NONE. rn_ordered_write parks new numbers behind the never-sent
-// ones already waiting, ahead of every number that was sent.
+// ones already waiting, ahead of every number on the wire: `after` is a
+// number never sent, so the class's sent mark stays where it is
+// (proofs/tla/RNResendFifoLayout.tla Park and its reversed witness
+// MCRNResendFifoLayoutBrokenParkAfterOnWire.cfg).
 void rn_window_ack_park( rn_window_ack_t * ack, uint32_t after, uint32_t slot_index );
 
 // Initializes the sent-packet map, resend FIFO, and RTT estimator over a
@@ -242,9 +257,13 @@ uint32_t rn_window_ack_on_acks( rn_window_ack_t * ack, const uint64_t * packet_i
 
 // Recovers reliable numbers from a packet that finish_packet refused
 // (standard/MESSAGES.md m9.1). The packet is not entered in the sent
-// map; its reliable numbers keep their assigned numbers and ring offsets, are
-// marked due now, and go to the head of the resend FIFO so the next update
-// resends them first.
+// map; its reliable numbers keep their assigned numbers and ring offsets and
+// are due now. A number on the wire before keeps its first send (its timeout
+// clock), takes a due-now stamp and goes back on the wire as its class's
+// sent mark, so the next write plans it as that class's first retransmit,
+// ahead of the numbers never sent (proofs/tla/RNResendTiming.tla
+// RetryPlanned). A number never sent stays never sent, with no clock, at
+// the head of its class ahead of the numbers never sent after it.
 void rn_window_ack_packet_failed( rn_window_ack_t * ack, const uint64_t * numbers, uint32_t count, double now );
 
 // Checks the per-connection reliable timeout before resending (standard/MESSAGES.md
