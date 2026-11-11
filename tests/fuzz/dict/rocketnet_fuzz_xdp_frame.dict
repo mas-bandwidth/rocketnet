@@ -1,0 +1,35 @@
+# Dictionary for tests/fuzz/rocketnet_fuzz_xdp_frame.cpp. Entries are the
+# values the frame reader branches on (sdk/rocketnet_xdp_frame.h).
+
+# served family (input[0] % 3): IPv4, IPv6, either
+served_ipv4="\x00"
+served_ipv6="\x01"
+served_either="\x02"
+
+# ethertypes at bytes 12-13: IPv4, IPv6, ARP
+ethertype_ipv4="\x08\x00"
+ethertype_ipv6="\x86\xdd"
+ethertype_arp="\x08\x06"
+
+# the IPv4 version and header length, and the IPv6 version nibble
+ipv4_version_ihl="\x45"
+ipv4_options="\x46"
+ipv6_version="\x60"
+
+# next header / protocol: UDP, TCP, and the IPv6 extension headers
+protocol_udp="\x11"
+protocol_tcp="\x06"
+extension_hop_by_hop="\x00"
+extension_routing="\x2b"
+extension_fragment="\x2c"
+extension_destination="\x3c"
+extension_ah="\x33"
+extension_esp="\x32"
+
+# a broadcast destination MAC
+broadcast="\xff\xff\xff\xff\xff\xff"
+
+# UDP lengths: under the header, the header alone, the smallest server packet
+udp_length_short="\x00\x07"
+udp_length_header="\x00\x08"
+udp_length_smallest="\x00\x29"

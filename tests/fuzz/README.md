@@ -18,6 +18,9 @@ connect tokens use only the published development keys from
 | `rocketnet_fuzz_receive_structured` | a real client and server through the handshake into the session, input as a decision stream | `corpus_receive_structured/` | `dict/rocketnet_fuzz_receive_structured.dict` |
 | `rocketnet_fuzz_round_trip` | every wire form encoded then decoded; the values read must equal the values written | `corpus_round_trip/` | `dict/rocketnet_fuzz_round_trip.dict` |
 | `rocketnet_fuzz_config` | `rocketnet_config_apply_env` over every env-backed config field | `corpus_config/` | `dict/rocketnet_fuzz_config.dict` |
+| `rocketnet_fuzz_xdp_frame` | the XDP transport's raw Ethernet frame reader (`rocketnet_xdp_frame_parse`, `rocketnet_xdp_frame_receive`), with oracles on the payload view and the drop counters | `corpus_xdp_frame/` | `dict/rocketnet_fuzz_xdp_frame.dict` |
+| `rocketnet_fuzz_uring_recvmsg` | the io_uring multishot recvmsg buffer (`rocketnet_uring_recvmsg_parse`), then the source conversion and GRO split the receive completion makes; Linux only, a no-op elsewhere | `corpus_uring_recvmsg/` | `dict/rocketnet_fuzz_uring_recvmsg.dict` |
+| `rocketnet_fuzz_gateway_netlink` | the XDP gateway discovery's rtnetlink reply parsers (`rocketnet_gateway_netlink_parse_route`, `_parse_neighbor`); Linux only, a no-op elsewhere | `corpus_gateway_netlink/` | `dict/rocketnet_fuzz_gateway_netlink.dict` |
 | `rocketnet_fuzz_server_transport` | the server's real receive loop (`rocketnet_server_transport_update`) and the message server above it | `corpus_server_transport/` | `dict/rocketnet_fuzz_server_transport.dict` |
 | `rocketnet_fuzz_client_transport` | the client's real receive loop (`rocketnet_client_transport_update`) and the message client above it | `corpus_client_transport/` | `dict/rocketnet_fuzz_client_transport.dict` |
 | `rocketnet_fuzz_session` | a scripted session (send, tick, drop, duplicate, reorder, corrupt, inject) checked against the DST invariants in `../dst_checks.h` | `corpus_session/` | `dict/rocketnet_fuzz_session.dict` |
@@ -31,7 +34,8 @@ record, and aborts on a `rocketnet-weaker` verdict or a stricter class that
 `tools/differential/README.md` does not document as permitted. It needs the
 pinned netcode checkout to build: the nightly Linux leg checks out
 mas-bandwidth/netcode at tag v1.2.1 into its own path and compiles it the way
-`tools/differential/run.sh` does. The last three are the pair targets. They share
+`tools/differential/run.sh` does. `rocketnet_fuzz_server_transport`,
+`rocketnet_fuzz_client_transport` and `rocketnet_fuzz_session` are the pair targets. They share
 `rocketnet_fuzz_pair.h`: a real message server and message client joined by
 the loopback transport, with the harness standing on the wire between them.
 They run with no sockets, no threads and no clock, and their randomness is
@@ -55,11 +59,11 @@ development library first, then the targets:
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
 cmake --build build --target rocketnet_dev --parallel 4
-make -C tests/fuzz -j 4                 # the ten targets (not the differential)
-make -C tests/fuzz compile              # syntax check of all ten sources on any host
+make -C tests/fuzz -j 4                 # the thirteen targets (not the differential)
+make -C tests/fuzz compile              # syntax check of all thirteen sources on any host
 ```
 
-`tests/fuzz/Makefile` builds the ten targets other than `rocketnet_fuzz_differential` with
+`tests/fuzz/Makefile` builds the thirteen targets other than `rocketnet_fuzz_differential` with
 `-fsanitize=fuzzer,address,undefined`, the same flags and link set as the
 nightly job (`.github/workflows/fuzz-nightly.yml`). One target by hand, as the
 nightly builds it:
@@ -161,7 +165,7 @@ mkdir -p /tmp/corpus_session && cp tests/fuzz/corpus_session/* /tmp/corpus_sessi
 | NDEBUG smoke | `ci.yml` job `fuzz-smoke-ndebug` | Debug, asserts live | `-DNDEBUG` | corpus replay only |
 
 `tools/fuzz_ndebug.sh --seconds 30 --jobs 8` builds the Release library and
-all eleven targets in `build-fuzz-ndebug/`, checks that every `sdk/` compile
+all fourteen targets in `build-fuzz-ndebug/`, checks that every `sdk/` compile
 line carries `-DNDEBUG` and that no library object references the assert
 callback, and fuzzes each target; `--target <name>` runs one. Reproducers
 land in `build-fuzz-ndebug/out/crashes/<target>/` and the script exits 1
@@ -218,7 +222,8 @@ input: the value is refused by the table's range and never clamped.
 `rocketnet_fuzz_session`, `rocketnet_fuzz_round_trip`,
 `rocketnet_fuzz_token_private`, `rocketnet_fuzz_config`,
 `rocketnet_fuzz_connect_token`, `rocketnet_fuzz_receive_structured`,
-`rocketnet_fuzz` and `rocketnet_fuzz_message` each contain a
+`rocketnet_fuzz`, `rocketnet_fuzz_message`, `rocketnet_fuzz_xdp_frame`,
+`rocketnet_fuzz_uring_recvmsg` and `rocketnet_fuzz_gateway_netlink` each contain a
 deterministic seed generator. Set `ROCKETNET_FUZZ_SEED_DIR` and run the
 binary (the libFuzzer build or the replay driver) to use it:
 
@@ -238,7 +243,14 @@ pre-send checks take (raw and structured halves, the signature verdicts, the
 client's flags, window, version, expiry and address-family refusals), and
 `rocketnet_fuzz_receive_structured` writes one seed per packet type the stateful
 receive path dispatches on, from a completed handshake and the real send
-paths. Each seed is replayed through the target before it is written. The
+paths. The three kernel-input generators write the inputs their unit cases
+build: `rocketnet_fuzz_xdp_frame` one frame per receive outcome and per
+refusal (through the real frame builder), `rocketnet_fuzz_uring_recvmsg` one
+buffer per verdict, GRO stride and GRO fault, and
+`rocketnet_fuzz_gateway_netlink` one datagram per parser outcome, the last
+two in the 64-bit Linux layout, held to the uapi headers by `static_assert`
+where those exist; off Linux those two write their seeds without replaying
+them. Each seed is replayed through the target before it is written. The
 generator exits 1 and prints `INCOMPLETE` unless every packet type the
 target's receive loop reads has a seed that raises that type's counter (or,
 for the session target, unless every reliability type is delivered in both
@@ -248,7 +260,7 @@ deterministic, so a regenerated corpus differs only when the code under it
 changed. The generator exits the process itself, from
 `LLVMFuzzerInitialize`, in the libFuzzer build and the replay driver alike:
 libFuzzer ignores that function's return value, and so does the replay
-driver. ci.yml's macOS checks leg, on the nightly tier, runs all ten
+driver. ci.yml's macOS checks leg, on the nightly tier, runs all thirteen
 generators and requires each to exit 0, and requires
 `rocketnet_fuzz_connect_token` and `rocketnet_fuzz_receive_structured` to
 exit 1 with `INCOMPLETE` when a seed is withheld
@@ -305,14 +317,14 @@ commit the minimized input to its corpus as `regress_<name>`.
 
 ## In CI
 
-- `ci.yml` `fuzz-smoke` deterministically replays all ten committed corpora
+- `ci.yml` `fuzz-smoke` deterministically replays all thirteen committed corpora
   through the `fuzz_replay_*` drivers on every push. The time-boxed
   fixed-seed mutation pass moved to `fuzz-nightly.yml`.
 - `fuzz-nightly.yml` builds the libFuzzer targets on Linux, macOS and
   Windows, restores each target's growing corpus from the cache (one cache
   per platform), runs a bounded campaign (`max_total_time`, 900 s by
   default) and uploads any reproducer.
-- `fuzz-nightly.yml` also runs the same ten-target matrix under
+- `fuzz-nightly.yml` also runs the same thirteen-target matrix under
   MemorySanitizer on Linux (`fuzz-msan`): the development library, vendored
   sodium included, is built with the MSan flags and the instrumented libc++
   headers at `-O1`, exactly as `tools/run_msan.sh` does, and each target
