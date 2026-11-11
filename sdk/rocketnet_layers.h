@@ -1594,10 +1594,10 @@ uint64_t rocketnet_message_print_connection_sizing( const struct rocketnet_messa
 // received on channel 0. The reliable types and promoted blocks are bounded
 // by the config's max_message_bytes.
 //
-// A start the connection's region has no room for ends the connection:
-// the server disconnects that client, the client disconnects itself, with the
-// reason ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED, and start returns
-// NULL. The send budget governs the wire, never the queue: a reliable message
+// A start the connection's region has no room for is refused: start returns
+// NULL, the refusal is counted, and the connection goes on (m1.7). Only a
+// region exhausted by the receive side ends the connection with
+// ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED. The send budget governs the wire, never the queue: a reliable message
 // waits for budget and is never dropped; an unreliable one over budget is
 // dropped and counted (MESSAGE_UNRELIABLE_OVER_BUDGET).
 //

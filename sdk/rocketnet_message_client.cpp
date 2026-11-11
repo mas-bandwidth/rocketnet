@@ -6,7 +6,8 @@
 // the client message object: the object core of
 // sdk/rocketnet_message_server.cpp with one connection, over a
 // rocketnet_client_transport_t. Its one connection is bound at create and never
-// bound again; when its region is exhausted the client disconnects itself with
+// bound again; when its region is exhausted (by the receive side; a send with
+// no room is only refused) the client disconnects itself with
 // ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED (R5, proofs/tla/RNConnectionMemory.tla
 // Kick). The spec of the update and release rules is proofs/tla/RNSlots.tla.
 

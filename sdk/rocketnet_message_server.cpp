@@ -1300,7 +1300,8 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
                 rn_region_send_room_exhausted( connection->region, object->is_server, index );
             }
 
-            // proofs/tla/ServerSession.tla MessageEnd: the send kick ends a connected slot of a running server.
+            // proofs/tla/ServerSession.tla MessageEnd: a start on a region the receive side already
+            // exhausted ends the slot here, before the update's kick would; a start with no room is only refused.
             rn_message_object_kick( object, index, connection->send_error );   // R5
         }
 

@@ -1958,7 +1958,8 @@ uint8_t * rocketnet_client_start_message( struct rocketnet_client_t * client, in
 
     uint8_t * pointer = rocketnet_message_client_start( client->connection, channel, reliability_value, max_bytes );
 
-    // a start the connection's message memory cannot hold ends the connection (MESSAGE_MEMORY_EXHAUSTED, proofs/tla/ClientSession.tla MessageEnd)
+    // a start the connection's message memory cannot hold is refused and the connection goes on (m1.7); only a
+    // region already exhausted by the receive side ends it (MESSAGE_MEMORY_EXHAUSTED, proofs/tla/ClientSession.tla MessageEnd)
 
     if ( !pointer )
     {

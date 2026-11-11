@@ -27,10 +27,11 @@
 // a typed carve-out of the region, sized from the connection's config by
 // docs/LOAD.md Table 3's formula.
 //
-// Exhaustion is a counted refusal (MESSAGE_SEND_STORE_FULL,
-// MESSAGE_SEND_QUEUE_FULL), never growth, and it ends the connection: the
-// region takes a sticky exhausted state with the reason
-// ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED, the owner's update reads
+// A send with no room is a counted refusal (MESSAGE_SEND_STORE_FULL,
+// MESSAGE_SEND_QUEUE_FULL), never growth, and the connection goes on
+// (standard/MESSAGES.md m1.7). Only the receive side's broken invariant takes
+// the region to its sticky exhausted state with the reason
+// ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED; the owner's update reads
 // rn_connection_memory_decide and disconnects that connection (a server
 // kicks the slot, a client disconnects itself), and rn_region_reset gives
 // the slot's next client a fresh region (proofs/tla/RNConnectionMemory.tla).
@@ -507,8 +508,8 @@ void rn_region_reset( rn_region_t * region );
 
 // one send's descriptor and store chunk, both or neither. The descriptor
 // index, or RN_DESCRIPTOR_NONE: a full pool counts MESSAGE_SEND_QUEUE_FULL,
-// a full store class MESSAGE_SEND_STORE_FULL, and either exhausts the region
-// (rn_region_exhaust). bytes outside 1..min(max_message_bytes,
+// a full store class MESSAGE_SEND_STORE_FULL; either is a refusal that leaves
+// the region as it was (standard/MESSAGES.md m1.7). bytes outside 1..min(max_message_bytes,
 // RN_STORE_LARGE_BYTES) is the caller's refusal to count, takes nothing here
 // and is not exhaustion.
 uint32_t rn_region_send_alloc( rn_region_t * region, int bytes );
@@ -548,7 +549,7 @@ void rn_region_send_free( rn_region_t * region, uint32_t descriptor );
 // descriptors (send_queue_messages), each of the store's three chunk classes
 // (send_message_buffer_bytes), and the send spans (receive_message_buffer_bytes). A pool fills
 // as start messages take room and empties as the receiver acks them. Running one
-// out ends the connection (R5), so a debug build warns before it does.
+// out refuses starts until room returns (m1.7), so a debug build warns before it does.
 
 #define RN_SEND_ROOM_WARN_PERMILLE      750     // a crossing: the fullest pool reaches 75%
 #define RN_SEND_ROOM_REARM_PERMILLE     500     // the watch rearms once every pool is below 50%
@@ -571,7 +572,7 @@ struct rn_send_room_t
 void rn_region_send_room( const rn_region_t * region, rn_send_room_t * room );
 
 // 1 when a start message of `bytes` bytes would be given room now, so it
-// would not exhaust the region; pure. The pool it would take from (the
+// would not be refused; pure. The pool it would take from (the
 // store class for up to one fragment, the send spans above it): its free
 // bytes and its size, and the free descriptors; each out pointer may be NULL.
 int rn_region_send_fits( const rn_region_t * region, int bytes, uint64_t * free_bytes, uint64_t * pool_bytes, uint32_t * free_messages );
@@ -584,8 +585,8 @@ int rn_region_send_fits( const rn_region_t * region, int bytes, uint64_t * free_
 int rn_region_send_room_watch( rn_region_t * region );
 
 // The debug-build warnings, through the log sink at ROCKETNET_LOG_LEVEL_WARN:
-// a crossing (rn_region_send_room_watch) and an exhaustion just before the
-// kick, each naming the client or the server slot, the room used against its
+// a crossing (rn_region_send_room_watch) and a receive-side exhaustion just
+// before its kick, each naming the client or the server slot, the room used against its
 // limits and the config fields to raise. A release build compiles both to
 // nothing; rn_send_room_warnings is 1 when they are compiled in.
 extern const int rn_send_room_warnings;
@@ -605,7 +606,7 @@ void rn_region_send_room_exhausted( const rn_region_t * region, int is_server, i
 // before the end, and admitted only when it stays clear of the oldest live
 // span's start. Spans are freed in any order; the head moves to the oldest
 // live span. A refusal counts MESSAGE_SEND_STORE_FULL (or QUEUE_FULL) and
-// exhausts the region like rn_region_send_alloc (R5). The descriptor index, or
+// leaves the region as it was, like rn_region_send_alloc (m1.7). The descriptor index, or
 // RN_DESCRIPTOR_NONE.
 uint32_t rn_region_send_alloc_span( rn_region_t * region, int bytes );
 
@@ -626,8 +627,8 @@ uint32_t rn_region_send_alloc_span( rn_region_t * region, int bytes );
 #define RN_SEND_FIT_OK              0   // room: the allocation takes it
 #define RN_SEND_FIT_REFUSED         1   // bytes outside the pool's range: the caller's refusal, not exhaustion
 #define RN_SEND_FIT_EXHAUSTED       2   // the region is already exhausted (sticky until reset)
-#define RN_SEND_FIT_QUEUE_FULL      3   // no free send descriptor: the allocation exhausts the region
-#define RN_SEND_FIT_STORE_FULL      4   // no chunks, or no span placement: the allocation exhausts the region
+#define RN_SEND_FIT_QUEUE_FULL      3   // no free send descriptor: the allocation is refused
+#define RN_SEND_FIT_STORE_FULL      4   // no chunks, or no span placement: the allocation is refused
 
 int rn_region_send_fit_store( const rn_region_t * region, int bytes, uint32_t * out_first );
 int rn_region_send_fit_span( const rn_region_t * region, int bytes, uint32_t * out_start );

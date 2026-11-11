@@ -1339,14 +1339,14 @@ uint8_t * rn_channels_start( struct rn_channels_t * channels, uint32_t channel, 
         return NULL;
     }
 
-    // an exhausted connection sends nothing more: the owner kicks it (R5)
+    // a connection exhausted by the receive side sends nothing more: the owner kicks it (R5)
 
     if ( rn_region_exhausted( region ) || bytes < 1 || bytes > region->max_message_bytes )
     {
         return NULL;
     }
 
-    // the room is the region's, one descriptor and its bytes; no room exhausts it
+    // the room is the region's, one descriptor and its bytes; no room is a counted refusal (m1.7)
 
     const uint32_t d = rn_region_send_take( region, (int) bytes );
     if ( d == RN_DESCRIPTOR_NONE )
@@ -1520,7 +1520,8 @@ bool rn_ordered_announce_config( struct rn_ordered_t * ordered, const struct roc
     const uint32_t d = rn_region_send_alloc( region, ROCKETNET_MESSAGE_CONFIG_BYTES );
     if ( d == RN_DESCRIPTOR_NONE )
     {
-        return false;                                           // no room: the region is exhausted, the owner kicks (R5)
+        rn_region_exhaust( region );                            // no room for the CONFIG: an invariant break, not a send; the owner kicks (R5)
+        return false;
     }
 
     rocketnet_message_write_config_body( rn_region_send_write_pointer( region, d ), body );

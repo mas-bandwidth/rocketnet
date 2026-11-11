@@ -8,6 +8,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <vector>
 
 #include "test_unit_registry.h"
 #include "unit_arena.h"
@@ -736,23 +737,115 @@ static uint32_t schedule_walk( const rn_channels_t * channels, uint32_t channel,
     return n;
 }
 
-static void test_channel_queue_fill_exhausts_the_region()
+// A channel filled to the descriptor pool: the next start is refused and
+// counted (MESSAGE_SEND_QUEUE_FULL), not exhaustion (standard/MESSAGES.md
+// m1.7). The queue keeps every accepted message, its bytes and its order, a
+// refused start changes nothing of the channel, and once the queue is written
+// and acknowledged a start is admitted again.
+
+static void test_channel_queue_fill_refuses_and_keeps_the_queue()
 {
     rocketnet_message_config_t config;
-    rn_arena_t * arena = schedule_arena( &config );
+    rocketnet_message_default_config( &config );
+    config.client_send_kbps = 0;
+    config.server_send_kbps = 0;
+
+    rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof( counters ) );
+
+    rn_arena_t * arena = rn_unit_arena_create( &config, 1, &counters );
     rocketnet_unit_check( arena != NULL );
 
     rn_region_t * region = rn_arena_region( arena, 0 );
-    rn_channels_t channels;
-    rocketnet_unit_check( rn_channels_init( &channels, region, region->num_channels, 0 ) );
+    rn_ordered_t ordered;
+    rocketnet_unit_check( rn_ordered_init( &ordered, region, &config, NULL, 8, ROCKETNET_MESSAGE_SINGLE_BYTES ) );
+    rn_channels_t * channels = &ordered.channels;
 
     uint32_t filled = 0;
-    while ( schedule_enqueue( &channels, 0, 16 ) )
+    while ( schedule_enqueue( channels, 0, 16 ) )
     {
         filled++;
     }
     rocketnet_unit_check( filled == region->queue );
-    rocketnet_unit_check( rn_region_exhausted( region ) );
+    rocketnet_unit_check( region->descriptors_free == 0 );
+    rocketnet_unit_check( channels->pending == RN_DESCRIPTOR_NONE );
+    rocketnet_unit_check( counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL] == 1 );
+    rocketnet_unit_check( counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL] == 0 );
+    rocketnet_unit_check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 0 );
+    rocketnet_unit_check( !rn_region_exhausted( region ) );
+    rocketnet_unit_check( rn_connection_memory_decide( region ) == ROCKETNET_DISCONNECT_REASON_NONE );
+    rocketnet_unit_check( rn_ordered_decide( &ordered ) == ROCKETNET_DISCONNECT_REASON_NONE );
+
+    // the queue holds every accepted message, in order, with its bytes
+
+    std::vector<uint32_t> queued( region->queue + 1 );
+    rocketnet_unit_check( schedule_walk( channels, 0, queued.data(), (uint32_t) queued.size() ) == filled );
+    for ( uint32_t i = 0; i < filled; i++ )
+    {
+        const rn_send_descriptor_t * descriptor = &region->send_descriptors[queued[i]];
+        rocketnet_unit_check( descriptor->in_use );
+        rocketnet_unit_check( descriptor->ordering == i );
+        rocketnet_unit_check( descriptor->bytes == 16 );
+        if ( i > 0 )
+        {
+            rocketnet_unit_check( descriptor->enqueue_ticket > region->send_descriptors[queued[i - 1]].enqueue_ticket );
+        }
+        const uint8_t * data = rn_region_send_write_pointer( region, queued[i] );
+        for ( int b = 0; b < 16; b++ )
+        {
+            rocketnet_unit_check( data[b] == 0x5a );
+        }
+    }
+
+    // a refused start again: the channel and every descriptor are as they were
+
+    const rn_channel_send_t send_before = region->channel_send[0];
+    const std::vector<rn_send_descriptor_t> descriptors_before( region->send_descriptors, region->send_descriptors + region->descriptors_fresh );
+    rocketnet_unit_check( rn_channels_start( channels, 0, ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED, 16 ) == NULL );
+    rocketnet_unit_check( channels->pending == RN_DESCRIPTOR_NONE );
+    rocketnet_unit_check( memcmp( &send_before, &region->channel_send[0], sizeof( send_before ) ) == 0 );
+    rocketnet_unit_check( memcmp( descriptors_before.data(), region->send_descriptors, sizeof( rn_send_descriptor_t ) * descriptors_before.size() ) == 0 );
+    rocketnet_unit_check( counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL] == 2 );
+    rocketnet_unit_check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 0 );
+    rocketnet_unit_check( !rn_region_exhausted( region ) );
+
+    // room returns: the queue is written, each packet acknowledged at once
+
+    alignas( 16 ) static uint8_t frames[8][ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
+    uint8_t * payloads[8];
+    for ( int p = 0; p < 8; p++ )
+    {
+        payloads[p] = frames[p];
+    }
+
+    double now = 1000.0;
+    uint64_t packet_id = 1;
+    for ( int update = 0; update < 100000 && region->descriptors_free < region->queue; update++ )
+    {
+        now += 0.01;
+        const int n = rn_ordered_write( &ordered, now, payloads, 8 );
+        std::vector<uint64_t> ids;
+        for ( int p = 0; p < n; p++ )
+        {
+            rn_ordered_commit( &ordered, p, packet_id, now );
+            ids.push_back( packet_id++ );
+        }
+        if ( !ids.empty() )
+        {
+            rn_ordered_acks( &ordered, ids.data(), (uint32_t) ids.size(), now + 0.001 );
+        }
+    }
+    rocketnet_unit_check( region->descriptors_free == region->queue );
+    rocketnet_unit_check( rn_ordered_decide( &ordered ) == ROCKETNET_DISCONNECT_REASON_NONE );
+
+    // and a start is admitted, next in the channel's order
+
+    rocketnet_unit_check( schedule_enqueue( channels, 0, 16 ) );
+    rocketnet_unit_check( schedule_walk( channels, 0, queued.data(), (uint32_t) queued.size() ) == 1 );
+    rocketnet_unit_check( region->send_descriptors[queued[0]].ordering == filled );
+    rocketnet_unit_check( counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL] == 2 );
+    rocketnet_unit_check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 0 );
+
     rn_unit_arena_destroy( arena );
 }
 
@@ -831,5 +924,5 @@ static void test_channel_config_front_ready_rotation_and_work()
     rn_unit_arena_destroy( arena );
 }
 
-REGISTER_UNIT_TEST( test_channel_queue_fill_exhausts_the_region );
+REGISTER_UNIT_TEST( test_channel_queue_fill_refuses_and_keeps_the_queue );
 REGISTER_UNIT_TEST( test_channel_config_front_ready_rotation_and_work );

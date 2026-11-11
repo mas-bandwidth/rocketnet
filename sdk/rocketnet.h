@@ -617,8 +617,8 @@ enum rocketnet_client_state_t
 
     ROCKETNET_CLIENT_STATE_MESSAGE_NOT_RECEIVED = -13,
 
-    /// The connection's message memory had no room for a message it must not
-    /// drop.
+    /// The connection's receive-side message memory broke its invariant (a
+    /// delivery table full). A send never ends a connection.
 
     ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED = -12,
 
@@ -1317,7 +1317,7 @@ struct rocketnet_client_config_t
     /// public state, the negative ones included. NULL disables the callback.
     /// It runs on the caller thread at the end of connect, update,
     /// disconnect (the one an early destroy makes included), and a start
-    /// message whose memory exhaustion ends the connection. Do not call client
+    /// message that ends the connection. Do not call client
     /// functions from it: a call that changes the client (connect, destroy,
     /// update, send_packets, disconnect, the message, receipt and send rate
     /// calls, network_simulator) made from it is refused at once, leaves the
@@ -1771,8 +1771,8 @@ struct rocketnet_server_config_t
 ///
 /// Reliable messages wait for send budget. Unreliable messages over budget are
 /// dropped and counted in messages_dropped_over_budget.
-/// Running out of message memory ends the connection with
-/// MESSAGE_MEMORY_EXHAUSTED. Ask first with rocketnet_client_can_send_message
+/// A start that finds no message memory is refused (NULL) and counted; the
+/// connection stays up. Ask first with rocketnet_client_can_send_message
 /// or rocketnet_server_can_send_message.
 
 struct rocketnet_message_batch_t;
@@ -2472,8 +2472,8 @@ ROCKETNET_EXPORT const char * rocketnet_client_transport_name( const struct rock
 ///
 /// Needs CONNECTED. A message already open or a bad argument is refused with
 /// NULL. Any send (reliable, or unreliable that finds no room in the send
-/// region) that finds no message memory ends the connection with
-/// MESSAGE_MEMORY_EXHAUSTED and returns NULL. Thread: not thread-safe;
+/// region) that finds no message memory is refused: it returns NULL, is
+/// counted, and the connection stays up. Thread: not thread-safe;
 /// the caller owns the client one thread at a time.
 ///
 /// @param client The client. NULL counts as API misuse and returns NULL.
@@ -3106,8 +3106,8 @@ ROCKETNET_EXPORT const char * rocketnet_disconnect_reason_name( enum rocketnet_d
 /// Needs a running server and a connected client in the slot. A message
 /// already open or a bad argument is refused with NULL. Any send (reliable,
 /// or unreliable that finds no room in the send region) that finds no
-/// message memory disconnects that client with
-/// ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED and returns NULL.
+/// message memory is refused: it returns NULL, is counted for that client,
+/// and the connection stays up.
 /// Thread: not thread-safe; the caller owns the
 /// server one thread at a time.
 ///

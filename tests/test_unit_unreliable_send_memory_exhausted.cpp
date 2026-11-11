@@ -5,9 +5,10 @@
 
 // An unreliable send that finds no room in the connection's send region
 // (after the in-place transport frame path does not take it, or when an
-// oversized unreliable send promotes to its reliable twin) ends the
-// connection with MESSAGE_MEMORY_EXHAUSTED and returns NULL, on both
-// client and server. Step-driven over loopback, no real time, sockets
+// oversized unreliable send promotes to its reliable twin) is refused
+// (m1.7): it returns NULL, is counted on that connection only, and the
+// connection stays up until room returns, on both client and server.
+// Step-driven over loopback, no real time, sockets
 // or threads; time starts at 1000.0.
 
 #include "unit_shutdown.h"
@@ -154,18 +155,76 @@ static void run_unreliable_exhaust_case( enum rocketnet_reliability_t probe_reli
     check( rocketnet_server_client_connected( server, server_slot ) );
     check( rocketnet_server_can_send_message( server, other_slot, 0, probe_reliability, probe_bytes ) );
 
-    // Starting an unreliable send without message memory returns NULL and ends
-    // the connection with MESSAGE_MEMORY_EXHAUSTED on both client and server.
+    // Starting an unreliable send without message memory returns NULL and is
+    // refused (m1.7): counted on that connection only, stats unchanged, and
+    // the connection stays up on both client and server.
+    struct rocketnet_client_stats_t client_before;
+    struct rocketnet_client_stats_t client_after;
+    memset( &client_before, 0, sizeof( client_before ) );
+    memset( &client_after, 0, sizeof( client_after ) );
+    rocketnet_client_stats( clients[0], &client_before );
+    struct rocketnet_server_client_stats_t slot_before;
+    struct rocketnet_server_client_stats_t slot_after;
+    memset( &slot_before, 0, sizeof( slot_before ) );
+    memset( &slot_after, 0, sizeof( slot_after ) );
+    rocketnet_server_client_stats( server, server_slot, &slot_before );
+
     check( rocketnet_client_start_message( clients[0], 0, probe_reliability, probe_bytes ) == NULL );
     check( rocketnet_server_start_message( server, (uint64_t) server_slot, 0, probe_reliability, probe_bytes ) == NULL );
 
+    rocketnet_client_stats( clients[0], &client_after );
+    check( memcmp( &client_before, &client_after, sizeof( client_before ) ) == 0 );
+    rocketnet_server_client_stats( server, server_slot, &slot_after );
+    check( memcmp( &slot_before, &slot_after, sizeof( slot_before ) ) == 0 );
+
+    struct rocketnet_conditions_t conditions;
+    check( rocketnet_client_conditions( clients[0], &conditions, (int) sizeof( conditions ) ) );
+    check( conditions.send_refused == 1 );
+    check( rocketnet_client_conditions( clients[1], &conditions, (int) sizeof( conditions ) ) );
+    check( conditions.send_refused == 0 );
+    check( rocketnet_server_client_conditions( server, server_slot, &conditions, (int) sizeof( conditions ) ) );
+    check( conditions.send_refused == 1 );
+    check( rocketnet_server_client_conditions( server, other_slot, &conditions, (int) sizeof( conditions ) ) );
+    check( conditions.send_refused == 0 );
+
     rocketnet_client_update( clients[0], g_unreliable_exhaust_now );
-    check( rocketnet_client_state( clients[0] ) == ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED );
-    check( !rocketnet_client_can_send_message( clients[0], 0, probe_reliability, probe_bytes ) );
+    check( rocketnet_client_state( clients[0] ) == ROCKETNET_CLIENT_STATE_CONNECTED );
 
     rocketnet_server_update( server, g_unreliable_exhaust_now );
+    check( rocketnet_server_client_connected( server, server_slot ) );
+    check( rocketnet_server_disconnect_reason( server, server_slot ) == ROCKETNET_DISCONNECT_REASON_NONE );
+    while ( rocketnet_server_receive_messages( server ) != NULL )
+    {
+    }
+    rocketnet_server_send_packets( server );
+    rocketnet_client_send_packets( clients[0] );
+    g_unreliable_exhaust_now += 0.01;
+
+    // Room returns as frames write the queued messages (and the receiver
+    // acknowledges the promoted ones): a later start succeeds on both sides.
+    for ( int i = 0; i < 4000 && ( !rocketnet_client_can_send_message( clients[0], 0, probe_reliability, probe_bytes ) ||
+                                   !rocketnet_server_can_send_message( server, server_slot, 0, probe_reliability, probe_bytes ) );
+          i++ )
+    {
+        unreliable_exhaust_frame( server, clients, 2 );
+        check( rocketnet_client_state( clients[0] ) == ROCKETNET_CLIENT_STATE_CONNECTED );
+        check( rocketnet_server_client_connected( server, server_slot ) );
+    }
+    uint8_t * again = rocketnet_client_start_message( clients[0], 0, probe_reliability, probe_bytes );
+    check( again != NULL );
+    memset( again, 0x5A, (size_t) probe_bytes );
+    check( rocketnet_client_finish_message( clients[0], probe_bytes ) != 0 );
+    again = rocketnet_server_start_message( server, (uint64_t) server_slot, 0, probe_reliability, probe_bytes );
+    check( again != NULL );
+    memset( again, 0x5A, (size_t) probe_bytes );
+    check( rocketnet_server_finish_message( server, probe_bytes ) != 0 );
+
+    // A gone connection has no room.
+    rocketnet_client_disconnect( clients[0] );
+    check( !rocketnet_client_can_send_message( clients[0], 0, probe_reliability, probe_bytes ) );
+    rocketnet_server_disconnect_client( server, server_slot );
+    rocketnet_server_update( server, g_unreliable_exhaust_now );
     check( !rocketnet_server_client_connected( server, server_slot ) );
-    check( rocketnet_server_disconnect_reason( server, server_slot ) == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
     check( !rocketnet_server_can_send_message( server, server_slot, 0, probe_reliability, probe_bytes ) );
 
     for ( int i = 0; i < 2; i++ )
@@ -175,7 +234,7 @@ static void run_unreliable_exhaust_case( enum rocketnet_reliability_t probe_reli
     rn_test_server_stop_and_destroy( server );
 }
 
-static void test_unreliable_send_without_message_memory_ends_connection()
+static void test_unreliable_send_without_message_memory_is_refused()
 {
     rocketnet_quiet( true );
     rocketnet_assert_function( unreliable_exhaust_count_assert );
@@ -191,4 +250,4 @@ static void test_unreliable_send_without_message_memory_ends_connection()
     rocketnet_assert_function( NULL );
     rocketnet_quiet( false );
 }
-REGISTER_UNIT_TEST( test_unreliable_send_without_message_memory_ends_connection );
+REGISTER_UNIT_TEST( test_unreliable_send_without_message_memory_is_refused );
