@@ -49,8 +49,12 @@
 // Each connection's rn_window_ack_t holds the two resend sent marks
 // (resend_sent, chunk_sent), adding 8 bytes a connection, 8000 at 1000
 // clients, computed and not measured on Windows.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1608609790 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22971951 )
+// Each channel's send state widens its per-priority queued counts to
+// uint64_t (rn_channel_send_t, 40 to 64 bytes), adding 24 bytes a channel,
+// 192 a light connection (8 channels), 192000 at 1000 clients, computed and
+// not measured on Windows.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1608801790 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22972143 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
 // The figures are the planned peak: the probe's actual= lines (server
@@ -65,8 +69,13 @@
 // sequence, where the ordered walk starts its retransmits), adding 8 bytes a
 // connection, 8000 at 1000 clients (measured); the probe's actual= line is
 // 1469253151.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468204575 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13987594 )
+// Each channel's send state widens its per-priority queued counts to
+// uint64_t (sdk/rocketnet_allocator.h, rn_channel_send_t, 40 to 64 bytes),
+// adding 24 bytes a channel, 192 a light connection (8 channels), 192000 at
+// 1000 clients (measured); the probe's actual= lines are 1469445151 and
+// 15036362.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468396575 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13987786 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Debug.
 // The RTT reader added to the message link crosses the message object's
@@ -99,8 +108,13 @@
 // Each connection's rn_window_ack_t holds the two resend sent marks
 // (resend_sent, chunk_sent), adding 8 bytes a connection, 8000 at 1000
 // clients; the probe's actual= line is 3111428715.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110380139ULL )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14146994 )
+// Each channel's send state widens its per-priority queued counts to
+// uint64_t (sdk/rocketnet_allocator.h, rn_channel_send_t, 40 to 64 bytes),
+// adding 24 bytes a channel, 192 a light connection (8 channels), 192000 at
+// 1000 clients (measured); the probe's actual= lines are 3111620715 and
+// 15195762.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110572139ULL )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14147186 )
 #endif // #if defined( _WIN32 )
 
 static void light_message_fields_server( const struct rocketnet_server_config_t * config )
