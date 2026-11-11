@@ -71,7 +71,7 @@ static void handshake_deadline_mint( uint8_t * token_data, uint64_t create, uint
 // it. An update just before five
 // seconds is still requesting cookie (1), past the token's expire timestamp on
 // the token's own clock; the update at five seconds is connect token expired
-// (-7). These are sdk/rocketnet_client_protocol.cpp:160, :187 and :205-206,
+// (-7). These are sdk/rocketnet_client_protocol.cpp:160, :201 and :220-222,
 // and netcode.c:3254-3262 at tag v1.2.1.
 
 static void test_client_attempt_runs_the_token_lifetime_from_its_start()
@@ -104,7 +104,7 @@ static void test_client_attempt_runs_the_token_lifetime_from_its_start()
 // A token whose expire timestamp is not later than the current time is refused
 // before an attempt begins, with connect token expired (-7) and nothing on the
 // wire: connect at C + 5 for a token that expires at C + 5. These are
-// sdk/rocketnet_client_protocol.cpp:160, :187 and :205-206, and
+// sdk/rocketnet_client_protocol.cpp:160, :201 and :220-222, and
 // netcode.c:3254-3262 at tag v1.2.1.
 
 static void test_client_connect_at_the_expire_timestamp_is_refused()

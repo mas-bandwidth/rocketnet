@@ -1602,7 +1602,7 @@ static pid_t onlink_spawn( const char * program, const char * argument, const ch
     }
 
     // the case connects one client: a message object sized for the default
-    // 1000 clients does not fit the guest (server.c:920, :925)
+    // 1000 clients does not fit the guest (server.c:920, :975)
 
     if ( xdp_server )
     {
