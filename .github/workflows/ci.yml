@@ -3214,6 +3214,15 @@ jobs:
           printf '%s\n' "$output"
           grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
 
+      - name: Test the mutation runner's generator and process cleanup
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/mutation/run_mutants.py --self-test
+          output="$(python3 tools/mutation/test_run_mutants.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
+          printf '%s\n' "$output"
+          grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
+
   # Every registered unit case runs in at least one CI configuration. Each job
   # that runs the unit suite uploads `bin/test --list` (or, for a leg that
   # runs named cases, the cases it ran) as unit-cases-<configuration>; this
