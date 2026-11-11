@@ -200,7 +200,9 @@ static int rocketnet_unit_clear_environment()
 #else
         if ( unsetenv( names[i].c_str() ) != 0 )
 #endif // #if defined( _WIN32 )
+        {
             return 1;
+        }
     }
 
     return 0;

@@ -238,9 +238,10 @@ void rocketnet_test_bundled_rng_opens_once_under_concurrent_keygen_on_mac()
             {
                 uint8_t public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
                 uint8_t secret_key[32];
-                if ( rocketnet_generate_server_keypair( public_key, secret_key ) != ROCKETNET_STATUS_OK ){
+                if ( rocketnet_generate_server_keypair( public_key, secret_key ) != ROCKETNET_STATUS_OK )
+                {
                     failures++;
-}
+                }
             } } );
     }
 

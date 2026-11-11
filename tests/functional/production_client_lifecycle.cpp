@@ -27,7 +27,9 @@ static void production_lifecycle_check_handler( const char * condition, const ch
     do                                                                                \
     {                                                                                 \
         if ( !( condition ) )                                                         \
+        {                                                                             \
             production_lifecycle_check_handler( #condition, __FILE__, __LINE__ );     \
+        }                                                                             \
     } while ( 0 )
 
 class production_environment_guard_t

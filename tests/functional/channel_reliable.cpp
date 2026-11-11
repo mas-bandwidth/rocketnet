@@ -12,7 +12,7 @@ static void reliable_functional_fail( const char * condition, int line )
     exit( 1 );
 }
 
-#define reliable_check( condition ) do { if ( !( condition ) ) reliable_functional_fail( #condition, __LINE__ ); } while ( 0 )
+#define reliable_check( condition ) do { if ( !( condition ) ) { reliable_functional_fail( #condition, __LINE__ ); } } while ( 0 )
 
 void reliable_mixed_sizes_over_lossy_link()
 {

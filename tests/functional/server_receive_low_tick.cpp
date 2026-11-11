@@ -95,7 +95,8 @@ static void server_receive_low_tick_capture( void * context, enum rocketnet_log_
     // the server's worker threads log too: the capture is under a spinlock
 
     while ( server_receive_low_tick_log_lock.test_and_set( std::memory_order_acquire ) )
-        ;
+    {
+    }
 
     const size_t used = strlen( server_receive_low_tick_log );
     if ( used + length + 2 < sizeof( server_receive_low_tick_log ) )
@@ -111,7 +112,8 @@ static void server_receive_low_tick_capture( void * context, enum rocketnet_log_
 static void server_receive_low_tick_clear_log()
 {
     while ( server_receive_low_tick_log_lock.test_and_set( std::memory_order_acquire ) )
-        ;
+    {
+    }
     server_receive_low_tick_log[0] = '\0';
     server_receive_low_tick_log_lock.clear( std::memory_order_release );
 }

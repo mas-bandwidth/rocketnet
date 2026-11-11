@@ -36,7 +36,9 @@ static void loopback_hub_shared_objects_check_handler( const char * condition, c
 do                                                                                                                     \
 {                                                                                                                      \
     if ( !(condition) )                                                                                                \
+    {                                                                                                                  \
         loopback_hub_shared_objects_check_handler( #condition, (const char*) __FUNCTION__, (const char*) __FILE__, __LINE__ ); \
+    }                                                                                                                  \
 } while(0)
 
 // The transport pins (ROCKETNET_SERVER_TRANSPORT, ROCKETNET_CLIENT_TRANSPORT)

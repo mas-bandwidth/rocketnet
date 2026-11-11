@@ -1177,7 +1177,9 @@ static void rn_test_log_function( void * context, enum rocketnet_log_level_t lev
             rn_trap_armed = 0;                                                                           \
             fprintf( stderr, "check failed: %s:%d: %s\n", __FILE__, __LINE__, #condition );              \
             if ( rn_log_last[0] )                                                                        \
+            {                                                                                            \
                 fprintf( stderr, "last log line: %s\n", rn_log_last );                                   \
+            }                                                                                            \
             exit( 1 );                                                                                   \
         }                                                                                                \
     } while ( 0 )

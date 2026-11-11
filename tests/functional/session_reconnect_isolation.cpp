@@ -62,7 +62,9 @@ static void session_isolation_check_handler( const char * condition, const char 
     do                                                                                                       \
     {                                                                                                        \
         if ( !( condition ) )                                                                                \
+        {                                                                                                    \
             session_isolation_check_handler( #condition, (const char *) __FUNCTION__, __FILE__, __LINE__ );  \
+        }                                                                                                    \
     } while ( 0 )
 
 class session_env_guard_t

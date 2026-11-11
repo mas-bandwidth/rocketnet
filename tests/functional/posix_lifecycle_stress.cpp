@@ -570,7 +570,9 @@ static bool posix_cell_runs( const char * name, const posix_cell_t * cell )
 #if defined( __linux__ ) && ROCKETNET_XDP
         if ( !posix_xdp_offered() )
 #endif // #if defined( __linux__ ) && ROCKETNET_XDP
+        {
             return false;
+        }
     }
 
     return true;
@@ -1564,10 +1566,14 @@ void rocketnet_test_posix_connect_disconnect_1000_##server_io##_##client_io()   
     posix_only_client_transport_io = #client_io;                                   \
     int selected = 0;                                                              \
     for ( int i = 0; i < posix_cell_count; i++ )                                     \
+    {                                                                                \
         selected += posix_cell_selected( &posix_cells[i] ) ? 1 : 0;                 \
+    }                                                                                \
     if ( selected != 1 )                                                           \
+    {                                                                              \
         printf( "macOS POSIX lifecycle filter excludes or duplicates %s/%s\n",   \
                 #server_io, #client_io );                                           \
+    }                                                                              \
     posix_check( selected == 1 );                                                   \
     rocketnet_test_posix_connect_disconnect_1000();                                \
     posix_only_client_transport_io = NULL;                                         \

@@ -75,14 +75,18 @@ public:
                 for (;;)
                 {
                     ready.wait(lock, [&] { return stopping || generation != seen; });
-                    if (stopping){ return;
-}
+                    if (stopping)
+                    {
+                        return;
+                    }
                     seen = generation;
                     lock.unlock();
                     work(id);
                     lock.lock();
-                    if (++completed == (int)workers.size()){ done.notify_one();
-}
+                    if (++completed == (int)workers.size())
+                    {
+                        done.notify_one();
+                    }
                 } } );
         }
     }
@@ -227,7 +231,8 @@ int main( int argc, char ** argv )
 
                 uint8_t * payload = frame + context.payload_index;
 
-                if (access){
+                if (access)
+                {
                     for (int read = 0; read < 8; ++read)
                     {
                         int capacity = 0;
@@ -238,12 +243,16 @@ int main( int argc, char ** argv )
                         CHECK(view == payload && capacity >= payload_bytes);
                         ++local_accessed;
                     }
-}
+                }
 
                 memset(payload, 0x5a, size_t(payload_bytes));
-                if (plant){
-                    for (int j = 0; j < 4096; ++j){ plant_state = plant_state * 1664525 + 1013904223;
-}}
+                if (plant)
+                {
+                    for (int j = 0; j < 4096; ++j)
+                    {
+                        plant_state = plant_state * 1664525 + 1013904223;
+                    }
+                }
 
                 if (finish)
                 {
@@ -253,10 +262,14 @@ int main( int argc, char ** argv )
                     CHECK(bytes > payload_bytes);
                     ++local_committed;
                 }
-                else if (from_server){ rocketnet_server_transport_abort_packet(server, &context);
-}
-                else{ rocketnet_client_transport_abort_packet(client, &context);
-}
+                else if (from_server)
+                {
+                    rocketnet_server_transport_abort_packet(server, &context);
+                }
+                else
+                {
+                    rocketnet_client_transport_abort_packet(client, &context);
+                }
 
                 CHECK(!context.frame);
             }

@@ -1662,7 +1662,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
 
 #if ROCKETNET_DEV
 void ( *rocketnet_server_transport_config_staging_hook )( const uint8_t * secret_key, int stage ) = NULL;
-#define ROCKETNET_SERVER_TRANSPORT_CONFIG_STAGING_SEEN( secret_key, stage ) do { if ( rocketnet_server_transport_config_staging_hook ) rocketnet_server_transport_config_staging_hook( secret_key, stage ); } while ( 0 )
+#define ROCKETNET_SERVER_TRANSPORT_CONFIG_STAGING_SEEN( secret_key, stage ) do { if ( rocketnet_server_transport_config_staging_hook ) { rocketnet_server_transport_config_staging_hook( secret_key, stage ); } } while ( 0 )
 #else
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_STAGING_SEEN( secret_key, stage ) do {} while ( 0 )
 #endif // #if ROCKETNET_DEV

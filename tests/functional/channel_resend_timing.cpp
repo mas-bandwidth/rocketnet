@@ -74,7 +74,7 @@ static void resend_timing_fail( const char * condition, int line )
     exit( 1 );
 }
 
-#define resend_timing_check( condition ) do { if ( !( condition ) ) resend_timing_fail( #condition, __LINE__ ); } while ( 0 )
+#define resend_timing_check( condition ) do { if ( !( condition ) ) { resend_timing_fail( #condition, __LINE__ ); } } while ( 0 )
 
 #define RESEND_TIMING_MESSAGES 400
 #define RESEND_TIMING_BYTES 64

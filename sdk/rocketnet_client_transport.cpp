@@ -375,7 +375,9 @@ static void rocketnet_client_transport_construct( rocketnet_client_transport_t *
     uint8_t * storage = (uint8_t *) client;
 #define ROCKETNET_CLIENT_TRANSPORT_ZERO_STATE( name, declaration ) \
     if ( !rocketnet_client_transport_buffer_member( #name ) ) \
-        memset( storage + offsetof( rocketnet_client_transport_t, name ), 0, sizeof( ( (rocketnet_client_transport_t *) 0 )->name ) );
+    { \
+        memset( storage + offsetof( rocketnet_client_transport_t, name ), 0, sizeof( ( (rocketnet_client_transport_t *) 0 )->name ) ); \
+    }
     ROCKETNET_CLIENT_TRANSPORT_LAYOUT_FIELDS( ROCKETNET_CLIENT_TRANSPORT_ZERO_STATE )
 #undef ROCKETNET_CLIENT_TRANSPORT_ZERO_STATE
     new ( client ) rocketnet_client_transport_t;
@@ -1478,17 +1480,21 @@ static bool rocketnet_client_transport_memory_plan( const rocketnet_client_trans
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
             if ( strcmp( transport, "iocp" ) == 0 )
+        {
             plan.transport_io_bytes = rocketnet_memory_allocations( { sizeof( rocketnet_platform_socket_t ),
                                                                       sizeof( rocketnet_client_iocp_io_layout_t ) } );
+        }
         else
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+        {
 #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
             plan.transport_io_bytes = rocketnet_memory_allocations( { sizeof( rocketnet_platform_socket_t ),
                                                                       sizeof( rocketnet_portable_io_client_layout_t ),
                                                                       sizeof( rocketnet_platform_wake_layout_t ) } );
 #else
-        plan.transport_io_bytes = rocketnet_platform_socket_allocation_bytes();
+            plan.transport_io_bytes = rocketnet_platform_socket_allocation_bytes();
 #endif // #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
+        }
 
         // the family race's second socket, the same allocations as the first,
         // and the race block that routes the two. The copy is taken before the

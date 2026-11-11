@@ -157,7 +157,9 @@ do                                                                              
     if ( !(condition) )                                                                                           \
     {                                                                                                             \
         if ( *rocketnet_unit_expected_fail_active() )                                                             \
+        {                                                                                                         \
             throw rocketnet_unit_expected_failure_t{ __LINE__ };                                                  \
+        }                                                                                                         \
         printf( "check failed: ( %s ), function %s, file %s, line %d\n", #condition,                             \
                 (const char*) __FUNCTION__, (const char*) __FILE__, __LINE__ );                                   \
         fflush( stdout );                                                                                         \

@@ -431,7 +431,9 @@ static portable_tx_step_t portable_tx_step( portable_server_t * server )
             }
             else
 #endif // #if ROCKETNET_DEV
+            {
                 consumed = rocketnet_platform_socket_send_packets_mmsg_progress( server->socket, bank->sends + server->tx_cursor, remaining );
+            }
             const bool no_buffers = errno == ENOBUFS;
             rocketnet_assert( consumed >= 0 && consumed <= remaining );
             server->tx_cursor += consumed;
@@ -452,7 +454,9 @@ static portable_tx_step_t portable_tx_step( portable_server_t * server )
             }
             else
 #endif // #if ROCKETNET_DEV
+            {
                 rocketnet_platform_socket_send_packets( server->socket, bank->sends + server->tx_cursor, bank->count - server->tx_cursor );
+            }
         }
     }
 

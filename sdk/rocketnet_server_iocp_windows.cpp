@@ -1675,7 +1675,9 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
          || fail_stage == 1
 #endif // #if ROCKETNET_DEV
     )
+    {
         goto failed;
+    }
     if ( setsockopt( iocp->socket, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char *) &enabled, sizeof( enabled ) ) == SOCKET_ERROR )
     {
         goto failed;
@@ -1773,7 +1775,9 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
          || fail_stage == 2
 #endif // #if ROCKETNET_DEV
     )
+    {
         goto failed;
+    }
     iocp->send_wake = rocketnet_platform_wake_create( context, NULL, status );
     if ( !iocp->send_wake )
     {

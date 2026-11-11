@@ -36,7 +36,9 @@ do                                                                              
     char wso_report[16384];                                                                                       \
     const bool wso_ok = rocketnet_counters_expect_core( (before), (after), __VA_ARGS__, wso_report, (int) sizeof(wso_report) ); \
     if ( !wso_ok )                                                                                                \
+    {                                                                                                             \
         printf( "case: %s\n%s", (label), wso_report );                                                            \
+    }                                                                                                             \
     check( wso_ok );                                                                                              \
 } while(0)
 
