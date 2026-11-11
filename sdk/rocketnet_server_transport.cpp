@@ -2428,6 +2428,26 @@ static void rocketnet_server_transport_stop_step( struct rocketnet_server_transp
     rocketnet_server_transport_flush( server_transport, true );
     rocketnet_server_link_drain( server_transport, true );
 
+    // no send room, and nothing staged or in flight whose finish could free
+    // any: no waiting packet can ever leave. Each waiting burst is abandoned,
+    // as an unreachable destination's is, and counted as a start refused for
+    // a full staging (one already complete leaves uncounted). The room is
+    // read again after send_idle, which may publish what was staged and so
+    // free room.
+    if ( server_transport->disconnect_burst_count > 0 && rocketnet_server_transport_io_send_room( server_transport ) == 0 &&
+         rocketnet_server_transport_io_send_idle( server_transport ) && rocketnet_server_transport_io_send_room( server_transport ) == 0 )
+    {
+        while ( server_transport->disconnect_burst_count > 0 )
+        {
+            if ( server_transport->disconnect_bursts[server_transport->disconnect_burst_head].sealed < ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS )
+                rocketnet_server_transport_io_count_refused( server_transport, 0 );
+            sodium_memzero( server_transport->disconnect_burst_keys[server_transport->disconnect_burst_head], ROCKETNET_KEY_BYTES );
+            server_transport->disconnect_burst_head = ( server_transport->disconnect_burst_head + 1 ) % server_transport->disconnect_burst_capacity;
+            server_transport->disconnect_burst_count--;
+        }
+        server_transport->disconnect_burst_cursor = 0;
+    }
+
     const bool link_empty = !server_transport->link_simulator ||
                             !rocketnet_network_simulator_holds_any( server_transport->link_simulator );
     if ( server_transport->disconnect_burst_count == 0 && link_empty && rocketnet_server_transport_io_send_idle( server_transport ) )
