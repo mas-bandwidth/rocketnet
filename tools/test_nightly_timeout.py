@@ -46,13 +46,16 @@ class NightlyTimeoutTests(unittest.TestCase):
             leaks.write_text("#!/bin/sh\nsleep .15\ncase $LEAKS_CONTROL in\nclean) echo 'Process 123: 0 leaks for 0 total leaked bytes';;\nleak) echo 'Process 123: 1 leak for 8 total leaked bytes';;\nmissing) echo 'inspection failed';;\nesac\n")
             leaks.chmod(0o755)
             script = root / "control.sh"
-            script.write_text('set -u\nbin=fixture; logs="$1"; run=""; limit=1\nsleep() { command sleep .01; }\n' + function + '\none test_control\n')
-            for opt_in, verdict, expected in (("", "clean", 1), ("0", "clean", 1), ("true", "clean", 1), ("1", "clean", 0), ("1", "leak", 1), ("1", "missing", 1)):
-                with self.subTest(opt_in=opt_in, verdict=verdict):
-                    env = dict(os.environ, PATH=str(root) + os.pathsep + os.environ["PATH"], ROCKETNET_NIGHTLY_NO_TIMEOUT=opt_in, LEAKS_CONTROL=verdict)
+            script.write_text('set -u\nbin=fixture; logs="$1"; run=""; limit=$LIMIT\nsleep() { command sleep .01; }\n' + function + '\none test_control\n')
+            # the watchdog bounds every inspection, the nightly opt-in included: a process the
+            # inspection stops at exit would otherwise hold the job until its platform limit
+            for opt_in, limit, verdict, expected in (("", "1", "clean", 1), ("0", "1", "clean", 1), ("true", "1", "clean", 1), ("1", "1", "clean", 1),
+                                                     ("1", "1000", "clean", 0), ("1", "1000", "leak", 1), ("1", "1000", "missing", 1), ("", "1000", "clean", 0)):
+                with self.subTest(opt_in=opt_in, limit=limit, verdict=verdict):
+                    env = dict(os.environ, PATH=str(root) + os.pathsep + os.environ["PATH"], ROCKETNET_NIGHTLY_NO_TIMEOUT=opt_in, LEAKS_CONTROL=verdict, LIMIT=limit)
                     result = subprocess.run(["/bin/bash", str(script), str(root)], env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=10)
                     self.assertEqual(result.returncode, expected, result.stdout)
-                    self.assertEqual("TIMEOUT test_control" in result.stdout, opt_in != "1", result.stdout)
+                    self.assertEqual("TIMEOUT test_control" in result.stdout, limit == "1", result.stdout)
 
     def test_example_subprocess_cap_and_original_oracle(self):
         for value, expected in (("0", 120), ("1", None)):
