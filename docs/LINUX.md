@@ -271,7 +271,11 @@ stay in the completion queue for a later call and are counted
   `io_uring transport refused: this kernel does not accept the io_uring ring, opcodes or provided buffer ring the transport needs`
   and the ladder falls (`sdk/rocketnet_server_uring_linux.cpp`).
   Multishot receive must be in the liburing headers the build used
-  (`sdk/rocketnet_server_uring_linux.cpp`).
+  (`sdk/rocketnet_server_uring_linux.cpp`), and the running kernel must
+  accept a multishot `RECVMSG` (Linux 6.0 or later). The create probe does
+  not test that: on a kernel with provided buffer rings but no multishot
+  receive (5.19) the transport is created and receives nothing, so pin
+  another transport there.
 - Kernel policy that permits this process to create rings. Where
   `/proc/sys/kernel/io_uring_disabled` exists, 0 permits all users, 1 permits
   processes with `CAP_SYS_ADMIN` or membership in `io_uring_group`, and 2
