@@ -95,6 +95,88 @@ static void test_dst_check_reliable_missing_fails()
     rocketnet_unit_check( strcmp( st.check, "liveness_delivered" ) == 0 );
 }
 
+// The same row in the real run's order: the fault window sends sequences
+// 0..10 and loses 3 for good, settle runs as the quiet window opens, and
+// 11..60 arrive on the clean wire. The lost fault-window message is owed
+// once the network has healed, for the unordered reliable types 2 and 6.
+
+static void dst_check_fault_window_loss( struct rocketnet_dst_check_state_t * st, int type )
+{
+    rocketnet_dst_check_init( st, 1, 44 );
+
+    for ( uint32_t seq = 0; seq <= 10; seq++ )
+    {
+        rec_sent( st, 0, 0, type, seq );
+        if ( seq != 3 )
+            rec_deliver( st, 0, 0, type, seq );
+    }
+    rocketnet_dst_check_settle( st );
+    for ( uint32_t seq = 11; seq <= 60; seq++ )
+    {
+        rec_sent( st, 0, 0, type, seq );
+        rec_deliver( st, 0, 0, type, seq );
+    }
+    rocketnet_unit_check( st->failed == 0 );
+    rec_end( st, 0 );
+}
+
+static void test_dst_check_reliable_missing_from_fault_window_fails()
+{
+    static struct rocketnet_dst_check_state_t st;
+
+    dst_check_fault_window_loss( &st, 2 );
+    rocketnet_unit_check( st.failed == 1 );
+    rocketnet_unit_check( strcmp( st.check, "liveness_delivered" ) == 0 );
+
+    dst_check_fault_window_loss( &st, 6 );
+    rocketnet_unit_check( st.failed == 1 );
+    rocketnet_unit_check( strcmp( st.check, "liveness_delivered" ) == 0 );
+}
+
+// Receipts as the run reads them: client 0 (sender 16) sends on server slot
+// 0, and each receipt names the serial its send returned.
+
+static void rec_receipt_send( struct rocketnet_dst_check_state_t * st, int type, uint32_t seq, uint32_t serial )
+{
+    rec_sent( st, 0, 0, type, seq );
+    rocketnet_dst_check_receipt_sent( st, 16, 1, serial, 0, 0, type, seq );
+}
+
+static void test_dst_check_receipt_acked_without_delivery_fails()
+{
+    static struct rocketnet_dst_check_state_t st;
+    rocketnet_dst_check_init( &st, 1, 50 );
+
+    rec_receipt_send( &st, 6, 0, 1 );
+    rec_deliver( &st, 0, 0, 6, 0 );
+    rocketnet_dst_check_receipt_one_outcome( &st, 16, 1, 1, ROCKETNET_RECEIPT_STATUS_ACKED );
+    rocketnet_unit_check( st.failed == 0 );
+
+    rec_receipt_send( &st, 6, 1, 2 );
+    rocketnet_dst_check_receipt_one_outcome( &st, 16, 1, 2, ROCKETNET_RECEIPT_STATUS_ACKED );
+    rocketnet_unit_check( st.failed == 1 );
+    rocketnet_unit_check( strcmp( st.check, "receipt_acked_delivered" ) == 0 );
+}
+
+static void test_dst_check_receipt_twice_fails()
+{
+    static struct rocketnet_dst_check_state_t st;
+    rocketnet_dst_check_init( &st, 1, 51 );
+
+    rec_receipt_send( &st, 5, 0, 1 );
+    rocketnet_dst_check_receipt_one_outcome( &st, 16, 1, 1, ROCKETNET_RECEIPT_STATUS_LOSS );
+    rocketnet_unit_check( st.failed == 0 );
+    rocketnet_dst_check_receipt_one_outcome( &st, 16, 1, 1, ROCKETNET_RECEIPT_STATUS_LOSS );
+    rocketnet_unit_check( st.failed == 1 );
+    rocketnet_unit_check( strcmp( st.check, "receipt_one_outcome" ) == 0 );
+
+    // a serial no receipt send returned
+    rocketnet_dst_check_init( &st, 1, 52 );
+    rocketnet_dst_check_receipt_one_outcome( &st, 16, 1, 9, ROCKETNET_RECEIPT_STATUS_ACKED );
+    rocketnet_unit_check( st.failed == 1 );
+    rocketnet_unit_check( strcmp( st.check, "receipt_one_outcome" ) == 0 );
+}
+
 static void test_dst_check_sequenced_backwards_fails()
 {
     static struct rocketnet_dst_check_state_t st;
@@ -280,6 +362,9 @@ static void test_dst_check_clean_sequence_passes()
 REGISTER_UNIT_TEST( test_dst_check_ordered_out_of_order_fails );
 REGISTER_UNIT_TEST( test_dst_check_reliable_duplicate_fails );
 REGISTER_UNIT_TEST( test_dst_check_reliable_missing_fails );
+REGISTER_UNIT_TEST( test_dst_check_reliable_missing_from_fault_window_fails );
+REGISTER_UNIT_TEST( test_dst_check_receipt_acked_without_delivery_fails );
+REGISTER_UNIT_TEST( test_dst_check_receipt_twice_fails );
 REGISTER_UNIT_TEST( test_dst_check_sequenced_backwards_fails );
 REGISTER_UNIT_TEST( test_dst_check_unreliable_duplicate_fails );
 REGISTER_UNIT_TEST( test_dst_check_ack_never_issued_fails );

@@ -10,11 +10,16 @@ The harness checks properties that also appear in the TLA+ models:
 - accepted payload bytes equal the sent message bytes;
 - reliable messages arrive exactly once and ordered streams arrive in order;
 - unreliable messages arrive at most once;
+- every receipt the senders read names a type 5, 6 or 7 message that
+  sender sent, is that message's only outcome, is LOSS only for type 5, and
+  is ACKED only for a message the receiver delivered (type 7: or holds
+  behind an earlier undelivered sequence);
 - stale packets from an earlier connection cannot enter a reused slot;
 - an acknowledgement names a packet the acknowledged endpoint itself issued,
   and names it once;
-- buffers, queues and receipt rings remain within their
-  configured bounds;
+- every reliable message a live session sent, in the fault window or after
+  it, is delivered by the end of the run, apart from the last few still in
+  flight;
 - an endpoint (the server or a client) that can make fair progress does not remain wedged.
 
 Every simulated endpoint has explicit state: connection generation, local clock,

@@ -50,6 +50,9 @@
 // the burst schedule releases its whole window in one update: the ring is as
 // wide as the window the schedule can hold (ROCKETNET_DST_BURST_CAPACITY).
 #define ROCKETNET_DST_MAX_PAYLOADS           1024
+// The receipts the harness reads from one endpoint's list per step; a
+// longer list fails the run (receipt_list) rather than going unjudged.
+#define ROCKETNET_DST_RECEIPTS               4096
 #define ROCKETNET_DST_MAX_STREAMS            8
 
 // The fault kinds. A kind that is off makes no draw. Every name here is
@@ -313,6 +316,12 @@ typedef struct rocketnet_dst_endpoint_t
     uint8_t * payload_ptr[ROCKETNET_DST_MAX_PAYLOADS];
     int payload_bytes[ROCKETNET_DST_MAX_PAYLOADS];
     int payload_client_index[ROCKETNET_DST_MAX_PAYLOADS];
+
+    // the session sequence and the connection each payload arrived on, as
+    // the real transports keep them beside their batch, for the message
+    // layer's accept_payload and payload_connection
+    uint64_t payload_sequence[ROCKETNET_DST_MAX_PAYLOADS];
+    uint64_t payload_connection_id[ROCKETNET_DST_MAX_PAYLOADS];
     int payload_count;
 } rocketnet_dst_endpoint_t;
 
@@ -380,6 +389,14 @@ typedef struct rocketnet_dst_world_t
     struct rocketnet_counters_t server_counters;
     struct rocketnet_counters_t client_counters;
     struct rocketnet_server_protocol_t server;
+
+    // the server protocol's per-connection storage the server transport
+    // allocates (rocketnet_server_transport_create): the id of each slot's
+    // connection, the connection of each acked batch entry, and each slot's
+    // end reason
+    uint64_t server_connection_ids[ROCKETNET_DST_MAX_CLIENTS];
+    uint64_t server_acked_connection_ids[ROCKETNET_DST_MAX_CLIENTS * ROCKETNET_SENT_PACKET_BUFFER_SIZE];
+    int server_end_reasons[ROCKETNET_DST_MAX_CLIENTS];
     rocketnet_dst_endpoint_t server_endpoint;
     struct rocketnet_message_server_t * message_server;
     struct rocketnet_message_config_t message_config;
@@ -500,7 +517,8 @@ static inline void rocketnet_dst_endpoint_reset_payloads( rocketnet_dst_endpoint
 }
 
 static inline void rocketnet_dst_endpoint_payload( rocketnet_dst_endpoint_t * endpoint, int client_index,
-                                                   const uint8_t * data, int bytes )
+                                                   const uint8_t * data, int bytes, uint64_t sequence,
+                                                   uint64_t connection_id )
 {
     if ( endpoint->payload_count >= ROCKETNET_DST_MAX_PAYLOADS || bytes <= 0 ||
          bytes > ROCKETNET_RECEIVE_PAYLOAD_BYTES )
@@ -514,6 +532,8 @@ static inline void rocketnet_dst_endpoint_payload( rocketnet_dst_endpoint_t * en
     endpoint->payload_ptr[index] = endpoint->payload[index];
     endpoint->payload_bytes[index] = bytes;
     endpoint->payload_client_index[index] = client_index;
+    endpoint->payload_sequence[index] = sequence;
+    endpoint->payload_connection_id[index] = connection_id;
 }
 
 static inline int rocketnet_dst_world_client_for_slot( rocketnet_dst_world_t * w, int slot )
@@ -573,7 +593,8 @@ static inline void rocketnet_dst_server_process( rocketnet_dst_endpoint_t * endp
                                          response, response_bytes, from );
     if ( result == ROCKETNET_SERVER_PROCESS_ACCEPTED && payload_bytes > 0 )
     {
-        rocketnet_dst_endpoint_payload( endpoint, payload_client_index, payload, payload_bytes );
+        rocketnet_dst_endpoint_payload( endpoint, payload_client_index, payload, payload_bytes,
+                                        w->server.payload_sequence, w->server.payload_connection_id );
     }
 }
 
@@ -679,7 +700,8 @@ static inline void rocketnet_dst_endpoint_update( void * transport, double time 
                                                                        payload, sizeof( payload ), &payload_bytes );
         if ( accepted && payload_bytes > 0 )
         {
-            rocketnet_dst_endpoint_payload( endpoint, -1, payload, payload_bytes );
+            rocketnet_dst_endpoint_payload( endpoint, -1, payload, payload_bytes,
+                                            w->client[endpoint->client_index].protocol.received_session_sequence, 1 );
         }
     }
 
@@ -861,17 +883,72 @@ static inline uint64_t rocketnet_dst_endpoint_connection( void * transport, int 
     rocketnet_dst_endpoint_t * endpoint = (rocketnet_dst_endpoint_t *) transport;
     rocketnet_dst_world_t * w = endpoint->world;
 
+    // as the real links answer: the server's the protocol's id of the
+    // connection in the slot, new for every connection the slot holds (P9a);
+    // the client's 1, the id of its one connection, while it is CONNECTED
+
     if ( endpoint->is_server )
-    {
-        if ( !rocketnet_client_slots_connected( w->server.client_slots, client_index ) )
-            return 0;
-        return rocketnet_client_slots_client_id( w->server.client_slots, client_index );
-    }
+        return rocketnet_server_protocol_connection_id( &w->server, client_index );
 
-    if ( w->client[endpoint->client_index].protocol.state != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
-        return 0;
+    return w->client[endpoint->client_index].protocol.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED ? 1 : 0;
+}
 
-    return w->client[endpoint->client_index].generation;
+// publishes a payload's ack only once the message layer has taken it, as
+// the real transports do under rocketnet_*_transport_defer_payload_acks
+
+static inline void rocketnet_dst_endpoint_accept_payload( void * transport, int k )
+{
+    rocketnet_dst_endpoint_t * endpoint = (rocketnet_dst_endpoint_t *) transport;
+    rocketnet_dst_world_t * w = endpoint->world;
+    if ( k < 0 || k >= endpoint->payload_count )
+        return;
+
+    if ( endpoint->is_server )
+        rocketnet_server_protocol_accept_payload( &w->server, endpoint->payload_client_index[k],
+                                                  endpoint->payload_connection_id[k], endpoint->payload_sequence[k] );
+    else
+        rocketnet_client_protocol_accept_payload( &w->client[endpoint->client_index].protocol,
+                                                  endpoint->payload_sequence[k] );
+}
+
+static inline uint64_t rocketnet_dst_endpoint_payload_connection( void * transport, int k )
+{
+    rocketnet_dst_endpoint_t * endpoint = (rocketnet_dst_endpoint_t *) transport;
+    return k >= 0 && k < endpoint->payload_count ? endpoint->payload_connection_id[k] : 0;
+}
+
+static inline uint64_t rocketnet_dst_endpoint_acked_connection( void * transport, int k )
+{
+    rocketnet_dst_endpoint_t * endpoint = (rocketnet_dst_endpoint_t *) transport;
+    rocketnet_dst_world_t * w = endpoint->world;
+    if ( !endpoint->is_server )
+        return 1;
+
+    return k >= 0 && k < w->server.acks->num_acked ? w->server.acked_connection_ids[k] : 0;
+}
+
+static inline int rocketnet_dst_endpoint_max_payload_bytes( void * transport )
+{
+    (void) transport;
+    return ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
+}
+
+static inline int rocketnet_dst_endpoint_send_capacity_available( void * transport )
+{
+    rocketnet_dst_endpoint_t * endpoint = (rocketnet_dst_endpoint_t *) transport;
+    return ROCKETNET_DST_MAX_PACKETS - endpoint->outgoing_count;
+}
+
+static inline int rocketnet_dst_endpoint_send_connected_count( void * transport )
+{
+    rocketnet_dst_endpoint_t * endpoint = (rocketnet_dst_endpoint_t *) transport;
+    return rocketnet_client_slots_num_connected( endpoint->world->server.client_slots );
+}
+
+static inline int rocketnet_dst_endpoint_end_reason( void * transport, int client_index )
+{
+    rocketnet_dst_endpoint_t * endpoint = (rocketnet_dst_endpoint_t *) transport;
+    return rocketnet_server_protocol_end_reason( &endpoint->world->server, client_index );
 }
 
 static inline int rocketnet_dst_endpoint_state( void * transport )
@@ -928,17 +1005,34 @@ static inline double rocketnet_dst_endpoint_rtt( void * transport, int client_in
     return rocketnet_client_protocol_rtt( &w->client[endpoint->client_index].protocol );
 }
 
+// The link the real ones set (rn_message_server_link, rn_message_client_link),
+// hook for hook, apart from what the harness owns itself: the transport's
+// lifetime (stop, stopped, destroy), the client's end reason (the clients
+// share one counter block, which the real link reads it from), and the
+// client's clock origin (the harness connects the client protocol on the
+// shared clock, so its update runs on that clock too).
+
 static inline void rocketnet_dst_endpoint_link( struct rn_message_link_t * link, rocketnet_dst_endpoint_t * endpoint )
 {
     memset( link, 0, sizeof( *link ) );
     link->transport = endpoint;
     link->update = rocketnet_dst_endpoint_update;
     link->payloads = rocketnet_dst_endpoint_payloads;
+    link->accept_payload = rocketnet_dst_endpoint_accept_payload;
     link->acked = rocketnet_dst_endpoint_acked;
+    link->payload_connection = rocketnet_dst_endpoint_payload_connection;
+    link->acked_connection = rocketnet_dst_endpoint_acked_connection;
+    link->max_payload_bytes = rocketnet_dst_endpoint_max_payload_bytes;
     link->start_packet = rocketnet_dst_endpoint_start_packet;
     link->finish_packet = rocketnet_dst_endpoint_finish_packet;
     link->abort_packet = rocketnet_dst_endpoint_abort_packet;
     link->send_packets = rocketnet_dst_endpoint_send_packets;
+    if ( endpoint->is_server )
+    {
+        link->send_capacity_available = rocketnet_dst_endpoint_send_capacity_available;
+        link->send_connected_count = rocketnet_dst_endpoint_send_connected_count;
+        link->end_reason = rocketnet_dst_endpoint_end_reason;
+    }
     link->connection = rocketnet_dst_endpoint_connection;
     link->disconnect = rocketnet_dst_endpoint_disconnect;
     link->state = rocketnet_dst_endpoint_state;
@@ -1083,14 +1177,14 @@ static inline void rocketnet_dst_connect_client( rocketnet_dst_world_t * w, int 
     client->generation++;
     rocketnet_dst_check_generation( &w->check, index, client->generation );
 
-    // the burst client's first session also gets a fresh message object at
-    // connect: its pre-connect updates leave the one made at create free, and
-    // the server's CONFIG would go by unseen; every later session rebuilds as
-    // a restart does
+    // every session, the first included, gets a fresh message object at
+    // connect, as the product creates its message client over a transport
+    // that is already connecting: the pre-connect updates of the one made at
+    // create see the transport DISCONNECTED, which ends and frees its one
+    // connection for good, so every payload of a first session would be
+    // dropped as a stale connection entry and acked unread
 
-    const int fresh = client->generation > 1 ||
-                      ( w->schedule.kind == ROCKETNET_DST_SCHEDULE_BURST && index == w->schedule.endpoint );
-    if ( fresh && !rocketnet_dst_client_message_build( w, index ) )
+    if ( !rocketnet_dst_client_message_build( w, index ) )
     {
         rocketnet_dst_fail( w, "message_object", "the restarted message object was refused" );
         return;
@@ -1161,8 +1255,10 @@ static inline void rocketnet_dst_send_one( rocketnet_dst_world_t * w, int index,
             return;
     }
 
+    const uint32_t generation = (uint32_t) client->generation;
+    const uint64_t identity = direction == 0 ? ( (uint64_t) generation * 256 + (uint64_t) index ) : (uint64_t) generation;
     const int reliable = ( type == 2 || type == 3 || type == 4 || type == 6 || type == 7 );
-    if ( reliable && rocketnet_dst_check_outstanding( &w->check, session ) > ROCKETNET_DST_CHECK_OUTSTANDING_CAP )
+    if ( reliable && rocketnet_dst_check_outstanding( &w->check, session, identity ) > ROCKETNET_DST_CHECK_OUTSTANDING_CAP )
         return;
 
     uint32_t epoch = 0;
@@ -1172,7 +1268,6 @@ static inline void rocketnet_dst_send_one( rocketnet_dst_world_t * w, int index,
     }
 
     const uint32_t sequence = rocketnet_dst_next_sequence( client, type, direction );
-    const uint32_t generation = (uint32_t) client->generation;
     uint8_t payload[16384];
     if ( size > (int) sizeof( payload ) )
         return;
@@ -1188,11 +1283,10 @@ static inline void rocketnet_dst_send_one( rocketnet_dst_world_t * w, int index,
 
     if ( sent )
     {
-        const uint64_t identity = direction == 0
-                                      ? ( (uint64_t) generation * 256 + (uint64_t) index )
-                                      : (uint64_t) generation;
         rocketnet_dst_check_sent( &w->check, w->now, session, channel, type, sequence, generation,
                                   identity, epoch, size );
+        rocketnet_dst_check_receipt_sent( &w->check, direction == 0 ? 16 + index : slot, identity, sent, session,
+                                          channel, type, sequence );
     }
     else
     {
@@ -1720,6 +1814,10 @@ static inline int rocketnet_dst_world_create( rocketnet_dst_world_t * w, uint64_
     w->server.used_token_history = rocketnet_used_token_history_create( NULL, 256 );
     w->server.client_slots = rocketnet_client_slots_create( NULL, ROCKETNET_DST_MAX_CLIENTS );
     w->server.acks = rocketnet_server_acks_create( NULL, ROCKETNET_DST_MAX_CLIENTS );
+    w->server.connection_ids = w->server_connection_ids;
+    w->server.acked_connection_ids = w->server_acked_connection_ids;
+    w->server.end_reasons = w->server_end_reasons;
+    w->server.defer_payload_acks = 1;
     if ( !w->server.encryption_map || !w->server.used_token_history || !w->server.client_slots ||
          !w->server.acks )
         return 0;
@@ -1753,6 +1851,7 @@ static inline int rocketnet_dst_world_create( rocketnet_dst_world_t * w, uint64_
         if ( !rocketnet_address_parse( &client->address, address_string ) )
             return 0;
         rocketnet_client_protocol_init( &client->protocol, &w->client_counters );
+        client->protocol.defer_payload_acks = 1;
         client->endpoint.world = w;
         client->endpoint.client_index = i;
         client->endpoint.pending_frame = -1;
@@ -1984,6 +2083,34 @@ static inline int rocketnet_dst_run_seed_with_options( uint64_t seed,
                 rocketnet_dst_trace_u64( &w->trace, (uint64_t) ( i + 1 ) );
                 rocketnet_dst_trace_u64( &w->trace, (uint64_t) client->protocol.state );
                 client->last_state = client->protocol.state;
+            }
+        }
+
+        {
+            // each receipt this step's updates surfaced, after both ends'
+            // deliveries; a list longer than the harness reads fails, so no
+            // receipt goes unjudged
+            struct rocketnet_message_receipt_t receipts[ROCKETNET_DST_RECEIPTS];
+            for ( int i = 0; i < w->num_clients; i++ )
+            {
+                const uint64_t identity = (uint64_t) (uint32_t) w->client[i].generation * 256 + (uint64_t) i;
+                const int count = rocketnet_message_client_receipts( w->client[i].message, receipts, ROCKETNET_DST_RECEIPTS );
+                if ( count > ROCKETNET_DST_RECEIPTS )
+                    rocketnet_dst_fail( w, "receipt_list", "a client's receipt list is longer than the harness reads" );
+                for ( int r = 0; r < count && r < ROCKETNET_DST_RECEIPTS; r++ )
+                    rocketnet_dst_check_receipt_one_outcome( &w->check, 16 + i, identity, receipts[r].serial, receipts[r].status );
+            }
+            for ( int slot = 0; slot < ROCKETNET_DST_MAX_CLIENTS; slot++ )
+            {
+                const int index = rocketnet_dst_world_client_for_slot( w, slot );
+                if ( index < 0 || index >= w->num_clients )
+                    continue;
+                const uint64_t identity = (uint32_t) w->client[index].generation;
+                const int count = rocketnet_message_server_receipts( w->message_server, slot, receipts, ROCKETNET_DST_RECEIPTS );
+                if ( count > ROCKETNET_DST_RECEIPTS )
+                    rocketnet_dst_fail( w, "receipt_list", "a server slot's receipt list is longer than the harness reads" );
+                for ( int r = 0; r < count && r < ROCKETNET_DST_RECEIPTS; r++ )
+                    rocketnet_dst_check_receipt_one_outcome( &w->check, slot, identity, receipts[r].serial, receipts[r].status );
             }
         }
 
