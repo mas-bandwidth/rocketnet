@@ -2337,7 +2337,7 @@ size_t rocketnet_server_required_memory( const struct rocketnet_server_config_t 
 // when that is set, for every server created. Either may be NULL, not both;
 // each must parse as its own family. The first served address is the one the
 // transport binds; with both, the IPv6 one is the second family on the same
-// port.
+// port, so two different ports are refused here rather than at start.
 
 static enum rocketnet_status_t rn_server_addresses( const char * ipv4_address, const char * ipv6_address,
                                                     char * primary, size_t primary_bytes, char * second, size_t second_bytes )
@@ -2381,18 +2381,25 @@ static enum rocketnet_status_t rn_server_addresses( const char * ipv4_address, c
 
     const char * addresses[2] = { ipv4_address, ipv6_address };
     const int families[2] = { ROCKETNET_ADDRESS_IPV4, ROCKETNET_ADDRESS_IPV6 };
+    struct rocketnet_address_t parsed[2];
+    memset( parsed, 0, sizeof( parsed ) );
 
     for ( int i = 0; i < 2; i++ )
     {
         if ( !addresses[i] )
             continue;
 
-        struct rocketnet_address_t parsed;
-        if ( memchr( addresses[i], '\0', ROCKETNET_MAX_ADDRESS_STRING_BYTES ) == NULL || !rocketnet_address_parse( &parsed, addresses[i] ) || parsed.type != families[i] )
+        if ( memchr( addresses[i], '\0', ROCKETNET_MAX_ADDRESS_STRING_BYTES ) == NULL || !rocketnet_address_parse( &parsed[i], addresses[i] ) || parsed[i].type != families[i] )
         {
             rocketnet_error( "server create refused: the %s address does not parse as one", i == 0 ? "IPv4" : "IPv6" );
             return ROCKETNET_STATUS_INVALID_ADDRESS;
         }
+    }
+
+    if ( ipv4_address && ipv6_address && parsed[0].port != parsed[1].port )
+    {
+        rocketnet_error( "server create refused: the IPv4 port %d and the IPv6 port %d differ; with both, the two share one port", (int) parsed[0].port, (int) parsed[1].port );
+        return ROCKETNET_STATUS_INVALID_ADDRESS;
     }
 
     const char * first = ipv4_address ? ipv4_address : ipv6_address;

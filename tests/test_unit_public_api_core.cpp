@@ -60,6 +60,41 @@ static void api_core_server_config( rocketnet_server_config_t * config )
     config->loopback_hub = rocketnet_test_loopback_hub();
 }
 
+// --- create refuses an IPv4 and an IPv6 address on different ports ---------------
+
+static void test_public_server_create_refuses_split_ports()
+{
+    rocketnet_server_config_t config;
+    api_core_server_config( &config );
+
+    enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
+    rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:40000", "[::1]:40001", &config, &status );
+    check( server == NULL );
+    check( status == ROCKETNET_STATUS_INVALID_ADDRESS );
+
+    status = ROCKETNET_STATUS_OK;
+    server = rocketnet_server_create( NULL, "127.0.0.1:40001", "[::1]:40000", &config, &status );
+    check( server == NULL );
+    check( status == ROCKETNET_STATUS_INVALID_ADDRESS );
+
+    const char * accepted[][2] = {
+        { "127.0.0.1:40000", "[::1]:40000" },
+        { "127.0.0.1:40000", NULL },
+        { NULL, "[::1]:40001" },
+    };
+
+    for ( int i = 0; i < (int) ( sizeof( accepted ) / sizeof( accepted[0] ) ); i++ )
+    {
+        status = ROCKETNET_STATUS_INVALID_ADDRESS;
+        server = rocketnet_server_create( NULL, accepted[i][0], accepted[i][1], &config, &status );
+        check( server != NULL );
+        check( status == ROCKETNET_STATUS_OK );
+        rocketnet_server_destroy( server );
+    }
+}
+
+REGISTER_UNIT_TEST( test_public_server_create_refuses_split_ports );
+
 #if ROCKETNET_DEV
 
 #include "../sdk/rocketnet_test_seams.h"
