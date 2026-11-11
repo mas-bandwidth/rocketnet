@@ -225,6 +225,7 @@ struct rocketnet_server_gso_t
     std::atomic<uint64_t> counter_gso_sends{ 0 };
     // TX worker only. An accepted segmented send resets it. A plain send does not.
     int segment_consecutive_refusals = 0;
+    bool segment_refusal_warned = false;        // TX worker only: the first refused run warns, later ones are spam
     uint64_t counter_packets_received;
     uint64_t counter_receive_syscalls;
     uint64_t counter_receive_dropped_size;
@@ -1805,7 +1806,15 @@ static int rocketnet_server_gso_flush( struct rocketnet_server_gso_t * gso, rock
                     return message_first_slot[sent];
                 }
 
-                rocketnet_warn( "gso transport: live GSO send refused (%s). resending that run plain", reason );
+                if ( !gso->segment_refusal_warned )
+                {
+                    gso->segment_refusal_warned = true;
+                    rocketnet_warn( "gso transport: live GSO send refused (%s). resending that run plain", reason );
+                }
+                else
+                {
+                    rocketnet_spam( "gso transport: live GSO send refused (%s). resending that run plain", reason );
+                }
                 const int resume = rocketnet_server_gso_resend_plain( gso, fd, &gso->send_headers[sent], message_first_slot[sent], message_num_packets[sent], full );
                 if ( *full )
                     return resume;
