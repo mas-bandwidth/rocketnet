@@ -233,6 +233,14 @@ static void test_held_entry_with_a_reused_descriptor_is_refused()
     check( ho_receive( &node, ho_record( ROCKETNET_MESSAGE_CODE_RELIABLE, 1 + W, 0, 0, 0, reuse, (int) sizeof( reuse ), 300 ) ) ==
            ROCKETNET_CHANNEL_DISPATCH_DELIVERED );
 
+    // the reuser made to look like the held message in every field but its
+    // number, so only the number test refuses the entry
+
+    node.region->receive_descriptors[1].code = ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED;
+    node.region->receive_descriptors[1].channel = 1;
+    node.region->receive_descriptors[1].ordering = 1;
+    check( node.region->receive_descriptors[1].live != 0 && node.region->receive_descriptors[1].number == 1 + W );
+
     const uint64_t violations = node.counters.values[ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION];
 
     ho_receive( &node, ho_record( ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 2, 1, 0, 0, &trigger, 1, 400 ) );
