@@ -10,6 +10,10 @@ The harness checks properties that also appear in the TLA+ models:
 - accepted payload bytes equal the sent message bytes;
 - reliable messages arrive exactly once and ordered streams arrive in order;
 - unreliable messages arrive at most once;
+- every receipt the senders read names a type 5, 6 or 7 message that
+  sender sent, is that message's only outcome, is LOSS only for type 5, and
+  is ACKED only for a message the receiver delivered (type 7: or holds
+  behind an earlier undelivered sequence);
 - stale packets from an earlier connection cannot enter a reused slot;
 - an acknowledgement names a packet the acknowledged endpoint itself issued,
   and names it once;

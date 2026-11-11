@@ -50,6 +50,9 @@
 // the burst schedule releases its whole window in one update: the ring is as
 // wide as the window the schedule can hold (ROCKETNET_DST_BURST_CAPACITY).
 #define ROCKETNET_DST_MAX_PAYLOADS           1024
+// The receipts the harness reads from one endpoint's list per step; a
+// longer list fails the run (receipt_list) rather than going unjudged.
+#define ROCKETNET_DST_RECEIPTS               4096
 #define ROCKETNET_DST_MAX_STREAMS            8
 
 // The fault kinds. A kind that is off makes no draw. Every name here is
@@ -1282,6 +1285,8 @@ static inline void rocketnet_dst_send_one( rocketnet_dst_world_t * w, int index,
     {
         rocketnet_dst_check_sent( &w->check, w->now, session, channel, type, sequence, generation,
                                   identity, epoch, size );
+        rocketnet_dst_check_receipt_sent( &w->check, direction == 0 ? 16 + index : slot, identity, sent, session,
+                                          channel, type, sequence );
     }
     else
     {
@@ -2078,6 +2083,34 @@ static inline int rocketnet_dst_run_seed_with_options( uint64_t seed,
                 rocketnet_dst_trace_u64( &w->trace, (uint64_t) ( i + 1 ) );
                 rocketnet_dst_trace_u64( &w->trace, (uint64_t) client->protocol.state );
                 client->last_state = client->protocol.state;
+            }
+        }
+
+        {
+            // each receipt this step's updates surfaced, after both ends'
+            // deliveries; a list longer than the harness reads fails, so no
+            // receipt goes unjudged
+            struct rocketnet_message_receipt_t receipts[ROCKETNET_DST_RECEIPTS];
+            for ( int i = 0; i < w->num_clients; i++ )
+            {
+                const uint64_t identity = (uint64_t) (uint32_t) w->client[i].generation * 256 + (uint64_t) i;
+                const int count = rocketnet_message_client_receipts( w->client[i].message, receipts, ROCKETNET_DST_RECEIPTS );
+                if ( count > ROCKETNET_DST_RECEIPTS )
+                    rocketnet_dst_fail( w, "receipt_list", "a client's receipt list is longer than the harness reads" );
+                for ( int r = 0; r < count && r < ROCKETNET_DST_RECEIPTS; r++ )
+                    rocketnet_dst_check_receipt_one_outcome( &w->check, 16 + i, identity, receipts[r].serial, receipts[r].status );
+            }
+            for ( int slot = 0; slot < ROCKETNET_DST_MAX_CLIENTS; slot++ )
+            {
+                const int index = rocketnet_dst_world_client_for_slot( w, slot );
+                if ( index < 0 || index >= w->num_clients )
+                    continue;
+                const uint64_t identity = (uint32_t) w->client[index].generation;
+                const int count = rocketnet_message_server_receipts( w->message_server, slot, receipts, ROCKETNET_DST_RECEIPTS );
+                if ( count > ROCKETNET_DST_RECEIPTS )
+                    rocketnet_dst_fail( w, "receipt_list", "a server slot's receipt list is longer than the harness reads" );
+                for ( int r = 0; r < count && r < ROCKETNET_DST_RECEIPTS; r++ )
+                    rocketnet_dst_check_receipt_one_outcome( &w->check, slot, identity, receipts[r].serial, receipts[r].status );
             }
         }
 

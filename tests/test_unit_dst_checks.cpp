@@ -133,6 +133,50 @@ static void test_dst_check_reliable_missing_from_fault_window_fails()
     rocketnet_unit_check( strcmp( st.check, "liveness_delivered" ) == 0 );
 }
 
+// Receipts as the run reads them: client 0 (sender 16) sends on server slot
+// 0, and each receipt names the serial its send returned.
+
+static void rec_receipt_send( struct rocketnet_dst_check_state_t * st, int type, uint32_t seq, uint32_t serial )
+{
+    rec_sent( st, 0, 0, type, seq );
+    rocketnet_dst_check_receipt_sent( st, 16, 1, serial, 0, 0, type, seq );
+}
+
+static void test_dst_check_receipt_acked_without_delivery_fails()
+{
+    static struct rocketnet_dst_check_state_t st;
+    rocketnet_dst_check_init( &st, 1, 50 );
+
+    rec_receipt_send( &st, 6, 0, 1 );
+    rec_deliver( &st, 0, 0, 6, 0 );
+    rocketnet_dst_check_receipt_one_outcome( &st, 16, 1, 1, ROCKETNET_RECEIPT_STATUS_ACKED );
+    rocketnet_unit_check( st.failed == 0 );
+
+    rec_receipt_send( &st, 6, 1, 2 );
+    rocketnet_dst_check_receipt_one_outcome( &st, 16, 1, 2, ROCKETNET_RECEIPT_STATUS_ACKED );
+    rocketnet_unit_check( st.failed == 1 );
+    rocketnet_unit_check( strcmp( st.check, "receipt_acked_delivered" ) == 0 );
+}
+
+static void test_dst_check_receipt_twice_fails()
+{
+    static struct rocketnet_dst_check_state_t st;
+    rocketnet_dst_check_init( &st, 1, 51 );
+
+    rec_receipt_send( &st, 5, 0, 1 );
+    rocketnet_dst_check_receipt_one_outcome( &st, 16, 1, 1, ROCKETNET_RECEIPT_STATUS_LOSS );
+    rocketnet_unit_check( st.failed == 0 );
+    rocketnet_dst_check_receipt_one_outcome( &st, 16, 1, 1, ROCKETNET_RECEIPT_STATUS_LOSS );
+    rocketnet_unit_check( st.failed == 1 );
+    rocketnet_unit_check( strcmp( st.check, "receipt_one_outcome" ) == 0 );
+
+    // a serial no receipt send returned
+    rocketnet_dst_check_init( &st, 1, 52 );
+    rocketnet_dst_check_receipt_one_outcome( &st, 16, 1, 9, ROCKETNET_RECEIPT_STATUS_ACKED );
+    rocketnet_unit_check( st.failed == 1 );
+    rocketnet_unit_check( strcmp( st.check, "receipt_one_outcome" ) == 0 );
+}
+
 static void test_dst_check_sequenced_backwards_fails()
 {
     static struct rocketnet_dst_check_state_t st;
@@ -319,6 +363,8 @@ REGISTER_UNIT_TEST( test_dst_check_ordered_out_of_order_fails );
 REGISTER_UNIT_TEST( test_dst_check_reliable_duplicate_fails );
 REGISTER_UNIT_TEST( test_dst_check_reliable_missing_fails );
 REGISTER_UNIT_TEST( test_dst_check_reliable_missing_from_fault_window_fails );
+REGISTER_UNIT_TEST( test_dst_check_receipt_acked_without_delivery_fails );
+REGISTER_UNIT_TEST( test_dst_check_receipt_twice_fails );
 REGISTER_UNIT_TEST( test_dst_check_sequenced_backwards_fails );
 REGISTER_UNIT_TEST( test_dst_check_unreliable_duplicate_fails );
 REGISTER_UNIT_TEST( test_dst_check_ack_never_issued_fails );
