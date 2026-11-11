@@ -134,12 +134,17 @@ Send(id) ==
                /\ UNCHANGED <<phase, owner, nextConn, bound, table, nextId, subs,
                               clientFlows, wants, delivered>>
 
+\* The send path ends no connection (standard/MESSAGES.md m1.7): a send to a
+\* subscriber whose memory is full is refused for that slot and counted, and
+\* the connection goes on, so no step of the application phase changes a
+\* slot's connection. The broken variant "sendkick" restores v1.0's
 \* rn_message_object_kick from the send path (region exhausted) on the main
-\* thread, possibly in the middle of a flow send: the transport ends the
-\* connection now and the endpoint takes nothing more. The flow lists are
-\* not touched; the slot is a changed slot at the next Observe, which drops
-\* its subscriptions (FLOWS.md 5, Kick).
+\* thread, possibly in the middle of a flow send: the transport ended the
+\* connection at once and the endpoint took nothing more. Connections end in
+\* the transport phase only (Disconnect), where a receive-side exhaustion,
+\* silence or an explicit disconnect ends them.
 Kick(s) ==
+    /\ "sendkick" \in Broken
     /\ phase = "application" /\ Live(s)
     /\ owner' = [owner EXCEPT ![s] = 0]
     /\ queue' = [queue EXCEPT ![s] = {}]
@@ -206,6 +211,11 @@ TypeOK ==
     /\ subs \in [Flows -> SUBSET Sub] /\ clientFlows \in [Slots -> SUBSET Flows]
     /\ queue \in [Slots -> SUBSET Copy]
     /\ wants \subseteq Want /\ entitled \subseteq Copy /\ delivered \subseteq Copy
+
+\* (N) Nothing the application does between updates, flow sends included,
+\* ends a connection (standard/MESSAGES.md m1.7). Reversed by "sendkick".
+SendNeverEnds ==
+    [][phase = "application" => owner' = owner]_vars
 
 \* No message sent to a flow reaches a connection that was not subscribed
 \* to that flow when it was sent.

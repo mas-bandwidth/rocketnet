@@ -124,3 +124,29 @@ twice with TLC and the pinned JAR:
 
 These are evidence that the invariant is not vacuous and that the drop at
 Observe carries delivery safety; they are not measured records.
+
+## Revision 1.1: the send path ends no connection
+
+Standard rule: MESSAGES.md m1.7. A flow send to a subscriber whose memory is
+full is refused for that slot and counted; the connection goes on. `Kick`
+(a connection ended from the application thread, in the middle of a flow
+send) is now reachable only under the reversed witness `Broken =
+{"sendkick"}`, v1.0's send-side kick; connections end in the transport phase
+only (`Disconnect`: a receive-side exhaustion, silence or an explicit
+disconnect). The action property `SendNeverEnds` (`phase = "application" =>
+owner' = owner`) says no step of the application phase changes a slot's
+connection.
+
+| Case | Expected | Exit | Distinct |
+|---|---|---:|---:|
+| `MCRNFlows.cfg` (now also `SendNeverEnds`) | pass | 0 | 402316 |
+| `MCRNFlowsBrokenSendKick.cfg` | `SendNeverEnds` | 13 | 49 |
+
+Witness trace, read by hand: a client connects and subscribes to a flow; in
+the application phase `Kick` ends its connection (`owner'` differs). The code
+before revision 1.1 did this when a flow send found the subscriber's region
+full: `rn_region_send_alloc` exhausted the region and the transport ended the
+connection at the next decision. `MCRNFlows.cfg` falls from 629876 distinct
+states to 402316: the states where a slot was ended in the middle of the
+application phase are no longer reachable. The measured-cases table above is
+the revision 1.0 record.
