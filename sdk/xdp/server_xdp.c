@@ -68,6 +68,7 @@
 #include <linux/udp.h>
 #include <linux/bpf.h>
 #include <bpf/bpf_helpers.h>
+#include <bpf/bpf_endian.h>
 
 #include "rocketnet_wire.h"
 #include "rocketnet_xdp_limits.h"
@@ -292,8 +293,8 @@ static __always_inline int server_xdp_udp_is_ours( struct udphdr * udp, __u8 * d
 // (ip_udp_bytes), that address result, and the source address (4 bytes for
 // family 4, 16 for family 6, network order) for the replay lookup.
 //
-// The UDP and IP length fields are byte-swapped scalars the verifier does not
-// bound, so they are compared as numbers against the frame bytes after the
+// The UDP and IP length fields are network order, read with bpf_ntohs (a
+// swap on bpfel, none on bpfeb), scalars the verifier does not bound, so they are compared as numbers against the frame bytes after the
 // UDP header (here, and in the IPv4 and IPv6 branches of server_xdp_filter)
 // and never added to a packet pointer.
 
@@ -320,7 +321,7 @@ static __always_inline int server_xdp_udp( struct xdp_md * ctx, struct udphdr * 
     }
 
     const __u32 frame_udp_bytes = (__u32) ( data_end - (__u8 *) udp );
-    const __u32 udp_len = __builtin_bswap16( udp->len );
+    const __u32 udp_len = bpf_ntohs( udp->len );
     if ( udp_len < sizeof( struct udphdr ) )
     {
         debug_printf( "packet udp length is below the UDP header" );
@@ -519,7 +520,7 @@ int server_xdp_filter( struct xdp_md * ctx )
                     // match
 
                     const __u32 frame_udp_bytes = (__u32) ( data_end - (__u8 *) udp );
-                    const __u32 ip_tot_len = __builtin_bswap16( ip->tot_len );
+                    const __u32 ip_tot_len = bpf_ntohs( ip->tot_len );
                     __u32 ip_udp_bytes = 0;
                     if ( ip_tot_len >= sizeof( struct iphdr ) + sizeof( struct udphdr ) && ip_tot_len - sizeof( struct iphdr ) <= frame_udp_bytes )
                     {
@@ -574,7 +575,7 @@ int server_xdp_filter( struct xdp_md * ctx )
                     // and address match
 
                     const __u32 frame_udp_bytes = (__u32) ( data_end - (__u8 *) udp );
-                    const __u32 ip6_payload_len = __builtin_bswap16( ip6->payload_len );
+                    const __u32 ip6_payload_len = bpf_ntohs( ip6->payload_len );
                     __u32 ip_udp_bytes = 0;
                     if ( ip6_payload_len >= sizeof( struct udphdr ) && ip6_payload_len <= frame_udp_bytes )
                     {

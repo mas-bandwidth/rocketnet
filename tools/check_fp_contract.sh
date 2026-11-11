@@ -6,7 +6,7 @@
 # NOT routed through the CMake target (which already carries the floor PRIVATE)
 # and fails on any compiler line that omits it.
 #
-# sdk/xdp/Makefile is exempt: `clang ... -target bpf -c server_xdp.c`
+# sdk/xdp/Makefile is exempt: `clang ... -target bpfel|bpfeb -c server_xdp.c`
 # compiles a BPF object, which has no floating point at all.
 #
 # `<compiler> --version` with no other argument is a version query, not a
