@@ -1349,6 +1349,94 @@ static void test_handshake_cookie_reply_update_clears_every_word()
 
 REGISTER_UNIT_TEST( test_handshake_cookie_reply_update_clears_every_word );
 
+// every update starts the limit afresh, whatever the update before it did:
+// after an update with cookie replies, and after idle updates, each source
+// again gets one reply and its second request is refused; a source answered
+// in one update is answered in the next
+
+static void test_handshake_cookie_reply_limit_fresh_every_update()
+{
+    struct budgets_server_t test;
+    budgets_server_setup( &test );
+
+    struct rocketnet_address_t other;
+    struct rocketnet_address_t late;
+    check( rocketnet_address_parse( &other, "198.51.100.8:40001" ) );
+    check( rocketnet_address_parse( &late, "198.51.100.9:40002" ) );
+
+    check( budgets_send_cookieless( &test, &test.client_address, 0xE0000, 1000.0 ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
+    check( budgets_send_cookieless( &test, &test.client_address, 0xE0001, 1000.0 ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    check( budgets_send_cookieless( &test, &other, 0xE0002, 1000.0 ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
+
+    // the update after one with replies
+
+    rocketnet_server_protocol_update( &test.server, 1000.1 );
+
+    check( budgets_send_cookieless( &test, &test.client_address, 0xE0003, 1000.1 ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
+    check( budgets_send_cookieless( &test, &test.client_address, 0xE0004, 1000.1 ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    check( budgets_send_cookieless( &test, &other, 0xE0005, 1000.1 ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
+    check( budgets_send_cookieless( &test, &other, 0xE0006, 1000.1 ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+
+    // idle updates, then the limit again
+
+    rocketnet_server_protocol_update( &test.server, 1000.2 );
+    rocketnet_server_protocol_update( &test.server, 1000.3 );
+    rocketnet_server_protocol_update( &test.server, 1000.4 );
+
+    check( budgets_send_cookieless( &test, &test.client_address, 0xE0007, 1000.4 ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
+    check( budgets_send_cookieless( &test, &test.client_address, 0xE0008, 1000.4 ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    check( budgets_send_cookieless( &test, &late, 0xE0009, 1000.4 ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
+    check( budgets_send_cookieless( &test, &late, 0xE000A, 1000.4 ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+
+    // one reply in one update, then the same source in the next
+
+    rocketnet_server_protocol_update( &test.server, 1000.5 );
+    check( budgets_send_cookieless( &test, &other, 0xE000B, 1000.5 ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
+    rocketnet_server_protocol_update( &test.server, 1000.6 );
+    check( budgets_send_cookieless( &test, &other, 0xE000C, 1000.6 ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
+    check( budgets_send_cookieless( &test, &other, 0xE000D, 1000.6 ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_COOKIE] == 14 );
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED] == 0 );
+    rocketnet_counters_assert_conserved( &test.counters );
+    budgets_server_teardown( &test );
+}
+
+REGISTER_UNIT_TEST( test_handshake_cookie_reply_limit_fresh_every_update );
+
+// the update clears the bitmap only after an update in which a cookie reply
+// was considered (it is already clear otherwise): a word the harness marks
+// after an idle update is left as it was, and the update after a considered
+// reply clears every word
+
+static void test_handshake_cookie_reply_idle_update_leaves_the_bitmap()
+{
+    struct budgets_server_t test;
+    budgets_server_setup( &test );
+
+    const uint64_t mark = 0x5a5a5a5a5a5a5a5aULL;
+    const int last = test.server.cookie_reply_source_words - 1;
+
+    rocketnet_server_protocol_update( &test.server, 1000.1 );
+    test.server.cookie_reply_sources[last] = mark;
+    rocketnet_server_protocol_update( &test.server, 1000.2 );
+    check( test.server.cookie_reply_sources[last] == mark );
+    test.server.cookie_reply_sources[last] = 0;
+
+    check( budgets_send_cookieless( &test, &test.client_address, 0xF0000, 1000.2 ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
+    test.server.cookie_reply_sources[last] |= mark;
+    rocketnet_server_protocol_update( &test.server, 1000.3 );
+    for ( int i = 0; i < test.server.cookie_reply_source_words; i++ )
+    {
+        check( test.server.cookie_reply_sources[i] == 0 );
+    }
+
+    rocketnet_counters_assert_conserved( &test.counters );
+    budgets_server_teardown( &test );
+}
+
+REGISTER_UNIT_TEST( test_handshake_cookie_reply_idle_update_leaves_the_bitmap );
+
 #if ROCKETNET_DEV
 // the transport carves the bitmap with itself, at the size for its
 // max_clients, every word clear before the first receive (a development

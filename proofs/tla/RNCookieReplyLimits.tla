@@ -11,7 +11,9 @@
 (* and port has not had one this update: the bit at                       *)
 (* Index(s) = SipHash(address bytes, key) & (AllocBits - 1) of a bitmap of *)
 (* AllocBits bits in words of WordBits, set by the reply and cleared,      *)
-(* every allocated word, by the update.  There is no limit on one         *)
+(* every allocated word, by the update after one in which a request read   *)
+(* the bitmap (cookie_reply_sources_dirty, set where the gate reads it);   *)
+(* a bitmap no request read is already clear.  There is no limit on one   *)
 (* update's cookie replies in all but the requests the update processes,   *)
 (* at most Bound (the receive bound of the code).  The update also clears *)
 (* the handshake work budget, which a cookie-valid request spends and the *)
@@ -43,6 +45,10 @@
 (*   "shortclear" the update clears every allocated word but the last, so *)
 (*                a bit from an earlier update refuses a source no reply  *)
 (*                of this update explains (RefusalHasCause);               *)
+(*   "noflag"     the reply sets its bit but not the dirty flag, so the   *)
+(*                update skips the clear and a stale bit survives into    *)
+(*                the next update, refusing a source no reply of that     *)
+(*                update explains (RefusalHasCause);                       *)
 (*   "unsized"    the bitmap is sized from Bound without Factor, so one   *)
 (*                full update sets more than 1 in Factor of its bits       *)
 (*                (FalseRefusalBound);                                     *)
@@ -64,7 +70,7 @@ CONSTANTS
 ASSUME /\ Bound \in Nat \ {0} /\ Factor \in Nat \ {0} /\ VerifyBudget \in Nat \ {0}
        /\ WordBits \in Nat \ {0}
        /\ HashRange \in Nat
-       /\ Broken \in {"none", "nobit", "nomask", "shortclear", "unsized", "shared"}
+       /\ Broken \in {"none", "nobit", "nomask", "shortclear", "noflag", "unsized", "shared"}
 
 \* rocketnet_server_cookie_reply_source_words: the next power of two at or
 \* above the bits needed, never below one word
@@ -78,6 +84,7 @@ ASSUME HashRange > AllocBits
 VARIABLES
     hash,           \* the keyed hash of each source, fixed at create
     words,          \* cookie_reply_sources: the set bits of each word
+    dirty,          \* cookie_reply_sources_dirty: a request read the bitmap since the clear
     processed,      \* ghost: connection requests this update processed
     sent,           \* ghost: cookie replies to each source this update
     bitRefused,     \* ghost: sources refused by their bit this update
@@ -85,7 +92,7 @@ VARIABLES
     verified,       \* ghost: requests actually verified this update
     validRefusedEarly   \* ghost: a valid request refused below VerifyBudget verifies
 
-vars == << hash, words, processed, sent, bitRefused, verifies, verified, validRefusedEarly >>
+vars == << hash, words, dirty, processed, sent, bitRefused, verifies, verified, validRefusedEarly >>
 
 Index(s) == IF Broken = "nomask" THEN hash[s] ELSE hash[s] % AllocBits
 Word(i) == i \div WordBits
@@ -96,6 +103,7 @@ SetBits == {i \in 0..AllocBits-1 : IsSet(i)}
 Init ==
     /\ hash \in [Sources -> 0..HashRange-1]
     /\ words = [w \in 0..Words-1 |-> {}]
+    /\ dirty = FALSE
     /\ processed = 0
     /\ sent = [s \in Sources |-> 0]
     /\ bitRefused = {}
@@ -106,6 +114,7 @@ Init ==
 CookieRequest(s) ==
     /\ processed < Bound
     /\ processed' = processed + 1
+    /\ dirty' = (Broken /= "noflag" \/ dirty)
     /\ UNCHANGED << hash, verified, validRefusedEarly >>
     /\ IF Broken /= "nobit" /\ IsSet(Index(s))
        THEN /\ bitRefused' = bitRefused \cup {s}
@@ -120,7 +129,7 @@ CookieRequest(s) ==
 ValidRequest ==
     /\ processed < Bound
     /\ processed' = processed + 1
-    /\ UNCHANGED << hash, words, sent, bitRefused >>
+    /\ UNCHANGED << hash, words, dirty, sent, bitRefused >>
     /\ IF verifies >= VerifyBudget
        THEN /\ validRefusedEarly' = (validRefusedEarly \/ verified < VerifyBudget)
             /\ UNCHANGED << verifies, verified >>
@@ -129,7 +138,10 @@ ValidRequest ==
             /\ UNCHANGED validRefusedEarly
 
 Update ==
-    /\ words' = [w \in 0..Words-1 |-> IF Broken = "shortclear" /\ w = Words - 1 THEN words[w] ELSE {}]
+    /\ words' = IF dirty
+                THEN [w \in 0..Words-1 |-> IF Broken = "shortclear" /\ w = Words - 1 THEN words[w] ELSE {}]
+                ELSE words
+    /\ dirty' = FALSE
     /\ processed' = 0
     /\ sent' = [s \in Sources |-> 0]
     /\ bitRefused' = {}
@@ -145,6 +157,7 @@ Spec == Init /\ [][Next]_vars
 
 TypeOK ==
     /\ words \in [0..Words-1 -> SUBSET (0..WordBits-1)]
+    /\ dirty \in BOOLEAN
     /\ processed \in 0..Bound /\ verifies \in Nat /\ verified \in Nat
     /\ bitRefused \subseteq Sources
 
@@ -163,6 +176,10 @@ RefusalHasCause ==
 \* The layout: the set bits are exactly the indices of this update's replies.
 BitmapIsThisUpdate ==
     \A i \in 0..AllocBits-1 : IsSet(i) <=> \E b \in Sources : sent[b] > 0 /\ Index(b) = i
+
+\* The skipped clear: a bitmap no request read since the last clear has no
+\* bit set, so the update that skips it leaves it as a clear would.
+CleanIsEmpty == ~dirty => SetBits = {}
 
 \* At most 1 in Factor of the bitmap is set in one update, so an honest
 \* source's bit is already set with probability at most 1 in Factor.

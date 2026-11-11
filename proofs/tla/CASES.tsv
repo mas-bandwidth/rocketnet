@@ -794,6 +794,7 @@ MCRNClientSendCursorLayoutBrokenPlus.cfg	MCRNClientSendCursorLayout.tla	invarian
 MCRNWindowLayoutBrokenWordShift.cfg	MCRNWindowLayout.tla	invariant	BitsAreReceived	check	rnwindowlayout	required	-
 MCRNCookieReplyLimits.cfg	MCRNCookieReplyLimits.tla	pass	-	check	rncookiereplylimits	required	-
 MCRNCookieReplyLimitsBrokenNoBit.cfg	MCRNCookieReplyLimits.tla	invariant	OneReplyPerSource	check	rncookiereplylimits	required	-
+MCRNCookieReplyLimitsBrokenNoFlag.cfg	MCRNCookieReplyLimits.tla	invariant	RefusalHasCause	check	rncookiereplylimits	required	-
 MCRNCookieReplyLimitsBrokenNoMask.cfg	MCRNCookieReplyLimits.tla	invariant	IndexInRange	check	rncookiereplylimits	required	-
 MCRNCookieReplyLimitsBrokenShortClear.cfg	MCRNCookieReplyLimits.tla	invariant	RefusalHasCause	check	rncookiereplylimits	required	-
 MCRNCookieReplyLimitsBrokenShared.cfg	MCRNCookieReplyLimits.tla	invariant	WorkBudgetOnlyVerifies	check	rncookiereplylimits	required	-

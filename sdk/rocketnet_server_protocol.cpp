@@ -693,6 +693,7 @@ static int rocketnet_server_protocol_process_connection_request_known( struct ro
 
             if ( server->cookie_reply_sources )
             {
+                server->cookie_reply_sources_dirty = 1;
                 const int index = rocketnet_server_protocol_cookie_reply_source_index( server, from );
                 if ( index < 0 || ( server->cookie_reply_sources[index >> 6] & ( 1ULL << ( index & 63 ) ) ) != 0 )
                 {
@@ -1827,13 +1828,15 @@ void rocketnet_server_protocol_update( struct rocketnet_server_protocol_t * serv
     rocketnet_server_protocol_rotate_cookie_key_if_due( server, current_time );
 
     // reset this server's per-update handshake budget and cookie reply
-    // bitmap, its whole allocated length, for the next update
-    // (proofs/tla/RNCookieReplyLimits.tla Update)
+    // bitmap, its whole allocated length, for the next update; a bitmap no
+    // request read since the last clear is already clear, so an idle update
+    // writes none of it (proofs/tla/RNCookieReplyLimits.tla Update)
 
     server->counters->handshakes_processed_this_update = 0;
-    if ( server->cookie_reply_sources )
+    if ( server->cookie_reply_sources && server->cookie_reply_sources_dirty )
     {
         memset( server->cookie_reply_sources, 0, (size_t) server->cookie_reply_source_words * sizeof( uint64_t ) );
+        server->cookie_reply_sources_dirty = 0;
     }
 
     uint64_t * counters = server->counters->values;
