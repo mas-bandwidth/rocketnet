@@ -18,7 +18,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 NUMBERS = {
     "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7,
-    "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12,
+    "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12, "thirteen": 13,
 }
 COUNT = re.compile(r"\b(" + "|".join(NUMBERS) + r")\s+(?:replay binaries|harnesses|committed corpora)\b")
 HARNESS = re.compile(r"\brocketnet_fuzz(?:_[a-z_]+)?\b")

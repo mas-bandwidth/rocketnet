@@ -1,0 +1,39 @@
+# Dictionary for tests/fuzz/rocketnet_fuzz_gateway_netlink.cpp. Entries are
+# the values the rtnetlink reply parsers branch on
+# (sdk/rocketnet_gateway_netlink_linux.cpp), little-endian as the seeds are.
+
+# query (input[0]): route or neighbour, AF_INET or AF_INET6
+query_route_ipv4="\x00"
+query_neighbor_ipv4="\x01"
+query_route_ipv6="\x02"
+query_neighbor_ipv6="\x03"
+
+# message types and flags (nlmsghdr type, flags)
+type_error="\x02\x00"
+type_done="\x03\x00"
+type_newroute="\x18\x00"
+type_newneigh="\x1c\x00"
+flags_multi="\x02\x00"
+flags_dump_intr="\x12\x00"
+
+# the request's sequence and port id
+sequence="\x01\x00\x00\x00"
+port_id="\x92\x10\x00\x00"
+
+# attributes (rta_len, rta_type): RTA_OIF, RTA_GATEWAY v4 and v6, RTA_TABLE,
+# RTA_MULTIPATH, NDA_DST v4, NDA_LLADDR
+rta_oif="\x08\x00\x04\x00"
+rta_gateway_v4="\x08\x00\x05\x00"
+rta_gateway_v6="\x14\x00\x05\x00"
+rta_table="\x08\x00\x0f\x00"
+rta_multipath="\x09\x00"
+nda_dst_v4="\x08\x00\x01\x00"
+nda_lladdr="\x0a\x00\x02\x00"
+
+# values: the server's interface, the main table, unicast, reachable,
+# INT_MIN as an error code
+interface="\x03\x00\x00\x00"
+table_main="\xfe\x00\x00\x00"
+rtn_unicast="\x01"
+nud_reachable="\x02\x00"
+error_int_min="\x00\x00\x00\x80"

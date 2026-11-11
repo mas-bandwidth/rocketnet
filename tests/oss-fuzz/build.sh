@@ -45,7 +45,8 @@ seeds_for()
 
 for target in rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured \
               rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session \
-              rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config; do
+              rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config \
+              rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink; do
     [ -f "tests/fuzz/$target.cpp" ] || { echo "skipping $target: no tests/fuzz/$target.cpp"; continue; }
     $CXX $CXXFLAGS -ffp-contract=off -std=c++17 $DEFS $INCS -c "tests/fuzz/$target.cpp" -o "$OBJ/$target.o"
     $CXX $CXXFLAGS "$OBJ/$target.o" "$OBJ/librocketnet_dev.a" $LIB_FUZZING_ENGINE -lbpf -lxdp -lpthread -o "$OUT/$target"

@@ -17,7 +17,7 @@
 # Usage: tools/fuzz_ndebug.sh [--seconds N] [--target NAME] [--jobs N]
 #                             [--out DIR] [--build-jobs N]
 #   --seconds N     seconds to fuzz each target (default 60)
-#   --target NAME   run one target (repeatable); default all eleven
+#   --target NAME   run one target (repeatable); default all fourteen
 #   --jobs N        targets fuzzed at once (default 1)
 #   --out DIR       reproducers, logs and scratch corpora (default
 #                   build-fuzz-ndebug/out, which .gitignore covers)
@@ -49,6 +49,9 @@ ALL_TARGETS=(
     rocketnet_fuzz_server_transport
     rocketnet_fuzz_client_transport
     rocketnet_fuzz_session
+    rocketnet_fuzz_xdp_frame
+    rocketnet_fuzz_uring_recvmsg
+    rocketnet_fuzz_gateway_netlink
     rocketnet_fuzz_differential
 )
 

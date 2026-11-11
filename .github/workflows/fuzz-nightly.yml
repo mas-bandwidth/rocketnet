@@ -14,8 +14,10 @@
 # harness under tests/fuzz/ (tests/fuzz/README.md's table): the one-binary stateless
 # parser sweep (the smoke's own binary, run long here), the message decoder,
 # the connect token ladder and its private layouts, the stateful receive
-# path, the wire round trip, the env config overlay, and the three pair
-# targets (server transport, client transport, scripted session).
+# path, the wire round trip, the env config overlay, the three pair
+# targets (server transport, client transport, scripted session), and the
+# XDP frame reader, the io_uring recvmsg codec and the netlink reply parsers
+# (the last two do work only on Linux, and compile to a no-op elsewhere).
 #
 # Each leg's finite fuzz campaign is max_total_time seconds (900 by default).
 # Building and completing that workload have no repository wall-clock cap.
@@ -63,6 +65,9 @@ jobs:
           - '{"target":"rocketnet_fuzz_token_private","source":"tests/fuzz/rocketnet_fuzz_token_private.cpp","seeds":"tests/fuzz/corpus_token_private","dict":"tests/fuzz/dict/rocketnet_fuzz_token_private.dict"}'
           - '{"target":"rocketnet_fuzz_round_trip","source":"tests/fuzz/rocketnet_fuzz_round_trip.cpp","seeds":"tests/fuzz/corpus_round_trip","dict":"tests/fuzz/dict/rocketnet_fuzz_round_trip.dict"}'
           - '{"target":"rocketnet_fuzz_config","source":"tests/fuzz/rocketnet_fuzz_config.cpp","seeds":"tests/fuzz/corpus_config","dict":"tests/fuzz/dict/rocketnet_fuzz_config.dict"}'
+          - '{"target":"rocketnet_fuzz_xdp_frame","source":"tests/fuzz/rocketnet_fuzz_xdp_frame.cpp","seeds":"tests/fuzz/corpus_xdp_frame","dict":"tests/fuzz/dict/rocketnet_fuzz_xdp_frame.dict"}'
+          - '{"target":"rocketnet_fuzz_uring_recvmsg","source":"tests/fuzz/rocketnet_fuzz_uring_recvmsg.cpp","seeds":"tests/fuzz/corpus_uring_recvmsg","dict":"tests/fuzz/dict/rocketnet_fuzz_uring_recvmsg.dict"}'
+          - '{"target":"rocketnet_fuzz_gateway_netlink","source":"tests/fuzz/rocketnet_fuzz_gateway_netlink.cpp","seeds":"tests/fuzz/corpus_gateway_netlink","dict":"tests/fuzz/dict/rocketnet_fuzz_gateway_netlink.dict"}'
           - '{"target":"rocketnet_fuzz_server_transport","source":"tests/fuzz/rocketnet_fuzz_server_transport.cpp","seeds":"tests/fuzz/corpus_server_transport","dict":"tests/fuzz/dict/rocketnet_fuzz_server_transport.dict"}'
           - '{"target":"rocketnet_fuzz_client_transport","source":"tests/fuzz/rocketnet_fuzz_client_transport.cpp","seeds":"tests/fuzz/corpus_client_transport","dict":"tests/fuzz/dict/rocketnet_fuzz_client_transport.dict"}'
           - '{"target":"rocketnet_fuzz_session","source":"tests/fuzz/rocketnet_fuzz_session.cpp","seeds":"tests/fuzz/corpus_session","dict":"tests/fuzz/dict/rocketnet_fuzz_session.dict"}'
@@ -225,6 +230,9 @@ jobs:
           - rocketnet_fuzz_token_private
           - rocketnet_fuzz_round_trip
           - rocketnet_fuzz_config
+          - rocketnet_fuzz_xdp_frame
+          - rocketnet_fuzz_uring_recvmsg
+          - rocketnet_fuzz_gateway_netlink
           - rocketnet_fuzz_server_transport
           - rocketnet_fuzz_client_transport
           - rocketnet_fuzz_session
@@ -311,6 +319,9 @@ jobs:
           - '{"target":"rocketnet_fuzz_token_private","source":"tests/fuzz/rocketnet_fuzz_token_private.cpp","seeds":"tests/fuzz/corpus_token_private","dict":"tests/fuzz/dict/rocketnet_fuzz_token_private.dict"}'
           - '{"target":"rocketnet_fuzz_round_trip","source":"tests/fuzz/rocketnet_fuzz_round_trip.cpp","seeds":"tests/fuzz/corpus_round_trip","dict":"tests/fuzz/dict/rocketnet_fuzz_round_trip.dict"}'
           - '{"target":"rocketnet_fuzz_config","source":"tests/fuzz/rocketnet_fuzz_config.cpp","seeds":"tests/fuzz/corpus_config","dict":"tests/fuzz/dict/rocketnet_fuzz_config.dict"}'
+          - '{"target":"rocketnet_fuzz_xdp_frame","source":"tests/fuzz/rocketnet_fuzz_xdp_frame.cpp","seeds":"tests/fuzz/corpus_xdp_frame","dict":"tests/fuzz/dict/rocketnet_fuzz_xdp_frame.dict"}'
+          - '{"target":"rocketnet_fuzz_uring_recvmsg","source":"tests/fuzz/rocketnet_fuzz_uring_recvmsg.cpp","seeds":"tests/fuzz/corpus_uring_recvmsg","dict":"tests/fuzz/dict/rocketnet_fuzz_uring_recvmsg.dict"}'
+          - '{"target":"rocketnet_fuzz_gateway_netlink","source":"tests/fuzz/rocketnet_fuzz_gateway_netlink.cpp","seeds":"tests/fuzz/corpus_gateway_netlink","dict":"tests/fuzz/dict/rocketnet_fuzz_gateway_netlink.dict"}'
           - '{"target":"rocketnet_fuzz_server_transport","source":"tests/fuzz/rocketnet_fuzz_server_transport.cpp","seeds":"tests/fuzz/corpus_server_transport","dict":"tests/fuzz/dict/rocketnet_fuzz_server_transport.dict"}'
           - '{"target":"rocketnet_fuzz_client_transport","source":"tests/fuzz/rocketnet_fuzz_client_transport.cpp","seeds":"tests/fuzz/corpus_client_transport","dict":"tests/fuzz/dict/rocketnet_fuzz_client_transport.dict"}'
           - '{"target":"rocketnet_fuzz_session","source":"tests/fuzz/rocketnet_fuzz_session.cpp","seeds":"tests/fuzz/corpus_session","dict":"tests/fuzz/dict/rocketnet_fuzz_session.dict"}'
@@ -470,6 +481,9 @@ jobs:
           - '{"target":"rocketnet_fuzz_token_private","source":"tests/fuzz/rocketnet_fuzz_token_private.cpp","seeds":"tests/fuzz/corpus_token_private","dict":"tests/fuzz/dict/rocketnet_fuzz_token_private.dict"}'
           - '{"target":"rocketnet_fuzz_round_trip","source":"tests/fuzz/rocketnet_fuzz_round_trip.cpp","seeds":"tests/fuzz/corpus_round_trip","dict":"tests/fuzz/dict/rocketnet_fuzz_round_trip.dict"}'
           - '{"target":"rocketnet_fuzz_config","source":"tests/fuzz/rocketnet_fuzz_config.cpp","seeds":"tests/fuzz/corpus_config","dict":"tests/fuzz/dict/rocketnet_fuzz_config.dict"}'
+          - '{"target":"rocketnet_fuzz_xdp_frame","source":"tests/fuzz/rocketnet_fuzz_xdp_frame.cpp","seeds":"tests/fuzz/corpus_xdp_frame","dict":"tests/fuzz/dict/rocketnet_fuzz_xdp_frame.dict"}'
+          - '{"target":"rocketnet_fuzz_uring_recvmsg","source":"tests/fuzz/rocketnet_fuzz_uring_recvmsg.cpp","seeds":"tests/fuzz/corpus_uring_recvmsg","dict":"tests/fuzz/dict/rocketnet_fuzz_uring_recvmsg.dict"}'
+          - '{"target":"rocketnet_fuzz_gateway_netlink","source":"tests/fuzz/rocketnet_fuzz_gateway_netlink.cpp","seeds":"tests/fuzz/corpus_gateway_netlink","dict":"tests/fuzz/dict/rocketnet_fuzz_gateway_netlink.dict"}'
           - '{"target":"rocketnet_fuzz_server_transport","source":"tests/fuzz/rocketnet_fuzz_server_transport.cpp","seeds":"tests/fuzz/corpus_server_transport","dict":"tests/fuzz/dict/rocketnet_fuzz_server_transport.dict"}'
           - '{"target":"rocketnet_fuzz_client_transport","source":"tests/fuzz/rocketnet_fuzz_client_transport.cpp","seeds":"tests/fuzz/corpus_client_transport","dict":"tests/fuzz/dict/rocketnet_fuzz_client_transport.dict"}'
           - '{"target":"rocketnet_fuzz_session","source":"tests/fuzz/rocketnet_fuzz_session.cpp","seeds":"tests/fuzz/corpus_session","dict":"tests/fuzz/dict/rocketnet_fuzz_session.dict"}'
@@ -592,7 +606,7 @@ jobs:
             leak-*
           if-no-files-found: ignore
 
-  # MemorySanitizer over the same ten-target matrix, Linux only (row 262's
+  # MemorySanitizer over the same thirteen-target matrix, Linux only (row 262's
   # macOS and Windows cells are n and -: MSan is a Linux instrument). Every
   # linked object must be instrumented: the development library, vendored
   # sodium included, is configured with the MSan flags and the instrumented
@@ -630,6 +644,9 @@ jobs:
           - '{"target":"rocketnet_fuzz_token_private","source":"tests/fuzz/rocketnet_fuzz_token_private.cpp","seeds":"tests/fuzz/corpus_token_private","dict":"tests/fuzz/dict/rocketnet_fuzz_token_private.dict"}'
           - '{"target":"rocketnet_fuzz_round_trip","source":"tests/fuzz/rocketnet_fuzz_round_trip.cpp","seeds":"tests/fuzz/corpus_round_trip","dict":"tests/fuzz/dict/rocketnet_fuzz_round_trip.dict"}'
           - '{"target":"rocketnet_fuzz_config","source":"tests/fuzz/rocketnet_fuzz_config.cpp","seeds":"tests/fuzz/corpus_config","dict":"tests/fuzz/dict/rocketnet_fuzz_config.dict"}'
+          - '{"target":"rocketnet_fuzz_xdp_frame","source":"tests/fuzz/rocketnet_fuzz_xdp_frame.cpp","seeds":"tests/fuzz/corpus_xdp_frame","dict":"tests/fuzz/dict/rocketnet_fuzz_xdp_frame.dict"}'
+          - '{"target":"rocketnet_fuzz_uring_recvmsg","source":"tests/fuzz/rocketnet_fuzz_uring_recvmsg.cpp","seeds":"tests/fuzz/corpus_uring_recvmsg","dict":"tests/fuzz/dict/rocketnet_fuzz_uring_recvmsg.dict"}'
+          - '{"target":"rocketnet_fuzz_gateway_netlink","source":"tests/fuzz/rocketnet_fuzz_gateway_netlink.cpp","seeds":"tests/fuzz/corpus_gateway_netlink","dict":"tests/fuzz/dict/rocketnet_fuzz_gateway_netlink.dict"}'
           - '{"target":"rocketnet_fuzz_server_transport","source":"tests/fuzz/rocketnet_fuzz_server_transport.cpp","seeds":"tests/fuzz/corpus_server_transport","dict":"tests/fuzz/dict/rocketnet_fuzz_server_transport.dict"}'
           - '{"target":"rocketnet_fuzz_client_transport","source":"tests/fuzz/rocketnet_fuzz_client_transport.cpp","seeds":"tests/fuzz/corpus_client_transport","dict":"tests/fuzz/dict/rocketnet_fuzz_client_transport.dict"}'
           - '{"target":"rocketnet_fuzz_session","source":"tests/fuzz/rocketnet_fuzz_session.cpp","seeds":"tests/fuzz/corpus_session","dict":"tests/fuzz/dict/rocketnet_fuzz_session.dict"}'
