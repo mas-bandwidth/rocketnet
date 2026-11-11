@@ -814,8 +814,10 @@ struct rocketnet_server_stats_t
 
     uint64_t connections_denied_full;
 
-    /// Connection requests dropped by the per-update handshake budget. A
-    /// client that retries counts once per request.
+    /// Connection requests dropped by a per-update handshake limit: the
+    /// handshake work budget, or the cookie reply limits (one cookie per
+    /// source address and port, max_clients cookies in all). A client that
+    /// retries counts once per request.
 
     uint64_t handshakes_dropped_over_budget;
 

@@ -2640,7 +2640,7 @@ The server turns a connection request into an encryption mapping, and a connecti
 4. A server MUST then ignore a request whose version is not the protocol version, and then one whose protocol id is not the server's.
 5. A server MUST then refuse a token whose expire timestamp is not later than the server's current time, counting `CONNECTION_REQUEST_TOKEN_EXPIRED`, and then a token whose create timestamp is more than the creation skew after the server's current time, counting `CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE`. Such a token MUST NOT be answered. A server places no limit on a token's lifetime.
 6. A server MUST then ignore a request whose timeout is zero or negative, then one whose address flags name no family or set a bit above bit 1, then one whose token address of the family the request arrived on (a v4-mapped source is IPv4) is not one this server serves, the token's other-family address unread, and then one whose server public key is not this server's. It MUST NOT answer a request that rules 2, 4, 5 or 6 refuse.
-7. A server MUST require a valid return cookie before any asymmetric work, and MUST answer a request without one, with a forged one, or with an expired one with a fresh connection cookie packet.
+7. A server MUST require a valid return cookie before any asymmetric work, and MUST answer a request without one, with a forged one, or with an expired one with a fresh connection cookie packet, within two cookie reply limits per update, checked in this order before the cookie is computed: at most `max_clients` cookie packets in all, and at most one to each source address and port. A request owed a cookie past either limit MUST be ignored, unanswered, counting `CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED`; the client sends again at its send rate. Neither limit spends the handshake work budget of rule 8, and neither refuses a request with a valid cookie. Both limits MUST be reset at the start of each update. A server MUST hold the per-source limit in fixed memory that no source can fill: it MAY keep one bit per index of a keyed hash of the source address and port, the key drawn at server creation and kept secret, so that a collision refuses another source for that update only and cannot be aimed.
 8. A server MUST check the per-update handshake work budget after the cheap rungs of rule 9 and immediately before the signature verify of rule 10, and MUST refuse, unanswered, a request that reaches that check when the budget is spent, counting `CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED`. Only a request that reaches the check spends budget; a request refused by an earlier rung spends none.
 9. A server MUST apply the cheap rungs below in the order given, before it verifies the signature in rule 10, and MUST stop at the first that refuses:
     1. Ignore, unanswered, a request whose token identifier is bound to a different source address, counting `CONNECTION_REQUEST_TOKEN_ALREADY_USED`.
@@ -2663,6 +2663,7 @@ The policy values of this section are below.
 |---|---|---|
 | token creation skew | `30` | seconds |
 | failed-signature source table | `64` | sources |
+| cookie reply source bitmap | `16384` | bits |
 
 The cookie lifetime, the cookie key rotation period and the used-token history
 capacity per slot are rows of [t3 Constants and registries](#t3). The handshake
@@ -2680,6 +2681,7 @@ list is ignored in that state.
 | no mapping | request | token expired | ignore, count | no mapping |
 | no mapping | request | token created in the future | ignore, count | no mapping |
 | no mapping | request | timeout, address flags, advertised address or server key check fails | ignore, count the reason | no mapping |
+| no mapping | request | cookie absent, forged or expired; `max_clients` cookies sent this update, or one already sent to this source address and port | ignore, count | no mapping |
 | no mapping | request | cookie absent, forged or expired | send a fresh cookie packet | no mapping |
 | no mapping | request | token used from another address | ignore, count | no mapping |
 | no mapping | request | token claimed from another address until the handshake deadline or its half-open mapping's removal | ignore, count | no mapping |
@@ -3869,6 +3871,7 @@ the property its row names.
 | An on-path replay of a first request cannot hold a token past its mapping | the request claim is released with its half-open mapping; the claim window is min(handshake deadline, half-open idle deadline), and a refused client retries from its own address within its token timeout |
 | Working keys are scoped to one connection | keys derived per connection from a fresh salt and a fresh session nonce; teardown erases the keys |
 | No response larger than what provoked it | the amplification table, re-checked whenever any size changes |
+| A spoofed flood draws a bounded number of cookies | per update, at most one cookie to each source address and port and at most `max_clients` in all, held in fixed memory ([t12 Handshake: server](#t12) rule 7) |
 | Recorded session traffic resists later compromise of long-term keys | ephemeral X25519 exchange; ephemeral and shared secrets erased after derivation, and session keys erased at teardown |
 | A compromised server mints nothing | servers hold no signing key |
 
@@ -3906,7 +3909,12 @@ answered traffic, never an amplifier.
 Two rules keep the table true rather than merely accurate. Padding used to
 satisfy a row MUST be checked on read, for length and content. A server MUST NOT
 answer a request it has rejected; the connection cookie is the single exception
-and is smaller than the request.
+and is smaller than the request. A source that has not returned a valid cookie
+is sent at most that cookie, only for a datagram of the request wire size, at
+most once per update ([t12 Handshake: server](#t12) rules 2 and 7). The
+connection challenge and the connection denied packet go only to a source
+address that has returned a valid cookie; a resent challenge (rule 3) goes to
+an address whose mapping a request with a valid cookie created.
 
 ```vector t19.amplification
 input: each row's packet type (u8) and wire size (u16), in the rows' order

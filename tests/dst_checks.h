@@ -1129,6 +1129,11 @@ static inline void rocketnet_dst_check_unexplained_refusal( struct rocketnet_dst
             // duplicate fault moves it (seeds 1-200, one fault at a time),
             // as soak_sim's table explains the same row.
             ( duplicates_enabled && i == ROCKETNET_COUNTER_CLIENT_ACK_ALREADY_RECEIVED ) ||
+            // A connection request owed a cookie, delivered twice in one
+            // server step: the copy is past its source's one cookie reply of
+            // the update (standard/TRANSPORT.md t12 rule 7). Measured: seeds
+            // 1-200, one fault at a time, only the duplicate fault moves it.
+            ( duplicates_enabled && i == ROCKETNET_COUNTER_CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED ) ||
             // Measured mechanism (seeds 1-1000 under clock-back at base:
             // 11 seeds, first seed 13): clock-back rewinds one endpoint's
             // protocol clock by a drawn 10 ms .. 5 s, past the server's

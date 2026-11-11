@@ -760,7 +760,18 @@ carrying a passing filter value and a zero type byte, making the server a packet
 reflector for garbage and spending a hash and a system call on every piece of it.
 Everything below it is expensive — the used-token lookup hashes 576 bytes, and the three
 asymmetric operations follow — so nothing below may run for an address that has not
-answered. * **A server should bound the handshake work it performs in one update: at
+answered. * **A server must bound the cookies it sends in one update: at most one to
+each source address and port, and at most `max_clients` in all.** A cookie is smaller
+than the request, but a spoofed flood would otherwise draw one cookie per request, aimed
+at whatever address the flood names. The reference implementation keeps the per-source
+limit as one bit of a fixed 16384-bit map, indexed by SipHash of the address and port
+under a key drawn at server creation, and cleared each update: there is no table a
+flood can fill, and the key keeps a collision from being aimed. A collision refuses an
+honest source for one update, and its client sends again. The global limit bounds one
+update's cookie bytes at `max_clients` times the cookie wire size. Both checks sit
+before the cookie MAC, so a refusal costs one hash at most, and neither spends the
+handshake work budget below, so a cookie flood cannot starve verified requests and a
+spent budget does not stop cookies. * **A server should bound the handshake work it performs in one update: at
 most 16 connection requests reaching the signature verify, per server, per update by
 default.** This check sits after the cheap rungs (the used-token lookup, the
 failed-signature budget, the claim and the two capacities) and immediately before the
@@ -1972,3 +1983,9 @@ It differs from the text shipped with v1.0.0 in these places:
   bursts is not sent and is counted as `DISCONNECT_BURST_DROPPED`, a refused destination
   ends its burst, and the timeout stands behind every burst withheld, as the reference
   implementation has done since v1.0.0 (the counter is new).
+- [RN-1 t12 Handshake: server](TRANSPORT.md#t12), rule 7, and
+  [RN-1 t19.1 Amplification](TRANSPORT.md#t19.1): a server sends at most one connection
+  cookie to each source address and port, and at most `max_clients` in all, per update,
+  held in a fixed bitmap under a keyed hash; a request owed a cookie past either limit is
+  ignored and counted as `CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED`, and neither limit
+  spends the handshake work budget.

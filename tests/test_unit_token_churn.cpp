@@ -184,6 +184,12 @@ static int tc_drive( struct tc_server_t * t, struct tc_client_t * c, uint64_t no
              c->client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_DENIED )
             break;
 
+        // each step is one server update for the cookie reply limits, which
+        // the update clears (rocketnet_server_protocol_update). The harness
+        // runs no sweep: a client it is not driving stays seated.
+        t->server.cookie_replies_this_update = 0;
+        memset( t->server.cookie_reply_sources, 0, sizeof( t->server.cookie_reply_sources ) );
+
         int out_bytes = 0;
         rocketnet_client_protocol_update( &c->client, t->time, out_packet, &out_bytes );
         if ( out_bytes == 0 )

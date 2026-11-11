@@ -2261,6 +2261,10 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_s
     }
 
     randombytes_buf( protocol->cookie_key, ROCKETNET_COOKIE_KEY_BYTES );
+    randombytes_buf( protocol->cookie_reply_source_key, ROCKETNET_SERVER_COOKIE_REPLY_KEY_BYTES );
+#if ROCKETNET_DEV
+    rocketnet_dev_seed_hash_key( protocol->cookie_reply_source_key, ROCKETNET_SERVER_COOKIE_REPLY_KEY_BYTES, ROCKETNET_DEV_HASH_KEY_COOKIE_REPLY_SOURCES );
+#endif // #if ROCKETNET_DEV
     sodium_memzero( protocol->previous_cookie_key, ROCKETNET_COOKIE_KEY_BYTES );
     protocol->has_previous_cookie_key = 0;
     protocol->cookie_lifetime_seconds = ROCKETNET_DEFAULT_COOKIE_LIFETIME_SECONDS;

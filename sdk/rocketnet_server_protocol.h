@@ -40,9 +40,9 @@ struct rocketnet_counters_t;
 #endif // #if ROCKETNET_DEV
 
 // The outcomes of processing a connection request: IGNORED sends nothing;
-// SEND_* names the response packet written. BUDGET_EXCEEDED is the handshake
-// work budget refusal: the request was dropped unanswered before any
-// asymmetric work and counted as
+// SEND_* names the response packet written. BUDGET_EXCEEDED is a per-update
+// limit's refusal, the handshake work budget or a cookie reply limit: the
+// request was dropped unanswered before any asymmetric work and counted as
 // CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED.
 
 #define ROCKETNET_SERVER_PROCESS_IGNORED            0
@@ -52,6 +52,15 @@ struct rocketnet_counters_t;
 #define ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE    4
 #define ROCKETNET_SERVER_PROCESS_ACCEPTED           5
 #define ROCKETNET_SERVER_PROCESS_BUDGET_EXCEEDED    6
+
+// The cookie reply limits of one update (standard/TRANSPORT.md t12 rule 7,
+// proofs/tla/RNCookieReplyLimits.tla): at most max_clients cookie replies,
+// and at most one to each source address and port, remembered as one bit of
+// a fixed bitmap at a keyed hash of the address. Nothing here grows with the
+// sources; a collision refuses the other source for the rest of the update.
+
+#define ROCKETNET_SERVER_COOKIE_REPLY_SOURCE_BITS   16384
+#define ROCKETNET_SERVER_COOKIE_REPLY_KEY_BYTES     16
 
 struct rocketnet_server_protocol_t
 {
@@ -77,6 +86,10 @@ struct rocketnet_server_protocol_t
     double handshake_deadline_seconds;                      // default 5
     int handshakes_per_update;                              // the handshake work budget, 1 .. 1024; default 16
     int32_t max_timeout_seconds;                            // clamp; <= 0 means no clamp
+
+    uint64_t cookie_replies_this_update;                    // against max_clients; cleared by update
+    uint64_t cookie_reply_sources[ROCKETNET_SERVER_COOKIE_REPLY_SOURCE_BITS / 64];   // cleared by update
+    uint8_t cookie_reply_source_key[ROCKETNET_SERVER_COOKIE_REPLY_KEY_BYTES];        // drawn at create
 
     struct rocketnet_encryption_map_t * encryption_map;
     struct rocketnet_used_token_history_t * used_token_history;
@@ -124,6 +137,13 @@ struct rocketnet_server_transport_t;
 void rocketnet_server_transport_test_receive_work( const struct rocketnet_server_transport_t * server_transport,
                                                    uint64_t * map_hashes, uint64_t * payload_writes );
 #endif // #if ROCKETNET_DEV
+
+// The bit of cookie_reply_sources that stands for from, 0 ..
+// ROCKETNET_SERVER_COOKIE_REPLY_SOURCE_BITS - 1: a SipHash of the address
+// bytes, port included, under cookie_reply_source_key; -1 for an address that
+// is not IPv4 or IPv6.
+
+int rocketnet_server_protocol_cookie_reply_source_index( const struct rocketnet_server_protocol_t * server, const struct rocketnet_address_t * from );
 
 // The connection id held by client_index now (P9a): 0 for a free slot, an
 // index out of range, or a protocol without the connection id arrays.

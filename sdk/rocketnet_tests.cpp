@@ -2493,6 +2493,16 @@ static int rocketnet_test_process_at( struct rocketnet_test_server_t * test, con
                                                                  response, response_bytes );
 }
 
+// the next server update, at the time the requests above are processed: it
+// clears the per-update limits, so a cookie for a source that already had one
+// is that update's first (standard/TRANSPORT.md t12 rule 7). A real client
+// sends its requests at its send rate, one per update at most.
+
+static void rocketnet_test_next_update( struct rocketnet_test_server_t * test )
+{
+    rocketnet_server_protocol_update( &test->server, 100.0 );
+}
+
 // a request that fails a check must count exactly: the arrival, and the one
 // reason. everything else in the counter set stays untouched.
 
@@ -2510,6 +2520,7 @@ static void rocketnet_test_pass_cookie_gate( struct rocketnet_test_server_t * te
 {
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
     int response_bytes = 0;
+    rocketnet_test_next_update( test );
     int result = rocketnet_test_process( test, request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES, response, &response_bytes );
 
     rocketnet_check( result == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
@@ -2832,6 +2843,7 @@ void rocketnet_test_request_path_cookie_gate()
         rocketnet_write_uint64( &p, stale_expire );
         rocketnet_write_bytes( &p, stale_mac, ROCKETNET_COOKIE_MAC_BYTES );
     }
+    rocketnet_test_next_update( &test );
     before = test.counters;
 
     result = rocketnet_test_process( &test, request, sizeof( request ), response, &response_bytes );
@@ -2845,6 +2857,7 @@ void rocketnet_test_request_path_cookie_gate()
     p = request + ROCKETNET_PREFILTER_BYTES;
     rocketnet_write_uint64( &p, ROCKETNET_TEST_CREATE_TS );             // <= now, forged mac
 
+    rocketnet_test_next_update( &test );
     before = test.counters;
 
     result = rocketnet_test_process( &test, request, sizeof( request ), response, &response_bytes );
@@ -3144,6 +3157,7 @@ void rocketnet_test_cookie_bounds_signature_verifies()
 
         uint8_t response[ROCKETNET_RECEIVE_CEILING];
         int response_bytes = 0;
+        rocketnet_test_next_update( &test );
         int result = rocketnet_test_process_at( &test, request2, sizeof( request2 ), later, response, &response_bytes );
 
         rocketnet_check( result == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
@@ -5028,6 +5042,9 @@ static int rocketnet_test_pump( struct rocketnet_test_server_t * test,
 
         if ( client->state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
             return client->state;
+
+        // each step is one server update: receives, then the update
+        rocketnet_server_protocol_update( &test->server, time );
 
         time += 0.05;
     }

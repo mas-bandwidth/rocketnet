@@ -540,5 +540,75 @@ static void test_reply_never_larger_than_request_hostile_inputs()
     reply_server_teardown( &test );
 }
 
+// ---------------------------------------------------------------------------
+// An address that has proven nothing -- no mapping, no valid cookie -- can
+// provoke one reply and only one: the 38-byte cookie, for a request of exactly
+// 710 bytes. A connection request of any other length, shorter or longer, up
+// to the receive ceiling, is answered with nothing. The challenge and the
+// denied are sent only past a valid cookie for the address: with every slot
+// taken, a request without one still gets the cookie, not the denied.
+// ---------------------------------------------------------------------------
+
+static void test_reply_unproven_source_gets_at_most_a_cookie()
+{
+    struct reply_server_t test;
+    reply_server_setup( &test );
+
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+
+    for ( int length = 1; length <= ROCKETNET_RECEIVE_CEILING; length++ )
+    {
+        if ( length == ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES )
+            continue;
+
+        uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+        memset( packet, 0, sizeof( packet ) );
+        reply_write_header( packet, length, ROCKETNET_CONNECTION_REQUEST_PACKET );
+        response_bytes = -1;
+        rocketnet_unit_check( reply_process_at( &test, &test.client_address, packet, length,
+                                                response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+        rocketnet_unit_check( response_bytes == 0 );
+    }
+
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    reply_build_standard_request( request, 0xF100ULL, rocketnet_test_salt );
+
+    // no cookie, then a forged one: the cookie each time, at most 38/710
+    // of the request
+
+    rocketnet_unit_check( reply_process_at( &test, &test.client_address, request, sizeof( request ),
+                                            response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
+    rocketnet_unit_check( response_bytes == ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES );
+    rocketnet_unit_check( response_bytes * ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES <=
+                          ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES * (int) sizeof( request ) );
+
+    memset( request + ROCKETNET_PREFILTER_BYTES, 0xAB, ROCKETNET_COOKIE_FIELD_BYTES );
+    rocketnet_unit_check( reply_process_at( &test, &test.second_address, request, sizeof( request ),
+                                            response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
+    rocketnet_unit_check( response_bytes == ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES );
+
+    // every slot taken: a forged cookie still earns only the cookie
+
+    uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
+    memset( user_data, 0, sizeof( user_data ) );
+    for ( int i = 0; i < 4; i++ )
+        rocketnet_unit_check( rocketnet_client_slots_assign( test.server.client_slots, 0xF400 + (uint64_t) i, -1,
+                                                             0xF400 + (uint64_t) i, user_data ) == i );
+
+    rocketnet_unit_check( reply_process_at( &test, &test.third_address, request, sizeof( request ),
+                                            response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
+    rocketnet_unit_check( response_bytes == ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES );
+
+    for ( int i = 0; i < 4; i++ )
+        rocketnet_client_slots_release( test.server.client_slots, i );
+
+    rocketnet_unit_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SENT_CHALLENGE] == 0 );
+    rocketnet_unit_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_SLOTS] == 0 );
+
+    reply_server_teardown( &test );
+}
+
 REGISTER_UNIT_TEST( test_reply_never_larger_than_request_every_unauthenticated_type );
 REGISTER_UNIT_TEST( test_reply_never_larger_than_request_hostile_inputs );
+REGISTER_UNIT_TEST( test_reply_unproven_source_gets_at_most_a_cookie );

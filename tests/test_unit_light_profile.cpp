@@ -50,7 +50,10 @@
 // 1469212319, client 15036170, Release and Debug) less the 1 MiB caller
 // slack, which the check adds back. The server figure pinned before this one,
 // 1469129231, still held most of that slack: 965488 bytes over the peak.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468163743 )
+// The server protocol's cookie reply limits (a 16384-bit source bitmap, its
+// 16-byte key and the update's reply count) add 2112 bytes to the transport
+// object; the probe's actual= line is 1469214431.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468165855 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13987594 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Debug.
@@ -74,7 +77,9 @@
 // expire_floor, the bindings' lower bound on a live expiry, adding 16 bytes
 // (sdk/rocketnet_token_tables.cpp, struct rocketnet_token_table_t); the probe's
 // actual= line is 3111387939.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110339363ULL )
+// The server protocol's cookie reply limits add 2048 bytes to the transport
+// object as laid out here; the probe's actual= line is 3111389987.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110341411ULL )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14146994 )
 #endif // #if defined( _WIN32 )
 
