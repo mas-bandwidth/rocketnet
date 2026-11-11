@@ -289,7 +289,7 @@ def check_declarations(raw):
     # below still apply to every other public declaration.
     for name in ALLOWED_INLINES:
         pattern = (r"static\s+inline\s+enum\s+rocketnet_status_t\s+%s\s*\(\s*struct\s+(\w+)\s*\*\s*config\s*\)\s*\{"
-                   r"\s*if\s*\(\s*config\s*\)\s*config->config_bytes\s*=\s*sizeof\s*\(\s*\*config\s*\)\s*;"
+                   r"\s*if\s*\(\s*config\s*\)\s*\{\s*config->config_bytes\s*=\s*sizeof\s*\(\s*\*config\s*\)\s*;\s*\}"
                    r"\s*return\s+%s_internal\s*\(\s*config\s*\)\s*;\s*\}") % ( name, name )
         found = list(re.finditer(pattern, code))
         report(len(found) == 1, "(c) the inline %s is the one allowed form, exactly once" % name)
@@ -298,7 +298,7 @@ def check_declarations(raw):
 
     for name, config_type, internal_name in ALLOWED_LIGHT_CONFIG_INLINES:
         pattern = (r"static\s+inline\s+enum\s+rocketnet_status_t\s+%s\s*\(\s*struct\s+%s\s*\*\s*config\s*\)\s*\{"
-                   r"\s*if\s*\(\s*config\s*\)\s*config->config_bytes\s*=\s*sizeof\s*\(\s*\*config\s*\)\s*;"
+                   r"\s*if\s*\(\s*config\s*\)\s*\{\s*config->config_bytes\s*=\s*sizeof\s*\(\s*\*config\s*\)\s*;\s*\}"
                    r"\s*return\s+%s\s*\(\s*config\s*\)\s*;\s*\}") % (name, config_type, internal_name)
         found = list(re.finditer(pattern, code))
         report(len(found) == 1, "(c) the inline %s is the one allowed form, exactly once" % name)
