@@ -2895,8 +2895,13 @@ subject to probe pacing ([m9.3 Resend classes and the reliable timeout](#m9.3)),
 until it is acknowledged or the connection ends.
 
 When the reliable timeout is disabled, an update that acknowledges a message
-packet after an interval of at least 1 second in which no message packet was
-acknowledged ends an acknowledgement silence at that update. A sender MUST NOT
+packet ends an acknowledgement silence at that update when, for at least
+1 second before it, the lowest unacknowledged number had been sent and no
+message packet was acknowledged: that is, at least 1 second has passed since
+the later of the previous update that acknowledged a message packet and the
+first send of the lowest unacknowledged number. An interval in which every sent
+number was acknowledged owes no acknowledgement and is not a silence, however
+long. A sender MUST NOT
 take a round-trip sample of [m9.1 Acknowledgement mapping](#m9.1) from an
 acknowledged packet sent before the end of the latest acknowledgement silence
 less its smoothed round-trip time; every other acknowledged packet is sampled as

@@ -41,7 +41,7 @@
 // the disconnect reasons (enum rocketnet_disconnect_reason_t)
 #include "rocketnet.h"
 
-// probe pacing and the RTT filter: a path with no reliable progress (or no ack)
+// probe pacing and the RTT filter: a path with no reliable progress (or no ack while a reliable number is owed one)
 // for this long is treated as not delivering (standard/MESSAGES.md m9.2, m9.3)
 #define RN_PROBE_SECONDS 1.0
 
@@ -94,7 +94,7 @@ struct rn_window_ack_t
     double reliable_timeout;        // seconds; 0.0 is off (the default)
     double last_progress;           // the last update that newly acknowledged a reliable number (m9.3 probe)
     double last_ack;                // the last update that acknowledged any message packet
-    double silence_end;             // the last ack after RN_PROBE_SECONDS with none (m9.2 RTT filter)
+    double silence_end;             // the last ack after RN_PROBE_SECONDS owed none came (m9.2 RTT filter)
     uint8_t has_last_ack;
 
     double srtt;                    // 5% smoothed RTT

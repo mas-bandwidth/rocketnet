@@ -361,3 +361,43 @@ hand against `sdk/rocketnet_window_ack.cpp` and `sdk/rocketnet_channel.cpp`:
   silence samples a packet sent before `silence_end - srtt`. The code's
   `on_ack` keeps the first sample, then takes one only when
   `send_time >= silence_end - srtt`.
+
+## Revision 1.2: a silence needs an acknowledgement owed
+
+Standard rule: MESSAGES.md m9.2. Revision 1.1 ended a silence on any ack
+that came two ticks (1 s) after the previous one. A sender with one message
+every two seconds has nothing in flight between messages, so each ack ended a
+silence and its own sample, above srtt, was refused: the estimate could only
+fall. Now `EndsSilence` (`OwedSilence`) also needs `U` on the wire and its
+first send two ticks or more ago, the code's
+`now - max(last_ack, oldest_first_send) >= RN_PROBE_SECONDS` with
+`has_oldest` in `rn_window_ack_on_acks`. `SilenceOnGap` is the revision 1.1
+rule. `PriorAck` starts the instance with the previous message acknowledged
+0 to 2 ticks before the record's first send and its sample taken, a sparse
+sender; `SrttUnderTick` makes srtt shorter than one tick, so an ack one tick
+after its send is above it. The ghosts `sinceOwedEnd` and `badRefusal` follow
+the owed rule beside the configured one and record a refusal it would not
+make.
+
+| Property | Kind | Claim |
+|---|---|---|
+| `RefuseOnlyAfterOwedSilence` | invariant | a sample is refused only after a silence in which an ack was owed |
+
+| Case | Spec | Exit | Distinct |
+|---|---|---:|---:|
+| `MCRNResendTimingFilter.cfg` (now also `RefuseOnlyAfterOwedSilence`) | Spec | 0 | 3938 |
+| `MCRNResendTimingFilterSparse.cfg` (`PriorAck`, `SrttUnderTick`) | Spec | 0 | 3911 |
+| `MCRNResendTimingBrokenSilenceOnGap.cfg` | `RefuseOnlyAfterOwedSilence` | 12 | 15 |
+
+Every other case of the module was re-run with it and kept its distinct
+count. The witness, read by hand against `sdk/rocketnet_window_ack.cpp`:
+the previous ack was two ticks ago (`sinceAck = 2`), the small record is
+first sent at tick 0 and nothing else is in flight; at tick 0 an ack of a
+packet one tick old arrives. Under `SilenceOnGap`, the v1.1.0 code,
+`now - last_ack >= 1 s` sets `silence_end = now`, and the packet, sent before
+`silence_end - srtt`, gives no sample. Under the rule `U`'s first send is now,
+no ack was owed for a second, no silence ends, and the packet is sampled.
+The unit tests `test_rtt_filter_follows_a_sparse_sender` and
+`test_rtt_filter_idle_connection_is_not_a_silence`
+(`test_unit_resend_timing.cpp`) replay it against the code, and
+`test_rtt_filter_skips_the_samples_an_outage_delays` keeps the outage case.

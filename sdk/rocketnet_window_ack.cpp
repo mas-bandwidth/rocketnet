@@ -1029,12 +1029,18 @@ uint32_t rn_window_ack_on_acks( rn_window_ack_t * ack, const uint64_t * packet_i
         return 0;
     }
 
-    // an ack after RN_PROBE_SECONDS with none ends an ack silence (the RTT filter in rn_window_ack_on_ack);
-    // like probe pacing it is off when the game opted in, so an opted-in connection samples as v1.0 does
-    // (proofs/tla/RNResendTiming.tla Ack, EndsSilence)
-    if ( ack->reliable_timeout <= 0.0 && ack->has_last_ack && now - ack->last_ack >= RN_PROBE_SECONDS )
+    // an ack ends an ack silence (the RTT filter in rn_window_ack_on_ack) when, for RN_PROBE_SECONDS
+    // before it, a reliable number was on the wire unacknowledged and no ack arrived: from the later of
+    // the last ack and U's first send. A sender with nothing on the wire owed no ack, so a gap with
+    // nothing sent is not a silence. Like probe pacing it is off when the game opted in, so an opted-in
+    // connection samples as v1.0 does (proofs/tla/RNResendTiming.tla Ack, EndsSilence)
+    if ( ack->reliable_timeout <= 0.0 && ack->has_last_ack && ack->has_oldest && ack->send->U < ack->send->next )
     {
-        ack->silence_end = now;
+        const double owed = ack->last_ack > ack->oldest_first_send ? ack->last_ack : ack->oldest_first_send;
+        if ( now - owed >= RN_PROBE_SECONDS )
+        {
+            ack->silence_end = now;
+        }
     }
     ack->last_ack = now;
     ack->has_last_ack = 1;
