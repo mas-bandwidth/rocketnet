@@ -87,6 +87,7 @@ static void usage( const char * prog )
     printf( "  --results PATH           where result lines go\n" );
     printf( "  --status PATH            one line per state change\n" );
     printf( "  --self-test-result FILE  write a sample result file without any socket and exit\n" );
+    printf( "  --print-dev-tokens N A:P [EXPIRE_S]  print N development tokens for A:P, base64, and exit\n" );
     printf( "  --help                   this message\n" );
 }
 
@@ -1264,9 +1265,46 @@ static void run_matrix( opts_t * o )
     }
 }
 
+// the AF_XDP packet blaster's token file (docs/XDP-PACKET-BLASTER.md): N distinct
+// development tokens for bin/server at the address, one canonical base64 line each
+static int print_dev_tokens( int argc, char ** argv )
+{
+    const uint64_t count = parse_u64( argv[2], "--print-dev-tokens" );
+    const uint64_t expire = argc == 5 ? parse_u64( argv[4], "--print-dev-tokens expire" ) : (uint64_t) ROCKETNET_DEV_CONNECT_TOKEN_EXPIRE_SECONDS;
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR ); // stdout carries only the token lines
+    if ( count == 0 || count > 1000 || expire == 0 || expire > 3600 || rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK )
+    {
+        fprintf( stderr, "client: --print-dev-tokens wants 1..1000 tokens and 1..3600 expire seconds\n" );
+        return 2;
+    }
+
+    const uint64_t now = (uint64_t) time( NULL );
+    for ( uint64_t i = 0; i < count; i++ )
+    {
+        char connect_token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+        if ( rocketnet_create_dev_connect_token( argv[3], NULL, rocketnet_dev_server_public_key, (int) expire,
+                                                 ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS, rocketnet_random_uint64(),
+                                                 ROCKETNET_DEV_PROTOCOL_ID, now, NULL, connect_token ) != ROCKETNET_STATUS_OK )
+        {
+            fprintf( stderr, "client: token mint failed\n" );
+            rocketnet_term();
+            return 1;
+        }
+        printf( "%s\n", connect_token );
+    }
+
+    rocketnet_term();
+    return 0;
+}
+
 int main( int argc, char ** argv )
 {
     signal( SIGINT, interrupt_handler );
+
+    if ( ( argc == 4 || argc == 5 ) && strcmp( argv[1], "--print-dev-tokens" ) == 0 )
+    {
+        return print_dev_tokens( argc, argv );
+    }
 
     opts_t o;
     default_opts( &o, argc, argv );

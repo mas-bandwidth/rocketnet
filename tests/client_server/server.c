@@ -13,7 +13,7 @@
     using tests/live_verify.h (sections 3 to 5). It runs at the max_clients
     the run sets, dumps counters and resident memory each minute, exits when
     its controlling ssh or stdin closes, and refuses to start when the XDP
-    transport is pinned and the interface reports the in-tree transport (section 9).
+    transport is pinned and the interface reports the in-tree i40e (section 9).
 */
 
 #include "tests/native_shutdown.h"
@@ -77,7 +77,7 @@ static void usage( void )
         "  --counters-every S      print counters, RSS and transport stats every S seconds\n"
         "  --results PATH          where the result lines go\n"
         "  --status PATH           one line per state change, for the orchestrator\n"
-        "  --transport T           pin the transport (e.g. xdp); the in-tree transport refuses\n"
+        "  --transport T           pin the transport (e.g. xdp); the in-tree i40e refuses\n"
         "  --self-test-result FILE write a sample result file without any socket and exit\n"
         "  --help                  this message\n"
         "environment:\n"
@@ -207,6 +207,52 @@ static void dump_counters( const struct rocketnet_counters_t * counters )
     fflush( stdout );
 }
 
+// the echo loop's main-call durations since the last counters dump, for a bench
+// run that floods the server (docs/XDP-PACKET-BLASTER.md): p50, p99 and max
+#define ROCKETNET_SERVER_TIMES_MAX 65536
+
+struct update_times_t
+{
+    int count;
+    double max;
+    double samples[ROCKETNET_SERVER_TIMES_MAX];
+};
+
+static struct update_times_t g_update_times;
+static struct update_times_t g_send_times;
+
+static void update_times_add( struct update_times_t * t, double seconds )
+{
+    if ( t->count < ROCKETNET_SERVER_TIMES_MAX )
+    {
+        t->samples[t->count++] = seconds;
+    }
+    if ( seconds > t->max )
+    {
+        t->max = seconds;
+    }
+}
+
+static int update_times_compare( const void * a, const void * b )
+{
+    const double x = *(const double *) a;
+    const double y = *(const double *) b;
+    return ( x > y ) - ( x < y );
+}
+
+static void update_times_print( const char * name, struct update_times_t * t )
+{
+    if ( t->count > 0 )
+    {
+        qsort( t->samples, (size_t) t->count, sizeof( double ), update_times_compare );
+        printf( "rocketnet time %s n %d p50_us %.1f p99_us %.1f max_us %.1f\n", name, t->count,
+                t->samples[t->count / 2] * 1e6, t->samples[( t->count * 99 ) / 100] * 1e6, t->max * 1e6 );
+        fflush( stdout );
+    }
+    t->count = 0;
+    t->max = 0.0;
+}
+
 // the interface that carries an IPv4 address, via `ip -o -4 addr show`
 static int interface_for_address( const char * address, char * out, size_t out_size )
 {
@@ -216,8 +262,18 @@ static int interface_for_address( const char * address, char * out, size_t out_s
     (void) out_size;
     return 0;
 #else
+    // the address arrives as A:P; `ip` prints A/len, so compare the host part only
+
+    char host[64] = { 0 };
+    snprintf( host, sizeof host, "%s", address );
+    char * colon = strrchr( host, ':' );
+    if ( colon )
+    {
+        *colon = 0;
+    }
+
     char cmd[256];
-    snprintf( cmd, sizeof cmd, "ip -o -4 addr show 2>/dev/null | awk -v a=%s '$4 ~ a\"$\" {print $2; exit}'", address );
+    snprintf( cmd, sizeof cmd, "ip -o -4 addr show 2>/dev/null | awk -v a=%s '{ split( $4, p, \"/\" ); if ( p[1] == a ) { print $2; exit } }'", host );
 
     FILE * f = popen( cmd, "r" );
     if ( !f )
@@ -244,7 +300,8 @@ static int interface_for_address( const char * address, char * out, size_t out_s
 
 // Section 9: the in-tree i40e reports the running kernel's version (the same
 // string as `uname -r`); the out-of-tree build reports its own release number.
-static int in_tree_transport( const char * nic )
+// Only i40e is refused: other in-tree drivers (ixgbe) pass.
+static int in_tree_i40e( const char * nic )
 {
 #if defined( _WIN32 )
     (void) nic;
@@ -285,7 +342,7 @@ static int in_tree_transport( const char * nic )
     }
 
     pclose( u );
-    return strcmp( version, kernel ) == 0;
+    return strcmp( transport, "i40e" ) == 0 && strcmp( version, kernel ) == 0;
 #endif // #if defined( _WIN32 )
 }
 
@@ -1189,14 +1246,14 @@ int main( int argc, char ** argv )
         snprintf( config.transport, sizeof config.transport, "%s", env_transport );
     }
 
-    // section 9: when xdp is pinned, refuse the in-tree transport
+    // section 9: when xdp is pinned, refuse the in-tree i40e
 
     if ( strcmp( config.transport, "xdp" ) == 0 )
     {
         char nic[64] = { 0 };
-        if ( interface_for_address( address, nic, sizeof nic ) && in_tree_transport( nic ) )
+        if ( interface_for_address( address, nic, sizeof nic ) && in_tree_i40e( nic ) )
         {
-            fprintf( stderr, "server: refusing: interface %s reports the in-tree transport\n", nic );
+            fprintf( stderr, "server: refusing: interface %s reports the in-tree i40e\n", nic );
             rocketnet_term();
             return 1;
         }
@@ -1239,7 +1296,9 @@ int main( int argc, char ** argv )
 
         while ( !quit )
         {
-            rocketnet_server_transport_update( transport_obj, rocketnet_time() );
+            const double update_start = rocketnet_time();
+            rocketnet_server_transport_update( transport_obj, update_start );
+            update_times_add( &g_update_times, rocketnet_time() - update_start );
 
             const int num_connected = rocketnet_server_transport_num_connected_clients( transport_obj );
             if ( num_connected != last_num_connected )
@@ -1254,14 +1313,20 @@ int main( int argc, char ** argv )
                 int client_index, payload_bytes;
                 uint8_t * payload = rocketnet_server_transport_payload( transport_obj, i, &client_index, &payload_bytes );
                 rocketnet_server_transport_send_packet( transport_obj, client_index, payload, payload_bytes );
+                // the message server defers payload acks to whoever consumes the payload; the echo consumes it here
+                rocketnet_server_transport_accept_payload( transport_obj, i );
             }
 
+            const double send_start = rocketnet_time();
             rocketnet_server_transport_send_packets( transport_obj );
+            update_times_add( &g_send_times, rocketnet_time() - send_start );
 
             const double now = rocketnet_time();
             if ( counters_every > 0.0 && now - last_counters >= counters_every )
             {
                 dump_counters( rocketnet_server_transport_counters( transport_obj ) );
+                update_times_print( "update", &g_update_times );
+                update_times_print( "send_packets", &g_send_times );
                 last_counters = now;
             }
 

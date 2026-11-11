@@ -128,13 +128,16 @@ cmd_preflight()
 
     ip -o link
 
-    local transport_line version kernel
+    # XDP SAFETY 4 refuses the in-tree i40e only: the i40e a distribution ships
+    # may lack AF_XDP zero copy (docs/LINUX.md). Other in-tree drivers pass.
+    local transport_line driver version kernel
     transport_line=$( ethtool -i "$nic" 2>/dev/null ) || fail "preflight: ethtool -i $nic failed"
     echo "nic transport: $( echo "$transport_line" | tr '\n' ' ' )"
+    driver=$( echo "$transport_line" | awk '/^driver:/ { print $2 }' )
     version=$( echo "$transport_line" | awk '/^version:/ { print $2 }' )
     kernel=$( uname -r )
-    if [ -n "$version" ] && [ "$version" = "$kernel" ]; then
-        fail "preflight: $nic runs the in-tree transport (version $version equals uname -r); XDP SAFETY 4 refuses the run"
+    if [ "$driver" = "i40e" ] && [ -n "$version" ] && [ "$version" = "$kernel" ]; then
+        fail "preflight: $nic runs the in-tree i40e (version $version equals uname -r); XDP SAFETY 4 refuses the run"
     fi
 
     if ip -d link show dev "$nic" | grep -q 'prog/xdp'; then
