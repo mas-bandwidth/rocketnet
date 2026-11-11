@@ -1,4 +1,4 @@
-| failed-signature budget | `90` | failed verifications per window | default failed Ed25519 verifications, and refusals recorded as failures by item 12, one server takes in one failed-signature window |# RN-1: RocketNet connection layer
+# RN-1: RocketNet connection layer
 
 Version: 1.0<br>
 Status: normative<br>
@@ -3472,7 +3472,7 @@ The values this section introduces are:
 | send rate | `10` | hertz | the handshake retransmission and keep-alive rate, one value for client and server |
 | half-open idle deadline | `10` | seconds | a half-open mapping with no matching request from its address for this long is discarded |
 | handshake work budget | `16` | requests per update | default connection requests one server takes to the signature verification in one update |
-| failed-signature budget | `90` | failed verifications per window | default failed Ed25519 verifications one server performs in one failed-signature window |
+| failed-signature budget | `90` | failed verifications per window | default failed Ed25519 verifications, and refusals recorded as failures by item 12, one server takes in one failed-signature window |
 | failed-signature window | `10` | seconds | the period over which the failed-signature budget is counted |
 
 The timing defaults of one implementation are, in this order, the send rate,
