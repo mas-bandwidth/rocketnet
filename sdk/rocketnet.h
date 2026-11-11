@@ -943,7 +943,7 @@ struct rocketnet_server_client_stats_t
 /// (rocketnet_client_conditions, rocketnet_server_client_conditions). The
 /// library refuses and reports; it does not end a heard connection for these.
 /// Fields are only ever appended: pass sizeof your struct, and the library
-/// fills the fields that fit.
+/// fills the fields that fit and zeroes any it does not know.
 
 struct rocketnet_conditions_t
 {
@@ -959,9 +959,11 @@ struct rocketnet_conditions_t
     double seconds_since_progress;
 
     /// Reliable message pieces (a fragmented message counts once per piece)
-    /// from the oldest unacknowledged to the newest sent, acknowledged ones
-    /// above the oldest included; at most the window. Messages queued but
-    /// not yet sent are not counted.
+    /// from the oldest unacknowledged to the newest numbered, acknowledged
+    /// ones above the oldest included; at most the window. A message is
+    /// numbered when its first piece is planned for sending, and all its
+    /// pieces are numbered then, so pieces not yet sent are counted; messages
+    /// queued but not yet numbered are not.
 
     uint64_t reliable_in_flight;
 
