@@ -536,11 +536,8 @@ static void world_free_message( world_t * w, uint64_t first )
     w->ref.owned--;
 }
 
-static int world_ack( world_t * w )
+static int world_ack_number( world_t * w, uint64_t n )
 {
-    if ( w->ref.u >= w->ref.next )
-        return 0;
-    const uint64_t n = w->ref.u;
     const int rc = rn_window_send_mark_acked( &w->send, n );
     seq_check( rc == 1 );
 
@@ -557,6 +554,13 @@ static int world_ack( world_t * w )
     world_free_message( w, ref_at( &w->ref, n )->first );
 
     return 1;
+}
+
+static int world_ack( world_t * w )
+{
+    if ( w->ref.u >= w->ref.next )
+        return 0;
+    return world_ack_number( w, w->ref.u );
 }
 
 static int world_release( world_t * w )
@@ -764,6 +768,72 @@ static void probe_ack_does_not_free_held( world_t * w )
     rn_arena_destroy( arena );
 }
 
+// The walk only ever acks U. Here the later numbers are acked first, out of
+// order, and U stays at the oldest; acking the oldest then moves U and U' over
+// the whole acked run at once. Each message's descriptor is freed exactly
+// once: the pool ends where it began, and no descriptor is in use.
+
+static void probe_ack_later_then_oldest( world_t * w )
+{
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    config.receive_message_buffer_bytes = 65536;
+    config.max_message_bytes = 32768;
+
+    rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof( counters ) );
+    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+    rocketnet_unit_check( arena != NULL );
+
+    rn_region_t * region = rn_arena_region( arena, 0 );
+    const uint32_t free_before = region->descriptors_free;
+    world_bind( w, region, 1, 0 );
+    g_seed = 8;
+    action_begin();
+
+    uint32_t descriptors[4];
+    for ( int i = 0; i < 4; i++ )
+    {
+        seq_check( world_write_single( w, 16 ) );
+        descriptors[i] = w->region->send_numbers[i].descriptor;
+    }
+
+    while ( world_release( w ) )
+    {
+        ;
+    }
+
+    seq_check( w->ref.released == 4 );
+    seq_check( region->descriptors_free == free_before - 4 );
+
+    const uint64_t later[] = { 3, 1, 2 };
+    for ( int i = 0; i < 3; i++ )
+    {
+        seq_check( world_ack_number( w, later[i] ) );
+        seq_check( w->send.U == 0 );
+        seq_check( w->send.U_prime == 0 );
+        seq_check( !region->send_descriptors[descriptors[later[i]]].in_use );
+        seq_check( region->descriptors_free == free_before - 3 + (uint32_t) i );
+        world_check( w );
+    }
+
+    seq_check( region->send_descriptors[descriptors[0]].in_use );
+    seq_check( world_ack_number( w, 0 ) );
+    seq_check( w->send.U == 4 );
+    seq_check( w->send.U_prime == 4 );
+    seq_check( w->send.U == w->send.next );
+    seq_check( region->descriptors_free == free_before );
+    seq_check( w->ref.owned == 0 );
+    for ( int i = 0; i < 4; i++ )
+    {
+        seq_check( !region->send_descriptors[descriptors[i]].in_use );
+    }
+
+    world_check( w );
+
+    rn_arena_destroy( arena );
+}
+
 static void probe_wrap_and_delivery( world_t * w )
 {
     // WireNumberReconstructs across the 24-bit boundary: wire 0 against R just
@@ -917,6 +987,7 @@ static void test_window_ring_operation_sequences()
     probe_floor_at_uprime( &g_world );
     probe_padding( &g_world );
     probe_ack_does_not_free_held( &g_world );
+    probe_ack_later_then_oldest( &g_world );
     probe_wrap_and_delivery( &g_world );
     probe_exhaustive( &g_world );
     probe_walk( &g_world, 0x853c49e6748fea9bULL, 0, 200000, 1 );
