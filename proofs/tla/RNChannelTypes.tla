@@ -277,13 +277,16 @@ Enqueue ==
     /\ UNCHANGED <<plan,written,numbers,opened,lost,acked,resend,
                     receiver,orderedInputs,referenceTrace>>
 
-WritePacket(m,attempt) ==
-    /\ UNCHANGED sendEnded
-    /\ connected /\ m \in DOMAIN queue /\ attempt \in 1..2
+CanWrite(m,attempt) ==
+    /\ m \in DOMAIN queue /\ attempt \in 1..2
     /\ Packet(m,attempt) \notin written
     /\ ~Block(m)
     /\ IF attempt=1 THEN \A n \in 1..(m-1) : Block(n) \/ Packet(n,1) \in written
        ELSE Reliable(Code(m)) /\ Packet(m,1) \in written /\ m \notin acked
+
+WritePacket(m,attempt) ==
+    /\ UNCHANGED sendEnded
+    /\ connected /\ CanWrite(m,attempt)
     /\ written'=written \cup {Packet(m,attempt)}
     /\ numbers'=IF Reliable(Code(m)) /\ m \notin Values(numbers) THEN Append(numbers,m) ELSE numbers
     /\ resend'=IF Reliable(Code(m)) THEN resend \cup {m} ELSE resend
@@ -366,9 +369,36 @@ LoseAny == \E pid \in Pids : LosePacket(pid)
 ArriveAny == \E m \in Messages, f \in Fragments : ArriveFragment(m,f)
 Next == Refuse \/ Enqueue \/ WriteAny \/ OpenAny \/ AckAny \/ LoseAny \/ ArriveAny
 SafetySpec == Init /\ [][Next]_vars
+
+\* ENABLED <<Next>>_vars written out as a state predicate: a step of Next
+\* that changes vars exists. Each disjunct is one action's guard, and each of
+\* those actions changes a variable whenever its guard holds (Enqueue grows
+\* queue, WritePacket grows written, OpenPacket grows opened, ReceiveAck grows
+\* acked, ArriveFragment grows receiver.arrived, Refuse under "SendKick"
+\* clears connected); Refuse otherwise and LosePacket's extra steps add no
+\* enabledness. StepPossibleIsEnabled checks the equality in the cheaper
+\* configurations (TLC evaluates ENABLED by computing every successor again).
+StepPossible ==
+    /\ connected
+    /\ \/ Len(queue)<MaxMessages /\ Len(queue)<SendCapacity
+       \/ Broken = "SendKick" /\ Len(queue)=SendCapacity /\ Len(queue)<MaxMessages
+       \/ \E m \in Messages, attempt \in 1..2 : CanWrite(m,attempt)
+       \/ written \ (opened \cup lost) # {}
+       \/ \E pid \in opened : Reliable(Code(PacketMessage(pid))) /\ PacketMessage(pid) \notin acked
+       \/ \E m \in DOMAIN queue, f \in Fragments : Block(m) /\ <<m,f>> \notin receiver.arrived
+
+StepPossibleIsEnabled == StepPossible = ENABLED <<Next>>_vars
+
 \* All enabled actions consume a finite id/cursor. Weak fairness of this
 \* disjunction therefore drains every reliable send/arrival/packet ACK.
-Spec == SafetySpec /\ WF_vars(Next)
+\* Spec is Init /\ [][Next]_vars /\ WF_vars(Next), with WF expanded by its
+\* definition (WF_v(A) == []<>~ENABLED <<A>>_v \/ []<><<A>>_v) and two exact
+\* rewrites TLC checks far faster: ENABLED <<Next>>_vars is StepPossible, and
+\* in a behaviour of SafetySpec every step that changes vars is a Next step,
+\* so <<Next>>_vars is <<TRUE>>_vars. Evaluating ENABLED on every state and
+\* Next on every edge of the liveness graph cost the control about two
+\* thirds of its time.
+Spec == SafetySpec /\ ([]<>~StepPossible \/ []<><<TRUE>>_vars)
 
 TypeOK ==
     /\ plan \in Plans /\ Len(queue)<=MaxMessages
