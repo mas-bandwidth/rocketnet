@@ -84,6 +84,9 @@
 // defined in tests/functional/harness.inc: the connect token timestamp from the clock that judges it
 uint64_t rocketnet_functional_token_timestamp( uint64_t token_epoch_unix_seconds, double time );
 
+// defined in tests/functional/rocketnet_functional_tests.cpp: prints the SDK log lines the suite captured
+void rocketnet_functional_log_ring_dump();
+
 #include <atomic>
 #include <chrono>
 #include <thread>
@@ -118,6 +121,7 @@ do                                                                              
     if ( !( condition ) )                                                                                       \
     {                                                                                                           \
         printf( "posix lifecycle stress check failed: %s:%d: %s\n", __FILE__, __LINE__, #condition );           \
+        rocketnet_functional_log_ring_dump();                                                                   \
         fflush( stdout );                                                                                       \
         exit( 1 );                                                                                              \
     }                                                                                                           \
