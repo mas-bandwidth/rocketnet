@@ -27,6 +27,17 @@
 (* each operation's contract.  ListsMatch says the array, the heads, the   *)
 (* tails, the flag bits and the count are exactly those two sequences.     *)
 (*                                                                         *)
+(* The sent mark.  Each sequence is its numbers due without a time test   *)
+(* (never sent, or a refused send; last_send < 0), then its numbers on the *)
+(* wire (last_send >= 0): park and push_head link the first kind, push_tail *)
+(* the second.  mk[c] is ack->resend_sent ("s") / ack->chunk_sent ("c"),   *)
+(* the slot of the class's first number on the wire, where the resend walk *)
+(* of rn_ordered_write starts; the ghost sent[s] is last_send >= 0.  The   *)
+(* unlink moves the mark to the slot's next when the slot is the mark, and *)
+(* push_tail makes the slot the mark when its class had none; park and     *)
+(* push_head link before the mark and leave it.  MarkMatch says mk is the  *)
+(* first sent slot of its sequence.                                        *)
+(*                                                                         *)
 (* An entry is prev and next only (rn_resend_link_t, 8 bytes); which      *)
 (* number an ack may unlink is RNResendGenerations.tla's, and Unlink of    *)
 (* any slot at any time covers it.                                         *)
@@ -37,6 +48,9 @@
 (*   UnlinkClearsClass unlink leaves the class bit in next                 *)
 (*   InsertSetsClass   insert_after ORs the class bit in, never clears it  *)
 (* the last two are one witness: either alone is masked by the other.     *)
+(*   MarkOnUnlink      unlink leaves the mark on the slot it removes       *)
+(*   MarkOnPushTail    push_tail never starts the sent part of a class     *)
+(*   MarkInitNone      init leaves the mark at 0 (the memset) for NONE     *)
 (***************************************************************************)
 EXTENDS Integers, Sequences, FiniteSets
 
@@ -45,10 +59,14 @@ CONSTANTS
     SelfTailFix,        \* rn_resend_fifo_push_tail steps back when slot is the tail
     TailOnEnd,          \* rn_resend_fifo_insert_after sets the tail when next is NONE
     UnlinkClearsClass,  \* rn_resend_fifo_unlink writes next = 0
-    InsertSetsClass     \* rn_resend_fifo_insert_after writes next = chunk ? CHUNK : 0
+    InsertSetsClass,    \* rn_resend_fifo_insert_after writes next = chunk ? CHUNK : 0
+    MarkOnUnlink,       \* rn_resend_fifo_unlink moves the class's mark off the slot
+    MarkOnPushTail,     \* rn_resend_fifo_push_tail sets the mark of a class with none
+    MarkInitNone        \* rn_window_ack_init sets both marks to RN_RESEND_NONE
 
 ASSUME W \in Nat \ {0}
-ASSUME \A f \in {SelfTailFix, TailOnEnd, UnlinkClearsClass, InsertSetsClass} : f \in BOOLEAN
+ASSUME \A f \in {SelfTailFix, TailOnEnd, UnlinkClearsClass, InsertSetsClass,
+                 MarkOnUnlink, MarkOnPushTail, MarkInitNone} : f \in BOOLEAN
 
 Slots == 0..(W - 1)
 NONE == W                       \* RN_RESEND_NONE, and RN_RESEND_END in a field
@@ -64,12 +82,14 @@ VARIABLES
     hd,         \* hd[c]: the head of class c
     tl,         \* tl[c]: the tail of class c
     cnt,        \* ack->resend_count
+    mk,         \* mk[c]: ack->resend_sent / chunk_sent, the class's first sent slot
     isChunk,    \* isChunk[s]: rn_window_ack_slot_is_chunk( ack, s ) now
-    seq         \* ghost: seq[c], the abstract sequence of class c
+    seq,        \* ghost: seq[c], the abstract sequence of class c
+    sent        \* ghost: sent[s], the slot's last_send >= 0 (on the wire)
 
-vars == << pf, nf, hd, tl, cnt, isChunk, seq >>
+vars == << pf, nf, hd, tl, cnt, mk, isChunk, seq, sent >>
 
-L == [ pf |-> pf, nf |-> nf, hd |-> hd, tl |-> tl, cnt |-> cnt ]
+L == [ pf |-> pf, nf |-> nf, hd |-> hd, tl |-> tl, cnt |-> cnt, mk |-> mk ]
 
 Remove(q, s) == SelectSeq(q, LAMBDA x : x # s)
 InSeq(q, s) == \E k \in 1..Len(q) : q[k] = s
@@ -78,7 +98,7 @@ InsertAt(q, k, s) == SubSeq(q, 1, k) \o << s >> \o SubSeq(q, k + 1, Len(q))
 
 -----------------------------------------------------------------------------
 (* The code's operations on the layout, each a function of the state     *)
-(* record st = [pf, nf, hd, tl, cnt].                                     *)
+(* record st = [pf, nf, hd, tl, cnt, mk].                                 *)
 
 \* rn_resend_fifo_unlink
 UnlinkL(st, s) ==
@@ -91,11 +111,13 @@ UnlinkL(st, s) ==
         hd1 == IF p # NONE THEN st.hd ELSE [ st.hd EXCEPT ![c] = n ]
         pf1 == IF n # NONE THEN [ st.pf EXCEPT ![n] = [ lk |-> TRUE, ix |-> p ] ] ELSE st.pf
         tl1 == IF n # NONE THEN st.tl ELSE [ st.tl EXCEPT ![c] = p ]
+        mk1 == IF MarkOnUnlink /\ st.mk[c] = s THEN [ st.mk EXCEPT ![c] = n ] ELSE st.mk
     IN [ pf |-> [ pf1 EXCEPT ![s] = [ lk |-> FALSE, ix |-> 0 ] ],
          nf |-> [ nf1 EXCEPT ![s] = [ ck |-> IF UnlinkClearsClass THEN FALSE ELSE nf1[s].ck, ix |-> 0 ] ],
          hd |-> hd1,
          tl |-> tl1,
-         cnt |-> st.cnt - 1 ]
+         cnt |-> st.cnt - 1,
+         mk |-> mk1 ]
 
 \* rn_resend_fifo_insert_after, after its unlink:
 \* links s right after `after` (NONE: at the head) of class c
@@ -109,7 +131,7 @@ LinkAfter(st, after, s, chunk) ==
         hd2 == IF after # NONE THEN st.hd ELSE [ st.hd EXCEPT ![c] = s ]
         pf2 == IF n # NONE THEN [ pf1 EXCEPT ![n] = [ lk |-> TRUE, ix |-> s ] ] ELSE pf1
         tl2 == IF n # NONE \/ ~TailOnEnd THEN st.tl ELSE [ st.tl EXCEPT ![c] = s ]
-    IN [ pf |-> pf2, nf |-> nf2, hd |-> hd2, tl |-> tl2, cnt |-> st.cnt + 1 ]
+    IN [ pf |-> pf2, nf |-> nf2, hd |-> hd2, tl |-> tl2, cnt |-> st.cnt + 1, mk |-> st.mk ]
 
 InsertAfterL(st, after, s, chunk) == LinkAfter(UnlinkL(st, s), after, s, chunk)
 
@@ -119,6 +141,7 @@ SetL(st) ==
     /\ hd' = st.hd
     /\ tl' = st.tl
     /\ cnt' = st.cnt
+    /\ mk' = st.mk
 
 -----------------------------------------------------------------------------
 
@@ -128,43 +151,51 @@ Init ==
     /\ hd = [ c \in Classes |-> NONE ]
     /\ tl = [ c \in Classes |-> NONE ]
     /\ cnt = 0
+    /\ mk = [ c \in Classes |-> IF MarkInitNone THEN NONE ELSE 0 ]
     /\ isChunk \in [ Slots -> BOOLEAN ]
     /\ seq = [ c \in Classes |-> << >> ]
+    /\ sent = [ s \in Slots |-> FALSE ]
 
 \* rn_resend_fifo_push_tail, from rn_window_ack_commit
-\* step 1: a sent number joins the tail of its class
+\* step 1: a sent number joins the tail of its class, and is the class's
+\* mark when the class had no number on the wire
 PushTail(s) ==
     LET chunk == isChunk[s]
         c == ClassOf(chunk)
         t0 == tl[c]
         t == IF SelfTailFix /\ t0 = s THEN pf[s].ix ELSE t0
-    IN /\ SetL(InsertAfterL(L, t, s, chunk))
+        st == InsertAfterL(L, t, s, chunk)
+    IN /\ SetL([ st EXCEPT !.mk = IF MarkOnPushTail /\ st.mk[c] = NONE THEN [ st.mk EXCEPT ![c] = s ] ELSE st.mk ])
        /\ seq' = [ k \in Classes |-> IF k = c THEN Append(Remove(seq[k], s), s) ELSE Remove(seq[k], s) ]
+       /\ sent' = [ sent EXCEPT ![s] = TRUE ]
        /\ UNCHANGED isChunk
 
 \* rn_resend_fifo_push_head, from
-\* rn_window_ack_packet_failed: a refused packet's numbers go first
+\* rn_window_ack_packet_failed: a refused packet's numbers go first, due now
 PushHead(s) ==
     LET chunk == isChunk[s]
         c == ClassOf(chunk)
     IN /\ SetL(InsertAfterL(L, NONE, s, chunk))
        /\ seq' = [ k \in Classes |-> IF k = c THEN << s >> \o Remove(seq[k], s) ELSE Remove(seq[k], s) ]
+       /\ sent' = [ sent EXCEPT ![s] = FALSE ]
        /\ UNCHANGED isChunk
 
 \* rn_window_ack_park, from rn_ordered_write
 \* (channel.cpp): a newly numbered slot joins after the last never-sent
 \* number of its class (after = NONE: at the head).  The caller's
-\* contract, asserted there: after is linked in s's class, and is not s.
+\* contract: after is linked in s's class and is not s (both asserted
+\* there), and is not on the wire (the walk's last never-sent number).
 Park(after, s) ==
     LET chunk == isChunk[s]
         c == ClassOf(chunk)
     IN /\ after # s
-       /\ after = NONE \/ InSeq(seq[c], after)
+       /\ after = NONE \/ (InSeq(seq[c], after) /\ ~sent[after])
        /\ SetL(InsertAfterL(L, after, s, chunk))
        /\ seq' = [ k \in Classes |->
                      IF k # c THEN Remove(seq[k], s)
                      ELSE LET q == Remove(seq[k], s)
                           IN IF after = NONE THEN << s >> \o q ELSE InsertAt(q, Pos(q, after), s) ]
+       /\ sent' = [ sent EXCEPT ![s] = FALSE ]
        /\ UNCHANGED isChunk
 
 \* rn_resend_fifo_unlink, from rn_window_ack_on_ack: the acked number leaves
@@ -172,13 +203,13 @@ Park(after, s) ==
 Unlink(s) ==
     /\ SetL(UnlinkL(L, s))
     /\ seq' = [ k \in Classes |-> Remove(seq[k], s) ]
-    /\ UNCHANGED isChunk
+    /\ UNCHANGED << isChunk, sent >>
 
 \* the environment: the slot's descriptor is freed, or another attached,
 \* so rn_window_ack_slot_is_chunk changes, linked or not
 SetClass(s) ==
     /\ isChunk' = [ isChunk EXCEPT ![s] = ~isChunk[s] ]
-    /\ UNCHANGED << pf, nf, hd, tl, cnt, seq >>
+    /\ UNCHANGED << pf, nf, hd, tl, cnt, mk, seq, sent >>
 
 AfterSlots == Slots \cup {NONE}
 
@@ -198,6 +229,8 @@ TypeOK ==
     /\ hd \in [ Classes -> 0..W ]
     /\ tl \in [ Classes -> 0..W ]
     /\ cnt \in Int
+    /\ mk \in [ Classes -> 0..W ]
+    /\ sent \in [ Slots -> BOOLEAN ]
 
 \* the array, heads, tails, flag bits and count are exactly the two sequences
 ListsMatch ==
@@ -217,4 +250,18 @@ ListsMatch ==
 Disjoint ==
     /\ \A c \in Classes : Cardinality({ seq[c][k] : k \in 1..Len(seq[c]) }) = Len(seq[c])
     /\ \A s \in Slots : ~(InSeq(seq["s"], s) /\ InSeq(seq["c"], s))
+
+\* each sequence is its numbers not on the wire, then its numbers on the wire
+Partitioned ==
+    \A c \in Classes : \A i, j \in 1..Len(seq[c]) : (i < j /\ sent[seq[c][i]]) => sent[seq[c][j]]
+
+\* the first slot of q on the wire, or NONE
+FirstSent(q) ==
+    IF \E k \in 1..Len(q) : sent[q[k]]
+    THEN q[CHOOSE k \in 1..Len(q) : sent[q[k]] /\ \A j \in 1..(k - 1) : ~sent[q[j]]]
+    ELSE NONE
+
+\* the code's mark is each class's first number on the wire
+MarkMatch ==
+    \A c \in Classes : mk[c] = FirstSent(seq[c])
 =============================================================================

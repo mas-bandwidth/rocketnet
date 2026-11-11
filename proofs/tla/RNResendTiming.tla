@@ -91,8 +91,29 @@
 (* before the timeout (by reading; not checked here).  NoDueRecordHeld's  *)
 (* exception for a refused packet is the code's behaviour; see its        *)
 (* comment.                                                                *)
+(*                                                                         *)
+(* The paced walk (Room > 0).  Walk writes every due record at once, the   *)
+(* walk with room for all of them.  The product asks rn_ordered_write for  *)
+(* one packet per call (rn_endpoint_write_packet), as many calls as the    *)
+(* update and the send budget allow, and a chunk fills a packet alone.     *)
+(* With Room > 0 an update is Room calls (WriteOne), then EndWrites.  Each *)
+(* call plans as rn_ordered_walk does, in its order, until the plan holds  *)
+(* a packet (a chunk fills it, the one small record does not), and the     *)
+(* builder writes one item of the plan: a retransmit (a record on the      *)
+(* wire) before ordered progress (a record never sent), either of two of   *)
+(* one class.  Pending chunks of the chunk's block are numbered with it    *)
+(* and never sent, behind it in number order; a pending chunk written is   *)
+(* delivered and acked at once and leaves the model (the lost one is "c"). *)
+(* Under the rule each class's numbers on the wire are walked first, the   *)
+(* small class then the chunk class, then the never-sent numbers of each.  *)
+(* UnsentFirst = TRUE is the walk before the fix: each class from its      *)
+(* head, its never-sent numbers first, so a block's pending chunks fill    *)
+(* every call and the due chunk behind them waits for the block's whole    *)
+(* first pass (the reversed witnesses MCRNResendTimingBrokenUnsentFirst    *)
+(* .cfg and MCRNResendTimingBrokenUnsentFirstHeld.cfg).  Acks and samples  *)
+(* come before the update's first call, as the code reads them.            *)
 (***************************************************************************)
-EXTENDS Integers
+EXTENDS Integers, Sequences
 
 CONSTANTS
     RtoInitial,     \* message_resend_delay_initial, in ticks
@@ -153,6 +174,25 @@ SeedAtEarly == 2
 SeedRtoMeasured == 3
 SeedRuleOff == FALSE
 
+\*   Room:    the packets an update writes, one rn_ordered_write call each;
+\*            0 (the default) is Walk, every due record written at once.
+\*   Pending: the never-sent chunks of the chunk's block (0 by default).
+\*   Small:   the small record is in flight; FALSE starts it acked.
+\*   UnsentFirst: FALSE walks each class's numbers on the wire before the
+\*            never-sent ones (the rule); TRUE walks each class from its
+\*            head, never-sent first (the reversed witness).
+\* (Room <- RoomOne or RoomTwo, Pending <- PendingLong, Small <- SmallOff,
+\*  UnsentFirst <- UnsentFirstOn)
+Room == 0
+Pending == 0
+Small == TRUE
+UnsentFirst == FALSE
+RoomOne == 1
+RoomTwo == 2
+PendingLong == 2 * Timeout + 2
+SmallOff == FALSE
+UnsentFirstOn == TRUE
+
 Min(a, b) == IF a < b THEN a ELSE b
 Max(a, b) == IF a > b THEN a ELSE b
 
@@ -184,9 +224,11 @@ VARIABLES
     sampled,    \* an ack of this layer's own has given an RTT sample
     seeded,     \* the transport's round trip was taken as the first sample
     firstSend,  \* [Records -> send_first_sends: the tick of the first send]
-    refused     \* [Records -> the packet carrying it was refused this update]
+    refused,    \* [Records -> the packet carrying it was refused this update]
+    pending,    \* the chunk's block's chunks numbered and never sent
+    calls       \* Room > 0: the rn_ordered_write calls of this update so far
 
-vars == <<t, lastSend, rto, backoff, attempts, acked, head, phase, sampled, seeded, firstSend, refused>>
+vars == <<t, lastSend, rto, backoff, attempts, acked, head, phase, sampled, seeded, firstSend, refused, pending, calls>>
 
 \* A small record waits the resend delay alone; a chunk waits it capped.
 Cap(r) == IF r = "s" THEN RtoMax ELSE ChunkCap
@@ -227,6 +269,8 @@ TypeOK ==
     /\ phase \in {"walk", "tick"}
     /\ sampled \in BOOLEAN
     /\ seeded \in BOOLEAN
+    /\ pending \in 0..Pending
+    /\ calls \in 0..Room
 
 Init ==
     /\ t = 0
@@ -235,12 +279,14 @@ Init ==
     /\ rto = RtoInitial
     /\ backoff = [r \in Records |-> 1]
     /\ attempts = [r \in Records |-> IF FirstSend(r) = 0 /\ RefuseFor = 0 THEN 1 ELSE 0]
-    /\ acked = [r \in Records |-> IF r = "c" THEN ~Chunk ELSE FALSE]
+    /\ acked = [r \in Records |-> IF r = "c" THEN ~Chunk ELSE ~Small]
     /\ head \in (IF Chunk THEN Records ELSE {"s"})
     /\ phase = "walk"
     /\ sampled = FALSE
     /\ seeded = FALSE
     /\ refused = [r \in Records |-> FALSE]
+    /\ pending = Pending
+    /\ calls = 0
 
 \* The one FIFO's walk: from the head while due, stopping at the first live
 \* record that is not.
@@ -263,6 +309,7 @@ NextHead ==
 \* rn_ordered_walk in rn_ordered_write: every due record the walk reaches
 \* is resent.
 Walk ==
+    /\ Room = 0
     /\ phase = "walk"
     /\ Live
     /\ ~SeedOwed
@@ -273,7 +320,7 @@ Walk ==
     /\ head' = NextHead
     /\ refused' = [r \in Records |-> FALSE]
     /\ phase' = "tick"
-    /\ UNCHANGED <<t, rto, acked, sampled, seeded>>
+    /\ UNCHANGED <<t, rto, acked, sampled, seeded, pending, calls>>
 
 \* rn_window_ack_packet_failed: the walk of Walk, but finish_packet refuses
 \* the packet carrying the records of F, each never on the wire and inside
@@ -285,6 +332,7 @@ Walk ==
 Refusable(r) == Sent(r) /\ attempts[r] = 0 /\ t < FirstSend(r) + RefuseFor
 
 WalkRefused(F) ==
+    /\ Room = 0
     /\ phase = "walk"
     /\ Live
     /\ ~SeedOwed
@@ -301,37 +349,108 @@ WalkRefused(F) ==
     /\ head' = (IF head \in F THEN head ELSE CHOOSE r \in F : TRUE)
     /\ refused' = [r \in Records |-> r \in F]
     /\ phase' = "tick"
-    /\ UNCHANGED <<t, rto, acked, sampled, seeded>>
+    /\ UNCHANGED <<t, rto, acked, sampled, seeded, pending, calls>>
+
+\* The paced walk (Room > 0), one rn_ordered_write call for one packet.
+\* Order is the walk's order of the due items: "s", "c", or "u", a pending
+\* chunk (the first of them; one call plans at most one chunk).  Under the
+\* rule rn_ordered_write walks each class's numbers on the wire from the
+\* class's mark (ack->resend_sent, ack->chunk_sent), small then chunk, then
+\* each class's never-sent numbers from its head; UnsentFirst walks each
+\* class from its head, the never-sent numbers first.  The chunk is ahead of
+\* its block's pending chunks in number order.
+SentDue(r) == Due(r) /\ OnWire(r)
+UnsentDue(r) == Due(r) /\ ~OnWire(r)
+PendingDue == pending > 0 /\ ~TimedOut /\ Started("c")
+Opt(b, x) == IF b THEN << x >> ELSE << >>
+
+Order ==
+    IF UnsentFirst
+    THEN Opt(UnsentDue("s"), "s") \o Opt(SentDue("s"), "s") \o
+         Opt(UnsentDue("c"), "c") \o Opt(PendingDue, "u") \o Opt(SentDue("c"), "c")
+    ELSE Opt(SentDue("s"), "s") \o Opt(SentDue("c"), "c") \o
+         Opt(UnsentDue("s"), "s") \o Opt(UnsentDue("c"), "c") \o Opt(PendingDue, "u")
+
+\* The walk plans while the plan holds less than the call's one packet: a
+\* chunk fills it, the small record does not; it stops at the first chunk.
+Chunks == {k \in 1..Len(Order) : Order[k] \in {"c", "u"}}
+Plan == IF Chunks = {} THEN Order
+        ELSE SubSeq(Order, 1, CHOOSE k \in Chunks : \A j \in Chunks : k <= j)
+Planned == {Plan[k] : k \in 1..Len(Plan)}
+
+\* The builder writes one packet of the plan, in the budget's class order:
+\* a retransmit (a record on the wire) before ordered progress; within a
+\* class the scheduler's levels and channels pick, so either may go.  A
+\* chunk travels alone, and the small record beside a chunk takes its own
+\* packet, so the call writes one item.
+Retransmit(x) == x # "u" /\ OnWire(x)
+Picks == IF \E x \in Planned : Retransmit(x)
+         THEN {x \in Planned : Retransmit(x)}
+         ELSE Planned
+
+WriteOne(x) ==
+    /\ Room > 0
+    /\ phase = "walk"
+    /\ Live
+    /\ ~SeedOwed
+    /\ calls < Room
+    /\ x \in Picks
+    /\ IF x = "u"
+       THEN /\ pending' = pending - 1
+            /\ UNCHANGED <<lastSend, attempts, backoff, firstSend>>
+       ELSE /\ lastSend' = [lastSend EXCEPT ![x] = t]
+            /\ attempts' = [attempts EXCEPT ![x] = Min(@ + 1, MinAttempts)]
+            /\ backoff' = [backoff EXCEPT ![x] = Min(@ * 2, MaxBackoff)]
+            /\ firstSend' = [firstSend EXCEPT ![x] = IF OnWire(x) THEN @ ELSE t]
+            /\ UNCHANGED pending
+    /\ calls' = calls + 1
+    /\ UNCHANGED <<t, rto, acked, head, phase, sampled, seeded, refused>>
+
+\* The update's writes end: its Room calls are spent, or a call finds
+\* nothing to plan (rn_ordered_write returns 0 and the endpoint stops).
+EndWrites ==
+    /\ Room > 0
+    /\ phase = "walk"
+    /\ Live
+    /\ ~SeedOwed
+    /\ calls = Room \/ Plan = << >>
+    /\ calls' = 0
+    /\ refused' = [r \in Records |-> FALSE]
+    /\ phase' = "tick"
+    /\ UNCHANGED <<t, lastSend, rto, backoff, attempts, acked, head, sampled, seeded, firstSend, pending>>
 
 \* rn_window_ack_on_ack of another packet: one RTT sample.
 Sample(x) ==
     /\ phase = "walk"
+    /\ calls = 0
     /\ Live
     /\ rto' = x
     /\ backoff' = [r \in Records |-> 1]
     /\ sampled' = TRUE
-    /\ UNCHANGED <<t, lastSend, attempts, acked, head, phase, seeded, firstSend, refused>>
+    /\ UNCHANGED <<t, lastSend, attempts, acked, head, phase, seeded, firstSend, refused, pending, calls>>
 
 \* rn_window_ack_seed_rtt from the message object's update: the transport's
 \* round trip taken as the first sample, after the update's acks and before
 \* its walk.
 Seed ==
     /\ phase = "walk"
+    /\ calls = 0
     /\ Live
     /\ SeedOwed
     /\ rto' = SeedRto
     /\ backoff' = [r \in Records |-> 1]
     /\ seeded' = TRUE
-    /\ UNCHANGED <<t, lastSend, attempts, acked, head, phase, sampled, firstSend, refused>>
+    /\ UNCHANGED <<t, lastSend, attempts, acked, head, phase, sampled, firstSend, refused, pending, calls>>
 
 \* rn_window_ack_on_ack of a packet carrying record r.
 Ack(r) ==
     /\ phase = "walk"
+    /\ calls = 0
     /\ ~acked[r]
     /\ ~TimedOut
     /\ attempts[r] > 0
     /\ acked' = [acked EXCEPT ![r] = TRUE]
-    /\ UNCHANGED <<t, lastSend, rto, backoff, attempts, head, phase, sampled, seeded, firstSend, refused>>
+    /\ UNCHANGED <<t, lastSend, rto, backoff, attempts, head, phase, sampled, seeded, firstSend, refused, pending, calls>>
 
 \* The update ends and time moves on one tick.
 Tick ==
@@ -339,7 +458,7 @@ Tick ==
     /\ Live
     /\ t' = t + 1
     /\ phase' = "walk"
-    /\ UNCHANGED <<lastSend, rto, backoff, attempts, acked, head, sampled, seeded, firstSend, refused>>
+    /\ UNCHANGED <<lastSend, rto, backoff, attempts, acked, head, sampled, seeded, firstSend, refused, pending, calls>>
 
 \* Every record acked, or the timeout fired: nothing more happens.
 Done ==
@@ -349,6 +468,8 @@ Done ==
 Next ==
     \/ Walk
     \/ \E F \in SUBSET Records : WalkRefused(F)
+    \/ \E x \in {"s", "c", "u"} : WriteOne(x)
+    \/ EndWrites
     \/ \E x \in RtoMin..RtoMax : Sample(x)
     \/ Seed
     \/ \E r \in Records : Ack(r)
