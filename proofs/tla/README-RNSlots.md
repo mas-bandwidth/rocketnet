@@ -74,7 +74,7 @@ objects/API cards.
 
 | Model action | Implementation responsibility |
 |---|---|
-| `Connect`, `Disconnect` | Transport connection changes during `rocketnet_server_transport_update`; `Connect` clears the slot's transport end reason (`rocketnet_server_protocol_t.end_reasons`) and `Disconnect(s, why)` records it in `rocketnet_server_connection_reset` (TIMED_OUT from the idle sweep, CLIENT_DISCONNECTED from the client's disconnect packet, NONE from the integrity limit) |
+| `Connect`, `Disconnect` | Transport connection changes during `rocketnet_server_transport_update`; `Connect` clears the slot's transport end reason (`rocketnet_server_protocol_t.end_reasons`) and `Disconnect(s, why)` records it in `rocketnet_server_connection_reset` (TIMED_OUT from the idle sweep, CLIENT_DISCONNECTED from the client's disconnect packet, PROTOCOL_VIOLATION from the integrity limit) |
 | `Request` | Message submission to `rn_endpoint_send` |
 | `Send` | `rn_endpoint_write_packet` and transport packet submission; retain packet-to-record mapping |
 | `TransportOpen` | Transport payload batch tagged with the connection at receive time |
@@ -226,6 +226,20 @@ The apply-by-slot and client-id witnesses above need the same-update reuse
 to reach their hazard, so their configurations add `"reuseinupdate"`: they
 check that the per-connection compare in `Observe` would still catch it.
 `RNClientSlotsLayout` checks the hold at the free stack's layout.
+
+## Revision 1.1.2: the integrity limit ends with PROTOCOL_VIOLATION
+
+Before 1.1.2 a connection the server ended at the AEAD integrity limit
+recorded NONE as its transport reason, so the game read an ended slot with
+no reason. It now records PROTOCOL_VIOLATION, as the client's end already
+reads it. `TransportEnds` carries PROTOCOL_VIOLATION for the integrity limit,
+and the action property `TransportEndNamed` (in the three churn controls)
+says a slot `Observe` finds dropped never reads NONE.
+
+- **Integrity limit reads NONE** (`MCRNSlotsBrokenIntegrityNone.cfg`, Broken
+  `"integritynone"`, the code before the change): connect 1 and bind it, the
+  transport ends it at the integrity limit with NONE, and the next `Observe`
+  drops the slot with NONE; `TransportEndNamed` fails.
 
 ## Revision 1.1: no change
 

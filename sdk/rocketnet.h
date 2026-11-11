@@ -571,8 +571,10 @@ enum rocketnet_disconnect_reason_t
 
     ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH = -1,
 
-    /// The client sent what the protocol forbids, or the server found its own
-    /// state for the client inconsistent, a fault nothing the client sends can cause.
+    /// The client sent what the protocol forbids, data for the connection
+    /// failed authentication 2^36 times (the AEAD integrity limit), or the
+    /// server found its own state for the client inconsistent, a fault
+    /// nothing the client sends can cause.
 
     ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION = -2,
 

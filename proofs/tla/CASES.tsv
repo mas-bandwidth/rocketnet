@@ -181,6 +181,7 @@ MCRNSlotsExhaustion.cfg	MCRNSlots.tla	pass	-	ignore-terminal	rnslots	required	-
 MCRNSlotsBrokenDropReadsNone.cfg	MCRNSlots.tla	action	DropReadsTransportEnd	ignore-terminal	rnslots	required	-
 MCRNSlotsBrokenObserveClearsReason.cfg	MCRNSlots.tla	action	ReasonKeptUntilNextConnection	ignore-terminal	rnslots	required	-
 MCRNSlotsBrokenReuseInUpdate.cfg	MCRNSlots.tla	action	EveryEndSeen	ignore-terminal	rnslots	required	-
+MCRNSlotsBrokenIntegrityNone.cfg	MCRNSlots.tla	action	TransportEndNamed	ignore-terminal	rnslots	required	-
 MCRNChannelTypes.cfg	MCRNChannelTypes.tla	pass	-	ignore-terminal	rnchanneltypes	required	-
 MCRNChannelBrokenSequencedBackwards.cfg	MCRNChannelTypes.tla	invariant	SequencedNeverBackwards	ignore-terminal	rnchanneltypes	required	-
 MCRNChannelBrokenHeapDrainNoReset.cfg	MCRNChannelTypes.tla	invariant	EpochWatermark	ignore-terminal	rnchanneltypes	required	-

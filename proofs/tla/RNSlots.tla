@@ -6,8 +6,9 @@
 \*
 \* The disconnect reason (rocketnet_server_disconnect_reason): the transport
 \* records why each slot's connection ended (ended, the protocol's
-\* end_reasons: TIMED_OUT, CLIENT_DISCONNECTED, SERVER_DISCONNECTED, or NONE
-\* for the integrity limit) and clears it when the slot is next assigned. A
+\* end_reasons: TIMED_OUT, CLIENT_DISCONNECTED, SERVER_DISCONNECTED, or
+\* PROTOCOL_VIOLATION for the integrity limit) and clears it when the slot is
+\* next assigned. A
 \* message-layer end (Kick, PublicDisconnect) records its own reason in the
 \* slot. Observe reads the transport's reason for a slot it held that it
 \* finds free, NONE for a slot it binds to a new connection, and keeps every
@@ -34,9 +35,12 @@ Entry == [kind : {"payload", "ack"}, packet : Packets]
 Audit == [slot : Slots, from : 1..MaxConn, to : 0..MaxConn,
           kind : {"payload", "ack"}, msg : 1..MaxMessages]
 Record(p) == [conn |-> p.conn, msg |-> p.msg]
-TransportEnds == {"TIMED_OUT", "CLIENT_DISCONNECTED", "NONE"}
+\* The integrity limit's end: PROTOCOL_VIOLATION; Broken "integritynone"
+\* records NONE (the code before 1.1.2).
+IntegrityEnd == IF "integritynone" \in Broken THEN "NONE" ELSE "PROTOCOL_VIOLATION"
+TransportEnds == {"TIMED_OUT", "CLIENT_DISCONNECTED", IntegrityEnd}
 Reasons == {"NONE", "MESSAGE_MEMORY_EXHAUSTED", "SERVER_DISCONNECTED",
-            "TIMED_OUT", "CLIENT_DISCONNECTED"}
+            "TIMED_OUT", "CLIENT_DISCONNECTED", "PROTOCOL_VIOLATION"}
 AuditOf(e, to) == [slot |-> e.packet.slot, from |-> e.packet.conn,
                    to |-> to, kind |-> e.kind, msg |-> e.packet.msg]
 
@@ -416,4 +420,9 @@ ReasonKeptUntilNextConnection ==
 EveryEndSeen ==
     [][st.phase = "transport" /\ st'.phase = "apply" =>
          \A s \in Slots : st.freed[s] => st.owner[s] = 0]_vars
+\* Every transport end is named: a slot Observe finds dropped reads a reason
+\* other than NONE. MCRNSlotsBrokenIntegrityNone expects TLC to violate it.
+TransportEndNamed ==
+    [][st.phase = "transport" /\ st'.phase = "apply" =>
+         \A s \in Slots : st.bound[s] # 0 /\ st.owner[s] = 0 => st'.reason[s] # "NONE"]_vars
 =============================================================================

@@ -6469,6 +6469,11 @@ void rocketnet_test_integrity_limit()
         int payload_out_bytes = 0;
         int payload_client_index = -1;
 
+        // the transport's per-slot end reasons, which the bare protocol leaves unset
+        int end_reasons[64] = {};
+        rocketnet_check( rocketnet_client_slots_max_clients( test.server.client_slots ) <= 64 );
+        test.server.end_reasons = end_reasons;
+
         struct rocketnet_connection_keys_t client_keys;
         rocketnet_test_handshake_to_challenge( &test, 0x1A7E57ULL, &client_keys );
 
@@ -6565,8 +6570,12 @@ void rocketnet_test_integrity_limit()
         rocketnet_check( test.counters.values[ROCKETNET_COUNTER_INTEGRITY_LIMIT_REACHED] == 0 );
         rocketnet_check( rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address ) == mapping_index );
         rocketnet_check( rocketnet_client_slots_num_connected( test.server.client_slots ) == 1 );
+        const int slot = mapping->control->client_index;
+        rocketnet_check( slot != -1 );
+        rocketnet_check( rocketnet_server_protocol_end_reason( &test.server, slot ) == ROCKETNET_DISCONNECT_REASON_NONE );
 
-        // the limit: the mapping is torn down with its slot, the counter emits once
+        // the limit: the mapping is torn down with its slot, the counter
+        // emits once, and the slot's end reads PROTOCOL_VIOLATION
 
         packet_bytes = rocketnet_test_write_session_packet( packet, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, 1001,
                                                             keep_alive_bytes, 8, wrong_key );
@@ -6578,6 +6587,7 @@ void rocketnet_test_integrity_limit()
         rocketnet_check( rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address ) == -1 );
         rocketnet_check( rocketnet_encryption_map_num_mappings( test.server.encryption_map ) == 0 );
         rocketnet_check( rocketnet_client_slots_num_connected( test.server.client_slots ) == 0 );
+        rocketnet_check( rocketnet_server_protocol_end_reason( &test.server, slot ) == ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION );
 
         // after: no mapping, so the next forgery is NO_MAPPING and the
         // lifecycle counter does not move again
@@ -6589,6 +6599,7 @@ void rocketnet_test_integrity_limit()
         rocketnet_check( test.counters.values[ROCKETNET_COUNTER_PAYLOAD_NO_MAPPING] == 1 );
         rocketnet_check( test.counters.values[ROCKETNET_COUNTER_INTEGRITY_LIMIT_REACHED] == 1 );
 
+        test.server.end_reasons = NULL;
         rocketnet_test_server_teardown( &test );
     }
 

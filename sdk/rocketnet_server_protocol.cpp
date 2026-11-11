@@ -1267,12 +1267,13 @@ static void rocketnet_server_integrity_failure( struct rocketnet_server_protocol
     int client_index = mapping->control->client_index;
     rocketnet_debug( "server removed encryption mapping. integrity limit reached (client %d)", client_index );
 
-    // the reason is NONE: the integrity limit is neither the client's
-    // goodbye nor a timeout
+    // the reason is PROTOCOL_VIOLATION, as the client's end reads it
+    // (rocketnet_message_client.cpp): the integrity limit is neither the
+    // client's goodbye nor a timeout
 
     if ( client_index != -1 )
     {
-        rocketnet_server_connection_reset( server, client_index, ROCKETNET_DISCONNECT_REASON_NONE );
+        rocketnet_server_connection_reset( server, client_index, ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION );
         counters[ROCKETNET_COUNTER_CLIENT_DISCONNECTED]++;
     }
     else
