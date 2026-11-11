@@ -192,3 +192,10 @@ least two hundred packets in one update and receives at least two hundred in
 one release step, counted apart, and `test_dst_dup_storm_duplicates_payloads`
 pins that the storm's copies reach the receivers as a payload taken twice,
 with the duplicate fault off.
+
+At the default `reliable_message_timeout_ms` the message layer does not end a
+connection in seeds 1-50. `test_dst_reliable_timeout_ends_connections_cleanly`
+runs seed 3 at an accepted 1500 ms, where it ends connections on both ends,
+and requires every check to hold across them. A client whose session ended
+can reconnect while the server still holds the old session's slot; the
+harness books each server send and receipt to the session its slot holds.
