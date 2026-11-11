@@ -267,7 +267,10 @@ endfunction()
 
 # server_xdp.o is compiled here, at build time, and embedded in the library as
 # bytes (cmake/EmbedXdp.cmake); the server host needs no compiler. Only the
-# Linux xdp server transport includes the generated header.
+# Linux xdp server transport includes the generated header. The object's ELF
+# byte order is then checked against the library's
+# (cmake/CheckXdpObjectByteOrder.cmake), so a cross build cannot embed an
+# object for the build machine's byte order.
 include(cmake/XdpSources.cmake)
 set(ROCKETNET_XDP_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/rocketnet_server_xdp.h")
 set(ROCKETNET_XDP_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/generated/server_xdp.o")
@@ -320,8 +323,13 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND ROCKETNET_XDP)
             "-DHISTORY_PACKETS=${ROCKETNET_HISTORY_PACKETS}"
             "-DMAX_CLIENTS=${ROCKETNET_MAX_CLIENTS}"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedXdp.cmake"
+        COMMAND "${CMAKE_COMMAND}"
+            "-DOBJECT=${ROCKETNET_XDP_OBJECT}"
+            "-DHEADER=${ROCKETNET_XDP_HEADER}"
+            "-DBYTE_ORDER=${CMAKE_C_BYTE_ORDER}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/CheckXdpObjectByteOrder.cmake"
         BYPRODUCTS "${ROCKETNET_XDP_OBJECT}"
-        DEPENDS ${ROCKETNET_XDP_SOURCES} cmake/XdpSources.cmake cmake/EmbedXdp.cmake
+        DEPENDS ${ROCKETNET_XDP_SOURCES} cmake/XdpSources.cmake cmake/EmbedXdp.cmake cmake/CheckXdpObjectByteOrder.cmake
             "${CMAKE_CURRENT_BINARY_DIR}/generated/xdp-build-settings.txt"
         VERBATIM)
     add_custom_target(rocketnet_xdp_header DEPENDS "${ROCKETNET_XDP_HEADER}")
