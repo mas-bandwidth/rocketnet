@@ -3865,7 +3865,8 @@ static bool rn_conditions_out( const struct rocketnet_conditions_t * full, bool 
     memcpy( conditions, ok ? full : &none, bytes );
     if ( (size_t) conditions_bytes > bytes )
     {
-        memset( (uint8_t *) conditions + bytes, 0, (size_t) conditions_bytes - bytes );
+        // bytes is the library's whole struct here, so the tail starts just past it
+        memset( conditions + 1, 0, (size_t) conditions_bytes - bytes );
     }
     return ok;
 }
