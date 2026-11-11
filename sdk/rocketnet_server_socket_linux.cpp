@@ -2326,14 +2326,14 @@ void rocketnet_server_socket_destroy( rocketnet_server_socket_t * server_socket 
         {
             const int result = rocketnet_xdp_program_detach( server_socket->program, server_socket->interface_index, false );
             if ( result != 0 )
-                rocketnet_error( "could not detach server_xdp program (native) from interface %s: %s (errno %d)", server_socket->interface_name, strerror( -result ), -result );
+                rocketnet_error( "could not detach server_xdp program (native) from interface %s (errno %d)", server_socket->interface_name, -result );
         }
 
         if ( server_socket->attached_skb )
         {
             const int result = rocketnet_xdp_program_detach( server_socket->program, server_socket->interface_index, true );
             if ( result != 0 )
-                rocketnet_error( "could not detach server_xdp program (skb) from interface %s: %s (errno %d)", server_socket->interface_name, strerror( -result ), -result );
+                rocketnet_error( "could not detach server_xdp program (skb) from interface %s (errno %d)", server_socket->interface_name, -result );
         }
 
         rocketnet_xdp_program_close( server_socket->program );
@@ -2647,8 +2647,9 @@ void rocketnet_server_socket_finish_packet( struct rocketnet_server_socket_t * s
 
     // a packet started before its client's MAC was learned took the gateway
     // (or the answered frame's MAC). The reply to a client's first
-    // authenticated packet is that case: the transport reserves it before
-    // the packet opens, and the open learns the MAC before this commit.
+    // authenticated packet is that case: the transport reserves it after
+    // the packet is processed and before client_accepted learns the MAC,
+    // which is before this commit.
     // Taking the learned MAC here sends it the way the same update's
     // payloads go; through the gateway it takes the router's hairpin and
     // arrives after them, and the client is handed payloads before the
@@ -3752,7 +3753,10 @@ void rocketnet_server_socket_xdp_counters( struct rocketnet_server_socket_t * se
         if ( !fit )
             rocketnet_error( "xdp stats not read: %d possible cpus is outside 1 .. %d; the last read stands", num_cpus, ROCKETNET_XDP_STATS_MAX_CPUS );
         else
-            rocketnet_error( "xdp stats not read: map lookup failed: %s; the last read stands", strerror( read_error ) );
+        {
+            char reason[128];
+            rocketnet_error( "xdp stats not read: map lookup failed: %s; the last read stands", strerror_r( read_error, reason, sizeof( reason ) ) );
+        }
     }
 }
 
@@ -4234,8 +4238,11 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
                 const int error = errno;
                 rocketnet_xdp_send_wakeup_failed( error, socket->send_wakeup_failures, socket->send_hard_error );
                 if ( rocketnet_xdp_send_wakeup_report( error, send_error ) )
+                {
+                    char reason[128];
                     rocketnet_error( "xdp queue %d tx wakeup failed: %s; the tx ring cannot drain and stop will not wait for it",
-                                     socket->queue, strerror( error ) );
+                                     socket->queue, strerror_r( error, reason, sizeof( reason ) ) );
+                }
             }
             else
             {

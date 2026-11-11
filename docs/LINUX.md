@@ -580,8 +580,10 @@ What each path does with the errors it can see:
   accepted or dropped, and every interrupted call spends one unit of a read
   budget of `ROCKETNET_GSO_RECV_QUEUE_SIZE`; a spent budget ends the drain, so
   the worker publishes and tests its stop request however much the socket
-  holds. A `sendmmsg` refused
-  with `EAGAIN`, `EWOULDBLOCK`, `ENOBUFS`, `ENOMEM` or `EINTR` (a full
+  holds. A `sendmmsg` interrupted by a signal (`EINTR`) is sent again at once
+  (only the plain resend of a refused segmented run takes it as a full
+  socket). A `sendmmsg` refused
+  with `EAGAIN`, `EWOULDBLOCK`, `ENOBUFS` or `ENOMEM` (a full
   socket) drops nothing while the server runs: the TX worker keeps the bank's unsent rest, in
   order and ahead of every later bank, and retries every `ROCKETNET_GSO_SEND_RETRY_SECONDS` (1 ms) on `send_wake`
   (or sooner when main's next update wakes it). Once the server has begun

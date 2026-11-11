@@ -60,8 +60,9 @@ and layout id and refuses a hub from another build
 as one block through the caller's allocator: the endpoint records, each
 client's `ROCKETNET_LOOPBACK_QUEUE_PACKETS` queue and the server's queue
 sized for `max_clients`. Start and connect register an endpoint and allocate
-nothing, and runtime sends never allocate or grow a queue. Lookups scan the
-hub's records linearly under its mutex. `rocketnet_loopback_hub_destroy`
+nothing, and runtime sends never allocate or grow a queue. Under the hub's mutex a
+datagram finds its destination with one lookup in a table indexed by family
+and port, and registering an endpoint walks the records to refuse a held port. `rocketnet_loopback_hub_destroy`
 refuses while any endpoint is registered (`ROCKETNET_STATUS_LOOPBACK_HUB_IN_USE`),
 keeping the hub; destroy it after the server and clients, before
 `rocketnet_term`. The registration lifecycle is modelled in
@@ -211,7 +212,7 @@ rotation; it does not multiply the 4096-slot GSO or 2048-slot io_uring send
 capacity (`sdk/rocketnet_server_gso_linux.cpp`,
 `sdk/rocketnet_server_uring_linux.cpp`).
 
-Every built-in server transport reports the frames it takes before its next
+Every built-in server transport but loopback reports the frames it takes before its next
 flush through the optional `send_room` operation (`sdk/rocketnet_driver.h`):
 the free slots of the gso producer bank, the io_uring array, the IOCP
 producer bank (at most its free send operations), the open RIO fill phase,
@@ -224,8 +225,10 @@ no more than the room each update, a kicked client's burst is sealed at once
 only while the room holds all of it, and stop's bursts leave across stop steps
 the same way (`proofs/tla/ServerStopSpread.tla`). Stop tells the I/O to stop
 only once the optional `send_idle` operation reports every send it was handed
-finished (each built-in server transport reports it), so a stopping worker
-never retires a bank of disconnect packets unsent. A custom transport without
+finished (each built-in server transport but loopback reports it), so a stopping worker
+never retires a bank of disconnect packets unsent. Loopback reports neither: its send copies each frame into the
+destination's queue before it returns (a full queue drops the frame), so the
+server treats it as unbounded, and idle once the send returns. A custom transport without
 `send_room` is treated as unbounded; a start it refuses ends that update's
 drain, and the bursts wait for the next.
 

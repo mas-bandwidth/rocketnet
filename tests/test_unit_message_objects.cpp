@@ -3723,7 +3723,7 @@ static void test_send_budget_message_env_is_not_read()
 }
 
 // ---------------------------------------------------------------------------
-// the object's update clamps a bad time through rocketnet_clamp_update_time
+// the object's update clamps a bad time through rocketnet_update_clock_advance
 // once: a backwards, NaN or infinite update is counted once in
 // rocketnet_api_misuse_count, never stored in object->time, never made the
 // clock origin, so +INFINITY cannot wedge the clock or the connection

@@ -8,7 +8,8 @@
 // input names. Where rocketnet_fuzz_receive_structured drives the protocol
 // layer's process_packet directly, this target goes in at the top -- the
 // receive drain, the wire totals, the admission gate, the send-frame
-// reservation, process_packet_capacity and the payload batch -- and up
+// reservation, process_received (not the static process_packet_capacity, which
+// only the copying process_packet reaches) and the payload batch -- and up
 // through the message layer that reads
 // what the transport delivers.
 //

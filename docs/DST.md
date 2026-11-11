@@ -135,7 +135,7 @@ schedule; a failure prints its seed and the replay command, which carries
   clock plus its offset, so its update is handed a time below the one before.
   The wire stays on the shared clock. The fault is applied below the message
   object, whose update clamps a backwards game time
-  (`rocketnet_clamp_update_time`), so the protocol sees it. The skew check's
+  (`rocketnet_update_clock_advance`), so the protocol sees it. The skew check's
   bound for that endpoint is the 5 s maximum (plus 1 ms of rounding); every
   other endpoint keeps 0.45 s. A step back past the server's three-second
   cookie lifetime makes the rewound client answer a cookie challenge after

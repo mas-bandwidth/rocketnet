@@ -12543,6 +12543,7 @@ static void rocketnet_test_hostname_resolve_localhost()
 #endif // #if ROCKETNET_DEV
 
 extern void rocketnet_test_platform_thread();
+extern void rocketnet_test_platform_wake_wait_writable();
 #if defined( __APPLE__ ) && !defined( ROCKETNET_USE_SYSTEM_SODIUM )
 extern void rocketnet_test_bundled_rng_closes_and_reopens_on_mac();
 extern void rocketnet_test_bundled_rng_opens_once_under_concurrent_keygen_on_mac();
@@ -12747,6 +12748,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_hostname_resolve_localhost", rocketnet_test_hostname_resolve_localhost, NULL },
 #endif // #if ROCKETNET_DEV
     { "test_platform_thread", rocketnet_test_platform_thread, NULL },
+    { "test_platform_wake_wait_writable", rocketnet_test_platform_wake_wait_writable, NULL },
     { "test_message_client_create_takes_the_create_budget", rocketnet_test_message_client_create_takes_the_create_budget, NULL },
     { "test_token_time_game_clock_off_reads_the_wall_clock", rocketnet_test_token_time_game_clock_off_reads_the_wall_clock, NULL },
 #if defined( __APPLE__ ) && !defined( ROCKETNET_USE_SYSTEM_SODIUM )

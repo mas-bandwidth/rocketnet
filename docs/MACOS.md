@@ -185,8 +185,9 @@ and carry payloads both ways.
 The client and server configs each carry a `transport` string, with an
 environment overlay: `ROCKETNET_CLIENT_TRANSPORT` and
 `ROCKETNET_SERVER_TRANSPORT` (`sdk/rocketnet.h`, `rocketnet_client_config_t`
-and `rocketnet_server_config_t`). `NULL` is `auto`; one name is a pin (that
-transport or a refused create, never a silent fall); a comma list is an
+and `rocketnet_server_config_t`). `NULL` is `auto`; one name the endpoint has is a pin (that
+transport or a refused create, never a silent fall), and one name it does
+not have falls to `auto` with a warning; a comma list is an
 ordered candidate list (`BUILDING.md`, "Server transports"). An unknown name
 refuses the create and the log lists the valid names. A name the registry
 knows but macOS does not build (`gso`, `xdp`, `iocp`, `io_uring`, `rio`) is
