@@ -9,7 +9,15 @@
 # owns the sockets.
 #
 # What it covers: ./bin/test, then ./bin/functional on the auto ladder, then
-# ./bin/functional with the portable rung pinned. The guest image is Ubuntu
+# ./bin/functional with the portable rung pinned, then the cross-endian
+# interoperability run (tools/bigendian/run_interop.sh): a big-endian server
+# in the guest with little-endian clients on this runner, and a little-endian
+# server on this runner with big-endian clients in the guest, over real
+# sockets through QEMU user networking. That run is the check for a wire
+# field written in host order that has no byte vector: two big-endian ends
+# agree on such a field, a big-endian and a little-endian end do not. ./bin/test
+# includes the XDP filter compiled as host C, so the filter's conversions
+# run natively big-endian here too. The guest image is Ubuntu
 # 24.04 s390x, checked against the release SHA256SUMS and that file's GPG
 # signature before the overlay is created. The suite is compiled inside the
 # guest, so the toolchain matches the guest. Every compile carries
@@ -124,6 +132,17 @@ jobs:
 
           PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
           echo "guest ssh port ${PORT}"
+          # the cross-endian run: a udp port forwarded to the guest's server,
+          # and one on this runner for the runner's server
+          GUEST_UDP_PORT=$(python3 -c 'import socket; s=socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
+          HOST_UDP_PORT=$(python3 -c 'import socket; s=socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.bind(("0.0.0.0",0)); print(s.getsockname()[1]); s.close()')
+          echo "interop udp ports: guest ${GUEST_UDP_PORT}, runner ${HOST_UDP_PORT}"
+          # this runner's end of the cross-endian run: the same program built
+          # natively (little-endian x86-64), outside the tree copied to the guest
+          cmake -S "$GITHUB_WORKSPACE" -B "$WORK/host-build" -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS=-ffp-contract=off -DCMAKE_CXX_FLAGS=-ffp-contract=off > "$WORK/host-build.log" 2>&1
+          cmake --build "$WORK/host-build" --target bigendian_interop --parallel 4 >> "$WORK/host-build.log" 2>&1
+          cp "$GITHUB_WORKSPACE/bin/bigendian_interop" "$WORK/bigendian_interop_host"
+          readelf -h "$WORK/bigendian_interop_host" | grep -F -q "little endian"
           : > "$WORK/serial.log"
           # The full-capacity unit cases (SUITE_CASE_RSS_BOUND) create a
           # 1000-slot server whose plan is requested whole and mostly never
@@ -148,7 +167,7 @@ jobs:
             -device virtio-blk-ccw,drive=hd0,bootindex=1 \
             -drive "file=$WORK/seed.img,if=none,id=cidata,format=raw" \
             -device virtio-blk-ccw,drive=cidata \
-            -netdev "user,id=net0,hostfwd=tcp:127.0.0.1:${PORT}-:22" \
+            -netdev "user,id=net0,hostfwd=tcp:127.0.0.1:${PORT}-:22,hostfwd=udp:127.0.0.1:${GUEST_UDP_PORT}-:${GUEST_UDP_PORT}" \
             -device virtio-net-ccw,netdev=net0 \
             >"$WORK/qemu.log" 2>&1 &
           QEMU_PID=$!
@@ -202,10 +221,11 @@ jobs:
           # suites' stated 5x emulation scale.
           # Bare --parallel lets Make launch every translation unit at once;
           # bound compiler concurrency, not run time.
-          "${SSH[@]}" 'cd ~/src && cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS=-ffp-contract=off -DCMAKE_CXX_FLAGS="-ffp-contract=off -DROCKETNET_TEST_EMULATED=1" && cmake --build build --target test functional --parallel 2' 2>&1 | tee "$WORK/build.log"
-          "${SSH[@]}" 'cd ~/src && readelf -h bin/test && readelf -h bin/functional && readelf -h bin/test | grep -F -q "big endian" && readelf -h bin/test | grep -F -q "IBM S/390"'
+          "${SSH[@]}" 'cd ~/src && cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS=-ffp-contract=off -DCMAKE_CXX_FLAGS="-ffp-contract=off -DROCKETNET_TEST_EMULATED=1" && cmake --build build --target test functional bigendian_interop --parallel 2' 2>&1 | tee "$WORK/build.log"
+          "${SSH[@]}" 'cd ~/src && readelf -h bin/test && readelf -h bin/functional && readelf -h bin/test | grep -F -q "big endian" && readelf -h bin/test | grep -F -q "IBM S/390" && readelf -h bin/bigendian_interop | grep -F -q "big endian"'
 
-          "${SSH[@]}" bash -s << 'GUEST'
+          suite_rc=0
+          "${SSH[@]}" bash -s << 'GUEST' || suite_rc=$?
           set +e
           export ROCKETNET_NIGHTLY_NO_TIMEOUT=1
           cd ~/src
@@ -276,6 +296,15 @@ jobs:
           replay func_port ./bin/functional func_port.out "ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable" 0
           exit $rc
           GUEST
+          echo "SUITE_EXIT:${suite_rc}"
+
+          # three clients each way: the keep-alive's client index and every
+          # per-client field take values other than zero
+          interop_rc=0
+          interop_start=$SECONDS
+          "$GITHUB_WORKSPACE/tools/bigendian/run_interop.sh" "$WORK/bigendian_interop_host" "$PORT" "$WORK/guest_key" "$GUEST_UDP_PORT" "$HOST_UDP_PORT" 3 || interop_rc=$?
+          echo "INTEROP_EXIT:${interop_rc} INTEROP_SEC:$((SECONDS - interop_start))"
+          [ "$suite_rc" -eq 0 ] && [ "$interop_rc" -eq 0 ]
 
       - name: Preserve guest diagnostics on failure
         if: failure()
@@ -286,4 +315,5 @@ jobs:
             ${{ runner.temp }}/bigendian-system/serial.log
             ${{ runner.temp }}/bigendian-system/qemu.log
             ${{ runner.temp }}/bigendian-system/build.log
+            ${{ runner.temp }}/bigendian-system/host-build.log
           if-no-files-found: ignore
