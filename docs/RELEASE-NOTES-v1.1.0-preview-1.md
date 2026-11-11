@@ -1,10 +1,10 @@
-# RocketNet v1.1.0
+# RocketNet v1.1.0-preview-1
 
 Changes compared with the `v1.0.0` tag. v1.0.1 was prepared but never tagged;
 its fixes ship here, under "Fixes since v1.0.0".
 
-- Tag: `v1.1.0`, on the merged `main` commit.
-- Release: [GitHub release](https://github.com/mas-bandwidth/rocketnet/releases/tag/v1.1.0).
+- Tag: `v1.1.0-preview-1`, on the merged `main` commit.
+- Release: [GitHub release](https://github.com/mas-bandwidth/rocketnet/releases/tag/v1.1.0-preview-1).
 
 ## A bad network no longer ends a connection
 
