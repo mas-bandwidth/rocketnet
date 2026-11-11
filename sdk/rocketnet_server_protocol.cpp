@@ -1587,18 +1587,18 @@ int rocketnet_server_protocol_process_received( struct rocketnet_server_protocol
 // on the stack and an accepted payload is copied into out_payload, refused
 // whole when it does not fit out_payload_capacity.
 
-int rocketnet_server_protocol_process_packet_capacity( struct rocketnet_server_protocol_t * server,
-                                                       const struct rocketnet_address_t * from,
-                                                       const uint8_t * packet_data,
-                                                       int packet_bytes,
-                                                       uint64_t current_timestamp,
-                                                       double current_time,
-                                                       uint8_t * response_packet,
-                                                       int * response_bytes,
-                                                       uint8_t * out_payload,
-                                                       int out_payload_capacity,
-                                                       int * out_payload_bytes,
-                                                       int * out_payload_client_index )
+static int rocketnet_server_protocol_process_packet_capacity( struct rocketnet_server_protocol_t * server,
+                                                              const struct rocketnet_address_t * from,
+                                                              const uint8_t * packet_data,
+                                                              int packet_bytes,
+                                                              uint64_t current_timestamp,
+                                                              double current_time,
+                                                              uint8_t * response_packet,
+                                                              int * response_bytes,
+                                                              uint8_t * out_payload,
+                                                              int out_payload_capacity,
+                                                              int * out_payload_bytes,
+                                                              int * out_payload_client_index )
 {
     rocketnet_assert( out_payload );
 
