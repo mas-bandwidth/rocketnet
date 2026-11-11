@@ -55,7 +55,7 @@ int main(int argc, char** argv) {
     subprocess.run([str(baseline), *map(str, sorted((ROOT / 'tests/fuzz/corpus').iterdir()))], env=env, check=True)
 
     original = (ROOT / 'sdk/rocketnet_base64.cpp').read_text()
-    guard = '    if ( output_length > output_size )\n        return 0;'
+    guard = '    if ( output_length > output_size )\n    {\n        return 0;\n    }'
     if original.count(guard) != 1:
         raise SystemExit('decode capacity guard changed; review the negative control')
     mutant = work / 'base64-truncate.cpp'
@@ -85,12 +85,16 @@ int main(int argc, char** argv) {
     # accepted, and require the property oracle to catch the empty record.
     msg = (ROOT / 'sdk/rocketnet_message.cpp').read_text()
     msg_guard = '''    if ( length == 0 || length > remaining - header )
-        return ROCKETNET_MESSAGE_VIOLATION_BAD_LENGTH;'''
+    {
+        return ROCKETNET_MESSAGE_VIOLATION_BAD_LENGTH;
+    }'''
     if msg.count(msg_guard) != 1:
         raise SystemExit('message record length guard changed; review the negative control')
     mutant_msg = work / 'message-length-bypass.cpp'
     mutant_msg.write_text(msg.replace(msg_guard, '''    if ( length > remaining - header )
-        return ROCKETNET_MESSAGE_VIOLATION_BAD_LENGTH;'''))
+    {
+        return ROCKETNET_MESSAGE_VIOLATION_BAD_LENGTH;
+    }'''))
     sources_msg = [str(ROOT / 'tests/fuzz/rocketnet_fuzz_message.cpp'), str(replay)]
     control_msg = work / 'control_message'
     subprocess.run(flags + sources_msg + [str(mutant_msg), str(BUILD / 'librocketnet.a')] + libs
