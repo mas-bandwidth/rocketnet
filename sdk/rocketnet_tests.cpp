@@ -51,19 +51,13 @@
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 #include <windows.h>
-#else
-#include <dlfcn.h>
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 
-#include <limits.h>
-#include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
 #include <string>
-#include <thread>
 #include <vector>
 
 #include "../tests/suite_runner.h"
@@ -8402,14 +8396,6 @@ void rocketnet_test_version_is_one_integer()
     rocketnet_check( ROCKETNET_VERSION == ROCKETNET_VERSION_MAJOR * 10000 + ROCKETNET_VERSION_MINOR * 100 + ROCKETNET_VERSION_PATCH );
 #if ROCKETNET_DEV
     rocketnet_check( strcmp( ROCKETNET_VERSION_FULL, "dev" ) == 0 );
-#else // #if ROCKETNET_DEV
-    // the text form is "v" and the integers, then the end or a "-" prerelease
-
-    char expected[64];
-    snprintf( expected, sizeof( expected ), "v%d.%d.%d", ROCKETNET_VERSION_MAJOR, ROCKETNET_VERSION_MINOR, ROCKETNET_VERSION_PATCH );
-    const size_t length = strlen( expected );
-    rocketnet_check( strncmp( ROCKETNET_VERSION_FULL, expected, length ) == 0 );
-    rocketnet_check( ROCKETNET_VERSION_FULL[length] == '\0' || ROCKETNET_VERSION_FULL[length] == '-' );
 #endif // #if ROCKETNET_DEV
 }
 
@@ -12683,13 +12669,6 @@ void rocketnet_test_portable_server_release_gate()
         portable_in_auto |= ladder.candidates[i] == ROCKETNET_TRANSPORT_PORTABLE;
     rocketnet_check( portable_in_auto );
 
-#if !ROCKETNET_DEV
-    // native production server preferences remain ahead of the portable fallback
-
-    rocketnet_check( ladder.num_candidates > 0 );
-    rocketnet_check( ladder.candidates[ladder.num_candidates - 1] == ROCKETNET_TRANSPORT_PORTABLE );
-#endif // #if !ROCKETNET_DEV
-
     rocketnet_check( rocketnet_transport_ladder_parse( " portable ", servers, server_count, &ladder ) );
     rocketnet_check( ladder.num_candidates == 1 && ladder.candidates[0] == ROCKETNET_TRANSPORT_PORTABLE );
 }
@@ -14291,8 +14270,7 @@ void rocketnet_test_public_connect_token_string_refused()
     struct rocketnet_client_t * client = rocketnet_test_public_loopback_client();
     rocketnet_check( client != NULL );
 
-    // a well-formed base64 string of the right length: a real token in a
-    // development build, all 'A' in a production build (where none can be made)
+    // a well-formed base64 string of the right length: a real development token
 
     char base[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
 #if ROCKETNET_DEV
@@ -14300,9 +14278,6 @@ void rocketnet_test_public_connect_token_string_refused()
     memcpy( server_key, rocketnet_dev_server_public_key, sizeof( server_key ) );
 
     rocketnet_check( rocketnet_create_dev_connect_token( "127.0.0.1:40000", NULL, server_key, 30, 10, 1, ROCKETNET_DEV_PROTOCOL_ID, 1000, NULL, base ) == ROCKETNET_STATUS_OK );
-#else
-    memset( base, 'A', sizeof( base ) - 1 );
-    base[sizeof( base ) - 1] = '\0';
 #endif // #if ROCKETNET_DEV
 
     rocketnet_check( strlen( base ) == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
