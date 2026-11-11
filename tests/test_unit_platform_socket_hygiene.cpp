@@ -31,6 +31,12 @@
 #include <unistd.h>
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
+// darwin declares IPV6_DONTFRAG only under __APPLE_USE_RFC_3542, which the
+// platform layer defines for itself; the option number is the RFC 3542 one
+#if defined( __APPLE__ )
+#define PLATFORM_SOCKET_HYGIENE_IPV6_DONTFRAG 62
+#endif // #if defined( __APPLE__ )
+
 static void test_platform_id_is_the_build_platform()
 {
     rocketnet_unit_check( rocketnet_platform_id() == ROCKETNET_PLATFORM );
@@ -630,6 +636,13 @@ static void test_platform_socket_hygiene_dual_stack_sets_both_dont_fragment()
     rocketnet_unit_check( ipv6_options.count == 2 );
     rocketnet_unit_check( ipv6_options.levels[0] == IPPROTO_IPV6 && ipv6_options.names[0] == IPV6_MTU_DISCOVER && ipv6_options.values[0] == IPV6_PMTUDISC_DO );
     rocketnet_unit_check( ipv6_options.levels[1] == IPPROTO_IP && ipv6_options.names[1] == IP_MTU_DISCOVER && ipv6_options.values[1] == IP_PMTUDISC_DO );
+#elif defined( __APPLE__ )
+    // darwin refuses IP_DONTFRAG on an AF_INET6 socket (EINVAL), and
+    // IPV6_DONTFRAG keeps its v4-mapped datagrams whole, so it is asked alone
+    rocketnet_unit_check( ipv4_options.count == 1 );
+    rocketnet_unit_check( ipv4_options.levels[0] == IPPROTO_IP && ipv4_options.names[0] == IP_DONTFRAG && ipv4_options.values[0] == 1 );
+    rocketnet_unit_check( ipv6_options.count == 1 );
+    rocketnet_unit_check( ipv6_options.levels[0] == IPPROTO_IPV6 && ipv6_options.names[0] == PLATFORM_SOCKET_HYGIENE_IPV6_DONTFRAG && ipv6_options.values[0] == 1 );
 #elif defined( IPV6_DONTFRAG ) && defined( IP_DONTFRAG )
     rocketnet_unit_check( ipv4_options.count == 1 );
     rocketnet_unit_check( ipv4_options.levels[0] == IPPROTO_IP && ipv4_options.names[0] == IP_DONTFRAG && ipv4_options.values[0] == 1 );

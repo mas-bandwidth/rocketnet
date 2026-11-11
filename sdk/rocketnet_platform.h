@@ -306,8 +306,10 @@ uint64_t rocketnet_platform_receive_resets( void );
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 
 // the don't-fragment options every rocketnet UDP socket gets, through
-// set_option: an IPv6 (dual-stack) socket gets the IPv6 option and the IPv4
-// one, so v4-mapped traffic carries DF too. A refusal is tolerated.
+// set_option: an IPv6 (dual-stack) socket gets the IPv6 option and, except
+// on macOS, the IPv4 one, so v4-mapped traffic carries DF too. macOS refuses
+// IP_DONTFRAG on an IPv6 socket and applies IPV6_DONTFRAG to its v4-mapped
+// datagrams, so it gets the IPv6 option alone. A refusal is tolerated.
 void rocketnet_platform_socket_apply_dont_fragment( bool ipv6, void ( *set_option )( void * user, int level, int option_name, int value ), void * user );
 
 // the process-wide counts of datagrams a receive read and skipped: a
