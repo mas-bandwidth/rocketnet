@@ -16,10 +16,12 @@
 
 #include "rocketnet.h"
 #include "rocketnet_internal.h"
+#include "rocketnet_layers.h"
 #include "token_string.h"
 
 #include <stdio.h>
 #include <limits.h>
+#include <math.h>
 #include <string.h>
 #include "loopback_hub.h"
 
@@ -623,6 +625,288 @@ static void test_conditions_public_api_client_and_server()
 }
 
 REGISTER_UNIT_TEST( test_conditions_public_api_client_and_server );
+
+// One frame of the clients alone: the server is not updated, so nothing it
+// sends arrives and nothing the clients send is read.
+static void send_room_clients_frame( rocketnet_client_t ** clients, int num_clients )
+{
+    for ( int i = 0; i < num_clients; i++ )
+    {
+        rocketnet_client_update( clients[i], g_send_room_now );
+        while ( rocketnet_client_receive_messages( clients[i] ) != NULL )
+        {
+        }
+
+        rocketnet_client_send_packets( clients[i] );
+    }
+    g_send_room_now += 0.01;
+}
+
+// Queues `count` messages of `bytes` on channel 0, from the server to `slot`
+// (client NULL) or from the client.
+static void send_room_queue( rocketnet_server_t * server, int slot, rocketnet_client_t * client, enum rocketnet_reliability_t reliability, int count, int bytes )
+{
+    for ( int i = 0; i < count; i++ )
+    {
+        uint8_t * p = client ? rocketnet_client_start_message( client, 0, reliability, bytes )
+                             : rocketnet_server_start_message( server, (uint64_t) slot, 0, reliability, bytes );
+        check( p != NULL );
+        memset( p, 0x3C, (size_t) bytes );
+        check( ( client ? rocketnet_client_finish_message( client, bytes ) : rocketnet_server_finish_message( server, bytes ) ) != 0 );
+    }
+}
+
+// One frame of the server and clients[0..num_clients) in which each of them
+// sends an unreliable message to the other side, so each is heard in this
+// frame (with nothing to send an endpoint sends only a keep-alive every 100 ms).
+static void send_room_chatter_frame( rocketnet_server_t * server, rocketnet_client_t ** clients, int num_clients )
+{
+    for ( int i = 0; i < num_clients; i++ )
+    {
+        send_room_queue( NULL, 0, clients[i], ROCKETNET_RELIABILITY_UNRELIABLE, 1, 16 );
+        send_room_queue( server, rocketnet_client_index( clients[i] ), NULL, ROCKETNET_RELIABILITY_UNRELIABLE, 1, 16 );
+    }
+    send_room_frame( server, clients, num_clients );
+}
+
+// test_conditions_values_follow_a_dark_remote_endpoint: the values of
+// rocketnet_conditions_t against a known timeline, on both getters.
+// seconds_since_heard is the transport time of the reading less the time of
+// the last update that accepted a packet of that connection;
+// seconds_since_progress is the reading's time less the first send of the
+// oldest unacknowledged number (no acknowledgement came after it);
+// reliable_in_flight counts pieces numbered and unacknowledged, a fragmented
+// message once per piece. Two clients over loopback, step driven, time from
+// 1000.0. First client 1 stops (the server's slot for it goes dark both ways
+// while the other slot stays fresh), then the server stops (both clients go
+// dark), and each time stepping again brings every value back. The -1 of
+// seconds_since_heard (no connected client in the slot, or not yet connected)
+// is read from the transports, since the public getters return false there.
+static void test_conditions_values_follow_a_dark_remote_endpoint()
+{
+    rocketnet_quiet( true );
+    g_send_room_now = 1000.0;
+
+    uint8_t seed[32];
+    for ( int i = 0; i < 32; i++ )
+    {
+        seed[i] = (uint8_t) ( 0x5C ^ i );
+    }
+
+    uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
+    uint8_t backend_secret[RN_TEST_BACKEND_SECRET_KEY_BYTES];
+    check( rocketnet_generate_backend_keypair_from_seed( seed, backend_public, backend_secret ) == ROCKETNET_STATUS_OK );
+
+    struct rocketnet_server_config_t server_config;
+    check( rocketnet_server_default_config( &server_config ) == ROCKETNET_STATUS_OK );
+    check( server_config.reliable_message_timeout_ms == 0 );                // the shipped rule
+    server_config.protocol_id = SEND_ROOM_PROTOCOL;
+    server_config.max_clients = 3;
+    server_config.transport = "loopback";
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
+    memcpy( server_config.backend_public_key, backend_public, sizeof( server_config.backend_public_key ) );
+
+    enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
+    rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &create_status );
+    check( server != NULL );
+    check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
+    struct rocketnet_server_transport_t * server_transport = rocketnet_message_server_transport( rocketnet_server_message_server( server ) );
+    check( server_transport != NULL );
+
+    char address[64];
+    snprintf( address, sizeof( address ), "127.0.0.1:%d", (int) rocketnet_server_port( server ) );
+    const char * addresses[] = { address };
+
+    rocketnet_client_t * clients[2];
+    for ( int i = 0; i < 2; i++ )
+    {
+        struct rocketnet_client_config_t client_config;
+        check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
+        client_config.transport = "loopback";
+        client_config.loopback_hub = rocketnet_test_loopback_hub();
+        client_config.step_driven = 1;
+        client_config.time_callback = send_room_clock;
+        clients[i] = rocketnet_client_create( NULL, &client_config, &create_status );
+        check( clients[i] != NULL );
+
+        char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+        check( rn_test_server_token_string( backend_secret, server, SEND_ROOM_PROTOCOL, addresses, 1,
+                                            (uint64_t) ( 0x71 + i ), 1000, 1ULL << 40, 300, NULL, token ) == ROCKETNET_STATUS_OK );
+        check( rocketnet_client_connect( clients[i], token ) == ROCKETNET_STATUS_OK );
+    }
+
+    // not yet connected: the client transport has heard nothing as a connection
+
+    int connecting_reads = 0;
+    for ( int i = 0; i < 400; i++ )
+    {
+        for ( int k = 0; k < 2; k++ )
+        {
+            const int state = rocketnet_client_state( clients[k] );
+            struct rocketnet_message_client_t * message_client = rocketnet_client_message_client( clients[k] );
+            if ( state > 0 && state < ROCKETNET_CLIENT_STATE_CONNECTED && message_client )
+            {
+                check( rocketnet_client_transport_heard_age( rocketnet_message_client_transport( message_client ) ) == -1.0 );
+                connecting_reads++;
+            }
+        }
+        if ( rocketnet_client_state( clients[0] ) == ROCKETNET_CLIENT_STATE_CONNECTED &&
+             rocketnet_client_state( clients[1] ) == ROCKETNET_CLIENT_STATE_CONNECTED &&
+             rocketnet_server_num_connected_clients( server ) == 2 )
+        {
+            break;
+        }
+        send_room_frame( server, clients, 2 );
+    }
+    check( connecting_reads > 0 );
+    check( rocketnet_client_state( clients[0] ) == ROCKETNET_CLIENT_STATE_CONNECTED );
+    check( rocketnet_client_state( clients[1] ) == ROCKETNET_CLIENT_STATE_CONNECTED );
+    for ( int i = 0; i < 20; i++ )
+    {
+        send_room_frame( server, clients, 2 );
+    }
+
+    const int slot0 = rocketnet_client_index( clients[0] );
+    const int slot1 = rocketnet_client_index( clients[1] );
+    int empty_slot = 0;
+    while ( empty_slot == slot0 || empty_slot == slot1 )
+    {
+        empty_slot++;
+    }
+
+    // a slot with no client and an index out of range: -1 from the transport
+
+    check( rocketnet_server_transport_heard_age( server_transport, empty_slot ) == -1.0 );
+    check( rocketnet_server_transport_heard_age( server_transport, -1 ) == -1.0 );
+    check( rocketnet_server_transport_heard_age( server_transport, 3 ) == -1.0 );
+
+    // settled: the CONFIG exchange is acknowledged, nothing waits
+
+    struct rocketnet_conditions_t c;
+    const int slots[2] = { slot0, slot1 };
+    for ( int k = 0; k < 2; k++ )
+    {
+        check( rocketnet_client_conditions( clients[k], &c, (int) sizeof( c ) ) );
+        check( c.reliable_in_flight == 0 && c.seconds_since_progress == -1.0 );
+        check( rocketnet_server_client_conditions( server, slots[k], &c, (int) sizeof( c ) ) );
+        check( c.reliable_in_flight == 0 && c.seconds_since_progress == -1.0 );
+    }
+
+    // client 1 goes dark: its last full frame is at t_dark. In that frame
+    // client 1 sends an unreliable message before the server updates (heard
+    // at t_dark; with nothing to send a client sends only a keep-alive every
+    // 100 ms), and the server numbers and sends two small messages and one
+    // block of three pieces to it (first sent at t_dark), which client 1
+    // never reads.
+
+    const int block_bytes = 2 * ROCKETNET_MESSAGE_FRAGMENT_BYTES + 100;
+    send_room_queue( NULL, 0, clients[1], ROCKETNET_RELIABILITY_UNRELIABLE, 1, 16 );
+    send_room_queue( server, slot1, NULL, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 2, 100 );
+    send_room_queue( server, slot1, NULL, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 1, block_bytes );
+    const double t_dark = g_send_room_now;
+    send_room_frame( server, clients, 2 );
+
+    check( rocketnet_server_client_conditions( server, slot1, &c, (int) sizeof( c ) ) );
+    check( c.reliable_in_flight == 5 );                                     // 2 small + the block's 3 pieces
+    check( c.seconds_since_heard == 0.0 && c.seconds_since_progress == 0.0 );
+
+    double t_read = t_dark;
+    for ( int frame = 0; frame < 60; frame++ )
+    {
+        t_read = g_send_room_now;
+        send_room_chatter_frame( server, clients, 1 );                            // client 0 and the server only
+
+        check( rocketnet_server_client_conditions( server, slot1, &c, (int) sizeof( c ) ) );
+        check( fabs( c.seconds_since_heard - ( t_read - t_dark ) ) < 1e-9 );
+        check( fabs( c.seconds_since_progress - ( t_read - t_dark ) ) < 1e-9 );
+        check( c.reliable_in_flight == 5 );
+        check( c.send_refused == 0 );
+
+        check( rocketnet_server_client_conditions( server, slot0, &c, (int) sizeof( c ) ) );
+        check( c.seconds_since_heard >= 0.0 && c.seconds_since_heard < 0.02 );
+        check( c.seconds_since_progress == -1.0 && c.reliable_in_flight == 0 );
+    }
+    check( t_read - t_dark > 0.59 );
+    check( rocketnet_server_client_connected( server, slot1 ) );
+
+    // client 1 steps again: heard at once, and once its acknowledgement of
+    // every piece arrives nothing waits
+
+    send_room_chatter_frame( server, clients, 2 );
+    check( rocketnet_server_client_conditions( server, slot1, &c, (int) sizeof( c ) ) );
+    check( c.seconds_since_heard >= 0.0 && c.seconds_since_heard < 0.02 );
+    for ( int frame = 0; frame < 50 && c.reliable_in_flight > 0; frame++ )
+    {
+        send_room_chatter_frame( server, clients, 2 );
+        check( rocketnet_server_client_conditions( server, slot1, &c, (int) sizeof( c ) ) );
+    }
+    check( c.reliable_in_flight == 0 && c.seconds_since_progress == -1.0 );
+    check( c.seconds_since_heard >= 0.0 && c.seconds_since_heard < 0.02 );
+    for ( int i = 0; i < 20; i++ )
+    {
+        send_room_frame( server, clients, 2 );
+    }
+
+    // the server goes dark: its last update is at t_server, and it sends an
+    // unreliable message to each client then. The clients read those packets
+    // in their update at t_heard (heard then); client 0 numbers and sends
+    // four small messages in that update.
+
+    send_room_queue( server, slot0, NULL, ROCKETNET_RELIABILITY_UNRELIABLE, 1, 16 );
+    send_room_queue( server, slot1, NULL, ROCKETNET_RELIABILITY_UNRELIABLE, 1, 16 );
+    const double t_server = g_send_room_now;
+    send_room_frame( server, clients, 2 );
+    const double t_heard = g_send_room_now;
+    check( t_heard > t_server );
+    send_room_queue( NULL, 0, clients[0], ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4, 100 );
+    send_room_clients_frame( clients, 2 );
+
+    for ( int frame = 0; frame < 60; frame++ )
+    {
+        t_read = g_send_room_now;
+        send_room_clients_frame( clients, 2 );
+
+        check( rocketnet_client_conditions( clients[0], &c, (int) sizeof( c ) ) );
+        check( fabs( c.seconds_since_heard - ( t_read - t_heard ) ) < 1e-9 );
+        check( fabs( c.seconds_since_progress - ( t_read - t_heard ) ) < 1e-9 );
+        check( c.reliable_in_flight == 4 );
+
+        check( rocketnet_client_conditions( clients[1], &c, (int) sizeof( c ) ) );
+        check( fabs( c.seconds_since_heard - ( t_read - t_heard ) ) < 1e-9 );
+        check( c.seconds_since_progress == -1.0 && c.reliable_in_flight == 0 );
+    }
+    check( t_read - t_heard > 0.59 );
+
+    // the server steps again: both clients hear it, client 0's pieces are
+    // acknowledged
+
+    for ( int frame = 0; frame < 50; frame++ )
+    {
+        send_room_chatter_frame( server, clients, 2 );
+        check( rocketnet_client_conditions( clients[0], &c, (int) sizeof( c ) ) );
+        if ( c.reliable_in_flight == 0 && c.seconds_since_heard < 0.02 )
+        {
+            break;
+        }
+    }
+    for ( int k = 0; k < 2; k++ )
+    {
+        check( rocketnet_client_conditions( clients[k], &c, (int) sizeof( c ) ) );
+        check( c.seconds_since_heard >= 0.0 && c.seconds_since_heard < 0.02 );
+        check( c.reliable_in_flight == 0 && c.seconds_since_progress == -1.0 );
+        check( c.send_refused == 0 );
+        check( rocketnet_client_state( clients[k] ) == ROCKETNET_CLIENT_STATE_CONNECTED );
+    }
+
+    for ( int i = 0; i < 2; i++ )
+    {
+        rn_test_client_stop_and_destroy( clients[i] );
+    }
+    rn_test_server_stop_and_destroy( server );
+    rocketnet_quiet( false );
+}
+
+REGISTER_UNIT_TEST( test_conditions_values_follow_a_dark_remote_endpoint );
 
 // ---------------------------------------------------------------------------
 // m1.7 through the public API: a start that finds no room is refused at each
