@@ -76,9 +76,10 @@ static void test_server_gso_send_shutdown_full()
 REGISTER_UNIT_TEST( test_server_gso_send_shutdown_full );
 
 // The bounded retry once shutdown has begun: a socket that refuses fewer
-// times than ROCKETNET_GSO_SEND_RETRIES_AFTER_QUIT allows takes the whole
-// bank, nothing dropped; one that refuses past it loses only the unsent tail,
-// which is counted in SEND_DROPPED, and stop completes.
+// times than ROCKETNET_GSO_SEND_RETRIES_AFTER_QUIT allows takes every
+// routable packet; one that refuses past it loses only the unsent tail, whose
+// packets (not its aborted or already-dropped slots) are counted in
+// SEND_DROPPED, and stop completes.
 bool rocketnet_server_gso_test_send_shutdown_within_bound();
 bool rocketnet_server_gso_test_send_shutdown_past_bound();
 

@@ -467,8 +467,12 @@ static void rocketnet_server_gso_send_worker( rocketnet_platform_thread_t *, voi
                 retries_after_quit++;
                 if ( retries_after_quit > ROCKETNET_GSO_SEND_RETRIES_AFTER_QUIT )
                 {
-                    // the tail the socket never took is dropped: count it
-                    gso->counter_send_dropped += (uint64_t) ( count - slot );
+                    // the tail the socket never took is dropped: count its
+                    // packets. an aborted slot, or one already counted
+                    // unroutable and cleared, holds none
+                    for ( int i = slot; i < count; i++ )
+                        if ( bank->info[i].packet_bytes > 0 )
+                            gso->counter_send_dropped++;
                     break;
                 }
             }
@@ -2893,9 +2897,12 @@ bool rocketnet_server_gso_test_send_shutdown_full()
 }
 
 // the bounded retry after shutdown, from both sides. a bank holds a packet to
-// port 40000 and one to port 40002. the seam accepts 40000; 40002 meets a
-// full socket `refusals` times and is then accepted. the first refusal also
-// stops the transport, so the worker exits whatever it does with the bank.
+// port 40000 and one to port 40002, then a packet to an IPv6 destination this
+// IPv4 socket cannot carry (the first pass drops and counts it) and an
+// aborted slot: neither is a packet the tail can drop again. the seam accepts
+// 40000; 40002 meets a full socket `refusals` times and is then accepted. the
+// first refusal also stops the transport, so the worker exits whatever it
+// does with the bank.
 // a refusal past the bound's last retry means the worker kept retrying: the
 // seam then accepts so this thread is not stuck, and the test fails.
 struct rocketnet_server_gso_test_bounded_retry_t
@@ -2955,6 +2962,27 @@ static bool rocketnet_server_gso_test_bounded_retry( int refusals, uint64_t expe
 
     bool valid = rocketnet_server_gso_test_stage( gso, 40000 );
     valid = valid && rocketnet_server_gso_test_stage( gso, 40002 );
+
+    struct rocketnet_address_t to;
+    memset( &to, 0, sizeof( to ) );
+    to.type = ROCKETNET_ADDRESS_IPV6;
+    to.data.ipv6[7] = 1;
+    to.port = 40003;
+    uint64_t packet_id = 0;
+    uint8_t * packet = rocketnet_server_gso_start_packet( gso, &to, &packet_id );
+    valid = valid && packet;
+    if ( packet )
+        rocketnet_server_gso_finish_packet( gso, packet_id, packet, ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES );
+
+    memset( &to, 0, sizeof( to ) );
+    to.type = ROCKETNET_ADDRESS_IPV4;
+    to.data.ipv4[0] = 127;
+    to.data.ipv4[3] = 1;
+    to.port = 40004;
+    packet = rocketnet_server_gso_start_packet( gso, &to, &packet_id );
+    valid = valid && packet;
+    rocketnet_server_gso_abort_packet( gso, packet_id, packet );
+
     rocketnet_server_gso_send_packets( gso );
     valid = valid && gso->send_ready_count == 1;
 
@@ -2983,19 +3011,21 @@ static bool rocketnet_server_gso_test_bounded_retry( int refusals, uint64_t expe
 
 // the socket refuses the tail fewer times than the bound ends: once (one
 // transient EAGAIN), then as many times as the bound allows retries, so the
-// last allowed retry is accepted. both packets are sent, none dropped.
+// last allowed retry is accepted. both routable packets are sent; only the
+// unroutable one is dropped.
 bool rocketnet_server_gso_test_send_shutdown_within_bound()
 {
-    bool valid = rocketnet_server_gso_test_bounded_retry( 1, 2, 0 );
-    valid = valid && rocketnet_server_gso_test_bounded_retry( ROCKETNET_GSO_SEND_RETRIES_AFTER_QUIT, 2, 0 );
+    bool valid = rocketnet_server_gso_test_bounded_retry( 1, 2, 1 );
+    valid = valid && rocketnet_server_gso_test_bounded_retry( ROCKETNET_GSO_SEND_RETRIES_AFTER_QUIT, 2, 1 );
     return valid;
 }
 
 // the socket refuses the tail past the bound: the worker stops retrying, the
-// one packet it never sent is dropped and counted, and stop completes
+// one packet it never sent is dropped and counted beside the unroutable one,
+// the cleared and aborted slots behind it are not counted, and stop completes
 bool rocketnet_server_gso_test_send_shutdown_past_bound()
 {
-    return rocketnet_server_gso_test_bounded_retry( ROCKETNET_GSO_SEND_RETRIES_AFTER_QUIT + 2, 1, 1 );
+    return rocketnet_server_gso_test_bounded_retry( ROCKETNET_GSO_SEND_RETRIES_AFTER_QUIT + 2, 1, 2 );
 }
 
 #endif // #if ROCKETNET_DEV
