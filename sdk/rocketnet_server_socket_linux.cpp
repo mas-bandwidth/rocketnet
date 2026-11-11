@@ -1029,7 +1029,7 @@ uint64_t rocketnet_server_socket_memory_required( int num_queues, int max_client
 static bool rocketnet_server_socket_interface_is_veth( const char * interface_name )
 {
     // the transport name the kernel reports for the interface (ETHTOOL_GDRVINFO)
-    const int probe_fd = socket( AF_INET, SOCK_DGRAM, 0 );
+    const int probe_fd = socket( AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0 );
     if ( probe_fd < 0 )
         return false;
     struct ethtool_drvinfo info;
@@ -1396,7 +1396,7 @@ static bool rocketnet_server_socket_preflight_with_cpus( const char * public_add
     // count (a NIC without channel support passes)
 
     {
-        int probe_fd = socket( AF_INET, SOCK_DGRAM, 0 );
+        int probe_fd = socket( AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0 );
         if ( probe_fd < 0 )
         {
             // silence must never verify
@@ -1458,7 +1458,7 @@ static bool rocketnet_server_socket_preflight_with_cpus( const char * public_add
     // created and closed without a bind...
 
     {
-        int xdp_fd = socket( AF_XDP, SOCK_RAW, 0 );
+        int xdp_fd = socket( AF_XDP, SOCK_RAW | SOCK_CLOEXEC, 0 );
         if ( xdp_fd < 0 )
         {
             rocketnet_warn( "xdp pre-flight: kernel refused an AF_XDP socket (%s) (K1). this kernel cannot run the XDP data plane", strerror( errno ) );
