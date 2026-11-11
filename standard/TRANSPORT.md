@@ -2703,7 +2703,7 @@ list is ignored in that state.
 ```vector t12.cookie
 input: source 198.51.100.7:56789
 input: connection salt 53414c5430303031, server time 1756166400, cookie lifetime 3
-input: cookie key 102030405060708090a0b0c0d0e0f0000f1f2f3f4f5f6f7f8f9fafbfcfdfeff
+input: cookie key 102030405060708090a0b0c0d0e0f0000f1f2f3f4f5f6f7f8f9fafbfcfdfefff
 07 00 b7 59 01 00 53 41 4c 54 30 30 30 31 03 f9
 ac 68 00 00 00 00 0f b2 b2 8f 32 db d6 c9 eb 36
 4f 57 74 86 f3 e9
