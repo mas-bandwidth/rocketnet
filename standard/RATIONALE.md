@@ -1962,3 +1962,7 @@ It differs from the text shipped with v1.0.0 in these places:
   size before the shared checks, counted as `PREFILTER_TOO_SHORT` or
   `PREFILTER_TOO_LARGE`, or in the kernel counters of a transport that drops it in the
   kernel.
+- [RN-1 t2.4 Transport selection](TRANSPORT.md#t2.4), rules 3 and 4: a list of one name
+  that is not applicable is not a pin; like a longer list that names no applicable
+  transport it falls to the `auto` order with one warning, as the reference implementation
+  has done since v1.0.0.

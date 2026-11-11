@@ -256,14 +256,18 @@ ignore rules 1 to 5 and keeps rule 6.
    create, naming the fault.
 2. A name the implementation does not know MUST fail the create, listing the
    valid transport names, whatever the length of the list.
-3. A list of one name is a pin. The endpoint MUST create on that transport or
-   fail the create naming the transport and why it refused or is not
-   applicable. A pin never falls to another transport.
-4. A list of two or more transport names MUST be tried left to right, nothing
+3. A list of one applicable name is a pin. The endpoint MUST create on that
+   transport or fail the create naming the transport and why it refused. A
+   pin never falls to another transport. A list of one name that is not
+   applicable is not a pin: rule 4 applies to it as to any list that names
+   no applicable transport.
+4. A list of transport names MUST be tried left to right, nothing
    appended and nothing reordered; the first applicable transport that
    succeeds carries the endpoint. A name that is not applicable MUST be
-   skipped with one log line. When no name in the list is applicable, the
-   endpoint MUST fall to its `auto` order, with one log line saying so. When
+   skipped with one log line. When no name in the list is applicable,
+   whatever the length of the list, the endpoint MUST fall to its `auto`
+   order, with one warning naming the list and that order, so that one
+   configuration line can be deployed to endpoints it does not address. When
    at least one name is applicable and every applicable name refuses, the
    endpoint MUST fail the create, naming each refusal apart from each skip.
 5. A transport MUST NOT change machine state (kernel parameters, queue
@@ -4009,8 +4013,9 @@ Each note points to the section whose rule it serves.
 An implementation offers a set of transports for one endpoint role on one
 platform, and `auto` expands to its documented order for that role and
 platform. An explicit list is tried in order, nothing is appended or
-reordered, and a list of one name is a pin that refuses rather than falls.
-The endpoint reports the transport that carries it and logs each earlier
+reordered, and a list of one applicable name is a pin that refuses rather
+than falls; a list that names no applicable transport falls to `auto` with a
+warning. The endpoint reports the transport that carries it and logs each earlier
 candidate's skip or refusal. A transport never changes a byte on the wire, so
 transport selection is a deployment and diagnosis surface rather than a
 protocol one. See [t2.4 Transport selection](#t2.4).

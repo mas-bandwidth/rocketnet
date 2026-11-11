@@ -66,7 +66,9 @@ in `sdk/rocketnet.h`; no C++ type crosses it.
 
 - Linux, macOS and Windows are supported.
 - Runtime transport selection uses `transport`: automatic order, one pinned
-  name, or an explicit ordered list. A pin fails loudly when unavailable.
+  name, or an explicit ordered list. A pin to an available transport fails
+  loudly when it refuses; a list that names no transport this endpoint has
+  uses `auto` with a warning.
 - Linux includes portable UDP plus GSO, io_uring and AF_XDP server transports
   when their build and host requirements are available.
 - macOS includes portable and msgx transports. Windows includes portable,
