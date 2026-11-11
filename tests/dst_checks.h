@@ -976,8 +976,10 @@ static inline uint32_t rocketnet_dst_check_type4_newest( const struct rocketnet_
     return newest;
 }
 
-// Marks the sequences that were sent before the fault window ended: the
-// quiet window is the liveness bound, so only those are due at the last step.
+// Marks where the quiet window begins on each stream. The reliable types owe
+// every sequence sent before the last in-flight slack at the last step, the
+// fault window's included (rocketnet_dst_check_end); the sequenced type 4
+// owes the newest send of the quiet window.
 
 static inline void rocketnet_dst_check_settle( struct rocketnet_dst_check_state_t * st )
 {
@@ -1027,11 +1029,11 @@ static inline void rocketnet_dst_check_end( struct rocketnet_dst_check_state_t *
 
                 if ( type == 2 || type == 3 || type == 6 || type == 7 )
                 {
-                    // messages sent after the fault window ended, inside the
-                    // quiet window, are due; the last 20 may still be in
-                    // flight
+                    // every message still unresolved is due once the quiet
+                    // window has healed the wire, those sent in the fault
+                    // window included; the last 20 may still be in flight
                     const uint32_t settled = s->last_sent_seq > 20 ? s->last_sent_seq - 20 : 0;
-                    for ( uint32_t seq = s->quiet_start_seq + 1;
+                    for ( uint32_t seq = s->reliable_base;
                           seq <= settled && seq < s->reliable_base + ROCKETNET_DST_CHECK_SEQ_BITS; seq++ )
                     {
                         if ( rocketnet_dst_check_bit( st, s->reliable_sent, s->reliable_base, seq, "reliable_sent" ) &&
