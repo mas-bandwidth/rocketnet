@@ -616,6 +616,14 @@ jobs:
           ROCKETNET_CLIENT_TRANSPORT: portable
         run: ./bin/functional_production --run test_transport_env_pin_is_honoured
 
+      # The production library's public client and server through create,
+      # start, connect, update, disconnect and destroy over real sockets
+      # (docs/BUILD-REFERENCE.md lists it as a production gate); built on
+      # ROCKETNET_DEV=OFF only, under a second here.
+      - name: "Functional: production client lifecycle"
+        if: matrix.build_type == 'Release' && ((matrix.leg == 'functional' && runner.os != 'macOS') || matrix.leg == 'functional_production')
+        run: ./bin/test_production_client_lifecycle
+
       # THE TRANSPORT FAMILY MATRIX: every transport this OS builds, pinned by
       # env, on IPv4, on IPv6 and with an IPv4 client of an IPv6 wildcard
       # server, so a family regression on any one transport fails here.
