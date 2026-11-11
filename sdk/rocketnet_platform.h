@@ -437,7 +437,8 @@ struct rocketnet_platform_socket_t * rocketnet_server_transport_platform_socket_
 void rocketnet_platform_socket_send_packets_mmsg( struct rocketnet_platform_socket_t * socket, const struct rocketnet_platform_send_t * sends, int num_packets );
 // Retaining caller: returns the ORIGINAL input prefix sent or terminally
 // refused. EAGAIN/EWOULDBLOCK/ENOBUFS leave the remaining suffix for a later
-// call, with no failure count or log for that transient refusal.
+// call, with no failure count or log for that transient refusal, and a
+// short return leaves errno as that refusal set it.
 int rocketnet_platform_socket_send_packets_mmsg_progress( struct rocketnet_platform_socket_t * socket, const struct rocketnet_platform_send_t * sends, int num_packets );
 // Linux recvmmsg path; same layout and oversize rule as socket_receive_packets, and zero-length datagrams make no entry
 int rocketnet_platform_socket_receive_packets_mmsg( struct rocketnet_platform_socket_t * socket, struct rocketnet_address_t * from, uint8_t * packet_data, int packet_stride, int * packet_bytes, int max_packets );
