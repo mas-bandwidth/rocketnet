@@ -2287,11 +2287,16 @@ static uint64_t xdp_send_failures( void * transport )
     return rocketnet_server_socket_send_failures( (rocketnet_server_socket_t *) transport );
 }
 
+static void xdp_begin_shutdown( void * transport )
+{
+    rocketnet_server_socket_begin_shutdown( (rocketnet_server_socket_t *) transport );
+}
+
 static const rocketnet_server_transport_io_operations_t xdp_operations = {
     ROCKETNET_TRANSPORT_STAGED | ROCKETNET_TRANSPORT_FINISH_FINAL | ROCKETNET_TRANSPORT_BINDS_PUBLIC_ADDRESS | ROCKETNET_TRANSPORT_REFLUSHES,
     xdp_create, xdp_destroy, xdp_stop, xdp_stopped,
     xdp_start, xdp_finish, xdp_abort, xdp_flush, xdp_receive, NULL, NULL, xdp_prefilter_counters,
-    xdp_replay_forget, xdp_replay_mark, xdp_replay_commit, xdp_client_accepted, xdp_send_failures, NULL, xdp_send_room, xdp_send_idle, NULL
+    xdp_replay_forget, xdp_replay_mark, xdp_replay_commit, xdp_client_accepted, xdp_send_failures, NULL, xdp_send_room, xdp_send_idle, xdp_begin_shutdown
 };
 #else
 static void * xdp_disabled_create( void *, const rocketnet_server_transport_io_config_t * config, rocketnet_address_t * )
@@ -2600,8 +2605,9 @@ bool rocketnet_server_transport_io_receive_frames_dropped( const rocketnet_serve
                                                            uint64_t * dropped )
 {
     // builtin-only, matched on the operations table as receive_drops is: the
-    // xdp transport's frames its userspace receive dropped before reading a
-    // UDP datagram from them (XDP_RECEIVE_FRAME_DROPPED)
+    // xdp transport's frames its userspace receive, or the kernel on its
+    // sockets, dropped before a UDP datagram was read from them
+    // (XDP_RECEIVE_FRAME_DROPPED)
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
     if ( operations == &xdp_operations )

@@ -213,6 +213,12 @@ struct rocketnet_server_xdp_socket_t
     struct rocketnet_xdp_receive_drops_t receive_drops;
     std::atomic<uint64_t> receive_dropped{ 0 };
 
+    // frames the kernel dropped on this queue's socket before the worker saw
+    // them (rocketnet_xdp_socket_dropped): its total since bind, which only
+    // this queue's xdp thread reads and stores, every
+    // ROCKETNET_XDP_STATISTICS_PASSES passes and on its final pass
+    std::atomic<uint64_t> kernel_dropped{ 0 };
+
     // frames the flush did not send because the codec refused to build them
     // (a destination of the family this server does not serve); written by
     // this queue's xdp thread outside the handoff lock
@@ -238,6 +244,16 @@ struct rocketnet_server_xdp_socket_t
     // (rocketnet_server_socket_send_idle).
     std::atomic<uint64_t> send_wakeup_failures{ 0 };
     std::atomic<int> send_hard_error{ 0 };
+
+    // the stop drain's view of the worker's TX side: draining is set by
+    // begin_shutdown; pending while the worker holds frames the TX ring's
+    // consumer has not taken (set under send_mutex when it recycles a
+    // buffer, so send_idle never reads an idle handoff with a stale false);
+    // stalled once the ring stopped draining during the stop
+    // (rocketnet_xdp_send_stall_pass), when the stop drain gives up on it
+    std::atomic<bool> send_draining{ false };
+    std::atomic<bool> send_pending{ false };
+    std::atomic<bool> send_stalled{ false };
 
     uint8_t padding_5[4096];
 
@@ -349,6 +365,7 @@ struct rocketnet_server_socket_t
     // the per-cpu stats map read buffer (rocketnet_xdp_stats_cpus_fit), inside
     // the create-time allocation; written only by rocketnet_server_socket_xdp_counters
     struct rocketnet_server_xdp_stats_t stats_values[ROCKETNET_XDP_STATS_MAX_CPUS];
+    int stats_num_cpus;                                         // libbpf_num_possible_cpus, read once at create
     uint64_t stats_last[ROCKETNET_SERVER_XDP_NUM_COUNTERS];   // the last good read (rocketnet_xdp_stats_publish)
     bool stats_failing;                                         // the last read failed; logged once per run
 
@@ -583,6 +600,14 @@ static void rocketnet_server_socket_refresh_gateway( struct rocketnet_server_soc
 static void rocketnet_server_socket_publish_receive_dropped( rocketnet_server_xdp_socket_t * socket )
 {
     socket->receive_dropped.store( rocketnet_xdp_receive_drops_total( &socket->receive_drops ), std::memory_order_relaxed );
+}
+
+// the queue's xdp thread publishes the frames the kernel dropped on its
+// socket, from an XDP_STATISTICS answer of bytes bytes: the socket's total, so
+// a later answer replaces this one and nothing is counted twice
+static void rocketnet_server_socket_publish_kernel_dropped( rocketnet_server_xdp_socket_t * socket, const struct xdp_statistics * statistics, socklen_t bytes )
+{
+    socket->kernel_dropped.store( rocketnet_xdp_socket_dropped( statistics->rx_dropped, statistics->rx_ring_full, (size_t) bytes ), std::memory_order_relaxed );
 }
 
 static uint64_t alloc_send_frame( rocketnet_server_xdp_socket_t * socket )
@@ -2011,6 +2036,10 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         return NULL;
     }
 
+    // libbpf reads and allocates for this on its first call: here, not on
+    // the frame path of the first counters read
+    server_socket->stats_num_cpus = libbpf_num_possible_cpus();
+
     server_socket->replay_map_fd = bpf_obj_get( server_socket->pinned_paths[3] );
     if ( server_socket->replay_map_fd < 0 )
     {
@@ -2545,7 +2574,8 @@ int rocketnet_server_socket_send_room( struct rocketnet_server_socket_t * server
 }
 
 // proofs/tla/ServerStopSpread.tla RequestIoStop: every queue's buffers back
-// with its producer, the producer empty
+// with its producer, the producer empty; proofs/tla/RNXdpSendDrain.tla
+// SendIdle: the TX ring drained too, or the queue given up on
 
 bool rocketnet_server_socket_send_idle( struct rocketnet_server_socket_t * server_socket )
 {
@@ -2555,11 +2585,13 @@ bool rocketnet_server_socket_send_idle( struct rocketnet_server_socket_t * serve
     {
         rocketnet_server_xdp_socket_t * socket = &server_socket->socket[queue];
 
-        // A queue whose worker's last TX wakeup failed hard cannot drain its
-        // ring: give up on it before waiting on its buffers or mutex.
+        // A queue whose worker's last TX wakeup failed hard, or whose TX
+        // ring stalled during this stop, cannot drain its ring: give up on
+        // it before waiting on its buffers or mutex.
 
         const int hard_send_error = socket->send_hard_error.load( std::memory_order_relaxed );
-        if ( rocketnet_xdp_send_wakeup_hard_error( hard_send_error ) )
+        const bool stalled = socket->send_stalled.load( std::memory_order_relaxed );
+        if ( rocketnet_xdp_send_queue_released( hard_send_error, stalled, false, false ) )
             continue;
 
         const int flow_index = socket->send_flow_index.load( std::memory_order_acquire );
@@ -2567,13 +2599,24 @@ bool rocketnet_server_socket_send_idle( struct rocketnet_server_socket_t * serve
             return false;
         if ( !rocketnet_platform_mutex_try_acquire( &socket->send_mutex ) )
             return false;
-        const bool handoff_idle = socket->send_handoff.ready_count == 0 && socket->send_handoff.free_count == ROCKETNET_XDP_NUM_BUFFERS - 1;
+        const bool handoff_idle = socket->send_handoff.ready_count == 0 && socket->send_handoff.free_count == ROCKETNET_XDP_NUM_BUFFERS - 1 &&
+                                  !socket->send_pending.load( std::memory_order_relaxed );
         rocketnet_platform_mutex_release( &socket->send_mutex );
-        if ( !rocketnet_xdp_send_queue_released( hard_send_error, true, handoff_idle ) )
+        if ( !rocketnet_xdp_send_queue_released( hard_send_error, stalled, true, handoff_idle ) )
             return false;
     }
 
     return true;
+}
+
+// proofs/tla/RNXdpSendDrain.tla BeginShutdown: the stop has begun, so each
+// queue's worker may give up on a TX ring that has stopped draining
+
+void rocketnet_server_socket_begin_shutdown( struct rocketnet_server_socket_t * server_socket )
+{
+    rocketnet_assert( server_socket );
+    for ( int queue = 0; server_socket->socket && queue < server_socket->num_queues; queue++ )
+        server_socket->socket[queue].send_draining.store( true, std::memory_order_relaxed );
 }
 
 uint8_t * rocketnet_server_socket_start_packet( struct rocketnet_server_socket_t * server_socket, const rocketnet_address_t * to, uint64_t * packet_id )
@@ -3579,8 +3622,9 @@ uint64_t rocketnet_server_socket_send_failures( struct rocketnet_server_socket_t
 }
 
 // The transport's XDP_RECEIVE_FRAME_DROPPED: the frames every queue's receive
-// dropped before reading a UDP datagram from them, as each worker last
-// published them. Main thread; never waits on a worker.
+// dropped before reading a UDP datagram from them, and the frames the kernel
+// dropped on every queue's socket before its worker saw them, as each worker
+// last published them. Main thread; never waits on a worker, makes no call.
 
 uint64_t rocketnet_server_socket_receive_dropped( struct rocketnet_server_socket_t * server_socket )
 {
@@ -3588,7 +3632,8 @@ uint64_t rocketnet_server_socket_receive_dropped( struct rocketnet_server_socket
 
     uint64_t dropped = 0;
     for ( int queue = 0; queue < server_socket->num_queues; queue++ )
-        dropped += server_socket->socket[queue].receive_dropped.load( std::memory_order_relaxed );
+        dropped += server_socket->socket[queue].receive_dropped.load( std::memory_order_relaxed ) +
+                   server_socket->socket[queue].kernel_dropped.load( std::memory_order_relaxed );
 
     return dropped;
 }
@@ -3631,6 +3676,36 @@ bool rocketnet_server_socket_test_receive_dropped( rocketnet_server_socket_test_
     rocketnet_server_socket_publish_receive_dropped( &queues[0] );
     rocketnet_server_socket_publish_receive_dropped( &queues[1] );
     valid = valid && dispatch( xdp, server, &dropped ) && dropped == 31;
+
+    // the kernel's drops on queue 0's socket: rx_dropped and rx_ring_full,
+    // not the fill ring's empty reads. Each answer is the socket's total, so
+    // reading the counter again, or the worker publishing the same answer
+    // again, adds nothing; a later answer adds only what it grew by. Queue 1
+    // answers with no drops, and a three-field answer (an older kernel) has
+    // no rx_ring_full to read.
+
+    struct xdp_statistics statistics;
+    memset( &statistics, 0, sizeof( statistics ) );
+    statistics.rx_dropped = 32;
+    statistics.rx_ring_full = 64;
+    statistics.rx_fill_ring_empty_descs = 1000;
+    rocketnet_server_socket_publish_kernel_dropped( &queues[0], &statistics, sizeof( statistics ) );
+    valid = valid && dispatch( xdp, server, &dropped ) && dropped == 127;
+    valid = valid && dispatch( xdp, server, &dropped ) && dropped == 127;
+    rocketnet_server_socket_publish_kernel_dropped( &queues[0], &statistics, sizeof( statistics ) );
+    valid = valid && dispatch( xdp, server, &dropped ) && dropped == 127;
+
+    statistics.rx_ring_full = 65;
+    rocketnet_server_socket_publish_kernel_dropped( &queues[0], &statistics, sizeof( statistics ) );
+    valid = valid && dispatch( xdp, server, &dropped ) && dropped == 128;
+
+    struct xdp_statistics none;
+    memset( &none, 0, sizeof( none ) );
+    rocketnet_server_socket_publish_kernel_dropped( &queues[1], &none, sizeof( none ) );
+    valid = valid && dispatch( xdp, server, &dropped ) && dropped == 128;
+
+    rocketnet_server_socket_publish_kernel_dropped( &queues[0], &statistics, 3 * sizeof( uint64_t ) );
+    valid = valid && dispatch( xdp, server, &dropped ) && dropped == 63;
 
     queues[1].~rocketnet_server_xdp_socket_t();
     queues[0].~rocketnet_server_xdp_socket_t();
@@ -3713,8 +3788,25 @@ bool rocketnet_server_socket_test_send_idle_hard_error()
     queue->send_hard_error.store( 0, std::memory_order_relaxed );
     valid &= !rocketnet_server_socket_send_idle( server );
 
+    // a TX ring the worker found stalled during the stop releases it too
+    queue->send_stalled.store( true, std::memory_order_relaxed );
+    valid &= rocketnet_server_socket_send_idle( server );
+    queue->send_stalled.store( false, std::memory_order_relaxed );
+    valid &= !rocketnet_server_socket_send_idle( server );
+
     queue->send_buffer[queue->send_handoff.producer].num_packets.store( 0, std::memory_order_relaxed );
     valid &= rocketnet_server_socket_send_idle( server );
+
+    // frames the TX ring's consumer has not taken keep the queue busy
+    queue->send_pending.store( true, std::memory_order_relaxed );
+    valid &= !rocketnet_server_socket_send_idle( server );
+    queue->send_pending.store( false, std::memory_order_relaxed );
+    valid &= rocketnet_server_socket_send_idle( server );
+
+    // begin_shutdown starts every queue's stall watch
+    valid &= !queue->send_draining.load();
+    rocketnet_server_socket_begin_shutdown( server );
+    valid &= queue->send_draining.load();
 
     rocketnet_platform_mutex_destroy( &queue->send_mutex );
     queue->~rocketnet_server_xdp_socket_t();
@@ -3734,7 +3826,7 @@ void rocketnet_server_socket_xdp_counters( struct rocketnet_server_socket_t * se
     // the stats map is per-CPU: one value struct per possible CPU, summed by
     // rocketnet_xdp_stats_publish; a failed read publishes the last good one
 
-    const int num_cpus = libbpf_num_possible_cpus();
+    const int num_cpus = server_socket->stats_num_cpus;
     const bool fit = rocketnet_xdp_stats_cpus_fit( num_cpus );
 
     bool read = false;
@@ -3901,6 +3993,17 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
     // per contiguous run rather than every pass
 
     int send_error = 0;
+
+    // the TX ring's consumer index and the passes it has not moved with
+    // frames pending (rocketnet_xdp_send_stall_pass)
+
+    rocketnet_xdp_send_stall_t send_stall = { 0, 0 };
+
+    // passes since the socket's XDP_STATISTICS were last read, and whether a
+    // failed read was logged
+
+    int statistics_passes = 0;
+    bool reported_statistics_error = false;
 
     for ( ;; )
     {
@@ -4181,6 +4284,7 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
                     send_buffer->packet_start_index = 0;
                     rocketnet_platform_mutex_acquire( &socket->send_mutex );
                     socket->send_handoff.recycle( on_index );
+                    socket->send_pending.store( true, std::memory_order_relaxed ); // proofs/tla/RNXdpSendDrain.tla Load
                     rocketnet_platform_mutex_release( &socket->send_mutex );
 
                     // one warning per queue per flush for the starts this
@@ -4239,9 +4343,17 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
                 rocketnet_xdp_send_wakeup_failed( error, socket->send_wakeup_failures, socket->send_hard_error );
                 if ( rocketnet_xdp_send_wakeup_report( error, send_error ) )
                 {
-                    char reason[128];
-                    rocketnet_error( "xdp queue %d tx wakeup failed: %s; the tx ring cannot drain and stop will not wait for it",
-                                     socket->queue, strerror_r( error, reason, sizeof( reason ) ) );
+                    if ( rocketnet_xdp_send_wakeup_unexpected( error ) )
+                    {
+                        socket->send_wakeup_failures.fetch_add( 1, std::memory_order_relaxed );
+                        rocketnet_error( "xdp queue %d tx wakeup failed (errno %d); counted once until it changes", socket->queue, error );
+                    }
+                    else
+                    {
+                        char reason[128];
+                        rocketnet_error( "xdp queue %d tx wakeup failed: %s; the tx ring cannot drain and stop will not wait for it",
+                                         socket->queue, strerror_r( error, reason, sizeof( reason ) ) );
+                    }
                 }
             }
             else
@@ -4251,12 +4363,59 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
             }
         }
 
+        // the stop drain's view of this queue's TX side: pending while this
+        // thread holds frames the ring's consumer has not taken; stalled
+        // once that consumer has not moved for ROCKETNET_XDP_SEND_STALL_PASSES
+        // passes during a stop, when what is abandoned is counted and logged
+        // once (proofs/tla/RNXdpSendDrain.tla Pass)
+
+        {
+            const uint32_t consumer = __atomic_load_n( socket->send_queue.consumer, __ATOMIC_ACQUIRE );
+            const uint32_t on_ring = *socket->send_queue.producer - consumer;
+            const bool pending = num_batch_packets > 0 || send_worker_index >= 0 || on_ring != 0;
+            if ( socket->send_pending.load( std::memory_order_relaxed ) != pending )
+                socket->send_pending.store( pending, std::memory_order_relaxed );
+            if ( rocketnet_xdp_send_stall_pass( send_stall, consumer, pending, socket->send_draining.load( std::memory_order_relaxed ),
+                                                ROCKETNET_XDP_SEND_STALL_PASSES, socket->send_stalled ) )
+            {
+                const uint32_t abandoned = on_ring + (uint32_t) num_batch_packets;
+                socket->send_wakeup_failures.fetch_add( abandoned, std::memory_order_relaxed );
+                rocketnet_error( "xdp queue %d tx ring has not drained for %u passes; stop gives up on its %u queued frames", socket->queue,
+                                 ROCKETNET_XDP_SEND_STALL_PASSES, abandoned );
+            }
+        }
+
         // The SCHED_RR worker spins on its dedicated isolated queue CPU by
         // design: NAPI runs in softirq on the queue CPUs, and the isolated-CPU
         // pre-flight above is the guard that keeps every queue on its own core.
         // This pass deliberately does not sleep. rocketnet_platform_sleep
         // returns at once for a non-positive request, so a zero-duration call
         // would never yield the CPU.
+
+        // the frames the kernel dropped on this socket before this thread saw
+        // them (a full RX ring, an empty fill ring): read every
+        // ROCKETNET_XDP_STATISTICS_PASSES passes, and on the final pass so
+        // the count is complete once the queue has stopped
+
+        if ( ++statistics_passes >= ROCKETNET_XDP_STATISTICS_PASSES || stopping )
+        {
+            statistics_passes = 0;
+            if ( fds[0].fd >= 0 )
+            {
+                struct xdp_statistics statistics;
+                memset( &statistics, 0, sizeof( statistics ) );
+                socklen_t statistics_bytes = sizeof( statistics );
+                if ( getsockopt( fds[0].fd, SOL_XDP, XDP_STATISTICS, &statistics, &statistics_bytes ) == 0 )
+                {
+                    rocketnet_server_socket_publish_kernel_dropped( socket, &statistics, statistics_bytes );
+                }
+                else if ( !reported_statistics_error )
+                {
+                    rocketnet_error( "xdp queue %d could not read its socket statistics (errno %d); its kernel drops stay at the last read", socket->queue, errno );
+                    reported_statistics_error = true;
+                }
+            }
+        }
 
         if ( stopping )
             break;

@@ -84,7 +84,11 @@
 // The server protocol's cookie reply limit (its bitmap pointer, word count
 // and key, and the 262144-bit source bitmap carved with the transport) adds
 // 32768 bytes; the probe's actual= line is 3111420707.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110372131ULL )
+// Each xdp queue publishes the frames the kernel dropped on its socket
+// (kernel_dropped, sdk/rocketnet_server_socket_linux.cpp), adding 8 bytes;
+// computed with the cookie reply limit, the probe's actual= line is
+// 3111420715.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110372139ULL )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14146994 )
 #endif // #if defined( _WIN32 )
 

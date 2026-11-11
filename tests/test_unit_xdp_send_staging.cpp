@@ -19,6 +19,13 @@
 // real transport stop over a fake staged io whose send_idle is the XDP seam:
 // no socket, thread, clock or kernel resource is involved.
 
+//
+// The TX ring cases add a fake ring and the worker's stall watch: every stop
+// step's send_idle first runs passes_per_poll worker passes, in each of which
+// the ring's consumer takes one descriptor every drain_every passes (0:
+// never, a ring that has stopped draining) and the watch runs on the result
+// (rocketnet_xdp_send_stall_pass, with a small bound), as the worker loop does.
+
 static struct
 {
     const rocketnet_server_transport_io_operations_t * real_operations;
@@ -27,9 +34,42 @@ static struct
     bool buffer_empty;
     bool handoff_idle;
     int stops;
+
+    bool draining;                      // begin_shutdown was called
+    uint32_t producer;                  // the fake TX ring's indices
+    uint32_t consumer;
+    int drain_every;
+    int passes_per_poll;
+    uint32_t bound;
+    int pass;
+    rocketnet_xdp_send_stall_t stall;
+    std::atomic<bool> stalled;
+    std::atomic<uint64_t> abandoned;    // what the worker counts in send_wakeup_failures
+    bool released_while_draining;       // send_idle gave up on a ring that was still moving
 } xdp_stop_fixture;
 
 static rocketnet_server_transport_io_operations_t xdp_stop_operations;
+
+static void xdp_stop_fixture_begin_shutdown( void * )
+{
+    xdp_stop_fixture.draining = true;
+}
+
+static bool xdp_stop_fixture_worker_passes()
+{
+    bool pending = xdp_stop_fixture.consumer != xdp_stop_fixture.producer;
+    for ( int i = 0; i < xdp_stop_fixture.passes_per_poll; i++ )
+    {
+        xdp_stop_fixture.pass++;
+        if ( xdp_stop_fixture.drain_every > 0 && xdp_stop_fixture.pass % xdp_stop_fixture.drain_every == 0 && pending )
+            xdp_stop_fixture.consumer++;
+        pending = xdp_stop_fixture.consumer != xdp_stop_fixture.producer;
+        if ( rocketnet_xdp_send_stall_pass( xdp_stop_fixture.stall, xdp_stop_fixture.consumer, pending, xdp_stop_fixture.draining,
+                                            xdp_stop_fixture.bound, xdp_stop_fixture.stalled ) )
+            xdp_stop_fixture.abandoned.fetch_add( xdp_stop_fixture.producer - xdp_stop_fixture.consumer );
+    }
+    return pending;
+}
 
 static void xdp_stop_fixture_destroy( void * )
 {
@@ -51,8 +91,23 @@ static void xdp_stop_fixture_flush( void * ) {}
 
 static bool xdp_stop_fixture_send_idle( void * )
 {
-    return rocketnet_xdp_send_queue_released( xdp_stop_fixture.hard_error, xdp_stop_fixture.buffer_empty, xdp_stop_fixture.handoff_idle );
+    const bool pending = xdp_stop_fixture_worker_passes();
+    const bool released = rocketnet_xdp_send_queue_released( xdp_stop_fixture.hard_error, xdp_stop_fixture.stalled.load(), xdp_stop_fixture.buffer_empty,
+                                                             xdp_stop_fixture.handoff_idle && !pending );
+    if ( released && pending && xdp_stop_fixture.drain_every > 0 )
+        xdp_stop_fixture.released_while_draining = true;
+    return released;
 }
+
+// The fake TX ring the next scenario starts with: frames descriptors queued,
+// the rest as in xdp_stop_fixture. No call: an empty ring and no passes.
+static struct
+{
+    uint32_t frames;
+    int drain_every;
+    int passes_per_poll;
+    uint32_t bound;
+} xdp_stop_tx_next;
 
 // Stop one server over the fake staged io with the given queue state. Returns
 // false only when the case's own cleanup failed; stopped_after is the answer
@@ -65,6 +120,19 @@ static bool xdp_stop_scenario( int hard_error, bool buffer_empty, bool handoff_i
     xdp_stop_fixture.buffer_empty = buffer_empty;
     xdp_stop_fixture.handoff_idle = handoff_idle;
     xdp_stop_fixture.stops = 0;
+
+    xdp_stop_fixture.draining = false;
+    xdp_stop_fixture.producer = xdp_stop_tx_next.frames;
+    xdp_stop_fixture.consumer = 0;
+    xdp_stop_fixture.drain_every = xdp_stop_tx_next.drain_every;
+    xdp_stop_fixture.passes_per_poll = xdp_stop_tx_next.passes_per_poll;
+    xdp_stop_fixture.bound = xdp_stop_tx_next.bound;
+    xdp_stop_fixture.pass = 0;
+    xdp_stop_fixture.stall = rocketnet_xdp_send_stall_t{ 0, 0 };
+    xdp_stop_fixture.stalled.store( false );
+    xdp_stop_fixture.abandoned.store( 0 );
+    xdp_stop_fixture.released_while_draining = false;
+    xdp_stop_tx_next = {};
 
     rocketnet_server_transport_config_t config;
     rocketnet_server_transport_default_config_current( &config );
@@ -88,6 +156,7 @@ static bool xdp_stop_scenario( int hard_error, bool buffer_empty, bool handoff_i
     xdp_stop_operations.stopped = xdp_stop_fixture_stopped;
     xdp_stop_operations.flush = xdp_stop_fixture_flush;
     xdp_stop_operations.send_idle = xdp_stop_fixture_send_idle;
+    xdp_stop_operations.begin_shutdown = xdp_stop_fixture_begin_shutdown;
 
     const rocketnet_server_transport_io_operations_t * real_operations = &xdp_stop_operations;
     void * real_instance = &xdp_stop_fixture;
@@ -111,6 +180,7 @@ static bool xdp_stop_scenario( int hard_error, bool buffer_empty, bool handoff_i
     {
         xdp_stop_fixture.buffer_empty = true;
         xdp_stop_fixture.handoff_idle = true;
+        xdp_stop_fixture.consumer = xdp_stop_fixture.producer;
         stopped = rocketnet_server_transport_stopped( server );
     }
 
@@ -140,6 +210,82 @@ static void test_xdp_transport_stop_gives_up_on_hard_send_error()
 
 REGISTER_UNIT_TEST( test_xdp_transport_stop_gives_up_on_hard_send_error );
 
+// A TX ring whose consumer never moves, with no errno to say so (carrier lost
+// on a zero-copy queue while the interface stays up): the stop gives up on
+// the queue once the worker has run the bound's passes with frames pending,
+// and counts the ten frames it abandons. Bound 8, three passes a stop step:
+// the stop call and the first stopped poll run six passes and wait; one more
+// poll reaches the bound.
+static void test_xdp_transport_stop_gives_up_on_a_ring_that_never_drains()
+{
+    bool stopped = false;
+    xdp_stop_tx_next = { 10, 0, 3, 8 };
+    rocketnet_unit_check( xdp_stop_scenario( 0, true, true, 0, &stopped ) );
+    rocketnet_unit_check( !stopped );
+    rocketnet_unit_check( xdp_stop_fixture.abandoned.load() == 0 );
+
+    xdp_stop_tx_next = { 10, 0, 3, 8 };
+    rocketnet_unit_check( xdp_stop_scenario( 0, true, true, 1, &stopped ) );
+    rocketnet_unit_check( stopped );
+    rocketnet_unit_check( xdp_stop_fixture.stops == 1 );
+    rocketnet_unit_check( xdp_stop_fixture.abandoned.load() == 10 );
+    rocketnet_unit_check( xdp_stop_fixture.stalled.load() );
+}
+
+REGISTER_UNIT_TEST( test_xdp_transport_stop_gives_up_on_a_ring_that_never_drains );
+
+// A TX ring that drains slowly, one descriptor every four passes against a
+// bound of eight, is never given up on: the stop waits until the consumer has
+// taken all ten, then completes with nothing abandoned.
+static void test_xdp_transport_stop_waits_for_a_ring_that_drains_slowly()
+{
+    bool stopped = false;
+    xdp_stop_tx_next = { 10, 4, 3, 8 };
+    rocketnet_unit_check( xdp_stop_scenario( 0, true, true, 5, &stopped ) );
+    rocketnet_unit_check( !stopped );
+    rocketnet_unit_check( !xdp_stop_fixture.released_while_draining );
+
+    xdp_stop_tx_next = { 10, 4, 3, 8 };
+    rocketnet_unit_check( xdp_stop_scenario( 0, true, true, 20, &stopped ) );
+    rocketnet_unit_check( stopped );
+    rocketnet_unit_check( xdp_stop_fixture.consumer == 10 );
+    rocketnet_unit_check( xdp_stop_fixture.abandoned.load() == 0 );
+    rocketnet_unit_check( !xdp_stop_fixture.stalled.load() );
+    rocketnet_unit_check( !xdp_stop_fixture.released_while_draining );
+}
+
+REGISTER_UNIT_TEST( test_xdp_transport_stop_waits_for_a_ring_that_drains_slowly );
+
+// The watch itself: no stall outside a stop, however long the ring has not
+// moved; a stop that begins on a ring already past the bound stalls at the
+// next pass, reported once; the consumer moving, or nothing pending, clears
+// it, and a new stall is a new report.
+static void test_xdp_send_stall_watch()
+{
+    rocketnet_xdp_send_stall_t stall = { 0, 0 };
+    std::atomic<bool> stalled( false );
+
+    for ( int i = 0; i < 20; i++ )
+        rocketnet_unit_check( !rocketnet_xdp_send_stall_pass( stall, 5, true, false, 8, stalled ) );
+    rocketnet_unit_check( !stalled.load() );
+
+    rocketnet_unit_check( rocketnet_xdp_send_stall_pass( stall, 5, true, true, 8, stalled ) );
+    rocketnet_unit_check( stalled.load() );
+    rocketnet_unit_check( !rocketnet_xdp_send_stall_pass( stall, 5, true, true, 8, stalled ) );
+    rocketnet_unit_check( stalled.load() );
+
+    rocketnet_unit_check( !rocketnet_xdp_send_stall_pass( stall, 6, true, true, 8, stalled ) );
+    rocketnet_unit_check( !stalled.load() );
+    for ( int i = 0; i < 7; i++ )
+        rocketnet_unit_check( !rocketnet_xdp_send_stall_pass( stall, 6, true, true, 8, stalled ) );
+    rocketnet_unit_check( rocketnet_xdp_send_stall_pass( stall, 6, true, true, 8, stalled ) );
+
+    rocketnet_unit_check( !rocketnet_xdp_send_stall_pass( stall, 6, false, true, 8, stalled ) );
+    rocketnet_unit_check( !stalled.load() );
+}
+
+REGISTER_UNIT_TEST( test_xdp_send_stall_watch );
+
 static void test_xdp_send_wakeup_hard_errno_and_logging_run()
 {
     rocketnet_unit_check( !rocketnet_xdp_send_wakeup_hard_error( 0 ) );
@@ -158,6 +304,22 @@ static void test_xdp_send_wakeup_hard_errno_and_logging_run()
     rocketnet_unit_check( !rocketnet_xdp_send_wakeup_report( EAGAIN, last_error ) );
     rocketnet_unit_check( rocketnet_xdp_send_wakeup_report( ENXIO, last_error ) );
     rocketnet_unit_check( !rocketnet_xdp_send_wakeup_report( 0, last_error ) );
+
+    // an errno that is neither back-pressure, a lost datagram nor hard (a
+    // driver's EINVAL or EOPNOTSUPP) is unexpected: reported, and counted by
+    // the worker, once per run
+
+    rocketnet_unit_check( rocketnet_xdp_send_wakeup_unexpected( EINVAL ) );
+    rocketnet_unit_check( rocketnet_xdp_send_wakeup_unexpected( EOPNOTSUPP ) );
+    rocketnet_unit_check( !rocketnet_xdp_send_wakeup_unexpected( 0 ) );
+    rocketnet_unit_check( !rocketnet_xdp_send_wakeup_unexpected( EAGAIN ) );
+    rocketnet_unit_check( !rocketnet_xdp_send_wakeup_unexpected( ENOBUFS ) );
+    rocketnet_unit_check( !rocketnet_xdp_send_wakeup_unexpected( EBUSY ) );
+    rocketnet_unit_check( !rocketnet_xdp_send_wakeup_unexpected( ENETDOWN ) );
+    rocketnet_unit_check( rocketnet_xdp_send_wakeup_report( EINVAL, last_error ) );
+    rocketnet_unit_check( !rocketnet_xdp_send_wakeup_report( EINVAL, last_error ) );
+    rocketnet_unit_check( !rocketnet_xdp_send_wakeup_report( EBUSY, last_error ) );
+    rocketnet_unit_check( rocketnet_xdp_send_wakeup_report( EINVAL, last_error ) );
 }
 
 REGISTER_UNIT_TEST( test_xdp_send_wakeup_hard_errno_and_logging_run );
@@ -221,17 +383,17 @@ static void test_xdp_send_wakeup_success_clears_the_hard_error()
     std::atomic<int> hard_error( 0 );
 
     rocketnet_xdp_send_wakeup_failed( ENETDOWN, failures, hard_error );
-    rocketnet_unit_check( rocketnet_xdp_send_queue_released( hard_error.load( std::memory_order_relaxed ), false, false ) );
+    rocketnet_unit_check( rocketnet_xdp_send_queue_released( hard_error.load( std::memory_order_relaxed ), false, false, false ) );
 
     // back-pressure is no sign the interface is back
 
     rocketnet_xdp_send_wakeup_failed( EAGAIN, failures, hard_error );
-    rocketnet_unit_check( rocketnet_xdp_send_queue_released( hard_error.load( std::memory_order_relaxed ), false, false ) );
+    rocketnet_unit_check( rocketnet_xdp_send_queue_released( hard_error.load( std::memory_order_relaxed ), false, false, false ) );
 
     rocketnet_xdp_send_wakeup_succeeded( hard_error );
     rocketnet_unit_check( hard_error.load( std::memory_order_relaxed ) == 0 );
-    rocketnet_unit_check( !rocketnet_xdp_send_queue_released( hard_error.load( std::memory_order_relaxed ), false, false ) );
-    rocketnet_unit_check( rocketnet_xdp_send_queue_released( hard_error.load( std::memory_order_relaxed ), true, true ) );
+    rocketnet_unit_check( !rocketnet_xdp_send_queue_released( hard_error.load( std::memory_order_relaxed ), false, false, false ) );
+    rocketnet_unit_check( rocketnet_xdp_send_queue_released( hard_error.load( std::memory_order_relaxed ), false, true, true ) );
     rocketnet_unit_check( failures.load( std::memory_order_relaxed ) == 1 );
 
     // a success with no error kept changes nothing
