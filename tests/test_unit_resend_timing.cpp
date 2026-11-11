@@ -582,10 +582,10 @@ static void test_chunk_behind_a_small_record_not_held()
 
 REGISTER_UNIT_TEST( test_chunk_behind_a_small_record_not_held );
 
-// test_both_fifos_walk_only_what_is_due: each class is walked from its head while
-// due and no further. walk_visits counts every entry a walk examines: the due
-// entries and one stop per class, so a walk past a stop point would count
-// more.
+// test_both_fifos_walk_only_what_is_due: each class's numbers on the wire are
+// walked from its sent mark while due and no further. walk_visits counts every
+// entry a walk examines: the due entries and one stop per class, so a walk
+// past a stop point would count more.
 static void test_both_fifos_walk_only_what_is_due()
 {
     resend_timing_fixture_t f;

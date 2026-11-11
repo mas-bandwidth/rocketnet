@@ -29,8 +29,10 @@
 (* An update is two steps.  In phase "walk" the acks that arrived are      *)
 (* processed (Sample, Ack) and then Walk writes the resend FIFOs; in phase *)
 (* "tick" time moves on one tick.  The code keeps one FIFO per delay class *)
-(* and walks each from its head while due (OneFifo = FALSE): every due     *)
-(* record is written in the update it falls due.  OneFifo = TRUE is one    *)
+(* (OneFifo = FALSE) and walks each class's numbers on the wire from its  *)
+(* sent mark while due, then its never-sent numbers from its head; Walk   *)
+(* has room for every due record and writes each in the update it falls   *)
+(* due (the paced walk below has less room).  OneFifo = TRUE is one        *)
 (* FIFO ordered by last send with both delays, walked from its head and    *)
 (* stopped at the first record not due: once rto is above ChunkCap the     *)
 (* chunk's delay is the shorter, and a small record at the head that is    *)
@@ -81,16 +83,29 @@
 (* first send and stamps lastSend with the due-now sentinel DueNow, so the *)
 (* clock runs from the refusal (the reversed witness                       *)
 (* MCRNResendTimingBrokenRefusedClock.cfg).  A refused resend of a record  *)
-(* already on the wire is not modelled.  In the code it goes back to the   *)
-(* head of its FIFO with last_send at a second due-now sentinel,           *)
-(* -(resend_delay_max + 2) (rn_packet_builder_packet_failed), and its      *)
-(* send_first_sends entry, so its timeout clock, unchanged; it is due at   *)
-(* the next walk.  Nothing is sent, so AttemptsBeforeTimeout and           *)
-(* ResendGapBounded are claims for a transport that refuses no resend:    *)
-(* resends refused for long enough leave fewer than MinAttempts sends     *)
-(* before the timeout (by reading; not checked here).  NoDueRecordHeld's  *)
-(* exception for a refused packet is the code's behaviour; see its        *)
-(* comment.                                                                *)
+(* already on the wire is WriteRefused in the paced walk: in the code it   *)
+(* keeps its send_first_sends entry, so its timeout clock, takes a         *)
+(* due-now sentinel (-(resend_delay_max + 2) after                         *)
+(* rn_packet_builder_packet_failed; DueNow here) and goes back on the wire *)
+(* as its class's sent mark (rn_resend_fifo_push_mark), so the next call   *)
+(* plans it as a retransmit (RetryPlanned).  RefusedOffWire = TRUE is the  *)
+(* code before the fix: the refused resend went back to the head of its   *)
+(* FIFO, among the never-sent numbers, and was planned as ordered progress *)
+(* behind every due number on the wire (the reversed witness               *)
+(* MCRNResendTimingBrokenRefusedOffWire.cfg).                              *)
+(*                                                                         *)
+(* What the invariants claim.  In each write call the due numbers on the   *)
+(* wire are planned first, the small class before the chunk class, each   *)
+(* class oldest last send first, ahead of every number not on the wire.  A *)
+(* due number is held only while the update's packets (the send budget,   *)
+(* packets_per_update, the transport) go to numbers ahead of it in that    *)
+(* order, or its packet is refused.  NoDueRecordHeld, ResendGapBounded and *)
+(* AttemptsBeforeTimeout are checked for one lost chunk and one small      *)
+(* record with a packet for each in every update; they are not claims      *)
+(* about two due numbers and one packet (MCRNResendTimingPacedSmallRoomOne *)
+(* .cfg is the recorded expected failure), about a budget that admits no   *)
+(* packet in an update, or about refused resends.  For a refused resend    *)
+(* the claim is RetryPlanned.                                              *)
 (*                                                                         *)
 (* The paced walk (Room > 0).  Walk writes every due record at once, the   *)
 (* walk with room for all of them.  The product asks rn_ordered_write for  *)
@@ -111,7 +126,9 @@
 (* every call and the due chunk behind them waits for the block's whole    *)
 (* first pass (the reversed witnesses MCRNResendTimingBrokenUnsentFirst    *)
 (* .cfg and MCRNResendTimingBrokenUnsentFirstHeld.cfg).  Acks and samples  *)
-(* come before the update's first call, as the code reads them.            *)
+(* come before the update's first call, as the code reads them.  With      *)
+(* RefuseResends a call may instead have its packet refused when it        *)
+(* carries a record on the wire (WriteRefused); the call is spent.         *)
 (***************************************************************************)
 EXTENDS Integers
 
@@ -192,6 +209,17 @@ RoomTwo == 2
 PendingLong == 2 * Timeout + 2
 SmallOff == FALSE
 UnsentFirstOn == TRUE
+
+\*   RefuseResends: a paced call carrying a record on the wire may have its
+\*            packet refused (WriteRefused); FALSE (never) by default.
+\*   RefusedOffWire: FALSE walks a refused resend with the numbers on the
+\*            wire, as its class's mark (the rule); TRUE with the never-sent
+\*            numbers, as ordered progress (the reversed witness).
+\* (RefuseResends <- RefuseResendsOn, RefusedOffWire <- RefusedOffWireOn)
+RefuseResends == FALSE
+RefusedOffWire == FALSE
+RefuseResendsOn == TRUE
+RefusedOffWireOn == TRUE
 
 Min(a, b) == IF a < b THEN a ELSE b
 Max(a, b) == IF a > b THEN a ELSE b
@@ -363,8 +391,10 @@ WalkRefused(F) ==
 \* while the plan holds less than the call's one packet: a chunk fills it,
 \* the small record does not, so the plan is the order up to its first
 \* chunk item, and Planned is that prefix as a set.
-SentDue(r) == Due(r) /\ OnWire(r)
-UnsentDue(r) == Due(r) /\ ~OnWire(r)
+\* RefusedOffWire: a refused resend (DueNow) walked with the never-sent.
+OffWire(r) == ~OnWire(r) \/ (RefusedOffWire /\ lastSend[r] = DueNow)
+SentDue(r) == Due(r) /\ ~OffWire(r)
+UnsentDue(r) == Due(r) /\ OffWire(r)
 PendingDue == pending > 0 /\ ~TimedOut /\ Started("c")
 
 Planned ==
@@ -381,7 +411,7 @@ Planned ==
 \* class the scheduler's levels and channels pick, so either may go.  A
 \* chunk travels alone, and the small record beside a chunk takes its own
 \* packet, so the call writes one item.
-Retransmit(x) == x # "u" /\ OnWire(x)
+Retransmit(x) == x # "u" /\ ~OffWire(x)
 Picks == IF \E x \in Planned : Retransmit(x)
          THEN {x \in Planned : Retransmit(x)}
          ELSE Planned
@@ -404,8 +434,28 @@ WriteOne(x) ==
     /\ calls' = calls + 1
     /\ UNCHANGED <<t, rto, acked, head, phase, sampled, seeded, refused>>
 
+\* rn_window_ack_packet_failed for a call whose packet carries x, a record
+\* on the wire: the transport refuses it.  x keeps its first send (its
+\* clock) and its attempts, takes the due-now sentinel, and goes back on
+\* the wire as its class's mark (rn_resend_fifo_push_mark); the call is
+\* spent.
+WriteRefused(x) ==
+    /\ Room > 0
+    /\ RefuseResends
+    /\ phase = "walk"
+    /\ Live
+    /\ ~SeedOwed
+    /\ calls < Room
+    /\ x \in Picks
+    /\ Retransmit(x)
+    /\ lastSend' = [lastSend EXCEPT ![x] = DueNow]
+    /\ refused' = [refused EXCEPT ![x] = TRUE]
+    /\ calls' = calls + 1
+    /\ UNCHANGED <<t, rto, backoff, attempts, acked, head, phase, sampled, seeded, firstSend, pending>>
+
 \* The update's writes end: its Room calls are spent, or a call finds
 \* nothing to plan (rn_ordered_write returns 0 and the endpoint stops).
+\* The update's refusals stand until Tick.
 EndWrites ==
     /\ Room > 0
     /\ phase = "walk"
@@ -413,9 +463,8 @@ EndWrites ==
     /\ ~SeedOwed
     /\ calls = Room \/ Planned = {}
     /\ calls' = 0
-    /\ refused' = [r \in Records |-> FALSE]
     /\ phase' = "tick"
-    /\ UNCHANGED <<t, lastSend, rto, backoff, attempts, acked, head, sampled, seeded, firstSend, pending>>
+    /\ UNCHANGED <<t, lastSend, rto, backoff, attempts, acked, head, sampled, seeded, firstSend, refused, pending>>
 
 \* rn_window_ack_on_ack of another packet: one RTT sample.
 Sample(x) ==
@@ -450,13 +499,14 @@ Ack(r) ==
     /\ acked' = [acked EXCEPT ![r] = TRUE]
     /\ UNCHANGED <<t, lastSend, rto, backoff, attempts, head, phase, sampled, seeded, firstSend, refused, pending, calls>>
 
-\* The update ends and time moves on one tick.
+\* The update ends and time moves on one tick; its refusals are over.
 Tick ==
     /\ phase = "tick"
     /\ Live
     /\ t' = t + 1
     /\ phase' = "walk"
-    /\ UNCHANGED <<lastSend, rto, backoff, attempts, acked, head, sampled, seeded, firstSend, refused, pending, calls>>
+    /\ refused' = [r \in Records |-> FALSE]
+    /\ UNCHANGED <<lastSend, rto, backoff, attempts, acked, head, sampled, seeded, firstSend, pending, calls>>
 
 \* Every record acked, or the timeout fired: nothing more happens.
 Done ==
@@ -467,6 +517,7 @@ Next ==
     \/ Walk
     \/ \E F \in SUBSET Records : WalkRefused(F)
     \/ \E x \in {"s", "c", "u"} : WriteOne(x)
+    \/ \E x \in Records : WriteRefused(x)
     \/ EndWrites
     \/ \E x \in RtoMin..RtoMax : Sample(x)
     \/ Seed
@@ -476,34 +527,47 @@ Next ==
 
 Spec == Init /\ [][Next]_vars
 
-\* The property the rule exists for, for each class.
+\* The property the rule exists for, for each class: checked with a packet
+\* for each due record in every update (Room 0 or 2) and no refused resend.
 AttemptsBeforeTimeout ==
     \A r \in Records : (~acked[r] /\ OnWire(r) /\ t = Deadline(r)) => attempts[r] >= MinAttempts
 
 \* Under the rule no unacked record waits more than its delay's bound for
 \* its next send while the connection is up: RtoMax for a small record,
-\* Min(RtoMax, ChunkCap) for a chunk.
+\* Min(RtoMax, ChunkCap) for a chunk.  Checked as AttemptsBeforeTimeout is:
+\* a packet for each due record in every update, no refused resend.
 ResendGapBounded ==
     \A r \in Records :
         (~acked[r] /\ ~TimedOut /\ attempts[r] > 0) => t - lastSend[r] <= Min(RtoMax, Cap(r)) * MaxBackoff
 
 \* A due record is sent in the update it falls due: no update ends with a
 \* record of either class still due, whatever the other class does, but
-\* for one whose packet the transport refused.  The exception is the code's
-\* behaviour, not a loosening: rn_window_ack_packet_failed pushes every
-\* unacked number of the refused packet back to the head of its FIFO and
-\* leaves it due at once (a number never on the wire keeps
-\* RN_SEND_NUMBER_NEVER_SENT, so attempts = 0; a resend gets a negative
-\* due-now sentinel, -(resend_delay_max + 2) after
-\* rn_packet_builder_packet_failed), so after the walk in which its packet
-\* was refused the record is due by construction and waits for the next
-\* walk.  refused[r] is set only by WalkRefused and only for a record that
-\* walk offered (Refusable implies Sent), and every walk clears it, so a
-\* record that falls due and is not offered still fails this invariant.
-\* No sentinel value can remove the exception: the sentinel exists to make
-\* the record due.
+\* for one whose packet the transport refused.  Checked with a packet for
+\* each due record in every update (Room 0 or 2); with one packet and two
+\* due records it fails (MCRNResendTimingPacedSmallRoomOne.cfg), as the
+\* code holds the second for the next update.  The exception is the code's
+\* behaviour, not a loosening: rn_window_ack_packet_failed puts every
+\* unacked number of the refused packet back and leaves it due at once (a
+\* number never on the wire keeps RN_SEND_NUMBER_NEVER_SENT, so attempts =
+\* 0; a resend gets a negative due-now sentinel, -(resend_delay_max + 2)
+\* after rn_packet_builder_packet_failed), so after the walk or call in
+\* which its packet was refused the record is due by construction and
+\* waits for the next.  refused[r] is set only by WalkRefused and
+\* WriteRefused and only for a record offered (Refusable implies Sent;
+\* WriteRefused needs x in Picks), and every Tick clears it, so a record
+\* that falls due and is not offered still fails this invariant.  No
+\* sentinel value can remove the exception: the sentinel exists to make the
+\* record due.
 NoDueRecordHeld ==
     phase = "tick" => \A r \in Records : ~Due(r) \/ refused[r]
+
+\* A resend the transport refused is planned as a retransmit by the next
+\* call of the update, ahead of every number not on the wire: it is among
+\* the items the builder may write first (Picks).  The next update's walk
+\* plans it the same way, as a due number on the wire.
+RetryPlanned ==
+    (Room > 0 /\ phase = "walk" /\ Live /\ ~SeedOwed /\ calls < Room) =>
+        \A r \in Records : (refused[r] /\ Due(r)) => r \in Picks
 
 \* From the update the transport first reports a round trip until this
 \* layer's own first sample, no unacked record waits longer than the

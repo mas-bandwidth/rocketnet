@@ -221,6 +221,28 @@ static void rn_resend_fifo_push_tail( rn_window_ack_t * ack, uint32_t slot )
         *sent = slot;
 }
 
+// proofs/tla/RNResendFifoLayout.tla PushMark: a refused resend goes to the front of its
+// class's numbers on the wire, right before the sent mark (or at the tail when the class has
+// none), and becomes the mark; its due-now stamp is below every real send time (Ordered).
+static void rn_resend_fifo_push_mark( rn_window_ack_t * ack, uint32_t slot )
+{
+    if ( !rn_resend_fifo_unlink( ack, slot ) )
+    {
+        return;
+    }
+
+    const bool chunk = rn_window_ack_slot_is_chunk( ack, slot );
+    uint32_t * sent = chunk ? &ack->chunk_sent : &ack->resend_sent;
+    const uint32_t tail = chunk ? ack->chunk_tail : ack->resend_tail;
+    const uint32_t after = *sent == RN_RESEND_NONE ? tail : rn_resend_index( ack->region->resend_fifo[*sent].prev );
+    rn_resend_fifo_insert_after( ack, after, slot );
+
+    if ( rn_resend_entry_linked( &ack->region->resend_fifo[slot] ) )
+    {
+        *sent = slot;
+    }
+}
+
 // proofs/tla/RNResendFifoLayout.tla PushHead
 static void rn_resend_fifo_push_head( rn_window_ack_t * ack, uint32_t slot )
 {
@@ -928,11 +950,26 @@ void rn_window_ack_packet_failed( rn_window_ack_t * ack, const uint64_t * number
         rocketnet_assert( slot->number == n );
 
         // never on the wire: stays never sent, so no reliable timeout clock (m9.3;
-        // proofs/tla/RNResendTiming.tla WalkRefused)
-        if ( !rn_send_number_never_sent( slot->last_send ) )
+        // proofs/tla/RNResendTiming.tla WalkRefused), and goes back to the head of
+        // its class, ahead of the numbers never sent after it. On the wire before:
+        // keeps its first send (its clock), takes the due-now stamp and goes back
+        // on the wire as its class's mark, so the next walk resends it ahead of
+        // every other number of its class (proofs/tla/RNResendTiming.tla WriteRefused).
+        if ( rn_send_number_never_sent( slot->last_send ) )
+        {
+            if ( !slot->acked )
+            {
+                rn_resend_fifo_push_head( ack, slot_index );
+            }
+        }
+        else
+        {
             slot->last_send = due_now_sentinel;
-        if ( !slot->acked )
-            rn_resend_fifo_push_head( ack, slot_index );
+            if ( !slot->acked )
+            {
+                rn_resend_fifo_push_mark( ack, slot_index );
+            }
+        }
     }
 }
 

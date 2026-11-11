@@ -281,7 +281,131 @@ struct sim_t
     rocketnet_address_t address[2];
     double now;
     bool one_payload;               // the product's shape: one packet per rn_ordered_write call
+    uint32_t refuse_every;          // with one_payload: every Nth write call's packet is refused by the transport; 0 never
+    uint32_t calls;
 };
+
+// The order the resend walk relies on (rocketnet_window_ack.h;
+// proofs/tla/RNResendFifoLayout.tla Partitioned, MarkMatch, Ordered): each
+// class is its numbers never sent, then its numbers on the wire (sent, or a
+// refused resend at its due-now stamp) in order of last send, a due-now stamp
+// before any real one; the class's sent mark is its first number on the wire,
+// or RN_RESEND_NONE; the tails and the count match; every unacked number in
+// [U, next) is linked. Returns NULL, or what is wrong.
+
+static const char * resend_order_violation( const node_t * node )
+{
+    const rn_window_ack_t * ack = &node->ordered.ack;
+    const rn_region_t * region = node->region;
+    const uint32_t W = region->window;
+    uint32_t linked = 0;
+
+    for ( int c = 0; c < 2; c++ )
+    {
+        const bool chunk = c == 1;
+        uint32_t cursor = rn_window_ack_resend_first( ack, chunk );
+        uint32_t first_on_wire = RN_RESEND_NONE;
+        uint32_t last = RN_RESEND_NONE;
+        double last_key = 0.0;
+        uint32_t steps = 0;
+
+        while ( cursor != RN_RESEND_NONE )
+        {
+            steps++;
+            if ( cursor >= W || steps > W )
+            {
+                return "a link outside the window, or a cycle";
+            }
+            const rn_send_number_t * slot = &region->send_numbers[cursor];
+            if ( slot->acked )
+            {
+                return "an acked number is linked";
+            }
+            if ( rn_window_ack_slot_is_chunk( ack, cursor ) != chunk )
+            {
+                return "a slot is in the other class's sequence";
+            }
+            if ( !rn_send_number_never_sent( slot->last_send ) )
+            {
+                const double key = slot->last_send < 0.0 ? -1.0 : slot->last_send;
+                if ( first_on_wire != RN_RESEND_NONE && key < last_key )
+                {
+                    return "the numbers on the wire are not in order of last send";
+                }
+                if ( first_on_wire == RN_RESEND_NONE )
+                {
+                    first_on_wire = cursor;
+                }
+                last_key = key;
+            }
+            else if ( first_on_wire != RN_RESEND_NONE )
+            {
+                return "a number never sent is behind one on the wire";
+            }
+            last = cursor;
+            linked++;
+            cursor = rn_window_ack_resend_next( ack, chunk, cursor );
+        }
+
+        if ( rn_window_ack_resend_sent( ack, chunk ) != first_on_wire )
+        {
+            return "the sent mark is not the first number on the wire";
+        }
+        if ( ( chunk ? ack->chunk_tail : ack->resend_tail ) != last )
+        {
+            return "the tail is not the last slot";
+        }
+    }
+
+    if ( linked != ack->resend_count )
+    {
+        return "resend_count differs from the slots linked";
+    }
+
+    uint32_t unacked = 0;
+    for ( uint64_t n = ack->send->U; n < ack->send->next; n++ )
+    {
+        if ( !region->send_numbers[n & ( W - 1 )].acked )
+        {
+            unacked++;
+        }
+    }
+    if ( unacked != linked )
+    {
+        return "an unacked number in [U, next) is not linked";
+    }
+
+    return NULL;
+}
+
+static void check_resend_order( const node_t * node )
+{
+    const char * violation = resend_order_violation( node );
+    if ( violation )
+    {
+        printf( "resend order: %s\n", violation );
+    }
+    check( violation == NULL );
+}
+
+// one write call whose packet the transport refuses in place of the commit
+// (rn_endpoint_packet_failed). Returns whether a packet was written.
+
+static bool refuse_packet( node_t * node, double now )
+{
+    alignas( 16 ) static uint8_t frame[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
+    uint8_t * pointers[1] = { frame };
+    if ( rn_ordered_write( &node->ordered, now, pointers, 1 ) != 1 )
+    {
+        return false;
+    }
+    rn_ordered_packet_failed( &node->ordered, 0, now );
+    if ( node->ordered.budget )
+    {
+        check( rn_ordered_settle( &node->ordered, 0, 0 ) );
+    }
+    return true;
+}
 
 static void sim_setup( sim_t * sim, float loss, float duplicate, uint64_t seed )
 {
@@ -292,6 +416,8 @@ static void sim_setup( sim_t * sim, float loss, float duplicate, uint64_t seed )
     rocketnet_network_simulator_config( sim->wire, 0.015, 0.03, loss, duplicate );
     sim->now = 1.0;
     sim->one_payload = false;
+    sim->refuse_every = 0;
+    sim->calls = 0;
 }
 
 static void sim_teardown( sim_t * sim )
@@ -340,13 +466,27 @@ static void sim_tick( sim_t * sim, node_t * nodes[2], double dt )
         int n = 0;
         if ( sim->one_payload )
         {
-            while ( n < nodes[side]->ordered.builder.packets_per_update && write_packets( nodes[side], sim->now, &out[n], 1 ) == 1 )
+            while ( n < nodes[side]->ordered.builder.packets_per_update )
+            {
+                sim->calls++;
+                if ( sim->refuse_every != 0 && sim->calls % sim->refuse_every == 0 )
+                {
+                    refuse_packet( nodes[side], sim->now );
+                    break;                                      // a refusal ends the update's writes
+                }
+                if ( write_packets( nodes[side], sim->now, &out[n], 1 ) != 1 )
+                {
+                    break;
+                }
                 n++;
+                check_resend_order( nodes[side] );
+            }
         }
         else
         {
             n = write_packets( nodes[side], sim->now, out, ROCKETNET_PACKET_BUILDER_MAX_PACKETS );
         }
+        check_resend_order( nodes[side] );
         for ( int p = 0; p < n; p++ )
         {
             sim_send_data( sim, side, &out[p] );
@@ -387,6 +527,7 @@ static void sim_tick( sim_t * sim, node_t * nodes[2], double dt )
         }
 
         feed_acks( nodes[side], acks_in, sim->now );
+        check_resend_order( nodes[side] );
 
         std::vector<uint64_t> acks_out;
         take_acks( nodes[side], &acks_out );
@@ -837,7 +978,7 @@ static bool has_room_for( node_t * node, uint32_t bytes )
     return span_room( node ) >= bytes + 64 && node->region->descriptors_free > 16;
 }
 
-static void large_between_small_leg( float loss, float duplicate, uint64_t seed, bool one_payload = false )
+static void large_between_small_leg( float loss, float duplicate, uint64_t seed, bool one_payload = false, uint32_t refuse_every = 0 )
 {
     rocketnet_message_config_t config;
     node_config( &config, 1024, 262144, 262144, 800000 );
@@ -848,6 +989,7 @@ static void large_between_small_leg( float loss, float duplicate, uint64_t seed,
     sim_t sim;
     sim_setup( &sim, loss, duplicate, seed );
     sim.one_payload = one_payload;
+    sim.refuse_every = refuse_every;
 
     uint64_t random = seed * 2862933555777941757ULL + 3037000493ULL;
     int rounds = 0;
@@ -1049,6 +1191,16 @@ static void test_large_between_small_keeps_order_one_payload_per_write()
 
     large_between_small_leg( 15.0f, 15.0f, 12, true );
     large_between_small_leg( 35.0f, 20.0f, 13, true );
+}
+
+static void test_large_between_small_keeps_order_with_refused_packets()
+{
+    // the same, with the transport refusing every 7th or 3rd write call's
+    // packet: refused first sends and refused resends of both classes, the
+    // resend order checked after every call and every ack list
+
+    large_between_small_leg( 15.0f, 15.0f, 21, true, 7 );
+    large_between_small_leg( 35.0f, 20.0f, 22, true, 3 );
 }
 
 // ---------------------------------------------------------------------------
@@ -2871,6 +3023,338 @@ static void test_ordered_paced_block_first_pass_in_number_order()
     check( run.walk_visits_max <= 4 );
 }
 
+// ---------------------------------------------------------------------------
+// the resend FIFO's sent marks, read directly (rocketnet_window_ack.h;
+// proofs/tla/RNResendFifoLayout.tla MarkMatch and Ordered)
+// ---------------------------------------------------------------------------
+
+static uint32_t number_slot( const node_t * node, uint64_t number )
+{
+    return (uint32_t) ( number & ( node->region->window - 1 ) );
+}
+
+// one write call of one packet, committed; returns its first reliable number
+static uint64_t write_one( node_t * node, double now, uint64_t * packet_id = NULL )
+{
+    wire_packet_t out[1];
+    check( write_packets( node, now, out, 1 ) == 1 );
+    check( node->ordered.builder.packet[0].count >= 1 );
+    if ( packet_id )
+    {
+        *packet_id = out[0].id;
+    }
+    return node->ordered.builder.packet[0].numbers[0];
+}
+
+// one write call of one packet, refused by the transport; returns its first reliable number
+static uint64_t refuse_one( node_t * node, double now )
+{
+    check( refuse_packet( node, now ) );
+    check( node->ordered.builder.packet[0].count >= 1 );
+    return node->ordered.builder.packet[0].numbers[0];
+}
+
+// A resend of a chunk the transport refuses goes back on the wire as its
+// class's mark with a due-now stamp, keeping its first send (its timeout
+// clock): the next write call resends it, ahead of the chunks behind it that
+// are due too (proofs/tla/RNResendTiming.tla WriteRefused, RetryPlanned).
+
+static void test_resend_refused_mark_is_retried_first()
+{
+    rocketnet_message_config_t config;
+    node_config( &config, 1024, 262144, 262144, 800000 );
+    node_t * a = node_new( &config, 4 );
+    const rn_window_ack_t * ack = &a->ordered.ack;
+    const rn_region_t * region = a->region;
+
+    const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
+    check( send_message( a, 0, 2 * F + 8 ) != 0 );                  // three chunks
+
+    uint64_t chunk[3];
+    for ( int i = 0; i < 3; i++ )
+    {
+        chunk[i] = write_one( a, 1000.0 + i / 60.0 );
+    }
+    check( rn_window_ack_resend_sent( ack, true ) == number_slot( a, chunk[0] ) );
+
+    const double t = 1000.0 + 2.0 / 60.0 + rn_window_ack_class_delay( ack, true ) + 0.001;    // all three due
+
+    check( refuse_one( a, t ) == chunk[0] );
+    check( rn_window_ack_resend_sent( ack, true ) == number_slot( a, chunk[0] ) );
+    check( !rn_send_number_never_sent( region->send_numbers[number_slot( a, chunk[0] )].last_send ) );
+    check( ack->has_oldest == 1 && ack->oldest_first_send == 1000.0 );
+    check_resend_order( a );
+
+    check( write_one( a, t + 1.0 / 60.0 ) == chunk[0] );
+    check( write_one( a, t + 1.0 / 60.0 ) == chunk[1] );
+    check( write_one( a, t + 1.0 / 60.0 ) == chunk[2] );
+    check( counter( a, ROCKETNET_COUNTER_MESSAGE_RESENT ) == 3 );
+    check( rn_window_ack_resend_sent( ack, true ) == number_slot( a, chunk[0] ) );
+    check_resend_order( a );
+
+    node_free( a );
+}
+
+// The only number on the wire: its refused resend makes it the mark again at
+// once, and its retry is a resend that leaves it the mark at its new send time.
+
+static void test_resend_refused_only_number_on_the_wire()
+{
+    rocketnet_message_config_t config;
+    node_config( &config, 1024, 262144, 262144, 800000 );
+    node_t * a = node_new( &config, 4 );
+    const rn_window_ack_t * ack = &a->ordered.ack;
+    const rn_region_t * region = a->region;
+
+    check( send_message( a, 0, 16 ) != 0 );
+    const uint64_t n = write_one( a, 1000.0 );
+    const uint32_t slot = number_slot( a, n );
+    check( rn_window_ack_resend_sent( ack, false ) == slot );
+
+    const double t = 1000.0 + rn_window_ack_class_delay( ack, false );
+    check( refuse_one( a, t ) == n );
+    check( rn_window_ack_resend_sent( ack, false ) == slot );
+    check( rn_window_ack_resend_first( ack, false ) == slot );
+    check( region->send_numbers[slot].last_send < 0.0 && !rn_send_number_never_sent( region->send_numbers[slot].last_send ) );
+    check( ack->has_oldest == 1 && ack->oldest_first_send == 1000.0 );
+    check_resend_order( a );
+
+    const double retry = t + 1.0 / 60.0;
+    check( write_one( a, retry ) == n );
+    check( counter( a, ROCKETNET_COUNTER_MESSAGE_RESENT ) == 1 );
+    check( rn_window_ack_resend_sent( ack, false ) == slot );
+    check( region->send_numbers[slot].last_send == retry );
+    check_resend_order( a );
+
+    wire_packet_t out[1];
+    check( write_packets( a, retry + 1.0 / 60.0, out, 1 ) == 0 );
+
+    node_free( a );
+}
+
+// An ack of the mark passes it to the next number on the wire; an ack of the
+// mark when it is also the tail leaves the class with no mark.
+
+static void test_resend_ack_of_the_mark()
+{
+    rocketnet_message_config_t config;
+    node_config( &config, 1024, 262144, 262144, 800000 );
+    node_t * a = node_new( &config, 4 );
+    const rn_window_ack_t * ack = &a->ordered.ack;
+
+    uint64_t number[3];
+    uint64_t id[3];
+    for ( int i = 0; i < 3; i++ )
+    {
+        check( send_message( a, 0, 16 ) != 0 );
+        number[i] = write_one( a, 1000.0 + i / 60.0, &id[i] );
+    }
+    check( rn_window_ack_resend_sent( ack, false ) == number_slot( a, number[0] ) );
+
+    const double t = 1000.0 + 3.0 / 60.0;
+    feed_acks( a, std::vector<uint64_t>( 1, id[0] ), t );                  // the mark, others behind it
+    check( rn_window_ack_resend_sent( ack, false ) == number_slot( a, number[1] ) );
+    check_resend_order( a );
+
+    feed_acks( a, std::vector<uint64_t>( 1, id[2] ), t );                  // the tail, not the mark
+    check( rn_window_ack_resend_sent( ack, false ) == number_slot( a, number[1] ) );
+    check( ack->resend_tail == number_slot( a, number[1] ) );
+    check_resend_order( a );
+
+    feed_acks( a, std::vector<uint64_t>( 1, id[1] ), t );                  // the mark, also the tail
+    check( rn_window_ack_resend_sent( ack, false ) == RN_RESEND_NONE );
+    check( ack->resend_tail == RN_RESEND_NONE && ack->resend_count == 0 );
+    check_resend_order( a );
+
+    node_free( a );
+}
+
+// Two lost chunks of one block, one packet a call: both are resent in the
+// same update, the older last send first.
+
+static void test_resend_two_lost_chunks_in_order_one_packet_a_call()
+{
+    rocketnet_message_config_t config;
+    node_config( &config, 1024, 262144, 262144, 800000 );
+    node_t * a = node_new( &config, 4 );
+    const rn_window_ack_t * ack = &a->ordered.ack;
+
+    const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
+    check( send_message( a, 0, 3 * F + 8 ) != 0 );                  // four chunks
+
+    uint64_t chunk[4];
+    uint64_t id[4];
+    for ( int i = 0; i < 4; i++ )
+    {
+        chunk[i] = write_one( a, 1000.0 + i / 60.0, &id[i] );
+    }
+
+    std::vector<uint64_t> acked;
+    acked.push_back( id[1] );
+    acked.push_back( id[3] );
+    feed_acks( a, acked, 1000.0 + 4.0 / 60.0 );                       // chunks 0 and 2 lost
+    check( rn_window_ack_resend_sent( ack, true ) == number_slot( a, chunk[0] ) );
+    check_resend_order( a );
+
+    const double t = 1000.0 + 2.0 / 60.0 + rn_window_ack_class_delay( ack, true ) + 0.001;
+    check( write_one( a, t ) == chunk[0] );
+    check( write_one( a, t ) == chunk[2] );
+    wire_packet_t out[1];
+    check( write_packets( a, t, out, 1 ) == 0 );
+    check( rn_window_ack_resend_sent( ack, true ) == number_slot( a, chunk[0] ) );
+    check_resend_order( a );
+
+    node_free( a );
+}
+
+// A due small record and a due chunk in one update of one-packet calls: both
+// are resent in that update, the small record first (its class is walked
+// first).
+
+static void test_resend_small_and_chunk_due_in_one_update()
+{
+    rocketnet_message_config_t config;
+    node_config( &config, 1024, 262144, 262144, 800000 );
+    node_t * a = node_new( &config, 4 );
+    const rn_window_ack_t * ack = &a->ordered.ack;
+
+    const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
+    check( send_message( a, 0, 16 ) != 0 );
+    const uint64_t small = write_one( a, 1000.0 );
+    check( send_message( a, 0, 2 * F ) != 0 );                         // two full chunks
+    uint64_t id1 = 0;
+    const uint64_t chunk0 = write_one( a, 1000.0 + 1.0 / 60.0 );
+    write_one( a, 1000.0 + 2.0 / 60.0, &id1 );
+    feed_acks( a, std::vector<uint64_t>( 1, id1 ), 1000.0 + 3.0 / 60.0 );   // the second chunk arrived
+
+    const double delay_small = rn_window_ack_class_delay( ack, false );
+    const double delay_chunk = rn_window_ack_class_delay( ack, true );
+    const double t = 1000.0 + 1.0 / 60.0 + ( delay_small > delay_chunk ? delay_small : delay_chunk ) + 0.001;
+
+    std::vector<uint64_t> carried;                                        // in the order the calls carry them
+    wire_packet_t out[1];
+    while ( write_packets( a, t, out, 1 ) == 1 )
+    {
+        for ( uint32_t k = 0; k < a->ordered.builder.packet[0].count; k++ )
+        {
+            carried.push_back( a->ordered.builder.packet[0].numbers[k] );
+        }
+    }
+    check( carried.size() == 2 );
+    check( carried[0] == small );
+    check( carried[1] == chunk0 );
+    check( counter( a, ROCKETNET_COUNTER_MESSAGE_RESENT ) == 2 );
+    check_resend_order( a );
+
+    node_free( a );
+}
+
+// A first send the transport refuses while its class has a number on the
+// wire: it stays never sent, goes back ahead of the mark, which stays, and
+// the timeout clock is the number on the wire's.
+
+static void test_resend_refused_first_send_beside_numbers_on_the_wire()
+{
+    rocketnet_message_config_t config;
+    node_config( &config, 1024, 262144, 262144, 800000 );
+    node_t * a = node_new( &config, 4 );
+    const rn_window_ack_t * ack = &a->ordered.ack;
+    const rn_region_t * region = a->region;
+
+    check( send_message( a, 0, 16 ) != 0 );
+    const uint64_t on_wire = write_one( a, 1000.0 );
+
+    check( send_message( a, 0, 16 ) != 0 );
+    const uint64_t fresh = refuse_one( a, 1000.0 + 1.0 / 60.0 );
+    check( fresh != on_wire );
+    check( rn_send_number_never_sent( region->send_numbers[number_slot( a, fresh )].last_send ) );
+    check( rn_window_ack_resend_first( ack, false ) == number_slot( a, fresh ) );
+    check( rn_window_ack_resend_sent( ack, false ) == number_slot( a, on_wire ) );
+    check( ack->has_oldest == 1 && ack->oldest_first_send == 1000.0 );
+    check_resend_order( a );
+
+    check( write_one( a, 1000.0 + 2.0 / 60.0 ) == fresh );
+    check( counter( a, ROCKETNET_COUNTER_MESSAGE_RESENT ) == 0 );
+    check( rn_window_ack_resend_sent( ack, false ) == number_slot( a, on_wire ) );
+    check( ack->resend_tail == number_slot( a, fresh ) );
+    check_resend_order( a );
+
+    node_free( a );
+}
+
+// Slots reused after the window wraps, with a small record and a block's
+// chunks on the wire in every update: each class's mark names the slot of its
+// newest unacked number throughout.
+
+static void test_resend_marks_hold_across_window_wrap()
+{
+    rocketnet_message_config_t config;
+    node_config( &config, 64, 262144, 16 * ROCKETNET_MESSAGE_FRAGMENT_BYTES, 800000 );    // the smallest window
+    check( rocketnet_message_validate_config( &config ) );
+    node_t * a = node_new( &config, 4 );
+    const rn_window_ack_t * ack = &a->ordered.ack;
+    const uint32_t W = a->region->window;
+
+    const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
+    std::vector<uint64_t> previous;
+    uint64_t numbers_assigned = 0;
+    for ( uint32_t i = 0; i < 3 * W; i++ )
+    {
+        const double now = 1000.0 + i / 60.0;
+        check( send_message( a, 0, 16 ) != 0 );
+        check( send_message( a, 1, 2 * F ) != 0 );
+
+        wire_packet_t out[4];
+        const int n = write_packets( a, now, out, 4 );
+        check( n >= 2 );
+
+        uint64_t small = 0;
+        uint64_t chunk0 = 0;
+        bool have_chunk = false;
+        std::vector<uint64_t> ids;
+        for ( int p = 0; p < n; p++ )
+        {
+            ids.push_back( out[p].id );
+            for ( uint32_t k = 0; k < a->ordered.builder.packet[p].count; k++ )
+            {
+                const uint64_t number = a->ordered.builder.packet[p].numbers[k];
+                if ( rn_window_ack_slot_is_chunk( ack, number_slot( a, number ) ) )
+                {
+                    if ( !have_chunk )
+                    {
+                        chunk0 = number;
+                        have_chunk = true;
+                    }
+                }
+                else
+                {
+                    small = number;
+                }
+                numbers_assigned++;
+            }
+        }
+        check( have_chunk );
+        check_resend_order( a );
+
+        feed_acks( a, previous, now );
+        previous = ids;
+        check( rn_window_ack_resend_sent( ack, false ) == number_slot( a, small ) );
+        check( rn_window_ack_resend_sent( ack, true ) == number_slot( a, chunk0 ) );
+        check_resend_order( a );
+    }
+    check( numbers_assigned == 3 * 3 * W );                              // every number of every update sent once
+    check( counter( a, ROCKETNET_COUNTER_MESSAGE_RESENT ) == 0 );
+
+    node_free( a );
+}
+
+REGISTER_UNIT_TEST( test_resend_refused_mark_is_retried_first );
+REGISTER_UNIT_TEST( test_resend_refused_only_number_on_the_wire );
+REGISTER_UNIT_TEST( test_resend_ack_of_the_mark );
+REGISTER_UNIT_TEST( test_resend_two_lost_chunks_in_order_one_packet_a_call );
+REGISTER_UNIT_TEST( test_resend_small_and_chunk_due_in_one_update );
+REGISTER_UNIT_TEST( test_resend_refused_first_send_beside_numbers_on_the_wire );
+REGISTER_UNIT_TEST( test_resend_marks_hold_across_window_wrap );
 REGISTER_UNIT_TEST( test_ordered_lost_chunk_resent_ahead_of_unsent_chunks );
 REGISTER_UNIT_TEST( test_ordered_lost_chunk_resent_ahead_of_unsent_chunks_defaults );
 REGISTER_UNIT_TEST( test_ordered_lost_chunk_resent_ahead_of_unsent_chunks_800_kbps );
@@ -2889,6 +3373,7 @@ REGISTER_UNIT_TEST( test_small_packed_and_resent_until_packet_acked );
 REGISTER_UNIT_TEST( test_large_chunked_one_per_packet_and_delivered_whole );
 REGISTER_UNIT_TEST( test_large_between_small_keeps_order );
 REGISTER_UNIT_TEST( test_large_between_small_keeps_order_one_payload_per_write );
+REGISTER_UNIT_TEST( test_large_between_small_keeps_order_with_refused_packets );
 REGISTER_UNIT_TEST( test_reservation_counts_the_held_run_past_2_to_the_24 );
 REGISTER_UNIT_TEST( test_chunks_placed_by_index_not_arrival );
 REGISTER_UNIT_TEST( test_no_partial_delivery );

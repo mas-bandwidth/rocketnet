@@ -4647,7 +4647,7 @@ static void test_channels_window_lossy_soak_product_leg( float loss_percent )
         //    With no back-off (6.4, RNResendTiming) a write of every due
         //    number at a small P evicts each entry before its ack returns, and the
         //    soak ends in RELIABLE_TIMEOUT. Every 23rd packet is a failed send
-        //    (resent first next update, 6.4).
+        //    (due again at the next write, 6.4).
 
         const int written = rn_ordered_write( sender, now, pointers, 1 );
         check( sender->ack.error == ROCKETNET_DISCONNECT_REASON_NONE );
