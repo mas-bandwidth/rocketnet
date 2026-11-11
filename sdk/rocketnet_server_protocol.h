@@ -308,8 +308,9 @@ void rocketnet_server_protocol_disconnect_client( struct rocketnet_server_protoc
                                                   int * out_packet_count,
                                                   int * out_packet_bytes );
 
-// Builds a payload packet for a connected client. Returns the wire size, or
-// 0 when the client is not connected or the payload does not fit.
+// Starts a payload packet for a connected client: writes the client's address
+// to *to and takes the next session send sequence into *sequence. Returns 1,
+// or 0 when the client is not connected or has no mapping.
 
 int rocketnet_server_protocol_start_payload( struct rocketnet_server_protocol_t * server,
                                              int client_index,

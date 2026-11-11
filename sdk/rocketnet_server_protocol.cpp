@@ -650,8 +650,10 @@ static int rocketnet_server_protocol_process_connection_request_known( struct ro
     }
 
     // the authenticity check: the signature, and only the signature. the
-    // per-source failed-verify budget gates it, so one valid cookie cannot
-    // buy unlimited Ed25519 verifies from one address.
+    // per-source failed-verify budget gates it: a signature that fails is
+    // charged to its source, which is then refused here. a request whose
+    // signature verifies and is refused later charges nothing to its source;
+    // the per-update handshake work budget below is what bounds those.
 
     if ( !rocketnet_signature_verify_budget_allow( &server->signature_verify_budget, from, current_timestamp ) )
     {
