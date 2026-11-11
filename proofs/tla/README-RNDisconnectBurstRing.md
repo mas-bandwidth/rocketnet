@@ -16,6 +16,7 @@ count, the pass cursor, the modulo and the sealed counts.
 | `C` | `rocketnet_server_disconnect_bursts(max_clients)`, the ring's slots, which is `2 * max_clients` and not `ROCKETNET_MAX_CLIENTS` |
 | `K` | `ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS` |
 | `abandoned` | bursts marked complete because the destination was refused |
+| `dropped` | ghost: bursts dropped before complete by a stop step with no send room |
 
 The ghosts name each burst by the order it was deferred (`bid[s]`), count the
 packets sealed for it (`seals`), collect the bursts that left the ring
@@ -44,11 +45,21 @@ packets sealed for it (`seals`), collect the bursts that left the ring
 - **`PassOver`**: the same iteration when the entry is already complete. The
   cursor moves on and the entry is not sealed. An abandoned burst away from
   the head leaves only once the pop reaches it.
+- **`DropForRoom`**: `rocketnet_server_transport_stop_step` when the
+  transport reports no send room and is idle, and still no room when read
+  again (`ServerStopSpread`'s `AbandonNoRoom`): every waiting burst is popped
+  from the head with its key wiped, so `head` moves on by `count` modulo `C`
+  and `count` is 0, then `disconnect_burst_cursor` is reset to 0. The sealed
+  counts stay in the slots, as the code leaves them; the next `Defer` into a
+  slot writes `sealed = 0`. Each burst not yet complete is dropped; one
+  already complete (abandoned behind the head) leaves as it would have.
 
 A drain ends when its allowance is spent or a send frame is refused for a
 reason other than the destination. Either leaves the ring and the cursor as
 they are, and the next update's drain continues the pass, so any interleaving
-of `Defer`, `SealStep`, `Abandon` and `PassOver` is a run of updates. The stop
+of `Defer`, `SealStep`, `Abandon`, `PassOver` and `DropForRoom` is a run of
+updates and stop steps (a drop comes only at a stop step; letting the model
+defer again after one only adds behaviours). The stop
 path's drain is the same loop with a larger allowance. The immediate burst
 (no burst waiting, the allowance covering `K`) never touches the ring.
 
@@ -67,8 +78,9 @@ path's drain is the same loop with a larger allowance. The immediate burst
 - **`CursorInRange`**: the cursor is at most `count`.
 - **`ExactSeals`**: a waiting burst that was not abandoned holds its own
   seals, fewer than `K`. An abandoned one is marked complete and was sent
-  fewer than `K`. A burst that left without being abandoned was sent exactly
-  `K`.
+  fewer than `K`. A burst that left ended exactly one way: sealed whole
+  (exactly `K` sent), abandoned for its destination, or dropped for room
+  (each fewer than `K` sent).
 
 A burst deferred during a pass joins that pass at the tail, so the bursts ahead
 of it in the pass may have a redundant packet sealed before its first. The
@@ -109,6 +121,19 @@ counterexample below was checked against the C by hand.
    at 1 and the ring empty; bursts 2 and 3 are deferred at offsets 0 and 1;
    the next seal goes to offset 1, so burst 3 has a packet sealed and burst 2,
    at the head, none.
+4. **`MCRNDisconnectBurstRingBrokenDropKeepsCursor.cfg`**
+   (`DropResetsCursor = FALSE`): the drop for room without
+   `disconnect_burst_cursor = 0`. Violates `CursorInRange`: one burst is
+   deferred at slot 0, its first seal moves the cursor to 1, and the drop
+   pops it (head 1, count 0) with the cursor left at 1, past the empty ring.
+   In the code the next drain's wrap test would hide it, but the stop step
+   ends the stop there, and the drop is the one pop that does not lower the
+   cursor with each burst it removes.
+
+Not advancing the head on a drop is not a witness here: with `count` 0 every
+head is a valid empty ring (`Defer` writes slot `head`, the pass starts
+there), so in this layout it changes no outcome; the code advances it as the
+pops do.
 
 ## Runs
 

@@ -678,6 +678,7 @@ MCRNDisconnectBurstRingK3.cfg	MCRNDisconnectBurstRing.tla	pass	-	ignore-terminal
 MCRNDisconnectBurstRingBrokenFullOffByOne.cfg	MCRNDisconnectBurstRing.tla	invariant	NoOverwrite	ignore-terminal	rndisconnectburstring	required	-
 MCRNDisconnectBurstRingBrokenCursorWrapLate.cfg	MCRNDisconnectBurstRing.tla	invariant	SealOnlyLive	ignore-terminal	rndisconnectburstring	required	-
 MCRNDisconnectBurstRingBrokenCursorKept.cfg	MCRNDisconnectBurstRing.tla	invariant	SealedFallFromHead	ignore-terminal	rndisconnectburstring	required	-
+MCRNDisconnectBurstRingBrokenDropKeepsCursor.cfg	MCRNDisconnectBurstRing.tla	invariant	CursorInRange	ignore-terminal	rndisconnectburstring	required	-
 MCRNServerReplaySlots.cfg	MCRNServerReplaySlots.tla	pass	-	check	rnserverreplayslots	required	-
 MCRNServerReplaySlotsNoForgetRefusal.cfg	MCRNServerReplaySlots.tla	pass	-	check	rnserverreplayslots	required	-
 MCRNServerReplaySlotsBrokenStaleForget.cfg	MCRNServerReplaySlots.tla	invariant	KernelHoldsMark	check	rnserverreplayslots	required	-
