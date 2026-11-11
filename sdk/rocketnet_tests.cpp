@@ -200,72 +200,6 @@ do                                                                              
 #define ROCKETNET_COUNTERS_CHECK rocketnet_check
 #include "../tests/counters_expect.h"
 
-// the clamp is a pure function: a non-finite time or a step backwards is the
-// last good time, counted and (in a debug build) asserted; a forward step
-// passes through untouched. the hook is non-aborting so the debug build's
-// assert can be observed rather than trapping the suite.
-
-static int rocketnet_test_update_time_clamp_asserts = 0;
-
-static void rocketnet_test_update_time_clamp_assert_hook( const char * condition, const char * function, const char * file, int line )
-{
-    (void) condition;
-    (void) function;
-    (void) file;
-    (void) line;
-
-    rocketnet_test_update_time_clamp_asserts++;
-}
-
-void rocketnet_test_update_time_clamp()
-{
-    rocketnet_assert_function( rocketnet_test_update_time_clamp_assert_hook );
-    rocketnet_test_update_time_clamp_asserts = 0;
-
-    const double last_good = 10.0;
-
-    const uint64_t before = rocketnet_api_misuse_count();
-
-    bool clamped = false;
-
-    rocketnet_check( rocketnet_clamp_update_time( last_good, (double) NAN, &clamped ) == last_good );
-    rocketnet_check( clamped );
-
-    clamped = false;
-    rocketnet_check( rocketnet_clamp_update_time( last_good, (double) INFINITY, &clamped ) == last_good );
-    rocketnet_check( clamped );
-
-    clamped = false;
-    rocketnet_check( rocketnet_clamp_update_time( last_good, (double) -INFINITY, &clamped ) == last_good );
-    rocketnet_check( clamped );
-
-    clamped = false;
-    rocketnet_check( rocketnet_clamp_update_time( last_good, last_good - 0.5, &clamped ) == last_good );
-    rocketnet_check( clamped );
-
-    // a forward step, and an equal one, pass through untouched
-
-    clamped = false;
-    rocketnet_check( rocketnet_clamp_update_time( last_good, last_good + 0.5, &clamped ) == last_good + 0.5 );
-    rocketnet_check( !clamped );
-
-    clamped = false;
-    rocketnet_check( rocketnet_clamp_update_time( last_good, last_good, &clamped ) == last_good );
-    rocketnet_check( !clamped );
-
-    // four clamps, four counted misuses
-
-    rocketnet_check( rocketnet_api_misuse_count() == before + 4 );
-
-#if ROCKETNET_ASSERTS
-    rocketnet_check( rocketnet_test_update_time_clamp_asserts == 4 );
-#endif // #if ROCKETNET_ASSERTS
-
-    // restore the default (trapping) hook for the rest of the suite
-
-    rocketnet_assert_function( NULL );
-}
-
 #if ROCKETNET_XDP
 void rocketnet_test_xdp_free_list_refuses_overflow()
 {
@@ -14017,7 +13951,6 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] = {
 #if ROCKETNET_DEV
     { "test_suite_environment", rocketnet_test_suite_environment },
 #endif // #if ROCKETNET_DEV
-    { "test_update_time_clamp", rocketnet_test_update_time_clamp },
 #if ROCKETNET_XDP
     { "test_xdp_transport_free_list_refuses_overflow", rocketnet_test_xdp_free_list_refuses_overflow },
 #endif // #if ROCKETNET_XDP

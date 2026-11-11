@@ -51,37 +51,6 @@ std::atomic<unsigned long long> g_client_ack_stats_count{ 0 };
 // given create order.
 static std::atomic<unsigned long long> g_client_link_simulator_ordinal{ 0 };
 
-#if ROCKETNET_DEV
-// The one clamp both transports share. A NaN or infinite time makes every
-// timeout comparison false and freezes a transport; a backwards step rewinds
-// its deadlines. Both become the last good time instead, counted, logged in
-// every build and an assert in a debug build. Called once per update and once
-// at client create, never per packet.
-
-double rocketnet_clamp_update_time( double last_good, double time, bool * clamped )
-{
-    if ( clamped )
-        *clamped = false;
-
-    const bool usable = isfinite( time ) && time >= last_good;
-
-    if ( !usable )
-    {
-        if ( clamped )
-            *clamped = true;
-
-        rocketnet_api_misuse_record();
-
-        rocketnet_error( "update refused its time %f: it is not finite or goes back from %f; the last good time is kept", time, last_good );
-
-        rocketnet_assert( usable );
-        return last_good;
-    }
-
-    return time;
-}
-#endif // #if ROCKETNET_DEV
-
 // The update clock the three owners share: the caller's raw time beside the
 // clamped time they hand out. proofs/tla/RNUpdateClock.tla models it: ForwardStep, a
 // forward raw step, BackwardStep, a backwards raw step, and NonFiniteStep, a
