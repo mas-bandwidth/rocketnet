@@ -1271,6 +1271,7 @@ static int print_dev_tokens( int argc, char ** argv )
 {
     const uint64_t count = parse_u64( argv[2], "--print-dev-tokens" );
     const uint64_t expire = argc == 5 ? parse_u64( argv[4], "--print-dev-tokens expire" ) : (uint64_t) ROCKETNET_DEV_CONNECT_TOKEN_EXPIRE_SECONDS;
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR ); // stdout carries only the token lines
     if ( count == 0 || count > 1000 || expire == 0 || expire > 3600 || rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK )
     {
         fprintf( stderr, "client: --print-dev-tokens wants 1..1000 tokens and 1..3600 expire seconds\n" );
