@@ -682,6 +682,14 @@ with T above 30 s a failed attempt can take up to T to report. The wait for the
 other side's CONFIG record has no clock of its own unless
 `reliable_message_timeout_ms` is set.
 
+The outage guarantee above is for a connected client; the handshake is not
+covered. The server forgets a half-open handshake after
+`handshake_deadline_seconds` (5 s by default), and a client that has moved on
+to its connection response sends no more connection requests, so a client-to-server outage of
+several seconds during the handshake fails that connect attempt: the client
+reports `ROCKETNET_CLIENT_STATE_CONNECTION_RESPONSE_TIMED_OUT` at T, and the
+application connects again.
+
 `rocketnet_client_conditions` and `rocketnet_server_client_conditions` (per
 client) fill a `struct rocketnet_conditions_t` with what a game's own policy
 needs: seconds since the other side was last heard, seconds since reliable
