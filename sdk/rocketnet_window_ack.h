@@ -285,6 +285,17 @@ int rn_window_ack_check_timeout( rn_window_ack_t * ack, double now );
 // RN_PROBE_SECONDS since the later of the last progress and U's first send (m9.3)
 bool rn_window_ack_probing( const rn_window_ack_t * ack, double now );
 
+// Whether probe pacing holds this number on the wire: every number but U
+// while probing. The one rule for both rn_ordered_walk, which skips a held
+// number, and rn_endpoint_ordered_due, which never reports one due, so no
+// frame is started for a held number (proofs/tla/RNResendTiming.tla Held,
+// DueMeansWritten).
+bool rn_window_ack_held( const rn_window_ack_t * ack, uint64_t number, double now );
+
+// U's send_numbers slot when U is in the class's resend FIFO, or NULL: while
+// probing, the only number of that class the walk may resend.
+const rn_send_number_t * rn_window_ack_probe_slot( const rn_window_ack_t * ack, bool chunk );
+
 // The resend gap record's clock (development builds only; a no-op otherwise):
 // called once per update before the update's packets are written, with the
 // update's time, after its acks have moved the resend delay. It keeps this update's and

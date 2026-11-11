@@ -1790,7 +1790,7 @@ static bool rn_ordered_walk( rn_ordered_t * ordered, bool chunk, bool on_wire, d
             return true;
         }
 
-        if ( on_wire && slot->number != ack->send->U && rn_window_ack_probing( ack, now ) )
+        if ( on_wire && rn_window_ack_held( ack, slot->number, now ) )
         {
             cursor = next_slot;                                 // probe pacing: only U while nothing is acknowledged (m9.3; proofs/tla/RNResendTiming.tla Walk skips Held)
             continue;

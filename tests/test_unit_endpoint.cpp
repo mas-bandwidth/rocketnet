@@ -1050,6 +1050,94 @@ static void test_endpoint_stalled_window_requests_no_frame()
     rn_arena_destroy( arena );
 }
 
+// The same rule under probe pacing (standard/MESSAGES.md m9.3): with the
+// reliable timeout off and nothing acknowledged for a second, only U is
+// resent, once per resend delay. The endpoint asks for a frame exactly when
+// U is due, and every frame it asks for is written: a connection held with
+// several numbers on the wire (here small records and a block's chunks)
+// costs the transport's per-update send capacity only for U's probe.
+
+static void test_endpoint_probe_hold_requests_frame_only_for_u()
+{
+    rocketnet_message_config_t config;
+    ep_config( &config );
+    config.packets_per_update = 8;
+    config.reliable_message_timeout_ms = 0;
+
+    rocketnet_counters_t counters = {};
+    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+    check( arena != NULL );
+
+    rn_endpoint_config_t endpoint_config = {};
+    endpoint_config.config = &config;
+    endpoint_config.max_payload_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
+
+    rn_endpoint_t endpoint;
+    rn_endpoint_init( &endpoint, rn_arena_region( arena, 0 ), &endpoint_config );
+    rn_endpoint_reset( &endpoint, 1000.0 );
+
+    const int sizes[] = { 10, 10, 3000, 10 };
+    for ( int i = 0; i < 4; i++ )
+    {
+        uint8_t * message = rn_endpoint_start( &endpoint, 0, ROCKETNET_RELIABILITY_RELIABLE, sizes[i], endpoint_config.max_payload_bytes );
+        check( message != NULL );
+        if ( message )
+        {
+            memset( message, i, (size_t) sizes[i] );
+            check( rn_endpoint_finish( &endpoint, sizes[i], 0 ) != 0 );
+        }
+    }
+
+    // 60 updates a second for 5 s, nothing ever acknowledged
+
+    uint8_t frame[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
+    uint64_t packet_id = 1;
+    int held_updates = 0;
+    int u_due_updates = 0;
+    int aborted = 0;
+    const rn_window_ack_t * ack = &endpoint.ordered.ack;
+    const rn_region_t * region = endpoint.region;
+    for ( int update = 0; update < 300; update++ )
+    {
+        const double now = 1000.0 + update / 60.0;
+        rn_endpoint_begin_update( &endpoint );
+        rn_endpoint_begin_flush( &endpoint );
+
+        const bool held = rn_window_ack_probing( ack, now );
+        const rn_send_number_t * u = &region->send_numbers[ack->send->U & ( region->window - 1 )];
+        const bool u_due = now >= u->last_send + rn_window_ack_resend_delay( ack );
+
+        int frames = 0;
+        while ( rn_endpoint_next_packet_bytes( &endpoint, now ) > 0 )
+        {
+            frames++;
+            const int bytes = rn_endpoint_write_packet( &endpoint, frame, sizeof( frame ), packet_id, now );
+            if ( bytes > 0 )
+            {
+                rn_endpoint_packet_sent( &endpoint, packet_id++, rocketnet_send_budget_wire_bytes( ROCKETNET_ACK_BLOCK_MIN_BYTES, bytes ), now );
+            }
+            else
+            {
+                aborted++;
+            }
+        }
+
+        if ( held )
+        {
+            held_updates++;
+            u_due_updates += u_due ? 1 : 0;
+            check( frames == ( u_due ? 1 : 0 ) );
+        }
+    }
+
+    check( endpoint.ordered.send.next - endpoint.ordered.send.U >= 4 );
+    check( held_updates > 200 );
+    check( u_due_updates > 0 && u_due_updates < held_updates / 2 );
+    check( aborted == 0 );
+
+    rn_arena_destroy( arena );
+}
+
 // A pass that ended stays ended for the rest of the flush: a reliable packet
 // the budget cannot pay is not planned again, frame after frame, while the
 // send loop serves other connections. The next flush plans it again.
@@ -1415,5 +1503,6 @@ REGISTER_UNIT_TEST( test_endpoint_capacity_cut_starts_new_write_pass );
 REGISTER_UNIT_TEST( test_endpoint_dropped_large_sequenced_is_not_a_written_packet );
 REGISTER_UNIT_TEST( test_endpoint_reliable_continues_after_capacity_cut );
 REGISTER_UNIT_TEST( test_endpoint_stalled_window_requests_no_frame );
+REGISTER_UNIT_TEST( test_endpoint_probe_hold_requests_frame_only_for_u );
 REGISTER_UNIT_TEST( test_endpoint_ended_pass_stays_ended_until_the_next_flush );
 REGISTER_UNIT_TEST( test_endpoint_unreliable_tombstone_never_revives_after_ticket_wrap );

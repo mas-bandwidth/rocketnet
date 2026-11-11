@@ -21,6 +21,7 @@
 #include "../sdk/rocketnet_counters.h"
 #include "../sdk/rocketnet_memory.h"
 #include "../sdk/rocketnet_driver_loopback.h"
+#include "rocketnet_message_object.h"
 #include "suite_runner.h"
 
 #include <stdio.h>
@@ -557,6 +558,132 @@ static void test_server_send_cap_two_multi_packet_service()
 }
 
 REGISTER_UNIT_TEST( test_server_send_cap_two_multi_packet_service );
+
+// Per-client scope (standard/MESSAGES.md m1.8) under probe pacing (m9.3): the
+// default turns the reliable timeout off, so a client that goes dark with
+// reliable messages unacknowledged is held after a second, and only its
+// oldest number U is resent, once per resend delay. With the cap at the
+// client count, the healthy client is offered more than the cap every tick,
+// so every frame of the cap must carry a packet: a dark client takes one
+// only in an update its probe is due, and the healthy client takes the rest,
+// exactly the cap with idle neighbours.
+
+static rn_message_connection_t * fair_server_connection( fair_world_t * world, int client )
+{
+    rocketnet_message_server_t * messages = rocketnet_server_message_server( world->server );
+    return &messages->object.connections[world->server_index[client]];
+}
+
+static void fair_dark_run( bool dark, int * received, int * probes, int ticks )
+{
+    const int healthy = FAIR_MAX_CLIENTS - 1;
+    fair_world_t world;
+    fair_world_create( &world, FAIR_MAX_CLIENTS, FAIR_MAX_CLIENTS );
+    for ( int c = 0; c < FAIR_MAX_CLIENTS; c++ )
+    {
+        fair_connect( &world, c, 0x9300 + (uint64_t) c );
+    }
+
+    for ( int tick = 0; tick < ticks; tick++ )
+    {
+        received[tick] = 0;
+        probes[tick] = 0;
+
+        fair_now = world.time;
+        for ( int c = 0; c < FAIR_MAX_CLIENTS; c++ )
+        {
+            if ( dark && c != healthy )
+            {
+                continue;
+            }
+            rocketnet_client_update( world.clients[c], world.time );
+            const struct rocketnet_message_batch_t * batch = NULL;
+            while ( ( batch = rocketnet_client_receive_messages( world.clients[c] ) ) != NULL )
+            {
+                received[tick] += c == healthy ? batch->num_messages : 0;
+            }
+            rocketnet_client_send_packets( world.clients[c] );
+        }
+
+        fair_server_update( &world );
+        while ( rocketnet_server_receive_messages( world.server ) != NULL )
+        {
+        }
+
+        if ( tick == 0 )
+        {
+            for ( int c = 0; c < healthy; c++ )
+            {
+                for ( int k = 0; k < 3; k++ )
+                {
+                    check( fair_server_send( &world, c, FAIR_CHANNEL_RELIABLE, ROCKETNET_RELIABILITY_RELIABLE, (uint16_t) k ) != 0 );
+                }
+            }
+        }
+
+        for ( int k = 0; k < FAIR_MAX_CLIENTS; k++ )
+        {
+            uint8_t * out = rocketnet_server_start_message( world.server, (uint64_t) world.server_index[healthy], FAIR_CHANNEL_RELIABLE,
+                                                            ROCKETNET_RELIABILITY_RELIABLE, 1200 );
+            check( out != NULL );
+            if ( out )
+            {
+                memset( out, tick, 1200 );
+                check( rocketnet_server_finish_message( world.server, 1200 ) != 0 );
+            }
+        }
+
+        // the probes due in this update's send pass: a dark client held by
+        // probe pacing whose U has waited its resend delay
+
+        for ( int c = 0; dark && c < healthy; c++ )
+        {
+            const rn_window_ack_t * ack = &fair_server_connection( &world, c )->ordered.ack;
+            const rn_region_t * region = ack->region;
+            const rn_send_number_t * u = &region->send_numbers[ack->send->U & ( region->window - 1 )];
+            if ( tick >= 20 )
+            {
+                check( rn_window_ack_probing( ack, world.time ) );
+            }
+            probes[tick] += world.time >= u->last_send + rn_window_ack_resend_delay( ack ) ? 1 : 0;
+        }
+
+        rocketnet_server_send_packets( world.server );
+        world.time += FAIR_DT;
+
+        for ( int c = 0; c < FAIR_MAX_CLIENTS; c++ )
+        {
+            check( rocketnet_server_client_connected( world.server, world.server_index[c] ) != 0 );
+        }
+    }
+
+    fair_world_destroy( &world );
+}
+
+static void test_server_send_cap_dark_neighbours_take_only_their_probes()
+{
+    const int ticks = 80;                           // 8 s, inside the 10 s silence timeout
+    int idle_received[80];
+    int idle_probes[80];
+    int dark_received[80];
+    int dark_probes[80];
+    fair_dark_run( false, idle_received, idle_probes, ticks );
+    fair_dark_run( true, dark_received, dark_probes, ticks );
+
+    int probes = 0;
+    for ( int tick = 20; tick < ticks - 1; tick++ )
+    {
+        // what the server sent in update tick, the healthy client receives in update tick + 1
+
+        check( idle_received[tick + 1] == FAIR_MAX_CLIENTS );
+        check( dark_received[tick + 1] == idle_received[tick + 1] - dark_probes[tick] );
+        probes += dark_probes[tick];
+    }
+
+    check( probes > 0 );
+}
+
+REGISTER_UNIT_TEST( test_server_send_cap_dark_neighbours_take_only_their_probes );
 
 static void test_server_send_capacity_spare_slots_keep_in_place()
 {
