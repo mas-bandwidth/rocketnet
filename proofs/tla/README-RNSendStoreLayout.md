@@ -148,3 +148,39 @@ counterexample below was checked against the C by hand.
 
 The records are in `RUNS.tsv` (group `rnsendstorelayout`), made with the
 pinned runner as `proofs/tla/README.md` describes.
+
+## Revision 1.1: a refused fit leaves the store and the region as they were
+
+Standard rule: MESSAGES.md m1.7. `Refuse` (no free descriptor, or no chunk
+run that fits) no longer sets the sticky `exhausted`: the send is refused and
+counted, and the cursors, the free list, the descriptors and the region are as
+before the refused fit. `RefuseExhausts = TRUE` is the reversed witness,
+v1.0's `rn_region_exhaust` on a failed fit. The same change is made in
+`RNSendSpans.tla`, the span ring this store's large sends use: `Exhaust` is
+renamed `Refuse(l)` and leaves the ring unchanged.
+
+| Module | Property | Kind | Claim |
+|---|---|---|---|
+| RNSendStoreLayout | `StoreNeverExhausts` | invariant | the store never exhausts its region (only the receive side does) |
+| RNSendStoreLayout | `RefuseLeavesLayout` | action | a refusal changes no cursor, free list, descriptor or `exhausted` |
+| RNSendSpans | `SpansNeverExhaust` | invariant | the span ring never exhausts its region |
+| RNSendSpans | `RefuseLeavesRing` | action | a refusal leaves the ring, its links and the region unchanged |
+
+| Case | Expected | Exit | Distinct |
+|---|---|---:|---:|
+| `MCRNSendStoreLayout.cfg` | pass | 0 | 118621 |
+| `MCRNSendStoreLayoutBrokenRefuseExhausts.cfg` | `RefuseLeavesLayout` | 13 | 31 |
+| `MCRNSendStoreLayoutBrokenRefuseSticky.cfg` | `StoreNeverExhausts` | 12 | 31 |
+| `MCRNSendSpans.cfg` | pass | 0 | 1327995 |
+| `MCRNSendSpansRefuse.cfg` (refusals reachable, both properties) | pass | 0 | 735 |
+| `MCRNSendSpansBrokenRefuseExhausts.cfg` | `SpansNeverExhaust` | 12 | 27 |
+| `MCRNSendSpansBrokenRefuseChanges.cfg` | `RefuseLeavesRing` | 13 | 27 |
+
+Witness traces, read by hand. RNSendStoreLayout (both, 5 states): three
+`Alloc` steps take the three free chunks (`freeCount` 3 to 0, `dFree` 4 to
+1), and the fourth send's `Refuse` sets `exhausted = TRUE`. RNSendSpans (both,
+3 states): one `Alloc` takes the whole 16-byte ring and the next send's
+`Refuse` sets `exhausted = TRUE`. The code before revision 1.1 did both:
+`rn_send_store` and the span allocator in `sdk/rocketnet_allocator.cpp`
+called `rn_region_exhaust` on a failed fit. The code now calls
+`rn_region_send_refuse`, which counts the refusal and leaves the region.
