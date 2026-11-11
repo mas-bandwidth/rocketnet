@@ -18,6 +18,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <algorithm>
 #include <set>
 #include <vector>
 
@@ -2053,7 +2054,7 @@ static void test_start_pointer_is_the_frame_source()
 
 // ---------------------------------------------------------------------------
 // 9. nothing is allocated after create (R2), the defaults are admissible, and
-//    exhaustion kicks (R5)
+//    a send with no room is refused while the connection goes on (m1.7)
 // ---------------------------------------------------------------------------
 
 static uint64_t cm_mallocs = 0;
@@ -2182,7 +2183,8 @@ static void test_ordered_no_allocation_after_create()
     check( counter( a, ROCKETNET_COUNTER_MESSAGE_RESENT ) > 0 );
     check( b->delivered.size() == a->sent[0].size() + a->sent[1].size() + a->sent[2].size() + a->sent[3].size() );
 
-    // exhaustion: no room for a start is the end of the connection, not a refused send (R5)
+    // no room for a start is a refused send, and the connection goes on
+    // (standard/MESSAGES.md m1.7): not exhaustion, no kick
 
     node_t * c = node_new( &config, 8 );
     int accepted = 0;
@@ -2191,13 +2193,42 @@ static void test_ordered_no_allocation_after_create()
         accepted++;
     }
     check( accepted == (int) ( c->region->span_bytes / 100000 ) );          // exact capacity includes the create-time reserve
-    check( counter( c, ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED ) == 1 );
-    check( counter( c, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL ) >= 1 );
-    check( rn_ordered_decide( &c->ordered ) == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
-    check( send_message( c, 0, 16 ) == 0 );                             // nothing more is taken
+    check( counter( c, ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED ) == 0 );
+    check( counter( c, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL ) == 1 );
+    check( !rn_region_exhausted( c->region ) );
+    check( rn_ordered_decide( &c->ordered ) == ROCKETNET_DISCONNECT_REASON_NONE );
 
-    wire_packet_t none[4];
-    check( write_packets( c, now, none, 4 ) == 0 );                     // and nothing is sent: it is kicked
+    // nothing more is taken by the refusal: the descriptors and the span cursors stand
+
+    const uint32_t c_free = c->region->descriptors_free;
+    const uint32_t c_head = c->region->span_head;
+    const uint32_t c_tail = c->region->span_tail;
+    check( send_message( c, 0, 100000 ) == 0 );
+    check( counter( c, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL ) == 2 );
+    check( c->region->descriptors_free == c_free && c->region->span_head == c_head && c->region->span_tail == c_tail );
+    check( c->sent[0].size() == (size_t) accepted );
+
+    // and it sends: each packet acknowledged as written, until every message is acked
+
+    int c_packets = 0;
+    for ( int update = 0; update < 10000 && c->region->descriptors_free < c->region->queue; update++ )
+    {
+        now += 0.01;
+
+        wire_packet_t out[ROCKETNET_PACKET_BUILDER_MAX_PACKETS];
+        const int n = write_packets( c, now, out, 8 );
+        std::vector<uint64_t> ids;
+        for ( int p = 0; p < n; p++ )
+        {
+            ids.push_back( out[p].id );
+        }
+        c_packets += n;
+        feed_acks( c, ids, now + 0.001 );
+    }
+    check( c_packets > 0 );
+    check( c->region->descriptors_free == c->region->queue );
+    check( rn_ordered_decide( &c->ordered ) == ROCKETNET_DISCONNECT_REASON_NONE );
+    check( send_message( c, 0, 100000 ) != 0 );                         // room returned: a start is admitted
 
     // the slot is freed and its region reset for the next client
 
@@ -2216,7 +2247,9 @@ static void test_ordered_no_allocation_after_create()
     }
     check( queued == (int) d->region->queue );
     check( counter( d, ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL ) == 1 );
-    check( rn_ordered_decide( &d->ordered ) == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
+    check( counter( d, ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED ) == 0 );
+    check( !rn_region_exhausted( d->region ) );
+    check( rn_ordered_decide( &d->ordered ) == ROCKETNET_DISCONNECT_REASON_NONE );
 
     // and not one allocator call came from any of it
 
@@ -2230,6 +2263,166 @@ static void test_ordered_no_allocation_after_create()
     node_free( c );
     node_free( d );
     cm_restore();
+}
+
+// standard/MESSAGES.md m1.7 at the channel: a start refused for want of room
+// (the send spans full, then the descriptor pool full) leaves every message
+// accepted before it intact -- its descriptor, its bytes, its place in its
+// channel's queue -- and the connection up. Once the accepted messages are
+// delivered and acknowledged, a new start is admitted, and the receiver holds
+// every accepted message in order, nothing lost and nothing duplicated.
+
+// the channel's queued descriptors in enqueue order: a scan of the descriptor
+// array by enqueue_ticket, independent of the queue's own links
+
+static void ordered_queue_read( const node_t * node, uint32_t channel, std::vector<uint32_t> * out )
+{
+    out->clear();
+    const rn_region_t * region = node->region;
+    for ( uint32_t d = 0; d < region->descriptors_fresh; d++ )
+    {
+        const rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
+        if ( descriptor->in_use && descriptor->enqueue_ticket != 0 && descriptor->channel == channel )
+        {
+            out->push_back( d );
+        }
+    }
+    std::sort( out->begin(), out->end(), [region]( uint32_t x, uint32_t y )
+               { return region->send_descriptors[x].enqueue_ticket < region->send_descriptors[y].enqueue_ticket; } );
+    check( out->size() <= region->queue );
+    if ( !out->empty() )
+    {
+        check( out->front() == region->channel_send[channel].queue_head );
+        check( out->back() == region->channel_send[channel].queue_tail );
+    }
+}
+
+// every accepted message of the channel is queued, in order, with its own bytes
+
+static void ordered_queue_intact( node_t * node, uint32_t channel, const std::vector<uint32_t> & queued )
+{
+    check( queued.size() == node->sent[channel].size() );
+    for ( size_t i = 0; i < queued.size(); i++ )
+    {
+        const rn_send_descriptor_t * descriptor = &node->region->send_descriptors[queued[i]];
+        check( descriptor->in_use );
+        check( descriptor->ordering == (uint32_t) i );
+
+        uint64_t id = 0;
+        check( pattern_verify( rn_region_send_write_pointer( node->region, queued[i] ), descriptor->bytes, &id ) );
+        check( id == node->sent[channel][i] );
+    }
+}
+
+static void test_ordered_refused_start_keeps_accepted_messages()
+{
+    rocketnet_message_config_t config;
+    node_config( &config, 1024, 262144, 262144, 800000 );
+    config.send_queue_messages = 16;
+    config.client_send_kbps = config.server_send_kbps = 0;         // no budget reserve: the pools are exactly the config's
+
+    node_t * a = node_new( &config, 8 );
+    node_t * b = node_new( &config, 8 );
+    check( a->region->queue == 16 );
+
+    // large messages on channel 0 fill the send spans (their exact capacity,
+    // the create-time reserve included); the next is refused
+
+    const uint32_t large = 100000;
+    const uint32_t large_fit = (uint32_t) ( a->region->span_bytes / large );
+    check( large_fit >= 2 && large_fit < 8 );
+    for ( uint32_t i = 0; i < large_fit; i++ )
+    {
+        check( send_message( a, 0, large ) != 0 );
+    }
+
+    std::vector<uint32_t> queue0;
+    std::vector<uint32_t> queue1;
+    ordered_queue_read( a, 0, &queue0 );
+
+    std::vector<rn_send_descriptor_t> before( a->region->send_descriptors, a->region->send_descriptors + a->region->descriptors_fresh );
+    rn_channel_send_t channel_before[2] = { a->region->channel_send[0], a->region->channel_send[1] };
+    uint32_t span_head = a->region->span_head;
+    uint32_t span_tail = a->region->span_tail;
+    uint32_t descriptors_free = a->region->descriptors_free;
+
+    check( rn_channels_start( &a->ordered.channels, 0, ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED, large ) == NULL );
+    check( a->ordered.channels.pending == RN_DESCRIPTOR_NONE );
+    check( counter( a, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL ) == 1 );
+    check( counter( a, ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL ) == 0 );
+    check( counter( a, ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED ) == 0 );
+    check( !rn_region_exhausted( a->region ) );
+    check( rn_ordered_decide( &a->ordered ) == ROCKETNET_DISCONNECT_REASON_NONE );
+    check( memcmp( before.data(), a->region->send_descriptors, sizeof( rn_send_descriptor_t ) * before.size() ) == 0 );
+    check( memcmp( channel_before, a->region->channel_send, sizeof( channel_before ) ) == 0 );
+    check( a->region->span_head == span_head && a->region->span_tail == span_tail && a->region->descriptors_free == descriptors_free );
+    ordered_queue_intact( a, 0, queue0 );
+
+    // small messages on both channels take the rest of the descriptor pool; the next is refused
+
+    uint32_t small_sent = 0;
+    while ( a->region->descriptors_free > 0 )
+    {
+        check( send_message( a, small_sent % 2, 40 + small_sent ) != 0 );
+        small_sent++;
+    }
+    check( small_sent == 16 - large_fit );
+
+    ordered_queue_read( a, 0, &queue0 );
+    ordered_queue_read( a, 1, &queue1 );
+
+    before.assign( a->region->send_descriptors, a->region->send_descriptors + a->region->descriptors_fresh );
+    channel_before[0] = a->region->channel_send[0];
+    channel_before[1] = a->region->channel_send[1];
+    span_head = a->region->span_head;
+    span_tail = a->region->span_tail;
+
+    check( send_message( a, 1, 40 ) == 0 );
+    check( send_message( a, 0, large ) == 0 );
+    check( a->ordered.channels.pending == RN_DESCRIPTOR_NONE );
+    check( counter( a, ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL ) == 2 );
+    check( counter( a, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL ) == 1 );
+    check( counter( a, ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED ) == 0 );
+    check( !rn_region_exhausted( a->region ) );
+    check( rn_ordered_decide( &a->ordered ) == ROCKETNET_DISCONNECT_REASON_NONE );
+    check( memcmp( before.data(), a->region->send_descriptors, sizeof( rn_send_descriptor_t ) * before.size() ) == 0 );
+    check( memcmp( channel_before, a->region->channel_send, sizeof( channel_before ) ) == 0 );
+    check( a->region->span_head == span_head && a->region->span_tail == span_tail && a->region->descriptors_free == 0 );
+    ordered_queue_intact( a, 0, queue0 );
+    ordered_queue_intact( a, 1, queue1 );
+
+    // delivered and acknowledged: the room returns, nothing lost or duplicated
+
+    double now = 1000.0;
+    int packets = 0;
+    for ( int round = 0; round < 2000 && !( everything_delivered( a, b ) && a->region->descriptors_free == a->region->queue ); round++ )
+    {
+        exchange_perfect( a, b, &now, 1, &packets, NULL );
+    }
+    check( packets > 0 );
+    check( a->region->descriptors_free == a->region->queue );
+    check( b->violations == 0 );
+    check_ordered_exactly_once( a, b, true );
+    check( rn_ordered_decide( &a->ordered ) == ROCKETNET_DISCONNECT_REASON_NONE );
+    check( rn_ordered_decide( &b->ordered ) == ROCKETNET_DISCONNECT_REASON_NONE );
+
+    // new starts are admitted, on both pools, and follow the accepted ones in order
+
+    check( send_message( a, 0, large ) != 0 );
+    check( send_message( a, 1, 40 ) != 0 );
+    for ( int round = 0; round < 2000 && !( everything_delivered( a, b ) && a->region->descriptors_free == a->region->queue ); round++ )
+    {
+        exchange_perfect( a, b, &now, 1, &packets, NULL );
+    }
+    check_ordered_exactly_once( a, b, true );
+    check( a->sent[0].size() == large_fit + 1 + ( small_sent + 1 ) / 2 && a->sent[1].size() == 1 + small_sent / 2 );
+    check( b->delivered.size() == a->sent[0].size() + a->sent[1].size() );
+    check( counter( a, ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL ) == 2 );
+    check( counter( a, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL ) == 1 );
+    check( counter( a, ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED ) == 0 );
+
+    node_free( a );
+    node_free( b );
 }
 
 // ---------------------------------------------------------------------------
@@ -3455,4 +3648,5 @@ REGISTER_UNIT_TEST( test_hostile_small_at_held_ordering_is_refused );
 REGISTER_UNIT_TEST( test_hostile_small_at_held_ordering_is_refused_sim );
 REGISTER_UNIT_TEST( test_start_pointer_is_the_frame_source );
 REGISTER_UNIT_TEST( test_ordered_no_allocation_after_create );
+REGISTER_UNIT_TEST( test_ordered_refused_start_keeps_accepted_messages );
 REGISTER_UNIT_TEST( test_rnchannel_witness_replays_ordered );

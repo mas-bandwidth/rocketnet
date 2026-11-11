@@ -150,32 +150,33 @@ status code and the accompanying `ERROR` log line:
 
 ### Refused Sends, `can_send_message` vs. Failed `start_message`, Full Queues, and Wire Budgets
 
-Understanding the difference between `rocketnet_*_can_send_message` and
-`rocketnet_*_start_message` is critical for avoiding self-inflicted
-disconnects under load:
+A send never ends a connection. When the send side is full, `start_message`
+refuses the message and the connection stays up; what to do about repeated
+refusals is the game's decision:
 
-1. **Why calling `start_message` blindly on a full send region disconnects the session**:
+1. **What `start_message` does on a full send region**:
    - Each connection operates inside a fixed, pre-allocated connection region
      (`connection_bytes`, [`docs/LOAD.md`](LOAD.md)).
    - Any send (reliable, or unreliable that finds no room in the send region)
-     that finds no message memory ends the connection with
-     `MESSAGE_MEMORY_EXHAUSTED` and returns `NULL`. Message memory is the
-     connection's send descriptor pool (`send_queue_messages`) and send store
-     (`send_message_buffer_bytes`): if a connected caller calls
-     `rocketnet_client_start_message` or `rocketnet_server_start_message` when
-     either cannot take the message, the message layer treats region
-     exhaustion on an attempted `start_message` as fatal to that connection
-     (`proofs/tla/RNConnectionMemory.tla` `Kick`, requirement `R5`): `start_message`
-     returns `NULL` and **immediately disconnects that connection** with
-     `ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED` (transitioning
-     the client to `ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED`, `-12`).
+     that finds no message memory is refused: `start_message` returns `NULL`,
+     the refusal is counted in that connection's `send_refused`
+     (`struct rocketnet_conditions_t`, below), and the connection stays up.
+     Message memory is the connection's send descriptor pool
+     (`send_queue_messages`) and send store (`send_message_buffer_bytes`). A
+     refusal changes nothing a later start depends on: a start succeeds again
+     once the receiver acknowledges messages and room returns
+     ([MESSAGES.md m1.7](../standard/MESSAGES.md#m1.7)).
    - The reliable window (`reliable_messages_in_flight`), the sent-packet ring
      (`packets_in_flight`) and the send budget (`send_kbps` /
      `per_client_send_kbps`) never refuse a start. A message they hold back
      waits in the send region with its descriptor and bytes until acks free
-     room, so messages that accumulate faster than ACKs arrive fill the
-     region and the next start that finds no room exhausts it.
-2. **How `can_send_message` prevents `MESSAGE_MEMORY_EXHAUSTED`**:
+     room, so messages that accumulate faster than ACKs arrive (for example
+     while the other side is unreachable) fill the region, and from then on
+     starts that find no room are refused.
+   - `MESSAGE_MEMORY_EXHAUSTED` (client state `-12`) no longer comes from a
+     send: it means the receive side broke its own bound (a delivery table
+     with no room), which a correct build does not reach.
+2. **How `can_send_message` predicts a refusal**:
    - `rocketnet_client_can_send_message(client, channel, reliability, max_bytes)`
      and `rocketnet_server_can_send_message(server, client_index, channel, reliability, max_bytes)`
      return `true` if `start_message` with the same `channel`, `reliability`
@@ -192,8 +193,9 @@ disconnects under load:
    - A `false` answer may be pessimistic for a small unreliable message:
      `start_message` can write it straight into a transport frame without
      message memory.
-   - When `can_send_message` returns `false`, the connection remains healthy
-     and connected.
+   - When `can_send_message` returns `false`, the connection remains
+     connected, and so it does if the start is made anyway: that start is
+     refused and counted.
 3. **Other reasons `start_message` returns `NULL` (and how they are counted)**:
    - **Endpoint or slot not connected**: calling `start_message` when the
      client is not `ROCKETNET_CLIENT_STATE_CONNECTED`, when the server is
@@ -231,6 +233,52 @@ disconnects under load:
      `send_message_buffer_bytes`, `reliable_messages_in_flight`, `packets_in_flight`,
      `packets_per_update`, `unreliable_messages_per_update`, and
      `send_kbps` / `per_client_send_kbps` ([`docs/LOAD.md`](LOAD.md)).
+
+<a id="a-game-policy-for-a-client-it-cannot-send-to"></a>
+
+5. **A game policy for a client it cannot send to**:
+   - The library refuses and reports; it does not end a connection for
+     refusals or for a stall shorter than the connection timeout (see
+     [surviving a network outage](USAGE.md#surviving-a-network-outage)). A game
+     that wants a stricter rule reads `struct rocketnet_conditions_t` with
+     `rocketnet_server_client_conditions` (per client) or
+     `rocketnet_client_conditions` and decides for itself.
+   - `send_refused` counts the starts refused on that connection for no room;
+     `seconds_since_progress` is the time since a reliable message was last
+     acknowledged (counted from the oldest waiting message's first send when
+     that is later), or `-1` when no reliable message is waiting;
+     `seconds_since_heard` is the time since the last packet accepted from the
+     other side, and `reliable_in_flight` the reliable message pieces from the
+     oldest unacknowledged to the newest sent. Both getters return `false`
+     and write zeroes when that connection is not connected.
+   - This server drops a client it has been unable to send to for 5 s: its
+     starts to that client are being refused and nothing it sent has been
+     acknowledged for 5 s.
+
+```c
+#include "rocketnet.h"
+
+/* refused_seen[i]: send_refused at the previous frame, reset to 0 when slot i gets a new connection */
+void drop_unreachable_clients( struct rocketnet_server_t * server, uint64_t * refused_seen, int max_clients )
+{
+    for ( int i = 0; i < max_clients; i++ )
+    {
+        struct rocketnet_conditions_t conditions;
+        if ( !rocketnet_server_client_conditions( server, i, &conditions, (int) sizeof( conditions ) ) )
+        {
+            refused_seen[i] = 0;
+            continue;
+        }
+        bool refusing = conditions.send_refused > refused_seen[i];
+        refused_seen[i] = conditions.send_refused;
+        if ( refusing && conditions.seconds_since_progress >= 5.0 )
+        {
+            rocketnet_server_disconnect_client( server, i );    /* the game's policy, not the library's */
+            refused_seen[i] = 0;
+        }
+    }
+}
+```
 
 <a id="54-receive-drain-misuse-message_not_received-and-batch-lifetime"></a>
 
@@ -277,7 +325,10 @@ disconnects under load:
      `CONFIG_MISMATCH`, `MESSAGE_MEMORY_EXHAUSTED`, `MESSAGE_NOT_RECEIVED`,
      `CONNECT_TOKEN_EXPIRED`, `INVALID_CONNECT_TOKEN`, `CONNECTION_TIMED_OUT`,
      `CONNECTION_RESPONSE_TIMED_OUT`, `CONNECTION_REQUEST_TIMED_OUT`,
-     `COOKIE_REQUEST_TIMED_OUT`, `CONNECTION_DENIED`),
+     `COOKIE_REQUEST_TIMED_OUT`, `CONNECTION_DENIED`; `RELIABLE_TIMED_OUT`
+     happens only when `reliable_message_timeout_ms` is set nonzero, and
+     `MESSAGE_MEMORY_EXHAUSTED` only from the receive side's broken bound, never
+     from a send),
      `rocketnet_client_state(client)` remains in that negative state across
      subsequent `rocketnet_client_update` calls until the caller explicitly
      calls `rocketnet_client_disconnect(client)` (which resets the state to

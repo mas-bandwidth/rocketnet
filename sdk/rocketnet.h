@@ -47,7 +47,7 @@
     /// The SDK version as text. Development builds use "dev" and 255 for each
     /// numeric component.
 
-    #define ROCKETNET_VERSION_FULL                         "v1.0.1"
+    #define ROCKETNET_VERSION_FULL                         "v1.1.0"
 
     /// The major component of the SDK version.
 
@@ -55,11 +55,11 @@
 
     /// The minor component of the SDK version.
 
-    #define ROCKETNET_VERSION_MINOR                        0
+    #define ROCKETNET_VERSION_MINOR                        1
 
     /// The patch component of the SDK version.
 
-    #define ROCKETNET_VERSION_PATCH                        1
+    #define ROCKETNET_VERSION_PATCH                        0
 
 #else // !ROCKETNET_DEV
 
@@ -576,12 +576,13 @@ enum rocketnet_disconnect_reason_t
 
     ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION = -2,
 
-    /// A reliable message went unacknowledged past reliable_message_timeout_ms.
+    /// A reliable message went unacknowledged past reliable_message_timeout_ms
+    /// (only when the game set it nonzero; the default 0 never ends this way).
 
     ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT = -3,
 
-    /// The connection's message memory had no room for a message it must not
-    /// drop.
+    /// The connection's receive-side message memory broke its invariant (a
+    /// delivery table full). A send never ends a connection.
 
     ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED = -4,
 
@@ -617,8 +618,8 @@ enum rocketnet_client_state_t
 
     ROCKETNET_CLIENT_STATE_MESSAGE_NOT_RECEIVED = -13,
 
-    /// The connection's message memory had no room for a message it must not
-    /// drop.
+    /// The connection's receive-side message memory broke its invariant (a
+    /// delivery table full). A send never ends a connection.
 
     ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED = -12,
 
@@ -631,7 +632,8 @@ enum rocketnet_client_state_t
 
     ROCKETNET_CLIENT_STATE_PROTOCOL_VIOLATION = -10,
 
-    /// A reliable message went unacknowledged past reliable_message_timeout_ms.
+    /// A reliable message went unacknowledged past reliable_message_timeout_ms
+    /// (only when the game set it nonzero; the default 0 never ends this way).
 
     ROCKETNET_CLIENT_STATE_RELIABLE_TIMED_OUT = -9,
 
@@ -935,6 +937,37 @@ struct rocketnet_server_client_stats_t
     /// Kilobits per second of sent packets this client acknowledged.
 
     double bandwidth_acked_kbps;
+};
+
+/// Network conditions of one connection, for the game's own policy
+/// (rocketnet_client_conditions, rocketnet_server_client_conditions). The
+/// library refuses and reports; it does not end a heard connection for these.
+/// Fields are only ever appended: pass sizeof your struct, and the library
+/// fills the fields that fit.
+
+struct rocketnet_conditions_t
+{
+    /// Seconds since the remote endpoint was last heard from; -1 when it has
+    /// not been heard from.
+
+    double seconds_since_heard;
+
+    /// Seconds since a reliable message was last acknowledged, counted from
+    /// the oldest waiting message's first send when that is later; -1 when
+    /// no reliable message is waiting for its acknowledgement.
+
+    double seconds_since_progress;
+
+    /// Reliable message pieces (a fragmented message counts once per piece)
+    /// from the oldest unacknowledged to the newest sent, acknowledged ones
+    /// above the oldest included; at most the window. Messages queued but
+    /// not yet sent are not counted.
+
+    uint64_t reliable_in_flight;
+
+    /// Starts refused on this connection because its send memory was full.
+
+    uint64_t send_refused;
 };
 
 /// Every public enum has the same size as int.
@@ -1317,7 +1350,7 @@ struct rocketnet_client_config_t
     /// public state, the negative ones included. NULL disables the callback.
     /// It runs on the caller thread at the end of connect, update,
     /// disconnect (the one an early destroy makes included), and a start
-    /// message whose memory exhaustion ends the connection. Do not call client
+    /// message that ends the connection. Do not call client
     /// functions from it: a call that changes the client (connect, destroy,
     /// update, send_packets, disconnect, the message, receipt and send rate
     /// calls, network_simulator) made from it is refused at once, leaves the
@@ -1431,11 +1464,14 @@ struct rocketnet_client_config_t
 
     int message_resend_delay_max_ms;
 
-    /// ROCKETNET_CLIENT_RELIABLE_MESSAGE_TIMEOUT_MS disconnects if a reliable
-    /// message remains unacknowledged this long. Units are milliseconds.
-    /// Range is 1000 .. 600000, and at least four times
-    /// message_resend_delay_initial_ms (8000 at the default). Default is
-    /// 10000.
+    /// ROCKETNET_CLIENT_RELIABLE_MESSAGE_TIMEOUT_MS, when nonzero, disconnects
+    /// with RELIABLE_TIMED_OUT once the oldest reliable message has waited
+    /// this long since it was first sent, outage or not. Units are
+    /// milliseconds. 0 turns it off: a connection is then ended only by
+    /// silence for the connect token's timeout_seconds, and an outage shorter
+    /// than that is survived. A nonzero value is 1000 .. 600000, and at least
+    /// four times message_resend_delay_initial_ms (8000 at the default);
+    /// choose it well above the token's timeout. Default is 0 (off).
 
     int reliable_message_timeout_ms;
 
@@ -1668,11 +1704,14 @@ struct rocketnet_server_config_t
 
     int message_resend_delay_max_ms;
 
-    /// ROCKETNET_SERVER_RELIABLE_MESSAGE_TIMEOUT_MS disconnects if a reliable
-    /// message remains unacknowledged this long. Units are milliseconds.
-    /// Range is 1000 .. 600000, and at least four times
-    /// message_resend_delay_initial_ms (8000 at the default). Default is
-    /// 10000.
+    /// ROCKETNET_SERVER_RELIABLE_MESSAGE_TIMEOUT_MS, when nonzero, disconnects
+    /// the client with RELIABLE_TIMED_OUT once the oldest reliable message to
+    /// it has waited this long since it was first sent, outage or not. Units
+    /// are milliseconds. 0 turns it off: a client is then ended only by
+    /// silence for the connection timeout, and an outage shorter than that is
+    /// survived. A nonzero value is 1000 .. 600000, and at least four times
+    /// message_resend_delay_initial_ms (8000 at the default); choose it well
+    /// above the connection timeout. Default is 0 (off).
 
     int reliable_message_timeout_ms;
 
@@ -1771,8 +1810,8 @@ struct rocketnet_server_config_t
 ///
 /// Reliable messages wait for send budget. Unreliable messages over budget are
 /// dropped and counted in messages_dropped_over_budget.
-/// Running out of message memory ends the connection with
-/// MESSAGE_MEMORY_EXHAUSTED. Ask first with rocketnet_client_can_send_message
+/// A start that finds no message memory is refused (NULL) and counted; the
+/// connection stays up. Ask first with rocketnet_client_can_send_message
 /// or rocketnet_server_can_send_message.
 
 struct rocketnet_message_batch_t;
@@ -2472,8 +2511,8 @@ ROCKETNET_EXPORT const char * rocketnet_client_transport_name( const struct rock
 ///
 /// Needs CONNECTED. A message already open or a bad argument is refused with
 /// NULL. Any send (reliable, or unreliable that finds no room in the send
-/// region) that finds no message memory ends the connection with
-/// MESSAGE_MEMORY_EXHAUSTED and returns NULL. Thread: not thread-safe;
+/// region) that finds no message memory is refused: it returns NULL, is
+/// counted, and the connection stays up. Thread: not thread-safe;
 /// the caller owns the client one thread at a time.
 ///
 /// @param client The client. NULL counts as API misuse and returns NULL.
@@ -2521,7 +2560,9 @@ ROCKETNET_EXPORT void rocketnet_client_abort_message( struct rocketnet_client_t 
 ///
 /// Ask before a start you cannot afford to lose. Only start and update take
 /// room, so a true answer holds until the next of either. Room returns as the
-/// server acknowledges messages.
+/// server acknowledges messages. A false answer never ends the connection, and
+/// neither does the start it predicts: that start is refused and counted
+/// (rocketnet_conditions_t send_refused), and the game decides what to do.
 ///
 /// For valid arguments, changes no state, counts nothing and allocates nothing.
 /// Usually constant time; a message that needs a send store chunk scans that
@@ -2621,6 +2662,12 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_set_send_kbps( struct 
 /// nothing.
 
 ROCKETNET_EXPORT void rocketnet_client_stats( const struct rocketnet_client_t * client, struct rocketnet_client_stats_t * stats );
+
+/// Reads the client's network conditions (rocketnet_conditions_t). Zeroes
+/// conditions and returns false while not connected. Thread: not
+/// thread-safe; the caller owns the client one thread at a time.
+
+ROCKETNET_EXPORT bool rocketnet_client_conditions( const struct rocketnet_client_t * client, struct rocketnet_conditions_t * conditions, int conditions_bytes );
 
 /// Server
 
@@ -3106,8 +3153,8 @@ ROCKETNET_EXPORT const char * rocketnet_disconnect_reason_name( enum rocketnet_d
 /// Needs a running server and a connected client in the slot. A message
 /// already open or a bad argument is refused with NULL. Any send (reliable,
 /// or unreliable that finds no room in the send region) that finds no
-/// message memory disconnects that client with
-/// ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED and returns NULL.
+/// message memory is refused: it returns NULL, is counted for that client,
+/// and the connection stays up.
 /// Thread: not thread-safe; the caller owns the
 /// server one thread at a time.
 ///
@@ -3247,6 +3294,15 @@ ROCKETNET_EXPORT void rocketnet_server_stats( const struct rocketnet_server_t * 
 /// nothing.
 
 ROCKETNET_EXPORT void rocketnet_server_client_stats( const struct rocketnet_server_t * server, int client_index, struct rocketnet_server_client_stats_t * stats );
+
+/// Reads one client's network conditions (rocketnet_conditions_t). Zeroes
+/// conditions and returns false for a slot without a connected client.
+/// Thread: not thread-safe; the caller owns the server one thread at a time.
+///
+/// @param conditions_bytes sizeof( struct rocketnet_conditions_t ) as the
+/// caller was built.
+
+ROCKETNET_EXPORT bool rocketnet_server_client_conditions( const struct rocketnet_server_t * server, int client_index, struct rocketnet_conditions_t * conditions, int conditions_bytes );
 
 /// Receiving messages
 

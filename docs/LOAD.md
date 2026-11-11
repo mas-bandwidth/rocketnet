@@ -199,13 +199,13 @@ packets and 4 unreliable messages per update, 100 sequenced messages held, and
 128 receipts. Its
 256-kbps per-client send budget is 2.13 times the roughly 120-kbps wire rate
 of one 1,500-byte packet per 100 ms in each direction (10 * 1,500 * 8 =
-120,000 bits/s). The reliable timeout stays at its 10,000 ms default. On the Linux x86-64
+120,000 bits/s). The reliable timeout stays at its default, 0 (off). On the Linux x86-64
 Release development build (`ROCKETNET_DEV=1`, io_uring and XDP built) described
 in the tables below, at `max_clients = 1000`
-the server's `rocketnet_server_required_memory` is 3,111,628,715 bytes and the
-client's `rocketnet_client_required_memory` is 15,186,018 bytes. Both include
+the server's `rocketnet_server_required_memory` is 3,111,668,715 bytes and the
+client's `rocketnet_client_required_memory` is 15,186,082 bytes. Both include
 the planned lifecycle allocator peak plus the 1 MiB caller-allocator allowance.
-These v1.0.1 queries include type-9 removal, seeded RTT tracking, resend
+These v1.1.0 queries include type-9 removal, seeded RTT tracking, resend
 stamp removal, the public API allowance, and buffers sized from runtime
 configuration with the 512-client allocation floor. Earlier Linux and Windows
 receipts in this guide predated some of those changes and are not current sizing
@@ -297,7 +297,7 @@ universal preset suitable for every game:
   packets in flight, 256 packets and 1,024 unreliable messages per update,
   a 1,000-kbps client send budget, and a 10,000-kbps server per-client send
   budget. The server budget produces an `18,878,016`-byte (18.00 MiB) message
-  region per connection and a `21,028,236,715`-byte
+  region per connection and a `21,028,276,715`-byte
   (19.58 GiB, `ROCKETNET_DEV=1`) worst-case server allocator footprint at
   `max_clients = 1000`. A game with small messages, fewer channels, or smaller
   match sizes pays for unused per-client arena space if it leaves every field
@@ -312,9 +312,8 @@ universal preset suitable for every game:
   per-client message region to `963,136` bytes (0.92 MiB), but any game that
   sends messages larger than 1,415 bytes, emits more than 4 unreliable messages
   or 4 packets per `update` tick, or bursts above 256 kbps per client will hit
-  a refused send, `ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED` /
-  `ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED`, or
-  `messages_dropped_over_budget`.
+  a refused send (`start_message` returns `NULL`, counted in `send_refused`;
+  the connection stays up) or `messages_dropped_over_budget`.
 
 Size a game's configuration by mapping its concrete simulation and traffic
 requirements to each configuration group:
@@ -332,8 +331,8 @@ requirements to each configuration group:
   server instance (for example `16` for a squad server, `64` for an arena
   match, or `100` for a survival match). Lowering `max_clients` from `1000` to
   `64` on the `default` profile reduces `rocketnet_server_required_memory` from
-  `21,028,236,715` bytes (19.58 GiB) to `3,055,770,395` bytes (2.85 GiB) with
-  unpinned `transport = NULL` (`"auto"`), or to `1,454,600,806` bytes
+  `21,028,276,715` bytes (19.58 GiB) to `3,055,772,955` bytes (2.85 GiB) with
+  unpinned `transport = NULL` (`"auto"`), or to `1,454,603,366` bytes
   (1.35 GiB) with `transport = "gso"`.
 - **Compile-time `ROCKETNET_MAX_CLIENTS`**: the most clients a config may ask
   for (default `1000`, supported build range `512 .. 32768`). Server buffers
@@ -402,7 +401,7 @@ requirements to each configuration group:
   (`ceil(kbps * 125 * message_resend_delay_max_ms / 1000)` bytes) to `S`,
   `Q`, and `SR` so a rate-limited link does not run out of slab blocks while
   waiting to resend. The default maximum resend delay is 2,000 ms; the
-  separate `reliable_message_timeout_ms` default is 10,000 ms.
+  separate `reliable_message_timeout_ms` default is 0 (off).
 
 ### 4. Queues, reliable windows, per-update caps, sequenced holds, and receipts (`send_queue_messages`, `reliable_messages_in_flight`, `packets_in_flight`, `packets_per_update`, `unreliable_messages_per_update`, `sequenced_messages_held`, `max_message_receipts`)
 
@@ -438,14 +437,18 @@ requirements to each configuration group:
      directly, set both `client_send_kbps` and `server_send_kbps` on
      `rocketnet_message_config_t` to that endpoint's resolved kbps so it matches
      `rn_message_object_required_bytes`.)
-- **`reliable_message_timeout_ms`** (range `1000 .. 600000`, default `10000`): disconnects
-  a connection with `ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT` when a
-  reliable message remains unacknowledged past this deadline.
+- **`reliable_message_timeout_ms`** (`0`, or `1000 .. 600000`; default `0`, off):
+  when nonzero, disconnects a connection with
+  `ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT` once the oldest reliable
+  message has waited this long since its first send, outage or not. Leave it 0
+  to survive outages shorter than the connection timeout
+  ([surviving a network outage](USAGE.md#surviving-a-network-outage)); if you
+  set it, choose a value well above the connection timeout.
 - **Cross-field rules** (each refused at create with `CONFIG_OUT_OF_RANGE`,
   never clamped): `message_resend_delay_min_ms` is at most
   `message_resend_delay_max_ms`; `message_resend_delay_initial_ms` is from
-  `message_resend_delay_min_ms` to `message_resend_delay_max_ms`; and
-  `reliable_message_timeout_ms` is at least four times
+  `message_resend_delay_min_ms` to `message_resend_delay_max_ms`; and a
+  nonzero `reliable_message_timeout_ms` is at least four times
   `message_resend_delay_initial_ms`. At the default initial delay of `2000`
   that makes `8000` the smallest timeout, so `1000` is legal only with an
   initial delay of `250` or less.
@@ -468,8 +471,8 @@ requirements to each configuration group:
     `rocketnet_server_required_memory` and `rocketnet_server_create`. At
     `max_clients = 64` (`default` profile, `ROCKETNET_DEV=1`), pinning
     `transport = "gso"` reduces `rocketnet_server_required_memory` from
-    `3,055,770,395` bytes (2.85 GiB) to `1,454,600,806` bytes (1.35 GiB), and
-    pinning `transport = "portable"` reduces it to `1,280,301,151` bytes
+    `3,055,772,955` bytes (2.85 GiB) to `1,454,603,366` bytes (1.35 GiB), and
+    pinning `transport = "portable"` reduces it to `1,280,303,711` bytes
     (1.19 GiB).
 - **AF_XDP queues, CPU count, and compile-time cap (`num_xdp_queues`, `num_os_cpus`, `ROCKETNET_XDP_MEMORY_MIB`)**:
   - Preserve the pinned AF_XDP geometry: `ROCKETNET_XDP_FRAME_SIZE = 4096`,
@@ -510,7 +513,7 @@ requirements to each configuration group:
 
 ### Platform, build, and allocator assumptions
 
-Tables 1–3 and the plan receipts below are v1.0.1's, regenerated on 2026-11-11
+Tables 1–3 and the plan receipts below are v1.1.0's, regenerated on 2026-11-11
 on **Linux x86-64** (64-bit LP64, GCC 15.2.0, Release, `sizeof(void*) = 8`,
 4,096-byte page size).
 Every cell of Tables 1 and 2 is a call of the compiled public planners
@@ -592,8 +595,8 @@ the config; the command-line load tool does not supply one.
 Sample `LOAD_PLAN_ONLY=1` receipts on Linux x86-64 (`ROCKETNET_DEV=1`):
 
 ```text
-load_plan: clients=1000 profile=default client_public_required_bytes=22149218 server_public_required_bytes=21028236715 total_public_required_bytes=43177454715 public_memory_scope=lifecycle_allocator_peak transport_selection=unresolved_before_start term_status_code=0 reason=none verdict=PASS
-load_plan: clients=1000 profile=light client_public_required_bytes=15186018 server_public_required_bytes=3111628715 total_public_required_bytes=18297646715 public_memory_scope=lifecycle_allocator_peak transport_selection=unresolved_before_start term_status_code=0 reason=none verdict=PASS
+load_plan: clients=1000 profile=default client_public_required_bytes=22149282 server_public_required_bytes=21028276715 total_public_required_bytes=43177558715 public_memory_scope=lifecycle_allocator_peak transport_selection=unresolved_before_start term_status_code=0 reason=none verdict=PASS
+load_plan: clients=1000 profile=light client_public_required_bytes=15186082 server_public_required_bytes=3111668715 total_public_required_bytes=18297750715 public_memory_scope=lifecycle_allocator_peak transport_selection=unresolved_before_start term_status_code=0 reason=none verdict=PASS
 ```
 
 ### Named configuration examples
@@ -610,7 +613,8 @@ match:
   `unreliable_messages_per_update = 64` (`Du`), `sequenced_messages_held = 8`
   (`Ru`), `max_message_receipts = 256` (`Rq`)
 - `send_kbps = 1000`, `per_client_send_kbps = 1000`,
-  `reliable_message_timeout_ms = 10000`.
+  `reliable_message_timeout_ms = 0` (the default, off; the reliable timeout
+  enters no memory figure).
 
 #### Table 1: Client `rocketnet_client_required_memory` (Linux x86-64)
 
@@ -619,14 +623,14 @@ match:
 
 | Client profile | `transport` setting | Per-connection message region (`conn_bytes`) | `ROCKETNET_DEV=1` required bytes | `ROCKETNET_DEV=0` required bytes | Notes |
 | --- | --- | ---: | ---: | ---: | --- |
-| `default` | `NULL` / `"auto"` or `"gso"` | `7,924,608` (7.56 MiB) | `22,149,218` (21.12 MiB) | `21,364,310` (20.37 MiB) | Client `send_kbps = 1000`; auto ladder `gso -> portable`, sized for `gso` (`11,067,211` dev transport bytes) |
-| `default` | `"portable"` | `7,924,608` (7.56 MiB) | `21,998,962` (20.98 MiB) | `21,214,054` (20.23 MiB) | Single UDP socket, one client I/O worker |
-| `default` | `"loopback"` | `7,924,608` (7.56 MiB) | `21,997,977` (20.98 MiB) | `21,213,069` (20.23 MiB) | Caller-owned hub and its datagram queues are additional; see the note below |
-| `light` | `NULL` / `"auto"` or `"gso"` | `963,136` (0.92 MiB) | `15,186,018` (14.48 MiB) | `14,401,110` (13.73 MiB) | `max_message_bytes = 1415`, `send_kbps = 256` |
-| `light` | `"portable"` | `963,136` (0.92 MiB) | `15,035,762` (14.34 MiB) | `14,250,854` (13.59 MiB) | Pinned portable UDP |
-| `light` | `"loopback"` | `963,136` (0.92 MiB) | `15,034,777` (14.34 MiB) | `14,249,869` (13.59 MiB) | Caller-owned hub and its datagram queues are additional; see the note below |
-| `arena-64` | `NULL` / `"auto"` or `"gso"` | `1,479,488` (1.41 MiB) | `15,702,178` (14.97 MiB) | `14,917,270` (14.23 MiB) | 4 channels, 16 KiB max msg, `W=64`, `P=128` |
-| `arena-64` | `"portable"` | `1,479,488` (1.41 MiB) | `15,551,922` (14.83 MiB) | `14,767,014` (14.08 MiB) | Pinned portable UDP |
+| `default` | `NULL` / `"auto"` or `"gso"` | `7,924,608` (7.56 MiB) | `22,149,282` (21.12 MiB) | `21,364,374` (20.37 MiB) | Client `send_kbps = 1000`; auto ladder `gso -> portable`, sized for `gso` (`11,067,211` dev transport bytes) |
+| `default` | `"portable"` | `7,924,608` (7.56 MiB) | `21,999,026` (20.98 MiB) | `21,214,118` (20.23 MiB) | Single UDP socket, one client I/O worker |
+| `default` | `"loopback"` | `7,924,608` (7.56 MiB) | `21,998,041` (20.98 MiB) | `21,213,133` (20.23 MiB) | Caller-owned hub and its datagram queues are additional; see the note below |
+| `light` | `NULL` / `"auto"` or `"gso"` | `963,136` (0.92 MiB) | `15,186,082` (14.48 MiB) | `14,401,174` (13.73 MiB) | `max_message_bytes = 1415`, `send_kbps = 256` |
+| `light` | `"portable"` | `963,136` (0.92 MiB) | `15,035,826` (14.34 MiB) | `14,250,918` (13.59 MiB) | Pinned portable UDP |
+| `light` | `"loopback"` | `963,136` (0.92 MiB) | `15,034,841` (14.34 MiB) | `14,249,933` (13.59 MiB) | Caller-owned hub and its datagram queues are additional; see the note below |
+| `arena-64` | `NULL` / `"auto"` or `"gso"` | `1,479,488` (1.41 MiB) | `15,702,242` (14.97 MiB) | `14,917,334` (14.23 MiB) | 4 channels, 16 KiB max msg, `W=64`, `P=128` |
+| `arena-64` | `"portable"` | `1,479,488` (1.41 MiB) | `15,551,986` (14.83 MiB) | `14,767,078` (14.08 MiB) | Pinned portable UDP |
 
 #### Table 2: Server `rocketnet_server_required_memory` across client counts and transports (Linux x86-64)
 
@@ -635,38 +639,38 @@ match:
 
 | Server profile | `max_clients` | `transport` setting | Per-client message region (`conn_bytes`) | `ROCKETNET_DEV=1` required bytes | `ROCKETNET_DEV=0` required bytes |
 | --- | ---: | --- | ---: | ---: | ---: |
-| `default` | `1` | `NULL` / `"auto"` (includes `xdp`) | `18,878,016` (18.00 MiB) | `1,847,786,749` (1.72 GiB) | `1,841,525,409` (1.72 GiB) |
-| `default` | `2` | `NULL` / `"auto"` (includes `xdp`) | `18,878,016` (18.00 MiB) | `1,866,961,055` (1.74 GiB) | `1,860,699,587` (1.73 GiB) |
-| `default` | `64` | `NULL` / `"auto"` (includes `xdp`) | `18,878,016` (18.00 MiB) | `3,055,770,395` (2.85 GiB) | `3,049,500,991` (2.84 GiB) |
-| `default` | `64` | `"io_uring"` | `18,878,016` (18.00 MiB) | `2,418,421,907` (2.25 GiB) | `2,411,886,079` (2.25 GiB) |
-| `default` | `64` | `"gso"` | `18,878,016` (18.00 MiB) | `1,454,600,806` (1.35 GiB) | `1,448,331,362` (1.35 GiB) |
-| `default` | `64` | `"portable"` | `18,878,016` (18.00 MiB) | `1,280,301,151` (1.19 GiB) | `1,274,031,715` (1.19 GiB) |
-| `default` | `64` | `"loopback"` | `18,878,016` (18.00 MiB) | `1,271,157,239` (1.18 GiB) | `1,264,887,843` (1.18 GiB) |
-| `default` | `100` | `NULL` / `"auto"` (includes `xdp`) | `18,878,016` (18.00 MiB) | `3,746,046,947` (3.49 GiB) | `3,739,772,935` (3.48 GiB) |
-| `default` | `250` | `NULL` / `"auto"` (includes `xdp`) | `18,878,016` (18.00 MiB) | `6,622,199,055` (6.17 GiB) | `6,615,905,843` (6.16 GiB) |
-| `default` | `500` | `NULL` / `"auto"` (includes `xdp`) | `18,878,016` (18.00 MiB) | `11,415,785,731` (10.63 GiB) | `11,409,460,519` (10.63 GiB) |
-| `default` | `1000` | `NULL` / `"auto"` or `"xdp"` | `18,878,016` (18.00 MiB) | `21,028,236,715` (19.58 GiB) | `21,021,847,503` (19.58 GiB) |
-| `default` | `1000` | `"io_uring"` | `18,878,016` (18.00 MiB) | `20,407,894,147` (19.01 GiB) | `20,401,238,511` (19.00 GiB) |
-| `default` | `1000` | `"gso"` | `18,878,016` (18.00 MiB) | `19,426,904,662` (18.09 GiB) | `19,420,515,410` (18.09 GiB) |
-| `default` | `1000` | `"portable"` | `18,878,016` (18.00 MiB) | `19,386,060,879` (18.05 GiB) | `19,379,671,635` (18.05 GiB) |
-| `default` | `1000` | `"loopback"` | `18,878,016` (18.00 MiB) | `19,243,211,239` (17.92 GiB) | `19,236,822,035` (17.92 GiB) |
-| `light` | `1` | `NULL` / `"auto"` (includes `xdp`) | `963,136` (0.92 MiB) | `1,829,870,141` (1.70 GiB) | `1,823,608,801` (1.70 GiB) |
-| `light` | `64` | `NULL` / `"auto"` or `"xdp"` | `963,136` (0.92 MiB) | `1,909,107,483` (1.78 GiB) | `1,902,838,079` (1.77 GiB) |
-| `light` | `64` | `"io_uring"` | `963,136` (0.92 MiB) | `1,271,758,995` (1.18 GiB) | `1,265,223,167` (1.18 GiB) |
-| `light` | `64` | `"gso"` | `963,136` (0.92 MiB) | `307,937,894` (293.67 MiB) | `301,668,450` (287.69 MiB) |
-| `light` | `64` | `"portable"` | `963,136` (0.92 MiB) | `133,638,239` (127.45 MiB) | `127,368,803` (121.47 MiB) |
-| `light` | `64` | `"loopback"` | `963,136` (0.92 MiB) | `124,494,327` (118.73 MiB) | `118,224,931` (112.75 MiB) |
-| `light` | `100` | `NULL` / `"auto"` (includes `xdp`) | `963,136` (0.92 MiB) | `1,954,386,147` (1.82 GiB) | `1,948,112,135` (1.81 GiB) |
-| `light` | `250` | `NULL` / `"auto"` (includes `xdp`) | `963,136` (0.92 MiB) | `2,143,047,055` (2.00 GiB) | `2,136,753,843` (1.99 GiB) |
-| `light` | `500` | `NULL` / `"auto"` (includes `xdp`) | `963,136` (0.92 MiB) | `2,457,481,731` (2.29 GiB) | `2,451,156,519` (2.28 GiB) |
-| `light` | `1000` | `NULL` / `"auto"` or `"xdp"` | `963,136` (0.92 MiB) | `3,111,628,715` (2.90 GiB) | `3,105,239,503` (2.89 GiB) |
-| `light` | `1000` | `"io_uring"` | `963,136` (0.92 MiB) | `2,491,286,147` (2.32 GiB) | `2,484,630,511` (2.31 GiB) |
-| `light` | `1000` | `"gso"` | `963,136` (0.92 MiB) | `1,510,296,662` (1.41 GiB) | `1,503,907,410` (1.40 GiB) |
-| `light` | `1000` | `"portable"` | `963,136` (0.92 MiB) | `1,469,452,879` (1.37 GiB) | `1,463,063,635` (1.36 GiB) |
-| `light` | `1000` | `"loopback"` | `963,136` (0.92 MiB) | `1,326,603,239` (1.24 GiB) | `1,320,214,035` (1.23 GiB) |
-| `arena-64` | `64` | `NULL` / `"auto"` (includes `xdp`) | `1,479,488` (1.41 MiB) | `1,942,141,723` (1.81 GiB) | `1,935,872,319` (1.80 GiB) |
-| `arena-64` | `64` | `"gso"` | `1,479,488` (1.41 MiB) | `340,972,134` (325.18 MiB) | `334,702,690` (319.20 MiB) |
-| `arena-64` | `64` | `"portable"` | `1,479,488` (1.41 MiB) | `166,672,479` (158.95 MiB) | `160,403,043` (152.97 MiB) |
+| `default` | `1` | `NULL` / `"auto"` (includes `xdp`) | `18,878,016` (18.00 MiB) | `1,847,786,813` (1.72 GiB) | `1,841,525,473` (1.72 GiB) |
+| `default` | `2` | `NULL` / `"auto"` (includes `xdp`) | `18,878,016` (18.00 MiB) | `1,866,961,183` (1.74 GiB) | `1,860,699,715` (1.73 GiB) |
+| `default` | `64` | `NULL` / `"auto"` (includes `xdp`) | `18,878,016` (18.00 MiB) | `3,055,772,955` (2.85 GiB) | `3,049,503,551` (2.84 GiB) |
+| `default` | `64` | `"io_uring"` | `18,878,016` (18.00 MiB) | `2,418,424,467` (2.25 GiB) | `2,411,888,639` (2.25 GiB) |
+| `default` | `64` | `"gso"` | `18,878,016` (18.00 MiB) | `1,454,603,366` (1.35 GiB) | `1,448,333,922` (1.35 GiB) |
+| `default` | `64` | `"portable"` | `18,878,016` (18.00 MiB) | `1,280,303,711` (1.19 GiB) | `1,274,034,275` (1.19 GiB) |
+| `default` | `64` | `"loopback"` | `18,878,016` (18.00 MiB) | `1,271,159,799` (1.18 GiB) | `1,264,890,403` (1.18 GiB) |
+| `default` | `100` | `NULL` / `"auto"` (includes `xdp`) | `18,878,016` (18.00 MiB) | `3,746,050,979` (3.49 GiB) | `3,739,776,967` (3.48 GiB) |
+| `default` | `250` | `NULL` / `"auto"` (includes `xdp`) | `18,878,016` (18.00 MiB) | `6,622,209,103` (6.17 GiB) | `6,615,915,891` (6.16 GiB) |
+| `default` | `500` | `NULL` / `"auto"` (includes `xdp`) | `18,878,016` (18.00 MiB) | `11,415,805,763` (10.63 GiB) | `11,409,480,551` (10.63 GiB) |
+| `default` | `1000` | `NULL` / `"auto"` or `"xdp"` | `18,878,016` (18.00 MiB) | `21,028,276,715` (19.58 GiB) | `21,021,887,503` (19.58 GiB) |
+| `default` | `1000` | `"io_uring"` | `18,878,016` (18.00 MiB) | `20,407,934,147` (19.01 GiB) | `20,401,278,511` (19.00 GiB) |
+| `default` | `1000` | `"gso"` | `18,878,016` (18.00 MiB) | `19,426,944,662` (18.09 GiB) | `19,420,555,410` (18.09 GiB) |
+| `default` | `1000` | `"portable"` | `18,878,016` (18.00 MiB) | `19,386,100,879` (18.05 GiB) | `19,379,711,635` (18.05 GiB) |
+| `default` | `1000` | `"loopback"` | `18,878,016` (18.00 MiB) | `19,243,251,239` (17.92 GiB) | `19,236,862,035` (17.92 GiB) |
+| `light` | `1` | `NULL` / `"auto"` (includes `xdp`) | `963,136` (0.92 MiB) | `1,829,870,205` (1.70 GiB) | `1,823,608,865` (1.70 GiB) |
+| `light` | `64` | `NULL` / `"auto"` or `"xdp"` | `963,136` (0.92 MiB) | `1,909,110,043` (1.78 GiB) | `1,902,840,639` (1.77 GiB) |
+| `light` | `64` | `"io_uring"` | `963,136` (0.92 MiB) | `1,271,761,555` (1.18 GiB) | `1,265,225,727` (1.18 GiB) |
+| `light` | `64` | `"gso"` | `963,136` (0.92 MiB) | `307,940,454` (293.67 MiB) | `301,671,010` (287.70 MiB) |
+| `light` | `64` | `"portable"` | `963,136` (0.92 MiB) | `133,640,799` (127.45 MiB) | `127,371,363` (121.47 MiB) |
+| `light` | `64` | `"loopback"` | `963,136` (0.92 MiB) | `124,496,887` (118.73 MiB) | `118,227,491` (112.75 MiB) |
+| `light` | `100` | `NULL` / `"auto"` (includes `xdp`) | `963,136` (0.92 MiB) | `1,954,390,179` (1.82 GiB) | `1,948,116,167` (1.81 GiB) |
+| `light` | `250` | `NULL` / `"auto"` (includes `xdp`) | `963,136` (0.92 MiB) | `2,143,057,103` (2.00 GiB) | `2,136,763,891` (1.99 GiB) |
+| `light` | `500` | `NULL` / `"auto"` (includes `xdp`) | `963,136` (0.92 MiB) | `2,457,501,763` (2.29 GiB) | `2,451,176,551` (2.28 GiB) |
+| `light` | `1000` | `NULL` / `"auto"` or `"xdp"` | `963,136` (0.92 MiB) | `3,111,668,715` (2.90 GiB) | `3,105,279,503` (2.89 GiB) |
+| `light` | `1000` | `"io_uring"` | `963,136` (0.92 MiB) | `2,491,326,147` (2.32 GiB) | `2,484,670,511` (2.31 GiB) |
+| `light` | `1000` | `"gso"` | `963,136` (0.92 MiB) | `1,510,336,662` (1.41 GiB) | `1,503,947,410` (1.40 GiB) |
+| `light` | `1000` | `"portable"` | `963,136` (0.92 MiB) | `1,469,492,879` (1.37 GiB) | `1,463,103,635` (1.36 GiB) |
+| `light` | `1000` | `"loopback"` | `963,136` (0.92 MiB) | `1,326,643,239` (1.24 GiB) | `1,320,254,035` (1.23 GiB) |
+| `arena-64` | `64` | `NULL` / `"auto"` (includes `xdp`) | `1,479,488` (1.41 MiB) | `1,942,144,283` (1.81 GiB) | `1,935,874,879` (1.80 GiB) |
+| `arena-64` | `64` | `"gso"` | `1,479,488` (1.41 MiB) | `340,974,694` (325.18 MiB) | `334,705,250` (319.20 MiB) |
+| `arena-64` | `64` | `"portable"` | `1,479,488` (1.41 MiB) | `166,675,039` (158.95 MiB) | `160,405,603` (152.97 MiB) |
 
 For `loopback`, these are endpoint plans only: the separately allocated,
 caller-owned hub and all its datagram queues must be budgeted once in addition.
@@ -710,6 +714,25 @@ The `88Q` term is `72Q` send descriptors plus the `16Q` unreliable ring.
 | Send spans | `SR` | `3,581,120` | `207,296` | `318,848` |
 | Alignment padding | to 64 B | `32` | `96` | `168` |
 | **Total `connection_bytes`** | — | **`18,878,016` (18.00 MiB)** | **`963,136` (0.92 MiB)** | **`1,479,488` (1.41 MiB)** |
+
+#### Sizing the send side for an outage
+
+While the other side receives nothing, every message a game starts waits in
+the send region: the reliable window, the sent-packet ring and the send budget
+hold messages back but never refuse a start. To keep starting messages through
+an outage shorter than the connection timeout T (the connect token's
+`timeout_seconds`) without a refusal, size the send side for the send rate
+times T: `Q` at least the messages started per second times T, and `S` (with
+`SR` for messages above one 1,152-byte chunk) at least what those messages take
+in their slab classes over T. The light profile is sized this way for its
+workload: 10 messages per second over the default 10 s timeout is 100
+messages, inside its `Q` of 128. Past that size a start is refused
+(`start_message` returns `NULL` and the connection's `send_refused` counts it)
+and the connection stays up; it is not ended. See
+[surviving a network outage](USAGE.md#surviving-a-network-outage) for what
+the connection keeps through an outage and
+[refused sends](ERRORS-AND-LOGGING.md#a-game-policy-for-a-client-it-cannot-send-to)
+for a game policy on refusals.
 
 ### Deterministic planner values vs. measured OS and process memory
 

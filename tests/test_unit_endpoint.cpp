@@ -1258,6 +1258,156 @@ static void test_endpoint_unreliable_tombstone_never_revives_after_ticket_wrap()
     rn_arena_destroy( arena );
 }
 
+// ---------------------------------------------------------------------------
+// the reliable timeout off by default (standard/MESSAGES.md m9.3, 10.3): a
+// heard connection whose reliable stream never progresses never ends, and
+// the wait for the remote CONFIG has no clock. Opted in, both end with
+// RELIABLE_TIMED_OUT at the configured value, as in v1.0.
+// ---------------------------------------------------------------------------
+
+// One update of a lone endpoint whose every packet is lost. The transport
+// hears the remote end: it acks keep_alive_id, a packet that carried no
+// reliable number (the sent map never held it). Returns the packets written.
+static int ep_lone_update( ep_side_t * side, double now, int transport_connected, uint64_t keep_alive_id )
+{
+    rn_endpoint_t * endpoint = &side->endpoint;
+
+    rn_endpoint_begin_update( endpoint );
+    rn_endpoint_on_acked( endpoint, keep_alive_id, now );
+    rn_endpoint_tick( endpoint, now );
+    rn_endpoint_config_tick( endpoint, transport_connected, now );
+
+    int written = 0;
+    for ( ;; )
+    {
+        const int request = rn_endpoint_next_packet_bytes( endpoint, now );
+        if ( request == 0 )
+        {
+            break;
+        }
+        check( request > 0 && request <= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
+
+        uint8_t frame[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
+        const uint64_t id = side->next_packet_id++;
+        const int bytes = rn_endpoint_write_packet( endpoint, frame, (int) sizeof( frame ), id, now );
+        if ( bytes == 0 )
+        {
+            continue;
+        }
+        check( bytes > 0 && bytes <= request );
+        rn_endpoint_packet_sent( endpoint, id, rocketnet_send_budget_wire_bytes( ROCKETNET_ACK_BLOCK_MIN_BYTES, bytes ), now );
+        written++;
+    }
+
+    return written;
+}
+
+#define EP_KEEP_ALIVE_IDS ( (uint64_t) 1 << 40 )    // far above any id the endpoint writes
+
+static void test_endpoint_default_never_times_out_a_heard_stream()
+{
+    rocketnet_message_config_t config;
+    ep_config( &config );
+    config.reliable_message_timeout_ms = 0;                     // the default: off
+    check( rocketnet_message_validate_config( &config ) == 1 );
+
+    ep_side_t * a = new ep_side_t();
+    ep_side_create( a, &config );
+
+    // the endpoint's CONFIG is its one reliable number, and nothing ever
+    // acknowledges it; the transport is connected and hears the other end
+    // every update. 2800 updates of 0.25 s run 700 s, past 10 s and 600 s.
+
+    const double t0 = 1000.0;
+    rn_endpoint_reset( &a->endpoint, t0 );
+    rn_endpoint_announce_config( &a->endpoint, t0 );
+
+    int written = 0;
+    for ( int i = 0; i <= 2800; i++ )
+    {
+        const double now = t0 + i * 0.25;
+        written += ep_lone_update( a, now, 1, EP_KEEP_ALIVE_IDS + (uint64_t) i );
+        check( rn_endpoint_error( &a->endpoint ) == ROCKETNET_DISCONNECT_REASON_NONE );
+    }
+
+    check( a->endpoint.ordered.ack.error == ROCKETNET_DISCONNECT_REASON_NONE );
+    check( a->endpoint.config_error == ROCKETNET_DISCONNECT_REASON_NONE );
+    check( a->endpoint.config_wait_start == t0 );               // the CONFIG wait began and has no clock
+    check( !a->endpoint.ordered.config_received );
+    check( a->endpoint.ordered.send.U < a->endpoint.ordered.send.next );    // the CONFIG still unacknowledged
+    check( a->endpoint.ordered.ack.oldest_first_send == t0 );
+    check( written >= 2800 );                                   // the oldest number kept going out (the probe)
+    check( ep_counter( a, ROCKETNET_COUNTER_MESSAGE_RESENT ) > 0 );
+
+    // the CONFIG wait alone, from a fresh start: no clock ends it
+
+    const double start = t0 + 1000.0;
+    rn_endpoint_reset( &a->endpoint, start );
+    rn_endpoint_config_tick( &a->endpoint, 1, start );
+    check( a->endpoint.config_wait_start == start );
+    const double waits[3] = { 10.0, 600.0, 1000000.0 };
+    for ( int i = 0; i < 3; i++ )
+    {
+        rn_endpoint_config_tick( &a->endpoint, 1, start + waits[i] );
+        check( rn_endpoint_error( &a->endpoint ) == ROCKETNET_DISCONNECT_REASON_NONE );
+    }
+
+    ep_side_destroy( a );
+    delete a;
+}
+
+static void test_endpoint_opted_in_timeout_ends_the_stall_and_the_config_wait()
+{
+    rocketnet_message_config_t config;
+    ep_config( &config );
+    config.reliable_message_timeout_ms = 10000;
+    check( rocketnet_message_validate_config( &config ) == 1 );
+
+    ep_side_t * a = new ep_side_t();
+    ep_side_create( a, &config );
+
+    // the stall: the CONFIG is first sent at t0 and never acknowledged while
+    // the transport hears the other end; the transport is not yet connected,
+    // so the CONFIG wait has not begun and only the stall can end it
+
+    const double t0 = 1000.0;
+    rn_endpoint_reset( &a->endpoint, t0 );
+    rn_endpoint_announce_config( &a->endpoint, t0 );
+
+    check( ep_lone_update( a, t0, 0, EP_KEEP_ALIVE_IDS ) >= 1 );
+    check( a->endpoint.ordered.ack.has_oldest && a->endpoint.ordered.ack.oldest_first_send == t0 );
+
+    for ( int i = 1; i < 40; i++ )
+    {
+        const double now = t0 + i * 0.25;
+        ep_lone_update( a, now, 0, EP_KEEP_ALIVE_IDS + (uint64_t) i );
+        check( rn_endpoint_error( &a->endpoint ) == ROCKETNET_DISCONNECT_REASON_NONE );
+    }
+
+    ep_lone_update( a, t0 + 10.0, 0, EP_KEEP_ALIVE_IDS + 40 );     // 10 s from the first send
+    check( a->endpoint.ordered.ack.error == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT );
+    check( rn_endpoint_error( &a->endpoint ) == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT );
+    check( a->endpoint.config_wait_start < 0.0 );
+    check( a->endpoint.config_error == ROCKETNET_DISCONNECT_REASON_NONE );
+
+    // the CONFIG wait: RELIABLE_TIMED_OUT 10 s after it began
+
+    const double start = t0 + 100.0;
+    rn_endpoint_reset( &a->endpoint, start );
+    check( rn_endpoint_error( &a->endpoint ) == ROCKETNET_DISCONNECT_REASON_NONE );
+    rn_endpoint_config_tick( &a->endpoint, 1, start );
+    rn_endpoint_config_tick( &a->endpoint, 1, start + 9.999 );
+    check( rn_endpoint_error( &a->endpoint ) == ROCKETNET_DISCONNECT_REASON_NONE );
+    rn_endpoint_config_tick( &a->endpoint, 1, start + 10.0 );
+    check( a->endpoint.config_error == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT );
+    check( rn_endpoint_error( &a->endpoint ) == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT );
+
+    ep_side_destroy( a );
+    delete a;
+}
+
+REGISTER_UNIT_TEST( test_endpoint_default_never_times_out_a_heard_stream );
+REGISTER_UNIT_TEST( test_endpoint_opted_in_timeout_ends_the_stall_and_the_config_wait );
 REGISTER_UNIT_TEST( test_endpoint_back_to_back_over_lossy_array );
 REGISTER_UNIT_TEST( test_endpoint_uncapped_large_sequenced_skips_the_bucket );
 REGISTER_UNIT_TEST( test_endpoint_never_allocates_or_reads_a_clock );

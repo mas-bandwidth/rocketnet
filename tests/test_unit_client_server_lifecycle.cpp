@@ -4100,7 +4100,7 @@ static void test_integrated_slot_reuse_memory_pressure_disconnect_budget_and_del
     // filling all 17 send descriptors (send_queue_messages=16 + 1 reserve) causes
     // rocketnet_client_can_send_message to report false before start_message, and
     // start_message under pressure refuses the whole message (NULL) without partial
-    // bytes or stale receipts while transitioning the client to MESSAGE_MEMORY_EXHAUSTED
+    // bytes or stale receipts, and the client stays connected (m1.7)
 
     int pre_exhaust_queued = 0;
 
@@ -4115,6 +4115,31 @@ static void test_integrated_slot_reuse_memory_pressure_disconnect_budget_and_del
 
     check( pre_exhaust_queued == 17 );
     check( rocketnet_client_can_send_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, 900 ) == 0 );
+
+    // the start under pressure is refused (m1.7): NULL, counted on the
+    // client, its stats as they were, and the client stays CONNECTED
+
+    struct rocketnet_client_stats_t pressure_stats_before;
+    struct rocketnet_client_stats_t pressure_stats_after;
+    memset( &pressure_stats_before, 0, sizeof( pressure_stats_before ) );
+    memset( &pressure_stats_after, 0, sizeof( pressure_stats_after ) );
+    rocketnet_client_stats( client, &pressure_stats_before );
+    check( rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, 900 ) == NULL );
+    rocketnet_client_stats( client, &pressure_stats_after );
+    check( memcmp( &pressure_stats_before, &pressure_stats_after, sizeof( pressure_stats_before ) ) == 0 );
+    check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
+
+    struct rocketnet_conditions_t pressure_conditions;
+    check( rocketnet_client_conditions( client, &pressure_conditions, (int) sizeof( pressure_conditions ) ) );
+    check( pressure_conditions.send_refused == 1 );
+    check( rocketnet_client_receive_messages( client ) == NULL );
+    check( rocketnet_client_receipts( client, NULL, 0 ) == 0 );
+
+    // the story goes on to the terminal MESSAGE_MEMORY_EXHAUSTED state. Only
+    // the receive side exhausts a region now; that is reached here by
+    // rn_region_exhaust directly, and the next start ends the connection
+
+    rn_region_exhaust( rn_message_object_connection( &rocketnet_client_message_client( client )->object, 0 )->region );
     check( rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, 900 ) == NULL );
     check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED );
     check( rocketnet_client_receive_messages( client ) == NULL );

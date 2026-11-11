@@ -25,6 +25,12 @@
 #include "rocketnet_send_budget.h"
 #include "rocketnet_standard_rules.h"
 
+// The region's room refusals so far: a start that moves this was refused for no room (m1.7)
+static uint64_t rn_endpoint_room_refusals( const rn_region_t * region )
+{
+    return region->counters ? region->counters->values[ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL] + region->counters->values[ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL] : 0;
+}
+
 static void rn_endpoint_count( rn_endpoint_t * endpoint, int counter, uint64_t amount = 1 )
 {
     // the owner's message counters, which the region was carved with
@@ -217,6 +223,7 @@ void rn_endpoint_init( struct rn_endpoint_t * endpoint, rn_region_t * region, co
     endpoint->send_budget_enabled = config->send_kbps > 0 ? 1 : 0;
     endpoint->max_payload_bytes = config->max_payload_bytes > 0 ? config->max_payload_bytes : ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
     endpoint->send_error = ROCKETNET_DISCONNECT_REASON_NONE;
+    endpoint->send_refused = 0;
     endpoint->config_wait_start = -1.0;
     endpoint->config_error = ROCKETNET_DISCONNECT_REASON_NONE;
     endpoint->pending_type = -1;
@@ -257,6 +264,7 @@ void rn_endpoint_reset( struct rn_endpoint_t * endpoint, double now )
     rn_packet_builder_init( &endpoint->unreliable_builder, endpoint->region, NULL, budget, 1, ROCKETNET_MESSAGE_SINGLE_BYTES );
 
     endpoint->send_error = ROCKETNET_DISCONNECT_REASON_NONE;
+    endpoint->send_refused = 0;
     endpoint->config_wait_start = -1.0;
     endpoint->config_error = ROCKETNET_DISCONNECT_REASON_NONE;
     endpoint->serial = 0;
@@ -292,7 +300,8 @@ void rn_endpoint_announce_config( struct rn_endpoint_t * endpoint, double now )
     // becomes connected (the server's Observe reset, the client's connect at
     // create) queues this end's CONFIG before anything else, at the head of
     // IMMEDIATE on channel 0, so it takes the connection's first reliable
-    // number (rn_ordered_announce_config). No room is region exhaustion, and
+    // number (rn_ordered_announce_config). No room for it is an internal
+    // invariant break, not an application send: the region is exhausted and
     // rn_endpoint_error then ends the connection (R5).
 
     (void) now;
@@ -383,7 +392,7 @@ uint8_t * rn_endpoint_start( struct rn_endpoint_t * endpoint, int channel, int r
     // proofs/tla/RNEndpoint.tla Send, its first half (RNChannel Enqueue's first
     // half): room in the region for a message of `bytes` bytes, and the
     // pointer it is written at, once, in place (R3). A refusal for want of
-    // room sets send_error (R5); the owner ends the connection with it.
+    // room returns NULL and counts send_refused; the connection goes on (m1.7).
     // proofs/tla/RNOutgoingBuild.tla StartQueued: the start on the queued path, the
     // message handed its region record rather than a transport frame.
 
@@ -444,12 +453,17 @@ uint8_t * rn_endpoint_start( struct rn_endpoint_t * endpoint, int channel, int r
 
     if ( route == RN_ENDPOINT_ROUTE_CHANNELS )
     {
+        const uint64_t room_refusals = rn_endpoint_room_refusals( region );
         pointer = rn_channels_start( &endpoint->ordered.channels, (uint32_t) channel, type, (uint32_t) bytes );
         if ( !pointer )
         {
             if ( rn_region_exhausted( region ) )
             {
-                endpoint->send_error = ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED;     // R5
+                endpoint->send_error = ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED;     // receive-side invariant only (m1.7)
+            }
+            else if ( rn_endpoint_room_refusals( region ) != room_refusals )
+            {
+                endpoint->send_refused++;                       // no room: a refusal, counted by the region (m1.7)
             }
             else
             {
@@ -471,10 +485,10 @@ uint8_t * rn_endpoint_start( struct rn_endpoint_t * endpoint, int channel, int r
         const uint32_t d = rn_region_send_take( region, bytes );
         if ( d == RN_DESCRIPTOR_NONE )
         {
-            // proofs/tla/RNChannelTypes.tla MemoryExhausted: the send region has no room left, so the connection ends.
-            // The region has no room for a send it must not drop.
+            // No room is a refusal, counted by the region; the connection goes on
+            // (standard/MESSAGES.md m1.7). proofs/tla/RNChannelTypes.tla Refuse.
 
-            endpoint->send_error = ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED;
+            endpoint->send_refused++;
             return NULL;
         }
         rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
@@ -1040,7 +1054,7 @@ void rn_endpoint_config_tick( struct rn_endpoint_t * endpoint, int transport_con
     }
 
     const double reliable_timeout = (double) endpoint->config->reliable_message_timeout_ms / 1000.0;
-    if ( now - endpoint->config_wait_start >= reliable_timeout )
+    if ( reliable_timeout > 0.0 && now - endpoint->config_wait_start >= reliable_timeout )
     {
         endpoint->config_error = ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT;
     }

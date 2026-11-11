@@ -138,7 +138,10 @@ static void resend_timing_run( const char * schedule, int fixed_100ms, int rtt_m
 {
     const double tick = 1.0 / 60.0;
     rocketnet_channel_harness_t h;
-    resend_timing_check( rocketnet_channel_harness_create( &h ) );
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    config.reliable_message_timeout_ms = 10000;                 // the table checks resends against a reliable timeout: set one
+    resend_timing_check( rocketnet_channel_harness_create_with_config( &h, &config ) );
     resend_timing_check( rocketnet_channel_harness_connect( &h, 60 * 10 ) );
 
     rn_ordered_t * ordered = &h.message_client->object.connections[0].ordered;

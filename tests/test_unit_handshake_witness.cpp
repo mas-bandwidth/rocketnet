@@ -997,6 +997,215 @@ static void test_claim_written_only_after_signature_verifies()
 }
 #endif // #if ROCKETNET_DEV
 
+// ---------------------------------------------------------------------------
+// The connect clock (ClientConnection.tla Tick): the token's lifetime ends
+// the attempt as CONNECT_TOKEN_EXPIRED (-7) in states 1 and 2 only. From
+// state 3 (SENDING_CONNECTION_RESPONSE) the server may already hold the
+// client as connected, so only per-state silence T ends the wait, as
+// CONNECTION_RESPONSE_TIMED_OUT (-4). Here the token lives 3 s and T is
+// 10 s; time steps by 0.125 s from 100.0, exact in binary.
+// ---------------------------------------------------------------------------
+
+#define HANDSHAKE_CLOCK_LIFETIME 3
+#define HANDSHAKE_CLOCK_TIMEOUT 10
+#define HANDSHAKE_CLOCK_STEP 0.125
+
+// One client update at time; its packet goes to the server, and the server's
+// answer comes back only when it is a cookie, or a challenge and
+// deliver_challenge is set. Keep-alives are lost, so the client never
+// learns it is connected.
+static void rocketnet_handshake_clock_step( struct rocketnet_handshake_server_t * test,
+                                            struct rocketnet_client_protocol_t * client,
+                                            double time, int deliver_challenge )
+{
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    int packet_bytes = 0;
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    uint8_t payload[ROCKETNET_RECEIVE_CEILING];
+    int payload_bytes = 0;
+    int payload_client_index = -1;
+
+    rocketnet_client_protocol_update( client, time, packet, &packet_bytes );
+    if ( client->state <= ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED || packet_bytes <= 0 )
+    {
+        return;
+    }
+
+    rocketnet_handshake_process_at( test, &test->client_address, packet, packet_bytes,
+                                    response, &response_bytes, payload, &payload_bytes, &payload_client_index );
+    if ( response_bytes > 0 && ( response[0] == ROCKETNET_CONNECTION_COOKIE_PACKET ||
+                                 ( deliver_challenge && response[0] == ROCKETNET_CONNECTION_CHALLENGE_PACKET ) ) )
+    {
+        rocketnet_client_protocol_process_packet( client, response, response_bytes, time, payload, sizeof( payload ), &payload_bytes );
+    }
+}
+
+static void rocketnet_handshake_clock_connect( struct rocketnet_client_protocol_t * client, struct rocketnet_counters_t * counters )
+{
+    memset( counters, 0, sizeof( *counters ) );
+    rocketnet_client_protocol_init( client, counters );
+
+    uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_handshake_mint_token( token_data, 1, ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_CREATE_TS + HANDSHAKE_CLOCK_LIFETIME, HANDSHAKE_CLOCK_TIMEOUT );
+    rocketnet_unit_check( rocketnet_client_protocol_connect( client, token_data, 100.0, ROCKETNET_TEST_CREATE_TS ) );
+    rocketnet_unit_check( client->state == ROCKETNET_CLIENT_TRANSPORT_STATE_REQUESTING_COOKIE );
+    rocketnet_unit_check( client->total_deadline_seconds == HANDSHAKE_CLOCK_LIFETIME );
+}
+
+static void test_client_token_lifetime_ends_states_one_and_two()
+{
+    const double expire = 100.0 + HANDSHAKE_CLOCK_LIFETIME;
+
+    // state 1: no answer at all
+
+    {
+        struct rocketnet_client_protocol_t client;
+        struct rocketnet_counters_t counters;
+        rocketnet_handshake_clock_connect( &client, &counters );
+
+        uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+        int packet_bytes = 0;
+        double time = 100.0;
+        for ( int i = 0; time < expire; i++, time = 100.0 + i * HANDSHAKE_CLOCK_STEP )
+        {
+            rocketnet_client_protocol_update( &client, time, packet, &packet_bytes );
+            rocketnet_unit_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_REQUESTING_COOKIE );
+        }
+        rocketnet_unit_check( time == expire );
+        rocketnet_client_protocol_update( &client, time, packet, &packet_bytes );
+        rocketnet_unit_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECT_TOKEN_EXPIRED );
+        rocketnet_counters_assert_conserved( &counters );
+    }
+
+    // state 2: cookies arrive and challenges are lost, so the client keeps
+    // hearing the server and still ends at the token's lifetime
+
+    {
+        struct rocketnet_handshake_server_t test;
+        rocketnet_handshake_server_setup( &test );
+        struct rocketnet_client_protocol_t client;
+        struct rocketnet_counters_t counters;
+        rocketnet_handshake_clock_connect( &client, &counters );
+
+        double time = 100.0;
+        for ( int i = 0; time < expire; i++, time = 100.0 + i * HANDSHAKE_CLOCK_STEP )
+        {
+            rocketnet_handshake_clock_step( &test, &client, time, 0 );
+            rocketnet_unit_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_REQUESTING_COOKIE ||
+                                  client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST );
+        }
+        rocketnet_unit_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST );
+        rocketnet_handshake_clock_step( &test, &client, time, 0 );
+        rocketnet_unit_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECT_TOKEN_EXPIRED );
+        rocketnet_counters_assert_conserved( &counters );
+        rocketnet_handshake_server_teardown( &test );
+    }
+}
+
+static void test_client_sending_response_outlives_the_token_lifetime()
+{
+    // heard: the server's standalone acks keep the client in state 3 well
+    // past the token's lifetime and past T from entering it; then silence
+    // ends it T after the last packet heard
+
+    {
+        struct rocketnet_handshake_server_t test;
+        rocketnet_handshake_server_setup( &test );
+        struct rocketnet_client_protocol_t client;
+        struct rocketnet_counters_t counters;
+        rocketnet_handshake_clock_connect( &client, &counters );
+
+        int i = 0;
+        double time = 100.0;
+        for ( ; client.state != ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE; i++, time = 100.0 + i * HANDSHAKE_CLOCK_STEP )
+        {
+            rocketnet_unit_check( time < 100.0 + HANDSHAKE_CLOCK_LIFETIME );
+            rocketnet_handshake_clock_step( &test, &client, time, 1 );
+        }
+
+        // the server holds the client: the next update's response seats it
+
+        rocketnet_handshake_clock_step( &test, &client, time, 1 );
+        rocketnet_unit_check( rocketnet_client_slots_connected( test.server.client_slots, 0 ) );
+        rocketnet_unit_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE );
+
+        // a standalone ack once a second until 120.0; the debt stands in for
+        // session packets the server owes an ack for
+
+        const double heard_until = 120.0;
+        for ( i++, time = 100.0 + i * HANDSHAKE_CLOCK_STEP; time <= heard_until; i++, time = 100.0 + i * HANDSHAKE_CLOCK_STEP )
+        {
+            if ( i % 8 == 0 )
+            {
+                test.server.acks->endpoints[0].ack_debt = 1;
+                uint8_t ack[ROCKETNET_RECEIVE_CEILING];
+                const int ack_bytes = rocketnet_server_protocol_write_ack_if_due( &test.server, 0, time, ack );
+                rocketnet_unit_check( ack_bytes > 0 );
+
+                const uint64_t accepted = counters.values[ROCKETNET_COUNTER_CLIENT_ACK_ACCEPTED];
+                uint8_t payload[ROCKETNET_RECEIVE_CEILING];
+                int payload_bytes = 0;
+                rocketnet_client_protocol_process_packet( &client, ack, ack_bytes, time, payload, sizeof( payload ), &payload_bytes );
+                rocketnet_unit_check( counters.values[ROCKETNET_COUNTER_CLIENT_ACK_ACCEPTED] == accepted + 1 );
+                rocketnet_unit_check( client.last_receive_time == time );
+            }
+            rocketnet_handshake_clock_step( &test, &client, time, 1 );
+            rocketnet_unit_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE );
+        }
+
+        // silence: alive until T after the last packet heard, -4 at T
+
+        const double last_heard = client.last_receive_time;
+        rocketnet_unit_check( last_heard == heard_until );
+        for ( ; time < last_heard + HANDSHAKE_CLOCK_TIMEOUT; i++, time = 100.0 + i * HANDSHAKE_CLOCK_STEP )
+        {
+            rocketnet_handshake_clock_step( &test, &client, time, 1 );
+            rocketnet_unit_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE );
+        }
+        rocketnet_unit_check( time == last_heard + HANDSHAKE_CLOCK_TIMEOUT );
+        rocketnet_handshake_clock_step( &test, &client, time, 1 );
+        rocketnet_unit_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_RESPONSE_TIMED_OUT );
+
+        rocketnet_counters_assert_conserved( &counters );
+        rocketnet_handshake_server_teardown( &test );
+    }
+
+    // silent from the start of state 3: it does not end at the token's
+    // lifetime, only T after the challenge was heard
+
+    {
+        struct rocketnet_handshake_server_t test;
+        rocketnet_handshake_server_setup( &test );
+        struct rocketnet_client_protocol_t client;
+        struct rocketnet_counters_t counters;
+        rocketnet_handshake_clock_connect( &client, &counters );
+
+        int i = 0;
+        double time = 100.0;
+        for ( ; client.state != ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE; i++, time = 100.0 + i * HANDSHAKE_CLOCK_STEP )
+        {
+            rocketnet_handshake_clock_step( &test, &client, time, 1 );
+        }
+
+        const double heard = client.last_receive_time;
+        rocketnet_unit_check( heard < 100.0 + HANDSHAKE_CLOCK_LIFETIME );
+        for ( ; time < heard + HANDSHAKE_CLOCK_TIMEOUT; i++, time = 100.0 + i * HANDSHAKE_CLOCK_STEP )
+        {
+            rocketnet_handshake_clock_step( &test, &client, time, 1 );
+            rocketnet_unit_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE );
+        }
+        rocketnet_unit_check( time == heard + HANDSHAKE_CLOCK_TIMEOUT );
+        rocketnet_handshake_clock_step( &test, &client, time, 1 );
+        rocketnet_unit_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_RESPONSE_TIMED_OUT );
+
+        rocketnet_counters_assert_conserved( &counters );
+        rocketnet_handshake_server_teardown( &test );
+    }
+}
+
+REGISTER_UNIT_TEST( test_client_token_lifetime_ends_states_one_and_two );
+REGISTER_UNIT_TEST( test_client_sending_response_outlives_the_token_lifetime );
 REGISTER_UNIT_TEST( test_client_ephemeral_erased_outside_handshake );
 #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_claim_written_only_after_signature_verifies );

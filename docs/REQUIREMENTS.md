@@ -57,7 +57,10 @@ in `sdk/rocketnet.h`; no C++ type crosses it.
   endpoint-wide `rocketnet_message_batch_t` queue with no release call.
 - Fragmentation and reassembly carry messages up to the configured maximum
   within fixed storage.
-- Reliable work is retained until delivery or the reliable timeout. Unreliable
+- Reliable work is retained until delivery or the end of its connection: silence
+  for the connection timeout, or the reliable timeout when the game sets one
+  (it is off by default). A send that finds no room is refused and counted,
+  and never ends the connection. Unreliable
   work may be dropped only at documented bounded resources and is counted.
 - Receipt serials report terminal ACK or loss for receipt-bearing messages.
   The outcomes recorded for a connection remain readable after that

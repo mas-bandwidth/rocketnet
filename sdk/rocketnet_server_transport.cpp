@@ -4583,6 +4583,26 @@ void rocketnet_server_transport_client_stats( struct rocketnet_server_transport_
     }
 }
 
+// rocketnet_conditions_t's seconds_since_heard for one slot: since the last
+// packet its mapping accepted; -1 for a slot with no connected client, no
+// mapping, or nothing heard yet.
+
+double rocketnet_server_transport_heard_age( const struct rocketnet_server_transport_t * server_transport, int client_index )
+{
+    const struct rocketnet_server_protocol_t * protocol = &server_transport->protocol;
+    if ( !protocol->acks || client_index < 0 || client_index >= protocol->acks->max_clients || !rocketnet_client_slots_connected( protocol->client_slots, client_index ) )
+    {
+        return -1.0;
+    }
+    const int mapping_index = rocketnet_client_slots_mapping_index( protocol->client_slots, client_index );
+    if ( mapping_index < 0 )
+    {
+        return -1.0;
+    }
+    const struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( protocol->encryption_map, mapping_index );
+    return mapping->control && mapping->control->last_receive_time > 0.0 ? server_transport->time - mapping->control->last_receive_time : -1.0;
+}
+
 #if ROCKETNET_DEV
 // The transport's half of the delivery capture (rocketnet_layers.h): plain
 // copies of the slot's mapping and ack endpoint, on the main thread outside

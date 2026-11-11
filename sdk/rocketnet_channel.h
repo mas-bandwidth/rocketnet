@@ -436,8 +436,8 @@ int rn_ordered_receive( struct rn_ordered_t * ordered, const uint8_t * payload, 
 // mask, at the head of IMMEDIATE on channel 0, so it takes the connection's
 // first reliable number and is resent until acked like any reliable record.
 // Called once per connection, before anything else is queued. False when it
-// was already queued, or the region has no room (the region is then
-// exhausted and the owner kicks the connection).
+// was already queued, or the region has no room (an invariant break, not an
+// application send: the region is then exhausted and the owner kicks the connection).
 
 bool rn_ordered_announce_config( struct rn_ordered_t * ordered, const struct rocketnet_message_config_t * config );
 

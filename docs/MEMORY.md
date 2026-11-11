@@ -39,10 +39,10 @@ results is a measurement of your current build. See [Testing](TESTING.md).
 
 ## Server memory footprint
 
-The v1.0.1 Linux x86-64 Release development-build planner query described in
+The v1.1.0 Linux x86-64 Release development-build planner query described in
 [LOAD.md](LOAD.md#platform-build-and-allocator-assumptions) reports
-21,028,236,715 bytes (about 21.0 GB) for the default 1000-client server.
-The difference from one to two slots is 19,174,306 bytes (about 19.2 MB).
+21,028,276,715 bytes (about 21.0 GB) for the default 1000-client server.
+The difference from one to two slots is 19,174,370 bytes (about 19.2 MB).
 These are source-specific sizing examples, not portable constants:
 build options, platform, transport availability, and configuration affect the
 result. Query your own build with `rocketnet_server_required_memory` before
@@ -103,24 +103,24 @@ A light-client server uses `rocketnet_server_light_config`, which fills the
 defaults and then sizes for one 1,500-byte MTU packet per 100 ms to each
 client at 10 Hz (10 * 1,500 * 8 = 120,000 bits/s, about 120 kbps). The
 per-client send budget is 256 kbps (256 / 120 = 2.13). A message holds one
-packet's payload, `ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1` (1,415 bytes). Over the 10,000 ms reliable timeout left at
-its default, that rate is 100 messages; a 1,415-byte message can take two
+packet's payload, `ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1` (1,415 bytes). Over the default 10 s
+connection timeout, that rate is 100 messages; a 1,415-byte message can take two
 window numbers, so the reliable window is 256. The receive buffer is 142,400
 bytes, the send buffer is 141,500 bytes, the send queue is 128 messages,
 packets in flight are 256, each update may send 4 packets and 4 unreliable
 messages, 100 sequenced messages are held, 128 receipts are kept, and there
 are eight channels. At `max_clients` 1000, the same Linux development build
-reports 3,111,628,715 bytes (about 3.1 GB) from
+reports 3,111,668,715 bytes (about 3.1 GB) from
 `rocketnet_server_required_memory`. The matching `rocketnet_client_light_config`
-makes `rocketnet_client_required_memory` report 15,186,018 bytes. Those two
-figures, and the default-profile figures above, are v1.0.1 queries of the
+makes `rocketnet_client_required_memory` report 15,186,082 bytes. Those two
+figures, and the default-profile figures above, are v1.1.0 queries of the
 Linux x86-64 development build with io_uring and XDP.
 
 Both figures are the planned lifecycle peak (create, connect or start, stop or
 disconnect, the next cycle, and destroy) plus the 1 MiB allowance. They exclude
 memory owned by the operating system (worker thread stacks, XDP UMEM, io_uring
-rings, kernel socket buffers) and process overhead. The same v1.0.1 source built with
-`ROCKETNET_DEV=OFF` reports 3,105,239,503 and 14,401,110 bytes, using an accepted
+rings, kernel socket buffers) and process overhead. The same v1.1.0 source built with
+`ROCKETNET_DEV=OFF` reports 3,105,279,503 and 14,401,174 bytes, using an accepted
 non-test packet filter. Other platforms have different transport candidates and
 layouts; the older Windows and macOS examples predate this query and are not
 current measurements. The default profile remains the stock acceptance.

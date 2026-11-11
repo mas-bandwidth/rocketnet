@@ -1481,8 +1481,8 @@ struct rocketnet_message_config_t
     int message_resend_delay_min_ms;                     // optional resend delay floor; 0 disables; 0 .. 60000; default 0
     /** @brief Maximum resend delay in milliseconds; 10 through 60000, default 2000. */
     int message_resend_delay_max_ms;                     // 10 .. 60000; default 2000
-    /** @brief Reliable-message lifetime in milliseconds; 1000 through 600000, default 10000. */
-    int reliable_message_timeout_ms;            // 1000 .. 600000; default 10000
+    /** @brief Reliable-message lifetime in milliseconds; 0 (the default) is off, a nonzero value is 1000 through 600000. */
+    int reliable_message_timeout_ms;            // 0 off (default); else 1000 .. 600000
     /** @brief Default client send budget in kilobits per second; zero or less is uncapped, positive values may not exceed ROCKETNET_SEND_BUDGET_MAX_KBPS. */
     int client_send_kbps;                // client default budget; 0 or lower uncapped; <= ROCKETNET_SEND_BUDGET_MAX_KBPS
     /** @brief Default per-client server send budget in kilobits per second; zero or less is uncapped, positive values may not exceed ROCKETNET_SEND_BUDGET_MAX_KBPS. */
@@ -1594,10 +1594,10 @@ uint64_t rocketnet_message_print_connection_sizing( const struct rocketnet_messa
 // received on channel 0. The reliable types and promoted blocks are bounded
 // by the config's max_message_bytes.
 //
-// A start the connection's region has no room for ends the connection:
-// the server disconnects that client, the client disconnects itself, with the
-// reason ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED, and start returns
-// NULL. The send budget governs the wire, never the queue: a reliable message
+// A start the connection's region has no room for is refused: start returns
+// NULL, the refusal is counted, and the connection goes on (m1.7). Only a
+// region exhausted by the receive side ends the connection with
+// ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED. The send budget governs the wire, never the queue: a reliable message
 // waits for budget and is never dropped; an unreliable one over budget is
 // dropped and counted (MESSAGE_UNRELIABLE_OVER_BUDGET).
 //
@@ -1911,6 +1911,15 @@ static inline struct rocketnet_server_client_stats_t rn_server_client_stats_of( 
     rocketnet_server_client_stats( server, client_index, &stats );
     return stats;
 }
+
+// seconds since the last accepted session packet from the remote endpoint; -1 when none
+// or not connected (rocketnet_conditions_t)
+double rocketnet_server_transport_heard_age( const struct rocketnet_server_transport_t * server_transport, int client_index );
+double rocketnet_client_transport_heard_age( const struct rocketnet_client_transport_t * client_transport );
+
+// the message layer's half of rocketnet_conditions_t; false when not connected
+bool rocketnet_message_server_conditions( const struct rocketnet_message_server_t * server, int client_index, struct rocketnet_conditions_t * conditions );
+bool rocketnet_message_client_conditions( const struct rocketnet_message_client_t * client, struct rocketnet_conditions_t * conditions );
 
 #if ROCKETNET_DEV
 

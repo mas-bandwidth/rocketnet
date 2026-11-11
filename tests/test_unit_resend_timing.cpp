@@ -29,6 +29,7 @@
 #include "../sdk/rocketnet_window_send.h"
 #include "../sdk/rocketnet_window_ack.h"
 #include "../sdk/rocketnet_channel.h"
+#include "../sdk/rocketnet_config.h"
 
 #define check rocketnet_unit_check
 
@@ -330,6 +331,77 @@ static void test_config_refuses_fewer_than_four_attempts()
 
 REGISTER_UNIT_TEST( test_config_refuses_fewer_than_four_attempts );
 
+// test_reliable_timeout_defaults_off: reliable_message_timeout_ms is 0 (off)
+// by default in the message config and in the public client and server
+// configs, and 0 validates. A nonzero value is 1000 or more and fits four
+// initial resend delays; anything else is refused, never clamped.
+static void test_reliable_timeout_defaults_off()
+{
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    check( config.reliable_message_timeout_ms == 0 );
+    check( rocketnet_message_validate_config( &config ) );
+
+    struct rocketnet_client_config_t client;
+    check( rocketnet_client_default_config( &client ) == ROCKETNET_STATUS_OK );
+    check( client.reliable_message_timeout_ms == 0 );
+
+    struct rocketnet_server_config_t server;
+    check( rocketnet_server_default_config( &server ) == ROCKETNET_STATUS_OK );
+    check( server.reliable_message_timeout_ms == 0 );
+
+#if ROCKETNET_DEV
+    // the message configs the client and the server resolve from their defaults
+
+    {
+        struct rocketnet_client_transport_config_t client_transport;
+        struct rocketnet_server_transport_config_t server_transport;
+        rocketnet_message_config_t message;
+        uint32_t kbps = 0;
+
+        memset( &message, 0xFF, sizeof( message ) );
+        check( rocketnet_client_config_resolve( NULL, false, &client_transport, &message, &kbps ) );
+        check( message.reliable_message_timeout_ms == 0 );
+        check( rocketnet_message_validate_config( &message ) );
+
+        memset( &message, 0xFF, sizeof( message ) );
+        check( rocketnet_server_config_resolve( NULL, false, &server_transport, &message, &kbps ) );
+        check( message.reliable_message_timeout_ms == 0 );
+        check( rocketnet_message_validate_config( &message ) );
+    }
+#endif // #if ROCKETNET_DEV
+
+    // below 1000 is refused, even where four initial delays fit
+
+    rocketnet_message_default_config( &config );
+    config.message_resend_delay_initial_ms = 100;
+    config.reliable_message_timeout_ms = 999;
+    check( !rocketnet_message_validate_config( &config ) );
+    check( config.reliable_message_timeout_ms == 999 && config.message_resend_delay_initial_ms == 100 );
+
+    config.reliable_message_timeout_ms = 1;
+    check( !rocketnet_message_validate_config( &config ) );
+    check( config.reliable_message_timeout_ms == 1 );
+
+    // 1000 with an initial delay of 250 ms: exactly four, accepted
+
+    config.message_resend_delay_initial_ms = 250;
+    config.reliable_message_timeout_ms = 1000;
+    check( rocketnet_message_validate_config( &config ) );
+
+    // at or above 1000 but below four initial delays is refused
+
+    config.message_resend_delay_initial_ms = 500;
+    config.reliable_message_timeout_ms = 1999;
+    check( !rocketnet_message_validate_config( &config ) );
+    check( config.reliable_message_timeout_ms == 1999 && config.message_resend_delay_initial_ms == 500 );
+
+    config.reliable_message_timeout_ms = 2000;
+    check( rocketnet_message_validate_config( &config ) );
+}
+
+REGISTER_UNIT_TEST( test_reliable_timeout_defaults_off );
+
 #if ROCKETNET_DEV
 // test_resend_timing_witness_replays: the schedule of
 // proofs/tla/MCRNResendTimingBrokenBackoff.cfg against the code. The first version's
@@ -469,11 +541,14 @@ static bool resend_timing_contains( const uint64_t * numbers, uint32_t count, ui
 }
 
 // On a 200 ms path, the adaptive resend delay is 1230 ms. Chunks wait the adaptive resend delay,
-// with no fixed 100 ms cap or retry back-off.
+// with no fixed 100 ms cap or retry back-off. The case opts in to the 10 s
+// reliable timeout: its 1230 ms delay is past the 1 s probe pacing window, which
+// the default (0) would apply, and the 2.5 s chunk cap is above the delay.
 static void test_chunk_resend_paced_by_rtt_not_interval()
 {
     resend_timing_fixture_t f;
     rocketnet_message_default_config( &f.config );
+    f.config.reliable_message_timeout_ms = 10000;
     resend_timing_open( &f );
 
     const double t1 = resend_timing_sample( &f, resend_timing_start, 0.200 );
@@ -516,11 +591,14 @@ static void test_chunk_resend_paced_by_rtt_not_interval()
 REGISTER_UNIT_TEST( test_chunk_resend_paced_by_rtt_not_interval );
 
 // A small record sent behind a block remains independently due in its own
-// FIFO; its position in the small FIFO is independent of chunk timing.
+// FIFO; its position in the small FIFO is independent of chunk timing. Opted
+// in at 10 s so probe pacing (default 0, past 1 s with no progress) does not
+// hold everything but the oldest number.
 static void test_small_record_behind_a_chunk_not_held()
 {
     resend_timing_fixture_t f;
     rocketnet_message_default_config( &f.config );
+    f.config.reliable_message_timeout_ms = 10000;
     resend_timing_open( &f );
 
     const double t1 = resend_timing_sample( &f, resend_timing_start, 0.200 );
@@ -593,11 +671,13 @@ REGISTER_UNIT_TEST( test_chunk_behind_a_small_record_not_held );
 // test_both_fifos_walk_only_what_is_due: each class's numbers on the wire are
 // walked from its sent mark while due and no further. walk_visits counts every
 // entry a walk examines: the due entries and one stop per class, so a walk
-// past a stop point would count more.
+// past a stop point would count more. Opted in at 10 s so probe pacing (default
+// 0, past 1 s with no progress) does not hold everything but the oldest number.
 static void test_both_fifos_walk_only_what_is_due()
 {
     resend_timing_fixture_t f;
     rocketnet_message_default_config( &f.config );
+    f.config.reliable_message_timeout_ms = 10000;
     resend_timing_open( &f );
 
     const double t1 = resend_timing_sample( &f, resend_timing_start, 0.200 );
@@ -675,6 +755,243 @@ static void test_both_fifos_walk_only_what_is_due()
 }
 
 REGISTER_UNIT_TEST( test_both_fifos_walk_only_what_is_due );
+
+// ---------------------------------------------------------------------------
+// Probe pacing and the RTT filter (standard/MESSAGES.md m9.2, m9.3), on only
+// with the default reliable timeout (0, off). Once RN_PROBE_SECONDS pass with
+// no reliable number newly acknowledged, counted from the later of the last
+// such update and the first send of the oldest unacknowledged number U, only
+// U is resent; a number never sent still goes once; the first update that
+// newly acknowledges a number ends the hold. An ack after RN_PROBE_SECONDS of
+// no ack ends a silence, and a packet sent before that end less srtt gives no
+// RTT sample. An opted-in reliable timeout keeps v1.0 whole.
+// ---------------------------------------------------------------------------
+
+static uint32_t resend_timing_count( const uint64_t * numbers, uint32_t count, uint64_t number )
+{
+    uint32_t found = 0;
+    for ( uint32_t i = 0; i < count; i++ )
+    {
+        if ( numbers[i] == number )
+        {
+            found++;
+        }
+    }
+    return found;
+}
+
+// Starts and finishes one 16-byte RELIABLE_ORDERED message on channel 0: a
+// number the next write pass sends for the first time.
+static void resend_timing_queue( resend_timing_fixture_t * f )
+{
+    uint8_t * p = rn_channels_start( &f->ordered.channels, 0, ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED, 16 );
+    check( p != NULL );
+    memset( p, 0x5A, 16 );
+    check( rn_channels_finish( &f->ordered.channels, 16 ) );
+}
+
+static void test_probe_pacing_resends_only_the_oldest_without_progress()
+{
+    // the default: no reliable timeout, probe pacing on
+    {
+        resend_timing_fixture_t f;
+        rocketnet_message_default_config( &f.config );
+        check( f.config.reliable_message_timeout_ms == 0 );
+        resend_timing_open( &f );
+        check( f.ack.reliable_timeout == 0.0 );
+
+        // one 50 ms sample: the resend delay is 2 * 0.05 + 4 * 0.05 + 0.03 = 330 ms
+
+        check( rn_window_ack_seed_rtt( &f.ack, 0.050 ) == 1 );
+        check( fabs( f.ack.resend_delay - 0.330 ) < 1e-9 );
+
+        const double t0 = resend_timing_start;
+        uint64_t r0 = 0, r1 = 0, r2 = 0;
+        resend_timing_send( &f, t0, &r0 );
+        const uint64_t p1 = resend_timing_send( &f, t0, &r1 );
+        resend_timing_send( &f, t0, &r2 );
+        check( f.send.U == r0 );
+
+        uint64_t out[64];
+        uint32_t resent = 0;
+
+        // inside the first second nothing is held: every due number is resent at its delay
+
+        const double inside[2] = { t0 + 0.34, t0 + 0.68 };
+        for ( int i = 0; i < 2; i++ )
+        {
+            check( !rn_window_ack_probing( &f.ack, inside[i] ) );
+            resent = resend_timing_pass_numbers( &f, inside[i], out );
+            check( resent == 3 );
+            check( resend_timing_count( out, resent, r0 ) == 1 && resend_timing_count( out, resent, r1 ) == 1 && resend_timing_count( out, resent, r2 ) == 1 );
+        }
+        check( !rn_window_ack_probing( &f.ack, t0 + 0.999 ) );
+        check( rn_window_ack_probing( &f.ack, t0 + 1.000 ) );       // 1.0 s from U's first send, no progress
+
+        // past it, over five resend delays: only U, at its delay; r1 and r2 are
+        // due every pass and held. A number never sent goes once, at t0 + 1.10.
+
+        const uint64_t r3 = f.send.next;
+        uint32_t count[4] = { 0, 0, 0, 0 };
+        const double held[6] = { t0 + 1.02, t0 + 1.10, t0 + 1.36, t0 + 1.70, t0 + 2.04, t0 + 2.38 };
+        for ( int i = 0; i < 6; i++ )
+        {
+            if ( i == 1 )
+            {
+                resend_timing_queue( &f );
+            }
+            check( rn_window_ack_probing( &f.ack, held[i] ) );
+            resent = resend_timing_pass_numbers( &f, held[i], out );
+            check( resent == 1 );
+            count[0] += resend_timing_count( out, resent, r0 );
+            count[1] += resend_timing_count( out, resent, r1 );
+            count[2] += resend_timing_count( out, resent, r2 );
+            count[3] += resend_timing_count( out, resent, r3 );
+        }
+        check( count[0] == 5 );                                     // U at every resend delay
+        check( count[1] == 0 && count[2] == 0 );                    // the rest held
+        check( count[3] == 1 );                                     // never sent: sent once, then held
+        check( f.send.next == r3 + 1 );
+        check( f.send.U == r0 );
+
+        // an ack-only update that acknowledges no reliable number (the ack of
+        // a packet the sent map never held, as a keep-alive's) is not progress
+
+        const double last_progress = f.ack.last_progress;
+        const uint64_t not_reliable = f.next_packet_id + 1000;
+        check( rn_ordered_acks( &f.ordered, &not_reliable, 1, t0 + 2.40 ) == 0 );
+        check( f.ack.last_progress == last_progress );
+        check( rn_window_ack_probing( &f.ack, t0 + 2.40 ) );
+        resent = resend_timing_pass_numbers( &f, t0 + 2.72, out );
+        check( resent == 1 && out[0] == r0 );
+
+        // the first update that newly acknowledges a number (r1, in its first
+        // packet) ends the hold: the held numbers are due at once. It comes
+        // more than 1 s after the last ack, so the RTT filter leaves the delay alone.
+
+        const double release = t0 + 3.80;
+        check( rn_ordered_acks( &f.ordered, &p1, 1, release ) == 1 );
+        check( f.ack.last_progress == release );
+        check( !rn_window_ack_probing( &f.ack, release ) );
+        check( fabs( f.ack.resend_delay - 0.330 ) < 1e-9 );
+        check( f.send.U == r0 );
+
+        resent = resend_timing_pass_numbers( &f, release, out );
+        check( resent == 3 );
+        check( resend_timing_count( out, resent, r0 ) == 1 && resend_timing_count( out, resent, r2 ) == 1 && resend_timing_count( out, resent, r3 ) == 1 );
+        check( resend_timing_count( out, resent, r1 ) == 0 );
+        check( f.ack.error == ROCKETNET_DISCONNECT_REASON_NONE );
+
+        resend_timing_close( &f );
+    }
+
+    // opted in: no probe pacing, every due number resent as in v1.0
+    {
+        resend_timing_fixture_t f;
+        rocketnet_message_default_config( &f.config );
+        f.config.reliable_message_timeout_ms = 10000;
+        resend_timing_open( &f );
+        check( rn_window_ack_seed_rtt( &f.ack, 0.050 ) == 1 );
+
+        const double t0 = resend_timing_start;
+        uint64_t r[3] = { 0, 0, 0 };
+        for ( int i = 0; i < 3; i++ )
+        {
+            resend_timing_send( &f, t0, &r[i] );
+        }
+
+        uint64_t out[64];
+        const double passes[7] = { t0 + 0.34, t0 + 0.68, t0 + 1.02, t0 + 1.36, t0 + 1.70, t0 + 2.04, t0 + 2.38 };
+        for ( int i = 0; i < 7; i++ )
+        {
+            check( !rn_window_ack_probing( &f.ack, passes[i] ) );
+            const uint32_t resent = resend_timing_pass_numbers( &f, passes[i], out );
+            check( resent == 3 );
+            for ( int k = 0; k < 3; k++ )
+            {
+                check( resend_timing_count( out, resent, r[k] ) == 1 );
+            }
+        }
+        check( f.ack.error == ROCKETNET_DISCONNECT_REASON_NONE );
+
+        resend_timing_close( &f );
+    }
+}
+
+REGISTER_UNIT_TEST( test_probe_pacing_resends_only_the_oldest_without_progress );
+
+static void test_rtt_filter_skips_packets_sent_before_an_ack_silence()
+{
+    // the default: the filter is on
+    {
+        resend_timing_fixture_t f;
+        rocketnet_message_default_config( &f.config );
+        resend_timing_open( &f );
+
+        const double t0 = resend_timing_start;
+        const uint64_t pa = resend_timing_send( &f, t0, NULL );
+        check( rn_ordered_acks( &f.ordered, &pa, 1, t0 + 0.100 ) == 1 );
+        check( f.ack.has_rtt == 1 && fabs( f.ack.srtt - 0.100 ) < 1e-9 );
+
+        const uint64_t pb = resend_timing_send( &f, t0 + 0.500, NULL );     // before the silence ends less srtt
+        const uint64_t pc = resend_timing_send( &f, t0 + 1.950, NULL );     // after it
+
+        // the next ack comes 1.9 s after the last: it ends a silence at t0 + 2.0,
+        // and pb, sent before t0 + 2.0 - srtt = t0 + 1.9, gives no sample
+
+        const double srtt = f.ack.srtt;
+        const double rttvar = f.ack.rttvar;
+        const double delay = f.ack.resend_delay;
+        const double silence_end = t0 + 2.000;
+        check( rn_ordered_acks( &f.ordered, &pb, 1, silence_end ) == 1 );
+        check( f.ack.silence_end == silence_end );
+        check( f.ack.srtt == srtt && f.ack.rttvar == rttvar && f.ack.resend_delay == delay );
+
+        // pc, sent after it, samples (rtt 50 ms)
+
+        check( rn_ordered_acks( &f.ordered, &pc, 1, silence_end ) == 1 );
+        check( f.ack.silence_end == silence_end );
+        const double rtt_c = silence_end - ( t0 + 1.950 );
+        check( fabs( f.ack.rttvar - ( 0.95 * rttvar + 0.05 * fabs( srtt - rtt_c ) ) ) < 1e-12 );
+        check( fabs( f.ack.srtt - ( 0.95 * srtt + 0.05 * rtt_c ) ) < 1e-12 );
+        check( f.ack.srtt != srtt );
+
+        // an ack inside the second leaves the silence where it was, and samples
+
+        const double srtt_d = f.ack.srtt;
+        const uint64_t pd = resend_timing_send( &f, silence_end + 0.100, NULL );
+        check( rn_ordered_acks( &f.ordered, &pd, 1, silence_end + 0.300 ) == 1 );
+        check( f.ack.silence_end == silence_end );
+        check( fabs( f.ack.srtt - ( 0.95 * srtt_d + 0.05 * 0.200 ) ) < 1e-9 );
+
+        resend_timing_close( &f );
+    }
+
+    // opted in: no silence is recorded and every acked packet samples, as in v1.0
+    {
+        resend_timing_fixture_t f;
+        rocketnet_message_default_config( &f.config );
+        f.config.reliable_message_timeout_ms = 10000;
+        resend_timing_open( &f );
+
+        const double t0 = resend_timing_start;
+        const uint64_t pa = resend_timing_send( &f, t0, NULL );
+        check( rn_ordered_acks( &f.ordered, &pa, 1, t0 + 0.100 ) == 1 );
+
+        const uint64_t pb = resend_timing_send( &f, t0 + 0.500, NULL );
+        const double srtt = f.ack.srtt;
+        const double rttvar = f.ack.rttvar;
+        check( rn_ordered_acks( &f.ordered, &pb, 1, t0 + 2.000 ) == 1 );
+        check( f.ack.silence_end == 0.0 );
+        const double rtt_b = ( t0 + 2.000 ) - ( t0 + 0.500 );
+        check( fabs( f.ack.rttvar - ( 0.95 * rttvar + 0.05 * fabs( srtt - rtt_b ) ) ) < 1e-12 );
+        check( fabs( f.ack.srtt - ( 0.95 * srtt + 0.05 * rtt_b ) ) < 1e-12 );
+
+        resend_timing_close( &f );
+    }
+}
+
+REGISTER_UNIT_TEST( test_rtt_filter_skips_packets_sent_before_an_ack_silence );
 #endif // #if ROCKETNET_DEV
 
 // A sent_index with every cell used cannot happen (2P cells hold at most P
