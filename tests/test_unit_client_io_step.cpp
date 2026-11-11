@@ -192,8 +192,8 @@ REGISTER_UNIT_TEST( test_client_io_step_sends_rings_in_order_and_defers );
 
 // A hand-off while the I/O thread holds the mutex is deferred at once: the
 // game thread never waits for the lock. RNBufferHandoff MainNeverWaits. The
-// test holds the mutex on its own thread, so it runs on every platform: the
-// platform mutex is not recursive.
+// test holds the mutex on the calling thread, so it runs on every platform:
+// the platform mutex is not recursive.
 
 static void test_client_io_hand_off_never_waits_for_the_mutex()
 {

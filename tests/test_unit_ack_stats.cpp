@@ -203,9 +203,8 @@ static void stats_history_result( const rocketnet_ack_endpoint_t * endpoint,
 #endif // ROCKETNET_DEV
 
 // Compare the library's recompute with the test-local oracle at every existing
-// manual numeric edge assertion in DEV=1, while keeping the production
-// recompute and numeric assertions active in DEV=0. This intentionally updates
-// endpoint; the received live aggregate cases below compare without updating.
+// manual numeric edge assertion. This intentionally updates endpoint; the
+// received live aggregate cases below compare without updating.
 
 static void stats_update_and_compare_history( rocketnet_ack_endpoint_t * endpoint )
 {

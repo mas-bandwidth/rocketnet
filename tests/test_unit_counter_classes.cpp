@@ -16,7 +16,6 @@
 // directory walk, no network, no clock).
 
 #include "test_unit_registry.h"
-#include "resource_file.h"
 
 #include "rocketnet_internal.h"
 #include "rocketnet_counters.h"
