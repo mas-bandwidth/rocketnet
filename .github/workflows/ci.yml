@@ -575,6 +575,14 @@ jobs:
       - name: Run functional suite (auto ladder — the fall, on Linux; RSS enforced)
         if: matrix.leg == 'functional' && (inputs.full || matrix.build_type == 'Debug' || runner.os == 'macOS')
         shell: bash
+        # Nightly (full) Linux Debug only: scale 2, as nightly.yml scales its
+        # TSan leg. test_loopback_transport_live_message_matrix's window takes
+        # 27 s on a quiet host and 37-84 s on a 16-core fleet host at load
+        # 70-139, and passed 120 s on the nightly hosts at load 140-198
+        # (2026-11-11, cut while still sending, receipt loss 0). Per commit
+        # the value is empty, which is scale 1 (tests/time_scale.h).
+        env:
+          ROCKETNET_TEST_CASE_TIME_SCALE: ${{ inputs.full && runner.os == 'Linux' && matrix.build_type == 'Debug' && '2' || '' }}
         run: |
           set -euo pipefail
           ./bin/functional | tee functional-auto.log
