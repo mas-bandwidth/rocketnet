@@ -2585,6 +2585,11 @@ static void rocketnet_msgx_pause( rocketnet_platform_socket_t * socket, const ch
     rocketnet_warn( "%s refused (%s). msgx pump pauses %g seconds", which, strerror( error ), ROCKETNET_MSGX_RETRY_SECONDS );
 }
 
+// set once, when sendmsg_x refused a destination per message on this host;
+// never cleared: from then on unconnected sockets send per packet (below)
+
+static int rocketnet_msgx_send_names_refused = 0;
+
 // errnos a routine bad destination or a full buffer also produces on the
 // per-packet path: these never pause the pump, or one forged source port
 // would be a kill switch for it
@@ -2602,7 +2607,8 @@ void rocketnet_platform_socket_send_packets( rocketnet_platform_socket_t * socke
     rocketnet_assert( sends || num_packets == 0 );
 
     int base = 0;
-    while ( base < num_packets && rocketnet_msgx_active( socket ) )
+    while ( base < num_packets && ( socket->connected || !__atomic_load_n( &rocketnet_msgx_send_names_refused, __ATOMIC_RELAXED ) ) &&
+            rocketnet_msgx_active( socket ) )
     {
         sockaddr_storage addresses[ROCKETNET_MSGX_BATCH];
         struct iovec iov[ROCKETNET_MSGX_BATCH];
@@ -2677,6 +2683,32 @@ void rocketnet_platform_socket_send_packets( rocketnet_platform_socket_t * socke
 
             const int error = errno;
 
+            const uint64_t replay_failures_before = rocketnet_platform_atomic_load_u64( &socket->send_replay_failures );
+            for ( int i = offset; i < count; i++ )
+            {
+                const rocketnet_platform_send_t * send = &sends[map[i]];
+                rocketnet_platform_send_one( socket, send->to, send->packet_data, send->packet_bytes, &socket->send_replay_failures );
+            }
+
+            // EINVAL on an unconnected socket whose every destination the
+            // replay then sent: sendmsg_x refuses a destination per message
+            // (xnu before it took msg_name). Final for the process: sends of
+            // unconnected sockets go per packet from here, receives stay
+            // batched, one line says so, and nothing was dropped, so no
+            // send failure is counted. A refused destination fails its replay
+            // too and takes the pause below like any other refusal.
+
+            if ( error == EINVAL && !socket->connected &&
+                 rocketnet_platform_atomic_load_u64( &socket->send_replay_failures ) == replay_failures_before )
+            {
+                if ( !__atomic_exchange_n( &rocketnet_msgx_send_names_refused, 1, __ATOMIC_RELAXED ) )
+                {
+                    rocketnet_warn( "sendmsg_x refuses a destination per message on this macOS. unconnected sockets send per packet for the life of the process; receives stay batched" );
+                }
+                offset = count;
+                break;
+            }
+
             if ( result == 0 && error == 0 )
             {
                 rocketnet_debug( "sendmsg_x accepted nothing. chunk finishes per-packet" );
@@ -2691,12 +2723,6 @@ void rocketnet_platform_socket_send_packets( rocketnet_platform_socket_t * socke
             }
 
             rocketnet_platform_send_failed( socket, &socket->send_failures, ROCKETNET_PLATFORM_SEND_CALL_SENDMSG_X, error );
-
-            for ( int i = offset; i < count; i++ )
-            {
-                const rocketnet_platform_send_t * send = &sends[map[i]];
-                rocketnet_platform_send_one( socket, send->to, send->packet_data, send->packet_bytes, &socket->send_replay_failures );
-            }
 
             offset = count;
         }
