@@ -502,6 +502,70 @@ void rocketnet_test_platform_spin_lock_acquire_release_under_contention()
     rocketnet_check( lock == 0 );
 }
 
+// rocketnet_platform_wake_wait_writable against real descriptors, every wait
+// bounded: a set wake ends the wait and is consumed, and with nothing ready
+// the wait returns false at its timeout. A writable socket ends the wait at
+// once on Linux, where the portable server's carry waits for writability;
+// elsewhere the writable wait is the wake alone, so a writable socket does
+// not end it.
+
+#if defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
+static double rocketnet_platform_primitives_seconds_since( std::chrono::steady_clock::time_point start )
+{
+    return std::chrono::duration<double>( std::chrono::steady_clock::now() - start ).count();
+}
+#endif // #if defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
+
+void rocketnet_test_platform_wake_wait_writable()
+{
+#if defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
+    const double timeout = 0.05;
+    const double bound = 10.0;
+
+    rocketnet_platform_wake_t * wake = rocketnet_platform_wake_create( NULL, NULL );
+    rocketnet_check( wake );
+
+    rocketnet_platform_wake_set( wake );
+    std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
+    rocketnet_check( rocketnet_platform_wake_wait_writable( wake, bound ) );
+    rocketnet_check( rocketnet_platform_primitives_seconds_since( start ) < bound / 2 );
+
+    start = std::chrono::steady_clock::now();
+    rocketnet_check( !rocketnet_platform_wake_wait_writable( wake, timeout ) );
+    double waited = rocketnet_platform_primitives_seconds_since( start );
+    rocketnet_check( waited >= timeout / 2 && waited < bound / 2 );
+
+    rocketnet_platform_wake_destroy( wake );
+
+#if defined( ROCKETNET_PLATFORM_HAS_WAKE )
+    rocketnet_address_t address;
+    rocketnet_check( rocketnet_address_parse( &address, "127.0.0.1:0" ) );
+    rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( NULL, &address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f, 65536, 65536 );
+    rocketnet_check( socket );
+    wake = rocketnet_platform_wake_create( NULL, socket );
+    rocketnet_check( wake );
+
+    start = std::chrono::steady_clock::now();
+#if defined( __linux__ )
+    rocketnet_check( rocketnet_platform_wake_wait_writable( wake, bound ) );
+    rocketnet_check( rocketnet_platform_primitives_seconds_since( start ) < bound / 2 );
+#else // #if defined( __linux__ )
+    rocketnet_check( !rocketnet_platform_wake_wait_writable( wake, timeout ) );
+    waited = rocketnet_platform_primitives_seconds_since( start );
+    rocketnet_check( waited >= timeout / 2 && waited < bound / 2 );
+#endif // #if defined( __linux__ )
+
+    rocketnet_platform_wake_set( wake );
+    start = std::chrono::steady_clock::now();
+    rocketnet_check( rocketnet_platform_wake_wait_writable( wake, bound ) );
+    rocketnet_check( rocketnet_platform_primitives_seconds_since( start ) < bound / 2 );
+
+    rocketnet_platform_wake_destroy( wake );
+    rocketnet_platform_socket_destroy( socket );
+#endif // #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
+#endif // #if defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
+}
+
 
 
 #if defined( ROCKETNET_PLATFORM_PRIMITIVES_STANDALONE )
@@ -1129,6 +1193,7 @@ int main()
 
     rocketnet_test_platform_thread();
     rocketnet_platform_primitives_priority();
+    rocketnet_test_platform_wake_wait_writable();
 
     rocketnet_check( rocketnet_term() == ROCKETNET_STATUS_OK );
     rocketnet_thread_priority( priority_enabled );

@@ -1382,6 +1382,11 @@ void rocketnet_platform_socket_apply_dont_fragment( bool ipv6, void ( *set_optio
 
 #if defined( __linux__ )
     set_option( user, IPPROTO_IP, IP_MTU_DISCOVER, IP_PMTUDISC_DO );
+#elif defined( __APPLE__ )
+    // darwin refuses IP_DONTFRAG on an AF_INET6 socket (EINVAL), and
+    // IPV6_DONTFRAG already keeps its v4-mapped datagrams whole
+    if ( !ipv6 )
+        set_option( user, IPPROTO_IP, IP_DONTFRAG, 1 );
 #elif defined( IP_DONTFRAG )
     set_option( user, IPPROTO_IP, IP_DONTFRAG, 1 );
 #else
@@ -1662,9 +1667,10 @@ bool rocketnet_platform_socket_connect( rocketnet_platform_socket_t * socket, co
 
     if ( connect( socket->handle, (const sockaddr *) &storage, storage_bytes ) != 0 )
     {
+        const int error = errno;
         char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
         rocketnet_address_to_string( to, address_string );
-        rocketnet_error( "connect (%s) failed: %s", address_string, strerror( errno ) );
+        rocketnet_error( "connect (%s) failed: %s", address_string, strerror( error ) );
         return false;
     }
 
@@ -4253,9 +4259,10 @@ bool rocketnet_platform_socket_connect( rocketnet_platform_socket_t * socket, co
 
     if ( connect( socket->handle, (const sockaddr *) &storage, storage_bytes ) == SOCKET_ERROR )
     {
+        const int error = WSAGetLastError();
         char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
         rocketnet_address_to_string( input_to, address_string );
-        rocketnet_error( "connect (%s) failed: WSA error %d", address_string, WSAGetLastError() );
+        rocketnet_error( "connect (%s) failed: WSA error %d", address_string, error );
         return false;
     }
 

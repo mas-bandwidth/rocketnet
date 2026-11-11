@@ -5,6 +5,7 @@
 #include "rocketnet_memory.h"
 #include <new>
 #include <atomic>
+#include <errno.h>
 #include <string.h>
 
 static void * portable_socket_create( void * context, const char * name, rocketnet_address_t * bind, int receive_buffer_bytes, int * status )
@@ -329,7 +330,7 @@ enum portable_tx_step_t
 {
     PORTABLE_TX_EXIT,
     PORTABLE_TX_SENT,
-    PORTABLE_TX_WAIT,
+    PORTABLE_TX_WAIT,       // empty, or a retained bank's suffix is unsent (ENOBUFS): wait on the wake for the idle timeout
     PORTABLE_TX_WAIT_CARRY, // a retained bank's suffix is unsent (EAGAIN): wait for writability, not the idle timeout
 };
 
@@ -396,16 +397,20 @@ static portable_tx_step_t portable_tx_step( portable_server_t * server )
         {
             const int remaining = bank->count - server->tx_cursor;
             int consumed;
+            errno = 0;
 #if ROCKETNET_DEV
             if ( server->send_progress_for_test )
                 consumed = server->send_progress_for_test( server, bank->sends + server->tx_cursor, remaining );
             else
 #endif // #if ROCKETNET_DEV
                 consumed = rocketnet_platform_socket_send_packets_mmsg_progress( server->socket, bank->sends + server->tx_cursor, remaining );
+            const bool no_buffers = errno == ENOBUFS;
             rocketnet_assert( consumed >= 0 && consumed <= remaining );
             server->tx_cursor += consumed;
+            // ENOBUFS leaves the socket writable, so a writable wait would
+            // return at once and spin: it takes the idle wait instead
             if ( server->tx_cursor < bank->count )
-                return PORTABLE_TX_WAIT_CARRY;
+                return no_buffers ? PORTABLE_TX_WAIT : PORTABLE_TX_WAIT_CARRY;
         }
         else
 #endif // #if defined( __linux__ )
@@ -1656,8 +1661,10 @@ static bool portable_send_idle( void * transport )
 
 #if ROCKETNET_DEV && defined( __linux__ )
 // Fake only socket outcomes; the real publish/take/release/stop code owns
-// the banks. A zero-progress result models a persistent EAGAIN.
+// the banks. A short result leaves portable_carry_errno in errno, as the
+// real call leaves its refusal: EAGAIN unless a case sets ENOBUFS.
 static int portable_carry_allow;
+static int portable_carry_errno = EAGAIN;
 static int portable_carry_sent[8];
 static int portable_carry_count;
 static int portable_carry_terminal_count;
@@ -1669,6 +1676,8 @@ static int portable_carry_progress( portable_server_t *, const rocketnet_platfor
     const int consumed = count < portable_carry_allow ? count : portable_carry_allow;
     for ( int i = 0; i < consumed; i++ )
         portable_carry_sent[portable_carry_count++] = sends[i].packet_data[0];
+    if ( consumed < count )
+        errno = portable_carry_errno;
     return consumed;
 }
 
@@ -1772,6 +1781,12 @@ bool rocketnet_portable_tx_test_carry_wake()
     portable_carry_allow = 0;
     valid &= portable_tx_step( server ) == PORTABLE_TX_WAIT_CARRY;
     valid &= server->tx_cursor == 1 && portable_carry_progress_calls == 2;
+    // ENOBUFS also retains the bank, but the socket stays writable through
+    // it: the step is the idle wait, so the worker cannot spin on POLLOUT
+    portable_carry_errno = ENOBUFS;
+    valid &= portable_tx_step( server ) == PORTABLE_TX_WAIT;
+    valid &= server->tx_consumer == 0 && server->tx_cursor == 1 && portable_carry_progress_calls == 3;
+    portable_carry_errno = EAGAIN;
     // drain the publishes' wake, then a publish refused for NO_FREE_BANK
     // while the bank is retained must wake the worker again
     (void) rocketnet_platform_wake_wait( server->wake, false, 0.0 );
@@ -1874,7 +1889,7 @@ void rocketnet_portable_tx_test_sweep_destroy( void * transport ) { portable_ser
 #endif // #if ROCKETNET_DEV
 
 #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
-// the portable client on a platform with the client I/O wake: an eight-callback
+// the portable client on a platform with the client I/O wake: a twelve-callback
 // table over the socket and its wake, so the transport runs the I/O thread of
 // docs/CLIENT-IO.md (RNClientIo) instead of the BASE receive thread.
 struct portable_io_client_t
