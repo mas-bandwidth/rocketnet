@@ -4376,7 +4376,11 @@ void rocketnet_platform_count_receive_reset()
 
 uint64_t rocketnet_platform_receive_resets()
 {
+#if defined( _M_X64 ) || defined( _M_ARM64 )
     return (uint64_t) __iso_volatile_load64( &rocketnet_platform_receive_reset_count );
+#else
+    return (uint64_t) InterlockedCompareExchange64( &rocketnet_platform_receive_reset_count, 0, 0 );
+#endif // #if defined( _M_X64 ) || defined( _M_ARM64 )
 }
 
 int rocketnet_platform_socket_receive_buffer_bytes( rocketnet_platform_socket_t * socket )

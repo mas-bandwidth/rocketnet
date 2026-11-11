@@ -831,7 +831,11 @@ inline uint64_t rocketnet_platform_atomic_add_u64( volatile uint64_t * value, ui
     // relaxed ordering
 inline uint64_t rocketnet_platform_atomic_load_u64( volatile uint64_t * value )
 {
+#if defined( _M_X64 ) || defined( _M_ARM64 )
     return (uint64_t) __iso_volatile_load64( (const volatile long long *) value );
+#else
+    return (uint64_t) _InterlockedCompareExchange64( (volatile long long *) value, 0, 0 );
+#endif // #if defined( _M_X64 ) || defined( _M_ARM64 )
 }
 
     // relaxed ordering
