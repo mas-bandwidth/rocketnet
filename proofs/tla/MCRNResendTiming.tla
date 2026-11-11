@@ -18,7 +18,13 @@
 (* SeededGapBounded.  MCRNResendTimingRefused.cfg lets a first send be     *)
 (* refused for 9 s and MCRNResendTimingBrokenRefusedClock.cfg is its       *)
 (* reversed witness, the refusal starting the clock: it must fail          *)
-(* AttemptsBeforeTimeout.                                                  *)
+(* AttemptsBeforeTimeout.  MCRNResendTimingPaced.cfg is the product's      *)
+(* shape at the defaults, one packet an update and a block whose first     *)
+(* pass outlasts the timeout, and MCRNResendTimingPacedSmall.cfg the same  *)
+(* with the small record and two packets an update; their reversed         *)
+(* witnesses MCRNResendTimingBrokenUnsentFirst.cfg and                     *)
+(* MCRNResendTimingBrokenUnsentFirstHeld.cfg walk the never-sent numbers   *)
+(* first and must fail AttemptsBeforeTimeout and NoDueRecordHeld.          *)
 (***************************************************************************)
 EXTENDS RNResendTiming
 =============================================================================

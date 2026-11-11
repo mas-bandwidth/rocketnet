@@ -46,7 +46,10 @@
 // the transport, its pointer, word count and key) adds 32832 bytes on macOS
 // and 32768 on Linux, measured; this figure adds the larger, computed and
 // not measured on Windows.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1608601790 )
+// Each connection's rn_window_ack_t holds the two resend sent marks
+// (resend_sent, chunk_sent), adding 8 bytes a connection, 8000 at 1000
+// clients, computed and not measured on Windows.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1608609790 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22971951 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
@@ -57,7 +60,12 @@
 // The server protocol's cookie reply limit (its bitmap pointer, word count
 // and 16-byte key, and the 262144-bit source bitmap carved with the
 // transport) adds 32832 bytes; the probe's actual= line is 1469245151.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468196575 )
+// Each connection's rn_window_ack_t holds the two resend sent marks
+// (resend_sent, chunk_sent: the first number on the wire of each resend
+// sequence, where the ordered walk starts its retransmits), adding 8 bytes a
+// connection, 8000 at 1000 clients (measured); the probe's actual= line is
+// 1469253151.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468204575 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13987594 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Debug.
@@ -88,7 +96,10 @@
 // (kernel_dropped, sdk/rocketnet_server_socket_linux.cpp), adding 8 bytes;
 // computed with the cookie reply limit, the probe's actual= line is
 // 3111420715.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110372139ULL )
+// Each connection's rn_window_ack_t holds the two resend sent marks
+// (resend_sent, chunk_sent), adding 8 bytes a connection, 8000 at 1000
+// clients; the probe's actual= line is 3111428715.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110380139ULL )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14146994 )
 #endif // #if defined( _WIN32 )
 

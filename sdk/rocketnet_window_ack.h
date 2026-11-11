@@ -101,12 +101,16 @@ struct rn_window_ack_t
     // delay class (standard/MESSAGES.md m9.3; proofs/tla/RNResendTiming.tla
     // NoDueRecordHeld): single-packet records, and the chunks of a
     // block (a record whose send descriptor has more than one fragment). Each
-    // is ordered by its entries' sequence keys and walked from its head while due.
+    // is its numbers not on the wire (never sent, or refused), then its numbers
+    // on the wire by last send, from its sent mark (proofs/tla/RNResendFifoLayout.tla
+    // MarkMatch). The walk takes the numbers on the wire while due, then the others.
     uint32_t resend_head;           // oldest slot in the small-record sequence (0..W-1), or RN_RESEND_NONE
     uint32_t resend_tail;           // newest slot in the small-record sequence (0..W-1), or RN_RESEND_NONE
     uint32_t resend_count;          // number of slots sequenced in both resend sequences
     uint32_t chunk_head;            // oldest slot in the chunk sequence (0..W-1), or RN_RESEND_NONE
     uint32_t chunk_tail;            // newest slot in the chunk sequence (0..W-1), or RN_RESEND_NONE
+    uint32_t resend_sent;           // first slot of the small-record sequence on the wire, or RN_RESEND_NONE
+    uint32_t chunk_sent;            // first slot of the chunk sequence on the wire, or RN_RESEND_NONE
     uint32_t walk_visits;           // FIFO entries the last resend walk examined (O(due): due + one stop per FIFO)
 
     uint64_t pkt_head;              // oldest live or un-reclaimed slot in sent_packets
@@ -176,10 +180,16 @@ static inline double rn_window_ack_class_delay( const rn_window_ack_t * ack, boo
 uint32_t rn_window_ack_resend_first( const rn_window_ack_t * ack, bool chunk );
 uint32_t rn_window_ack_resend_next( const rn_window_ack_t * ack, bool chunk, uint32_t slot );
 
+// The first slot of a class's resend sequence whose number is on the wire
+// (last_send >= 0), or RN_RESEND_NONE: every slot before it is due now
+// without a time test, every slot from it on is ordered by last send.
+uint32_t rn_window_ack_resend_sent( const rn_window_ack_t * ack, bool chunk );
+
 // Links a never-sent number into its class's resend FIFO right after `after`
 // (a slot of the same FIFO), or at that FIFO's head when `after` is
 // RN_RESEND_NONE. rn_ordered_write parks new numbers behind the never-sent
-// ones already waiting, ahead of every number that was sent.
+// ones already waiting, ahead of every number that was sent: `after` is a
+// number not on the wire, so the class's sent mark stays where it is.
 void rn_window_ack_park( rn_window_ack_t * ack, uint32_t after, uint32_t slot_index );
 
 // Initializes the sent-packet map, resend FIFO, and RTT estimator over a
@@ -244,7 +254,7 @@ uint32_t rn_window_ack_on_acks( rn_window_ack_t * ack, const uint64_t * packet_i
 // (standard/MESSAGES.md m9.1). The packet is not entered in the sent
 // map; its reliable numbers keep their assigned numbers and ring offsets, are
 // marked due now, and go to the head of the resend FIFO so the next update
-// resends them first.
+// resends them ahead of the numbers never sent.
 void rn_window_ack_packet_failed( rn_window_ack_t * ack, const uint64_t * numbers, uint32_t count, double now );
 
 // Checks the per-connection reliable timeout before resending (standard/MESSAGES.md
