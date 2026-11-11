@@ -115,11 +115,12 @@ struct rocketnet_server_protocol_t
     int32_t max_timeout_seconds;                            // clamp; <= 0 means no clamp
 
     // cookie_reply_source_words words, a power of two, carved with the server
-    // transport and cleared by update; NULL, with 0 words, only in a protocol
-    // a unit harness builds by hand without one, which then keeps no
-    // per-source limit (the transport always carves it)
+    // transport and cleared by update when cookie_reply_sources_dirty; NULL,
+    // with 0 words, only in a protocol a unit harness builds by hand without
+    // one, which then keeps no per-source limit (the transport always carves it)
     uint64_t * cookie_reply_sources;
     int cookie_reply_source_words;
+    int cookie_reply_sources_dirty;                         // the bitmap was read since update last cleared it
     uint8_t cookie_reply_source_key[ROCKETNET_SERVER_COOKIE_REPLY_KEY_BYTES];        // drawn at create
 
     struct rocketnet_encryption_map_t * encryption_map;
