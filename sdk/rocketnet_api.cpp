@@ -2548,7 +2548,6 @@ static struct rocketnet_server_t * rn_server_create_current( void * context, con
     if ( keygen_failed )
     {
         sodium_memzero( &transport, sizeof( transport ) );
-        sodium_memzero( base, (size_t) total );
 
         if ( !memory )
             rocketnet_free( context, base );
