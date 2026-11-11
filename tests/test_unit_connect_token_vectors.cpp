@@ -544,10 +544,13 @@ static int wp_ed25519_run( bool accept_all, wp_ed25519_tally_t * tally,
     return failed;
 }
 
-// Pins sdk/rocketnet_connect_token.cpp rocketnet_verify_signed_connect_data
-// against all 151 Ed25519 vectors, then drives the SDK wrapper itself: S
-// replaced by S + L (RFC 8032 section 5.1.7), a flipped R bit, flipped data
-// and the identity public key encoding are all refused.
+// Pins the vendored crypto_sign_verify_detached, which
+// sdk/rocketnet_connect_token.cpp rocketnet_verify_signed_connect_data calls,
+// against all 151 Ed25519 vectors: the sweep calls it directly, since the
+// vectors' messages are not ROCKETNET_SIGNED_CONNECT_DATA_BYTES long. Then the
+// hand-built cases below drive the SDK wrapper itself: a valid signature is
+// accepted, and S replaced by S + L (RFC 8032 section 5.1.7), a flipped R bit,
+// flipped data and the identity public key encoding are all refused.
 
 static void test_wycheproof_ed25519_vectors()
 {
