@@ -168,7 +168,14 @@ void unreliable_receipts_over_lossy_link()
 void promoted_receipts_over_lossy_reliable_blocks()
 {
     rocketnet_channel_harness_t h;
-    receipt_check( rocketnet_channel_harness_create( &h ) );
+    // the case tests receipts over lossy blocks, not the reliable timeout: at the
+    // default 10 s a chunk gets about five sends (MESSAGES.md m9.3), and four
+    // losses on this 20% link end the connection (seed 4905888). The timeout
+    // covers the case's own 30 s loop instead.
+    struct rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    config.reliable_message_timeout_ms = 30000;
+    receipt_check( rocketnet_channel_harness_create_with_config( &h, &config ) );
     rocketnet_channel_harness_set_link( &h, 0.02, 0.05, 20.0f, 5.0f );
     receipt_check( rocketnet_channel_harness_connect( &h, 60 * 10 ) );
 
