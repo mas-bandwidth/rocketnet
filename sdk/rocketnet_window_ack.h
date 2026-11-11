@@ -70,7 +70,7 @@ struct rn_resend_gaps_t
     double update_delay[2];         // each class's delay at that update
     double prev_now;                // the update before it (0 before the second update)
     double prev_delay[2];           // each class's delay at the update before
-    uint32_t count[2];              // resends measured
+    uint64_t count[2];              // resends measured
     double gap_min[2];              // smallest gap, seconds
     double gap_max[2];              // largest gap, seconds
     double early_min[2];            // min over resends of gap - delay at the resend (>= 0 by the rule)

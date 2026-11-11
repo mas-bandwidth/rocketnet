@@ -1160,9 +1160,9 @@ void rn_channels_end_update( struct rn_channels_t * channels )
 // sit on the list twice. Removing a ticket that is not the current one leaves
 // the list alone.
 
-static uint32_t rn_channel_live_count( const rn_channel_send_t * send )
+static uint64_t rn_channel_live_count( const rn_channel_send_t * send )
 {
-    return (uint32_t) send->queued[0] + send->queued[1] + send->queued[2] + send->queued[3];
+    return send->queued[0] + send->queued[1] + send->queued[2] + send->queued[3];
 }
 
 // A channel's reliable FIFO links its queued descriptors by index through

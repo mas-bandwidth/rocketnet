@@ -21,7 +21,8 @@
 //          the entry sizes, pinned to docs/LOAD.md Table 3's figures
 // ----------------------------------------------------------------
 
-static_assert( sizeof( rn_channel_send_t ) == 40, "channel send state is 40 bytes (14)" );
+static_assert( sizeof( rn_channel_send_t ) == 64, "channel send state is 64 bytes (14)" );
+static_assert( sizeof( ( (rn_channel_send_t *) 0 )->queued[0] ) >= sizeof( uint32_t ), "a queued count holds every send descriptor a region can index, so any accepted send_queue_messages (14)" );
 static_assert( sizeof( rn_channel_receive_t ) == 24, "channel receive state is 24 bytes (14)" );
 static_assert( sizeof( rn_send_number_t ) == 32, "the sender's per-number entry is 32 bytes (14)" );
 static_assert( sizeof( rn_receive_descriptor_t ) == 32, "the receiver's descriptor is 32 bytes (14)" );
@@ -91,7 +92,7 @@ static const char * const rn_part_names[RN_NUM_PARTS] = {
 };
 
 static const char * const rn_part_formulas[RN_NUM_PARTS] = {
-    "40C",
+    "64C",
     "24C",
     "32W",
     "8W",
@@ -1801,7 +1802,7 @@ int rocketnet_message_connection_sizing( const struct rocketnet_message_config_t
 
     rn_text_t text = { buffer, buffer_size, 0 };
     rn_text_append( &text, "message connection sizing (docs/LOAD.md Table 3)\n" );
-    rn_text_append( &text, "connection_bytes = 64C + 112.125W + B + 88Q + S + 128P + 24(W + Du) + 1440Ru + 16Rq + SR, Q/S/SR include maximum resend-delay payload reserve (typical pool payloads 128/512/1024 bytes)\n" );
+    rn_text_append( &text, "connection_bytes = 88C + 112.125W + B + 88Q + S + 128P + 24(W + Du) + 1440Ru + 16Rq + SR, Q/S/SR include maximum resend-delay payload reserve (typical pool payloads 128/512/1024 bytes)\n" );
     rn_text_append( &text, "C=%d W=%d B=%d S=%d Q=%d P=%d Du=%d Ru=%d Rq=%d\n",
                     config->num_channels, config->reliable_messages_in_flight, config->receive_message_buffer_bytes, config->send_message_buffer_bytes,
                     config->send_queue_messages, config->packets_in_flight, config->unreliable_messages_per_update,
