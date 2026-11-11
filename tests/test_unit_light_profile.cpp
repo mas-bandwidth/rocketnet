@@ -86,11 +86,13 @@
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468404575 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13987786 )
 #else
-// Linux x86-64 with io_uring and XDP built (vision), gcc, Debug.
+// Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
 // The RTT reader added to the message link crosses the message object's
 // 64-byte head-block alignment, as measured on main, adding 64 bytes.
 // The xdp worker's two receive frame arrays moved from its thread stack into
-// each queue's rocketnet_server_xdp_socket_t, adding 872136 bytes (measured).
+// each queue's rocketnet_server_xdp_socket_t, adding 262152 bytes a queue,
+// 1835064 for the 7 default queues; the pin then moved by only 872136
+// because the pin before it stood 963320 bytes above the planned peak.
 // Each xdp queue counts the TX wakeups that failed hard
 // (send_wakeup_failures).
 // The replay walk's object holds supersede_owed and, in a development build,

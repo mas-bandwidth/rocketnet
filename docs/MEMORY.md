@@ -119,9 +119,9 @@ Linux x86-64 development build with io_uring and XDP.
 Both figures are the planned lifecycle peak (create, connect or start, stop or
 disconnect, the next cycle, and destroy) plus the 1 MiB allowance. They exclude
 memory owned by the operating system (worker thread stacks, XDP UMEM, io_uring
-rings, kernel socket buffers) and process overhead. The 2026-11-01 source built with
-`ROCKETNET_DEV=OFF` reported 3,102,970,529 and 14,400,918 bytes, using an accepted
-non-test packet filter; that query was not repeated for v1.0.1. Other platforms have different transport candidates and
+rings, kernel socket buffers) and process overhead. The same v1.0.1 source built with
+`ROCKETNET_DEV=OFF` reports 3,105,239,503 and 14,401,110 bytes, using an accepted
+non-test packet filter. Other platforms have different transport candidates and
 layouts; the older Windows and macOS examples predate this query and are not
 current measurements. The default profile remains the stock acceptance.
 

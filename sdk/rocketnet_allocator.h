@@ -239,7 +239,7 @@ struct rn_resend_link_t                 // 8 bytes: resend sequence entry, index
 
 enum
 {
-    RN_PART_CHANNEL_SEND = 0,           // 40 C
+    RN_PART_CHANNEL_SEND = 0,           // 64 C
     RN_PART_CHANNEL_RECEIVE,            // 24 C
     RN_PART_SEND_NUMBERS,               // 32 W
     RN_PART_SEND_FIRST_SENDS,           // 8 W
