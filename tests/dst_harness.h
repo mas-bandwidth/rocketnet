@@ -1083,14 +1083,14 @@ static inline void rocketnet_dst_connect_client( rocketnet_dst_world_t * w, int 
     client->generation++;
     rocketnet_dst_check_generation( &w->check, index, client->generation );
 
-    // the burst client's first session also gets a fresh message object at
-    // connect: its pre-connect updates leave the one made at create free, and
-    // the server's CONFIG would go by unseen; every later session rebuilds as
-    // a restart does
+    // every session, the first included, gets a fresh message object at
+    // connect, as the product creates its message client over a transport
+    // that is already connecting: the pre-connect updates of the one made at
+    // create see the transport DISCONNECTED, which ends and frees its one
+    // connection for good, so every payload of a first session would be
+    // dropped as a stale connection entry and acked unread
 
-    const int fresh = client->generation > 1 ||
-                      ( w->schedule.kind == ROCKETNET_DST_SCHEDULE_BURST && index == w->schedule.endpoint );
-    if ( fresh && !rocketnet_dst_client_message_build( w, index ) )
+    if ( !rocketnet_dst_client_message_build( w, index ) )
     {
         rocketnet_dst_fail( w, "message_object", "the restarted message object was refused" );
         return;
@@ -1161,8 +1161,10 @@ static inline void rocketnet_dst_send_one( rocketnet_dst_world_t * w, int index,
             return;
     }
 
+    const uint32_t generation = (uint32_t) client->generation;
+    const uint64_t identity = direction == 0 ? ( (uint64_t) generation * 256 + (uint64_t) index ) : (uint64_t) generation;
     const int reliable = ( type == 2 || type == 3 || type == 4 || type == 6 || type == 7 );
-    if ( reliable && rocketnet_dst_check_outstanding( &w->check, session ) > ROCKETNET_DST_CHECK_OUTSTANDING_CAP )
+    if ( reliable && rocketnet_dst_check_outstanding( &w->check, session, identity ) > ROCKETNET_DST_CHECK_OUTSTANDING_CAP )
         return;
 
     uint32_t epoch = 0;
@@ -1172,7 +1174,6 @@ static inline void rocketnet_dst_send_one( rocketnet_dst_world_t * w, int index,
     }
 
     const uint32_t sequence = rocketnet_dst_next_sequence( client, type, direction );
-    const uint32_t generation = (uint32_t) client->generation;
     uint8_t payload[16384];
     if ( size > (int) sizeof( payload ) )
         return;
@@ -1188,9 +1189,6 @@ static inline void rocketnet_dst_send_one( rocketnet_dst_world_t * w, int index,
 
     if ( sent )
     {
-        const uint64_t identity = direction == 0
-                                      ? ( (uint64_t) generation * 256 + (uint64_t) index )
-                                      : (uint64_t) generation;
         rocketnet_dst_check_sent( &w->check, w->now, session, channel, type, sequence, generation,
                                   identity, epoch, size );
     }

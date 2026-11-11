@@ -954,13 +954,24 @@ static inline void rocketnet_dst_check_liveness_connected( struct rocketnet_dst_
 }
 
 // The reliable bytes sent on a session and not yet delivered at the receiver.
+// Only the streams of the session's current identity count: an ended
+// connection's undelivered bytes went with its message object, as they do in
+// the product, so they hold no new session back.
 
-static inline uint64_t rocketnet_dst_check_outstanding( struct rocketnet_dst_check_state_t * st, int session )
+static inline uint64_t rocketnet_dst_check_outstanding( struct rocketnet_dst_check_state_t * st, int session,
+                                                        uint64_t identity )
 {
     uint64_t total = 0;
     for ( int channel = 0; channel < 9; channel++ )
+    {
         for ( int type = 0; type < 8; type++ )
-            total += st->stream[rocketnet_dst_check_stream_index( session, channel, type )].outstanding_bytes;
+        {
+            const struct rocketnet_dst_check_stream_t * s =
+                &st->stream[rocketnet_dst_check_stream_index( session, channel, type )];
+            if ( s->seen && s->identity == identity )
+                total += s->outstanding_bytes;
+        }
+    }
 
     return total;
 }
