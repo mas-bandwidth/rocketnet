@@ -31,6 +31,9 @@ analyzed must never read as a clean file.
 
 clang-tidy is found as CLANG_TIDY, clang-tidy or clang-tidy-18; cppcheck as
 CPPCHECK or cppcheck. A missing tool prints a TOOL-MISSING line and fails.
+The gate prints the cppcheck path and version it uses, and a cppcheck other
+than CPPCHECK_VERSION, the version the baseline and dispositions were written
+for, prints a TOOL-VERSION line and fails.
 
 Run with --generate to rewrite both baselines from the current findings.
 """
@@ -54,6 +57,10 @@ COMPILE_DB = os.path.join(BUILD, "compile_commands.json")
 TIDY_DB_DIR = os.path.join(BUILD, "tidy")
 TIDY_BASELINE = os.path.join(ROOT, "tools", "tidy_baseline.txt")
 CPPCHECK_BASELINE = os.path.join(ROOT, "tools", "cppcheck_baseline.txt")
+# The cppcheck the baseline and the cppcheck dispositions were written for
+# (the fleet runners' apt package in /usr/bin). Another version reports other
+# checks and other keys, so the gate refuses to compare its findings.
+CPPCHECK_VERSION = "2.19.0"
 DISPOSITIONS = os.path.join(ROOT, "tools", "tidy_dispositions.txt")
 TRIAGE_DOC = "docs/audits/2026-10-26-static-analysis-triage.md"
 
@@ -123,6 +130,19 @@ def find_tool(env, names):
         if path:
             return path
     return None
+
+
+def cppcheck_version(cppcheck):
+    """The version cppcheck --version prints ("Cppcheck 2.19.0" -> "2.19.0"), or None."""
+    try:
+        result = subprocess.run([cppcheck, "--version"], capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    match = re.search(r"(\d+\.\d+(?:\.\d+)?)", result.stdout + result.stderr)
+    if not match:
+        return None
+    version = match.group(1)
+    return version if version.count(".") == 2 else version + ".0"
 
 
 def ensure_compile_db():
@@ -484,6 +504,15 @@ def main():
         print("TOOL-MISSING cppcheck (cppcheck or CPPCHECK) (missing) on %s" % runner_name())
         missing = True
     if missing:
+        return 1
+
+    version = cppcheck_version(cppcheck)
+    print("cppcheck: %s, version %s on %s" % (cppcheck, version or "unknown", runner_name()))
+    if version != CPPCHECK_VERSION:
+        print("TOOL-VERSION cppcheck at %s is %s, but %s and %s were written for cppcheck %s: "
+              "set CPPCHECK to a cppcheck %s (the fleet runners' /usr/bin/cppcheck)" % (
+                  cppcheck, version or "unknown", relpath(args.cppcheck_baseline),
+                  relpath(args.dispositions), CPPCHECK_VERSION, CPPCHECK_VERSION))
         return 1
 
     if not ensure_compile_db():
