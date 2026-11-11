@@ -3,11 +3,9 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// The host shim for libbpf's <bpf/bpf_endian.h>: bpf_ntohs and its siblings
-// as libbpf defines them, from the compiler's __BYTE_ORDER__ for the
-// target: a swap on a little-endian target, the identity on a big-endian
-// one. (libbpf's own header cannot be reached from here without
-// #include_next, which the strict C build refuses.)
+// The host shim for libbpf's <bpf/bpf_endian.h>: bpf_ntohs as libbpf defines
+// it, a swap on a little-endian target and none on a big-endian one, keyed on
+// the compiler's __BYTE_ORDER__ as libbpf's is.
 
 #pragma once
 
@@ -17,17 +15,11 @@
 #include "linux/bpf.h"
 
 #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-#define bpf_htons(x) ((__be16)__builtin_bswap16((__u16)(x)))
-#define bpf_ntohs(x) ((__u16)__builtin_bswap16((__u16)(x)))
-#define bpf_htonl(x) ((__be32)__builtin_bswap32((__u32)(x)))
-#define bpf_ntohl(x) ((__u32)__builtin_bswap32((__u32)(x)))
+#define bpf_ntohs(x) ((__u16) __builtin_bswap16((__u16)(x)))
 #elif __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-#define bpf_htons(x) ((__be16)(__u16)(x))
 #define bpf_ntohs(x) ((__u16)(x))
-#define bpf_htonl(x) ((__be32)(__u32)(x))
-#define bpf_ntohl(x) ((__u32)(x))
-#else // #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-#error "the XDP host shim needs __BYTE_ORDER__ to be little or big endian"
-#endif // #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+#else
+#error "the XDP host shim needs a little-endian or big-endian host"
+#endif
 
 #endif // #ifndef ROCKETNET_XDP_HOST_BPF_ENDIAN_H
