@@ -782,6 +782,11 @@ MCRNBuilderPlanLayoutBrokenInclusivePrefix.cfg	MCRNBuilderPlanLayout.tla	invaria
 MCRNBuilderPlanLayoutBrokenReverseScatter.cfg	MCRNBuilderPlanLayout.tla	invariant	PlanSorted	ignore-terminal	rnbuilderplanlayout	required	-
 MCRNClientIoDecryptReduced.cfg	MCRNClientIoDecrypt.tla	pass	-	check	rnclientiodecrypt	required	-
 MCRNUringSendPhasesBrokenSlots.cfg	MCRNUringSendPhases.tla	invariant	PendingMatches	check	rnuringsendphases	required	-
+MCRNUringSendPhasesBrokenResendUncounted.cfg	MCRNUringSendPhases.tla	invariant	NoWriteWhileKernelOwned	check	rnuringsendphases	required	-
+MCRNSegmentRefusal.cfg	MCRNSegmentRefusal.tla	pass	-	check	rnsegmentrefusal	required	-
+MCRNSegmentRefusalKernel.cfg	MCRNSegmentRefusal.tla	pass	-	check	rnsegmentrefusal	required	-
+MCRNSegmentRefusalBrokenTransport.cfg	MCRNSegmentRefusal.tla	invariant	OtherDestinationUnaffected	check	rnsegmentrefusal	required	-
+MCRNSegmentRefusalBrokenConsecutive.cfg	MCRNSegmentRefusal.tla	invariant	OtherDestinationUnaffected	check	rnsegmentrefusal	required	-
 MCServerSessionBrokenMessageEnd.cfg	MCServerSession.tla	invariant	MessageEndOnlyConnected	ignore-terminal	serversession	required	-
 MCRNSequencingWrap.cfg	MCRNSequencingWrap.tla	pass	-	check	rnsequencingwrap	required	-
 MCRNSequencingWrapBrokenDeltaUnmasked.cfg	MCRNSequencingWrap.tla	invariant	NewerNeverDiscarded	check	rnsequencingwrap	required	-

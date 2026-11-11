@@ -124,9 +124,9 @@ static void test_server_gso_receive_backoff()
 REGISTER_UNIT_TEST( test_server_gso_receive_backoff );
 
 // one segmented sendmmsg to one destination returns EINVAL. that run leaves
-// as plain datagrams. segmentation stays on for a later destination, and
-// turns off only after the consecutive-refusal threshold with no accepted
-// segmented send between the refusals.
+// as plain datagrams. segmentation stays on for every other destination, and
+// turns off only when the threshold of destinations refused with no
+// segmented send ever accepted: a kernel that cannot segment.
 
 struct gso_segment_socket_t
 {
@@ -281,8 +281,30 @@ static void test_server_gso_segment_refusal_keeps_other_destinations()
     check( socket.plain_packets == 0 );
     check( ( rocketnet_server_gso_features( gso ) & ROCKETNET_SERVER_GSO_FEATURE_SEGMENT ) != 0 );
 
-    // refusals with no accepted segmented send between them. the threshold
-    // itself is the one that clears the tier, and that run is still resent.
+    // the transport has segmented (40001 and 40002 were accepted), so
+    // refusals by any number of other destinations stay theirs: each run is
+    // resent plain and the tier stays on
+    for ( int i = 0; i < 2 * ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD; i++ )
+    {
+        memset( &socket, 0, sizeof( socket ) );
+        socket.refuse_segment = 100;
+        gso_segment_stage( gso, (uint16_t) ( 41000 + i ), 2 );
+        check( rocketnet_server_gso_test_flush_staged( gso ) );
+        check( socket.plain_packets == 2 );
+        check( socket.segmented == 0 );
+        check( ( rocketnet_server_gso_features( gso ) & ROCKETNET_SERVER_GSO_FEATURE_SEGMENT ) != 0 );
+    }
+
+    rocketnet_server_gso_test_close( gso );
+
+    // a kernel that refuses every segmented send: no segmented send is ever
+    // accepted. the threshold'th refusing destination is the one that clears
+    // the tier, and that run is still resent.
+    gso = rocketnet_server_gso_test_open( 1 );
+    check( gso );
+    rocketnet_server_gso_test_set_features( gso, ROCKETNET_SERVER_GSO_FEATURE_SEGMENT );
+    rocketnet_server_gso_test_set_send( gso, gso_segment_send, &socket );
+
     for ( int i = 0; i < ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD - 1; i++ )
     {
         memset( &socket, 0, sizeof( socket ) );
@@ -317,10 +339,9 @@ static void test_server_gso_segment_refusal_keeps_other_destinations()
 
 REGISTER_UNIT_TEST( test_server_gso_segment_refusal_keeps_other_destinations );
 
-// a destination that refuses every segmented run, interleaved with accepted
-// segmented runs to another destination (so the consecutive count never
-// reaches the threshold): the first refusal warns, every later one is spam,
-// and segmentation stays on
+// a new destination refuses a segmented run every round, interleaved with
+// accepted segmented runs to another destination: the first refusal warns,
+// every later one is spam, and segmentation stays on
 
 static int gso_refusal_warnings = 0;
 static int gso_refusal_spam = 0;
@@ -362,7 +383,7 @@ static void test_server_gso_segment_refusal_warns_once()
     {
         memset( &socket, 0, sizeof( socket ) );
         socket.refuse_segment = 1;
-        gso_segment_stage( gso, 40000, 2 );
+        gso_segment_stage( gso, (uint16_t) ( 40100 + i ), 2 );
         gso_segment_stage( gso, 40001, 2 );
         check( rocketnet_server_gso_test_flush_staged( gso ) );
         check( socket.plain_packets == 2 );

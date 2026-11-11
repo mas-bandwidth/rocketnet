@@ -557,10 +557,14 @@ every slot of the run (`GSO_SENDS` counts segmented sends). Without it, or
 created with `ROCKETNET_SERVER_URING_DISABLE_SEGMENT` (through
 `rocketnet_server_uring_create_flags`, for tests), a run is one slot. A live
 refusal, a segmented send's completion of `-EINVAL`, `-EIO` or `-EOPNOTSUPP`,
-turns segmentation off for the transport with one warning (`GSO_FALLBACKS`) and
-counts that run's packets as `SEND_DROPPED`: unlike the GSO transport's
-`sendmmsg`, the run cannot be resent after its completion has handed the slots
-back, so the degradation is to plain sends from the next flush, not lossless.
+is that destination's (its route: an IPsec policy, say): the run's slots are
+resent at once as one plain `SENDMSG` each, pending in their phase so its index
+is not reset under them, and the destination is remembered (the table in
+`sdk/rocketnet_server_gso.h`) so its later runs leave plain without a refusal.
+Other destinations keep segmenting. Segmentation turns off for the transport,
+with one warning (`GSO_FALLBACKS`), only when
+`ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD` destinations refused and no
+segmented send was ever accepted: a kernel that cannot segment at all.
 `rocketnet_server_uring_features` reports `ROCKETNET_SERVER_URING_FEATURE_SEGMENT`
 while it is in use.
 
@@ -612,7 +616,7 @@ re-arms, calls that left completions for the next call (`REAP_DEFERRED`), and
 send calls that returned with sends still owned by the kernel
 (`SEND_DEFERRED`), receive completions that named no provided buffer
 (`RECEIVE_DROPPED_NO_BUFFER`), segmented sends (`GSO_SENDS`) and live
-segmentation refusals (`GSO_FALLBACKS`). Stop requests cancellation, and stopped remains
+segmentation turned off for the transport (`GSO_FALLBACKS`). Stop requests cancellation, and stopped remains
 false until outstanding completions have relinquished their storage. Destroy
 requires stopped and no longer uses a timed wait followed by leaked storage as
 normal cleanup. Existing leak counters remain diagnostic compatibility surfaces;

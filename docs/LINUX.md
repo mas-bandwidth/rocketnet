@@ -215,13 +215,16 @@ refuses either is a tier, not an error: no `UDP_SEGMENT` means plain
 `sendmmsg` batching, no `UDP_GRO` means plain `recvmmsg`
 (`sdk/rocketnet_server_gso.h`). The create line names the tier:
 `gso transport: <n> queue reuseport group on port <p>, UDP_SEGMENT yes|no (plain sendmmsg), UDP_GRO yes|no (plain recvmmsg)`
-(`sdk/rocketnet_server_gso_linux.cpp`). A kernel that accepted the
-probe but refuses a live GSO send (`EINVAL`, `EIO`, `EOPNOTSUPP`) logs
-`gso transport: live GSO send refused (...). resending that run plain`,
-resends that one run as plain packets, and keeps segmentation on for later
-runs. After `ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD` (8) refused
-segmented sends in a row, with no accepted one between them, it logs
-`gso transport: live GSO send refused (...). <n> consecutive refusals, degrading to plain sendmmsg`,
+(`sdk/rocketnet_server_gso_linux.cpp`). A destination that
+refuses a live GSO send (`EINVAL`, `EIO`, `EOPNOTSUPP`; its route, an IPsec
+policy say) logs
+`gso transport: live GSO send refused (...). resending that run plain`
+(once; later refusals are spam), resends that one run as plain packets, and
+is remembered so its later runs leave plain; every other destination keeps
+segmenting. Only when `ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD` (8)
+destinations have refused and no segmented send was ever accepted (a kernel
+that cannot segment) it logs
+`gso transport: live GSO send refused (...). <n> destinations refused and none accepted, degrading to plain sendmmsg`,
 turns segmentation off for the life of the transport, and resends from the
 refused run plain (`sdk/rocketnet_server_gso_linux.cpp`, `sdk/rocketnet_server_gso.h`).
 The degradation is inside the transport, below the ladder (`BUILDING.md`).
