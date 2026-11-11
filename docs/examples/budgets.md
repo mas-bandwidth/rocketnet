@@ -21,8 +21,9 @@ what a budget does when it is exceeded.
 
 The budget governs the wire, never the queue: reliable messages wait for
 budget; unreliable ones over budget are dropped and counted. The example
-verifies delivery before shutdown. Reliability does not survive a disconnect,
-and a reliable queue that outgrows its message storage can end the connection.
+verifies delivery before shutdown. Reliability does not survive a disconnect.
+A start that finds the message storage full is refused (`NULL`, counted) and
+the connection stays up.
 
 An environment variable can override a budget at create:
 `ROCKETNET_CLIENT_SEND_KBPS` for the client,

@@ -57,8 +57,14 @@
 // (rn_resend_gaps_t count), adding 8 bytes a connection, 8000 at 1000
 // clients, and at most 8 to the client (macOS and Linux measured 0),
 // computed and not measured on Windows.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1608809790 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22972151 )
+// Each connection's rn_window_ack_t holds the probe and RTT filter clocks
+// (last_progress, last_ack, silence_end, has_last_ack: 32 bytes) and its
+// rn_endpoint_t counts send_refused (8 bytes), adding 40 bytes a connection,
+// 40000 at 1000 clients, and at most 64 to the client (one 64-byte
+// rounding): computed, not measured on Windows, by adding the 40000 and the
+// 64 that macOS and Linux both measured to the figures pinned before.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1608849790 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22972215 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
 // The figures are the planned peak: the probe's actual= lines (server
@@ -83,8 +89,14 @@
 // connection, 8000 at 1000 clients; the client's figure is unchanged (its
 // object's 64-byte rounding holds the 8 bytes) (measured); the probe's
 // actual= line is 1469453151.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468404575 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13987786 )
+// Each connection's rn_window_ack_t holds the probe and RTT filter clocks
+// (last_progress, last_ack, silence_end, has_last_ack: 32 bytes) and its
+// rn_endpoint_t counts send_refused (8 bytes), adding 40 bytes a connection,
+// 40000 at 1000 clients, and 64 to the client (its object's 64-byte
+// rounding) (measured); the probe's actual= lines are 1469493151 and
+// 15036426.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468444575 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13987850 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
 // The RTT reader added to the message link crosses the message object's
@@ -129,8 +141,17 @@
 // connection, 8000 at 1000 clients; the client's figure is unchanged (its
 // object's 64-byte rounding holds the 8 bytes) (measured); the probe's
 // actual= line is 3111628715.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110580139ULL )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14147186 )
+// Each connection's rn_window_ack_t holds the probe and RTT filter clocks
+// (last_progress, last_ack, silence_end, has_last_ack: 32 bytes) and its
+// rn_endpoint_t counts send_refused (8 bytes), adding 40 bytes a connection,
+// 40000 at 1000 clients, and 64 to the client (its object's 64-byte
+// rounding) (measured on a second Linux bench, gcc, Release: the probe's
+// actual= lines are 3111668715 and 15186082, the client 64 above that
+// bench's own v1.0.1 reading of 15186018). The client pin stays the earlier
+// figure plus 64: the earlier bench read the client 9744 bytes higher, and
+// the check is an upper bound.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110620139ULL )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14147250 )
 #endif // #if defined( _WIN32 )
 
 static void light_message_fields_server( const struct rocketnet_server_config_t * config )
@@ -147,7 +168,7 @@ static void light_message_fields_server( const struct rocketnet_server_config_t 
     check( config->unreliable_messages_per_update == 4 );
     check( config->sequenced_messages_held == 100 );
     check( config->max_message_receipts == 128 );
-    check( config->reliable_message_timeout_ms == 10000 );
+    check( config->reliable_message_timeout_ms == 0 );             // the default: no reliable timeout (m9.3)
 }
 
 static void light_message_fields_client( const struct rocketnet_client_config_t * config )
@@ -164,7 +185,7 @@ static void light_message_fields_client( const struct rocketnet_client_config_t 
     check( config->unreliable_messages_per_update == 4 );
     check( config->sequenced_messages_held == 100 );
     check( config->max_message_receipts == 128 );
-    check( config->reliable_message_timeout_ms == 10000 );
+    check( config->reliable_message_timeout_ms == 0 );             // the default: no reliable timeout (m9.3)
 }
 
 static void test_light_profile_server_1000_required_memory()

@@ -112,7 +112,8 @@ and costs delay inside these windows, never the message. The server is the
 one authority on the start windows. A client shard waits for ARM, GO and RUN
 against one deadline from its own connection: the server's 10-second
 population window, both 10-second start windows, and one client
-`reliable_message_timeout_ms` for RUN itself
+`reliable_message_timeout_ms` for RUN itself (when it is 0, the v1.1.0 default,
+the 10-second connection timeout the tokens carry instead)
 (`tools/load_split_barrier.h`, modelled in `proofs/tla/SplitStart.tla`). Shards
 finish setup at different times, and the first to connect waits for the
 last; its own clock never cuts short a start the server would complete.
