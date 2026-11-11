@@ -210,12 +210,15 @@ int rocketnet_client_protocol_connect( struct rocketnet_client_protocol_t * clie
 
     client->state = ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED;
 
-    // the token's zero pad (TRANSPORT.md t1 rule 3, t6.3) is read by no
-    // field, so it is checked on the buffer before the split
+    // the token's zero pad (TRANSPORT.md t1 rule 3, t6.3) and the signed
+    // connect data's zero pad (t6.2) are read by no field, so they are
+    // checked on the buffer before the split
 
     const int outer_pad_offset = ROCKETNET_SIGNED_CONNECT_DATA_BYTES + ROCKETNET_SIGNATURE_BYTES + 2 * ROCKETNET_KEY_BYTES;
+    const int signed_pad_offset = ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK + ROCKETNET_SEALED_BLOCK_BYTES;
 
-    if ( sodium_is_zero( connect_token + outer_pad_offset, (size_t) ( ROCKETNET_CONNECT_TOKEN_BYTES - outer_pad_offset ) ) == 0 )
+    if ( sodium_is_zero( connect_token + outer_pad_offset, (size_t) ( ROCKETNET_CONNECT_TOKEN_BYTES - outer_pad_offset ) ) == 0 ||
+         sodium_is_zero( connect_token + signed_pad_offset, (size_t) ( ROCKETNET_SIGNED_CONNECT_DATA_BYTES - signed_pad_offset ) ) == 0 )
     {
         rocketnet_debug( "client connect failed. connect token zero pad is not zero" );
 

@@ -281,8 +281,9 @@ REGISTER_UNIT_TEST( test_standard_connect_token_vectors );
 // The zero fields of the token (TRANSPORT.md t1 rule 3, t6.1 to t6.3): a
 // receiver drops a structure whose zero[n] field is not all zero. The outer
 // pad (bytes 704..767) is checked where the client admits the token, the
-// signed pad (521..575) and the address bytes of an absent family before the
-// server admits the request, and the private pad (344..383) right after the
+// signed pad (521..575) there too and again before the server admits the
+// request, and the address bytes of an absent family before the server
+// admits the request, and the private pad (344..383) right after the
 // sealed block opens. Each field is poked at its first and last byte; the
 // signed buffer is re-signed and the private block re-sealed so every refusal
 // is the zero field's alone. Time is an argument and nothing here opens a
@@ -526,13 +527,16 @@ static void test_standard_connect_token_zero_fields()
         rocketnet_unit_check( !rn_zero_client_admits( token ) );
     }
 
-    // the signed pad, first and last byte: the server ignores the request
+    // the signed pad, first and last byte: the client refuses the token and
+    // the server ignores the request
 
     const int signed_indices[2] = { 0, RN_ZERO_SIGNED_BYTES - 1 };
     for ( int i = 0; i < 2; i++ )
     {
         struct rn_zero_token_t spec = rn_zero_none;
         spec.signed_index = signed_indices[i];
+        rn_zero_mint( token, &spec );
+        rocketnet_unit_check( !rn_zero_client_admits( token ) );
         rn_zero_server_refuses( &spec, ROCKETNET_COUNTER_CONNECTION_REQUEST_BAD_ADDRESS_FLAGS );
     }
 
