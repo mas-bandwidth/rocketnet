@@ -125,11 +125,22 @@ jobs:
           PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
           echo "guest ssh port ${PORT}"
           : > "$WORK/serial.log"
+          # The full-capacity unit cases (SUITE_CASE_RSS_BOUND) create a
+          # 1000-slot server whose plan is requested whole and mostly never
+          # touched. The guest kernel's overcommit admits such a block only
+          # if the guest holds it (docs/LOAD.md, the AF_XDP cell's guest
+          # memory): at 4 GiB the server create in
+          # test_server_stats_current_every_update is refused
+          # (ROCKETNET_STATUS_OUT_OF_MEMORY, mmap of 12275486720 bytes ENOMEM).
+          # The largest single request in the unit suite is 18886074368
+          # bytes; the whole unit and functional suites pass in a 32 GiB
+          # guest (x86_64 virtme-ng guest, 4 CPUs, 2026-11-11). Guest pages
+          # the suite does not touch cost the runner nothing.
           qemu-system-s390x \
             -machine s390-ccw-virtio \
             -cpu max \
             -accel tcg,thread=multi \
-            -m 4096 \
+            -m 32768 \
             -smp 4 \
             -display none \
             -serial file:"$WORK/serial.log" \
@@ -189,8 +200,8 @@ jobs:
           # TCG gives each case a fraction of a native CPU. Keep the Release
           # workloads unchanged, but opt their completion bounds into the
           # suites' stated 5x emulation scale.
-          # This guest has 4 GiB. Bare --parallel lets Make launch every
-          # translation unit at once; bound compiler concurrency, not run time.
+          # Bare --parallel lets Make launch every translation unit at once;
+          # bound compiler concurrency, not run time.
           "${SSH[@]}" 'cd ~/src && cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS=-ffp-contract=off -DCMAKE_CXX_FLAGS="-ffp-contract=off -DROCKETNET_TEST_EMULATED=1" && cmake --build build --target test functional --parallel 2' 2>&1 | tee "$WORK/build.log"
           "${SSH[@]}" 'cd ~/src && readelf -h bin/test && readelf -h bin/functional && readelf -h bin/test | grep -F -q "big endian" && readelf -h bin/test | grep -F -q "IBM S/390"'
 
