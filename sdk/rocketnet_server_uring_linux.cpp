@@ -1135,7 +1135,7 @@ static void rocketnet_server_uring_reap_cqe( struct rocketnet_server_uring_t * u
             if ( cqe->res < 0 && cqe->res != -ENOBUFS && cqe->res != -ECANCELED && !uring->logged_receive_refused )
             {
                 uring->logged_receive_refused = true;
-                rocketnet_error( "io_uring transport: the kernel refused the multishot receive on queue %d: %s (errno %d)", queue_index, strerror( -cqe->res ), -cqe->res );
+                rocketnet_error( "io_uring transport: the kernel refused the multishot receive on queue %d (errno %d)", queue_index, -cqe->res );
             }
 
             rocketnet_server_uring_multishot_ended( uring, queue_index );

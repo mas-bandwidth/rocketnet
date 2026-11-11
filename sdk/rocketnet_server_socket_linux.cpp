@@ -2326,14 +2326,14 @@ void rocketnet_server_socket_destroy( rocketnet_server_socket_t * server_socket 
         {
             const int result = rocketnet_xdp_program_detach( server_socket->program, server_socket->interface_index, false );
             if ( result != 0 )
-                rocketnet_error( "could not detach server_xdp program (native) from interface %s: %s (errno %d)", server_socket->interface_name, strerror( -result ), -result );
+                rocketnet_error( "could not detach server_xdp program (native) from interface %s (errno %d)", server_socket->interface_name, -result );
         }
 
         if ( server_socket->attached_skb )
         {
             const int result = rocketnet_xdp_program_detach( server_socket->program, server_socket->interface_index, true );
             if ( result != 0 )
-                rocketnet_error( "could not detach server_xdp program (skb) from interface %s: %s (errno %d)", server_socket->interface_name, strerror( -result ), -result );
+                rocketnet_error( "could not detach server_xdp program (skb) from interface %s (errno %d)", server_socket->interface_name, -result );
         }
 
         rocketnet_xdp_program_close( server_socket->program );
