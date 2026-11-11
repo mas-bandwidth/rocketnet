@@ -259,7 +259,8 @@ jobs:
           - { os: macos, build_type: Release, leg: functional_production, dev: 'OFF', runner: '["self-hosted","macOS","ARM64","fleet"]' }
           # The Linux transport family matrix runs in a row of its own beside
           # each Linux functional row: its xdp cell's eleven cases in a guest
-          # take 43 to 46 s, which with the functional suite took Linux Debug
+          # took 43 to 46 s (twelve, with the gateway change case, 62 s on a
+          # loaded vision), which with the functional suite took Linux Debug
           # functional to the two-minute bound. The macOS matrix stays in its
           # functional row (about a second).
           - { os: linux, build_type: Debug, leg: transport_matrix, dev: 'ON', runner: '["self-hosted","Linux","X64","fleet"]' }
@@ -455,9 +456,9 @@ jobs:
         if: matrix.leg == 'checks' && ( runner.os == 'macOS' )
         shell: bash
         run: |
-          # the ten harnesses build in one parallel build and replay at once;
+          # the thirteen harnesses build in one parallel build and replay at once;
           # each replay's exit status is checked
-          harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session"
+          harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink"
           targets=""
           for harness in $harnesses; do targets="$targets fuzz_replay_$harness"; done
           cmake --build build --target $targets --parallel
@@ -484,7 +485,7 @@ jobs:
         if: matrix.leg == 'checks' && ( runner.os == 'macOS' )
         shell: bash
         run: |
-          harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session"
+          harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink"
           empty="$RUNNER_TEMP/fuzz-empty-input"
           : > "$empty"
           failed=0
@@ -574,6 +575,14 @@ jobs:
       - name: Run functional suite (auto ladder — the fall, on Linux; RSS enforced)
         if: matrix.leg == 'functional' && (inputs.full || matrix.build_type == 'Debug' || runner.os == 'macOS')
         shell: bash
+        # Nightly (full) Linux Debug only: scale 2, as nightly.yml scales its
+        # TSan leg. test_loopback_transport_live_message_matrix's window takes
+        # 27 s on a quiet host and 37-84 s on a 16-core fleet host at load
+        # 70-139, and passed 120 s on the nightly hosts at load 140-198
+        # (2026-11-11, cut while still sending, receipt loss 0). Per commit
+        # the value is empty, which is scale 1 (tests/time_scale.h).
+        env:
+          ROCKETNET_TEST_CASE_TIME_SCALE: ${{ inputs.full && runner.os == 'Linux' && matrix.build_type == 'Debug' && '2' || '' }}
         run: |
           set -euo pipefail
           ./bin/functional | tee functional-auto.log
@@ -615,6 +624,14 @@ jobs:
           ROCKETNET_SERVER_TRANSPORT: portable
           ROCKETNET_CLIENT_TRANSPORT: portable
         run: ./bin/functional_production --run test_transport_env_pin_is_honoured
+
+      # The production library's public client and server through create,
+      # start, connect, update, disconnect and destroy over real sockets
+      # (docs/BUILD-REFERENCE.md lists it as a production gate); built on
+      # ROCKETNET_DEV=OFF only, under a second here.
+      - name: "Functional: production client lifecycle"
+        if: matrix.build_type == 'Release' && ((matrix.leg == 'functional' && runner.os != 'macOS') || matrix.leg == 'functional_production')
+        run: ./bin/test_production_client_lifecycle
 
       # THE TRANSPORT FAMILY MATRIX: every transport this OS builds, pinned by
       # env, on IPv4, on IPv6 and with an IPv4 client of an IPv6 wildcard
@@ -668,7 +685,7 @@ jobs:
             *) echo "TRANSPORT-MATRIX no matrix for $RUNNER_OS"; exit 1 ;;
           esac
           socket_cases="test_loopback_transport_udp test_loopback_transport_ipv6 test_transport_dual_stack_ipv4_client test_transport_env_pin_is_honoured"
-          xdp_cases="test_xdp_transport_max_size_both_ways_ipv4 test_xdp_transport_max_size_both_ways_ipv6 test_xdp_transport_keep_alive_before_first_payloads_ipv4 test_xdp_transport_keep_alive_before_first_payloads_ipv6 test_posix_hard_killed_client_xdp_ipv4_client_portable test_posix_hard_killed_client_xdp_ipv6_client_portable test_posix_send_to_closed_port_xdp_ipv4_client_portable test_posix_send_to_closed_port_xdp_ipv6_client_portable test_posix_client_server_gone_xdp_ipv4_client_portable test_posix_client_server_gone_xdp_ipv6_client_portable test_session_reconnect_isolation_xdp"
+          xdp_cases="test_xdp_transport_max_size_both_ways_ipv4 test_xdp_transport_max_size_both_ways_ipv6 test_xdp_transport_keep_alive_before_first_payloads_ipv4 test_xdp_transport_keep_alive_before_first_payloads_ipv6 test_xdp_transport_gateway_change_while_serving test_posix_hard_killed_client_xdp_ipv4_client_portable test_posix_hard_killed_client_xdp_ipv6_client_portable test_posix_send_to_closed_port_xdp_ipv4_client_portable test_posix_send_to_closed_port_xdp_ipv6_client_portable test_posix_client_server_gone_xdp_ipv4_client_portable test_posix_client_server_gone_xdp_ipv6_client_portable test_session_reconnect_isolation_xdp"
           # every rocketnet_test_xdp_veth_runs_here row must be named in xdp_cases
           if [ -f scripts/transport-cells-repeat ]; then
             scripts/transport-cells-repeat --list --os linux > /dev/null || exit 1
@@ -1279,9 +1296,9 @@ jobs:
         if: matrix.leg != 'c'
         shell: bash
         run: |
-          # the ten harnesses build in one parallel build and replay at once;
+          # the thirteen harnesses build in one parallel build and replay at once;
           # each replay's exit status is checked
-          harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session"
+          harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink"
           targets=""
           for harness in $harnesses; do targets="$targets fuzz_replay_$harness"; done
           cmake --build build --config Release --target $targets --parallel
@@ -1462,6 +1479,14 @@ jobs:
           ROCKETNET_SERVER_TRANSPORT: portable
           ROCKETNET_CLIENT_TRANSPORT: portable
         run: ./bin/Release/functional_production.exe --run test_transport_env_pin_is_honoured
+
+      # test_iocp.cpp's DEV=0 main on the production library: ordinary IOCP
+      # and RIO constructors, real loopback datagrams, bounded shutdown
+      # (CMakeLists.txt, test_windows_transports_production)
+      - name: "Functional: production Windows transports"
+        if: matrix.leg == 'b'
+        shell: bash
+        run: ./bin/Release/test_windows_transports_production.exe
 
       # THE TRANSPORT FAMILY MATRIX: every transport this OS builds, pinned by
       # env, on IPv4, on IPv6 and with an IPv4 client of an IPv6 wildcard
@@ -2068,9 +2093,9 @@ jobs:
         env:
           ASAN_OPTIONS: detect_leaks=0
         run: |
-          # the ten harnesses build in one parallel build and replay at once;
+          # the thirteen harnesses build in one parallel build and replay at once;
           # each replay's exit status is checked
-          harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session"
+          harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink"
           targets=""
           for harness in $harnesses; do targets="$targets fuzz_replay_$harness"; done
           mkdir -p bin
@@ -2169,7 +2194,8 @@ jobs:
         run: |
           for src in rocketnet_fuzz rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_message \
                    rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config \
-                   rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session; do
+                   rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session \
+                   rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink; do
             clang++ -g -O1 -std=c++17 \
               -ffp-contract=off \
               -DROCKETNET_DEV=1 -DNDEBUG \
@@ -2193,6 +2219,9 @@ jobs:
           ./bin/rocketnet_fuzz_server_transport_ndebug tests/fuzz/corpus_server_transport/*
           ./bin/rocketnet_fuzz_client_transport_ndebug tests/fuzz/corpus_client_transport/*
           ./bin/rocketnet_fuzz_session_ndebug tests/fuzz/corpus_session/*
+          ./bin/rocketnet_fuzz_xdp_frame_ndebug tests/fuzz/corpus_xdp_frame/*
+          ./bin/rocketnet_fuzz_uring_recvmsg_ndebug tests/fuzz/corpus_uring_recvmsg/*
+          ./bin/rocketnet_fuzz_gateway_netlink_ndebug tests/fuzz/corpus_gateway_netlink/*
 
       # The connect token and receive/structured targets are built only in
       # this job, so their time-boxed mutation pass lives here, after the
@@ -3211,6 +3240,15 @@ jobs:
         run: |
           set -euo pipefail
           output="$(python3 tools/check_header_guards.py --self-test -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
+          printf '%s\n' "$output"
+          grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
+
+      - name: Test the mutation runner's generator and process cleanup
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/mutation/run_mutants.py --self-test
+          output="$(python3 tools/mutation/test_run_mutants.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
           printf '%s\n' "$output"
           grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
 

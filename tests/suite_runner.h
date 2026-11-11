@@ -10,10 +10,10 @@
     fails. The functional runner keeps 120s in every build; the unit runner
     scales it for Debug, sanitizer or emulated builds (tests/time_scale.h).
     ROCKETNET_TEST_CASE_TIME_SCALE in the environment multiplies the case limit
-    a suite passes in; the nightly macOS TSAN functional runs set 30, a
-    one-hour case limit, the nightly Linux threaded TSan leg sets 4, and
-    every other run leaves it unset. ROCKETNET_NIGHTLY_NO_TIMEOUT=1 disables
-    only this execution watchdog; fixture durations and assertions stay intact. A
+    a suite passes in; the nightly macOS TSAN functional runs set 30 (one hour),
+    the nightly Linux threaded TSan leg 4, the nightly Linux Debug and LSan
+    functional runs 2, and every other run leaves it unset. ROCKETNET_NIGHTLY_NO_TIMEOUT=1
+    disables only this execution watchdog; fixture durations and assertions stay intact. A
     functional case whose peak resident set (wait4 ru_maxrss on POSIX,
     PeakWorkingSetSize on Windows) is over its bound fails
     (ROCKETNET_TEST_MAX_CASE_RSS_MB, overridable by that environment variable;
@@ -183,7 +183,9 @@ inline long suite_max_case_rss_mb()
     {
         const long requested = std::atol( env );
         if ( requested > 0 )
+        {
             return requested;
+        }
     }
 #if defined( ROCKETNET_FUNCTIONAL_SANITIZED )
     return 0;
@@ -240,8 +242,10 @@ inline bool suite_case_rss_bound_add( suite_case_rss_bound_registry_t * registry
     }
 
     if ( registry->count > 0 )
+    {
         memmove( &registry->entries[1], &registry->entries[0],
                  (size_t) registry->count * sizeof( registry->entries[0] ) );
+    }
     registry->entries[0].name = name;
     registry->entries[0].bound_mb = bound_mb;
     registry->count++;
@@ -254,8 +258,12 @@ inline bool suite_case_rss_bound_add( suite_case_rss_bound_registry_t * registry
 inline suite_case_rss_bound_t * suite_case_rss_bound_find( suite_case_rss_bound_registry_t * registry, const char * name )
 {
     for ( int i = 0; i < registry->count; i++ )
+    {
         if ( strcmp( registry->entries[i].name, name ) == 0 )
+        {
             return &registry->entries[i];
+        }
+    }
     return NULL;
 }
 
@@ -300,7 +308,9 @@ struct suite_case_rss_bound_registrar_t
 inline long suite_rss_bound_mb( uint64_t planned_bytes, long margin_mb )
 {
     if ( planned_bytes == 0 )
+    {
         return 0;
+    }
 
     const uint64_t mib = 1024 * 1024;
     return (long) ( ( planned_bytes + mib - 1 ) / mib ) + margin_mb;
@@ -335,7 +345,9 @@ inline long suite_case_rss_mb( const std::string & name, long plan_mb )
 {
     const long bound = suite_max_case_rss_mb();
     if ( bound <= 0 )
+    {
         return bound;
+    }
 
     long planned = plan_mb > 0 ? plan_mb : 0;
     suite_case_rss_bound_t * entry = suite_case_rss_bound_find( suite_case_rss_bound_registry(), name.c_str() );
@@ -349,9 +361,13 @@ inline long suite_case_rss_mb( const std::string & name, long plan_mb )
     }
 
     if ( planned <= 0 )
+    {
         return bound;
+    }
     if ( suite_env_is_set( "ROCKETNET_TEST_MAX_CASE_RSS_MB" ) )
+    {
         return planned > bound ? planned : bound;
+    }
 
     return planned;
 }
@@ -363,7 +379,9 @@ inline long suite_case_rss_mb( const std::string & name, long plan_mb )
 inline void suite_check_rss( suite_result & result, long bound_mb, bool enforce = true )
 {
     if ( result.failed || bound_mb <= 0 || result.peak_rss_mb <= bound_mb )
+    {
         return;
+    }
 
     char text[96];
     snprintf( text, sizeof( text ), " peak_rss_mb=%ld bound_mb=%ld", result.peak_rss_mb, bound_mb );
@@ -378,7 +396,9 @@ inline void suite_check_rss( suite_result & result, long bound_mb, bool enforce 
 inline bool suite_name_is_test_snake_case( const std::string & name )
 {
     if ( name.size() <= 5 || name.compare( 0, 5, "test_" ) != 0 )
+    {
         return false;
+    }
 
     char previous = '_';
 
@@ -388,7 +408,9 @@ inline bool suite_name_is_test_snake_case( const std::string & name )
         if ( c == '_' )
         {
             if ( previous == '_' )
+            {
                 return false;
+            }
         }
         else if ( !( ( c >= 'a' && c <= 'z' ) || ( c >= '0' && c <= '9' ) ) )
         {
@@ -431,9 +453,15 @@ inline int suite_layer_of( const std::string & name )
     const int count = (int) ( sizeof( layers ) / sizeof( layers[0] ) );
     const std::string area = name.compare( 0, 5, "test_" ) == 0 ? name.substr( 5 ) : name;
     for ( int layer = 0; layer < count; layer++ )
+    {
         for ( int i = 0; layers[layer][i] != NULL; i++ )
+        {
             if ( area.compare( 0, std::strlen( layers[layer][i] ), layers[layer][i] ) == 0 )
+            {
                 return layer;
+            }
+        }
+    }
 
     return count;
 }
@@ -447,24 +475,34 @@ inline std::string suite_executable_path()
     {
         const DWORD n = GetModuleFileNameW( NULL, buf.data(), (DWORD) buf.size() );
         if ( n == 0 )
+        {
             return "";
+        }
         if ( n < buf.size() )
+        {
             return rocketnet_test_wide_to_utf8( buf.data(), (int) n );
+        }
         if ( buf.size() >= 32768 )
+        {
             return "";
+        }
         buf.resize( buf.size() * 2 );
     }
 #elif defined( __APPLE__ )
     char buf[4096];
     uint32_t size = (uint32_t) sizeof( buf );
     if ( _NSGetExecutablePath( buf, &size ) != 0 )
+    {
         return "";
+    }
     return std::string( buf );
 #else
     char buf[4096];
     ssize_t n = readlink( "/proc/self/exe", buf, sizeof( buf ) - 1 );
     if ( n < 0 )
+    {
         return "";
+    }
     buf[n] = '\0';
     return std::string( buf );
 #endif // #if defined( _WIN32 )
@@ -474,7 +512,9 @@ inline std::string suite_directory_of( const std::string & path )
 {
     const std::string::size_type pos = path.find_last_of( "/\\" );
     if ( pos == std::string::npos )
+    {
         return ".";
+    }
     return path.substr( 0, pos );
 }
 
@@ -483,14 +523,18 @@ inline bool suite_file_exists( const std::string & path )
 #if defined( _WIN32 )
     const std::wstring wide = rocketnet_test_wide_path( path );
     if ( wide.empty() )
+    {
         return false;
+    }
 
     const DWORD attributes = GetFileAttributesW( wide.c_str() );
     return attributes != INVALID_FILE_ATTRIBUTES && !( attributes & FILE_ATTRIBUTE_DIRECTORY );
 #else
     FILE * file = fopen( path.c_str(), "rb" );
     if ( !file )
+    {
         return false;
+    }
     fclose( file );
     return true;
 #endif // #if defined( _WIN32 )
@@ -510,10 +554,14 @@ inline uint64_t suite_cgroup_limit_bytes( const std::string & path )
     {
         FILE * file = fopen( ( path + "/" + name ).c_str(), "r" );
         if ( !file )
+        {
             continue;
+        }
         unsigned long long value = 0;
         if ( fscanf( file, "%llu", &value ) == 1 && value > 0 && ( limit == 0 || value < limit ) )
+        {
             limit = (uint64_t) value; // "max" reads no number: no limit
+        }
         fclose( file );
     }
     return limit;
@@ -531,21 +579,29 @@ inline uint64_t suite_memory_budget_bytes()
         while ( fgets( line, sizeof( line ), file ) )
         {
             if ( strncmp( line, "0::", 3 ) != 0 )
+            {
                 continue; // cgroup v2 only
+            }
             std::string path = "/sys/fs/cgroup" + std::string( line + 3 );
             while ( !path.empty() && ( path.back() == '\n' || path.back() == '/' ) )
+            {
                 path.pop_back();
+            }
             for ( ; path.size() > strlen( "/sys/fs/cgroup" ); path.erase( path.rfind( '/' ) ) )
             {
                 const uint64_t limit = suite_cgroup_limit_bytes( path );
                 if ( limit > 0 && ( budget == 0 || limit < budget ) )
+                {
                     budget = limit;
+                }
             }
         }
         fclose( file );
     }
     if ( budget > 0 )
+    {
         return budget;
+    }
 
     file = fopen( "/proc/meminfo", "r" );
     if ( file )
@@ -553,8 +609,12 @@ inline uint64_t suite_memory_budget_bytes()
         char line[256];
         unsigned long long kib = 0;
         while ( fgets( line, sizeof( line ), file ) )
+        {
             if ( sscanf( line, "MemAvailable: %llu kB", &kib ) == 1 )
+            {
                 break;
+            }
+        }
         fclose( file );
         return (uint64_t) kib * 1024;
     }
@@ -667,7 +727,9 @@ inline bool suite_case_is_io_uring( const std::string & name )
 {
     char transport[256];
     if ( rocketnet_test_getenv( "ROCKETNET_SERVER_TRANSPORT", transport, sizeof( transport ) ) && std::strstr( transport, "io_uring" ) != NULL )
+    {
         return true;
+    }
     return name.find( "uring" ) != std::string::npos;
 }
 
@@ -680,14 +742,18 @@ inline long suite_uring_case_memlock_kib()
     {
         const long requested = std::atol( env );
         if ( requested > 0 )
+        {
             return requested;
+        }
     }
 #if defined( __linux__ )
     struct utsname host;
     int major = 0;
     int minor = 0;
     if ( uname( &host ) == 0 && sscanf( host.release, "%d.%d", &major, &minor ) == 2 && ( major < 6 || ( major == 6 && minor <= 8 ) ) )
+    {
         return ROCKETNET_TEST_URING_CASE_MEMLOCK_KIB_6_8;
+    }
 #endif // #if defined( __linux__ )
     return ROCKETNET_TEST_URING_CASE_MEMLOCK_KIB;
 }
@@ -701,7 +767,9 @@ inline long suite_memlock_limit_kib()
 #else
     struct rlimit limit;
     if ( getrlimit( RLIMIT_MEMLOCK, &limit ) != 0 || limit.rlim_cur == RLIM_INFINITY )
+    {
         return -1;
+    }
     return (long) ( limit.rlim_cur / 1024 );
 #endif // #if defined( _WIN32 )
 }
@@ -711,7 +779,9 @@ inline long suite_memlock_limit_kib()
 inline int suite_uring_slots( long limit_kib, long case_kib, int jobs )
 {
     if ( limit_kib < 0 || case_kib <= 0 )
+    {
         return jobs;
+    }
 
     const long slots = limit_kib / case_kib;
     return slots < (long) jobs ? (int) slots : jobs;
@@ -748,15 +818,25 @@ inline bool suite_parse_shard( const char * text, int * index, int * shards )
     int n = 0;
     const char * p = text;
     if ( *p < '0' || *p > '9' )
+    {
         return false;
+    }
     while ( *p >= '0' && *p <= '9' && i <= 64 )
+    {
         i = i * 10 + ( *p++ - '0' );
+    }
     if ( *p++ != '/' || *p < '0' || *p > '9' )
+    {
         return false;
+    }
     while ( *p >= '0' && *p <= '9' && n <= 64 )
+    {
         n = n * 10 + ( *p++ - '0' );
+    }
     if ( *p != '\0' || n < 1 || n > 64 || i >= n )
+    {
         return false;
+    }
     *index = i;
     *shards = n;
     return true;
@@ -772,7 +852,9 @@ inline bool suite_take_shard_option( int * argc, char ** argv, int * index, int 
     for ( int i = 1; i < *argc; i++ )
     {
         if ( std::strcmp( argv[i], "--shard" ) != 0 )
+        {
             continue;
+        }
         if ( i != *argc - 2 || !suite_parse_shard( argv[i + 1], index, shards ) )
         {
             suite_usage( argv );
@@ -790,7 +872,9 @@ inline int suite_list_registered_cases( int ( *count )(), const char * ( *name_a
     for ( int i = 0; i < n; i++ )
     {
         if ( shards > 0 && suite_shard_of( name_at( i ), shards ) != shard_index )
+        {
             continue;
+        }
         printf( "%s\n", name_at( i ) );
     }
     fflush( stdout );
@@ -813,7 +897,9 @@ template <typename F> inline void suite_for_each_line( const std::string & outpu
         }
         emit( line );
         if ( nl == std::string::npos )
+        {
             break;
+        }
         i = nl + 1;
     }
 }
@@ -832,7 +918,9 @@ inline long suite_reported_plan_rss_mb( const std::string & output )
         {
             const long bound = std::atol( text.c_str() + length );
             if ( bound > 0 )
+            {
                 reported = bound;
+            }
         } } );
 
     return reported;
@@ -899,12 +987,18 @@ inline bool suite_print_ready( std::vector<suite_result> & results, size_t & pri
 inline void suite_print_report( const std::vector<suite_result> & results )
 {
     if ( !suite_env_is_set( "ROCKETNET_TEST_REPORT" ) )
+    {
         return;
+    }
 
     std::vector<suite_result> ran;
     for ( size_t i = 0; i < results.size(); i++ )
+    {
         if ( results[i].done )
+        {
             ran.push_back( results[i] );
+        }
+    }
     std::sort( ran.begin(), ran.end(), []( const suite_result & a, const suite_result & b )
                { return a.seconds > b.seconds; } );
     // ROCKETNET_TEST_REPORT=all lists every case, the per-commit budget's input
@@ -922,11 +1016,13 @@ inline void suite_print_report( const std::vector<suite_result> & results )
 
     int printed = 0;
     for ( size_t i = 0; i < ran.size() && printed < 10; i++ )
+    {
         if ( ran[i].peak_rss_mb >= 0 && ran[i].check_rss )
         {
             printf( "  %6ld MiB (bound %ld)  %s\n", ran[i].peak_rss_mb, suite_case_rss_mb( ran[i].name, ran[i].plan_rss_mb ), ran[i].name.c_str() );
             printed++;
         }
+    }
     fflush( stdout );
 }
 
@@ -948,14 +1044,20 @@ inline bool suite_collect( std::vector<suite_case> & pending, std::vector<suite_
     const bool nightly = suite_nightly();
     int num_registered = 0;
     for ( int i = 0; i < count(); i++ )
+    {
         if ( nightly || !group_of || ( group_of( name_at( i ) ) & SUITE_GROUP_NIGHTLY ) == 0 )
+        {
             num_registered++;
+        }
+    }
     pending.resize( first + (size_t) num_registered + (size_t) nexecs );
 
     for ( int i = 0, kept = 0; i < count(); i++ )
     {
         if ( !nightly && group_of && ( group_of( name_at( i ) ) & SUITE_GROUP_NIGHTLY ) != 0 )
+        {
             continue;
+        }
         suite_case & item = pending[first + (size_t) kept++];
         item.name = name_at( i );
         item.check_rss = true;
@@ -1010,7 +1112,9 @@ inline bool suite_collect( std::vector<suite_case> & pending, std::vector<suite_
     std::stable_sort( pending.begin(), pending.end(), []( const suite_case & a, const suite_case & b )
                       {
         if ( a.group != b.group )
+        {
             return a.group < b.group;
+        }
         return suite_layer_of( a.name ) < suite_layer_of( b.name ); } );
 
     for ( size_t i = 0; i < pending.size(); i++ )
@@ -1037,13 +1141,17 @@ inline bool suite_collect( std::vector<suite_case> & pending, std::vector<suite_
 inline void suite_keep_shard( std::vector<suite_case> & pending, std::vector<suite_result> & results, int index, int shards )
 {
     if ( shards == 0 )
+    {
         return;
+    }
     const size_t collected = pending.size();
     size_t kept = 0;
     for ( size_t i = 0; i < collected; i++ )
     {
         if ( suite_shard_of( pending[i].name.c_str(), shards ) != index )
+        {
             continue;
+        }
         if ( kept != i )
         {
             std::swap( pending[kept], pending[i] );
@@ -1098,7 +1206,9 @@ inline void suite_note_skipped( const char * name, const char * predicate )
 inline void suite_print_skipped()
 {
     if ( !suite_skipped_reporting() )
+    {
         return;
+    }
     const std::vector<suite_skipped_row> & rows = suite_skipped_rows();
     for ( size_t i = 0; i < rows.size(); i++ )
     {
@@ -1113,7 +1223,9 @@ inline int suite_finish( const std::vector<suite_result> & results, bool passed 
     suite_print_report( results );
     suite_print_skipped();
     if ( !passed )
+    {
         return 1;
+    }
     printf( "\n*** ALL TESTS PASSED ***\n\n" );
     fflush( stdout );
 
@@ -1152,8 +1264,12 @@ inline bool suite_case_runs_alone( const std::string & name )
 #if defined( SUITE_RSS_BOUND_CASES_RUN_ALONE )
     suite_case_rss_bound_registry_t * registry = suite_case_rss_bound_registry();
     for ( int i = 0; i < registry->count; i++ )
+    {
         if ( name == registry->entries[i].name )
+        {
             return true;
+        }
+    }
 #else // #if defined( SUITE_RSS_BOUND_CASES_RUN_ALONE )
     (void) name;
 #endif // #if defined( SUITE_RSS_BOUND_CASES_RUN_ALONE )
@@ -1166,7 +1282,9 @@ inline bool suite_case_runs_alone( const std::string & name )
 inline void suite_drain( int fd, std::string & output )
 {
     if ( fd < 0 )
+    {
         return;
+    }
 
     char buf[4096];
 
@@ -1180,7 +1298,9 @@ inline void suite_drain( int fd, std::string & output )
         }
 
         if ( n < 0 && errno == EINTR )
+        {
             continue;
+        }
         break;
     }
 }
@@ -1199,7 +1319,9 @@ inline int suite_run_names_only( int ( *worker )( const char * ), const char * n
 
     int pipefd[2];
     if ( pipe( pipefd ) != 0 )
+    {
         return worker( name );
+    }
 
     const pid_t pid = fork();
     if ( pid < 0 )
@@ -1243,9 +1365,13 @@ inline int suite_run_names_only( int ( *worker )( const char * ), const char * n
 
     int rc = 1;
     if ( waited >= 0 && WIFEXITED( status ) )
+    {
         rc = WEXITSTATUS( status );
+    }
     else if ( waited >= 0 && WIFSIGNALED( status ) )
+    {
         rc = 128 + WTERMSIG( status );
+    }
     suite_emit_captured( output, rc != 0 );
 
     return rc;
@@ -1265,13 +1391,19 @@ inline int suite_main( int argc, char ** argv,
     int shard_index;
     int shards;
     if ( !suite_take_shard_option( &argc, argv, &shard_index, &shards ) )
+    {
         return 2;
+    }
     const bool list = argc == 2 && std::strcmp( argv[1], "--list" ) == 0;
     if ( shards > 0 && argc != 1 && !list )
+    {
         return suite_usage( argv );
+    }
 
     if ( list )
+    {
         return suite_list_registered_cases( count, name_at, shard_index, shards );
+    }
 
     if ( argc == 2 && std::strcmp( argv[1], "--enforce-rss" ) == 0 )
     {
@@ -1282,10 +1414,16 @@ inline int suite_main( int argc, char ** argv,
     if ( argc >= 2 && std::strcmp( argv[1], "--run" ) == 0 )
     {
         if ( argc < 3 || argv[2][0] == '-' )
+        {
             return suite_usage( argv );
+        }
         for ( int i = 3; i < argc; i++ )
+        {
             if ( argv[i][0] == '-' )
+            {
                 return suite_usage( argv );
+            }
+        }
 
         // under a suite run the parent already captures this process, so
         // stream straight through; a second capture would lose lines when the
@@ -1298,13 +1436,19 @@ inline int suite_main( int argc, char ** argv,
         }
 
         if ( !suite_env_is_set( "ROCKETNET_TEST_VERBOSE" ) )
+        {
             return suite_run_names_only( worker, argv[2] );
+        }
         return worker( argv[2] );
     }
 
     for ( int i = 1; i < argc; i++ )
+    {
         if ( argv[i][0] == '-' )
+        {
             return suite_usage( argv );
+        }
+    }
 
     const std::string self = suite_executable_path();
     if ( self.empty() )
@@ -1316,13 +1460,17 @@ inline int suite_main( int argc, char ** argv,
     std::vector<suite_case> pending;
     std::vector<suite_result> results;
     if ( !suite_collect( pending, results, count, name_at, execs, nexecs, group_of, suite_directory_of( self ), "" ) )
+    {
         return 1;
+    }
     suite_keep_shard( pending, results, shard_index, shards );
 
     const int jobs = max_jobs > 0 ? ( std::min )( suite_job_count(), max_jobs ) : suite_job_count();
     double limit_s = case_limit_s;
     if ( !suite_case_limit( case_limit_s, &limit_s ) )
+    {
         return 1;
+    }
 
     int uring_slots = jobs;
 
@@ -1589,7 +1737,9 @@ inline int suite_main( int argc, char ** argv,
 inline void suite_drain( HANDLE pipe, std::string & output )
 {
     if ( pipe == NULL )
+    {
         return;
+    }
 
     char buf[4096];
 
@@ -1597,11 +1747,15 @@ inline void suite_drain( HANDLE pipe, std::string & output )
     {
         DWORD available = 0;
         if ( !PeekNamedPipe( pipe, NULL, 0, NULL, &available, NULL ) || available == 0 )
+        {
             return;
+        }
 
         DWORD n = 0;
         if ( !ReadFile( pipe, buf, available < sizeof( buf ) ? available : (DWORD) sizeof( buf ), &n, NULL ) || n == 0 )
+        {
             return;
+        }
         output.append( buf, (size_t) n );
     }
 }
@@ -1661,13 +1815,19 @@ inline int suite_main( int argc, char ** argv,
     int shard_index;
     int shards;
     if ( !suite_take_shard_option( &argc, argv, &shard_index, &shards ) )
+    {
         return 2;
+    }
     const bool list = argc == 2 && std::strcmp( argv[1], "--list" ) == 0;
     if ( shards > 0 && argc != 1 && !list )
+    {
         return suite_usage( argv );
+    }
 
     if ( list )
+    {
         return suite_list_registered_cases( count, name_at, shard_index, shards );
+    }
 
     if ( argc == 2 && std::strcmp( argv[1], "--enforce-rss" ) == 0 )
     {
@@ -1678,16 +1838,26 @@ inline int suite_main( int argc, char ** argv,
     if ( argc >= 2 && std::strcmp( argv[1], "--run" ) == 0 )
     {
         if ( argc < 3 || argv[2][0] == '-' )
+        {
             return suite_usage( argv );
+        }
         for ( int i = 3; i < argc; i++ )
+        {
             if ( argv[i][0] == '-' )
+            {
                 return suite_usage( argv );
+            }
+        }
         return worker( argv[2] );
     }
 
     for ( int i = 1; i < argc; i++ )
+    {
         if ( argv[i][0] == '-' )
+        {
             return suite_usage( argv );
+        }
+    }
 
     const std::string self = suite_executable_path();
     if ( self.empty() )
@@ -1699,13 +1869,17 @@ inline int suite_main( int argc, char ** argv,
     std::vector<suite_case> pending;
     std::vector<suite_result> results;
     if ( !suite_collect( pending, results, count, name_at, execs, nexecs, group_of, suite_directory_of( self ), ".exe" ) )
+    {
         return 1;
+    }
     suite_keep_shard( pending, results, shard_index, shards );
 
     const int jobs = max_jobs > 0 ? ( std::min )( suite_job_count(), max_jobs ) : suite_job_count();
     double limit_s = case_limit_s;
     if ( !suite_case_limit( case_limit_s, &limit_s ) )
+    {
         return 1;
+    }
     (void) bound_io_uring; // no io_uring on Windows
 
     struct running_t
@@ -1736,9 +1910,13 @@ inline int suite_main( int argc, char ** argv,
             const std::wstring wide_path = rocketnet_test_wide_path( path );
             std::wstring command = L"\"" + wide_path + L"\"";
             if ( item.exec_path.empty() )
+            {
                 command += L" --run " + rocketnet_test_utf8_to_wide( item.name );
+            }
             else if ( !item.exec_argument.empty() )
+            {
                 command += L" " + rocketnet_test_utf8_to_wide( item.exec_argument );
+            }
             std::vector<wchar_t> mutable_command( command.begin(), command.end() );
             mutable_command.push_back( L'\0' );
 

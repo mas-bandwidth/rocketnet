@@ -64,7 +64,7 @@ How to read the verdicts. A row passes only when every column passes:
            suites a foreign packet sent to its port is refused and counted
            too: a server WRONG_DIRECTION refusal is a CONNECTION_COOKIE,
            CHALLENGE or DENIED packet arriving at a server, which only ever
-           sends them (sdk/rocketnet_server_protocol.cpp:1271-1279). Read the
+           sends them (sdk/rocketnet_server_protocol.cpp:1317-1325). Read the
            sender before calling it a defect; rerun the cell on a quiet machine.
 The script exits 0 when every row passes and 1 otherwise.
 """

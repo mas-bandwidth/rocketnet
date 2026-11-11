@@ -32,17 +32,27 @@ static bool buffer_handoff_one_owner( const rocketnet_buffer_handoff_t<BUFFER_HA
 {
     int owners[BUFFER_HANDOFF_TEST_N] = {};
     if ( producer >= 0 )
+    {
         owners[producer]++;
+    }
     if ( consumer >= 0 )
+    {
         owners[consumer]++;
+    }
     for ( int i = 0; i < handoff->ready_count; i++ )
+    {
         owners[handoff->ready_index[( handoff->ready_head + i ) % BUFFER_HANDOFF_TEST_N]]++;
+    }
     for ( int i = 0; i < handoff->free_count; i++ )
+    {
         owners[handoff->free_index[( handoff->free_head + i ) % BUFFER_HANDOFF_TEST_N]]++;
+    }
     for ( int i = 0; i < BUFFER_HANDOFF_TEST_N; i++ )
     {
         if ( owners[i] != 1 )
+        {
             return false;
+        }
     }
     return true;
 }
@@ -174,7 +184,9 @@ static void test_buffer_handoff_long_run_one_owner()
             else
             {
                 if ( consumer >= 0 )
+                {
                     rocketnet_buffer_handoff_release( &handoff, consumer );
+                }
                 consumer = rocketnet_buffer_handoff_take( &handoff );
                 if ( consumer >= 0 )
                 {

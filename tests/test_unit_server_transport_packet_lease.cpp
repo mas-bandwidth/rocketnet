@@ -77,7 +77,9 @@ static void lease_world_pump( lease_world_t * world, double dt = 0.01 )
     int pkt_bytes = 0;
     rocketnet_client_protocol_update( &world->client, world->time, pkt, &pkt_bytes );
     if ( pkt_bytes > 0 )
+    {
         world->client_io.operations->send( world->client_io.instance, &world->client.server_address, pkt, pkt_bytes );
+    }
 
     rocketnet_server_transport_update( world->server, world->time );
     rocketnet_server_transport_send_packets( world->server );
@@ -107,7 +109,9 @@ static int lease_world_create( lease_world_t * world, uint8_t seed_tag )
 
     uint8_t seed[32];
     for ( int i = 0; i < 32; i++ )
+    {
         seed[i] = (uint8_t) ( seed_tag ^ i );
+    }
     check( rocketnet_generate_backend_keypair_from_seed( seed, world->backend_public, world->backend_secret ) == ROCKETNET_STATUS_OK );
     check( rocketnet_generate_server_keypair( world->server_public, world->server_secret ) == ROCKETNET_STATUS_OK );
 
@@ -124,7 +128,7 @@ static int lease_world_create( lease_world_t * world, uint8_t seed_tag )
     server_config.loopback_hub = rocketnet_test_loopback_hub();
 
     int status = ROCKETNET_STATUS_OK;
-    world->server = rocketnet_server_transport_create_current_ex( NULL, "127.0.0.1:0", &server_config, world->time, &status );
+    world->server = rocketnet_server_transport_create_current_internal( NULL, "127.0.0.1:0", &server_config, world->time, &status );
     check( world->server != NULL );
     check( status == ROCKETNET_STATUS_OK );
 
@@ -161,7 +165,9 @@ static int lease_world_create( lease_world_t * world, uint8_t seed_tag )
         if ( world->client.state == ROCKETNET_CLIENT_STATE_CONNECTED &&
              world->client.client_index >= 0 &&
              rocketnet_server_transport_is_client_connected( world->server, world->client.client_index ) )
+        {
             break;
+        }
         lease_world_pump( world );
     }
     check( world->client.state == ROCKETNET_CLIENT_STATE_CONNECTED );
@@ -231,7 +237,9 @@ static void test_server_transport_finish_after_flush()
         rocketnet_server_transport_send_packets( server );
 
         for ( int step = 0; step < 20 && world.last_rx_payload_bytes == 0; step++ )
+        {
             lease_world_pump( &world );
+        }
         check( world.last_rx_payload_bytes == 16 && world.last_rx_payload[0] == 0xCC && world.last_rx_payload[15] == 0xCC );
 
         // 1d. A lease already consumed by finish_packet or abort_packet is in
@@ -324,8 +332,12 @@ static void test_packet_lease_resolve_skips_writing_entry()
 
     int second = -1;
     for ( int i = 16; i < 512 && second < 0; i += 16 )
+    {
         if ( decltype( leases )::hash( frames + i ) == decltype( leases )::hash( frames ) )
+        {
             second = i;
+        }
+    }
 
     check( second > 0 );
 

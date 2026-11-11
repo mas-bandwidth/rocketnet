@@ -30,7 +30,9 @@ static void rocketnet_environment_check_handler( const char * condition, const c
 do                                                                                                                \
 {                                                                                                                 \
     if ( !(condition) )                                                                                           \
+    {                                                                                                             \
         rocketnet_environment_check_handler( #condition, __FUNCTION__, __FILE__, __LINE__ );                     \
+    }                                                                                                             \
 } while(0)
 
 // The functional tier alone changes the real process environment. Each guard

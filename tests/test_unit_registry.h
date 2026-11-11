@@ -79,13 +79,21 @@ inline enum rocketnet_unit_file_register_result_t rocketnet_unit_file_register(
     const char * name, void ( *function )(), const char * expected_fail_card )
 {
     for ( int i = 0; i < registry->count; i++ )
+    {
         if ( strcmp( registry->tests[i].name, name ) == 0 )
+        {
             return ROCKETNET_UNIT_FILE_DUPLICATE;
+        }
+    }
     if ( registry->count == capacity )
+    {
         return ROCKETNET_UNIT_FILE_FULL;
+    }
     if ( registry->count > 0 )
+    {
         memmove( &registry->tests[1], &registry->tests[0],
                  (size_t) registry->count * sizeof( registry->tests[0] ) );
+    }
     registry->tests[0].name = name;
     registry->tests[0].function = function;
     registry->tests[0].expected_fail_card = expected_fail_card;
@@ -149,7 +157,9 @@ do                                                                              
     if ( !(condition) )                                                                                           \
     {                                                                                                             \
         if ( *rocketnet_unit_expected_fail_active() )                                                             \
+        {                                                                                                         \
             throw rocketnet_unit_expected_failure_t{ __LINE__ };                                                  \
+        }                                                                                                         \
         printf( "check failed: ( %s ), function %s, file %s, line %d\n", #condition,                             \
                 (const char*) __FUNCTION__, (const char*) __FILE__, __LINE__ );                                   \
         fflush( stdout );                                                                                         \
@@ -159,14 +169,16 @@ do                                                                              
 
 #define ROCKETNET_UNIT_TEST_JOIN_( a, b ) a##b
 #define ROCKETNET_UNIT_TEST_JOIN( a, b ) ROCKETNET_UNIT_TEST_JOIN_( a, b )
-#define ROCKETNET_UNIT_TEST_LINE_( l ) rocketnet_unit_file_registrar_##l
-#define ROCKETNET_UNIT_TEST_LINE( l ) ROCKETNET_UNIT_TEST_LINE_( l )
+// each registrar is named after its test, never its line: a unit file that
+// includes another (test_unit_driver_loopback.cpp includes
+// test_unit_server_stop_spread.cpp) can hold two registrations on one line
+// number, and a test name is registered once (tools/check_test_environment.py)
 
 #define REGISTER_UNIT_TEST( name )                                                                                \
-    static rocketnet_unit_file_registrar_t ROCKETNET_UNIT_TEST_LINE( __LINE__ )( #name, &( name ), NULL )
+    static rocketnet_unit_file_registrar_t rocketnet_unit_file_registrar_##name( #name, &( name ), NULL )
 
 #define REGISTER_UNIT_TEST_EXPECTED_FAIL( name, card )                                                            \
-    static rocketnet_unit_file_registrar_t ROCKETNET_UNIT_TEST_LINE( __LINE__ )( #name, &( name ), card )
+    static rocketnet_unit_file_registrar_t rocketnet_unit_file_registrar_##name( #name, &( name ), card )
 
 inline int rocketnet_unit_tests_count()
 {
@@ -183,8 +195,12 @@ inline struct rocketnet_unit_file_test_t * rocketnet_unit_file_find( const char 
 {
     struct rocketnet_unit_file_registry_t * registry = rocketnet_unit_file_registry();
     for ( int i = 0; i < registry->count; i++ )
+    {
         if ( strcmp( registry->tests[i].name, name ) == 0 )
+        {
             return &registry->tests[i];
+        }
+    }
     return NULL;
 }
 
@@ -196,7 +212,9 @@ inline int rocketnet_unit_tests_run_named( const char * name )
 {
     struct rocketnet_unit_file_test_t * test = rocketnet_unit_file_find( name );
     if ( test == NULL )
+    {
         return 2;
+    }
 
     printf( "%s\n", test->name );
     fflush( stdout );

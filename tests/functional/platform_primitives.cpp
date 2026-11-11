@@ -75,11 +75,15 @@ static long rng_lifecycle_fd_count()
 {
     const int bytes = proc_pidinfo( getpid(), PROC_PIDLISTFDS, 0, NULL, 0 );
     if ( bytes <= 0 )
+    {
         return -1;
+    }
 
     void * entries = malloc( (size_t) bytes );
     if ( !entries )
+    {
         return -1;
+    }
 
     const int used = proc_pidinfo( getpid(), PROC_PIDLISTFDS, 0, entries, bytes );
     free( entries );
@@ -192,7 +196,9 @@ void rocketnet_test_bundled_rng_opens_once_under_concurrent_keygen_on_mac()
         bool ok[RNG_CONCURRENT_THREADS];
         std::thread threads[RNG_CONCURRENT_THREADS];
         for ( int i = 0; i < RNG_CONCURRENT_THREADS; i++ )
+        {
             threads[i] = std::thread( rng_concurrent_keygen, &ok[i] );
+        }
         while ( rng_concurrent_waiting.load() < RNG_CONCURRENT_THREADS )
         {
         }
@@ -233,7 +239,9 @@ void rocketnet_test_bundled_rng_opens_once_under_concurrent_keygen_on_mac()
                 uint8_t public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
                 uint8_t secret_key[32];
                 if ( rocketnet_generate_server_keypair( public_key, secret_key ) != ROCKETNET_STATUS_OK )
+                {
                     failures++;
+                }
             } } );
     }
 
@@ -252,7 +260,9 @@ void rocketnet_test_bundled_rng_opens_once_under_concurrent_keygen_on_mac()
 
     stop = true;
     for ( int i = 0; i < 4; i++ )
+    {
         minters[i].join();
+    }
     rocketnet_check( failures.load() == 0 );
 
     // with no generator running, the last term left nothing open
@@ -394,7 +404,9 @@ static void rocketnet_test_ack_endpoint_thread( int rounds, struct rocketnet_ack
     struct rocketnet_ack_endpoint_t * endpoint = (struct rocketnet_ack_endpoint_t *)
         rocketnet_malloc( NULL, sizeof( struct rocketnet_ack_endpoint_t ) );
     if ( !endpoint )
+    {
         return;
+    }
     rocketnet_ack_endpoint_reset( endpoint );
 
     uint64_t acked[64];
@@ -496,10 +508,76 @@ void rocketnet_test_platform_spin_lock_acquire_release_under_contention()
     go.store( true, std::memory_order_release );
 
     for ( int i = 0; i < THREADS; i++ )
+    {
         threads[i].join();
+    }
 
     rocketnet_check( guarded == (uint64_t) THREADS * ITERATIONS );
     rocketnet_check( lock == 0 );
+}
+
+// rocketnet_platform_wake_wait_writable against real descriptors, every wait
+// bounded: a set wake ends the wait and is consumed, and with nothing ready
+// the wait returns false at its timeout. A writable socket ends the wait at
+// once on Linux, where the portable server's carry waits for writability;
+// elsewhere the writable wait is the wake alone, so a writable socket does
+// not end it.
+
+#if defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
+static double rocketnet_platform_primitives_seconds_since( std::chrono::steady_clock::time_point start )
+{
+    return std::chrono::duration<double>( std::chrono::steady_clock::now() - start ).count();
+}
+#endif // #if defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
+
+void rocketnet_test_platform_wake_wait_writable()
+{
+#if defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
+    const double timeout = 0.05;
+    const double bound = 10.0;
+
+    rocketnet_platform_wake_t * wake = rocketnet_platform_wake_create( NULL, NULL );
+    rocketnet_check( wake );
+
+    rocketnet_platform_wake_set( wake );
+    std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
+    rocketnet_check( rocketnet_platform_wake_wait_writable( wake, bound ) );
+    rocketnet_check( rocketnet_platform_primitives_seconds_since( start ) < bound / 2 );
+
+    start = std::chrono::steady_clock::now();
+    rocketnet_check( !rocketnet_platform_wake_wait_writable( wake, timeout ) );
+    double waited = rocketnet_platform_primitives_seconds_since( start );
+    rocketnet_check( waited >= timeout / 2 && waited < bound / 2 );
+
+    rocketnet_platform_wake_destroy( wake );
+
+#if defined( ROCKETNET_PLATFORM_HAS_WAKE )
+    rocketnet_address_t address;
+    rocketnet_check( rocketnet_address_parse( &address, "127.0.0.1:0" ) );
+    rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( NULL, &address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f, 65536, 65536 );
+    rocketnet_check( socket );
+    wake = rocketnet_platform_wake_create( NULL, socket );
+    rocketnet_check( wake );
+
+    start = std::chrono::steady_clock::now();
+#if defined( __linux__ )
+    rocketnet_check( rocketnet_platform_wake_wait_writable( wake, bound ) );
+    rocketnet_check( rocketnet_platform_primitives_seconds_since( start ) < bound / 2 );
+#else // #if defined( __linux__ )
+    rocketnet_check( !rocketnet_platform_wake_wait_writable( wake, timeout ) );
+    waited = rocketnet_platform_primitives_seconds_since( start );
+    rocketnet_check( waited >= timeout / 2 && waited < bound / 2 );
+#endif // #if defined( __linux__ )
+
+    rocketnet_platform_wake_set( wake );
+    start = std::chrono::steady_clock::now();
+    rocketnet_check( rocketnet_platform_wake_wait_writable( wake, bound ) );
+    rocketnet_check( rocketnet_platform_primitives_seconds_since( start ) < bound / 2 );
+
+    rocketnet_platform_wake_destroy( wake );
+    rocketnet_platform_socket_destroy( socket );
+#endif // #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
+#endif // #if defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
 }
 
 
@@ -624,7 +702,9 @@ static void rocketnet_platform_primitives_capture( void *, rocketnet_log_level_t
 {
     if ( level == rocketnet_platform_primitives_capture_level && rocketnet_platform_primitives_capture_prefix &&
          strstr( message, rocketnet_platform_primitives_capture_prefix ) )
+    {
         ++rocketnet_platform_primitives_matching_lines;
+    }
 }
 static void rocketnet_platform_primitives_capture_begin( const char * prefix, rocketnet_log_level_t level = ROCKETNET_LOG_LEVEL_ERROR )
 {
@@ -665,7 +745,7 @@ static void rocketnet_platform_primitives_key_warning_environment()
     int status = -1;
 
     rocketnet_platform_primitives_capture_begin( "public and not for production", ROCKETNET_LOG_LEVEL_WARN );
-    rocketnet_check( rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &config, 1000.0, &status ) == NULL );
+    rocketnet_check( rocketnet_server_transport_create_internal( NULL, "127.0.0.1:0", &config, 1000.0, &status ) == NULL );
     rocketnet_check( status == ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED );
     rocketnet_check( rocketnet_platform_primitives_matching_lines == 0 );
     rocketnet_platform_primitives_capture_end();
@@ -732,7 +812,7 @@ static void rocketnet_platform_primitives_production_status_environment()
     maximum.set( "not-a-number" );
 
     int status = -1;
-    rocketnet_check( rocketnet_server_transport_create_ex( NULL, "127.0.0.1:12345", NULL, 1000.0, &status ) == NULL );
+    rocketnet_check( rocketnet_server_transport_create_internal( NULL, "127.0.0.1:12345", NULL, 1000.0, &status ) == NULL );
     rocketnet_check( status == ROCKETNET_STATUS_CONFIG_ENV_INVALID );
     maximum.set( NULL );
 
@@ -740,7 +820,7 @@ static void rocketnet_platform_primitives_production_status_environment()
     rocketnet_platform_primitives_production_config( &config );
     budget.set( "not-a-number" );
     status = -1;
-    rocketnet_check( rocketnet_server_transport_create_ex( NULL, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
+    rocketnet_check( rocketnet_server_transport_create_internal( NULL, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
     rocketnet_check( status == ROCKETNET_STATUS_CONFIG_ENV_INVALID );
     budget.set( "1" );
 
@@ -750,7 +830,7 @@ static void rocketnet_platform_primitives_production_status_environment()
     {
         snprintf( config.transport, sizeof( config.transport ), "%s", transports[i] );
         status = -1;
-        rocketnet_check( rocketnet_server_transport_create_ex( NULL, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
+        rocketnet_check( rocketnet_server_transport_create_internal( NULL, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
         rocketnet_check( status == ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED );
     }
 }
@@ -799,7 +879,7 @@ static void rocketnet_platform_primitives_production_simulator_environment()
     int status = ROCKETNET_STATUS_OK;
 
     rocketnet_platform_primitives_capture_begin( "simulated_drop_every_nth" );
-    rocketnet_check( rocketnet_client_transport_create_ex( NULL, token, &client_config, 1000.0, &status ) == NULL );
+    rocketnet_check( rocketnet_client_transport_create_internal( NULL, token, &client_config, 1000.0, &status ) == NULL );
     rocketnet_check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
     rocketnet_check( rocketnet_platform_primitives_matching_lines == 1 );
     rocketnet_platform_primitives_capture_end();
@@ -810,7 +890,7 @@ static void rocketnet_platform_primitives_production_simulator_environment()
     rocketnet_check( rocketnet_platform_primitives_setenv( "ROCKETNET_SERVER_SIMULATED_REVERSE_WINDOW", "4" ) == 0 );
     status = ROCKETNET_STATUS_OK;
     rocketnet_platform_primitives_capture_begin( "simulated_reverse_window" );
-    rocketnet_check( rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &server_config, 1000.0, &status ) == NULL );
+    rocketnet_check( rocketnet_server_transport_create_internal( NULL, "127.0.0.1:0", &server_config, 1000.0, &status ) == NULL );
     rocketnet_check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
     rocketnet_check( rocketnet_platform_primitives_matching_lines == 1 );
     rocketnet_platform_primitives_capture_end();
@@ -988,7 +1068,9 @@ static void rocketnet_platform_primitives_priority_note( rocketnet_platform_thre
     }
     record->calls++;
     if ( refused )
+    {
         record->refused++;
+    }
 }
 
 static int rocketnet_platform_primitives_record_set_sched( rocketnet_platform_thread_t * thread, int policy, int priority )
@@ -1129,6 +1211,7 @@ int main()
 
     rocketnet_test_platform_thread();
     rocketnet_platform_primitives_priority();
+    rocketnet_test_platform_wake_wait_writable();
 
     rocketnet_check( rocketnet_term() == ROCKETNET_STATUS_OK );
     rocketnet_thread_priority( priority_enabled );

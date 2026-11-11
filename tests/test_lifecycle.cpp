@@ -40,7 +40,9 @@ static int setenv( const char * name, const char * value, int overwrite )
 {
     char existing[4096];
     if ( !overwrite && rocketnet_test_getenv( name, existing, sizeof( existing ) ) )
+    {
         return 0;
+    }
     return _putenv_s( name, value );
 }
 
@@ -62,11 +64,15 @@ static void * allocate( void * context, size_t bytes )
 
     const int call = ++state.calls;
     if ( state.fail_at == call )
+    {
         return NULL;
+    }
 
     void * base = malloc( bytes + 128 );
     if ( !base )
+    {
         return NULL;
+    }
 
     // valid fundamental alignment, deliberately not cache-line alignment
 
@@ -426,8 +432,12 @@ static void check_stats_cadence()
 
         uint64_t total = 0;
         for ( const auto & b : buckets )
+        {
             if ( b.frame && b.time + 1.0 >= 0.9 )
+            {
                 total += b.packets;
+            }
+        }
         check( total == (uint64_t) updates );
 
         for ( int i = 0; i < 10000; ++i )
@@ -438,14 +448,22 @@ static void check_stats_cadence()
 
         total = 0;
         for ( const auto & b : buckets )
+        {
             if ( b.frame && b.time + 1.0 >= 0.9 )
+            {
                 total += b.packets;
+            }
+        }
         check( total == (uint64_t) updates + 10000 );
         index = rocketnet_stats_window_advance( buckets, index, 20001, 3.0 );
         total = 0;
         for ( const auto & b : buckets )
+        {
             if ( b.frame && b.time + 1.0 >= 3.0 )
+            {
                 total += b.packets;
+            }
+        }
         check( total == 0 );
     }
 }
@@ -473,8 +491,10 @@ static void check_frame_conservation()
 
     volatile uint32_t refused = 0;
     for ( int i = 0; i < 10; ++i )
+    {
         check( !pending.flush( [&]( uint32_t, uint32_t * )
                                { return (uint32_t) refused; }, write, submit ) );
+    }
     check( pending.count == 4 && written == 0 && published == 0 );
     check( pending.append( second, 4 ) && pending.available() == 0 );
     check( !pending.append( first, 1 ) && pending.count == 8 );
@@ -757,7 +777,7 @@ static void check_game_clock_client_create( allocator_state & state )
     memset( config.packet_filter, 0x5A, sizeof( config.packet_filter ) );
     config.token_epoch_unix_seconds = epoch;
 
-    rocketnet_client_transport_t * client = rocketnet_client_transport_create_ex( &state, token, &config, 1000.0, NULL );
+    rocketnet_client_transport_t * client = rocketnet_client_transport_create_internal( &state, token, &config, 1000.0, NULL );
     check( client != NULL );
     rn_native_client_transport_stop_and_destroy( client );
 }
@@ -905,12 +925,16 @@ static install_pair_state install_pairs[2];
 static void * install_pair_allocate( install_pair_state & pair, size_t bytes )
 {
     if ( pair.retired.load( std::memory_order_acquire ) )
+    {
         ++pair.allocated_after_retired;
+    }
     ++pair.allocates;
 
     uint8_t * base = (uint8_t *) malloc( bytes + 16 );
     if ( !base )
+    {
         return NULL;
+    }
 
     memcpy( base, &pair.tag, sizeof( pair.tag ) );
     ++pair.live;
@@ -923,7 +947,9 @@ static void install_pair_release( install_pair_state & pair, void * pointer )
     uint64_t tag = 0;
     memcpy( &tag, base, sizeof( tag ) );
     if ( tag != pair.tag )
+    {
         ++pair.foreign_releases;
+    }
     --pair.live;
     free( base );
 }
@@ -935,7 +961,7 @@ static void install_release_b( void *, void * pointer ) { install_pair_release( 
 
 static int install_pair( int index )
 {
-    return index == 0 ? rocketnet_allocator_ex( install_allocate_a, install_release_a ) : rocketnet_allocator_ex( install_allocate_b, install_release_b );
+    return index == 0 ? rocketnet_allocator_internal( install_allocate_a, install_release_a ) : rocketnet_allocator_internal( install_allocate_b, install_release_b );
 }
 
 static void install_pairs_reset()
@@ -975,13 +1001,17 @@ static std::atomic<int> sentinel_call_waits{ 0 };
 static void sentinel_call_step( int step )
 {
     if ( step == ROCKETNET_ALLOCATOR_STEP_WAITED )
+    {
         ++sentinel_call_waits;
+    }
 }
 
 static void sentinel_call( void ** block )
 {
     while ( !sentinel_call_start.load( std::memory_order_acquire ) )
+    {
         std::this_thread::yield();
+    }
     *block = rocketnet_malloc( NULL, 64 );
 }
 
@@ -992,7 +1022,9 @@ static void sentinel_install_window()
 {
     sentinel_call_start.store( true, std::memory_order_release );
     while ( sentinel_call_waits.load() == 0 && install_pairs[0].allocates.load() == 0 )
+    {
         std::this_thread::yield();
+    }
 }
 
 static void check_allocator_install_waits_out_a_call()
@@ -1023,7 +1055,7 @@ static void check_allocator_install_waits_out_a_call()
     rocketnet_free( NULL, block );
     install_pairs_check_clean();
 
-    check( rocketnet_allocator_ex( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_allocator_internal( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
     printf( "allocator install waits out a call: %d sentinel waits\n", sentinel_call_waits.load() );
 }
 
@@ -1031,7 +1063,9 @@ static void check_allocator_install_waits_out_a_call()
 static void install_window_yield()
 {
     for ( int i = 0; i < INSTALL_WINDOW_YIELDS; ++i )
+    {
         std::this_thread::yield();
+    }
 }
 #endif // #if ROCKETNET_DEV
 
@@ -1051,7 +1085,9 @@ struct install_race_worker_args
 static void install_race_worker( install_race_worker_args * args )
 {
     while ( !args->go->load( std::memory_order_acquire ) )
+    {
         std::this_thread::yield();
+    }
 
     for ( int i = 0; !args->stop->load( std::memory_order_acquire ); ++i )
     {
@@ -1059,7 +1095,9 @@ static void install_race_worker( install_race_worker_args * args )
         {
             args->parked->fetch_add( 1 );
             while ( args->hold->load( std::memory_order_acquire ) && !args->stop->load( std::memory_order_acquire ) )
+            {
                 std::this_thread::yield();
+            }
             args->parked->fetch_sub( 1 );
             continue;
         }
@@ -1114,7 +1152,9 @@ static void check_allocator_install_race()
         if ( status == ROCKETNET_STATUS_OK )
         {
             if ( install_pairs[installed].live.load() != 0 )
+            {
                 ++install_pairs[installed].live_at_replace;
+            }
             install_pairs[installed].retired.store( true, std::memory_order_release );
             installed = next;
             ++installs;
@@ -1134,14 +1174,18 @@ static void check_allocator_install_race()
         // workers running: an install lands or is refused as the interleaving falls
 
         while ( operations.load( std::memory_order_relaxed ) < ( round + 1 ) * INSTALL_RACE_OPERATIONS_PER_ROUND )
+        {
             std::this_thread::yield();
+        }
         attempt();
 
         // workers parked between calls: nothing is counted, so install lands
 
         hold.store( true, std::memory_order_release );
         while ( parked.load() < workers )
+        {
             std::this_thread::yield();
+        }
         check( attempt() == ROCKETNET_STATUS_OK );
         ++parked_installs;
         hold.store( false, std::memory_order_release );
@@ -1149,7 +1193,9 @@ static void check_allocator_install_race()
 
     stop.store( true, std::memory_order_release );
     for ( std::thread & thread : threads )
+    {
         thread.join();
+    }
 
 #if ROCKETNET_DEV
     rocketnet_allocator_set_install_hook_for_test( NULL );
@@ -1162,7 +1208,7 @@ static void check_allocator_install_race()
     check( parked_installs == INSTALL_RACE_ROUNDS );
     check( operations.load() >= INSTALL_RACE_ROUNDS * INSTALL_RACE_OPERATIONS_PER_ROUND );
 
-    check( rocketnet_allocator_ex( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_allocator_internal( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
 }
 
 int main()
@@ -1175,7 +1221,7 @@ int main()
 
     allocator_state state;
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
-    rocketnet_allocator_ex( allocate, release );
+    rocketnet_allocator_internal( allocate, release );
     check( rocketnet_malloc( &state, SIZE_MAX ) == NULL );
     check( state.calls == 0 );
 
@@ -1230,7 +1276,7 @@ int main()
     }
 
     void * p = rocketnet_malloc( &state, 1 );
-    rocketnet_allocator_ex( refuse_allocation, refuse_free ); // live allocation prevents replacement
+    rocketnet_allocator_internal( refuse_allocation, refuse_free ); // live allocation prevents replacement
     rocketnet_free( &state, p );
     check( state.live == 0 );
     check( rocketnet_init( &state, allocate, release ) == ROCKETNET_STATUS_OK );
@@ -1238,7 +1284,7 @@ int main()
     check( clock_after_init >= 0.0 && clock_after_init < 3600.0 );
     check( rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK );
     rocketnet_forbid_xdp_commit();
-    rocketnet_allocator_ex( refuse_allocation, refuse_free ); // initialized library prevents replacement
+    rocketnet_allocator_internal( refuse_allocation, refuse_free ); // initialized library prevents replacement
     p = rocketnet_malloc( &state, 16 );
     check( p );
     rocketnet_term(); // live allocation prevents premature shutdown
@@ -1276,7 +1322,7 @@ int main()
     rocketnet_term();
     rocketnet_term();
     check( state.live == 0 );
-    rocketnet_allocator_ex( refuse_allocation, refuse_free );
+    rocketnet_allocator_internal( refuse_allocation, refuse_free );
     check( rocketnet_malloc( NULL, 16 ) == NULL );
     check( rocketnet_init( &state, allocate, release ) == ROCKETNET_STATUS_OK );
     rocketnet_term();

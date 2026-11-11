@@ -88,7 +88,9 @@ static inline int rocketnet_uring_tag_index( uint64_t tag )
 static inline int rocketnet_uring_buffer_id( uint32_t cqe_flags )
 {
     if ( cqe_flags & IORING_CQE_F_BUFFER )
+    {
         return (int) ( cqe_flags >> IORING_CQE_BUFFER_SHIFT );
+    }
     return -1;
 }
 
@@ -104,7 +106,9 @@ static inline int rocketnet_uring_recvmsg_gro_stride( const uint8_t * control, i
     if ( out_flags & MSG_CTRUNC )
     {
         if ( gro_faults )
+        {
             *gro_faults += 1;
+        }
         return 0;
     }
 
@@ -116,7 +120,9 @@ static inline int rocketnet_uring_recvmsg_gro_stride( const uint8_t * control, i
         if ( header.cmsg_len < sizeof( struct cmsghdr ) || header.cmsg_len > (size_t) ( control_bytes - offset ) )
         {
             if ( gro_faults )
+            {
                 *gro_faults += 1;
+            }
             return 0;
         }
 
@@ -125,7 +131,9 @@ static inline int rocketnet_uring_recvmsg_gro_stride( const uint8_t * control, i
             if ( header.cmsg_len < CMSG_LEN( sizeof( int ) ) )
             {
                 if ( gro_faults )
+                {
                     *gro_faults += 1;
+                }
                 return 0;
             }
 
@@ -156,24 +164,36 @@ static inline int rocketnet_uring_recvmsg_parse(
     int * segment_bytes, uint64_t * gro_faults )
 {
     if ( segment_bytes )
+    {
         *segment_bytes = 0;
+    }
 
     if ( msg_namelen < 0 || msg_controllen < 0 )
+    {
         return ROCKETNET_URING_RECV_SHORT_BUFFER;
+    }
 
     struct io_uring_recvmsg_out out;
     if ( buffer_bytes < (int) sizeof( out ) + msg_namelen + msg_controllen )
+    {
         return ROCKETNET_URING_RECV_SHORT_BUFFER;
+    }
 
     memcpy( &out, buffer, sizeof( out ) );
     if ( out.namelen > (uint32_t) msg_namelen )
+    {
         return ROCKETNET_URING_RECV_NAME_TRUNCATED;
+    }
     if ( out.flags & MSG_TRUNC )
+    {
         return ROCKETNET_URING_RECV_PAYLOAD_TRUNCATED;
+    }
 
     const int payload_left = buffer_bytes - (int) sizeof( out ) - msg_namelen - msg_controllen;
     if ( out.payloadlen > (uint32_t) payload_left )
+    {
         return ROCKETNET_URING_RECV_PAYLOAD_TRUNCATED;
+    }
 
     *name = buffer + sizeof( out );
     *name_bytes = (int) out.namelen;
@@ -199,18 +219,24 @@ static inline bool rocketnet_uring_sockaddr_to_address(
     bool socket_ipv6, struct rocketnet_address_t * out )
 {
     if ( !input || !out )
+    {
         return false;
+    }
 
     if ( input->ss_family == AF_INET6 )
     {
         if ( name_bytes < (int) sizeof( struct sockaddr_in6 ) )
+        {
             return false;
+        }
 
         const struct sockaddr_in6 * addr = (const struct sockaddr_in6 *) input;
         out->type = ROCKETNET_ADDRESS_IPV6;
 
         for ( int i = 0; i < 8; ++i )
+        {
             out->data.ipv6[i] = ntohs( ( (const uint16_t *) &addr->sin6_addr )[i] );
+        }
 
         out->port = ntohs( addr->sin6_port );
 
@@ -220,7 +246,9 @@ static inline bool rocketnet_uring_sockaddr_to_address(
     if ( input->ss_family == AF_INET )
     {
         if ( name_bytes < (int) sizeof( struct sockaddr_in ) )
+        {
             return false;
+        }
 
         rocketnet_platform_sockaddr_in_to_address( (const struct sockaddr_in *) input, out );
         return true;
@@ -251,11 +279,15 @@ static inline int rocketnet_uring_gso_message(
 {
     const bool has_control = control != NULL && control_bytes >= (int) ROCKETNET_URING_GSO_CONTROL_BYTES;
     if ( !has_control || max_segments < 1 )
+    {
         max_segments = 1;
+    }
 
     const int run = rocketnet_coalesce_send_run( packet_bytes, to, count, max_segments, max_super_bytes );
     if ( run <= 0 )
+    {
         return 0;
+    }
 
     for ( int i = 0; i < run; i++ )
     {

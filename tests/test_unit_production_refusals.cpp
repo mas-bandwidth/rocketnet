@@ -126,11 +126,11 @@ static void test_production_server_refuses_test_packet_filter()
         config.max_clients = 2;
 
         int status = -1;
-        check( rocketnet_server_transport_create_current_ex( NULL, "127.0.0.1:0", &config, 1000.0, &status ) == NULL );
+        check( rocketnet_server_transport_create_current_internal( NULL, "127.0.0.1:0", &config, 1000.0, &status ) == NULL );
         check( status == ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION );
 
         memcpy( config.packet_filter, production_filter, sizeof( config.packet_filter ) );
-        struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_current_ex( NULL, "127.0.0.1:0", &config, 1000.0, &status );
+        struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_current_internal( NULL, "127.0.0.1:0", &config, 1000.0, &status );
         check( server != NULL );
         check( status == ROCKETNET_STATUS_OK );
 

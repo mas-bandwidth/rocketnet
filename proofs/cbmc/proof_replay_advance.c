@@ -60,7 +60,9 @@ static uint64_t bits_from_to( int lo, int hi )
     uint64_t low_ones;
 
     if ( lo > hi )
+    {
         return 0;
+    }
     high_ones = ( hi == 63 ) ? ~0ULL : ( ( 1ULL << ( hi + 1 ) ) - 1ULL );
     low_ones = ( lo == 0 ) ? ~0ULL : ( ~0ULL << (unsigned) lo );
     return high_ones & low_ones;
@@ -75,7 +77,9 @@ static uint64_t mask_intersect( uint64_t a, uint64_t b, int word )
     uint64_t hi = b < w1 ? b : w1;
 
     if ( lo > hi )
+    {
         return 0;
+    }
 
     return bits_from_to( (int) ( lo - w0 ), (int) ( hi - w0 ) );
 }
@@ -97,8 +101,10 @@ static uint64_t reference_near_word( uint64_t old_word, uint64_t old_high,
             vacated = mask_intersect( a, b, word );
         }
         else
+        {
             vacated = mask_intersect( a, ROCKETNET_REPLAY_WINDOW_BITS - 1, word ) |
                       mask_intersect( 0, b, word );
+        }
     }
 
     uint64_t result = old_word & ~vacated;
@@ -166,7 +172,9 @@ static int replay_near_partition_matches( int part, int begin, int end,
     if ( end <= ROCKETNET_REPLAY_WINDOW_BITS )
     {
         if ( begin == end )
+        {
             return part == 0;
+        }
 
         int last_word = ( end - 1 ) / 64;
         int single_partial = ( first_word == last_word ) && ( ( end - begin ) < 64 );
@@ -174,24 +182,40 @@ static int replay_near_partition_matches( int part, int begin, int end,
         if ( single_partial )
         {
             if ( chosen == first_word && chosen == set_word )
+            {
                 return part == 1;
+            }
             if ( chosen == first_word && chosen != set_word )
+            {
                 return part == 2;
+            }
             if ( chosen != first_word && chosen == set_word )
+            {
                 return part == 3;
+            }
             if ( chosen != first_word && chosen != set_word )
+            {
                 return part == 4;
+            }
             return 0;
         }
 
         if ( chosen == first_word )
+        {
             return part == 5;
+        }
         if ( chosen > first_word && chosen < last_word )
+        {
             return part == 6;
+        }
         if ( chosen > first_word && chosen == last_word )
+        {
             return part == 7;
+        }
         if ( chosen < first_word || chosen > last_word )
+        {
             return part == 8;
+        }
         return 0;
     }
     else
@@ -199,13 +223,21 @@ static int replay_near_partition_matches( int part, int begin, int end,
         int wrap_last_word = ( end - ROCKETNET_REPLAY_WINDOW_BITS - 1 ) / 64;
 
         if ( chosen >= first_word && chosen <= wrap_last_word )
+        {
             return part == 9;
+        }
         if ( chosen >= first_word && chosen > wrap_last_word )
+        {
             return part == 10;
+        }
         if ( chosen < first_word && chosen <= wrap_last_word )
+        {
             return part == 11;
+        }
         if ( chosen < first_word && chosen > wrap_last_word )
+        {
             return part == 12;
+        }
         return 0;
     }
 }

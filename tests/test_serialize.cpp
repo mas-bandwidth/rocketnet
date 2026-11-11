@@ -61,7 +61,9 @@ int main()
         rocketnet_client_transport_update( client, rocketnet_time() );
         rocketnet_server_transport_update( server, rocketnet_time() );
         if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+        {
             break;
+        }
         rocketnet_sleep( 0.001 );
     }
 

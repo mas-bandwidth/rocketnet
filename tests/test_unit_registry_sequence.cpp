@@ -112,7 +112,9 @@ static void test_unit_registry_sequence_suite_capacity_refusal()
     rocketnet_unit_check( registry.count == SUITE_CASE_RSS_BOUND_CAPACITY );
     rocketnet_unit_check( suite_overflow_calls == 0 );
     for ( int i = 0; i < SUITE_CASE_RSS_BOUND_CAPACITY; i++ )
+    {
         rocketnet_unit_check( registry.entries[i].name == names[SUITE_CASE_RSS_BOUND_CAPACITY - 1 - i] );
+    }
 
     suite_case_rss_bound_registry_t before;
     memcpy( &before, &registry, sizeof( before ) );
@@ -126,8 +128,10 @@ static void test_unit_registry_sequence_suite_capacity_refusal()
     rocketnet_unit_check( memcmp( &before, &registry, sizeof( before ) ) == 0 );
     rocketnet_unit_check( suite_case_rss_bound_find( &registry, "suite_case_omitted" ) == NULL );
     for ( int i = 0; i < SUITE_CASE_RSS_BOUND_CAPACITY; i++ )
+    {
         rocketnet_unit_check( suite_case_rss_bound_find( &registry, names[i] ) ==
                               &registry.entries[SUITE_CASE_RSS_BOUND_CAPACITY - 1 - i] );
+    }
     suite_overflow_reset();
 }
 

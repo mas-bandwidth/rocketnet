@@ -58,7 +58,9 @@ static long server_receive_low_tick_rss_bound_mb()
     const uint64_t server_bytes = rocketnet_server_transport_required_memory( &server_config, "portable" );
     const uint64_t client_bytes = rocketnet_client_transport_required_memory( &client_config, "portable" );
     if ( !server_bytes || !client_bytes )
+    {
         return 0; // a refused plan keeps the strict suite-wide bound
+    }
 
     // 1000 client sockets and their workers: 256 MiB covers the process,
     // thread stacks and allocator rounding
@@ -71,7 +73,9 @@ SUITE_CASE_RSS_BOUND( test_server_receive_1000_clients_256kbps_10hz, server_rece
 static void server_receive_low_tick_check( bool condition, const char * expression, int line )
 {
     if ( condition )
+    {
         return;
+    }
     printf( "server_receive_low_tick check failed: %s at line %d\n", expression, line );
     fflush( stdout );
     exit( 1 );
@@ -91,7 +95,8 @@ static void server_receive_low_tick_capture( void * context, enum rocketnet_log_
     // the server's worker threads log too: the capture is under a spinlock
 
     while ( server_receive_low_tick_log_lock.test_and_set( std::memory_order_acquire ) )
-        ;
+    {
+    }
 
     const size_t used = strlen( server_receive_low_tick_log );
     if ( used + length + 2 < sizeof( server_receive_low_tick_log ) )
@@ -107,7 +112,8 @@ static void server_receive_low_tick_capture( void * context, enum rocketnet_log_
 static void server_receive_low_tick_clear_log()
 {
     while ( server_receive_low_tick_log_lock.test_and_set( std::memory_order_acquire ) )
-        ;
+    {
+    }
     server_receive_low_tick_log[0] = '\0';
     server_receive_low_tick_log_lock.clear( std::memory_order_release );
 }
@@ -164,7 +170,7 @@ void rocketnet_test_server_receive_buffer_sized_from_max_clients()
 #endif // #if defined( _WIN32 ) && ROCKETNET_DEV
 
     int status = -1;
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &server_config, 1000.0, &status );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_internal( NULL, "127.0.0.1:0", &server_config, 1000.0, &status );
 #if defined( _WIN32 ) && ROCKETNET_DEV
     // A failed create can exit the test before the production helper consumes
     // the override; clear it before the fatal assertion either way.
@@ -295,7 +301,7 @@ void rocketnet_test_server_gso_receive_buffer_request()
     snprintf( server_config.transport, sizeof( server_config.transport ), "%s", "gso" );
 
     int status = -1;
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &server_config, 1000.0, &status );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_internal( NULL, "127.0.0.1:0", &server_config, 1000.0, &status );
     server_receive_low_tick_require( server != NULL );
     server_receive_low_tick_require( status == ROCKETNET_STATUS_OK );
 
@@ -341,7 +347,9 @@ static server_receive_low_tick_udp_row_t server_receive_low_tick_udp_row( uint16
     {
         FILE * f = fopen( file, "r" );
         if ( !f )
+        {
             continue;
+        }
 
         char line[512];
         bool header = true;
@@ -357,11 +365,15 @@ static server_receive_low_tick_udp_row_t server_receive_low_tick_udp_row( uint16
             unsigned int state = 0;
             unsigned long tx_queue = 0, rx_queue = 0;
             if ( sscanf( line, " %*d: %127s %127s %x %lx:%lx", local, remote, &state, &tx_queue, &rx_queue ) != 5 )
+            {
                 continue;
+            }
 
             const char * colon = strrchr( local, ':' );
             if ( !colon || (uint16_t) strtoul( colon + 1, NULL, 16 ) != port )
+            {
                 continue;
+            }
 
             const size_t length = strlen( line );
             size_t end = length;
@@ -398,7 +410,9 @@ static int server_receive_low_tick_update_hz()
     {
         const int hz = atoi( value );
         if ( hz >= 1 && hz <= 1000 )
+        {
             return hz;
+        }
     }
 
     return 10;
@@ -432,10 +446,12 @@ static uint64_t server_receive_low_tick_refusals( const struct rocketnet_counter
     uint64_t total = 0;
 
     for ( int i = 0; i < rocketnet_num_counters(); ++i )
+    {
         if ( rocketnet_counter_class( i ) == ROCKETNET_COUNTER_CLASS_REFUSAL )
         {
             total += rocketnet_counter_value( counters, i );
         }
+    }
 
     return total;
 }
@@ -513,7 +529,7 @@ void rocketnet_test_server_receive_1000_clients_256kbps_10hz()
     double time = 1000.0;
 
     int status = -1;
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &server_config, time, &status );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_internal( NULL, "127.0.0.1:0", &server_config, time, &status );
     server_receive_low_tick_require( server != NULL );
     server_receive_low_tick_require( status == ROCKETNET_STATUS_OK );
 
@@ -558,13 +574,17 @@ void rocketnet_test_server_receive_1000_clients_256kbps_10hz()
         rocketnet_server_transport_update( server, time );
         connected = 0;
         for ( size_t i = 0; i < clients.size(); ++i )
+        {
             if ( rocketnet_client_transport_state( clients[i] ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
             {
                 ++connected;
             }
+        }
 
         if ( connected == max_clients && rocketnet_server_transport_num_connected_clients( server ) == max_clients )
+        {
             break;
+        }
 
         if ( rocketnet_platform_time() >= connect_deadline )
         {
@@ -574,7 +594,9 @@ void rocketnet_test_server_receive_1000_clients_256kbps_10hz()
             {
                 const int state = (int) rocketnet_client_transport_state( clients[i] );
                 if ( state != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+                {
                     printf( "server_receive_low_tick client %d state %d\n", (int) i, state );
+                }
             }
             fflush( stdout );
             break;
@@ -635,7 +657,9 @@ void rocketnet_test_server_receive_1000_clients_256kbps_10hz()
                 struct rocketnet_packet_context_t context;
                 uint8_t * packet = rocketnet_client_transport_start_packet( client, packet_bytes, &context );
                 if ( !packet )
+                {
                     break;
+                }
 
                 int capacity = 0;
                 uint8_t * payload = rocketnet_client_transport_packet_payload( client, &context, &capacity );
@@ -698,15 +722,19 @@ void rocketnet_test_server_receive_1000_clients_256kbps_10hz()
                     if ( tagged_client >= (uint32_t) max_clients || client_index < 0 ||
                          rocketnet_server_transport_client_id( server, client_index ) != (uint64_t) tagged_client + 1 ||
                          ( tagged_client < (uint32_t) max_clients && packet_sequence >= client_packet_sequences[(size_t) tagged_client] ) )
+                    {
                         ++invalid_payload_clients;
+                    }
 
                     bool content_valid = true;
                     const int samples[] = { 8, packet_bytes / 2, packet_bytes - 1 };
                     for ( int sample : samples )
+                    {
                         if ( sample >= 8 && payload[sample] != (uint8_t) ( tagged_client * 31u + packet_sequence * 17u + (uint32_t) sample ) )
                         {
                             content_valid = false;
                         }
+                    }
 
                     if ( !content_valid )
                     {
@@ -718,10 +746,12 @@ void rocketnet_test_server_receive_1000_clients_256kbps_10hz()
             }
 
             for ( size_t i = 0; i < clients.size(); ++i )
+            {
                 if ( rocketnet_client_transport_state( clients[i] ) != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
                 {
                     ++connection_state_failures;
                 }
+            }
 
             if ( rocketnet_server_transport_num_connected_clients( server ) != max_clients )
             {
@@ -737,10 +767,12 @@ void rocketnet_test_server_receive_1000_clients_256kbps_10hz()
     int clients_connected = 0;
 
     for ( size_t i = 0; i < clients.size(); ++i )
+    {
         if ( rocketnet_client_transport_state( clients[i] ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
         {
             ++clients_connected;
         }
+    }
 
     const int server_connected = rocketnet_server_transport_num_connected_clients( server );
     const uint64_t kernel_drops = after.drops - before.drops;

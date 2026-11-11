@@ -19,7 +19,7 @@ with tempfile.TemporaryDirectory(prefix="xdp guard control ", dir=build) as dire
         archive.extractall(source, filter="data")
     file = source / "sdk/rocketnet_server_socket_linux.cpp"
     text = file.read_text()
-    guard = "    if ( flow_index < 0 )\n        return;\n"
+    guard = "    if ( flow_index < 0 )\n    {\n        return;\n    }\n"
     if text.count(guard) != 2:
         raise SystemExit("expected the two native finish/abort guards")
     file.write_text(text.replace(guard, ""))

@@ -102,7 +102,9 @@ static void test_server_payload_capacity_uses_live_session_path()
 
     uint8_t expected[ROCKETNET_RECEIVE_PAYLOAD_BYTES];
     for ( int i = 0; i < ROCKETNET_RECEIVE_PAYLOAD_BYTES; i++ )
+    {
         expected[i] = (uint8_t) ( i * 37 + 11 );
+    }
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
     uint8_t opened[ROCKETNET_RECEIVE_CEILING];
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
@@ -207,7 +209,9 @@ static uint8_t * pc_start_packet( void * transport, int client_index, int reques
     (void) client_index;
     memset( context, 0, sizeof( *context ) );
     if ( request_bytes < 1 || request_bytes > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES || end->used )
+    {
         return NULL;
+    }
 
     end->used = true;
     memset( end->frame, PC_GUARD, sizeof( end->frame ) );
@@ -225,7 +229,9 @@ static int pc_finish_packet( void * transport, rocketnet_packet_context_t * cont
     pc_endpoint_t * end = (pc_endpoint_t *) transport;
     (void) context;
     if ( !end->used )
+    {
         return 0;
+    }
 
     end->used = false;
     end->finishes++;
@@ -286,12 +292,16 @@ static void test_write_pass_honours_transport_payload_capacity()
     struct rn_message_object_t * object = rn_message_object_create( NULL, &link, 0, 1, &config, NULL, 0, 1, 1000.0 );
     rocketnet_unit_check( object != NULL );
     if ( !object )
+    {
         return;
+    }
 
     uint8_t * pointer = rn_message_object_start( object, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, PC_MESSAGE_BYTES );
     rocketnet_unit_check( pointer != NULL );
     if ( pointer )
+    {
         memset( pointer, 0x5a, PC_MESSAGE_BYTES );
+    }
     rocketnet_unit_check( rn_message_object_finish( object, 0, PC_MESSAGE_BYTES ) != 0 );
 
     const int starts_before = endpoint.starts;
@@ -302,7 +312,9 @@ static void test_write_pass_honours_transport_payload_capacity()
     // pass must not write at or past the reported capacity
 
     for ( int i = PC_CAPACITY; i < PC_FRAME_BYTES - PC_PAYLOAD_INDEX; i++ )
+    {
         rocketnet_unit_check( endpoint.frame[PC_PAYLOAD_INDEX + i] == PC_GUARD );
+    }
 
     rn_message_object_destroy( object );
 }
@@ -342,7 +354,9 @@ static int held_receive_batch( void * instance, struct rocketnet_address_t * fro
         {
             const uint8_t * packet = held->scratch_data + (size_t) i * ROCKETNET_RECEIVE_CEILING;
             if ( packet[0] != ROCKETNET_CONNECTION_PAYLOAD_PACKET || held->count == held->capacity )
+            {
                 continue;
+            }
             memcpy( held->data + (size_t) held->count * ROCKETNET_RECEIVE_CEILING, packet, (size_t) held->scratch_bytes[i] );
             held->bytes[held->count] = held->scratch_bytes[i];
             held->from[held->count] = held->scratch_from[i];
@@ -463,7 +477,9 @@ static void test_server_payload_batch_holds_the_receive_budget()
             struct rocketnet_packet_context_t context;
             uint8_t * frame = rocketnet_client_transport_start_packet( client, 4, &context );
             if ( !frame )
+            {
                 break;
+            }
             uint8_t * payload = frame + context.payload_index;
             payload[0] = (uint8_t) ( sent & 0xFF );
             payload[1] = (uint8_t) ( ( sent >> 8 ) & 0xFF );

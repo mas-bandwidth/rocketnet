@@ -17,7 +17,7 @@
 //     truncation by returning a value >= the buffer size; a negative
 //     return is a formatting or encoding error. The longest bracketed
 //     IPv6 rendering with a port is 47 characters against a
-//     ROCKETNET_MAX_ADDRESS_STRING_LENGTH of 256 (sdk/rocketnet.h:60), so
+//     ROCKETNET_MAX_ADDRESS_STRING_LENGTH of 256 (sdk/rocketnet.h:64), so
 //     truncation is unreachable today -- but the arm must name what it
 //     checks. The longest rendering is asserted whole and in-bounds.
 //
@@ -315,13 +315,21 @@ static void test_wycheproof_files_load_and_count()
     {
         rocketnet_unit_check( tests[i].tc_id == (int) i + 1 );
         if ( tests[i].result == "valid" )
+        {
             chacha_valid++;
+        }
         else if ( tests[i].result == "invalid" )
+        {
             chacha_invalid++;
+        }
         else if ( tests[i].result == "acceptable" )
+        {
             chacha_acceptable++;
+        }
         else
+        {
             rocketnet_unit_check( 0 );
+        }
 
         std::vector<uint8_t> bytes;
 
@@ -348,13 +356,21 @@ static void test_wycheproof_files_load_and_count()
     {
         rocketnet_unit_check( tests[i].tc_id == (int) i + 1 );
         if ( tests[i].result == "valid" )
+        {
             x25519_valid++;
+        }
         else if ( tests[i].result == "invalid" )
+        {
             x25519_invalid++;
+        }
         else if ( tests[i].result == "acceptable" )
+        {
             x25519_acceptable++;
+        }
         else
+        {
             rocketnet_unit_check( 0 );
+        }
 
         std::vector<uint8_t> bytes;
 
@@ -381,13 +397,21 @@ static void test_wycheproof_files_load_and_count()
     {
         rocketnet_unit_check( tests[i].tc_id == (int) i + 1 );
         if ( tests[i].result == "valid" )
+        {
             ed25519_valid++;
+        }
         else if ( tests[i].result == "invalid" )
+        {
             ed25519_invalid++;
+        }
         else if ( tests[i].result == "acceptable" )
+        {
             ed25519_acceptable++;
+        }
         else
+        {
             rocketnet_unit_check( 0 );
+        }
 
         std::vector<uint8_t> bytes;
         std::map<std::string, std::string>::const_iterator msg = tests[i].fields.find( "msg" );

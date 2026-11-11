@@ -8,14 +8,14 @@
 // receives datagrams whose reported sizes are outside [prefilter, receive
 // ceiling], as a socket reports a runt or an oversize datagram, and
 // datagrams from a source other than the dialed server. The I/O step drops
-// nothing (sdk/rocketnet_client_io.h:390-396): on update, a datagram from
+// nothing (sdk/rocketnet_client_io.h:410-416): on update, a datagram from
 // another source counts CLIENT_RECEIVE_FOREIGN_SOURCE before any protocol
-// check (sdk/rocketnet_client_transport.cpp:1296-1301), whatever its size,
+// check (sdk/rocketnet_client_transport.cpp:1404-1409), whatever its size,
 // and one from the server reaches the prefilter
-// (sdk/rocketnet_client_protocol.cpp:1248-1253), which counts
+// (sdk/rocketnet_client_protocol.cpp:1300-1305), which counts
 // PREFILTER_TOO_SHORT or PREFILTER_TOO_LARGE; per-packet and batch. With a
 // link pattern configured the client runs no I/O core and update receives
-// from the driver itself (sdk/rocketnet_client_transport.cpp:1570-1571); that
+// from the driver itself (sdk/rocketnet_client_transport.cpp:1722-1723); that
 // receive keeps every datagram too, so the same counters count the same drops.
 
 #include "unit_shutdown.h"
@@ -88,9 +88,13 @@ static int drop_counters_pop( drop_counters_driver_t * driver, rocketnet_address
 
     const int written = reported < capacity ? reported : capacity;
     if ( written > 0 && driver->actual[driver->head - 1] > 0 )
+    {
         memcpy( data, driver->data[driver->head - 1], (size_t) written );
+    }
     else if ( written > 0 )
+    {
         memset( data, 0x5a, (size_t) written );
+    }
 
     return reported;
 }
@@ -103,7 +107,9 @@ static int drop_counters_receive( void * instance, rocketnet_address_t * from, u
     // never scripted on it
 
     if ( driver->head == driver->count )
+    {
         return 0;
+    }
 
     return drop_counters_pop( driver, from, data, capacity );
 }
@@ -417,7 +423,7 @@ static void drop_counters_run( bool batch )
     // are the diagnostics that name the stage: the source check before any
     // protocol work for the foreign group (sdk/rocketnet_client_transport.cpp:
     // 2276-2280), and the prefilter for the server's short and large group
-    // (sdk/rocketnet_client_protocol.cpp:1367-1372). Everything else must sit
+    // (sdk/rocketnet_client_protocol.cpp:1421-1426). Everything else must sit
     // still: protocol state, the ack endpoint, the replay/window marks, any
     // payload/message queue, delivery, and connection or ownership. The
     // explicit state oracle proves those outcomes, while the exact-delta
@@ -461,7 +467,7 @@ static void drop_counters_run( bool batch )
 
 // a step-driven client with a link pattern configured: no I/O core, so update
 // receives from the driver on the caller's thread
-// (sdk/rocketnet_client_transport.cpp:1570-1571). The create reads the whole
+// (sdk/rocketnet_client_transport.cpp:1722-1723). The create reads the whole
 // config, simulated_drop_every_nth included, so the I/O core is off.
 
 static void test_client_receive_counts_prefilter_drops_without_io_core()
@@ -555,9 +561,9 @@ static void test_client_receive_counts_prefilter_drops_without_io_core()
 REGISTER_UNIT_TEST( test_client_receive_counts_prefilter_drops_without_io_core );
 
 // after the client disconnects, the reset clears the dialed address
-// (sdk/rocketnet_connection_reset.cpp:42), and the former server's redundant
+// (sdk/rocketnet_connection_reset.cpp:43), and the former server's redundant
 // disconnect packets still arrive: dropped as before, never counted as a
-// foreign source (sdk/rocketnet_client_transport.cpp:1296-1301)
+// foreign source (sdk/rocketnet_client_transport.cpp:1404-1409)
 
 static void test_client_receive_foreign_source_not_counted_after_disconnect()
 {

@@ -87,8 +87,12 @@ static const char * no_dialogs_name( int index )
 static int no_dialogs_worker( const char * name )
 {
     for ( int i = 0; i < no_dialogs_count(); i++ )
+    {
         if ( strcmp( name, no_dialogs_cases[i].name ) == 0 )
+        {
             return no_dialogs_cases[i].run();
+        }
+    }
     printf( "check failed: no case %s\n", name );
     return 1;
 }

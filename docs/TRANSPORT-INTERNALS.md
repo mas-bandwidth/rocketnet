@@ -60,8 +60,9 @@ and layout id and refuses a hub from another build
 as one block through the caller's allocator: the endpoint records, each
 client's `ROCKETNET_LOOPBACK_QUEUE_PACKETS` queue and the server's queue
 sized for `max_clients`. Start and connect register an endpoint and allocate
-nothing, and runtime sends never allocate or grow a queue. Lookups scan the
-hub's records linearly under its mutex. `rocketnet_loopback_hub_destroy`
+nothing, and runtime sends never allocate or grow a queue. Under the hub's mutex a
+datagram finds its destination with one lookup in a table indexed by family
+and port, and registering an endpoint walks the records to refuse a held port. `rocketnet_loopback_hub_destroy`
 refuses while any endpoint is registered (`ROCKETNET_STATUS_LOOPBACK_HUB_IN_USE`),
 keeping the hub; destroy it after the server and clients, before
 `rocketnet_term`. The registration lifecycle is modelled in
@@ -211,7 +212,7 @@ rotation; it does not multiply the 4096-slot GSO or 2048-slot io_uring send
 capacity (`sdk/rocketnet_server_gso_linux.cpp`,
 `sdk/rocketnet_server_uring_linux.cpp`).
 
-Every built-in server transport reports the frames it takes before its next
+Every built-in server transport but loopback reports the frames it takes before its next
 flush through the optional `send_room` operation (`sdk/rocketnet_driver.h`):
 the free slots of the gso producer bank, the io_uring array, the IOCP
 producer bank (at most its free send operations), the open RIO fill phase,
@@ -224,8 +225,10 @@ no more than the room each update, a kicked client's burst is sealed at once
 only while the room holds all of it, and stop's bursts leave across stop steps
 the same way (`proofs/tla/ServerStopSpread.tla`). Stop tells the I/O to stop
 only once the optional `send_idle` operation reports every send it was handed
-finished (each built-in server transport reports it), so a stopping worker
-never retires a bank of disconnect packets unsent. A custom transport without
+finished (each built-in server transport but loopback reports it), so a stopping worker
+never retires a bank of disconnect packets unsent. Loopback reports neither: its send copies each frame into the
+destination's queue before it returns (a full queue drops the frame), so the
+server treats it as unbounded, and idle once the send returns. A custom transport without
 `send_room` is treated as unbounded; a start it refuses ends that update's
 drain, and the bursts wait for the next.
 
@@ -252,9 +255,12 @@ model reads one datagram per step against its capacity
 
 ## UDP coalescing
 
-The coalescing rules live once, in `sdk/rocketnet_coalesce.h`: a receive split
-at the stride the kernel reports, and a send run of same-destination frames of
-one size with at most one shorter tail. Each coalescing transport probes its
+The coalescing rules are a receive split at the stride the kernel reports,
+and a send run of same-destination frames of one size with at most one
+shorter tail. `sdk/rocketnet_coalesce.h` holds them for the client gso, the
+io_uring server and the IOCP server; the gso server
+(`sdk/rocketnet_server_gso_linux.cpp`) keeps its own copy of both, the run
+rule in its send flush and the split in its receive worker. Each coalescing transport probes its
 offloads at create on the bound socket; a refusal is a tier, not an error, and
 the create log line names each feature as yes or no.
 
@@ -351,8 +357,8 @@ msgx, gso, xdp, io_uring, iocp, rio, loopback) reports it so; a native
 extension's create does the same. Any other NULL leaves the status OK and is a
 refusal. The transport ladder falls to the next
 candidate on a refusal, and on OUT_OF_MEMORY it stops:
-`rocketnet_server_transport_create_ex` (`sdk/rocketnet_server_transport.cpp`)
-and `rocketnet_client_transport_create_ex`
+`rocketnet_server_transport_create_internal` (`sdk/rocketnet_server_transport.cpp`)
+and `rocketnet_client_transport_create_internal`
 (`sdk/rocketnet_client_transport.cpp`) destroy what they built and return
 NULL with `ROCKETNET_STATUS_OUT_OF_MEMORY`.
 
@@ -584,7 +590,7 @@ up to 64 KiB, so a provided buffer is 66 KiB (`ROCKETNET_URING_RECV_BUFFER_BYTES
 create, so a page is resident only once the kernel writes it: small datagrams
 keep about one page of each buffer resident. Each `send_packets` and `receive_packets` call reaps at most a
 fixed completion budget (`ROCKETNET_URING_SEND_BUDGET`, and the receive
-bank's size, `rocketnet_server_uring_bank_size`) and `send_packets` waits at most once, so an
+bank's size, `rocketnet_server_uring_bank_size`) and neither call waits, so an
 update returns under sustained traffic; completions past a budget stay queued
 for the next call, and a send without its completion keeps its slot until a
 later call reaps it. A queue count past
@@ -686,8 +692,17 @@ family the server does not serve (`other_family`), or a frame the parse
 refuses or too short for any server packet (`malformed`); a receive
 descriptor outside the receive region or its own frame (`descriptor`, a
 kernel or driver defect) is dropped before a byte of it is read. Each queue's
-worker publishes the sum after every receive pass, and the transport's
-counters read it, all queues summed, as `XDP_RECEIVE_FRAME_DROPPED`. The flush builds
+worker publishes the sum after every receive pass. A frame the program
+redirected can also be dropped by the kernel before the worker sees it: the
+socket's RX ring is full (the worker stops taking descriptors while its
+staging buffer is full and no spare is free) or its fill ring has no frame to
+take it. The kernel counts those only in the socket's `XDP_STATISTICS`; each
+worker reads them every 4096 passes of its loop and on its final pass, and
+publishes `rx_dropped` plus `rx_ring_full`, the socket's total
+(`rx_fill_ring_empty_descs` counts failed fill ring reads, not frames, and in
+copy mode the same frame also counts in `rx_dropped`). The transport's
+counters read both, all queues summed, as `XDP_RECEIVE_FRAME_DROPPED`; the
+main thread makes no call for it. The flush builds
 each reply with the server address of the destination's family as the source,
 and an IPv6 reply carries the UDP checksum computed in software. Create and
 the pre-flight find the interface carrying each address over `AF_INET` or

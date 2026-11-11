@@ -52,7 +52,9 @@ namespace
             entries = ring->cached_prod - ring->cached_cons;
         }
         if ( entries > nb )
+        {
             entries = nb;
+        }
         if ( entries > 0 )
         {
             *index = ring->cached_cons;
@@ -72,7 +74,9 @@ namespace
     bool fake_kernel_post( fake_rx_ring_t * ring, uint64_t addr )
     {
         if ( ring->producer - ring->consumer >= FAKE_RING_SIZE )
+        {
             return false;
+        }
         ring->addr[ring->producer & ( FAKE_RING_SIZE - 1 )] = addr;
         ring->producer++;
         return true;
@@ -85,12 +89,16 @@ namespace
         uint32_t index = 0;
         const uint32_t peeked = fake_peek( ring, peek_max, &index );
         if ( peeked == 0 )
+        {
             return 0;
+        }
         uint32_t taken = 0;
         for ( uint32_t i = 0; i < peeked; i++ )
         {
             if ( taken >= staging_room )
+            {
                 break;
+            }
             taken_addr[taken] = ring->addr[( index + i ) & ( FAKE_RING_SIZE - 1 )];
             taken++;
         }
@@ -209,7 +217,9 @@ static void test_xdp_transport_receive_ring_conserves_frames_and_never_stalls()
         for ( uint32_t i = 0; i < peeked; i++ )
         {
             if ( staged >= staging_cap )
+            {
                 break;
+            }
             taken[took] = ring.addr[( index + i ) & ( FAKE_RING_SIZE - 1 )];
             took++;
             staged++;

@@ -93,7 +93,9 @@ extern char ** environ;
 static void posix_hard_killed_check( bool condition, const char * expression, const char * function, int line )
 {
     if ( condition )
+    {
         return;
+    }
     printf( "check failed: ( %s ), function %s, file %s, line %d\n", expression, function, __FILE__, line );
     fflush( stdout );
     exit( 1 );
@@ -231,7 +233,9 @@ static void posix_hk_require_server_io( struct rocketnet_server_transport_t * se
 {
     posix_hard_killed_require( strcmp( rocketnet_server_transport_io_name( server ), cell.server ) == 0 );
     if ( !posix_hk_server_has_socket( cell ) )
+    {
         return;
+    }
 
     struct rocketnet_platform_socket_t * socket = rocketnet_server_transport_platform_socket_for_testing( server );
     posix_hard_killed_require( socket );
@@ -244,7 +248,9 @@ static void posix_hk_require_server_io( struct rocketnet_server_transport_t * se
 static const char * posix_hk_server_pump( struct rocketnet_server_transport_t * server, const posix_hk_cell_t & cell )
 {
     if ( !posix_hk_server_has_socket( cell ) )
+    {
         return rocketnet_server_transport_io_name( server );
+    }
     return rocketnet_platform_socket_pump( rocketnet_server_transport_platform_socket_for_testing( server ) );
 }
 
@@ -406,8 +412,12 @@ static void posix_hk_live_init( posix_hk_live_t & live, struct rocketnet_client_
 static uint8_t posix_hk_slot_epoch( const std::vector<posix_hk_live_t> & live, int slot )
 {
     for ( size_t i = 0; i < live.size(); i++ )
+    {
         if ( live[i].slot == slot )
+        {
             return live[i].epoch;
+        }
+    }
     return 0;
 }
 
@@ -431,7 +441,9 @@ static void posix_hk_tick( struct rocketnet_server_transport_t * server, std::ve
             int bytes = 0;
             uint8_t * data = rocketnet_client_transport_payload( live[i].client, p, &bytes );
             if ( !data || bytes != (int) sizeof( payload ) || data[0] != 0xD0 || data[2] != live[i].epoch )
+            {
                 continue;
+            }
             live[i].received_down++;
             if ( measure && live[i].last_down > 0.0 && now - live[i].last_down > live[i].max_gap_down )
             {
@@ -451,12 +463,16 @@ static void posix_hk_tick( struct rocketnet_server_transport_t * server, std::ve
         int bytes = 0;
         uint8_t * data = rocketnet_server_transport_payload( server, p, &slot, &bytes );
         if ( !data || bytes != (int) sizeof( payload ) || data[0] != 0x0U )
+        {
             continue;
+        }
 
         for ( size_t i = 0; i < live.size(); i++ )
         {
             if ( live[i].slot != slot || data[2] != live[i].epoch )
+            {
                 continue;
+            }
             live[i].received_up++;
             if ( measure && live[i].last_up > 0.0 && now - live[i].last_up > live[i].max_gap_up )
             {
@@ -472,7 +488,9 @@ static void posix_hk_tick( struct rocketnet_server_transport_t * server, std::ve
         if ( !rocketnet_server_transport_is_client_connected( server, slot ) )
         {
             if ( slot >= 8 )
+            {
                 break;
+            }
             continue;
         }
 
@@ -488,10 +506,12 @@ static void posix_hk_tick( struct rocketnet_server_transport_t * server, std::ve
         }
 
         for ( size_t i = 0; i < live.size(); i++ )
+        {
             if ( live[i].slot == slot )
             {
                 live[i].sent_down++;
             }
+        }
     }
 
     rocketnet_server_transport_send_packets( server );
@@ -567,13 +587,17 @@ static void posix_hk_connect_all( struct rocketnet_server_transport_t * server, 
         bool all = true;
 
         for ( size_t i = 0; i < live.size(); i++ )
+        {
             if ( rocketnet_client_transport_state( live[i].client ) != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED || live[i].slot < 0 )
             {
                 all = false;
             }
+        }
 
         if ( all )
+        {
             return;
+        }
         posix_hard_killed_require( rocketnet_platform_time() - start < deadline_seconds );
         posix_hk_sleep_rest_of_tick( tick_start );
     }
@@ -592,8 +616,12 @@ static void posix_hk_connect_all( struct rocketnet_server_transport_t * server, 
 static bool posix_hk_balanced( const std::vector<posix_hk_live_t> & live )
 {
     for ( size_t i = 0; i < live.size(); i++ )
+    {
         if ( live[i].received_up != live[i].sent_up || live[i].received_down != live[i].sent_down )
+        {
             return false;
+        }
+    }
     return true;
 }
 
@@ -628,12 +656,16 @@ static void posix_hk_quiesce( struct rocketnet_server_transport_t * server, std:
             int bytes = 0;
             uint8_t * data = rocketnet_server_transport_payload( server, p, &slot, &bytes );
             if ( !data || bytes != 32 || data[0] != 0x0U )
+            {
                 continue;
+            }
             for ( size_t i = 0; i < live.size(); i++ )
+            {
                 if ( live[i].slot == slot && data[2] == live[i].epoch )
                 {
                     live[i].received_up++;
                 }
+            }
         }
 
         rocketnet_server_transport_send_packets( server );
@@ -691,8 +723,10 @@ static void posix_hk_require_accounted( struct rocketnet_server_transport_t * se
         const uint64_t lost_down = posix_hk_wire_lost( live[i].wire_down_sent, down_sent, live[i].wire_down_received, down_received );
 
         if ( lost_up > 0 || lost_down > 0 )
+        {
             printf( "  live client %d: datagrams lost below the transports: up %llu down %llu\n", (int) i, (unsigned long long) lost_up,
                     (unsigned long long) lost_down );
+        }
 
         posix_hard_killed_require( live[i].sent_up > 0 && live[i].received_up <= live[i].sent_up );
         posix_hard_killed_require( live[i].sent_down > 0 && live[i].received_down <= live[i].sent_down );
@@ -707,12 +741,16 @@ static std::string posix_hk_self_path()
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     uint32_t size = sizeof( buffer );
     if ( _NSGetExecutablePath( buffer, &size ) != 0 )
+    {
         return std::string();
+    }
     return std::string( buffer );
 #else
     const ssize_t bytes = readlink( "/proc/self/exe", buffer, sizeof( buffer ) - 1 );
     if ( bytes <= 0 )
+    {
         return std::string();
+    }
     buffer[bytes] = '\0';
     return std::string( buffer );
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
@@ -727,11 +765,15 @@ static std::string posix_hk_self_path()
 int rocketnet_posix_hard_killed_child_main( int argc, char ** argv )
 {
     if ( argc < 4 )
+    {
         return 2;
+    }
     setvbuf( stdout, NULL, _IOLBF, 0 );
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
     if ( rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK )
+    {
         return 1;
+    }
 
     const pid_t parent = getppid();
 #if defined( __linux__ ) && ROCKETNET_XDP
@@ -787,7 +829,9 @@ int rocketnet_posix_hard_killed_child_main( int argc, char ** argv )
             rocketnet_client_transport_send_packets( client );
         }
         else if ( rocketnet_client_transport_state( client ) < ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
+        {
             return 3;
+        }
 
         posix_hk_sleep_rest_of_tick( tick_start );
     }
@@ -816,7 +860,9 @@ static void posix_hard_killed_client( const posix_hk_cell_t & cell )
     }
     else
 #endif // #if defined( __linux__ ) && ROCKETNET_XDP
+    {
         posix_hk_server_address( cell, rocketnet_server_transport_port( server ), server_address, sizeof( server_address ) );
+    }
 
     // the child first, so its slot is the only one connected when it lands
 
@@ -849,10 +895,12 @@ static void posix_hard_killed_client( const posix_hk_cell_t & cell )
 
         posix_hk_tick( server, none, false, NULL );
         for ( int slot = 0; slot < 8; slot++ )
+        {
             if ( rocketnet_server_transport_is_client_connected( server, slot ) )
             {
                 dead_slot = slot;
             }
+        }
 
         if ( dead_slot < 0 && rocketnet_platform_time() - child_start > POSIX_HK_HANDSHAKE_SECONDS )
         {
@@ -943,10 +991,12 @@ static void posix_hard_killed_client( const posix_hk_cell_t & cell )
             cell.server, cell.ipv6 ? "ipv6" : "ipv4", cell.client, (unsigned long long) sent_to_slot[dead_slot], timeout_seen,
             worst_gap * 1000.0, POSIX_HK_GAP_REFERENCE * 1000.0, posix_hk_server_pump( server, cell ) );
     for ( size_t i = 0; i < 3; i++ )
+    {
         printf( "  live client %d slot %d: after kill up +%llu down +%llu, up gap %.1f ms down gap %.1f ms\n", (int) i, live[i].slot,
                 (unsigned long long) ( live[i].received_up - received_up_at_kill[i] ),
                 (unsigned long long) ( live[i].received_down - received_down_at_kill[i] ),
                 live[i].max_gap_up * 1000.0, live[i].max_gap_down * 1000.0 );
+    }
 
     posix_hard_killed_require( sent_to_slot[dead_slot] > 0 );
 
@@ -1038,7 +1088,9 @@ static int posix_hk_closed_port( const posix_hk_cell_t & cell )
         }
 #endif // #if defined( __linux__ ) && ROCKETNET_XDP
         if ( !socket )
+        {
             continue;
+        }
 
         const int port = address.port;
 
@@ -1153,7 +1205,9 @@ static void posix_send_to_closed_port( const posix_hk_cell_t & cell )
     }
     else
 #endif // #if defined( __linux__ ) && ROCKETNET_XDP
+    {
         posix_hk_server_address( cell, rocketnet_server_transport_port( server ), server_address, sizeof( server_address ) );
+    }
 
     std::vector<posix_hk_live_t> live( 3 );
 
@@ -1247,9 +1301,11 @@ static void posix_send_to_closed_port( const posix_hk_cell_t & cell )
             cell.server, cell.ipv6 ? "ipv6" : "ipv4", cell.client, sent_closed, closed.port, worst_gap * 1000.0, POSIX_HK_GAP_REFERENCE * 1000.0,
             posix_hk_server_pump( server, cell ) );
     for ( size_t i = 0; i < 3; i++ )
+    {
         printf( "  live client %d slot %d: up %llu/%llu down %llu/%llu\n", (int) i, live[i].slot,
                 (unsigned long long) live[i].received_up, (unsigned long long) live[i].sent_up,
                 (unsigned long long) live[i].received_down, (unsigned long long) live[i].sent_down );
+    }
 
     for ( size_t i = 0; i < 3; i++ )
     {
@@ -1436,7 +1492,9 @@ static struct rocketnet_platform_socket_t * posix_seam_socket_with_queue( const 
         socklen_t queued_bytes = sizeof( queued );
         posix_hard_killed_require( getsockopt( socket->handle, SOL_SOCKET, SO_NUMRCVPKT, &queued, &queued_bytes ) == 0 );
         if ( queued >= POSIX_SEAM_PACKETS )
+        {
             break;
+        }
         posix_hard_killed_require( rocketnet_platform_time() - start < 2.0 );
         rocketnet_platform_sleep( 0.001 );
     }
@@ -1649,7 +1707,9 @@ const char * rocketnet_posix_hard_killed_client_test_name( int index )
 {
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     if ( index >= posix_hk_num_cell_cases() )
+    {
         return posix_seam_cases[index - posix_hk_num_cell_cases()].name;
+    }
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     int kind = 0;
     posix_hk_cell_t cell;

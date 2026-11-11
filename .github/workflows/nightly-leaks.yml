@@ -91,6 +91,11 @@ jobs:
           ASAN_OPTIONS: detect_leaks=1
           UBSAN_OPTIONS: print_stacktrace=1
           LSAN_OPTIONS: suppressions=tools/lsan.supp:print_suppressions=1
+          # Scale 2, as nightly.yml scales its TSan leg: the live message
+          # matrix passed its 120 s case bound under ASan on the nightly
+          # hosts at load 140-198 (2026-11-11, cut while still sending,
+          # receipt loss 0); it takes 60-76 s on a fleet host at load 44-70.
+          ROCKETNET_TEST_CASE_TIME_SCALE: "2"
         run: |
           set -o pipefail
           ./bin/functional 2>&1 | tee functional.log

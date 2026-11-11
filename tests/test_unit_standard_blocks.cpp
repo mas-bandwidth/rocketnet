@@ -96,7 +96,9 @@ static int standard_blocks_encode( uint32_t number, uint32_t ring, uint32_t orde
     struct rocketnet_message_writer_t writer;
     rocketnet_message_writer_begin( &writer, out, capacity );
     if ( !rocketnet_message_writer_add( &writer, &record ) )
+    {
         return -1;
+    }
     return rocketnet_message_writer_finish( &writer );
 }
 
@@ -122,15 +124,23 @@ static int standard_blocks_split( const char * id, uint8_t * out, int capacity )
     uint64_t first = 0;
     uint64_t ring_start = 0;
     if ( rn_window_send_first_write_block( &send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 2404, 0, &first, &ring_start ) != 3 )
+    {
         return -1;
+    }
 
     uint32_t index = 0;
     if ( strcmp( id, "m8.split-nonfinal" ) == 0 )
+    {
         index = 1;
+    }
     else if ( strcmp( id, "m8.final-short" ) == 0 )
+    {
         index = 2;
+    }
     else
+    {
         return -1;
+    }
 
     const int bytes = index == 2 ? 100 : (int) ROCKETNET_MESSAGE_FRAGMENT_BYTES;
     standard_blocks_fill( bytes );
@@ -143,7 +153,9 @@ static int standard_blocks_split( const char * id, uint8_t * out, int capacity )
 static int standard_blocks_ring_wrap( const char * id, uint8_t * out, int capacity )
 {
     if ( strcmp( id, "m8.ring-wrap" ) != 0 )
+    {
         return -1;
+    }
 
     rn_region_t region;
     static rn_send_number_t numbers[16];
@@ -155,12 +167,16 @@ static int standard_blocks_ring_wrap( const char * id, uint8_t * out, int capaci
     uint64_t number = 0;
     uint64_t ring_start = 0;
     if ( rn_window_send_first_write( &send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 1152, 0, &number, &ring_start ) != RN_WINDOW_SEND_NUMBERED )
+    {
         return -1;
+    }
     rn_window_send_mark_acked( &send, number );
 
     uint64_t first = 0;
     if ( rn_window_send_first_write_block( &send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 1153, 1, &first, &ring_start ) != 2 )
+    {
         return -1;
+    }
 
     int written = 0;
     for ( uint32_t index = 0; index < 2; index++ )
@@ -172,7 +188,9 @@ static int standard_blocks_ring_wrap( const char * id, uint8_t * out, int capaci
         const uint32_t ring = (uint32_t) ( ( slot->ring_start % region.ring_bytes ) / 16 );
         const int encoded = standard_blocks_encode( (uint32_t) ( first + index ), ring, 1, 0, index, 1, bytes, out + written, capacity - written );
         if ( encoded < 0 )
+        {
             return -1;
+        }
         written += encoded;
     }
 
@@ -182,7 +200,9 @@ static int standard_blocks_ring_wrap( const char * id, uint8_t * out, int capaci
 static int standard_blocks_generate( const char * id, uint8_t * out, int capacity )
 {
     if ( strcmp( id, "m8.split-nonfinal" ) == 0 || strcmp( id, "m8.final-short" ) == 0 )
+    {
         return standard_blocks_split( id, out, capacity );
+    }
     return standard_blocks_ring_wrap( id, out, capacity );
 }
 
@@ -209,7 +229,9 @@ static void test_standard_blocks_vectors()
     {
         const int bytes = index == 2 ? 100 : (int) ROCKETNET_MESSAGE_FRAGMENT_BYTES;
         for ( int i = 0; i < bytes; i++ )
+        {
             rocketnet_unit_check( fragments[at + i] == (uint8_t) ( i & 0xFF ) );
+        }
         at += bytes;
     }
 

@@ -39,10 +39,10 @@ results is a measurement of your current build. See [Testing](TESTING.md).
 
 ## Server memory footprint
 
-The 2026-11-01 Linux x86-64 Release planner query described in
+The v1.0.1 Linux x86-64 Release development-build planner query described in
 [LOAD.md](LOAD.md#platform-build-and-allocator-assumptions) reports
-21,025,383,757 bytes (about 21.0 GB) for the default 1000-client server.
-The difference from one to two slots is 19,173,338 bytes (about 19.2 MB).
+21,028,236,715 bytes (about 21.0 GB) for the default 1000-client server.
+The difference from one to two slots is 19,174,306 bytes (about 19.2 MB).
 These are source-specific sizing examples, not portable constants:
 build options, platform, transport availability, and configuration affect the
 result. Query your own build with `rocketnet_server_required_memory` before
@@ -110,20 +110,17 @@ bytes, the send buffer is 141,500 bytes, the send queue is 128 messages,
 packets in flight are 256, each update may send 4 packets and 4 unreliable
 messages, 100 sequenced messages are held, 128 receipts are kept, and there
 are eight channels. At `max_clients` 1000, the same Linux development build
-reports 3,109,351,757 bytes (about 3.1 GB) from
+reports 3,111,628,715 bytes (about 3.1 GB) from
 `rocketnet_server_required_memory`. The matching `rocketnet_client_light_config`
-makes `rocketnet_client_required_memory` report 15,185,786 bytes. Those two
-figures, and the default-profile figures above, are from the 2026-11-01
-source. This revision's Linux x86-64 development build with io_uring and XDP
-reports 3,111,387,939 bytes for the light server at `max_clients` 1000 and
-15,195,570 bytes for the light client; the other figures were not regenerated
-for it.
+makes `rocketnet_client_required_memory` report 15,186,018 bytes. Those two
+figures, and the default-profile figures above, are v1.0.1 queries of the
+Linux x86-64 development build with io_uring and XDP.
 
 Both figures are the planned lifecycle peak (create, connect or start, stop or
 disconnect, the next cycle, and destroy) plus the 1 MiB allowance. They exclude
 memory owned by the operating system (worker thread stacks, XDP UMEM, io_uring
-rings, kernel socket buffers) and process overhead. The same source built with
-`ROCKETNET_DEV=OFF` reports 3,102,970,529 and 14,400,918 bytes, using an accepted
+rings, kernel socket buffers) and process overhead. The same v1.0.1 source built with
+`ROCKETNET_DEV=OFF` reports 3,105,239,503 and 14,401,110 bytes, using an accepted
 non-test packet filter. Other platforms have different transport candidates and
 layouts; the older Windows and macOS examples predate this query and are not
 current measurements. The default profile remains the stock acceptance.
@@ -138,7 +135,9 @@ struct rocketnet_client_t * start_client( const char * token, const struct rocke
     enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, config, &status );
     if ( !client )
+    {
         printf( "create refused: %s\n", rocketnet_status_name( status ) );
+    }
     if ( client && ( status = rocketnet_client_connect( client, token ) ) != ROCKETNET_STATUS_OK )
     {
         printf( "connect refused: %s\n", rocketnet_status_name( status ) );
@@ -153,7 +152,9 @@ struct rocketnet_server_t * start_server( const struct rocketnet_server_config_t
     enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
     struct rocketnet_server_t * server = rocketnet_server_create( NULL, "0.0.0.0:40000", NULL, config, &status );
     if ( !server )
+    {
         printf( "create refused: %s\n", rocketnet_status_name( status ) );
+    }
     if ( server && ( status = rocketnet_server_start( server ) ) != ROCKETNET_STATUS_OK )
     {
         printf( "start refused: %s\n", rocketnet_status_name( status ) );
@@ -173,7 +174,9 @@ void request_stop( struct rocketnet_client_t * client, struct rocketnet_server_t
 bool finish_stop( struct rocketnet_client_t * client, struct rocketnet_server_t * server )
 {
     if ( !rocketnet_client_disconnected( client ) || !rocketnet_server_stopped( server ) )
+    {
         return false;
+    }
     rocketnet_client_destroy( client );
     rocketnet_server_destroy( server );
     return true; /* Both pointers are now invalid; do not call again. */

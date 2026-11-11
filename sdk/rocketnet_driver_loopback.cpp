@@ -125,11 +125,15 @@ static int loopback_num_endpoints( const rocketnet_loopback_hub_t * hub )
 enum rocketnet_status_t rocketnet_loopback_hub_check( const rocketnet_loopback_hub_t * hub )
 {
     if ( !hub )
+    {
         return ROCKETNET_STATUS_LOOPBACK_HUB_MISSING;
+    }
 
     if ( hub->header.magic != ROCKETNET_LOOPBACK_HUB_MAGIC || hub->header.version != ROCKETNET_VERSION ||
          hub->header.layout != ROCKETNET_LOOPBACK_HUB_LAYOUT )
+    {
         return ROCKETNET_STATUS_LOOPBACK_HUB_MISMATCH;
+    }
 
     return ROCKETNET_STATUS_OK;
 }
@@ -138,9 +142,13 @@ static bool loopback_hub_usable( const rocketnet_loopback_hub_t * hub, const cha
 {
     const enum rocketnet_status_t status = rocketnet_loopback_hub_check( hub );
     if ( status == ROCKETNET_STATUS_LOOPBACK_HUB_MISSING )
+    {
         rocketnet_error( "loopback transport refused a %s: its config has no loopback_hub; create one with rocketnet_loopback_hub_create", endpoint );
+    }
     else if ( status != ROCKETNET_STATUS_OK )
+    {
         rocketnet_error( "loopback transport refused a %s: the loopback hub was made by another build of the library (magic, version or layout differ)", endpoint );
+    }
 
     return status == ROCKETNET_STATUS_OK;
 }
@@ -165,7 +173,9 @@ static bool loopback_try_send_lock( rocketnet_loopback_hub_t * hub )
 {
 #if ROCKETNET_DEV
     if ( loopback_test_send_contention )
+    {
         return false;
+    }
 #endif // #if ROCKETNET_DEV
 
     return rocketnet_platform_mutex_try_acquire( &hub->mutex );
@@ -188,8 +198,12 @@ static bool loopback_is_wildcard( const rocketnet_address_t & address )
     if ( address.type == ROCKETNET_ADDRESS_IPV4 )
     {
         for ( int i = 0; i < 4; ++i )
+        {
             if ( address.data.ipv4[i] )
+            {
                 return false;
+            }
+        }
 
         return true;
     }
@@ -197,8 +211,12 @@ static bool loopback_is_wildcard( const rocketnet_address_t & address )
     if ( address.type == ROCKETNET_ADDRESS_IPV6 )
     {
         for ( int i = 0; i < 8; ++i )
+        {
             if ( address.data.ipv6[i] )
+            {
                 return false;
+            }
+        }
 
         return true;
     }
@@ -216,7 +234,9 @@ static rocketnet_address_t loopback_sender_address( const rocketnet_address_t & 
 
     rocketnet_address_t from = bind;
     if ( !loopback_is_wildcard( bind ) )
+    {
         return from;
+    }
 
     memset( &from.data, 0, sizeof( from.data ) );
 
@@ -246,14 +266,18 @@ static rocketnet_loopback_endpoint_t * loopback_find_destination( rocketnet_loop
     // IPv4 datagram has one destination.
 
     if ( to.type != ROCKETNET_ADDRESS_IPV4 && to.type != ROCKETNET_ADDRESS_IPV6 )
+    {
         return NULL;
+    }
 
     const uint16_t same = *loopback_bound_entry( hub, to.type, to.port );
     if ( same )
     {
         rocketnet_loopback_endpoint_t & e = hub->endpoints[same - 1];
         if ( e.live && ( loopback_is_wildcard( e.bind ) || rocketnet_address_equal( &e.bind, &to ) ) )
+        {
             return &e;
+        }
     }
 
     if ( to.type == ROCKETNET_ADDRESS_IPV4 )
@@ -263,7 +287,9 @@ static rocketnet_loopback_endpoint_t * loopback_find_destination( rocketnet_loop
         {
             rocketnet_loopback_endpoint_t & e = hub->endpoints[dual - 1];
             if ( e.live && loopback_is_wildcard( e.bind ) )
+            {
                 return &e;
+            }
         }
     }
 
@@ -301,7 +327,9 @@ static void loopback_queue_pop( rocketnet_loopback_endpoint_t * ep )
     --ep->count;
 
     if ( ep->count == 0 )
+    {
         ep->head = ep->tail = 0;
+    }
 }
 
 size_t rocketnet_loopback_queue_bytes( int packets )
@@ -322,7 +350,9 @@ int rocketnet_loopback_server_queue_packets( int max_clients )
     uint64_t packets = ROCKETNET_LOOPBACK_QUEUE_PACKETS;
 
     while ( packets < wanted )
+    {
         packets *= 2;
+    }
 
     return (int) packets;
 }
@@ -341,7 +371,9 @@ uint64_t rocketnet_loopback_hub_bytes( int max_clients )
     // counters, the server's queue and each client's queue, each part aligned
 
     if ( max_clients < 1 || max_clients > ROCKETNET_MAX_CLIENTS )
+    {
         return 0;
+    }
 
     const uint64_t endpoints = (uint64_t) max_clients + 1;
 
@@ -359,7 +391,9 @@ rocketnet_loopback_hub_t * rocketnet_loopback_hub_create( void * context, int ma
     // client's, the layout proofs/tla/LoopbackHubLayout.tla checks (Base, Addr)
 
     if ( status )
+    {
         *status = ROCKETNET_STATUS_OK;
+    }
 
     if ( !rocketnet_library_initialized() )
     {
@@ -368,7 +402,9 @@ rocketnet_loopback_hub_t * rocketnet_loopback_hub_create( void * context, int ma
         rocketnet_api_misuse_record();
 
         if ( status )
+        {
             *status = ROCKETNET_STATUS_NOT_INITIALIZED;
+        }
 
         return NULL;
     }
@@ -378,7 +414,9 @@ rocketnet_loopback_hub_t * rocketnet_loopback_hub_create( void * context, int ma
         rocketnet_error( "rocketnet_loopback_hub_create refused: max_clients is %d, expected 1 .. %d", max_clients, (int) ROCKETNET_MAX_CLIENTS );
 
         if ( status )
+        {
             *status = ROCKETNET_STATUS_INVALID_ARGUMENT;
+        }
 
         return NULL;
     }
@@ -390,7 +428,9 @@ rocketnet_loopback_hub_t * rocketnet_loopback_hub_create( void * context, int ma
         rocketnet_error( "rocketnet_loopback_hub_create refused: %llu bytes for %d clients", (unsigned long long) bytes, max_clients );
 
         if ( status )
+        {
             *status = ROCKETNET_STATUS_OUT_OF_MEMORY;
+        }
 
         return NULL;
     }
@@ -431,7 +471,9 @@ rocketnet_loopback_hub_t * rocketnet_loopback_hub_create( void * context, int ma
         rocketnet_free( context, block );
 
         if ( status )
+        {
             *status = ROCKETNET_STATUS_MUTEX_CREATE_FAILED;
+        }
 
         return NULL;
     }
@@ -449,7 +491,9 @@ enum rocketnet_status_t rocketnet_loopback_hub_destroy( rocketnet_loopback_hub_t
     // endpoint is registered with it
 
     if ( !hub )
+    {
         return ROCKETNET_STATUS_OK;                     // as free(NULL): silent, uncounted
+    }
 
     const enum rocketnet_status_t valid = rocketnet_loopback_hub_check( hub );
     if ( valid != ROCKETNET_STATUS_OK )
@@ -490,10 +534,14 @@ static void * loopback_create( rocketnet_loopback_hub_t * hub, rocketnet_address
     // record 0, a client the first free record after it; a full hub refuses
 
     if ( bind->type != ROCKETNET_ADDRESS_IPV4 && bind->type != ROCKETNET_ADDRESS_IPV6 )
+    {
         return NULL;
+    }
 
     if ( !loopback_hub_usable( hub, server ? "server" : "client" ) )
+    {
         return NULL;
+    }
 
     rocketnet_platform_mutex_guard( &hub->mutex );
 
@@ -508,9 +556,13 @@ static void * loopback_create( rocketnet_loopback_hub_t * hub, rocketnet_address
     {
         rocketnet_loopback_endpoint_t & e = hub->endpoints[i];
         if ( !e.live || e.bind.port != bind->port )
+        {
             continue;
+        }
         if ( e.bind.type == bind->type )
+        {
             return NULL;
+        }
         const rocketnet_address_t & ipv6 = e.bind.type == ROCKETNET_ADDRESS_IPV6 ? e.bind : *bind;
         if ( loopback_is_wildcard( ipv6 ) )
         {
@@ -532,9 +584,13 @@ static void * loopback_create( rocketnet_loopback_hub_t * hub, rocketnet_address
     if ( slot < 0 )
     {
         if ( server )
+        {
             rocketnet_warn( "loopback transport refused a server: its hub already has one" );
+        }
         else
+        {
             rocketnet_warn( "loopback transport refused a client: its hub holds %d clients", hub->max_clients );
+        }
 
         return NULL;
     }
@@ -615,7 +671,9 @@ static void loopback_destroy( void * transport )
 
     uint16_t * bound = loopback_bound_entry( hub, ep->bind.type, ep->bind.port );
     if ( *bound == (uint16_t) ( ep - hub->endpoints + 1 ) )
+    {
         *bound = 0;
+    }
 
     memset( &ep->bind, 0, sizeof( ep->bind ) );
     ep->dropped = 0;
@@ -636,7 +694,9 @@ static bool loopback_stopped( void * )
 static void loopback_send( void * transport, const rocketnet_address_t * to, const uint8_t * data, int bytes )
 {
     if ( bytes <= 0 || bytes > ROCKETNET_RECEIVE_CEILING )
+    {
         return;
+    }
 
     rocketnet_loopback_endpoint_t * sender = (rocketnet_loopback_endpoint_t *) transport;
     rocketnet_loopback_hub_t * hub = sender->hub;
@@ -680,18 +740,24 @@ static void loopback_server_send_batch_impl( void * transport, const rocketnet_p
     if ( shutdown && !loopback_try_send_lock( hub ) )
     {
         if ( count > 0 )
+        {
             loopback_send_failed( sender, (uint64_t) count );
+        }
         return;
     }
 
     if ( !shutdown )
+    {
         rocketnet_platform_mutex_acquire( &hub->mutex );
+    }
 
     for ( int i = 0; i < count; ++i )
     {
         const rocketnet_platform_send_t & packet = packets[i];
         if ( packet.packet_bytes <= 0 || packet.packet_bytes > ROCKETNET_RECEIVE_CEILING )
+        {
             continue;
+        }
 
         rocketnet_loopback_endpoint_t * dst = loopback_find_destination( hub, *packet.to );
         if ( !dst )

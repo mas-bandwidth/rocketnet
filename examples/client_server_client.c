@@ -37,7 +37,9 @@ static int read_keys( uint8_t * server_public_key, char * address )
 {
     FILE * file = fopen( KEY_FILE, "r" );
     if ( !file )
+    {
         return 0;
+    }
 
     char hex[ROCKETNET_SERVER_PUBLIC_KEY_BYTES * 2 + 1] = "";
     int ok = fscanf( file, "server_public %64s server_ipv4 %63s", hex, address ) == 2 && strlen( hex ) == sizeof( hex ) - 1;

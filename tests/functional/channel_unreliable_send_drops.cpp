@@ -33,7 +33,9 @@ static bool drops_verbose()
 static void drops_check( bool condition, const char * label )
 {
     if ( condition )
+    {
         return;
+    }
     printf( "unreliable send drops failed: %s\n", label );
     fflush( stdout );
     exit( 1 );
@@ -57,10 +59,16 @@ static void drops_fill( uint8_t * bytes, int count, uint8_t tag )
 static bool drops_matches( const rocketnet_channel_delivery_t * d, int count, uint8_t tag )
 {
     if ( d->bytes != count )
+    {
         return false;
+    }
     for ( int i = 0; i < count; i++ )
+    {
         if ( d->data[i] != (uint8_t) ( tag + i * 7 ) )
+        {
             return false;
+        }
+    }
 
     return true;
 }
@@ -161,8 +169,10 @@ void unreliable_dropped_while_reliable_waits_never_arrives()
     drops_check( rocketnet_channel_harness_overflows( &h ) == 0, "delivery ring overflow" );
     drops_check( rocketnet_channel_allocator_calls == h.allocations_after_create, "allocation after create" );
     if ( drops_verbose() )
+    {
         printf( "test_unreliable_dropped_while_reliable_waits_never_arrives: over_budget=%llu reliable_arrived=%d elapsed=%.2f\n",
                 (unsigned long long) ( drops_over_budget( &h ) - before ), reliable_arrived, elapsed );
+    }
     rocketnet_channel_harness_destroy( &h );
 }
 
@@ -224,7 +234,9 @@ void unreliable_dropped_when_builder_out_of_budget_never_arrives()
     drops_check( rocketnet_channel_harness_overflows( &h ) == 0, "delivery ring overflow" );
     drops_check( rocketnet_channel_allocator_calls == h.allocations_after_create, "allocation after create" );
     if ( drops_verbose() )
+    {
         printf( "test_unreliable_dropped_when_builder_out_of_budget_never_arrives: sent=%d arrived=%d over_budget=%llu elapsed=%.2f\n",
                 sent, arrived, (unsigned long long) ( drops_over_budget( &h ) - before ), elapsed );
+    }
     rocketnet_channel_harness_destroy( &h );
 }

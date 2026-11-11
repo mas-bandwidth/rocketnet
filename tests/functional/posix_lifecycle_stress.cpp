@@ -12,7 +12,7 @@
     /proc/self/task and the heap in use, counted in whole xdp umems. An xdp
     umem is a posix_memalign block of ROCKETNET_XDP_UMEM_FRAMES *
     ROCKETNET_XDP_FRAME_SIZE bytes per queue, freed with free() at destroy
-    (sdk/rocketnet_server_socket_linux.cpp:1733-1735 and :2005), with no mlock,
+    (sdk/rocketnet_server_socket_linux.cpp:1835-1837 and :2131), with no mlock,
     so it moves neither VmLck nor VmPin; the kernel charges its pin to the
     user's RLIMIT_MEMLOCK account. The Linux cells keep the heap with mmap
     off and trimming off (posix_heap_keep below), so the umem is served from
@@ -41,7 +41,7 @@
     connect/disconnect case is registered once per exact server/client pair.
 
     A connect waits on the client's send rate: the client sends at most once
-    per 1/send_rate, 10 per second (sdk/rocketnet_client_protocol.cpp:88 and
+    per 1/send_rate, 10 per second (sdk/rocketnet_client_protocol.cpp:94 and
     :296), and a handshake is three sends, so on the platform clock alone one
     connect takes 0.2 s. The client here runs on its own clock, the platform
     clock plus the send intervals the wait has skipped (its time_callback and
@@ -57,7 +57,7 @@
     them. A client whose socket shares a port with one of them never hears
     its server, since the IPv4 datagrams to that port reach the held socket.
     Darwin gives a dual stack IPv6 socket such a port, so the macOS client of
-    an IPv4 server binds an IPv4 socket (sdk/rocketnet_client_transport.cpp:796).
+    an IPv4 server binds an IPv4 socket (sdk/rocketnet_client_transport.cpp:854).
 */
 
 #include "../native_shutdown.h"
@@ -83,6 +83,9 @@
 
 // defined in tests/functional/harness.inc: the connect token timestamp from the clock that judges it
 uint64_t rocketnet_functional_token_timestamp( uint64_t token_epoch_unix_seconds, double time );
+
+// defined in tests/functional/rocketnet_functional_tests.cpp: prints the SDK log lines the suite captured
+void rocketnet_functional_log_ring_dump();
 
 #include <atomic>
 #include <chrono>
@@ -118,6 +121,7 @@ do                                                                              
     if ( !( condition ) )                                                                                       \
     {                                                                                                           \
         printf( "posix lifecycle stress check failed: %s:%d: %s\n", __FILE__, __LINE__, #condition );           \
+        rocketnet_functional_log_ring_dump();                                                                   \
         fflush( stdout );                                                                                       \
         exit( 1 );                                                                                              \
     }                                                                                                           \
@@ -137,19 +141,25 @@ static int posix_open_file_descriptors()
     const int wanted = (int) sizeof( entries );
     const int got = proc_pidinfo( getpid(), PROC_PIDLISTFDS, 0, entries, wanted );
     if ( got <= 0 )
+    {
         return -1;
+    }
     return got / (int) sizeof( struct proc_fdinfo );
 #else
     DIR * directory = opendir( "/proc/self/fd" );
     if ( !directory )
+    {
         return -1;
+    }
 
     int count = 0;
     struct dirent * entry = NULL;
     while ( ( entry = readdir( directory ) ) != NULL )
     {
         if ( strcmp( entry->d_name, "." ) == 0 || strcmp( entry->d_name, ".." ) == 0 )
+        {
             continue;
+        }
         count++;
     }
 
@@ -164,19 +174,25 @@ static int posix_threads()
     struct proc_taskinfo info;
     const int got = proc_pidinfo( getpid(), PROC_PIDTASKINFO, 0, &info, (int) sizeof( info ) );
     if ( got != (int) sizeof( info ) )
+    {
         return -1;
+    }
     return (int) info.pti_threadnum;
 #else
     DIR * directory = opendir( "/proc/self/task" );
     if ( !directory )
+    {
         return -1;
+    }
 
     int count = 0;
     struct dirent * entry = NULL;
     while ( ( entry = readdir( directory ) ) != NULL )
     {
         if ( strcmp( entry->d_name, "." ) == 0 || strcmp( entry->d_name, ".." ) == 0 )
+        {
             continue;
+        }
         count++;
     }
 
@@ -232,7 +248,9 @@ static void posix_sanitizer_threads_start()
 #if defined( POSIX_THREAD_SANITIZER )
     static bool started = false;
     if ( started )
+    {
         return;
+    }
 
     const int threads_before = posix_threads();
 
@@ -267,7 +285,9 @@ static posix_resource_counts_t posix_stable_counts()
 
         const posix_resource_counts_t current = posix_read_counts();
         if ( current.fds == previous.fds && current.threads == previous.threads && current.umems == previous.umems )
+        {
             return current;
+        }
         previous = current;
     }
 
@@ -407,15 +427,21 @@ static void posix_xdp_run( const char * command )
 static bool posix_xdp_offered()
 {
     if ( geteuid() != 0 )
+    {
         return false;
+    }
 
     const char * opt_in = getenv( "ROCKETNET_TEST_XDP_VETH" );
     if ( opt_in && strcmp( opt_in, "1" ) == 0 )
+    {
         return true;
+    }
 
     FILE * file = fopen( "/proc/cmdline", "r" );
     if ( !file )
+    {
         return false;
+    }
 
     char line[4096];
     const bool read = fgets( line, sizeof( line ), file ) != NULL;
@@ -428,7 +454,9 @@ static bool posix_xdp_offered()
 static void posix_xdp_setup()
 {
     if ( posix_xdp_made )
+    {
         return;
+    }
 
     atexit( posix_xdp_teardown );
 
@@ -490,14 +518,20 @@ static bool posix_cell_selected( const posix_cell_t * cell )
 {
 #if defined( __APPLE__ )
     if ( posix_only_client_transport_io && strcmp( posix_only_client_transport_io, cell->client_transport_io ) != 0 )
+    {
         return false;
+    }
 #endif // #if defined( __APPLE__ )
     if ( posix_only_server_transport_io && strcmp( posix_only_server_transport_io, cell->server_transport_io ) != 0 )
+    {
         return false;
+    }
 
     const char * list = getenv( "ROCKETNET_POSIX_LIFECYCLE_CELLS" );
     if ( !list || list[0] == '\0' )
+    {
         return true;
+    }
 
     const char * label = cell->server_transport_io;
     const size_t length = strlen( label );
@@ -507,9 +541,13 @@ static bool posix_cell_selected( const posix_cell_t * cell )
         const char * end = strchr( cursor, ',' );
         const size_t item = end ? (size_t) ( end - cursor ) : strlen( cursor );
         if ( item == length && strncmp( cursor, label, length ) == 0 )
+        {
             return true;
+        }
         if ( !end )
+        {
             break;
+        }
         cursor = end + 1;
     }
 
@@ -523,16 +561,22 @@ static bool posix_cell_runs( const char * name, const posix_cell_t * cell )
 {
     (void) name;
     if ( !posix_cell_selected( cell ) )
+    {
         return false;
+    }
     if ( strcmp( cell->server_transport_io, "io_uring" ) == 0 && !posix_io_uring_offered() )
+    {
         return false;
+    }
 
     if ( cell->xdp )
     {
 #if defined( __linux__ ) && ROCKETNET_XDP
         if ( !posix_xdp_offered() )
 #endif // #if defined( __linux__ ) && ROCKETNET_XDP
+        {
             return false;
+        }
     }
 
     return true;
@@ -542,7 +586,9 @@ static bool posix_cell_runs( const char * name, const posix_cell_t * cell )
 static int posix_count( const posix_cell_t * cell, int count )
 {
     if ( cell->xdp && count > 100 )
+    {
         return 100;
+    }
     return count;
 }
 
@@ -643,7 +689,7 @@ static rocketnet_server_transport_t * posix_server_create( const posix_cell_t * 
     snprintf( config.transport, sizeof( config.transport ), "%s", cell->server_transport_io );
 
     int status = ROCKETNET_STATUS_OK;
-    rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, address, &config, rocketnet_platform_time(), &status );
+    rocketnet_server_transport_t * server = rocketnet_server_transport_create_internal( NULL, address, &config, rocketnet_platform_time(), &status );
     if ( !server )
     {
         printf( "server create [%s] at %s failed: %s\n", cell->name, address, rocketnet_status_name( (enum rocketnet_status_t) status ) );
@@ -728,7 +774,7 @@ static rocketnet_client_transport_t * posix_client_create( const posix_cell_t * 
         const int far_ns = open( "/var/run/netns/" POSIX_XDP_NETNS, O_RDONLY );
         posix_check( self_ns >= 0 && far_ns >= 0 );
         posix_check( setns( far_ns, CLONE_NEWNET ) == 0 );
-        client = rocketnet_client_transport_create_ex( clock, token, &config, posix_client_clock_now( clock ), &status );
+        client = rocketnet_client_transport_create_internal( clock, token, &config, posix_client_clock_now( clock ), &status );
         posix_check( setns( self_ns, CLONE_NEWNET ) == 0 );
         close( self_ns );
         close( far_ns );
@@ -736,7 +782,7 @@ static rocketnet_client_transport_t * posix_client_create( const posix_cell_t * 
     else
 #endif // #if defined( __linux__ )
     {
-        client = rocketnet_client_transport_create_ex( clock, token, &config, posix_client_clock_now( clock ), &status );
+        client = rocketnet_client_transport_create_internal( clock, token, &config, posix_client_clock_now( clock ), &status );
     }
 
     if ( !client )
@@ -844,7 +890,9 @@ static bool posix_wait_connected( rocketnet_server_transport_t * server, rocketn
 
         const int state = rocketnet_client_transport_state( client );
         if ( state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+        {
             return true;
+        }
 
         if ( state < ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
         {
@@ -885,12 +933,16 @@ static bool posix_wait_server_empty( rocketnet_server_transport_t * server, rock
         rocketnet_server_transport_update( server, rocketnet_platform_time() );
         rocketnet_server_transport_send_packets( server );
         if ( rocketnet_server_transport_num_connected_clients( server ) == 0 )
+        {
             return true;
+        }
         rocketnet_platform_sleep( 0.0002 );
     }
 
     if ( rocketnet_server_transport_num_connected_clients( server ) == 0 )
+    {
         return true;
+    }
 
     printf( "disconnect stalled: client state %s, server connected clients %d\n",
             rocketnet_client_transport_state_name( rocketnet_client_transport_state( client ) ),
@@ -934,7 +986,9 @@ void rocketnet_test_posix_init_term_1000()
     {
         const posix_cell_t * cell = &posix_cells[cell_index];
         if ( !posix_cell_runs( case_name, cell ) )
+        {
             continue;
+        }
 
         posix_env_guard_t server_guard, client_guard;
         posix_cell_begin( cell, &server_guard, &client_guard );
@@ -973,7 +1027,9 @@ void rocketnet_test_posix_server_create_destroy_1000()
     {
         const posix_cell_t * cell = &posix_cells[cell_index];
         if ( !posix_cell_runs( case_name, cell ) )
+        {
             continue;
+        }
 
         posix_env_guard_t server_guard, client_guard;
         posix_cell_begin( cell, &server_guard, &client_guard );
@@ -1034,7 +1090,9 @@ void rocketnet_test_posix_client_create_destroy_1000()
     {
         const posix_cell_t * cell = &posix_cells[cell_index];
         if ( !posix_cell_runs( case_name, cell ) )
+        {
             continue;
+        }
 
         posix_env_guard_t server_guard, client_guard;
         posix_cell_begin( cell, &server_guard, &client_guard );
@@ -1072,7 +1130,9 @@ static unsigned posix_reserved_restart_port( int cell_index )
 #if defined( __linux__ )
     FILE * port_range = fopen( "/proc/sys/net/ipv4/ip_local_port_range", "r" );
     if ( !port_range )
+    {
         return 0;
+    }
 
     unsigned ephemeral_first = 0;
     unsigned ephemeral_last = 0;
@@ -1080,7 +1140,9 @@ static unsigned posix_reserved_restart_port( int cell_index )
 
     fclose( port_range );
     if ( range_read != 2 || ephemeral_first <= first_port || ephemeral_last < ephemeral_first )
+    {
         return 0;
+    }
 
     if ( last_port >= ephemeral_first )
     {
@@ -1088,7 +1150,9 @@ static unsigned posix_reserved_restart_port( int cell_index )
     }
 #endif // #if defined( __linux__ )
     if ( last_port < first_port )
+    {
         return 0;
+    }
 
     // the restart_same_port transport cases run concurrently in the suite and
     // each reserves its own port. seeding every reservation on the same
@@ -1099,7 +1163,9 @@ static unsigned posix_reserved_restart_port( int cell_index )
 
     const unsigned slice_count = (unsigned) posix_cell_count;
     if ( slice_count == 0 )
+    {
         return 0;
+    }
 
     const unsigned port_count = last_port - first_port + 1;
     const unsigned slice = port_count / slice_count;
@@ -1108,17 +1174,23 @@ static unsigned posix_reserved_restart_port( int cell_index )
     const unsigned remainder = ( slice_index == slice_count - 1 ) ? port_count % slice_count : 0;
     const unsigned usable = slice + remainder;
     if ( usable == 0 )
+    {
         return 0;
+    }
 
     unsigned port = base + (unsigned) getpid() % usable;
     if ( port > last_port )
+    {
         return 0;
+    }
 
     for ( unsigned i = 0; i < usable; i++ )
     {
         const int fd = (int) socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
         if ( fd < 0 )
+        {
             return 0;
+        }
 
         struct sockaddr_in address;
         memset( &address, 0, sizeof( address ) );
@@ -1131,9 +1203,13 @@ static unsigned posix_reserved_restart_port( int cell_index )
 
         close( fd );
         if ( result == 0 )
+        {
             return port;
+        }
         if ( error != EADDRINUSE && error != EACCES )
+        {
             return 0;
+        }
         port = base + ( port - base + 1 ) % usable;
     }
 
@@ -1149,7 +1225,9 @@ void rocketnet_test_posix_server_restart_same_port_100()
     {
         const posix_cell_t * cell = &posix_cells[cell_index];
         if ( !posix_cell_runs( case_name, cell ) )
+        {
             continue;
+        }
 
         posix_env_guard_t server_guard, client_guard;
         posix_cell_begin( cell, &server_guard, &client_guard );
@@ -1210,7 +1288,9 @@ void rocketnet_test_posix_connect_disconnect_1000()
     {
         const posix_cell_t * cell = &posix_cells[cell_index];
         if ( !posix_cell_runs( case_name, cell ) )
+        {
             continue;
+        }
 
         posix_env_guard_t server_guard, client_guard;
         posix_cell_begin( cell, &server_guard, &client_guard );
@@ -1218,7 +1298,7 @@ void rocketnet_test_posix_connect_disconnect_1000()
         const posix_resource_counts_t before = posix_stable_counts();
 
         // the server remembers max_clients * ROCKETNET_USED_TOKEN_HISTORY_RATIO
-        // (8) used tokens (sdk/rocketnet_server_transport.cpp:1865), and a
+        // (8) used tokens (sdk/rocketnet_server_transport.cpp:2057), and a
         // connect whose history is full waits for an entry to expire:
         // an 8-slot server held 64, so about every 65th connect stalled for
         // seconds. 128 slots hold 1024, more than the cycles, so no connect
@@ -1300,7 +1380,9 @@ static bool posix_destroy_under_traffic_cell_runs( const posix_cell_t * cell )
 #if defined( __APPLE__ )
     const char * nightly = getenv( "ROCKETNET_TEST_NIGHTLY" );
     if ( nightly && strcmp( nightly, "1" ) == 0 )
+    {
         return true;
+    }
     return strcmp( cell->server_transport_io, "msgx" ) == 0 && strcmp( cell->client_transport_io, "msgx" ) == 0;
 #else
     (void) cell;
@@ -1319,7 +1401,9 @@ void rocketnet_test_posix_destroy_under_traffic_100()
     {
         const posix_cell_t * cell = &posix_cells[cell_index];
         if ( !posix_cell_runs( case_name, cell ) || !posix_destroy_under_traffic_cell_runs( cell ) )
+        {
             continue;
+        }
 
         posix_env_guard_t server_guard, client_guard;
         posix_cell_begin( cell, &server_guard, &client_guard );
@@ -1368,7 +1452,9 @@ void rocketnet_test_posix_destroy_under_traffic_100()
                 rocketnet_server_transport_send_packets( server );
                 if ( rocketnet_platform_time() >= traffic_deadline &&
                      rocketnet_counter_value( server_counters, ROCKETNET_COUNTER_PAYLOAD_RECEIVED ) != payload_received_before )
+                {
                     break;
+                }
                 rocketnet_platform_sleep( 0.0005 );
             }
 
@@ -1407,8 +1493,8 @@ void rocketnet_test_posix_destroy_under_traffic_100()
 // The server transport and the gso transport are single allocations of 56 MB
 // and 116 MB (strace of one create: two anonymous mmaps of those sizes),
 // past glibc's largest mmap threshold, so every create maps them fresh and
-// the value-initialising placement new (sdk/rocketnet_server_transport.cpp:1163,
-// sdk/rocketnet_server_gso_linux.cpp:644) faults every page in: ~42k minor
+// the value-initialising placement new (sdk/rocketnet_server_transport.cpp:1251,
+// sdk/rocketnet_server_gso_linux.cpp:674) faults every page in: ~42k minor
 // faults and ~0.12 s of system time a gso create on a 64-core Linux member.
 // A per-cell case serves those allocations from the main heap and keeps the
 // heap untrimmed, so a create after the first reuses resident pages. The
@@ -1484,10 +1570,14 @@ void rocketnet_test_posix_connect_disconnect_1000_##server_io##_##client_io()   
     posix_only_client_transport_io = #client_io;                                   \
     int selected = 0;                                                              \
     for ( int i = 0; i < posix_cell_count; i++ )                                     \
+    {                                                                                \
         selected += posix_cell_selected( &posix_cells[i] ) ? 1 : 0;                 \
+    }                                                                                \
     if ( selected != 1 )                                                           \
+    {                                                                              \
         printf( "macOS POSIX lifecycle filter excludes or duplicates %s/%s\n",   \
                 #server_io, #client_io );                                           \
+    }                                                                              \
     posix_check( selected == 1 );                                                   \
     rocketnet_test_posix_connect_disconnect_1000();                                \
     posix_only_client_transport_io = NULL;                                         \

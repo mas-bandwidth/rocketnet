@@ -15,6 +15,7 @@
 #include "../sdk/rocketnet_encryption_map.h"
 #include "../sdk/rocketnet_server_replay_marks.h"
 
+#include <inttypes.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -22,7 +23,7 @@
 #if ROCKETNET_DEV
 // every record the walk's supersede scans read, counted in development
 // builds only (sdk/rocketnet_server_replay_marks.cpp)
-uint32_t rocketnet_server_replay_marks_comparisons_for_test( const struct rocketnet_server_replay_marks_t * marks );
+uint64_t rocketnet_server_replay_marks_comparisons_for_test( const struct rocketnet_server_replay_marks_t * marks );
 #endif // #if ROCKETNET_DEV
 
 #define ROCKETNET_REPLAY_MARKS_TEST_HANDSHAKE_DEADLINE 1005.0
@@ -120,7 +121,9 @@ static bool server_replay_marks_record_forget( void * context, const struct rock
     call->high_water = 0;
     call->queued = recording->forget_refusals == 0;
     if ( call->queued )
+    {
         return true;
+    }
     recording->forget_refusals--;
 
     return false;
@@ -137,7 +140,9 @@ static bool server_replay_marks_record_mark( void * context, const struct rocket
     call->high_water = high_water;
     call->queued = recording->mark_refusals == 0;
     if ( call->queued )
+    {
         return true;
+    }
     recording->mark_refusals--;
 
     return false;
@@ -545,7 +550,9 @@ static int server_replay_marks_kernel_find( const struct server_replay_marks_ker
     for ( int i = 0; i < kernel->count; i++ )
     {
         if ( rocketnet_address_equal( &kernel->address[i], address ) )
+        {
             return i;
+        }
     }
     return -1;
 }
@@ -557,10 +564,14 @@ static void server_replay_marks_kernel_commit( struct server_replay_marks_kernel
     {
         const struct server_replay_marks_call_t * call = &recording->calls[i];
         if ( call->kind != SERVER_REPLAY_MARKS_FORGET || !call->queued )
+        {
             continue;
+        }
         const int entry = server_replay_marks_kernel_find( kernel, &call->address );
         if ( entry < 0 )
+        {
             continue;
+        }
         kernel->count--;
         kernel->address[entry] = kernel->address[kernel->count];
         kernel->high_water[entry] = kernel->high_water[kernel->count];
@@ -570,7 +581,9 @@ static void server_replay_marks_kernel_commit( struct server_replay_marks_kernel
     {
         const struct server_replay_marks_call_t * call = &recording->calls[i];
         if ( call->kind != SERVER_REPLAY_MARKS_MARK || !call->queued )
+        {
             continue;
+        }
         int entry = server_replay_marks_kernel_find( kernel, &call->address );
         if ( entry < 0 )
         {
@@ -597,7 +610,9 @@ static void server_replay_marks_check_kernel( const struct server_replay_marks_k
     const int entry = server_replay_marks_kernel_find( kernel, address );
     rocketnet_unit_check( entry >= 0 );
     if ( entry >= 0 )
+    {
         rocketnet_unit_check( kernel->high_water[entry] == high_water );
+    }
 }
 
 // proofs/tla/RNServerReplaySlots.tla Walk, MarkSupersedes: slot 0 is seen at A
@@ -823,10 +838,10 @@ static void test_server_replay_marks_mass_disconnect_is_linear()
     rocketnet_unit_check( counts.forgets == clients && counts.marks == 0 );
 
 #if ROCKETNET_DEV
-    const uint32_t comparisons = rocketnet_server_replay_marks_comparisons_for_test( fixture.marks );
+    const uint64_t comparisons = rocketnet_server_replay_marks_comparisons_for_test( fixture.marks );
     if ( comparisons != 0 )
     {
-        printf( "mass disconnect of %d clients: supersede scans read %u records, expected 0\n", clients, comparisons );
+        printf( "mass disconnect of %d clients: supersede scans read %" PRIu64 " records, expected 0\n", clients, comparisons );
     }
     rocketnet_unit_check( comparisons == 0 );
 #endif // #if ROCKETNET_DEV

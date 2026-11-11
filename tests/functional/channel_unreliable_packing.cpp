@@ -5,7 +5,9 @@
 static void packing_check_impl( bool ok, const char * condition, int line )
 {
     if ( ok )
+    {
         return;
+    }
     printf( "unreliable packing failed: %s at line %d\n", condition, line );
     fflush( stdout );
     exit( 1 );
@@ -15,6 +17,7 @@ static void packing_check_impl( bool ok, const char * condition, int line )
 void unreliable_small_messages_pack_in_place()
 {
     for ( int to_server = 0; to_server < 2; ++to_server )
+    {
         for ( int bytes : { 1, 4, 64 } )
         {
             rocketnet_channel_harness_t h;
@@ -102,4 +105,5 @@ void unreliable_small_messages_pack_in_place()
             packing_check( rocketnet_channel_allocator_calls == h.allocations_after_create );
             rocketnet_channel_harness_destroy( &h );
         }
+    }
 }

@@ -35,7 +35,9 @@ static void destroy_check_handler( const char * condition, const char * function
     do                                                                                                         \
     {                                                                                                          \
         if ( !( condition ) )                                                                                  \
+        {                                                                                                      \
             destroy_check_handler( #condition, (const char *) __FUNCTION__, __FILE__, __LINE__ );              \
+        }                                                                                                      \
     } while ( 0 )
 
 #define check destroy_check
@@ -78,9 +80,13 @@ public:
         (void) _putenv_s( name.c_str(), present ? value.c_str() : "" );
 #else
         if ( present )
+        {
             (void) setenv( name.c_str(), value.c_str(), 1 );
+        }
         else
+        {
             (void) unsetenv( name.c_str() );
+        }
 #endif
     }
 
@@ -102,7 +108,9 @@ static void * destroy_allocator_malloc( void * context, size_t bytes )
     destroy_allocator_t * state = (destroy_allocator_t *) context;
     void * memory = malloc( bytes );
     if ( memory && state )
+    {
         state->live++;
+    }
     return memory;
 }
 
@@ -110,7 +118,9 @@ static void destroy_allocator_free( void * context, void * memory )
 {
     destroy_allocator_t * state = (destroy_allocator_t *) context;
     if ( memory && state )
+    {
         state->live--;
+    }
     free( memory );
 }
 
@@ -138,7 +148,9 @@ static void destroy_log_capture( void * context, enum rocketnet_log_level_t leve
 {
     (void) context;
     if ( level != ROCKETNET_LOG_LEVEL_ERROR )
+    {
         return;
+    }
     destroy_error_lines++;
     const size_t copied = length < sizeof( destroy_last_error ) - 1 ? length : sizeof( destroy_last_error ) - 1;
     memcpy( destroy_last_error, message, copied );
@@ -163,7 +175,9 @@ static void destroy_pair_create( destroy_pair_t * pair, void * context )
     memset( pair, 0, sizeof( *pair ) );
     uint8_t seed[32];
     for ( int i = 0; i < 32; i++ )
+    {
         seed[i] = (uint8_t) ( 0x5A ^ i );
+    }
     check( rocketnet_generate_backend_keypair_from_seed( seed, pair->backend_public, pair->backend_secret ) == ROCKETNET_STATUS_OK );
 
     rocketnet_server_config_t server_config;
@@ -204,7 +218,9 @@ static void destroy_pair_create( destroy_pair_t * pair, void * context )
         rocketnet_server_update( pair->server, now );
         rocketnet_server_send_packets( pair->server );
         if ( rocketnet_client_state( pair->client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
+        {
             break;
+        }
         rocketnet_sleep( 0.001 );
     }
     check( rocketnet_client_state( pair->client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
@@ -256,8 +272,8 @@ static void destroy_begin_counted( destroy_allocator_t * state, int * before )
     rocketnet_log_function( destroy_log_capture, NULL );
     destroy_error_lines = 0;
     int status = -1;
-    check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
-    check( rocketnet_init_ex( state, destroy_allocator_malloc, destroy_allocator_free, &status ) );
+    check( rocketnet_term_internal() == ROCKETNET_STATUS_OK );
+    check( rocketnet_init_internal( state, destroy_allocator_malloc, destroy_allocator_free, &status ) );
     check( status == ROCKETNET_STATUS_OK );
     *before = state->live;
 }
@@ -265,7 +281,7 @@ static void destroy_begin_counted( destroy_allocator_t * state, int * before )
 static void destroy_end_counted( destroy_allocator_t * state )
 {
     rocketnet_destroy_stop_seconds_for_test( -1.0 );
-    check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    check( rocketnet_term_internal() == ROCKETNET_STATUS_OK );
     check( state->live == 0 );
     check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
     rocketnet_functional_restore_log_function();
@@ -350,7 +366,9 @@ void test_client_destroy_early_threaded_keeps_then_frees()
         destroy_error_lines = 0;
         rocketnet_client_destroy( pair.client );
         if ( destroy_error_lines == 2 )
+        {
             break;
+        }
         check( destroy_error_lines == 1 );
         destroy_server_teardown( &pair );
         check( state.live == before );
@@ -403,7 +421,9 @@ void test_server_destroy_early_threaded_keeps_then_frees()
         destroy_error_lines = 0;
         rocketnet_server_destroy( pair.server );
         if ( destroy_error_lines == 2 )
+        {
             break;
+        }
         check( destroy_error_lines == 1 );
         destroy_client_teardown( &pair );
         check( state.live == before );

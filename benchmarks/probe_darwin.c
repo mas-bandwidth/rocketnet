@@ -75,7 +75,9 @@ static int udp_socket_nonblocking( int port_out_fd_bound_port[1] )
 {
     int fd = socket( AF_INET, SOCK_DGRAM, 0 );
     if ( fd < 0 )
+    {
         return -1;
+    }
 
     struct sockaddr_in address;
     memset( &address, 0, sizeof( address ) );
@@ -237,11 +239,13 @@ static void probe_msg_x( void )
         int intact = 1;
 
         for ( int j = 0; j < PROBE_PACKET_BYTES; j++ )
+        {
             if ( recv_payload[i][j] != (uint8_t) ( 'a' + i ) )
             {
                 intact = 0;
                 break;
             }
+        }
 
         if ( intact )
         {
@@ -250,8 +254,10 @@ static void probe_msg_x( void )
     }
 
     if ( received > 0 )
+    {
         printf( "recvmsg_x contract: msg_name filled %d/%zd, msg_datalen==%d %d/%zd, payload intact %d/%zd\n",
                 name_filled, received, PROBE_PACKET_BYTES, datalen_ok, received, payload_ok, received );
+    }
 
     /* empty-socket semantics: what a drained nonblocking recvmsg_x returns.
        the connected-socket shape above queued its own 8 packets onto the
@@ -395,8 +401,10 @@ static void probe_reuseport( void )
 
     printf( "received %llu of %d\n", (unsigned long long) total, REUSEPORT_SENDERS * REUSEPORT_PACKETS_PER_SENDER );
     for ( int i = 0; i < REUSEPORT_WORKERS; i++ )
+    {
         printf( "worker %d (bind order %d): %llu packets (%.1f%%)\n", i, i, (unsigned long long) counts[i],
                 total ? 100.0 * (double) counts[i] / (double) total : 0.0 );
+    }
     printf( "\n" );
 }
 

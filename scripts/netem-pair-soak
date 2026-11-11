@@ -19,7 +19,8 @@
 # Linux only, and root (namespaces and tc need it). It runs nothing outside its
 # own two namespaces, creates only the namespaces and logs it names below,
 # deletes only what it created, and kills only the processes it started. The
-# transport is pinned to portable by default (no XDP attach); --transport names another.
+# server's transport is pinned to portable by default (no XDP attach); --transport
+# names another. The clients are always pinned to portable.
 #
 # Options:
 #   --clients N       clients to run (default 64)
@@ -27,7 +28,7 @@
 #   --delay-ms D      one-way delay on each end of the pair, in ms (default 78)
 #   --loss P          one-way loss on each end, as a percentage such as 1% (default 1%)
 #   --burst           correlated loss: runs of lost packets (25% correlation)
-#   --transport NAME     the transport pinned on the server and the clients (default portable)
+#   --transport NAME  the transport pinned on the server (default portable)
 #   --port PORT       the server's port inside its namespace (default 40000)
 #   --bin-dir DIR     where bin/server and bin/client are (default: ../bin of this script)
 #   --keep-logs       keep the log directory and print its path
@@ -241,22 +242,29 @@ ip netns exec "$NS_SERVER" tc qdisc add dev "$VETH_SERVER" root netem limit 1000
 ip netns exec "$NS_CLIENT" tc qdisc add dev "$VETH_CLIENT" root netem limit 100000 delay "${DELAY_MS}ms" "${LOSS_ARGS[@]}" \
     || fail "tc qdisc add netem on the client end"
 
-echo "$NAME: clients=$CLIENTS seconds=$SECONDS_TO_RUN delay_ms=$DELAY_MS (each way) loss=$LOSS (each way) burst=$BURST transport=$TRANSPORT"
+echo "$NAME: clients=$CLIENTS seconds=$SECONDS_TO_RUN delay_ms=$DELAY_MS (each way) loss=$LOSS (each way) burst=$BURST server_transport=$TRANSPORT client_transport=portable"
 ip netns exec "$NS_SERVER" tc qdisc show dev "$VETH_SERVER"
 ip netns exec "$NS_CLIENT" tc qdisc show dev "$VETH_CLIENT"
 if command -v ping >/dev/null 2>&1; then
     ip netns exec "$NS_CLIENT" ping -c 3 -W 2 "$SERVER_ADDRESS" | tail -2
 fi
 
+# bin/server quits when its stdin closes, and a background job's stdin is
+# /dev/null. its stdin is a fifo this script holds open on fd 3 for the run, so
+# it reaches end of file only when this script exits.
+mkfifo "$LOG_DIR/server.stdin" || fail "mkfifo $LOG_DIR/server.stdin"
+exec 3<>"$LOG_DIR/server.stdin" || fail "open $LOG_DIR/server.stdin"
+
 ip netns exec "$NS_SERVER" env -u ROCKETNET_DRIVER ROCKETNET_SERVER_PRINT_COUNTERS=1 ROCKETNET_SERVER_TRANSPORT="$TRANSPORT" \
-    "$BIN_DIR/server" "$SERVER_ADDRESS:$PORT" > "$LOG_DIR/server.log" 2>&1 &
+    "$BIN_DIR/server" "$SERVER_ADDRESS:$PORT" < "$LOG_DIR/server.stdin" > "$LOG_DIR/server.log" 2>&1 3>&- &
 SERVER_PID=$!
 sleep 2
 kill -0 "$SERVER_PID" 2>/dev/null || { cat "$LOG_DIR/server.log" >&2; fail "the server exited at start"; }
 
+# the clients are always portable: the run is server transport X against portable clients
 for i in $(seq 1 "$CLIENTS"); do
-    ip netns exec "$NS_CLIENT" env -u ROCKETNET_DRIVER ROCKETNET_CLIENT_TRANSPORT="$TRANSPORT" ROCKETNET_CLIENT_CONNECT_ADDRESS="$SERVER_ADDRESS:$PORT" \
-        "$BIN_DIR/client" > "$LOG_DIR/client-$i.log" 2>&1 &
+    ip netns exec "$NS_CLIENT" env -u ROCKETNET_DRIVER ROCKETNET_CLIENT_TRANSPORT=portable ROCKETNET_CLIENT_CONNECT_ADDRESS="$SERVER_ADDRESS:$PORT" \
+        "$BIN_DIR/client" > "$LOG_DIR/client-$i.log" 2>&1 3>&- &
     CLIENT_PIDS+=("$!")
     sleep 0.05
 done

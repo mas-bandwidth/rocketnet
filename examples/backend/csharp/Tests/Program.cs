@@ -30,7 +30,9 @@ static class Tests
     static void Check( bool condition, string what )
     {
         if ( !condition )
+        {
             throw new TestFailure( what );
+        }
     }
 
     static byte[] Unhex( JsonElement vector, string field, int bytes )
@@ -50,7 +52,9 @@ static class Tests
         {
             string path = Path.Combine( directory.FullName, "standard", "vectors", "connect_token_v1.json" );
             if ( File.Exists( path ) )
+            {
                 return path;
+            }
         }
         throw new TestFailure( "standard/vectors/connect_token_v1.json not found above the working directory" );
     }

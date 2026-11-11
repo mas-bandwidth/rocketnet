@@ -48,7 +48,9 @@ static int standard_channels_receipts_security_generate( const char * id, uint8_
         record.bytes = 2;
         rocketnet_message_writer_begin( &writer, out, capacity );
         if ( !rocketnet_message_writer_add( &writer, &record ) )
+        {
             return -1;
+        }
         return rocketnet_message_writer_finish( &writer );
     }
 
@@ -61,7 +63,9 @@ static int standard_channels_receipts_security_generate( const char * id, uint8_
         rn_arena_t * arena = rn_unit_arena_create( &config, 1, NULL );
         check( arena != NULL );
         if ( !arena )
+        {
             return -1;
+        }
 
         rn_endpoint_config_t endpoint_config;
         memset( &endpoint_config, 0, sizeof( endpoint_config ) );
@@ -89,13 +93,17 @@ static int standard_channels_receipts_security_generate( const char * id, uint8_
             const int request = rn_endpoint_next_packet_bytes( &endpoint, 1000.0 );
             check( request > 0 && request <= (int) sizeof( frame ) );
             if ( request <= 0 || request > (int) sizeof( frame ) )
+            {
                 break;
+            }
 
             const int written = rn_endpoint_write_packet( &endpoint, frame, (int) sizeof( frame ),
                                                           (uint64_t) fragment + 1, 1000.0 );
             check( written > 12 && written <= request );
             if ( written <= 12 || written > request )
+            {
                 break;
+            }
 
             check( ( frame[0] & ROCKETNET_MESSAGE_FLAG_CODE_MASK ) == ROCKETNET_MESSAGE_CODE_RELIABLE );
             check( ( frame[0] & ROCKETNET_MESSAGE_FLAG_BLOCK ) != 0 );

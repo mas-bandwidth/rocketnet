@@ -118,8 +118,10 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_SEND_QUEUE_SIZE >= 2 * ROCKETNET_DEFAUL
 // one receive bank holds a whole process batch, so the swap never drops
 // below the process arrays; a receive is copied into it only while the last
 // ROCKETNET_URING_MAX_SEGMENTS slots are free, the most datagrams one
-// coalesced receive carries (the kernel's UDP_MAX_SEGMENTS, the gso
-// transport's bound), and held otherwise. the hold has a slot for every
+// coalesced receive is taken with (NIC GRO's limit, the gso transport's
+// bound; a receive split into more, which a local sender's segmented send
+// can produce, is dropped whole and counted in GRO_CMSG_FAULTS and
+// RECEIVE_DROPPED_SIZE), and held otherwise. the hold has a slot for every
 // provided buffer of the most queues: a held receive owns its buffer.
 // A bank holds one update's receive budget for the configured clients, and
 // never less than one send reap (ROCKETNET_URING_SEND_BUDGET), so a reap
@@ -176,8 +178,10 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_SEND_BUDGET > ROCKETNET_URING_MAX_SEGME
 #define ROCKETNET_SERVER_URING_DISABLE_GRO                              (1<<1)
 
 // true when the library was built with liburing and this kernel accepts the
-// ring, the opcodes and the provided buffer ring the transport needs. the probe
-// runs once and its answer is kept.
+// ring, the opcodes and the provided buffer ring. it does not cover multishot
+// receive (Linux 6.0), which the transport also needs and create cannot
+// detect: an older kernel refuses each arm, logged once. the probe runs once
+// and its answer is kept.
 
 bool rocketnet_server_uring_available();
 

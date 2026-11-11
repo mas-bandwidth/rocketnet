@@ -60,7 +60,9 @@ template <int NumBuffers> inline void rocketnet_buffer_handoff_init( rocketnet_b
     for ( int i = 0; i < NumBuffers; i++ )
     {
         if ( i != producer )
+        {
             handoff->free_index[handoff->free_count++] = i;
+        }
     }
 
     handoff->ready_head = 0;
@@ -110,7 +112,9 @@ template <int NumBuffers> inline int rocketnet_buffer_handoff_publish( rocketnet
 template <int NumBuffers> inline int rocketnet_buffer_handoff_take( rocketnet_buffer_handoff_t<NumBuffers> * handoff )
 {
     if ( handoff->ready_count == 0 )
+    {
         return -1;
+    }
 
     const int index = handoff->ready_index[handoff->ready_head];
 

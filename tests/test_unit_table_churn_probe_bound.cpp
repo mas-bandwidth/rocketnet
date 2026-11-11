@@ -36,7 +36,9 @@ do                                                                              
 {                                                                                                        \
     const bool check_passed = ( condition );                                                             \
     if ( !check_passed && rocketnet_dev_hash_key_seed() != 0 )                                           \
+    {                                                                                                    \
         printf( "hash key seed 0x%016llx\n", (unsigned long long) rocketnet_dev_hash_key_seed() );       \
+    }                                                                                                    \
     rocketnet_unit_check( check_passed && #condition );                                                  \
 } while ( 0 )
 
@@ -66,7 +68,9 @@ static uint64_t churn_map_worst_absent_probes( struct rocketnet_encryption_map_t
         check( rocketnet_encryption_map_find( map, &absent[i] ) == -1 );
         const uint64_t probes = rocketnet_encryption_map_test_probes( map ) - before;
         if ( probes > worst )
+        {
             worst = probes;
+        }
     }
     return worst;
 }
@@ -81,7 +85,9 @@ static void test_encryption_map_churn_probe_bound()
 
     struct rocketnet_address_t absent[128];
     for ( int i = 0; i < absent_count; ++i )
+    {
         absent[i] = churn_map_address( 500000 + i );
+    }
 
     struct rocketnet_encryption_map_t * map = rocketnet_encryption_map_create( NULL, capacity );
     check( map != NULL );
@@ -115,7 +121,9 @@ static void test_encryption_map_churn_probe_bound()
     }
     check( rocketnet_encryption_map_num_mappings( map ) == load );
     for ( int i = 0; i < load; ++i )
+    {
         check( rocketnet_encryption_map_find( map, &live_addr[i] ) == live_index[i] );
+    }
 
     const uint64_t churned_worst = churn_map_worst_absent_probes( map, absent, absent_count );
 
@@ -152,7 +160,9 @@ static void test_encryption_map_full_probe_bound()
 
     int log2_cells = 0;
     while ( ( 1 << log2_cells ) < index_cells )
+    {
         ++log2_cells;
+    }
     const uint64_t probe_cap = 8 * (uint64_t) log2_cells;
 
     struct rocketnet_encryption_map_t * map = rocketnet_encryption_map_create( NULL, capacity );
@@ -180,7 +190,9 @@ static void test_encryption_map_full_probe_bound()
         const uint64_t probes = rocketnet_encryption_map_test_probes( map ) - before;
         absent_total += probes;
         if ( probes > absent_worst )
+        {
             absent_worst = probes;
+        }
     }
 
     // each erase runs on the full map: remove one mapping, measure, add it
@@ -208,9 +220,13 @@ static void test_encryption_map_full_probe_bound()
 
         erase_lookup_total += lookup;
         if ( lookup > erase_lookup_worst )
+        {
             erase_lookup_worst = lookup;
+        }
         if ( scan > erase_scan_worst )
+        {
             erase_scan_worst = scan;
+        }
 
         check( rocketnet_encryption_map_find( map, &live_addr[i] ) == -1 );
         live_index[i] = rocketnet_encryption_map_add( map, &live_addr[i], 1000.0 );
@@ -218,7 +234,9 @@ static void test_encryption_map_full_probe_bound()
     }
     check( rocketnet_encryption_map_num_mappings( map ) == capacity );
     for ( int i = 0; i < capacity; ++i )
+    {
         check( rocketnet_encryption_map_find( map, &live_addr[i] ) == live_index[i] );
+    }
 
     const double absent_mean = (double) absent_total / (double) absent_count;
     const double erase_lookup_mean = (double) erase_lookup_total / (double) capacity;
@@ -260,7 +278,9 @@ static uint64_t churn_token_worst_absent_probes( struct rocketnet_used_token_his
         check( rocketnet_used_token_history_claim_check( history, absent[i], holder, 1000.0 ) == 1 );
         const uint64_t probes = rocketnet_dev_token_claim_probe_steps( history );
         if ( probes > worst )
+        {
             worst = probes;
+        }
     }
     return worst;
 }
@@ -280,7 +300,9 @@ static void test_used_token_table_churn_probe_bound()
 
     uint8_t absent[128][ROCKETNET_TOKEN_IDENTIFIER_BYTES];
     for ( int i = 0; i < absent_count; ++i )
+    {
         churn_token_id( absent[i], 900000u + (uint32_t) i );
+    }
 
     struct rocketnet_used_token_history_t * history = rocketnet_used_token_history_create( NULL, capacity );
     check( history != NULL );

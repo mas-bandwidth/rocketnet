@@ -4,7 +4,7 @@
 
 > **Current model note (2026-10-18).** The following historical narrative and RUNS examples describe the earlier admitted-token abstraction. The current model removes `admitted`, `admits`, and `AdmittedCap`: admission is not a separate global token set. `bound[t]` represents used-token history by source address; a mapping is created at request time, while history is bound only when an opened response is accepted. Request-side connected-ID checks are followed by the authoritative response-side connected-ID check. The current properties are `OneTokenOneLiveConnection`, `ChurnNeverDenied`, and `ExpiredTokenNeverMapped`; `OneConnectionPerToken` remains a compatibility alias for the first property for the small `MCServerConnection.tla` wrapper.
 
-> Two reversed witnesses exercise the checks at the point they matter. In `MCServerConnectionClientIdNoCheck.cfg`, two same-token requests from distinct clients create pending mappings before either response arrives. The first response binds the token and occupies a slot; with the response-side client-ID check disabled, the second response occupies another slot too, violating `OneTokenOneLiveConnection` (24,910 generated / 10,671 distinct states; expected invariant violation, exit 12). The production check at `sdk/rocketnet_server_protocol.cpp:734` looks up the client ID when processing the response, after the request race, and prevents that second seat.
+> Two reversed witnesses exercise the checks at the point they matter. In `MCServerConnectionClientIdNoCheck.cfg`, two same-token requests from distinct clients create pending mappings before either response arrives. The first response binds the token and occupies a slot; with the response-side client-ID check disabled, the second response occupies another slot too, violating `OneTokenOneLiveConnection` (24,910 generated / 10,671 distinct states; expected invariant violation, exit 12). The production check at `sdk/rocketnet_server_protocol.cpp:772` looks up the client ID when processing the response, after the request race, and prevents that second seat.
 
 > In `MCServerConnectionHoldUntilExpire.cfg`, the trace seats then times out token 1, seats then times out token 2 while history persists, and finally submits fresh token 3 while a slot is free. A global held-token cap would reject token 3 despite no live connection; the current behavior accepts it, so the old hold restriction is exposed by the expected `ChurnNeverDenied` violation (102,917 generated / 39,836 distinct, exit 12). The compact witness uses MapCap=1, Capacity=1, Timeout=1, and disables application disconnect actions to keep the timeout/history sequence small. `MCServerConnectionExpiredToken.cfg` passes `ExpiredTokenNeverMapped` (134 generated / 48 distinct, exit 0).
 
@@ -45,7 +45,7 @@ numbers below are at `3ad4179` (origin/main at the time of writing).
 | `sDiscPending`, `sDiscPkt` | the disconnect burst | copies still to send after `disconnect_client` |
 
 Capacities: `MaxSlots` is `max_clients`; `MapCap` and `AdmittedCap` are the code's
-`max_clients * 2` (`sdk/rocketnet_server_transport.cpp:821-823`).
+`max_clients * 2` (`sdk/rocketnet_server_transport.cpp:871-875`).
 
 **The clients, as the server sees them**: one record per client with the ClientConnection
 states (-1 denied, 0 disconnected, 1 requesting cookie, 2 sending request, 3 sending
@@ -87,7 +87,7 @@ Safety, checked under every loss pattern with no fairness:
 | `OneSlotPerClientId` | a client id holds at most one slot (S:2647, S:2817) |
 | `SlotMappingBijection` | no slot without a live, established mapping behind it naming that slot, and no established mapping without the used slot it names bound to its address (S:3141-3144, slot reset destroys the mapping; S:2852-2853; the leak the audits suspect at the 2x mapping table) |
 | `NoSlotBeforeResponse` | a live mapping holds a slot only once established: no amount of requests consumes one (S:2712-2715) |
-| `MappingsBounded` | the map stays inside its capacity (S:2760-2764, the 2x table; `sdk/rocketnet_server_transport.cpp:821`) |
+| `MappingsBounded` | the map stays inside its capacity (S:2760-2764, the 2x table; `sdk/rocketnet_server_transport.cpp:871`) |
 | `OneConnectionPerToken` | the same token never admits two clients (S:2648, S:2788-2791) |
 | `NonceFresh` | no two live mappings share keys (S:32-33, no key or nonce outlives one connection; S:2656-2658) |
 | `StoredChallengeNeverReplaced` | every live mapping holds the one challenge fixed at its creation: the salt and nonce a request sees are the stored ones, never replaced (S:2691-2697) |
@@ -120,7 +120,7 @@ checked with every deadline and timeout off, so that only the protocol's own re-
 get the client to 4; `RepeatKeepAlive = FALSE` is the reversed witness, the server that sends
 the establishing keep-alive once at the response and never again. The code's behaviour is
 `RepeatKeepAlive = TRUE` (`rocketnet_server_protocol_write_keep_alive_if_due`,
-`sdk/rocketnet_server_protocol.cpp:1414-1492`).
+`sdk/rocketnet_server_protocol.cpp:1464-1546`).
 
 ## What the model abstracts away
 
@@ -270,7 +270,7 @@ committed case. One model error was found and fixed on the way.
 5. **Both client-id checks off with `SameId = TRUE`**
    (`MCServerConnectionBrokenClientIdNoCheck.cfg`, `OneSlotPerClientId`, two slots): two clients present two tokens carrying one client id; both get
    mappings and both responses are seated. Replayed: the code refuses the second at the
-   request (`rocketnet_client_slots_find`, `sdk/rocketnet_server_protocol.cpp:511`) and
+   request (`rocketnet_client_slots_find`, `sdk/rocketnet_server_protocol.cpp:547`) and
    again at the response (`:664`); the witness removes both.
 6. **`AddressIsIdentity = FALSE`** (`MCServerConnectionBrokenAddressNotIdentity.cfg`,
    `PacketsReachOwnSlotOnly`, 16 states): a
@@ -280,7 +280,7 @@ committed case. One model error was found and fixed on the way.
    disconnect from address 2 releases that slot, a packet from one address acting on a slot
    bound to another. Replayed: the code looks a sealed packet up by its source address only
    (`rocketnet_encryption_map_find(server->encryption_map, from)`,
-   `sdk/rocketnet_server_protocol.cpp:873`); a response from address 2 finds no mapping and
+   `sdk/rocketnet_server_protocol.cpp:913`); a response from address 2 finds no mapping and
    is `NO_MAPPING`, and the slot at address 1 is left to its idle timeout. With the code's
    behaviour the property holds (`MCServerConnectionMove.cfg`).
 
@@ -307,7 +307,7 @@ committed case. One model error was found and fixed on the way.
    address. Two clients held one slot's keys. Replayed against the code: the challenge is
    sealed under handshake keys derived from the token keys, the 64-bit random
    `connection_salt` and the session nonce (`rocketnet_derive_connection_keys`, called at
-   `sdk/rocketnet_server_protocol.cpp:537`); two clients sharing a token share the token
+   `sdk/rocketnet_server_protocol.cpp:574`); two clients sharing a token share the token
    keys, and nothing else, so the second client cannot open the first's challenge. The
    model's salt was too small, not the code. The salt is now the pair
    `<<client, attempt>>`, which no two clients share, and the same instance passes.

@@ -152,7 +152,9 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
     rocketnet_fuzz_receive_coverage = 0;
 
     if ( size < 4 )
+    {
         return 0;
+    }
 
     struct rocketnet_fuzz_reader r = { data, size, 0 };
 
@@ -585,7 +587,9 @@ static size_t rocketnet_fuzz_receive_build_seed( int kind, uint8_t * output, siz
 {
     const size_t required_capacity = 256;
     if ( capacity < required_capacity )
+    {
         return 0;
+    }
 
     size_t size = 0;
     rocketnet_fuzz_receive_append_u8( output, &size, 1 );
@@ -650,12 +654,16 @@ static int rocketnet_fuzz_receive_generate_seed_dir( const char * directory )
     {
         const struct rocketnet_fuzz_receive_seed_spec_t * spec = &rocketnet_fuzz_receive_seed_specs[index];
         if ( have_withheld && strcmp( withheld, spec->name ) == 0 )
+        {
             continue;
+        }
 
         uint8_t data[1024];
         const size_t size = rocketnet_fuzz_receive_build_seed( spec->kind, data, sizeof( data ) );
         if ( size == 0 )
+        {
             return 0;
+        }
 
         rocketnet_fuzz_receive_coverage = 0;
         LLVMFuzzerTestOneInput( data, size );
@@ -676,23 +684,31 @@ static int rocketnet_fuzz_receive_generate_seed_dir( const char * directory )
     {
         const struct rocketnet_fuzz_receive_seed_spec_t * spec = &rocketnet_fuzz_receive_seed_specs[index];
         if ( have_withheld && strcmp( withheld, spec->name ) == 0 )
+        {
             continue;
+        }
 
         uint8_t data[1024];
         const size_t size = rocketnet_fuzz_receive_build_seed( spec->kind, data, sizeof( data ) );
         if ( size == 0 )
+        {
             return 0;
+        }
 
         char path[1024];
         snprintf( path, sizeof( path ), "%s/%s", directory, spec->name );
 
         FILE * f = rocketnet_test_fopen( path, "wb" );
         if ( !f )
+        {
             return 0;
+        }
 
         const size_t written = fwrite( data, 1, size, f );
         if ( fclose( f ) != 0 || written != size )
+        {
             return 0;
+        }
     }
 
     return 1;

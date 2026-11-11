@@ -743,25 +743,33 @@ static int standard_message_forms_generate( const char * id, uint8_t * out, int 
     for ( int i = 0; i < count; i++ )
     {
         if ( strcmp( id, standard_message_forms_table[i].id ) != 0 )
+        {
             continue;
+        }
         const struct standard_message_vector_input_t * input = &standard_message_forms_inputs[i];
         if ( input->single )
         {
             if ( capacity < ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
+            {
                 return -1;
+            }
             standard_message_forms_data( out, input->bytes );
             return rocketnet_message_single_finish( out, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, input->bytes );
         }
 
         static uint8_t data[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
         if ( input->bytes < 1 || input->bytes > (int) sizeof( data ) )
+        {
             return -1;
+        }
         standard_message_forms_data( data, input->bytes );
 
         if ( strncmp( id, "m3.", 3 ) == 0 )
         {
             if ( strcmp( id, "m3.block-wide-last" ) == 0 )
+            {
                 data[0] = 0x5a;
+            }
             else
             {
                 data[0] = 0x68;
@@ -786,7 +794,9 @@ static int standard_message_forms_generate( const char * id, uint8_t * out, int 
         struct rocketnet_message_writer_t writer;
         rocketnet_message_writer_begin( &writer, out, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
         if ( !rocketnet_message_writer_add( &writer, &record ) )
+        {
             return -1;
+        }
         return rocketnet_message_writer_finish( &writer );
     }
 

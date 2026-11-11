@@ -144,9 +144,13 @@ inline double rocketnet_send_budget_depth_bytes( uint32_t kbps )
 inline int rocketnet_send_budget_wire_bytes( int ack_block_bytes, int payload_bytes )
 {
     if ( ack_block_bytes < ROCKETNET_ACK_BLOCK_MIN_BYTES || ack_block_bytes > ROCKETNET_ACK_BLOCK_MAX_BYTES )
+    {
         return 0;
+    }
     if ( payload_bytes < 1 || payload_bytes > ROCKETNET_SEND_BUDGET - ROCKETNET_PACKET_OVERHEAD_BYTES - ack_block_bytes )
+    {
         return 0;
+    }
     return ROCKETNET_PACKET_OVERHEAD_BYTES + ack_block_bytes + payload_bytes;
 }
 #endif // #if ROCKETNET_DEV
@@ -160,10 +164,14 @@ inline int rocketnet_send_budget_wire_bytes( int ack_block_bytes, int payload_by
 inline int rocketnet_send_budget_max_wire_bytes( int payload_bytes )
 {
     if ( payload_bytes < 1 || payload_bytes > ROCKETNET_SEND_BUDGET - ROCKETNET_PACKET_OVERHEAD_BYTES - ROCKETNET_ACK_BLOCK_MIN_BYTES )
+    {
         return 0;
+    }
     int block_capacity = ROCKETNET_SEND_BUDGET - ROCKETNET_PACKET_OVERHEAD_BYTES - payload_bytes;
     if ( block_capacity > ROCKETNET_ACK_BLOCK_MAX_BYTES )
+    {
         block_capacity = ROCKETNET_ACK_BLOCK_MAX_BYTES;
+    }
     return ROCKETNET_PACKET_OVERHEAD_BYTES + block_capacity + payload_bytes;
 }
 
@@ -198,10 +206,14 @@ inline bool rocketnet_send_budget_time_valid( double now )
 inline bool rocketnet_send_budget_init( struct rocketnet_send_budget_t * budget, uint32_t kbps, double now )
 {
     if ( !budget )
+    {
         return false;
+    }
     memset( budget, 0, sizeof( *budget ) );
     if ( !rocketnet_send_budget_kbps_valid( kbps ) || !rocketnet_send_budget_time_valid( now ) )
+    {
         return false;
+    }
     budget->kbps = kbps;
     budget->bytes_per_second = rocketnet_send_budget_bytes_per_second( kbps );
     budget->depth = rocketnet_send_budget_depth_bytes( kbps );
@@ -219,13 +231,17 @@ inline bool rocketnet_send_budget_init( struct rocketnet_send_budget_t * budget,
 inline void rocketnet_send_budget_refill( struct rocketnet_send_budget_t * budget, double now )
 {
     if ( !budget || !rocketnet_send_budget_time_valid( now ) || now <= budget->last_time )
+    {
         return;
+    }
     const double elapsed = now - budget->last_time;
     budget->last_time = now;
 
     double tokens = budget->tokens + budget->bytes_per_second * elapsed;
     if ( tokens > budget->depth )
+    {
         tokens = budget->depth;
+    }
     budget->tokens = tokens;
 }
 
@@ -236,7 +252,9 @@ inline void rocketnet_send_budget_refill( struct rocketnet_send_budget_t * budge
 inline void rocketnet_send_budget_begin_update( struct rocketnet_send_budget_t * budget, double now )
 {
     if ( !budget )
+    {
         return;
+    }
     rocketnet_send_budget_refill( budget, now );
     budget->rank_reached = 0;
     budget->reliable_waiting = 0;
@@ -252,7 +270,9 @@ inline bool rocketnet_send_budget_set_kbps( struct rocketnet_send_budget_t * bud
     if ( !budget || budget->kbps == 0 || !rocketnet_send_budget_kbps_valid( kbps ) || !rocketnet_send_budget_time_valid( now ) )
     {
         if ( budget )
+        {
             budget->refusals++;
+        }
         return false;
     }
 
@@ -261,7 +281,9 @@ inline bool rocketnet_send_budget_set_kbps( struct rocketnet_send_budget_t * bud
     budget->bytes_per_second = rocketnet_send_budget_bytes_per_second( kbps );
     budget->depth = rocketnet_send_budget_depth_bytes( kbps );
     if ( budget->tokens > budget->depth )
+    {
         budget->tokens = budget->depth;
+    }
     return true;
 }
 
@@ -281,7 +303,9 @@ inline bool rocketnet_send_budget_can_send( const struct rocketnet_send_budget_t
 inline bool rocketnet_send_budget_spend( struct rocketnet_send_budget_t * budget, int wire_bytes )
 {
     if ( !rocketnet_send_budget_can_send( budget, wire_bytes ) )
+    {
         return false;
+    }
     budget->tokens -= (double) wire_bytes;
     budget->bytes_spent += (uint64_t) wire_bytes;
 
@@ -304,7 +328,9 @@ inline int rocketnet_send_budget_admit( struct rocketnet_send_budget_t * budget,
     if ( !budget || budget->kbps == 0 || rank < 0 || wire_bytes < 1 || wire_bytes > ROCKETNET_SEND_BUDGET_MAX_PACKET_WIRE_BYTES )
     {
         if ( budget )
+        {
             budget->refusals++;
+        }
         return ROCKETNET_SEND_BUDGET_REFUSED;
     }
 
@@ -347,14 +373,18 @@ inline bool rocketnet_send_budget_settle( struct rocketnet_send_budget_t * budge
          (uint64_t) admitted_wire_bytes > budget->bytes_spent )
     {
         if ( budget )
+        {
             budget->refusals++;
+        }
         return false;
     }
 
     const int refund = admitted_wire_bytes - actual_wire_bytes;
     double tokens = budget->tokens + (double) refund;
     if ( tokens > budget->depth )
+    {
         tokens = budget->depth;
+    }
     budget->tokens = tokens;
     budget->bytes_spent -= (uint64_t) refund;
 

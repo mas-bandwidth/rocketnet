@@ -96,7 +96,9 @@ namespace RocketNet.Backend
             byte[] sealedBlock = seal( block, signedFields.ServerPublicKey );
             CryptographicOperations.ZeroMemory( block );
             if ( sealedBlock.Length != SealedBlockBytes )
+            {
                 throw new CryptographicException( $"sealed block is {sealedBlock.Length} bytes, not {SealedBlockBytes}" );
+            }
 
             byte[] token = new byte[ConnectTokenBytes];
             BinaryPrimitives.WriteUInt32LittleEndian( token.AsSpan( 0 ), WireVersion );
@@ -125,7 +127,9 @@ namespace RocketNet.Backend
             ArgumentNullException.ThrowIfNull( signedFields );
             ArgumentNullException.ThrowIfNull( addresses );
             if ( addresses.Length < 1 || addresses.Length > 2 )
+            {
                 throw new ArgumentException( $"a token names one server by one or two addresses, not {addresses.Length}" );
+            }
             foreach ( string text in addresses )
             {
                 IPEndPoint address = ParseAddress( text.Trim() ) ?? throw new ArgumentException( $"invalid server address \"{text}\"" );
@@ -133,7 +137,9 @@ namespace RocketNet.Backend
                 if ( address.AddressFamily == AddressFamily.InterNetwork )
                 {
                     if ( ( signedFields.AddressFlags & AddressFlagIpv4 ) != 0 )
+                    {
                         throw new ArgumentException( "more than one IPv4 server address" );
+                    }
                     signedFields.AddressFlags |= AddressFlagIpv4;
                     address.Address.GetAddressBytes().CopyTo( signedFields.Ipv4Address, 0 );
                     BinaryPrimitives.WriteUInt16LittleEndian( signedFields.Ipv4Address.AsSpan( 4 ), port );
@@ -141,11 +147,15 @@ namespace RocketNet.Backend
                 else
                 {
                     if ( ( signedFields.AddressFlags & AddressFlagIpv6 ) != 0 )
+                    {
                         throw new ArgumentException( "more than one IPv6 server address" );
+                    }
                     signedFields.AddressFlags |= AddressFlagIpv6;
                     byte[] octets = address.Address.GetAddressBytes();
                     for ( int i = 0; i < 8; i++ )
+                    {
                         BinaryPrimitives.WriteUInt16LittleEndian( signedFields.Ipv6Address.AsSpan( i * 2 ), BinaryPrimitives.ReadUInt16BigEndian( octets.AsSpan( i * 2 ) ) );
+                    }
                     BinaryPrimitives.WriteUInt16LittleEndian( signedFields.Ipv6Address.AsSpan( 16 ), port );
                 }
             }
@@ -160,26 +170,39 @@ namespace RocketNet.Backend
             if ( text.StartsWith( '[' ) )
             {
                 int close = text.IndexOf( "]:", StringComparison.Ordinal );
-                if ( close < 0 ) return null;
+                if ( close < 0 )
+                {
+                    return null;
+                }
                 host = text.Substring( 1, close - 1 );
                 port = text.Substring( close + 2 );
             }
             else
             {
                 int colon = text.LastIndexOf( ':' );
-                if ( colon < 0 ) return null;
+                if ( colon < 0 )
+                {
+                    return null;
+                }
                 host = text.Substring( 0, colon );
                 port = text.Substring( colon + 1 );
             }
             if ( !ushort.TryParse( port, NumberStyles.None, CultureInfo.InvariantCulture, out ushort portNumber ) || portNumber == 0 )
+            {
                 return null;
+            }
             if ( !IPAddress.TryParse( host, out IPAddress? address ) )
+            {
                 return null;
+            }
             bool bracketed = text.StartsWith( '[' );
             if ( address.AddressFamily == AddressFamily.InterNetwork )
             {
                 // IPAddress.TryParse takes "1" as 0.0.0.1; take only a dotted quad
-                if ( bracketed || address.ToString() != host ) return null;
+                if ( bracketed || address.ToString() != host )
+                {
+                    return null;
+                }
             }
             else if ( address.AddressFamily != AddressFamily.InterNetworkV6 || !bracketed || address.ScopeId != 0 || host.Contains( '%', StringComparison.Ordinal ) )
             {
@@ -273,7 +296,9 @@ namespace RocketNet.Backend
             if ( !string.IsNullOrEmpty( text ) )
             {
                 if ( !ushort.TryParse( text, NumberStyles.None, CultureInfo.InvariantCulture, out ushort port ) || port == 0 )
+                {
                     throw new ArgumentException( $"ROCKETNET_BACKEND_PORT is not 1 to 65535: \"{text}\"" );
+                }
                 config.Port = port;
             }
 
@@ -281,7 +306,9 @@ namespace RocketNet.Backend
             if ( !string.IsNullOrEmpty( text ) )
             {
                 if ( !System.Net.IPAddress.TryParse( text, out System.Net.IPAddress? address ) )
+                {
                     throw new ArgumentException( $"ROCKETNET_BACKEND_LISTEN_ADDRESS is not an IP address: \"{text}\"" );
+                }
                 config.ListenAddress = address.ToString();
             }
 
@@ -294,7 +321,9 @@ namespace RocketNet.Backend
             // a 64 byte Ed25519 secret key is its seed then its public key; refuse one whose halves disagree
             byte[] expanded = PublicKeyAuth.GenerateKeyPair( config.BackendPrivateKey.AsSpan( 0, 32 ).ToArray() ).PrivateKey;
             if ( !CryptographicOperations.FixedTimeEquals( expanded, config.BackendPrivateKey ) )
+            {
                 throw new ArgumentException( "ROCKETNET_BACKEND_PRIVATE_KEY: the public half does not match the seed" );
+            }
             CryptographicOperations.ZeroMemory( expanded );
 
             text = getenv( "ROCKETNET_BACKEND_PROTOCOL_ID" );
@@ -302,20 +331,26 @@ namespace RocketNet.Backend
             {
                 bool hex = text.StartsWith( "0x", StringComparison.OrdinalIgnoreCase );
                 if ( !ulong.TryParse( hex ? text.Substring( 2 ) : text, hex ? NumberStyles.AllowHexSpecifier : NumberStyles.None, CultureInfo.InvariantCulture, out ulong protocolId ) || protocolId == 0 )
+                {
                     throw new ArgumentException( $"ROCKETNET_BACKEND_PROTOCOL_ID is not a nonzero 64 bit id: \"{text}\"" );
+                }
                 config.ProtocolId = protocolId;
             }
 
             string? addressesText = getenv( "ROCKETNET_BACKEND_SERVER_ADDRESSES" );
             if ( !string.IsNullOrEmpty( addressesText ) )
+            {
                 config.ServerAddresses = addressesText.Split( ',' );
+            }
 
             // each server makes its own keypair at create; the backend needs its public half
             text = getenv( "ROCKETNET_BACKEND_SERVER_PUBLIC_KEY" );
             if ( string.IsNullOrEmpty( text ) )
             {
                 if ( requireServer || !string.IsNullOrEmpty( addressesText ) )
+                {
                     throw new ArgumentException( "ROCKETNET_BACKEND_SERVER_PUBLIC_KEY is not the base64 of the server's 32 byte public key (example_backend_server prints it)" );
+                }
                 config.ServerAddresses = Array.Empty<string>();
             }
             else
@@ -337,14 +372,18 @@ namespace RocketNet.Backend
             if ( !string.IsNullOrEmpty( text ) )
             {
                 if ( !uint.TryParse( text, NumberStyles.None, CultureInfo.InvariantCulture, out uint seconds ) || seconds == 0 )
+                {
                     throw new ArgumentException( $"ROCKETNET_BACKEND_TOKEN_EXPIRE_SECONDS is not a positive number of seconds: \"{text}\"" );
+                }
                 config.ExpireSeconds = seconds;
             }
             text = getenv( "ROCKETNET_BACKEND_TOKEN_TIMEOUT_SECONDS" );
             if ( !string.IsNullOrEmpty( text ) )
             {
                 if ( !int.TryParse( text, NumberStyles.None, CultureInfo.InvariantCulture, out int seconds ) || seconds <= 0 )
+                {
                     throw new ArgumentException( $"ROCKETNET_BACKEND_TOKEN_TIMEOUT_SECONDS is not a positive number of seconds: \"{text}\"" );
+                }
                 config.TimeoutSeconds = seconds;
             }
 

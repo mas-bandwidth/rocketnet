@@ -286,11 +286,15 @@ static void disconnect_reentry_callback( void * context, enum rocketnet_log_leve
 
     static const char prefix[] = "server disconnected client ";
     if ( length < sizeof( prefix ) - 1 || memcmp( message, prefix, sizeof( prefix ) - 1 ) != 0 )
+    {
         return;
+    }
 
     g_reentry_logs++;
     if ( g_reentry_calls != 0 )
+    {
         return;
+    }
 
     g_reentry_calls++;
     rocketnet_server_disconnect_client( g_reentry_server, g_reentry_slot );

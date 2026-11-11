@@ -464,7 +464,9 @@ static int link_stop_wait_hold( void * context )
     link_stop_wait_hold_t * hold = (link_stop_wait_hold_t *) context;
     hold->polls++;
     if ( hold->polls > hold->ceiling )
+    {
         rocketnet_unit_check( 0 );
+    }
     return 1;
 }
 
@@ -476,7 +478,9 @@ static void link_stop_wait_destroy( void * transport )
 static void link_stop_wait_log( void * context, enum rocketnet_log_level_t level, const char * message, size_t )
 {
     if ( level == ROCKETNET_LOG_LEVEL_ERROR && strstr( message, "the transport is kept, not freed" ) != NULL )
+    {
         ( (link_stop_wait_hold_t *) context )->logged++;
+    }
 }
 
 static void test_message_link_stop_and_wait_bounds_held_worker()

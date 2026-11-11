@@ -8,7 +8,8 @@
 // input names. Where rocketnet_fuzz_receive_structured drives the protocol
 // layer's process_packet directly, this target goes in at the top -- the
 // receive drain, the wire totals, the admission gate, the send-frame
-// reservation, process_packet_capacity and the payload batch -- and up
+// reservation, process_received (not the static process_packet_capacity, which
+// only the copying process_packet reaches) and the payload batch -- and up
 // through the message layer that reads
 // what the transport delivers.
 //
@@ -57,9 +58,11 @@ static void rocketnet_fuzz_server_step( struct rocketnet_fuzz_pair_t * pair )
 
     const struct rocketnet_server_transport_t * transport = pair->transport;
     for ( int i = 0; i < transport->payloads.num_payloads; i++ )
+    {
         rocketnet_fuzz_pair_require( transport->payloads.payload_bytes[i] > 0 &&
                                          transport->payloads.payload_bytes[i] <= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES,
                                      "a delivered payload is within the payload bound" );
+    }
 
     rocketnet_fuzz_pair_client_update( pair );
     rocketnet_fuzz_pair_drain_messages( pair );
@@ -71,7 +74,9 @@ static void rocketnet_fuzz_server_step( struct rocketnet_fuzz_pair_t * pair )
 static uint64_t rocketnet_fuzz_server_run( const uint8_t * data, size_t size )
 {
     if ( size < 1 )
+    {
         return 0;
+    }
 
     struct rocketnet_fuzz_cursor_t cursor = { data, size, 0 };
     const uint8_t selector = rocketnet_fuzz_u8( &cursor );
@@ -121,7 +126,9 @@ static uint64_t rocketnet_fuzz_server_run( const uint8_t * data, size_t size )
             case 2:
             {
                 if ( length < 2 )
+                {
                     break;
+                }
 
                 const uint8_t type = rocketnet_fuzz_c2s_types[record[0] % sizeof( rocketnet_fuzz_c2s_types )];
                 const int bytes = rocketnet_fuzz_pair_seal_c2s( pair, type, record[1] % 64, record + 2, length - 2, packet );
@@ -210,8 +217,12 @@ static const struct rocketnet_fuzz_server_seed_type_t rocketnet_fuzz_server_seed
 static int rocketnet_fuzz_server_type_index( uint8_t type )
 {
     for ( int i = 0; i < (int) sizeof( rocketnet_fuzz_c2s_types ); i++ )
+    {
         if ( rocketnet_fuzz_c2s_types[i] == type )
+        {
             return i;
+        }
+    }
     return -1;
 }
 
@@ -256,7 +267,9 @@ static bool rocketnet_fuzz_server_generate( const char * dir )
         }
 
         if ( t->accepted < 0 )
+        {
             continue;
+        }
 
         if ( r->plaintext_bytes < 0 )
         {
@@ -293,18 +306,24 @@ static bool rocketnet_fuzz_server_generate( const char * dir )
         {
             const std::string file = entry.path().filename().string();
             if ( file.rfind( "prefilter_", 0 ) != 0 || !entry.is_regular_file() )
+            {
                 continue;
+            }
 
             static uint8_t body[ROCKETNET_RECEIVE_CEILING + 2];
             FILE * f = rocketnet_test_fopen( entry.path().string().c_str(), "rb" );
             if ( !f )
+            {
                 continue;
+            }
 
             const int got = (int) fread( body, 1, sizeof( body ), f );
 
             fclose( f );
             if ( got < 2 )
+            {
                 continue;
+            }
 
             // the stateless target's selector byte comes first; the datagram is the rest
 

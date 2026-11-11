@@ -101,19 +101,25 @@ struct rn_blaster_string_wiper_t
     ~rn_blaster_string_wiper_t()
     {
         if ( value && !value->empty() )
+        {
             sodium_memzero( &( *value )[0], value->size() );
+        }
     }
 };
 
 static bool rn_blaster_parse_u32( const char * text_value, uint32_t low, uint32_t high, uint32_t * value )
 {
     if ( !text_value || !*text_value || !value )
+    {
         return false;
+    }
     char * end = NULL;
     errno = 0;
     const unsigned long parsed = strtoul( text_value, &end, 10 );
     if ( errno != 0 || !end || *end != '\0' || parsed < low || parsed > high )
+    {
         return false;
+    }
     *value = (uint32_t) parsed;
     return true;
 }
@@ -121,12 +127,16 @@ static bool rn_blaster_parse_u32( const char * text_value, uint32_t low, uint32_
 static bool rn_blaster_parse_u64( const char * text_value, uint64_t * value )
 {
     if ( !text_value || !*text_value || !value )
+    {
         return false;
+    }
     char * end = NULL;
     errno = 0;
     const unsigned long long parsed = strtoull( text_value, &end, 0 );
     if ( errno != 0 || !end || *end != '\0' )
+    {
         return false;
+    }
     *value = (uint64_t) parsed;
     return true;
 }
@@ -134,7 +144,9 @@ static bool rn_blaster_parse_u64( const char * text_value, uint64_t * value )
 static bool rn_blaster_parse_filter( const std::string & text_value, uint8_t filter[ROCKETNET_FILTER_VALUE_BYTES] )
 {
     if ( text_value.size() != 8u )
+    {
         return false;
+    }
     for ( size_t i = 0; i < ROCKETNET_FILTER_VALUE_BYTES; ++i )
     {
         const char pair[3] = { text_value[2u * i], text_value[2u * i + 1u], '\0' };
@@ -142,7 +154,9 @@ static bool rn_blaster_parse_filter( const std::string & text_value, uint8_t fil
         errno = 0;
         const unsigned long byte = strtoul( pair, &end, 16 );
         if ( errno != 0 || !end || *end != '\0' || byte > 255u )
+        {
             return false;
+        }
         filter[i] = (uint8_t) byte;
     }
     return true;
@@ -152,17 +166,23 @@ static bool rn_blaster_mac_unicast( const uint8_t mac[6] )
 {
     bool nonzero = false;
     for ( int i = 0; i < 6; ++i )
+    {
         nonzero = nonzero || mac[i] != 0;
+    }
     return nonzero && ( mac[0] & 1u ) == 0;
 }
 
 static bool rn_blaster_read_file( const std::string & path, std::string * contents )
 {
     if ( path.empty() || !contents )
+    {
         return false;
+    }
     FILE * file = fopen( path.c_str(), "rb" );
     if ( !file )
+    {
         return false;
+    }
     std::string data;
     rn_blaster_string_wiper_t data_wiper = { &data };
     (void) data_wiper;
@@ -180,11 +200,15 @@ static bool rn_blaster_read_file( const std::string & path, std::string * conten
             data.append( block.data(), count );
         }
         if ( count < block.size() )
+        {
             break;
+        }
     }
     const int close_result = fclose( file );
     if ( close_result != 0 || data.empty() )
+    {
         return false;
+    }
     *contents = data;
     return true;
 }
@@ -192,23 +216,37 @@ static bool rn_blaster_read_file( const std::string & path, std::string * conten
 static bool rn_blaster_json_string( const std::string & object, const char * key, char * output, size_t output_bytes )
 {
     if ( !key || !output || output_bytes == 0 )
+    {
         return false;
+    }
     const std::string needle = std::string( "\"" ) + key + "\"";
     size_t at = object.find( needle );
     if ( at == std::string::npos )
+    {
         return false;
+    }
     at = object.find( ':', at + needle.size() );
     if ( at == std::string::npos )
+    {
         return false;
+    }
     at = object.find( '"', at + 1u );
     if ( at == std::string::npos )
+    {
         return false;
+    }
     const size_t end = object.find( '"', at + 1u );
     if ( end == std::string::npos || end == at + 1u || end - at >= output_bytes )
+    {
         return false;
+    }
     for ( size_t i = at + 1u; i < end; ++i )
+    {
         if ( object[i] == '\\' || (unsigned char) object[i] < 0x20u )
+        {
             return false;
+        }
+    }
     memcpy( output, object.data() + at + 1u, end - at - 1u );
     output[end - at - 1u] = '\0';
     return true;
@@ -219,18 +257,28 @@ static bool rn_blaster_json_u32( const std::string & object, const char * key, u
     const std::string needle = std::string( "\"" ) + key + "\"";
     size_t at = object.find( needle );
     if ( at == std::string::npos )
+    {
         return false;
+    }
     at = object.find( ':', at + needle.size() );
     if ( at == std::string::npos )
+    {
         return false;
+    }
     ++at;
     while ( at < object.size() && ( object[at] == ' ' || object[at] == '\t' || object[at] == '\n' || object[at] == '\r' ) )
+    {
         ++at;
+    }
     const size_t begin = at;
     while ( at < object.size() && object[at] >= '0' && object[at] <= '9' )
+    {
         ++at;
+    }
     if ( begin == at )
+    {
         return false;
+    }
     return rn_blaster_parse_u32( object.substr( begin, at - begin ).c_str(), 0, UINT32_MAX, output );
 }
 
@@ -251,11 +299,13 @@ static bool rn_blaster_case_operation( const char * text_value, enum rn_blaster_
         { "bad_tag", RN_BLASTER_CASE_BAD_TAG },
     };
     for ( const entry_t & entry : entries )
+    {
         if ( strcmp( text_value, entry.name ) == 0 )
         {
             *operation = entry.value;
             return true;
         }
+    }
     return false;
 }
 
@@ -281,8 +331,12 @@ static_assert( sizeof( rn_blaster_server_transport_profiles ) / sizeof( rn_blast
 static int rn_blaster_server_transport_profile( const std::string & name )
 {
     for ( uint32_t i = 0; i < RN_BLASTER_NUM_SERVER_TRANSPORT_PROFILES; ++i )
+    {
         if ( name == rn_blaster_server_transport_profiles[i].name )
+        {
             return (int) i;
+        }
+    }
     return -1;
 }
 
@@ -389,7 +443,9 @@ static bool rn_blaster_manifest_load( const std::string & path, struct rn_blaste
     {
         const size_t name_at = json.find( "\"name\"", cursor );
         if ( name_at == std::string::npos )
+        {
             break;
+        }
         const size_t object_begin = json.rfind( '{', name_at );
         const size_t object_end = json.find( '}', name_at );
         if ( object_begin == std::string::npos || object_end == std::string::npos || manifest->count >= RN_BLASTER_MAX_MANIFEST_CASES )
@@ -432,7 +488,9 @@ static bool rn_blaster_manifest_load( const std::string & path, struct rn_blaste
         }
         bool oracle_contract = true;
         for ( uint32_t profile = 0; profile < RN_BLASTER_NUM_SERVER_TRANSPORT_PROFILES; ++profile )
+        {
             oracle_contract = oracle_contract && rn_blaster_case_oracle_contract( item, profile );
+        }
         if ( !rn_blaster_case_contract( item ) || !oracle_contract )
         {
             *error = "manifest operation has a noncanonical argument, sequence state, or oracle";
@@ -453,11 +511,13 @@ static bool rn_blaster_manifest_load( const std::string & path, struct rn_blaste
             return false;
         }
         for ( uint32_t i = 0; i < manifest->count; ++i )
+        {
             if ( strcmp( manifest->cases[i].name, item.name ) == 0 )
             {
                 *error = "manifest case names must be unique";
                 return false;
             }
+        }
         ++manifest->count;
         cursor = object_end + 1u;
     }
@@ -487,9 +547,13 @@ static bool rn_blaster_tokens_load( const std::string & path, uint32_t wanted, s
     {
         size_t end = data.find( '\n', cursor );
         if ( end == std::string::npos )
+        {
             end = data.size();
+        }
         if ( end > cursor && data[end - 1u] == '\r' )
+        {
             --end;
+        }
         std::string line = data.substr( cursor, end - cursor );
         rn_blaster_string_wiper_t line_wiper = { &line };
         (void) line_wiper;
@@ -510,6 +574,7 @@ static bool rn_blaster_tokens_load( const std::string & path, uint32_t wanted, s
                 return false;
             }
             for ( const rn_blaster_token_t & existing : *tokens )
+            {
                 if ( sodium_memcmp( existing.bytes.data(), token.bytes.data(), token.bytes.size() ) == 0 )
                 {
                     sodium_memzero( token.bytes.data(), token.bytes.size() );
@@ -517,12 +582,15 @@ static bool rn_blaster_tokens_load( const std::string & path, uint32_t wanted, s
                     rn_blaster_tokens_wipe( tokens );
                     return false;
                 }
+            }
             tokens->push_back( token );
             sodium_memzero( token.bytes.data(), token.bytes.size() );
         }
         cursor = data.find( '\n', cursor );
         if ( cursor == std::string::npos )
+        {
             break;
+        }
         ++cursor;
     }
     if ( tokens->size() != wanted )
@@ -537,7 +605,9 @@ static bool rn_blaster_tokens_load( const std::string & path, uint32_t wanted, s
 static void rn_blaster_tokens_wipe( std::vector<rn_blaster_token_t> * tokens )
 {
     for ( rn_blaster_token_t & token : *tokens )
+    {
         sodium_memzero( token.bytes.data(), token.bytes.size() );
+    }
     tokens->clear();
 }
 
@@ -559,7 +629,9 @@ static bool rn_blaster_tokens_name_server( const std::vector<rn_blaster_token_t>
             selected.type = ROCKETNET_ADDRESS_IPV6;
             const uint8_t * cursor = signed_fields.ipv6_address;
             for ( int i = 0; i < 8; ++i )
+            {
                 selected.data.ipv6[i] = rocketnet_read_uint16( &cursor );
+            }
             selected.port = rocketnet_read_uint16( &cursor );
         }
         else if ( valid_flags )
@@ -574,7 +646,9 @@ static bool rn_blaster_tokens_name_server( const std::vector<rn_blaster_token_t>
         sodium_memzero( &signed_fields, sizeof( signed_fields ) );
         sodium_memzero( &token, sizeof( token ) );
         if ( !matches )
+        {
             return false;
+        }
     }
     return true;
 }
@@ -596,7 +670,9 @@ static void rn_blaster_usage( const char * program )
 static bool rn_blaster_next( int argc, char ** argv, int * i, const char ** value )
 {
     if ( *i + 1 >= argc )
+    {
         return false;
+    }
     *value = argv[++( *i )];
     return true;
 }
@@ -614,38 +690,66 @@ static bool rn_blaster_parse_args( int argc, char ** argv, rn_blaster_options_t 
         const char * arg = argv[i];
         const char * value = NULL;
         if ( strcmp( arg, "--self-test" ) == 0 )
+        {
             options->self_test = true;
+        }
         else if ( strcmp( arg, "--execute" ) == 0 )
+        {
             options->execute = true;
+        }
         else if ( strcmp( arg, "--dry-run" ) == 0 )
+        {
             options->execute = false;
+        }
         else if ( !rn_blaster_next( argc, argv, &i, &value ) )
         {
             *error = std::string( "missing value for " ) + arg;
             return false;
         }
         else if ( strcmp( arg, "--interface" ) == 0 )
+        {
             options->interface_name = value;
+        }
         else if ( strcmp( arg, "--source" ) == 0 )
+        {
             options->source_text = value;
+        }
         else if ( strcmp( arg, "--server" ) == 0 )
+        {
             options->server_text = value;
+        }
         else if ( strcmp( arg, "--source-mac" ) == 0 )
+        {
             options->source_mac_text = value;
+        }
         else if ( strcmp( arg, "--next-hop-mac" ) == 0 )
+        {
             options->next_hop_mac_text = value;
+        }
         else if ( strcmp( arg, "--token-file" ) == 0 )
+        {
             options->token_file = value;
+        }
         else if ( strcmp( arg, "--manifest" ) == 0 )
+        {
             options->manifest_file = value;
+        }
         else if ( strcmp( arg, "--server-transport-profile" ) == 0 )
+        {
             options->server_transport_profile = value;
+        }
         else if ( strcmp( arg, "--packet-filter" ) == 0 )
+        {
             options->packet_filter_text = value;
+        }
         else if ( strcmp( arg, "--owned-bench-confirm" ) == 0 )
+        {
             options->owned_confirmation = value;
+        }
         else if ( strcmp( arg, "--xdp-mode" ) == 0 )
+        {
             options->xdp_mode = value;
+        }
         else if ( strcmp( arg, "--duration" ) == 0 && rn_blaster_parse_u32( value, 1, RN_BLASTER_MAX_DURATION_SECONDS, &options->plan.duration_seconds ) )
         {
         }
@@ -675,21 +779,37 @@ static bool rn_blaster_parse_args( int argc, char ** argv, rn_blaster_options_t 
         {
         }
         else if ( strcmp( arg, "--mode" ) == 0 && strcmp( value, "throughput" ) == 0 )
+        {
             options->plan.mode = RN_BLASTER_MODE_THROUGHPUT;
+        }
         else if ( strcmp( arg, "--mode" ) == 0 && strcmp( value, "robustness" ) == 0 )
+        {
             options->plan.mode = RN_BLASTER_MODE_ROBUSTNESS;
+        }
         else if ( strcmp( arg, "--direction" ) == 0 && strcmp( value, "c2s" ) == 0 )
+        {
             options->plan.direction = RN_BLASTER_DIRECTION_CLIENT_TO_SERVER;
+        }
         else if ( strcmp( arg, "--direction" ) == 0 && strcmp( value, "s2c" ) == 0 )
+        {
             options->plan.direction = RN_BLASTER_DIRECTION_SERVER_TO_CLIENT;
+        }
         else if ( strcmp( arg, "--direction" ) == 0 && strcmp( value, "both" ) == 0 )
+        {
             options->plan.direction = RN_BLASTER_DIRECTION_BIDIRECTIONAL;
+        }
         else if ( strcmp( arg, "--bind" ) == 0 && strcmp( value, "auto" ) == 0 )
+        {
             options->plan.bind = RN_BLASTER_BIND_AUTO;
+        }
         else if ( strcmp( arg, "--bind" ) == 0 && strcmp( value, "copy" ) == 0 )
+        {
             options->plan.bind = RN_BLASTER_BIND_COPY;
+        }
         else if ( strcmp( arg, "--bind" ) == 0 && strcmp( value, "zero-copy" ) == 0 )
+        {
             options->plan.bind = RN_BLASTER_BIND_ZERO_COPY;
+        }
         else
         {
             *error = std::string( "unknown or invalid argument: " ) + arg;
@@ -697,7 +817,9 @@ static bool rn_blaster_parse_args( int argc, char ** argv, rn_blaster_options_t 
         }
     }
     if ( options->self_test )
+    {
         return argc == 2;
+    }
     /* Address parsing happens in main after every explicit text field exists.
        Validate all address-independent bounds here, then validate the real
        family together with the parsed source and server before dry-run or
@@ -739,7 +861,9 @@ static bool rn_blaster_parse_args( int argc, char ** argv, rn_blaster_options_t 
 static bool rn_blaster_address_private( const rocketnet_address_t & address )
 {
     if ( address.type == ROCKETNET_ADDRESS_IPV4 )
+    {
         return rn_blaster_ipv4_private( address.data.ipv4 ) != 0;
+    }
     if ( address.type == ROCKETNET_ADDRESS_IPV6 )
     {
         uint8_t bytes[16];
@@ -778,7 +902,9 @@ static void rn_blaster_print_plan( const rn_blaster_options_t & options, const r
     const uint64_t offers = rn_blaster_offered_packets( options.plan.duration_seconds, options.plan.rate_pps );
     uint32_t mutation_datagrams = 0;
     for ( uint32_t i = 0; i < manifest.count; ++i )
+    {
         mutation_datagrams += manifest.cases[i].operation == RN_BLASTER_CASE_REPLAY ? manifest.cases[i].argument : 1u;
+    }
     /* 33 bytes before a transport payload, then the message record's three
      * header bytes, body, and one trailing form byte. */
     const uint32_t nominal_wire = 37u + options.plan.payload_bytes;
@@ -800,10 +926,12 @@ static void rn_blaster_print_plan( const rn_blaster_options_t & options, const r
             rn_blaster_mode_name( options.plan.mode ), rn_blaster_direction_name( options.plan.direction ), options.plan.clients,
             options.plan.duration_seconds, options.plan.rate_pps, options.plan.payload_bytes, options.plan.seed );
     if ( options.plan.mode == RN_BLASTER_MODE_THROUGHPUT )
+    {
         printf( "PLAN throughput_offers_per_enabled_direction=%" PRIu64
                 " nominal_rocketnet_bytes=%u nominal_frame_bytes=%u"
                 " nominal_wire_slot_bytes=%u nominal_physical_wire_bytes_per_direction=%" PRIu64 "\n",
                 offers, nominal_wire, frame, wire_slot, offers * wire_slot );
+    }
     else
     {
         printf( "PLAN mutation_cases=%u mutation_datagrams=%u baseline_datagrams=1 recovery_datagrams=%u"
@@ -815,12 +943,14 @@ static void rn_blaster_print_plan( const rn_blaster_options_t & options, const r
         const int profile = rn_blaster_server_transport_profile( options.server_transport_profile );
         rocketnet_assert( profile >= 0 );
         for ( uint32_t i = 0; i < manifest.count; ++i )
+        {
             printf( "PLAN_CASE name=%s server_transport_profile=%s sequence_state=%s expected_stage=%s"
                     " expected_counter=%s expected_delta=%u expected_recovery=%s\n",
                     manifest.cases[i].name, options.server_transport_profile.c_str(), manifest.cases[i].sequence_state,
                     manifest.cases[i].profile_oracles[profile].expected_stage,
                     manifest.cases[i].profile_oracles[profile].expected_counter, manifest.cases[i].expected_delta,
                     manifest.cases[i].expected_recovery );
+        }
     }
     printf( "PLAN manifest_cases=%u nominal_valid_rocketnet_bytes=%u nominal_valid_frame_bytes=%u"
             " nominal_valid_wire_slot_bytes=%u\n",
@@ -829,7 +959,9 @@ static void rn_blaster_print_plan( const rn_blaster_options_t & options, const r
     printf( "PLAN endpoint_arena_required_bytes=%" PRIu64 "\n", arena_required );
     printf( "PLAN downstream=controlled_server_workload_contract rss=externally_provisioned_one_queue\n" );
     if ( options.plan.mode == RN_BLASTER_MODE_ROBUSTNESS )
+    {
         printf( "PLAN robustness_family=ipv4 oversize_rocketnet_bytes=%u\n", ROCKETNET_RECEIVE_CEILING + 1u );
+    }
     printf( "PLAN logging=no_tokens_no_keys_no_packet_bodies cleanup=xsk_umem_program_process_settings_postcheck\n" );
     printf( "PLAN next=%s\n", options.execute ? "attach_after_plan" : "dry_run_stop" );
     fflush( stdout );
@@ -839,7 +971,9 @@ static int rn_blaster_mutate_case( const rn_blaster_case_t & item, const uint8_t
                                    uint8_t * output, int capacity )
 {
     if ( valid_bytes <= 0 || capacity < ROCKETNET_RECEIVE_CEILING + 1 )
+    {
         return 0;
+    }
     memcpy( output, valid, (size_t) valid_bytes );
     int bytes = valid_bytes;
     switch ( item.operation )
@@ -945,7 +1079,9 @@ static int rn_blaster_self_test()
     uint8_t valid[100];
     uint8_t mutated[ROCKETNET_RECEIVE_CEILING + 1];
     for ( uint32_t i = 0; i < (uint32_t) sizeof( valid ); ++i )
+    {
         valid[i] = (uint8_t) i;
+    }
     rn_blaster_case_t mutation = {};
     mutation.operation = RN_BLASTER_CASE_TRUNCATE;
     mutation.argument = 5;
@@ -994,7 +1130,9 @@ static int rn_blaster_self_test()
     RN_BLASTER_CHECK( rocketnet_message_writer_finish( &writer ) > (int) sizeof( body ) );
 #undef RN_BLASTER_CHECK
     if ( failures == 0 )
+    {
         printf( "xdp_packet_blaster self-test: PASS\n" );
+    }
     return failures == 0 ? 0 : 1;
 }
 
@@ -1015,7 +1153,9 @@ int main( int argc, char ** argv )
         return 2;
     }
     if ( options.self_test )
+    {
         return rn_blaster_self_test();
+    }
 
     rocketnet_address_t source = {}, server = {};
     uint8_t source_mac[6], next_hop_mac[6], packet_filter[4];
@@ -1151,7 +1291,9 @@ static bool rn_blaster_now_nanoseconds( uint64_t * nanoseconds )
 {
     struct timespec time_value;
     if ( !nanoseconds || clock_gettime( CLOCK_MONOTONIC, &time_value ) != 0 )
+    {
         return false;
+    }
     *nanoseconds = (uint64_t) time_value.tv_sec * UINT64_C( 1000000000 ) + (uint64_t) time_value.tv_nsec;
     return true;
 }
@@ -1160,12 +1302,16 @@ static bool rn_blaster_source_on_interface( const std::string & interface_name, 
 {
     struct ifaddrs * addresses = NULL;
     if ( getifaddrs( &addresses ) != 0 )
+    {
         return false;
+    }
     bool found = false;
     for ( struct ifaddrs * item = addresses; item != NULL && !found; item = item->ifa_next )
     {
         if ( !item->ifa_addr || interface_name != item->ifa_name )
+        {
             continue;
+        }
         if ( source.type == ROCKETNET_ADDRESS_IPV4 && item->ifa_addr->sa_family == AF_INET )
         {
             const struct sockaddr_in * address = (const struct sockaddr_in *) item->ifa_addr;
@@ -1191,7 +1337,9 @@ static bool rn_blaster_mac_on_interface( const std::string & interface_name, con
 {
     const int fd = socket( AF_INET, SOCK_DGRAM, 0 );
     if ( fd < 0 )
+    {
         return false;
+    }
     struct ifreq request;
     memset( &request, 0, sizeof( request ) );
     strncpy( request.ifr_name, interface_name.c_str(), sizeof( request.ifr_name ) - 1u );
@@ -1205,7 +1353,9 @@ static bool rn_blaster_interface_one_queue( const std::string & interface_name )
 {
     const int fd = socket( AF_INET, SOCK_DGRAM, 0 );
     if ( fd < 0 )
+    {
         return false;
+    }
     struct ifreq request;
     struct ethtool_channels channels;
     memset( &request, 0, sizeof( request ) );
@@ -1226,7 +1376,9 @@ static void rn_blaster_print_host( const std::string & interface_name )
     struct utsname system_name;
     memset( &system_name, 0, sizeof( system_name ) );
     if ( uname( &system_name ) != 0 )
+    {
         strcpy( system_name.release, "unknown" );
+    }
     char driver[sizeof( ( (struct ethtool_drvinfo *) 0 )->driver )] = "unknown";
     const int fd = socket( AF_INET, SOCK_DGRAM, 0 );
     if ( fd >= 0 )
@@ -1349,12 +1501,16 @@ static bool rn_blaster_xsk_attempt( rn_blaster_xsk_t * xsk, const rn_blaster_opt
         return false;
     }
     for ( uint32_t i = 0; i < RN_BLASTER_RX_FRAMES; ++i )
+    {
         *xsk_ring_prod__fill_addr( &xsk->fill, fill_index + i ) = (uint64_t) ( RN_BLASTER_RX_FRAMES + i ) * RN_BLASTER_FRAME_BYTES;
+    }
     xsk_ring_prod__submit( &xsk->fill, RN_BLASTER_RX_FRAMES );
     xsk->free_transmit.reserve( RN_BLASTER_RX_FRAMES );
     xsk->pending_fill.reserve( RN_BLASTER_RX_FRAMES );
     for ( uint32_t i = 0; i < RN_BLASTER_RX_FRAMES; ++i )
+    {
         xsk->free_transmit.push_back( (uint64_t) i * RN_BLASTER_FRAME_BYTES );
+    }
     return true;
 }
 
@@ -1408,7 +1564,9 @@ static bool rn_blaster_xsk_open( rn_blaster_xsk_t * xsk, const rn_blaster_option
     xsk->rlimit_restored = true;
     xsk->interface_index = (int) if_nametoindex( options.interface_name.c_str() );
     if ( options.plan.bind != RN_BLASTER_BIND_AUTO )
+    {
         return false;
+    }
     if ( !rn_blaster_xdp_empty( xsk->interface_index ) )
     {
         *error = "zero-copy fallback cleanup left an XDP attachment";
@@ -1440,12 +1598,18 @@ static void rn_blaster_complete( rn_blaster_xsk_t * xsk, rn_blaster_results_t * 
         const uint64_t address = *xsk_ring_cons__comp_addr( &xsk->completion, index + i );
         if ( address < (uint64_t) RN_BLASTER_RX_FRAMES * RN_BLASTER_FRAME_BYTES &&
              address % RN_BLASTER_FRAME_BYTES == 0 )
+        {
             xsk->free_transmit.push_back( address );
+        }
         else
+        {
             ++results->ownership_errors;
+        }
     }
     if ( count > 0 )
+    {
         xsk_ring_cons__release( &xsk->completion, count );
+    }
 }
 
 static bool rn_blaster_send( rn_blaster_xsk_t * xsk, const uint8_t * packet, int packet_bytes,
@@ -1484,7 +1648,9 @@ static bool rn_blaster_send( rn_blaster_xsk_t * xsk, const uint8_t * packet, int
     descriptor->len = (uint32_t) frame_bytes;
     xsk_ring_prod__submit( &xsk->transmit, 1 );
     if ( xsk_ring_prod__needs_wakeup( &xsk->transmit ) )
+    {
         (void) sendto( xsk_socket__fd( xsk->socket ), NULL, 0, MSG_DONTWAIT, NULL, 0 );
+    }
     ++results->submitted;
     results->protocol_bytes += (uint64_t) packet_bytes;
     results->ethernet_frame_bytes += (uint64_t) frame_bytes;
@@ -1501,9 +1667,13 @@ static bool rn_blaster_send_robustness( rn_blaster_xsk_t * xsk, const uint8_t * 
                                         rn_blaster_results_t * results )
 {
     if ( packet_bytes <= ROCKETNET_RECEIVE_CEILING )
+    {
         return rn_blaster_send( xsk, packet, packet_bytes, source, server, source_mac, next_hop_mac, results );
+    }
     if ( packet_bytes != ROCKETNET_RECEIVE_CEILING + 1 || source.type != ROCKETNET_ADDRESS_IPV4 )
+    {
         return false;
+    }
     rn_blaster_complete( xsk, results );
     if ( xsk->free_transmit.empty() )
     {
@@ -1548,7 +1718,9 @@ static bool rn_blaster_send_robustness( rn_blaster_xsk_t * xsk, const uint8_t * 
     descriptor->len = (uint32_t) frame_bytes;
     xsk_ring_prod__submit( &xsk->transmit, 1 );
     if ( xsk_ring_prod__needs_wakeup( &xsk->transmit ) )
+    {
         (void) sendto( xsk_socket__fd( xsk->socket ), NULL, 0, MSG_DONTWAIT, NULL, 0 );
+    }
     ++results->submitted;
     results->protocol_bytes += (uint64_t) packet_bytes;
     results->ethernet_frame_bytes += (uint64_t) frame_bytes;
@@ -1560,26 +1732,34 @@ static uint16_t rn_blaster_frame_destination_port( const uint8_t * frame, int fr
 {
     const int header = family == ROCKETNET_ADDRESS_IPV6 ? 14 + 40 + 8 : 14 + 20 + 8;
     if ( frame_bytes < header )
+    {
         return 0;
+    }
     return (uint16_t) ( ( (uint16_t) frame[header - 6] << 8 ) | frame[header - 5] );
 }
 
 static void rn_blaster_fill_returned( rn_blaster_xsk_t * xsk )
 {
     if ( xsk->pending_fill.empty() )
+    {
         return;
+    }
     uint32_t index = 0;
     const uint32_t wanted = (uint32_t) xsk->pending_fill.size();
     const uint32_t reserved = xsk_ring_prod__reserve( &xsk->fill, wanted, &index );
     if ( reserved == 0 )
+    {
         return;
+    }
     for ( uint32_t i = 0; i < reserved; ++i )
     {
         *xsk_ring_prod__fill_addr( &xsk->fill, index + i ) = xsk->pending_fill.back();
         xsk->pending_fill.pop_back();
     }
     if ( reserved > 0 )
+    {
         xsk_ring_prod__submit( &xsk->fill, reserved );
+    }
 }
 
 static void rn_blaster_receive( rn_blaster_xsk_t * xsk, std::vector<rn_blaster_session_t> * sessions,
@@ -1602,9 +1782,13 @@ static void rn_blaster_receive( rn_blaster_xsk_t * xsk, std::vector<rn_blaster_s
         uint64_t frame_address = 0;
         if ( rocketnet_xdp_fill_return( descriptor->addr, receive_begin, receive_end, &frame_address ) &&
              xsk->pending_fill.size() < RN_BLASTER_RX_FRAMES )
+        {
             xsk->pending_fill.push_back( frame_address );
+        }
         else
+        {
             ++results->ownership_errors;
+        }
         rocketnet_xdp_receive_drops_t descriptor_drops = {};
         const uint8_t * frame = rocketnet_xdp_receive_descriptor( xsk->buffer, receive_begin, receive_end,
                                                                   descriptor->addr, descriptor->len,
@@ -1644,7 +1828,9 @@ static void rn_blaster_receive( rn_blaster_xsk_t * xsk, std::vector<rn_blaster_s
             {
                 rn_endpoint_on_acked( &session.endpoint, session.protocol.acked_packet_ids[ack], now );
                 if ( session.protocol.acked_packet_ids[ack] == session.watched_packet_id )
+                {
                     session.watched_packet_acked = true;
+                }
             }
             session.protocol.num_acked = 0;
             if ( payload_bytes > 0 )
@@ -1721,7 +1907,9 @@ static bool rn_blaster_endpoint_prepare( rn_blaster_session_t * session, double 
 {
     const int requested = rn_endpoint_next_packet_bytes( &session->endpoint, now );
     if ( requested == 0 )
+    {
         return false;
+    }
     *packet_id = session->next_packet_id++;
     uint64_t sequence = 0;
     if ( !rocketnet_client_protocol_start_payload( &session->protocol, &sequence ) )
@@ -1754,7 +1942,9 @@ static bool rn_blaster_endpoint_packet( rn_blaster_xsk_t * xsk, rn_blaster_sessi
 {
     uint64_t packet_id = 0;
     if ( !rn_blaster_endpoint_prepare( session, now, last_packet, last_packet_bytes, &packet_id ) )
+    {
         return false;
+    }
     if ( !rn_blaster_send( xsk, last_packet->data(), *last_packet_bytes, session->source, server,
                            source_mac, next_hop_mac, results ) )
     {
@@ -1763,7 +1953,9 @@ static bool rn_blaster_endpoint_packet( rn_blaster_xsk_t * xsk, rn_blaster_sessi
     }
     rn_endpoint_packet_sent( &session->endpoint, packet_id, *last_packet_bytes, now );
     if ( sent_packet_id )
+    {
         *sent_packet_id = packet_id;
+    }
     return true;
 }
 
@@ -1833,13 +2025,19 @@ static int rn_blaster_execute( const rn_blaster_options_t & options, const rn_bl
     const time_t wall_time = time( NULL );
     const uint64_t unix_time = wall_time >= 0 ? (uint64_t) wall_time : 0;
     if ( wall_time < 0 )
+    {
         sessions_ok = false;
+    }
     if ( !message_arena )
+    {
         sessions_ok = false;
+    }
     for ( uint32_t i = 0; i < options.plan.clients; ++i )
     {
         if ( !sessions_ok )
+        {
             break;
+        }
         rn_blaster_session_t & session = sessions[i];
         memset( &session, 0, sizeof( session ) );
         rocketnet_client_protocol_init( &session.protocol, &session.counters );
@@ -1865,7 +2063,9 @@ static int rn_blaster_execute( const rn_blaster_options_t & options, const rn_bl
     rn_blaster_results_t results = {};
     uint64_t start_ns = 0;
     if ( !rn_blaster_now_nanoseconds( &start_ns ) )
+    {
         sessions_ok = false;
+    }
     const uint64_t connect_deadline_ns = start_ns + RN_BLASTER_CONNECT_TIMEOUT_SECONDS * UINT64_C( 1000000000 );
     const uint64_t total_offers = rn_blaster_offered_packets( options.plan.duration_seconds, options.plan.rate_pps );
     uint64_t workload_start_ns = 0;
@@ -1890,7 +2090,9 @@ static int rn_blaster_execute( const rn_blaster_options_t & options, const rn_bl
             break;
         }
         if ( workload_start_ns != 0 && now_ns >= workload_end_ns )
+        {
             break;
+        }
         if ( workload_start_ns == 0 && now_ns >= connect_deadline_ns )
         {
             sessions_ok = false;
@@ -1898,7 +2100,9 @@ static int rn_blaster_execute( const rn_blaster_options_t & options, const rn_bl
         }
         const double now = (double) ( now_ns - start_ns ) / 1000000000.0;
         for ( rn_blaster_session_t & session : sessions )
+        {
             (void) rn_endpoint_begin_update( &session.endpoint );
+        }
         rn_blaster_receive( &xsk, &sessions, server, options.plan.source_port, options.plan.payload_bytes, now, &results );
         if ( now_ns - last_handshake_step_ns >= UINT64_C( 1000000 ) )
         {
@@ -1910,7 +2114,9 @@ static int rn_blaster_execute( const rn_blaster_options_t & options, const rn_bl
                 int packet_bytes = 0;
                 rocketnet_client_protocol_update( &session.protocol, now, packet, &packet_bytes );
                 if ( packet_bytes > 0 )
+                {
                     (void) rn_blaster_send( &xsk, packet, packet_bytes, session.source, server, source_mac, next_hop_mac, &results );
+                }
                 const bool connected = session.protocol.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED;
                 if ( connected && !session.endpoint_announced )
                 {
@@ -1920,17 +2126,23 @@ static int rn_blaster_execute( const rn_blaster_options_t & options, const rn_bl
                 rn_endpoint_tick( &session.endpoint, now );
                 rn_endpoint_config_tick( &session.endpoint, connected ? 1 : 0, now );
                 if ( rn_endpoint_error( &session.endpoint ) != ROCKETNET_DISCONNECT_REASON_NONE )
+                {
                     sessions_ok = false;
+                }
                 if ( connected )
+                {
                     (void) rn_blaster_endpoint_packet( &xsk, &session, now, server, source_mac, next_hop_mac,
                                                        &results, &scratch_packet, &scratch_packet_bytes, NULL );
+                }
             }
         }
         all_sessions_ready = sessions_ok;
         for ( const rn_blaster_session_t & session : sessions )
+        {
             all_sessions_ready = all_sessions_ready &&
                                  session.protocol.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
                                  session.endpoint.ordered.config_received;
+        }
         if ( all_sessions_ready && workload_start_ns == 0 )
         {
             workload_start_ns = now_ns;
@@ -2036,8 +2248,10 @@ static int rn_blaster_execute( const rn_blaster_options_t & options, const rn_bl
                 bool mutation_sent = mutated_bytes > 0;
                 const uint32_t mutation_copies = item.operation == RN_BLASTER_CASE_REPLAY ? item.argument : 1u;
                 for ( uint32_t copy = 0; copy < mutation_copies && mutation_sent; ++copy )
+                {
                     mutation_sent = rn_blaster_send_robustness( &xsk, mutated, mutated_bytes, session.source, server,
                                                                 source_mac, next_hop_mac, &results );
+                }
                 uint8_t recovery_payload[RN_BLASTER_MAX_PAYLOAD_BYTES];
                 rn_blaster_application_message( recovery_payload, options.plan.payload_bytes, 0,
                                                 ++session.application_sequence, options.plan.seed );
@@ -2048,7 +2262,9 @@ static int rn_blaster_execute( const rn_blaster_options_t & options, const rn_bl
                                            rn_blaster_endpoint_packet( &xsk, &session, now, server, source_mac, next_hop_mac,
                                                                        &results, &case_valid, &case_valid_bytes, &robustness_wait_ack );
                 if ( !mutation_sent || !recovery_sent )
+                {
                     sessions_ok = false;
+                }
                 else
                 {
                     session.watched_packet_id = robustness_wait_ack;
@@ -2062,7 +2278,9 @@ static int rn_blaster_execute( const rn_blaster_options_t & options, const rn_bl
         }
         if ( options.plan.mode == RN_BLASTER_MODE_ROBUSTNESS && robustness_index == manifest.count &&
              robustness_wait_ack == 0 )
+        {
             break;
+        }
     }
 
     printf( "RESULT work_units_offered=%" PRIu64 " submitted=%" PRIu64 " backpressure=%" PRIu64 " not_ready=%" PRIu64
@@ -2100,14 +2318,18 @@ static int rn_blaster_execute( const rn_blaster_options_t & options, const rn_bl
         int burst_bytes = 0;
         rocketnet_client_protocol_disconnect( &session.protocol, burst, &burst_count, &burst_bytes );
         for ( int packet = 0; packet < burst_count; ++packet )
+        {
             (void) rn_blaster_send( &xsk, burst + packet * ROCKETNET_SEND_BUDGET, burst_bytes,
                                     session.source, server, source_mac, next_hop_mac, &disconnect_results );
+        }
         sodium_memzero( burst, sizeof( burst ) );
     }
     sodium_memzero( scratch_packet.data(), scratch_packet.size() );
     sodium_memzero( case_valid.data(), case_valid.size() );
     if ( message_arena )
+    {
         rn_arena_destroy( message_arena );
+    }
     rn_blaster_xsk_close( &xsk );
     rn_blaster_print_xdp_ids( "after", xsk.after );
     const bool clean = xsk.cleanup_empty;
@@ -2131,7 +2353,9 @@ static int rn_blaster_execute( const rn_blaster_options_t & options, const rn_bl
          !robustness_complete || !downstream_observed || results.payload_errors != 0 ||
          !clean || !rlimit_restored || results.ownership_errors != 0 || disconnect_results.ownership_errors != 0 ||
          term != ROCKETNET_STATUS_OK )
+    {
         return 1;
+    }
     return 0;
 }
 

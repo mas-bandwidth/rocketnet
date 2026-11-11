@@ -184,7 +184,9 @@ static __always_inline int server_xdp_ipv6_extension_step( __u8 ** cursor, __u8 
         // 8-byte units not counting the first 8
 
         if ( header + 2 > data_end )
+        {
             return 0;
+        }
 
         const __u32 bytes = ( (__u32) header[1] + 1 ) * 8;
 
@@ -199,7 +201,9 @@ static __always_inline int server_xdp_ipv6_extension_step( __u8 ** cursor, __u8 
         // minus 2
 
         if ( header + 2 > data_end )
+        {
             return 0;
+        }
 
         const __u32 bytes = ( (__u32) header[1] + 2 ) * 4;
 
@@ -213,12 +217,16 @@ static __always_inline int server_xdp_ipv6_extension_step( __u8 ** cursor, __u8 
         // only a first fragment has the UDP header behind it
 
         if ( header + sizeof( struct server_xdp_ipv6_fragment_header_t ) > data_end )
+        {
             return 0;
+        }
 
         struct server_xdp_ipv6_fragment_header_t fragment;
         __builtin_memcpy( &fragment, header, sizeof( fragment ) );
         if ( ( fragment.offset_flags & __constant_htons( 0xfff8 ) ) != 0 )
+        {
             return 0;
+        }
         *next_header = fragment.next_header;
         *cursor = header + sizeof( struct server_xdp_ipv6_fragment_header_t );
         return 1;
@@ -270,7 +278,9 @@ static __always_inline int server_xdp_ipv6_address_match( const struct rocketnet
 static __always_inline int server_xdp_udp_is_ours( struct udphdr * udp, __u8 * data_end, const struct rocketnet_server_xdp_config_t * config, int address_match )
 {
     if ( (__u8 *) udp + sizeof( struct udphdr ) > data_end )
+    {
         return 0;
+    }
     return config != NULL && udp->dest == config->public_port && address_match;
 }
 
@@ -292,7 +302,9 @@ static __always_inline int server_xdp_udp( struct xdp_md * ctx, struct udphdr * 
                                            __u8 family, const void * source_address )
 {
     if ( udp->dest != config->public_port || !address_match )
+    {
         return XDP_PASS;
+    }
 
     __u8 * packet_data = (__u8 *) udp + sizeof( struct udphdr );
 
@@ -496,7 +508,9 @@ int server_xdp_filter( struct xdp_md * ctx )
                 {
                     struct rocketnet_server_xdp_config_t * config = server_xdp_config();
                     if ( config == NULL )
+                    {
                         return XDP_PASS;
+                    }
 
                     // the IP total length bounds the datagram when it names
                     // at least a UDP header and fits in the frame; otherwise
@@ -549,7 +563,9 @@ int server_xdp_filter( struct xdp_md * ctx )
                 {
                     struct rocketnet_server_xdp_config_t * config = server_xdp_config();
                     if ( config == NULL )
+                    {
                         return XDP_PASS;
+                    }
 
                     // the IPv6 payload length bounds the datagram when it
                     // names at least a UDP header and fits in the frame;

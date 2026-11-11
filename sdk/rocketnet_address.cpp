@@ -21,18 +21,24 @@ void rocketnet_address_load_ipv4( struct rocketnet_address_t * address, uint32_t
 static bool rocketnet_address_parse_port( const char * text, uint16_t & port )
 {
     if ( !*text )
+    {
         return false;
+    }
 
     unsigned int value = 0;
 
     for ( ; *text; ++text )
     {
         if ( *text < '0' || *text > '9' )
+        {
             return false;
+        }
 
         value = value * 10 + (unsigned int) ( *text - '0' );
         if ( value > 65535 )
+        {
             return false;
+        }
     }
 
     port = (uint16_t) value;
@@ -46,19 +52,27 @@ bool rocketnet_address_parse( rocketnet_address_t * address, const char * addres
     rocketnet_assert( address_string_in );
 
     if ( !address )
+    {
         return false;
+    }
 
     memset( address, 0, sizeof( rocketnet_address_t ) );
 
     if ( !address_string_in )
+    {
         return false;
+    }
 
     char buffer[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
     size_t length = 0;
     while ( length < sizeof( buffer ) && address_string_in[length] )
+    {
         ++length;
+    }
     if ( !length || length == sizeof( buffer ) )
+    {
         return false;
+    }
 
     memcpy( buffer, address_string_in, length + 1 );
 
@@ -71,9 +85,13 @@ bool rocketnet_address_parse( rocketnet_address_t * address, const char * addres
 
         char * close = strchr( host, ']' );
         if ( !close )
+        {
             return false;
+        }
         if ( close[1] && ( close[1] != ':' || !rocketnet_address_parse_port( close + 2, port ) ) )
+        {
             return false;
+        }
 
         *close = '\0';
     }
@@ -85,26 +103,34 @@ bool rocketnet_address_parse( rocketnet_address_t * address, const char * addres
         address->port = port;
 
         for ( int i = 0; i < 8; ++i )
+        {
             address->data.ipv6[i] = rocketnet_platform_ntohs( addr6[i] );
+        }
 
         return true;
     }
 
     if ( bracketed )
+    {
         return false;
+    }
 
     char * colon = strchr( host, ':' );
     if ( colon )
     {
         if ( !rocketnet_address_parse_port( colon + 1, port ) )
+        {
             return false;
+        }
 
         *colon = '\0';
     }
 
     uint32_t addr4;
     if ( !rocketnet_platform_inet_pton4( host, &addr4 ) )
+    {
         return false;
+    }
 
     address->type = ROCKETNET_ADDRESS_IPV4;
     address->port = port;
@@ -139,7 +165,9 @@ static bool rocketnet_address_write_without_port( const rocketnet_address_t * ad
         uint16_t ipv6_network_order[8];
 
         for ( int i = 0; i < 8; ++i )
+        {
             ipv6_network_order[i] = rocketnet_platform_htons( address->data.ipv6[i] );
+        }
 
         if ( !rocketnet_platform_inet_ntop6( ipv6_network_order, buffer, ROCKETNET_MAX_ADDRESS_STRING_LENGTH ) )
         {
@@ -214,13 +242,19 @@ bool rocketnet_address_equal( const rocketnet_address_t * a, const rocketnet_add
     rocketnet_assert( b );
 
     if ( a->type != b->type || a->port != b->port )
+    {
         return false;
+    }
 
     if ( a->type == ROCKETNET_ADDRESS_IPV4 )
+    {
         return memcmp( a->data.ipv4, b->data.ipv4, 4 ) == 0;
+    }
 
     if ( a->type == ROCKETNET_ADDRESS_IPV6 )
+    {
         return memcmp( a->data.ipv6, b->data.ipv6, sizeof( a->data.ipv6 ) ) == 0;
+    }
 
     return false;
 }

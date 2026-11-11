@@ -81,6 +81,7 @@ void rocketnet_dev_set_server_keygen_failure( bool fail );
 #define ROCKETNET_DEV_HASH_KEY_CLIENT_SLOTS   1
 #define ROCKETNET_DEV_HASH_KEY_TOKEN_TABLE    2
 #define ROCKETNET_DEV_HASH_KEY_ENCRYPTION_MAP 3
+#define ROCKETNET_DEV_HASH_KEY_COOKIE_REPLY_SOURCES 4
 
 void rocketnet_dev_set_hash_key_seed( uint64_t seed );
 

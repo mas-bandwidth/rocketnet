@@ -181,7 +181,7 @@ TokenAddressAdvertised(arrival, tokFams) ==
            arrival \in ServedFamilies
       [] AddressMatch = "either" /\ arrival = "ipv4" /\ "ipv6" \in tokFams ->
            \* no IPv4 flag: the token's IPv6 address is IPv4-mapped, so it is
-           \* that IPv4 address (sdk/rocketnet_server_protocol.cpp:289-298)
+           \* that IPv4 address (sdk/rocketnet_server_protocol.cpp:345-354)
            "ipv4" \in ServedFamilies
       [] AddressMatch = "either" ->
            FALSE
@@ -558,7 +558,7 @@ ServerRecvRequest(p) ==
             [] m.live /\ (p.salt = m.salt \/ p.tok = m.tok) ->
                  \* salt or token: the stored challenge. The idle deadline
                  \* moves only when the salt matches
-                 \* (sdk/rocketnet_server_protocol.cpp:410-428).
+                 \* (sdk/rocketnet_server_protocol.cpp:474-494).
                  /\ ServerSendPacket([type |-> "challenge", to |-> p.from, salt |-> m.csalt, nonce |-> m.cnonce])
                  /\ IF p.salt = m.salt
                       THEN smap' = [smap EXCEPT ![p.from].sinceRecv = 0]
@@ -584,15 +584,15 @@ ServerRecvRequest(p) ==
                       [] m.live ->
                            \* replace branch: salt and token both differ. The
                            \* map entry is reused, so a full table is not a
-                           \* refusal (sdk/rocketnet_server_protocol.cpp:431,
-                           \* 682 and 904-909).
+                           \* refusal (sdk/rocketnet_server_protocol.cpp:497,
+                           \* 788 and 1019-1026).
                            /\ \E n \in (Nonce \ HeldNonce({p.from})) :
                                 /\ smap' = [smap EXCEPT ![p.from] = OpenMapping(p, n)]
                                 /\ ServerSendPacket([type |-> "challenge", to |-> p.from, salt |-> p.salt, nonce |-> n])
                            /\ UNCHANGED churnDenied
                       [] NumMappings = MapCap ->
                            \* a full table is silent, and it is before any denial
-                           \* (sdk/rocketnet_server_protocol.cpp:682-688)
+                           \* (sdk/rocketnet_server_protocol.cpp:788-794)
                            ServerSilent /\ UNCHANGED <<smap, churnDenied>>
                       [] FreeSlots = 0 ->
                            /\ ServerSendPacket([type |-> "denied", to |-> p.from, salt |-> p.salt, nonce |-> 0])

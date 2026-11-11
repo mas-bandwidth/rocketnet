@@ -44,9 +44,9 @@ inside sixty seconds and prints `PASS` as its last line; any failure prints one
 ## What the output means
 
 The program prints the two header defaults, the configured client rate, the
-numeric status from `rocketnet_client_set_send_kbps`, the final
+name of the status from `rocketnet_client_set_send_kbps`, the final
 `messages_dropped_over_budget` value, and the reliable arrival count. A successful runtime
-change prints status `0`, the numeric value of `ROCKETNET_STATUS_OK`. The drop
+change prints `OK`, the name `rocketnet_status_name` gives `ROCKETNET_STATUS_OK`. The drop
 count is run-dependent but must be nonzero, while the reliable arrival line
 must report every queued reliable message.
 

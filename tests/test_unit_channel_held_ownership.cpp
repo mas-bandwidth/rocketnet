@@ -81,7 +81,9 @@ static int ho_receive( ho_node_t * node, const rocketnet_message_record_t & reco
 {
     uint32_t slot = RN_DESCRIPTOR_NONE;
     if ( rn_window_receive_accept( &node->ordered.receive, &record, &slot ) != RN_WINDOW_RECEIVE_ACCEPT )
+    {
         return -1;
+    }
 
     rn_delivery_t out;
     return rn_channels_dispatch( &node->ordered.channels, &record, &out );
@@ -91,7 +93,9 @@ static uint32_t ho_held_used( const ho_node_t * node )
 {
     uint32_t used = 0;
     for ( uint32_t i = 0; i < node->region->held_entries; i++ )
+    {
         used += node->region->held_index[i].used ? 1 : 0;
+    }
     return used;
 }
 
@@ -103,10 +107,14 @@ static void ho_check_channel_one( const ho_node_t * node, const uint8_t * trigge
     {
         const rn_delivery_t & delivery = node->region->deliveries[i];
         if ( delivery.channel != 1 || delivery.code != ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED || delivery.data == trigger )
+        {
             continue;
+        }
 
         if ( delivery.bytes != held_bytes || memcmp( delivery.data, held, (size_t) held_bytes ) != 0 )
+        {
             printf( "channel 1 delivered %d bytes that are not the held message's %d\n", delivery.bytes, held_bytes );
+        }
 
         check( delivery.bytes == held_bytes );
         check( memcmp( delivery.data, held, (size_t) held_bytes ) == 0 );
@@ -137,7 +145,9 @@ static void test_sequenced_block_release_spares_a_foreign_hold()
     ho_receive( &node, ho_record( ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED, 2, 0, 0, 1, &newest, 1, 200 ) );
 
     if ( !node.region->receive_descriptors[1].live )
+    {
         printf( "the cancelled channel-0 block released channel 1's held descriptor\n" );
+    }
 
     check( node.region->receive_descriptors[1].live != 0 );
     check( node.region->receive_descriptors[1].channel == 1 );
@@ -258,7 +268,9 @@ static void test_held_index_stays_within_the_window()
         if ( ho_receive( &node, ho_record( ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, n + 1, channel, ordering, 0, held, 4, 100 ) ) < 0 ||
              ho_receive( &node, ho_fragment( n, 0, 2 * r, chunk ) ) < 0 ||
              ho_receive( &node, ho_record( ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED, n + 2, 0, 0, 2 * r + 1, &newest, 1, 200 ) ) < 0 )
+        {
             break;
+        }
 
         rn_ordered_end_update( &node.ordered );
         rounds++;
@@ -268,7 +280,9 @@ static void test_held_index_stays_within_the_window()
     }
 
     if ( most > W )
+    {
         printf( "the held index reached %u entries (W = %u, %u cells) in %u rounds\n", most, W, node.region->held_entries, rounds );
+    }
 
     check( most <= W );
     check( node.ordered.channels.error == ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION );
@@ -308,7 +322,9 @@ static void test_held_erase_ends_on_a_full_index()
     for ( uint32_t i = 0, k = 0; i < region->held_entries; i++ )
     {
         if ( region->held_index[i].used )
+        {
             continue;
+        }
 
         region->held_index[i].key = ( (uint64_t) 3 << 32 ) | ( 1 + k++ );
         region->held_index[i].number = 0;
@@ -321,7 +337,9 @@ static void test_held_erase_ends_on_a_full_index()
 
     check( node.ordered.channels.error == ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION );
     for ( uint32_t i = 0; i < node.ordered.channels.deliveries; i++ )
+    {
         check( region->deliveries[i].data == &trigger );
+    }
 
     rn_ordered_end_update( &node.ordered );
     rn_unit_arena_destroy( node.arena );
@@ -376,8 +394,10 @@ static void ho_deliver_turns( ho_node_t * node, uint32_t channel, uint32_t from,
 {
     const uint8_t trigger = 7;
     for ( uint32_t ordering = from; ordering < to; ordering++ )
+    {
         check( ho_receive( node, ho_record( ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, ( *number )++, channel, ordering, 0, &trigger, 1, 0 ) ) ==
                ROCKETNET_CHANNEL_DISPATCH_DELIVERED );
+    }
 }
 
 static bool ho_delivered( const ho_node_t * node, uint32_t channel, const uint8_t * held, int bytes )
@@ -386,7 +406,9 @@ static bool ho_delivered( const ho_node_t * node, uint32_t channel, const uint8_
     {
         const rn_delivery_t & delivery = node->region->deliveries[i];
         if ( delivery.channel == channel && delivery.bytes == bytes && memcmp( delivery.data, held, (size_t) bytes ) == 0 )
+        {
             return true;
+        }
     }
     return false;
 }
@@ -429,7 +451,9 @@ static void test_held_erase_shifts_back_across_the_wrap()
     rn_ordered_end_update( &node.ordered );
 
     if ( !( region->held_index[last].key == key_second && region->held_index[0].key == key_third ) )
+    {
         printf( "the erase at cell %u left the wrapped cluster misplaced\n", last );
+    }
 
     check( region->held_index[last].used && region->held_index[last].key == key_second );
     check( region->held_index[0].used && region->held_index[0].key == key_third );

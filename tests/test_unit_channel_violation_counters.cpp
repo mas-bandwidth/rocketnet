@@ -69,7 +69,9 @@ static void violation_send( violation_node_t * node, uint32_t channel, int type,
     uint8_t * pointer = rn_channels_start( &node->ordered.channels, channel, type, bytes );
     check( pointer != NULL );
     if ( !pointer )
+    {
         return;
+    }
     memcpy( pointer, data, bytes );
     check( rn_channels_finish( &node->ordered.channels, bytes ) );
 }
@@ -226,9 +228,13 @@ static void violation_feed_refuses( violation_node_t * receiver, const uint8_t *
 {
     const int result = rn_ordered_receive( &receiver->ordered, data, bytes );
     if ( expected_result >= 0 )
+    {
         check( result == expected_result );
+    }
     else
+    {
         check( result != ROCKETNET_MESSAGE_VIOLATION_NONE );
+    }
     check( receiver->counters.values[expected_counter] == 1 );
     check( receiver->counters.values[ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION] == 1 );
     check( rn_ordered_decide( &receiver->ordered ) == ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION );
@@ -641,12 +647,14 @@ static void test_block_shape_refusals_match_across_reliable_codes()
     const uint32_t fragment[] = { 0, 0, 3, 0, 2 };
     const int bytesv[] = { (int) F, (int) F, (int) F, 100, (int) F + 1 };
     for ( int c = 0; c < 3; c++ )
+    {
         for ( int i = 0; i < 5; i++ )
         {
             const uint32_t ordering = codes[c] == ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED ? 1u : 0u;
             const rocketnet_message_record_t record = block_shape_record( codes[c], fragments[i], fragment[i], 0, bytesv[i], ordering );
             block_shape_refusal( &record, ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK );
         }
+    }
 
     // block span past the ring: BAD_RING on all three
 
@@ -673,6 +681,13 @@ REGISTER_UNIT_TEST( test_block_shape_refusals_match_across_reliable_codes );
 
 // A valid ring span does not make a negative extended first number valid.
 // At connection start, number zero cannot be fragment one of a prior block.
+static void test_block_first_number_underflow_reliable()
+{
+    const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
+    const rocketnet_message_record_t record = block_shape_record( ROCKETNET_MESSAGE_CODE_RELIABLE, 1, 1, F / 16, (int) F, 0 );
+    block_shape_refusal( &record, ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK );
+}
+
 static void test_block_first_number_underflow_ordered()
 {
     const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
@@ -687,5 +702,6 @@ static void test_block_first_number_underflow_sequenced()
     block_shape_refusal( &record, ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK );
 }
 
+REGISTER_UNIT_TEST( test_block_first_number_underflow_reliable );
 REGISTER_UNIT_TEST( test_block_first_number_underflow_ordered );
 REGISTER_UNIT_TEST( test_block_first_number_underflow_sequenced );

@@ -53,7 +53,7 @@ static void env_names_log_capture( void * context, rocketnet_log_level_t level, 
     log->levels.push_back( (int) level );
 }
 
-// rocketnet_config_apply_env logs "<endpoint> config override NAME=value" (sdk/rocketnet_config.cpp:679)
+// rocketnet_config_apply_env logs "<endpoint> config override NAME=value" (sdk/rocketnet_config.cpp:745)
 
 static std::vector<std::string> env_names_overrides( const env_names_log_t & log )
 {
@@ -63,7 +63,9 @@ static std::vector<std::string> env_names_overrides( const env_names_log_t & log
     {
         const char * at = strstr( log.lines[i].c_str(), "config override " );
         if ( !at )
+        {
             continue;
+        }
         at += strlen( "config override " );
 
         const char * end = strchr( at, '=' );
@@ -79,8 +81,12 @@ static std::vector<std::string> env_names_overrides( const env_names_log_t & log
 static bool env_names_contains( const std::vector<std::string> & names, const char * name )
 {
     for ( size_t i = 0; i < names.size(); i++ )
+    {
         if ( names[i] == name )
+        {
             return true;
+        }
+    }
     return false;
 }
 
@@ -188,11 +194,15 @@ static std::vector<std::string> env_names_documented( const char * relative_path
             size_t begin = text.find( "ROCKETNET_", at );
             size_t end = begin;
             while ( end < text.size() && ( ( text[end] >= 'A' && text[end] <= 'Z' ) || ( text[end] >= '0' && text[end] <= '9' ) || text[end] == '_' ) )
+            {
                 end++;
+            }
         // docs/ENVIRONMENT.md names ROCKETNET_TEST_* seams. They are not public
         // config variables, so this harvest does not treat them as pass names.
             if ( environment_doc && end > begin && text.compare( begin, strlen( "ROCKETNET_TEST_" ), "ROCKETNET_TEST_" ) == 0 )
+            {
                 continue;
+            }
         // Namespace prefixes are prose, not complete environment variable names.
             if ( end > begin && text[end - 1] != '_' &&
 #if !ROCKETNET_DEV
@@ -393,7 +403,9 @@ static void env_names_add_literal_reads( std::vector<std::string> & reads )
 
             const std::string name = text.substr( begin, end - begin );
             if ( name.compare( 0, strlen( "ROCKETNET_TEST_" ), "ROCKETNET_TEST_" ) == 0 )
+            {
                 continue;
+            }
             if ( !env_names_contains( reads, name.c_str() ) )
             {
                 reads.push_back( name );
@@ -410,14 +422,18 @@ static std::vector<std::string> env_names_pass_reads()
     int num_message_fields = 0;
     const struct rocketnet_config_field_t * message_fields = rocketnet_message_config_fields( &num_message_fields );
     for ( int p = 0; p < 2; p++ )
+    {
         for ( int i = 0; i < num_message_fields; i++ )
         {
             if ( strcmp( message_fields[i].name, "client_send_kbps" ) == 0 || strcmp( message_fields[i].name, "server_send_kbps" ) == 0 )
+            {
                 continue;
+            }
             char name[128];
             check( rocketnet_config_env_var_name_for( prefixes[p], message_fields[i].name, name, sizeof( name ) ) );
             reads.push_back( name );
         }
+    }
 
     int num_client_fields = 0;
     const struct rocketnet_config_field_t * client_fields = rocketnet_client_transport_config_fields( &num_client_fields );
@@ -425,7 +441,9 @@ static std::vector<std::string> env_names_pass_reads()
     for ( int i = 0; i < num_client_fields; i++ )
     {
         if ( strcmp( client_fields[i].name, "transport" ) == 0 || ( client_fields[i].flags & ROCKETNET_CONFIG_NO_ENV ) != 0 )
+        {
             continue;
+        }
 
         char name[128];
         check( rocketnet_config_env_var_name_for( "client", client_fields[i].name, name, sizeof( name ) ) );
@@ -438,7 +456,9 @@ static std::vector<std::string> env_names_pass_reads()
     for ( int i = 0; i < num_server_fields; i++ )
     {
         if ( strcmp( server_fields[i].name, "transport" ) == 0 || ( server_fields[i].flags & ROCKETNET_CONFIG_NO_ENV ) != 0 )
+        {
             continue;
+        }
 
         char name[128];
         check( rocketnet_config_env_var_name_for( "server", server_fields[i].name, name, sizeof( name ) ) );
@@ -521,7 +541,7 @@ static void test_config_env_every_name_read_is_documented()
     struct rn_message_object_t * server = env_names_object_create( 1, 0 );
     struct rn_message_object_t * client = env_names_object_create( 0, 0 );
 
-    // transport public env passes (sdk/rocketnet_client_transport.cpp:583-586 and sdk/rocketnet_server_transport.cpp rocketnet_config_apply_env)
+    // transport public env passes (sdk/rocketnet_client_transport.cpp:613-616 and sdk/rocketnet_server_transport.cpp rocketnet_config_apply_env)
 
     int num_client_fields = 0;
     const struct rocketnet_config_field_t * client_fields = rocketnet_client_transport_config_fields( &num_client_fields );

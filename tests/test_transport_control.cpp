@@ -64,20 +64,32 @@ static void record( control_fixture_t * f, const rocketnet_address_t * to, const
     const int client = to->port - 1000;
     CHECK( client >= 0 && client < ROCKETNET_MAX_CLIENTS );
     if ( packet[0] == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET )
+    {
         ++f->keep_alives[client];
+    }
     else if ( packet[0] == ROCKETNET_CONNECTION_ACK_PACKET )
+    {
         ++f->acks[client];
+    }
     else if ( packet[0] == ROCKETNET_CONNECTION_PAYLOAD_PACKET )
+    {
         ++f->payloads;
+    }
     else if ( packet[0] == ROCKETNET_CONNECTION_DISCONNECT_PACKET )
     {
         if ( f->staged )
+        {
             ++f->pending_disconnects;
+        }
         else
+        {
             ++f->disconnects;
+        }
     }
     else
+    {
         CHECK( false );
+    }
 }
 static void fixture_destroy( void * ) {}
 static void fixture_stop( void * ) {}
@@ -135,14 +147,18 @@ static uint8_t * start_packet( void * p, const rocketnet_address_t * to, uint64_
     if ( f->lease_frames )
     {
         if ( f->lease_starts == f->capacity )
+        {
             return NULL;
+        }
         f->reserved_to = *to;
         *id = (uint64_t) f->lease_starts;
         return f->lease_frames + (size_t) f->lease_starts++ * ROCKETNET_FRAME_STRIDE;
     }
 
     if ( f->used == f->capacity )
+    {
         return NULL;
+    }
     f->reserved_to = *to;
     *id = (uint64_t) f->used;
 
@@ -189,7 +205,9 @@ static rocketnet_server_socket_process_packets_t * receive( void * p )
         f->feed_count = 0;
     }
     else
+    {
         f->received.num_packets = 0;
+    }
 
     return &f->received;
 }
@@ -756,11 +774,17 @@ int main( int argc, char ** argv )
     if ( argc == 2 )
     {
         if ( strcmp( argv[1], "disconnect-burst-portable" ) == 0 )
+        {
             test_disconnect_burst_next_send( false );
+        }
         else if ( strcmp( argv[1], "disconnect-burst-staged" ) == 0 )
+        {
             test_disconnect_burst_next_send( true );
+        }
         else
+        {
             CHECK( false );
+        }
         CHECK( rocketnet_test_loopback_hub_release() );
         rocketnet_term();
         return 0;

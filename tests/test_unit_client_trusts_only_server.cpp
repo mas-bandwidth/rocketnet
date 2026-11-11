@@ -265,9 +265,13 @@ static void test_client_forged_cookie_never_displaces_kept_cookie()
     {
         client_trusts_next_request_mac( &client, &time, mac );
         if ( memcmp( mac, fresh_mac, sizeof( mac ) ) == 0 )
+        {
             fresh_mac_sent++;
+        }
         else
+        {
             check( memcmp( mac, server_mac, sizeof( mac ) ) == 0 );
+        }
     }
     check( fresh_mac_sent == 1 );
 }
@@ -364,7 +368,7 @@ static void test_client_transport_refuses_when_connect_fails()
     config.time_callback = client_trusts_time;
 
     int status = ROCKETNET_STATUS_OK;
-    rocketnet_client_transport_t * transport = rocketnet_client_transport_create_step_driven_ex( &clock, token, &config, clock.now, &operations, fake, &status );
+    rocketnet_client_transport_t * transport = rocketnet_client_transport_create_step_driven_internal( &clock, token, &config, clock.now, &operations, fake, &status );
     check( transport == NULL );
     check( status == ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED );
     check( fake->connect_calls >= 1 );

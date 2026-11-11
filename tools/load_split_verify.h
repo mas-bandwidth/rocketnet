@@ -165,9 +165,13 @@ static inline int split_verify_payload_fields_valid( const struct split_verify_p
          payload->size_class >= SPLIT_VERIFY_NUM_SIZE_CLASSES ||
          payload->sequence == 0 || payload->sequence > SPLIT_VERIFY_MAX_SEQUENCE ||
          payload->length < SPLIT_VERIFY_HEADER_BYTES )
+    {
         return 0;
+    }
     if ( payload->size_class == SPLIT_VERIFY_SMALL )
+    {
         return payload->length <= ( split_verify_mode_is_reliable( payload->mode ) ? (uint32_t) ROCKETNET_MAX_PACKET_PAYLOAD_BYTES : SPLIT_VERIFY_SMALL_UNRELIABLE_MAX_BYTES );
+    }
     return split_verify_mode_is_reliable( payload->mode ) &&
            payload->length > (uint32_t) ROCKETNET_MAX_PACKET_PAYLOAD_BYTES &&
            payload->length <= (uint32_t) ROCKETNET_MAX_MESSAGE_BYTES;
@@ -194,7 +198,9 @@ static inline uint32_t split_verify_checksum( const uint8_t * data, uint32_t len
     for ( uint32_t i = 0; i < length; ++i )
     {
         if ( i >= 20 && i < 24 )
+        {
             continue;
+        }
         hash ^= data[i];
         hash *= 16777619u;
     }
@@ -207,7 +213,9 @@ static inline uint32_t split_verify_checksum( const uint8_t * data, uint32_t len
 static inline uint32_t split_verify_write_payload( uint8_t * out, uint32_t capacity, const struct split_verify_payload_t * payload )
 {
     if ( !split_verify_payload_fields_valid( payload ) || capacity < payload->length )
+    {
         return 0;
+    }
     split_verify_write_u32( out, SPLIT_VERIFY_MAGIC );
     split_verify_write_u32( out + 4, payload->client );
     out[8] = (uint8_t) payload->direction;
@@ -248,26 +256,38 @@ static inline enum split_verify_read_t split_verify_read_payload( const uint8_t 
                                                                   struct split_verify_payload_t * payload )
 {
     if ( data == NULL || bytes < SPLIT_VERIFY_HEADER_BYTES )
+    {
         return SPLIT_VERIFY_READ_SHORT;
+    }
     if ( split_verify_read_u32( data ) != SPLIT_VERIFY_MAGIC )
+    {
         return SPLIT_VERIFY_READ_MAGIC;
+    }
 
     struct split_verify_payload_t fields;
     fields.run_id = (uint64_t) split_verify_read_u32( data + 24 ) | ( (uint64_t) split_verify_read_u32( data + 28 ) << 32 );
     if ( fields.run_id != run_id )
+    {
         return SPLIT_VERIFY_READ_RUN_ID;
+    }
     fields.length = split_verify_read_u32( data + 16 );
     if ( fields.length != bytes )
+    {
         return SPLIT_VERIFY_READ_LENGTH;
+    }
     fields.client = split_verify_read_u32( data + 4 );
     fields.direction = data[8];
     fields.mode = data[9];
     fields.size_class = data[10];
     fields.sequence = split_verify_read_u32( data + 12 );
     if ( data[11] != 0 || !split_verify_payload_fields_valid( &fields ) )
+    {
         return SPLIT_VERIFY_READ_FIELDS;
+    }
     if ( split_verify_read_u32( data + 20 ) != split_verify_checksum( data, bytes ) )
+    {
         return SPLIT_VERIFY_READ_CHECKSUM;
+    }
     *payload = fields;
 
     return SPLIT_VERIFY_READ_OK;
@@ -302,7 +322,9 @@ static inline void split_verify_stream_init( struct split_verify_stream_t * stre
 static inline int split_verify_stream_has( const struct split_verify_stream_t * stream, uint32_t sequence )
 {
     if ( sequence == 0 || sequence > SPLIT_VERIFY_MAX_SEQUENCE )
+    {
         return 0;
+    }
     return ( stream->seen[sequence >> 3] >> ( sequence & 7u ) ) & 1;
 }
 
@@ -553,7 +575,9 @@ static inline void split_verify_ledger_stream( const struct split_verify_ledger_
     for ( uint32_t i = 0; i < ledger->sends; ++i )
     {
         if ( ledger->mode_size[i] != mode_size )
+        {
             continue;
+        }
         out->sends++;
 
         if ( ledger->outcome[i] == SPLIT_VERIFY_OUTCOME_NONE )
@@ -606,7 +630,9 @@ static inline int split_verify_ledger_final( const struct split_verify_ledger_t 
         }
 
         if ( ledger->outcome[i] != SPLIT_VERIFY_OUTCOME_ACKED || receiver_streams == NULL )
+        {
             continue;
+        }
 
         const uint32_t mode = ledger->mode_size[i] / SPLIT_VERIFY_NUM_SIZE_CLASSES;
         const uint32_t size_class = ledger->mode_size[i] % SPLIT_VERIFY_NUM_SIZE_CLASSES;

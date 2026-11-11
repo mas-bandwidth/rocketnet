@@ -5,7 +5,7 @@
 `rn_window_ack_reclaim_head`, `rn_window_ack_on_ack`), resent from by the walk
 of `rn_ordered_write` (`rn_ordered_walk`, `sdk/rocketnet_channel.cpp`),
 against the reliable window, and the config rule that sizes it in
-`rocketnet_message_validate_config_ex` (`sdk/rocketnet_config.cpp`).
+`rocketnet_message_validate_config_internal` (`sdk/rocketnet_config.cpp`).
 
 ## The question
 

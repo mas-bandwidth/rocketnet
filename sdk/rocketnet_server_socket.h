@@ -45,15 +45,70 @@ inline bool rocketnet_xdp_send_wakeup_hard_error( int error )
 }
 
 // The stop drain's answer for one XDP queue: released once its producer
-// buffer is empty and its handoff holds no work, or at once when the worker
-// reported a hard wakeup error. Waiting on such a queue would keep
-// rocketnet_server_stopped false forever.
-inline bool rocketnet_xdp_send_queue_released( int hard_send_error, bool buffer_empty, bool handoff_idle )
+// buffer is empty and its handoff and worker hold no work (handoff_idle: no
+// buffer waits, none is claimed, and the TX ring's consumer has taken every
+// descriptor the worker put on it), or at once when the worker reported a
+// hard wakeup error or a stalled TX ring (rocketnet_xdp_send_stall_pass).
+// Waiting on such a queue would keep rocketnet_server_stopped false forever
+// (proofs/tla/RNXdpSendDrain.tla SendIdle).
+inline bool rocketnet_xdp_send_queue_released( int hard_send_error, bool stalled, bool buffer_empty, bool handoff_idle )
 {
-    if ( rocketnet_xdp_send_wakeup_hard_error( hard_send_error ) )
+    if ( rocketnet_xdp_send_wakeup_hard_error( hard_send_error ) || stalled )
+    {
         return true;
+    }
     return buffer_empty && handoff_idle;
 }
+
+// The worker's watch for a TX ring that has stopped draining with no hard
+// errno (a zero-copy queue whose link lost carrier while the interface stays
+// up, a copy-mode queue whose device queue stays stopped), run once per pass.
+// pending: the worker holds frames the ring's consumer has not taken (its
+// batch, a claimed buffer, or descriptors on the ring). passes counts the
+// passes since the consumer index last moved while frames were pending. Once
+// it reaches bound during a stop (draining), stalled is set and the call
+// returns true, once per stall, for the worker to count and log what it
+// abandons; the consumer moving again, or nothing pending, clears it
+// (proofs/tla/RNXdpSendDrain.tla Pass).
+struct rocketnet_xdp_send_stall_t
+{
+    uint32_t consumer;
+    uint32_t passes;
+};
+
+inline bool rocketnet_xdp_send_stall_pass( rocketnet_xdp_send_stall_t & stall, uint32_t consumer, bool pending, bool draining, uint32_t bound, std::atomic<bool> & stalled )
+{
+    if ( !pending || consumer != stall.consumer )
+    {
+        stall.consumer = consumer;
+        stall.passes = 0;
+        if ( stalled.load( std::memory_order_relaxed ) )
+        {
+            stalled.store( false, std::memory_order_relaxed );
+        }
+        return false;
+    }
+    if ( stall.passes < bound )
+    {
+        stall.passes++;
+    }
+    if ( stall.passes < bound || !draining || stalled.load( std::memory_order_relaxed ) )
+    {
+        return false;
+    }
+    stalled.store( true, std::memory_order_relaxed );
+    return true;
+}
+
+// The bound of that watch, in worker passes. A healthy NIC takes descriptors
+// from its 4096-entry TX ring at every NAPI poll; the longest healthy pause is
+// an 802.3x PAUSE of 65535 quanta, 33.6 ms at 1 Gb/s, or a few interrupt
+// moderation intervals. A pass is at least one poll call and the ring reads:
+// at a floor of 100 ns a pass, 2^24 passes are at least 1.68 s, fifty times
+// that pause; at a more usual 1 us a pass the stop gives up about 17 s after
+// the ring stopped. Chosen, not measured. Passes, not wakeup attempts: a
+// zero-copy driver that clears the ring's need-wakeup flag is never woken.
+#define ROCKETNET_XDP_SEND_STALL_PASSES ( 1u << 24 )
 
 // The worker's accounting of one TX wakeup that failed with error, into
 // failures, which the public SEND_FAILED counter sums (unit: datagrams).
@@ -65,6 +120,8 @@ inline bool rocketnet_xdp_send_queue_released( int hard_send_error, bool buffer_
 // when it differs from the one kept in hard_error for the stop drain (a
 // wakeup that succeeds clears that). EAGAIN and ENOBUFS are back-pressure:
 // the descriptors stay queued for the next wakeup, and they count nothing.
+// Any other errno is counted by the worker once per run, when it reports it
+// (rocketnet_xdp_send_wakeup_unexpected).
 inline void rocketnet_xdp_send_wakeup_failed( int error, std::atomic<uint64_t> & failures, std::atomic<int> & hard_error )
 {
     if ( error == EBUSY )
@@ -73,9 +130,13 @@ inline void rocketnet_xdp_send_wakeup_failed( int error, std::atomic<uint64_t> &
         return;
     }
     if ( !rocketnet_xdp_send_wakeup_hard_error( error ) )
+    {
         return;
+    }
     if ( hard_error.load( std::memory_order_relaxed ) == error )
+    {
         return;
+    }
     failures.fetch_add( 1, std::memory_order_relaxed );
     hard_error.store( error, std::memory_order_relaxed );
 }
@@ -86,18 +147,50 @@ inline void rocketnet_xdp_send_wakeup_failed( int error, std::atomic<uint64_t> &
 inline void rocketnet_xdp_send_wakeup_succeeded( std::atomic<int> & hard_error )
 {
     if ( hard_error.load( std::memory_order_relaxed ) != 0 )
+    {
         hard_error.store( 0, std::memory_order_relaxed );
+    }
 }
 
-// The worker logs a hard wakeup failure once per contiguous run of one errno:
-// report when it is hard and differs from last_error, and remember every
-// attempt's errno (0 for success) so the next run reports again.
+// A TX wakeup errno that is neither back-pressure (EAGAIN, ENOBUFS), a lost
+// datagram (EBUSY) nor hard: EINVAL or EOPNOTSUPP from a driver, say. The
+// worker counts it in failures and logs it once per contiguous run.
+inline bool rocketnet_xdp_send_wakeup_unexpected( int error )
+{
+    return error != 0 && error != EAGAIN && error != ENOBUFS && error != EBUSY && !rocketnet_xdp_send_wakeup_hard_error( error );
+}
+
+// The worker logs a hard or unexpected wakeup failure once per contiguous run
+// of one errno: report when it is either and differs from last_error, and
+// remember every attempt's errno (0 for success) so the next run reports
+// again.
 inline bool rocketnet_xdp_send_wakeup_report( int error, int & last_error )
 {
-    const bool report = rocketnet_xdp_send_wakeup_hard_error( error ) && error != last_error;
+    const bool report = ( rocketnet_xdp_send_wakeup_hard_error( error ) || rocketnet_xdp_send_wakeup_unexpected( error ) ) && error != last_error;
     last_error = error;
     return report;
 }
+
+// The frames the kernel dropped on one AF_XDP socket's receive path after the
+// XDP program redirected them, from its XDP_STATISTICS answer of bytes bytes
+// (struct xdp_statistics in linux/if_xdp.h). rx_dropped counts a frame with no
+// fill ring frame to take it, or larger than a umem frame; rx_ring_full, the
+// fourth field (bytes 24 to 31), a frame with no room on the RX ring. A kernel
+// that answers with only the first three fields (24 bytes, before Linux 5.9)
+// counts both in rx_dropped. rx_fill_ring_empty_descs is not a frame count:
+// it counts failed fill ring reads, and in copy mode the frame such a read
+// failed for counts in rx_dropped too. The answer is the socket's total
+// since bind, so each read replaces the last.
+inline uint64_t rocketnet_xdp_socket_dropped( uint64_t rx_dropped, uint64_t rx_ring_full, size_t bytes )
+{
+    return rx_dropped + ( bytes >= 32 ? rx_ring_full : 0 );
+}
+
+// The worker reads its socket's XDP_STATISTICS once per this many passes of
+// its loop, and on its final pass: a count of passes, so the read adds no
+// clock to the loop. A pass is at least one poll call, so this is about a
+// read every few milliseconds at most; chosen, not measured.
+#define ROCKETNET_XDP_STATISTICS_PASSES 4096
 #endif // #if defined( __cplusplus )
 
 #define ROCKETNET_SERVER_SOCKET_STOPPED    0
@@ -231,10 +324,17 @@ void rocketnet_server_socket_send_packets( struct rocketnet_server_socket_t * se
 // hashes to one queue. Main thread.
 int rocketnet_server_socket_send_room( struct rocketnet_server_socket_t * server_socket );
 
-// true once every queue's producer buffer is empty and its worker has
-// written and recycled every buffer it was handed. Main thread; a send
-// mutex held by a worker reads as not idle.
+// true once every queue's producer buffer is empty, its worker has copied and
+// recycled every buffer it was handed, and the TX ring's consumer has taken
+// every descriptor the worker put on it; a queue whose worker reported a hard
+// wakeup error, or a TX ring stalled during the stop, is given up on
+// (rocketnet_xdp_send_queue_released). Main thread; a send mutex held by a
+// worker reads as not idle.
 bool rocketnet_server_socket_send_idle( struct rocketnet_server_socket_t * server_socket );
+
+// the stop has begun: each queue's worker watches its TX ring for a stall
+// from now on (rocketnet_xdp_send_stall_pass). Main thread.
+void rocketnet_server_socket_begin_shutdown( struct rocketnet_server_socket_t * server_socket );
 
 // receive packets (staged, one copy each way)
 

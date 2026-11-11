@@ -129,7 +129,9 @@ int crypto_aead_chacha20poly1305_ietf_decrypt( unsigned char * m,
     int ok = nondet_int();
     __CPROVER_assume( ok == 0 || ok == -1 );
     if ( ok != 0 )
+    {
         return -1;
+    }
 
     const unsigned long long plaintext = clen - 16;
     __CPROVER_assert( PROOF_W_OK( m, plaintext ), "decrypt writes the plaintext inside the output" );
@@ -369,8 +371,10 @@ void harness_sequence_nonce( void )
     __CPROVER_assert( nonce[0] == 0 && nonce[1] == 0 && nonce[2] == 0 && nonce[3] == 0,
                       "the nonce starts with four zero bytes" );
     for ( int i = 0; i < 8; i++ )
+    {
         __CPROVER_assert( nonce[4 + i] == (uint8_t) ( ( sequence >> ( 8 * i ) ) & 0xFF ),
                           "the nonce carries the sequence little-endian" );
+    }
 }
 
 int main( void )

@@ -137,6 +137,13 @@ RefuseUnremembered == FALSE
 FailWindow == 2
 FloodMaxClock == 3
 BackwardsRollover == TRUE
+\* ChargeSpec's sender: it holds a valid token, so its signature verifies,
+\* and it is refused past the verify for a reason it chose.  With
+\* ChargePastVerify that refusal records a failure, as a forged signature
+\* does; a reversed witness overrides it with <- (the code before
+\* 2026-11-10, which recorded nothing).
+Charger == "V"
+ChargePastVerify == TRUE
 
 \* The request-claim table's small instance (the code sizes it at
 \* ROCKETNET_USED_TOKEN_HISTORY_RATIO x max_clients).  Definitions, not
@@ -338,7 +345,11 @@ Request(a, tok, g) ==
 \* A request refused past the verify (the sealed block does not open, the
 \* client id is connected, the server is full, a small-order key, no
 \* mapping): the claim is recorded and released in the same step, and no
-\* mapping is made.
+\* mapping is made.  Three of these reasons are the sender's own making
+\* (the sealed block does not open, its fields disagree with the signed
+\* ones, a small-order key) and charge the failed-signature budget; the
+\* others charge nothing.  Spec holds the budget at its initial value, so
+\* the charge is ChargedRefusal in ChargeSpec below.
 RequestRefused(a, tok, g) ==
     /\ tok \in ClaimTokens
     /\ RequestRungs(a, tok, g)
@@ -560,6 +571,36 @@ FloodSpec == Init /\ [][FloodNext]_vars
 FloodSpecWeakHonest == Init /\ [][FloodNext]_vars
              /\ WF_vars(HonestRequest) /\ WF_vars(HonestResponse) /\ WF_vars(FloodUpdate)
 
+\* A refusal past the verify (rocketnet_server_process_opened_request:
+\* COULD_NOT_OPEN_SEALED_BLOCK, SEALED_MISMATCH, SMALL_ORDER_KEY) from
+\* Charger: it spends one unit of the work budget, as every verify does,
+\* and with ChargePastVerify records a failure as Forge does
+\* (rocketnet_signature_verify_budget_record_failure).  Without the charge
+\* the source is never refused before the verify, however often it fails.
+ChargedRefusal ==
+    /\ floodVerifies < VerifyBudget
+    /\ FailAllow(Charger)
+    /\ floodVerifies' = floodVerifies + 1
+    /\ windowStart' = WindowNow
+    /\ IF ChargePastVerify
+         THEN /\ failCount' = IF CountNow < FailBudget THEN CountNow + 1 ELSE CountNow
+              /\ failTable' = IF Charger \notin TableNow /\ Cardinality(TableNow) < FailSlots
+                               THEN TableNow \cup {Charger} ELSE TableNow
+         ELSE /\ failCount' = CountNow /\ failTable' = TableNow
+    /\ UNCHANGED <<honest, fclock, tableVars>>
+
+\* One sender with a valid token refused past the verify, the honest client,
+\* and updates, inside one window (the clock is held, so the window never
+\* rolls over).  The honest request has weak fairness only: with the charge
+\* the sender is refused before the work budget once the failed-signature
+\* budget is spent, so the honest request stays enabled and runs.  Without
+\* it (MCRNSecurityTablesBrokenNoCharge.cfg) the sender takes the whole
+\* work budget before the honest request in every update of the window,
+\* and HonestConnectsUnderFlood fails.
+ChargeNext == ChargedRefusal \/ HonestRequest \/ HonestResponse \/ FloodUpdate
+ChargeSpec == Init /\ [][ChargeNext]_vars
+              /\ WF_vars(HonestRequest) /\ WF_vars(HonestResponse) /\ WF_vars(FloodUpdate)
+
 \* No global lockout: an honest client with a valid token connects while
 \* forging sources keep the failed-signature budget spent and the source
 \* table full.
@@ -570,13 +611,13 @@ HonestConnectsUnderFlood == <>(honest = "connected")
 \* less than one window before it.  BASE's one-sided rollover breaks it on
 \* a backwards step (MCRNSecurityTablesBrokenBackwardsWindow.cfg).
 FloodWindowBounded ==
-    \A a \in Forgers \cup {HonestAddr} :
+    \A a \in Forgers \cup {HonestAddr, Charger} :
         ~FailAllow(a) => (windowStart <= fclock /\ fclock < windowStart + FailWindow)
 \* the work budget bounds the verifies of one update, and the table never
 \* passes its slots
 FloodInvariants == /\ floodVerifies \in 0..VerifyBudget
                    /\ failCount \in 0..FailBudget
-                   /\ failTable \subseteq Forgers /\ Cardinality(failTable) <= FailSlots
+                   /\ failTable \subseteq Forgers \cup {Charger} /\ Cardinality(failTable) <= FailSlots
                    /\ honest \in {"start", "challenged", "connected"}
                    /\ fclock \in 0..FloodMaxClock /\ windowStart \in 0..FloodMaxClock
                    /\ FloodWindowBounded

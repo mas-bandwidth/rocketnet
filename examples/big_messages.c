@@ -226,7 +226,9 @@ int main( void )
             for ( int i = 0; i < batch->num_messages; i++ )
             {
                 if ( batch->bytes[i] != BIG_BYTES )
+                {
                     continue;
+                }
 
                 if ( memcmp( batch->data[i], pattern, BIG_BYTES ) != 0 )
                 {

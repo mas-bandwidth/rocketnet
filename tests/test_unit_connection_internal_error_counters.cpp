@@ -190,7 +190,9 @@ static void internal_error_fill_only_slot( struct internal_error_server_t * test
 static void internal_error_check_sentinel( const uint8_t * bytes, int count, uint8_t sentinel )
 {
     for ( int i = 0; i < count; i++ )
+    {
         check( bytes[i] == sentinel );
+    }
 }
 
 #if ROCKETNET_ASSERTS

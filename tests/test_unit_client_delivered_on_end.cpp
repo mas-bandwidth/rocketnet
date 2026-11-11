@@ -110,7 +110,9 @@ static void delivered_on_end_connect( struct delivered_on_end_pair_t * pair )
     {
         if ( rocketnet_client_transport_state( pair->client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
              rocketnet_server_transport_is_client_connected( pair->server, 0 ) )
+        {
             break;
+        }
         delivered_on_end_step( pair );
     }
 
@@ -120,7 +122,9 @@ static void delivered_on_end_connect( struct delivered_on_end_pair_t * pair )
     // settle: whatever the handshake left in flight is delivered and read
 
     for ( int i = 0; i < 4; i++ )
+    {
         delivered_on_end_step( pair );
+    }
 }
 
 static uint64_t delivered_on_end_delivered( struct delivered_on_end_pair_t * pair )
@@ -251,7 +255,9 @@ static void test_client_payload_burst_past_batch_capacity_spreads_across_updates
         const uint8_t payload[4] = { (uint8_t) k, (uint8_t) ( k >> 8 ), 0xB5, 0x7E };
         rocketnet_server_transport_send_packet( pair.server, 0, payload, (int) sizeof( payload ) );
         if ( k % 64 == 63 )
+        {
             rocketnet_server_transport_send_packets( pair.server );
+        }
     }
     rocketnet_server_transport_send_packets( pair.server );
 
@@ -274,7 +280,9 @@ static void test_client_payload_burst_past_batch_capacity_spreads_across_updates
         check( delivered_on_end_delivered( &pair ) - before == (uint64_t) num );
 
         if ( num == ROCKETNET_NUM_CLIENT_PACKETS )
+        {
             full_updates++;
+        }
 
         for ( int i = 0; i < num; i++ )
         {

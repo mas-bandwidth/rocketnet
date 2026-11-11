@@ -217,8 +217,13 @@ refuses either is a tier, not an error: no `UDP_SEGMENT` means plain
 `gso transport: <n> queue reuseport group on port <p>, UDP_SEGMENT yes|no (plain sendmmsg), UDP_GRO yes|no (plain recvmmsg)`
 (`sdk/rocketnet_server_gso_linux.cpp`). A kernel that accepted the
 probe but refuses a live GSO send (`EINVAL`, `EIO`, `EOPNOTSUPP`) logs
-`gso transport: live GSO send refused (...). degrading to plain sendmmsg` and
-resends that batch as plain packets (`sdk/rocketnet_server_gso_linux.cpp`).
+`gso transport: live GSO send refused (...). resending that run plain`,
+resends that one run as plain packets, and keeps segmentation on for later
+runs. After `ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD` (8) refused
+segmented sends in a row, with no accepted one between them, it logs
+`gso transport: live GSO send refused (...). <n> consecutive refusals, degrading to plain sendmmsg`,
+turns segmentation off for the life of the transport, and resends from the
+refused run plain (`sdk/rocketnet_server_gso_linux.cpp`, `sdk/rocketnet_server_gso.h`).
 The degradation is inside the transport, below the ladder (`BUILDING.md`).
 
 ## 5. io_uring
@@ -266,7 +271,11 @@ stay in the completion queue for a later call and are counted
   `io_uring transport refused: this kernel does not accept the io_uring ring, opcodes or provided buffer ring the transport needs`
   and the ladder falls (`sdk/rocketnet_server_uring_linux.cpp`).
   Multishot receive must be in the liburing headers the build used
-  (`sdk/rocketnet_server_uring_linux.cpp`).
+  (`sdk/rocketnet_server_uring_linux.cpp`), and the running kernel must
+  accept a multishot `RECVMSG` (Linux 6.0 or later). The create probe does
+  not test that: on a kernel with provided buffer rings but no multishot
+  receive (5.19) the transport is created and receives nothing, so pin
+  another transport there.
 - Kernel policy that permits this process to create rings. Where
   `/proc/sys/kernel/io_uring_disabled` exists, 0 permits all users, 1 permits
   processes with `CAP_SYS_ADMIN` or membership in `io_uring_group`, and 2
@@ -452,6 +461,10 @@ startup and an `xdp` transport label alone do not establish zero-copy.
 - A real port and a global address: port 0 refuses `xdp` (section 2), and an
   IPv6 link-local address is refused by name
   (`sdk/rocketnet_server_socket_linux.cpp`).
+- The gateway's neighbour entry: create refuses `xdp` with `no neighbor entry
+  with a link-layer address` when the host has not yet talked to its gateway
+  (`auto` then falls to `gso`); ping the gateway before create, or set
+  `ROCKETNET_GATEWAY_ETHERNET_ADDRESS` ([Environment](ENVIRONMENT.md)).
 - Queues: `num_xdp_queues`, default 7; worker CPUs start at `num_os_cpus`,
   default 1 (`sdk/rocketnet_driver_builtin.cpp`, `BUILDING.md`).
 - Memory: each queue's UMEM is 49152 frames of 4096 bytes, 192 MiB:
@@ -567,11 +580,17 @@ What each path does with the errors it can see:
   accepted or dropped, and every interrupted call spends one unit of a read
   budget of `ROCKETNET_GSO_RECV_QUEUE_SIZE`; a spent budget ends the drain, so
   the worker publishes and tests its stop request however much the socket
-  holds. A `sendmmsg` refused
-  with `EAGAIN`, `EWOULDBLOCK`, `ENOBUFS`, `ENOMEM` or `EINTR` (a full
-  socket) drops nothing: the TX worker keeps the bank's unsent rest, in
+  holds. A `sendmmsg` interrupted by a signal (`EINTR`) is sent again at once
+  (only the plain resend of a refused segmented run takes it as a full
+  socket). A `sendmmsg` refused
+  with `EAGAIN`, `EWOULDBLOCK`, `ENOBUFS` or `ENOMEM` (a full
+  socket) drops nothing while the server runs: the TX worker keeps the bank's unsent rest, in
   order and ahead of every later bank, and retries every `ROCKETNET_GSO_SEND_RETRY_SECONDS` (1 ms) on `send_wake`
-  (or sooner when main's next update wakes it).
+  (or sooner when main's next update wakes it). Once the server has begun
+  to stop, that wait is bounded: after `ROCKETNET_GSO_SEND_RETRIES_AFTER_QUIT`
+  (100) further refused attempts the worker drops the bank's unsent tail
+  and counts it in `ROCKETNET_SERVER_GSO_COUNTER_SEND_DROPPED`, so a socket
+  that stays full cannot hold the stop.
   Any other errno drops the one refused message and
   continues with the next, as the portable batch does; dropped packets
   count in `ROCKETNET_SERVER_GSO_COUNTER_SEND_DROPPED`, never resent

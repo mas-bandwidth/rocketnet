@@ -269,7 +269,7 @@ static void test_packet_builder_no_allocation_after_create()
 
     // the hot path: write packets, dispatch records, feed acks, end the update.
     // each update queues its items afresh: the builder skips an item it marked
-    // taken (rn_builder_writable, sdk/rocketnet_packet_builder.cpp:131).
+    // taken (rn_builder_writable, sdk/rocketnet_packet_builder.cpp:139).
 
     for ( int update = 0; update < 8; update++ )
     {
@@ -516,7 +516,9 @@ static int reference_next_in_class( struct reference_scheduler_t * scheduler, co
     {
         scheduler->visits++;
         if ( items[i].send_class != (uint8_t) send_class || !reference_writable( &items[i] ) )
+        {
             continue;
+        }
 
         bool head = true;
         int level = items[i].priority;
@@ -525,7 +527,9 @@ static int reference_next_in_class( struct reference_scheduler_t * scheduler, co
         {
             scheduler->visits++;
             if ( j == i || items[j].channel != items[i].channel || items[j].send_class != (uint8_t) send_class || !reference_writable( &items[j] ) )
+            {
                 continue;
+            }
 
             if ( j < i )
             {
@@ -540,7 +544,9 @@ static int reference_next_in_class( struct reference_scheduler_t * scheduler, co
         }
 
         if ( !head )
+        {
             continue;
+        }
 
         const uint64_t clock = reference_effective_clock( scheduler, level );
         const uint32_t distance = ( items[i].channel % channels + channels - scheduler->round_robin % channels - 1 ) % channels;
@@ -590,14 +596,20 @@ static int reference_write( struct reference_scheduler_t * scheduler, struct rn_
                 int level = 0;
                 const int i = reference_next_in_class( scheduler, items, num_items, send_class, &level );
                 if ( i < 0 )
+                {
                     break;
+                }
 
                 if ( records >= ROCKETNET_PACKET_BUILDER_MAX_RECORDS ||
                      ( items[i].number != ROCKETNET_PACKET_NUMBER_NONE && count >= ROCKETNET_PACKET_BUILDER_MAX_NUMBERS ) )
+                {
                     goto packet_done;
+                }
 
                 if ( items[i].alone && records > 0 )
+                {
                     goto packet_done;
+                }
 
                 struct rocketnet_message_record_t record;
                 memset( &record, 0, sizeof( record ) );
@@ -622,14 +634,18 @@ static int reference_write( struct reference_scheduler_t * scheduler, struct rn_
                 reference_take_level( scheduler, level );
 
                 if ( items[i].alone )
+                {
                     goto packet_done;
+                }
             }
         }
     packet_done:
 
         const int payload_bytes = rocketnet_message_writer_finish( &writer );
         if ( payload_bytes <= 0 )
+        {
             break;
+        }
 
         out_payload_bytes[p] = (uint32_t) payload_bytes;
         packets++;
@@ -637,8 +653,12 @@ static int reference_write( struct reference_scheduler_t * scheduler, struct rn_
 
     bool drained = true;
     for ( int i = 0; i < num_items && drained; i++ )
+    {
         if ( reference_writable( &items[i] ) )
+        {
             drained = false;
+        }
+    }
     if ( drained )
     {
         reference_reset_clocks( scheduler );
@@ -700,13 +720,21 @@ static void plan_fill( int num_items, uint32_t channels )
         builder_item( item, channel, ROCKETNET_MESSAGE_CODE_UNRELIABLE, send_class, data, bytes );
         item->priority = (uint8_t) ( plan_random() % 4 );
         if ( plan_random() % 50 == 0 )
+        {
             item->priority = 4;                                 // never taken
+        }
         if ( plan_random() % 40 == 0 )
+        {
             item->taken = 1;                                    // already taken
+        }
         if ( plan_random() % 60 == 0 )
+        {
             item->bytes = 0;                                    // nothing to write
+        }
         if ( plan_random() % 3 == 0 )
+        {
             item->number = (uint64_t) i;                        // numbered: the packet's number limit
+        }
         if ( plan_random() % 30 == 0 )
         {
             item->alone = 1;
@@ -793,7 +821,9 @@ static void test_packet_builder_matches_reference_order()
             rocketnet_unit_check( builder.round_robin == reference.round_robin );
 
             if ( builder_packets == 0 )
+            {
                 break;
+            }
 
             // the application queues more between updates: a few new items
             // replace taken ones, so the clocks and the round robin carry over

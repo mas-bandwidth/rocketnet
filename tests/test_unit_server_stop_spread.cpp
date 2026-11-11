@@ -29,7 +29,7 @@ struct stop_spread_fixture_t
 {
     rocketnet_address_t reserved_to;
     int capacity;                                       // frames the staging takes per flush
-    int used;                                           // frames staged since the last flush
+    int used;                                           // frames started since the last flush
     int refused_for_room;                               // starts called with the staging full
     int unreachable_port;                               // a destination with no link-layer address, 0: none
     int refused_port;                                   // a destination the socket cannot carry, 0: none
@@ -64,24 +64,29 @@ static uint8_t * stop_spread_start_packet( void * p, const rocketnet_address_t *
         return NULL;
     }
     if ( f->refused_port != 0 && to->port == f->refused_port )
+    {
         return NULL;
+    }
     if ( f->used >= f->capacity )
     {
         f->refused_for_room++;
         return NULL;
     }
     f->reserved_to = *to;
-    *id = (uint64_t) f->used;
+    *id = (uint64_t) f->used++;
 
     return stop_spread_frame;
 }
 
+// a started frame stays claimed until the flush, finished or aborted, as on
+// every real staged transport
 static void stop_spread_finish_packet( void * p, uint64_t, uint8_t * frame, int )
 {
     stop_spread_fixture_t * f = (stop_spread_fixture_t *) p;
-    f->used++;
     if ( frame[ROCKETNET_FRAME_WIRE_OFFSET] != ROCKETNET_CONNECTION_DISCONNECT_PACKET )
+    {
         return;
+    }
     const int client = f->reserved_to.port - 1000;
     rocketnet_unit_check( client >= 0 && client < STOP_SPREAD_MAX_CLIENTS );
     f->staged[client]++;
@@ -102,7 +107,9 @@ static void stop_spread_flush( void * p )
         f->staged[i] = 0;
     }
     if ( f->hold_flushed )
+    {
         f->in_flight += f->used;
+    }
     f->used = 0;
 }
 
@@ -122,7 +129,9 @@ static int stop_spread_flushed( const stop_spread_fixture_t * f )
 {
     int total = 0;
     for ( int i = 0; i < STOP_SPREAD_MAX_CLIENTS; i++ )
+    {
         total += f->flushed[i];
+    }
     return total;
 }
 
@@ -170,7 +179,7 @@ static rocketnet_server_transport_t * stop_spread_server( stop_spread_fixture_t 
     memset( config.server_secret_key, 0xEF, 32 );
 
     int create_status = -1;
-    rocketnet_server_transport_t * server = rocketnet_server_transport_create_current_ex( NULL, "127.0.0.1:0", &config, 1000.0, &create_status );
+    rocketnet_server_transport_t * server = rocketnet_server_transport_create_current_internal( NULL, "127.0.0.1:0", &config, 1000.0, &create_status );
     rocketnet_unit_check( server );
     rn_test_server_io_stop_and_close( &server->io );
 
@@ -192,7 +201,9 @@ static rocketnet_server_transport_t * stop_spread_server( stop_spread_fixture_t 
     server->io.operations = operations;
 
     for ( int i = 0; i < clients; i++ )
+    {
         stop_spread_connect( server, i );
+    }
 
     return server;
 }
@@ -202,7 +213,9 @@ static rocketnet_server_transport_t * stop_spread_server( stop_spread_fixture_t 
 static void stop_spread_stop_server( rocketnet_server_transport_t * server, int clients )
 {
     for ( int i = 0; i < clients; i++ )
+    {
         rocketnet_server_transport_disconnect_client_shutdown( server, i );
+    }
     rocketnet_unit_check( rocketnet_server_transport_num_connected_clients( server ) == 0 );
     rocketnet_server_transport_stop( server );
 }
@@ -245,7 +258,9 @@ static void test_server_stop_spreads_disconnect_bursts_across_updates()
     rocketnet_unit_check( f->refused_for_room == 0 );
     rocketnet_unit_check( stop_spread_flushed( f ) == owed );
     for ( int i = 0; i < clients; i++ )
+    {
         rocketnet_unit_check( f->flushed[i] == ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
+    }
 
     // ceil( 80 / 24 ) = 4 steps: the stop call and three more (the state read
     // in the loop condition is a step as well, so the updates are at most that)
@@ -314,6 +329,81 @@ static void test_server_stop_abandons_an_unreachable_burst()
     rocketnet_unit_check( f->flushed[1] == 0 );
     rocketnet_unit_check( f->flushed[2] == ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
     rocketnet_unit_check( f->refused_for_room == 0 );
+
+    rn_test_server_transport_stop_and_destroy( server );
+    delete f;
+}
+
+// A staging that reports no send room with nothing staged or in flight (an
+// xdp queue in hard send error whose producer is full, which its send_idle
+// gives up on): no waiting burst can ever leave. The stop abandons each one,
+// as an unreachable destination's, counted as a start refused for a full
+// staging, wipes its key and finishes. It used to stay not-stopped forever.
+static void test_server_stop_abandons_bursts_without_send_room()
+{
+    stop_spread_fixture_t * f = new stop_spread_fixture_t();
+    f->capacity = 0;
+    const int clients = 2;
+
+    rocketnet_server_transport_io_operations_t operations;
+    rocketnet_server_transport_t * server = stop_spread_server( f, &operations, clients, true );
+    const uint64_t * counters = server->protocol.counters->values;
+    const uint64_t ring_full = counters[ROCKETNET_COUNTER_SEND_RING_FULL];
+
+    stop_spread_stop_server( server, clients );
+
+    for ( int poll = 0; poll < 8 && !rocketnet_server_transport_stopped( server ); poll++ )
+    {
+    }
+
+    rocketnet_unit_check( rocketnet_server_transport_stopped( server ) );
+    rocketnet_unit_check( f->stops == 1 );
+    rocketnet_unit_check( stop_spread_flushed( f ) == 0 );
+    rocketnet_unit_check( server->disconnect_burst_count == 0 );
+    rocketnet_unit_check( counters[ROCKETNET_COUNTER_SEND_RING_FULL] == ring_full + (uint64_t) clients );
+    const uint8_t zero_key[ROCKETNET_KEY_BYTES] = {};
+    for ( int i = 0; i < clients; i++ )
+    {
+        rocketnet_unit_check( memcmp( server->disconnect_burst_keys[i], zero_key, ROCKETNET_KEY_BYTES ) == 0 );
+    }
+
+    rn_test_server_transport_stop_and_destroy( server );
+    delete f;
+}
+
+// No send room while a send is still in flight: its finish frees room, so
+// the stop waits and abandons nothing; once there is room the bursts leave
+// whole and the stop finishes.
+static void test_server_stop_without_room_waits_for_sends_in_flight()
+{
+    stop_spread_fixture_t * f = new stop_spread_fixture_t();
+    f->capacity = 0;
+    f->in_flight = 1;
+    const int clients = 2;
+
+    rocketnet_server_transport_io_operations_t operations;
+    rocketnet_server_transport_t * server = stop_spread_server( f, &operations, clients, true );
+    const uint64_t * counters = server->protocol.counters->values;
+    const uint64_t ring_full = counters[ROCKETNET_COUNTER_SEND_RING_FULL];
+
+    stop_spread_stop_server( server, clients );
+
+    for ( int poll = 0; poll < 4; poll++ )
+    {
+        rocketnet_unit_check( !rocketnet_server_transport_stopped( server ) );
+    }
+    rocketnet_unit_check( f->stops == 0 );
+    rocketnet_unit_check( server->disconnect_burst_count == clients );
+
+    f->in_flight = 0;
+    f->capacity = 64;
+    rocketnet_unit_check( rocketnet_server_transport_stopped( server ) );
+    rocketnet_unit_check( f->stops == 1 );
+    for ( int i = 0; i < clients; i++ )
+    {
+        rocketnet_unit_check( f->flushed[i] == ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
+    }
+    rocketnet_unit_check( counters[ROCKETNET_COUNTER_SEND_RING_FULL] == ring_full );
 
     rn_test_server_transport_stop_and_destroy( server );
     delete f;
@@ -470,7 +560,9 @@ static void test_server_stop_waits_for_flushed_sends()
     rocketnet_unit_check( f->stops == 0 );
 
     for ( int poll = 0; poll < 4; poll++ )
+    {
         rocketnet_unit_check( !rocketnet_server_transport_stopped( server ) );
+    }
     rocketnet_unit_check( f->stops == 0 );
 
     f->in_flight = 0;
@@ -486,7 +578,9 @@ static int g_stop_spread_dropped_lines;
 static void stop_spread_log_capture( void *, enum rocketnet_log_level_t level, const char * message, size_t )
 {
     if ( level == ROCKETNET_LOG_LEVEL_DEBUG && strstr( message, "dropped disconnect burst" ) != NULL )
+    {
         g_stop_spread_dropped_lines++;
+    }
 }
 
 // A running server keeps at most max_clients bursts waiting. With the ring at
@@ -507,7 +601,9 @@ static void test_server_kick_at_steady_cap_counts_dropped_burst()
     // the staging has less room than a burst, so each kick's burst waits
 
     for ( int i = 0; i < clients; i++ )
+    {
         rocketnet_server_transport_disconnect_client( server, i );
+    }
     rocketnet_unit_check( server->disconnect_burst_count == clients );
     rocketnet_unit_check( counters[ROCKETNET_COUNTER_DISCONNECT_BURST_DROPPED] == dropped );
 
@@ -539,7 +635,9 @@ static void test_server_kick_at_steady_cap_counts_dropped_burst()
     rocketnet_server_transport_stop( server );
     rocketnet_unit_check( rocketnet_server_transport_stopped( server ) );
     for ( int i = 0; i < clients; i++ )
+    {
         rocketnet_unit_check( f->flushed[i] == ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
+    }
 
     rn_test_server_transport_stop_and_destroy( server );
     delete f;
@@ -559,7 +657,9 @@ static void test_server_stop_sends_burst_staged_in_link_simulator()
 {
     uint8_t seed[32];
     for ( int i = 0; i < 32; i++ )
+    {
         seed[i] = (uint8_t) ( 0x6C ^ i );
+    }
 
     uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
     uint8_t backend_secret[RN_TEST_BACKEND_SECRET_KEY_BYTES];
@@ -712,6 +812,8 @@ REGISTER_UNIT_TEST( test_server_stop_waits_for_flushed_sends );
 REGISTER_UNIT_TEST( test_server_refused_starts_counted_by_cause );
 REGISTER_UNIT_TEST( test_server_stop_polls_are_the_stop_steps );
 REGISTER_UNIT_TEST( test_server_stop_abandons_an_unreachable_burst );
+REGISTER_UNIT_TEST( test_server_stop_abandons_bursts_without_send_room );
+REGISTER_UNIT_TEST( test_server_stop_without_room_waits_for_sends_in_flight );
 REGISTER_UNIT_TEST( test_server_kick_spreads_its_burst_across_updates );
 REGISTER_UNIT_TEST( test_server_send_capacity_reports_staged_room );
 #if ROCKETNET_DEV
@@ -758,11 +860,15 @@ static int g_stop_spread_reentry_calls;
 static void stop_spread_reentry_callback( void *, enum rocketnet_log_level_t level, const char * message, size_t )
 {
     if ( level != ROCKETNET_LOG_LEVEL_DEBUG || strstr( message, "dropped disconnect burst" ) == NULL )
+    {
         return;
+    }
 
     g_stop_spread_dropped_lines++;
     if ( g_stop_spread_reentry_calls != 0 )
+    {
         return;
+    }
 
     g_stop_spread_reentry_calls++;
     rocketnet_server_transport_disconnect_client( g_stop_spread_reentry_server, g_stop_spread_reentry_slot );
@@ -783,7 +889,9 @@ static void test_server_kick_at_steady_cap_log_reentry_does_not_repeat()
     const uint64_t * counters = server->protocol.counters->values;
 
     for ( int i = 0; i < clients; i++ )
+    {
         rocketnet_server_transport_disconnect_client( server, i );
+    }
     rocketnet_unit_check( server->disconnect_burst_count == clients );
 
     const int again = clients - 1;
@@ -818,3 +926,60 @@ static void test_server_kick_at_steady_cap_log_reentry_does_not_repeat()
     delete f;
 }
 REGISTER_UNIT_TEST( test_server_kick_at_steady_cap_log_reentry_does_not_repeat );
+
+static int g_stop_spread_not_stopped_errors;
+static int g_stop_spread_asserts;
+
+static void stop_spread_error_capture( void *, enum rocketnet_log_level_t level, const char * message, size_t )
+{
+    if ( level == ROCKETNET_LOG_LEVEL_ERROR && strstr( message, "not stopped" ) != NULL )
+    {
+        g_stop_spread_not_stopped_errors++;
+    }
+}
+
+static void stop_spread_assert_capture( const char *, const char *, const char *, int )
+{
+    g_stop_spread_asserts++;
+}
+
+// Two misuses as a release build meets them, with the debug assert captured:
+// destroy of a transport that is not stopped says so in an error and keeps
+// the transport, and a NULL user data buffer is refused and counted, never
+// written through.
+static void test_server_transport_misuse_refused_without_asserts()
+{
+    stop_spread_fixture_t * f = new stop_spread_fixture_t();
+    f->capacity = 64;
+
+    rocketnet_server_transport_io_operations_t operations;
+    rocketnet_server_transport_t * server = stop_spread_server( f, &operations, 1, true );
+
+    const rocketnet_assert_function_t saved_assert = rn_assert_function;
+    const enum rocketnet_log_level_t saved_level = rocketnet_log_level_current();
+    g_stop_spread_not_stopped_errors = 0;
+    g_stop_spread_asserts = 0;
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+    rocketnet_log_function( stop_spread_error_capture, NULL );
+    rocketnet_assert_function( stop_spread_assert_capture );
+
+    rocketnet_server_transport_destroy( server );
+    const int destroy_errors = g_stop_spread_not_stopped_errors;
+
+    const uint64_t misuse = rocketnet_api_misuse_count();
+    const bool user_data_read = rocketnet_server_transport_client_user_data( server, 0, NULL );
+
+    rocketnet_assert_function( saved_assert );
+    rocketnet_log_function( NULL, NULL );
+    rocketnet_log_level( saved_level );
+
+    rocketnet_unit_check( destroy_errors == 1 );
+    rocketnet_unit_check( !user_data_read );
+    rocketnet_unit_check( rocketnet_api_misuse_count() == misuse + 1 );
+    rocketnet_unit_check( g_stop_spread_asserts == ( ROCKETNET_ASSERTS ? 2 : 0 ) );
+    rocketnet_unit_check( rocketnet_server_transport_num_connected_clients( server ) == 1 );
+
+    rn_test_server_transport_stop_and_destroy( server );
+    delete f;
+}
+REGISTER_UNIT_TEST( test_server_transport_misuse_refused_without_asserts );

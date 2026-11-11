@@ -82,7 +82,9 @@ static int cm_fill( rn_region_t * region, int bytes, uint32_t * taken, int max_t
     {
         const uint32_t d = rn_region_send_take( region, bytes );
         if ( d == RN_DESCRIPTOR_NONE )
+        {
             break;
+        }
         if ( taken && n < max_taken )
         {
             taken[n] = d;
@@ -112,51 +114,87 @@ static bool cm_inside( const void * block, uint64_t block_bytes, const void * p,
 static bool cm_bookkeeping_equal( const rn_region_t * a, const rn_region_t * b )
 {
     if ( a->bytes != b->bytes || a->num_channels != b->num_channels || a->window != b->window || a->queue != b->queue )
+    {
         return false;
+    }
     if ( rn_region_exhausted( a ) != rn_region_exhausted( b ) )
+    {
         return false;
+    }
     if ( rn_connection_memory_decide( a ) != rn_connection_memory_decide( b ) )
+    {
         return false;
+    }
 
     // the pools are lazy (proofs/tla/RNLazyPool.tla): their state is the free list,
     // the free count and the watermark; the bytes of a descriptor or chunk
     // link at or past the watermark are not state and are not compared
 
     if ( a->descriptors_free_top != b->descriptors_free_top || a->descriptors_free != b->descriptors_free || a->descriptors_fresh != b->descriptors_fresh )
+    {
         return false;
+    }
     if ( memcmp( a->channel_send, b->channel_send, sizeof( rn_channel_send_t ) * a->num_channels ) != 0 )
+    {
         return false;
+    }
     if ( memcmp( a->channel_receive, b->channel_receive, sizeof( rn_channel_receive_t ) * a->num_channels ) != 0 )
+    {
         return false;
+    }
     if ( memcmp( a->send_numbers, b->send_numbers, sizeof( rn_send_number_t ) * a->window ) != 0 )
+    {
         return false;
+    }
     if ( memcmp( a->receive_descriptors, b->receive_descriptors, sizeof( rn_receive_descriptor_t ) * a->window ) != 0 )
+    {
         return false;
+    }
     if ( memcmp( a->received_bits, b->received_bits, a->window / 8 ) != 0 )
+    {
         return false;
+    }
     if ( memcmp( a->held_index, b->held_index, sizeof( rn_held_entry_t ) * a->held_entries ) != 0 )
+    {
         return false;
+    }
     if ( memcmp( a->send_descriptors, b->send_descriptors, sizeof( rn_send_descriptor_t ) * a->descriptors_fresh ) != 0 )
+    {
         return false;
+    }
     if ( memcmp( a->sent_packets, b->sent_packets, sizeof( rn_sent_packet_t ) * a->packets ) != 0 )
+    {
         return false;
+    }
     if ( memcmp( a->sent_index, b->sent_index, sizeof( rn_sent_index_t ) * a->sent_index_entries ) != 0 )
+    {
         return false;
+    }
     if ( memcmp( a->sent_refs, b->sent_refs, sizeof( uint32_t ) * a->sent_ref_entries ) != 0 )
+    {
         return false;
+    }
     if ( memcmp( a->deliveries, b->deliveries, sizeof( rn_delivery_t ) * a->delivery_entries ) != 0 )
+    {
         return false;
+    }
     if ( memcmp( a->receipts, b->receipts, sizeof( rn_receipt_t ) * a->receipt_entries ) != 0 )
+    {
         return false;
+    }
     if ( memcmp( a->resend_fifo, b->resend_fifo, sizeof( rn_resend_link_t ) * a->window ) != 0 )
+    {
         return false;
+    }
 
     for ( uint32_t h = 0; h < a->holds; h++ )
     {
         const rn_sequenced_hold_t * x = &a->sequenced_messages_held[h];
         const rn_sequenced_hold_t * y = &b->sequenced_messages_held[h];
         if ( x->bytes != y->bytes || x->ordering != y->ordering || x->sequencing != y->sequencing || x->channel != y->channel || x->used != y->used || x->code != y->code )
+        {
             return false;
+        }
     }
 
     for ( int c = 0; c < RN_STORE_NUM_CLASSES; c++ )
@@ -164,14 +202,20 @@ static bool cm_bookkeeping_equal( const rn_region_t * a, const rn_region_t * b )
         const rn_store_class_t * x = &a->store.classes[c];
         const rn_store_class_t * y = &b->store.classes[c];
         if ( x->num_chunks != y->num_chunks || x->free_head != y->free_head || x->free_count != y->free_count || x->chunk_bytes != y->chunk_bytes || x->fresh != y->fresh )
+        {
             return false;
+        }
         if ( memcmp( x->meta, y->meta, sizeof( uint32_t ) * x->fresh ) != 0 )
+        {
             return false;
+        }
 
         // the class's place in its region, the same offset in both
 
         if ( x->data - a->store_memory != y->data - b->store_memory )
+        {
             return false;
+        }
     }
 
     return true;
@@ -514,9 +558,13 @@ static void test_connection_memory_no_allocation_after_create()
             for ( int i = 0; i < n && i < 1024; i++ )
             {
                 if ( region->send_descriptors[taken[i]].fragments > 1 )
+                {
                     rn_region_send_free_fragment( region, taken[i] );
+                }
                 else if ( i % 2 == 0 )
+                {
                     rn_region_send_free( region, taken[i] );
+                }
             }
 
             const int reason = rn_connection_memory_decide( region );

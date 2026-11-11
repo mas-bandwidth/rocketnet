@@ -123,13 +123,21 @@ static void test_unit_transport_pins_ignored()
     rn_test_server_transport_stop_and_destroy( server );
 
     if ( had_server )
+    {
         pins_set( "ROCKETNET_SERVER_TRANSPORT", saved_server );
+    }
     else
+    {
         pins_clear( "ROCKETNET_SERVER_TRANSPORT" );
+    }
     if ( had_client )
+    {
         pins_set( "ROCKETNET_CLIENT_TRANSPORT", saved_client );
+    }
     else
+    {
         pins_clear( "ROCKETNET_CLIENT_TRANSPORT" );
+    }
 }
 
 REGISTER_UNIT_TEST( test_unit_transport_pins_ignored );

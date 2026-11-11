@@ -117,7 +117,9 @@ static void lookup_build_request( uint8_t * request, int index, const struct roc
     rocketnet_write_connection_request_packet( request, tag, NULL, rocketnet_test_salt, rocketnet_test_client_eph_public,
                                                token.signed_connect_data, token.signature );
     if ( !cookie_valid )
+    {
         return;
+    }
 
     const uint64_t cookie_expire = ROCKETNET_TEST_CREATE_TS + 3;
     uint8_t cookie_mac[ROCKETNET_COOKIE_MAC_BYTES];
@@ -161,14 +163,18 @@ static double lookup_round( int requests, bool resend, int expected )
     if ( resend )
     {
         for ( int i = 0; i < requests; i++ )
+        {
             CHECK( lookup_receive( test, &addresses[(size_t) i], &packets[(size_t) i * ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES] ) ==
                    ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
+        }
     }
 
     int matched = 0;
     const auto start = std::chrono::steady_clock::now();
     for ( int i = 0; i < requests; i++ )
+    {
         matched += lookup_receive( test, &addresses[(size_t) i], &packets[(size_t) i * ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES] ) == expected;
+    }
     const auto end = std::chrono::steady_clock::now();
     CHECK( matched == requests );
 
@@ -192,7 +198,9 @@ int main( int argc, char ** argv )
     {
         std::vector<double> ns;
         for ( int r = 0; r < rounds; r++ )
+        {
             ns.push_back( lookup_round( requests, shape == 1, expected[shape] ) );
+        }
         std::sort( ns.begin(), ns.end() );
         printf( "%-9s requests %d rounds %d ns_per_request best %.1f median %.1f\n", names[shape], requests, rounds, ns[0], ns[ns.size() / 2] );
     }

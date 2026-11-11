@@ -71,12 +71,12 @@ extern "C"
 #endif // #ifdef __cplusplus
 
 // returns true on success; writes the status when status is not NULL
-bool rocketnet_init_ex( void * context, void * ( *malloc_function )( void * context, size_t bytes ), void ( *free_function )( void * context, void * p ), int * status );
+bool rocketnet_init_internal( void * context, void * ( *malloc_function )( void * context, size_t bytes ), void ( *free_function )( void * context, void * p ), int * status );
 
-int rocketnet_term_ex( void );
+int rocketnet_term_internal( void );
 
 // replaces the allocator without init, for tests. both functions are required
-int rocketnet_allocator_ex( void * ( *malloc_function )( void * context, size_t bytes ), void ( *free_function )( void * context, void * p ) );
+int rocketnet_allocator_internal( void * ( *malloc_function )( void * context, size_t bytes ), void ( *free_function )( void * context, void * p ) );
 
 // the connection a public client holds (NULL while DISCONNECTED) and the
 // running message server a public server holds (NULL while stopped), for
@@ -287,7 +287,9 @@ void rocketnet_api_misuse_record( void );
 static inline bool rocketnet_api_null_guard( const void * p )
 {
     if ( p != NULL )
+    {
         return true;
+    }
 
     rocketnet_api_misuse_record();
     rocketnet_assert( p );
@@ -298,23 +300,12 @@ static inline bool rocketnet_api_null_guard( const void * p )
 void * rocketnet_default_malloc_function( void * context, size_t bytes );
 void rocketnet_default_free_function( void * context, void * p );
 
-#if ROCKETNET_DEV
-// internal to the SDK. The transport updates and the message object's update
-// clamp the caller's clock once per update, before any read of it, through this
-// helper: a non-finite time, or a time below the last good one, becomes the
-// last good time. A clamp sets *clamped, counts one misuse and fires
-// rocketnet_assert; a release build clamps and goes on, a debug build is loud.
-// It is also the client create's check, seeded with a zero last good time. The
-// message object clamps first and passes the clamped value on to its transport,
-// so a bad time is counted once, never stored, and never becomes the clock
-// origin. One compare per update, none per packet
-/** @brief Internal monotonic-time guard used by transport and message-object updates. @param last_good Previous accepted time in seconds. @param time Candidate time in seconds. @param clamped Optional output set true when candidate is rejected; NULL is allowed. @return Candidate time if finite and nondecreasing, otherwise last_good. Invalid time records misuse and fires the configured assertion. */
-double rocketnet_clamp_update_time( double last_good, double time, bool * clamped );
-#endif // #if ROCKETNET_DEV
-
 /**
- * @brief Advances one owner's update clock by the caller's raw step, beside
- * rocketnet_clamp_update_time. The owner keeps the caller's raw time and the
+ * @brief Advances one owner's update clock by the caller's raw step. Internal
+ * to the SDK: the client and server transport updates, the message server's
+ * update, the public client's update and the client transport's create each
+ * pass the caller's time through it before any read of it. The owner keeps
+ * the caller's raw time and the
  * clamped time it hands out; this helper keeps them in step: a forward raw
  * step of d advances the clamped time by exactly d, a backwards raw step
  * returns the last good time and records the new raw time, and a non-finite
@@ -330,7 +321,7 @@ double rocketnet_clamp_update_time( double last_good, double time, bool * clampe
  * @param clamped Optional output set true when the sample was rejected; NULL
  * is allowed.
  * @return The owner's new clamped time. A non-finite or backwards sample
- * records one misuse and fires the configured assertion.
+ * counts one misuse and logs one error, in every build; it never asserts.
  */
 double rocketnet_update_clock_advance( double last_good, double * raw_time, double * time_offset, double time, bool * clamped );
 
@@ -706,7 +697,9 @@ void rocketnet_server_transport_disconnect_client_shutdown( struct rocketnet_ser
 static inline void rocketnet_create_status( int * status, int value )
 {
     if ( status && *status != ROCKETNET_STATUS_OUT_OF_MEMORY )
+    {
         *status = value;
+    }
 }
 
 #if ROCKETNET_DEV

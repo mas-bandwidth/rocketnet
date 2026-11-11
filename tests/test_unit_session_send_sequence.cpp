@@ -174,7 +174,9 @@ static int send_sequence_write_payload( uint8_t salt )
     memset( g_send_sequence_frame, 0, sizeof( g_send_sequence_frame ) );
     uint8_t * root = g_send_sequence_frame + ROCKETNET_FRAME_PAYLOAD_OFFSET;
     for ( int i = 0; i < 8; i++ )
+    {
         root[i] = (uint8_t) ( salt + i );
+    }
     root[8] = ROCKETNET_MESSAGE_FORM_SINGLE;
     return 9;
 }
@@ -198,7 +200,9 @@ static void send_sequence_fill_inside_control( void * context, uint64_t sequence
     struct send_sequence_interleave_t * interleave = (struct send_sequence_interleave_t *) context;
     interleave->calls++;
     if ( interleave->calls != 1 )
+    {
         return;
+    }
 
     interleave->control_sequence = sequence;
 

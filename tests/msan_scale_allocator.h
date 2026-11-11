@@ -75,7 +75,9 @@ struct msan_scale_header_t
 inline void * msan_scale_allocate( void *, size_t bytes )
 {
     if ( bytes > SIZE_MAX - MSAN_SCALE_HEADER_BYTES )
+    {
         return NULL;
+    }
 
     const size_t total = bytes + MSAN_SCALE_HEADER_BYTES;
     uint8_t * base = NULL;
@@ -84,7 +86,9 @@ inline void * msan_scale_allocate( void *, size_t bytes )
     {
         void * mapping = mmap( NULL, total, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0 );
         if ( mapping == MAP_FAILED )
+        {
             return NULL;
+        }
         base = (uint8_t *) mapping;
         mapped_bytes = total;
     }
@@ -92,7 +96,9 @@ inline void * msan_scale_allocate( void *, size_t bytes )
     {
         base = (uint8_t *) malloc( total );
         if ( !base )
+        {
             return NULL;
+        }
     }
 
     msan_scale_header_t * header = (msan_scale_header_t *) base;
@@ -103,14 +109,20 @@ inline void * msan_scale_allocate( void *, size_t bytes )
 inline void msan_scale_release( void *, void * pointer )
 {
     if ( !pointer )
+    {
         return;
+    }
 
     uint8_t * base = (uint8_t *) pointer - MSAN_SCALE_HEADER_BYTES;
     const msan_scale_header_t * header = (const msan_scale_header_t *) base;
     if ( header->mapped_bytes )
+    {
         munmap( base, header->mapped_bytes );
+    }
     else
+    {
         free( base );
+    }
 }
 
 #endif // #if defined( ROCKETNET_TEST_MSAN_SCALE_ALLOCATOR )
@@ -121,17 +133,17 @@ struct msan_scale_allocator_scope_t
     msan_scale_allocator_scope_t()
     {
         rocketnet_unit_check( rocketnet_test_loopback_hub_release() );
-        rocketnet_unit_check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+        rocketnet_unit_check( rocketnet_term_internal() == ROCKETNET_STATUS_OK );
         int status = -1;
-        rocketnet_unit_check( rocketnet_init_ex( NULL, msan_scale_allocate, msan_scale_release, &status ) );
+        rocketnet_unit_check( rocketnet_init_internal( NULL, msan_scale_allocate, msan_scale_release, &status ) );
         rocketnet_unit_check( status == ROCKETNET_STATUS_OK );
     }
 
     ~msan_scale_allocator_scope_t() noexcept( false ) // check() throws under the expected-fail harness
     {
         rocketnet_unit_check( rocketnet_test_loopback_hub_release() );
-        rocketnet_unit_check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
-        rocketnet_unit_check( rocketnet_allocator_ex( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
+        rocketnet_unit_check( rocketnet_term_internal() == ROCKETNET_STATUS_OK );
+        rocketnet_unit_check( rocketnet_allocator_internal( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
     }
 #else // #if defined( ROCKETNET_TEST_MSAN_SCALE_ALLOCATOR )
     msan_scale_allocator_scope_t() {} // user-provided, so a case's scope is never an unused variable

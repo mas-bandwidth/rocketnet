@@ -32,7 +32,9 @@ static void * allocate( void *, size_t bytes )
 {
     auto * block = (allocation_t *) malloc( sizeof( allocation_t ) + bytes );
     if ( !block )
+    {
         return NULL;
+    }
     block->bytes = bytes;
 
     const size_t current = live.fetch_add( bytes ) + bytes;
@@ -48,7 +50,9 @@ static void * allocate( void *, size_t bytes )
 static void release( void *, void * pointer )
 {
     if ( !pointer )
+    {
         return;
+    }
 
     auto * block = (allocation_t *) pointer - 1;
     live.fetch_sub( block->bytes );
@@ -60,12 +64,16 @@ static uint64_t process_peak_rss()
 #if defined( _WIN32 )
     PROCESS_MEMORY_COUNTERS counters = {};
     if ( !GetProcessMemoryInfo( GetCurrentProcess(), &counters, sizeof( counters ) ) )
+    {
         return 0;
+    }
     return (uint64_t) counters.PeakWorkingSetSize;
 #else
     struct rusage usage;
     if ( getrusage( RUSAGE_SELF, &usage ) != 0 )
+    {
         return 0;
+    }
 #if defined( __APPLE__ )
     return (uint64_t) usage.ru_maxrss;
 #else
@@ -102,9 +110,13 @@ static bool server_environment_overridden()
     char ** variables = environ;
 #endif // #if defined( _WIN32 )
     for ( char ** entry = variables; entry && *entry; ++entry )
+    {
         if ( strncmp( *entry, "ROCKETNET_SERVER_", 17 ) == 0 ||
              strncmp( *entry, "ROCKETNET_DEV_SERVER_", 21 ) == 0 )
+        {
             return true;
+        }
+    }
 
     return false;
 }
@@ -121,7 +133,9 @@ static bool wait_until( bool ( *done )( void * ), void ( *step )( void * ), void
     while ( !done( object ) )
     {
         if ( rocketnet_time() >= deadline )
+        {
             return false;
+        }
 
         if ( step )
         {
@@ -141,7 +155,9 @@ static int lifecycle( const rocketnet_server_transport_config_t & transport_conf
                       const rocketnet_server_memory_plan_t & plan )
 {
     if ( rocketnet_init( NULL, allocate, release ) != ROCKETNET_STATUS_OK )
+    {
         return 1;
+    }
     rocketnet_forbid_xdp_commit();
 
     uint8_t seed[32], backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES], backend_secret[64];
@@ -326,7 +342,9 @@ static bool light_arena_setup( light_arena_t & arena, size_t bytes )
 
     arena.allocation = (uint8_t *) malloc( bytes + 2 * LIGHT_GUARD_BYTES + ROCKETNET_ALLOCATION_ALIGNMENT );
     if ( !arena.segments || !arena.allocation )
+    {
         return false;
+    }
 
     const uintptr_t first = (uintptr_t) arena.allocation + LIGHT_GUARD_BYTES;
     arena.base = (uint8_t *) ( ( first + ROCKETNET_ALLOCATION_ALIGNMENT - 1 ) & ~(uintptr_t) ( ROCKETNET_ALLOCATION_ALIGNMENT - 1 ) );
@@ -344,8 +362,12 @@ static bool light_arena_setup( light_arena_t & arena, size_t bytes )
 static bool light_arena_canaries_ok( const light_arena_t & arena )
 {
     for ( size_t i = 0; i < LIGHT_GUARD_BYTES; i++ )
+    {
         if ( arena.base[-(ptrdiff_t) LIGHT_GUARD_BYTES + (ptrdiff_t) i] != LIGHT_GUARD_BYTE || arena.base[arena.bytes + i] != LIGHT_GUARD_BYTE )
+        {
             return false;
+        }
+    }
     return true;
 }
 
@@ -365,7 +387,9 @@ static void * light_arena_allocate( light_arena_t & arena, size_t bytes )
     {
         const light_segment_t & candidate = arena.segments[i];
         if ( candidate.used || candidate.bytes < bytes )
+        {
             continue;
+        }
 
         if ( pick < 0 || ( large ? candidate.bytes > arena.segments[pick].bytes : candidate.bytes < arena.segments[pick].bytes ) )
         {
@@ -428,7 +452,9 @@ static void light_arena_release( light_arena_t & arena, void * pointer )
     {
         light_segment_t & segment = arena.segments[i];
         if ( !segment.used || segment.offset != offset )
+        {
             continue;
+        }
         segment.used = 0;
         arena.live -= segment.bytes;
         if ( i + 1 < arena.num_segments && !arena.segments[i + 1].used && segment.offset + segment.bytes == arena.segments[i + 1].offset )
@@ -459,16 +485,22 @@ static bool light_in_arena( const light_arena_t & arena, const void * pointer )
 static void * light_allocate( void * context, size_t bytes )
 {
     if ( context == &light_server_arena )
+    {
         return light_arena_allocate( light_server_arena, bytes );
+    }
     if ( context == &light_client_arena )
+    {
         return light_arena_allocate( light_client_arena, bytes );
+    }
     return allocate( context, bytes );
 }
 
 static void light_release( void * context, void * pointer )
 {
     if ( !pointer )
+    {
         return;
+    }
 
     if ( light_in_arena( light_server_arena, pointer ) )
     {
@@ -501,7 +533,9 @@ static bool light_pump_until( rocketnet_server_t * server, rocketnet_client_t * 
     while ( !done( object ) )
     {
         if ( rocketnet_time() >= deadline )
+        {
             return false;
+        }
         rocketnet_client_update( client, rocketnet_time() );
         rocketnet_client_send_packets( client );
         rocketnet_server_update( server, rocketnet_time() );
@@ -521,18 +555,26 @@ static bool light_exchange( rocketnet_server_t * server, rocketnet_client_t * cl
     {
         uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, 2 );
         if ( !out )
+        {
             return false;
+        }
         out[0] = 0x4C;
         out[1] = (uint8_t) i;
         if ( !rocketnet_client_finish_message( client, 2 ) )
+        {
             return false;
+        }
         out = rocketnet_server_start_message( server, (uint64_t) index, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, 2 );
         if ( !out )
+        {
             return false;
+        }
         out[0] = 0x53;
         out[1] = (uint8_t) i;
         if ( !rocketnet_server_finish_message( server, 2 ) )
+        {
             return false;
+        }
     }
 
     int at_server = 0, at_client = 0;
@@ -572,7 +614,9 @@ static int light_lifecycle( const rocketnet_server_transport_config_t & transpor
                             const rocketnet_server_memory_plan_t & plan )
 {
     if ( rocketnet_init( NULL, light_allocate, light_release ) != ROCKETNET_STATUS_OK )
+    {
         return 1;
+    }
     rocketnet_forbid_xdp_commit();
 
     uint8_t seed[32], backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES], backend_secret[64];
@@ -733,13 +777,17 @@ int main( int argc, char ** argv )
     const bool lifecycle_only = argc == 6 && strcmp( argv[5], "--lifecycle" ) == 0;
     const bool light_lifecycle_only = argc == 6 && strcmp( argv[5], "--light-lifecycle" ) == 0;
     if ( argc == 6 && !plan_only && !session_plan_only && !lifecycle_only && !light_lifecycle_only )
+    {
         return 1;
+    }
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
 
     rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config( &config );
     if ( strlen( transport ) >= sizeof( config.transport ) )
+    {
         return 1;
+    }
     snprintf( config.transport, sizeof( config.transport ), "%s", transport );
     config.max_clients = number( argv[1] );
     config.num_xdp_queues = argc >= 5 ? number( argv[4] ) : 0;
@@ -761,7 +809,9 @@ int main( int argc, char ** argv )
 
         rocketnet_server_config_t endpoint;
         if ( rocketnet_server_default_config( &endpoint ) != ROCKETNET_STATUS_OK )
+        {
             return 1;
+        }
         endpoint.transport = transport;
         endpoint.max_clients = config.max_clients;
         endpoint.num_xdp_queues = config.num_xdp_queues;
@@ -814,13 +864,21 @@ int main( int argc, char ** argv )
             (unsigned long long) plan.allocator_bytes, (unsigned long long) plan.os_bytes,
             (unsigned long long) plan.thread_stack_bytes, (unsigned long long) plan.mapped_ring_bytes );
     if ( plan_only )
+    {
         return 0; // No init, sockets, worker threads or UMEM registration.
+    }
     if ( lifecycle_only )
+    {
         return lifecycle( config, transport, plan );
+    }
     if ( light_lifecycle_only )
+    {
         return light_lifecycle( config, transport, plan );
+    }
     if ( rocketnet_init( NULL, allocate, release ) != ROCKETNET_STATUS_OK )
+    {
         return 1;
+    }
     rocketnet_forbid_xdp_commit();
 
     auto * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config );

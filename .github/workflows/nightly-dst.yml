@@ -48,7 +48,7 @@ on:
 
 env:
   ROCKETNET_NIGHTLY_NO_TIMEOUT: '1'
-  DST_REFERENCE_TRACE: 17999bcc78a7254d
+  DST_REFERENCE_TRACE: cb02374fb45015e4
 
 permissions:
   contents: read

@@ -264,7 +264,9 @@ static int verify_payload( const uint8_t * payload_data, int payload_bytes )
     for ( int i = 0; i < payload_bytes; i++ )
     {
         if ( payload_data[i] != (uint8_t) ( start + i ) )
+        {
             return 0;
+        }
     }
 
     return 1;
@@ -273,14 +275,18 @@ static int verify_payload( const uint8_t * payload_data, int payload_bytes )
 static int parse_positive_uint64( const char * arg, uint64_t * out )
 {
     if ( !arg || arg[0] < '0' || arg[0] > '9' )
+    {
         return 0;
+    }
 
     char * end = NULL;
 
     errno = 0;
     unsigned long long value = strtoull( arg, &end, 10 );
     if ( !end || *end != '\0' || errno != 0 || value == 0 )
+    {
         return 0;
+    }
     *out = (uint64_t) value;
 
     return 1;
@@ -313,7 +319,9 @@ static void soak_record_disconnect( uint64_t * disconnect_counts, int state )
 static void soak_accumulate_counters( uint64_t * totals, const struct rocketnet_counters_t * counters )
 {
     if ( !counters )
+    {
         return;
+    }
 
     const int n = rocketnet_num_counters();
     for ( int i = 0; i < n && i < ROCKETNET_SOAK_MAX_COUNTERS; i++ )
@@ -356,7 +364,9 @@ static int soak_link_env_value( const char * name, int max_value, int * value )
 
     const int found = rocketnet_test_getenv( name, text, sizeof( text ) );
     if ( !found || text[0] == '\0' )
+    {
         return 1;
+    }
 
     long parsed = 0;
 
@@ -387,13 +397,19 @@ static int soak_link_request( const char * end, struct soak_link_t * link )
     char name[64];
     snprintf( name, sizeof( name ), "ROCKETNET_DEV_%s_LATENCY_MS", end );
     if ( !soak_link_env_value( name, 60000, &link->latency_ms ) )
+    {
         return 0;
+    }
     snprintf( name, sizeof( name ), "ROCKETNET_DEV_%s_JITTER_MS", end );
     if ( !soak_link_env_value( name, 60000, &link->jitter_ms ) )
+    {
         return 0;
+    }
     snprintf( name, sizeof( name ), "ROCKETNET_DEV_%s_PACKET_LOSS_PERCENT", end );
     if ( !soak_link_env_value( name, 100, &link->loss_percent ) )
+    {
         return 0;
+    }
     snprintf( name, sizeof( name ), "ROCKETNET_DEV_%s_DUPLICATE_PERCENT", end );
     return soak_link_env_value( name, 100, &link->duplicate_percent );
 }
@@ -461,7 +477,9 @@ static void soak_link_witness_receive( struct soak_link_witness_t * witness, int
 {
     const int cycle = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
     if ( payload_bytes < 1 || payload_bytes > cycle )
+    {
         return;
+    }
 
     if ( !witness->have_last )
     {
@@ -558,7 +576,9 @@ struct soak_sequences_t
 static void soak_capture_sequences( struct rocketnet_client_transport_t * client, struct rocketnet_server_transport_t * server, struct soak_sequences_t * sequences )
 {
     if ( !client || rocketnet_client_transport_state( client ) != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+    {
         return;
+    }
 
     struct rocketnet_delivery_capture_t capture;
     memset( &capture, 0, sizeof( capture ) );
@@ -598,7 +618,9 @@ static uint64_t soak_peak_resident_bytes( void )
 #if !defined( _WIN32 )
     struct rusage usage;
     if ( getrusage( RUSAGE_SELF, &usage ) != 0 )
+    {
         return 0;
+    }
 #if defined( __APPLE__ )
     return (uint64_t) usage.ru_maxrss;                  // bytes on macOS
 #else // #if defined( __APPLE__ )
@@ -653,7 +675,9 @@ static int soak_counter_index( const char * counter_name )
     for ( int i = 0; i < rocketnet_num_counters(); i++ )
     {
         if ( strcmp( rocketnet_counter_name( i ), counter_name ) == 0 )
+        {
             return i;
+        }
     }
 
     return -1;
@@ -681,7 +705,9 @@ static void soak_print_counters( const char * name, const struct rocketnet_count
 static uint64_t soak_unacked_span( const struct rocketnet_delivery_capture_t * capture, uint64_t sent_sequence_at_connect )
 {
     if ( !capture->connected )
+    {
         return 0;
+    }
 
     const uint64_t acked = capture->largest_acked_sequence > sent_sequence_at_connect ? capture->largest_acked_sequence : sent_sequence_at_connect;
     return capture->highest_sent_sequence > acked ? capture->highest_sent_sequence - acked : 0;
@@ -709,7 +735,9 @@ static int soak_client_send( struct rocketnet_client_transport_t * client, int p
     struct rocketnet_packet_context_t context;
     uint8_t * frame = rocketnet_client_transport_start_packet( client, payload_size, &context );
     if ( !frame )
+    {
         return 0;
+    }
     generate_payload( frame + context.payload_index, payload_size );
     return rocketnet_client_transport_finish_packet( client, &context, payload_size ) > 0;
 }
@@ -719,7 +747,9 @@ static int soak_server_send( struct rocketnet_server_transport_t * server, int c
     struct rocketnet_packet_context_t context;
     uint8_t * frame = rocketnet_server_transport_start_packet( server, client_index, payload_size, &context );
     if ( !frame )
+    {
         return 0;
+    }
     generate_payload( frame + context.payload_index, payload_size );
     return rocketnet_server_transport_finish_packet( server, &context, payload_size ) > 0;
 }
@@ -774,7 +804,9 @@ static void * soak_library_malloc( void * context, size_t bytes )
 
     uint8_t * block = (uint8_t *) malloc( bytes + SOAK_ALLOCATION_HEADER_BYTES );
     if ( !block )
+    {
         return NULL;
+    }
     memcpy( block, &bytes, sizeof( bytes ) );
     soak_library_bytes_add( (int64_t) bytes );
 
@@ -785,7 +817,9 @@ static void soak_library_free( void * context, void * p )
 {
     (void) context;
     if ( !p )
+    {
         return;
+    }
 
     uint8_t * block = (uint8_t *) p - SOAK_ALLOCATION_HEADER_BYTES;
     size_t bytes = 0;
@@ -958,12 +992,16 @@ int main( int argc, char ** argv )
         else if ( strcmp( argv[i], "--rate" ) == 0 )
         {
             if ( !soak_flag_value( argc, argv, &i, &have_rate, ROCKETNET_SOAK_RATE_MAX, &rate ) )
+            {
                 return 2;
+            }
         }
         else if ( strcmp( argv[i], "--assert-every" ) == 0 )
         {
             if ( !soak_flag_value( argc, argv, &i, &have_assert_every, 0, &assert_every ) )
+            {
                 return 2;
+            }
         }
         else if ( argv[i][0] == '-' && ( argv[i][1] < '0' || argv[i][1] > '9' ) )
         {
@@ -992,7 +1030,9 @@ int main( int argc, char ** argv )
     int fault_verify_pending = ( rocketnet_test_getenv( "ROCKETNET_SOAK_FAULT_VERIFY", fault_verify_env, sizeof( fault_verify_env ) ) && fault_verify_env[0] != '\0' && strcmp( fault_verify_env, "0" ) != 0 ) ? 1 : 0;
 
     if ( soak_link_unread_name_set() || !soak_link_request( "SERVER", &soak_server_link ) || !soak_link_request( "CLIENT", &soak_client_link ) )
+    {
         return 2;
+    }
 
     signal( SIGINT, interrupt_handler );
 
@@ -1476,7 +1516,9 @@ int main( int argc, char ** argv )
             for ( uint64_t n = 0; n < server_send_count; n++ )
             {
                 if ( !soak_server_send( server, client_index, server_payload_size ) )
+                {
                     break;
+                }
                 server_sent++;
                 connection_server_sent++;
                 server_payload_size = server_payload_size < ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ? server_payload_size + 1 : 1;
@@ -1733,7 +1775,9 @@ int main( int argc, char ** argv )
         for ( int i = 0; i < rocketnet_num_counters() && i < ROCKETNET_SOAK_MAX_COUNTERS; i++ )
         {
             if ( rocketnet_counter_class( i ) != ROCKETNET_COUNTER_CLASS_REFUSAL || !soak_refusal_planted_by_duplicates( rocketnet_counter_name( i ) ) )
+            {
                 continue;
+            }
             duplicates_refused_at_server += rocketnet_counter_value( counters, i );
             duplicates_refused_at_client += client_counters[i];
         }
@@ -1816,7 +1860,9 @@ int main( int argc, char ** argv )
             // private_bytes 8192 with handles and threads flat.
 
             if ( i == PROCESS_RESOURCES_MEMORY )
+            {
                 continue;
+            }
 
             if ( assert_flat && !process_resources_flat( i, resources_start.values[i], resources_end.values[i], seconds_since_start ) )
             {

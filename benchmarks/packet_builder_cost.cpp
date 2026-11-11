@@ -132,10 +132,12 @@ int main()
     static const int packet_counts[] = { 1, 16 };
 
     for ( int c = 0; c < 2; c++ )
+    {
         for ( int s = 0; s < 3; s++ )
         {
             bench_run( region, sizes[s], packet_counts[c] );
         }
+    }
 
     rn_arena_destroy( arena );
     rocketnet_term();

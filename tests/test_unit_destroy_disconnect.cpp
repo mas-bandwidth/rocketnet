@@ -37,11 +37,11 @@ static const int DESTROY_DISCONNECT_MAX_CLIENTS = 4;
 // the cases build both endpoints over the loopback transport their config
 // structs name (destroy_disconnect_server_create and
 // destroy_disconnect_client_create below). the environment overlays the
-// struct (sdk/rocketnet_server_transport.cpp:955 and
-// sdk/rocketnet_client_transport.cpp:586), so a ROCKETNET_SERVER_TRANSPORT
+// struct (sdk/rocketnet_server_transport.cpp:1013 and
+// sdk/rocketnet_client_transport.cpp:616), so a ROCKETNET_SERVER_TRANSPORT
 // or ROCKETNET_CLIENT_TRANSPORT pin replaces "loopback": the server binds a
 // portable socket, and the step-driven client create is refused at
-// sdk/rocketnet_client_transport.cpp:968 because portable has no
+// sdk/rocketnet_client_transport.cpp:1056 because portable has no
 // non-blocking step. each case clears both names for its run and restores
 // them at its end.
 #if ROCKETNET_DEV
@@ -87,9 +87,13 @@ struct destroy_disconnect_env_guard_t
         for ( int i = 0; i < NUM_NAMES; i++ )
         {
             if ( present[i] )
+            {
                 check( destroy_disconnect_setenv( names[i], saved[i] ) == 0 );
+            }
             else
+            {
                 check( destroy_disconnect_unsetenv( names[i] ) == 0 );
+            }
         }
     }
 };
@@ -127,7 +131,7 @@ static rocketnet_server_t * destroy_disconnect_server_create( const destroy_disc
     config.loopback_hub = rocketnet_test_loopback_hub();
 
     int status = -1;
-    rocketnet_server_transport_t * transport = rocketnet_server_transport_create_current_ex( NULL, "127.0.0.1:0", &config, now, &status );
+    rocketnet_server_transport_t * transport = rocketnet_server_transport_create_current_internal( NULL, "127.0.0.1:0", &config, now, &status );
     check( transport != NULL && status == ROCKETNET_STATUS_OK );
     rocketnet_server_transport_set_test_timestamp( transport, 1000 );
 
@@ -221,7 +225,9 @@ static int destroy_disconnect_connect_client( rocketnet_server_t * server, rocke
         {
             const int slot = (int) rocketnet_client_index( client );
             if ( rocketnet_server_client_connected( server, slot ) )
+            {
                 return slot;
+            }
         }
     }
 
@@ -311,7 +317,9 @@ static uint64_t destroy_disconnect_drain( void * endpoint, uint64_t * dropped )
         rocketnet_address_t from;
         uint8_t packet[ROCKETNET_RECEIVE_CEILING];
         if ( rocketnet_loopback_transport.client->receive( endpoint, &from, packet, (int) sizeof( packet ) ) <= 0 )
+        {
             break;
+        }
         count++;
     }
 
@@ -560,7 +568,7 @@ static void test_shutdown_without_live_connection_sends_nothing()
     destroy_disconnect_mint_token( &keys, 40000, 0xE301ULL, token );
 
     // each fake transport is static and zeroed in place: one fake holds two 256
-    // datagram rings (tests/fake_client_driver.h:37), and an unoptimised MSVC
+    // datagram rings (tests/fake_client_driver.h:39), and an unoptimised MSVC
     // build gives both blocks their own stack slot, past the default 1 MB stack
 
     // client on the base fake transport: destroyed before any session keys exist

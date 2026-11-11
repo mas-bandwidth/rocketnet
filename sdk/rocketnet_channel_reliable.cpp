@@ -76,9 +76,13 @@ static int rn_channels_dispatch_reliable_chunk( rn_channels_t * channels, const 
                                                                   (uint32_t) ( first_number & ROCKETNET_MESSAGE_U24_MASK ), slot,
                                                                   (uint32_t) ( first_number & ROCKETNET_MESSAGE_U24_MASK ), base_units, &held );
     if ( !anchor )
+    {
         return ROCKETNET_CHANNEL_DISPATCH_NONE;
+    }
     if ( anchor->block_have < count )
+    {
         return ROCKETNET_CHANNEL_DISPATCH_HELD;                 // never a partial delivery
+    }
 
     // every chunk is in: the anchor agreed with each of them on the count, the first number and the base, and each one's size was checked as it came
 
@@ -104,7 +108,9 @@ static int rn_channels_dispatch_reliable_chunk( rn_channels_t * channels, const 
     }
 
     if ( !rn_channels_delivery_room( channels ) )
+    {
         return ROCKETNET_CHANNEL_DISPATCH_NONE;
+    }
 
     rn_channels_block_settle( channels, held, anchor, first_slot, count, total, (uint32_t) base_units, false );
 
@@ -128,7 +134,9 @@ static int rn_channels_dispatch_reliable_chunk( rn_channels_t * channels, const 
 int rn_channels_dispatch_reliable( struct rn_channels_t * channels, const struct rocketnet_message_record_t * record, struct rn_delivery_t * out )
 {
     if ( !channels || !record || !out )
+    {
         return ROCKETNET_CHANNEL_DISPATCH_NONE;
+    }
 
     if ( record->control )
     {
@@ -136,13 +144,17 @@ int rn_channels_dispatch_reliable( struct rn_channels_t * channels, const struct
         rn_region_t * region = channels->region;
         rn_receive_descriptor_t * descriptor = &region->receive_descriptors[record->number & ( region->window - 1 )];
         if ( descriptor->live && (uint32_t) ( descriptor->number & ROCKETNET_MESSAGE_U24_MASK ) == record->number )
+        {
             descriptor->live = 0;
+        }
 
         return ROCKETNET_CHANNEL_DISPATCH_CONTROL;
     }
 
     if ( record->block )
+    {
         return rn_channels_dispatch_reliable_chunk( channels, record, out );
+    }
 
     rn_region_t * region = channels->region;
     uint32_t slot = 0;
@@ -155,7 +167,9 @@ int rn_channels_dispatch_reliable( struct rn_channels_t * channels, const struct
     }
 
     if ( !rn_channels_delivery_room( channels ) )
+    {
         return ROCKETNET_CHANNEL_DISPATCH_NONE;
+    }
 
     rn_delivery_t * delivery = &region->deliveries[channels->deliveries++];
     delivery->data = record->data;

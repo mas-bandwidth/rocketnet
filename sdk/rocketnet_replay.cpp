@@ -23,7 +23,9 @@ static void rocketnet_replay_set_bit( struct rocketnet_replay_protection_t * rep
 static void rocketnet_replay_clear_range( struct rocketnet_replay_protection_t * replay, int begin, int end )
 {
     if ( begin == end )
+    {
         return;
+    }
 
     const int offset = begin % 64;
     if ( offset != 0 )
@@ -41,7 +43,9 @@ static void rocketnet_replay_clear_range( struct rocketnet_replay_protection_t *
     }
 
     if ( begin < end )
+    {
         replay->window[begin / 64] &= ~( ( 1ULL << ( end - begin ) ) - 1 );
+    }
 }
 
 // proofs/tla/ReplayWindow.tla AlreadyReceived
@@ -51,11 +55,15 @@ int rocketnet_replay_already_received( const struct rocketnet_replay_protection_
     rocketnet_assert( sequence != 0 );
 
     if ( sequence > replay->highest_opened )
+    {
         return 0;
+    }
 
     if ( replay->highest_opened >= ROCKETNET_REPLAY_WINDOW_BITS &&
          sequence <= replay->highest_opened - ROCKETNET_REPLAY_WINDOW_BITS )
+    {
         return 1;
+    }
 
     return rocketnet_replay_bit( replay, sequence );
 }
@@ -87,7 +95,9 @@ void rocketnet_replay_advance( struct rocketnet_replay_protection_t * replay, ui
             const int begin = (int) ( ( replay->highest_opened + 1 ) % ROCKETNET_REPLAY_WINDOW_BITS );
             const int end = begin + (int) skipped - 1;
             if ( end <= ROCKETNET_REPLAY_WINDOW_BITS )
+            {
                 rocketnet_replay_clear_range( replay, begin, end );
+            }
             else
             {
                 rocketnet_replay_clear_range( replay, begin, ROCKETNET_REPLAY_WINDOW_BITS );

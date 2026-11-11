@@ -68,7 +68,9 @@
 static void rocketnet_fuzz_require( bool condition, const char * property )
 {
     if ( condition )
+    {
         return;
+    }
     fprintf( stderr, "fuzz oracle failed: %s\n", property );
     abort();
 }
@@ -105,8 +107,12 @@ static void fuzz_take( const uint8_t * data, size_t size, size_t * pos, uint8_t 
 static bool fuzz_all_zero( const uint8_t * p, size_t bytes )
 {
     for ( size_t i = 0; i < bytes; i++ )
+    {
         if ( p[i] != 0 )
+        {
             return false;
+        }
+    }
     return true;
 }
 
@@ -342,7 +348,9 @@ static void fuzz_minted( const uint8_t * data, size_t size )
     static const uint8_t ephemeral_secret[ROCKETNET_KEY_BYTES] = { 0x21 };
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     if ( !rocketnet_write_connect_token_deterministic( &sf, &pf, rocketnet_dev_backend_secret_key, ephemeral_secret, token ) )
+    {
         return;     // a crypto refusal, e.g. a server key that is not a curve point
+    }
 
     struct rocketnet_connect_token_t ct;
     rocketnet_read_connect_token( &ct, token );
@@ -371,7 +379,9 @@ static void fuzz_raw_signed( const uint8_t * data, size_t size )
 
     const uint8_t * seal_key = signed_data + ROCKETNET_SIGNED_OFFSET_SERVER_KEY;
     if ( crypto_box_seal( signed_data + ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK, block, ROCKETNET_PRIVATE_BLOCK_BYTES, seal_key ) != 0 )
+    {
         return;
+    }
 
     uint8_t signature[ROCKETNET_SIGNATURE_BYTES];
     if ( crypto_sign_detached( signature, NULL, signed_data, ROCKETNET_SIGNED_CONNECT_DATA_BYTES, rocketnet_dev_backend_secret_key ) != 0 )
@@ -408,7 +418,9 @@ static void fuzz_write_seed( const char * dir, const char * name, uint8_t select
 {
     char path[1024];
     if ( snprintf( path, sizeof( path ), "%s/%s", dir, name ) >= (int) sizeof( path ) )
+    {
         abort(); // a truncated path would write some other file
+    }
 
     FILE * f = rocketnet_test_fopen( path, "wb" );
     if ( !f )
@@ -505,7 +517,9 @@ extern "C" int LLVMFuzzerInitialize( int * argc, char *** argv )
 extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
 {
     if ( size < 1 )
+    {
         return 0;
+    }
 
     const uint8_t * body = data + 1;
     const size_t body_size = size - 1;

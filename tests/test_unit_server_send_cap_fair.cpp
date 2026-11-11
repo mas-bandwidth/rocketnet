@@ -236,7 +236,9 @@ static uint32_t fair_client_send( fair_world_t * world, int client, int channel,
     uint8_t * out = rocketnet_client_start_message( world->clients[client], channel, reliability, 2 );
     check( out != NULL );
     if ( !out )
+    {
         return 0;
+    }
     out[0] = (uint8_t) ( value >> 8 );
     out[1] = (uint8_t) value;
 
@@ -248,7 +250,9 @@ static uint32_t fair_server_send( fair_world_t * world, int client, int channel,
     uint8_t * out = rocketnet_server_start_message( world->server, (uint64_t) world->server_index[client], channel, reliability, 2 );
     check( out != NULL );
     if ( !out )
+    {
         return 0;
+    }
     out[0] = (uint8_t) ( value >> 8 );
     out[1] = (uint8_t) value;
 
@@ -394,7 +398,9 @@ static void fair_run_case( int num_clients, int capacity = 1 )
             for ( int i = 0; i < batch->num_messages; i++ )
             {
                 if ( batch->channel[i] != FAIR_CHANNEL_RELIABLE )
+                {
                     continue;
+                }
                 check( batch->bytes[i] == 2 );
 
                 const uint8_t * data = batch->data[i];
@@ -412,7 +418,9 @@ static void fair_run_case( int num_clients, int capacity = 1 )
         if ( rocketnet_client_state( world.clients[c] ) != ROCKETNET_CLIENT_STATE_CONNECTED ||
              !rocketnet_server_client_connected( world.server, world.server_index[c] ) ||
              server_reliable[c] != FAIR_DATA_TICKS || client_reliable[c] != FAIR_DATA_TICKS )
+        {
             ok = false;
+        }
     }
 
     if ( !ok )
@@ -604,7 +612,9 @@ static long send_capacity_default_rss_bound_mb()
 
     rocketnet_server_memory_plan_t plan;
     if ( !rocketnet_server_transport_memory_plan( &config, "portable", plan ) )
+    {
         return 0;
+    }
 
     const uint64_t hub = rocketnet_loopback_hub_bytes( ROCKETNET_TEST_LOOPBACK_HUB_CLIENTS ) + rocketnet_allocation_overhead();
     return suite_rss_bound_mb( plan.total_bytes + hub, 32 );

@@ -49,7 +49,9 @@ static void create_token_config( struct rocketnet_connect_token_config_t * confi
     config->client_id = CREATE_TOKEN_CLIENT_ID;
     config->protocol_id = CREATE_TOKEN_PROTOCOL;
     for ( int i = 0; i < ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES; i++ )
+    {
         config->user_data[i] = (uint8_t) ( i * 5 + 1 );
+    }
     config->expire_seconds = 30;
     config->timeout_seconds = 10;
     config->unix_timestamp = CREATE_TOKEN_TIMESTAMP;
@@ -67,9 +69,13 @@ static void test_create_connect_token_defaults()
     check( config.client_id == 0 && config.protocol_id == 0 && config.unix_timestamp == 0 );
     check( config.expire_seconds == 30 && config.timeout_seconds == 10 );
     for ( size_t i = 0; i < sizeof( config.backend_secret_key ); i++ )
+    {
         check( config.backend_secret_key[i] == 0 );
+    }
     for ( size_t i = 0; i < sizeof( config.user_data ); i++ )
+    {
         check( config.user_data[i] == 0 );
+    }
 
     // a zeroed config was never initialized
 
@@ -135,7 +141,9 @@ static void create_token_refused( const struct rocketnet_connect_token_config_t 
     memset( token_string, 'Z', sizeof( token_string ) );
     check( rocketnet_create_connect_token( config, token_string ) == expected );
     for ( size_t i = 0; i < sizeof( token_string ); i++ )
+    {
         check( token_string[i] == 'Z' );
+    }
 }
 
 static void test_create_connect_token_refusals()
@@ -460,7 +468,9 @@ static void test_token_epoch_no_expiry_while_time_is_paused()
     create_token_pair( &pair, &keys, CREATE_TOKEN_EPOCH, CREATE_TOKEN_EPOCH - 100, CREATE_TOKEN_TIMESTAMP, 1 );
 
     for ( int i = 0; i < 400; i++ )
+    {
         create_token_step( &pair, 1001.0 );
+    }
 
     check( rocketnet_server_num_connected_clients( pair.server ) == 0 );
 

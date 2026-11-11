@@ -72,7 +72,9 @@ static uint8_t * seed_link_start( void * context, int, int bytes, rocketnet_pack
 {
     seed_transport_t * t = (seed_transport_t *) context;
     if ( bytes > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
+    {
         return NULL;
+    }
     memset( packet, 0, sizeof( *packet ) );
     packet->frame = t->frame;
     packet->payload_index = 16;
@@ -86,7 +88,9 @@ static int seed_link_finish( void * context, rocketnet_packet_context_t * packet
     seed_transport_t * t = (seed_transport_t *) context;
     t->sends++;
     if ( t->sends == 2 )
+    {
         t->first_resend = t->now;
+    }
     t->last_packet = packet->packet_id;
     return rocketnet_send_budget_wire_bytes( ROCKETNET_ACK_BLOCK_MIN_BYTES, bytes );
 }
@@ -165,7 +169,9 @@ static int seed_run_until( seed_run_t * run, double until )
     while ( run->time < seed_start + until )
     {
         if ( run->time >= seed_start + seed_reported_at )
+        {
             run->transport.rtt = seed_rtt;
+        }
         seed_step( run );
     }
     return run->transport.sends;
@@ -229,13 +235,17 @@ static void test_resend_unseeded_without_transport_rtt()
         seed_open( &run, true, measures != 0 );
 
         while ( run.time < seed_start + 1.99 )
+        {
             seed_step( &run );                                      // the transport reports 0 throughout
+        }
         check( run.transport.sends == 1 );
         check( run.ack->has_rtt == 0 );
         check( fabs( run.ack->resend_delay - 2.0 ) < 1e-12 );
 
         while ( run.time < seed_start + 2.0 + 2.0 * seed_tick )
+        {
             seed_step( &run );
+        }
         check( run.transport.sends == 2 );
         check( run.transport.first_resend >= seed_start + 2.0 );
 
@@ -259,7 +269,9 @@ static void test_resend_seed_never_replaces_own_sample()
     const uint64_t config_packet = run.transport.last_packet;
 
     while ( run.time < seed_start + 0.1 )
+    {
         seed_step( &run );
+    }
     run.transport.ack_packet = config_packet;
     const double acked_at = run.time;
     seed_step( &run );

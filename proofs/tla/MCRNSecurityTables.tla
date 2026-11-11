@@ -28,4 +28,7 @@ MCReleaseChecksLive == FALSE
 \* MCRNSecurityTablesBrokenBackwardsWindow.cfg overrides BackwardsRollover
 \* with this: the window rolls over only when the clock passes it.
 MCNoBackwardsRollover == FALSE
+\* MCRNSecurityTablesBrokenNoCharge.cfg overrides ChargePastVerify with
+\* this: a refusal past the verify records no failure.
+MCNoChargePastVerify == FALSE
 =============================================================================

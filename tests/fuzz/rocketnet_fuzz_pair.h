@@ -98,7 +98,9 @@
 static inline void rocketnet_fuzz_pair_require( bool condition, const char * property )
 {
     if ( condition )
+    {
         return;
+    }
     fprintf( stderr, "fuzz oracle failed: %s\n", property );
     abort();
 }
@@ -213,7 +215,9 @@ static inline void * rocketnet_fuzz_block_alloc( size_t bytes )
     const size_t rounded = bytes == 0 ? page_bytes : ( bytes + page_bytes - 1 ) / page_bytes * page_bytes;
     void * p = NULL;
     if ( posix_memalign( &p, page_bytes, rounded ) != 0 )
+    {
         return NULL;
+    }
 
     if ( rounded > bytes )
     {
@@ -247,13 +251,17 @@ static inline void * rocketnet_fuzz_malloc( void *, size_t bytes )
 static inline void rocketnet_fuzz_free( void *, void * p )
 {
     if ( !p )
+    {
         return;
+    }
     rocketnet_fuzz_frees++;
 
     for ( int i = 0; i < rocketnet_fuzz_num_blocks; i++ )
     {
         if ( rocketnet_fuzz_blocks[i].p != p )
+        {
             continue;
+        }
         rocketnet_fuzz_pair_require( !rocketnet_fuzz_states_saved, "nothing frees a block the saved states hold" );
         rocketnet_fuzz_blocks[i] = rocketnet_fuzz_blocks[--rocketnet_fuzz_num_blocks];
         break;
@@ -268,7 +276,9 @@ static inline int rocketnet_fuzz_pair_initialize()
 {
     randombytes_set_implementation( &rocketnet_fuzz_random_implementation );
     if ( rocketnet_init( NULL, rocketnet_fuzz_malloc, rocketnet_fuzz_free ) != ROCKETNET_STATUS_OK )
+    {
         return 1;
+    }
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
     rocketnet_quiet( 1 );
 
@@ -334,7 +344,9 @@ struct rocketnet_fuzz_ring_t
 static inline bool rocketnet_fuzz_ring_push( struct rocketnet_fuzz_ring_t * ring, const struct rocketnet_address_t * from, const uint8_t * data, int bytes )
 {
     if ( bytes <= 0 || bytes > ROCKETNET_RECEIVE_CEILING || ring->count >= ROCKETNET_FUZZ_WIRE_PACKETS )
+    {
         return false;
+    }
 
     struct rocketnet_fuzz_datagram_t * d = &ring->packet[ring->count++];
     d->from = *from;
@@ -347,7 +359,9 @@ static inline bool rocketnet_fuzz_ring_push( struct rocketnet_fuzz_ring_t * ring
 static inline void rocketnet_fuzz_ring_remove( struct rocketnet_fuzz_ring_t * ring, int index )
 {
     if ( index < 0 || index >= ring->count )
+    {
         return;
+    }
 
     for ( int i = index; i + 1 < ring->count; i++ )
     {
@@ -401,7 +415,9 @@ static inline int rocketnet_fuzz_shim_receive_batch( void * instance, struct roc
     {
         const struct rocketnet_fuzz_datagram_t * d = &pair->c2s_deliver.packet[consumed];
         if ( d->bytes > stride )
+        {
             continue;
+        }
         from[received] = d->from;
         bytes[received] = d->bytes;
         memcpy( data + (size_t) received * (size_t) stride, d->data, (size_t) d->bytes );
@@ -446,7 +462,9 @@ static inline void rocketnet_fuzz_pair_capture_c2s( struct rocketnet_fuzz_pair_t
     {
         const int n = pair->real->receive_batch( pair->transport->io.instance, from, data, ROCKETNET_RECEIVE_CEILING, bytes, 64 );
         if ( n <= 0 )
+        {
             break;
+        }
 
         for ( int i = 0; i < n; i++ )
         {
@@ -473,7 +491,9 @@ static inline void rocketnet_fuzz_pair_capture_c2s( struct rocketnet_fuzz_pair_t
 static inline void rocketnet_fuzz_pair_deliver_c2s( struct rocketnet_fuzz_pair_t * pair, int index )
 {
     if ( index < 0 || index >= pair->c2s.count )
+    {
         return;
+    }
 
     const struct rocketnet_fuzz_datagram_t * d = &pair->c2s.packet[index];
     rocketnet_fuzz_ring_push( &pair->c2s_deliver, &d->from, d->data, d->bytes );
@@ -484,7 +504,9 @@ static inline void rocketnet_fuzz_pair_deliver_c2s( struct rocketnet_fuzz_pair_t
 static inline void rocketnet_fuzz_pair_deliver_s2c( struct rocketnet_fuzz_pair_t * pair, int index )
 {
     if ( index < 0 || index >= pair->s2c.count )
+    {
         return;
+    }
 
     const struct rocketnet_fuzz_datagram_t * d = &pair->s2c.packet[index];
     rocketnet_platform_send_t send;
@@ -519,7 +541,9 @@ static inline void rocketnet_fuzz_pair_inject_c2s( struct rocketnet_fuzz_pair_t 
 static inline void rocketnet_fuzz_pair_inject_s2c( struct rocketnet_fuzz_pair_t * pair, const uint8_t * data, int bytes )
 {
     if ( !pair->client_known || bytes <= 0 || bytes > ROCKETNET_RECEIVE_CEILING )
+    {
         return;
+    }
 
     rocketnet_platform_send_t send;
     send.to = &pair->client_address;
@@ -535,11 +559,15 @@ static inline void rocketnet_fuzz_pair_inject_s2c( struct rocketnet_fuzz_pair_t 
 static inline struct rocketnet_encryption_mapping_t * rocketnet_fuzz_pair_mapping( struct rocketnet_fuzz_pair_t * pair )
 {
     if ( !pair->client_known )
+    {
         return NULL;
+    }
 
     const int index = rocketnet_encryption_map_find( pair->transport->protocol.encryption_map, &pair->client_address );
     if ( index < 0 )
+    {
         return NULL;
+    }
 
     return rocketnet_encryption_map_entry( pair->transport->protocol.encryption_map, index );
 }
@@ -558,7 +586,9 @@ static inline int rocketnet_fuzz_pair_seal_c2s( struct rocketnet_fuzz_pair_t * p
 {
     struct rocketnet_encryption_mapping_t * m = rocketnet_fuzz_pair_mapping( pair );
     if ( !m || plaintext_bytes < 0 || plaintext_bytes > ROCKETNET_RECEIVE_CEILING - ROCKETNET_PACKET_OVERHEAD_BYTES - ROCKETNET_SESSION_NONCE_BYTES )
+    {
         return 0;
+    }
 
     const uint64_t protocol_id = pair->transport->protocol.protocol_id;
     const uint8_t * filter = pair->transport->protocol.packet_filter;
@@ -588,7 +618,9 @@ static inline int rocketnet_fuzz_pair_seal_s2c( struct rocketnet_fuzz_pair_t * p
 {
     struct rocketnet_encryption_mapping_t * m = rocketnet_fuzz_pair_mapping( pair );
     if ( !m || plaintext_bytes < 0 || plaintext_bytes > ROCKETNET_RECEIVE_CEILING - ROCKETNET_PACKET_OVERHEAD_BYTES - ROCKETNET_SESSION_NONCE_BYTES )
+    {
         return 0;
+    }
 
     const uint64_t protocol_id = pair->transport->protocol.protocol_id;
     const uint8_t * filter = pair->transport->protocol.packet_filter;
@@ -623,7 +655,9 @@ static inline bool rocketnet_fuzz_pair_create( struct rocketnet_fuzz_pair_t * pa
 
     pair->hub = rocketnet_loopback_hub_create( NULL, 1, NULL );
     if ( !pair->hub )
+    {
         return false;
+    }
 
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
@@ -638,7 +672,9 @@ static inline bool rocketnet_fuzz_pair_create( struct rocketnet_fuzz_pair_t * pa
 
     pair->server = rocketnet_message_server_create( NULL, ROCKETNET_FUZZ_SERVER_ADDRESS, &server_config, &message_config, NULL, 0, 0 );
     if ( !pair->server )
+    {
         return false;
+    }
     pair->transport = rocketnet_message_server_transport( pair->server );
 
     // the wire seam
@@ -661,7 +697,9 @@ static inline bool rocketnet_fuzz_pair_create( struct rocketnet_fuzz_pair_t * pa
                                                    ROCKETNET_DEV_PROTOCOL_ID, addresses, 1, ROCKETNET_FUZZ_CLIENT_ID,
                                                    ROCKETNET_TEST_CREATE_TS - 10, ROCKETNET_TEST_CREATE_TS + 3600, 10,
                                                    NULL, token, sizeof( token ) ) != ROCKETNET_STATUS_OK )
+    {
         return false;
+    }
 
     struct rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config_current( &client_config );
@@ -673,7 +711,9 @@ static inline bool rocketnet_fuzz_pair_create( struct rocketnet_fuzz_pair_t * pa
 
     pair->client = rocketnet_message_client_create( NULL, token, &client_config, &message_config, NULL, 0, 0 );
     if ( !pair->client )
+    {
         return false;
+    }
 
     pair->allocations_after_create = rocketnet_fuzz_allocations;
 
@@ -841,7 +881,9 @@ __attribute__( ( no_sanitize( "memory" ) ) ) static inline bool rocketnet_fuzz_b
     for ( size_t i = 0; i < bytes; i++ )
     {
         if ( x[i] != y[i] )
+        {
             return false;
+        }
     }
     return true;
 }
@@ -912,11 +954,15 @@ static void rocketnet_fuzz_segv( int sig, siginfo_t * info, void * context )
         const uintptr_t begin = (uintptr_t) rocketnet_fuzz_blocks[i].p;
         const uintptr_t end = begin + rocketnet_fuzz_block_pages( i ) * rocketnet_fuzz_page_bytes;
         if ( address < begin || address >= end )
+        {
             continue;
+        }
 
         const uint32_t page = (uint32_t) ( ( address - begin ) / rocketnet_fuzz_page_bytes );
         if ( rocketnet_fuzz_page_marks[i][page] )
+        {
             break;      // already writable: not our fault
+        }
         rocketnet_fuzz_page_marks[i][page] = 1;
 
         struct rocketnet_fuzz_page_t * entry = &rocketnet_fuzz_dirty[rocketnet_fuzz_num_dirty];
@@ -924,7 +970,9 @@ static void rocketnet_fuzz_segv( int sig, siginfo_t * info, void * context )
         entry->page = page;
         rocketnet_fuzz_num_dirty = rocketnet_fuzz_num_dirty + 1;
         if ( mprotect( (void *) ( begin + (size_t) page * rocketnet_fuzz_page_bytes ), rocketnet_fuzz_page_bytes, PROT_READ | PROT_WRITE ) == 0 )
+        {
             return;
+        }
         break;
     }
 
@@ -966,14 +1014,18 @@ static inline bool rocketnet_fuzz_protect_setup()
     rocketnet_fuzz_dirty = (struct rocketnet_fuzz_page_t *) calloc( total, sizeof( struct rocketnet_fuzz_page_t ) );
     rocketnet_fuzz_differ = (struct rocketnet_fuzz_page_t *) calloc( total, sizeof( struct rocketnet_fuzz_page_t ) );
     if ( !rocketnet_fuzz_dirty || !rocketnet_fuzz_differ )
+    {
         return false;
+    }
 
     for ( int i = 0; i < rocketnet_fuzz_num_blocks; i++ )
     {
         const size_t pages = rocketnet_fuzz_block_pages( i );
         rocketnet_fuzz_page_marks[i] = (uint8_t *) calloc( pages, 1 );
         if ( !rocketnet_fuzz_page_marks[i] )
+        {
             return false;
+        }
 
         const uint8_t * a = (const uint8_t *) rocketnet_fuzz_block_copies[ROCKETNET_FUZZ_STATE_CREATED][i];
         const uint8_t * b = (const uint8_t *) rocketnet_fuzz_block_copies[ROCKETNET_FUZZ_STATE_CONNECTED][i];
@@ -983,7 +1035,9 @@ static inline bool rocketnet_fuzz_protect_setup()
         {
             const size_t from = k * rocketnet_fuzz_page_bytes;
             if ( from >= bytes )
+            {
                 break;
+            }
 
             const size_t n = bytes - from < rocketnet_fuzz_page_bytes ? bytes - from : rocketnet_fuzz_page_bytes;
             if ( !rocketnet_fuzz_bytes_equal( a + from, b + from, n ) )
@@ -1001,7 +1055,9 @@ static inline bool rocketnet_fuzz_protect_setup()
     action.sa_flags = SA_SIGINFO | SA_NODEFER;
     sigemptyset( &action.sa_mask );
     if ( sigaction( SIGSEGV, &action, &rocketnet_fuzz_old_segv ) != 0 )
+    {
         return false;
+    }
 
     for ( int i = 0; i < rocketnet_fuzz_num_blocks; i++ )
     {
@@ -1028,7 +1084,9 @@ static inline void rocketnet_fuzz_copy_page( struct rocketnet_fuzz_page_t page, 
     const size_t from = (size_t) page.page * rocketnet_fuzz_page_bytes;
     const size_t bytes = rocketnet_fuzz_blocks[page.block].bytes;
     if ( from >= bytes )
+    {
         return;
+    }
 
     const size_t n = bytes - from < rocketnet_fuzz_page_bytes ? bytes - from : rocketnet_fuzz_page_bytes;
     memcpy( (uint8_t *) rocketnet_fuzz_blocks[page.block].p + from, (const uint8_t *) rocketnet_fuzz_block_copies[which][page.block] + from, n );
@@ -1101,8 +1159,10 @@ static inline void rocketnet_fuzz_restore_blocks( int which )
     if ( rocketnet_fuzz_check_restore )
     {
         for ( int i = 0; i < rocketnet_fuzz_num_blocks; i++ )
+        {
             rocketnet_fuzz_pair_require( rocketnet_fuzz_bytes_equal( rocketnet_fuzz_blocks[i].p, rocketnet_fuzz_block_copies[which][i], rocketnet_fuzz_blocks[i].bytes ),
                                          "a restore leaves every block equal to its saved copy" );
+        }
     }
 }
 
@@ -1215,11 +1275,15 @@ static inline void rocketnet_fuzz_pair_dump( struct rocketnet_fuzz_pair_t * pair
     const char * names[4] = { "server_transport", "message_server", "client_transport", "message_client" };
 
     for ( int b = 0; b < 4; b++ )
+    {
         for ( int i = 0; i < rocketnet_num_counters(); i++ )
+        {
             if ( rocketnet_counter_value( blocks[b], i ) != 0 )
             {
                 printf( "%s %s %llu\n", names[b], rocketnet_counter_name( i ), (unsigned long long) rocketnet_counter_value( blocks[b], i ) );
             }
+        }
+    }
 }
 
 // -----------------------------------------------------------------------
@@ -1275,7 +1339,9 @@ static inline int rocketnet_fuzz_pair_open( struct rocketnet_fuzz_pair_t * pair,
     }
 
     if ( !m || bytes < ROCKETNET_PREFILTER_BYTES + ROCKETNET_SEQUENCE_BYTES )
+    {
         return -1;
+    }
 
     const uint8_t type = packet[0];
     const uint8_t * p = packet + ROCKETNET_PREFILTER_BYTES;
@@ -1298,7 +1364,9 @@ static inline int rocketnet_fuzz_pair_open( struct rocketnet_fuzz_pair_t * pair,
     }
 
     if ( !key )
+    {
         return -1;
+    }
 
     uint8_t nonce[ROCKETNET_SESSION_NONCE_BYTES];
     const bool has_nonce = type == ROCKETNET_CONNECTION_CHALLENGE_PACKET || type == ROCKETNET_CONNECTION_DENIED_PACKET;
@@ -1316,7 +1384,9 @@ static inline void rocketnet_fuzz_pair_record_ring( struct rocketnet_fuzz_pair_t
         const struct rocketnet_fuzz_datagram_t * d = &ring->packet[i];
         const int type = d->data[0];
         if ( type >= ROCKETNET_FUZZ_NUM_PACKET_TYPES || table[type].bytes > 0 )
+        {
             continue;
+        }
 
         struct rocketnet_fuzz_recorded_t * r = &table[type];
         r->bytes = d->bytes;
@@ -1483,7 +1553,9 @@ static inline int rocketnet_fuzz_seed_place( uint8_t * out, rocketnet_fuzz_run_t
         pos += rocketnet_fuzz_record_write( out + pos, mode, a, a_bytes, b, b_bytes );
         run( out, (size_t) pos );
         if ( rocketnet_counter_value( counters( rocketnet_fuzz_live_pair ), counter ) > before )
+        {
             return pos;
+        }
     }
 
     return 0;
@@ -1510,19 +1582,27 @@ static const char * const rocketnet_fuzz_packet_type_names[ROCKETNET_FUZZ_NUM_PA
         char restore[8];                                                                                \
         rocketnet_fuzz_check_restore = rocketnet_test_getenv( "ROCKETNET_FUZZ_CHECK_RESTORE", restore, sizeof( restore ) ) && restore[0] == '1'; \
         if ( rocketnet_fuzz_pair_initialize() != 0 )                                                    \
+        {                                                                                               \
             exit( 1 );                                                                                  \
+        }                                                                                               \
         char seed_dir[1024];                                                                            \
         if ( rocketnet_test_getenv( "ROCKETNET_FUZZ_SEED_DIR", seed_dir, sizeof( seed_dir ) ) )          \
+        {                                                                                                \
             exit( generate( seed_dir ) ? 0 : 1 );                                                       \
+        }                                                                                                \
         return 0;                                                                                       \
     }                                                                                                   \
     extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )                          \
     {                                                                                                   \
         const uint64_t first = run( data, size );                                                       \
         if ( rocketnet_fuzz_check_replay )                                                              \
+        {                                                                                               \
             rocketnet_fuzz_pair_require( run( data, size ) == first, "an input replays to the same counters" ); \
+        }                                                                                               \
         if ( rocketnet_fuzz_dump_counters && rocketnet_fuzz_live_pair )                                 \
+        {                                                                                               \
             rocketnet_fuzz_pair_dump( rocketnet_fuzz_live_pair );                                       \
+        }                                                                                               \
         return 0;                                                                                       \
     }
 

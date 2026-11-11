@@ -96,16 +96,22 @@ static int rocketnet_box_seal_with_ephemeral( uint8_t * c, const uint8_t * m, un
     crypto_generichash_state state;
 
     if ( crypto_scalarmult_base( epk, esk ) != 0 )
+    {
         goto out;
+    }
 
     if ( crypto_generichash_init( &state, NULL, 0, crypto_box_NONCEBYTES ) != 0 ||
          crypto_generichash_update( &state, epk, crypto_box_PUBLICKEYBYTES ) != 0 ||
          crypto_generichash_update( &state, pk, crypto_box_PUBLICKEYBYTES ) != 0 ||
          crypto_generichash_final( &state, nonce, crypto_box_NONCEBYTES ) != 0 )
+    {
         goto out;
+    }
 
     if ( crypto_box_easy( c + crypto_box_PUBLICKEYBYTES, m, mlen, nonce, pk, esk ) != 0 )
+    {
         goto out;
+    }
 
     memcpy( c, epk, crypto_box_PUBLICKEYBYTES );
     result = 0;
@@ -145,19 +151,25 @@ static int rocketnet_write_connect_token_sealed( const struct rocketnet_signed_c
     if ( ephemeral_secret_key == NULL )
     {
         if ( crypto_box_seal( signed_data.sealed_private_block, private_block, ROCKETNET_PRIVATE_BLOCK_BYTES, signed_data.server_public_key ) != 0 )
+        {
             goto out;
+        }
     }
     else
     {
         if ( rocketnet_box_seal_with_ephemeral( signed_data.sealed_private_block, private_block, ROCKETNET_PRIVATE_BLOCK_BYTES,
                                                 signed_data.server_public_key, ephemeral_secret_key ) != 0 )
+        {
             goto out;
+        }
     }
 #else // #if ROCKETNET_DEV
     (void) ephemeral_secret_key;
 
     if ( crypto_box_seal( signed_data.sealed_private_block, private_block, ROCKETNET_PRIVATE_BLOCK_BYTES, signed_data.server_public_key ) != 0 )
+    {
         goto out;
+    }
 #endif // #if ROCKETNET_DEV
 
     p = token;
@@ -166,7 +178,9 @@ static int rocketnet_write_connect_token_sealed( const struct rocketnet_signed_c
 
     uint8_t signature[ROCKETNET_SIGNATURE_BYTES];
     if ( crypto_sign_detached( signature, NULL, token, ROCKETNET_SIGNED_CONNECT_DATA_BYTES, backend_secret_key ) != 0 )
+    {
         goto out;
+    }
 
     rocketnet_write_bytes( &p, signature, ROCKETNET_SIGNATURE_BYTES );
     rocketnet_write_bytes( &p, private_data.client_to_server_key, ROCKETNET_KEY_BYTES );
@@ -203,7 +217,9 @@ int rocketnet_write_connect_token_deterministic( const struct rocketnet_signed_c
     // TEST-ONLY: exists for standard/vectors/connect_token_v1.json; see the header
 
     if ( ephemeral_secret_key == NULL )
+    {
         return 0;
+    }
 
     return rocketnet_write_connect_token_sealed( signed_fields, private_fields, backend_secret_key, ephemeral_secret_key, token );
 }
@@ -213,10 +229,14 @@ int rocketnet_write_connect_token_deterministic( const struct rocketnet_signed_c
 enum rocketnet_status_t rocketnet_generate_backend_keypair( uint8_t * public_key, uint8_t * secret_key )
 {
     if ( !rocketnet_api_null_guard( public_key ) || !rocketnet_api_null_guard( secret_key ) )
+    {
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
+    }
 
     if ( !rocketnet_crypto_acquire() )
+    {
         return ROCKETNET_STATUS_CRYPTO_INIT_FAILED;
+    }
 
     const int result = crypto_sign_keypair( public_key, secret_key );
     rocketnet_crypto_release();
@@ -227,10 +247,14 @@ enum rocketnet_status_t rocketnet_generate_backend_keypair( uint8_t * public_key
 enum rocketnet_status_t rocketnet_generate_backend_keypair_from_seed( const uint8_t * seed, uint8_t * public_key, uint8_t * secret_key )
 {
     if ( !rocketnet_api_null_guard( seed ) || !rocketnet_api_null_guard( public_key ) || !rocketnet_api_null_guard( secret_key ) )
+    {
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
+    }
 
     if ( !rocketnet_crypto_acquire() )
+    {
         return ROCKETNET_STATUS_CRYPTO_INIT_FAILED;
+    }
 
     const int result = crypto_sign_seed_keypair( public_key, secret_key, seed );
     rocketnet_crypto_release();
@@ -241,10 +265,14 @@ enum rocketnet_status_t rocketnet_generate_backend_keypair_from_seed( const uint
 enum rocketnet_status_t rocketnet_generate_server_keypair( uint8_t * public_key, uint8_t * secret_key )
 {
     if ( !rocketnet_api_null_guard( public_key ) || !rocketnet_api_null_guard( secret_key ) )
+    {
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
+    }
 
     if ( !rocketnet_crypto_acquire() )
+    {
         return ROCKETNET_STATUS_CRYPTO_INIT_FAILED;
+    }
 
     const int result = crypto_box_keypair( public_key, secret_key );
     rocketnet_crypto_release();
@@ -269,22 +297,32 @@ enum rocketnet_status_t rocketnet_write_production_connect_token( const uint8_t 
          !rocketnet_api_null_guard( server_public_key ) ||
          !rocketnet_api_null_guard( server_address_strings ) ||
          !rocketnet_api_null_guard( connect_token ) )
+    {
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
+    }
 
     if ( server_address_count < 1 || server_address_count > 2 )
+    {
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
+    }
 
     if ( connect_token_bytes < ROCKETNET_CONNECT_TOKEN_BYTES )
+    {
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
+    }
 
     if ( protocol_id == 0 )
+    {
         return ROCKETNET_STATUS_INVALID_PROTOCOL_ID;
+    }
 
     // every endpoint refuses these: a production server refuses a timeout of zero or below (t13.2),
     // and a token whose expire is at or before its create is already expired when it is made
 
     if ( timeout_seconds <= 0 || expire_timestamp <= create_timestamp )
+    {
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
+    }
 
     struct rocketnet_signed_connect_data_t signed_fields;
     memset( &signed_fields, 0, sizeof( signed_fields ) );
@@ -298,23 +336,31 @@ enum rocketnet_status_t rocketnet_write_production_connect_token( const uint8_t 
     for ( int i = 0; i < server_address_count; i++ )
     {
         if ( !rocketnet_api_null_guard( server_address_strings[i] ) )
+        {
             return ROCKETNET_STATUS_INVALID_ARGUMENT;
+        }
 
         struct rocketnet_address_t address;
         if ( !rocketnet_address_parse( &address, server_address_strings[i] ) )
+        {
             return ROCKETNET_STATUS_INVALID_ADDRESS;
+        }
 
         // a token naming port 0 names no server: refuse the address before
         // any field is written
 
         if ( address.port == 0 )
+        {
             return ROCKETNET_STATUS_INVALID_ADDRESS;
+        }
 
         uint8_t * p;
         if ( address.type == ROCKETNET_ADDRESS_IPV4 )
         {
             if ( signed_fields.address_flags & ROCKETNET_ADDRESS_FLAG_IPV4 )
+            {
                 return ROCKETNET_STATUS_INVALID_ARGUMENT;
+            }
 
             signed_fields.address_flags |= ROCKETNET_ADDRESS_FLAG_IPV4;
             p = signed_fields.ipv4_address;
@@ -324,13 +370,17 @@ enum rocketnet_status_t rocketnet_write_production_connect_token( const uint8_t 
         else if ( address.type == ROCKETNET_ADDRESS_IPV6 )
         {
             if ( signed_fields.address_flags & ROCKETNET_ADDRESS_FLAG_IPV6 )
+            {
                 return ROCKETNET_STATUS_INVALID_ARGUMENT;
+            }
 
             signed_fields.address_flags |= ROCKETNET_ADDRESS_FLAG_IPV6;
             p = signed_fields.ipv6_address;
 
             for ( int j = 0; j < 8; j++ )
+            {
                 rocketnet_write_uint16( &p, address.data.ipv6[j] );
+            }
 
             rocketnet_write_uint16( &p, address.port );
         }
@@ -341,19 +391,24 @@ enum rocketnet_status_t rocketnet_write_production_connect_token( const uint8_t 
     }
 
     if ( !rocketnet_crypto_acquire() )
+    {
         return ROCKETNET_STATUS_CRYPTO_INIT_FAILED;
+    }
 
     struct rocketnet_connect_token_private_t private_fields;
     memset( &private_fields, 0, sizeof( private_fields ) );
     private_fields.client_id = client_id;
     randombytes_buf( private_fields.client_to_server_key, ROCKETNET_KEY_BYTES );
     randombytes_buf( private_fields.server_to_client_key, ROCKETNET_KEY_BYTES );
-    rocketnet_crypto_release();
 
     if ( user_data != NULL )
+    {
         memcpy( private_fields.user_data, user_data, ROCKETNET_USER_DATA_BYTES );
+    }
 
+    // crypto_box_seal draws its ephemeral keypair, so the hold covers it
     const int result = rocketnet_write_connect_token( &signed_fields, &private_fields, backend_secret_key, connect_token );
+    rocketnet_crypto_release();
 
     sodium_memzero( &private_fields, sizeof( private_fields ) );
 
@@ -380,12 +435,12 @@ int rocketnet_verify_signed_connect_data( const uint8_t * signed_connect_data,
 // The private block seam, compiled into the unit suite's hook library only
 // (ROCKETNET_DEV): rocketnet_open_connect_token_private
 // hands its private block staging to the hook as it enters (at_exit 0, so a
-// unit case can plant a canary in it) and on each of its two exits (at_exit
+// unit case can plant a canary in it) and on each of its three exits (at_exit
 // 1, so the case reads what the staging still holds)
 // (test_unit_secrets_wiped.cpp).
 #if ROCKETNET_DEV
 void ( *rocketnet_token_private_block_hook )( uint8_t * block, int bytes, int at_exit ) = NULL;
-#define ROCKETNET_TOKEN_PRIVATE_BLOCK_SEEN( block, bytes, at_exit ) do { if ( rocketnet_token_private_block_hook ) rocketnet_token_private_block_hook( block, bytes, at_exit ); } while ( 0 )
+#define ROCKETNET_TOKEN_PRIVATE_BLOCK_SEEN( block, bytes, at_exit ) do { if ( rocketnet_token_private_block_hook ) { rocketnet_token_private_block_hook( block, bytes, at_exit ); } } while ( 0 )
 #else
 #define ROCKETNET_TOKEN_PRIVATE_BLOCK_SEEN( block, bytes, at_exit ) do {} while ( 0 )
 #endif // #if ROCKETNET_DEV
@@ -408,6 +463,18 @@ int rocketnet_open_connect_token_private( struct rocketnet_connect_token_private
     {
         // the refused exit wipes the staging as the open exit does
 
+        sodium_memzero( private_block, sizeof( private_block ) );
+        ROCKETNET_TOKEN_PRIVATE_BLOCK_SEEN( private_block, (int) sizeof( private_block ), 1 );
+        return 0;
+    }
+
+    // the block opened, but its zero pad (TRANSPORT.md t1 rule 3, t6.1) is not
+    // zero: refused before any field is read, with the staging wiped
+
+    const int pad_offset = 3 * 8 + 2 * ROCKETNET_KEY_BYTES + ROCKETNET_USER_DATA_BYTES;
+
+    if ( sodium_is_zero( private_block + pad_offset, (size_t) ( ROCKETNET_PRIVATE_BLOCK_BYTES - pad_offset ) ) == 0 )
+    {
         sodium_memzero( private_block, sizeof( private_block ) );
         ROCKETNET_TOKEN_PRIVATE_BLOCK_SEEN( private_block, (int) sizeof( private_block ), 1 );
         return 0;
@@ -484,7 +551,9 @@ enum rocketnet_status_t rocketnet_write_test_connect_token( const char * server_
                                                             size_t connect_token_bytes )
 {
     if ( !rocketnet_api_null_guard( server_address_string ) )
+    {
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
+    }
 
     if ( connect_token && connect_token_bytes < ROCKETNET_CONNECT_TOKEN_BYTES )
     {
@@ -516,7 +585,9 @@ enum rocketnet_status_t rocketnet_create_dev_connect_token( const char * server_
     // published development backend key
 
     if ( !rocketnet_api_null_guard( server_public_key ) )
+    {
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
+    }
 
     struct rocketnet_connect_token_config_t config;
     rocketnet_connect_token_default_config( &config );
@@ -527,7 +598,9 @@ enum rocketnet_status_t rocketnet_create_dev_connect_token( const char * server_
     config.client_id = client_id;
     config.protocol_id = protocol_id;
     if ( user_data )
+    {
         memcpy( config.user_data, user_data, sizeof( config.user_data ) );
+    }
     config.expire_seconds = expire_seconds;
     config.timeout_seconds = timeout_seconds;
     config.unix_timestamp = unix_timestamp;

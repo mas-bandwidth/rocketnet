@@ -116,7 +116,9 @@ static void * stress_malloc( void * context, size_t bytes )
 
     uint8_t * block = (uint8_t *) malloc( STRESS_ALLOCATION_HEADER_BYTES + bytes );
     if ( !block )
+    {
         return NULL;
+    }
 
     stress_allocation_header_t * header = (stress_allocation_header_t *) block;
     header->count = (stress_allocation_count_t *) context;
@@ -129,7 +131,9 @@ static void * stress_malloc( void * context, size_t bytes )
         count->bytes += (uint64_t) bytes;
         const uint64_t live = count->live += (uint64_t) bytes;
         if ( live > count->peak.load() )
+        {
             count->peak = live;
+        }
     }
 
     return block + STRESS_ALLOCATION_HEADER_BYTES;
@@ -139,12 +143,16 @@ static void stress_free( void * context, void * p )
 {
     (void) context;
     if ( !p )
+    {
         return;
+    }
 
     uint8_t * block = (uint8_t *) p - STRESS_ALLOCATION_HEADER_BYTES;
     const stress_allocation_header_t * header = (const stress_allocation_header_t *) block;
     if ( header->count )
+    {
         header->count->live -= header->bytes;
+    }
 
     free( block );
 }
@@ -357,9 +365,13 @@ static void stress_side_receive_one( stress_side_t * side, int channel_delivered
 
     const enum rocketnet_reliability_t sent_mode = stress_mode( channel );
     if ( stress_mode_ordered( sent_mode ) )
+    {
         check( round == side->last_round[channel] + 1 );    // in order, no gap
+    }
     else if ( stress_mode_sequenced( sent_mode ) )
+    {
         check( round > side->last_round[channel] );         // newer only
+    }
     if ( round > side->last_round[channel] )
     {
         side->last_round[channel] = round;
@@ -383,7 +395,9 @@ static void stress_side_record_send( stress_side_t * side, int channel, uint32_t
 
     const enum rocketnet_reliability_t mode = stress_mode( channel );
     if ( !stress_mode_has_receipt( mode ) )
+    {
         return;
+    }
     check( side->num_receipt_sends < STRESS_MESSAGES_PER_SIDE );
     if ( side->num_receipt_sends > 0 )
     {
@@ -413,9 +427,13 @@ static void stress_side_receipts( stress_side_t * side, const struct rocketnet_r
             }
 
             if ( side->receipt_sends[mid].serial < receipts[i].serial )
+            {
                 lo = mid + 1;
+            }
             else
+            {
                 hi = mid - 1;
+            }
         }
 
         check( found >= 0 );
@@ -591,18 +609,26 @@ static bool stress_side_complete( const stress_side_t * side )
     {
         const enum rocketnet_reliability_t mode = stress_mode( c );
         if ( !stress_mode_reliable( mode ) )
+        {
             continue;
+        }
 
         if ( mode == ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED )
         {
             if ( side->last_round[c] != STRESS_ROUNDS - 1 )
+            {
                 return false;
+            }
             continue;
         }
 
         for ( int r = 0; r < STRESS_ROUNDS; r++ )
+        {
             if ( side->received[c * STRESS_ROUNDS + r] != 1 )
+            {
                 return false;
+            }
+        }
     }
 
     return true;
@@ -671,7 +697,9 @@ static void test_channels_stress_every_channel_delivers()
         if ( stress_side_complete( &world->client_side ) && stress_side_complete( &world->server_side ) &&
              world->client_side.reliable_receipts_acked == reliable_receipts &&
              world->server_side.reliable_receipts_acked == reliable_receipts )
+        {
             break;
+        }
         stress_world_frame( world );
         stress_world_send_packets( world );
         check( rocketnet_client_state( world->client ) == ROCKETNET_CLIENT_STATE_CONNECTED );

@@ -18,8 +18,7 @@ layouts with no schema or bit-packing dependency.
 
 The public client and server objects own connection, security, message and
 transport state. Frame work has configured budgets and does not wait for network
-delivery; budgets are not a measured time bound, and client update can briefly
-wait for a shared I/O lock. Create, connect,
+delivery; budgets are not a measured time bound. Create, connect,
 start, and synchronous destroy have lifecycle costs outside that frame-time
 claim. See [lifecycle](USAGE.md#connection-lifecycle). All regular
 memory uses the caller allocator, including documented runtime allocation;

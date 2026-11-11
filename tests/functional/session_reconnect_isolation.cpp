@@ -62,7 +62,9 @@ static void session_isolation_check_handler( const char * condition, const char 
     do                                                                                                       \
     {                                                                                                        \
         if ( !( condition ) )                                                                                \
+        {                                                                                                    \
             session_isolation_check_handler( #condition, (const char *) __FUNCTION__, __FILE__, __LINE__ );  \
+        }                                                                                                    \
     } while ( 0 )
 
 class session_env_guard_t
@@ -97,14 +99,22 @@ public:
     {
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
         if ( present )
+        {
             (void) _putenv_s( name.c_str(), value.c_str() );
+        }
         else
+        {
             (void) _putenv_s( name.c_str(), "" );
+        }
 #else
         if ( present )
+        {
             (void) setenv( name.c_str(), value.c_str(), 1 );
+        }
         else
+        {
             (void) unsetenv( name.c_str() );
+        }
 #endif
     }
 
@@ -119,11 +129,15 @@ static uint32_t session_client_send_tagged( rocketnet_client_t * client, int cha
     uint8_t * out = rocketnet_client_start_message( client, channel, reliability, bytes );
     session_check( out != NULL );
     if ( !out )
+    {
         return 0;
+    }
     memset( out, (int) tag, (size_t) bytes );
     out[0] = tag;
     if ( bytes > 1 )
+    {
         out[1] = seq_byte;
+    }
     const uint32_t serial = rocketnet_client_finish_message( client, bytes );
     session_check( serial != 0 );
     return serial;
@@ -134,11 +148,15 @@ static uint32_t session_server_send_tagged( rocketnet_server_t * server, uint64_
     uint8_t * out = rocketnet_server_start_message( server, dest, channel, reliability, bytes );
     session_check( out != NULL );
     if ( !out )
+    {
         return 0;
+    }
     memset( out, (int) tag, (size_t) bytes );
     out[0] = tag;
     if ( bytes > 1 )
+    {
         out[1] = seq_byte;
+    }
     const uint32_t serial = rocketnet_server_finish_message( server, bytes );
     session_check( serial != 0 );
     return serial;
@@ -207,7 +225,9 @@ static void session_run_isolation_pair( const char * server_transport, const cha
 
     uint8_t seed[32];
     for ( int i = 0; i < 32; ++i )
+    {
         seed[i] = (uint8_t) ( 0x4E ^ i );
+    }
     uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
     uint8_t backend_secret[64];
     session_check( rocketnet_generate_backend_keypair_from_seed( seed, backend_public, backend_secret ) == ROCKETNET_STATUS_OK );
@@ -290,7 +310,9 @@ static void session_run_isolation_pair( const char * server_transport, const cha
         rocketnet_server_send_packets( server_a );
         if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED &&
              rocketnet_server_client_connected( server_a, 0 ) )
+        {
             break;
+        }
         rocketnet_sleep( 0.002 );
     }
     session_check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
@@ -441,7 +463,9 @@ static void session_run_isolation_pair( const char * server_transport, const cha
         rocketnet_server_send_packets( server_a );
         if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED &&
              rocketnet_server_client_connected( server_a, 0 ) )
+        {
             break;
+        }
         rocketnet_sleep( 0.002 );
     }
     session_check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
@@ -606,7 +630,9 @@ static void session_run_isolation_pair( const char * server_transport, const cha
         rocketnet_server_send_packets( server_b );
         if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED &&
              rocketnet_server_client_connected( server_b, 0 ) )
+        {
             break;
+        }
         rocketnet_sleep( 0.002 );
     }
     session_check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
@@ -695,9 +721,13 @@ static void session_run_isolation_pair( const char * server_transport, const cha
 
     rn_cli_client_stop_and_destroy( client, 1000.0 + ( rocketnet_time() - wall_start ) );
     if ( server_a )
+    {
         rn_cli_server_stop_and_destroy( server_a );
+    }
     if ( server_b )
+    {
         rn_cli_server_stop_and_destroy( server_b );
+    }
 }
 
 void rocketnet_test_session_reconnect_isolation_portable()

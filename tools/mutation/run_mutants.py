@@ -255,17 +255,73 @@ def tree_files(root):
         return [str(p.relative_to(root)) for p in root.rglob("*") if p.is_file() and not skip & set(p.relative_to(root).parts)]
 
 
+SESSIONS, SESSIONS_LOCK = set(), threading.RLock()
+
+
+def kill_session(sid):
+    """SIGKILL every live process in session sid.
+
+    ./bin/test spawns each job in a process group of its own
+    (tests/suite_runner.h), so killing the leader's group alone orphans the jobs.
+    """
+    try:
+        os.killpg(sid, signal.SIGKILL)
+    except OSError:
+        pass
+    for _ in range(10):
+        found = False
+        try:
+            listing = subprocess.run(["ps", "-A", "-o", "pid=,stat="], capture_output=True, text=True).stdout
+        except OSError:
+            listing = ""
+        for line in listing.splitlines():
+            pid, stat = (line.split() + ["", ""])[:2]
+            try:
+                if not stat.startswith("Z") and int(pid) != os.getpid() and os.getsid(int(pid)) == sid:
+                    os.kill(int(pid), signal.SIGKILL)
+                    found = True
+            except (OSError, ValueError):
+                pass
+        if not found:
+            return
+
+
+def kill_all_sessions():
+    with SESSIONS_LOCK:
+        for sid in list(SESSIONS):
+            kill_session(sid)
+
+
+def install_signal_cleanup():
+    """On SIGTERM, SIGINT or SIGHUP (a cancelled CI step) kill every test process, then exit."""
+    def stop(signum, frame):
+        with SESSIONS_LOCK:  # held to the exit: no worker starts a session after this
+            kill_all_sessions()
+            os._exit(128 + signum)
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, stop)
+
+
 def run(cmd, cwd, timeout, env=None):
-    """Run cmd in its own process group; return (code or None on timeout, seconds, output tail)."""
+    """Run cmd in its own session; return (code or None on timeout, seconds, output tail).
+
+    Every process left in the session when cmd ends or times out is killed."""
     start = time.monotonic()
-    proc = subprocess.Popen(cmd, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
+    with SESSIONS_LOCK:
+        proc = subprocess.Popen(cmd, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                start_new_session=True)
+        SESSIONS.add(proc.pid)
     try:
         out, _ = proc.communicate(timeout=timeout)
         code = proc.returncode
     except subprocess.TimeoutExpired:
-        os.killpg(proc.pid, signal.SIGKILL)
+        kill_session(proc.pid)
         out, _ = proc.communicate()
         code = None
+    finally:
+        kill_session(proc.pid)
+        with SESSIONS_LOCK:
+            SESSIONS.discard(proc.pid)
     tail = "\n".join(out.decode(errors="replace").splitlines()[-6:])
     return code, time.monotonic() - start, tail
 
@@ -495,4 +551,8 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    install_signal_cleanup()
+    try:
+        sys.exit(main())
+    finally:
+        kill_all_sessions()

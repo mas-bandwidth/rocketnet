@@ -14,7 +14,9 @@ int rocketnet_num_counters() { return ROCKETNET_NUM_COUNTERS; }
 uint64_t rocketnet_counter_value( const rocketnet_counters_t * counters, int counter )
 {
     if ( !rocketnet_api_null_guard( counters ) )
+    {
         return 0;
+    }
 
     return counter >= 0 && counter < ROCKETNET_NUM_COUNTERS ? counters->values[counter] : 0;
 }
@@ -55,7 +57,9 @@ const char * rocketnet_counter_name( int counter )
 int rocketnet_counter_class( int counter )
 {
     if ( counter < 0 || counter >= ROCKETNET_NUM_COUNTERS )
+    {
         return -1;
+    }
 
     return rocketnet_counter_classes[counter];
 }
@@ -102,23 +106,33 @@ void rocketnet_counters_apply_prefilter( struct rocketnet_counters_t * counters,
                    "a new kernel prefilter counter needs its transport row" );
 
     if ( !rocketnet_api_null_guard( counters ) )
+    {
         return;
+    }
     if ( !rocketnet_api_null_guard( prefilter ) )
+    {
         return;
+    }
 
     for ( int i = 0; i < ROCKETNET_SERVER_XDP_NUM_COUNTERS; i++ )
+    {
         counters->values[rocketnet_prefilter_table[i]] = prefilter[i];
+    }
 }
 
 int rocketnet_counters_conserved( const struct rocketnet_counters_t * counters, char * report, int report_bytes )
 {
     if ( report && report_bytes > 0 )
+    {
         report[0] = '\0';
+    }
 
     if ( !rocketnet_api_null_guard( counters ) )
     {
         if ( report && report_bytes > 0 )
+        {
             snprintf( report, (size_t) report_bytes, "counters is NULL" );
+        }
         return 0;
     }
 
@@ -138,10 +152,12 @@ int rocketnet_counters_conserved( const struct rocketnet_counters_t * counters, 
         if ( is_received_counter && counters->values[received] != outcomes )
         {
             if ( report && report_bytes > 0 )
+            {
                 snprintf( report, (size_t) report_bytes, "%s received=%llu outcomes=%llu",
                           rocketnet_counter_names[received],
                           (unsigned long long) counters->values[received],
                           (unsigned long long) outcomes );
+            }
             return 0;
         }
     }

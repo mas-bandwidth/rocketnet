@@ -199,9 +199,13 @@ static void mc_update( void * transport, double time )
     {
         const mc_packet_t & p = e->inbound[i];
         if ( e->is_server && net->slot_connection[p.slot] == 0 )
+        {
             continue;                                           // no connection in the slot: the transport refuses it
+        }
         if ( !e->is_server && !e->connected )
+        {
             continue;
+        }
         e->batch.push_back( p );
 
         // the opened id goes back to the sender as an ack at its next update
@@ -247,14 +251,20 @@ static uint8_t * mc_start_packet( void * transport, int client_index, int reques
     mc_endpoint_t * e = (mc_endpoint_t *) transport;
     memset( context, 0, sizeof( *context ) );
     if ( request_bytes < 1 || request_bytes > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
+    {
         return NULL;
+    }
     if ( e->is_server ? e->net->slot_connection[client_index] == 0 : !e->connected )
+    {
         return NULL;
+    }
 
     for ( int f = 0; f < MC_MAX_FRAMES; f++ )
     {
         if ( e->frame_used[f] )
+        {
             continue;
+        }
         e->frame_used[f] = true;
         e->frame_id[f] = e->net->next_packet_id++;
         e->frame_slot[f] = e->is_server ? client_index : e->slot;
@@ -272,8 +282,12 @@ static uint8_t * mc_start_packet( void * transport, int client_index, int reques
 static int mc_frame_of( mc_endpoint_t * e, const rocketnet_packet_context_t * context )
 {
     for ( int f = 0; f < MC_MAX_FRAMES; f++ )
+    {
         if ( e->frame_used[f] && context->frame == e->frames[f] )
+        {
             return f;
+        }
+    }
     return -1;
 }
 
@@ -315,9 +329,13 @@ static int mc_finish_packet( void * transport, rocketnet_packet_context_t * cont
     else
     {
         if ( net->drop_next_to_server > 0 )
+        {
             net->drop_next_to_server--;
+        }
         else if ( !net->drop_to_server )
+        {
             net->server->inbound.push_back( packet );
+        }
     }
 
     return rocketnet_send_budget_wire_bytes( ROCKETNET_ACK_BLOCK_MIN_BYTES, payload_bytes );
@@ -342,7 +360,9 @@ static uint64_t mc_connection( void * transport, int client_index )
 {
     mc_endpoint_t * e = (mc_endpoint_t *) transport;
     if ( e->is_server )
+    {
         return e->net->slot_connection[client_index];
+    }
     return e->connected ? 1 : 0;
 }
 
@@ -351,16 +371,22 @@ static void mc_disconnect( void * transport, int client_index )
     mc_endpoint_t * e = (mc_endpoint_t *) transport;
     e->disconnects++;
     if ( e->is_server )
+    {
         mc_net_drop_slot( e->net, client_index );
+    }
     else
+    {
         e->connected = false;
+    }
 }
 
 static int mc_state( void * transport )
 {
     mc_endpoint_t * e = (mc_endpoint_t *) transport;
     if ( e->is_server )
+    {
         return ROCKETNET_SERVER_TRANSPORT_RUNNING;
+    }
     return e->connected ? ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED : ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED;
 }
 
@@ -593,13 +619,19 @@ static void mc_fill( uint8_t * data, uint32_t id, uint32_t bytes )
 static bool mc_verify( const std::vector<uint8_t> & data, uint32_t * out_id )
 {
     if ( data.size() < 4 )
+    {
         return false;
+    }
 
     uint32_t id;
     memcpy( &id, data.data(), 4 );
     for ( uint32_t i = 4; i < data.size(); i++ )
+    {
         if ( data[i] != mc_pattern( id, i ) )
+        {
             return false;
+        }
+    }
     *out_id = id;
 
     return true;
@@ -646,7 +678,9 @@ static void mc_capture( void * context, enum rocketnet_log_level_t level, const 
 {
     (void) context;
     if ( level != ROCKETNET_LOG_LEVEL_ERROR || !strstr( message, "CONFIG mismatch" ) )
+    {
         return;
+    }
 
     if ( g_mc_mismatch_lines < 2 )
     {
@@ -728,7 +762,9 @@ static int mc_records( const mc_packet_t & packet, const rocketnet_message_limit
 {
     rocketnet_message_reader_t reader;
     if ( rocketnet_message_reader_begin( &reader, packet.data, packet.bytes, limits ) != ROCKETNET_MESSAGE_VIOLATION_NONE )
+    {
         return -1;
+    }
 
     int count = 0;
     rocketnet_message_record_t record;
@@ -748,13 +784,17 @@ static void mc_check_first_record_is_config( const mc_endpoint_t * sender, const
 {
     check( !sender->sent_log.empty() );
     if ( sender->sent_log.empty() )
+    {
         return;
+    }
 
     rocketnet_message_record_t records[16];
     const int count = mc_records( sender->sent_log[0], limits, records, 16 );
     check( count >= 1 );
     if ( count < 1 )
+    {
         return;
+    }
     check( records[0].code == ROCKETNET_MESSAGE_CODE_RELIABLE );
     check( records[0].control );
     check( !records[0].block );
@@ -783,8 +823,12 @@ static int mc_config_sends( const mc_endpoint_t * sender, const rocketnet_messag
         rocketnet_message_record_t records[16];
         const int count = mc_records( sender->sent_log[p], limits, records, 16 );
         for ( int i = 0; i < count; i++ )
+        {
             if ( records[i].control )
+            {
                 sends++;
+            }
+        }
     }
 
     return sends;
@@ -841,12 +885,14 @@ static void test_message_config_equal_connects_and_verifies()
         rocketnet_message_record_t records[16];
         const int count = mc_records( pair.net->clients[0]->sent_log[p], &server_slot->ordered.limits, records, 16 );
         for ( int i = 0; i < count; i++ )
+        {
             if ( records[i].code == ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED )
             {
                 check( records[i].number == 1 );
                 found = true;
                 break;
             }
+        }
     }
 
     check( found );
@@ -1148,13 +1194,13 @@ static void test_message_config_reserve_past_32_bits_refused_by_validate_and_cre
 
     int status = -1;
     config.client_send_kbps = last_kbps;
-    check( rocketnet_message_validate_config_ex( &config, &status ) == 1 );
+    check( rocketnet_message_validate_config_internal( &config, &status ) == 1 );
     check( status == ROCKETNET_STATUS_OK );
     check( rocketnet_message_connection_bytes( &config ) > (uint64_t) UINT32_MAX );
 
     status = -1;
     config.client_send_kbps = past_kbps;
-    check( rocketnet_message_validate_config_ex( &config, &status ) == 0 );
+    check( rocketnet_message_validate_config_internal( &config, &status ) == 0 );
     check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
     check( rocketnet_message_connection_bytes( &config ) == 0 );
     check( rocketnet_message_client_required_memory( &config, 0 ) == 0 );
@@ -1176,7 +1222,7 @@ static void test_message_config_reserve_past_32_bits_refused_by_validate_and_cre
 
 // The store's large class only has to hold one chunk: a message larger than a
 // large chunk takes a span of the send spans, never the store
-// (sdk/rocketnet_allocator.h:313-315, sdk/rocketnet_allocator.cpp:1045-1048).
+// (sdk/rocketnet_allocator.h:313-315, sdk/rocketnet_allocator.cpp:1121-1124).
 // An obsolete pre-span floor demanded one large chunk per fragment of
 // max_message_bytes, so it refused the default settings with a 1 MiB send
 // store even though the span path carries the maximal message.
@@ -1188,7 +1234,7 @@ static void test_message_config_send_store_one_mib_accepted()
     config.send_message_buffer_bytes = 1048576;
 
     int status = -1;
-    check( rocketnet_message_validate_config_ex( &config, &status ) == 1 );
+    check( rocketnet_message_validate_config_internal( &config, &status ) == 1 );
     check( status == ROCKETNET_STATUS_OK );
     check( rocketnet_message_connection_bytes( &config ) > 0 );
 
@@ -1200,6 +1246,72 @@ static void test_message_config_send_store_one_mib_accepted()
     mc_pair_teardown( &pair );
 #endif // #if ROCKETNET_DEV
 }
+
+// The smallest send store the table accepts (12288 bytes) with the default
+// 1 MiB max_message_bytes carries every size, each way: a message of 1152
+// bytes takes a store chunk, 1153 and the maximal message take a span
+// (sdk/rocketnet_allocator.h:313-315). Validation alone accepted this config
+// once the pre-span floor went; here the bytes cross the pair and arrive
+// equal to the bytes sent.
+
+#if ROCKETNET_DEV
+static void test_message_config_minimal_send_store_carries_maximal_message()
+{
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    config.send_message_buffer_bytes = 12288;
+    check( config.max_message_bytes == ROCKETNET_MAX_MESSAGE_BYTES );
+    check( rocketnet_message_validate_config( &config ) );
+
+    const int32_t kbps = 100000;                                // the store is the subject, not the rate: a maximal message crosses in about a tenth of a second
+
+    mc_pair_t pair;
+    mc_pair_setup( &pair, 1, &config, kbps, kbps );
+    mc_step( &pair );                                           // the server's update observes the slot's connection
+
+    const int sizes[] = { 1152, 1153, ROCKETNET_MAX_MESSAGE_BYTES };
+    std::vector<uint8_t> data( (size_t) ROCKETNET_MAX_MESSAGE_BYTES );
+
+    for ( int s = 0; s < (int) ( sizeof( sizes ) / sizeof( sizes[0] ) ); s++ )
+    {
+        const int bytes = sizes[s];
+        const uint32_t client_id = 100 + (uint32_t) s;
+        const uint32_t server_id = 200 + (uint32_t) s;
+
+        mc_fill( data.data(), client_id, (uint32_t) bytes );
+        check( rocketnet_message_client_send( pair.clients[0], 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, data.data(), bytes ) != 0 );
+        mc_fill( data.data(), server_id, (uint32_t) bytes );
+        check( rocketnet_message_server_send( pair.server, 0, 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, data.data(), bytes ) != 0 );
+
+        std::vector<mc_received_t> server_got;
+        std::vector<mc_received_t> client_got;
+        for ( int i = 0; i < 1000 && ( server_got.empty() || client_got.empty() ); i++ )
+        {
+            mc_step( &pair, &server_got, &client_got );
+        }
+
+        if ( server_got.size() != 1 || client_got.size() != 1 )
+        {
+            printf( "\nminimal send store: %d bytes, server got %d, client got %d\n", bytes, (int) server_got.size(), (int) client_got.size() );
+        }
+        check( server_got.size() == 1 );
+        check( client_got.size() == 1 );
+
+        uint32_t id = 0;
+        check( server_got[0].bytes.size() == (size_t) bytes );
+        check( mc_verify( server_got[0].bytes, &id ) );
+        check( id == client_id );
+        check( client_got[0].bytes.size() == (size_t) bytes );
+        check( mc_verify( client_got[0].bytes, &id ) );
+        check( id == server_id );
+    }
+
+    check( rocketnet_message_client_disconnect_reason( pair.clients[0] ) == ROCKETNET_DISCONNECT_REASON_NONE );
+    check( rocketnet_message_server_disconnect_reason( pair.server, 0 ) == ROCKETNET_DISCONNECT_REASON_NONE );
+
+    mc_pair_teardown( &pair );
+}
+#endif // #if ROCKETNET_DEV
 
 #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_message_config_mismatch_ends_both_connections );
@@ -1215,3 +1327,6 @@ REGISTER_UNIT_TEST( test_message_config_resend_delay_max_zero_refused );
 REGISTER_UNIT_TEST( test_message_config_resend_delay_cross_rule_refused );
 REGISTER_UNIT_TEST( test_message_config_reserve_past_32_bits_refused_by_validate_and_create );
 REGISTER_UNIT_TEST( test_message_config_send_store_one_mib_accepted );
+#if ROCKETNET_DEV
+REGISTER_UNIT_TEST( test_message_config_minimal_send_store_carries_maximal_message );
+#endif // #if ROCKETNET_DEV

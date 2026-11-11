@@ -10,7 +10,7 @@
 // failing at each allocation in turn.
 //
 // Not reachable in the unit tier:
-//   * rocketnet_init_ex PLATFORM_INIT_FAILED and CRYPTO_INIT_FAILED, which need
+//   * rocketnet_init_internal PLATFORM_INIT_FAILED and CRYPTO_INIT_FAILED, which need
 //     the platform or sodium start to fail (no fault hook exists);
 //   * the client and server transport create exits (C1-C11, S1-S14), which are
 //     Layer 4 work owned by the transport cards, not this card's surface.
@@ -38,11 +38,15 @@ static void * allocate( void * context, size_t bytes )
     allocator_state * state = (allocator_state *) context;
     const int call = ++state->calls;
     if ( state->fail_at == call )
+    {
         return NULL;
+    }
 
     void * base = malloc( bytes + 128 );
     if ( !base )
+    {
         return NULL;
+    }
     uintptr_t address = ( ( (uintptr_t) base + sizeof( void * ) + 63 ) & ~(uintptr_t) 63 ) + 16;
     memcpy( (void *) ( address - sizeof( void * ) ), &base, sizeof( base ) );
     memset( (void *) address, 0xA5, bytes );
@@ -67,12 +71,12 @@ static void check_message_validate_status()
 
     // a NULL config means the defaults, and the defaults are accepted
 
-    check( rocketnet_message_validate_config_ex( NULL, &status ) == 1 );
+    check( rocketnet_message_validate_config_internal( NULL, &status ) == 1 );
     check( status == ROCKETNET_STATUS_OK );
 
     rocketnet_message_default_config( &config );
     status = -1;
-    check( rocketnet_message_validate_config_ex( &config, &status ) == 1 );
+    check( rocketnet_message_validate_config_internal( &config, &status ) == 1 );
     check( status == ROCKETNET_STATUS_OK );
 
     // the table's range refusal
@@ -80,7 +84,7 @@ static void check_message_validate_status()
     rocketnet_message_default_config( &config );
     config.num_channels = 0;
     status = -1;
-    check( rocketnet_message_validate_config_ex( &config, &status ) == 0 );
+    check( rocketnet_message_validate_config_internal( &config, &status ) == 0 );
     check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
 
     // the window count is not a power of two
@@ -88,7 +92,7 @@ static void check_message_validate_status()
     rocketnet_message_default_config( &config );
     config.reliable_messages_in_flight = 96;
     status = -1;
-    check( rocketnet_message_validate_config_ex( &config, &status ) == 0 );
+    check( rocketnet_message_validate_config_internal( &config, &status ) == 0 );
     check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
 
     // ring placements are not multiples of 16
@@ -96,7 +100,7 @@ static void check_message_validate_status()
     rocketnet_message_default_config( &config );
     config.receive_message_buffer_bytes = 262145;
     status = -1;
-    check( rocketnet_message_validate_config_ex( &config, &status ) == 0 );
+    check( rocketnet_message_validate_config_internal( &config, &status ) == 0 );
     check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
 
     // a maximal message cannot fit the receive ring
@@ -105,7 +109,7 @@ static void check_message_validate_status()
     config.receive_message_buffer_bytes = 4096;
     config.max_message_bytes = 5000;
     status = -1;
-    check( rocketnet_message_validate_config_ex( &config, &status ) == 0 );
+    check( rocketnet_message_validate_config_internal( &config, &status ) == 0 );
     check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
 
     // more fragments than the window holds
@@ -114,7 +118,7 @@ static void check_message_validate_status()
     config.reliable_messages_in_flight = 64;
     config.max_message_bytes = 100000;
     status = -1;
-    check( rocketnet_message_validate_config_ex( &config, &status ) == 0 );
+    check( rocketnet_message_validate_config_internal( &config, &status ) == 0 );
     check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
 
     // a small send store is enough for a maximal block: the block takes a
@@ -124,7 +128,7 @@ static void check_message_validate_status()
     config.send_message_buffer_bytes = 12288;
     config.max_message_bytes = 100000;
     status = -1;
-    check( rocketnet_message_validate_config_ex( &config, &status ) == 1 );
+    check( rocketnet_message_validate_config_internal( &config, &status ) == 1 );
     check( status == ROCKETNET_STATUS_OK );
 
     // resend_delay_min above resend_delay_max
@@ -132,7 +136,7 @@ static void check_message_validate_status()
     rocketnet_message_default_config( &config );
     config.message_resend_delay_min_ms = 3000;
     status = -1;
-    check( rocketnet_message_validate_config_ex( &config, &status ) == 0 );
+    check( rocketnet_message_validate_config_internal( &config, &status ) == 0 );
     check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
 
     // resend_delay_initial outside the min/max clamp
@@ -141,7 +145,7 @@ static void check_message_validate_status()
     config.message_resend_delay_min_ms = 200;
     config.message_resend_delay_initial_ms = 150;
     status = -1;
-    check( rocketnet_message_validate_config_ex( &config, &status ) == 0 );
+    check( rocketnet_message_validate_config_internal( &config, &status ) == 0 );
     check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
 
     // reliable_timeout too short for the resend budget
@@ -152,7 +156,7 @@ static void check_message_validate_status()
     config.message_resend_delay_initial_ms = 5000;
     config.reliable_message_timeout_ms = 10000;
     status = -1;
-    check( rocketnet_message_validate_config_ex( &config, &status ) == 0 );
+    check( rocketnet_message_validate_config_internal( &config, &status ) == 0 );
     check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
 }
 
@@ -164,45 +168,45 @@ static void test_lifecycle_ex_reports_every_status()
     // the worker starts the process initialized; return to the pre-init state
     // so the lifecycle refusals below are reachable
 
-    check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
-    check( rocketnet_term_ex() == ROCKETNET_STATUS_NOT_INITIALIZED );
+    check( rocketnet_term_internal() == ROCKETNET_STATUS_OK );
+    check( rocketnet_term_internal() == ROCKETNET_STATUS_NOT_INITIALIZED );
 
     // init: success, then a second init is the re-entry refusal
 
     status = -1;
-    check( rocketnet_init_ex( NULL, NULL, NULL, &status ) );
+    check( rocketnet_init_internal( NULL, NULL, NULL, &status ) );
     check( status == ROCKETNET_STATUS_OK );
 
     status = -1;
-    check( !rocketnet_init_ex( NULL, NULL, NULL, &status ) );
+    check( !rocketnet_init_internal( NULL, NULL, NULL, &status ) );
     check( status == ROCKETNET_STATUS_ALREADY_INITIALIZED );
 
     // term with a live allocation is refused and leaves the library up
 
     void * live = rocketnet_malloc( NULL, 16 );
     check( live != NULL );
-    check( rocketnet_term_ex() == ROCKETNET_STATUS_LIVE_ALLOCATIONS );
+    check( rocketnet_term_internal() == ROCKETNET_STATUS_LIVE_ALLOCATIONS );
 
     status = -1;
-    check( !rocketnet_init_ex( NULL, NULL, NULL, &status ) );
+    check( !rocketnet_init_internal( NULL, NULL, NULL, &status ) );
     check( status == ROCKETNET_STATUS_ALREADY_INITIALIZED );
 
     rocketnet_free( NULL, live );
 
     // a clean term is OK
 
-    check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    check( rocketnet_term_internal() == ROCKETNET_STATUS_OK );
 
     // allocator while uninitialized: a partial set is INVALID_ARGUMENT, a
     // replacement with outstanding allocations is LIVE_ALLOCATIONS, and a
     // clean replacement is OK
 
-    check( rocketnet_allocator_ex( NULL, NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
-    check( rocketnet_allocator_ex( allocate, release ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_allocator_internal( NULL, NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+    check( rocketnet_allocator_internal( allocate, release ) == ROCKETNET_STATUS_OK );
 
     void * pre_init = rocketnet_malloc( &state, 16 );
     check( pre_init != NULL );
-    check( rocketnet_allocator_ex( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_LIVE_ALLOCATIONS );
+    check( rocketnet_allocator_internal( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_LIVE_ALLOCATIONS );
 
     rocketnet_free( &state, pre_init );
     check( state.live == 0 );
@@ -212,21 +216,21 @@ static void test_lifecycle_ex_reports_every_status()
     // init with the fault-injecting allocator in context
 
     status = -1;
-    check( rocketnet_init_ex( &state, allocate, release, &status ) );
+    check( rocketnet_init_internal( &state, allocate, release, &status ) );
     check( status == ROCKETNET_STATUS_OK );
 
     // allocator after init is ALREADY_INITIALIZED
 
-    check( rocketnet_allocator_ex( allocate, release ) == ROCKETNET_STATUS_ALREADY_INITIALIZED );
+    check( rocketnet_allocator_internal( allocate, release ) == ROCKETNET_STATUS_ALREADY_INITIALIZED );
 
     // a clean term is OK and leaves no allocation behind
 
-    check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    check( rocketnet_term_internal() == ROCKETNET_STATUS_OK );
     check( state.live == 0 );
 
     // restore the default allocator for the worker's own term
 
-    check( rocketnet_allocator_ex( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_allocator_internal( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
 }
 
 REGISTER_UNIT_TEST( test_lifecycle_ex_reports_every_status );

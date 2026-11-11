@@ -4,7 +4,7 @@
 transport and the message object keep: the caller's raw time beside the
 clamped time the owner hands out
 (`rocketnet_update_clock_advance` in `sdk/rocketnet_client_transport.cpp`,
-declared beside `rocketnet_clamp_update_time` in `sdk/rocketnet_internal.h`).
+declared in `sdk/rocketnet_internal.h`).
 The model is the clock only; it says nothing about the packets, the channels
 or the slots.
 

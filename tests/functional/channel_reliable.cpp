@@ -12,7 +12,7 @@ static void reliable_functional_fail( const char * condition, int line )
     exit( 1 );
 }
 
-#define reliable_check( condition ) do { if ( !( condition ) ) reliable_functional_fail( #condition, __LINE__ ); } while ( 0 )
+#define reliable_check( condition ) do { if ( !( condition ) ) { reliable_functional_fail( #condition, __LINE__ ); } } while ( 0 )
 
 void reliable_mixed_sizes_over_lossy_link()
 {
@@ -26,11 +26,13 @@ void reliable_mixed_sizes_over_lossy_link()
     uint8_t server_data[4][8192];
 
     for ( int i = 0; i < 4; i++ )
+    {
         for ( int j = 0; j < lengths[i]; j++ )
         {
             client_data[i][j] = (uint8_t) ( i * 31 + j * 7 + 1 );
             server_data[i][j] = (uint8_t) ( i * 29 + j * 11 + 2 );
         }
+    }
 
     for ( int i = 0; i < 4; i++ )
     {
@@ -50,9 +52,13 @@ void reliable_mixed_sizes_over_lossy_link()
             int match = -1;
 
             for ( int i = 0; i < 4; i++ )
+            {
                 if ( delivery.bytes == lengths[i] && delivery.hash == rocketnet_channel_hash( client_data[i], lengths[i] ) &&
                      memcmp( delivery.data, client_data[i], (size_t) lengths[i] ) == 0 )
+                {
                     match = i;
+                }
+            }
             reliable_check( match >= 0 && !( server_seen & ( 1u << match ) ) );
             server_seen |= 1u << match;
         }
@@ -62,9 +68,13 @@ void reliable_mixed_sizes_over_lossy_link()
             int match = -1;
 
             for ( int i = 0; i < 4; i++ )
+            {
                 if ( delivery.bytes == lengths[i] && delivery.hash == rocketnet_channel_hash( server_data[i], lengths[i] ) &&
                      memcmp( delivery.data, server_data[i], (size_t) lengths[i] ) == 0 )
+                {
                     match = i;
+                }
+            }
             reliable_check( match >= 0 && !( client_seen & ( 1u << match ) ) );
             client_seen |= 1u << match;
         }
@@ -185,10 +195,12 @@ void reliable_duplicate_after_gap_delivered_once()
     int b_resends = 0;
 
     for ( int i = 0; i < h.held_count; i++ )
+    {
         if ( h.held_bytes[i] < a_bytes )
         {
             order[count++] = i;
         }
+    }
 
     b_resends = count;
     reliable_check( rocketnet_channel_harness_deliver_held( &h, order, count ) == count );
@@ -208,10 +220,12 @@ void reliable_duplicate_after_gap_delivered_once()
 
     count = 0;
     for ( int i = 0; i < h.held_count; i++ )
+    {
         if ( h.held_bytes[i] > a_bytes )
         {
             order[count++] = i;
         }
+    }
 
     reliable_check( rocketnet_channel_harness_deliver_held( &h, order, count ) == count );
     rocketnet_channel_harness_clear_held( &h );
@@ -510,7 +524,9 @@ void default_one_mib_messages_all_modes()
             }
 
             if ( client_seen && server_seen && ++settled == 120 )
+            {
                 break;
+            }
         }
 
         printf( "default 1 MiB mode=%d client_received=%d server_received=%d\n", mode, client_seen, server_seen );

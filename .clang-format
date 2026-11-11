@@ -5,7 +5,9 @@
 # reproduces Allman braces, 4-space indent, spaces inside parentheses but not
 # empty ones, `char * p`, `(T) value` casts, tight square brackets, unlimited
 # line length, unsorted includes, indented case labels and namespaces, and
-# macro definition bodies left as written.
+# macro definition bodies left as written. InsertBraces was then set by the
+# owner's ruling of 2026-11-10, not by the measurement below (see the end of
+# this comment).
 #
 # Changed original lines (`diff <original> <(clang-format-18 <file>)` lines
 # marked `<`), this file copied beside the pinned clones:
@@ -32,14 +34,14 @@
 #   sizeof is written tight, `sizeof(buffer)` (netcode.c:130); no sizeof-only paren option, SpacesInParensOptions Other false costs 3552/7739
 #   some calls and groupings are tight, `netcode_generate_nonce(nonce)` (netcode.c:5594); the reference mixes forms, Other false costs 3552/7739
 #   function-pointer declarators are tight, `void (*f)( ... )` (netcode.c:103); Other spaces declarator parens with call parens, no separate option
-#   preprocessor lines are indented by hand, `    #if` (netcode.c:93); BeforeHash and AfterHash indent by depth everywhere and cost 796/1827 and 833/1903
+#   preprocessor lines are indented by hand, `    #if` (netcode.c:93); BeforeHash and AfterHash indent by depth everywhere and cost 796/1827 and 833/1903; with IndentPPDirectives None they are pulled to column 0, so a preprocessor group indented by hand holds only inside a clang-format off region; sdk/rocketnet.h, whose groups are indented one level per #if with their doc comments (an include guard after #pragma once is not seen as a guard, so BeforeHash would also indent the whole header), sits between one clang-format off and on pair
 #   preprocessor parens are tight, `#if defined(_WIN32)`, `#pragma warning(disable:4996)` (next.h:80, netcode.c:36); SpacesInParens has no preprocessor-only switch
 #   short unions, enums and if/else blocks sit on one line, `union { ... } data;` (next_address.h:17); Allman wrapping splits them, custom wrapping costs 801/1625
 #   byte tables keep several values per line (netcode.c:5792); a braced list ending in a comma is broken one element per line, no option keeps it
 #   `#if` conditions continue over backslash lines (netcode.h:62); with ColumnLimit 0 they are joined, ColumnLimit 300 costs 1010/2290
 #   case bodies and values sit at a hand-chosen column (netcode.c:2797); short-case alignment pads to the longest label only
 #   continuation arguments are sometimes indented one level, not aligned (next_client.cpp:724); AlignAfterOpenBracket DontAlign gives 878/1418, worse in total
-#   declarations inside `#if` are indented (next_platform_gdk.h:22); no option indents code by preprocessor depth
+#   declarations inside `#if` are indented (next_platform_gdk.h:22); no option indents code by preprocessor depth; sdk/rocketnet.h indents the declarations and doc comments of its #if ROCKETNET_DEV block by hand, inside its off/on pair
 #   spaces are hand-padded inside lines, `>> 8  )`, `x  = y` (netcode.c:316, next_header.h:75); AlignConsecutiveAssignments costs 1039/2585, no option for padding in expressions
 #   binary operators inside an index are tight, `buffer[4*1024]` (netcode.c:129); binary operators are always spaced, no index-only option
 #   some casts have no space after, `(uint32_t)INVALID_SOCKET` (netcode.c:653); SpaceAfterCStyleCast false costs 871/1625
@@ -48,6 +50,10 @@
 #   comment-only lines inside a #define body are joined onto the line above, dropping their backslashes; SkipMacroDefinitionBody does not cover comments, so such macros sit between clang-format off and on
 #   a #if or #elif condition continued over backslash lines is joined into one line (see above); these sit between clang-format off and on
 #   a directive's trailing // comment followed by a // comment line gains a backslash that splices the two; that directive sits between clang-format off and on
+#
+# Set by the owner's ruling of 2026-11-10, after the tuning above and not
+# measured against the reference trees:
+#   InsertBraces: true -- every if, else, for, while and do body is braced, "brackets are just safer". Braced by hand, because the formatter does not reach them: control statements inside a #define (SkipMacroDefinitionBody), a body that a preprocessor branch separates from its statement or that sits in a lambda holding a preprocessor branch (left unbraced), and a lambda body passed as a call argument (braces inserted but not placed)
 Language: Cpp
 BasedOnStyle: LLVM
 IndentWidth: 4
@@ -85,7 +91,7 @@ Cpp11BracedListStyle: false
 MaxEmptyLinesToKeep: 4
 KeepEmptyLinesAtTheStartOfBlocks: true
 SeparateDefinitionBlocks: Leave
-InsertBraces: false
+InsertBraces: true
 RemoveBracesLLVM: false
 FixNamespaceComments: false
 ReflowComments: false

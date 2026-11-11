@@ -184,15 +184,15 @@ int rocketnet_client_protocol_process_record( struct rocketnet_client_protocol_t
                                               int out_payload_capacity,
                                               int * out_payload_bytes );
 
-// Builds a payload packet for the server, and stamps the send -- ordinary
-// traffic suppresses the client's own keep-alive. NOT "as on the server":
-// the server's rule splits on whether the client has acknowledged a
-// keep-alive, because until then it is starving the packet that would
-// establish the connection. The client has no such split, and needs none --
-// it sends keep-alives only from _connected_, and nothing at the far end
-// waits on one, since any sealed packet confirms the slot.
-// Valid only while connected; returns the wire size, or 0 when not connected
-// or the payload does not fit.
+// Starts a payload packet for the server: takes the next session send
+// sequence into *sequence. Valid only while connected; returns 1, or 0 when
+// not connected. The seal (rocketnet_client_protocol_seal_payload_frame)
+// stamps the send -- ordinary traffic suppresses the client's own keep-alive.
+// NOT "as on the server": the server's rule splits on whether the client has
+// acknowledged a keep-alive, because until then it is starving the packet
+// that would establish the connection. The client has no such split, and
+// needs none -- it sends keep-alives only from _connected_, and nothing at the
+// far end waits on one, since any sealed packet confirms the slot.
 
 int rocketnet_client_protocol_start_payload( struct rocketnet_client_protocol_t * client, uint64_t * sequence );
 

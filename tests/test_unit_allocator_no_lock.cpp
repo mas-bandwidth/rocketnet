@@ -40,7 +40,7 @@ static void no_lock_free( void * context, void * p )
 
 static void test_allocator_malloc_and_free_take_no_lock()
 {
-    check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    check( rocketnet_term_internal() == ROCKETNET_STATUS_OK );
     check( rocketnet_init( NULL, no_lock_malloc, no_lock_free ) == ROCKETNET_STATUS_OK );
 
     const uint64_t locks_before = rocketnet_lifecycle_locks_for_test();
@@ -53,7 +53,9 @@ static void test_allocator_malloc_and_free_take_no_lock()
     }
 
     for ( int i = 0; i < 16; i++ )
+    {
         rocketnet_free( NULL, blocks[i] );
+    }
 
     // a refusal by the installed allocator, and a size past the header overhead
 
@@ -67,10 +69,10 @@ static void test_allocator_malloc_and_free_take_no_lock()
 
     void * live = rocketnet_malloc( NULL, 64 );
     check( live != NULL );
-    check( rocketnet_term_ex() == ROCKETNET_STATUS_LIVE_ALLOCATIONS );
+    check( rocketnet_term_internal() == ROCKETNET_STATUS_LIVE_ALLOCATIONS );
     rocketnet_free( NULL, live );
 
-    check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    check( rocketnet_term_internal() == ROCKETNET_STATUS_OK );
     check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
 

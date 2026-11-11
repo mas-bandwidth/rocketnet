@@ -11,8 +11,10 @@
 static int rn_window_duplicate( rn_window_receive_t * receive )
 {
     if ( receive->region->counters )
+    {
         rocketnet_platform_atomic_add_u64(
             (volatile uint64_t *) &receive->region->counters->values[ROCKETNET_COUNTER_MESSAGE_DUPLICATE], 1 );
+    }
 
     return RN_WINDOW_RECEIVE_DUPLICATE;
 }
@@ -39,7 +41,9 @@ int rn_window_receive_accept( rn_window_receive_t * receive, const rocketnet_mes
     rocketnet_assert( receive && receive->region && record && slot );
 
     if ( receive->violation != ROCKETNET_MESSAGE_VIOLATION_NONE )
+    {
         return RN_WINDOW_RECEIVE_VIOLATION;
+    }
 
     *slot = RN_DESCRIPTOR_NONE;
 
@@ -50,7 +54,9 @@ int rn_window_receive_accept( rn_window_receive_t * receive, const rocketnet_mes
     // R is zero. No unsigned subtraction can turn it into a huge fresh n.
 
     if ( delta < 0 )
+    {
         return rn_window_duplicate( receive );
+    }
 
     if ( (uint32_t) delta >= W || receive->R > UINT64_MAX - (uint32_t) delta )
     {
@@ -63,7 +69,9 @@ int rn_window_receive_accept( rn_window_receive_t * receive, const rocketnet_mes
     const uint64_t bit = 1ULL << ( index & 63 );
     uint64_t * word = &receive->region->received_bits[index >> 6];
     if ( *word & bit )
+    {
         return rn_window_duplicate( receive );
+    }
 
     rn_receive_descriptor_t * descriptor = &receive->region->receive_descriptors[index];
     if ( descriptor->live && descriptor->number != number )
@@ -99,7 +107,9 @@ int rn_window_receive_accept( rn_window_receive_t * receive, const rocketnet_mes
         const uint64_t floor_bit = 1ULL << ( floor_index & 63 );
         uint64_t * floor_word = &receive->region->received_bits[floor_index >> 6];
         if ( !( *floor_word & floor_bit ) )
+        {
             break;
+        }
 
         *floor_word &= ~floor_bit;
         receive->R++;
@@ -120,6 +130,8 @@ void rn_window_receive_release( rn_window_receive_t * receive, uint64_t number )
     const uint32_t index = (uint32_t) ( number & ( receive->region->window - 1 ) );
     rn_receive_descriptor_t * descriptor = &receive->region->receive_descriptors[index];
     if ( descriptor->live && descriptor->number == number )
+    {
         descriptor->live = 0;
+    }
 }
 #endif // #if ROCKETNET_DEV

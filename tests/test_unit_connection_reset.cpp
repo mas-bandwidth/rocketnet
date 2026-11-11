@@ -57,7 +57,9 @@ static void reset_env_pin_set_aside( reset_env_pin_t * pin, const char * name )
 static void reset_env_pin_put_back( const reset_env_pin_t * pin )
 {
     if ( !pin->was_set )
+    {
         return;
+    }
     rocketnet_test_env_setenv( pin->name, pin->value, 1 );
 }
 #endif // #if ROCKETNET_DEV
@@ -159,11 +161,17 @@ static void reset_field_holds( const char * structure, const char * member, cons
 
     bool holds;
     if ( strcmp( structure, "rocketnet_client_protocol_t" ) == 0 && strcmp( member, "ack" ) == 0 )
+    {
         holds = rocketnet_ack_endpoint_state_equal( (const rocketnet_ack_endpoint_t *) value, (const rocketnet_ack_endpoint_t *) expected );
+    }
     else if ( strcmp( structure, "rocketnet_client_protocol_t" ) == 0 && strcmp( member, "acked_packet_ids" ) == 0 )
+    {
         holds = true;
+    }
     else
+    {
         holds = memcmp( value, expected, bytes ) == 0;
+    }
 
     if ( !holds )
     {
@@ -190,9 +198,13 @@ static void test_connection_reset_inventory_covers_every_field()
     for ( size_t i = 0; i < RESET_COUNT( client_protocol_fields ); i++ )
     {
         if ( client_protocol_fields[i].reset )
+        {
             reset_fields++;
+        }
         else
+        {
             keep_fields++;
+        }
     }
 
     check( reset_fields == 36 );
@@ -445,8 +457,12 @@ static void test_connection_reset_client_slots_reuse_keeps_full_identity()
     check( rocketnet_client_slots_find( slots, initial[2] ) == -1 );
     check( rocketnet_client_slots_find( slots, initial[5] ) == -1 );
     for ( int i = 0; i < LIVE; ++i )
+    {
         if ( i != 2 && i != 5 )
+        {
             check( rocketnet_client_slots_find( slots, initial[i] ) == index[i] );
+        }
+    }
 
     const uint64_t replacement_5 = UINT64_C( 0x1234567800000001 );
     const uint64_t replacement_2 = UINT64_C( 0xfedcba9800000001 );
@@ -485,7 +501,9 @@ static void test_connection_reset_client_slots_reuse_keeps_full_identity()
         for ( int i = 0; i < LIVE; ++i )
         {
             if ( i == 2 || i == 5 )
+            {
                 continue;
+            }
             check( rocketnet_client_slots_find( slots, initial[i] ) == index[i] );
         }
 
@@ -610,7 +628,7 @@ static rocketnet_message_server_t * reset_loopback_server_create( double now, co
     reset_env_pin_t pin;
     reset_env_pin_set_aside( &pin, "ROCKETNET_SERVER_TRANSPORT" );
 #endif // #if ROCKETNET_DEV
-    rocketnet_server_transport_t * transport = rocketnet_server_transport_create_current_ex( NULL, "127.0.0.1:0", &config, now, &status );
+    rocketnet_server_transport_t * transport = rocketnet_server_transport_create_current_internal( NULL, "127.0.0.1:0", &config, now, &status );
 #if ROCKETNET_DEV
     reset_env_pin_put_back( &pin );
 #endif // #if ROCKETNET_DEV
@@ -694,7 +712,9 @@ static void reset_loopback_step( reset_loopback_t * f )
     for ( int i = 0; i < RESET_LOOPBACK_MAX_CLIENTS; i++ )
     {
         if ( !f->clients[i] )
+        {
             continue;
+        }
         check( rocketnet_message_client_update( f->clients[i], f->now ) == ROCKETNET_UPDATE_OK );
         rocketnet_message_client_send_packets( f->clients[i] );
     }
@@ -717,7 +737,9 @@ static int reset_loopback_connect( reset_loopback_t * f, int which, uint64_t cli
             const int slot = rocketnet_client_transport_client_index( rocketnet_message_client_transport( f->clients[which] ) );
             if ( slot >= 0 && slot < RESET_LOOPBACK_MAX_CLIENTS &&
                  rocketnet_message_server_client_connected( f->server, slot ) )
+            {
                 return slot;
+            }
         }
     }
 
@@ -731,12 +753,16 @@ static int reset_loopback_advance_client_to_state( reset_loopback_t * f, int whi
     for ( int i = 0; i < 400; i++ )
     {
         if ( rocketnet_message_client_state( f->clients[which] ) == target )
+        {
             return 1;
+        }
         f->now += 0.01;
         check( rocketnet_message_client_update( f->clients[which], f->now ) == ROCKETNET_UPDATE_OK );
         rocketnet_message_client_send_packets( f->clients[which] );
         if ( rocketnet_message_client_state( f->clients[which] ) == target )
+        {
             return 1;
+        }
         check( rocketnet_message_server_update( f->server, f->now ) == ROCKETNET_UPDATE_OK );
         rocketnet_message_server_send_packets( f->server );
     }
@@ -750,7 +776,9 @@ static void reset_loopback_wait_for_server_connection_state_clean( reset_loopbac
     {
         if ( rocketnet_server_transport_connection_state_clean_for_test(
                  rocketnet_message_server_transport( f->server ) ) )
+        {
             return;
+        }
         f->now += 0.01;
         check( rocketnet_message_server_update( f->server, f->now ) == ROCKETNET_UPDATE_OK );
         rocketnet_message_server_send_packets( f->server );
@@ -762,8 +790,12 @@ static void reset_loopback_wait_for_server_connection_state_clean( reset_loopbac
 static void reset_loopback_destroy( reset_loopback_t * f )
 {
     for ( int i = 0; i < RESET_LOOPBACK_MAX_CLIENTS; i++ )
+    {
         if ( f->clients[i] )
+        {
             rn_test_message_client_stop_and_destroy( f->clients[i] );
+        }
+    }
     rn_test_message_server_stop_and_destroy( f->server );
 }
 
@@ -925,7 +957,7 @@ static void test_connection_reset_deferred_disconnect_does_not_charge_reused_slo
     reset_env_pin_t pin;
     reset_env_pin_set_aside( &pin, "ROCKETNET_SERVER_TRANSPORT" );
 #endif // #if ROCKETNET_DEV
-    rocketnet_server_transport_t * transport = rocketnet_server_transport_create_current_ex( NULL, "127.0.0.1:0", &server_config, now, &status );
+    rocketnet_server_transport_t * transport = rocketnet_server_transport_create_current_internal( NULL, "127.0.0.1:0", &server_config, now, &status );
 #if ROCKETNET_DEV
     reset_env_pin_put_back( &pin );
 #endif // #if ROCKETNET_DEV
@@ -987,7 +1019,9 @@ static void test_connection_reset_deferred_disconnect_does_not_charge_reused_slo
         rocketnet_message_client_update( replacement, now );
         rocketnet_message_client_send_packets( replacement );
         if ( rocketnet_client_transport_state( replacement_transport ) == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE )
+        {
             break;
+        }
         rocketnet_message_server_update( server, now );
         rocketnet_message_server_send_packets( server );
         handshake_ticks++;
@@ -1160,7 +1194,9 @@ static void test_connection_reset_drained_frame_charges_sealing_connection_only(
         check( rocketnet_message_client_update( replacement, f.now ) == ROCKETNET_UPDATE_OK );
         rocketnet_message_client_send_packets( replacement );
         if ( rocketnet_client_transport_state( replacement_transport ) == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE )
+        {
             break;
+        }
         check( rocketnet_message_client_update( f.clients[0], f.now ) == ROCKETNET_UPDATE_OK );
         rocketnet_message_client_send_packets( f.clients[0] );
         check( rocketnet_message_server_update( f.server, f.now ) == ROCKETNET_UPDATE_OK );
@@ -1542,7 +1578,9 @@ static void * reset_alloc_failure_malloc( void * context, size_t bytes )
 {
     (void) context;
     if ( reset_alloc_failure_armed )
+    {
         return NULL;
+    }
     return malloc( bytes );
 }
 

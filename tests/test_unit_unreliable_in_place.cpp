@@ -127,7 +127,9 @@ static ip_end_t * ip_taking = NULL;
 static bool ip_ack_only_take( const ip_packet_t & packet )
 {
     if ( !packet.data.empty() )
+    {
         return false;
+    }
     for ( size_t k = 0; k < packet.acks.size(); k++ )
     {
         ip_taking->acks_inbox.push_back( packet.acks[k] );
@@ -201,14 +203,18 @@ static uint8_t * ip_start_packet( void * transport, int client_index, int reques
     if ( request_bytes < 1 || request_bytes > IP_ARENA_BYTES || e->refuse_start || !e->connected )
     {
         if ( e->refuse_start )
+        {
             e->refused_start++;
+        }
         return NULL;
     }
 
     for ( int f = 0; f < IP_FRAMES; f++ )
     {
         if ( e->used[f] )
+        {
             continue;
+        }
         e->used[f] = true;
         e->frame_id[f] = ++e->net->next_id;
         context->frame = e->frames[f];
@@ -230,8 +236,12 @@ static uint8_t * ip_start_packet( void * transport, int client_index, int reques
 static int ip_frame_of( ip_end_t * e, const rocketnet_packet_context_t * context )
 {
     for ( int f = 0; f < IP_FRAMES; f++ )
+    {
         if ( e->used[f] && context->frame == e->frames[f] )
+        {
             return f;
+        }
+    }
     return -1;
 }
 
@@ -259,7 +269,9 @@ static int ip_finish_packet( void * transport, rocketnet_packet_context_t * cont
     ip_end_t * remote = e->is_server ? &e->net->client : &e->net->server;
     remote->inbound.push_back( packet );
     if ( payload_bytes > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
+    {
         return payload_bytes + 64 * ( payload_bytes / ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 1 );   // the fragments' wire bytes
+    }
     return rocketnet_send_budget_wire_bytes( ROCKETNET_ACK_BLOCK_MIN_BYTES, payload_bytes );
 }
 
@@ -284,7 +296,9 @@ static void ip_send_packets( void * transport )
 {
     ip_end_t * e = (ip_end_t *) transport;
     if ( e->acks_due.empty() )
+    {
         return;
+    }
 
     ip_packet_t packet;
     packet.id = ++e->net->next_id;
@@ -311,7 +325,9 @@ static int ip_state( void * transport )
 {
     ip_end_t * e = (ip_end_t *) transport;
     if ( e->is_server )
+    {
         return ROCKETNET_SERVER_TRANSPORT_RUNNING;
+    }
     return e->connected ? ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED : ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED;
 }
 
@@ -404,7 +420,9 @@ static void ip_step( ip_pair_t * pair, std::vector<ip_received_t> * server_got, 
         static rocketnet_message_batch_t batch;     // 1.5 MB: never on the stack (Windows gives 1 MB)
         const int count = rocketnet_message_server_receive_messages( pair->server, &batch );
         if ( count == 0 )
+        {
             break;
+        }
 
         for ( int i = 0; i < batch.num_messages && server_got; i++ )
         {
@@ -420,7 +438,9 @@ static void ip_step( ip_pair_t * pair, std::vector<ip_received_t> * server_got, 
         static rocketnet_message_batch_t batch;     // 1.5 MB: never on the stack (Windows gives 1 MB)
         const int count = rocketnet_message_client_receive_messages( pair->client, &batch );
         if ( count == 0 )
+        {
             break;
+        }
 
         for ( int i = 0; i < batch.num_messages && client_got; i++ )
         {
@@ -451,8 +471,12 @@ static bool ip_inside( const uint8_t * p, int bytes, const ip_buffer_t & buffer 
 static bool ip_inside_any( const uint8_t * p, int bytes, const std::vector<ip_buffer_t> & buffers )
 {
     for ( size_t i = 0; i < buffers.size(); i++ )
+    {
         if ( ip_inside( p, bytes, buffers[i] ) )
+        {
             return true;
+        }
+    }
     return false;
 }
 
@@ -493,8 +517,12 @@ static bool ip_got( const std::vector<ip_received_t> & got, int channel, uint32_
     std::vector<uint8_t> expected( (size_t) bytes );
     ip_fill( expected.data(), id, bytes );
     for ( size_t i = 0; i < got.size(); i++ )
+    {
         if ( got[i].channel == channel && (int) got[i].bytes.size() == bytes && memcmp( got[i].bytes.data(), expected.data(), (size_t) bytes ) == 0 )
+        {
             return true;
+        }
+    }
 
     return false;
 }
@@ -521,9 +549,13 @@ static void test_unreliable_fit_is_written_in_the_packet()
         }
 
         if ( from_server )
+        {
             rocketnet_message_server_send_packets( pair.server );
+        }
         else
+        {
             rocketnet_message_client_send_packets( pair.client );
+        }
         ip_step( &pair, &server_got, &client_got );
         const std::vector<ip_received_t> & got = from_server ? client_got : server_got;
         check( got.size() == 3 );
@@ -765,10 +797,16 @@ static void test_repeated_fill_flush_respects_packet_cap()
 static bool ip_carries( const ip_packet_t & packet, const uint8_t * needle, int bytes )
 {
     if ( (int) packet.data.size() < bytes )
+    {
         return false;
+    }
     for ( size_t i = 0; i + (size_t) bytes <= packet.data.size(); i++ )
+    {
         if ( memcmp( packet.data.data() + i, needle, (size_t) bytes ) == 0 )
+        {
             return true;
+        }
+    }
 
     return false;
 }
@@ -810,8 +848,12 @@ static void test_reliable_not_starved_by_in_place()
 
     bool reliable_out = false;
     for ( size_t i = sent_before; i < client->sent.size(); i++ )
+    {
         if ( ip_carries( client->sent[i], reliable, (int) sizeof( reliable ) ) )
+        {
             reliable_out = true;
+        }
+    }
     check( reliable_out );
 
     // both small records share one frame, leaving the last packet for reliable work
@@ -954,11 +996,17 @@ static void test_in_place_unreliable_keeps_acks_and_order()
         }
 
         if ( server_got[i].channel == 1 )
+        {
             reliable.push_back( first );
+        }
         else if ( server_got[i].channel == 2 )
+        {
             sequenced.push_back( first );
+        }
         else
+        {
             unreliable++;
+        }
     }
 
     check( reliable.size() == 4 && reliable[0] == 200 && reliable[1] == 201 && reliable[2] == 202 && reliable[3] == 203 );
@@ -1018,11 +1066,15 @@ static enum rocketnet_status_t ip_write_connect_token( const char * server_addre
 static enum rocketnet_status_t ip_write_connect_token( const char * server_address_string, uint64_t client_id, uint64_t current_timestamp, uint8_t * connect_token, size_t connect_token_bytes )
 {
     if ( connect_token_bytes < ROCKETNET_CONNECT_TOKEN_BYTES )
+    {
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
+    }
 
     struct rocketnet_address_t server_address;
     if ( !rocketnet_address_parse( &server_address, server_address_string ) || server_address.type != ROCKETNET_ADDRESS_IPV4 )
+    {
         return ROCKETNET_STATUS_INVALID_ADDRESS;
+    }
 
     struct rocketnet_signed_connect_data_t signed_fields;
     memset( &signed_fields, 0, sizeof( signed_fields ) );
@@ -1056,7 +1108,9 @@ static void test_unreliable_fit_in_place_every_transport()
     check( rocketnet_channel_harness_create( &h ) );
     check( rocketnet_channel_harness_connect( &h, 600 ) );
     for ( int i = 0; i < 4; i++ )
+    {
         rocketnet_channel_harness_pump( &h, 1.0 / 60.0 );                 // the CONFIG exchange settles
+    }
 
     for ( int side = 0; side < 2; side++ )
     {
@@ -1084,9 +1138,13 @@ static void test_unreliable_fit_in_place_every_transport()
         }
 
         if ( from_server )
+        {
             rocketnet_message_server_send_packets( h.message_server );
+        }
         else
+        {
             rocketnet_message_client_send_packets( h.message_client );
+        }
         check( e->pending_frame == -1 );
 
         uint8_t expected[128];
@@ -1097,6 +1155,7 @@ static void test_unreliable_fit_in_place_every_transport()
 
             rocketnet_channel_delivery_t d = {};
             for ( int channel = 0; channel < 2; channel++ )
+            {
                 while ( from_server ? rocketnet_channel_harness_client_collect( &h, channel, &d ) : rocketnet_channel_harness_server_collect( &h, channel, &d ) )
                 {
                     for ( int m = 0; m < 3; m++ )
@@ -1108,6 +1167,7 @@ static void test_unreliable_fit_in_place_every_transport()
                         }
                     }
                 }
+            }
         }
 
         check( found == 3 );
@@ -1321,7 +1381,16 @@ static void test_unreliable_packing_abort_and_short_finish()
         auto finish = [&]( int n )
         { return server ? rocketnet_message_server_finish( pair.server, 0, n ) : rocketnet_message_client_finish( pair.client, n ); };
         auto abort = [&]()
-        { if ( server ) rocketnet_message_server_abort( pair.server, 0 ); else rocketnet_message_client_abort( pair.client ); };
+        {
+            if ( server )
+            {
+                rocketnet_message_server_abort( pair.server, 0 );
+            }
+            else
+            {
+                rocketnet_message_client_abort( pair.client );
+            }
+        };
         const uint64_t copies = rn_message_payload_copy_count();
         const size_t frames = end->finished.size();
         uint8_t * first = start( 128 );
@@ -1358,9 +1427,13 @@ static void test_unreliable_packing_abort_and_short_finish()
 
         check( finish( 8 ) );
         if ( server )
+        {
             rocketnet_message_server_send_packets( pair.server );
+        }
         else
+        {
             rocketnet_message_client_send_packets( pair.client );
+        }
         check( end->finished.size() == frames + 1 );
         check( ip_inside( first, 7, end->finished.back() ) );
         check( ip_inside( second, 11, end->finished.back() ) );
@@ -1448,8 +1521,12 @@ static void test_unreliable_packing_receipt_boundary()
         {
             int match = -1;
             for ( int i = 0; i < 33; ++i )
+            {
                 if ( receipts[j].serial == serials[i] )
+                {
                     match = i;
+                }
+            }
             check( match >= 0 && !seen[match] );
             check( receipts[j].status == ROCKETNET_RECEIPT_STATUS_ACKED );
 

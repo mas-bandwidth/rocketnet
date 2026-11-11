@@ -98,7 +98,9 @@ static void finish_world_create( finish_world_t * world, int max_clients, int nu
 
     uint8_t seed[32];
     for ( int i = 0; i < 32; i++ )
+    {
         seed[i] = (uint8_t) ( seed_tag ^ i );
+    }
     check( rocketnet_generate_backend_keypair_from_seed( seed, world->backend_public, world->backend_secret ) == ROCKETNET_STATUS_OK );
 
     world->hub = rocketnet_loopback_hub_create( NULL, max_clients, NULL );
@@ -133,7 +135,9 @@ static void finish_world_create( finish_world_t * world, int max_clients, int nu
 static void finish_world_destroy( finish_world_t * world )
 {
     for ( int i = 0; i < world->num_clients; i++ )
+    {
         rn_test_client_stop_and_destroy( world->clients[i] );
+    }
     rn_test_server_stop_and_destroy( world->server );
     check( rocketnet_loopback_hub_destroy( world->hub ) == ROCKETNET_STATUS_OK );
 }
@@ -144,7 +148,9 @@ static void finish_world_pump( finish_world_t * world, double dt = 0.01 )
     for ( int i = 0; i < world->num_clients; i++ )
     {
         if ( !world->clients[i] )
+        {
             continue;
+        }
         rocketnet_client_update( world->clients[i], world->time );
         rocketnet_client_send_packets( world->clients[i] );
     }
@@ -172,11 +178,15 @@ static void finish_world_connect( finish_world_t * world, int client_slot, uint6
     finish_world_token( world, client_id, token );
     check( rn_test_client_connect_after_completion( world->clients[client_slot], token ) == ROCKETNET_STATUS_OK );
     for ( int i = 0; i < 400 && rocketnet_client_state( world->clients[client_slot] ) != ROCKETNET_CLIENT_STATE_CONNECTED; i++ )
+    {
         finish_world_pump( world );
+    }
     check( rocketnet_client_state( world->clients[client_slot] ) == ROCKETNET_CLIENT_STATE_CONNECTED );
     const int index = rocketnet_client_index( world->clients[client_slot] );
     for ( int i = 0; i < 400 && !rocketnet_server_client_connected( world->server, index ); i++ )
+    {
         finish_world_pump( world );
+    }
     check( rocketnet_server_client_connected( world->server, index ) );
 }
 
@@ -214,7 +224,9 @@ static void finish_world_verify_round_trip( finish_world_t * world, int client_s
             {
                 if ( server_batch->client_index[i] == index && server_batch->bytes[i] == 4 &&
                      server_batch->data[i][0] == client_tag && server_batch->data[i][3] == 0x33 )
+                {
                     server_got = true;
+                }
             }
         }
         const rocketnet_message_batch_t * client_batch = NULL;
@@ -224,7 +236,9 @@ static void finish_world_verify_round_trip( finish_world_t * world, int client_s
             {
                 if ( client_batch->bytes[i] == 4 && client_batch->data[i][0] == server_tag &&
                      client_batch->data[i][3] == 0x66 )
+                {
                     client_got = true;
+                }
             }
         }
     }
@@ -278,11 +292,15 @@ static void test_finish_requires_start_public_client_and_server()
 
     // Complete the connection
     for ( int i = 0; i < 400 && rocketnet_client_state( client ) != ROCKETNET_CLIENT_STATE_CONNECTED; i++ )
+    {
         finish_world_pump( &world );
+    }
     check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
     const int slot = rocketnet_client_index( client );
     for ( int i = 0; i < 400 && !rocketnet_server_client_connected( server, slot ); i++ )
+    {
         finish_world_pump( &world );
+    }
     check( rocketnet_server_client_connected( server, slot ) );
     const int empty_slot = 1 - slot;
 

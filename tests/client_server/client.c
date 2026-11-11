@@ -339,14 +339,18 @@ static long resident_kb( void )
 {
     FILE * f = rocketnet_test_fopen( "/proc/self/statm", "r" );
     if ( !f )
+    {
         return 0;
+    }
 
     char line[256];
     const int have_line = fgets( line, sizeof( line ), f ) != NULL;
 
     fclose( f );
     if ( !have_line )
+    {
         return 0;
+    }
     // statm is "total resident ...": skip the total, read the resident pages
     char * after_total = NULL;
     char * after_resident = NULL;
@@ -355,7 +359,9 @@ static long resident_kb( void )
     const long resident = strtol( after_total, &after_resident, 10 );
 
     if ( after_total == line || after_resident == after_total )
+    {
         return 0;
+    }
 
     return resident; /* pages; the page size is 4 KiB on Linux, kb = pages * 4 */
 }
@@ -463,7 +469,9 @@ static int stream_channels( int mode, int channel )
        modes 1, 3, 4, 7 run on channels 0 to 30 (31 carries the progress
        reports and the HELLO). */
     if ( mode == 0 || mode == 2 || mode == 5 || mode == 6 )
+    {
         return 1;
+    }
 
     return channel < 31;
 }
@@ -473,11 +481,15 @@ static int send_message( struct rocketnet_client_t * client, int mode, int chann
 {
     int len = rocketnet_live_generate( &st->cfg, 0, mode, channel, cycle, sequence, buf, cap );
     if ( len <= 0 )
+    {
         return 0;
+    }
 
     uint8_t * out = rocketnet_client_start_message( client, channel, (enum rocketnet_reliability_t) mode, len );
     if ( !out )
+    {
         return -1;
+    }
     memcpy( out, buf, (size_t) len );
     rocketnet_client_finish_message( client, len );
     return len;
@@ -502,10 +514,12 @@ static int seen_test_and_set( stream_t * s, uint32_t sequence )
             memset( s->seen, 0, sizeof( s->seen ) );
         }
         else
+        {
             for ( uint32_t q = s->seen_high + 1; q <= sequence; q++ )
             {
                 s->seen[( q >> 6 ) & 1023] &= ~( 1ull << ( q & 63 ) );
             }
+        }
 
         s->seen_high = sequence;
         s->seen[( sequence >> 6 ) & 1023] |= 1ull << ( sequence & 63 );
@@ -513,12 +527,16 @@ static int seen_test_and_set( stream_t * s, uint32_t sequence )
     }
 
     if ( (uint64_t) sequence + 65536u <= s->seen_high )
+    {
         return 0;
+    }
 
     uint64_t * word = &s->seen[( sequence >> 6 ) & 1023];
     const uint64_t bit = 1ull << ( sequence & 63 );
     if ( *word & bit )
+    {
         return 1;
+    }
     *word |= bit;
 
     return 0;
@@ -538,7 +556,9 @@ static void receive_check( matrix_state_t * st, struct rocketnet_client_t * clie
             const int bytes = batch->bytes[m];
             const int channel = batch->channel[m];
             if ( bytes < 1 )
+            {
                 continue;
+            }
 
             int tag = data[0];
             int mode = tag & 7;
@@ -654,11 +674,15 @@ static void receive_check( matrix_state_t * st, struct rocketnet_client_t * clie
 static double quantile( const double * values, int count, double q )
 {
     if ( count <= 0 )
+    {
         return 0.0;
+    }
 
     double * copy = (double *) malloc( (size_t) count * sizeof( double ) );
     if ( !copy )
+    {
         return 0.0;
+    }
     memcpy( copy, values, (size_t) count * sizeof( double ) );
     for ( int i = 1; i < count; i++ )
     {
@@ -701,7 +725,9 @@ static long resident_kb( void );
 static void sample_counters( matrix_state_t * st, struct rocketnet_client_t * client, double seconds )
 {
     if ( !client )
+    {
         return;
+    }
 
     struct rocketnet_message_client_t * message_client = rocketnet_client_message_client( client );
     if ( !message_client )
@@ -757,7 +783,9 @@ static void over_maximum( matrix_state_t * st, struct rocketnet_client_t * clien
     for ( int mode = 0; mode < ROCKETNET_LIVE_NUM_MODES; mode++ )
     {
         if ( !( st->o->mode_mask & ( 1u << mode ) ) )
+        {
             continue;
+        }
 
         const int max_m = (int) rocketnet_live_mode_max( &st->cfg, mode );
         const int channels[2] = { 0, last_stream_channel( mode ) };
@@ -956,7 +984,9 @@ static void run_matrix( opts_t * o )
             }
 
             if ( rocketnet_time() - t0 > connect_timeout )
+            {
                 break;
+            }
             rocketnet_sleep( step );
         }
 
@@ -1002,12 +1032,14 @@ static void run_matrix( opts_t * o )
         memset( st.streams, 0, ROCKETNET_LIVE_NUM_MODES * ROCKETNET_LIVE_NUM_CHANNELS * sizeof( stream_t ) );
         memset( st.cells, 0, 2 * ROCKETNET_LIVE_NUM_MODES * ROCKETNET_LIVE_NUM_CHANNELS * ROCKETNET_LIVE_NUM_BUCKETS * sizeof( cell_counts_t ) );
         for ( int m = 0; m < ROCKETNET_LIVE_NUM_MODES; m++ )
+        {
             for ( int c = 0; c < ROCKETNET_LIVE_NUM_CHANNELS; c++ )
             {
                 stream_t * s = RN_STREAM( &st, m, c );
                 s->mode = m;
                 s->channel = c;
             }
+        }
 
         double w0 = rocketnet_time();
         double last_counters = w0;
@@ -1040,12 +1072,16 @@ static void run_matrix( opts_t * o )
             for ( int m = 0; m < ROCKETNET_LIVE_NUM_MODES && !quit; m++ )
             {
                 if ( !( o->mode_mask & ( 1u << m ) ) )
+                {
                     continue;
+                }
 
                 for ( int c = 0; c < o->channels; c++ )
                 {
                     if ( !stream_channels( m, c ) )
+                    {
                         continue;
+                    }
 
                     stream_t * s = RN_STREAM( &st, m, c );
                     int r = send_message( client, m, c, st.cycle, s->sequence, buf, cap, &st );
@@ -1128,11 +1164,15 @@ static void run_matrix( opts_t * o )
         // section 7: the per-window table, one row per (dir, mode, channel, bucket)
 
         for ( int dir = 0; dir < 2; dir++ )
+        {
             for ( int m = 0; m < ROCKETNET_LIVE_NUM_MODES; m++ )
             {
                 if ( !( o->mode_mask & ( 1u << m ) ) )
+                {
                     continue;
+                }
                 for ( int c = 0; c < o->channels; c++ )
+                {
                     for ( int b = 0; b < ROCKETNET_LIVE_NUM_BUCKETS; b++ )
                     {
                         cell_counts_t * cell = RN_CELL( &st, dir, m, c, b );
@@ -1144,7 +1184,9 @@ static void run_matrix( opts_t * o )
                                     cell->superseded, cell->missing, cell->ooo, cell->dup, cell->over, cell->paced );
                         }
                     }
+                }
             }
+        }
 
         // section 7: counters and RSS at exit of the window
 
@@ -1179,10 +1221,12 @@ static void run_matrix( opts_t * o )
     double reconnect_max = 0.0;
 
     for ( int i = 0; i < st.reconnect_count; i++ )
+    {
         if ( st.reconnect_ms[i] > reconnect_max )
         {
             reconnect_max = st.reconnect_ms[i];
         }
+    }
 
     r_bench( res, o->label, st.connect_count, st.connect_ok,
              st.connect_count ? st.connect_ms_sum / st.connect_count : 0.0,
@@ -1300,7 +1344,9 @@ int main( int argc, char ** argv )
             printf( "client state: %s\n", rocketnet_client_transport_state_name( state ) );
             last_state = state;
             if ( state < ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
+            {
                 break;
+            }
         }
 
         if ( state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
@@ -1314,8 +1360,10 @@ int main( int argc, char ** argv )
             {
                 payloads_received++;
                 if ( ( payloads_received % 100 ) == 0 )
+                {
                     printf( "client sent %llu and received %llu payloads\n",
                             (unsigned long long) payloads_sent, (unsigned long long) payloads_received );
+                }
             }
         }
 

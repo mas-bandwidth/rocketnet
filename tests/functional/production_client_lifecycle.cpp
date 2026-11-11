@@ -27,7 +27,9 @@ static void production_lifecycle_check_handler( const char * condition, const ch
     do                                                                                \
     {                                                                                 \
         if ( !( condition ) )                                                         \
+        {                                                                             \
             production_lifecycle_check_handler( #condition, __FILE__, __LINE__ );     \
+        }                                                                             \
     } while ( 0 )
 
 class production_environment_guard_t
@@ -59,9 +61,13 @@ public:
     ~production_environment_guard_t()
     {
         if ( present )
+        {
             set( value.c_str() );
+        }
         else
+        {
             clear();
+        }
     }
 
     void set( const char * current )
@@ -97,7 +103,9 @@ int main()
 
     uint8_t seed[32];
     for ( int i = 0; i < 32; ++i )
+    {
         seed[i] = (uint8_t) ( 0xA7 ^ i );
+    }
 
     uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
     uint8_t backend_secret[64];

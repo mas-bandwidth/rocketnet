@@ -159,14 +159,18 @@ static void rcr_pair_setup( struct rcr_pair_t * pair, int stage )
     pair->time = 100.0;
 
     if ( stage == RCR_STAGE_DISCONNECTED )
+    {
         return;
+    }
 
     uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
     rcr_mint_token( token_data, 0x1400ULL );
     check( rocketnet_client_protocol_connect( &pair->client, token_data, 100.0, ROCKETNET_TEST_CREATE_TS ) );
 
     if ( stage == RCR_STAGE_REQUESTING_COOKIE )
+    {
         return;
+    }
 
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
@@ -515,9 +519,13 @@ static void rcr_run_row( const rcr_row_t * row )
 
     int stage = RCR_STAGE_CONNECTED;
     if ( row->defect == RCR_NOT_CONNECTED )
+    {
         stage = RCR_STAGE_HALF_OPEN;
+    }
     else if ( row->defect == RCR_NO_MAPPING && !to_server )
+    {
         stage = RCR_STAGE_REQUESTING_COOKIE;
+    }
 
     static struct rcr_pair_t pair;
     rcr_pair_setup( &pair, stage );
@@ -538,9 +546,13 @@ static void rcr_run_row( const rcr_row_t * row )
         const int prior_bytes = rcr_plaintext_valid( ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, plaintext );
         bytes = rcr_seal( &pair, to_server, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, sequence, plaintext, prior_bytes, NULL, packet );
         if ( to_server )
+        {
             check( rcr_to_server( &pair, packet, bytes ) == ROCKETNET_SERVER_PROCESS_ACCEPTED );
+        }
         else
+        {
             check( rcr_to_client( &pair, packet, bytes ) );
+        }
     }
 
     int plaintext_bytes = 0;
@@ -597,21 +609,31 @@ static void rcr_run_row( const rcr_row_t * row )
     const struct rocketnet_counters_t * after = to_server ? &pair.server_counters : &pair.client_counters;
 
     if ( to_server )
+    {
         rcr_to_server_from( &pair, row->defect == RCR_NO_MAPPING ? &stranger : &pair.client_address, packet, bytes );
+    }
     else
+    {
         rcr_to_client( &pair, packet, bytes );
+    }
 
     char report[16384];
     bool moved_as_named;
     if ( row->extra == RCR_NONE )
+    {
         moved_as_named = rocketnet_counters_expect_core( &before, after, { { ROCKETNET_COUNTER_PACKETS_RECEIVED, 1 }, { row->received, 1 }, { row->outcome, 1 } },
                                                          report, (int) sizeof( report ) );
+    }
     else
+    {
         moved_as_named = rocketnet_counters_expect_core( &before, after, { { ROCKETNET_COUNTER_PACKETS_RECEIVED, 1 }, { row->received, 1 }, { row->outcome, 1 }, { row->extra, 1 } },
                                                          report, (int) sizeof( report ) );
+    }
     if ( !moved_as_named )
+    {
         printf( "row: %s %s %s -> %s\n%s", to_server ? "server" : "client", rocketnet_counter_name( row->received ),
                 rcr_defect_name( row->defect ), rocketnet_counter_name( row->outcome ), report );
+    }
     check( moved_as_named );
 
     rcr_pair_teardown( &pair );
@@ -639,7 +661,9 @@ do                                                                              
     char rcr_report[16384];                                                                                       \
     const bool rcr_ok = rocketnet_counters_expect_core( (before), (after), __VA_ARGS__, rcr_report, (int) sizeof(rcr_report) ); \
     if ( !rcr_ok )                                                                                                \
+    {                                                                                                             \
         printf( "case: %s\n%s", (label), rcr_report );                                                            \
+    }                                                                                                             \
     check( rcr_ok );                                                                                              \
 } while(0)
 
@@ -819,15 +843,19 @@ static void test_server_response_and_slot_counters_move_exactly()
             int out_bytes = 0;
             rocketnet_client_protocol_update( &other, time, out_packet, &out_bytes );
             if ( out_bytes == 0 )
+            {
                 continue;
+            }
 
             int response_bytes = 0;
             rocketnet_server_protocol_process_packet( &pair.server, &other_address, out_packet, out_bytes,
                                                       ROCKETNET_TEST_CREATE_TS, time, response, &response_bytes,
                                                       payload, &payload_bytes, &payload_client_index );
             if ( response_bytes > 0 )
+            {
                 rocketnet_client_protocol_process_packet( &other, response, response_bytes, time + 0.01,
                                                           payload, (int) sizeof( payload ), &payload_bytes );
+            }
         }
 
         check( other.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
@@ -1085,7 +1113,9 @@ static int rcr_transport_fault_receive( void * transport, rocketnet_address_t * 
     (void) capacity;
     fault->receive_calls++;
     if ( fault->receive_calls > 1 )
+    {
         return 0;
+    }
     memset( from, 0, sizeof( *from ) );
     from->type = ROCKETNET_ADDRESS_IPV4;
     from->port = 1;

@@ -17,12 +17,12 @@ sequenced compare made at the wrong width or with the wrong boundary.
 
 | Site | Code | Model |
 |---|---|---|
-| `rn_sequenced_in_turn`, `sdk/rocketnet_channel_sequenced.cpp:337`, `:340` | `held_gap = ( sequencing - held->sequencing ) & mask`; superseded at 0 or at or past the half range | `InTurn`, `hg` |
-| `rn_sequenced_in_turn`, `sdk/rocketnet_channel_sequenced.cpp:356`, `:357` | `sequence_gap = ( sequencing - rx->sequenced_watermark ) & mask`; stale at or past the half range | `InTurn`, `wg` |
-| `rn_channels_dispatch_sequenced`, `sdk/rocketnet_channel_sequenced.cpp:418`, `:420` | `delta = ( ordering - rx->ordered_read ) & mask`; stale at or past the half range, in turn at 0 | `Arrive`, `delta` |
-| `rn_channels_dispatch_sequenced`, `sdk/rocketnet_channel_sequenced.cpp:463`, `:464`, `:467` | the future hold: `gap` and `sequence_gap`, the newer by ordering then sequencing kept | `Future`, `g`, `sg` |
-| `rn_channels_drain_sequenced`, `sdk/rocketnet_channel_sequenced.cpp:576`, `:579` | the hold's `gap = ( ordering - rx->ordered_read ) & mask` after an ordered delivery | `OpenEpoch`, `g` |
-| `rn_channels_deliver_sequenced`, `sdk/rocketnet_channel.cpp:432`, `:438` | the delivery's own check, then `sequenced_watermark = ( sequencing + 1 ) & mask` | `DeliverOK`, `wm'` |
+| `rn_sequenced_in_turn`, `sdk/rocketnet_channel_sequenced.cpp:377`, `:340` | `held_gap = ( sequencing - held->sequencing ) & mask`; superseded at 0 or at or past the half range | `InTurn`, `hg` |
+| `rn_sequenced_in_turn`, `sdk/rocketnet_channel_sequenced.cpp:396`, `:357` | `sequence_gap = ( sequencing - rx->sequenced_watermark ) & mask`; stale at or past the half range | `InTurn`, `wg` |
+| `rn_channels_dispatch_sequenced`, `sdk/rocketnet_channel_sequenced.cpp:474`, `:420` | `delta = ( ordering - rx->ordered_read ) & mask`; stale at or past the half range, in turn at 0 | `Arrive`, `delta` |
+| `rn_channels_dispatch_sequenced`, `sdk/rocketnet_channel_sequenced.cpp:523`, `:464`, `:467` | the future hold: `gap` and `sequence_gap`, the newer by ordering then sequencing kept | `Future`, `g`, `sg` |
+| `rn_channels_drain_sequenced`, `sdk/rocketnet_channel_sequenced.cpp:644`, `:579` | the hold's `gap = ( ordering - rx->ordered_read ) & mask` after an ordered delivery | `OpenEpoch`, `g` |
+| `rn_channels_deliver_sequenced`, `sdk/rocketnet_channel.cpp:478`, `:438` | the delivery's own check, then `sequenced_watermark = ( sequencing + 1 ) & mask` | `DeliverOK`, `wm'` |
 
 An unmasked difference is the uint32 subtraction: modulo `CounterMod` in the
 model (2^32 in the code), a multiple of `Mod`.
@@ -142,7 +142,7 @@ counted stale; masked, `sequence_gap` is 1 and it is delivered.
 `MCRNSequencingWrapBrokenWatermarkBoundary.cfg`: from sequencing 6 records 7, 8
 and 9 are delivered (watermark 10, wire 2) while record 6 is still in flight,
 exactly the half range behind. `(6 - 2) & mask` is the half range; `>` lets it
-through, and `rn_channels_deliver_sequenced` (`sdk/rocketnet_channel.cpp:434`)
+through, and `rn_channels_deliver_sequenced` (`sdk/rocketnet_channel.cpp:480`)
 refuses it, so `rn_sequenced_in_turn` returns `ROCKETNET_CHANNEL_DISPATCH_NONE`
 with nothing counted (a code-4 record's number is not released either).
 

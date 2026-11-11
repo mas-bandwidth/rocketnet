@@ -234,7 +234,9 @@ static void * allocate( void *, size_t bytes )
 {
     const int index = allocations.fetch_add( 1 );
     if ( index == fail_allocation )
+    {
         return NULL;
+    }
 
     void * p = malloc( bytes );
     if ( p )
@@ -306,12 +308,14 @@ static void test_create_cleanup()
     }
 
     for ( int repeat = 0; repeat < 3; ++repeat )
+    {
         for ( int stage = 1; stage <= 4; ++stage )
         {
             bind = address( "127.0.0.1:0" );
             CHECK( !rocketnet_server_iocp_create( NULL, &bind, 2, ROCKETNET_DEFAULT_MAX_CLIENTS, stage ) );
             CHECK( live_allocations.load() == baseline );
         }
+    }
 
     DWORD handles;
     CHECK( GetProcessHandleCount( GetCurrentProcess(), &handles ) );
@@ -398,7 +402,9 @@ static void test_completion_owns_frames()
     {
         rocketnet_server_iocp_counters( transport, counters );
         if ( counters[ROCKETNET_IOCP_SEND_COMPLETED] == 32 )
+        {
             break;
+        }
         rocketnet_platform_sleep( 0.001 );
     } while ( rocketnet_platform_time() < deadline );
 
@@ -511,7 +517,9 @@ static void test_uso_run_owns_frames()
     {
         rocketnet_server_iocp_counters( transport, counters );
         if ( counters[ROCKETNET_IOCP_SEND_COMPLETED] == (uint64_t) run )
+        {
             break;
+        }
         rocketnet_platform_sleep( 0.001 );
     } while ( rocketnet_platform_time() < deadline );
 
@@ -594,7 +602,9 @@ static void test_datagrams_and_producers()
     {
         rocketnet_server_iocp_counters( transport, after );
         if ( after[ROCKETNET_IOCP_RECEIVE_COMPLETED] > before[ROCKETNET_IOCP_RECEIVE_COMPLETED] )
+        {
             break;
+        }
         rocketnet_platform_sleep( 0.001 );
     } while ( rocketnet_platform_time() < receive_deadline );
 
@@ -604,6 +614,7 @@ static void test_datagrams_and_producers()
 
     std::vector<std::thread> producers;
     for ( int t = 0; t < 4; ++t )
+    {
         producers.emplace_back( [=]()
                                 {
             for ( int i = 0; i < 64; ++i )
@@ -614,6 +625,7 @@ static void test_datagrams_and_producers()
                 memset(frame + ROCKETNET_FRAME_WIRE_OFFSET, t * 64 + i, 32);
                 rocketnet_server_iocp_finish_packet(transport, id, frame, 32);
             } } );
+    }
     for ( auto & thread : producers )
     {
         thread.join();
@@ -654,7 +666,9 @@ static void test_datagrams_and_producers()
     std::thread incoming( [&]()
                           {
         while (sending.load())
-            rocketnet_platform_socket_send_packet(client, &destination, extra, sizeof(extra)); } );
+        {
+            rocketnet_platform_socket_send_packet(client, &destination, extra, sizeof(extra));
+        } } );
 
     std::atomic<bool> stop_returned{ false };
     std::thread stopping( [&]()
@@ -724,7 +738,10 @@ static void test_receive_publication_never_waits()
                         {
         rocketnet_server_iocp_test_hold_publication(transport, true);
         held.store(true);
-        while (!release_lock.load()) rocketnet_platform_sleep(0.001);
+        while (!release_lock.load())
+        {
+            rocketnet_platform_sleep(0.001);
+        }
         rocketnet_server_iocp_test_hold_publication(transport, false); } );
 
     const double hold_deadline = rocketnet_platform_time() + 5.0;
@@ -832,7 +849,9 @@ static void test_receive_boundaries()
         rocketnet_server_iocp_counters( transport, counters );
         if ( received == 1 && counters[ROCKETNET_IOCP_RECEIVE_DROPPED] == 2 &&
              rocketnet_server_iocp_pending( transport ) == ROCKETNET_IOCP_RECEIVES_PER_WORKER )
+        {
             break;
+        }
         rocketnet_platform_sleep( 0.001 );
     }
 
@@ -878,14 +897,18 @@ static void receive_oversize_queued_at_post( int flags )
 
     rocketnet_server_iocp_test_hold_completions( transport, true );
     for ( int i = 0; i < ROCKETNET_IOCP_RECEIVES_PER_WORKER; ++i )
+    {
         CHECK( sendto( client, "fill", 4, 0, (sockaddr *) &to, sizeof( to ) ) == 4 );
+    }
     for ( int i = 0; i < num_oversized; ++i )
     {
         const int bytes = sizes[i % 2];
         CHECK( sendto( client, oversized, bytes, 0, (sockaddr *) &to, sizeof( to ) ) == bytes );
     }
     for ( int i = 0; i < num_after; ++i )
+    {
         CHECK( sendto( client, "good", 4, 0, (sockaddr *) &to, sizeof( to ) ) == 4 );
+    }
     rocketnet_server_iocp_test_hold_completions( transport, false );
 
     int fills = 0;
@@ -901,18 +924,26 @@ static void receive_oversize_queued_at_post( int flags )
         {
             CHECK( batch->packet_bytes[i] == 4 );
             if ( memcmp( batch->packet_data[i], "fill", 4 ) == 0 )
+            {
                 ++fills;
+            }
             else if ( memcmp( batch->packet_data[i], "good", 4 ) == 0 )
+            {
                 ++goods;
+            }
             else
+            {
                 CHECK( false );
+            }
         }
 
         rocketnet_server_iocp_counters( transport, counters );
         if ( fills == ROCKETNET_IOCP_RECEIVES_PER_WORKER && goods == num_after &&
              counters[ROCKETNET_IOCP_RECEIVE_DROPPED] >= (uint64_t) num_oversized &&
              rocketnet_server_iocp_pending( transport ) == ROCKETNET_IOCP_RECEIVES_PER_WORKER )
+        {
             break;
+        }
         rocketnet_platform_sleep( 0.001 );
     }
 
@@ -1024,7 +1055,9 @@ static void oversize_post_drain( HANDLE port, oversize_post_receive_t * receives
     {
         const double left = deadline - rocketnet_platform_time();
         if ( left <= 0.0 )
+        {
             break;
+        }
 
         OVERLAPPED_ENTRY entries[8];
         ULONG count = 0;
@@ -1035,12 +1068,16 @@ static void oversize_post_drain( HANDLE port, oversize_post_receive_t * receives
         }
 
         for ( ULONG i = 0; i < count; ++i )
+        {
             for ( int k = 0; k < 2; ++k )
+            {
                 if ( entries[i].lpOverlapped == &receives[k].overlapped )
                 {
                     tally->entry[k] = entries[i];
                     tally->count[k]++;
                 }
+            }
+        }
     }
 }
 
@@ -1075,7 +1112,9 @@ static void oversize_post_cell( int cell, bool message_api, bool skip_on_success
     HANDLE port = CreateIoCompletionPort( (HANDLE) server, NULL, 0, 1 );
     CHECK( port );
     if ( skip_on_success )
+    {
         CHECK( SetFileCompletionNotificationModes( (HANDLE) server, FILE_SKIP_COMPLETION_PORT_ON_SUCCESS ) );
+    }
 
     LPFN_WSARECVMSG receive_message = NULL;
     if ( message_api )
@@ -1108,7 +1147,9 @@ static void oversize_post_cell( int cell, bool message_api, bool skip_on_success
     DWORD result_flags = 0;
     int overlapped_error = 0;
     if ( tally.count[0] > 0 && !WSAGetOverlappedResult( server, &receives[0].overlapped, &transferred, FALSE, &result_flags ) )
+    {
         overlapped_error = WSAGetLastError();
+    }
     seen->status = (unsigned long long) tally.entry[0].Internal;
     seen->overlapped_error = overlapped_error;
 
@@ -1149,7 +1190,9 @@ static void test_windows_oversize_receive_at_post()
 
     oversize_post_seen_t seen[4];
     for ( int cell = 0; cell < 4; ++cell )
+    {
         oversize_post_cell( cell, ( cell & 2 ) != 0, ( cell & 1 ) != 0, &seen[cell] );
+    }
 
     // What Windows 11 does (build 26200, 2026-11-10), and what the post rule
     // of the IOCP server and the iocp client rests on: the call reports
@@ -1212,12 +1255,18 @@ static void fault_mark( uint8_t * data, int round, int index )
 static int fault_index( const uint8_t * data, int bytes, int round )
 {
     if ( bytes != FAULT_BYTES || data[0] != 0xA5 || data[1] != (uint8_t) round )
+    {
         return -1;
+    }
 
     const int index = ( data[2] << 8 ) | data[3];
     for ( int i = 4; i < FAULT_BYTES; ++i )
+    {
         if ( data[i] != (uint8_t) ( index + i ) )
+        {
             return -1;
+        }
+    }
 
     return index;
 }
@@ -1288,7 +1337,9 @@ static void iocp_wait_sends( rocketnet_server_iocp_t * transport, uint64_t total
     {
         rocketnet_server_iocp_counters( transport, counters );
         if ( counters[ROCKETNET_IOCP_SEND_COMPLETED] + counters[ROCKETNET_IOCP_SEND_FAILED] >= total )
+        {
             break;
+        }
         rocketnet_platform_sleep( 0.001 );
     } while ( rocketnet_platform_time() < deadline );
 
@@ -1874,7 +1925,9 @@ static uint8_t * rio_reserve( rocketnet_server_rio_t * rio, const rocketnet_addr
 {
     uint8_t * frame = rocketnet_server_rio_start_packet( rio, to, id );
     if ( frame )
+    {
         return frame;
+    }
     wait_until( "RIO fill phase open", [&]()
                 {
         rocketnet_server_rio_send_packets(rio);
@@ -2240,10 +2293,12 @@ static void test_rio_transport_stop_sends_handed_burst()
         const uint64_t sent = rio_counter( rio, ROCKETNET_RIO_COUNTER_PACKETS_SENT );
         rio_stage( rio, &client_address, round, 10 );
         if ( handed )
+        {
             wait_until( "RIO burst handed", [&]()
                         {
                 rocketnet_server_rio_send_packets(rio);
                 return rocketnet_server_rio_test_handed_phases(rio) == 1; } );
+        }
         rocketnet_server_rio_stop( rio );
         rocketnet_server_rio_test_hold_send( rio, false );
         wait_until( "RIO stopped after handed sends", [&]()
@@ -2368,9 +2423,13 @@ static int port_thief_steals( const rocketnet_address_t * owner, SOCKET thief )
     {
         char packet[ROCKETNET_RECEIVE_CEILING];
         if ( recv( thief, packet, sizeof( packet ), 0 ) > 0 )
+        {
             ++stolen;
+        }
         else
+        {
             rocketnet_platform_sleep( 0.001 );
+        }
     }
 
     rocketnet_platform_socket_destroy( client );
@@ -2778,11 +2837,13 @@ int main( int argc, char ** argv )
     {
         bool found = false;
         for ( const fault_case_t & c : fault_cases )
+        {
             if ( strcmp( argv[i], c.name ) == 0 )
             {
                 c.run();
                 found = true;
             }
+        }
         CHECK( found );
     }
 

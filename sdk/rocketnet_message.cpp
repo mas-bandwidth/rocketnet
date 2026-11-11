@@ -59,15 +59,25 @@ static int rocketnet_message_flags_header_bytes( uint8_t flags )
 
     int bytes = ROCKETNET_MESSAGE_RECORD_FIXED_BYTES;
     if ( rocketnet_message_code_has_number( code ) )
+    {
         bytes += ROCKETNET_MESSAGE_NUMBER_BYTES;
+    }
     if ( rocketnet_message_code_is_holdable( code ) || block )
+    {
         bytes += 2;
+    }
     if ( rocketnet_message_code_has_sequencing( code ) )
+    {
         bytes += 3;
+    }
     if ( rocketnet_message_code_has_channel( code ) )
+    {
         bytes += 3 + ( wide ? 2 : 1 );     // ordering, then channel
+    }
     if ( block )
+    {
         bytes += 4;
+    }
 
     return bytes;
 }
@@ -82,15 +92,25 @@ static bool rocketnet_message_flags_allowed( uint8_t flags )
     const bool control = ( flags & ROCKETNET_MESSAGE_FLAG_CONTROL ) != 0;
 
     if ( code >= ROCKETNET_MESSAGE_NUM_CODES )
+    {
         return false;                                               // L2.1: 5 to 7 never reach the wire
+    }
     if ( flags & ROCKETNET_MESSAGE_FLAG_RESERVED )
+    {
         return false;
+    }
     if ( block && ( code == ROCKETNET_MESSAGE_CODE_UNRELIABLE || code == ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED ) )
+    {
         return false;                                               // only reliable messages are blocks (standard/MESSAGES.md m8)
+    }
     if ( wide && !rocketnet_message_code_has_channel( code ) )
+    {
         return false;
+    }
     if ( control && ( code != ROCKETNET_MESSAGE_CODE_RELIABLE || block ) )
+    {
         return false;                                               // CONTROL is code 2, never a block (standard/MESSAGES.md m11)
+    }
 
     return true;
 }
@@ -99,11 +119,17 @@ static uint8_t rocketnet_message_record_flags( const struct rocketnet_message_re
 {
     uint8_t flags = (uint8_t) ( record->code & ROCKETNET_MESSAGE_FLAG_CODE_MASK );
     if ( record->block )
+    {
         flags |= ROCKETNET_MESSAGE_FLAG_BLOCK;
+    }
     if ( rocketnet_message_code_has_channel( record->code ) && record->channel >= ROCKETNET_MESSAGE_WIDE_CHANNEL )
+    {
         flags |= ROCKETNET_MESSAGE_FLAG_WIDE;                       // exactly when channel >= ROCKETNET_MESSAGE_WIDE_CHANNEL
+    }
     if ( record->control )
+    {
         flags |= ROCKETNET_MESSAGE_FLAG_CONTROL;
+    }
 
     return flags;
 }
@@ -159,7 +185,9 @@ int rocketnet_message_max_unfragmented_bytes( int reliability, int channel )
 int rocketnet_max_unfragmented_message_bytes( enum rocketnet_reliability_t reliability, int channel )
 {
     if ( channel < 0 || channel >= ROCKETNET_MAX_CHANNELS )
+    {
         return 0;
+    }
 
     // a C caller can pass any int here; the value is read as an int, never as
     // the enum, so one outside the enumerators is refused by the rule and not
@@ -175,13 +203,21 @@ int rocketnet_max_unfragmented_message_bytes( enum rocketnet_reliability_t relia
 int rocketnet_message_record_valid( const struct rocketnet_message_record_t * record )
 {
     if ( !record )
+    {
         return 0;
+    }
     if ( record->code < 0 || record->code >= ROCKETNET_MESSAGE_NUM_CODES )
+    {
         return 0;
+    }
     if ( !rocketnet_message_flags_allowed( rocketnet_message_record_flags( record ) ) )
+    {
         return 0;
+    }
     if ( record->bytes < 1 || record->bytes > ROCKETNET_MESSAGE_MAX_RECORD_BYTES || !record->data )
+    {
         return 0;
+    }
 
     const int code = record->code;
     const bool block = record->block != 0;
@@ -189,19 +225,33 @@ int rocketnet_message_record_valid( const struct rocketnet_message_record_t * re
     // absent fields are zero, present ones inside their wire widths
 
     if ( record->number > ( rocketnet_message_code_has_number( code ) ? ROCKETNET_MESSAGE_U24_MASK : 0u ) )
+    {
         return 0;
+    }
     if ( record->ring > ( rocketnet_message_code_is_holdable( code ) || block ? 0xFFFFu : 0u ) )
+    {
         return 0;
+    }
     if ( record->sequencing > ( rocketnet_message_code_has_sequencing( code ) ? ROCKETNET_MESSAGE_U24_MASK : 0u ) )
+    {
         return 0;
+    }
     if ( record->ordering > ( rocketnet_message_code_has_channel( code ) ? ROCKETNET_MESSAGE_U24_MASK : 0u ) )
+    {
         return 0;
+    }
     if ( record->channel > ( rocketnet_message_code_has_channel( code ) ? 0xFFFFu : 0u ) )
+    {
         return 0;
+    }
     if ( record->fragments > ( block ? 0xFFFFu : 0u ) || record->fragment > record->fragments )
+    {
         return 0;
+    }
     if ( block && record->fragments == 0 )
+    {
         return 0;                                                   // a block has at least two fragments
+    }
 
     return 1;
 }
@@ -267,14 +317,20 @@ static int rocketnet_message_writer_put( struct rocketnet_message_writer_t * wri
     rocketnet_assert( rocketnet_message_record_valid( record ) );
 
     if ( !rocketnet_message_record_valid( record ) )
+    {
         return 0;
+    }
 
     const uint8_t flags = rocketnet_message_record_flags( record );
     const int header = rocketnet_message_flags_header_bytes( flags );
     if ( header + record->bytes > rocketnet_message_writer_space( writer ) )
+    {
         return 0;                                                   // never split: the record ends this packet (standard/MESSAGES.md m2)
+    }
     if ( !copy && record->data != writer->payload + writer->bytes + header )
+    {
         return 0;                                                   // in place: the data starts where its header ends
+    }
 
     const int code = record->code;
     uint8_t * p = writer->payload + writer->bytes;
@@ -282,20 +338,30 @@ static int rocketnet_message_writer_put( struct rocketnet_message_writer_t * wri
     rocketnet_write_uint16( &p, (uint16_t) record->bytes );
 
     if ( rocketnet_message_code_has_number( code ) )
+    {
         rocketnet_message_write_uint24( &p, record->number );
+    }
     if ( rocketnet_message_code_is_holdable( code ) || record->block )
+    {
         rocketnet_write_uint16( &p, (uint16_t) record->ring );
+    }
     if ( rocketnet_message_code_has_sequencing( code ) )
+    {
         rocketnet_message_write_uint24( &p, record->sequencing );
+    }
 
     if ( rocketnet_message_code_has_channel( code ) )
     {
         rocketnet_message_write_uint24( &p, record->ordering );
 
         if ( flags & ROCKETNET_MESSAGE_FLAG_WIDE )
+        {
             rocketnet_write_uint16( &p, (uint16_t) record->channel );
+        }
         else
+        {
             rocketnet_write_uint8( &p, (uint8_t) record->channel );
+        }
     }
 
     if ( record->block )
@@ -336,7 +402,9 @@ int rocketnet_message_writer_finish( struct rocketnet_message_writer_t * writer 
     rocketnet_assert( writer );
 
     if ( writer->records == 0 )
+    {
         return 0;                                                   // an empty plan writes nothing (standard/MESSAGES.md m2)
+    }
 
     rocketnet_assert( writer->bytes + 1 <= writer->capacity );
     writer->payload[writer->bytes] = ROCKETNET_MESSAGE_FORM_RECORDS;
@@ -356,7 +424,9 @@ int rocketnet_message_single_finish( uint8_t * payload, int payload_capacity, in
 {
     rocketnet_assert( payload );
     if ( message_bytes < 1 || message_bytes > rocketnet_message_single_capacity( payload_capacity ) )
+    {
         return 0;
+    }
     payload[message_bytes] = ROCKETNET_MESSAGE_FORM_SINGLE;
     return message_bytes + 1;
 }
@@ -371,11 +441,17 @@ uint32_t rocketnet_message_enabled_codes( uint32_t enabled_reliabilities )
 
     uint32_t codes = enabled_reliabilities & 0x1F;
     if ( enabled_reliabilities & ( 1u << 5 ) )
+    {
         codes |= 1u << ROCKETNET_MESSAGE_CODE_UNRELIABLE;
+    }
     if ( enabled_reliabilities & ( 1u << 6 ) )
+    {
         codes |= 1u << ROCKETNET_MESSAGE_CODE_RELIABLE;
+    }
     if ( enabled_reliabilities & ( 1u << 7 ) )
+    {
         codes |= 1u << ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED;
+    }
 
     return codes;
 }
@@ -396,17 +472,23 @@ static int rocketnet_message_decode_record( const uint8_t * record_start, int re
     // check 2: the fixed part, then every field the flags name, inside the body
 
     if ( remaining < ROCKETNET_MESSAGE_RECORD_FIXED_BYTES )
+    {
         return ROCKETNET_MESSAGE_VIOLATION_TRUNCATED;
+    }
 
     const uint8_t flags = record_start[0];
     const int header = rocketnet_message_flags_header_bytes( flags );
     if ( header > remaining )
+    {
         return ROCKETNET_MESSAGE_VIOLATION_TRUNCATED;
+    }
 
     // check 3: the flags a correct sender writes
 
     if ( !rocketnet_message_flags_allowed( flags ) )
+    {
         return ROCKETNET_MESSAGE_VIOLATION_BAD_FLAGS;
+    }
 
     const int code = flags & ROCKETNET_MESSAGE_FLAG_CODE_MASK;
     const bool block = ( flags & ROCKETNET_MESSAGE_FLAG_BLOCK ) != 0;
@@ -421,11 +503,17 @@ static int rocketnet_message_decode_record( const uint8_t * record_start, int re
     const uint8_t * p = record_start + 1;
     const int length = rocketnet_read_uint16( &p );
     if ( rocketnet_message_code_has_number( code ) )
+    {
         record->number = rocketnet_message_read_uint24( &p );
+    }
     if ( rocketnet_message_code_is_holdable( code ) || block )
+    {
         record->ring = rocketnet_read_uint16( &p );
+    }
     if ( rocketnet_message_code_has_sequencing( code ) )
+    {
         record->sequencing = rocketnet_message_read_uint24( &p );
+    }
 
     if ( rocketnet_message_code_has_channel( code ) )
     {
@@ -442,7 +530,9 @@ static int rocketnet_message_decode_record( const uint8_t * record_start, int re
     // check 4: the data is at least one byte and inside the body
 
     if ( length == 0 || length > remaining - header )
+    {
         return ROCKETNET_MESSAGE_VIOLATION_BAD_LENGTH;
+    }
 
     // check 5: the channel is under this end's runtime count (I15), and WIDE
     // only where it is needed, so every record has one encoding
@@ -450,15 +540,21 @@ static int rocketnet_message_decode_record( const uint8_t * record_start, int re
     if ( rocketnet_message_code_has_channel( code ) )
     {
         if ( (int) record->channel >= limits->num_channels )
+        {
             return ROCKETNET_MESSAGE_VIOLATION_BAD_CHANNEL;
+        }
         if ( wide && record->channel < ROCKETNET_MESSAGE_WIDE_CHANNEL )
+        {
             return ROCKETNET_MESSAGE_VIOLATION_BAD_CHANNEL;
+        }
     }
 
     // check 6: the type is enabled (standard/MESSAGES.md m4); CONTROL is exempt
 
     if ( !control && ( limits->enabled_codes & ( 1u << code ) ) == 0 )
+    {
         return ROCKETNET_MESSAGE_VIOLATION_TYPE_NOT_ENABLED;
+    }
 
     // check 7, the part a record shows alone: a count of at least two, the
     // index inside it, k <= W, k * F <= max_message_bytes + F - 1, and every
@@ -472,11 +568,17 @@ static int rocketnet_message_decode_record( const uint8_t * record_start, int re
         const bool last = record->fragment == record->fragments;
 
         if ( record->fragments == 0 || record->fragment > record->fragments )
+        {
             return ROCKETNET_MESSAGE_VIOLATION_BAD_BLOCK;
+        }
         if ( k > limits->reliable_messages_in_flight || k * F > limits->max_message_bytes + F - 1 )
+        {
             return ROCKETNET_MESSAGE_VIOLATION_BAD_BLOCK;
+        }
         if ( last ? length > F : length != F )
+        {
             return ROCKETNET_MESSAGE_VIOLATION_BAD_BLOCK;
+        }
     }
 
     // check 8: a holdable record's span lies inside the ring. A block's span
@@ -492,12 +594,16 @@ static int rocketnet_message_decode_record( const uint8_t * record_start, int re
         const bool last = record->fragment == record->fragments;
         const int span = (int) record->fragments * F + ( last ? rocketnet_message_round16( length ) : ROCKETNET_MESSAGE_RING_UNIT );
         if ( base_units < 0 || base_units * ROCKETNET_MESSAGE_RING_UNIT + span > limits->receive_message_buffer_bytes )
+        {
             return ROCKETNET_MESSAGE_VIOLATION_BAD_RING;
+        }
     }
     else if ( rocketnet_message_code_is_holdable( code ) )
     {
         if ( (int) record->ring * ROCKETNET_MESSAGE_RING_UNIT + rocketnet_message_round16( length ) > limits->receive_message_buffer_bytes )
+        {
             return ROCKETNET_MESSAGE_VIOLATION_BAD_RING;
+        }
     }
 
     // check 9: reliable and CONTROL records ride only unfragmented payloads (L2.2, L2.4),
@@ -505,9 +611,13 @@ static int rocketnet_message_decode_record( const uint8_t * record_start, int re
     // the block path holds a whole block to (a fragment is at most F, below it)
 
     if ( ( rocketnet_message_code_has_number( code ) || control ) && payload_bytes > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
+    {
         return ROCKETNET_MESSAGE_VIOLATION_BAD_SIZE;
+    }
     if ( length > limits->max_message_bytes )
+    {
         return ROCKETNET_MESSAGE_VIOLATION_BAD_SIZE;
+    }
 
     record->data = record_start + header;
     record->bytes = length;
@@ -524,11 +634,15 @@ int rocketnet_message_check_payload( const uint8_t * payload, int bytes, const s
     rocketnet_assert( limits );
 
     if ( bytes < 2 || !payload )
+    {
         return ROCKETNET_MESSAGE_VIOLATION_BAD_FORM;
+    }
 
     const uint8_t form = payload[bytes - 1];
     if ( form != ROCKETNET_MESSAGE_FORM_SINGLE && form != ROCKETNET_MESSAGE_FORM_RECORDS )
+    {
         return ROCKETNET_MESSAGE_VIOLATION_BAD_FORM;
+    }
 
     if ( form == ROCKETNET_MESSAGE_FORM_SINGLE )
     {
@@ -536,9 +650,13 @@ int rocketnet_message_check_payload( const uint8_t * payload, int bytes, const s
         // SINGLE message is held to max_message_bytes as a block is
 
         if ( ( limits->enabled_codes & ( 1u << ROCKETNET_MESSAGE_CODE_UNRELIABLE ) ) == 0 )
+        {
             return ROCKETNET_MESSAGE_VIOLATION_TYPE_NOT_ENABLED;
+        }
         if ( bytes - 1 > limits->max_message_bytes )
+        {
             return ROCKETNET_MESSAGE_VIOLATION_BAD_SIZE;
+        }
 
         return ROCKETNET_MESSAGE_VIOLATION_NONE;
     }
@@ -551,7 +669,9 @@ int rocketnet_message_check_payload( const uint8_t * payload, int bytes, const s
         int record_bytes = 0;
         const int violation = rocketnet_message_decode_record( payload + offset, body_bytes - offset, bytes, limits, &record, &record_bytes );
         if ( violation != ROCKETNET_MESSAGE_VIOLATION_NONE )
+        {
             return violation;
+        }
 
         offset += record_bytes;
     }
@@ -584,11 +704,15 @@ int rocketnet_message_reader_next( struct rocketnet_message_reader_t * reader, s
     // a refused payload hands out nothing: a record is whole or absent
 
     if ( reader->violation != ROCKETNET_MESSAGE_VIOLATION_NONE )
+    {
         return 0;
+    }
 
     const int body_bytes = reader->payload_bytes - 1;
     if ( reader->offset >= body_bytes )
+    {
         return 0;
+    }
 
     if ( reader->form == ROCKETNET_MESSAGE_FORM_SINGLE )
     {
@@ -650,9 +774,13 @@ int rocketnet_message_read_config_body( const uint8_t * data, int bytes, struct 
     rocketnet_assert( body );
 
     if ( !data || bytes < 1 || data[0] != ROCKETNET_MESSAGE_CONTROL_CONFIG )
+    {
         return ROCKETNET_MESSAGE_VIOLATION_BAD_CONTROL;            // kinds other than 1 are reserved
+    }
     if ( bytes != ROCKETNET_MESSAGE_CONFIG_BYTES )
+    {
         return ROCKETNET_MESSAGE_VIOLATION_BAD_CONTROL;
+    }
 
     const uint8_t * p = data + 1;
     body->version = rocketnet_read_uint8( &p );
@@ -669,7 +797,9 @@ int rocketnet_message_read_config_body( const uint8_t * data, int bytes, struct 
     // reads, and the comparison above it is a CONFIG mismatch
 
     if ( body->version == ROCKETNET_MESSAGE_CONFIG_VERSION && ( zero != 0 || zero_tail != 0 ) )
+    {
         return ROCKETNET_MESSAGE_VIOLATION_BAD_CONTROL;
+    }
 
     return ROCKETNET_MESSAGE_VIOLATION_NONE;
 }

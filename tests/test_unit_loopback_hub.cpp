@@ -44,7 +44,9 @@ static loopback_hub_allocator_t loopback_hub_allocator;
 static void * loopback_hub_malloc( void * context, size_t bytes )
 {
     if ( context != &loopback_hub_allocator )
+    {
         loopback_hub_allocator.wrong_context++;
+    }
     loopback_hub_allocator.allocations++;
     loopback_hub_allocator.live++;
     loopback_hub_allocator.bytes += bytes;
@@ -57,9 +59,13 @@ static void * loopback_hub_malloc( void * context, size_t bytes )
 static void loopback_hub_free( void * context, void * p )
 {
     if ( !p )
+    {
         return;
+    }
     if ( context != &loopback_hub_allocator )
+    {
         loopback_hub_allocator.wrong_context++;
+    }
     loopback_hub_allocator.frees++;
     loopback_hub_allocator.live--;
     plan_rss_free( context, p );
@@ -117,7 +123,9 @@ static void test_loopback_hub_create_and_destroy()
 
         check( rocketnet_loopback_hub_destroy( second ) == ROCKETNET_STATUS_OK );
         if ( hub )
+        {
             check( rocketnet_loopback_hub_destroy( hub ) == ROCKETNET_STATUS_OK );
+        }
         check( loopback_hub_allocator.live == 0 );
     }
 
@@ -337,11 +345,17 @@ static void test_loopback_hub_mismatch_refused()
     for ( int field = 0; field < 3; field++ )
     {
         if ( field == 0 )
+        {
             header->magic ^= 1;
+        }
         else if ( field == 1 )
+        {
             header->version += 1;
+        }
         else
+        {
             header->layout ^= 0x80000000u;
+        }
 
         check( rocketnet_loopback_hub_check( hub ) == ROCKETNET_STATUS_LOOPBACK_HUB_MISMATCH );
 

@@ -31,6 +31,12 @@
 #include <unistd.h>
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
+// darwin declares IPV6_DONTFRAG only under __APPLE_USE_RFC_3542, which the
+// platform layer defines for itself; the option number is the RFC 3542 one
+#if defined( __APPLE__ )
+#define PLATFORM_SOCKET_HYGIENE_IPV6_DONTFRAG 62
+#endif // #if defined( __APPLE__ )
+
 static void test_platform_id_is_the_build_platform()
 {
     rocketnet_unit_check( rocketnet_platform_id() == ROCKETNET_PLATFORM );
@@ -115,7 +121,9 @@ static int platform_socket_hygiene_scripted_receive( void * user, void * packet_
     platform_socket_hygiene_script_t * script = (platform_socket_hygiene_script_t *) user;
     const int index = script->calls++;
     if ( index >= script->count )
+    {
         return -1;
+    }
     const platform_socket_hygiene_datagram_t * datagram = &script->datagrams[index];
     struct sockaddr_in6 * in6 = (struct sockaddr_in6 *) from;
     in6->sin6_family = AF_INET6;
@@ -250,7 +258,9 @@ static int platform_socket_hygiene_chaff_receive( void * user, void * packet_dat
 {
     platform_socket_hygiene_chaff_t * chaff = (platform_socket_hygiene_chaff_t *) user;
     if ( ++chaff->calls > chaff->limit )
+    {
         return -1;
+    }
     struct sockaddr_in6 * in6 = (struct sockaddr_in6 *) from;
     in6->sin6_family = AF_INET6;
     in6->sin6_port = htons( chaff->datagram.port );
@@ -293,13 +303,19 @@ static int platform_socket_hygiene_chaff_reads( platform_socket_hygiene_arm_t ar
 
     int received = -1;
     if ( arm == PLATFORM_SOCKET_HYGIENE_SINGLE )
+    {
         received = rocketnet_platform_socket_receive_packet( &socket, from, packet_data, 64 );
+    }
 #if defined( __linux__ )
     else if ( arm == PLATFORM_SOCKET_HYGIENE_MMSG )
+    {
         received = rocketnet_platform_socket_receive_packets_mmsg( &socket, from, packet_data, 64, packet_bytes, max_packets );
+    }
 #endif // #if defined( __linux__ )
     else
+    {
         received = rocketnet_platform_socket_receive_packets( &socket, from, packet_data, 64, packet_bytes, max_packets );
+    }
 
     rocketnet_platform_socket_set_receive_hook( &socket, NULL, NULL );
 
@@ -401,7 +417,9 @@ static int platform_socket_hygiene_fake_socket( int domain, int type, int protoc
     platform_socket_hygiene_socket_domain = domain;
     int fds[2];
     if ( pipe( fds ) != 0 )
+    {
         return -1;
+    }
     close( fds[1] );
 #if defined( SOCK_CLOEXEC )
     if ( ( type & SOCK_CLOEXEC ) != 0 && fcntl( fds[0], F_SETFD, FD_CLOEXEC ) != 0 )
@@ -475,7 +493,9 @@ static void test_platform_socket_hygiene_wake_is_close_on_exec()
     const int max_fd = 1024;
     static bool open_before[1024];
     for ( int fd = 0; fd < max_fd; fd++ )
+    {
         open_before[fd] = fcntl( fd, F_GETFD ) >= 0;
+    }
 
     struct rocketnet_platform_wake_t * wake = rocketnet_platform_wake_create( NULL, NULL );
     rocketnet_unit_check( wake != NULL );
@@ -484,7 +504,9 @@ static void test_platform_socket_hygiene_wake_is_close_on_exec()
     for ( int fd = 0; fd < max_fd; fd++ )
     {
         if ( open_before[fd] || fcntl( fd, F_GETFD ) < 0 )
+        {
             continue;
+        }
         opened++;
         rocketnet_unit_check( platform_socket_hygiene_close_on_exec( fd ) );
     }
@@ -630,6 +652,13 @@ static void test_platform_socket_hygiene_dual_stack_sets_both_dont_fragment()
     rocketnet_unit_check( ipv6_options.count == 2 );
     rocketnet_unit_check( ipv6_options.levels[0] == IPPROTO_IPV6 && ipv6_options.names[0] == IPV6_MTU_DISCOVER && ipv6_options.values[0] == IPV6_PMTUDISC_DO );
     rocketnet_unit_check( ipv6_options.levels[1] == IPPROTO_IP && ipv6_options.names[1] == IP_MTU_DISCOVER && ipv6_options.values[1] == IP_PMTUDISC_DO );
+#elif defined( __APPLE__ )
+    // darwin refuses IP_DONTFRAG on an AF_INET6 socket (EINVAL), and
+    // IPV6_DONTFRAG keeps its v4-mapped datagrams whole, so it is asked alone
+    rocketnet_unit_check( ipv4_options.count == 1 );
+    rocketnet_unit_check( ipv4_options.levels[0] == IPPROTO_IP && ipv4_options.names[0] == IP_DONTFRAG && ipv4_options.values[0] == 1 );
+    rocketnet_unit_check( ipv6_options.count == 1 );
+    rocketnet_unit_check( ipv6_options.levels[0] == IPPROTO_IPV6 && ipv6_options.names[0] == PLATFORM_SOCKET_HYGIENE_IPV6_DONTFRAG && ipv6_options.values[0] == 1 );
 #elif defined( IPV6_DONTFRAG ) && defined( IP_DONTFRAG )
     rocketnet_unit_check( ipv4_options.count == 1 );
     rocketnet_unit_check( ipv4_options.levels[0] == IPPROTO_IP && ipv4_options.names[0] == IP_DONTFRAG && ipv4_options.values[0] == 1 );

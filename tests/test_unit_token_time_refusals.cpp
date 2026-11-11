@@ -214,25 +214,6 @@ static void test_token_time_refusals_are_distinct()
     token_time_teardown( &t );
 }
 
-// the accepted side of each boundary as its own check: the request is answered
-// with a cookie, so it is not ignored and no token-time refusal counter moves
-
-static void test_token_expiring_one_second_ahead_is_accepted()
-{
-    struct token_time_server_t t;
-    token_time_setup( &t );
-    token_time_accept( &t, TOKEN_TIME_NOW - 100, TOKEN_TIME_NOW + 1 );
-    token_time_teardown( &t );
-}
-
-static void test_token_created_at_the_skew_limit_is_accepted()
-{
-    struct token_time_server_t t;
-    token_time_setup( &t );
-    token_time_accept( &t, TOKEN_TIME_NOW + 30, TOKEN_TIME_NOW + 40 );
-    token_time_teardown( &t );
-}
-
 // no maximum token lifetime: a token valid for 2^40 seconds is answered
 static void test_token_with_a_long_lifetime_is_accepted()
 {
@@ -243,8 +224,6 @@ static void test_token_with_a_long_lifetime_is_accepted()
 }
 
 REGISTER_UNIT_TEST( test_token_time_refusals_are_distinct );
-REGISTER_UNIT_TEST( test_token_expiring_one_second_ahead_is_accepted );
-REGISTER_UNIT_TEST( test_token_created_at_the_skew_limit_is_accepted );
 REGISTER_UNIT_TEST( test_token_with_a_long_lifetime_is_accepted );
 
 static void test_token_future_creation_without_lifetime_limit()

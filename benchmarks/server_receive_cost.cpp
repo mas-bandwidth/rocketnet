@@ -142,7 +142,9 @@ static double percentile( std::vector<double> samples, double p )
 
     const size_t n = samples.size();
     if ( n == 0 )
+    {
         return 0.0;
+    }
 
     const double rank = ( p / 100.0 ) * (double) n;
     size_t index = (size_t) rank;
@@ -196,7 +198,7 @@ int main( int argc, char ** argv )
     config.loopback_hub = hub;
 
     int status = 0;
-    rocketnet_server_transport_t * server = rocketnet_server_transport_create_current_ex( NULL, "127.0.0.1:0", &config, receive_cost_clock, &status );
+    rocketnet_server_transport_t * server = rocketnet_server_transport_create_current_internal( NULL, "127.0.0.1:0", &config, receive_cost_clock, &status );
     CHECK( server );
     CHECK( !rocketnet_server_transport_staged( server ) );
 
@@ -278,10 +280,12 @@ int main( int argc, char ** argv )
         {
             const int last = std::min( num_clients, first + clients_per_group );
             for ( int i = first; i < last; i++ )
+            {
                 for ( int p = 0; p < packets_per_client; p++ )
                 {
                     rocketnet_client_transport_send_packet( clients[(size_t) i], payload, payload_bytes );
                 }
+            }
 
             receive_cost_clock += 0.0001;
             rocketnet_server_transport_update( server, receive_cost_clock );

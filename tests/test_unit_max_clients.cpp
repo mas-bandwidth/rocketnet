@@ -49,7 +49,9 @@ do                                                                              
 {                                                                                                        \
     const bool check_passed = ( condition );                                                             \
     if ( !check_passed && rocketnet_dev_hash_key_seed() != 0 )                                           \
+    {                                                                                                    \
         printf( "hash key seed 0x%016llx\n", (unsigned long long) rocketnet_dev_hash_key_seed() );       \
+    }                                                                                                    \
     rocketnet_unit_check( check_passed && #condition );                                                  \
 } while ( 0 )
 
@@ -188,7 +190,9 @@ static void max_clients_server_config( rocketnet_server_config_t * config )
 static void test_server_plan_follows_configured_max_clients()
 {
     if ( ROCKETNET_MAX_CLIENTS < 1000 )
+    {
         return;
+    }
 
     rocketnet_server_config_t config;
     max_clients_server_config( &config );
@@ -217,7 +221,9 @@ static long max_clients_server_rss_bound_mb()
     config.transport = "portable";
     const uint64_t server = (uint64_t) rocketnet_server_required_memory( &config );
     if ( server == 0 )
+    {
         return 0;
+    }
     return suite_rss_bound_mb( server + rocketnet_loopback_hub_bytes( ROCKETNET_TEST_LOOPBACK_HUB_CLIENTS ) + rocketnet_allocation_overhead(), 32 );
 }
 
@@ -519,11 +525,15 @@ static void * slots_count_malloc( void * context, size_t bytes )
 {
     const int call = slots_allocator.calls++;
     if ( call == slots_allocator.refuse_call )
+    {
         return NULL;
+    }
 
     uint8_t * block = (uint8_t *) rocketnet_default_malloc_function( context, bytes + SLOTS_COUNT_HEADER );
     if ( !block )
+    {
         return NULL;
+    }
 
     memcpy( block, &bytes, sizeof( bytes ) );
     slots_allocator.live_bytes += bytes;
@@ -534,7 +544,9 @@ static void * slots_count_malloc( void * context, size_t bytes )
 static void slots_count_free( void * context, void * memory )
 {
     if ( !memory )
+    {
         return;
+    }
 
     uint8_t * block = (uint8_t *) memory - SLOTS_COUNT_HEADER;
     size_t bytes;
@@ -548,13 +560,13 @@ static void slots_allocator_install()
     memset( &slots_allocator, 0, sizeof( slots_allocator ) );
     slots_allocator.refuse_call = -1;
 
-    check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    check( rocketnet_term_internal() == ROCKETNET_STATUS_OK );
     check( rocketnet_init( NULL, slots_count_malloc, slots_count_free ) == ROCKETNET_STATUS_OK );
 }
 
 static void slots_allocator_remove()
 {
-    check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    check( rocketnet_term_internal() == ROCKETNET_STATUS_OK );
     check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
 

@@ -21,8 +21,8 @@
   (group "proof-debt" :title "Existing nightly proof debt"
    :text "Incomplete proof measurements remain explicit failures under the existing nightly workflows. These are distinct from the completed audit correspondence repairs.")
 
-  (group "older-prs" :title "Older open pull requests"
-   :text "Pull requests not in the 2026-10-31 landing. Each is merged if it still applies, or closed naming the change that replaced it.")
+  (group "after-v1-0-1" :title "Found while preparing v1.0.1"
+   :text "Defects, gaps and measurements found by the v1.0.1 review and test campaign that a point release does not carry. Each is checked at the cited code first.")
   (group "decisions" :title "Decisions for Glenn"
    :text "Choices that change behavior, remove machinery, or touch repository and fleet settings.")
  )
@@ -50,8 +50,8 @@
 
 
   (item "tlc-timeout-debt" :group "proof-debt" :area "proofs"
-   :title "Ten recorded TLC benchmark timeouts"
-   :text "The committed RUNS.tsv still records FAIL/124 at the existing 110-second limit for ClientConnection LArbitrary, LCrash, SNone, SAlternate, SBurst and SArbitrary; ReplayWindowMid; RNEndpointTwoWay and RNEndpointPartial; and SessionAcksLive. The existing TLC nightly retries each declared timeout-debt case and every stale-group case, once each, without rerunning healthy siblings solely because another case timed out. The nightly now runs without a project elapsed-time cap and preserves separate JSON evidence through the pinned engine; the bounded committed measurements remain unchanged. Failure, cancellation or resource exhaustion is not a proof. Fresh measured records require a reviewed commit; the workflow does not commit them automatically."
+   :title "Eleven recorded TLC benchmark timeouts"
+   :text "The committed RUNS.tsv records FAIL/124 at the 110-second limit for the eleven declared timeout-debt cases in CASES.tsv: ClientConnection LArbitrary, LCrash, SNone, SAlternate, SBurst and SArbitrary; ReplayWindowMid; RNEndpointTwoWay and RNEndpointPartial; RNClientIoDecrypt; and SessionAcksLive. The TLC records workflow checks each only to that bounded record; the weekly tlc-debt.yml runs each to its declared result as its own job, two at a time, and keeps its evidence. Failure, cancellation or resource exhaustion is not a proof. Fresh measured records require a reviewed commit; the workflow does not commit them automatically."
    :date "2026-11-01" :origin "proofs/tla/CASES.tsv and RUNS.tsv; existing TLC nightly; #833")
 
   (item "ack-proof-hold" :group "proof-debt" :area "proofs"
@@ -82,15 +82,6 @@
 
 
 
-  (item "older-prs-triage" :group "older-prs" :area "rocketnet"
-   :title "Merge or close the pull requests outside the landing"
-   :text "Open outside the audit continuation as of 2026-11-01: #716, #717, #718, #719, #720, #727, #618, #619, #592, #564, #558, #418, #402, #380. #711, #724 and #729 have landed; the other closed entries are no longer pending. Triage these separately against current source."
-   :date "2026-10-31" :origin "Glenn, 2026-10-31")
-
-  (item "issue-122" :group "older-prs" :area "github"
-   :title "Close issue #122 with the evidence"
-   :text "176 runs on mini-m5 under load 35-100 did not reproduce it."
-   :date "2026-10-31" :origin "Audit item 199")
 
   (item "decision-resend-cap" :group "decisions" :area "rocketnet"
    :title "Cap the single-packet resend delay at timeout/4"
@@ -113,4 +104,124 @@
    :title "A runner label for the nightly frame budget held only by amd-2 and amd-3"
    :text "rocketnet-quiet also covers hetzner2; the frame budget is a wall-clock gate that compares only on one machine class."
    :date "2026-10-31" :origin "#731")
+
+  (item "uring-enomem-status" :group "after-v1-0-1" :area "rocketnet"
+   :title "io_uring setup ENOMEM: a status, or the gso fallback"
+   :text "Under kernel memory pressure io_uring ring setup can fail with ENOMEM, and create treats it as an ordinary refusal: auto falls to gso and a pinned io_uring ends TRANSPORT_LADDER_EXHAUSTED. Reporting an out-of-memory status instead would stop that fallback, a behaviour change, so it belongs in a minor release. Decide which, then pin it with a test."
+   :date "2026-11-11" :origin "v1.0.1 CI: io_uring ENOMEM on a loaded bench, errno now logged by posix_check")
+
+  (item "xdp-stop-abandoned-buffers" :group "after-v1-0-1" :area "rocketnet"
+   :title "xdp stop: count the handoff buffers it abandons"
+   :text "When xdp stop gives up on a transmit ring that has stopped draining, the handoff buffers it abandons are counted in no counter. Count them, so a stop that dropped packets says so."
+   :date "2026-11-11" :origin "v1.0.1 xdp worker fixes (stop bound for a stalled TX ring)")
+
+  (item "xdp-carrier-off-ebusy" :group "after-v1-0-1" :area "rocketnet"
+   :title "xdp: EBUSY with the carrier off is counted per frame"
+   :text "With the link carrier off, each frame's transmit wakeup EBUSY counts in SEND_FAILED on its own, so a down link inflates the counter by its send rate. Decide whether such a run counts once, as a hard wakeup error does."
+   :date "2026-11-11" :origin "v1.0.1 xdp worker fixes")
+
+  (item "xdp-worker-lock-contention" :group "after-v1-0-1" :area "rocketnet"
+   :title "Measure xdp worker lock contention"
+   :text "Try-lock failures between the main thread and the xdp workers were never measured. Measure them on a two-queue guest on a quiet bench before any change."
+   :date "2026-11-11" :origin "v1.0.1 xdp review, item M6")
+
+  (item "xdp-receive-time-seam" :group "after-v1-0-1" :area "rocketnet"
+   :title "xdp receive path reads the platform clock"
+   :text "The xdp receive path still reads rocketnet_platform_time() instead of the update's time. Passing the time in needs the driver seam widened."
+   :date "2026-11-11" :origin "v1.0.1 xdp gateway review, item L13")
+
+  (item "xdp-tx-queue-hash" :group "after-v1-0-1" :area "rocketnet"
+   :title "xdp TX queue choice is an unkeyed hash; gso send bank at 32768 clients"
+   :text "xdp picks the TX queue with an unkeyed FNV-1a of the destination (rocketnet_server_socket_send_queue), so spoofed sources can aim replies at one queue: key it per server. gso's fixed 4096-packet send bank is short at max_clients 32768."
+   :date "2026-11-11" :origin "v1.0.1 review")
+
+  (item "load-split-xdp-flaky" :group "quiet-host" :area "rocketnet"
+   :title "load_split xdp server with portable clients fails about 1 run in 4 or 5"
+   :text "The two-machine load_split delivery proof with an xdp server and portable clients failed 1 of 5 runs on v1.0.1 (one client RELIABLE_TIMED_OUT) and 1 of 4 on v1.0.0 (missed due slots), so it predates v1.0.1. Find each cause on quiet hosts."
+   :date "2026-11-11" :origin "v1.0.1 test campaign, two-machine transport cells")
+
+  (item "uring-rotation-reordering" :group "quiet-host" :area "rocketnet"
+   :title "Measure reordering from io_uring per-send socket rotation"
+   :text "Since v1.0.1, io_uring picks the send socket per send run instead of per batch, so consecutive packets to one client can leave on different reuseport sockets within one update. Measure any extra reordering against v1.0.0."
+   :date "2026-11-11" :origin "v1.0.1 cold read")
+
+  (item "uring-receive-view-640" :group "after-v1-0-1" :area "rocketnet"
+   :title "io_uring receive view larger than the payload batch"
+   :text "Below 640 clients the io_uring receive view is larger than the server payload batch. Check what the server does with the difference and pin it."
+   :date "2026-11-11" :origin "v1.0.1 server transport review, item F5")
+
+  (item "large-messages-under-loss" :group "after-v1-0-1" :area "tests"
+   :title "Functional case: large messages under loss"
+   :text "The functional suite sends reliable messages above 8 KiB only without loss (1 MiB lossless). Add a lossy case with large blocks in the existing harness."
+   :date "2026-11-11" :origin "v1.0.1 guarantees review")
+
+  (item "weak-guarantee-checks" :group "after-v1-0-1" :area "tests"
+   :title "Message guarantees checked weakly or not at all"
+   :text "The DST end check excuses the last 20 sequences and every ended session and caps messages at 16 KiB; the chunk resend cap is pinned by one assertion; the receipt outcome of sends in flight when a connection ends, and fresh serials after a reconnect, are not checked. Strengthen each."
+   :date "2026-11-11" :origin "v1.0.1 guarantees review")
+
+  (item "model-code-mismatches" :group "after-v1-0-1" :area "proofs"
+   :title "Models that no longer match their code"
+   :text "RNClientIo and its three rings, the MCRNSecurityTables switches, and the expire_floor layout in the token tables no longer match the code. Bring each model back to its code."
+   :date "2026-11-11" :origin "v1.0.1 review")
+
+  (item "model-citations-by-name" :group "after-v1-0-1" :area "proofs"
+   :title "Cite code by function or action name, not line number"
+   :text "Model citations point at source line numbers (for example ServerSession.tla citing rocketnet_server_transport_disconnect_client by line), and check_tla_coverage.py enforces them, so a function moving 21 lines forced every serversession case to be rerun. Cite by function or action name so a move does not stale the records."
+   :date "2026-11-10" :origin "Owner request, 2026-11-10")
+
+  (item "transports-shared-setup" :group "after-v1-0-1" :area "rocketnet"
+   :title "Transports repeat themselves: share socket setup"
+   :text "The transports are large and repeat each other: socket setup is duplicated between gso and io_uring and between iocp and rio. Share it."
+   :date "2026-11-10" :origin "Owner request, 2026-11-10")
+
+  (item "windows-transport-gaps" :group "after-v1-0-1" :area "rocketnet"
+   :title "Windows transport gaps"
+   :text "The IOCP create-failure poll is unbounded (RIO's is bounded). The IOCP unit tests exercise queue_pop while production uses queue_pop_before. The USO fallback is untested."
+   :date "2026-11-11" :origin "v1.0.1 Windows review")
+
+  (item "exact-delivery-asserts" :group "after-v1-0-1" :area "tests"
+   :title "Functional cases that assert exact delivery over real sockets"
+   :text "Windows functional cases and the gso and io_uring functional cases assert exact delivery over real sockets, so a host dropping a datagram under load turns them red. Assert what the library promises instead."
+   :date "2026-11-11" :origin "v1.0.1 review")
+
+  (item "fault-counters-public" :group "after-v1-0-1" :area "rocketnet"
+   :title "Transport fault counters with no public reader"
+   :text "transport_faults feeds no production counter, and the client IOCP, gso and I/O fault counters have no public reader."
+   :date "2026-11-11" :origin "v1.0.1 review")
+
+  (item "client-disconnect-family-race" :group "after-v1-0-1" :area "rocketnet"
+   :title "Client disconnect and the address-family race"
+   :text "rocketnet_client_transport_disconnect does not commit the family race (update does since v1.0.0), so after a disconnect before any cookie the I/O thread polls until stop. A send_batch_progress result out of range retries forever."
+   :date "2026-11-11" :origin "v1.0.1 client transport review")
+
+  (item "staged-fakes-claim" :group "after-v1-0-1" :area "tests"
+   :title "Staged test fakes still claim at finish"
+   :text "The staged fakes in test_unit_public_link_simulator.cpp (staged_fake_t), test_unit_driver_loopback.cpp (wt_staged) and test_transport_control.cpp still claim at finish, unlike the transports they stand for."
+   :date "2026-11-11" :origin "v1.0.1 review")
+
+  (item "stale-code-comments" :group "after-v1-0-1" :area "rocketnet"
+   :title "Code comments found stale in the v1.0.1 review"
+   :text "sdk/rocketnet_test_vectors.h says its data mirrors the standard's appendix byte for byte, but most of its arrays are not printed there; the update-time clamp comments in the client and server transports say a bad time is 'loud in a debug build', which a reviewer found stale. Check each against the code and make it say what is true."
+   :date "2026-11-11" :origin "v1.0.1 review; release prep changed docs only")
+
+  (item "fuzz-targets-v1-0-2" :group "after-v1-0-1" :area "tests"
+   :title "Three new fuzz targets"
+   :text "Branch fix/v1.0.1/fuzz-targets holds fuzz targets for the xdp frame, the io_uring recvmsg and the netlink reply (test code only; the xdp target ran 69 million runs clean on macOS). Landing it needs the fuzz lists in ci.yml and fuzz-nightly.yml, MACOS.md, BUILD-REFERENCE.md and tools/fuzz_ndebug.sh, and a first Linux run."
+   :date "2026-11-11" :origin "Held out of v1.0.1")
+
+  (item "platform-primitives-unrun" :group "after-v1-0-1" :area "tests"
+   :title "test_platform_primitives runs in no CI job"
+   :text "CMake builds the test_platform_primitives binary, but no workflow runs it. Run it in CI."
+   :date "2026-11-11" :origin "v1.0.1 review")
+
+  (item "stale-ci-tooling" :group "after-v1-0-1" :area "tools"
+   :title "Stale nightly dispositions and roadmap regeneration"
+   :text "Every row of tools/nightly_dispositions.txt names a pull request that is now merged or closed, so the nightly watch reports each as STALE. The roadmap workflow commits ROADMAP.md to main, while docs/CLAUDE.md says ROADMAP.md is not committed and it is not in the tree: settle which is meant."
+   :date "2026-11-11" :origin "v1.0.1 review")
+
+  (item "xdp-private-link" :group "quiet-host" :area "fleet"
+   :title "Private 10G link for XDP packet blaster and bare-metal LAN runs"
+   :text "The XDP packet blaster, bare-metal XDP LAN runs and the zero-copy load_split ladder need a private 10G link between the XDP bench and a second 10G machine; today the XDP bench's only cabled port is its uplink."
+   :date "2026-11-10" :origin "Owner request, 2026-11-10; docs/runs/xdp-zero-copy.md")
  ))

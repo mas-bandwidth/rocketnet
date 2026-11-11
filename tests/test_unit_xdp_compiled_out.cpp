@@ -85,7 +85,7 @@ static void test_xdp_compiled_out_pin_refuses_not_built()
     xdp_compiled_out_config( &config, "xdp" );
 
     int status = -1;
-    check( rocketnet_server_transport_create_current_ex( NULL, "127.0.0.1:40000", &config, 1000.0, &status ) == NULL );
+    check( rocketnet_server_transport_create_current_internal( NULL, "127.0.0.1:40000", &config, 1000.0, &status ) == NULL );
     check( status == ROCKETNET_STATUS_TRANSPORT_NOT_BUILT );
     check( strcmp( rocketnet_status_name( (enum rocketnet_status_t) status ), "TRANSPORT_NOT_BUILT" ) == 0 );
 
@@ -93,7 +93,7 @@ static void test_xdp_compiled_out_pin_refuses_not_built()
 
     xdp_compiled_out_config( &config, "xdp,xdp" );
     status = -1;
-    check( rocketnet_server_transport_create_current_ex( NULL, "127.0.0.1:40000", &config, 1000.0, &status ) == NULL );
+    check( rocketnet_server_transport_create_current_internal( NULL, "127.0.0.1:40000", &config, 1000.0, &status ) == NULL );
     check( status == ROCKETNET_STATUS_TRANSPORT_NOT_BUILT );
 
 #if ROCKETNET_DEV
@@ -115,7 +115,7 @@ static void test_xdp_compiled_out_list_takes_the_next_candidate()
     config.loopback_hub = rocketnet_test_loopback_hub();
 
     int status = -1;
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_current_ex( NULL, "127.0.0.1:40000", &config, 1000.0, &status );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_current_internal( NULL, "127.0.0.1:40000", &config, 1000.0, &status );
     check( server != NULL );
     check( status == ROCKETNET_STATUS_OK );
 

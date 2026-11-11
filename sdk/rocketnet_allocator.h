@@ -55,12 +55,12 @@
 #define RN_HANDLE_INDEX         0x3FFFFFFFu     // a chunk handle's index bits; its class is the top two
 #define RN_RESEND_NONE          0xFFFFFFFFu
 
-struct rn_channel_send_t                // 40 bytes (7.1): ready membership is a ticket plus the head generation, linked by channel index
+struct rn_channel_send_t                // 64 bytes (7.1): ready membership is a ticket plus the head generation, linked by channel index
 {
     uint32_t ordered_write;             // next ordering index for an ordered send
     uint32_t sequenced_write;           // next sequencing index; zeroed by every ordered send
     uint32_t queue_head, queue_tail;    // the first and last descriptor of this channel's reliable FIFO, linked by queue_next; RN_DESCRIPTOR_NONE when empty
-    uint16_t queued[4];                 // live queued count per priority (holes are not counted)
+    uint64_t queued[4];                 // live queued count per priority (holes are not counted)
     uint32_t ready_prev, ready_next;    // the neighbouring ready channels, RN_DESCRIPTOR_NONE at the ends and when not ready
     uint32_t ready_ticket;              // 0 when this channel is not on the ready list; else its membership ticket
     uint32_t ready_generation;          // generation of the live queue head when this channel joined the ready list
@@ -239,7 +239,7 @@ struct rn_resend_link_t                 // 8 bytes: resend sequence entry, index
 
 enum
 {
-    RN_PART_CHANNEL_SEND = 0,           // 40 C
+    RN_PART_CHANNEL_SEND = 0,           // 64 C
     RN_PART_CHANNEL_RECEIVE,            // 24 C
     RN_PART_SEND_NUMBERS,               // 32 W
     RN_PART_SEND_FIRST_SENDS,           // 8 W
@@ -453,7 +453,9 @@ static inline uint32_t rn_region_schedule_ticket( rn_region_t * region )
 {
     uint32_t ticket = region->schedule_ticket_next;
     if ( ticket == 0 )
+    {
         ticket = 1;
+    }
 
     uint32_t next = ticket + 1;
     if ( next == 0 )

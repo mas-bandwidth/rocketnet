@@ -53,7 +53,7 @@ struct rocketnet_signature_verify_source_t
 struct rocketnet_signature_verify_budget_t
 {
     uint64_t window_start;      // unix seconds the current window began
-    uint32_t failure_count;     // failed verifies this window, across all sources
+    uint32_t failure_count;     // failures recorded this window, across all sources
     struct rocketnet_signature_verify_source_t sources[ROCKETNET_SIGNATURE_VERIFY_TABLE_SLOTS];
 };
 
@@ -66,7 +66,9 @@ int rocketnet_signature_verify_budget_allow( struct rocketnet_signature_verify_b
                                              uint64_t current_timestamp );
 
 // Records a failed verify from this source: the source's own count and the
-// global count both rise. Call only after a verify actually failed.
+// global count both rise. Call only after a verify actually failed, or after
+// a request whose signature verified was refused for its sealed block or its
+// key (rocketnet_server_protocol.cpp, the refusals past the verify).
 void rocketnet_signature_verify_budget_record_failure( struct rocketnet_signature_verify_budget_t * budget,
                                                        const struct rocketnet_address_t * source,
                                                        uint64_t current_timestamp );

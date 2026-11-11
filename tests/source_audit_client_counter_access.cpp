@@ -32,12 +32,16 @@ static bool client_cast_read_file( const char * relative, std::string & text )
     const std::string path = std::string( ROCKETNET_SOURCE_DIR ) + "/" + relative;
     FILE * file = rocketnet_test_fopen( path.c_str(), "rb" );
     if ( file == NULL )
+    {
         return false;
+    }
     char buffer[4096];
     size_t got;
     text.clear();
     while ( ( got = fread( buffer, 1, sizeof( buffer ), file ) ) > 0 )
+    {
         text.append( buffer, got );
+    }
     fclose( file );
     return true;
 }
@@ -59,9 +63,13 @@ static std::string client_cast_code_only( const std::string & source )
         if ( line_comment )
         {
             if ( c == '\n' )
+            {
                 line_comment = false;
+            }
             else
+            {
                 code[i] = ' ';
+            }
             continue;
         }
         if ( block_comment )
@@ -73,17 +81,25 @@ static std::string client_cast_code_only( const std::string & source )
                 block_comment = false;
             }
             else if ( c != '\n' )
+            {
                 code[i] = ' ';
+            }
             continue;
         }
         if ( string_literal || char_literal )
         {
             if ( c != '\n' )
+            {
                 code[i] = ' ';
+            }
             if ( escaped )
+            {
                 escaped = false;
+            }
             else if ( c == '\\' )
+            {
                 escaped = true;
+            }
             else if ( ( string_literal && c == '"' ) || ( char_literal && c == '\'' ) )
             {
                 string_literal = false;
@@ -125,14 +141,18 @@ static bool client_cast_is_identifier_char( char c )
 static void client_cast_skip_space( const std::string & code, size_t & i )
 {
     while ( i < code.size() && isspace( (unsigned char) code[i] ) )
+    {
         i++;
+    }
 }
 
 static std::string client_cast_identifier_at( const std::string & code, size_t & i )
 {
     const size_t start = i;
     while ( i < code.size() && client_cast_is_identifier_char( code[i] ) )
+    {
         i++;
+    }
     return code.substr( start, i - start );
 }
 
@@ -141,9 +161,13 @@ static bool client_cast_word_at( const std::string & code, size_t i, const char 
 {
     const size_t n = strlen( word );
     if ( code.compare( i, n, word ) != 0 )
+    {
         return false;
+    }
     if ( i > 0 && client_cast_is_identifier_char( code[i - 1] ) )
+    {
         return false;
+    }
     return i + n >= code.size() || !client_cast_is_identifier_char( code[i + n] );
 }
 
@@ -151,8 +175,12 @@ static int client_cast_line_of( const std::string & code, size_t offset )
 {
     int line = 1;
     for ( size_t i = 0; i < offset && i < code.size(); i++ )
+    {
         if ( code[i] == '\n' )
+        {
             line++;
+        }
+    }
     return line;
 }
 
@@ -165,15 +193,21 @@ static std::set<std::string> client_cast_client_names( const std::string & code 
     for ( size_t i = 0; i < code.size(); i++ )
     {
         if ( !client_cast_word_at( code, i, "struct" ) )
+        {
             continue;
+        }
         size_t j = i + 6;
         client_cast_skip_space( code, j );
         if ( !client_cast_word_at( code, j, "rocketnet_client_t" ) )
+        {
             continue;
+        }
         j += strlen( "rocketnet_client_t" );
         client_cast_skip_space( code, j );
         if ( j >= code.size() || code[j] != '*' )
+        {
             continue;
+        }
         j++;
         client_cast_skip_space( code, j );
         while ( client_cast_word_at( code, j, "const" ) )
@@ -183,7 +217,9 @@ static std::set<std::string> client_cast_client_names( const std::string & code 
         }
         const std::string name = client_cast_identifier_at( code, j );
         if ( !name.empty() )
+        {
             names.insert( name );
+        }
     }
     return names;
 }
@@ -196,7 +232,9 @@ static void client_cast_find_casts( const char * file, const std::string & code,
     for ( size_t i = 0; i < code.size(); i++ )
     {
         if ( code[i] != '(' )
+        {
             continue;
+        }
         size_t j = i + 1;
         client_cast_skip_space( code, j );
         if ( client_cast_word_at( code, j, "const" ) )
@@ -205,15 +243,21 @@ static void client_cast_find_casts( const char * file, const std::string & code,
             client_cast_skip_space( code, j );
         }
         if ( !client_cast_word_at( code, j, "struct" ) )
+        {
             continue;
+        }
         j += 6;
         client_cast_skip_space( code, j );
         const std::string type = client_cast_identifier_at( code, j );
         if ( type.empty() || type == "rocketnet_client_t" )
+        {
             continue;
+        }
         client_cast_skip_space( code, j );
         if ( j >= code.size() || code[j] != '*' )
+        {
             continue;
+        }
         j++;
         client_cast_skip_space( code, j );
         if ( client_cast_word_at( code, j, "const" ) )
@@ -222,7 +266,9 @@ static void client_cast_find_casts( const char * file, const std::string & code,
             client_cast_skip_space( code, j );
         }
         if ( j >= code.size() || code[j] != ')' )
+        {
             continue;
+        }
         j++;
         client_cast_skip_space( code, j );
         while ( j < code.size() && code[j] == '(' )
@@ -232,7 +278,9 @@ static void client_cast_find_casts( const char * file, const std::string & code,
         }
         const std::string operand = client_cast_identifier_at( code, j );
         if ( operand.empty() || names.find( operand ) == names.end() )
+        {
             continue;
+        }
         char line[512];
         snprintf( line, sizeof( line ), "%s:%d: cast of public client '%s' to struct %s",
                   file, client_cast_line_of( code, i ), operand.c_str(), type.c_str() );
@@ -273,7 +321,9 @@ static void test_tools_never_cast_public_client_to_internal()
         found.clear();
         client_cast_find_casts( "fixture-without-cast", client_cast_code_only( without_cast ), found );
         for ( size_t i = 0; i < found.size(); i++ )
+        {
             failures.push_back( "detector witness: false cast " + found[i] );
+        }
     }
 
     static const char * const files[] = { "tests/client_server/client.c", "tests/client_server/server.c", "tests/load/load.c", "tests/soak/soak.c" };
@@ -291,7 +341,9 @@ static void test_tools_never_cast_public_client_to_internal()
     if ( !failures.empty() )
     {
         for ( size_t i = 0; i < failures.size(); i++ )
+        {
             printf( "%s\n", failures[i].c_str() );
+        }
         printf( "test_tools_never_cast_public_client_to_internal: %zu failure(s)\n", failures.size() );
         fflush( stdout );
         exit( 1 );

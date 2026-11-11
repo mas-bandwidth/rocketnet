@@ -10,11 +10,16 @@ The harness checks properties that also appear in the TLA+ models:
 - accepted payload bytes equal the sent message bytes;
 - reliable messages arrive exactly once and ordered streams arrive in order;
 - unreliable messages arrive at most once;
+- every receipt the senders read names a type 5, 6 or 7 message that
+  sender sent, is that message's only outcome, is LOSS only for type 5, and
+  is ACKED only for a message the receiver delivered (type 7: or holds
+  behind an earlier undelivered sequence);
 - stale packets from an earlier connection cannot enter a reused slot;
 - an acknowledgement names a packet the acknowledged endpoint itself issued,
   and names it once;
-- buffers, queues and receipt rings remain within their
-  configured bounds;
+- every reliable message a live session sent, in the fault window or after
+  it, is delivered by the end of the run, apart from the last few still in
+  flight;
 - an endpoint (the server or a client) that can make fair progress does not remain wedged.
 
 Every simulated endpoint has explicit state: connection generation, local clock,
@@ -51,18 +56,20 @@ The same seeds and options print the same trace on Linux, macOS and Windows,
 so a seed that fails on one OS replays on the others. The reference is
 
     ./bin/dst --seeds 1-50
-    PASS seeds=1-50 runs=50 trace=17999bcc78a7254d
+    PASS seeds=1-50 runs=50 trace=cb02374fb45015e4
 
-measured equal, Release, at executable source e385557a (after 93eaebd06 seeded
-the message resend delay from the transport's measured RTT) on all three OSes:
+measured equal, Release, at executable source 27b56da21 (the v1.0.1 audit
+integration, stitch/v1.0.1-audit) on Linux and macOS; the Windows line is
+confirmed separately:
 
-    Linux   (x64, gcc)     PASS seeds=1-50 runs=50 trace=17999bcc78a7254d
-    macOS   (arm64, clang) PASS seeds=1-50 runs=50 trace=17999bcc78a7254d
-    Windows (x64, MSVC)    PASS seeds=1-50 runs=50 trace=17999bcc78a7254d
+    Linux   (x64, gcc)     PASS seeds=1-50 runs=50 trace=cb02374fb45015e4
+    macOS   (arm64, clang) PASS seeds=1-50 runs=50 trace=cb02374fb45015e4
 
-The trace was 510908e5051b7f68 at 968673ea and f5b51aa640524001 at main 010c8167
-(also equal on the three OSes); seeding the message resend delay from the
-transport's measured RTT (93eaebd06) moved it. A change that moves this
+The trace was f5b51aa640524001 at main 010c8167, 510908e5051b7f68 at 968673ea
+and 17999bcc78a7254d at e385557a (each equal on the three OSes; seeding the
+message resend delay from the transport's measured RTT, 93eaebd06, gave the
+last); the v1.0.1 audit fixes between e385557a and 27b56da21 moved it to
+cb02374fb45015e4. A change that moves this
 trace changes what a run does; it updates the reference here and
 `DST_REFERENCE_TRACE` in `.github/workflows/nightly-dst.yml` together, from
 three equal PASS lines.
@@ -135,7 +142,7 @@ schedule; a failure prints its seed and the replay command, which carries
   clock plus its offset, so its update is handed a time below the one before.
   The wire stays on the shared clock. The fault is applied below the message
   object, whose update clamps a backwards game time
-  (`rocketnet_clamp_update_time`), so the protocol sees it. The skew check's
+  (`rocketnet_update_clock_advance`), so the protocol sees it. The skew check's
   bound for that endpoint is the 5 s maximum (plus 1 ms of rounding); every
   other endpoint keeps 0.45 s. A step back past the server's three-second
   cookie lifetime makes the rewound client answer a cookie challenge after
@@ -187,3 +194,10 @@ least two hundred packets in one update and receives at least two hundred in
 one release step, counted apart, and `test_dst_dup_storm_duplicates_payloads`
 pins that the storm's copies reach the receivers as a payload taken twice,
 with the duplicate fault off.
+
+At the default `reliable_message_timeout_ms` the message layer does not end a
+connection in seeds 1-50. `test_dst_reliable_timeout_ends_connections_cleanly`
+runs seed 3 at an accepted 1500 ms, where it ends connections on both ends,
+and requires every check to hold across them. A client whose session ended
+can reconnect while the server still holds the old session's slot; the
+harness books each server send and receipt to the session its slot holds.

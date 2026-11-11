@@ -3,8 +3,9 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// A client start_packet can refuse after spending its sequence
-// (sdk/rocketnet_client_transport.cpp:1532, :1549, :1570 and :1587). The
+// A client start_packet can refuse after spending its sequence: it takes
+// the sequence at sdk/rocketnet_client_transport.cpp:3729 and refuses after
+// at :3745 (payload ring full) and :3767 (lease table full). The
 // server assigns a sequence only when finish accepts the payload and reserves
 // every wire frame, so a server lease or ring refusal, an abort, or a
 // refused finish leaves no sequence gap.
@@ -161,11 +162,15 @@ REGISTER_UNIT_TEST( test_sequence_burn_sender_walk_is_harmless );
 static int seq_claimed( const struct rocketnet_ack_block_t * b, uint64_t seq )
 {
     if ( seq > b->largest )
+    {
         return 0;
+    }
     {
         uint64_t lo = b->largest - (uint64_t) b->first_range_length + 1;
         if ( seq >= lo )
+        {
             return 1;
+        }
     }
     uint64_t cur = b->largest - (uint64_t) b->first_range_length + 1;
     for ( int i = 0; i < (int) b->num_ranges; i++ )
@@ -173,7 +178,9 @@ static int seq_claimed( const struct rocketnet_ack_block_t * b, uint64_t seq )
         uint64_t high = cur - 1 - (uint64_t) b->range_gap[i];
         uint64_t lo = high - (uint64_t) b->range_length[i] + 1;
         if ( seq >= lo && seq <= high )
+        {
             return 1;
+        }
         cur = lo;
     }
 
@@ -287,7 +294,9 @@ static bool sequence_burn_pair_setup( struct sequence_burn_pair_t * pair )
     pair->server = rocketnet_server_transport_create_sized( NULL, "127.0.0.1:0", &server_config, sizeof( server_config ) );
     rocketnet_unit_check( pair->server != NULL );
     if ( !pair->server )
+    {
         return false;
+    }
 
     char server_address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
     snprintf( server_address, sizeof( server_address ), "127.0.0.1:%d", rocketnet_server_transport_port( pair->server ) );
@@ -347,7 +356,9 @@ static bool sequence_burn_round_burns( int round )
 static uint8_t * sequence_burn_start( struct sequence_burn_pair_t * pair, int side, int request, struct rocketnet_packet_context_t * context )
 {
     if ( side == BURN_SIDE_SERVER )
+    {
         return rocketnet_server_transport_start_packet( pair->server, 0, request, context );
+    }
     return rocketnet_client_transport_start_packet( pair->client, request, context );
 }
 
@@ -356,16 +367,22 @@ static bool sequence_burn_send_one( struct sequence_burn_pair_t * pair, int side
     struct rocketnet_packet_context_t context;
     uint8_t * frame = sequence_burn_start( pair, side, request, &context );
     if ( !frame )
+    {
         return false;
+    }
     uint8_t * payload = frame + context.payload_index;
     memset( payload, (uint8_t) ( 0xB0 + round ), BURN_SMALL_BYTES );
     payload[0] = (uint8_t) index;
 
     int wire = 0;
     if ( side == BURN_SIDE_SERVER )
+    {
         wire = rocketnet_server_transport_finish_packet( pair->server, &context, BURN_SMALL_BYTES );
+    }
     else
+    {
         wire = rocketnet_client_transport_finish_packet( pair->client, &context, BURN_SMALL_BYTES );
+    }
     rocketnet_unit_check( wire > 0 );
 
     return true;
@@ -374,7 +391,9 @@ static bool sequence_burn_send_one( struct sequence_burn_pair_t * pair, int side
 static const struct rocketnet_counters_t * sequence_burn_counters( struct sequence_burn_pair_t * pair, int side )
 {
     if ( side == BURN_SIDE_SERVER )
+    {
         return rocketnet_server_transport_counters( pair->server );
+    }
     return rocketnet_client_transport_counters( pair->client );
 }
 
@@ -522,7 +541,9 @@ static void sequence_burn_print( const char * name, const struct sequence_burn_m
 {
     char burn_print[256];
     if ( !rocketnet_test_getenv( "ROCKETNET_SEQUENCE_BURN_PRINT", burn_print, sizeof( burn_print ) ) )
+    {
         return;
+    }
     printf( "BURN %-22s sent=%d refused=%d acked=%d delivered=%d refusal_ctr=%llu lease_full=%llu ack_unknown=%llu "
             "batch_full=%llu history_lost=%llu rx_already=%llu rx_did_not_open=%llu rx_delivered=%llu "
             "client_rtt=%.3f server_rtt=%.3f client_loss=%.4f server_loss=%.4f\n",
@@ -742,7 +763,7 @@ REGISTER_UNIT_TEST( test_sequence_burn_server_refused_finish_does_not_count_as_l
 // transport refuses for real (SEND_RING_FULL). Client starts spend their
 // sequence before this refusal; server starts spend none until finish.
 // The layer's write pass then treats the frame as not started
-// (rn_endpoint_packet_failed, sdk/rocketnet_endpoint.cpp:1100) and writes the
+// (rn_endpoint_packet_failed, sdk/rocketnet_endpoint.cpp:1206) and writes the
 // rest next update. The control run is the same traffic with no seam. Measured
 // on the burning side: reliable records resent on the resend delay (MESSAGE_RESENT),
 // the ordered window's srtt, rttvar and resend_delay; on the receiving side: every reliable
@@ -793,11 +814,17 @@ static uint8_t * sequence_burn_seam_start( void * transport, int client_index, i
             struct rocketnet_packet_context_t fill;
             uint8_t * frame = sequence_burn_seam_side == BURN_SIDE_SERVER ? rocketnet_server_transport_start_packet( (struct rocketnet_server_transport_t *) transport, client_index, BURN_SMALL_BYTES, &fill ) : rocketnet_client_transport_start_packet( (struct rocketnet_client_transport_t *) transport, BURN_SMALL_BYTES, &fill );
             if ( !frame )
+            {
                 break;
+            }
             if ( sequence_burn_seam_side == BURN_SIDE_SERVER )
+            {
                 rocketnet_server_transport_abort_packet( (struct rocketnet_server_transport_t *) transport, &fill );
+            }
             else
+            {
                 rocketnet_client_transport_abort_packet( (struct rocketnet_client_transport_t *) transport, &fill );
+            }
         }
 
         uint8_t * frame = sequence_burn_seam_next( transport, client_index, request_bytes, context );
@@ -838,7 +865,9 @@ static bool sequence_burn_message_pair_setup( struct sequence_burn_message_pair_
     pair->server = rocketnet_message_server_create( NULL, "127.0.0.1:0", &server_config, NULL, NULL, 0, 0 );
     rocketnet_unit_check( pair->server != NULL );
     if ( !pair->server )
+    {
         return false;
+    }
 
     char server_address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
     snprintf( server_address, sizeof( server_address ), "127.0.0.1:%d",
@@ -871,7 +900,9 @@ static void sequence_burn_message_pair_teardown( struct sequence_burn_message_pa
 static uint32_t sequence_burn_message_send( struct sequence_burn_message_pair_t * pair, int side, const uint8_t * data, int bytes )
 {
     if ( side == BURN_SIDE_SERVER )
+    {
         return rocketnet_message_server_send( pair->server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, data, bytes );
+    }
     return rocketnet_message_client_send( pair->client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, data, bytes );
 }
 
@@ -892,21 +923,31 @@ static void sequence_burn_message_step( struct sequence_burn_message_pair_t * pa
             const int got = side == BURN_SIDE_SERVER ? rocketnet_message_client_receive( pair->client, NULL, &data, &bytes )
                                                      : rocketnet_message_server_receive( pair->server, NULL, NULL, &data, &bytes );
             if ( !got )
+            {
                 break;
+            }
             if ( bytes == BURN_MESSAGE_LARGE_BYTES && data[0] == 0xE2 )
+            {
                 m->large_received++;
+            }
             if ( bytes == 8 && data[0] == 0xE1 )
             {
                 uint32_t index = 0;
                 memcpy( &index, data + 4, sizeof( index ) );
                 if ( (int) index != m->reliable_received )
+                {
                     m->reliable_in_order = 0;
+                }
                 m->reliable_received++;
             }
             if ( side == BURN_SIDE_SERVER )
+            {
                 rocketnet_message_client_release( pair->client, data );
+            }
             else
+            {
                 rocketnet_message_server_release( pair->server, data );
+            }
         }
     }
 
@@ -945,7 +986,9 @@ static void sequence_burn_message_run( int side, bool burn, struct sequence_burn
     for ( int i = 0; i < 400 && !( rocketnet_message_client_state( pair.client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
                                    rocketnet_message_server_client_connected( pair.server, 0 ) );
           i++ )
+    {
         sequence_burn_message_step( &pair, side, -1, false, NULL );
+    }
     rocketnet_unit_check( rocketnet_message_server_client_connected( pair.server, 0 ) );
     rocketnet_unit_check( rocketnet_message_client_state( pair.client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
 
@@ -986,7 +1029,9 @@ static void sequence_burn_message_print( const char * name, const struct sequenc
 {
     char burn_print[256];
     if ( !rocketnet_test_getenv( "ROCKETNET_SEQUENCE_BURN_PRINT", burn_print, sizeof( burn_print ) ) )
+    {
         return;
+    }
     printf( "BURN %-22s reliable_sent=%d reliable_received=%d large_sent=%d large_received=%d in_order=%d layer_refused=%d "
             "ring_full=%llu resent=%llu duplicate=%llu srtt=%.6f rttvar=%.6f resend_delay=%.6f\n",
             name, m->reliable_sent, m->reliable_received, m->large_sent, m->large_received, m->reliable_in_order,

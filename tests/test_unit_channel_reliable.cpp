@@ -659,7 +659,9 @@ static void reliable_block_refused_case( int wrong )
 
     rocketnet_message_record_t last = reliable_block_record( data, total, 0, 2 );
     if ( wrong == RELIABLE_BLOCK_WRONG_RING )
+    {
         last.ring += F / 16;                    // the block's base moves by one chunk
+    }
     else
     {
         last.fragments = 3;                     // a block of four, where this chunk is not the last

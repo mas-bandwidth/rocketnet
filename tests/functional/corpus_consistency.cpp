@@ -82,7 +82,9 @@ static void * pcapng_malloc( void * context, size_t bytes )
 
     uint8_t * block = (uint8_t *) malloc( bytes + 16 );
     if ( !block )
+    {
         return NULL;
+    }
     memcpy( block, &bytes, sizeof( bytes ) );
     pcapng_live_bytes += bytes;
     if ( pcapng_live_bytes > pcapng_peak_bytes )
@@ -97,7 +99,9 @@ static void pcapng_free( void * context, void * p )
 {
     (void) context;
     if ( !p )
+    {
         return;
+    }
 
     uint8_t * block = (uint8_t *) p - 16;
     size_t bytes;
@@ -221,8 +225,12 @@ static const pcapng_session_counters_t pcapng_session_counters[] = {
 static const pcapng_session_counters_t * pcapng_session( int packet_type )
 {
     for ( size_t i = 0; i < sizeof( pcapng_session_counters ) / sizeof( pcapng_session_counters[0] ); i++ )
+    {
         if ( pcapng_session_counters[i].packet_type == packet_type )
+        {
             return &pcapng_session_counters[i];
+        }
+    }
     return NULL;
 }
 
@@ -232,7 +240,9 @@ static const pcapng_session_counters_t * pcapng_session( int packet_type )
 static pcapng_outcome_t pcapng_connect_request( const uint8_t * packet, int bytes )
 {
     if ( bytes != ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES )
+    {
         return pcapng_refused( ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_SIZE );
+    }
 
     // after the prefilter header: return cookie (24), salt (8), client
     // ephemeral public key (32), signed connect data (576), signature (64)
@@ -245,12 +255,16 @@ static pcapng_outcome_t pcapng_connect_request( const uint8_t * packet, int byte
     {
         const uint8_t * p = signed_connect_data + ROCKETNET_SIGNED_OFFSET_VERSION;
         if ( rocketnet_read_uint32( &p ) != ROCKETNET_WIRE_VERSION )
+        {
             return pcapng_refused( ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_VERSION );
+        }
     }
     {
         const uint8_t * p = signed_connect_data + ROCKETNET_SIGNED_OFFSET_PROTOCOL_ID;
         if ( rocketnet_read_uint64( &p ) != ROCKETNET_TEST_PROTOCOL_ID )
+        {
             return pcapng_refused( ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_PROTOCOL_ID );
+        }
     }
 
     // the signed part of a token travels in the request; the token's two
@@ -266,7 +280,9 @@ static pcapng_outcome_t pcapng_connect_request( const uint8_t * packet, int byte
     check( memcmp( token.signed_connect_data, signed_connect_data, ROCKETNET_SIGNED_CONNECT_DATA_BYTES ) == 0 );
 
     if ( !rocketnet_verify_signed_connect_data( token.signed_connect_data, token.signature, rocketnet_test_backend_public_key ) )
+    {
         return pcapng_refused( ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_DID_NOT_VERIFY );
+    }
 
     struct rocketnet_connect_token_private_t private_fields;
     const int opened = rocketnet_open_connect_token_private( &private_fields, token.signed_connect_data,
@@ -280,9 +296,13 @@ static pcapng_outcome_t pcapng_connect_request( const uint8_t * packet, int byte
     }
 
     if ( !opened )
+    {
         return pcapng_refused( ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_OPEN_SEALED_BLOCK );
+    }
     if ( !consistent )
+    {
         return pcapng_refused( ROCKETNET_COUNTER_CONNECTION_REQUEST_SEALED_MISMATCH );
+    }
 
     return pcapng_read_as( "server REQUEST token" );
 }
@@ -293,11 +313,15 @@ static pcapng_outcome_t pcapng_wire( const uint8_t * packet, int bytes, int to_s
 {
     const int code = rocketnet_prefilter_check( packet, bytes, rocketnet_test_filter_value );
     if ( code < 0 )
+    {
         return pcapng_fault_drop_prefilter_name ? pcapng_outcome_t() : pcapng_refused( rocketnet_prefilter_counter( code ) );
+    }
 
     const int packet_type = code;
     if ( packet_type >= ROCKETNET_FIRST_RESERVED_PACKET_TYPE )
+    {
         return pcapng_refused( ROCKETNET_COUNTER_RESERVED_TYPE );
+    }
 
     std::string read = std::string( to_server ? "server " : "client " ) + pcapng_type_name( packet_type );
     const pcapng_session_counters_t * session = pcapng_session( packet_type );
@@ -306,7 +330,9 @@ static pcapng_outcome_t pcapng_wire( const uint8_t * packet, int bytes, int to_s
     {
         if ( packet_type == ROCKETNET_CONNECTION_DENIED_PACKET || packet_type == ROCKETNET_CONNECTION_CHALLENGE_PACKET ||
              packet_type == ROCKETNET_CONNECTION_COOKIE_PACKET )
+        {
             return pcapng_refused( ROCKETNET_COUNTER_WRONG_DIRECTION );
+        }
 
         if ( packet_type == ROCKETNET_CONNECTION_REQUEST_PACKET )
         {
@@ -320,9 +346,13 @@ static pcapng_outcome_t pcapng_wire( const uint8_t * packet, int bytes, int to_s
         }
 
         if ( packet_type == ROCKETNET_CONNECTION_RESPONSE_PACKET && bytes != ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES )
+        {
             return pcapng_refused( ROCKETNET_COUNTER_CONNECTION_RESPONSE_WRONG_SIZE );
+        }
         if ( session && bytes < session->min_wire_bytes )
+        {
             return pcapng_refused( session->server_wrong_size );
+        }
 
         // what the server reads before keys is what the kernel filter passes
 
@@ -331,15 +361,25 @@ static pcapng_outcome_t pcapng_wire( const uint8_t * packet, int bytes, int to_s
     }
 
     if ( packet_type == ROCKETNET_CONNECTION_REQUEST_PACKET || packet_type == ROCKETNET_CONNECTION_RESPONSE_PACKET )
+    {
         return pcapng_refused( ROCKETNET_COUNTER_WRONG_DIRECTION );
+    }
     if ( packet_type == ROCKETNET_CONNECTION_COOKIE_PACKET && bytes != ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES )
+    {
         return pcapng_refused( ROCKETNET_COUNTER_CLIENT_COOKIE_WRONG_SIZE );
+    }
     if ( packet_type == ROCKETNET_CONNECTION_CHALLENGE_PACKET && bytes != ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES )
+    {
         return pcapng_refused( ROCKETNET_COUNTER_CLIENT_CHALLENGE_DID_NOT_OPEN );
+    }
     if ( packet_type == ROCKETNET_CONNECTION_DENIED_PACKET && bytes != ROCKETNET_CONNECTION_DENIED_WIRE_BYTES )
+    {
         return pcapng_refused( ROCKETNET_COUNTER_CLIENT_DENIED_DID_NOT_OPEN );
+    }
     if ( session && bytes < session->min_wire_bytes )
+    {
         return pcapng_refused( session->client_wrong_size );
+    }
 
     return pcapng_read_as( read.c_str() );
 }
@@ -357,7 +397,9 @@ struct pcapng_replay_t
 static pcapng_outcome_t pcapng_opened( pcapng_replay_t * replay, const std::vector<uint8_t> & record, const std::string & comment )
 {
     if ( record.empty() )
+    {
         return pcapng_refused_by( "PCAPNG_EMPTY_RECORD" );
+    }
 
     const int kind = record[0];
     const uint8_t * data = record.data() + 1;
@@ -367,14 +409,18 @@ static pcapng_outcome_t pcapng_opened( pcapng_replay_t * replay, const std::vect
     const std::string end = comment.substr( 0, space );
     const int is_server = end == "server";
     if ( !is_server && end != "client" )
+    {
         return pcapng_refused_by( "PCAPNG_RECORD_NO_CONTEXT" );
+    }
 
     if ( kind == ROCKETNET_PCAPNG_KIND_ACK_BLOCK )
     {
         const int packet_type = space == std::string::npos ? -1 : atoi( comment.c_str() + space + 1 );
         const pcapng_session_counters_t * session = pcapng_session( packet_type );
         if ( !session )
+        {
             return pcapng_refused_by( "PCAPNG_RECORD_NO_CONTEXT" );
+        }
 
         // the reader's context is the receiver's own highest sent sequence;
         // the replay stands an honest sender's in for it: the block's own
@@ -391,14 +437,18 @@ static pcapng_outcome_t pcapng_opened( pcapng_replay_t * replay, const std::vect
         struct rocketnet_ack_block_t block;
         const int block_bytes = rocketnet_ack_block_read( &block, data, bytes, highest_sent );
         if ( block_bytes == 0 )
+        {
             return pcapng_refused( is_server ? session->server_bad_ack_block : session->client_bad_ack_block );
+        }
 
         const int type_data_bytes = bytes - block_bytes;
         if ( ( packet_type == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET && type_data_bytes != 8 ) ||
              ( packet_type == ROCKETNET_CONNECTION_PAYLOAD_PACKET && type_data_bytes < 1 ) ||
              ( packet_type == ROCKETNET_CONNECTION_DISCONNECT_PACKET && type_data_bytes != 0 ) ||
              ( packet_type == ROCKETNET_CONNECTION_ACK_PACKET && type_data_bytes != 0 ) )
+        {
             return pcapng_refused( is_server ? session->server_wrong_opened_size : session->client_wrong_opened_size );
+        }
         return pcapng_read_as( ( end + " ack block " + pcapng_type_name( packet_type ) ).c_str() );
     }
 
@@ -407,9 +457,11 @@ static pcapng_outcome_t pcapng_opened( pcapng_replay_t * replay, const std::vect
         struct rocketnet_message_reader_t reader;
         const int violation = rocketnet_message_reader_begin( &reader, data, bytes, &replay->limits );
         if ( violation != ROCKETNET_MESSAGE_VIOLATION_NONE )
+        {
             return pcapng_refused_by( ( std::string( rocketnet_counter_name( ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION ) ) + " " +
                                         pcapng_violation_name( violation ) )
                                           .c_str() );
+        }
         struct rocketnet_message_record_t message;
         int records = 0;
         while ( rocketnet_message_reader_next( &reader, &message ) )
@@ -441,13 +493,17 @@ static pcapng_file_result_t pcapng_replay_file( const std::string & path )
     std::vector<uint8_t> image;
     result.read_result = rocketnet_pcapng_read_file( path, image );
     if ( result.read_result != ROCKETNET_PCAPNG_OK )
+    {
         return result;
+    }
     result.file_bytes = image.size();
 
     std::vector<rocketnet_pcapng_packet_t> packets;
     result.read_result = rocketnet_pcapng_read_buffer( image.data(), image.size(), packets );
     if ( result.read_result != ROCKETNET_PCAPNG_OK )
+    {
         return result;
+    }
 
     pcapng_replay_t replay;
     memset( &replay, 0, sizeof( replay ) );
@@ -594,8 +650,10 @@ static int pcapng_replay_corpus( int pin_tallies )
         check( result.file_bytes <= ROCKETNET_PCAPNG_MAX_FILE_BYTES );
         corpus_bytes += result.file_bytes;
         if ( pcapng_live_bytes != 0 || pcapng_peak_bytes > bound )
+        {
             printf( "pcapng corpus: %s live bytes %llu, peak %llu, bound %llu\n", name.c_str(),
                     (unsigned long long) pcapng_live_bytes, (unsigned long long) pcapng_peak_bytes, (unsigned long long) bound );
+        }
         check( pcapng_live_bytes == 0 );
         check( pcapng_peak_bytes <= bound );
 
@@ -607,16 +665,20 @@ static int pcapng_replay_corpus( int pin_tallies )
         unnamed += (int) result.unnamed.size();
 
         if ( !pin_tallies || is_regress )
+        {
             continue;
+        }
 
         const std::string tally = pcapng_tally_text( result.tally );
         const pcapng_pin_t * pin = NULL;
 
         for ( size_t k = 0; k < sizeof( pcapng_pins ) / sizeof( pcapng_pins[0] ); k++ )
+        {
             if ( name == pcapng_pins[k].file )
             {
                 pin = &pcapng_pins[k];
             }
+        }
 
         if ( !pin || tally != pin->tally )
         {
@@ -768,20 +830,28 @@ void test_pcapng_corpus_covers_control_packet_types()
         for ( size_t j = 0; j < packets.size(); j++ )
         {
             if ( packets[j].interface_id != ROCKETNET_PCAPNG_INTERFACE_WIRE )
+            {
                 continue;
+            }
 
             const uint8_t * datagram;
             int bytes;
             uint32_t src_address, dst_address;
             uint16_t src_port, dst_port;
             if ( !rocketnet_pcapng_udp_payload( packets[j].data, &datagram, &bytes, &src_address, &src_port, &dst_address, &dst_port ) )
+            {
                 continue;
+            }
             if ( bytes < 1 )
+            {
                 continue;
+            }
 
             const int packet_type = datagram[0];
             if ( packet_type < 0 || packet_type >= ROCKETNET_FIRST_RESERVED_PACKET_TYPE )
+            {
                 continue;
+            }
             counts[packet_type]++;
         }
     }
@@ -873,8 +943,10 @@ void test_fuzz_prefilter_seed_names_match_outcomes()
                                  ? result >= ROCKETNET_FIRST_RESERVED_PACKET_TYPE
                                  : result == seed.expected;
         if ( !matches || ( seed.expected_bytes >= 0 && datagram_bytes != seed.expected_bytes ) )
+        {
             printf( "fuzz prefilter seed %s: %d bytes, prefilter result %d, the name says %d\n",
                     seed.name, datagram_bytes, result, seed.expected );
+        }
         check( matches );
         check( seed.expected_bytes < 0 || datagram_bytes == seed.expected_bytes );
     }

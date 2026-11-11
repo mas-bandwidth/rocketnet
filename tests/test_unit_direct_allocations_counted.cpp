@@ -57,7 +57,9 @@ static void * direct_count_malloc( void * context, size_t bytes )
 
     uint8_t * block = (uint8_t *) rocketnet_default_malloc_function( context, bytes + DIRECT_COUNT_HEADER );
     if ( !block )
+    {
         return NULL;
+    }
     memcpy( block, &bytes, sizeof( bytes ) );
     g_direct_live_bytes += bytes;
 
@@ -67,7 +69,9 @@ static void * direct_count_malloc( void * context, size_t bytes )
 static void direct_count_free( void * context, void * memory )
 {
     if ( !memory )
+    {
         return;
+    }
 
     uint8_t * block = (uint8_t *) memory - DIRECT_COUNT_HEADER;
     size_t bytes;
@@ -78,13 +82,13 @@ static void direct_count_free( void * context, void * memory )
 
 static void direct_count_install()
 {
-    check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    check( rocketnet_term_internal() == ROCKETNET_STATUS_OK );
     check( rocketnet_init( NULL, direct_count_malloc, direct_count_free ) == ROCKETNET_STATUS_OK );
 }
 
 static void direct_count_uninstall()
 {
-    check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    check( rocketnet_term_internal() == ROCKETNET_STATUS_OK );
     check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
 
@@ -124,7 +128,9 @@ static void test_io_uring_fake_create_destroy_counted()
         struct rocketnet_server_uring_t * uring = rocketnet_server_uring_test_create_fake( 2 );
         check( uring != NULL );
         if ( !uring )
+        {
             break;
+        }
         check( g_direct_live_bytes > live_before );
         check( g_direct_allocation_calls == calls_before + 2 * (size_t) ( cycle + 1 ) );
         rocketnet_server_uring_test_destroy_fake( uring );

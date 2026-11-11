@@ -16,7 +16,6 @@
 // directory walk, no network, no clock).
 
 #include "test_unit_registry.h"
-#include "resource_file.h"
 
 #include "rocketnet_internal.h"
 #include "rocketnet_counters.h"
@@ -292,8 +291,12 @@ static const char * const counters_appended_names[] = {
 static bool counters_is_received( int counter )
 {
     for ( int i = 0; i < ROCKETNET_NUM_COUNTERS; i++ )
+    {
         if ( counters_rows[i].family == counter )
+        {
             return true;
+        }
+    }
     return false;
 }
 
@@ -427,8 +430,12 @@ static void counters_balanced_family( struct rocketnet_counters_t * counters, in
 static int counters_first_outcome( int received )
 {
     for ( int i = 0; i < ROCKETNET_NUM_COUNTERS; i++ )
+    {
         if ( counters_rows[i].family == received )
+        {
             return i;
+        }
+    }
     return -1;
 }
 
@@ -488,7 +495,9 @@ static void test_counters_conservation_reports_the_first_unbalanced_family()
     for ( int received = 0; received < ROCKETNET_NUM_COUNTERS; received++ )
     {
         if ( !counters_is_received( received ) )
+        {
             continue;
+        }
         families++;
 
         const int outcome = counters_first_outcome( received );

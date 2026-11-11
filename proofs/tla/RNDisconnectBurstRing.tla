@@ -36,6 +36,12 @@
 (*             cursor moves on and the entry is not sealed. A complete     *)
 (*             entry away from the head (one abandoned) leaves only once   *)
 (*             the pop at the head reaches it                               *)
+(*   DropForRoom  rocketnet_server_transport_stop_step when the transport  *)
+(*             has no send room and is idle (ServerStopSpread AbandonNoRoom):*)
+(*             every waiting burst leaves from the head (keys wiped, head  *)
+(*             moved on by count modulo C, count 0) and the cursor is      *)
+(*             reset to 0; each burst not yet complete is dropped unsent   *)
+(*             in part or whole                                            *)
 (*                                                                         *)
 (* A drain ends when its allowance is spent or a send frame is refused     *)
 (* for a reason other than the destination; either leaves the ring and the *)
@@ -48,6 +54,7 @@
 (*   FullTestExact  the room test one late (count <= C)                    *)
 (*   CursorWrapAt   the cursor restarts only past count (cursor > count)   *)
 (*   CursorDrops    the cursor is not lowered when the head pops           *)
+(*   DropResetsCursor  the drop for room leaves the cursor where it was    *)
 (*                                                                         *)
 (* A burst deferred during a pass joins it at the tail: the bursts ahead   *)
 (* of it may have a redundant packet sealed before its first.  The pass is *)
@@ -62,10 +69,11 @@ CONSTANTS
     Bursts,             \* how many disconnects the instance makes
     FullTestExact,      \* disconnect_client_impl defers only at count < C
     CursorWrapAt,       \* drain restarts the cursor at cursor >= count
-    CursorDrops         \* drain lowers the cursor when the head pops
+    CursorDrops,        \* drain lowers the cursor when the head pops
+    DropResetsCursor    \* the stop step's drop for room resets the cursor to 0
 
 ASSUME C \in Nat \ {0} /\ K \in Nat \ {0} /\ Bursts \in Nat
-ASSUME \A f \in {FullTestExact, CursorWrapAt, CursorDrops} : f \in BOOLEAN
+ASSUME \A f \in {FullTestExact, CursorWrapAt, CursorDrops, DropResetsCursor} : f \in BOOLEAN
 
 Ring == 0..(C - 1)
 NOBURST == 0                    \* ghost id of a slot no live burst holds
@@ -80,10 +88,11 @@ VARIABLES
     seals,          \* ghost: seals[b], the packets actually sealed for burst b
     gone,           \* ghost: the bursts that left the ring
     abandoned,      \* ghost: bursts marked complete because the destination was refused
+    dropped,        \* ghost: bursts dropped before complete because the transport had no room
     pass,           \* ghost: the bursts sealed in the current pass
     bad             \* ghost: the first rule a step broke, "" while none
 
-vars == <<sealed, bid, head, count, cursor, next, seals, gone, abandoned, pass, bad>>
+vars == <<sealed, bid, head, count, cursor, next, seals, gone, abandoned, dropped, pass, bad>>
 
 Ids == 1..Bursts
 \* bursts the pass still owes a seal: a complete (abandoned) entry is not one
@@ -107,6 +116,7 @@ Init ==
     /\ seals = [ b \in Ids |-> 0 ]
     /\ gone = {}
     /\ abandoned = {}
+    /\ dropped = {}
     /\ pass = {}
     /\ bad = ""
 
@@ -121,7 +131,7 @@ Defer ==
                /\ count' = count + 1
                /\ bad' = IF bad = "" /\ count >= C THEN "overwrite" ELSE bad
        ELSE UNCHANGED <<sealed, bid, count, bad>>
-    /\ UNCHANGED <<head, cursor, seals, gone, abandoned, pass>>
+    /\ UNCHANGED <<head, cursor, seals, gone, abandoned, dropped, pass>>
 
 \* the pop loop at the end of a seal or an abandon: each burst at the head
 \* with sealed = K leaves; the cursor drops with each
@@ -152,7 +162,7 @@ SealStep ==
                     ELSE IF p.wrap /\ ~(Need \subseteq pass) THEN "skipped"
                     ELSE IF ~p.wrap /\ b \in pass THEN "twice"
                     ELSE ""
-    /\ UNCHANGED <<bid, next, abandoned>>
+    /\ UNCHANGED <<bid, next, abandoned, dropped>>
 
 \* rocketnet_server_transport_drain_disconnect_bursts: the destination was
 \* refused with room left. The burst is marked complete and no packet is
@@ -177,7 +187,7 @@ Abandon ==
                     ELSE IF ~p.live THEN "dead"
                     ELSE IF p.wrap /\ ~(Need \subseteq pass) THEN "skipped"
                     ELSE ""
-    /\ UNCHANGED <<bid, next, seals>>
+    /\ UNCHANGED <<bid, next, seals, dropped>>
 
 \* a complete entry is not sealed again: the cursor moves on, and the pop
 \* does not run until a later seal or abandon.
@@ -186,9 +196,27 @@ PassOver ==
     /\ LET p == Place
        IN /\ sealed[p.s] = K
           /\ cursor' = p.cur + 1
-          /\ UNCHANGED <<sealed, bid, head, count, next, seals, gone, abandoned, pass, bad>>
+          /\ UNCHANGED <<sealed, bid, head, count, next, seals, gone, abandoned, dropped, pass, bad>>
 
-Next == Defer \/ SealStep \/ Abandon \/ PassOver
+\* rocketnet_server_transport_stop_step with no send room and the transport
+\* idle (ServerStopSpread AbandonNoRoom): the loop pops every waiting burst
+\* from the head, wiping its key (the sealed counts stay, as the code leaves
+\* them), so head moves on by count modulo C and count is 0; then the cursor
+\* is reset. Each burst not yet complete is dropped; one already complete
+\* (abandoned behind the head) leaves as it would have.
+DropForRoom ==
+    /\ count > 0
+    /\ LET live == { bid[At(p)] : p \in 0..(count - 1) }
+           short == { bid[At(p)] : p \in { q \in 0..(count - 1) : sealed[At(q)] < K } }
+       IN /\ head' = (head + count) % C
+          /\ count' = 0
+          /\ cursor' = IF DropResetsCursor THEN 0 ELSE cursor
+          /\ gone' = gone \cup live
+          /\ dropped' = dropped \cup short
+          /\ pass' = {}
+    /\ UNCHANGED <<sealed, bid, next, seals, abandoned, bad>>
+
+Next == Defer \/ SealStep \/ Abandon \/ PassOver \/ DropForRoom
 
 Spec == Init /\ [][Next]_vars
 
@@ -201,6 +229,7 @@ TypeOK ==
     /\ cursor \in Nat
     /\ next \in 1..(Bursts + 1)
     /\ abandoned \subseteq 0..Bursts
+    /\ dropped \subseteq Ids
 
 \* a deferred burst never overwrites a waiting one
 NoOverwrite == bad # "overwrite"
@@ -228,14 +257,18 @@ CursorInRange == cursor <= count
 
 \* a waiting burst that was not abandoned holds its own seals, fewer than K.
 \* An abandoned one is marked complete and was sent fewer than K. A burst
-\* that left without being abandoned was sent exactly K.
+\* that left ended exactly one way: sealed whole (exactly K sent), abandoned
+\* for its destination, or dropped for room (each fewer than K sent).
 ExactSeals ==
     /\ \A p \in 0..(count - 1) : LET b == bid[At(p)] IN
           /\ b \in Ids
+          /\ b \notin dropped
           /\ IF b \in abandoned
              THEN sealed[At(p)] = K /\ seals[b] < K
              ELSE sealed[At(p)] = seals[b] /\ seals[b] < K
     /\ \A b \in gone : b \in Ids
-          /\ IF b \in abandoned THEN seals[b] < K ELSE seals[b] = K
+          /\ ~(b \in abandoned /\ b \in dropped)
+          /\ IF b \in abandoned \/ b \in dropped THEN seals[b] < K ELSE seals[b] = K
+    /\ dropped \subseteq gone
 
 =============================================================================

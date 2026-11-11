@@ -113,20 +113,22 @@ Observe the expected state or message within a bounded deadline.
 Here is the receive portion of the hello example. The `batch` variable is
 declared earlier in its frame loop; the returned data is used before the next call.
 
-From [examples/hello.c](../examples/hello.c), lines 202 to 206:
+From [examples/hello.c](../examples/hello.c), lines 202 to 208:
 
 ```c
             while ( ( batch = rocketnet_server_receive_messages( server ) ) != NULL )
+            {
                 for ( int i = 0; i < batch->num_messages; i++, received++ )
                 {
                     printf( "server received: %.*s\n", batch->bytes[i], (const char *) batch->data[i] );
                 }
+            }
 ```
 
 The sender waits for `CONNECTED`, then checks available room and the actual
 reservation. This fragment is inside that connected-state check:
 
-From [examples/hello.c](../examples/hello.c), lines 213 to 224:
+From [examples/hello.c](../examples/hello.c), lines 215 to 226:
 
 ```c
 

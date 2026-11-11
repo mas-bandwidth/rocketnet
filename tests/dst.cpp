@@ -75,7 +75,9 @@ static int dst_parse_faults( const char * list, uint32_t * mask )
 {
     *mask = 0;
     if ( strcmp( list, "none" ) == 0 )
+    {
         return 1;
+    }
 
     if ( strcmp( list, "all" ) == 0 )
     {
@@ -89,7 +91,9 @@ static int dst_parse_faults( const char * list, uint32_t * mask )
         const char * comma = strchr( p, ',' );
         const size_t bytes = comma ? (size_t) ( comma - p ) : strlen( p );
         if ( bytes == 0 || !dst_fault_name( p, bytes, mask ) )
+        {
             return 0;
+        }
         p += bytes;
         if ( *p == ',' )
         {
@@ -117,10 +121,14 @@ static int dst_set_sequence_start( uint64_t start )
     snprintf( text, sizeof( text ), "%llu", (unsigned long long) start );
 #if defined( _WIN32 )
     if ( _putenv_s( "ROCKETNET_DEV_SESSION_SEQUENCE_START", text ) != 0 )
+    {
         return 0;
+    }
 #else
     if ( setenv( "ROCKETNET_DEV_SESSION_SEQUENCE_START", text, 1 ) != 0 )
+    {
         return 0;
+    }
 #endif // #if defined( _WIN32 )
     return rocketnet_dev_session_sequence_start() == start;
 }
@@ -171,9 +179,13 @@ int main( int argc, char ** argv )
         {
             const char * shape = argv[++i];
             if ( strcmp( shape, "push" ) == 0 )
+            {
                 options.shape = ROCKETNET_DST_SHAPE_PUSH;
+            }
             else if ( strcmp( shape, "full" ) == 0 )
+            {
                 options.shape = ROCKETNET_DST_SHAPE_FULL;
+            }
             else
             {
                 fprintf( stderr, "dst: --shape is push or full\n" );
@@ -232,7 +244,9 @@ int main( int argc, char ** argv )
             }
         }
         else if ( strcmp( arg, "--verbose" ) == 0 )
+        {
             verbose = 1;
+        }
         else
         {
             fprintf( stderr, "dst: unknown or malformed argument: %s\n%s", arg, dst_usage );
@@ -268,7 +282,9 @@ int main( int argc, char ** argv )
     rocketnet_dst_substream_init( &dst_keys_stream, seeds_a, "keys" );
     randombytes_set_implementation( &dst_keys_implementation );
     if ( rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK )
+    {
         return 1;
+    }
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
 
     uint64_t runs = 0;
@@ -297,14 +313,18 @@ int main( int argc, char ** argv )
         }
 
         if ( verbose && options.schedule == ROCKETNET_DST_SCHEDULE_NONE )
+        {
             printf( "seed=%llu trace=%016llx\n",
                     (unsigned long long) seed, (unsigned long long) result.trace_hash );
+        }
         else if ( verbose )
+        {
             printf( "seed=%llu trace=%016llx fired=%llu clock_back=%llu jump=%llu burst_sent=%llu burst_received=%llu\n",
                     (unsigned long long) seed, (unsigned long long) result.trace_hash,
                     (unsigned long long) result.schedule_fired, (unsigned long long) result.clock_back_seen,
                     (unsigned long long) result.max_sequence_jump, (unsigned long long) result.burst_sent,
                     (unsigned long long) result.burst_received );
+        }
 
         if ( !result.passed )
         {
@@ -313,12 +333,16 @@ int main( int argc, char ** argv )
             printf( "%s\n", line );
             failed++;
             if ( (int) failed >= max_fails )
+            {
                 break;
+            }
         }
 
         uint64_t next_seed;
         if ( !rocketnet_dst_seed_range_next( seed, seeds_b, &next_seed ) )
+        {
             break;
+        }
         seed = next_seed;
     }
 
@@ -326,8 +350,10 @@ int main( int argc, char ** argv )
 
     char schedule_text[96] = "";
     if ( options.schedule != ROCKETNET_DST_SCHEDULE_NONE )
+    {
         snprintf( schedule_text, sizeof( schedule_text ), " schedule=%s fired=%llu",
                   rocketnet_dst_schedule_name( options.schedule ), (unsigned long long) fired_seeds );
+    }
 
     if ( failed )
     {

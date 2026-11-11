@@ -36,7 +36,9 @@ static int standard_prefilter_generate( const char * id, uint8_t * out, int capa
     if ( strcmp( id, "t5.unkeyed-accept" ) == 0 )
     {
         if ( capacity < ROCKETNET_PREFILTER_BYTES )
+        {
             return -1;
+        }
 
         uint8_t * p = out;
         rocketnet_write_prefilter_header( &p, ROCKETNET_CONNECTION_PAYLOAD_PACKET, test_value );
@@ -47,7 +49,9 @@ static int standard_prefilter_generate( const char * id, uint8_t * out, int capa
     if ( strcmp( id, "t5.reject-short" ) == 0 )
     {
         if ( capacity < ROCKETNET_PREFILTER_BYTES - 1 )
+        {
             return -1;
+        }
         standard_prefilter_write_value( out, ROCKETNET_CONNECTION_PAYLOAD_PACKET, ROCKETNET_FILTER_EPOCH_UNKEYED, test_value );
 
         const int bytes = ROCKETNET_PREFILTER_BYTES - 1;
@@ -58,7 +62,9 @@ static int standard_prefilter_generate( const char * id, uint8_t * out, int capa
     if ( strcmp( id, "t5.reject-long" ) == 0 )
     {
         if ( capacity < STANDARD_PREFILTER_LONG_BYTES )
+        {
             return -1;
+        }
         memset( long_packet, 0, sizeof( long_packet ) );
         standard_prefilter_write_value( long_packet, ROCKETNET_CONNECTION_PAYLOAD_PACKET, ROCKETNET_FILTER_EPOCH_UNKEYED, test_value );
         rocketnet_unit_check( rocketnet_prefilter_check( long_packet, STANDARD_PREFILTER_LONG_BYTES, test_value ) == ROCKETNET_PREFILTER_TOO_LARGE );
@@ -70,7 +76,9 @@ static int standard_prefilter_generate( const char * id, uint8_t * out, int capa
     if ( strcmp( id, "t5.reject-epoch" ) == 0 )
     {
         if ( capacity < ROCKETNET_PREFILTER_BYTES )
+        {
             return -1;
+        }
         standard_prefilter_write_value( out, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 1, test_value );
         rocketnet_unit_check( rocketnet_prefilter_check( out, ROCKETNET_PREFILTER_BYTES, test_value ) == ROCKETNET_PREFILTER_WRONG_EPOCH );
         return ROCKETNET_PREFILTER_BYTES;
@@ -79,7 +87,9 @@ static int standard_prefilter_generate( const char * id, uint8_t * out, int capa
     if ( strcmp( id, "t5.reject-value" ) == 0 )
     {
         if ( capacity < ROCKETNET_PREFILTER_BYTES )
+        {
             return -1;
+        }
 
         static const uint8_t zero_value[ROCKETNET_FILTER_VALUE_BYTES] = { 0, 0, 0, 0 };
         uint8_t * p = out;

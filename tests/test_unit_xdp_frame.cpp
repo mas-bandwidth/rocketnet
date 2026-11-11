@@ -227,7 +227,9 @@ static void test_build_refuses_missing_inputs_and_short_frames()
     // nothing was written by any refusal
 
     for ( size_t i = 0; i < sizeof( frame ); i++ )
+    {
         rocketnet_unit_check( frame[i] == 0x5A );
+    }
 
     rocketnet_unit_check( rocketnet_xdp_frame_build( frame, 46, server_mac, gateway_mac, &src, &dst, 4 ) == 46 );
 }
@@ -864,7 +866,7 @@ static void test_xdp_transport_ipv6_pin_reaches_the_xdp_transport_at_create()
     xdp_ipv6_barrier_lines = 0;
 
     int status = -1;
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, "[2001:db8::10]:40000", &config, 1000.0, &status );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_internal( NULL, "[2001:db8::10]:40000", &config, 1000.0, &status );
 
     rocketnet_log_function( NULL, NULL );
     rocketnet_log_level( level );

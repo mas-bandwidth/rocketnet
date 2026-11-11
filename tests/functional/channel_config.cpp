@@ -41,7 +41,9 @@ static float rocketnet_config_loss_percent( float fallback )
 {
     char value[256];
     if ( rocketnet_test_getenv( "ROCKETNET_CHANNEL_LOSS_PERCENT", value, sizeof( value ) ) && value[0] )
+    {
         return (float) atof( value );
+    }
     return fallback;
 }
 
@@ -150,8 +152,10 @@ void config_mismatch_over_loopback()
 
     if ( client_reason != ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH ||
          server_reason != ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH )
+    {
         rocketnet_config_print_failure( "test_loopback_transport_config_mismatch", &h, elapsed,
                                         client_reason, server_reason, 0, 0 );
+    }
 
     rocketnet_config_check( client_reason == ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH );
     rocketnet_config_check( server_reason == ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH );
@@ -234,7 +238,9 @@ void config_equal_over_lossy_loopback()
         {
             rocketnet_config_fill( payload, sent_to_server );
             if ( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, payload, rocketnet_config_payload_bytes ) == 0 )
+            {
                 break;
+            }
             sent_to_server++;
         }
 
@@ -242,7 +248,9 @@ void config_equal_over_lossy_loopback()
         {
             rocketnet_config_fill( payload, sent_to_client );
             if ( rocketnet_channel_harness_server_send( &h, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, payload, rocketnet_config_payload_bytes ) == 0 )
+            {
                 break;
+            }
             sent_to_client++;
         }
 
@@ -291,8 +299,10 @@ void config_equal_over_lossy_loopback()
                    !order_error && rocketnet_channel_harness_overflows( &h ) == 0;
 
     if ( !ok )
+    {
         rocketnet_config_print_failure( "test_loopback_transport_config_equal_over_lossy", &h, elapsed,
                                         client_reason, server_reason, delivered_client, delivered_server );
+    }
 
     rocketnet_config_check( h.connected );
     rocketnet_config_check( held_to_server > 0 );

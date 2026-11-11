@@ -29,7 +29,9 @@ static const rn_standard_vector_t standard_wire_primitives_table[] = {
 static int standard_wire_primitives_sequence( uint8_t * out, int capacity, uint32_t wire_field, uint64_t highest_opened )
 {
     if ( capacity < 8 )
+    {
         return -1;
+    }
 
     uint8_t * p = out;
     rocketnet_write_uint64( &p, rocketnet_reconstruct_sequence( wire_field, highest_opened ) );
@@ -39,22 +41,34 @@ static int standard_wire_primitives_sequence( uint8_t * out, int capacity, uint3
 static int standard_wire_primitives_address( uint8_t * out, int capacity, const struct rocketnet_address_t * address )
 {
     if ( capacity < ROCKETNET_ADDRESS_BYTES_IPV6 )
+    {
         return -1;
+    }
     return rocketnet_write_address_bytes( out, address );
 }
 
 static int standard_wire_primitives_generate( const char * id, uint8_t * out, int capacity )
 {
     if ( strcmp( id, "t4.sequence-start" ) == 0 )
+    {
         return standard_wire_primitives_sequence( out, capacity, 1u, 0u );
+    }
     if ( strcmp( id, "t4.sequence-steady" ) == 0 )
+    {
         return standard_wire_primitives_sequence( out, capacity, 1000u, 999u );
+    }
     if ( strcmp( id, "t4.sequence-tie" ) == 0 )
+    {
         return standard_wire_primitives_sequence( out, capacity, 0u, 0x17fffffffull );
+    }
     if ( strcmp( id, "t4.sequence-wrap" ) == 0 )
+    {
         return standard_wire_primitives_sequence( out, capacity, 0u, 0xffffffffull );
+    }
     if ( strcmp( id, "t4.sequence-zero" ) == 0 )
+    {
         return standard_wire_primitives_sequence( out, capacity, 0u, 0u );
+    }
     if ( strcmp( id, "t4.address-ipv4" ) == 0 )
     {
         struct rocketnet_address_t address;

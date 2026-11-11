@@ -72,7 +72,9 @@ static void boundary_update( void * transport, double time )
     {
         const boundary_packet_t & p = e->inbound[i];
         if ( ( e->is_server && e->net->slot_connection == 0 ) || ( !e->is_server && !e->connected ) )
+        {
             continue;
+        }
 
         boundary_endpoint_t * sender = e->is_server ? e->net->client : e->net->server;
         e->batch.push_back( p );
@@ -115,10 +117,15 @@ static uint8_t * boundary_start_packet( void * transport, int client_index, int 
     boundary_endpoint_t * e = (boundary_endpoint_t *) transport;
     memset( context, 0, sizeof( *context ) );
     if ( request_bytes < 1 || request_bytes > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
+    {
         return NULL;
+    }
     if ( e->is_server ? e->net->slot_connection == 0 : !e->connected )
+    {
         return NULL;
+    }
     for ( int f = 0; f < BOUNDARY_MAX_FRAMES; ++f )
+    {
         if ( !e->frame_used[f] )
         {
             e->frame_used[f] = true;
@@ -131,14 +138,19 @@ static uint8_t * boundary_start_packet( void * transport, int client_index, int 
             context->client_index = client_index;
             return e->frames[f];
         }
+    }
 
     return NULL;
 }
 static int boundary_frame_of( boundary_endpoint_t * e, const rocketnet_packet_context_t * context )
 {
     for ( int f = 0; f < BOUNDARY_MAX_FRAMES; ++f )
+    {
         if ( e->frame_used[f] && context->frame == e->frames[f] )
+        {
             return f;
+        }
+    }
     return -1;
 }
 static int boundary_finish_packet( void * transport, rocketnet_packet_context_t * context, int payload_bytes )
@@ -183,9 +195,13 @@ static void boundary_disconnect( void * transport, int client_index )
     (void) client_index;
     e->disconnects++;
     if ( e->is_server )
+    {
         e->net->slot_connection = 0;
+    }
     else
+    {
         e->connected = false;
+    }
 }
 static int boundary_state( void * transport )
 {
@@ -289,7 +305,9 @@ static void boundary_drain( boundary_pair_t * pair, std::vector<boundary_receive
         static rocketnet_message_batch_t batch;     // 1.5 MB: never on the stack (Windows gives 1 MB)
         const int count = rocketnet_message_server_receive_messages( pair->server, &batch );
         if ( count == 0 )
+        {
             break;
+        }
 
         for ( int i = 0; i < batch.num_messages; ++i )
         {
@@ -378,8 +396,12 @@ static void test_message_boundary_sizes_every_mode_every_channel()
                 {
                     bool seen = false;
                     for ( size_t k = 0; k < got.size(); ++k )
+                    {
                         if ( got[k].data == expected[(size_t) j] )
+                        {
                             seen = true;
+                        }
+                    }
                     if ( !seen )
                     {
                         fprintf( stderr, "boundary missing mode=%d channel=%d bytes=%d\n", reliability, channel, sizes[j] );
@@ -403,11 +425,13 @@ static void test_message_boundary_sizes_every_mode_every_channel()
 
                 int found = -1;
                 for ( int j = 0; j < 6; ++j )
+                {
                     if ( !matched[j] && got[i].data == expected[(size_t) j] )
                     {
                         found = j;
                         break;
                     }
+                }
                 if ( found < 0 )
                 {
                     fprintf( stderr, "boundary data mode=%d channel=%d received=%zu\n", reliability, channel, got[i].data.size() );

@@ -91,7 +91,7 @@ static int token_time_game_client_create( uint64_t create, uint64_t expire, uint
     config.token_epoch_unix_seconds = epoch;
 
     int status = 0;
-    struct rocketnet_client_transport_t * transport = rocketnet_client_transport_create_current_ex( NULL, token_data, &config, time, &status );
+    struct rocketnet_client_transport_t * transport = rocketnet_client_transport_create_current_internal( NULL, token_data, &config, time, &status );
     if ( transport )
     {
         rn_native_client_transport_stop_and_destroy( transport );

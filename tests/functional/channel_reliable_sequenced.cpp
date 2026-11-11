@@ -12,7 +12,9 @@
 static void rs_functional_check( bool condition, const char * label )
 {
     if ( condition )
+    {
         return;
+    }
     printf( "reliable state stream failed: %s\n", label );
     fflush( stdout );
     exit( 1 );
@@ -170,7 +172,9 @@ void reliable_sequenced_long_run_across_epochs()
 
         have_last = tick > states && ordered_seen == ordered_sent && newest_seen == position;
         if ( have_last )
+        {
             break;
+        }
     }
 
     rocketnet_channel_harness_read_counters( &h );

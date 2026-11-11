@@ -217,7 +217,9 @@ static void build_frame( frame_t * frame, const spec_t & spec )
         {
             p[0] = spec.next_header == IPV6_FRAGMENT && spec.ipv6_after_fragment_count > 0 ? (uint8_t) spec.ipv6_after_fragment[0] : IP_UDP;
             if ( spec.next_header == IPV6_AH )
+            {
                 p[1] = 1;                      // 12 bytes: (1 + 2) * 4
+            }
             if ( spec.next_header == IPV6_FRAGMENT )
             {
                 put16( p + 2, (uint16_t) ( spec.ipv6_fragment_field >= 0 ? spec.ipv6_fragment_field : 0x0001 ) );
@@ -299,7 +301,9 @@ static void print_log_tail( int lines )
 {
     const size_t length = strnlen( verifier_log, sizeof( verifier_log ) );
     if ( length == 0 )
+    {
         return;
+    }
     size_t end = length;
     while ( end > 0 && ( verifier_log[end - 1] == '\n' || verifier_log[end - 1] == ' ' ) )
     {
@@ -311,7 +315,9 @@ static void print_log_tail( int lines )
     while ( start > 0 )
     {
         if ( verifier_log[start - 1] == '\n' && ++seen == lines )
+        {
             break;
+        }
         start--;
     }
 
@@ -321,7 +327,9 @@ static void print_log_tail( int lines )
 __attribute__( ( format( printf, 2, 0 ) ) ) static int print_libbpf( enum libbpf_print_level level, const char * format, va_list args )
 {
     if ( level == LIBBPF_DEBUG )
+    {
         return 0;
+    }
     return vfprintf( stderr, format, args );
 }
 
@@ -532,7 +540,9 @@ static bool run_frame( filter_t * filter, const char * label, const spec_t & spe
 
     bool ok = (int) options.retval == want_verdict;
     if ( !ok )
+    {
         printf( "  FAIL %s: verdict %s, wanted %s\n", label, verdict_name( (int) options.retval ), verdict_name( want_verdict ) );
+    }
 
     for ( int i = 0; i < NUM_COUNTER_SLOTS; i++ )
     {
@@ -557,7 +567,9 @@ typedef bool ( *case_function_t )( filter_t * filter );
 static bool ipv4_rocketnet_packet_redirects( filter_t * filter )
 {
     if ( !write_config( filter, server_ipv4, NULL ) )
+    {
         return false;
+    }
     return run_frame( filter, "ipv4 max-size packet", spec_default( false ), XDP_REDIRECT, ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED );
 }
 
@@ -1099,9 +1111,13 @@ static replay_row_t replay_row( const char * label, bool ipv6, uint8_t type, uin
     row.spec.packet_type = type;
     row.spec.packet_bytes = 100;
     if ( type == ROCKETNET_CONNECTION_REQUEST_PACKET )
+    {
         row.spec.packet_bytes = ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES;
+    }
     else if ( type == ROCKETNET_CONNECTION_RESPONSE_PACKET )
+    {
         row.spec.packet_bytes = ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES;
+    }
     row.spec.sequence = sequence;
     row.entry = true;
     row.high_water = high_water;
@@ -1323,7 +1339,9 @@ static bool inside_virtme_guest()
 {
     FILE * file = fopen( "/proc/cmdline", "r" );
     if ( !file )
+    {
         return false;
+    }
 
     char line[4096];
     const bool read = fgets( line, sizeof( line ), file ) != NULL;
@@ -1546,7 +1564,7 @@ static double onlink_now()
 }
 
 // stdin_fd is the read end of a pipe the case holds open: server.c quits when
-// its stdin reaches end of file (check_stdin_closed, server.c:150-165), and a
+// its stdin reaches end of file (check_stdin_closed, server.c:156-173), and a
 // guest started without a terminal hands the case an stdin already at end of
 // file, so the server would stop after its first frame.
 
@@ -1554,7 +1572,9 @@ static pid_t onlink_spawn( const char * program, const char * argument, const ch
 {
     const pid_t pid = fork();
     if ( pid != 0 )
+    {
         return pid;
+    }
 
     if ( stdin_fd >= 0 && dup2( stdin_fd, 0 ) < 0 )
     {
@@ -1582,26 +1602,34 @@ static pid_t onlink_spawn( const char * program, const char * argument, const ch
     }
 
     // the case connects one client: a message object sized for the default
-    // 1000 clients does not fit the guest (server.c:872, :925)
+    // 1000 clients does not fit the guest (server.c:920, :975)
 
     if ( xdp_server )
+    {
         execl( program, program, argument, "--max-clients", ONLINK_MAX_CLIENTS, (char *) NULL );
+    }
     else
+    {
         execl( program, program, argument, (char *) NULL );
+    }
     _exit( 127 );
 }
 
 static void onlink_stop( pid_t pid )
 {
     if ( pid <= 0 )
+    {
         return;
+    }
     kill( pid, SIGINT );
 
     const double deadline = onlink_now() + 5.0;
     while ( onlink_now() < deadline )
     {
         if ( waitpid( pid, NULL, WNOHANG ) == pid )
+        {
             return;
+        }
         usleep( 10000 );
     }
 
@@ -1613,7 +1641,9 @@ static bool onlink_log_has( const char * path, const char * text )
 {
     FILE * file = fopen( path, "r" );
     if ( !file )
+    {
         return false;
+    }
 
     char line[1024];
     bool found = false;
@@ -1653,11 +1683,15 @@ struct onlink_environment_t
         onlink_stop( client );
         onlink_stop( server );
         if ( capture_fd >= 0 )
+        {
             close( capture_fd );
+        }
         for ( int i = 0; i < 2; i++ )
         {
             if ( stdin_pipe[i] >= 0 )
+            {
                 close( stdin_pipe[i] );
+            }
         }
         if ( home_netns_fd >= 0 )
         {
@@ -1665,7 +1699,9 @@ struct onlink_environment_t
             close( home_netns_fd );
         }
         if ( client_netns_fd >= 0 )
+        {
             close( client_netns_fd );
+        }
         if ( system( "ip netns del " ONLINK_NAMESPACE " 2>/dev/null; ip link del " ONLINK_NEAR " 2>/dev/null" ) != 0 )
         {
             // already gone: the namespace takes its veth end with it
@@ -1686,11 +1722,15 @@ static bool xdp_on_link_reply_reaches_the_client( filter_t * )
     char exe[4096];
     const ssize_t exe_bytes = readlink( "/proc/self/exe", exe, sizeof( exe ) - 1 );
     if ( exe_bytes <= 0 )
+    {
         return false;
+    }
     exe[exe_bytes] = '\0';
     char * slash = strrchr( exe, '/' );
     if ( !slash )
+    {
         return false;
+    }
     *slash = '\0';
     char server_path[4200], client_path[4200];
     snprintf( server_path, sizeof( server_path ), "%s/server", exe );
@@ -1702,7 +1742,9 @@ static bool xdp_on_link_reply_reaches_the_client( filter_t * )
         const int server_log_fd = mkstemp( environment.server_log );
         const int client_log_fd = mkstemp( environment.client_log );
         if ( server_log_fd < 0 || client_log_fd < 0 )
+        {
             return false;
+        }
         close( server_log_fd );
         close( client_log_fd );
     }
@@ -1714,7 +1756,9 @@ static bool xdp_on_link_reply_reaches_the_client( filter_t * )
     if ( statfs( "/sys/fs/bpf", &bpffs ) != 0 || (uint64_t) bpffs.f_type != (uint64_t) BPF_FS_MAGIC )
     {
         if ( !onlink_run( "mount -t bpf bpf /sys/fs/bpf" ) )
+        {
             return false;
+        }
     }
 
     if ( system( "ip netns del " ONLINK_NAMESPACE " 2>/dev/null; ip link del " ONLINK_NEAR " 2>/dev/null" ) != 0 )
@@ -1732,7 +1776,9 @@ static bool xdp_on_link_reply_reaches_the_client( filter_t * )
          !onlink_run( "ip netns exec " ONLINK_NAMESPACE " ip addr add 10.77.1.2/24 dev " ONLINK_FAR ) ||
          !onlink_run( "ip netns exec " ONLINK_NAMESPACE " ip link set " ONLINK_FAR " up" ) ||
          !onlink_run( "ip netns exec " ONLINK_NAMESPACE " ip link set lo up" ) )
+    {
         return false;
+    }
 
     environment.home_netns_fd = open( "/proc/self/ns/net", O_RDONLY );
     environment.client_netns_fd = open( "/var/run/netns/" ONLINK_NAMESPACE, O_RDONLY );
@@ -1748,7 +1794,9 @@ static bool xdp_on_link_reply_reaches_the_client( filter_t * )
     int client_ifindex = 0;
     {
         if ( setns( environment.client_netns_fd, CLONE_NEWNET ) != 0 )
+        {
             return false;
+        }
 
         const int probe = socket( AF_INET, SOCK_DGRAM, 0 );
         struct ifreq ifr;
@@ -1756,9 +1804,13 @@ static bool xdp_on_link_reply_reaches_the_client( filter_t * )
         strncpy( ifr.ifr_name, ONLINK_FAR, sizeof( ifr.ifr_name ) - 1 );
         const bool have_mac = probe >= 0 && ioctl( probe, SIOCGIFHWADDR, &ifr ) == 0;
         if ( have_mac )
+        {
             memcpy( client_mac, ifr.ifr_hwaddr.sa_data, 6 );
+        }
         if ( probe >= 0 )
+        {
             close( probe );
+        }
         client_ifindex = (int) if_nametoindex( ONLINK_FAR );
         environment.capture_fd = socket( AF_PACKET, SOCK_RAW, htons( ETH_P_IP ) );
         if ( environment.capture_fd >= 0 )
@@ -1776,7 +1828,9 @@ static bool xdp_on_link_reply_reaches_the_client( filter_t * )
         }
 
         if ( setns( environment.home_netns_fd, CLONE_NEWNET ) != 0 )
+        {
             return false;
+        }
         if ( !have_mac || client_ifindex == 0 || environment.capture_fd < 0 )
         {
             printf( "  FAIL could not read the far end's MAC or open a packet socket on it\n" );
@@ -1812,20 +1866,28 @@ static bool xdp_on_link_reply_reaches_the_client( filter_t * )
         fds.events = POLLIN;
         fds.revents = 0;
         if ( poll( &fds, 1, 100 ) <= 0 )
+        {
             continue;
+        }
 
         uint8_t frame[2048];
         const ssize_t bytes = recv( environment.capture_fd, frame, sizeof( frame ), 0 );
         if ( bytes < 14 + 20 + 8 )
+        {
             continue;
+        }
         if ( frame[12] != 0x08 || frame[13] != 0x00 || frame[23] != IP_UDP )
+        {
             continue;
+        }
 
         static const uint8_t onlink_server_ipv4[4] = { 10, 77, 1, 1 };
         const int ihl = ( frame[14] & 0x0F ) * 4;
         const uint16_t source_port = (uint16_t) ( ( frame[14 + ihl] << 8 ) | frame[14 + ihl + 1] );
         if ( memcmp( frame + 26, onlink_server_ipv4, 4 ) != 0 || source_port != 40000 )
+        {
             continue;
+        }
         if ( memcmp( frame, client_mac, 6 ) == 0 )
         {
             frames_to_client++;
@@ -1833,9 +1895,11 @@ static bool xdp_on_link_reply_reaches_the_client( filter_t * )
         else
         {
             if ( frames_elsewhere == 0 )
+            {
                 printf( "  FAIL a reply went to %02x:%02x:%02x:%02x:%02x:%02x, not the client's %02x:%02x:%02x:%02x:%02x:%02x\n",
                         frame[0], frame[1], frame[2], frame[3], frame[4], frame[5],
                         client_mac[0], client_mac[1], client_mac[2], client_mac[3], client_mac[4], client_mac[5] );
+            }
             frames_elsewhere++;
         }
     }
@@ -1887,7 +1951,7 @@ static bool xdp_on_link_reply_reaches_the_client( filter_t * )
 // A create that fails part way tears down what it built and nothing else.
 // The example server runs with two XDP queues on a two-queue veth and the
 // development-only seam ROCKETNET_TEST_XDP_FAIL_AT_QUEUE=1
-// (sdk/rocketnet_server_socket_linux.cpp:1809-1825, the top of the create queue loop):
+// (sdk/rocketnet_server_socket_linux.cpp:1919-1937, the top of the create queue loop):
 // queue 0 is fully built, queue 1 fails before its mutexes exist, and create
 // calls destroy. The server must report the injected failure and exit on its
 // own, never die on a signal (a Debug build aborts on the mutex assert when
@@ -1904,13 +1968,17 @@ static int isolated_cpu_count()
 {
     FILE * file = fopen( "/sys/devices/system/cpu/isolated", "r" );
     if ( !file )
+    {
         return 0;
+    }
 
     char line[1024];
     const bool read = fgets( line, sizeof( line ), file ) != NULL;
     fclose( file );
     if ( !read )
+    {
         return 0;
+    }
 
     int count = 0;
     const char * p = line;
@@ -1956,11 +2024,15 @@ static bool xdp_create_fails_part_way_tears_down( filter_t * )
     char exe[4096];
     const ssize_t exe_bytes = readlink( "/proc/self/exe", exe, sizeof( exe ) - 1 );
     if ( exe_bytes <= 0 )
+    {
         return false;
+    }
     exe[exe_bytes] = '\0';
     char * slash = strrchr( exe, '/' );
     if ( !slash )
+    {
         return false;
+    }
     *slash = '\0';
 
     char server_path[4200];
@@ -1970,7 +2042,9 @@ static bool xdp_create_fails_part_way_tears_down( filter_t * )
     {
         const int server_log_fd = mkstemp( server_log );
         if ( server_log_fd < 0 )
+        {
             return false;
+        }
         close( server_log_fd );
     }
 
@@ -2117,14 +2191,20 @@ int main( int argc, char ** argv )
     for ( int i = 1; i < argc; i++ )
     {
         if ( strcmp( argv[i], "-v" ) == 0 )
+        {
             show_verifier = true;
+        }
         else
+        {
             path = argv[i];
+        }
     }
 
     filter_t filter;
     if ( !load_filter( &filter, path ) )
+    {
         return 2;
+    }
 
     // the last line of the log is the verifier's verdict on the program
 
@@ -2177,9 +2257,13 @@ int main( int argc, char ** argv )
 
     const int total = (int) ( sizeof( cases ) / sizeof( cases[0] ) );
     if ( skipped )
+    {
         printf( "test_xdp_filter: %d cases passed, %d skipped\n", total - skipped, skipped );
+    }
     else
+    {
         printf( "test_xdp_filter: %d cases passed\n", total );
+    }
 
     return 0;
 }

@@ -157,12 +157,16 @@ static long dev_warning_rss_bound_mb()
 
     rocketnet_server_memory_plan_t plan;
     if ( !rocketnet_server_transport_memory_plan( &config, "portable", plan ) )
+    {
         return 0;
+    }
 
     uint64_t planned = plan.total_bytes;
     const uint64_t hub = rocketnet_loopback_hub_bytes( ROCKETNET_TEST_LOOPBACK_HUB_CLIENTS ) + rocketnet_allocation_overhead();
     if ( !rocketnet_memory_add( planned, 1, hub ) )
+    {
         return 0;
+    }
     return suite_rss_bound_mb( planned, 32 );
 #else
     return 0; // keep the suite-wide bound when create refuses before allocation
@@ -188,7 +192,7 @@ static void test_dev_keys_warn_on_every_start()
         int status = -1;
         start_capture();
 
-        void * srv = rocketnet_server_transport_create_current_ex( NULL, "127.0.0.1:0", &config, 1000.0, &status );
+        void * srv = rocketnet_server_transport_create_current_internal( NULL, "127.0.0.1:0", &config, 1000.0, &status );
         check( g_dev_warn_lines == 1 );
         check( g_dev_warn_level == ROCKETNET_LOG_LEVEL_WARN );
         check( strstr( g_dev_warn_buf, DEV_KEY_WARN_PHRASE ) != NULL );

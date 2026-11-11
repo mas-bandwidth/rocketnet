@@ -87,9 +87,13 @@ static void barrier_send( struct barrier_world_t * world, double now, int client
     message->kind = kind;
     message->delivered = 0;
     if ( client == world->dark_client )
+    {
         message->arrive = 1.0e9;
+    }
     else
+    {
         message->arrive = now + BARRIER_LATENCY + BARRIER_RESEND_DELAY * (double) world->losses[client][to_server];
+    }
 }
 
 static void barrier_server_send_all( struct barrier_world_t * world, double now, int kind )
@@ -108,9 +112,13 @@ static void barrier_server_abort( struct barrier_world_t * world, double now )
     for ( int client = 0; client < BARRIER_CLIENTS; ++client )
     {
         if ( client == world->dark_client )
+        {
             world->disconnect_at[client] = now + BARRIER_RELIABLE_TIMEOUT;
+        }
         else
+        {
             barrier_send( world, now, client, 0, BARRIER_END );
+        }
     }
 }
 
@@ -120,7 +128,9 @@ static void barrier_deliver( struct barrier_world_t * world, double now )
     {
         struct barrier_message_t * message = &world->messages[i];
         if ( message->delivered || message->arrive > now )
+        {
             continue;
+        }
         message->delivered = 1;
 
         const int client = message->client;
@@ -165,28 +175,38 @@ static void barrier_deliver( struct barrier_world_t * world, double now )
     }
 
     for ( int client = 0; client < BARRIER_CLIENTS; ++client )
+    {
         if ( world->disconnect_at[client] >= 0.0 && now >= world->disconnect_at[client] )
+        {
             world->disconnected[client] = 1;
+        }
+    }
 }
 
 static void barrier_server_update( struct barrier_world_t * world, double now )
 {
     if ( world->server_verdict != SPLIT_START_WAITING )
+    {
         return;
+    }
 
     if ( world->server_phase_start < 0.0 )
     {
         // the population: ARM goes out once the last shard is connected
         const double last = world->connected[0] > world->connected[1] ? world->connected[0] : world->connected[1];
         if ( now < last )
+        {
             return;
+        }
         world->server_phase_start = now;
         barrier_server_send_all( world, now, SPLIT_STARTUP_ARM );
         return;
     }
 
     if ( world->server_silent )
+    {
         return;
+    }
 
     int acked = 0;
     for ( int client = 0; client < BARRIER_CLIENTS; ++client )
@@ -196,7 +216,9 @@ static void barrier_server_update( struct barrier_world_t * world, double now )
 
     const enum split_start_verdict_t verdict = split_server_start_update( now, world->server_phase_start, BARRIER_CLIENTS, acked, 0 );
     if ( verdict == SPLIT_START_WAITING )
+    {
         return;
+    }
 
     if ( verdict != SPLIT_START_COMPLETE )
     {
@@ -222,7 +244,9 @@ static void barrier_server_update( struct barrier_world_t * world, double now )
 static void barrier_shard_update( struct barrier_world_t * world, int shard, double now )
 {
     if ( now < world->connected[shard] || world->shard_verdict[shard] != SPLIT_START_WAITING )
+    {
         return;
+    }
 
     int running = 0, disconnected = 0;
     enum split_start_step_t step = SPLIT_START_STEP_RUNNING;
@@ -243,7 +267,9 @@ static void barrier_shard_update( struct barrier_world_t * world, int shard, dou
     const enum split_start_verdict_t verdict =
         split_shard_start_update( &world->shard_start[shard], now, BARRIER_SHARD_CLIENTS, running, disconnected );
     if ( verdict == SPLIT_START_WAITING )
+    {
         return;
+    }
     world->shard_verdict[shard] = verdict;
     world->shard_verdict_time[shard] = now;
     world->shard_step[shard] = step;
@@ -252,8 +278,10 @@ static void barrier_shard_update( struct barrier_world_t * world, int shard, dou
 static void barrier_run( struct barrier_world_t * world )
 {
     for ( int shard = 0; shard < BARRIER_SHARDS; ++shard )
+    {
         split_shard_start_begin( &world->shard_start[shard], world->connected[shard],
                                  BARRIER_CONNECT_WINDOW, BARRIER_RELIABLE_TIMEOUT );
+    }
 
     for ( int64_t tick = 0; tick <= 10000; ++tick )
     {
@@ -265,7 +293,9 @@ static void barrier_run( struct barrier_world_t * world )
             barrier_shard_update( world, shard, now );
         }
         if ( world->shard_verdict[0] != SPLIT_START_WAITING && world->shard_verdict[1] != SPLIT_START_WAITING )
+        {
             return;
+        }
     }
 }
 

@@ -29,7 +29,9 @@ suite_exec rocketnet_unit_case_memory_exec()
 bool rocketnet_unit_case_memory_runs_here()
 {
     if ( suite_max_case_rss_mb() > 0 )
+    {
         return true;
+    }
     suite_note_skipped( "test_unit_case_memory", "suite_max_case_rss_mb" );
     return false;
 }

@@ -146,7 +146,9 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MIN_SIZED_CLIENTS <= ROCKETNET_MAX_CLI
 static inline int rocketnet_server_sized_clients( int max_clients )
 {
     if ( max_clients > ROCKETNET_MAX_CLIENTS )
+    {
         return ROCKETNET_MAX_CLIENTS;
+    }
     return max_clients > ROCKETNET_SERVER_MIN_SIZED_CLIENTS ? max_clients : ROCKETNET_SERVER_MIN_SIZED_CLIENTS;
 }
 
@@ -155,7 +157,9 @@ static inline int rocketnet_power_of_two_at_least( int n )
 {
     int p = 1;
     while ( p < n )
+    {
         p <<= 1;
+    }
     return p;
 }
 

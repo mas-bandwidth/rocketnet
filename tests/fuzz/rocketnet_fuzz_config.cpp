@@ -86,7 +86,9 @@ extern "C" size_t __sanitizer_get_current_allocated_bytes( void );
 static void rocketnet_fuzz_require( bool condition, const char * property )
 {
     if ( condition )
+    {
         return;
+    }
     fprintf( stderr, "fuzz oracle failed: %s\n", property );
     abort();
 }
@@ -155,7 +157,9 @@ static void fuzz_defaults( int table, union fuzz_config_storage_t * config )
 static bool fuzz_in_range( const struct rocketnet_config_field_t * field, int64_t value )
 {
     if ( value == 0 && ( field->flags & ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) != 0 )
+    {
         return true;
+    }
     return value >= field->min_value && value <= field->max_value;
 }
 
@@ -170,7 +174,9 @@ static void fuzz_check_ladder( const char * value )
         struct rocketnet_transport_ladder_t ladder;
         memset( &ladder, 0, sizeof( ladder ) );
         if ( !rocketnet_transport_ladder_parse( value, available, num_available, &ladder ) )
+        {
             continue;
+        }
         rocketnet_fuzz_require( ladder.num_candidates >= 1 && ladder.num_candidates <= ROCKETNET_MAX_TRANSPORT_CANDIDATES, "a parsed ladder holds one to the maximum candidates" );
         rocketnet_fuzz_require( ladder.num_skipped >= 0 && ladder.num_skipped <= ROCKETNET_MAX_TRANSPORT_CANDIDATES, "a parsed ladder's skips fit its array" );
         for ( int i = 0; i < ladder.num_candidates; i++ )
@@ -193,7 +199,9 @@ static void fuzz_overlay( int table_index, int field_index, uint8_t mode, const 
 {
     const struct fuzz_table_t * table = &fuzz_tables[table_index];
     if ( table->num_fields <= 0 )
+    {
         return;
+    }
 
     const struct rocketnet_config_field_t * field = &table->fields[field_index % table->num_fields];
 
@@ -335,7 +343,9 @@ static void fuzz_write_seed( const char * dir, const char * name, int table, int
 {
     char path[1024];
     if ( snprintf( path, sizeof( path ), "%s/%s", dir, name ) >= (int) sizeof( path ) )
+    {
         abort(); // a truncated path would write some other file
+    }
 
     FILE * file = rocketnet_test_fopen( path, "wb" );
     if ( !file )
@@ -366,7 +376,9 @@ static void fuzz_write_seeds( const char * dir, const char * from )
         {
             const struct rocketnet_config_field_t * field = &fuzz_tables[t].fields[i];
             if ( ( field->flags & ROCKETNET_CONFIG_NO_ENV ) != 0 || field->kind < 0 || field->kind > 3 )
+            {
                 continue;
+            }
 
             char value[1024];
             char name[256];
@@ -383,7 +395,9 @@ static void fuzz_write_seeds( const char * dir, const char * from )
             }
 
             if ( kind_written[field->kind] )
+            {
                 continue;
+            }
 
             switch ( field->kind )
             {
@@ -414,7 +428,9 @@ static void fuzz_write_seeds( const char * dir, const char * from )
             }
 
             if ( value[0] == '\0' )
+            {
                 continue;
+            }
             snprintf( name, sizeof( name ), "%s_%s_default", fuzz_table_names[t], field->name );
             fuzz_write_seed( dir, name, t, i, 0, value );
             kind_written[field->kind] = true;
@@ -426,10 +442,12 @@ static void fuzz_write_seeds( const char * dir, const char * from )
     int transport_field = -1;
 
     for ( int i = 0; i < fuzz_tables[1].num_fields; i++ )
+    {
         if ( strcmp( fuzz_tables[1].fields[i].name, "transport" ) == 0 )
         {
             transport_field = i;
         }
+    }
 
     if ( transport_field < 0 )
     {
@@ -444,7 +462,9 @@ static void fuzz_write_seeds( const char * dir, const char * from )
     {
         const char * transport = rocketnet_transport_name( available[i] );
         if ( !transport )
+        {
             continue;
+        }
 
         const size_t used = strlen( ladder );
         snprintf( ladder + used, sizeof( ladder ) - used, "%s%s", ladder[0] != '\0' ? "," : "", transport );
@@ -453,7 +473,9 @@ static void fuzz_write_seeds( const char * dir, const char * from )
     fuzz_write_seed( dir, "server_transport_ladder_available", 1, transport_field, 2, ladder );
 
     if ( from == NULL || from[0] == '\0' )
+    {
         return;
+    }
     const char * committed[] = { "config_auto", "config_auto_in_list", "config_empty_element", "config_ladder", "config_long_list",
                                  "config_pin_portable", "config_spaced", "config_unknown_name" };
 
@@ -461,18 +483,24 @@ static void fuzz_write_seeds( const char * dir, const char * from )
     {
         char path[1024];
         if ( snprintf( path, sizeof( path ), "%s/%s", from, committed[c] ) >= (int) sizeof( path ) )
+        {
             continue;
+        }
 
         FILE * file = rocketnet_test_fopen( path, "rb" );
         if ( !file )
+        {
             continue;
+        }
 
         char value[1024];
         const size_t got = fread( value, 1, sizeof( value ) - 1, file );
 
         fclose( file );
         if ( got < 1 )
+        {
             continue;
+        }
         value[got] = '\0';
 
         char name[256];
@@ -544,7 +572,9 @@ extern "C" int LLVMFuzzerInitialize( int * argc, char *** argv )
 extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
 {
     if ( size < 3 )
+    {
         return 0;
+    }
 
     static char value[5001];
     size_t n = 0;

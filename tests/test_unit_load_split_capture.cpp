@@ -59,7 +59,9 @@ static int capture_fake_sample( void * context, int index, double now, struct sp
     fake->samples++;
     out->time = now;
     if ( !fake->exists[index] )
+    {
         return 0;
+    }
     out->state = fake->state[index];
     out->packets_sent = 100 + (uint64_t) index;
     out->packets_received = 90 + (uint64_t) index;
@@ -85,7 +87,9 @@ static uint64_t capture_fake_counter( void * context, int index, int counter )
 {
     const capture_fake_t * fake = (const capture_fake_t *) context;
     if ( counter < 0 || counter >= ROCKETNET_NUM_COUNTERS )
+    {
         return 0;
+    }
     return index < 0 ? fake->global[counter] : fake->own[index][counter];
 }
 
@@ -129,13 +133,21 @@ static int capture_count( const capture_fake_t * fake, const char * prefix, cons
     {
         const char * line = fake->lines[i];
         if ( strncmp( line, prefix, strlen( prefix ) ) != 0 )
+        {
             continue;
+        }
         if ( a && !strstr( line, a ) )
+        {
             continue;
+        }
         if ( b && !strstr( line, b ) )
+        {
             continue;
+        }
         if ( c && !strstr( line, c ) )
+        {
             continue;
+        }
         found++;
     }
 
@@ -149,7 +161,9 @@ static int capture_line_well_formed( const char * line )
 {
     const char * colon = strchr( line, ':' );
     if ( !colon || colon[1] != ' ' )
+    {
         return 0;
+    }
 
     char keys[64][48];
     int num_keys = 0;
@@ -160,16 +174,24 @@ static int capture_line_well_formed( const char * line )
         const size_t length = end ? (size_t) ( end - p ) : strlen( p );
         const char * equals = (const char *) memchr( p, '=', length );
         if ( !equals || equals == p || equals == p + length - 1 )
+        {
             return 0;
+        }
 
         const size_t key_length = (size_t) ( equals - p );
         if ( key_length >= sizeof( keys[0] ) || num_keys == 64 )
+        {
             return 0;
+        }
         memcpy( keys[num_keys], p, key_length );
         keys[num_keys][key_length] = '\0';
         for ( int k = 0; k < num_keys; k++ )
+        {
             if ( strcmp( keys[k], keys[num_keys] ) == 0 )
+            {
                 return 0;
+            }
+        }
         num_keys++;
         p = end ? end + 1 : p + length;
     }

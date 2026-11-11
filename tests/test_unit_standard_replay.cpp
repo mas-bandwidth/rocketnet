@@ -82,7 +82,9 @@ static int standard_replay_observe( rn_replay_check_t check, rn_replay_advance_t
 {
     const int bytes = 4 + 8 + probe_count;
     if ( capacity < bytes )
+    {
         return -1;
+    }
 
     rn_vector_replay_t replay;
     memset( &replay, 0, sizeof( replay ) );

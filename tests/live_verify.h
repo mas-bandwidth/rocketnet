@@ -118,7 +118,9 @@ static inline uint32_t rocketnet_live_mode_max( const rocketnet_live_config_t * 
 {
     const uint32_t mmb = config->max_message_bytes;
     if ( mode == 0 )
+    {
         return ROCKETNET_LIVE_UNRELIABLE_LIMIT < mmb ? ROCKETNET_LIVE_UNRELIABLE_LIMIT : mmb;
+    }
 
     if ( mode == 1 )
     {
@@ -172,14 +174,18 @@ static inline void rocketnet_live_boundary_add( uint32_t * list, int * count, in
     // it is below 1; a value already in the list is not added twice
 
     if ( value < 1 )
+    {
         return;
+    }
 
     const uint32_t v = value > (int64_t) max_m ? max_m : (uint32_t) value;
 
     for ( int i = 0; i < *count; i++ )
     {
         if ( list[i] == v )
+        {
             return;
+        }
     }
 
     if ( *count < ROCKETNET_LIVE_MAX_BOUNDARIES )
@@ -276,12 +282,16 @@ static inline uint32_t rocketnet_live_length( const rocketnet_live_config_t * co
     {
         const uint32_t hi = m < 16384u ? m : 16384u;
         if ( e + 1u <= hi )
+        {
             return rocketnet_live_bucket_length( e + 1u, hi, sequence, config->seed );
+        }
     }
     else if ( r >= 30u )
     {
         if ( m >= 16385u )
+        {
             return rocketnet_live_bucket_length( 16385u, m, sequence, config->seed );
+        }
     }
 
     return rocketnet_live_bucket_length( small_lo, e, sequence, config->seed );
@@ -306,25 +316,39 @@ static inline int rocketnet_live_bucket( const rocketnet_live_config_t * config,
     const uint32_t m = rocketnet_live_mode_max( config, mode );
     const uint32_t e = rocketnet_live_edge( config, mode );
     if ( length > m )
+    {
         return ROCKETNET_LIVE_BUCKET_OVER;
+    }
     if ( length == m )
+    {
         return ROCKETNET_LIVE_BUCKET_MAX;
+    }
     if ( length < ROCKETNET_LIVE_HEADER_BYTES )
+    {
         return ROCKETNET_LIVE_BUCKET_TINY;
+    }
     if ( length + 1u >= e && length <= e + 1u )
+    {
         return ROCKETNET_LIVE_BUCKET_EDGE;
+    }
 
     for ( uint32_t k = 1; k <= 3; k++ )
     {
         const uint32_t f = k * ROCKETNET_LIVE_BLOCK_STRIDE;
         if ( length + 1u >= f && length <= f + 1u )
+        {
             return ROCKETNET_LIVE_BUCKET_FRAGMENT;
+        }
     }
 
     if ( length <= e )
+    {
         return ROCKETNET_LIVE_BUCKET_SMALL;
+    }
     if ( length <= 16384u )
+    {
         return ROCKETNET_LIVE_BUCKET_MEDIUM;
+    }
 
     return ROCKETNET_LIVE_BUCKET_LARGE;
 }
@@ -340,7 +364,9 @@ static inline int rocketnet_live_generate( const rocketnet_live_config_t * confi
 {
     const uint32_t length = rocketnet_live_length( config, mode, channel, sequence );
     if ( capacity < 0 || length > (uint32_t) capacity )
+    {
         return 0;
+    }
 
     uint8_t header[ROCKETNET_LIVE_HEADER_BYTES];
     header[0] = rocketnet_live_tag( direction, mode );
@@ -368,7 +394,9 @@ static inline int rocketnet_live_generate( const rocketnet_live_config_t * confi
 static inline uint32_t rocketnet_live_sequence( const uint8_t * buffer, int bytes )
 {
     if ( bytes < ROCKETNET_LIVE_HEADER_BYTES )
+    {
         return 0;
+    }
     return (uint32_t) buffer[3] | ( (uint32_t) buffer[4] << 8 ) | ( (uint32_t) buffer[5] << 16 ) | ( (uint32_t) buffer[6] << 24 );
 }
 
@@ -390,7 +418,9 @@ static inline int rocketnet_live_check( const rocketnet_live_config_t * config, 
         *bad_offset = -1;
     }
     if ( !buffer || bytes < 1 )
+    {
         return ROCKETNET_LIVE_SHORT;
+    }
 
     if ( buffer[0] != rocketnet_live_tag( direction, mode ) )
     {
@@ -428,12 +458,16 @@ static inline int rocketnet_live_check( const rocketnet_live_config_t * config, 
     else
     {
         if ( expected_sequence < 0 )
+        {
             return ROCKETNET_LIVE_OK;           // the stated blind spot: no sequence to check against
+        }
         sequence = (uint32_t) expected_sequence;
     }
 
     if ( (uint32_t) bytes != rocketnet_live_length( config, mode, channel, sequence ) )
+    {
         return ROCKETNET_LIVE_BAD_LENGTH;
+    }
 
     for ( int i = 3; i < bytes && i < ROCKETNET_LIVE_HEADER_BYTES; i++ )
     {

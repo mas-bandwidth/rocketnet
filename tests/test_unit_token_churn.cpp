@@ -56,7 +56,9 @@ do                                                                              
 {                                                                                                        \
     const bool check_passed = ( condition );                                                             \
     if ( !check_passed && rocketnet_dev_hash_key_seed() != 0 )                                           \
+    {                                                                                                    \
         printf( "hash key seed 0x%016llx\n", (unsigned long long) rocketnet_dev_hash_key_seed() );       \
+    }                                                                                                    \
     rocketnet_unit_check( check_passed && #condition );                                                  \
 } while ( 0 )
 
@@ -182,20 +184,26 @@ static int tc_drive( struct tc_server_t * t, struct tc_client_t * c, uint64_t no
     {
         if ( c->client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED ||
              c->client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_DENIED )
+        {
             break;
+        }
 
         int out_bytes = 0;
         rocketnet_client_protocol_update( &c->client, t->time, out_packet, &out_bytes );
         if ( out_bytes == 0 )
+        {
             continue;
+        }
 
         int response_bytes = 0;
         rocketnet_server_protocol_process_packet( &t->server, &c->address, out_packet, out_bytes,
                                                   now, t->time, response, &response_bytes,
                                                   payload, &payload_bytes, &payload_client_index );
         if ( response_bytes > 0 )
+        {
             rocketnet_client_protocol_process_packet( &c->client, response, response_bytes, t->time + 0.01,
                                                       payload, (int) sizeof( payload ), &payload_bytes );
+        }
     }
 
     return c->client.state;
@@ -252,7 +260,9 @@ static void test_server_admits_sequential_fresh_tokens_past_twice_max_clients()
 
         const int state = tc_drive( &t, &c, TC_NOW );
         if ( state != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+        {
             printf( "cycle %d of 5 not admitted: client state %d\n", cycle + 1, state );
+        }
         check( state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
         check( rocketnet_client_slots_num_connected( t.server.client_slots ) == 1 );
 
@@ -951,7 +961,9 @@ static void test_claim_compaction_write_cursor_wraps()
     // H, I, N and P are the claims that stay live; each expires after the one before it
     double deadline[FRESH + 1];
     for ( int i = 0; i <= FRESH; ++i )
+    {
         deadline[i] = 1010.0;
+    }
     deadline[H] = 1011.0;
     deadline[I] = 1012.0;
     deadline[N] = 1013.0;
@@ -1003,14 +1015,18 @@ static void test_claim_compaction_write_cursor_wraps()
     {
         const double now = deadline[live[k]] + 0.5;
         for ( int j = k; j < 4; ++j )
+        {
             check( rocketnet_used_token_history_claim_check( history, ids[live[j]], &other, deadline[live[k]] - 0.5 ) == 0 );
+        }
 
         uint8_t fresh[ROCKETNET_TOKEN_IDENTIFIER_BYTES];
         tc_claim_id( fresh, (uint8_t) ( 0xD0 + k ) );
         check( rocketnet_used_token_history_claim_record( history, fresh, &holder, 1100.0, now ) == 1 );
         check( rocketnet_used_token_history_claim_can_record( history, ids[FRESH], now ) == 0 );
         for ( int j = k + 1; j < 4; ++j )
+        {
             check( rocketnet_used_token_history_claim_check( history, ids[live[j]], &other, now ) == 0 );
+        }
     }
 
     rocketnet_used_token_history_destroy( history );
@@ -1043,7 +1059,9 @@ static void test_claim_full_refusal_is_constant_time()
     tc_claim_id( id, 0xEE );
     rocketnet_dev_token_table_reset_operation_counts( history );
     for ( int i = 0; i < 1000; ++i )
+    {
         check( rocketnet_used_token_history_claim_can_record( history, id, 1075.0 ) == 0 );
+    }
     check( rocketnet_dev_token_claim_slot_steps( history ) <= (uint64_t) ( 2 * capacity ) );
 
     rocketnet_used_token_history_destroy( history );
@@ -1150,11 +1168,15 @@ static void test_binding_wrapped_compaction_keeps_insertion_order()
         tc_binding_id( x[i], 0xC0, i );
     }
     for ( int i = 0; i < 2; ++i )
+    {
         tc_binding_id( b[i], 0xB0, i );
+    }
 
     // fill: ring positions 0..3
     for ( int i = 0; i < 4; ++i )
+    {
         rocketnet_used_token_history_record( history, a[i], &holder, 1010, 1000 );
+    }
 
     // a0 and a1 expire and their slots go to b0 and b1 (positions 4, 5); the
     // head moves past a0's tombstone
@@ -1182,9 +1204,13 @@ static void test_binding_wrapped_compaction_keeps_insertion_order()
         rocketnet_used_token_history_record( history, x[i], &holder, 1300, 1040 );
         check( rocketnet_used_token_history_check( history, expected[i], &other, 1040 ) == 1 );
         for ( int j = i + 1; j < 4; ++j )
+        {
             check( rocketnet_used_token_history_check( history, expected[j], &other, 1040 ) == 0 );
+        }
         for ( int j = 0; j <= i; ++j )
+        {
             check( rocketnet_used_token_history_check( history, x[j], &other, 1040 ) == 0 );
+        }
     }
 
     rocketnet_used_token_history_destroy( history );

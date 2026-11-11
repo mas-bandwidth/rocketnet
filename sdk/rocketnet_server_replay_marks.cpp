@@ -37,7 +37,7 @@ struct rocketnet_server_replay_marks_t
     int max_clients;
     bool supersede_owed;                // the last walk left a refused forget: two records may name one address
 #if ROCKETNET_DEV
-    uint32_t comparisons;               // every record a supersede scan reads, for the unit cost case
+    uint64_t comparisons;               // every record a supersede scan reads, for the unit cost case
 #endif // #if ROCKETNET_DEV
     struct rocketnet_server_replay_slot_mark_t * slots;
 };
@@ -45,7 +45,9 @@ struct rocketnet_server_replay_marks_t
 uint64_t rocketnet_server_replay_marks_allocation_bytes( int max_clients )
 {
     if ( max_clients < 1 )
+    {
         return 0;
+    }
 
     return rocketnet_memory_allocations( { sizeof( struct rocketnet_server_replay_marks_t ),
                                            sizeof( struct rocketnet_server_replay_slot_mark_t ) * (uint64_t) max_clients } );
@@ -54,11 +56,15 @@ uint64_t rocketnet_server_replay_marks_allocation_bytes( int max_clients )
 struct rocketnet_server_replay_marks_t * rocketnet_server_replay_marks_create( void * context, int max_clients )
 {
     if ( max_clients < 1 )
+    {
         return NULL;
+    }
 
     struct rocketnet_server_replay_marks_t * marks = (struct rocketnet_server_replay_marks_t *) rocketnet_malloc( context, sizeof( struct rocketnet_server_replay_marks_t ) );
     if ( !marks )
+    {
         return NULL;
+    }
     memset( marks, 0, sizeof( struct rocketnet_server_replay_marks_t ) );
 
     marks->context = context;
@@ -84,7 +90,7 @@ void rocketnet_server_replay_marks_destroy( struct rocketnet_server_replay_marks
 }
 
 #if ROCKETNET_DEV
-uint32_t rocketnet_server_replay_marks_comparisons_for_test( const struct rocketnet_server_replay_marks_t * marks )
+uint64_t rocketnet_server_replay_marks_comparisons_for_test( const struct rocketnet_server_replay_marks_t * marks )
 {
     return marks->comparisons;
 }
@@ -109,7 +115,9 @@ static void rocketnet_server_replay_marks_supersede( struct rocketnet_server_rep
 #endif // #if ROCKETNET_DEV
         struct rocketnet_server_replay_slot_mark_t * slot = &marks->slots[i];
         if ( i != keep && slot->seen && rocketnet_address_equal( &slot->seen_address, address ) )
+        {
             memset( slot, 0, sizeof( *slot ) );
+        }
     }
 }
 
@@ -139,7 +147,9 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
     {
         struct rocketnet_server_replay_slot_mark_t * slot = &marks->slots[i];
         if ( !slot->seen )
+        {
             continue;
+        }
 
         int forget = 0;
 
@@ -158,7 +168,9 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
             {
                 const struct rocketnet_address_t * address = rocketnet_encryption_map_address( map, mapping_index );
                 if ( !rocketnet_address_equal( address, &slot->seen_address ) )
+                {
                     forget = 1;
+                }
             }
         }
 
@@ -180,7 +192,9 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
                 // each slot once.
 
                 if ( marks->supersede_owed )
+                {
                     rocketnet_server_replay_marks_supersede( marks, i, &forgotten );
+                }
             }
             else
             {
@@ -198,11 +212,15 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
     for ( int i = 0; i < marks->max_clients; i++ )
     {
         if ( !rocketnet_client_slots_connected( slots, i ) )
+        {
             continue;
+        }
 
         const int mapping_index = rocketnet_client_slots_mapping_index( slots, i );
         if ( mapping_index < 0 )
+        {
             continue;
+        }
         struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( map, mapping_index );
         const uint64_t highest_opened = mapping->replay_session.highest_opened;
 
@@ -214,7 +232,9 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
         // current mapping replaces its seen or marked identity.
 
         if ( slot->seen && !rocketnet_address_equal( address, &slot->seen_address ) )
+        {
             continue;
+        }
 
         // proofs/tla/RNXdpReplay.tla Marks, NewSessionNeverDroppedByOldMark: a slot
         // first seen, or whose highest_opened fell below its mark (a new
@@ -232,7 +252,9 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
         const uint32_t last_marked = slot->has_mark ? slot->marked_value : 0;
 
         if ( !first_seen && !mark_owed && high_water == last_marked )
+        {
             continue;
+        }
 
         // proofs/tla/RNXdpReplay.tla Walk, AdvanceOnQueueRefusal = FALSE: a mark the
         // sink cannot queue leaves the cache where it was and the slot owes
@@ -253,7 +275,9 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
         // by its own queued forget or names the address its slot is at
 
         if ( refused_forgets > 0 )
+        {
             rocketnet_server_replay_marks_supersede( marks, i, address );
+        }
     }
 
     // proofs/tla/RNServerReplaySlots.tla Walk (supOwed'): a forget refused in
@@ -301,11 +325,17 @@ bool rocketnet_server_replay_marks_reset_witness_for_test()
     if ( !marks || !slots || !map )
     {
         if ( marks )
+        {
             rocketnet_server_replay_marks_destroy( marks );
+        }
         if ( slots )
+        {
             rocketnet_client_slots_destroy( slots );
+        }
         if ( map )
+        {
             rocketnet_encryption_map_destroy( map );
+        }
         return false;
     }
 
