@@ -960,9 +960,11 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     # directory of minimal kernel and libbpf headers, so the unit suite judges
     # its decisions with no kernel, no root and no BPF syscall
     # (test_unit_xdp_filter_host.cpp). The shim directory is on this one C
-    # target's include path only. The filter is GNU C and the shim models a
-    # little-endian host, so the target is built for GCC or Clang on a
-    # little-endian, non-Windows host; elsewhere the cases print SKIPPED.
+    # target's include path only. The filter is GNU C, so the target is built
+    # for GCC or Clang on a non-Windows host; elsewhere the cases print
+    # SKIPPED. It is built for either byte order: the shim takes the target's
+    # (the kernel's <asm/byteorder.h> where present, else __BYTE_ORDER__), so
+    # the big-endian legs run the filter cases on big-endian bytes.
     # ROCKETNET_XDP_FILTER_HOST_SOURCE names the filter source to compile; the
     # default is the shipped file, and another value is for reproducing a
     # historical filter.
@@ -973,7 +975,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     endif()
     set(ROCKETNET_XDP_FILTER_HOST_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/sdk/xdp/server_xdp.c" CACHE FILEPATH
         "XDP filter source the host-C unit target compiles")
-    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang" AND CMAKE_C_BYTE_ORDER STREQUAL "LITTLE_ENDIAN" AND NOT WIN32)
+    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang" AND NOT WIN32)
         get_filename_component(ROCKETNET_XDP_FILTER_HOST_SOURCE_PATH "${ROCKETNET_XDP_FILTER_HOST_SOURCE}" ABSOLUTE)
         add_library(rocketnet_xdp_filter_host STATIC tests/xdp_host/server_xdp_host.c)
         set_source_files_properties(tests/xdp_host/server_xdp_host.c PROPERTIES
@@ -987,7 +989,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         target_link_libraries(test PRIVATE rocketnet_xdp_filter_host)
         target_compile_definitions(test PRIVATE ROCKETNET_XDP_FILTER_HOST=1)
     else()
-        message(STATUS "XDP filter host-C target not built: needs GCC or Clang on a little-endian, non-Windows host")
+        message(STATUS "XDP filter host-C target not built: needs GCC or Clang on a non-Windows host")
     endif()
     # Functional-tier binaries (docs/BUILDING.md, "Test binaries and their tiers"):
     # test_lifecycle, test_production_client_lifecycle, test_transport,
