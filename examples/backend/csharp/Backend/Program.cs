@@ -51,7 +51,9 @@ catch ( ArgumentException e )
     return 1;
 }
 if ( config.DevelopmentKey )
+{
     Console.Error.WriteLine( "rocketnet-backend: WARNING: using the published development backend key. DEVELOPMENT ONLY: anyone can mint tokens for a server that accepts it. Set ROCKETNET_BACKEND_PRIVATE_KEY to deploy." );
+}
 
 string MintToken( BackendConfig selected, ulong clientId )
 {
@@ -75,12 +77,16 @@ WebApplicationBuilder builder = WebApplication.CreateSlimBuilder();
 string listenHost = config.ListenAddress.Contains( ':' ) ? $"[{config.ListenAddress}]" : config.ListenAddress;
 builder.WebHost.UseUrls( $"http://{listenHost}:{config.Port}" );
 if ( !config.ListenAddressIsLoopback )
+{
     Console.Error.WriteLine( $"rocketnet-backend: warning: listening on {config.ListenAddress}, not loopback: server registration and token issuance are unauthenticated here; production needs authenticated registration and player authorization" );
+}
 WebApplication app = builder.Build();
 
 ServerRegistry registry = new ServerRegistry( RandomNumberGenerator.GetInt32 );
 if ( config.ServerConfigured )
+{
     registry.Register( "environment", config.ServerAddresses, Convert.ToBase64String( config.ServerPublicKey ) );
+}
 
 const int RegistrationBodyBytes = 4096;
 async Task<(byte[] Data, bool TooLarge)> ReadRegistrationBody( Stream body )
@@ -91,7 +97,9 @@ async Task<(byte[] Data, bool TooLarge)> ReadRegistrationBody( Stream body )
     {
         int count = await body.ReadAsync( data.AsMemory( used, data.Length - used ) );
         if ( count == 0 )
+        {
             return ( data.AsSpan( 0, used ).ToArray(), false );
+        }
         used += count;
     }
     return ( Array.Empty<byte>(), true );
@@ -101,7 +109,9 @@ app.MapPut( "/servers/{serverId}", async ( string serverId, HttpRequest request 
 {
     ( byte[] data, bool tooLarge ) = await ReadRegistrationBody( request.Body );
     if ( tooLarge )
+    {
         return Results.StatusCode( StatusCodes.Status413PayloadTooLarge );
+    }
     try
     {
         ServerRegistrationRequest registration = JsonSerializer.Deserialize<ServerRegistrationRequest>( data )
@@ -122,10 +132,14 @@ app.MapPut( "/servers/{serverId}", async ( string serverId, HttpRequest request 
 app.MapGet( "/match/{clientId}", ( string clientId, HttpResponse response ) =>
 {
     if ( !ulong.TryParse( clientId, NumberStyles.None, CultureInfo.InvariantCulture, out ulong id ) )
+    {
         return Results.BadRequest( "the client id is not a decimal 64 bit number" );
+    }
     RegisteredServer? server = registry.Random();
     if ( server == null )
+    {
         return Results.StatusCode( StatusCodes.Status503ServiceUnavailable );
+    }
     string token = MintToken( config.ForServer( server ), id );
     // a token is for one client, once: never cached
     response.Headers.CacheControl = "no-store";
