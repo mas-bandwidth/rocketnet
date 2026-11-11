@@ -320,6 +320,75 @@ static void test_server_stop_abandons_an_unreachable_burst()
     delete f;
 }
 
+// A staging that reports no send room with nothing staged or in flight (an
+// xdp queue in hard send error whose producer is full, which its send_idle
+// gives up on): no waiting burst can ever leave. The stop abandons each one,
+// as an unreachable destination's, counted as a start refused for a full
+// staging, wipes its key and finishes. It used to stay not-stopped forever.
+static void test_server_stop_abandons_bursts_without_send_room()
+{
+    stop_spread_fixture_t * f = new stop_spread_fixture_t();
+    f->capacity = 0;
+    const int clients = 2;
+
+    rocketnet_server_transport_io_operations_t operations;
+    rocketnet_server_transport_t * server = stop_spread_server( f, &operations, clients, true );
+    const uint64_t * counters = server->protocol.counters->values;
+    const uint64_t ring_full = counters[ROCKETNET_COUNTER_SEND_RING_FULL];
+
+    stop_spread_stop_server( server, clients );
+
+    for ( int poll = 0; poll < 8 && !rocketnet_server_transport_stopped( server ); poll++ )
+    {
+    }
+
+    rocketnet_unit_check( rocketnet_server_transport_stopped( server ) );
+    rocketnet_unit_check( f->stops == 1 );
+    rocketnet_unit_check( stop_spread_flushed( f ) == 0 );
+    rocketnet_unit_check( server->disconnect_burst_count == 0 );
+    rocketnet_unit_check( counters[ROCKETNET_COUNTER_SEND_RING_FULL] == ring_full + (uint64_t) clients );
+    const uint8_t zero_key[ROCKETNET_KEY_BYTES] = {};
+    for ( int i = 0; i < clients; i++ )
+        rocketnet_unit_check( memcmp( server->disconnect_burst_keys[i], zero_key, ROCKETNET_KEY_BYTES ) == 0 );
+
+    rn_test_server_transport_stop_and_destroy( server );
+    delete f;
+}
+
+// No send room while a send is still in flight: its finish frees room, so
+// the stop waits and abandons nothing; once there is room the bursts leave
+// whole and the stop finishes.
+static void test_server_stop_without_room_waits_for_sends_in_flight()
+{
+    stop_spread_fixture_t * f = new stop_spread_fixture_t();
+    f->capacity = 0;
+    f->in_flight = 1;
+    const int clients = 2;
+
+    rocketnet_server_transport_io_operations_t operations;
+    rocketnet_server_transport_t * server = stop_spread_server( f, &operations, clients, true );
+    const uint64_t * counters = server->protocol.counters->values;
+    const uint64_t ring_full = counters[ROCKETNET_COUNTER_SEND_RING_FULL];
+
+    stop_spread_stop_server( server, clients );
+
+    for ( int poll = 0; poll < 4; poll++ )
+        rocketnet_unit_check( !rocketnet_server_transport_stopped( server ) );
+    rocketnet_unit_check( f->stops == 0 );
+    rocketnet_unit_check( server->disconnect_burst_count == clients );
+
+    f->in_flight = 0;
+    f->capacity = 64;
+    rocketnet_unit_check( rocketnet_server_transport_stopped( server ) );
+    rocketnet_unit_check( f->stops == 1 );
+    for ( int i = 0; i < clients; i++ )
+        rocketnet_unit_check( f->flushed[i] == ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
+    rocketnet_unit_check( counters[ROCKETNET_COUNTER_SEND_RING_FULL] == ring_full );
+
+    rn_test_server_transport_stop_and_destroy( server );
+    delete f;
+}
+
 // A kick on a running server whose staging has less room than a burst: the
 // slot ends at once, the burst waits, and each update seals what the room
 // takes until the whole burst has left. Nothing is refused or dropped.
@@ -713,6 +782,8 @@ REGISTER_UNIT_TEST( test_server_stop_waits_for_flushed_sends );
 REGISTER_UNIT_TEST( test_server_refused_starts_counted_by_cause );
 REGISTER_UNIT_TEST( test_server_stop_polls_are_the_stop_steps );
 REGISTER_UNIT_TEST( test_server_stop_abandons_an_unreachable_burst );
+REGISTER_UNIT_TEST( test_server_stop_abandons_bursts_without_send_room );
+REGISTER_UNIT_TEST( test_server_stop_without_room_waits_for_sends_in_flight );
 REGISTER_UNIT_TEST( test_server_kick_spreads_its_burst_across_updates );
 REGISTER_UNIT_TEST( test_server_send_capacity_reports_staged_room );
 #if ROCKETNET_DEV
