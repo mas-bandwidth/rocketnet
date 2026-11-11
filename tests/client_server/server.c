@@ -1313,6 +1313,8 @@ int main( int argc, char ** argv )
                 int client_index, payload_bytes;
                 uint8_t * payload = rocketnet_server_transport_payload( transport_obj, i, &client_index, &payload_bytes );
                 rocketnet_server_transport_send_packet( transport_obj, client_index, payload, payload_bytes );
+                // the message server defers payload acks to whoever consumes the payload; the echo consumes it here
+                rocketnet_server_transport_accept_payload( transport_obj, i );
             }
 
             const double send_start = rocketnet_time();
