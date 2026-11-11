@@ -147,7 +147,7 @@ static int interop_parse_clients( const char * text )
     return clients;
 }
 
-struct interop_peer_t
+struct interop_record_t
 {
     int seen;
     uint64_t client_id;
@@ -191,8 +191,8 @@ static int interop_server( const char * address, int clients )
     printf( "server started on %s, transport %s\n", address, rocketnet_server_transport_name( server ) );
     fflush( stdout );
 
-    struct interop_peer_t peers[INTEROP_MAX_CLIENTS];
-    memset( peers, 0, sizeof( peers ) );
+    struct interop_record_t records[INTEROP_MAX_CLIENTS];
+    memset( records, 0, sizeof( records ) );
     int seen = 0;
     int bad = 0;
     int result = 1;
@@ -206,12 +206,12 @@ static int interop_server( const char * address, int clients )
 
         for ( int index = 0; index < clients; index++ )
         {
-            if ( rocketnet_server_client_connected( server, index ) && !peers[index].seen )
+            if ( rocketnet_server_client_connected( server, index ) && !records[index].seen )
             {
-                peers[index].seen = 1;
-                peers[index].client_id = rocketnet_server_client_id( server, index );
+                records[index].seen = 1;
+                records[index].client_id = rocketnet_server_client_id( server, index );
                 seen++;
-                printf( "client %d connected, client id %llu\n", index, (unsigned long long) peers[index].client_id );
+                printf( "client %d connected, client id %llu\n", index, (unsigned long long) records[index].client_id );
                 fflush( stdout );
             }
         }
@@ -228,7 +228,7 @@ static int interop_server( const char * address, int clients )
                 uint64_t client_id = 0;
                 if ( from < 0 || from >= clients ||
                      !interop_check( batch->data[i], batch->bytes[i], &kind, &sender, &number, &client_id ) ||
-                     sender != from || client_id != peers[from].client_id )
+                     sender != from || client_id != records[from].client_id )
                 {
                     printf( "BAD message from client %d: %d bytes, sender %d, number %u, client id %llu\n", from,
                             batch->bytes[i], sender, (unsigned) number, (unsigned long long) client_id );
@@ -239,15 +239,15 @@ static int interop_server( const char * address, int clients )
 
                 if ( kind == INTEROP_UNRELIABLE )
                 {
-                    peers[from].unreliable++;
+                    records[from].unreliable++;
                 }
                 else if ( kind == INTEROP_RELIABLE )
                 {
-                    peers[from].reliable++;
+                    records[from].reliable++;
                 }
                 else
                 {
-                    peers[from].large++;
+                    records[from].large++;
                 }
 
                 // the echo: the same bytes back on the same reliability
@@ -271,9 +271,9 @@ static int interop_server( const char * address, int clients )
             result = 0;
             for ( int index = 0; index < clients; index++ )
             {
-                const int ok = peers[index].reliable == RELIABLE_MESSAGES && peers[index].large == 1 && peers[index].unreliable >= 1;
-                printf( "client %d: %d of %d reliable, %d of 1 large, %d of %d unreliable: %s\n", index, peers[index].reliable,
-                        RELIABLE_MESSAGES, peers[index].large, peers[index].unreliable, UNRELIABLE_MESSAGES, ok ? "ok" : "FAIL" );
+                const int ok = records[index].reliable == RELIABLE_MESSAGES && records[index].large == 1 && records[index].unreliable >= 1;
+                printf( "client %d: %d of %d reliable, %d of 1 large, %d of %d unreliable: %s\n", index, records[index].reliable,
+                        RELIABLE_MESSAGES, records[index].large, records[index].unreliable, UNRELIABLE_MESSAGES, ok ? "ok" : "FAIL" );
                 if ( !ok )
                 {
                     result = 1;
