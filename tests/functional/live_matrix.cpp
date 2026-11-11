@@ -161,7 +161,6 @@ struct live_matrix_stream_t
     uint32_t expected;              // ordered modes: the next sequence due
     uint32_t received;
     uint32_t lost_sequenced;        // mode 1 and 4: sequences skipped over
-    uint64_t acked[LIVE_MATRIX_MAX_SEQUENCES / 64];     // receipt modes: sequences whose receipt came back ACKED
 };
 
 struct live_matrix_receipt_entry_t
@@ -169,8 +168,6 @@ struct live_matrix_receipt_entry_t
     uint32_t serial;
     uint8_t mode;
     uint8_t receipted;
-    uint8_t channel;
-    uint32_t sequence;
     uint32_t length;
 };
 
@@ -215,7 +212,6 @@ struct live_matrix_t
     uint64_t not_delivered;              // modes 0, 1 and 4: lost or superseded, counted, not failed
     uint64_t refusals;
     uint64_t iteration;
-    int cut;                        // the window ended at the wall bound, itself a failure
 };
 
 static double live_matrix_now( struct live_matrix_t * m )
@@ -347,11 +343,6 @@ static void live_matrix_take_receipts( struct live_matrix_t * m, int direction )
         if ( receipts[i].status == ROCKETNET_RECEIPT_STATUS_ACKED )
         {
             d->receipts_acked++;
-
-            if ( e->sequence < LIVE_MATRIX_MAX_SEQUENCES )
-            {
-                d->streams[e->mode][e->channel].acked[e->sequence / 64] |= 1ull << ( e->sequence % 64 );
-            }
         }
         else if ( receipts[i].status == ROCKETNET_RECEIPT_STATUS_LOSS )
         {
@@ -682,8 +673,6 @@ static void live_matrix_send( struct live_matrix_t * m, int direction )
             live_matrix_check( e && e->serial == 0 );
             e->serial = serial;
             e->mode = (uint8_t) mode;
-            e->channel = (uint8_t) channel;
-            e->sequence = sequence;
             e->length = length;
             e->receipted = 0;
             d->receipts_expected++;
@@ -721,24 +710,12 @@ static int live_matrix_sends_done( struct live_matrix_direction_t * d )
     return 1;
 }
 
-// After a cut at the wall bound, what is owed is still in flight and is
-// counted, not failed, except a sequence the sender's receipt says arrived
-// (ACKED) that its receiver never read, with every earlier sequence of an
-// ordered stream read: that one is lost. The cut itself is the failure.
-static int live_matrix_lost_at_cut( const struct live_matrix_stream_t * s, int mode, uint32_t q )
-{
-    if ( !( s->acked[q / 64] & ( 1ull << ( q % 64 ) ) ) )
-        return 0;
-    return !live_matrix_ordered( mode ) || q == s->expected;
-}
-
 // the count of sequences a direction still owes: every complete-mode
 // sequence and tiny length, mode 4's closing message, and every receipt
 static uint64_t live_matrix_owed( struct live_matrix_t * m, int direction, int report )
 {
     struct live_matrix_direction_t * d = &live_matrix_directions[direction];
     uint64_t owed = 0;
-    uint64_t in_flight = 0;
 
     for ( int mode = 0; mode < LIVE_MATRIX_MODES; mode++ )
     {
@@ -757,11 +734,7 @@ static uint64_t live_matrix_owed( struct live_matrix_t * m, int direction, int r
                 {
                     owed++;
 
-                    if ( report && m->cut && !live_matrix_lost_at_cut( s, mode, q ) )
-                    {
-                        in_flight++;
-                    }
-                    else if ( report )
+                    if ( report )
                     {
                         live_matrix_fail( m, "complete", direction, mode, channel, q, "missing", (int) length );
                     }
@@ -778,11 +751,7 @@ static uint64_t live_matrix_owed( struct live_matrix_t * m, int direction, int r
             {
                 owed += d->tiny_sent[mode][length] - d->tiny_received[mode][length];
 
-                if ( report && m->cut )
-                {
-                    in_flight += d->tiny_sent[mode][length] - d->tiny_received[mode][length];
-                }
-                else if ( report )
+                if ( report )
                 {
                     live_matrix_fail( m, "complete", direction, mode, -1, -1, "missing-tiny", length );
                 }
@@ -794,19 +763,10 @@ static uint64_t live_matrix_owed( struct live_matrix_t * m, int direction, int r
     {
         owed += d->receipts_expected - d->receipts_seen;
 
-        if ( report && m->cut )
-        {
-            in_flight += d->receipts_expected - d->receipts_seen;
-        }
-        else if ( report )
+        if ( report )
         {
             live_matrix_fail( m, "complete", direction, -1, -1, -1, "missing-receipts", (int) ( d->receipts_expected - d->receipts_seen ) );
         }
-    }
-
-    if ( in_flight > 0 )
-    {
-        printf( "in-flight %u %d %llu at the wall bound (sequences, tiny messages and receipts owed, none shown lost)\n", m->cycle, direction, (unsigned long long) in_flight );
     }
 
     return owed;
@@ -1009,8 +969,6 @@ static int live_matrix_probe_one( struct live_matrix_t * m, struct live_matrix_p
         live_matrix_check( e && e->serial == 0 );
         e->serial = serial;
         e->mode = (uint8_t) probe->mode;
-        e->channel = (uint8_t) probe->channel;
-        e->sequence = probe->sequence;      // past LIVE_MATRIX_MAX_SEQUENCES: marks no matrix stream
         e->length = probe->length;
         e->receipted = 0;
         d->receipts_expected++;
@@ -1285,7 +1243,6 @@ static void live_matrix_window( struct live_matrix_t * m, double deadline )
         if ( rocketnet_platform_time() > deadline )
         {
             live_matrix_fail( m, "window", -1, -1, -1, -1, "wall-bound", 0 );
-            m->cut = 1;
             break;
         }
     }

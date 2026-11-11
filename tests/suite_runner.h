@@ -11,9 +11,8 @@
     scales it for Debug, sanitizer or emulated builds (tests/time_scale.h).
     ROCKETNET_TEST_CASE_TIME_SCALE in the environment multiplies the case limit
     a suite passes in; the nightly macOS TSAN functional runs set 30, a
-    one-hour case limit, the nightly Linux threaded TSan leg sets 4, the
-    nightly Linux Debug and LSan functional runs set 2, and every other run
-    leaves it unset. ROCKETNET_NIGHTLY_NO_TIMEOUT=1 disables
+    one-hour case limit, the nightly Linux threaded TSan leg sets 4, and
+    every other run leaves it unset. ROCKETNET_NIGHTLY_NO_TIMEOUT=1 disables
     only this execution watchdog; fixture durations and assertions stay intact. A
     functional case whose peak resident set (wait4 ru_maxrss on POSIX,
     PeakWorkingSetSize on Windows) is over its bound fails
