@@ -3,8 +3,9 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// A client start_packet can refuse after spending its sequence
-// (sdk/rocketnet_client_transport.cpp:1532, :1549, :1722 and :1739). The
+// A client start_packet can refuse after spending its sequence: it takes
+// the sequence at sdk/rocketnet_client_transport.cpp:3729 and refuses after
+// at :3745 (payload ring full) and :3767 (lease table full). The
 // server assigns a sequence only when finish accepts the payload and reserves
 // every wire frame, so a server lease or ring refusal, an abort, or a
 // refused finish leaves no sequence gap.
