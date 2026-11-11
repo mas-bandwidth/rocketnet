@@ -298,6 +298,16 @@ bool rocketnet_platform_socket_disable_udp_resets( uintptr_t handle );
 // ERROR_NETWORK_UNREACHABLE and ERROR_CONNECTION_REFUSED
 bool rocketnet_platform_receive_status_is_reset( int status );
 
+// A create that fails at a kernel object (a socket, event, thread, completion
+// port, RIO registration, queue or first receive post) with a Win32 or Winsock
+// error that says the machine is out of memory or commit writes OUT_OF_MEMORY
+// through status (rocketnet_create_status), so the transport ladder ends the
+// create there instead of trying the next transport: ERROR_NOT_ENOUGH_MEMORY
+// (the value of WSA_NOT_ENOUGH_MEMORY), ERROR_OUTOFMEMORY,
+// ERROR_COMMITMENT_LIMIT, ERROR_NO_SYSTEM_RESOURCES and WSAENOBUFS (what
+// WSASocketW and the RIO calls report). Any other error leaves status as it is.
+void rocketnet_platform_windows_create_status( int * status, unsigned long error );
+
 // the process-wide count of reset statuses the receive paths skipped: zero
 // while the reports stay off
 void rocketnet_platform_count_receive_reset( void );
@@ -543,7 +553,7 @@ struct rocketnet_platform_priority_calls_t
     int ( *platform_start )( void );
     /** @brief Windows: CreateWaitableTimerExW; NULL on failure. Frame sync requests CREATE_WAITABLE_TIMER_HIGH_RESOLUTION (0x00000002) and refuses creation without falling back to a coarse timer when unavailable. Off Windows the handle is unused and the entry returns a non-NULL placeholder only for the high-resolution flag, so NULL stays the failure answer on every platform. */
     void * ( *create_waitable_timer )( unsigned flags );
-    /** @brief The OS thread start for a thread record (POSIX pthread_create, Windows CreateThread), writing the thread's handle; 0 on success, nonzero when the OS refuses the thread. */
+    /** @brief The OS thread start for a thread record (POSIX pthread_create, Windows CreateThread), writing the thread's handle; 0 on success, nonzero when the OS refuses the thread (on Windows the GetLastError value, which the create maps to OUT_OF_MEMORY when it says out of memory or commit). */
     int ( *thread_start )( struct rocketnet_platform_thread_t * thread, void * record );
 };
 

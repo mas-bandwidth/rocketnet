@@ -556,3 +556,64 @@ static void test_create_status_out_of_memory_is_kept()
 }
 
 REGISTER_UNIT_TEST( test_create_status_out_of_memory_is_kept );
+
+// ---- a kernel object refused for want of memory or commit (Windows) --------
+
+// A create that fails at a kernel object reports OUT_OF_MEMORY when Windows
+// refused it for memory or commit, so the transport ladder ends there rather
+// than walking on to TRANSPORT_LADDER_EXHAUSTED. The thread start is the
+// platform's seam: it refuses with each error in turn, the thread create
+// returns NULL with nothing live, and the status is OUT_OF_MEMORY for the
+// memory and commit errors and untouched for any other, which the callers
+// then report as THREAD_CREATE_FAILED.
+
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+static int thread_start_refusal;
+
+static int thread_start_refused( struct rocketnet_platform_thread_t *, void * )
+{
+    return thread_start_refusal;
+}
+
+static void thread_start_never_runs( rocketnet_platform_thread_t *, void * )
+{
+    check( false );
+}
+
+static void test_windows_thread_create_refused_for_commit_is_out_of_memory()
+{
+    transport_oom_allocator_t state;
+    transport_oom_begin( &state );
+
+    const struct rocketnet_platform_priority_calls_t * saved = rocketnet_platform_priority_calls_current();
+    struct rocketnet_platform_priority_calls_t fake;
+    fake = *saved;
+    fake.thread_start = thread_start_refused;
+    rocketnet_platform_set_priority_calls_for_testing( &fake );
+
+    const int out_of_memory[] = { ERROR_NOT_ENOUGH_MEMORY, ERROR_OUTOFMEMORY, ERROR_COMMITMENT_LIMIT, ERROR_NO_SYSTEM_RESOURCES, WSAENOBUFS, WSA_NOT_ENOUGH_MEMORY };
+    for ( size_t i = 0; i < sizeof( out_of_memory ) / sizeof( out_of_memory[0] ); ++i )
+    {
+        thread_start_refusal = out_of_memory[i];
+        int status = ROCKETNET_STATUS_OK;
+        check( rocketnet_platform_thread_create( &state, thread_start_never_runs, NULL, &status ) == NULL );
+        check( status == ROCKETNET_STATUS_OUT_OF_MEMORY );
+        check( state.live == 0 );
+    }
+
+    const int other[] = { 1, ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER, ERROR_MAX_THRDS_REACHED };
+    for ( size_t i = 0; i < sizeof( other ) / sizeof( other[0] ); ++i )
+    {
+        thread_start_refusal = other[i];
+        int status = ROCKETNET_STATUS_OK;
+        check( rocketnet_platform_thread_create( &state, thread_start_never_runs, NULL, &status ) == NULL );
+        check( status == ROCKETNET_STATUS_OK );
+        check( state.live == 0 );
+    }
+
+    rocketnet_platform_set_priority_calls_for_testing( saved );
+    transport_oom_end( &state );
+}
+
+REGISTER_UNIT_TEST( test_windows_thread_create_refused_for_commit_is_out_of_memory );
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS

@@ -853,7 +853,9 @@ static bool rocketnet_iocp_address_read( const sockaddr_storage * storage, int b
     return rocketnet_platform_sockaddr_to_address( storage, dual_stack, address );
 }
 
-static bool rocketnet_iocp_post_receive( rocketnet_server_iocp_t * iocp, rocketnet_iocp_operation_t * op )
+// post_error, when given, takes the Winsock error of a refused post (create
+// maps it to its status)
+static bool rocketnet_iocp_post_receive( rocketnet_server_iocp_t * iocp, rocketnet_iocp_operation_t * op, int * post_error = NULL )
 {
     // proofs/tla/RNIocpRetryStop.tla PostStart is the stop check and the new
     // generation, PostAccepted an accepted post and PostRefused a refused
@@ -927,6 +929,10 @@ static bool rocketnet_iocp_post_receive( rocketnet_server_iocp_t * iocp, rocketn
         return true; // Immediate success also produces exactly one IOCP event.
     }
     iocp->pending.fetch_sub( 1, std::memory_order_release );
+    if ( post_error )
+    {
+        *post_error = error;
+    }
 
     // a post refused with an ICMP report of an earlier send is counted with
     // the reset statuses, then waits on the retry list like every refused post
@@ -1670,14 +1676,17 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
         iocp->socket_generation = rocketnet_lifecycle_track_open( ROCKETNET_LIFECYCLE_SOCKET, (uintptr_t) iocp->socket, "iocp socket" );
     }
 #endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    if ( iocp->socket == INVALID_SOCKET
+    if ( iocp->socket == INVALID_SOCKET )
+    {
+        rocketnet_platform_windows_create_status( status, (unsigned long) WSAGetLastError() );
+        goto failed;
+    }
 #if ROCKETNET_DEV
-         || fail_stage == 1
-#endif // #if ROCKETNET_DEV
-    )
+    if ( fail_stage == 1 )
     {
         goto failed;
     }
+#endif // #if ROCKETNET_DEV
     if ( setsockopt( iocp->socket, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char *) &enabled, sizeof( enabled ) ) == SOCKET_ERROR )
     {
         goto failed;
@@ -1764,6 +1773,10 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
     }
 
     iocp->port = CreateIoCompletionPort( (HANDLE) iocp->socket, NULL, 0, (DWORD) num_workers );
+    if ( !iocp->port )
+    {
+        rocketnet_platform_windows_create_status( status, GetLastError() );
+    }
 #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( iocp->port )
     {
@@ -1827,8 +1840,10 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
         {
             iocp->receives[i].uro_data = iocp->uro_buffers + (size_t) i * ROCKETNET_IOCP_URO_BUFFER_BYTES;
         }
-        if ( !rocketnet_iocp_post_receive( iocp, &iocp->receives[i] ) )
+        int post_error = 0;
+        if ( !rocketnet_iocp_post_receive( iocp, &iocp->receives[i], &post_error ) )
         {
+            rocketnet_platform_windows_create_status( status, (unsigned long) post_error );
             goto failed;
         }
 #if ROCKETNET_DEV

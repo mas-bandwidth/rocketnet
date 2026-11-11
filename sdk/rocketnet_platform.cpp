@@ -3957,10 +3957,16 @@ static DWORD WINAPI thread_function_shim( void * data )
     return 0;
 }
 
+// 0, or the Win32 error CreateThread refused with (1 when it gives none)
 static int rocketnet_platform_real_thread_start( rocketnet_platform_thread_t * thread, void * record )
 {
     thread->handle = CreateThread( NULL, 0, thread_function_shim, record, 0, NULL );
-    return thread->handle != NULL ? 0 : 1;
+    if ( thread->handle != NULL )
+    {
+        return 0;
+    }
+    const DWORD error = GetLastError();
+    return error != 0 ? (int) error : 1;
 }
 
 static HANDLE rocketnet_platform_sleep_timer_create();
@@ -4011,8 +4017,10 @@ rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, 
     }
 #endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 
-    if ( ROCKETNET_PLATFORM_PRIORITY_CALL( thread_start )( thread, record ) != 0 )
+    const int start_error = ROCKETNET_PLATFORM_PRIORITY_CALL( thread_start )( thread, record );
+    if ( start_error != 0 )
     {
+        rocketnet_platform_windows_create_status( status, (unsigned long) start_error );
         rocketnet_platform_thread_sleep_timer_close( thread );
         rocketnet_free( context, thread );
         return NULL;
@@ -4309,6 +4317,22 @@ bool rocketnet_platform_receive_status_is_reset( int status )
     }
 }
 
+void rocketnet_platform_windows_create_status( int * status, unsigned long error )
+{
+    switch ( error )
+    {
+        case ERROR_NOT_ENOUGH_MEMORY:
+        case ERROR_OUTOFMEMORY:
+        case ERROR_COMMITMENT_LIMIT:
+        case ERROR_NO_SYSTEM_RESOURCES:
+        case WSAENOBUFS:
+            rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
+            break;
+        default:
+            break;
+    }
+}
+
 void rocketnet_platform_count_receive_reset()
 {
     InterlockedIncrement64( &rocketnet_platform_receive_reset_count );
@@ -4375,6 +4399,7 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
 
     if ( s->handle == INVALID_SOCKET )
     {
+        rocketnet_platform_windows_create_status( status, (unsigned long) WSAGetLastError() );
         rocketnet_error( "failed to create socket" );
         rocketnet_free( context, s );
         return NULL;
@@ -4822,6 +4847,7 @@ rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rock
         wake->read_event = WSACreateEvent();
         if ( wake->read_event == WSA_INVALID_EVENT )
         {
+            rocketnet_platform_windows_create_status( status, (unsigned long) WSAGetLastError() );
             rocketnet_free( context, wake );
             return NULL;
         }
@@ -4851,6 +4877,10 @@ rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rock
     // manual-reset behavior.
 
     wake->wake_event = CreateEvent( NULL, socket ? TRUE : FALSE, FALSE, NULL );
+    if ( wake->wake_event == NULL )
+    {
+        rocketnet_platform_windows_create_status( status, GetLastError() );
+    }
 #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( wake->wake_event )
     {

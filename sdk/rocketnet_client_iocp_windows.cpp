@@ -470,7 +470,9 @@ static void * rocketnet_client_iocp_create( void * context, const rocketnet_clie
     client->port = CreateIoCompletionPort( (HANDLE) client->socket->handle, NULL, ROCKETNET_CLIENT_IOCP_RECEIVE_KEY, 1 );
     if ( !client->port )
     {
-        rocketnet_warn( "iocp client: CreateIoCompletionPort failed: %lu", GetLastError() );
+        const DWORD error = GetLastError();
+        rocketnet_platform_windows_create_status( config->status, error );
+        rocketnet_warn( "iocp client: CreateIoCompletionPort failed: %lu", error );
 
         rocketnet_platform_socket_destroy( client->socket );
 
