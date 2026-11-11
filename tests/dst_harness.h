@@ -267,6 +267,7 @@ struct rocketnet_dst_options_t
     int force_fail_step;        // a test's forced failure, -1 for none
     int schedule;               // ROCKETNET_DST_SCHEDULE_*, 0 for none
     int witness;                // ROCKETNET_DST_WITNESS_*, 0 for none: a unit case's planted defect
+    int reliable_timeout_ms;    // 0: the default reliable_message_timeout_ms; else that accepted value
 };
 
 // Reversed witnesses: a unit case plants one defect in what the checks
@@ -297,6 +298,8 @@ struct rocketnet_dst_result_t
     uint64_t burst_sent;            // packets the burst endpoint put on the wire in its one update
     uint64_t burst_received;        // packets the burst endpoint took in its one release step
     uint64_t duplicate_payloads;    // payloads a receiver took twice (the library's duplicate refusals)
+    uint64_t server_reliable_timeouts;  // server connections the message layer ended with RELIABLE_TIMED_OUT
+    uint64_t client_reliable_timeouts;  // client connections the message layer ended with RELIABLE_TIMED_OUT
 };
 
 struct rocketnet_dst_world_t;
@@ -422,6 +425,7 @@ typedef struct rocketnet_dst_world_t
     int server_incarnation;
     uint64_t fault_steps;
     struct rocketnet_dst_schedule_t schedule;
+    uint64_t reliable_timeouts[2];  // the message layer's RELIABLE_TIMED_OUT kicks: server, clients
     struct rocketnet_dst_check_state_t check;
     int witness;
     int witness_state;                  // 0 armed, 1 holding (ORDERED_SWAP), 2 fired
@@ -543,6 +547,28 @@ static inline int rocketnet_dst_world_client_for_slot( rocketnet_dst_world_t * w
 
     const uint64_t id = rocketnet_client_slots_client_id( w->server.client_slots, slot );
     return (int) ( id & 0xFF );
+}
+
+// The slot holding client index's current session (client_id generation *
+// 256 + index), or -1. After a client ends its session (a churn whose
+// disconnect burst is lost, or its message layer's reliable timeout), the
+// server keeps the old session's slot until its own transport ends it, so
+// for a while two slots name the same client index: only this one is the
+// session the client's message object talks to.
+
+static inline int rocketnet_dst_world_slot_for_client( rocketnet_dst_world_t * w, int index )
+{
+    const uint64_t client_id = w->client[index].generation * 256 + (uint64_t) index;
+    for ( int slot = 0; slot < ROCKETNET_DST_MAX_CLIENTS; slot++ )
+    {
+        if ( rocketnet_client_slots_connected( w->server.client_slots, slot ) &&
+             rocketnet_client_slots_client_id( w->server.client_slots, slot ) == client_id )
+        {
+            return slot;
+        }
+    }
+
+    return -1;
 }
 
 static inline int rocketnet_dst_world_client_for_address( rocketnet_dst_world_t * w,
@@ -974,6 +1000,16 @@ static inline void rocketnet_dst_endpoint_disconnect( void * transport, int clie
     // releases it, as the payload path resolves its receiver by address
 
     const int target = endpoint->is_server ? rocketnet_dst_world_client_for_slot( w, client_index ) : -1;
+
+    // the message layer's kick records its reason before it calls here
+    const int reason = endpoint->is_server
+                           ? rocketnet_message_server_disconnect_reason( w->message_server, client_index )
+                           : rocketnet_message_client_disconnect_reason( w->client[endpoint->client_index].message );
+    if ( reason == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT )
+    {
+        w->reliable_timeouts[endpoint->is_server ? 0 : 1]++;
+    }
+
     if ( endpoint->is_server )
         rocketnet_server_protocol_disconnect_client( &w->server, client_index, packets, &packet_count, &packet_bytes );
     else
@@ -1239,23 +1275,22 @@ static inline void rocketnet_dst_send_one( rocketnet_dst_world_t * w, int index,
 
     if ( direction == 0 )
     {
-        session = -1;
-
-        for ( int s = 0; s < ROCKETNET_DST_MAX_CLIENTS; s++ )
-        {
-            if ( rocketnet_client_slots_connected( w->server.client_slots, s ) &&
-                 (int) ( rocketnet_client_slots_client_id( w->server.client_slots, s ) & 0xFF ) == index )
-            {
-                session = s;
-                break;
-            }
-        }
-
+        session = rocketnet_dst_world_slot_for_client( w, index );
         if ( session < 0 )
             return;
     }
 
-    const uint32_t generation = (uint32_t) client->generation;
+    // a server send belongs to the session its slot holds, which is the
+    // client's current one or one the client already ended. A send on an
+    // ended session is owed to nobody (CHANNELS.md: reliability does not
+    // persist across a disconnect), so it is stamped with that session's
+    // generation, kept out of the client's books, and its receipt is judged
+    // against that session: delivered into the client's new session it fails
+    // stale_session_payload.
+
+    const uint32_t generation = direction == 0 ? (uint32_t) client->generation
+                                               : (uint32_t) ( rocketnet_client_slots_client_id( w->server.client_slots, slot ) >> 8 );
+    const int current = generation == (uint32_t) client->generation;
     const uint64_t identity = direction == 0 ? ( (uint64_t) generation * 256 + (uint64_t) index ) : (uint64_t) generation;
     const int reliable = ( type == 2 || type == 3 || type == 4 || type == 6 || type == 7 );
     if ( reliable && rocketnet_dst_check_outstanding( &w->check, session, identity ) > ROCKETNET_DST_CHECK_OUTSTANDING_CAP )
@@ -1283,8 +1318,11 @@ static inline void rocketnet_dst_send_one( rocketnet_dst_world_t * w, int index,
 
     if ( sent )
     {
-        rocketnet_dst_check_sent( &w->check, w->now, session, channel, type, sequence, generation,
-                                  identity, epoch, size );
+        if ( current )
+        {
+            rocketnet_dst_check_sent( &w->check, w->now, session, channel, type, sequence, generation,
+                                      identity, epoch, size );
+        }
         rocketnet_dst_check_receipt_sent( &w->check, direction == 0 ? 16 + index : slot, identity, sent, session,
                                           channel, type, sequence );
     }
@@ -1306,13 +1344,7 @@ static inline void rocketnet_dst_send_one( rocketnet_dst_world_t * w, int index,
 
 static inline int rocketnet_dst_burst_slot( rocketnet_dst_world_t * w, int index )
 {
-    for ( int slot = 0; slot < ROCKETNET_DST_MAX_CLIENTS; slot++ )
-    {
-        if ( rocketnet_dst_world_client_for_slot( w, slot ) == index )
-            return slot;
-    }
-
-    return -1;
+    return rocketnet_dst_world_slot_for_client( w, index );
 }
 
 // burst: one endpoint queues its whole burst in the step the window opens.
@@ -1834,6 +1866,15 @@ static inline int rocketnet_dst_world_create( rocketnet_dst_world_t * w, uint64_
 
     rocketnet_message_default_config( &w->message_config );
     w->message_config.num_channels = ROCKETNET_DST_NUM_CHANNELS;
+    if ( options->reliable_timeout_ms > 0 )
+    {
+        // the config check keeps four initial resend delays inside the timeout
+        w->message_config.reliable_message_timeout_ms = options->reliable_timeout_ms;
+        if ( w->message_config.message_resend_delay_initial_ms > options->reliable_timeout_ms / 4 )
+        {
+            w->message_config.message_resend_delay_initial_ms = options->reliable_timeout_ms / 4;
+        }
+    }
 
     struct rn_message_link_t server_link;
     rocketnet_dst_endpoint_link( &server_link, &w->server_endpoint );
@@ -2105,7 +2146,8 @@ static inline int rocketnet_dst_run_seed_with_options( uint64_t seed,
                 const int index = rocketnet_dst_world_client_for_slot( w, slot );
                 if ( index < 0 || index >= w->num_clients )
                     continue;
-                const uint64_t identity = (uint32_t) w->client[index].generation;
+                // the session the slot holds, as its sends were recorded
+                const uint64_t identity = (uint32_t) ( rocketnet_client_slots_client_id( w->server.client_slots, slot ) >> 8 );
                 const int count = rocketnet_message_server_receipts( w->message_server, slot, receipts, ROCKETNET_DST_RECEIPTS );
                 if ( count > ROCKETNET_DST_RECEIPTS )
                     rocketnet_dst_fail( w, "receipt_list", "a server slot's receipt list is longer than the harness reads" );
@@ -2225,6 +2267,8 @@ static inline int rocketnet_dst_run_seed_with_options( uint64_t seed,
     result->duplicate_payloads =
         rocketnet_counter_value( &w->server_counters, ROCKETNET_COUNTER_PAYLOAD_ALREADY_RECEIVED ) +
         rocketnet_counter_value( &w->client_counters, ROCKETNET_COUNTER_CLIENT_PAYLOAD_ALREADY_RECEIVED );
+    result->server_reliable_timeouts = w->reliable_timeouts[0];
+    result->client_reliable_timeouts = w->reliable_timeouts[1];
     result->step = w->fail_step;
     if ( w->failed )
     {

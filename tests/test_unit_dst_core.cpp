@@ -139,6 +139,32 @@ static void test_dst_server_kick_reaches_slot_holder()
     rocketnet_unit_check( result.passed );
 }
 
+// At the default reliable_message_timeout_ms the message layer never ends a
+// connection in seeds 1-50. At 1500 ms (an accepted value: four 375 ms
+// initial resend delays fit) seed 3 ends connections by RELIABLE_TIMED_OUT on
+// both ends, and every check still holds across them: a client that timed out
+// reconnects while the server still holds its old session's slot, so the
+// harness books each server send and receipt to the session its slot holds,
+// never to the client's newer one (CHANNELS.md, "Receipts and stats").
+
+static void test_dst_reliable_timeout_ends_connections_cleanly()
+{
+    struct rocketnet_dst_options_t options = dst_test_options( 4000 );
+    options.fault_steps = 2000;
+    options.reliable_timeout_ms = 1500;
+
+    struct rocketnet_dst_result_t result;
+    rocketnet_unit_check( rocketnet_dst_run_seed_with_options( 3, &options, &result ) );
+    rocketnet_unit_check( result.passed );
+    rocketnet_unit_check( result.server_reliable_timeouts > 0 );
+    rocketnet_unit_check( result.client_reliable_timeouts > 0 );
+
+    options.reliable_timeout_ms = 0;
+    rocketnet_unit_check( rocketnet_dst_run_seed_with_options( 3, &options, &result ) );
+    rocketnet_unit_check( result.passed );
+    rocketnet_unit_check( result.server_reliable_timeouts == 0 && result.client_reliable_timeouts == 0 );
+}
+
 // The server's maintenance sends a standalone ACK while a slot owes one, as
 // the server transport does, and the wire's duplicate fault replays some of
 // them at the client: CLIENT_ACK_ALREADY_RECEIVED is explained under that
@@ -330,6 +356,7 @@ REGISTER_UNIT_TEST( test_dst_substreams_independent );
 REGISTER_UNIT_TEST( test_dst_seed_range_uint64_max_terminates );
 REGISTER_UNIT_TEST( test_dst_fail_names_seed );
 REGISTER_UNIT_TEST( test_dst_server_kick_reaches_slot_holder );
+REGISTER_UNIT_TEST( test_dst_reliable_timeout_ends_connections_cleanly );
 REGISTER_UNIT_TEST( test_dst_duplicate_server_ack_explained );
 
 static void test_dst_steps_refused_past_int_range()
