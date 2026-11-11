@@ -895,7 +895,10 @@ static bool rocketnet_iocp_post_receive( rocketnet_server_iocp_t * iocp, rocketn
     else if ( op->uro_data )
     {
         // URO: a buffer of the coalesced maximum and a control area for
-        // UDP_COALESCED_INFO, the stride of all but the last datagram.
+        // UDP_COALESCED_INFO, the stride of all but the last datagram. The
+        // area is cleared at every post, so a completion that writes no
+        // control data never shows the walk the last completion's stride.
+        memset( op->control, 0, sizeof( op->control ) );
         op->buffer.buf = (char *) op->uro_data;
         op->buffer.len = ROCKETNET_IOCP_URO_BUFFER_BYTES;
         memset( &op->message, 0, sizeof( op->message ) );
