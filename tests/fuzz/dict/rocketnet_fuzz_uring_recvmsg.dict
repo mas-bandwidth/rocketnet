@@ -1,0 +1,27 @@
+# Dictionary for tests/fuzz/rocketnet_fuzz_uring_recvmsg.cpp. Entries are the
+# values the multishot recvmsg codec branches on (sdk/rocketnet_uring_codec.h),
+# in the little-endian 64-bit Linux layout the seeds use.
+
+# mode (input[0]): GRO control area, IPv6 socket
+mode_plain="\x00"
+mode_gro="\x01"
+mode_ipv6="\x02"
+mode_gro_ipv6="\x03"
+
+# io_uring_recvmsg_out fields: name lengths, the GRO control size, flags
+namelen_sockaddr_in="\x10\x00\x00\x00"
+namelen_sockaddr_in6="\x1c\x00\x00\x00"
+namelen_storage="\x80\x00\x00\x00"
+namelen_past_storage="\x81\x00\x00\x00"
+controllen_gro="\x18\x00\x00\x00"
+flags_ctrunc="\x08\x00\x00\x00"
+flags_trunc="\x20\x00\x00\x00"
+payloadlen_top_bit="\x00\x00\x00\x80"
+
+# sockaddr families (native u16) and a v4-mapped prefix
+family_inet="\x02\x00"
+family_inet6="\x0a\x00"
+v4_mapped="\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\xff"
+
+# a UDP_GRO cmsg header: cmsg_len 20, level IPPROTO_UDP, type UDP_GRO
+cmsg_gro="\x14\x00\x00\x00\x00\x00\x00\x00\x11\x00\x00\x00\x68\x00\x00\x00"
