@@ -16,6 +16,8 @@ see.
 | `hd["s"]`, `tl["s"]` | `ack->resend_head`, `ack->resend_tail` (small records) |
 | `hd["c"]`, `tl["c"]` | `ack->chunk_head`, `ack->chunk_tail` (block chunks) |
 | `cnt` | `ack->resend_count` |
+| `mk["s"]`, `mk["c"]` | `ack->resend_sent`, `ack->chunk_sent`: the first slot of the class on the wire, or `RN_RESEND_NONE` |
+| `sent[s]` | ghost: the slot's number is on the wire (`last_send >= 0`) |
 | `isChunk[s]` | `rn_window_ack_slot_is_chunk( ack, s )`, read off the slot's descriptor now |
 | `seq[c]` | ghost: the abstract sequence of class `c` |
 
@@ -36,19 +38,25 @@ Functions in `sdk/rocketnet_window_ack.cpp`.
 
 - **`Unlink(s)`**: `rn_resend_fifo_unlink`: an unlinked slot is left
   alone; otherwise the class from bit 31 of `next`, the neighbors' fields or
-  the class's head and tail, then `prev = 0`, `next = 0`, and the count.
-  Called from `rn_window_ack_on_ack`.
+  the class's head and tail, the class's mark passed to the slot's next when
+  it is the slot, then `prev = 0`, `next = 0`, and the count. Called from
+  `rn_window_ack_on_ack`, and first in every insert.
 - **`PushTail(s)`**: `rn_resend_fifo_push_tail` from
   `rn_window_ack_commit`: the tail of the slot's class, stepped back to
   the slot's prev when the slot is itself that tail, then
   `rn_resend_fifo_insert_after`: unlink first, the next of `after` (or the
   head), `next = chunk ? RN_RESEND_CHUNK : 0`, the links, the tail when
-  the new entry is last, the count.
+  the new entry is last, the count; then the class's mark set to the slot
+  when the class had none. The number is on the wire.
 - **`PushHead(s)`**: `rn_resend_fifo_push_head` from
-  `rn_window_ack_packet_failed`: `insert_after( NONE, s )`.
+  `rn_window_ack_packet_failed`: `insert_after( NONE, s )`. The number is
+  not on the wire (never sent, or a refused resend at its sentinel).
 - **`Park(after, s)`**: `rn_window_ack_park` from `rn_ordered_write`
-  (`sdk/rocketnet_channel.cpp`), with the caller's contract that its asserts
-  state: `after` is `NONE` or linked in `s`'s class, and is not `s`.
+  (`sdk/rocketnet_channel.cpp`), with the caller's contract: `after` is
+  `NONE` or linked in `s`'s class, and is not `s` (both asserted there), and
+  is not on the wire (the walk's last never-sent number; stated in the header,
+  not asserted, as `test_resend_fifo_corrupt_link_is_bounded` parks outside
+  it). `s` is never sent. The mark is untouched.
 - **`SetClass(s)`**: the environment, a descriptor freed or attached.
 
 ## Invariants
@@ -61,6 +69,11 @@ Functions in `sdk/rocketnet_window_ack.cpp`.
   (`rn_window_ack_resend_first`, `rn_window_ack_resend_next`, `rn_ordered_walk`)
   reads the abstract sequence.
 - **`Disjoint`**: a slot is in at most one sequence, once.
+- **`Partitioned`**: each sequence is its numbers not on the wire, then its
+  numbers on the wire.
+- **`MarkMatch`**: each class's mark is its first number on the wire (`NONE`
+  when it has none), so `rn_ordered_walk` from the mark sees exactly the
+  numbers on the wire, and from the head to the mark exactly the others.
 
 ## The instance
 
@@ -70,8 +83,9 @@ check is on.
 
 ## Reversed witnesses
 
-Each turns a rule off and must fail with `ListsMatch`. Every counterexample
-was checked against the C by hand.
+Each turns a rule off and must fail, the first three with `ListsMatch` and
+the last three with `MarkMatch`. Every counterexample was checked against
+the C by hand.
 
 1. **`MCRNResendFifoLayoutBrokenNoSelfTailFix.cfg`** (`SelfTailFix = FALSE`):
    `rn_resend_fifo_push_tail` without `if ( tail == slot ) tail = rn_resend_index(
@@ -104,3 +118,25 @@ states, measured on hulk): the code clears the bit twice, once at the unlink
 (`rn_resend_fifo_unlink`) and again by assigning the whole field at the insert
 (`rn_resend_fifo_insert_after`), so each
 clear masks the loss of the other. The witness removes both.
+4. **`MCRNResendFifoLayoutBrokenMarkOnUnlink.cfg`** (`MarkOnUnlink = FALSE`):
+   `rn_resend_fifo_unlink` without `if ( *sent == slot ) *sent = next;`.
+   TLC: `PushTail(0)` sends slot 0, the class's mark becomes 0; `PushHead(0)`
+   (the packet carrying it failed) puts it back at the head, not on the wire,
+   and the mark stays 0. Against the C: `rn_window_ack_packet_failed` calls
+   `push_head`, whose insert unlinks slot 0 first; with the mark left on it,
+   the walk takes a number not on the wire as a retransmit, and after an ack
+   unlinks the mark's slot the walk starts at an unlinked entry whose zeroed
+   `next` reads as slot 0.
+5. **`MCRNResendFifoLayoutBrokenMarkOnPushTail.cfg`** (`MarkOnPushTail = FALSE`):
+   `rn_resend_fifo_push_tail` without setting the mark of a class with none.
+   TLC: `PushTail(0)` sends slot 0 into an empty class and the mark stays
+   `NONE`. Against the C: `rn_window_ack_commit` links the number on the wire,
+   and the walk from the mark sees nothing on the wire while the walk from the
+   head runs to the end, so the number is walked as never sent, behind the
+   small class's never-sent numbers, and a due retransmit waits again.
+6. **`MCRNResendFifoLayoutBrokenMarkInit.cfg`** (`MarkInitNone = FALSE`):
+   `rn_window_ack_init` without `resend_sent = chunk_sent = RN_RESEND_NONE`.
+   TLC: the initial state, both marks 0 with both classes empty. Against the
+   C: a zeroed `rn_window_ack_t` reads both marks as slot 0, so the first commit into a
+   class finds a mark already set and leaves it on slot 0, a slot in no
+   sequence.
