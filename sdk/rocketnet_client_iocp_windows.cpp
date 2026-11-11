@@ -243,7 +243,11 @@ void rocketnet_client_iocp_wake( rocketnet_client_iocp_t * iocp )
 }
 
 // proofs/tla/RNClientIocp.tla Close, then Dequeue until Drained: Free is the caller's,
-// and only on true (FreedOnlyWhenDrained)
+// and only on true (FreedOnlyWhenDrained). Only a stalled dequeue, one after
+// which num_posted did not fall, counts against max_waits, as RIO's create
+// drain counts: a drain whose aborts keep arriving runs until it has them
+// all. Each other dequeue lowers num_posted, so the total stays bounded by
+// max_waits plus the receives posted at close.
 
 bool rocketnet_client_iocp_close( rocketnet_client_iocp_t * iocp, int max_waits, double wait_seconds )
 {
@@ -255,9 +259,14 @@ bool rocketnet_client_iocp_close( rocketnet_client_iocp_t * iocp, int max_waits,
         iocp->port->close( iocp->port_context );
     }
 
-    for ( int i = 0; i < max_waits && iocp->num_posted > 0; i++ )
+    for ( int stalled = 0; stalled < max_waits && iocp->num_posted > 0; )
     {
+        const int posted = iocp->num_posted;
         rocketnet_client_iocp_dequeue( iocp, wait_seconds );
+        if ( iocp->num_posted >= posted )
+        {
+            stalled++;
+        }
     }
 
     return iocp->num_posted == 0;
