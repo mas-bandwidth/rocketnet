@@ -2,7 +2,7 @@
 (***************************************************************************)
 (* The sender's span ring, as sdk/rocketnet_allocator.cpp builds it:       *)
 (* rn_span_place, rn_span_link and rn_span_unlink, reached through         *)
-(* rn_region_send_alloc_span (Alloc / Exhaust), rn_region_send_free and    *)
+(* rn_region_send_alloc_span (Alloc / Refuse), rn_region_send_free and     *)
 (* rn_region_send_free_fragment's last fragment (Free), and the region     *)
 (* reset (Reset).                                                          *)
 (*                                                                         *)
@@ -29,7 +29,10 @@
 (*   PadOnWrap     = FALSE  a span that does not fit before the end goes   *)
 (*                          at tail and crosses the end, no padding;       *)
 (*   SpliceBoth    = FALSE  a free repairs its predecessor's next link but *)
-(*                          not its successor's prev link.                 *)
+(*                          not its successor's prev link;                 *)
+(*   RefuseExhausts = TRUE  a span with no room exhausts the region, the   *)
+(*                          v1.0 send-side kick (standard/MESSAGES.md      *)
+(*                          m1.7 makes it a refusal that changes nothing). *)
 (***************************************************************************)
 EXTENDS Naturals, Sequences, FiniteSets
 
@@ -39,7 +42,8 @@ CONSTANTS
     Q,              \* send descriptors (region->queue)
     FloorAtOldest,  \* TRUE in the code
     PadOnWrap,      \* TRUE in the code
-    SpliceBoth      \* TRUE in the code
+    SpliceBoth,     \* TRUE in the code
+    RefuseExhausts  \* FALSE in the code (TRUE: v1.0's send-side kick)
 
 ASSUME SR > 0 /\ SR % 16 = 0
 ASSUME Lengths \subseteq 1..SR
@@ -59,7 +63,9 @@ VARIABLES
     nxt,        \* descriptor->span_next: the next newer live span, NONE at last
     live,       \* descriptors with RN_SEND_FLAG_SPAN set
     order,      \* ghost: live descriptors in allocation order
-    exhausted   \* rn_region_exhaust has fired (sticky until Reset)
+    exhausted   \* the region's sticky exhausted flag (sticky until Reset); only
+                \* the receive side sets it in the code, so here only the broken
+                \* RefuseExhausts does
 
 vars == <<head, tail, first, last, start, len, prv, nxt, live, order, exhausted>>
 
@@ -115,13 +121,15 @@ Alloc(l, d) ==
     /\ order' = Append(order, d)
     /\ UNCHANGED exhausted
 
-\* rn_region_send_alloc_span without room: QUEUE_FULL or STORE_FULL, then
-\* rn_region_exhaust; the connection is kicked and nothing more is sent.
-Exhaust(l) ==
+\* rn_region_send_alloc_span without room: QUEUE_FULL or STORE_FULL, counted
+\* by rn_region_send_refuse. The ring, its links and the region are as they
+\* were, and the connection goes on (standard/MESSAGES.md m1.7).
+\* RefuseExhausts is v1.0's rn_region_exhaust here, the send-side kick.
+Refuse(l) ==
     /\ ~exhausted
     /\ \/ D \ live = {}
        \/ ~Place(Round16(l)).ok
-    /\ exhausted' = TRUE
+    /\ exhausted' = RefuseExhausts
     /\ UNCHANGED <<head, tail, first, last, start, len, prv, nxt, live, order>>
 
 \* rn_span_unlink, from rn_region_send_free or the last fragment's
@@ -164,7 +172,7 @@ Reset ==
 
 Next ==
     \/ \E l \in Lengths, d \in D : Alloc(l, d)
-    \/ \E l \in Lengths : Exhaust(l)
+    \/ \E l \in Lengths : Refuse(l)
     \/ \E d \in D : Free(d)
     \/ Reset
 
@@ -186,6 +194,15 @@ TypeOK ==
     /\ exhausted \in BOOLEAN
 
 Bytes(d) == { (start[d] + i) % SR : i \in 0..(len[d] - 1) }
+
+\* A span with no room never exhausts the region: only the receive side does
+\* (standard/MESSAGES.md m1.7). Reversed by RefuseExhausts.
+SpansNeverExhaust == ~exhausted
+
+\* A refusal leaves the ring, its links and the region as they were
+\* (standard/MESSAGES.md m1.7, rule 2). Reversed by RefuseExhausts.
+RefuseLeavesRing ==
+    [][\A l \in Lengths : Refuse(l) => UNCHANGED vars]_vars
 
 \* No two live spans share a byte.
 LiveSpansDisjoint ==
