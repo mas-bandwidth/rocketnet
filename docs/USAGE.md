@@ -288,10 +288,11 @@ channel (`rn_message_send_channel` in `sdk/rocketnet_message_server.cpp`,
 which `rn_message_object_start` calls to map the channel before reserving
 the message).
 
-A send the connection's region has no room for ends the connection: the
-server disconnects that client with
-`ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED`, and the client ends its
-own connection in `ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED`. The send budget governs the wire,
+A send the connection's region has no room for is refused: `start_message`
+returns `NULL`, the refusal is counted for that connection (`send_refused` in
+[`struct rocketnet_conditions_t`](#surviving-a-network-outage)), and the
+connection stays up, for unreliable sends too. A later start succeeds once the
+receiver acknowledges messages and room returns. The send budget governs the wire,
 never the queue. Reliable messages wait for budget; unreliable messages over
 budget are dropped and counted. Reliable delivery still depends on the
 connection remaining alive; see [reliability and receipts](CHANNELS.md).
@@ -312,9 +313,9 @@ unreliable message that can write directly into a transport frame. For valid
 arguments, the query changes no state, counts nothing and allocates nothing; a
 message that needs a send store chunk scans that size class for a free one, so
 its worst case grows with the chunks in the class. It does not
-promise wire budget, packet capacity, or immediate transmission. Exhausting message storage by
-calling start still ends the connection with `MESSAGE_MEMORY_EXHAUSTED`;
-other causes of `false` follow their own refusal rules.
+promise wire budget, packet capacity, or immediate transmission. Calling start
+when message storage is full is refused and counted and never ends the
+connection; other causes of `false` follow their own refusal rules.
 
 On `false`, choose whether to defer the message, skip replaceable state, or
 coalesce queued application work. Each server slot has separate message memory.
@@ -327,7 +328,7 @@ bool queue_state_if_room( struct rocketnet_client_t * client, const uint8_t * st
 {
     if ( !rocketnet_client_can_send_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, bytes ) )
     {
-        return false;                       /* application policy: hold/defer rather than exhaust message memory */
+        return false;                       /* application policy: hold/defer rather than be refused */
     }
 
     uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, bytes );
@@ -583,8 +584,10 @@ when no packet arrived within the connection timeout, and the message-layer
 reasons for the ends a client shares with its own state.
 A client whose server disconnected it, stopped, or was destroyed reads
 `ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED` once its update accepts the
-server's disconnect packet; a reliable timeout, a protocol violation, a config
-mismatch, exhausted message memory and an update with a message not received read `ROCKETNET_CLIENT_STATE_RELIABLE_TIMED_OUT`,
+server's disconnect packet; a reliable timeout (only when
+`reliable_message_timeout_ms` is set nonzero), a protocol violation, a config
+mismatch, exhausted receive-side message memory (a broken internal bound; a
+send never causes it) and an update with a message not received read `ROCKETNET_CLIENT_STATE_RELIABLE_TIMED_OUT`,
 `ROCKETNET_CLIENT_STATE_PROTOCOL_VIOLATION`, `ROCKETNET_CLIENT_STATE_CONFIG_MISMATCH`,
 `ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED` and `ROCKETNET_CLIENT_STATE_MESSAGE_NOT_RECEIVED`. Each stays until
 disconnect, or until connect ends it to start the next connection. A NULL
@@ -626,6 +629,65 @@ and keeps the object. A stalled
 worker keeps completion false, so its object and contexts must remain alive.
 Destroy is synchronous after completion; allocator hooks and thread-handle
 cleanup do not have a strict wall-time guarantee.
+
+<a id="surviving-a-network-outage"></a>
+
+### Surviving a network outage
+
+A connected client survives a total network outage in either or both
+directions shorter than T, the connection timeout: the connect token's
+`timeout_seconds` (default 10), at most the server's `max_timeout_seconds`
+(default 60, settable up to 3600). This holds when both ends are v1.1.0 or
+later, `reliable_message_timeout_ms` is left 0 (the default), and the round
+trip is at most 900 ms. Outages of T − 1 seconds at T of 10, 30 and 60 were
+tested. An outage that starts just as the server accepts the client, before
+the client knows it is connected, costs one extra round trip of margin, and at
+a 1000 ms round trip that moment fails. Silence for T still ends the
+connection: `ROCKETNET_DISCONNECT_REASON_TIMED_OUT` on the server,
+`ROCKETNET_CLIENT_STATE_CONNECTION_TIMED_OUT` on the client.
+
+While the other side is not receiving, sends that find no room are refused
+(`start_message` returns `NULL`, `can_send_message` returns `false`), each
+refusal is counted for that connection, and the connection stays up; what to
+do about it is the game's decision
+([refused sends](ERRORS-AND-LOGGING.md#53-refused-sends-can_send_message-vs-failed-start_message-full-queues-and-wire-budgets)).
+Unreliable messages sent into a dark direction are lost. After the outage,
+every reliable message the application started and finished is delivered
+exactly once and in its channel's order. The backlog drains at the send budget when
+each end updates at least every 100 ms (the send budget holds 100 ms of credit,
+or one maximum packet when that is more;
+[MESSAGES.md m9.4](../standard/MESSAGES.md#m9.4)); a slower update rate drains it more slowly.
+
+While nothing is acknowledged, the sender holds back: after 1 s with no
+reliable message newly acknowledged it resends only the oldest unacknowledged
+message, once per resend delay, until an acknowledgement arrives
+([MESSAGES.md m9.3](../standard/MESSAGES.md#m9.3)), and a packet whose
+acknowledgement waited out the silence gives no round-trip sample, so the
+outage does not inflate the resend delay
+([MESSAGES.md m9.2](../standard/MESSAGES.md#m9.2)).
+
+If you set `reliable_message_timeout_ms`, choose a value well above T: it ends
+the connection with `RELIABLE_TIMED_OUT` when the oldest reliable message has
+waited that long since it was first sent, outage or not, and a nonzero value
+also turns off the hold and the round-trip filter above. A nonzero value
+carries no outage guarantee.
+
+During the handshake, the client's connect clock (the connect token's
+lifetime, 30 s by default) applies only until the client sends its connection
+response. From then the server may already hold the client connected, so only
+silence for T ends the attempt (`ROCKETNET_CLIENT_STATE_CONNECTION_RESPONSE_TIMED_OUT`);
+with T above 30 s a failed attempt can take up to T to report. The wait for the
+other side's CONFIG record has no clock of its own unless
+`reliable_message_timeout_ms` is set.
+
+`rocketnet_client_conditions` and `rocketnet_server_client_conditions` (per
+client) fill a `struct rocketnet_conditions_t` with what a game's own policy
+needs: seconds since the other side was last heard, seconds since reliable
+progress, the reliable message pieces in flight, and the starts refused for no
+room (`send_refused`). Pass `sizeof` your struct as the last argument; fields
+are only ever appended. Both return `false` and write zeroes when not
+connected. An example policy is in
+[ERRORS-AND-LOGGING.md](ERRORS-AND-LOGGING.md#a-game-policy-for-a-client-it-cannot-send-to).
 
 ## Configuration
 

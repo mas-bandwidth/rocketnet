@@ -345,6 +345,10 @@ struct rn_message_connection_t * rn_message_object_connection( struct rn_message
 void rn_message_object_delivery_capture( struct rn_message_object_t * object, int index, struct rocketnet_delivery_capture_t * capture );
 #endif // #if ROCKETNET_DEV
 
+// the message half of rocketnet_conditions_t for one connection (all but
+// seconds_since_heard); false, writing nothing, when it is not CONNECTED
+bool rn_message_object_conditions( const struct rn_message_object_t * object, int index, struct rocketnet_conditions_t * conditions );
+
 // the client and server links over the real transports
 void rn_message_client_link( struct rn_message_link_t * link, struct rocketnet_client_transport_t * transport );
 void rn_message_server_link( struct rn_message_link_t * link, struct rocketnet_server_transport_t * transport );

@@ -1040,8 +1040,8 @@ enum rocketnet_status_t rocketnet_client_light_config_internal( struct rocketnet
 #define RN_LIGHT_SET( field, value ) do { if ( offsetof( struct rocketnet_client_config_t, field ) + sizeof( config->field ) <= use ) { config->field = ( value ); } } while ( 0 )
 
     // Workload: one 1500-byte MTU each way every 100 ms.
-    // 10 * 1500 * 8 = 120000 bits/s, about 120 kbps. The reliable timeout
-    // stays at its 10000 ms default, so 10 s * 10 messages/s = 100 messages.
+    // 10 * 1500 * 8 = 120000 bits/s, about 120 kbps. Sized to hold the default 10 s
+    // connection timeout of sends, so 10 s * 10 messages/s = 100 messages.
     // A message at the 1415-byte ceiling can take ceil(1415 / 1152) = 2
     // window numbers, so 200 numbers. Validation refuses values below its
     // minimums; it never clamps. These assignments stay inside those ranges.
@@ -1958,7 +1958,8 @@ uint8_t * rocketnet_client_start_message( struct rocketnet_client_t * client, in
 
     uint8_t * pointer = rocketnet_message_client_start( client->connection, channel, reliability_value, max_bytes );
 
-    // a start the connection's message memory cannot hold ends the connection (MESSAGE_MEMORY_EXHAUSTED, proofs/tla/ClientSession.tla MessageEnd)
+    // a start the connection's message memory cannot hold is refused and the connection goes on (m1.7); only a
+    // region already exhausted by the receive side ends it (MESSAGE_MEMORY_EXHAUSTED, proofs/tla/ClientSession.tla MessageEnd)
 
     if ( !pointer )
     {
@@ -2470,8 +2471,8 @@ enum rocketnet_status_t rocketnet_server_light_config_internal( struct rocketnet
 #define RN_LIGHT_SET( field, value ) do { if ( offsetof( struct rocketnet_server_config_t, field ) + sizeof( config->field ) <= use ) { config->field = ( value ); } } while ( 0 )
 
     // Workload: one 1500-byte MTU each way every 100 ms.
-    // 10 * 1500 * 8 = 120000 bits/s, about 120 kbps. The reliable timeout
-    // stays at its 10000 ms default, so 10 s * 10 messages/s = 100 messages.
+    // 10 * 1500 * 8 = 120000 bits/s, about 120 kbps. Sized to hold the default 10 s
+    // connection timeout of sends, so 10 s * 10 messages/s = 100 messages.
     // A message at the 1415-byte ceiling can take ceil(1415 / 1152) = 2
     // window numbers, so 200 numbers. Validation refuses values below its
     // minimums; it never clamps. These assignments stay inside those ranges.
@@ -3853,6 +3854,48 @@ const struct rocketnet_counters_t * rocketnet_client_message_counter_block( stru
     return connection ? rocketnet_message_client_counters( connection ) : NULL;
 }
 #endif // #if ROCKETNET_DEV
+
+// rocketnet_conditions_t is size-revisioned: fill a full copy, then hand the
+// caller the bytes its build knows
+static bool rn_conditions_out( const struct rocketnet_conditions_t * full, bool ok, struct rocketnet_conditions_t * conditions, int conditions_bytes )
+{
+    const size_t bytes = conditions_bytes < (int) sizeof( *full ) ? (size_t) conditions_bytes : sizeof( *full );
+    static const struct rocketnet_conditions_t none = {};
+    memcpy( conditions, ok ? full : &none, bytes );
+    return ok;
+}
+
+bool rocketnet_server_client_conditions( const struct rocketnet_server_t * server, int client_index, struct rocketnet_conditions_t * conditions, int conditions_bytes )
+{
+    if ( !rocketnet_api_null_guard( conditions ) || conditions_bytes <= 0 )
+    {
+        return false;
+    }
+    struct rocketnet_conditions_t full = {};
+    int slot = 0;
+    bool ok = rocketnet_api_null_guard( server ) && rn_server_slot( server, client_index, &slot ) && server->running &&
+              rocketnet_message_server_conditions( server->running, slot, &full );
+    if ( ok )
+    {
+        full.seconds_since_heard = rocketnet_server_transport_heard_age( rn_server_transport( server ), slot );
+    }
+    return rn_conditions_out( &full, ok, conditions, conditions_bytes );
+}
+
+bool rocketnet_client_conditions( const struct rocketnet_client_t * client, struct rocketnet_conditions_t * conditions, int conditions_bytes )
+{
+    if ( !rocketnet_api_null_guard( conditions ) || conditions_bytes <= 0 )
+    {
+        return false;
+    }
+    struct rocketnet_conditions_t full = {};
+    bool ok = rocketnet_api_null_guard( client ) && rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED && client->connection && rocketnet_message_client_conditions( client->connection, &full );
+    if ( ok )
+    {
+        full.seconds_since_heard = rocketnet_client_transport_heard_age( rocketnet_message_client_transport( client->connection ) );
+    }
+    return rn_conditions_out( &full, ok, conditions, conditions_bytes );
+}
 
 void rocketnet_server_client_stats( const struct rocketnet_server_t * server, int client_index, struct rocketnet_server_client_stats_t * stats )
 {

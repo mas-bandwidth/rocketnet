@@ -19,6 +19,7 @@ rocketnet_client_set_send_kbps
 rocketnet_client_start_message
 rocketnet_client_state
 rocketnet_client_state_name
+rocketnet_client_conditions
 rocketnet_client_stats
 rocketnet_client_transport_name
 rocketnet_client_update
@@ -40,6 +41,7 @@ rocketnet_server_can_send_message
 rocketnet_server_client_connected
 rocketnet_server_client_connection_id
 rocketnet_server_client_id
+rocketnet_server_client_conditions
 rocketnet_server_client_stats
 rocketnet_server_client_user_data
 rocketnet_server_create

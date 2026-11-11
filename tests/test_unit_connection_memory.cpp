@@ -266,10 +266,20 @@ static void test_memory_isolation_between_slots()
     check( b_memory );
     memcpy( b_memory, b->base, (size_t) b->bytes );
 
-    // a sends until refused, then refuses again
+    // a sends until refused: a send with no room is a refusal, not exhaustion
+    // (standard/MESSAGES.md m1.7), so A is still whole
 
     const int sent = cm_fill( a, 10, NULL, 0 );
     check( sent > 0 );
+    check( !rn_region_exhausted( a ) );
+    check( rn_connection_memory_decide( a ) == ROCKETNET_DISCONNECT_REASON_NONE );
+    check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 0 );
+    check( counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL] + counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL] == 1 );
+
+    // only the receive side exhausts a region now, so A is exhausted directly
+    // (rn_region_exhaust, the receive side's step); then A refuses again
+
+    rn_region_exhaust( a );
     check( rn_region_exhausted( a ) );
     check( rn_region_send_alloc( a, 10 ) == RN_DESCRIPTOR_NONE );
 
@@ -291,7 +301,8 @@ static void test_memory_isolation_between_slots()
     check( !rn_region_exhausted( b ) );
 
     // A's exhaustion is a kick for A only: the exhaustion step counts once, and
-    // the refusal above (a send after exhaustion) also counts, so it is 2
+    // the refusal above (a send after exhaustion) also counts, so it is 2 (the
+    // room refusal before it counted only its own counter)
 
     check( rn_connection_memory_decide( a ) == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
     check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 2 );
@@ -303,7 +314,8 @@ static void test_memory_isolation_between_slots()
 
 // RNConnectionMemory Exhaust and Kick: exhaustion is sticky with the reason
 // MESSAGE_MEMORY_EXHAUSTED, and the kick decision for that region says so on
-// every update until the region is reset; a flood is kicked by name.
+// every update until the region is reset. A send flood is not exhaustion: it
+// is refused and counted, and the connection goes on (standard/MESSAGES.md m1.7).
 
 #if ROCKETNET_DEV
 static void test_exhaustion_is_a_kick_with_its_reason()
@@ -331,29 +343,55 @@ static void test_exhaustion_is_a_kick_with_its_reason()
     check( rn_region_send_alloc( region, (int) region->max_message_bytes + 1 ) == RN_DESCRIPTOR_NONE );
     check( !rn_region_exhausted( region ) );
 
-    // a flood of maximal messages: the store refuses, and that is exhaustion
+    // a flood of maximal messages: the store refuses, and that is a counted
+    // refusal, not exhaustion (standard/MESSAGES.md m1.7): no kick, and a
+    // send succeeds again once room returns
 
-    const int sent = cm_fill( region, (int) region->max_message_bytes, NULL, 0 );
-    check( sent >= 1 );
+    std::vector<uint32_t> flood( region->queue );
+    const int sent = cm_fill( region, (int) region->max_message_bytes, flood.data(), (int) flood.size() );
+    check( sent >= 1 && (size_t) sent <= flood.size() );
+    check( !rn_region_exhausted( region ) );
+    check( rn_region_exhausted_reason( region ) == ROCKETNET_DISCONNECT_REASON_NONE );
+    check( rn_connection_memory_decide( region ) == ROCKETNET_DISCONNECT_REASON_NONE );
+    check( counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL] == 1 );
+    check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 0 );
+
+    rn_region_send_free( region, flood[0] );
+    flood[0] = rn_region_send_take( region, (int) region->max_message_bytes );
+    check( flood[0] != RN_DESCRIPTOR_NONE );
+    check( counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL] == 1 );
+
+    // the store full again refuses again, still without exhaustion
+
+    check( rn_region_send_take( region, (int) region->max_message_bytes ) == RN_DESCRIPTOR_NONE );
+    check( counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL] == 2 );
+    check( !rn_region_exhausted( region ) );
+
+    // only the receive side exhausts a region now: it is reached here by
+    // rn_region_exhaust directly, the receive side's step. It counts once
+    // and names its reason
+
+    rn_region_exhaust( region );
     check( rn_region_exhausted( region ) );
     check( rn_region_exhausted_reason( region ) == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
-    check( counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL] == 1 );
     check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 1 );
 
     // sticky: a later refusal does not clear it; each refused send counts the
-    // exhaustion counter (the send above plus the explicit exhaust call both
-    // see an already-exhausted region, so only the send above counts again)
+    // exhaustion counter (the send below and a second exhaust call both see
+    // an already-exhausted region, so only the send counts again)
 
     check( rn_region_send_take( region, (int) region->max_message_bytes ) == RN_DESCRIPTOR_NONE );
     rn_region_exhaust( region );
     check( rn_region_exhausted( region ) );
     check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 2 );
+    check( counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL] == 2 );
     for ( int update = 0; update < 3; update++ )
     {
         check( rn_connection_memory_decide( region ) == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
     }
 
-    // the descriptor pool running out is the same outcome, with its own counter
+    // the descriptor pool running out is the same refusal, with its own
+    // counter: no exhaustion and no kick, and room returning admits a send
 
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
@@ -364,10 +402,16 @@ static void test_exhaustion_is_a_kick_with_its_reason()
     check( small );
 
     rn_region_t * q = rn_arena_region( small, 0 );
-    check( cm_fill( q, 10, NULL, 0 ) == 16 );
+    uint32_t q_taken[16];
+    check( cm_fill( q, 10, q_taken, 16 ) == 16 );
     check( counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL] == 1 );
-    check( rn_connection_memory_decide( q ) == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
-    check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 3 );
+    check( !rn_region_exhausted( q ) );
+    check( rn_connection_memory_decide( q ) == ROCKETNET_DISCONNECT_REASON_NONE );
+    check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 2 );
+
+    rn_region_send_free( q, q_taken[7] );
+    check( rn_region_send_alloc( q, 10 ) == q_taken[7] );
+    check( counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL] == 1 );
 
     // the kick resets the region for the slot's next client
 
@@ -508,6 +552,13 @@ static void test_user_block_is_used_and_nothing_else()
             check( rn_region_contains( region, data, d->bytes ) );
         }
 
+        // the fill's refusal is not exhaustion (standard/MESSAGES.md m1.7);
+        // the receive side's exhaustion is reached directly (rn_region_exhaust)
+        // so the kick decision and the reset still run inside the block
+
+        check( !rn_region_exhausted( region ) );
+        check( rn_connection_memory_decide( region ) == ROCKETNET_DISCONNECT_REASON_NONE );
+        rn_region_exhaust( region );
         check( rn_connection_memory_decide( region ) == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
         rn_region_reset( region );
         check( rn_connection_memory_decide( region ) == ROCKETNET_DISCONNECT_REASON_NONE );
@@ -567,6 +618,14 @@ static void test_connection_memory_no_allocation_after_create()
                 }
             }
 
+            // the fill's refusal is not exhaustion (standard/MESSAGES.md m1.7);
+            // the receive side's exhaustion is reached directly (rn_region_exhaust)
+            // so the kick decision and the reset still run without the allocator
+
+            check( n > 0 );
+            check( !rn_region_exhausted( region ) );
+            check( rn_connection_memory_decide( region ) == ROCKETNET_DISCONNECT_REASON_NONE );
+            rn_region_exhaust( region );
             const int reason = rn_connection_memory_decide( region );
             check( reason == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
             rn_region_reset( region );
@@ -617,12 +676,31 @@ static void test_exhausted_region_refuses_sends_until_reset()
 
     check( region->descriptors_free == 0 );
 
-    // next alloc exhausts the region (queue full)
+    // next alloc is refused (queue full): a counted refusal, not exhaustion
+    // (standard/MESSAGES.md m1.7); nothing taken, no kick
 
     check( rn_region_send_alloc( region, 10 ) == RN_DESCRIPTOR_NONE );
+    check( !rn_region_exhausted( region ) );
+    check( rn_connection_memory_decide( region ) == ROCKETNET_DISCONNECT_REASON_NONE );
+    check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 0 );
+    check( counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL] == 1 );
+    check( region->descriptors_free == 0 );
+
+    // room returns (an ack) and the same send succeeds: the region was not exhausted
+
+    rn_region_send_free( region, descriptors[3] );
+    check( region->descriptors_free == 1 );
+    descriptors[3] = rn_region_send_alloc( region, 10 );
+    check( descriptors[3] != RN_DESCRIPTOR_NONE );
+    check( region->descriptors_free == 0 );
+    check( counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL] == 1 );
+
+    // only the receive side exhausts a region now: it is reached here by
+    // rn_region_exhaust directly, the receive side's step
+
+    rn_region_exhaust( region );
     check( rn_region_exhausted( region ) );
     check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 1 );
-    check( counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL] == 1 );
 
     // free one descriptor - but region is still exhausted
 
@@ -675,10 +753,15 @@ static void test_receive_without_room_exhausts_the_region()
 
     rn_region_t * region = rn_arena_region( arena, 0 );
 
-    // exhaust the region through reliable sends (the store runs out)
+    // reliable sends until the store runs out: that is a refusal, not
+    // exhaustion (standard/MESSAGES.md m1.7), so the region is exhausted
+    // directly (rn_region_exhaust, the receive side's step)
 
     const int n = cm_fill( region, (int) region->max_message_bytes, NULL, 0 );
     check( n > 0 );
+    check( !rn_region_exhausted( region ) );
+    check( counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL] == 1 );
+    rn_region_exhaust( region );
     check( rn_region_exhausted( region ) );
 
     // the shipped receive path over this region (layer 3 and 4 over the codec)
@@ -717,8 +800,9 @@ static void test_receive_without_room_exhausts_the_region()
 }
 
 // RNConnectionMemory Use requires ~exhausted for every way a send takes room,
-// the large-message span path too (rn_region_send_alloc_span). A region
-// exhausted by its descriptor table, with one descriptor then returned, still
+// the large-message span path too (rn_region_send_alloc_span). A full
+// descriptor table is only a refusal (m1.7); a region then exhausted (by the
+// receive side's step, called directly), with one descriptor returned, still
 // refuses a span: nothing is taken, and each refusal counts
 // MESSAGE_MEMORY_EXHAUSTED exactly as rn_region_send_alloc does.
 
@@ -746,7 +830,20 @@ static void test_exhausted_region_refuses_spans()
         check( descriptors[i] != RN_DESCRIPTOR_NONE );
     }
 
+    // the descriptor table full is a refusal for a send and for a span alike,
+    // not exhaustion (standard/MESSAGES.md m1.7)
+
     check( rn_region_send_alloc( region, 10 ) == RN_DESCRIPTOR_NONE );
+    check( rn_region_send_alloc_span( region, (int) RN_SPAN_MIN_BYTES ) == RN_DESCRIPTOR_NONE );
+    check( !rn_region_exhausted( region ) );
+    check( counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL] == 2 );
+    check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 0 );
+    check( region->span_first == RN_DESCRIPTOR_NONE );
+
+    // only the receive side exhausts a region now: it is reached here by
+    // rn_region_exhaust directly, the receive side's step
+
+    rn_region_exhaust( region );
     check( rn_region_exhausted( region ) );
     check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 1 );
 
@@ -791,8 +888,16 @@ static void test_span_granted_after_reset()
         check( rn_region_send_alloc( region, 10 ) != RN_DESCRIPTOR_NONE );
     }
     check( rn_region_send_alloc( region, 10 ) == RN_DESCRIPTOR_NONE );
+    check( !rn_region_exhausted( region ) );                        // a refusal, not exhaustion (m1.7)
+    check( counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL] == 1 );
+
+    // only the receive side exhausts a region now: it is reached here by
+    // rn_region_exhaust directly, the receive side's step
+
+    rn_region_exhaust( region );
     check( rn_region_exhausted( region ) );
     check( rn_region_send_alloc_span( region, (int) RN_SPAN_MIN_BYTES ) == RN_DESCRIPTOR_NONE );
+    check( counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL] == 1 );      // the sticky state refused it, not the table
 
     rn_region_reset( region );
     check( !rn_region_exhausted( region ) );
@@ -809,6 +914,199 @@ static void test_span_granted_after_reset()
     check( region->span_first == RN_DESCRIPTOR_NONE );
 
     rn_unit_arena_destroy( arena );
+}
+
+// standard/MESSAGES.md m1.7: a send with no room is refused and leaves the
+// region as it was. At each place that used to exhaust the region -- the
+// descriptor pool full (QUEUE_FULL), a store class full (STORE_FULL), no span
+// placement for a multi-fragment send (STORE_FULL) -- the take returns
+// RN_DESCRIPTOR_NONE, its own counter moves by one and no other counter
+// moves, the region is not exhausted and the kick decision is NONE, and the
+// region struct and every byte of its memory are what they were before the
+// refused call. Freeing one earlier take admits the same request.
+
+struct cm_refusal_t
+{
+    rocketnet_counters_t counters;
+    uint8_t * raw;
+    rn_arena_t * arena;
+    rn_region_t * region;
+    rn_region_t before;
+    std::vector<uint8_t> memory;
+    rocketnet_counters_t counters_before;
+};
+
+// the arena lives in a zeroed block of the test's own, so the byte compare of
+// the region reads only defined bytes
+
+static void cm_refusal_open( cm_refusal_t * r, const rocketnet_message_config_t * config )
+{
+    memset( &r->counters, 0, sizeof( r->counters ) );
+
+    const uint64_t arena_bytes = rn_arena_required_bytes( config, 1 );
+    check( arena_bytes > 0 );
+
+    r->raw = (uint8_t *) calloc( 1, (size_t) arena_bytes + ROCKETNET_ALLOCATION_ALIGNMENT );
+    check( r->raw );
+
+    uint8_t * block = (uint8_t *) ( ( (uintptr_t) r->raw + ( ROCKETNET_ALLOCATION_ALIGNMENT - 1 ) ) & ~(uintptr_t) ( ROCKETNET_ALLOCATION_ALIGNMENT - 1 ) );
+    r->arena = rn_arena_create_in_block( block, arena_bytes, config, 1, &r->counters );
+    check( r->arena );
+    r->region = rn_arena_region( r->arena, 0 );
+}
+
+static void cm_refusal_close( cm_refusal_t * r )
+{
+    rn_arena_destroy( r->arena );
+    free( r->raw );
+}
+
+static void cm_refusal_mark( cm_refusal_t * r )
+{
+    r->before = *r->region;
+    r->memory.assign( r->region->base, r->region->base + r->region->bytes );
+    r->counters_before = r->counters;
+}
+
+// the refused take's whole effect: one count of `counter`, nothing else
+
+static void cm_refusal_check( const cm_refusal_t * r, int counter )
+{
+    const rn_region_t * region = r->region;
+
+    check( !rn_region_exhausted( region ) );
+    check( rn_connection_memory_decide( region ) == ROCKETNET_DISCONNECT_REASON_NONE );
+    check( memcmp( &r->before, region, sizeof( *region ) ) == 0 );
+    check( memcmp( r->memory.data(), region->base, (size_t) region->bytes ) == 0 );
+
+    for ( int c = 0; c < ROCKETNET_NUM_COUNTERS; c++ )
+    {
+        check( r->counters.values[c] == r->counters_before.values[c] + ( c == counter ? 1u : 0u ) );
+    }
+    check( r->counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 0 );
+}
+
+static void test_send_refusal_leaves_the_region_as_it_was()
+{
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    config.client_send_kbps = config.server_send_kbps = 0; // isolate explicit capacity
+
+    // 1. the descriptor pool full: QUEUE_FULL, for a single send and a span alike
+
+    {
+        rocketnet_message_config_t small = config;
+        small.send_queue_messages = 16;
+
+        cm_refusal_t r;
+        cm_refusal_open( &r, &small );
+
+        uint32_t taken[16];
+        for ( int i = 0; i < 16; i++ )
+        {
+            taken[i] = rn_region_send_alloc( r.region, 10 );
+            check( taken[i] != RN_DESCRIPTOR_NONE );
+        }
+        check( r.region->descriptors_free == 0 );
+
+        cm_refusal_mark( &r );
+        check( rn_region_send_alloc( r.region, 10 ) == RN_DESCRIPTOR_NONE );
+        cm_refusal_check( &r, ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL );
+
+        cm_refusal_mark( &r );
+        check( rn_region_send_alloc_span( r.region, (int) RN_SPAN_MIN_BYTES ) == RN_DESCRIPTOR_NONE );
+        cm_refusal_check( &r, ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL );
+
+        rn_region_send_free( r.region, taken[9] );
+        check( rn_region_send_alloc( r.region, 10 ) == taken[9] );
+        check( r.counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL] == 2 );
+        check( r.counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 0 );
+
+        cm_refusal_close( &r );
+    }
+
+    // 2. a store class full, with descriptors to spare: STORE_FULL, and no
+    //    fallback into another class
+
+    {
+        rn_region_layout_t layout;
+        check( rn_region_layout( &config, &layout ) );
+
+        rocketnet_message_config_t wide = config;
+        wide.send_queue_messages = (int) layout.store_chunks[RN_STORE_SMALL] + 1;
+        check( rocketnet_message_validate_config( &wide ) );
+
+        cm_refusal_t r;
+        cm_refusal_open( &r, &wide );
+
+        const uint32_t total = layout.store_chunks[RN_STORE_SMALL];
+#if ROCKETNET_DEV
+        check( rn_send_store_total_chunks( &r.region->store, RN_STORE_SMALL ) == total );
+#endif // #if ROCKETNET_DEV
+        std::vector<uint32_t> taken( total );
+        for ( uint32_t i = 0; i < total; i++ )
+        {
+            taken[i] = rn_region_send_alloc( r.region, RN_STORE_SMALL_BYTES );
+            check( taken[i] != RN_DESCRIPTOR_NONE );
+        }
+#if ROCKETNET_DEV
+        check( rn_send_store_free_chunks( &r.region->store, RN_STORE_SMALL ) == 0 );
+#endif // #if ROCKETNET_DEV
+        check( r.region->descriptors_free > 0 );
+
+        cm_refusal_mark( &r );
+        check( rn_region_send_alloc( r.region, RN_STORE_SMALL_BYTES ) == RN_DESCRIPTOR_NONE );
+        cm_refusal_check( &r, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL );
+
+        rn_region_send_free( r.region, taken[total / 2] );
+        const uint32_t again = rn_region_send_alloc( r.region, RN_STORE_SMALL_BYTES );
+        check( again != RN_DESCRIPTOR_NONE );
+        check( rn_send_store_chunk_class( r.region->send_descriptors[again].chunk ) == RN_STORE_SMALL );
+        check( r.counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL] == 1 );
+        check( r.counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 0 );
+
+        cm_refusal_close( &r );
+    }
+
+    // 3. no span placement for a multi-fragment send, with descriptors to
+    //    spare: STORE_FULL through rn_region_send_alloc_span
+
+    {
+        cm_refusal_t r;
+        cm_refusal_open( &r, &config );
+
+        const int bytes = 4 * ROCKETNET_MESSAGE_FRAGMENT_BYTES + 100;
+        check( bytes >= (int) RN_SPAN_MIN_BYTES && bytes <= (int) r.region->max_message_bytes );
+
+        std::vector<uint32_t> taken;
+        while ( rn_region_send_fit_span( r.region, bytes, NULL ) == RN_SEND_FIT_OK )
+        {
+            const uint32_t d = rn_region_send_alloc_span( r.region, bytes );
+            check( d != RN_DESCRIPTOR_NONE );
+            check( r.region->send_descriptors[d].fragments > 1 );
+            taken.push_back( d );
+            check( taken.size() < 1000000 );
+        }
+        check( taken.size() >= 2 );
+        check( rn_region_send_fit_span( r.region, bytes, NULL ) == RN_SEND_FIT_STORE_FULL );
+        check( r.region->descriptors_free > 0 );
+        check( r.counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL] == 0 );
+
+        cm_refusal_mark( &r );
+        check( rn_region_send_alloc_span( r.region, bytes ) == RN_DESCRIPTOR_NONE );
+        cm_refusal_check( &r, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL );
+
+        // the oldest span freed moves the floor, and the same request is placed
+
+        rn_region_send_free( r.region, taken[0] );
+        const uint32_t again = rn_region_send_alloc_span( r.region, bytes );
+        check( again != RN_DESCRIPTOR_NONE );
+        check( r.region->span_last == again );
+        check( r.counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL] == 1 );
+        check( r.counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 0 );
+
+        cm_refusal_close( &r );
+    }
 }
 
 // Generation-tagged slots: a descriptor's generation bumps on every take and
@@ -1030,6 +1328,7 @@ REGISTER_UNIT_TEST( test_exhausted_region_refuses_sends_until_reset );
 REGISTER_UNIT_TEST( test_receive_without_room_exhausts_the_region );
 REGISTER_UNIT_TEST( test_exhausted_region_refuses_spans );
 REGISTER_UNIT_TEST( test_span_granted_after_reset );
+REGISTER_UNIT_TEST( test_send_refusal_leaves_the_region_as_it_was );
 #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_generation_tagged_slots_and_lifo_stack );
 #endif // #if ROCKETNET_DEV

@@ -4280,6 +4280,19 @@ const struct rocketnet_counters_t * rocketnet_client_transport_counters( rocketn
     return &client_transport->counters;
 }
 
+// rocketnet_conditions_t's seconds_since_heard: since the last packet the
+// connected protocol accepted; -1 when not connected or nothing heard yet.
+
+double rocketnet_client_transport_heard_age( const struct rocketnet_client_transport_t * client_transport )
+{
+    const struct rocketnet_client_protocol_t * protocol = &client_transport->protocol;
+    if ( protocol->state != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED || protocol->last_receive_time <= 0.0 )
+    {
+        return -1.0;
+    }
+    return client_transport->time - protocol->last_receive_time;
+}
+
 #if ROCKETNET_DEV
 // The transport's half of the delivery capture (rocketnet_layers.h): plain
 // copies of the protocol's receive window, send sequence and ack endpoint, on

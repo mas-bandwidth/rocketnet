@@ -64,7 +64,8 @@ struct rn_endpoint_config_t
     X( default_kbps, int32_t default_kbps ) /* the budget a reset starts with; 0 or lower uncapped */                                                 \
     X( send_budget_enabled, int send_budget_enabled ) /* 0: this connection is uncapped (R6, standard/MESSAGES.md m9.4) */                                \
     X( max_payload_bytes, int max_payload_bytes ) /* the transport's payload cap (rn_endpoint_send) */                                                \
-    X( send_error, int send_error ) /* ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED once a send found no room (R5), else NONE */ /* CONFIG (10.3): the wait for the remote endpoint's CONFIG */                                                                                               \
+    X( send_error, int send_error ) /* ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED once a send found the region exhausted by the receive side (R5), else NONE */ /* CONFIG (10.3): the wait for the remote endpoint's CONFIG */                                                                                               \
+    X( send_refused, uint64_t send_refused ) /* starts refused for no room on this connection (m1.7; rocketnet_conditions_t) */ \
     X( config_wait_start, double config_wait_start ) /* when this end began waiting for the remote endpoint's CONFIG, or -1 before its transport is connected */ \
     X( config_error, int config_error ) /* ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT once the remote endpoint's CONFIG is past reliable_timeout, else NONE */     \
     X( serial, uint32_t serial ) /* the receipt serial of the last finished send (7.4) */ /* the start between start and finish (one at a time) */                                                                                          \

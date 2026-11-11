@@ -85,9 +85,11 @@ estimator, and stays within `message_resend_delay_min_ms` and
 `message_resend_delay_max_ms`. The estimator's first sample is the transport's
 measured round trip as soon as the transport has one, so a record lost on its
 first send is resent after a delay derived from the path rather than after the
-initial delay. `reliable_message_timeout_ms` ends the connection
+initial delay. `reliable_message_timeout_ms` is 0 (off) by default; set
+nonzero, it ends the connection
 when its oldest unacknowledged reliable number has waited that long since its
-first send. It is not a deadline from `finish_message`: work waiting for its
+first send, outage or not, so choose it well above the connection timeout
+([surviving a network outage](USAGE.md#surviving-a-network-outage)). It is not a deadline from `finish_message`: work waiting for its
 first send has no reliable-send timeout, and each fragment has its own first
 send time. `packets_per_update` bounds packet work per connection per update.
 
@@ -127,13 +129,19 @@ and units are defined in [rocketnet.h](../sdk/rocketnet.h).
 Message stores, queues, delivery batches, receipt rings and replay windows
 have bounded capacity derived from the public config. Their
 storage lifecycle uses the caller allocator and a refused allocation is
-reported. Message frame calls do not wait on the network. Exhausting connection message memory ends
-that connection: the server's slot reads
-`ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED` and the client's state
-reads `ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED`. Unreliable work may be
+reported. Message frame calls do not wait on the network. A start that finds
+the connection's send memory full is refused: `start_message` returns `NULL`,
+the refusal is counted in that connection's `send_refused`
+(`struct rocketnet_conditions_t`), and the connection stays up, for unreliable
+sends too; a later start succeeds once acknowledgements return room. A send
+never ends a connection. Only the receive side's broken bound (a delivery table
+with no room) ends one with `ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED`
+(client state `ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED`). Unreliable work may be
 dropped at its documented bounded queues; queued reliable work is retained
 while the connection survives. Use `can_send_message` to defer discretionary
-sends before exhausting message memory.
+sends before they are refused, and see
+[refused sends](ERRORS-AND-LOGGING.md#a-game-policy-for-a-client-it-cannot-send-to)
+for a game policy built on the refusal count.
 
 ## Queue scheduling
 

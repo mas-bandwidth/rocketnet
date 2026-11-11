@@ -1684,6 +1684,92 @@ static void mo_small_config( rocketnet_message_config_t * config )
 }
 
 #if ROCKETNET_DEV
+// m1.7: a start that finds no room is refused and nothing else changes. The
+// send side of one connection is taken just before a start; after a refused
+// one the region (its memory and its own fields), the connection's endpoint
+// and its hot state are the same bytes, but for the endpoint's send_refused,
+// one higher, and the object's counters are the same but for exactly one of
+// MESSAGE_SEND_QUEUE_FULL and MESSAGE_SEND_STORE_FULL, one higher. The
+// connection stays CONNECTED, its region is not exhausted and the memory
+// decision stays NONE.
+
+struct mo_send_side_t
+{
+    std::vector<uint8_t> region_memory;
+    std::vector<uint8_t> region;
+    std::vector<uint8_t> endpoint;
+    std::vector<uint8_t> hot;
+    rocketnet_counters_t counters;
+};
+
+static void mo_send_side_take( mo_send_side_t * side, const rn_message_object_t * object, int index )
+{
+    const rn_message_connection_t * connection = &object->connections[index];
+    const rn_region_t * region = connection->region;
+    side->region_memory.assign( region->base, region->base + region->bytes );
+    side->region.assign( (const uint8_t *) region, (const uint8_t *) region + sizeof( *region ) );
+    side->endpoint.assign( (const uint8_t *) connection, (const uint8_t *) connection + sizeof( *connection ) );
+    side->hot.assign( (const uint8_t *) &object->hot_connections[index], (const uint8_t *) &object->hot_connections[index] + sizeof( object->hot_connections[index] ) );
+    memcpy( &side->counters, &object->counters, sizeof( side->counters ) );
+}
+
+// checks the refusal against the side taken before it; expected_counter is the
+// room counter that must have moved, or -1 for either; also_counter, when not
+// -1, is one more counter the start moves by exactly one before it reaches the
+// region (an unreliable start that found no transport frame counts
+// MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK). Returns the room counter that moved.
+
+static int mo_send_side_check_refused( const mo_send_side_t * before, const rn_message_object_t * object, int index, int expected_counter, int also_counter = -1 )
+{
+    const rn_message_connection_t * connection = &object->connections[index];
+    const rn_region_t * region = connection->region;
+
+    check( object->hot_connections[index].state == RN_MESSAGE_CONNECTION_CONNECTED );
+    check( !rn_region_exhausted( region ) );
+    check( rn_connection_memory_decide( region ) == ROCKETNET_DISCONNECT_REASON_NONE );
+    check( connection->send_error == ROCKETNET_DISCONNECT_REASON_NONE );
+
+    check( before->region_memory.size() == region->bytes );
+    check( memcmp( before->region_memory.data(), region->base, region->bytes ) == 0 );
+    check( memcmp( before->region.data(), region, sizeof( *region ) ) == 0 );
+    check( memcmp( before->hot.data(), &object->hot_connections[index], sizeof( object->hot_connections[index] ) ) == 0 );
+
+    // the endpoint: every byte but send_refused, which is one higher
+
+    rn_message_connection_t was;
+    memcpy( &was, before->endpoint.data(), sizeof( was ) );
+    check( connection->send_refused == was.send_refused + 1 );
+    rn_message_connection_t now;
+    memcpy( &now, connection, sizeof( now ) );
+    now.send_refused = was.send_refused;
+    check( memcmp( &now, &was, sizeof( now ) ) == 0 );
+
+    // the counters: exactly one room counter one higher, nothing else
+
+    int moved = -1;
+    for ( int i = 0; i < ROCKETNET_NUM_COUNTERS; i++ )
+    {
+        const uint64_t a = before->counters.values[i];
+        const uint64_t b = object->counters.values[i];
+        if ( i == ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL || i == ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL )
+        {
+            check( b == a || b == a + 1 );
+            if ( b == a + 1 )
+            {
+                check( moved == -1 );
+                moved = i;
+            }
+        }
+        else
+        {
+            check( b == a + ( i == also_counter ? 1 : 0 ) );
+        }
+    }
+    check( moved != -1 );
+    check( expected_counter == -1 || moved == expected_counter );
+    return moved;
+}
+
 static void test_server_kicks_exhausted_client_others_unaffected()
 {
     rocketnet_message_config_t config;
@@ -1694,12 +1780,15 @@ static void test_server_kicks_exhausted_client_others_unaffected()
     mo_pair_setup( &pair, 2, &config, 0, 0 );
     mo_step( &pair );
 
-    // the server queues to slot 0 without sending until its region has no room
+    // the server queues to slot 0 without sending until its region has no room:
+    // that start is refused (m1.7), counted, and changes nothing else
 
     int started = 0;
+    mo_send_side_t before;
 
     for ( ;; )
     {
+        mo_send_side_take( &before, &pair.server->object, 0 );
         uint8_t * q = rocketnet_message_server_start( pair.server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 100 );
         if ( !q )
         {
@@ -1712,6 +1801,32 @@ static void test_server_kicks_exhausted_client_others_unaffected()
     }
 
     check( started > 0 );
+    mo_send_side_check_refused( &before, &pair.server->object, 0, ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL );
+    check( pair.net->server->disconnects == 0 );
+    check( pair.net->slot_connection[0] != 0 );
+    check( rocketnet_message_server_disconnect_reason( pair.server, 0 ) == ROCKETNET_DISCONNECT_REASON_NONE );
+    check( rocketnet_message_server_client_connected( pair.server, 0 ) == 1 );
+    check( mo_counter( rocketnet_message_server_counters( pair.server ), ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED ) == 0 );
+
+    // room returns as the client acknowledges: a later start succeeds
+
+    for ( int step = 0; step < 50 && !rn_message_object_send_room( &pair.server->object, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 100 ); step++ )
+    {
+        mo_step( &pair );
+    }
+    uint8_t * again = rocketnet_message_server_start( pair.server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 100 );
+    check( again != NULL );
+    mo_fill( again, (uint32_t) started, 100 );
+    check( rocketnet_message_server_finish( pair.server, 0, 100 ) != 0 );
+    check( mo_server_slot( &pair, 0 )->send_refused == 1 );
+    check( rocketnet_message_server_client_connected( pair.server, 0 ) == 1 );
+
+    // exhaustion now comes from the receive side only (a delivery table full);
+    // it is reached here by rn_region_exhaust directly. The next start on the
+    // exhausted region is the kick
+
+    rn_region_exhaust( mo_server_slot( &pair, 0 )->region );
+    check( rocketnet_message_server_start( pair.server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 100 ) == NULL );
 
     // kicked at once: the transport disconnected the slot, with the reason
 
@@ -1775,9 +1890,14 @@ static void test_client_disconnects_itself_on_exhaustion()
 
     rocketnet_message_client_t * client = pair.clients[0];
     int started = 0;
+    mo_send_side_t before;
+
+    // the client queues until its region has no room: that start is refused
+    // (m1.7), counted, and changes nothing else; the client stays connected
 
     for ( ;; )
     {
+        mo_send_side_take( &before, &client->object, 0 );
         uint8_t * p = rocketnet_message_client_start( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 900 );
         if ( !p )
         {
@@ -1790,6 +1910,36 @@ static void test_client_disconnects_itself_on_exhaustion()
     }
 
     check( started > 0 );
+    mo_send_side_check_refused( &before, &client->object, 0, -1 );
+    check( pair.net->clients[0]->disconnects == 0 );
+    check( pair.net->clients[0]->connected );
+    check( rocketnet_message_client_disconnect_reason( client ) == ROCKETNET_DISCONNECT_REASON_NONE );
+    check( rocketnet_message_client_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+    check( mo_counter( rocketnet_message_client_counters( client ), ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED ) == 0 );
+
+    struct rocketnet_conditions_t conditions;
+    memset( &conditions, 0, sizeof( conditions ) );
+    check( rocketnet_message_client_conditions( client, &conditions ) );
+    check( conditions.send_refused == 1 );
+
+    // room returns as the server acknowledges: a later start succeeds
+
+    for ( int step = 0; step < 100 && !rn_message_object_send_room( &client->object, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 900 ); step++ )
+    {
+        mo_step( &pair );
+    }
+    uint8_t * again = rocketnet_message_client_start( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 900 );
+    check( again != NULL );
+    mo_fill( again, (uint32_t) started, 900 );
+    check( rocketnet_message_client_finish( client, 900 ) != 0 );
+    check( pair.net->clients[0]->disconnects == 0 );
+
+    // exhaustion now comes from the receive side only (a delivery table full);
+    // it is reached here by rn_region_exhaust directly. The next start on the
+    // exhausted region is the client's own disconnect
+
+    rn_region_exhaust( mo_client_connection( client )->region );
+    check( rocketnet_message_client_start( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 900 ) == NULL );
 
     check( pair.net->clients[0]->disconnects == 1 );
     check( !pair.net->clients[0]->connected );
@@ -1852,10 +2002,35 @@ static void test_slot_reuse_starts_clean()
     check( slot->budget.kbps == 500 );
     check( rocketnet_message_server_set_send_kbps( pair.server, 0, -1 ) == 1 );
     check( slot->send_budget_enabled == 0 );
+
+    // a full send side is refused (m1.7), counted, and changes nothing else
+
+    mo_send_side_t before;
+    mo_send_side_take( &before, &pair.server->object, 0 );
     while ( rocketnet_message_server_start( pair.server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 100 ) )
     {
         check( rocketnet_message_server_finish( pair.server, 0, 100 ) != 0 );
+        mo_send_side_take( &before, &pair.server->object, 0 );
     }
+    mo_send_side_check_refused( &before, &pair.server->object, 0, -1 );
+    check( rocketnet_message_server_disconnect_reason( pair.server, 0 ) == ROCKETNET_DISCONNECT_REASON_NONE );
+    check( rocketnet_message_server_client_connected( pair.server, 0 ) == 1 );
+    check( slot->send_refused == 1 );
+
+    // room returns as the client acknowledges: a later start succeeds
+
+    for ( int step = 0; step < 50 && !rn_message_object_send_room( &pair.server->object, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 100 ); step++ )
+    {
+        mo_step( &pair );
+    }
+    check( rocketnet_message_server_start( pair.server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 100 ) != NULL );
+    check( rocketnet_message_server_finish( pair.server, 0, 100 ) != 0 );
+
+    // the slot's region exhausted by the receive side (reached here by
+    // rn_region_exhaust directly): the next start ends the connection
+
+    rn_region_exhaust( slot->region );
+    check( rocketnet_message_server_start( pair.server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 100 ) == NULL );
     check( rocketnet_message_server_disconnect_reason( pair.server, 0 ) == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
 
     // the next update frees the slot in O(1); the region is carved lazily,
@@ -1888,6 +2063,7 @@ static void test_slot_reuse_starts_clean()
     check( slot->budget.kbps == 7000 );                                // not the setter's -1 nor the default
     check( slot->send_budget_enabled == 1 );
     check( slot->hot->held == 0 && slot->unreliable_count == 0 && slot->serial == 0 );
+    check( slot->send_refused == 0 );                                  // the previous connection's refusal does not cross
     mo_step( &pair );
     mo_step( &pair );
     check( slot->region->descriptors_free == slot->region->queue );              // CONFIG acked: every descriptor is back (10.3)
@@ -2766,10 +2942,13 @@ static void test_rnslots_witness_replays()
 
     // Carry on after exhaustion (ExhaustionOnlyLeadsToDisconnect): records
     // arrive and are handed to the application in one update, then the
-    // connection's region finds no room. The connection does not go on: the
-    // next step is the disconnect with the named reason, nothing more is
-    // taken from the region, the views already handed out are still released
-    // before the next update, and the region is reset before the slot is reused.
+    // connection's sends find no room. Those starts are only refused (m1.7):
+    // the connection goes on, nothing is taken. Then the region is exhausted
+    // (the receive side's invariant break, reached here by rn_region_exhaust
+    // directly). The connection does not go on: the next step is the
+    // disconnect with the named reason, nothing more is taken from the region,
+    // the views already handed out are still released before the next
+    // update, and the region is reset before the slot is reused.
     {
         rocketnet_message_config_t small;
         mo_small_config( &small );
@@ -2790,14 +2969,24 @@ static void test_rnslots_witness_replays()
 
         rn_message_connection_t * slot = mo_server_slot( &pair, 0 );
         int started = 0;
+        mo_send_side_t before;
 
+        mo_send_side_take( &before, &pair.server->object, 0 );
         while ( rocketnet_message_server_start( pair.server, 0, 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 100 ) )
         {
             check( rocketnet_message_server_finish( pair.server, 0, 100 ) );
             started++;
+            mo_send_side_take( &before, &pair.server->object, 0 );
         }
 
         check( started > 0 );
+        mo_send_side_check_refused( &before, &pair.server->object, 0, -1 );
+        check( slot->hot->state == RN_MESSAGE_CONNECTION_CONNECTED );
+        check( rocketnet_message_server_disconnect_reason( pair.server, 0 ) == ROCKETNET_DISCONNECT_REASON_NONE );
+        check( pair.net->slot_connection[0] != 0 );
+
+        rn_region_exhaust( slot->region );
+        check( rocketnet_message_server_start( pair.server, 0, 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 100 ) == NULL );
         check( slot->hot->state == RN_MESSAGE_CONNECTION_KICKED );
         check( rocketnet_message_server_disconnect_reason( pair.server, 0 ) == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
         check( pair.net->slot_connection[0] == 0 );
@@ -3039,11 +3228,13 @@ static void test_message_objects_client_clock_starts_at_first_update()
 // describe behaviour the product has, run through the message objects.
 // ---------------------------------------------------------------------------
 
-// a send the store has no room for exhausts the connection and kicks it (R5):
-// the shipped path never drops an unreliable send for a full store, it counts
-// the refusal once and ends the connection
+// a send the store has no room for is refused (m1.7): the shipped path never
+// drops an unreliable send it accepted and never ends the connection for a
+// full store; it returns NULL, counts each refusal, changes nothing else, and
+// takes the next send once the queued messages are written and their chunks
+// are free
 
-static void test_unreliable_store_full_exhausts_and_kicks()
+static void test_unreliable_store_full_is_refused_and_counted()
 {
     rocketnet_message_config_t config;
     mo_small_config( &config );
@@ -3055,9 +3246,11 @@ static void test_unreliable_store_full_exhausts_and_kicks()
 
     int started = 0;
     pair.net->refuse_start = true;                              // no frame at start: every send takes the queued path
+    mo_send_side_t before;
 
     for ( ;; )
     {
+        mo_send_side_take( &before, &pair.server->object, 0 );
         uint8_t * p = rocketnet_message_server_start( pair.server, 0, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 16 );
         if ( !p )
         {
@@ -3069,20 +3262,43 @@ static void test_unreliable_store_full_exhausts_and_kicks()
         check( started < 100000 );
     }
 
-    pair.net->refuse_start = false;
     check( started > 0 );
+    mo_send_side_check_refused( &before, &pair.server->object, 0, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK );
 
     const rocketnet_counters_t * counters = rocketnet_message_server_counters( pair.server );
     check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL ) == 1 );
-    check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED ) == 1 );
-    check( rocketnet_message_server_disconnect_reason( pair.server, 0 ) == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
-    check( rocketnet_message_server_client_connected( pair.server, 0 ) == 0 );
-    check( pair.net->server->disconnects == 1 );
+    check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED ) == 0 );
+    check( rocketnet_message_server_disconnect_reason( pair.server, 0 ) == ROCKETNET_DISCONNECT_REASON_NONE );
+    check( rocketnet_message_server_client_connected( pair.server, 0 ) == 1 );
+    check( pair.net->server->disconnects == 0 );
 
-    // sticky: the kicked connection takes no further send
+    // not sticky: each refused start is counted once more, and still nothing ends
 
+    mo_send_side_take( &before, &pair.server->object, 0 );
     check( rocketnet_message_server_start( pair.server, 0, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 16 ) == NULL );
-    check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL ) == 1 );
+    mo_send_side_check_refused( &before, &pair.server->object, 0, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK );
+    check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL ) == 2 );
+    check( mo_server_slot( &pair, 0 )->send_refused == 2 );
+    check( pair.net->server->disconnects == 0 );
+
+    // frames again: the queued messages are written, their chunks freed, and
+    // the next queued-path start is given room in the region
+
+    pair.net->refuse_start = false;
+    for ( int step = 0; step < 100 && !rn_message_object_send_room( &pair.server->object, 0, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 16 ); step++ )
+    {
+        mo_step( &pair );
+    }
+    pair.net->refuse_start = true;
+    const uint32_t free_before = mo_server_slot( &pair, 0 )->region->descriptors_free;
+    uint8_t * p = rocketnet_message_server_start( pair.server, 0, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 16 );
+    check( p != NULL );
+    check( mo_server_slot( &pair, 0 )->region->descriptors_free == free_before - 1 );   // the region's room, not a frame
+    memset( p, 0xAB, 16 );
+    check( rocketnet_message_server_finish( pair.server, 0, 16 ) != 0 );
+    pair.net->refuse_start = false;
+    check( rocketnet_message_server_client_connected( pair.server, 0 ) == 1 );
+    check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL ) == 2 );
 
     mo_pair_teardown( &pair );
 }
@@ -3410,15 +3626,35 @@ static void test_send_room_watch_crosses_once_and_rearms_below_half()
 
     check( crossings == 1 );
 
-    // the last descriptor: fits; then none, and the send that finds none exhausts
+    // the last descriptor: fits; then none, and the send that finds none is
+    // refused (m1.7): counted under MESSAGE_SEND_QUEUE_FULL, the region not
+    // exhausted, every byte of it as it was; a freed descriptor is room again
 
     for ( int i = 13; i < 16; i++ )
     {
         taken[i] = rn_region_send_alloc( region, 100 );
     }
     check( rn_region_send_fits( region, 100, NULL, NULL, NULL ) == 0 );
+
+    std::vector<uint8_t> memory_before( region->base, region->base + region->bytes );
+    std::vector<uint8_t> region_before( (const uint8_t *) region, (const uint8_t *) region + sizeof( *region ) );
+    rocketnet_counters_t counters_before;
+    memcpy( &counters_before, &counters, sizeof( counters ) );
+
     check( rn_region_send_alloc( region, 100 ) == RN_DESCRIPTOR_NONE );
-    check( rn_region_exhausted( region ) );
+    check( !rn_region_exhausted( region ) );
+    check( rn_connection_memory_decide( region ) == ROCKETNET_DISCONNECT_REASON_NONE );
+    check( memcmp( memory_before.data(), region->base, region->bytes ) == 0 );
+    check( memcmp( region_before.data(), region, sizeof( *region ) ) == 0 );
+    for ( int i = 0; i < ROCKETNET_NUM_COUNTERS; i++ )
+    {
+        check( counters.values[i] == counters_before.values[i] + ( i == ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL ? 1 : 0 ) );
+    }
+
+    rn_region_send_free( region, taken[15] );
+    taken[15] = rn_region_send_alloc( region, 100 );
+    check( taken[15] != RN_DESCRIPTOR_NONE );
+    check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 0 );
 
     // a reset carve rearms
 
@@ -3433,7 +3669,7 @@ static void test_send_room_watch_crosses_once_and_rearms_below_half()
 // the room query (rn_message_object_send_room, under
 // rocketnet_client_can_send_message and rocketnet_server_can_send_message):
 // it says no exactly when the start would find no room, a start after a no
-// still ends the connection, and asking changes nothing
+// is refused and changes nothing else (m1.7), and asking changes nothing
 // ---------------------------------------------------------------------------
 
 struct mo_room_case_t
@@ -3492,8 +3728,10 @@ static void mo_room_ask_everything( rn_message_object_t * object, int index )
 
 // one object queues without sending until a start finds no room. Before each
 // start the query is asked (every combination, changing nothing), and its
-// answer for the start is the start's: yes, a pointer; no, NULL with the
-// connection's send error set, and the kick at the next update
+// answer for the start is the start's: yes, a pointer; no, NULL, counted, and
+// nothing else changed. The connection stays up through the next update,
+// room returns as the receiver acknowledges, and the query and the start agree
+// again; only an exhausted region (the receive side) ends the connection
 
 static void mo_room_run_case( const mo_room_case_t * room_case, bool server_side )
 {
@@ -3548,14 +3786,18 @@ static void mo_room_run_case( const mo_room_case_t * room_case, bool server_side
         check( room == rn_message_object_send_room( object, 0, channel, room_case->reliability, room_case->bytes ) );
         check( !rn_region_exhausted( connection->region ) );
 
+        mo_send_side_t before;
+        mo_send_side_take( &before, object, 0 );
         uint8_t * p = rn_message_object_start( object, 0, channel, room_case->reliability, room_case->bytes );
 
         if ( !room )
         {
-            // a no: the start is still the fatal one, unchanged
+            // a no: the start is refused, counted under the pool that ran
+            // out, and nothing else changes (m1.7)
             check( p == NULL );
-            check( rn_region_exhausted( connection->region ) );
-            check( connection->send_error == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
+            mo_send_side_check_refused( &before, object, 0, room_case->counter );
+            check( !rn_region_exhausted( connection->region ) );
+            check( connection->send_error == ROCKETNET_DISCONNECT_REASON_NONE );
             check( !rn_message_object_send_room( object, 0, channel, room_case->reliability, room_case->bytes ) );
             said_no = true;
             break;
@@ -3573,11 +3815,48 @@ static void mo_room_run_case( const mo_room_case_t * room_case, bool server_side
 
     check( said_no );
     check( started > 0 );
-    check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED ) == 1 );
+    check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED ) == 0 );
+    check( mo_counter( counters, room_case->counter ) == 1 );
+    check( connection->send_refused == 1 );
+
+    // the update after the refusal ends nothing; frames let the receiver
+    // acknowledge, room returns, and the query's yes is again a start's pointer
+
+    pair.time += 0.01;
+    if ( server_side )
+    {
+        check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_OK );
+        check( rocketnet_message_server_disconnect_reason( pair.server, 0 ) == ROCKETNET_DISCONNECT_REASON_NONE );
+        check( rocketnet_message_server_client_connected( pair.server, 0 ) == 1 );
+        mo_drain_server( &pair, NULL );
+        rocketnet_message_server_send_packets( pair.server );
+    }
+    else
+    {
+        check( rocketnet_message_client_update( pair.clients[0], pair.time ) == ROCKETNET_UPDATE_OK );
+        check( rocketnet_message_client_disconnect_reason( pair.clients[0] ) == ROCKETNET_DISCONNECT_REASON_NONE );
+        mo_drain_client( pair.clients[0], NULL );
+        rocketnet_message_client_send_packets( pair.clients[0] );
+    }
+    check( object->hot_connections[0].state == RN_MESSAGE_CONNECTION_CONNECTED );
+
+    for ( int step = 0; step < 200 && !rn_message_object_send_room( object, 0, channel, room_case->reliability, room_case->bytes ); step++ )
+    {
+        mo_step( &pair );
+    }
+    check( rn_message_object_send_room( object, 0, channel, room_case->reliability, room_case->bytes ) );
+    uint8_t * again = rn_message_object_start( object, 0, channel, room_case->reliability, room_case->bytes );
+    check( again != NULL );
+    mo_fill( again, (uint32_t) started, (uint32_t) room_case->bytes );
+    check( rn_message_object_finish( object, 0, room_case->bytes ) != 0 );
+    check( connection->send_refused == 1 );
     check( mo_counter( counters, room_case->counter ) == 1 );
 
-    // the kick: the connection ends with the reason, and a gone connection has no room
+    // the region exhausted by the receive side (reached here by
+    // rn_region_exhaust directly): the kick ends the connection with the
+    // reason, and a gone connection has no room
 
+    rn_region_exhaust( connection->region );
     if ( server_side )
     {
         pair.time += 0.01;
@@ -3600,7 +3879,7 @@ static void mo_room_run_case( const mo_room_case_t * room_case, bool server_side
     free( server_allocation );
 }
 
-static void test_send_room_query_says_no_exactly_when_a_start_exhausts()
+static void test_send_room_query_says_no_exactly_when_a_start_is_refused()
 {
     // the small config: 16 descriptors, a store of 12288 bytes in three
     // classes, and the spans sized by receive_message_buffer_bytes
@@ -3715,12 +3994,33 @@ static void test_send_room_warns_in_debug_builds_only()
     check( mo_room_crossings == ( rn_send_room_warnings ? 2 : 0 ) );
     check( mo_room_exhausted == 0 );
 
-    // on to exhaustion: one line just before the kick, naming the client
+    // on to a full send side: the refused start (m1.7) says nothing about
+    // exhaustion and ends nothing
 
     while ( rocketnet_message_client_send( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, (int) sizeof( message ) ) )
     {
         check( ++sends < 300 );
     }
+    check( rocketnet_message_client_disconnect_reason( client ) == ROCKETNET_DISCONNECT_REASON_NONE );
+    check( connection->send_refused == 1 );
+    check( mo_room_crossings == ( rn_send_room_warnings ? 2 : 0 ) );
+    check( mo_room_exhausted == 0 );
+    check( mo_room_lines == ( rn_send_room_warnings ? 2 : 0 ) );
+
+    // room returns as the server acknowledges: the next send is taken
+
+    for ( int step = 0; step < 50 && !rn_message_object_send_room( &client->object, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, (int) sizeof( message ) ); step++ )
+    {
+        mo_step( &pair );
+    }
+    check( rocketnet_message_client_send( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, (int) sizeof( message ) ) );
+    check( mo_room_exhausted == 0 );
+
+    // exhaustion (the receive side's, reached here by rn_region_exhaust
+    // directly): one line just before the kick, naming the client
+
+    rn_region_exhaust( connection->region );
+    check( !rocketnet_message_client_send( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, (int) sizeof( message ) ) );
     check( rocketnet_message_client_disconnect_reason( client ) == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
     check( mo_room_crossings == ( rn_send_room_warnings ? 2 : 0 ) );
     check( mo_room_exhausted == ( rn_send_room_warnings ? 1 : 0 ) );
@@ -3740,6 +4040,11 @@ static void test_send_room_warns_in_debug_builds_only()
     {
         check( ++sends < 400 );
     }
+    check( rocketnet_message_server_disconnect_reason( pair.server, 0 ) == ROCKETNET_DISCONNECT_REASON_NONE );
+    check( rocketnet_message_server_client_connected( pair.server, 0 ) == 1 );
+    check( mo_room_exhausted == 0 );
+    rn_region_exhaust( mo_server_slot( &pair, 0 )->region );
+    check( !rocketnet_message_server_send( pair.server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, (int) sizeof( message ) ) );
     check( rocketnet_message_server_disconnect_reason( pair.server, 0 ) == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
     check( mo_room_crossings == ( rn_send_room_warnings ? 1 : 0 ) );
     check( mo_room_exhausted == ( rn_send_room_warnings ? 1 : 0 ) );
@@ -4886,7 +5191,7 @@ REGISTER_UNIT_TEST( test_message_objects_no_allocation_after_create );
 REGISTER_UNIT_TEST( test_rnslots_witness_replays );
 REGISTER_UNIT_TEST( test_message_objects_client_clock_starts_at_first_update );
 REGISTER_UNIT_TEST( test_message_send_refused_counts_bad_arguments );
-REGISTER_UNIT_TEST( test_unreliable_store_full_exhausts_and_kicks );
+REGISTER_UNIT_TEST( test_unreliable_store_full_is_refused_and_counted );
 REGISTER_UNIT_TEST( test_unreliable_past_limit_promotes_counted_and_not_wedged );
 REGISTER_UNIT_TEST( test_unreliable_failed_packet_drops_and_counts_each_record );
 REGISTER_UNIT_TEST( test_unreliable_chunks_freed_when_written );
@@ -4894,7 +5199,7 @@ REGISTER_UNIT_TEST( test_unreliable_over_a_lossy_link_arrives_intact_at_most_onc
 #endif // #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_send_room_watch_crosses_once_and_rearms_below_half );
 #if ROCKETNET_DEV
-REGISTER_UNIT_TEST( test_send_room_query_says_no_exactly_when_a_start_exhausts );
+REGISTER_UNIT_TEST( test_send_room_query_says_no_exactly_when_a_start_is_refused );
 REGISTER_UNIT_TEST( test_send_room_warns_in_debug_builds_only );
 REGISTER_UNIT_TEST( test_update_time_bad_counted_once_never_stored_or_wedged );
 

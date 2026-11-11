@@ -858,14 +858,12 @@ int rn_region_send_fit_store( const rn_region_t * region, int bytes, uint32_t * 
     return RN_SEND_FIT_OK;
 }
 
-// A refused allocation's effects, by its decision. Exhaustion is a counted
+// A refused allocation's effects, by its decision. No room is a counted
 // refusal, never growth (R1, 4), and nothing is taken from either pool when
-// one of them refuses. It is also the end of the connection: the region is
-// exhausted (proofs/tla/RNConnectionMemory.tla, Exhaust) and its owner kicks it on
-// the next decision. A send refused while the region stays exhausted is
-// counted under MESSAGE_MEMORY_EXHAUSTED, the counter that names this refusal,
-// on every refused send, not just at the transition to exhausted
-// (proofs/tla/RNSendStoreLayout.tla Refuse).
+// one of them refuses. It leaves the region as it was: the connection goes on
+// and a later start succeeds once room returns (standard/MESSAGES.md m1.7,
+// proofs/tla/RNSendStoreLayout.tla Refuse). A send refused while the region
+// is exhausted (by the receive side) is counted under MESSAGE_MEMORY_EXHAUSTED.
 
 static void rn_region_send_refuse( rn_region_t * region, int fit )
 {
@@ -876,13 +874,9 @@ static void rn_region_send_refuse( rn_region_t * region, int fit )
             break;
         case RN_SEND_FIT_QUEUE_FULL:
             rn_count( region->counters, ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL );
-
-            rn_region_exhaust( region );
             break;
         case RN_SEND_FIT_STORE_FULL:
             rn_count( region->counters, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL );
-
-            rn_region_exhaust( region );
             break;
         default:
             break;                                              // RN_SEND_FIT_REFUSED: the caller's to count
@@ -1131,8 +1125,11 @@ uint32_t rn_region_send_alloc_span( rn_region_t * region, int bytes )
     // is proofs/tla/RNRing.tla's PlaceSingle on the sender's side, and its PlaceBlock
     // for a send of more than one fragment: one contiguous span, both bounds
     // checked once, fragment i at start + i * F (rn_region_send_data).
-    // proofs/tla/RNSendSpans.tla Exhaust: no descriptor or no place for the span,
-    // so rn_region_send_refuse exhausts the region.
+    // No descriptor or no place for the span is a refusal counted by
+    // rn_region_send_refuse; the region is unchanged (standard/MESSAGES.md m1.7).
+    // proofs/tla/RNSendSpans.tla Exhaust and RNConnectionMemory.tla Exhaust still
+    // model this case as exhaustion: the code leads those models here, and the
+    // models owe a send-side Refuse that leaves the region as it was.
 
     rocketnet_assert( region );
 
@@ -1455,7 +1452,7 @@ void rn_region_send_room_note( rn_region_t * region, int is_server, int index )
 
 void rn_region_send_room_exhausted( const rn_region_t * region, int is_server, int index )
 {
-    rn_region_send_room_log( region, is_server, index, "exhausted, the connection ends (MESSAGE_MEMORY_EXHAUSTED)" );
+    rn_region_send_room_log( region, is_server, index, "exhausted on the receive side, the connection ends (MESSAGE_MEMORY_EXHAUSTED)" );
 }
 
 #else // #if ROCKETNET_ASSERTS

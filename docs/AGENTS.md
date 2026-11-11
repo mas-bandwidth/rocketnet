@@ -163,7 +163,7 @@ Preserve wraparound, sparse occupancy, stale-generation, and lifetime checks.
 Write directly into a successful start reservation. Some fitting unreliable
 messages are built in a transport packet; reliable or queued messages retain
 storage for later transmission. [Sending](USAGE.md#sending-messages) defines
-fallback, promotion, lifetime, and memory-exhaustion behavior. Do not depend on
+fallback, promotion, lifetime, and the refusal of a start that finds no room. Do not depend on
 which storage path a particular reservation takes.
 `rocketnet_max_unfragmented_message_bytes( reliability, channel )` returns each
 mode's one-packet limit; size per-packet game messages against it.

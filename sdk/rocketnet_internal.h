@@ -599,7 +599,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MESSAGE_SINGLE_BYTES >= 1400, "a 1400-byte ga
     INT_FIELD( message_resend_delay_initial_ms,           2000,     10, 60000,                  0 )                                         \
     INT_FIELD( message_resend_delay_min_ms,                  0,      0, 60000,                  0 )                                         \
     INT_FIELD( message_resend_delay_max_ms,               2000,     10, 60000,                  0 )                                         \
-    INT_FIELD( reliable_message_timeout_ms,     10000,   1000, 600000,                 0 )                                         \
+    INT_FIELD( reliable_message_timeout_ms,         0,      0, 600000,                 0 )                                         \
     INT_FIELD( client_send_kbps,         ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, INT32_MIN, ROCKETNET_SEND_BUDGET_MAX_KBPS, 0 ) \
     INT_FIELD( server_send_kbps,         ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS, INT32_MIN, ROCKETNET_SEND_BUDGET_MAX_KBPS, 0 )
 
