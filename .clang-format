@@ -5,7 +5,9 @@
 # reproduces Allman braces, 4-space indent, spaces inside parentheses but not
 # empty ones, `char * p`, `(T) value` casts, tight square brackets, unlimited
 # line length, unsorted includes, indented case labels and namespaces, and
-# macro definition bodies left as written.
+# macro definition bodies left as written. InsertBraces was then set by the
+# owner's ruling of 2026-11-10, not by the measurement below (see the end of
+# this comment).
 #
 # Changed original lines (`diff <original> <(clang-format-18 <file>)` lines
 # marked `<`), this file copied beside the pinned clones:
@@ -48,6 +50,10 @@
 #   comment-only lines inside a #define body are joined onto the line above, dropping their backslashes; SkipMacroDefinitionBody does not cover comments, so such macros sit between clang-format off and on
 #   a #if or #elif condition continued over backslash lines is joined into one line (see above); these sit between clang-format off and on
 #   a directive's trailing // comment followed by a // comment line gains a backslash that splices the two; that directive sits between clang-format off and on
+#
+# Set by the owner's ruling of 2026-11-10, after the tuning above and not
+# measured against the reference trees:
+#   InsertBraces: true -- every if, else, for, while and do body is braced, "brackets are just safer". Braced by hand, because the formatter does not reach them: control statements inside a #define (SkipMacroDefinitionBody), a body that a preprocessor branch separates from its statement or that sits in a lambda holding a preprocessor branch (left unbraced), and a lambda body passed as a call argument (braces inserted but not placed)
 Language: Cpp
 BasedOnStyle: LLVM
 IndentWidth: 4
@@ -85,7 +91,7 @@ Cpp11BracedListStyle: false
 MaxEmptyLinesToKeep: 4
 KeepEmptyLinesAtTheStartOfBlocks: true
 SeparateDefinitionBlocks: Leave
-InsertBraces: false
+InsertBraces: true
 RemoveBracesLLVM: false
 FixNamespaceComments: false
 ReflowComments: false
