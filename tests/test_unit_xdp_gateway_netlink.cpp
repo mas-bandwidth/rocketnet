@@ -954,12 +954,15 @@ struct fake_netlink_t
     int sockets = 0;
     int closes = 0;
     socklen_t local_bytes = sizeof( struct sockaddr_nl );
+    bool nonblocking = false;                       // the last socket opened with SOCK_NONBLOCK
+    int blocking_receives = 0;                      // reads that would wait for the kernel: a blocking socket, no MSG_DONTWAIT
 };
 
 static fake_netlink_t * fake_netlink = NULL;
 
-static int fake_netlink_socket( int, int, int )
+static int fake_netlink_socket( int, int type, int )
 {
+    fake_netlink->nonblocking = ( type & SOCK_NONBLOCK ) != 0;
     fake_netlink->sockets++;
     return 100 + fake_netlink->sockets;
 }
@@ -993,15 +996,28 @@ static ssize_t fake_netlink_sendto( int, const void * data, size_t bytes, int, c
     return (ssize_t) bytes;
 }
 
-static ssize_t fake_netlink_recvmsg( int, struct msghdr * message, int )
+static ssize_t fake_netlink_recvmsg( int, struct msghdr * message, int flags )
 {
+    if ( !fake_netlink->nonblocking && ( flags & MSG_DONTWAIT ) == 0 )
+    {
+        fake_netlink->blocking_receives++;
+    }
+
     if ( fake_netlink->next >= fake_netlink->script.size() )
     {
         errno = EAGAIN;
         return -1;
     }
 
+    // an empty datagram in the script: nothing queued for this read
+
     const netlink_datagram_t & datagram = fake_netlink->script[fake_netlink->next++];
+    if ( datagram.bytes.empty() )
+    {
+        errno = EAGAIN;
+        return -1;
+    }
+
     memcpy( message->msg_iov[0].iov_base, datagram.bytes.data(), datagram.bytes.size() );
     struct sockaddr_nl kernel;
     memset( &kernel, 0, sizeof( kernel ) );
@@ -1018,10 +1034,24 @@ static int fake_netlink_close( int )
     return 0;
 }
 
-static const rocketnet_gateway_netlink_system_t fake_netlink_system = {
-    fake_netlink_socket, fake_netlink_setsockopt, fake_netlink_bind, fake_netlink_getsockname,
-    fake_netlink_sendto, fake_netlink_recvmsg, fake_netlink_close
-};
+// the table field by field, every other field zero: the fake's sockets take
+// only the flags the code under test adds
+
+static rocketnet_gateway_netlink_system_t fake_netlink_system_table()
+{
+    rocketnet_gateway_netlink_system_t system;
+    memset( &system, 0, sizeof( system ) );
+    system.socket = fake_netlink_socket;
+    system.setsockopt = fake_netlink_setsockopt;
+    system.bind = fake_netlink_bind;
+    system.getsockname = fake_netlink_getsockname;
+    system.sendto = fake_netlink_sendto;
+    system.recvmsg = fake_netlink_recvmsg;
+    system.close = fake_netlink_close;
+    return system;
+}
+
+static const rocketnet_gateway_netlink_system_t fake_netlink_system = fake_netlink_system_table();
 
 static netlink_datagram_t interrupted_route_datagram()
 {
@@ -1338,6 +1368,70 @@ static void test_xdp_transport_gateway_netlink_refresh_never_dumps_in_steady_sta
     fake_netlink = NULL;
 }
 
+// the refresh runs inside the update, so it never makes a blocking netlink
+// receive: every socket it opens is non-blocking, and the answer the kernel
+// has already queued is read as before
+static void test_xdp_transport_gateway_netlink_refresh_never_blocks()
+{
+    fake_netlink_t fake;
+    fake_netlink = &fake;
+    fake.script.push_back( neighbor_reply( AF_INET ) );
+
+    uint8_t gateway[16];
+    memset( gateway, 0, sizeof( gateway ) );
+    memcpy( gateway, gateway_ipv4, 4 );
+    bool gateway_known = true;
+    uint8_t mac[6];
+    memset( mac, 0, sizeof( mac ) );
+    int error = -1;
+    check( rocketnet_gateway_netlink_refresh_with( &fake_netlink_system, AF_INET, server_interface, gateway, &gateway_known, mac, &error ) == ROCKETNET_GATEWAY_NETLINK_FOUND );
+    check( memcmp( mac, gateway_mac, 6 ) == 0 );
+    check( fake.nonblocking );
+    check( fake.blocking_receives == 0 );
+    check( fake.sockets == 1 && fake.closes == 1 );
+
+    fake_netlink = NULL;
+}
+
+// nothing queued when the refresh reads (EAGAIN) is a failed query, where a
+// blocking read would have waited for its timeout: the known gateway's
+// neighbour request failing goes on to the route dump, as any failure of it
+// did; the dump failing EAGAIN mid-reply fails the refresh SYSTEM with
+// EAGAIN, the gateway and MAC in use kept, nothing waited for
+static void test_xdp_transport_gateway_netlink_refresh_eagain_fails_and_keeps_the_gateway()
+{
+    fake_netlink_t fake;
+    fake_netlink = &fake;
+    fake.script.push_back( netlink_datagram_t() );
+    netlink_datagram_t other_route;
+    netlink_route_t route;
+    route.destination_length = 24;
+    route.destination = subnet_ipv4;
+    netlink_route( &other_route, route );
+    fake.script.push_back( other_route );
+    fake.script.push_back( netlink_datagram_t() );
+    fake.script.push_back( default_route_datagram() );
+
+    uint8_t gateway[16];
+    memset( gateway, 0, sizeof( gateway ) );
+    memcpy( gateway, gateway_ipv4_other, 4 );
+    bool gateway_known = true;
+    uint8_t mac[6];
+    memcpy( mac, other_mac, 6 );
+    int error = -1;
+    check( rocketnet_gateway_netlink_refresh_with( &fake_netlink_system, AF_INET, server_interface, gateway, &gateway_known, mac, &error ) == ROCKETNET_GATEWAY_NETLINK_SYSTEM );
+    check( error == EAGAIN );
+    check( gateway_known && memcmp( gateway, gateway_ipv4_other, 4 ) == 0 );
+    check( memcmp( mac, other_mac, 6 ) == 0 );
+    check( fake.requests.size() == 2 && fake_dumps( fake ) == 1 );
+    check( fake.next == 3 );
+    check( fake.sockets == 2 && fake.closes == 2 );
+    check( fake.blocking_receives == 0 );
+
+    fake_netlink = NULL;
+}
+
+
 // create-time discovery records the route's gateway IP and marks it known, so
 // the first periodic refresh asks that gateway's neighbour entry directly:
 // it does not dump the routes again just because create only kept the MAC
@@ -1425,6 +1519,8 @@ REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_short_local_address );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_neighbor_asked_directly );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_neighbor_missing_entry );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_refresh_never_dumps_in_steady_state );
+REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_refresh_never_blocks );
+REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_refresh_eagain_fails_and_keeps_the_gateway );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_create_seeds_gateway_for_refresh );
 
 #endif // #if ROCKETNET_XDP

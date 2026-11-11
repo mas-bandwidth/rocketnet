@@ -259,7 +259,8 @@ jobs:
           - { os: macos, build_type: Release, leg: functional_production, dev: 'OFF', runner: '["self-hosted","macOS","ARM64","fleet"]' }
           # The Linux transport family matrix runs in a row of its own beside
           # each Linux functional row: its xdp cell's eleven cases in a guest
-          # take 43 to 46 s, which with the functional suite took Linux Debug
+          # took 43 to 46 s (twelve, with the gateway change case, 62 s on a
+          # loaded vision), which with the functional suite took Linux Debug
           # functional to the two-minute bound. The macOS matrix stays in its
           # functional row (about a second).
           - { os: linux, build_type: Debug, leg: transport_matrix, dev: 'ON', runner: '["self-hosted","Linux","X64","fleet"]' }
@@ -676,7 +677,7 @@ jobs:
             *) echo "TRANSPORT-MATRIX no matrix for $RUNNER_OS"; exit 1 ;;
           esac
           socket_cases="test_loopback_transport_udp test_loopback_transport_ipv6 test_transport_dual_stack_ipv4_client test_transport_env_pin_is_honoured"
-          xdp_cases="test_xdp_transport_max_size_both_ways_ipv4 test_xdp_transport_max_size_both_ways_ipv6 test_xdp_transport_keep_alive_before_first_payloads_ipv4 test_xdp_transport_keep_alive_before_first_payloads_ipv6 test_posix_hard_killed_client_xdp_ipv4_client_portable test_posix_hard_killed_client_xdp_ipv6_client_portable test_posix_send_to_closed_port_xdp_ipv4_client_portable test_posix_send_to_closed_port_xdp_ipv6_client_portable test_posix_client_server_gone_xdp_ipv4_client_portable test_posix_client_server_gone_xdp_ipv6_client_portable test_session_reconnect_isolation_xdp"
+          xdp_cases="test_xdp_transport_max_size_both_ways_ipv4 test_xdp_transport_max_size_both_ways_ipv6 test_xdp_transport_keep_alive_before_first_payloads_ipv4 test_xdp_transport_keep_alive_before_first_payloads_ipv6 test_xdp_transport_gateway_change_while_serving test_posix_hard_killed_client_xdp_ipv4_client_portable test_posix_hard_killed_client_xdp_ipv6_client_portable test_posix_send_to_closed_port_xdp_ipv4_client_portable test_posix_send_to_closed_port_xdp_ipv6_client_portable test_posix_client_server_gone_xdp_ipv4_client_portable test_posix_client_server_gone_xdp_ipv6_client_portable test_session_reconnect_isolation_xdp"
           # every rocketnet_test_xdp_veth_runs_here row must be named in xdp_cases
           if [ -f scripts/transport-cells-repeat ]; then
             scripts/transport-cells-repeat --list --os linux > /dev/null || exit 1

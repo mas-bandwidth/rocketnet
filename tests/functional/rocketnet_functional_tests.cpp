@@ -9879,6 +9879,77 @@ static void rocketnet_xdp_keep_alive_before_first_payloads( bool ipv6, const cha
     rocketnet_xdp_veth_teardown();
 }
 
+// The gateway refresh runs inside the server's receive call on non-blocking
+// netlink sockets, so it takes the kernel's answers only if they are queued
+// when it reads them. Against a real kernel: the server starts with no
+// default route on its interface; a default route through the far end
+// appears, with a permanent neighbour entry, and then that entry's MAC
+// changes. The server takes each gateway within three refresh periods
+// (ROCKETNET_XDP_GATEWAY_REFRESH_SECONDS, five seconds), which its log says.
+// The case passes on a blocking refresh too: it shows the refresh still
+// follows the gateway, not that it never blocks (the unit case
+// test_xdp_transport_gateway_netlink_refresh_never_blocks shows that). The
+// longest server update across both changes is printed, not checked. The
+// route takes a metric of its own, so it adds to a default route the host
+// may have rather than replacing it, and both go with the pair.
+
+static void rocketnet_xdp_gateway_change_while_serving( const char * case_name )
+{
+    char server_address[128];
+    struct rocketnet_server_transport_t * server = rocketnet_xdp_veth_start( false, case_name, server_address, sizeof( server_address ) );
+
+    static const char * const changes[2][2] = {
+        { "ip route add default via 10.77.2.2 dev " ROCKETNET_XDP_VETH_NEAR " metric 4242 && ip neigh replace 10.77.2.2 lladdr 02:00:00:00:77:a1 dev " ROCKETNET_XDP_VETH_NEAR " nud permanent",
+          "ipv4 gateway ethernet address is now 02.00.00.00.77.a1" },
+        { "ip neigh replace 10.77.2.2 lladdr 02:00:00:00:77:a2 dev " ROCKETNET_XDP_VETH_NEAR " nud permanent",
+          "ipv4 gateway ethernet address changed from 02.00.00.00.77.a1 to 02.00.00.00.77.a2" },
+    };
+
+    rocketnet_test_captured_log[0] = '\0';
+    const enum rocketnet_log_level_t saved_level = rocketnet_log_level_current();
+    rocketnet_log_function( rocketnet_test_capture_log, NULL );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
+
+    double longest = 0.0;
+    int updates = 0;
+    bool taken[2] = { false, false };
+    for ( int change = 0; change < 2; change++ )
+    {
+        rocketnet_xdp_veth_run( changes[change][0] );
+
+        const double start = rocketnet_platform_time();
+        while ( !taken[change] && rocketnet_platform_time() - start < 15.0 )
+        {
+            const double before = rocketnet_platform_time();
+            rocketnet_server_transport_update( server, before );
+            const double took = rocketnet_platform_time() - before;
+            longest = took > longest ? took : longest;
+            updates++;
+            taken[change] = strstr( rocketnet_test_captured_log, changes[change][1] ) != NULL;
+            rocketnet_platform_sleep( 0.001 );
+        }
+    }
+
+    rocketnet_log_level( saved_level );
+    rocketnet_log_function( rocketnet_test_suite_log_function, NULL );
+
+    printf( "%s: longest server update %.6f seconds over %d updates\n", case_name, longest, updates );
+    if ( !taken[0] || !taken[1] )
+    {
+        printf( "%s: FAILED: the server took the new default route's gateway %s, the changed neighbour MAC %s\n", case_name, taken[0] ? "yes" : "no", taken[1] ? "yes" : "no" );
+    }
+
+    rocketnet_check( taken[0] );
+    rocketnet_check( taken[1] );
+
+    rocketnet_xdp_veth_teardown();
+}
+
+void rocketnet_test_xdp_gateway_change_while_serving()
+{
+    rocketnet_xdp_gateway_change_while_serving( "test_xdp_transport_gateway_change_while_serving" );
+}
+
 void rocketnet_test_xdp_keep_alive_before_first_payloads_ipv4()
 {
     rocketnet_xdp_keep_alive_before_first_payloads( false, "test_xdp_transport_keep_alive_before_first_payloads_ipv4" );
@@ -12918,6 +12989,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_xdp_transport_max_size_both_ways_ipv6", rocketnet_test_xdp_max_size_both_ways_ipv6, rocketnet_test_xdp_veth_runs_here },
     { "test_xdp_transport_keep_alive_before_first_payloads_ipv4", rocketnet_test_xdp_keep_alive_before_first_payloads_ipv4, rocketnet_test_xdp_veth_runs_here },
     { "test_xdp_transport_keep_alive_before_first_payloads_ipv6", rocketnet_test_xdp_keep_alive_before_first_payloads_ipv6, rocketnet_test_xdp_veth_runs_here },
+    { "test_xdp_transport_gateway_change_while_serving", rocketnet_test_xdp_gateway_change_while_serving, rocketnet_test_xdp_veth_runs_here },
 #if ROCKETNET_DEV
     { "test_posix_hard_killed_client_xdp_ipv4_client_portable", rocketnet_test_posix_hard_killed_client_xdp_ipv4_client_portable, rocketnet_test_xdp_veth_runs_here },
     { "test_posix_hard_killed_client_xdp_ipv6_client_portable", rocketnet_test_posix_hard_killed_client_xdp_ipv6_client_portable, rocketnet_test_xdp_veth_runs_here },
