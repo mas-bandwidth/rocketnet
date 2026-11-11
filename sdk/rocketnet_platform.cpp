@@ -2747,6 +2747,11 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
         struct rocketnet_msghdr_x_t msg[ROCKETNET_MSGX_BATCH];
         memset( msg, 0, sizeof( msg ) );
 
+        // a message the kernel returns without a name parses as family zero,
+        // a refused source, never as bytes an earlier chunk left here
+
+        memset( addresses, 0, sizeof( addresses ) );
+
         for ( int i = 0; i < want; i++ )
         {
             iov[i][0].iov_base = packet_data + (size_t) ( chunk_base + i ) * (size_t) packet_stride;
