@@ -821,6 +821,7 @@ MCRNResendTimingBrokenSampleAcrossSilence.cfg	MCRNResendTiming.tla	invariant	NoS
 MCRNResendTimingFilterSparse.cfg	MCRNResendTiming.tla	pass	-	check	rnresendtiming	required	-
 MCRNResendTimingBrokenSilenceOnGap.cfg	MCRNResendTiming.tla	invariant	RefuseOnlyAfterOwedSilence	check	rnresendtiming	required	-
 MCRNResendTimingPacedOff.cfg	MCRNResendTiming.tla	pass	-	check	rnresendtiming	required	-
+MCRNResendTimingBrokenDueIgnoresHold.cfg	MCRNResendTiming.tla	invariant	DueMeansWritten	check	rnresendtiming	required	-
 MCRNClientSendCursorLayout.cfg	MCRNClientSendCursorLayout.tla	pass	-	check	rnclientsendcursorlayout	required	-
 MCRNClientSendCursorLayoutBrokenPlus.cfg	MCRNClientSendCursorLayout.tla	invariant	AtMostOnce	check	rnclientsendcursorlayout	required	-
 MCRNWindowLayoutBrokenWordShift.cfg	MCRNWindowLayout.tla	invariant	BitsAreReceived	check	rnwindowlayout	required	-

@@ -401,3 +401,39 @@ The unit tests `test_rtt_filter_follows_a_sparse_sender` and
 `test_rtt_filter_idle_connection_is_not_a_silence`
 (`test_unit_resend_timing.cpp`) replay it against the code, and
 `test_rtt_filter_skips_the_samples_an_outage_delays` keeps the outage case.
+
+## Revision 1.2: the due test agrees with the walk
+
+Standard rules: MESSAGES.md m9.3 (while probing only `U` is resent) and m1.8
+item 2 (no connection changes another connection's send budget). The code
+asks the endpoint whether a frame is due (`rn_endpoint_fifo_due`) before it
+starts one; a frame started and then left empty is aborted, and on every
+server transport an aborted frame keeps its slot of the update's shared send
+capacity. So the due test must report work exactly when the walk writes some.
+
+`ReportedDue` is the due test: for each class, the head of its FIFO
+(never-sent first, then oldest last send), and when that head is on the wire
+and held by probe pacing, `U` in its place (`rn_window_ack_held`,
+`rn_window_ack_probe_slot`). `DueMeansWritten` states that, in a walk with no
+room left by earlier calls (`Room = 0`), the due test is true exactly when the
+walk sends a record. `DueRule` switches the held head's replacement; `DueRuleOff`
+is the code before the fix, which read the head's own time.
+
+| Case | Property | Exit | Distinct |
+|---|---|---:|---:|
+| `MCRNResendTiming.cfg`, `MCRNResendTimingOff.cfg`, `MCRNResendTimingOffLive.cfg`, `MCRNResendTimingFilter.cfg` | `DueMeansWritten` added | 0 | unchanged |
+| `MCRNResendTimingBrokenDueIgnoresHold.cfg` (`MCRNResendTimingOff.cfg` with `DueRule <- DueRuleOff`) | `DueMeansWritten` | 12 | 498 |
+
+The witness trace, read by hand against `sdk/rocketnet_endpoint.cpp` and
+`sdk/rocketnet_channel.cpp`: `s`, `c` and `s2` are sent at 0 and nothing is
+acked; a sample at tick 2 sets `rto` to 2 and only `U = s` is resent at tick 2;
+at tick 3 the stall has lasted past one second, `s2` and `c` are held and past
+their delay, and `U` is not due. The old due test reads the held head and
+reports work; the walk skips every held number and writes nothing. The unit
+tests `test_endpoint_probe_hold_requests_frame_only_for_u`
+(`test_unit_endpoint.cpp`) and
+`test_server_send_cap_dark_neighbours_take_only_their_probes`
+(`test_unit_server_send_cap_fair.cpp`) replay it against the code: the first
+counts frames asked for during the hold (one exactly when `U` is due, none
+aborted); the second shows three held clients taking only their probe slots of
+a shared send capacity of four.

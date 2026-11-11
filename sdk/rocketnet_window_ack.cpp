@@ -1124,6 +1124,25 @@ bool rn_window_ack_probing( const rn_window_ack_t * ack, double now )
     return now - from >= RN_PROBE_SECONDS;
 }
 
+// proofs/tla/RNResendTiming.tla Held: the hold Walk and the due test share
+bool rn_window_ack_held( const rn_window_ack_t * ack, uint64_t number, double now )
+{
+    return number != ack->send->U && rn_window_ack_probing( ack, now );
+}
+
+const rn_send_number_t * rn_window_ack_probe_slot( const rn_window_ack_t * ack, bool chunk )
+{
+    const rn_region_t * region = ack->region;
+    const uint32_t slot_index = (uint32_t) ( ack->send->U & ( region->window - 1 ) );
+    const rn_resend_link_t * entry = &region->resend_fifo[slot_index];
+    const rn_send_number_t * slot = &region->send_numbers[slot_index];
+    if ( !rn_resend_entry_linked( entry ) || rn_resend_entry_is_chunk( entry ) != chunk || slot->acked || slot->number != ack->send->U )
+    {
+        return NULL;
+    }
+    return slot;
+}
+
 // Checks the per-connection reliable timeout (standard/MESSAGES.md m9.3).
 // proofs/tla/RNReceipts.tla Disconnect: ends the connection when the oldest unacked number reaches the reliable timeout
 int rn_window_ack_check_timeout( rn_window_ack_t * ack, double now )
