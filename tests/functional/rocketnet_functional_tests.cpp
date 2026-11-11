@@ -8217,7 +8217,7 @@ void rocketnet_test_transport_reply_opens_a_later_update()
     // the request left and after the server answered; the answer then lands in
     // the same pass, reply_seen equals request_opened, and the strictly-later
     // check at the bottom goes red. The transport-side rule this pins is the
-    // client buffer swap (sdk/rocketnet_client_transport.cpp:466, 563).
+    // client buffer swap (sdk/rocketnet_client_transport.cpp:490, 563).
 
     const int rounds = 200;
 
@@ -9750,10 +9750,10 @@ static void rocketnet_xdp_max_size_both_ways( bool ipv6, const char * case_name 
     // ROCKETNET_COUNTER_SEND_RING_FULL and never reaches the wire: the xdp
     // transport has ROCKETNET_XDP_NUM_BUFFERS staging generations
     // (sdk/rocketnet_constants.h:49), each flush publishes one
-    // (sdk/rocketnet_server_socket_linux.cpp:2249), and while its send
+    // (sdk/rocketnet_server_socket_linux.cpp:2379), and while its send
     // thread has retired neither, a start is refused
-    // (sdk/rocketnet_server_socket_linux.cpp:2118) and counted
-    // (sdk/rocketnet_server_transport.cpp:2153). This loop flushes every
+    // (sdk/rocketnet_server_socket_linux.cpp:2246) and counted
+    // (sdk/rocketnet_server_transport.cpp:2369). This loop flushes every
     // iteration, so a send thread that falls two flushes behind refuses the
     // next send. A send counts as taken when the counter did not move, and
     // a refused send is sent again, so a send dropped without a count fails

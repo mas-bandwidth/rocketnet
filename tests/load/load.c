@@ -38,7 +38,7 @@
       gso        ROCKETNET_SERVER_TRANSPORT=gso
       gso plain  ROCKETNET_SERVER_TRANSPORT=gso ROCKETNET_TEST_GSO_PLAIN=1: the
                  development library load links skips the UDP_SEGMENT and
-                 UDP_GRO probes (sdk/rocketnet_server_gso_linux.cpp:627-629)
+                 UDP_GRO probes (sdk/rocketnet_server_gso_linux.cpp:657-659)
       io_uring   ROCKETNET_SERVER_TRANSPORT=io_uring, where
                  /proc/sys/kernel/io_uring_disabled reads 0
       xdp        ROCKETNET_SERVER_TRANSPORT=xdp ROCKETNET_SERVER_NUM_XDP_QUEUES=1

@@ -4,7 +4,7 @@
 */
 
 // A client start_packet can refuse after spending its sequence
-// (sdk/rocketnet_client_transport.cpp:1532, :1549, :1570 and :1587). The
+// (sdk/rocketnet_client_transport.cpp:1532, :1549, :1722 and :1739). The
 // server assigns a sequence only when finish accepts the payload and reserves
 // every wire frame, so a server lease or ring refusal, an abort, or a
 // refused finish leaves no sequence gap.
@@ -762,7 +762,7 @@ REGISTER_UNIT_TEST( test_sequence_burn_server_refused_finish_does_not_count_as_l
 // transport refuses for real (SEND_RING_FULL). Client starts spend their
 // sequence before this refusal; server starts spend none until finish.
 // The layer's write pass then treats the frame as not started
-// (rn_endpoint_packet_failed, sdk/rocketnet_endpoint.cpp:1100) and writes the
+// (rn_endpoint_packet_failed, sdk/rocketnet_endpoint.cpp:1206) and writes the
 // rest next update. The control run is the same traffic with no seam. Measured
 // on the burning side: reliable records resent on the resend delay (MESSAGE_RESENT),
 // the ordered window's srtt, rttvar and resend_delay; on the receiving side: every reliable

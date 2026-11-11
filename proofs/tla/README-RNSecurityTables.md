@@ -44,9 +44,9 @@ replaying `tf` is the on-path attacker of STANDARD.md's replay paragraph.
   `ChurnNeverDenied`.
 - **The cookie gate and rotation.** A mapping is created only under a
   cookie of a live generation: the current key, or the previous one
-  while `clock < prevUntil` (`sdk/rocketnet_server_protocol.cpp:377`,
+  while `clock < prevUntil` (`sdk/rocketnet_server_protocol.cpp:411`,
   `server->has_previous_cookie_key && current_time < server->previous_cookie_key_expire_time`).
-  The key is initialised at create (`sdk/rocketnet_server_transport.cpp:832-838`)
+  The key is initialised at create (`sdk/rocketnet_server_transport.cpp:886-892`)
   and rotated on its period by `rocketnet_server_protocol_rotate_cookie_key_if_due`,
   called before the request cookie gate and from `rocketnet_server_protocol_update`.
   The receive path rotates before both verification and issuance because the

@@ -725,8 +725,8 @@ REGISTER_UNIT_TEST( test_transport_results_server_staged_receive_checks_the_view
 // proofs/tla/ServerSession.tla: NoReceiveUnlessRunning and NoAdmitUnlessRunning.
 // A stopping or stopped server reads no packet and admits no client.
 // rocketnet_server_update returns while !server->running
-// (sdk/rocketnet_api.cpp:1797). rocketnet_server_transport_update returns
-// while the transport is not RUNNING (sdk/rocketnet_server_transport.cpp:2388).
+// (sdk/rocketnet_api.cpp:2013). rocketnet_server_transport_update returns
+// while the transport is not RUNNING (sdk/rocketnet_server_transport.cpp:2636).
 
 static bool transport_results_stopping_stopped( void * transport )
 {

@@ -583,7 +583,7 @@ static void windows_server_counts_runt_as_prefilter_too_short_rio_case()
 }
 
 // the prefilter counters a client's refusal of a datagram from the server it
-// dialed lands on (sdk/rocketnet_protocol.cpp:174-193): short, large, then
+// dialed lands on (sdk/rocketnet_protocol.cpp:186-211): short, large, then
 // the epoch byte, then the filter value. Seeded garbage never carries the
 // session's filter value.
 struct windows_socket_errors_prefilter_t
@@ -628,7 +628,7 @@ static void windows_socket_errors_prefilter_read( struct rocketnet_client_transp
 // First from the server's own socket (reached through the portable server
 // transport's instance, rocketnet_portable_server_test_socket),
 // the one source the client listens to: every datagram reaches the client's
-// prefilter (sdk/rocketnet_client_protocol.cpp:1248-1253) and lands on the
+// prefilter (sdk/rocketnet_client_protocol.cpp:1300-1305) and lands on the
 // counter its size and bytes name. rocketnet_platform_socket_send_packet
 // sends no zero-length datagram (it asserts packet_bytes > 0), so the empty
 // one goes in the second leg only. Then from the raw test socket, a source

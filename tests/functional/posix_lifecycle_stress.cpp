@@ -12,7 +12,7 @@
     /proc/self/task and the heap in use, counted in whole xdp umems. An xdp
     umem is a posix_memalign block of ROCKETNET_XDP_UMEM_FRAMES *
     ROCKETNET_XDP_FRAME_SIZE bytes per queue, freed with free() at destroy
-    (sdk/rocketnet_server_socket_linux.cpp:1733-1735 and :2005), with no mlock,
+    (sdk/rocketnet_server_socket_linux.cpp:1835-1837 and :2131), with no mlock,
     so it moves neither VmLck nor VmPin; the kernel charges its pin to the
     user's RLIMIT_MEMLOCK account. The Linux cells keep the heap with mmap
     off and trimming off (posix_heap_keep below), so the umem is served from
@@ -41,7 +41,7 @@
     connect/disconnect case is registered once per exact server/client pair.
 
     A connect waits on the client's send rate: the client sends at most once
-    per 1/send_rate, 10 per second (sdk/rocketnet_client_protocol.cpp:88 and
+    per 1/send_rate, 10 per second (sdk/rocketnet_client_protocol.cpp:94 and
     :296), and a handshake is three sends, so on the platform clock alone one
     connect takes 0.2 s. The client here runs on its own clock, the platform
     clock plus the send intervals the wait has skipped (its time_callback and
@@ -57,7 +57,7 @@
     them. A client whose socket shares a port with one of them never hears
     its server, since the IPv4 datagrams to that port reach the held socket.
     Darwin gives a dual stack IPv6 socket such a port, so the macOS client of
-    an IPv4 server binds an IPv4 socket (sdk/rocketnet_client_transport.cpp:796).
+    an IPv4 server binds an IPv4 socket (sdk/rocketnet_client_transport.cpp:854).
 */
 
 #include "../native_shutdown.h"
@@ -1298,7 +1298,7 @@ void rocketnet_test_posix_connect_disconnect_1000()
         const posix_resource_counts_t before = posix_stable_counts();
 
         // the server remembers max_clients * ROCKETNET_USED_TOKEN_HISTORY_RATIO
-        // (8) used tokens (sdk/rocketnet_server_transport.cpp:1865), and a
+        // (8) used tokens (sdk/rocketnet_server_transport.cpp:2057), and a
         // connect whose history is full waits for an entry to expire:
         // an 8-slot server held 64, so about every 65th connect stalled for
         // seconds. 128 slots hold 1024, more than the cycles, so no connect
@@ -1493,8 +1493,8 @@ void rocketnet_test_posix_destroy_under_traffic_100()
 // The server transport and the gso transport are single allocations of 56 MB
 // and 116 MB (strace of one create: two anonymous mmaps of those sizes),
 // past glibc's largest mmap threshold, so every create maps them fresh and
-// the value-initialising placement new (sdk/rocketnet_server_transport.cpp:1163,
-// sdk/rocketnet_server_gso_linux.cpp:644) faults every page in: ~42k minor
+// the value-initialising placement new (sdk/rocketnet_server_transport.cpp:1251,
+// sdk/rocketnet_server_gso_linux.cpp:674) faults every page in: ~42k minor
 // faults and ~0.12 s of system time a gso create on a 64-core Linux member.
 // A per-cell case serves those allocations from the main heap and keeps the
 // heap untrimmed, so a create after the first reuses resident pages. The

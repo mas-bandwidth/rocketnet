@@ -1222,7 +1222,7 @@ static void test_message_config_reserve_past_32_bits_refused_by_validate_and_cre
 
 // The store's large class only has to hold one chunk: a message larger than a
 // large chunk takes a span of the send spans, never the store
-// (sdk/rocketnet_allocator.h:313-315, sdk/rocketnet_allocator.cpp:1045-1048).
+// (sdk/rocketnet_allocator.h:313-315, sdk/rocketnet_allocator.cpp:1121-1124).
 // An obsolete pre-span floor demanded one large chunk per fragment of
 // max_message_bytes, so it refused the default settings with a 1 MiB send
 // store even though the span path carries the maximal message.
