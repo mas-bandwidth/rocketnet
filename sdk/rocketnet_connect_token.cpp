@@ -381,7 +381,7 @@ int rocketnet_verify_signed_connect_data( const uint8_t * signed_connect_data,
 // The private block seam, compiled into the unit suite's hook library only
 // (ROCKETNET_DEV): rocketnet_open_connect_token_private
 // hands its private block staging to the hook as it enters (at_exit 0, so a
-// unit case can plant a canary in it) and on each of its two exits (at_exit
+// unit case can plant a canary in it) and on each of its three exits (at_exit
 // 1, so the case reads what the staging still holds)
 // (test_unit_secrets_wiped.cpp).
 #if ROCKETNET_DEV
