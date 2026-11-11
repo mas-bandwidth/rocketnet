@@ -55,8 +55,6 @@ XDP_CASES = (
     "test_xdp_transport_max_size_both_ways_ipv6",
 )
 
-ROW = re.compile(r'^ROCKETNET_TRANSPORT\(\s*(\w+)\s*,\s*"([^"]+)"\s*,\s*\w+\s*,\s*\w+\s*,\s*(\w+)\s*,\s*(\w+)\s*,\s*(\w+)\s*\)', re.M)
-
 ROW_FULL = re.compile(r'^ROCKETNET_TRANSPORT\(\s*(\w+)\s*,\s*"([^"]+)"\s*,\s*\w+\s*,\s*\w+\s*,\s*(\w+)\s*,\s*(\([^)]*\)|\w+)\s*,\s*(\w+)\s*\)', re.M)
 
 OS_LABELS = {"LINUX": "Linux", "MACOS": "macOS", "WINDOWS": "Windows"}
@@ -169,8 +167,10 @@ def read(path):
 
 
 def transport_rows(text):
+    # ROW_FULL: a server rank may be a parenthesised expression (portable's
+    # development and production ranks), which serves
     rows = []
-    for symbol, name, platforms, server, client in ROW.findall(text):
+    for symbol, name, platforms, server, client in ROW_FULL.findall(text):
         rows.append((name, platforms, server != "0", client != "0"))
     return rows
 
@@ -270,6 +270,9 @@ def main():
 
     if not rows:
         problems.append("no ROCKETNET_TRANSPORT rows read from sdk/rocketnet_drivers.inc")
+    registry_rows = len(re.findall(r"^ROCKETNET_TRANSPORT\(", read("sdk/rocketnet_drivers.inc"), re.M))
+    if registry_rows != len(rows):
+        problems.append(f"{registry_rows} ROCKETNET_TRANSPORT rows in sdk/rocketnet_drivers.inc, {len(rows)} parsed: a row shape this check cannot read")
 
     driven = set()
     for os_name in sorted(blocks):
