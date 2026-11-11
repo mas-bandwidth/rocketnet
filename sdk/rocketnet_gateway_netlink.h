@@ -33,7 +33,8 @@
 // The parse functions are pure: one received datagram of a dump in, an
 // outcome out, no socket and no allocation (test_unit_xdp_gateway_netlink.cpp
 // feeds them canned replies). The dump functions are the thin socket wrapper
-// around them: a fixed-size receive buffer, SO_RCVTIMEO, a bounded number of
+// around them: a fixed-size receive buffer, SO_RCVTIMEO (the refresh's
+// sockets are non-blocking instead), a bounded number of
 // reads, and the reply's sequence number, port id and sender checked. A dump
 // the kernel marks interrupted (NLM_F_DUMP_INTR: the table changed while it
 // was dumped) is asked again on a fresh socket, up to
@@ -96,6 +97,10 @@ int rocketnet_gateway_netlink_discover( int family, int interface_index, uint8_t
 // its DONE (no default route) is DONE with *gateway_known false, any other
 // failure is its outcome and keeps gateway; a route found writes gateway,
 // sets *gateway_known, and the neighbour query's outcome is the answer.
+// The refresh runs inside the update, so its sockets are non-blocking and
+// it never makes a blocking netlink receive: a reply not yet queued when it
+// is read fails that query SYSTEM with EAGAIN, where a blocking read would
+// have waited up to its timeout, and the refresh goes on as for any failure.
 
 int rocketnet_gateway_netlink_refresh( int family, int interface_index, uint8_t * gateway, bool * gateway_known, uint8_t * mac, int * error );
 
@@ -112,6 +117,7 @@ struct rocketnet_gateway_netlink_system_t
     ssize_t ( *sendto )( int fd, const void * data, size_t bytes, int flags, const struct sockaddr * address, socklen_t address_bytes );
     ssize_t ( *recvmsg )( int fd, struct msghdr * message, int flags );
     int ( *close )( int fd );
+    int socket_flags;   // added to each socket's type: SOCK_NONBLOCK for the refresh
 };
 
 int rocketnet_gateway_netlink_route_with( const struct rocketnet_gateway_netlink_system_t * system, int family, int interface_index,

@@ -403,7 +403,7 @@ static int rocketnet_gateway_netlink_dump_once( const rocketnet_gateway_netlink_
 {
     *error = 0;
 
-    const int fd = system->socket( AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, NETLINK_ROUTE );
+    const int fd = system->socket( AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC | system->socket_flags, NETLINK_ROUTE );
     if ( fd < 0 )
     {
         *error = errno;
@@ -582,7 +582,7 @@ static int rocketnet_gateway_netlink_libc_close( int fd )
 }
 
 static const rocketnet_gateway_netlink_system_t rocketnet_gateway_netlink_libc = {
-    socket, setsockopt, bind, getsockname, sendto, recvmsg, rocketnet_gateway_netlink_libc_close
+    socket, setsockopt, bind, getsockname, sendto, recvmsg, rocketnet_gateway_netlink_libc_close, 0
 };
 
 static int rocketnet_gateway_netlink_route_parse( const uint8_t * data, size_t bytes, uint32_t sequence, uint32_t port_id, void * context, int * error )
@@ -666,6 +666,13 @@ int rocketnet_gateway_netlink_refresh_with( const rocketnet_gateway_netlink_syst
                                             uint8_t * gateway, bool * gateway_known, uint8_t * mac, int * error )
 {
     rocketnet_assert( gateway_known );
+
+    // the refresh runs inside the update: its sockets are non-blocking, so a
+    // read finds the reply queued or fails EAGAIN, and never waits for it
+
+    rocketnet_gateway_netlink_system_t nonblocking = *system;
+    nonblocking.socket_flags |= SOCK_NONBLOCK;
+    system = &nonblocking;
 
     if ( *gateway_known && rocketnet_gateway_netlink_neighbor_with( system, family, interface_index, gateway, mac, error ) == ROCKETNET_GATEWAY_NETLINK_FOUND )
         return ROCKETNET_GATEWAY_NETLINK_FOUND;
