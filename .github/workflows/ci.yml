@@ -1471,6 +1471,14 @@ jobs:
           ROCKETNET_CLIENT_TRANSPORT: portable
         run: ./bin/Release/functional_production.exe --run test_transport_env_pin_is_honoured
 
+      # test_iocp.cpp's DEV=0 main on the production library: ordinary IOCP
+      # and RIO constructors, real loopback datagrams, bounded shutdown
+      # (CMakeLists.txt, test_windows_transports_production)
+      - name: "Functional: production Windows transports"
+        if: matrix.leg == 'b'
+        shell: bash
+        run: ./bin/Release/test_windows_transports_production.exe
+
       # THE TRANSPORT FAMILY MATRIX: every transport this OS builds, pinned by
       # env, on IPv4, on IPv6 and with an IPv4 client of an IPv6 wildcard
       # server, so a family regression on any one transport fails here.
