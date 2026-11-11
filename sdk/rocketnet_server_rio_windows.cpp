@@ -1637,10 +1637,16 @@ static void rocketnet_rio_complete_receive( rocketnet_server_rio_t * rio, const 
         {
             rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_RECEIVE_FAILED );
         }
+        else if ( bank->num_packets >= bank->capacity )
+        {
+            // the dequeue takes at most the bank's room, so this cannot
+            // happen; if it ever does, the datagram is counted and dropped,
+            // never written past the bank
+            rocketnet_assert( bank->num_packets < bank->capacity );
+            rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_OVERFLOW );
+        }
         else
         {
-            rocketnet_assert( bank->num_packets < bank->capacity );     // the dequeue takes at most the bank's room
-
             const int index = bank->num_packets++;
             bank->from[index] = from;
             bank->packet_bytes[index] = bytes;
