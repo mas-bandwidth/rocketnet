@@ -126,7 +126,6 @@ struct rocketnet_server_gso_queue_t
 {
     uint8_t padding_0[4096];
 
-    int queue_index;
     int fd;
     bool ipv6;
     struct rocketnet_server_gso_t * gso;
@@ -178,7 +177,6 @@ struct rocketnet_server_gso_t
     bool stopping = false;
     std::atomic<int> features{ 0 };
     bool ipv6;
-    rocketnet_address_t bind_address;
 
     struct rocketnet_server_gso_queue_t * queues;
 
@@ -234,7 +232,6 @@ struct rocketnet_server_gso_t
     uint64_t counter_receive_dropped_source;
     uint64_t counter_receive_errors;
     uint64_t counter_gro_batches;
-    uint64_t counter_gro_cmsg_faults;           // folded from the receive buffers; not a public counter
 
     struct rocketnet_server_socket_process_packets_t process_packets;
     int max_clients;                    // the server's configured client count: sizes the view and the socket receive buffers
@@ -1136,7 +1133,6 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
     {
         struct rocketnet_server_gso_queue_t * queue = &gso->queues[i];
 
-        queue->queue_index = i;
         queue->ipv6 = gso->ipv6;
         queue->gso = gso;
 
@@ -1149,7 +1145,6 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
     }
 
     bind_address->port = bound_port;
-    gso->bind_address = *bind_address;
     gso->features |= ROCKETNET_SERVER_GSO_FEATURE_REUSEPORT;
 
     // the runtime probes, each a real setsockopt against a real socket in
@@ -1641,12 +1636,6 @@ static int rocketnet_server_gso_flush( struct rocketnet_server_gso_t * gso, rock
 
         while ( batch_end < num_slots && num_messages < ROCKETNET_GSO_SEND_BATCH )
         {
-            // close the batch while a full run still fits the iovec array:
-            // the run builder below may take up to MAX_SEGMENTS entries
-
-            if ( num_iovecs + ROCKETNET_GSO_MAX_SEGMENTS > ROCKETNET_GSO_SEND_BATCH * ROCKETNET_GSO_MAX_SEGMENTS )
-                break;
-
             struct rocketnet_server_gso_send_info_t * info = &bank->info[batch_end];
 
             if ( info->packet_bytes <= 0 )
@@ -1669,9 +1658,7 @@ static int rocketnet_server_gso_flush( struct rocketnet_server_gso_t * gso, rock
                 // packet, a different destination, or an aborted slot ends
                 // the run.
 
-                while ( batch_end < num_slots &&
-                        run_count < ROCKETNET_GSO_MAX_SEGMENTS &&
-                        num_iovecs + run_count < ROCKETNET_GSO_SEND_BATCH * ROCKETNET_GSO_MAX_SEGMENTS )
+                while ( batch_end < num_slots && run_count < ROCKETNET_GSO_MAX_SEGMENTS )
                 {
                     struct rocketnet_server_gso_send_info_t * next = &bank->info[batch_end];
 
@@ -1911,7 +1898,6 @@ static void rocketnet_server_gso_receive_from_queue( rocketnet_server_gso_t * gs
         gso->counter_receive_dropped_source += buffer->dropped_source;
         gso->counter_receive_errors += buffer->receive_errors;
         gso->counter_gro_batches += buffer->gro_batches;
-        gso->counter_gro_cmsg_faults += buffer->gro_cmsg_faults;
         buffer->receive_errors = 0;
         buffer->dropped_size = 0;
         buffer->dropped_too_large = 0;
@@ -2033,7 +2019,6 @@ static struct rocketnet_server_gso_t * rocketnet_server_gso_test_create()
 
     struct rocketnet_server_gso_queue_t * queue = &gso->queues[0];
     new ( queue ) rocketnet_server_gso_queue_t();
-    queue->queue_index = 0;
     queue->fd = -1;
     queue->gso = gso;
     queue->worker_buffer = &queue->buffers[0];
@@ -2118,7 +2103,6 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_test_open( int num_queues )
     {
         struct rocketnet_server_gso_queue_t * queue = &gso->queues[i];
         new ( queue ) rocketnet_server_gso_queue_t();
-        queue->queue_index = i;
         queue->fd = -1;
         queue->gso = gso;
         queue->worker_buffer = &queue->buffers[0];

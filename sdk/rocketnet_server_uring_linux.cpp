@@ -195,7 +195,6 @@ struct rocketnet_server_uring_t
 #if ROCKETNET_DEV
     bool test_stall_destroy;                    // test completion remains pending until explicitly released
 #endif // #if ROCKETNET_DEV
-    rocketnet_address_t bind_address;
 
     struct io_uring ring;
     uint64_t ring_mapped_bytes;                 // the submission, completion and entry rings mapped at create, in the direct allocation count
@@ -1571,7 +1570,6 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create_flags( void * co
     }
 
     bind_address->port = bound_port;
-    uring->bind_address = *bind_address;
 
     // the UDP_SEGMENT probe, the gso transport's: sends rotate across the
     // whole group, so every socket must accept it, all or nothing. the probe
