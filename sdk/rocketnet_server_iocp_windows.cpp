@@ -588,8 +588,6 @@ struct rocketnet_server_iocp_t
     std::atomic<uint64_t> counters[ROCKETNET_IOCP_NUM_COUNTERS]{};
     rocketnet_server_socket_process_packets_t process;
     std::atomic<int> features{ 0 };
-    // The socket's UDP_SEND_MSG_SIZE now. Only the TX worker writes it.
-    int uso_stride = 0;
     LPFN_WSARECVMSG receive_message = NULL;
     uint8_t * uro_buffers = NULL;
     // The flush's view of the staged frames, slot by slot, for run grouping:
@@ -2007,23 +2005,6 @@ void rocketnet_server_iocp_abort_packet( rocketnet_server_iocp_t * iocp, uint64_
     op->packet_bytes = 0;
 }
 
-// Sets the socket's UDP_SEND_MSG_SIZE when it differs. Only the TX worker calls it.
-static bool rocketnet_iocp_set_stride( rocketnet_server_iocp_t * iocp, int stride )
-{
-    if ( iocp->uso_stride == stride )
-    {
-        return true;
-    }
-    DWORD value = (DWORD) stride;
-    if ( setsockopt( iocp->socket, IPPROTO_UDP, UDP_SEND_MSG_SIZE, (const char *) &value, sizeof( value ) ) == SOCKET_ERROR )
-    {
-        return false;
-    }
-    iocp->uso_stride = stride;
-
-    return true;
-}
-
 // The per-datagram send: one frame, one WSASendTo.
 static void rocketnet_iocp_post_send( rocketnet_server_iocp_t * iocp, const rocketnet_iocp_ref_t & ref )
 {
@@ -2036,16 +2017,6 @@ static void rocketnet_iocp_post_send( rocketnet_server_iocp_t * iocp, const rock
     op->run_count = 1;
     op->run_bytes = op->packet_bytes;
     op->run_ticket = 0;
-
-    // A frame longer than the stride a USO run left on the socket would be
-    // broken into segments: clear the stride first.
-
-    if ( iocp->uso_stride != 0 && op->packet_bytes > iocp->uso_stride && !rocketnet_iocp_set_stride( iocp, 0 ) )
-    {
-        iocp->counters[ROCKETNET_IOCP_SEND_FAILED].fetch_add( 1, std::memory_order_relaxed );
-        rocketnet_iocp_release_send( iocp, ref, ROCKETNET_IOCP_OPERATION_STAGED );
-        return;
-    }
 
     memset( &op->overlapped, 0, sizeof( op->overlapped ) );
     op->buffer.buf = (char *) op->frame + ROCKETNET_FRAME_WIRE_OFFSET;
@@ -2077,15 +2048,16 @@ static void rocketnet_iocp_post_send( rocketnet_server_iocp_t * iocp, const rock
     }
 }
 
-// A USO run: one overlapped WSASendMsg with one WSABUF per frame, the socket's
-// UDP_SEND_MSG_SIZE set to the run's stride before the post. The Winsock
-// reference documents the segment size as a socket option only, not as a
-// per-send control message, so the stride is the option and a run is one
+// A USO run: one overlapped WSASendMsg with one WSABUF per frame and the
+// run's stride as its own IPPROTO_UDP / UDP_SEND_MSG_SIZE control message, so
+// a send still pending when the next run posts keeps the stride it was posted
+// with; the socket option stays the zero the create probe wrote. A run is one
 // stride (the shared run rule's shorter tail is the documented shorter last
 // segment). WSASendMsg captures the WSABUF array before it returns (WSASendMsg
-// reference), so the array lives on this stack; the WSAMSG lives in the run's
-// first frame. Returns false when the host refused USO live: the feature is
-// cleared, counted, and the caller sends the run frame by frame.
+// reference), so the array lives on this stack; the WSAMSG and its control
+// message live in the run's first frame. Returns false when the host refused
+// USO live: the feature is cleared, counted, and the caller sends the run
+// frame by frame.
 static bool rocketnet_iocp_post_send_run( rocketnet_server_iocp_t * iocp, const rocketnet_iocp_ref_t * staged, int run )
 {
     rocketnet_iocp_operation_t * first = rocketnet_iocp_send_from_ref( iocp, staged[0], ROCKETNET_IOCP_OPERATION_STAGED );
@@ -2126,44 +2098,46 @@ static bool rocketnet_iocp_post_send_run( rocketnet_server_iocp_t * iocp, const 
 
     int error = 0;
 
-    if ( rocketnet_iocp_set_stride( iocp, first->packet_bytes ) )
+    memset( &first->overlapped, 0, sizeof( first->overlapped ) );
+    memset( &first->message, 0, sizeof( first->message ) );
+    memset( first->control, 0, sizeof( first->control ) );
+    first->message.name = (LPSOCKADDR) &first->address;
+    first->message.namelen = first->address_bytes;
+    first->message.lpBuffers = buffers;
+    first->message.dwBufferCount = (ULONG) run;
+    first->message.Control.buf = first->control;
+    first->message.Control.len = WSA_CMSG_SPACE( sizeof( DWORD ) ); // 24 bytes of the 64
+    WSACMSGHDR * cmsg = WSA_CMSG_FIRSTHDR( &first->message );
+    cmsg->cmsg_len = WSA_CMSG_LEN( sizeof( DWORD ) );
+    cmsg->cmsg_level = IPPROTO_UDP;
+    cmsg->cmsg_type = UDP_SEND_MSG_SIZE;
+    const DWORD stride = (DWORD) first->packet_bytes;
+    memcpy( WSA_CMSG_DATA( cmsg ), &stride, sizeof( stride ) );
+    iocp->pending.fetch_add( 1, std::memory_order_relaxed );
+
+    int result = SOCKET_ERROR;
+
+    if ( !ROCKETNET_IOCP_TEST_FAULT( iocp, ROCKETNET_IOCP_TEST_FAULT_SEND_POST, &error ) )
     {
-        memset( &first->overlapped, 0, sizeof( first->overlapped ) );
-        memset( &first->message, 0, sizeof( first->message ) );
-        first->message.name = (LPSOCKADDR) &first->address;
-        first->message.namelen = first->address_bytes;
-        first->message.lpBuffers = buffers;
-        first->message.dwBufferCount = (ULONG) run;
-        iocp->pending.fetch_add( 1, std::memory_order_relaxed );
-
-        int result = SOCKET_ERROR;
-
-        if ( !ROCKETNET_IOCP_TEST_FAULT( iocp, ROCKETNET_IOCP_TEST_FAULT_SEND_POST, &error ) )
-        {
-            result = WSASendMsg( iocp->socket, &first->message, 0, NULL, &first->overlapped, NULL );
-            if ( result == 0 )
-            {
-                iocp->counters[ROCKETNET_IOCP_USO_SENDS].fetch_add( 1, std::memory_order_relaxed );
-                return true;
-            }
-
-            error = WSAGetLastError();
-        }
-
-        if ( error == WSA_IO_PENDING )
+        result = WSASendMsg( iocp->socket, &first->message, 0, NULL, &first->overlapped, NULL );
+        if ( result == 0 )
         {
             iocp->counters[ROCKETNET_IOCP_USO_SENDS].fetch_add( 1, std::memory_order_relaxed );
             return true;
         }
 
-        // An unsuccessful submission has no completion.
+        error = WSAGetLastError();
+    }
 
-        iocp->pending.fetch_sub( 1, std::memory_order_release );
-    }
-    else
+    if ( error == WSA_IO_PENDING )
     {
-        error = WSAEINVAL;                          // the host refused the stride itself
+        iocp->counters[ROCKETNET_IOCP_USO_SENDS].fetch_add( 1, std::memory_order_relaxed );
+        return true;
     }
+
+    // An unsuccessful submission has no completion.
+
+    iocp->pending.fetch_sub( 1, std::memory_order_release );
 
     if ( error == WSAEINVAL || error == WSAEOPNOTSUPP )
     {
@@ -2172,7 +2146,6 @@ static bool rocketnet_iocp_post_send_run( rocketnet_server_iocp_t * iocp, const 
         rocketnet_warn( "iocp transport: live USO send refused (Winsock %d). degrading to WSASendTo per datagram", error );
         iocp->features.fetch_and( ~ROCKETNET_IOCP_FEATURE_USO, std::memory_order_relaxed );
         iocp->counters[ROCKETNET_IOCP_USO_FALLBACKS].fetch_add( 1, std::memory_order_relaxed );
-        rocketnet_iocp_set_stride( iocp, 0 );
 
         rocketnet_iocp_ref_t refs[ROCKETNET_IOCP_USO_MAX_SEGMENTS];
         const bool released = rocketnet_iocp_take_run( iocp, run_ticket, run, refs );
