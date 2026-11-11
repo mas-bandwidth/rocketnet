@@ -113,7 +113,7 @@
 (* .cfg and MCRNResendTimingBrokenUnsentFirstHeld.cfg).  Acks and samples  *)
 (* come before the update's first call, as the code reads them.            *)
 (***************************************************************************)
-EXTENDS Integers, Sequences
+EXTENDS Integers
 
 CONSTANTS
     RtoInitial,     \* message_resend_delay_initial, in ticks
@@ -352,31 +352,29 @@ WalkRefused(F) ==
     /\ UNCHANGED <<t, rto, acked, sampled, seeded, pending, calls>>
 
 \* The paced walk (Room > 0), one rn_ordered_write call for one packet.
-\* Order is the walk's order of the due items: "s", "c", or "u", a pending
-\* chunk (the first of them; one call plans at most one chunk).  Under the
-\* rule rn_ordered_write walks each class's numbers on the wire from the
-\* class's mark (ack->resend_sent, ack->chunk_sent), small then chunk, then
-\* each class's never-sent numbers from its head; UnsentFirst walks each
-\* class from its head, the never-sent numbers first.  The chunk is ahead of
-\* its block's pending chunks in number order.
+\* The items a call can plan are "s", "c" and "u", the first pending chunk.
+\* Under the rule rn_ordered_write walks the numbers on the wire of each
+\* class from its sent mark (ack->resend_sent, ack->chunk_sent), small then
+\* chunk, then the never-sent numbers of each class from its head: the
+\* order s on the wire, c on the wire, s never sent, c never sent, u.
+\* UnsentFirst walks each class from its head, never-sent numbers first:
+\* s never sent, s on the wire, c never sent, u, c on the wire.  The chunk
+\* is ahead of its block's pending chunks in number order.  The walk plans
+\* while the plan holds less than the call's one packet: a chunk fills it,
+\* the small record does not, so the plan is the order up to its first
+\* chunk item, and Planned is that prefix as a set.
 SentDue(r) == Due(r) /\ OnWire(r)
 UnsentDue(r) == Due(r) /\ ~OnWire(r)
 PendingDue == pending > 0 /\ ~TimedOut /\ Started("c")
-Opt(b, x) == IF b THEN << x >> ELSE << >>
 
-Order ==
+Planned ==
     IF UnsentFirst
-    THEN Opt(UnsentDue("s"), "s") \o Opt(SentDue("s"), "s") \o
-         Opt(UnsentDue("c"), "c") \o Opt(PendingDue, "u") \o Opt(SentDue("c"), "c")
-    ELSE Opt(SentDue("s"), "s") \o Opt(SentDue("c"), "c") \o
-         Opt(UnsentDue("s"), "s") \o Opt(UnsentDue("c"), "c") \o Opt(PendingDue, "u")
-
-\* The walk plans while the plan holds less than the call's one packet: a
-\* chunk fills it, the small record does not; it stops at the first chunk.
-Chunks == {k \in 1..Len(Order) : Order[k] \in {"c", "u"}}
-Plan == IF Chunks = {} THEN Order
-        ELSE SubSeq(Order, 1, CHOOSE k \in Chunks : \A j \in Chunks : k <= j)
-Planned == {Plan[k] : k \in 1..Len(Plan)}
+    THEN { x \in {"s"} : Due("s") } \cup
+         { x \in {"c"} : UnsentDue("c") \/ (SentDue("c") /\ ~PendingDue) } \cup
+         { x \in {"u"} : PendingDue /\ ~UnsentDue("c") }
+    ELSE { x \in {"s"} : SentDue("s") \/ (UnsentDue("s") /\ ~SentDue("c")) } \cup
+         { x \in {"c"} : Due("c") } \cup
+         { x \in {"u"} : PendingDue /\ ~Due("c") }
 
 \* The builder writes one packet of the plan, in the budget's class order:
 \* a retransmit (a record on the wire) before ordered progress; within a
@@ -413,7 +411,7 @@ EndWrites ==
     /\ phase = "walk"
     /\ Live
     /\ ~SeedOwed
-    /\ calls = Room \/ Plan = << >>
+    /\ calls = Room \/ Planned = {}
     /\ calls' = 0
     /\ refused' = [r \in Records |-> FALSE]
     /\ phase' = "tick"
