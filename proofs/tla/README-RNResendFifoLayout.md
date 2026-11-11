@@ -94,9 +94,10 @@ check is on.
 
 ## Reversed witnesses
 
-Each turns a rule off and must fail, the first three with `ListsMatch` and
-the last three with `MarkMatch`. Every counterexample was checked against
-the C by hand.
+Each turns a rule off and must fail: the first three with `ListsMatch`, the
+next three and the seventh with `MarkMatch`, the eighth with `Ordered` and
+the ninth with `Partitioned`. Every counterexample was checked against the C
+by hand.
 
 1. **`MCRNResendFifoLayoutBrokenNoSelfTailFix.cfg`** (`SelfTailFix = FALSE`):
    `rn_resend_fifo_push_tail` without `if ( tail == slot ) tail = rn_resend_index(
@@ -131,13 +132,11 @@ states, measured on hulk): the code clears the bit twice, once at the unlink
 clear masks the loss of the other. The witness removes both.
 4. **`MCRNResendFifoLayoutBrokenMarkOnUnlink.cfg`** (`MarkOnUnlink = FALSE`):
    `rn_resend_fifo_unlink` without `if ( *sent == slot ) *sent = next;`.
-   TLC: `PushTail(0)` sends slot 0, the class's mark becomes 0; `PushHead(0)`
-   (the packet carrying it failed) puts it back at the head, not on the wire,
-   and the mark stays 0. Against the C: `rn_window_ack_packet_failed` calls
-   `push_head`, whose insert unlinks slot 0 first; with the mark left on it,
-   the walk takes a number not on the wire as a retransmit, and after an ack
-   unlinks the mark's slot the walk starts at an unlinked entry whose zeroed
-   `next` reads as slot 0.
+   TLC: `PushTail(0)` sends slot 0, the class's mark becomes 0; `Unlink(0)`
+   (its ack) empties the class and the mark stays 0. Against the C:
+   `rn_window_ack_on_ack` unlinks slot 0 with the mark left on it, and the
+   next walk of the numbers on the wire starts at an unlinked entry whose
+   zeroed `next` reads as slot 0.
 5. **`MCRNResendFifoLayoutBrokenMarkOnPushTail.cfg`** (`MarkOnPushTail = FALSE`):
    `rn_resend_fifo_push_tail` without setting the mark of a class with none.
    TLC: `PushTail(0)` sends slot 0 into an empty class and the mark stays
@@ -151,3 +150,28 @@ clear masks the loss of the other. The witness removes both.
    C: a zeroed `rn_window_ack_t` reads both marks as slot 0, so the first commit into a
    class finds a mark already set and leaves it on slot 0, a slot in no
    sequence.
+7. **`MCRNResendFifoLayoutBrokenRefusedNoMark.cfg`** (`RefusedTakesMark = FALSE`):
+   `rn_resend_fifo_push_mark` without `*sent = slot`. TLC: `PushTail(0)`
+   sends slot 0, the mark becomes 0; `PushMark(0)` (its resend refused)
+   unlinks it, which moves the mark to its next, `NONE`, and links it back,
+   leaving the mark `NONE` with slot 0 on the wire. Against the C: the walk
+   from the mark sees no number on the wire, and the walk from the head
+   takes slot 0 as ordered progress, behind every due retransmit, and hands
+   it back as `last_unsent`, so new numbers are parked behind a number on
+   the wire (`test_resend_refused_only_number_on_the_wire`).
+8. **`MCRNResendFifoLayoutBrokenRefusedAtTail.cfg`** (`RefusedBeforeMark = FALSE`):
+   `rn_resend_fifo_push_mark` linking after the class's tail, as a send now.
+   TLC: `PushTail(0)`, `PushTail(1)` send two small records, mark 0;
+   `PushMark(0)` moves the mark to 1 and links 0 behind it, but 0's due-now
+   stamp is below 1's send time: `Ordered` fails. Against the C: the walk
+   from the mark stops at slot 1 while it is not yet due, and the refused
+   resend behind it, due at once, waits for slot 1's delay
+   (`test_resend_refused_mark_is_retried_first`).
+9. **`MCRNResendFifoLayoutBrokenParkAfterOnWire.cfg`** (`ParkContract = FALSE`):
+   `rn_window_ack_park` with `after` on the wire. TLC: `PushTail(0)` sends
+   slot 0; `Park(0, 1)` links a new number behind it: `Partitioned` fails.
+   Against the C: the walk from the mark meets a never-sent number among the
+   numbers on the wire, plans it as a retransmit, and its first send leaves
+   number order. The walk supplies `after` from the part not on the wire
+   only (`rn_ordered_walk`'s `*last_unsent`), which this witness and the
+   random legs' order check in `test_unit_channel_ordered.cpp` hold to.
