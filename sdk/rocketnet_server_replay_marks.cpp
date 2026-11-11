@@ -37,7 +37,7 @@ struct rocketnet_server_replay_marks_t
     int max_clients;
     bool supersede_owed;                // the last walk left a refused forget: two records may name one address
 #if ROCKETNET_DEV
-    uint32_t comparisons;               // every record a supersede scan reads, for the unit cost case
+    uint64_t comparisons;               // every record a supersede scan reads, for the unit cost case
 #endif // #if ROCKETNET_DEV
     struct rocketnet_server_replay_slot_mark_t * slots;
 };
@@ -90,7 +90,7 @@ void rocketnet_server_replay_marks_destroy( struct rocketnet_server_replay_marks
 }
 
 #if ROCKETNET_DEV
-uint32_t rocketnet_server_replay_marks_comparisons_for_test( const struct rocketnet_server_replay_marks_t * marks )
+uint64_t rocketnet_server_replay_marks_comparisons_for_test( const struct rocketnet_server_replay_marks_t * marks )
 {
     return marks->comparisons;
 }

@@ -15,6 +15,7 @@
 #include "../sdk/rocketnet_encryption_map.h"
 #include "../sdk/rocketnet_server_replay_marks.h"
 
+#include <inttypes.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -22,7 +23,7 @@
 #if ROCKETNET_DEV
 // every record the walk's supersede scans read, counted in development
 // builds only (sdk/rocketnet_server_replay_marks.cpp)
-uint32_t rocketnet_server_replay_marks_comparisons_for_test( const struct rocketnet_server_replay_marks_t * marks );
+uint64_t rocketnet_server_replay_marks_comparisons_for_test( const struct rocketnet_server_replay_marks_t * marks );
 #endif // #if ROCKETNET_DEV
 
 #define ROCKETNET_REPLAY_MARKS_TEST_HANDSHAKE_DEADLINE 1005.0
@@ -837,10 +838,10 @@ static void test_server_replay_marks_mass_disconnect_is_linear()
     rocketnet_unit_check( counts.forgets == clients && counts.marks == 0 );
 
 #if ROCKETNET_DEV
-    const uint32_t comparisons = rocketnet_server_replay_marks_comparisons_for_test( fixture.marks );
+    const uint64_t comparisons = rocketnet_server_replay_marks_comparisons_for_test( fixture.marks );
     if ( comparisons != 0 )
     {
-        printf( "mass disconnect of %d clients: supersede scans read %u records, expected 0\n", clients, comparisons );
+        printf( "mass disconnect of %d clients: supersede scans read %" PRIu64 " records, expected 0\n", clients, comparisons );
     }
     rocketnet_unit_check( comparisons == 0 );
 #endif // #if ROCKETNET_DEV
