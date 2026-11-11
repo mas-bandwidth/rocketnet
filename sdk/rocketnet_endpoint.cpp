@@ -1501,10 +1501,8 @@ void rn_endpoint_packet_sent( struct rn_endpoint_t * endpoint, uint64_t packet_i
 void rn_endpoint_packet_failed( struct rn_endpoint_t * endpoint, uint64_t packet_id, double now )
 {
     // proofs/tla/RNEndpoint.tla PacketFailed (6.4 "Failed send", P5): the packet
-    // was written and never sent, so its reliable records are due again: a
-    // resend is planned next as its class's first retransmit, a first send
-    // ahead of its class's later first sends, behind the due retransmits
-    // (rn_window_ack_packet_failed). With nothing written, no frame was started for the plan:
+    // was written and never sent, so its reliable records are due again and
+    // resent first. With nothing written, no frame was started for the plan:
     // the reliable path ends there, an unreliable one ends the pass.
 
     (void) packet_id;
@@ -1523,7 +1521,7 @@ void rn_endpoint_packet_failed( struct rn_endpoint_t * endpoint, uint64_t packet
     switch ( endpoint->packet_kind )
     {
         case RN_ENDPOINT_PACKET_ORDERED:
-            rn_ordered_packet_failed( &endpoint->ordered, 0, now );     // 6.4 Failed send: due again at the next write
+            rn_ordered_packet_failed( &endpoint->ordered, 0, now );     // 6.4 Failed send: resent first next update
             rn_ordered_settle( &endpoint->ordered, 0, 0 );              // proofs/tla/RNSendBudget.tla SendFailed: refund the whole charge
             endpoint->written++;
             rn_endpoint_end_reliable( endpoint );

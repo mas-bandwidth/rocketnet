@@ -1566,47 +1566,26 @@ struct rn_ordered_plan_t
     uint32_t capacity;
 };
 
-// One part of one resend FIFO's walk for rn_ordered_write, oldest first
-// (RNWindow!WriteOldest). A FIFO is its numbers never sent, then from its
-// sent mark its numbers on the wire by last send (rn_window_ack_resend_sent),
-// a resend the transport refused first at its due-now stamp. A number never
-// sent (a new message's, a chunk's, a first send the transport refused) is
-// due now; one on the wire is due when its class's delay has passed since
-// its last send, the same delay every time (proofs/tla/RNResendTiming.tla
-// Walk and WriteOne, no back-off), and a refused resend at once. The part on
-// the wire is walked from the mark and stops at the first number not yet
-// due; the other part from the head to the mark, and a sequence that ends
-// before the mark is a corrupt FIFO. Returns false when more is due than
-// this update can write, or on a corrupt FIFO (ack->error set). On return
-// from the walk of the part not on the wire, *last_unsent is the last
-// number before the mark (where new numbers of this class join), or
-// RN_RESEND_NONE.
+// One resend FIFO's walk for rn_ordered_write, oldest first
+// (RNWindow!WriteOldest): a number never sent is due now (a new message's, a
+// chunk's, a packet the transport refused); a sent one is due when its class's
+// delay has passed since its last send, the same delay every time
+// (proofs/tla/RNResendTiming.tla Walk, no back-off). The walk stops at the first number not
+// yet due. Returns false when more is due than this update can write. On
+// return *last_unsent is the last never-sent number at the FIFO's head (where
+// new numbers of this class join), or RN_RESEND_NONE.
 
-static bool rn_ordered_walk( rn_ordered_t * ordered, bool chunk, bool on_wire, double now, rn_ordered_plan_t * plan, uint32_t * last_unsent )
+static bool rn_ordered_walk( rn_ordered_t * ordered, bool chunk, double now, rn_ordered_plan_t * plan, uint32_t * last_unsent )
 {
     rn_region_t * region = ordered->channels.region;
     rn_window_ack_t * ack = &ordered->ack;
     const double delay = rn_window_ack_class_delay( ack, chunk );
-    const uint32_t mark = rn_window_ack_resend_sent( ack, chunk );
-    const uint32_t end = on_wire ? RN_RESEND_NONE : mark;
-    uint32_t cursor = on_wire ? mark : rn_window_ack_resend_first( ack, chunk );
+    uint32_t cursor = rn_window_ack_resend_first( ack, chunk );
 
     *last_unsent = RN_RESEND_NONE;
 
-    while ( cursor != end )
+    while ( cursor != RN_RESEND_NONE )
     {
-        // a sequence that ends before the mark, or a link outside the window:
-        // the FIFO memory was corrupted. The connection ends as a protocol
-        // violation and the access is skipped, never made (rn_resend_fifo_index_ok).
-        if ( cursor >= region->window )
-        {
-            if ( ack->error == ROCKETNET_DISCONNECT_REASON_NONE )
-            {
-                ack->error = ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION;
-            }
-            return false;
-        }
-
         const rn_send_number_t * slot = &region->send_numbers[cursor];
         const uint32_t next_slot = rn_window_ack_resend_next( ack, chunk, cursor );
 
@@ -1615,12 +1594,9 @@ static bool rn_ordered_walk( rn_ordered_t * ordered, bool chunk, bool on_wire, d
         // an ack unlinks its number before marking it acked
         rocketnet_assert( !slot->acked );
 
-        // a refused resend is on the wire with a due-now stamp, so the time test passes at once
-        const bool unsent = !on_wire;
-        if ( on_wire && !( now >= slot->last_send + delay ) )
-        {
+        const bool unsent = rn_send_number_unsent_due( slot->last_send );
+        if ( !unsent && !( now >= slot->last_send + delay ) )
             return true;
-        }
 
         if ( plan->count >= ROCKETNET_ORDERED_MAX_ITEMS || plan->planned >= plan->room )
             return false;                                       // more is due than this update can write
@@ -1682,27 +1658,17 @@ int rn_ordered_write( struct rn_ordered_t * ordered, double now, uint8_t ** payl
     // 1. The two resend FIFOs (6.4 "Resend"): single-packet records at the
     // resend delay (rn_window_ack_resend_delay), then the chunks of blocks at
     // the resend delay capped at reliable_timeout / 4
-    // (rn_window_ack_chunk_resend_delay), retransmits first (R6): the numbers
-    // on the wire of both FIFOs, small then chunk, each oldest last send first
-    // (a refused resend first of all), then their numbers never sent, which
-    // have no timeout clock, so a block's first pass never holds back a due
-    // chunk (proofs/tla/RNResendTiming.tla WriteOne and RetryPlanned, the
-    // reversed witnesses MCRNResendTimingBrokenUnsentFirst.cfg and
-    // MCRNResendTimingBrokenRefusedOffWire.cfg). Each walk of numbers on the
-    // wire stops at its own first number not yet due, so a record that is not
-    // due never holds back one of the other class that is (RNResendTiming!
-    // NoDueRecordHeld); a due number waits only while the update's packets go
-    // to numbers ahead of it in this order. The numbers never sent are walked
-    // only as far as they are planned: the work is O(due).
+    // (rn_window_ack_chunk_resend_delay), retransmits first (R6). Each walk
+    // stops at its own first number not yet due, so a record that is not due
+    // never holds back one of the other class that is (RNResendTiming!
+    // NoDueRecordHeld) and the work is O(due).
 
     ack->walk_visits = 0;
 
     uint32_t last_unsent_small = RN_RESEND_NONE;
     uint32_t last_unsent_chunk = RN_RESEND_NONE;
-    const bool walked = rn_ordered_walk( ordered, false, true, now, &plan, &last_unsent_small ) &&
-                        rn_ordered_walk( ordered, true, true, now, &plan, &last_unsent_chunk ) &&
-                        rn_ordered_walk( ordered, false, false, now, &plan, &last_unsent_small ) &&
-                        rn_ordered_walk( ordered, true, false, now, &plan, &last_unsent_chunk );
+    const bool walked = rn_ordered_walk( ordered, false, now, &plan, &last_unsent_small ) &&
+                        rn_ordered_walk( ordered, true, now, &plan, &last_unsent_chunk );
 
     // 2. New messages, numbered late (6.2) and whole (8), channels taking turns
     // one message each (17.3 item 4), while the update has room. The channel's
@@ -1785,9 +1751,6 @@ int rn_ordered_write( struct rn_ordered_t * ordered, double now, uint8_t ** payl
             }
         }
     }
-
-    // nothing to plan: the endpoint's writes for the update end
-    // (proofs/tla/RNResendTiming.tla EndWrites)
 
     if ( plan.count == 0 )
         return 0;
