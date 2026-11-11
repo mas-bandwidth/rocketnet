@@ -305,8 +305,8 @@ def run_cppcheck_file(cppcheck, entry, path):
     return raw, errors
 
 
-def run_parallel(function, items, jobs):
-    """Runs function over items, jobs at a time, and merges the findings.
+def merge_findings(results):
+    """Merges the (raw, errors) results of one tool over its files.
 
     A header is seen by every translation unit that includes it, so the same
     header finding comes back once per includer. The merged count of a
@@ -315,14 +315,13 @@ def run_parallel(function, items, jobs):
     second copy of it in that header is still a second finding."""
     merged = {}
     errors = []
-    with ThreadPoolExecutor(max_workers=jobs) as executor:
-        for file_raw, file_errors in executor.map(function, items):
-            counts = {}
-            for item in file_raw:
-                counts[item] = counts.get(item, 0) + 1
-            for item, count in counts.items():
-                merged[item] = max(merged.get(item, 0), count)
-            errors.extend(file_errors)
+    for file_raw, file_errors in results:
+        counts = {}
+        for item in file_raw:
+            counts[item] = counts.get(item, 0) + 1
+        for item, count in counts.items():
+            merged[item] = max(merged.get(item, 0), count)
+        errors.extend(file_errors)
     raw = []
     for item, count in merged.items():
         raw.extend([item] * count)
@@ -496,20 +495,25 @@ def main():
     files = sdk_files(by_file)
     db_dir = write_tidy_db(by_file, files)
 
+    # one pool of args.jobs for both tools, so the runner never sees more than
+    # that many analyzers at once: clang-tidy (the slower tool) first, largest
+    # file first, and cppcheck fills the slots clang-tidy's tail leaves free
+    largest_first = sorted(files, key=os.path.getsize, reverse=True)
     start = time.time()
-    tidy_raw, tidy_errors = run_parallel(
-        lambda path: run_clang_tidy_file(tidy, db_dir, path), files, args.jobs)
-    tidy_seconds = time.time() - start
-
-    start = time.time()
-    cppcheck_raw, cppcheck_errors = run_parallel(
-        lambda path: run_cppcheck_file(cppcheck, by_file[path], path), files, args.jobs)
-    cppcheck_seconds = time.time() - start
+    with ThreadPoolExecutor(max_workers=args.jobs) as executor:
+        tidy_futures = [executor.submit(run_clang_tidy_file, tidy, db_dir, path)
+                        for path in largest_first]
+        cppcheck_futures = [executor.submit(run_cppcheck_file, cppcheck, by_file[path], path)
+                            for path in largest_first]
+        tidy_raw, tidy_errors = merge_findings(f.result() for f in tidy_futures)
+        tidy_seconds = time.time() - start
+        cppcheck_raw, cppcheck_errors = merge_findings(f.result() for f in cppcheck_futures)
+        total_seconds = time.time() - start
 
     tidy_findings = finding_lines("clang-tidy", tidy_raw)
     cppcheck_findings = finding_lines("cppcheck", cppcheck_raw)
-    print("analyzed %d files with %d jobs: clang-tidy %.0f s, cppcheck %.0f s" % (
-        len(files), args.jobs, tidy_seconds, cppcheck_seconds))
+    print("analyzed %d files with %d jobs in one pool: clang-tidy done at %.0f s, both tools done at %.0f s" % (
+        len(files), args.jobs, tidy_seconds, total_seconds))
 
     errors = tidy_errors + cppcheck_errors
     if errors:
