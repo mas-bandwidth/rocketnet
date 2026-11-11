@@ -35,8 +35,14 @@ records in `proofs/tla/RUNS.tsv`.
   whose send descriptor has more than one fragment) waits
   `min( resend_delay, reliable_timeout / 4 )` (`rn_window_ack_chunk_resend_delay`),
   the resend delay alone at the defaults. There is no back-off.
-- **The FIFOs.** Each delay class has its own resend FIFO, ordered by last
-  send and walked from its head while due; the small FIFO is walked first.
+- **The FIFOs.** Each delay class has its own resend FIFO: its numbers not
+  on the wire (never sent, or refused), then its numbers on the wire by last
+  send from the class's sent mark (`ack->resend_sent`, `ack->chunk_sent`).
+  `rn_ordered_write` walks the numbers on the wire of the small class, then
+  of the chunk class, each while due, then the numbers not on the wire of
+  each class from its head, and stops when the plan holds a packet. A due
+  retransmit is planned ahead of every never-sent number, so a block whose
+  first pass is paced by the send budget does not hold its lost chunks.
 - **The timeout.** A record unacked for `reliable_timeout` (10 s) ends the
   connection with `RELIABLE_TIMEOUT`, and nothing more is sent.
 - **The validation.** A config is refused when
@@ -58,6 +64,16 @@ configuration (`Chunk <- ChunkInFlight`, `OneFifo <- OneFifoTwoDelays`):
 `Chunk` puts the chunk in flight (otherwise it starts acked and the module is
 the one-record timing of the first cut), and `OneFifo` puts both classes in
 one FIFO (the broken shape).
+
+The paced walk has four more definitions, overridden in its configurations:
+`Room`, the `rn_ordered_write` calls of one packet each an update may make
+(0, the default, keeps `Walk`, which sends every due record; the endpoint
+makes one call per packet, `rn_endpoint.cpp`); `Pending`, the never-sent
+chunks of the chunk's block behind it in number order (`pending` counts
+them down); `Small`, whether the small record is in flight; and
+`UnsentFirst`, the walk from each FIFO's head with the never-sent numbers
+first (the broken shape, the code before the sent marks). `calls` counts
+the update's calls.
 
 Actions:
 
@@ -89,6 +105,13 @@ Actions:
   `AttemptsBeforeTimeout` and `ResendGapBounded` are claims for a transport
   that refuses no resend (by reading; not checked). `RefuseFor` is 0 (no
   refusals) except in the refusal cases.
+- `WriteOne(x)`: with `Room > 0`, one call: the walk plans in its order
+  (`Planned`) up to the first chunk item, as a chunk fills the call's one
+  packet, and the builder writes one planned item, a retransmit (a record on
+  the wire) before ordered progress. `"u"` is the first pending chunk's first
+  send; any other item is a send of that record.
+- `EndWrites`: the update's writes end when its `Room` calls are spent or a
+  call plans nothing (`rn_ordered_write` returns 0).
 - `Tick`: the update ends and time moves one tick.
 - `Done`: every record acked, or the timeout fired; a stutter, so the end is
   not a deadlock.
@@ -132,8 +155,13 @@ Invariants:
 - **Loss.** The adversary chooses when, if ever, the record's ack arrives;
   that is any loss pattern, including every send lost.
 - **The send budget.** A resend the budget cannot pay waits a later update
-  (`RNSendBudget`); that is outside this module, which assumes the update
-  writes each due record.
+  (`RNSendBudget`); that is outside this module. `Walk` assumes the update
+  writes each due record; the paced walk takes the budget as `Room`
+  packets an update, a block's first pass that outlasts the timeout.
+- **The pending chunks.** Only their count is kept: each is timed from its
+  own first send, as the chunk is, so the chunk stands for any of them once
+  sent; what the module checks is that their first sends never hold the
+  chunk's resend.
 
 ## The small instance
 
@@ -154,6 +182,19 @@ CONFIG record sent at 0 and never acked, the transport reporting 50 ms from
 200 ms, the record resent at the first update past 330 ms and every 330 ms
 after; built without the seed it waits the 2 s initial delay.
 
+`MCRNResendTimingPaced.cfg` is the product's shape at the defaults: one
+packet an update (`Room = 1`), the chunk sent at 0 with `2 · Timeout + 2`
+never-sent chunks behind it, and no small record. `MCRNResendTimingPacedSmall.cfg`
+adds the small record and two packets an update, so a due small record and a
+due chunk can share an update. Both pass `AttemptsBeforeTimeout`,
+`ResendGapBounded` and `NoDueRecordHeld`. The unit tests
+`test_ordered_lost_chunk_resent_ahead_of_unsent_chunks` (and its `_defaults`
+and `_800_kbps` cases, `test_unit_channel_ordered.cpp`) replay them against
+the code: a block paced by the budget with one payload a write, its second
+chunk lost, is resent within one packet's budget and one update of falling
+due, first sends stay in number order, and the walk visits at most four
+numbers a call.
+
 ## Reversed witnesses
 
 | Configuration | Rule removed | Expected failure |
@@ -162,6 +203,8 @@ after; built without the seed it waits the 2 s initial delay.
 | `MCRNResendTimingBrokenOneFifoGap.cfg` | the same | `ResendGapBounded`, exit 12: the held chunk waits past `Min(RtoMax, ChunkCap)`. |
 | `MCRNResendTimingBrokenBackoff.cfg` | the first version's schedule (100 ms ticks): `RtoInitial = 10` (1000 ms), `RtoMax = 20` (2000 ms), back-off doubling to 8 | `AttemptsBeforeTimeout`, exit 12: a sample at the first tick sets `rto` to 1.5 s, the record is sent at 0, 1.5 and 4.5 s, and the next send is due at 10.5 s, after the timeout: three sends where four are owed. |
 | `MCRNResendTimingBrokenUnseeded.cfg` | the seed: `MCRNResendTimingSeeded.cfg` with the transport's round trip ignored (`SeedRule = FALSE`) | `SeededGapBounded`, exit 12: the record sent at 0 is lost and no ack is sampled; the transport reports a round trip at 200 ms, but the resend delay stays the 2 s initial delay, and at 600 ms the record has waited 400 ms past the report where the seeded delay owes its resend by 500 ms. Any seed below the initial delay does the same. |
+| `MCRNResendTimingBrokenUnsentFirst.cfg` | the sent marks: `MCRNResendTimingPaced.cfg` walked from each FIFO's head, never-sent numbers first (`UnsentFirst = TRUE`) | `AttemptsBeforeTimeout`, exit 12: the chunk sent at 0 is never acked; each update's one packet goes to the next never-sent chunk (42 down to 22), the chunk falls due at tick 4 and is never planned, and at tick 20 it has one send where four are owed. |
+| `MCRNResendTimingBrokenUnsentFirstHeld.cfg` | the same, on `MCRNResendTimingPacedSmall.cfg` | `NoDueRecordHeld`, exit 12: both records are sent at 0 and two pending chunks fill tick 0; at tick 1 a sample sets `rto` to 1, both records are due, and the two calls write the small record and a never-sent chunk; the update ends with the chunk due and unsent. |
 
 The back-off witness passes `ConfigAccepted` (`10 s >= 4 × 1 s`), so
 validation alone does not keep the property; the delay without back-off does. The unit
