@@ -95,6 +95,121 @@ static void test_public_server_create_refuses_split_ports()
 
 REGISTER_UNIT_TEST( test_public_server_create_refuses_split_ports );
 
+// --- the IPv6 address of a running server -----------------------------------------
+
+static void api_core_check_ipv6_address( rocketnet_server_t * server )
+{
+    char address[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
+    char expected[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
+
+    // stopped: no address, and the buffer is emptied
+
+    memset( address, 'x', sizeof( address ) );
+    check( !rocketnet_server_ipv6_address( server, address, sizeof( address ) ) );
+    check( address[0] == '\0' );
+
+    check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
+
+    const uint16_t port = rocketnet_server_port( server );
+    check( port != 0 );
+    snprintf( expected, sizeof( expected ), "[::1]:%d", (int) port );
+
+    memset( address, 'x', sizeof( address ) );
+    check( rocketnet_server_ipv6_address( server, address, sizeof( address ) ) );
+    check( strcmp( address, expected ) == 0 );
+
+    // exactly the string and its terminator fits; one byte fewer is refused
+    // and leaves an empty string
+
+    const size_t needed = strlen( expected ) + 1;
+    check( rocketnet_server_ipv6_address( server, address, needed ) );
+    check( strcmp( address, expected ) == 0 );
+    check( !rocketnet_server_ipv6_address( server, address, needed - 1 ) );
+    check( address[0] == '\0' );
+
+    rn_test_server_stop_and_destroy( server );
+}
+
+static void test_public_server_ipv6_address_reads_the_running_address()
+{
+    rocketnet_quiet( 1 );
+
+    rocketnet_server_config_t config;
+    api_core_server_config( &config );
+
+    rocketnet_server_t * ipv6_only = rocketnet_server_create( NULL, NULL, "[::1]:0", &config, NULL );
+    check( ipv6_only != NULL );
+    api_core_check_ipv6_address( ipv6_only );
+
+    rocketnet_server_t * both = rocketnet_server_create( NULL, "127.0.0.1:0", "[::1]:0", &config, NULL );
+    check( both != NULL );
+    api_core_check_ipv6_address( both );
+
+    // a server that serves IPv4 only has no IPv6 address
+
+    rocketnet_server_t * ipv4_only = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &config, NULL );
+    check( ipv4_only != NULL );
+    check( rocketnet_server_start( ipv4_only ) == ROCKETNET_STATUS_OK );
+    char address[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
+    memset( address, 'x', sizeof( address ) );
+    check( !rocketnet_server_ipv6_address( ipv4_only, address, sizeof( address ) ) );
+    check( address[0] == '\0' );
+    rn_test_server_stop_and_destroy( ipv4_only );
+
+    rocketnet_quiet( 0 );
+}
+
+REGISTER_UNIT_TEST( test_public_server_ipv6_address_reads_the_running_address );
+
+// --- NULL objects to the lifecycle polls and the network simulators ----------------
+
+static int api_core_asserts = 0;
+
+static void api_core_count_assert( const char * condition, const char * function, const char * file, int line )
+{
+    (void) condition;
+    (void) function;
+    (void) file;
+    (void) line;
+    api_core_asserts++;
+}
+
+// a build with asserts compiled out (ROCKETNET_ASSERTS 0) still counts the
+// misuse and refuses; a build with them fires exactly one
+#if ROCKETNET_ASSERTS
+#define API_CORE_ASSERTS_FIRED 1
+#else // #if ROCKETNET_ASSERTS
+#define API_CORE_ASSERTS_FIRED 0
+#endif // #if ROCKETNET_ASSERTS
+
+#define API_CORE_ONE_MISUSE( call )                                       \
+    do                                                                    \
+    {                                                                     \
+        const uint64_t misuse_before = rocketnet_api_misuse_count();      \
+        const int asserts_before = api_core_asserts;                      \
+        call;                                                             \
+        check( rocketnet_api_misuse_count() == misuse_before + 1 );       \
+        check( api_core_asserts == asserts_before + API_CORE_ASSERTS_FIRED ); \
+    } while ( 0 )
+
+static void test_public_null_lifecycle_and_simulator_calls_count_misuse()
+{
+    rocketnet_quiet( 1 );
+    rocketnet_assert_function( api_core_count_assert );
+
+    API_CORE_ONE_MISUSE( check( !rocketnet_client_disconnected( NULL ) ) );
+    API_CORE_ONE_MISUSE( check( !rocketnet_server_stopped( NULL ) ) );
+#if ROCKETNET_DEV
+    API_CORE_ONE_MISUSE( rocketnet_client_network_simulator( NULL, 0, 0, 0, 0 ) );
+    API_CORE_ONE_MISUSE( rocketnet_server_network_simulator( NULL, 0, 0, 0, 0 ) );
+#endif // #if ROCKETNET_DEV
+
+    rocketnet_assert_function( NULL );
+    rocketnet_quiet( 0 );
+}
+
+REGISTER_UNIT_TEST( test_public_null_lifecycle_and_simulator_calls_count_misuse );
+
 #if ROCKETNET_DEV
 
 #include "../sdk/rocketnet_test_seams.h"
