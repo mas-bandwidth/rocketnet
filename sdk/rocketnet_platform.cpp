@@ -1667,9 +1667,10 @@ bool rocketnet_platform_socket_connect( rocketnet_platform_socket_t * socket, co
 
     if ( connect( socket->handle, (const sockaddr *) &storage, storage_bytes ) != 0 )
     {
+        const int error = errno;
         char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
         rocketnet_address_to_string( to, address_string );
-        rocketnet_error( "connect (%s) failed: %s", address_string, strerror( errno ) );
+        rocketnet_error( "connect (%s) failed: %s", address_string, strerror( error ) );
         return false;
     }
 
@@ -4258,9 +4259,10 @@ bool rocketnet_platform_socket_connect( rocketnet_platform_socket_t * socket, co
 
     if ( connect( socket->handle, (const sockaddr *) &storage, storage_bytes ) == SOCKET_ERROR )
     {
+        const int error = WSAGetLastError();
         char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
         rocketnet_address_to_string( input_to, address_string );
-        rocketnet_error( "connect (%s) failed: WSA error %d", address_string, WSAGetLastError() );
+        rocketnet_error( "connect (%s) failed: WSA error %d", address_string, error );
         return false;
     }
 
