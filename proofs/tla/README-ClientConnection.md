@@ -141,9 +141,10 @@ The code's behaviour is `RepeatKeepAlive = TRUE`, `KeepAliveClock = "keepalive"`
   from state 4 does in the code. The standalone ack (debt threshold 64) and the client's
   payloads are not modelled; neither moves the connection machine.
 - **Time** is a tick of one send interval on both ends, with saturating counters. A
-  `Timeout`, `Deadline` or `ServerDeadline` of 0 is off. The code's idle timeout can be
-  0; its total deadline cannot, so `Deadline = 0` is the model asking whether the
-  protocol alone gets there.
+  `Timeout`, `Deadline` or `ServerDeadline` of 0 is off. In the code neither can be
+  0 (connect refuses a token whose timeout is not positive, and the total deadline is
+  always set), so `Deadline = 0` is the model asking whether the protocol alone gets
+  there.
 - **The server** holds one mapping for this address and one slot for this client. Other
   clients are a count. Token tables, cookie keys, the client-id check and the confirmed
   flag are the server and security cards'.

@@ -120,7 +120,11 @@ Cold, on a fresh box, as root:
     #    with any transport (auto falls to gso) receives nothing. The library
     #    never unloads anyone; unload it with step 2 (provision mode runs
     #    xdp-loader unload -a on the interface, removing every XDP program
-    #    attached to it), or by hand with xdp-loader unload -a eth0:
+    #    attached to it), or by hand with xdp-loader unload -a eth0.
+    #    verify in this state reports the attached program (R3); on some NICs
+    #    (ixgbe) the attached program also adds interrupt vectors, so verify
+    #    may report too few isolated cpus (R4) until the program is unloaded:
+    #    unload first, then read R4 again.
     scripts/rocketnet-provision eth0 7
     #    Each instance also leaves a bpffs pin root named for the instance --
     #    /sys/fs/bpf/rocketnet_xdp_<token>_<pid>_<starttime>_<bootid> -- and
