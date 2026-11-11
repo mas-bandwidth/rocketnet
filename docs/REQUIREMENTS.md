@@ -30,6 +30,9 @@ in `sdk/rocketnet.h`; no C++ type crosses it.
   backend's public signing key.
 - A token fits in one 1,500-byte MTU packet and names one server with one IPv4
   address, one IPv6 address, or one of each.
+- The network path between client and server must carry a 1500-byte MTU:
+  full-size packets, 1452 bytes of UDP payload, are sent with Don't-Fragment
+  set, so a narrower path connects but loses them.
 - A server may serve IPv4, IPv6 or both. The request must arrive on a family and
   advertised address present in the token.
 - One active token is bound to one source address and one live connection. One
