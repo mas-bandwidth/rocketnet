@@ -348,12 +348,13 @@ enum rocketnet_status_t rocketnet_write_production_connect_token( const uint8_t 
     private_fields.client_id = client_id;
     randombytes_buf( private_fields.client_to_server_key, ROCKETNET_KEY_BYTES );
     randombytes_buf( private_fields.server_to_client_key, ROCKETNET_KEY_BYTES );
-    rocketnet_crypto_release();
 
     if ( user_data != NULL )
         memcpy( private_fields.user_data, user_data, ROCKETNET_USER_DATA_BYTES );
 
+    // crypto_box_seal draws its ephemeral keypair, so the hold covers it
     const int result = rocketnet_write_connect_token( &signed_fields, &private_fields, backend_secret_key, connect_token );
+    rocketnet_crypto_release();
 
     sodium_memzero( &private_fields, sizeof( private_fields ) );
 
