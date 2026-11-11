@@ -201,6 +201,32 @@ space. The exact table follows.
 | `MCRNSlotsLive.cfg` | 756 | 491 | 1.593 | pass - |
 | `MCRNSlotsTwoSlots.cfg` | 858,124 | 360,941 | 5.897 | pass - |
 
+## Revision 1.1.2: a freed slot is held until the update ends
+
+Before 1.1.2 the transport could free a slot and give it to a new client in
+the same update. `Observe` then saw only the new connection: the old one's end
+and its reason were never reported. The transport now holds every slot it
+frees (`rocketnet_client_slots_release` writes it above the free stack's top)
+until `rocketnet_client_slots_publish` at the end of
+`rocketnet_server_protocol_update`, which runs before the message layer's
+`Observe`. In the model a slot ended by `Disconnect`, `Kick` or
+`PublicDisconnect` is `freed` until the next `Observe`, and `Connect` does not
+take it. The action property `EveryEndSeen` (in the three churn controls)
+says every slot freed since the last `Observe` is still free when `Observe`
+runs.
+
+- **Reuse in the update** (`MCRNSlotsBrokenReuseInUpdate.cfg`, Broken
+  `"reuseinupdate"`, the code before the hold): in one update the transport
+  connects 1, times it out (`ended` TIMED_OUT) and connects 2 into the same
+  slot, which clears `ended` to NONE as `rocketnet_server_connection_id_assigned`
+  clears `end_reasons`; the `Observe` that follows finds the slot held by 2,
+  and `EveryEndSeen` fails at state 6.
+
+The apply-by-slot and client-id witnesses above need the same-update reuse
+to reach their hazard, so their configurations add `"reuseinupdate"`: they
+check that the per-connection compare in `Observe` would still catch it.
+`RNClientSlotsLayout` checks the hold at the free stack's layout.
+
 ## Revision 1.1: no change
 
 MESSAGES.md m1.7 turns a send with no room into a refusal and keeps the

@@ -466,6 +466,7 @@ static void test_connection_reset_client_slots_reuse_keeps_full_identity()
 
     const uint64_t replacement_5 = UINT64_C( 0x1234567800000001 );
     const uint64_t replacement_2 = UINT64_C( 0xfedcba9800000001 );
+    rocketnet_client_slots_publish( slots );        // the server update's end
     check( rocketnet_client_slots_assign( slots, replacement_5, 205, replacement_5, user_data ) == index[5] );
     check( rocketnet_client_slots_assign( slots, replacement_2, 202, replacement_2, user_data ) == index[2] );
     check( rocketnet_client_slots_find( slots, replacement_5 ) == index[5] );
@@ -485,6 +486,7 @@ static void test_connection_reset_client_slots_reuse_keeps_full_identity()
         check( rocketnet_client_slots_confirmed( slots, index[5] ) );
         rocketnet_client_slots_release( slots, index[5] );
         check( rocketnet_client_slots_find( slots, current ) == -1 );
+        rocketnet_client_slots_publish( slots );    // the server update's end
 
         uint8_t next_user_data[ROCKETNET_USER_DATA_BYTES];
         memset( next_user_data, (int) ( generation & 0xFF ), sizeof( next_user_data ) );
@@ -537,6 +539,7 @@ static void test_connection_reset_client_slots_stale_handle_cannot_release_reuse
     check( stale.client_id == old_id );
     check( stale.client_index == 0 );
     check( rocketnet_client_slots_release_handle( slots, &stale ) );
+    rocketnet_client_slots_publish( slots );        // the server update's end
 
     check( rocketnet_client_slots_assign( slots, new_id, 23, 2, new_user_data ) == 0 );
 
@@ -939,6 +942,9 @@ static void test_connection_reset_deferred_disconnect_does_not_charge_reused_slo
         DEFERRED_INITIAL_CLIENTS = 7
     };
 
+    // the initial clients, the replacement and the filler
+    rocketnet_test_loopback_hub_clients( DEFERRED_INITIAL_CLIENTS + 2 );
+
     const reset_loopback_keys_t * keys = reset_loopback_keys();
     double now = 1000.0;
 
@@ -1029,6 +1035,24 @@ static void test_connection_reset_deferred_disconnect_does_not_charge_reused_slo
     }
 
     check( rocketnet_client_transport_state( replacement_transport ) == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE );
+
+    // a filler client takes the last never-used slot, so the only free slots
+    // after the disconnects below are the ones they free
+
+    rocketnet_message_client_t * filler = reset_loopback_client_create( server, 0xA1FF );
+    check( filler );
+    for ( int ticks = 0; rocketnet_server_transport_num_connected_clients( transport ) < DEFERRED_MAX_CLIENTS; ticks++ )
+    {
+        check( ticks < 200 );
+        now += 0.01;
+        rocketnet_message_client_update( filler, now );
+        rocketnet_message_server_update( server, now );
+        rocketnet_message_client_send_packets( filler );
+        rocketnet_message_server_send_packets( server );
+    }
+    const int filler_slot = DEFERRED_MAX_CLIENTS - 1;
+    check( rocketnet_server_transport_client_id( transport, filler_slot ) == 0xA1FF );
+
     now += 0.11;
     rocketnet_message_client_update( replacement, now );
     rocketnet_message_client_send_packets( replacement );
@@ -1100,37 +1124,53 @@ static void test_connection_reset_deferred_disconnect_does_not_charge_reused_slo
         rn_test_message_client_stop_and_destroy( initial[i] );
     }
 
-    // one server update first processes replacement client B's queued
-    // CONNECTION_RESPONSE (assigning B to LIFO top slot 6, clearing slot 6's
-    // per-client wire totals on assignment, and committing B's 1 establishing
-    // keep-alive) and then drains ended client 6's 10 deferred disconnect
-    // frames in the same update
+    // the next server update processes replacement client B's queued
+    // CONNECTION_RESPONSE first: every free slot was freed since the last
+    // update and is held, so B is ignored, not denied, and slot 6 reads free.
+    // The same update drains ended client 6's 10 deferred disconnect frames.
+    // In the update after it, B's resent response takes LIFO top slot 6
+    // (clearing slot 6's per-client wire totals on assignment, and committing
+    // B's 1 establishing keep-alive).
+
+    rocketnet_server_transport_client_stats_t filler_before = {};
+    rocketnet_server_transport_client_stats( transport, filler_slot, &filler_before );
 
     now += 0.01;
     rocketnet_message_server_update( server, now );
 
-    check( rocketnet_server_transport_is_client_connected( transport, deferred_slot ) );
-    check( rocketnet_server_transport_client_id( transport, deferred_slot ) == 0xB003 );
-
+    check( !rocketnet_server_transport_is_client_connected( transport, deferred_slot ) );
+    check( rocketnet_client_transport_state( replacement_transport ) == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE );
     const uint64_t seals_after_drain = rocketnet_server_transport_disconnect_seals_for_test( transport );
     check( seals_after_drain - seals_after_disconnects == (uint64_t) ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
 
+    now += 0.11;
+    rocketnet_message_client_update( replacement, now );
+    rocketnet_message_client_send_packets( replacement );
+    rocketnet_message_server_update( server, now );
+
+    check( rocketnet_server_transport_is_client_connected( transport, deferred_slot ) );
+    check( rocketnet_server_transport_client_id( transport, deferred_slot ) == 0xB003 );
+    check( rocketnet_server_transport_disconnect_seals_for_test( transport ) == seals_after_drain );
+
     rocketnet_server_transport_stats_t server_after_drain = {};
     rocketnet_server_transport_client_stats_t slot_after = {};
+    rocketnet_server_transport_client_stats_t filler_after = {};
     rocketnet_server_transport_stats( transport, &server_after_drain );
     rocketnet_server_transport_client_stats( transport, deferred_slot, &slot_after );
+    rocketnet_server_transport_client_stats( transport, filler_slot, &filler_after );
 
-    // Whole-server sent totals include B's 1 establishing keep-alive plus the
-    // 10 deferred disconnect packets of ended client 6, and whole-server
-    // received totals include B's 1 CONNECTION_RESPONSE (arriving while B's
-    // mapping still had client_index == -1 before slot assignment). Reused
-    // slot 6's per-client totals were cleared on assignment and include only
-    // B's 1 establishing keep-alive.
+    // Whole-server sent totals include B's 1 establishing keep-alive, the 10
+    // deferred disconnect packets of ended client 6 and whatever the filler
+    // was sent; whole-server received totals include B's 2 CONNECTION_RESPONSEs
+    // (each arriving while B's mapping had client_index == -1). Reused slot 6's
+    // per-client totals were cleared on assignment and include only B's 1
+    // establishing keep-alive.
 
-    check( server_after_drain.packets_received - server_after_immediate.packets_received == (uint64_t) 1u );
+    check( server_after_drain.packets_received - server_after_immediate.packets_received == (uint64_t) 2u );
     check( server_after_drain.bytes_received > server_after_immediate.bytes_received );
     check( server_after_drain.packets_sent - server_after_immediate.packets_sent ==
-           (uint64_t) 1u + (uint64_t) ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
+           (uint64_t) 1u + (uint64_t) ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS +
+               ( filler_after.packets_sent - filler_before.packets_sent ) );
     check( server_after_drain.bytes_sent > server_after_immediate.bytes_sent );
     check( slot_after.packets_received == 0 );
     check( slot_after.bytes_received == 0 );
@@ -1156,6 +1196,7 @@ static void test_connection_reset_deferred_disconnect_does_not_charge_reused_slo
     reset_wipe_key( wiped_key );
     reset_wipe_key( slot_key );
 
+    rn_test_message_client_stop_and_destroy( filler );
     rn_test_message_client_stop_and_destroy( replacement );
     rn_test_message_server_stop_and_destroy( server );
 }
@@ -1182,7 +1223,7 @@ static void test_connection_reset_drained_frame_charges_sealing_connection_only(
     check( old_connection != 0 );
 
     // B's CONNECTION_RESPONSE waits in the server receive queue. The server
-    // has not taken it, so A still holds the only live slot.
+    // has not taken it, so A still holds its slot.
     rocketnet_message_client_t * replacement = reset_loopback_client_create( f.server, 0xB010 );
     check( replacement );
     rocketnet_client_transport_t * replacement_transport = rocketnet_message_client_transport( replacement );
@@ -1209,11 +1250,16 @@ static void test_connection_reset_drained_frame_charges_sealing_connection_only(
     }
 
     check( rocketnet_client_transport_state( replacement_transport ) == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE );
+
+    // a filler client takes the other slot, so A's slot is the only one B
+    // can be given
+    check( reset_loopback_connect( &f, 1, 0xA011 ) == 1 );
+
     f.now += 0.11;
     check( rocketnet_message_client_update( replacement, f.now ) == ROCKETNET_UPDATE_OK );
     rocketnet_message_client_send_packets( replacement );
 
-    check( rocketnet_server_transport_num_connected_clients( transport ) == 1 );
+    check( rocketnet_server_transport_num_connected_clients( transport ) == 2 );
     check( rocketnet_server_transport_client_id( transport, slot ) == 0xA010 );
     check( rocketnet_server_transport_client_connection_id( transport, slot ) == old_connection );
 
@@ -1225,12 +1271,21 @@ static void test_connection_reset_drained_frame_charges_sealing_connection_only(
     const int sealed = rocketnet_server_transport_finish_packet( transport, &context, (int) sizeof( payload ) );
     check( sealed > 0 );
 
-    // update runs before send_packets: the slot is freed and given to B while
-    // A's sealed frame is still in the send ring.
+    // updates run before send_packets: the slot is freed, held through the
+    // next update (B's response is ignored there, not denied), and given to B
+    // by its resent response in the update after, while A's sealed frame is
+    // still in the send ring.
     rocketnet_server_transport_disconnect_client( transport, slot );
     check( !rocketnet_server_transport_is_client_connected( transport, slot ) );
 
     f.now += 0.01;
+    rocketnet_server_transport_update( transport, f.now );
+    check( !rocketnet_server_transport_is_client_connected( transport, slot ) );
+    check( rocketnet_client_transport_state( replacement_transport ) == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE );
+
+    f.now += 0.11;
+    check( rocketnet_message_client_update( replacement, f.now ) == ROCKETNET_UPDATE_OK );
+    rocketnet_message_client_send_packets( replacement );
     rocketnet_server_transport_update( transport, f.now );
 
     check( rocketnet_server_transport_is_client_connected( transport, slot ) );
@@ -1262,6 +1317,7 @@ static void test_connection_reset_drained_frame_charges_sealing_connection_only(
     check( slot_after.bytes_sent == slot_before.bytes_sent );
 
     rn_test_message_client_stop_and_destroy( f.clients[0] );
+    rn_test_message_client_stop_and_destroy( f.clients[1] );
     rn_test_message_client_stop_and_destroy( replacement );
     rn_test_message_server_stop_and_destroy( f.server );
 }
@@ -1494,6 +1550,7 @@ static void test_connection_reset_server_slot_reuse_is_clean()
     check( f.connection_ids[a] == 0 );
     check( rocketnet_ack_endpoint_state_equal( &f.server.acks->endpoints[a], &fresh_ack ) );
 
+    rocketnet_client_slots_publish( f.server.client_slots );    // the server update's end
     const int b = reset_server_assign( &f, "198.51.100.2:4000", 2 );
     check( b == a );
     check( f.server.acks->endpoints[b].highest_sequence == 0 );

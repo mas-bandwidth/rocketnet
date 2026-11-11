@@ -3051,13 +3051,15 @@ ROCKETNET_EXPORT uint64_t rocketnet_server_client_id( const struct rocketnet_ser
 /// stopped.
 ///
 /// Every connection gets a new id, unique for the server's lifetime: a client
-/// that disconnects and reconnects into the same slot, even within one
-/// update, reads a different id, and no id repeats across slots, stops and
-/// starts. The ids are a 64-bit count from 1 and never wrap in practice.
+/// that disconnects and reconnects into the same slot reads a different id,
+/// and no id repeats across slots, stops and starts. The ids are a 64-bit
+/// count from 1 and never wrap in practice.
 ///
-/// Compare the id per slot after each update to detect a disconnect plus a
-/// reconnect within one update, which polling rocketnet_server_client_connected
-/// misses, and to reset your per-connection state when it changes.
+/// A freed slot is given to another client no sooner than the update after
+/// the first update that ends with it free, so every end is seen: after that
+/// update the slot reads not connected, with the ended connection's
+/// rocketnet_server_disconnect_reason. Compare the id per slot after each
+/// update to reset your per-connection state when it changes.
 ///
 /// Callable running or stopped, any time between updates. Thread: not
 /// thread-safe; the caller owns the server one thread at a time.

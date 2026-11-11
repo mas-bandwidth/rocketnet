@@ -14,6 +14,13 @@
 \* other slot's reason. Broken "dropreadsnone" drops the slot with NONE (the
 \* code before the transport carried its reason); "observeclearsreason"
 \* clears every reason at each Observe, the rule this model held before.
+\*
+\* A slot whose connection ends (Disconnect, Kick, PublicDisconnect) is held
+\* (freed) until the next Observe: the transport publishes its freed slots
+\* at the end of its update (rocketnet_client_slots_publish in
+\* rocketnet_server_protocol_update), and Observe follows it before any
+\* other assign, so Connect takes no slot freed since the last Observe.
+\* Broken "reuseinupdate" lets Connect take it (the code before the hold).
 EXTENDS Naturals, FiniteSets, Sequences
 
 CONSTANTS SlotCount, MaxConn, MaxMessages, TicketCount, RegionCapacity,
@@ -53,15 +60,18 @@ Init ==
              requested |-> {}, delivered |-> {}, released |-> {}, acked |-> {},
              opened |-> {}, packetMap |-> {}, applied |-> {}, dropped |-> {},
              changed |-> [s \in Slots |-> FALSE],
+             freed |-> [s \in Slots |-> FALSE],
              badKick |-> FALSE, badLifetime |-> FALSE, error |-> "NONE",
              pending |-> 0, pendingConn |-> 0]
 
 \* Transport connection ids never repeat in the bounded lifetime. Several
-\* connect/disconnect steps may precede a single Observe. A new connection
-\* has not ended: its slot's transport reason is NONE.
+\* connect/disconnect steps may precede a single Observe, but a slot freed
+\* since the last Observe is held: it is not connected again before the next.
+\* A new connection has not ended: its slot's transport reason is NONE.
 Connect(s) ==
     /\ ~Stable /\ st.phase = "transport" /\ st.owner[s] = 0
     /\ st.state[s] \notin {"Exhausted", "Disconnected"}
+    /\ (~st.freed[s] \/ "reuseinupdate" \in Broken)
     /\ st.nextConn <= MaxConn
     /\ st' = [st EXCEPT !.owner[s] = st.nextConn, !.nextConn = @ + 1,
                         !.ended[s] = "NONE"]
@@ -71,7 +81,7 @@ Connect(s) ==
 \* the client's disconnect packet, the integrity limit) and records why.
 Disconnect(s, why) ==
     /\ ~Stable /\ st.phase = "transport" /\ st.owner[s] # 0
-    /\ st' = [st EXCEPT !.owner[s] = 0, !.ended[s] = why]
+    /\ st' = [st EXCEPT !.owner[s] = 0, !.ended[s] = why, !.freed[s] = TRUE]
     /\ UNCHANGED <<wire, sent, pulse>>
 
 \* The live workload submits the next record only after earlier views are
@@ -164,6 +174,7 @@ Observe ==
           !.held = [s \in Slots |-> IF Unbinds(s) THEN {} ELSE st.held[s]],
           !.packetMap = {p \in st.packetMap : p.conn = st.owner[p.slot]},
           !.changed = [s \in Slots |-> "clientid" \in Broken /\ SeenChange(s)],
+          !.freed = [s \in Slots |-> FALSE],
           !.pending = IF CancelsPending(st.owner) THEN 0 ELSE @,
           !.pendingConn = IF CancelsPending(st.owner) THEN 0 ELSE @,
           !.todo = st.batch \cup ready, !.batch = {},
@@ -205,7 +216,7 @@ Kick(s) ==
     /\ st.state[s] = "Exhausted"
     /\ st' = [st EXCEPT !.state[s] = "Disconnected", !.owner[s] = 0,
           !.bound[s] = 0, !.reason[s] = "MESSAGE_MEMORY_EXHAUSTED",
-          !.ended[s] = "SERVER_DISCONNECTED",
+          !.ended[s] = "SERVER_DISCONNECTED", !.freed[s] = TRUE,
           !.pending = IF @ = s THEN 0 ELSE @,
           !.pendingConn = IF st.pending = s THEN 0 ELSE @]
     /\ UNCHANGED <<wire, sent, pulse>>
@@ -227,10 +238,11 @@ PublicDisconnect(s) ==
     /\ IF st.state[s] = "Connected" /\ "disconnectbypasseskick" \notin Broken
           THEN st' = [st EXCEPT !.state[s] = "Disconnected", !.owner[s] = 0,
                       !.bound[s] = 0, !.reason[s] = "SERVER_DISCONNECTED",
-                      !.ended[s] = "SERVER_DISCONNECTED",
+                      !.ended[s] = "SERVER_DISCONNECTED", !.freed[s] = TRUE,
                       !.pending = IF @ = s THEN 0 ELSE @,
                       !.pendingConn = IF st.pending = s THEN 0 ELSE @]
-          ELSE st' = [st EXCEPT !.owner[s] = 0, !.ended[s] = "SERVER_DISCONNECTED"]
+          ELSE st' = [st EXCEPT !.owner[s] = 0, !.ended[s] = "SERVER_DISCONNECTED",
+                      !.freed[s] = (st.owner[s] # 0) \/ @]
     /\ UNCHANGED <<wire, sent, pulse>>
 
 CarryOn(s) ==
@@ -344,6 +356,7 @@ TypeOK ==
     /\ st.released \subseteq Records /\ st.acked \subseteq Records
     /\ st.applied \subseteq Audit /\ st.dropped \subseteq Audit
     /\ st.changed \in [Slots -> BOOLEAN]
+    /\ st.freed \in [Slots -> BOOLEAN]
     /\ st.badKick \in BOOLEAN /\ st.badLifetime \in BOOLEAN
     /\ st.error \in {"NONE", "ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED"}
     /\ st.pending \in 0..SlotCount /\ st.pendingConn \in 0..MaxConn
@@ -395,4 +408,12 @@ DropReadsTransportEnd ==
 ReasonKeptUntilNextConnection ==
     [][\A s \in Slots : st'.reason[s] # st.reason[s] =>
          st'.bound[s] # st.bound[s] \/ st'.state[s] = "Disconnected"]_vars
+\* Every end is seen: Observe finds each slot whose connection ended since the
+\* last Observe still free, so after that update the slot reads not
+\* connected with the end's reason, never the NONE of a next connection
+\* (rocketnet_server_disconnect_reason). MCRNSlotsBrokenReuseInUpdate expects
+\* TLC to violate it.
+EveryEndSeen ==
+    [][st.phase = "transport" /\ st'.phase = "apply" =>
+         \A s \in Slots : st.freed[s] => st.owner[s] = 0]_vars
 =============================================================================

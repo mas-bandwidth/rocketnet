@@ -4398,12 +4398,15 @@ void rocketnet_test_client_slots()
     int c = rocketnet_client_slots_assign( slots, 0x3333, 9, 0x3333, user_data );
     rocketnet_check( b == 1 && c == 2 );
 
-    // release frees the slot, clears identity, and the lowest-free rule
-    // reuses it next
+    // release frees the slot, clears identity, and once the update publishes
+    // it the stack reuses it next
 
     rocketnet_client_slots_release( slots, 1 );
     rocketnet_check( rocketnet_client_slots_find( slots, 0x2222 ) == -1 );
     rocketnet_check( rocketnet_client_slots_num_free( slots ) == 2 );
+    rocketnet_check( rocketnet_client_slots_num_held( slots ) == 1 );
+    rocketnet_client_slots_publish( slots );
+    rocketnet_check( rocketnet_client_slots_num_held( slots ) == 0 );
     int d = rocketnet_client_slots_assign( slots, 0x4444, 10, 0x4444, user_data );
     rocketnet_check( d == 1 );
     rocketnet_check( !rocketnet_client_slots_confirmed( slots, 1 ) );
@@ -4492,6 +4495,12 @@ void rocketnet_test_client_slots_free_list()
     rocketnet_check( rocketnet_client_slots_num_free( slots ) == 2 );
     rocketnet_check( rocketnet_client_slots_find( slots, 0x9000000000000002ULL ) == -1 );
     rocketnet_check( rocketnet_client_slots_find( slots, 0x9000000000000005ULL ) == -1 );
+
+    // held until the update publishes them: nothing pops a slot freed in this update
+
+    rocketnet_check( rocketnet_client_slots_assign( slots, 0x900000000000000AULL, 10,
+                                                    0x900000000000000AULL, user_data ) == -1 );
+    rocketnet_client_slots_publish( slots );
     rocketnet_check( rocketnet_client_slots_assign( slots, 0x900000000000000AULL, 10,
                                                     0x900000000000000AULL, user_data ) == 5 );
     rocketnet_check( rocketnet_client_slots_assign( slots, 0x900000000000000BULL, 11,
@@ -4939,10 +4948,12 @@ void rocketnet_test_server_response_denials()
                                                        NULL, client_keys.handshake_server_to_client ) == 0 );
     }
 
-    // a slot frees, the client retransmits the same response, and the
-    // connection completes: the denial consumed nothing
+    // a slot frees (the update's end publishes it), the client retransmits
+    // the same response, and the connection completes: the denial consumed
+    // nothing
 
     rocketnet_client_slots_release( test.server.client_slots, 0 );
+    rocketnet_client_slots_publish( test.server.client_slots );
     rocketnet_check( rocketnet_test_process_packet( &test, client_response, sizeof( client_response ), response, &response_bytes,
                                                     payload_out, &payload_out_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE );
     rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_CONNECTED] == 1 );
