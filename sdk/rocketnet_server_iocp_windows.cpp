@@ -1874,9 +1874,19 @@ failed:
 #else
     rocketnet_warn( "iocp transport create failed (Winsock %d, Win32 %lu)", WSAGetLastError(), GetLastError() );
 #endif // #if ROCKETNET_DEV
+    // The wait has no bound, unlike RIO's inline drain: here the workers and
+    // the send worker may already run on this memory, so it can be neither
+    // freed nor left while any of them is live. Every post raised pending and
+    // every completion or refused post lowers it; a wait still running after
+    // 10000 sleeps of a millisecond (ten seconds or more) says what it waits
+    // on, once.
     rocketnet_server_iocp_stop( iocp );
-    while ( !rocketnet_server_iocp_stopped( iocp ) )
+    for ( int passes = 0; !rocketnet_server_iocp_stopped( iocp ); ++passes )
     {
+        if ( passes == 10000 )
+        {
+            rocketnet_error( "iocp transport: create failure still waiting for %d pending operations and %d workers", iocp->pending.load(), iocp->active_workers.load() );
+        }
         rocketnet_platform_sleep( 0.001 );
     }
     rocketnet_server_iocp_destroy( iocp );
