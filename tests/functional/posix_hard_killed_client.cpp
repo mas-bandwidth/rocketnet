@@ -860,7 +860,9 @@ static void posix_hard_killed_client( const posix_hk_cell_t & cell )
     }
     else
 #endif // #if defined( __linux__ ) && ROCKETNET_XDP
+    {
         posix_hk_server_address( cell, rocketnet_server_transport_port( server ), server_address, sizeof( server_address ) );
+    }
 
     // the child first, so its slot is the only one connected when it lands
 
@@ -1203,7 +1205,9 @@ static void posix_send_to_closed_port( const posix_hk_cell_t & cell )
     }
     else
 #endif // #if defined( __linux__ ) && ROCKETNET_XDP
+    {
         posix_hk_server_address( cell, rocketnet_server_transport_port( server ), server_address, sizeof( server_address ) );
+    }
 
     std::vector<posix_hk_live_t> live( 3 );
 

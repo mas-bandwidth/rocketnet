@@ -1149,7 +1149,9 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
          || fail_stage == 1
 #endif // #if ROCKETNET_DEV
     )
+    {
         goto failed;
+    }
     if ( setsockopt( rio->socket, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char *) &enabled, sizeof( enabled ) ) == SOCKET_ERROR )
     {
         goto failed;
@@ -1237,7 +1239,9 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
          || fail_stage == 3
 #endif // #if ROCKETNET_DEV
     )
+    {
         goto failed;
+    }
 
     // both completion queues notify the worker's one event after RIONotify
 
@@ -1264,7 +1268,9 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
          || fail_stage == 4
 #endif // #if ROCKETNET_DEV
     )
+    {
         goto failed;
+    }
 
     // the request queue holds every send of every phase plus every receive
 
@@ -1281,7 +1287,9 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
          || fail_stage == 5
 #endif // #if ROCKETNET_DEV
     )
+    {
         goto failed;
+    }
 
     // proofs/tla/RNRioWorker.tla Init: every receive slice is posted
 

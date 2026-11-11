@@ -639,7 +639,7 @@ bool rocketnet_config_apply_env_uint64( const char * transport_name, const char 
 // (test_unit_secrets_wiped.cpp).
 #if ROCKETNET_DEV
 void ( *rocketnet_config_decode_staging_hook )( const uint8_t * staging, int bytes ) = NULL;
-#define ROCKETNET_CONFIG_DECODE_STAGING_SEEN( staging, bytes ) do { if ( rocketnet_config_decode_staging_hook ) rocketnet_config_decode_staging_hook( staging, bytes ); } while ( 0 )
+#define ROCKETNET_CONFIG_DECODE_STAGING_SEEN( staging, bytes ) do { if ( rocketnet_config_decode_staging_hook ) { rocketnet_config_decode_staging_hook( staging, bytes ); } } while ( 0 )
 #else
 #define ROCKETNET_CONFIG_DECODE_STAGING_SEEN( staging, bytes ) do {} while ( 0 )
 #endif // #if ROCKETNET_DEV

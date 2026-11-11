@@ -1381,9 +1381,16 @@ static void test_unreliable_packing_abort_and_short_finish()
         auto finish = [&]( int n )
         { return server ? rocketnet_message_server_finish( pair.server, 0, n ) : rocketnet_message_client_finish( pair.client, n ); };
         auto abort = [&]()
-        { if ( server ){ rocketnet_message_server_abort( pair.server, 0 );
-} else{ rocketnet_message_client_abort( pair.client );
-} };
+        {
+            if ( server )
+            {
+                rocketnet_message_server_abort( pair.server, 0 );
+            }
+            else
+            {
+                rocketnet_message_client_abort( pair.client );
+            }
+        };
         const uint64_t copies = rn_message_payload_copy_count();
         const size_t frames = end->finished.size();
         uint8_t * first = start( 128 );

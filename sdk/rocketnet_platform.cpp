@@ -2399,7 +2399,9 @@ int rocketnet_platform_socket_receive_packets_mmsg( rocketnet_platform_socket_t 
         }
         else
 #endif // #if ROCKETNET_DEV
+        {
             result = recvmmsg( socket->handle, msg, (unsigned int) want, MSG_DONTWAIT | MSG_TRUNC, NULL );
+        }
 
         if ( result < 0 )
         {
@@ -2651,7 +2653,9 @@ void rocketnet_platform_socket_send_packets( rocketnet_platform_socket_t * socke
             }
             else
 #endif // #if ROCKETNET_DEV
+            {
                 result = rocketnet_sendmsg_x( socket->handle, msg + offset, (u_int) ( count - offset ), 0 );
+            }
             (void) injected_error;
 
             if ( result > 0 )
@@ -2777,7 +2781,9 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
         }
         else
 #endif // #if ROCKETNET_DEV
+        {
             result = rocketnet_recvmsg_x( socket->handle, msg, (u_int) want, 0 );
+        }
 
         if ( result < 0 )
         {

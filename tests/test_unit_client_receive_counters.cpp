@@ -661,7 +661,9 @@ do                                                                              
     char rcr_report[16384];                                                                                       \
     const bool rcr_ok = rocketnet_counters_expect_core( (before), (after), __VA_ARGS__, rcr_report, (int) sizeof(rcr_report) ); \
     if ( !rcr_ok )                                                                                                \
+    {                                                                                                             \
         printf( "case: %s\n%s", (label), rcr_report );                                                            \
+    }                                                                                                             \
     check( rcr_ok );                                                                                              \
 } while(0)
 

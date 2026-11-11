@@ -440,7 +440,7 @@ int rocketnet_verify_signed_connect_data( const uint8_t * signed_connect_data,
 // (test_unit_secrets_wiped.cpp).
 #if ROCKETNET_DEV
 void ( *rocketnet_token_private_block_hook )( uint8_t * block, int bytes, int at_exit ) = NULL;
-#define ROCKETNET_TOKEN_PRIVATE_BLOCK_SEEN( block, bytes, at_exit ) do { if ( rocketnet_token_private_block_hook ) rocketnet_token_private_block_hook( block, bytes, at_exit ); } while ( 0 )
+#define ROCKETNET_TOKEN_PRIVATE_BLOCK_SEEN( block, bytes, at_exit ) do { if ( rocketnet_token_private_block_hook ) { rocketnet_token_private_block_hook( block, bytes, at_exit ); } } while ( 0 )
 #else
 #define ROCKETNET_TOKEN_PRIVATE_BLOCK_SEEN( block, bytes, at_exit ) do {} while ( 0 )
 #endif // #if ROCKETNET_DEV

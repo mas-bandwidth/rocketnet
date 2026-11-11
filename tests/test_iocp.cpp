@@ -665,9 +665,10 @@ static void test_datagrams_and_producers()
     std::atomic<bool> sending{ true };
     std::thread incoming( [&]()
                           {
-        while (sending.load()){
+        while (sending.load())
+        {
             rocketnet_platform_socket_send_packet(client, &destination, extra, sizeof(extra));
-} } );
+        } } );
 
     std::atomic<bool> stop_returned{ false };
     std::thread stopping( [&]()
@@ -737,8 +738,10 @@ static void test_receive_publication_never_waits()
                         {
         rocketnet_server_iocp_test_hold_publication(transport, true);
         held.store(true);
-        while (!release_lock.load()){ rocketnet_platform_sleep(0.001);
-}
+        while (!release_lock.load())
+        {
+            rocketnet_platform_sleep(0.001);
+        }
         rocketnet_server_iocp_test_hold_publication(transport, false); } );
 
     const double hold_deadline = rocketnet_platform_time() + 5.0;

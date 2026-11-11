@@ -93,7 +93,9 @@ static void fail_replay( const char * condition, const char * file, int line )
 do                                                                                                                \
 {                                                                                                                 \
     if ( !( condition ) )                                                                                         \
+    {                                                                                                             \
         fail_replay( #condition, __FILE__, __LINE__ );                                                            \
+    }                                                                                                             \
 }                                                                                                                 \
 while ( 0 )
 

@@ -1582,19 +1582,27 @@ static const char * const rocketnet_fuzz_packet_type_names[ROCKETNET_FUZZ_NUM_PA
         char restore[8];                                                                                \
         rocketnet_fuzz_check_restore = rocketnet_test_getenv( "ROCKETNET_FUZZ_CHECK_RESTORE", restore, sizeof( restore ) ) && restore[0] == '1'; \
         if ( rocketnet_fuzz_pair_initialize() != 0 )                                                    \
+        {                                                                                               \
             exit( 1 );                                                                                  \
+        }                                                                                               \
         char seed_dir[1024];                                                                            \
         if ( rocketnet_test_getenv( "ROCKETNET_FUZZ_SEED_DIR", seed_dir, sizeof( seed_dir ) ) )          \
+        {                                                                                                \
             exit( generate( seed_dir ) ? 0 : 1 );                                                       \
+        }                                                                                                \
         return 0;                                                                                       \
     }                                                                                                   \
     extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )                          \
     {                                                                                                   \
         const uint64_t first = run( data, size );                                                       \
         if ( rocketnet_fuzz_check_replay )                                                              \
+        {                                                                                               \
             rocketnet_fuzz_pair_require( run( data, size ) == first, "an input replays to the same counters" ); \
+        }                                                                                               \
         if ( rocketnet_fuzz_dump_counters && rocketnet_fuzz_live_pair )                                 \
+        {                                                                                               \
             rocketnet_fuzz_pair_dump( rocketnet_fuzz_live_pair );                                       \
+        }                                                                                               \
         return 0;                                                                                       \
     }
 

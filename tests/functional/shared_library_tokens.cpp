@@ -34,7 +34,9 @@ static void rocketnet_shared_library_token_check_handler( const char * condition
 do                                                                                                                  \
 {                                                                                                                   \
     if ( !(condition) )                                                                                             \
+    {                                                                                                               \
         rocketnet_shared_library_token_check_handler( #condition, (const char*) __FUNCTION__, (const char*) __FILE__, __LINE__ ); \
+    }                                                                                                               \
 } while(0)
 
 // The functional suite also links the development library. Load the separate

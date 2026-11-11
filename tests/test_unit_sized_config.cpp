@@ -393,7 +393,9 @@ do                                                                              
     check( (accepted) ? made_status == ROCKETNET_STATUS_OK                                                      \
                       : ( made_status != ROCKETNET_STATUS_OK && made_status != ROCKETNET_TEST_STATUS_UNSET ) );      \
     if ( made )                                                                                                 \
+    {                                                                                                           \
         rn_test_client_stop_and_destroy( made );                                                                       \
+    }                                                                                                           \
 } while ( 0 )
 
 #define SIZED_CONFIG_SERVER_CREATE( mutation, accepted )                                                        \
@@ -411,7 +413,9 @@ do                                                                              
     check( (accepted) ? made_status == ROCKETNET_STATUS_OK                                                      \
                       : ( made_status != ROCKETNET_STATUS_OK && made_status != ROCKETNET_TEST_STATUS_UNSET ) );      \
     if ( made )                                                                                                 \
+    {                                                                                                           \
         rn_test_server_stop_and_destroy( made );                                                                       \
+    }                                                                                                           \
 } while ( 0 )
 
 static void test_sized_config_create_refuses_before_init()

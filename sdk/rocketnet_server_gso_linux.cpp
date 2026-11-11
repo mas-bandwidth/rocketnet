@@ -896,7 +896,9 @@ static bool rocketnet_server_gso_drain( struct rocketnet_server_gso_queue_t * qu
         }
         else
 #endif
+        {
             count = recvmmsg( queue->fd, queue->messages, (unsigned int) vlen, MSG_DONTWAIT, NULL );
+        }
 
         // every recvmmsg counts, empty ones included -- an instrument
         // that hides the misses cannot argue the syscall win. the 1ms

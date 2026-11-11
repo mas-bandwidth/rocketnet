@@ -1665,7 +1665,9 @@ static int rocketnet_ack_apply_run( struct rocketnet_ack_endpoint_t * endpoint,
             {
                 rocketnet_ack_stats_sent_add_acked( endpoint, sequence, record );
                 if ( sequence <= rocketnet_ack_stats_eligible_top( endpoint->highest_sequence ) )
+                {
                     endpoint->stats_eligible_unacked--;
+                }
             }
             newly_acked++;
 
@@ -1677,14 +1679,18 @@ static int rocketnet_ack_apply_run( struct rocketnet_ack_endpoint_t * endpoint,
             // the endpoint.
 
             if ( sequence > endpoint->largest_acked_sequence )
+            {
                 endpoint->largest_acked_sequence = sequence;
+            }
 
             // the claim _Keep-alive generation_ turns on: this client says it
             // received a keep-alive, so it says it holds its client index.
             // unverifiable here, and by design
 
             if ( record->was_keep_alive )
+            {
                 endpoint->keep_alive_acked = 1;
+            }
 
             // the first block that acknowledges a sequence yields one rtt
             // sample: the elapsed time between sending it and receiving the
@@ -1698,7 +1704,9 @@ static int rocketnet_ack_apply_run( struct rocketnet_ack_endpoint_t * endpoint,
             }
 
             if ( record->has_packet_id )
+            {
                 acked_packet_ids[( *acked_count )++] = record->packet_id;
+            }
         }
     };
 

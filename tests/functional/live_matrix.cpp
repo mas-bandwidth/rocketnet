@@ -94,7 +94,9 @@ static void live_matrix_check_failed( const char * condition, const char * funct
 do                                                                                                              \
 {                                                                                                               \
     if ( !(condition) )                                                                                         \
+    {                                                                                                           \
         live_matrix_check_failed( #condition, (const char*) __FUNCTION__, (const char*) __FILE__, __LINE__ );   \
+    }                                                                                                           \
 } while(0)
 
 // ---------------------------------------------------------------

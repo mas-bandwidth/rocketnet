@@ -917,9 +917,10 @@ inline long suite_reported_plan_rss_mb( const std::string & output )
         if ( text.compare( 0, length, line ) == 0 )
         {
             const long bound = std::atol( text.c_str() + length );
-            if ( bound > 0 ){
+            if ( bound > 0 )
+            {
                 reported = bound;
-}
+            }
         } } );
 
     return reported;
@@ -1110,9 +1111,10 @@ inline bool suite_collect( std::vector<suite_case> & pending, std::vector<suite_
     }
     std::stable_sort( pending.begin(), pending.end(), []( const suite_case & a, const suite_case & b )
                       {
-        if ( a.group != b.group ){
+        if ( a.group != b.group )
+        {
             return a.group < b.group;
-}
+        }
         return suite_layer_of( a.name ) < suite_layer_of( b.name ); } );
 
     for ( size_t i = 0; i < pending.size(); i++ )

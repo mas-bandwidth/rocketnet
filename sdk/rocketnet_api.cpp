@@ -1037,7 +1037,7 @@ enum rocketnet_status_t rocketnet_client_light_config_internal( struct rocketnet
     }
 
     const size_t use = config->config_bytes < sizeof( *config ) ? config->config_bytes : sizeof( *config );
-#define RN_LIGHT_SET( field, value ) do { if ( offsetof( struct rocketnet_client_config_t, field ) + sizeof( config->field ) <= use ) config->field = ( value ); } while ( 0 )
+#define RN_LIGHT_SET( field, value ) do { if ( offsetof( struct rocketnet_client_config_t, field ) + sizeof( config->field ) <= use ) { config->field = ( value ); } } while ( 0 )
 
     // Workload: one 1500-byte MTU each way every 100 ms.
     // 10 * 1500 * 8 = 120000 bits/s, about 120 kbps. The reliable timeout
@@ -2467,7 +2467,7 @@ enum rocketnet_status_t rocketnet_server_light_config_internal( struct rocketnet
     }
 
     const size_t use = config->config_bytes < sizeof( *config ) ? config->config_bytes : sizeof( *config );
-#define RN_LIGHT_SET( field, value ) do { if ( offsetof( struct rocketnet_server_config_t, field ) + sizeof( config->field ) <= use ) config->field = ( value ); } while ( 0 )
+#define RN_LIGHT_SET( field, value ) do { if ( offsetof( struct rocketnet_server_config_t, field ) + sizeof( config->field ) <= use ) { config->field = ( value ); } } while ( 0 )
 
     // Workload: one 1500-byte MTU each way every 100 ms.
     // 10 * 1500 * 8 = 120000 bits/s, about 120 kbps. The reliable timeout
