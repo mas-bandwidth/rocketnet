@@ -360,7 +360,8 @@ struct rocketnet_server_transport_t
 // allocation's bytes. Create and the memory plan both take this layout.
 struct rocketnet_server_transport_layout_t
 {
-    int send_packets, receive_packets, ring_slots, disconnect_bursts;
+    int send_packets, receive_packets, ring_slots, disconnect_bursts, cookie_reply_source_words;
+    uint64_t cookie_reply_sources;
     uint64_t send_to, send_packet_bytes, send_data, send_sends, send_accepted;
     uint64_t receive_from, receive_packet_bytes, receive_data;
     uint64_t ring_info, ring_data, ring_sends, ring_send_client_index, ring_accepted;
@@ -379,6 +380,7 @@ static bool rocketnet_server_transport_layout( int max_clients, rocketnet_server
     layout->receive_packets = rocketnet_server_receive_packets_per_update( max_clients );
     layout->ring_slots = rocketnet_server_send_batch_packets( max_clients );
     layout->disconnect_bursts = rocketnet_server_disconnect_bursts( max_clients );
+    layout->cookie_reply_source_words = rocketnet_server_cookie_reply_source_words( max_clients );
 
     const uint64_t send = (uint64_t) layout->send_packets;
     const uint64_t receive = (uint64_t) layout->receive_packets;
@@ -410,6 +412,9 @@ static bool rocketnet_server_transport_layout( int max_clients, rocketnet_server
 
     layout->disconnect_bursts_offset = rocketnet_carve( carve, bursts, sizeof( rocketnet_server_disconnect_burst_t ) );
     layout->disconnect_burst_keys = rocketnet_carve( carve, bursts, ROCKETNET_KEY_BYTES );
+
+    // the protocol's cookie reply source bitmap (rocketnet_server_cookie_reply_source_words)
+    layout->cookie_reply_sources = rocketnet_carve( carve, (uint64_t) layout->cookie_reply_source_words, sizeof( uint64_t ) );
 
     layout->payload_client_index = rocketnet_carve( carve, receive, sizeof( int ) );
     layout->payload_connection_id = rocketnet_carve( carve, receive, sizeof( uint64_t ) );
@@ -473,6 +478,12 @@ static rocketnet_server_transport_t * rocketnet_server_transport_allocate( void 
     server_transport->disconnect_burst_steady_cap = max_clients;
     memset( server_transport->disconnect_burst_keys, 0, (size_t) layout.disconnect_bursts * ROCKETNET_KEY_BYTES );
 
+    // clear before the first receive: the first update's receives run before
+    // its protocol update clears the bitmap
+    server_transport->protocol.cookie_reply_sources = (uint64_t *) ( base + layout.cookie_reply_sources );
+    server_transport->protocol.cookie_reply_source_words = layout.cookie_reply_source_words;
+    memset( server_transport->protocol.cookie_reply_sources, 0, (size_t) layout.cookie_reply_source_words * sizeof( uint64_t ) );
+
     rocketnet_server_payloads_t * payloads = &server_transport->payloads;
     payloads->capacity = layout.receive_packets;
     payloads->client_index = (int *) ( base + layout.payload_client_index );
@@ -491,6 +502,20 @@ void rocketnet_server_transport_poison_slot_for_test( struct rocketnet_server_tr
     rocketnet_assert( server );
     rocketnet_assert( client_index >= 0 && client_index < server->client_wire_totals_capacity );
     memset( &server->client_wire_totals[client_index], 0xA5, sizeof( server->client_wire_totals[client_index] ) );
+}
+
+// The unit seam for the protocol's cookie reply source bitmap: its words,
+// and whether every one of them is clear.
+int rocketnet_server_transport_cookie_reply_source_words_for_test( const struct rocketnet_server_transport_t * server, bool * clear )
+{
+    rocketnet_assert( server && clear );
+    const struct rocketnet_server_protocol_t * protocol = &server->protocol;
+    *clear = protocol->cookie_reply_sources != NULL;
+    for ( int i = 0; *clear && i < protocol->cookie_reply_source_words; ++i )
+    {
+        *clear = protocol->cookie_reply_sources[i] == 0;
+    }
+    return protocol->cookie_reply_source_words;
 }
 
 // The unit seam for a sweep over many clients without a handshake: seats
@@ -2261,6 +2286,10 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_s
     }
 
     randombytes_buf( protocol->cookie_key, ROCKETNET_COOKIE_KEY_BYTES );
+    randombytes_buf( protocol->cookie_reply_source_key, ROCKETNET_SERVER_COOKIE_REPLY_KEY_BYTES );
+#if ROCKETNET_DEV
+    rocketnet_dev_seed_hash_key( protocol->cookie_reply_source_key, ROCKETNET_SERVER_COOKIE_REPLY_KEY_BYTES, ROCKETNET_DEV_HASH_KEY_COOKIE_REPLY_SOURCES );
+#endif // #if ROCKETNET_DEV
     sodium_memzero( protocol->previous_cookie_key, ROCKETNET_COOKIE_KEY_BYTES );
     protocol->has_previous_cookie_key = 0;
     protocol->cookie_lifetime_seconds = ROCKETNET_DEFAULT_COOKIE_LIFETIME_SECONDS;

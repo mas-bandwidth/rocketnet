@@ -429,6 +429,9 @@ int main( int argc, char ** argv )
 
     struct rocketnet_server_protocol_t server;
     memset( &server, 0, sizeof( server ) );
+    static uint64_t server_cookie_reply_sources[64];    // a harness-sized bitmap: 4096 bits
+    server.cookie_reply_sources = server_cookie_reply_sources;
+    server.cookie_reply_source_words = 64;
     server.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
     server.send_rate = 10.0;
 

@@ -760,7 +760,25 @@ carrying a passing filter value and a zero type byte, making the server a packet
 reflector for garbage and spending a hash and a system call on every piece of it.
 Everything below it is expensive — the used-token lookup hashes 576 bytes, and the three
 asymmetric operations follow — so nothing below may run for an address that has not
-answered. * **A server should bound the handshake work it performs in one update: at
+answered. * **A server must send at most one cookie to each source address and port in
+one update.** A cookie is smaller than the request, but one source repeating its
+request would otherwise draw a cookie for every copy. There is no limit on one update's
+cookies in all beyond the packets the update processes: a lower one would let a spoofed
+flood of distinct sources take every cookie of the update and refuse the honest source
+behind it. The reference implementation keeps the per-source limit as one bit of a
+bitmap, indexed by SipHash of the address and port under a key drawn at server creation,
+allocated with the server and cleared each update: there is no table a flood can fill,
+and the key keeps a collision from being aimed. The bitmap holds the next power of two
+at or above 16 times the most connection requests one update can process, so a flood
+that fills the whole bound has set at most 1 in 16 of its bits, and an honest source is
+refused for one update by a collision with probability at most about 1 in 16, and
+proportionally less below the bound; its client sends again. The factor 16 is a chosen
+bound, not a measured optimum. The check sits before the cookie MAC, so a refusal costs
+one hash at most, and it does not spend the handshake work budget below, so a cookie
+flood cannot starve verified requests and a spent budget does not stop cookies. The
+refusal has no counter of its own: the request is counted by its cookie's reason, as
+before, so no existing counter changes what it means. * **A
+server should bound the handshake work it performs in one update: at
 most 16 connection requests reaching the signature verify, per server, per update by
 default.** This check sits after the cheap rungs (the used-token lookup, the
 failed-signature budget, the claim and the two capacities) and immediately before the
@@ -1972,3 +1990,14 @@ It differs from the text shipped with v1.0.0 in these places:
   bursts is not sent and is counted as `DISCONNECT_BURST_DROPPED`, a refused destination
   ends its burst, and the timeout stands behind every burst withheld, as the reference
   implementation has done since v1.0.0 (the counter is new).
+- [RN-1 t12 Handshake: server](TRANSPORT.md#t12), rule 7, and
+  [RN-1 t19.1 Amplification](TRANSPORT.md#t19.1): a server sends at most one connection
+  cookie to each source address and port per update, held in a bitmap under a keyed hash
+  of at least 16 bits for each connection request one update can process; a request owed
+  a cookie past it is ignored, counted only by its cookie's reason as before, and the limit
+  does not spend the handshake work budget.
+- [RN-1 t17 Timing and defaults](TRANSPORT.md#t17), item 12: a request whose signature
+  verifies and is then refused for a sealed block that does not open, sealed fields that
+  disagree with the signed fields, or a small-order client key is recorded against its
+  source as a failed verification is; a client id already connected and a full server's
+  denial record nothing.
