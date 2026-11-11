@@ -97,6 +97,11 @@ uint32_t rn_window_ack_resend_first( const rn_window_ack_t * ack, bool chunk )
     return chunk ? ack->chunk_head : ack->resend_head;
 }
 
+uint32_t rn_window_ack_resend_sent( const rn_window_ack_t * ack, bool chunk )
+{
+    return chunk ? ack->chunk_sent : ack->resend_sent;
+}
+
 uint32_t rn_window_ack_resend_next( const rn_window_ack_t * ack, bool chunk, uint32_t slot )
 {
     const rn_region_t * region = ack->region;
@@ -123,7 +128,8 @@ static bool rn_resend_fifo_index_ok( rn_window_ack_t * ack, uint32_t index )
 }
 
 // Returns false when a link was out of range and nothing was changed.
-// proofs/tla/RNResendFifoLayout.tla Unlink: the fields, heads, tails, flag bits and count at W = 4.
+// proofs/tla/RNResendFifoLayout.tla Unlink: the fields, heads, tails, flag bits and count at W = 4;
+// a slot that is its class's sent mark passes the mark to its next (MarkMatch).
 static bool rn_resend_fifo_unlink( rn_window_ack_t * ack, uint32_t slot )
 {
     rn_resend_link_t * fifo = ack->region->resend_fifo;
@@ -140,6 +146,10 @@ static bool rn_resend_fifo_unlink( rn_window_ack_t * ack, uint32_t slot )
         return false;
     uint32_t * head = chunk ? &ack->chunk_head : &ack->resend_head;
     uint32_t * tail = chunk ? &ack->chunk_tail : &ack->resend_tail;
+    uint32_t * sent = chunk ? &ack->chunk_sent : &ack->resend_sent;
+
+    if ( *sent == slot )
+        *sent = next;
 
     if ( prev != RN_RESEND_NONE )
         rn_resend_set_next( &fifo[prev], next );
@@ -195,7 +205,8 @@ static void rn_resend_fifo_insert_after( rn_window_ack_t * ack, uint32_t after, 
     ack->resend_count++;
 }
 
-// proofs/tla/RNResendFifoLayout.tla PushTail: a slot that is already the tail links after its prev.
+// proofs/tla/RNResendFifoLayout.tla PushTail: a slot that is already the tail links after its prev;
+// a number sent into a class with none on the wire becomes its sent mark (MarkMatch).
 // proofs/tla/RNResendGenerations.tla Send
 static void rn_resend_fifo_push_tail( rn_window_ack_t * ack, uint32_t slot )
 {
@@ -204,6 +215,32 @@ static void rn_resend_fifo_push_tail( rn_window_ack_t * ack, uint32_t slot )
     if ( tail == slot )
         tail = rn_resend_index( ack->region->resend_fifo[slot].prev );
     rn_resend_fifo_insert_after( ack, tail, slot );
+
+    uint32_t * sent = chunk ? &ack->chunk_sent : &ack->resend_sent;
+    if ( *sent == RN_RESEND_NONE && rn_resend_entry_linked( &ack->region->resend_fifo[slot] ) )
+        *sent = slot;
+}
+
+// proofs/tla/RNResendFifoLayout.tla PushMark: a refused resend goes to the front of its
+// class's numbers on the wire, right before the sent mark (or at the tail when the class has
+// none), and becomes the mark; its due-now stamp is below every real send time (Ordered).
+static void rn_resend_fifo_push_mark( rn_window_ack_t * ack, uint32_t slot )
+{
+    if ( !rn_resend_fifo_unlink( ack, slot ) )
+    {
+        return;
+    }
+
+    const bool chunk = rn_window_ack_slot_is_chunk( ack, slot );
+    uint32_t * sent = chunk ? &ack->chunk_sent : &ack->resend_sent;
+    const uint32_t tail = chunk ? ack->chunk_tail : ack->resend_tail;
+    const uint32_t after = *sent == RN_RESEND_NONE ? tail : rn_resend_index( ack->region->resend_fifo[*sent].prev );
+    rn_resend_fifo_insert_after( ack, after, slot );
+
+    if ( rn_resend_entry_linked( &ack->region->resend_fifo[slot] ) )
+    {
+        *sent = slot;
+    }
 }
 
 // proofs/tla/RNResendFifoLayout.tla PushHead
@@ -447,6 +484,8 @@ void rn_window_ack_init( rn_window_ack_t * ack, rn_window_send_t * send, rn_regi
     ack->resend_tail = RN_RESEND_NONE;
     ack->chunk_head = RN_RESEND_NONE;
     ack->chunk_tail = RN_RESEND_NONE;
+    ack->resend_sent = RN_RESEND_NONE;                // proofs/tla/RNResendFifoLayout.tla Init
+    ack->chunk_sent = RN_RESEND_NONE;
 
     ack->oldest_number = send->U;
 
@@ -911,11 +950,26 @@ void rn_window_ack_packet_failed( rn_window_ack_t * ack, const uint64_t * number
         rocketnet_assert( slot->number == n );
 
         // never on the wire: stays never sent, so no reliable timeout clock (m9.3;
-        // proofs/tla/RNResendTiming.tla WalkRefused)
-        if ( !rn_send_number_never_sent( slot->last_send ) )
+        // proofs/tla/RNResendTiming.tla WalkRefused), and goes back to the head of
+        // its class, ahead of the numbers never sent after it. On the wire before:
+        // keeps its first send (its clock), takes the due-now stamp and goes back
+        // on the wire as its class's mark, so the next walk resends it ahead of
+        // every other number of its class (proofs/tla/RNResendTiming.tla WriteRefused).
+        if ( rn_send_number_never_sent( slot->last_send ) )
+        {
+            if ( !slot->acked )
+            {
+                rn_resend_fifo_push_head( ack, slot_index );
+            }
+        }
+        else
+        {
             slot->last_send = due_now_sentinel;
-        if ( !slot->acked )
-            rn_resend_fifo_push_head( ack, slot_index );
+            if ( !slot->acked )
+            {
+                rn_resend_fifo_push_mark( ack, slot_index );
+            }
+        }
     }
 }
 
