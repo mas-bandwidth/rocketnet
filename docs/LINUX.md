@@ -452,6 +452,10 @@ startup and an `xdp` transport label alone do not establish zero-copy.
 - A real port and a global address: port 0 refuses `xdp` (section 2), and an
   IPv6 link-local address is refused by name
   (`sdk/rocketnet_server_socket_linux.cpp`).
+- The gateway's neighbour entry: create refuses `xdp` with `no neighbor entry
+  with a link-layer address` when the host has not yet talked to its gateway
+  (`auto` then falls to `gso`); ping the gateway before create, or set
+  `ROCKETNET_GATEWAY_ETHERNET_ADDRESS` ([Environment](ENVIRONMENT.md)).
 - Queues: `num_xdp_queues`, default 7; worker CPUs start at `num_os_cpus`,
   default 1 (`sdk/rocketnet_driver_builtin.cpp`, `BUILDING.md`).
 - Memory: each queue's UMEM is 49152 frames of 4096 bytes, 192 MiB:

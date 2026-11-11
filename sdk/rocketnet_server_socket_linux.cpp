@@ -1029,7 +1029,7 @@ uint64_t rocketnet_server_socket_memory_required( int num_queues, int max_client
 static bool rocketnet_server_socket_interface_is_veth( const char * interface_name )
 {
     // the transport name the kernel reports for the interface (ETHTOOL_GDRVINFO)
-    const int probe_fd = socket( AF_INET, SOCK_DGRAM, 0 );
+    const int probe_fd = socket( AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0 );
     if ( probe_fd < 0 )
         return false;
     struct ethtool_drvinfo info;
@@ -1396,7 +1396,7 @@ static bool rocketnet_server_socket_preflight_with_cpus( const char * public_add
     // count (a NIC without channel support passes)
 
     {
-        int probe_fd = socket( AF_INET, SOCK_DGRAM, 0 );
+        int probe_fd = socket( AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0 );
         if ( probe_fd < 0 )
         {
             // silence must never verify
@@ -1458,7 +1458,7 @@ static bool rocketnet_server_socket_preflight_with_cpus( const char * public_add
     // created and closed without a bind...
 
     {
-        int xdp_fd = socket( AF_XDP, SOCK_RAW, 0 );
+        int xdp_fd = socket( AF_XDP, SOCK_RAW | SOCK_CLOEXEC, 0 );
         if ( xdp_fd < 0 )
         {
             rocketnet_warn( "xdp pre-flight: kernel refused an AF_XDP socket (%s) (K1). this kernel cannot run the XDP data plane", strerror( errno ) );
@@ -2324,12 +2324,16 @@ void rocketnet_server_socket_destroy( rocketnet_server_socket_t * server_socket 
     {
         if ( server_socket->attached_native )
         {
-            rocketnet_xdp_program_detach( server_socket->program, server_socket->interface_index, false );
+            const int result = rocketnet_xdp_program_detach( server_socket->program, server_socket->interface_index, false );
+            if ( result != 0 )
+                rocketnet_error( "could not detach server_xdp program (native) from interface %s: %s (errno %d)", server_socket->interface_name, strerror( -result ), -result );
         }
 
         if ( server_socket->attached_skb )
         {
-            rocketnet_xdp_program_detach( server_socket->program, server_socket->interface_index, true );
+            const int result = rocketnet_xdp_program_detach( server_socket->program, server_socket->interface_index, true );
+            if ( result != 0 )
+                rocketnet_error( "could not detach server_xdp program (skb) from interface %s: %s (errno %d)", server_socket->interface_name, strerror( -result ), -result );
         }
 
         rocketnet_xdp_program_close( server_socket->program );
@@ -3748,10 +3752,7 @@ void rocketnet_server_socket_xdp_counters( struct rocketnet_server_socket_t * se
         if ( !fit )
             rocketnet_error( "xdp stats not read: %d possible cpus is outside 1 .. %d; the last read stands", num_cpus, ROCKETNET_XDP_STATS_MAX_CPUS );
         else
-        {
-            char reason[128];
-            rocketnet_error( "xdp stats not read: map lookup failed: %s; the last read stands", strerror_r( read_error, reason, sizeof( reason ) ) );
-        }
+            rocketnet_error( "xdp stats not read: map lookup failed: %s; the last read stands", strerror( read_error ) );
     }
 }
 
@@ -3892,10 +3893,9 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
 
     bool reported_frame_pressure = false;
 
-    // the last errno each wakeup call saw, so a hard failure is logged once
+    // the last errno the tx wakeup saw, so a hard failure is logged once
     // per contiguous run rather than every pass
 
-    int poll_error = 0;
     int send_error = 0;
 
     for ( ;; )
@@ -3905,22 +3905,7 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
         // Complete one final nonwaiting I/O pass after stop was requested.
         // busy poll the transport
 
-        if ( poll( fds, 1, 0 ) < 0 )
-        {
-            const int error = errno;
-            if ( rocketnet_xdp_send_wakeup_hard_error( error ) )
-                rocketnet_xdp_send_wakeup_failed( error, socket->send_wakeup_failures, socket->send_hard_error );
-            if ( rocketnet_xdp_send_wakeup_report( error, poll_error ) )
-            {
-                char reason[128];
-                rocketnet_error( "xdp queue %d poll failed: %s; the tx ring cannot drain and stop will not wait for it",
-                                 socket->queue, strerror_r( error, reason, sizeof( reason ) ) );
-            }
-        }
-        else
-        {
-            poll_error = 0;
-        }
+        poll( fds, 1, 0 );
 
         // return pending frames to the fill queue
 
@@ -4249,11 +4234,8 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
                 const int error = errno;
                 rocketnet_xdp_send_wakeup_failed( error, socket->send_wakeup_failures, socket->send_hard_error );
                 if ( rocketnet_xdp_send_wakeup_report( error, send_error ) )
-                {
-                    char reason[128];
                     rocketnet_error( "xdp queue %d tx wakeup failed: %s; the tx ring cannot drain and stop will not wait for it",
-                                     socket->queue, strerror_r( error, reason, sizeof( reason ) ) );
-                }
+                                     socket->queue, strerror( error ) );
             }
             else
             {
