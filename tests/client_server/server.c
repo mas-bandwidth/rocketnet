@@ -207,6 +207,52 @@ static void dump_counters( const struct rocketnet_counters_t * counters )
     fflush( stdout );
 }
 
+// the echo loop's main-call durations since the last counters dump, for a bench
+// run that floods the server (docs/XDP-PACKET-BLASTER.md): p50, p99 and max
+#define ROCKETNET_SERVER_TIMES_MAX 65536
+
+struct update_times_t
+{
+    int count;
+    double max;
+    double samples[ROCKETNET_SERVER_TIMES_MAX];
+};
+
+static struct update_times_t g_update_times;
+static struct update_times_t g_send_times;
+
+static void update_times_add( struct update_times_t * t, double seconds )
+{
+    if ( t->count < ROCKETNET_SERVER_TIMES_MAX )
+    {
+        t->samples[t->count++] = seconds;
+    }
+    if ( seconds > t->max )
+    {
+        t->max = seconds;
+    }
+}
+
+static int update_times_compare( const void * a, const void * b )
+{
+    const double x = *(const double *) a;
+    const double y = *(const double *) b;
+    return ( x > y ) - ( x < y );
+}
+
+static void update_times_print( const char * name, struct update_times_t * t )
+{
+    if ( t->count > 0 )
+    {
+        qsort( t->samples, (size_t) t->count, sizeof( double ), update_times_compare );
+        printf( "rocketnet time %s n %d p50_us %.1f p99_us %.1f max_us %.1f\n", name, t->count,
+                t->samples[t->count / 2] * 1e6, t->samples[( t->count * 99 ) / 100] * 1e6, t->max * 1e6 );
+        fflush( stdout );
+    }
+    t->count = 0;
+    t->max = 0.0;
+}
+
 // the interface that carries an IPv4 address, via `ip -o -4 addr show`
 static int interface_for_address( const char * address, char * out, size_t out_size )
 {
@@ -1250,7 +1296,9 @@ int main( int argc, char ** argv )
 
         while ( !quit )
         {
-            rocketnet_server_transport_update( transport_obj, rocketnet_time() );
+            const double update_start = rocketnet_time();
+            rocketnet_server_transport_update( transport_obj, update_start );
+            update_times_add( &g_update_times, rocketnet_time() - update_start );
 
             const int num_connected = rocketnet_server_transport_num_connected_clients( transport_obj );
             if ( num_connected != last_num_connected )
@@ -1267,12 +1315,16 @@ int main( int argc, char ** argv )
                 rocketnet_server_transport_send_packet( transport_obj, client_index, payload, payload_bytes );
             }
 
+            const double send_start = rocketnet_time();
             rocketnet_server_transport_send_packets( transport_obj );
+            update_times_add( &g_send_times, rocketnet_time() - send_start );
 
             const double now = rocketnet_time();
             if ( counters_every > 0.0 && now - last_counters >= counters_every )
             {
                 dump_counters( rocketnet_server_transport_counters( transport_obj ) );
+                update_times_print( "update", &g_update_times );
+                update_times_print( "send_packets", &g_send_times );
                 last_counters = now;
             }
 
