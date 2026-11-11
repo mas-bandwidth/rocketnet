@@ -41,6 +41,10 @@
 // the disconnect reasons (enum rocketnet_disconnect_reason_t)
 #include "rocketnet.h"
 
+// probe pacing and the RTT filter: a path with no reliable progress (or no ack)
+// for this long is treated as not delivering (standard/MESSAGES.md m9.2, m9.3)
+#define RN_PROBE_SECONDS 1.0
+
 #if ROCKETNET_DEV
 // Present only in the unit-test library; counts actual work, not ACK calls.
 struct rn_ack_cost_t
@@ -87,7 +91,11 @@ struct rn_window_ack_t
     double resend_delay_initial;             // seconds (default 2.0)
     double resend_delay_min;                 // optional resend delay floor (0.0 means no floor)
     double resend_delay_max;                 // seconds (default 2.0)
-    double reliable_timeout;        // seconds (default 10.0)
+    double reliable_timeout;        // seconds; 0.0 is off (the default)
+    double last_progress;           // the last update that newly acknowledged a reliable number (m9.3 probe)
+    double last_ack;                // the last update that acknowledged any message packet
+    double silence_end;             // the last ack after RN_PROBE_SECONDS with none (m9.2 RTT filter)
+    uint8_t has_last_ack;
 
     double srtt;                    // 5% smoothed RTT
     double rttvar;                  // deviation estimate
@@ -272,6 +280,10 @@ void rn_window_ack_packet_failed( rn_window_ack_t * ack, const uint64_t * number
 // ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT and returns 1. Otherwise returns
 // whether ack->error is already set.
 int rn_window_ack_check_timeout( rn_window_ack_t * ack, double now );
+
+// Whether only U may be resent: no reliable number newly acknowledged for
+// RN_PROBE_SECONDS since the later of the last progress and U's first send (m9.3)
+bool rn_window_ack_probing( const rn_window_ack_t * ack, double now );
 
 // The resend gap record's clock (development builds only; a no-op otherwise):
 // called once per update before the update's packets are written, with the
