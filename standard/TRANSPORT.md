@@ -1,6 +1,6 @@
 # RN-1: RocketNet connection layer
 
-Version: 1.0<br>
+Version: 1.1<br>
 Status: normative<br>
 Companion documents: RN-2 (`MESSAGES.md`), the message layer; RN-R
 (`RATIONALE.md`), informative rationale.
@@ -2389,7 +2389,7 @@ The client is in exactly one of the states of the table below. A state number is
 3. An accepted token MUST select one server address for the whole attempt: the IPv6 address when its flag is set and the client's host can open an IPv6 socket; otherwise the IPv4 address when its flag is set; otherwise the IPv6 address. A host that cannot open a socket of the selected family MUST NOT send to it. When the token names both families and the client's socket for the selected IPv6 address is refused, at open or at connect, for any reason but a want of memory, the client MUST open a socket for the IPv4 address on the same transport and connect it before it treats that transport as refused; when that socket is granted, the IPv4 address is the server address for the attempt and nothing races. A refusal for want of memory on either family ends the attempt. When the token names both families and the host can use both, the selected address is the IPv6 address and the client MUST also dial the IPv4 address, from a socket of its own opened with the connect, and send each requesting cookie (1) packet to both addresses until the first valid connection cookie arrives. Only this stateless stage races: that first cookie commits the attempt to the family it arrived on, the committed family's address is the server address for the rest of the attempt, the client MUST send its connection request only to that family, and it MUST close the other family's socket. A packet from the other family's address after the commit, a late cookie included, MUST be dropped and counted as from a foreign source. The token's lifetime and timeout bound the attempt as for one address. With one family named, or one family usable, the choice is the single address exactly as above.
 4. An attempt MUST begin with a fresh connection salt and a fresh ephemeral keypair. The handshake and session sending sequences MUST start at one and MUST NOT be reset within the attempt.
 5. The client MUST enter requesting cookie (1), sending connection request (2), sending connection response (3) and connected (4) in that order, each at most once per attempt.
-6. While the client is in requesting cookie (1) or sending connection request (2), it MUST abandon the attempt for connect token expired (-7) once the token's lifetime, the difference between its expire timestamp and its create timestamp, has elapsed since the attempt began. The check does not apply in sending connection response (3) or connected (4): from sending connection response (3) the server may already hold the client connected, so only the timeout of rule 8 ends the wait.
+6. While the client is in requesting cookie (1) or sending connection request (2), it MUST abandon the attempt for connect token expired (-7) once the token's lifetime, the difference between its expire timestamp and its create timestamp, has elapsed since the attempt began. The check does not apply in sending connection response (3) or connected (4): from the moment the client has sent its connection response the server can already hold it connected, so from then on the only clock that ends the attempt is the timeout of rule 8, and in sending connection response (3) the client waits for the timeout even when the timeout is larger than the token's lifetime.
 7. In requesting cookie (1), sending connection request (2) and sending connection response (3), the client MUST retransmit its current packet at the send rate of [t17 Timing and defaults](#t17) until a packet advances it or a deadline ends the attempt. A client MUST NOT send a packet because a packet arrived.
 8. In a positive state below connected (4), a client that has accepted no authenticated packet for the token's timeout MUST move to the state whose number is one less than the negation of its current state: requesting cookie (1) to cookie request timed out (-2), sending connection request (2) to connection request timed out (-3), sending connection response (3) to connection response timed out (-4). In connected (4) the same silence MUST move the client to connection timed out (-5). An authenticated packet is one that opens under the attempt's keys: a connection challenge or a session packet. The timeout runs from the attempt's start until the first one, and a connection cookie never restarts it ([t11.1 Cookie processing](#t11.1)).
 9. A negative state MUST persist until the client disconnects or accepts a new connect token after any retiring transport from the ended attempt has finished stopping. A disconnect from any state MUST perform the per-connection reset of [t13 Session: keep-alive, timeout, disconnect, slot reset](#t13) and MUST return the client to disconnected (0). From disconnected (0), or from a negative state once any retiring transport has finished stopping, the client MAY connect again with a new token.
@@ -3407,11 +3407,12 @@ an input ([t1.4 Conventions](#t1.4)).
    that opens under its handshake key, refreshes the idle deadline.
 5. A client MUST NOT begin an attempt with a token whose expire timestamp is
    not later than its current time, and MUST send no packet for it. In
-   requesting cookie (1), sending connection request (2) and sending connection
-   response (3) the client MUST abandon the attempt for connect token expired
-   (-7) once the token's lifetime, its expire timestamp less its create
-   timestamp, has elapsed on the client's clock since the attempt began. The
-   check does not apply in connected (4).
+   requesting cookie (1) and sending connection request (2) the client MUST
+   abandon the attempt for connect token expired (-7) once the token's
+   lifetime, its expire timestamp less its create timestamp, has elapsed on the
+   client's clock since the attempt began. The check does not apply in sending
+   connection response (3) or connected (4), where the only clock that ends the
+   client is the silence timeout of [t11 Handshake: client](#t11) rule 8.
 6. An endpoint MUST end an established connection when the connection timeout
    has elapsed with no accepted authenticated packet from the remote endpoint. The connection timeout is
    the timeout seconds field of the connect token
@@ -3748,6 +3749,13 @@ The registry of counters, in index order, is:
 | `PAYLOAD_BATCH_FULL` | `refusal` | `none` |
 | `XDP_RECEIVE_FRAME_DROPPED` | `refusal` | `none` |
 | `DISCONNECT_BURST_DROPPED` | `refusal` | `none` |
+
+`MESSAGE_MEMORY_EXHAUSTED` moves only once the receive side has exhausted a
+connection's message memory, which only a broken invariant of the receiver
+reaches, and on each start refused after that; a start that finds no room in
+the send queue or the send store counts `MESSAGE_SEND_QUEUE_FULL` or
+`MESSAGE_SEND_STORE_FULL`, and the connection goes on
+([RN-2 m1.7 Send refusal](MESSAGES.md#m1.7)).
 
 The vector below encodes the registry in index order. For each counter it holds
 the little-endian u32 FNV-1a hash of the ASCII name, the class as one byte
@@ -4133,8 +4141,8 @@ the resulting total. All parts remain in the single allocator-hook allocation.
 
 The capacity guarantee assumes typical payload sizes of 128/512/1024 bytes in
 the corresponding fixed pools, or larger messages in the span arena. Arbitrarily
-tiny records can exhaust bounded descriptors or padding capacity; a send that
-finds no room is then refused and counted, and the connection stays up
+tiny records can exhaust bounded descriptors or padding capacity; a start that
+then finds no room is refused and counted, and the connection goes on
 ([RN-2 m1.7 Send refusal](MESSAGES.md#m1.7)). Raising the runtime send budget
 after CREATE does not enlarge this allocation; configure the intended maximum
 budget before creation.

@@ -200,3 +200,15 @@ space. The exact table follows.
 | `MCRNSlotsExhaustion.cfg` | 7,961,361 | 1,918,511 | 25.977 | pass - |
 | `MCRNSlotsLive.cfg` | 756 | 491 | 1.593 | pass - |
 | `MCRNSlotsTwoSlots.cfg` | 858,124 | 360,941 | 5.897 | pass - |
+
+## Revision 1.1: no change
+
+MESSAGES.md m1.7 turns a send with no room into a refusal and keeps the
+receive side's MESSAGE_MEMORY_EXHAUSTED end. This model's only step to
+`"Exhausted"` is `Admit` of a received record into a full region
+(`Cardinality(st.region[s]) >= RegionCapacity`), which is the receive side;
+no send step reaches it. `MCRNSlotsExhaustion.cfg` and
+`MCRNSlotsBrokenKickCarriesOn.cfg` therefore check the end that stays, and
+the model, its configurations and its records are unchanged. The send-side
+refusal is modelled in RNConnectionMemory, RNSendStoreLayout, RNSendSpans,
+RNChannelTypes, RNFlows and ClientSession.

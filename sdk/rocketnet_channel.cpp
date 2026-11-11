@@ -77,6 +77,9 @@ static rn_delivery_t * rn_channels_append_delivery( rn_channels_t * channels )
 // A reliable delivery has room by construction: at most W numbers are live in
 // an update (6.3 step 4). A table that is full anyway is the region failing its
 // own bound, so the connection is exhausted rather than a message dropped (R5).
+// This is the receive side's exhaustion, the only one that ends a connection
+// (standard/MESSAGES.md m1.7): proofs/tla/ClientSession.tla ReceiveExhaust,
+// proofs/tla/RNConnectionMemory.tla Exhaust.
 
 bool rn_channels_delivery_room( rn_channels_t * channels )
 {
@@ -1789,7 +1792,7 @@ static bool rn_ordered_walk( rn_ordered_t * ordered, bool chunk, bool on_wire, d
 
         if ( on_wire && slot->number != ack->send->U && rn_window_ack_probing( ack, now ) )
         {
-            cursor = next_slot;                                 // probe pacing: only U while nothing is acknowledged (m9.3)
+            cursor = next_slot;                                 // probe pacing: only U while nothing is acknowledged (m9.3; proofs/tla/RNResendTiming.tla Walk skips Held)
             continue;
         }
 

@@ -46,7 +46,7 @@
 (* records that arrive before CONFIG are processed against the receiver's  *)
 (* own bounds: a channel outside them is a VIOLATION, never an overrun.  A *)
 (* remote endpoint whose CONFIG or acks never come is RELIABLE_TIMEOUT     *)
-(* (Tick).  An                                                             *)
+(* (Tick) when the reliable timeout is configured, and waits otherwise.  An *)
 (* endpoint in error does nothing more: the object disconnects it.         *)
 (*                                                                         *)
 (* The reversed witnesses are constants, each the rule it names:           *)
@@ -72,6 +72,10 @@ CONSTANTS
     ConfigCompared, \* BOOLEAN: the receiver compares CONFIG with its own (13.4)
     OrderChecked,   \* BOOLEAN: an ordered message waits for its channel predecessors (7.2)
     TimeoutAnyTime, \* BOOLEAN: Tick may time out at any time, not only on a silent remote endpoint
+    TimeoutConfigured, \* BOOLEAN: reliable_message_timeout_ms is nonzero (m9.3); zero, the
+                    \* default, gives neither half of Tick a clock
+    ConfigWaitOnTimeout, \* BOOLEAN, a reversed witness: the CONFIG wait keeps its clock
+                    \* with the timeout off, where a zero timeout fires at once
     Silence,        \* BOOLEAN: ack history overflow may drop pending acks (P5)
     Failures,       \* BOOLEAN: a written packet may fail to send (PacketFailed, P5)
     WriteAll,       \* BOOLEAN: a packet carries every due record (a model-size knob;
@@ -97,6 +101,7 @@ ASSUME /\ N \in Nat \ {0}
        /\ ConfigReliable \in BOOLEAN /\ ConfigCompared \in BOOLEAN
        /\ OrderChecked \in BOOLEAN
        /\ TimeoutAnyTime \in BOOLEAN /\ Silence \in BOOLEAN /\ Failures \in BOOLEAN
+       /\ TimeoutConfigured \in BOOLEAN /\ ConfigWaitOnTimeout \in BOOLEAN
        /\ WriteAll \in BOOLEAN /\ RtoAboveRtt \in BOOLEAN
 
 \* a packet: reliable records, unreliable records, and the transport acks
@@ -348,10 +353,18 @@ OnPayload(e, p) ==
 (* once the remote end is in error and silent: that time passes enough for *)
 (* a live remote end's resends to land first is RNResendTiming's           *)
 (* AttemptsBeforeTimeout.                                                  *)
+(*                                                                         *)
+(* Both halves run only when the timeout is configured (MESSAGES.md m9.3   *)
+(* and m11 rule 4): with it off (zero, the default) the CONFIG wait and an *)
+(* unacked record have no clock, and only the transport's silence timeout  *)
+(* ends a silent connection.  ConfigWaitOnTimeout is the code before       *)
+(* v1.1.0: the CONFIG half compared the wait with a timeout of zero and    *)
+(* fired at the first update.                                              *)
 (***************************************************************************)
 Tick(e) ==
     /\ Live(e)
-    /\ remoteCfg[e] = NoCfg \/ Unacked(e) # {}
+    /\ \/ TimeoutConfigured /\ (remoteCfg[e] = NoCfg \/ Unacked(e) # {})
+       \/ ConfigWaitOnTimeout /\ ~TimeoutConfigured /\ remoteCfg[e] = NoCfg
     /\ TimeoutAnyTime \/ ~Live(Remote(e))
     /\ err' = [err EXCEPT ![e] = "RELIABLE_TIMEOUT"]
     /\ UNCHANGED <<cfg, nextMsg, relQ, acked, unrelQ, firstWritten, pendAck, remoteCfg,
@@ -473,6 +486,14 @@ MismatchErrorsBothEnds ==
 \* remote endpoint never trips the receiver's bounds
 NoViolationWhenEqual ==
     cfg["a"] = cfg["b"] => \A e \in E : err[e] # "VIOLATION"
+
+\* With the reliable timeout off the message layer ends a connection only for
+\* what the remote endpoint did (CONFIG_MISMATCH, VIOLATION), never for a wait:
+\* the model has no clock, so no wait of any length ends it, and the only end a
+\* silent remote endpoint meets is the transport's at T, outside this module
+\* (MESSAGES.md m1.9 rule 1). The name is the property's: no end before T.
+NoEndBeforeT ==
+    ~TimeoutConfigured => \A e \in E : err[e] # "RELIABLE_TIMEOUT"
 
 (***************************************************************************)
 (* Liveness.                                                               *)

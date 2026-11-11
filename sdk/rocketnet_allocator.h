@@ -441,7 +441,7 @@ struct rn_region_t
     uint32_t descriptors_free;          // queue less the descriptors in use
     uint32_t descriptors_fresh;         // descriptors [0, fresh) have been taken since the carve; the rest are untouched (proofs/tla/RNLazyPool.tla)
 
-    uint32_t exhausted;                 // sticky until reset: an operation found no room (RNConnectionMemory Exhaust)
+    uint32_t exhausted;                 // sticky until reset: the receive side or the CONFIG found no room (RNConnectionMemory Exhaust); a send with none is refused (Refuse)
     int32_t exhausted_reason;           // ROCKETNET_DISCONNECT_REASON_*: NONE, or MESSAGE_MEMORY_EXHAUSTED
 
     uint32_t send_room_armed;           // 1 until the send room watch reports a crossing, 1 again below half (rn_region_send_room_watch)
@@ -515,7 +515,7 @@ void rn_region_reset( rn_region_t * region );
 uint32_t rn_region_send_alloc( rn_region_t * region, int bytes );
 
 // RNConnectionMemory Exhaust: an operation of this region's connection found
-// no room for something it must not drop (a send, a receive ring placement,
+// no room for something it must not drop (the CONFIG, a receive ring placement,
 // a hold). Sticky until rn_region_reset; the first call counts
 // MESSAGE_MEMORY_EXHAUSTED on the owner's counters, later calls nothing.
 void rn_region_exhaust( rn_region_t * region );

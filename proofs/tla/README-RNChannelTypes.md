@@ -231,3 +231,32 @@ scenario in the module; the existing scenarios keep their counts, since no
 fragment is enabled outside it. The reset scenario originally exhausted its
 110-second budget during recursive expression evaluation. Eager binding
 completes the same bounded scenario without restricting its action graph.
+
+## Revision 1.1: a full send capacity refuses
+
+Standard rule: MESSAGES.md m1.7. The action `MemoryExhausted` (the
+application's send finding the send capacity full ended the connection with
+MESSAGE_MEMORY_EXHAUSTED) is replaced by `Refuse`: the start is refused and
+counted and nothing of the connection changes. The receive side's overflow
+in `OpenPacket` keeps its end. `Broken = "SendKick"` is the reversed witness,
+v1.0's end from the send path; the ghost `sendEnded` records an end a send
+caused. The invariant `SendNeverEnds == ~sendEnded` is added. The code that
+cites this step is the start's refusal in `sdk/rocketnet_endpoint.cpp`
+(`RNChannelTypes.tla Refuse`); revision 1.0's citation of `MemoryExhausted`
+named a step the code no longer took.
+
+| Case | Expected | Exit | Distinct |
+|---|---|---:|---:|
+| `MCRNChannelTypesRefuse.cfg` (send capacity 2, every safety invariant and `SendNeverEnds`) | pass | 0 | 61 |
+| `MCRNChannelBrokenSendKick.cfg` | `SendNeverEnds` | 12 | 5 |
+
+`MCRNChannelTypes.cfg` keeps its invariants and liveness property. Its cost was the liveness check of `WF_vars(Next)`: TLC evaluated `ENABLED <<Next>>_vars` on every state and `<<Next>>_vars` on every edge (on vision with the record JVM flags: 2 min 56 s with the property, 50 s without). `Spec` now writes the fairness out by its definition with `StepPossible` for the enabledness and `<<TRUE>>_vars` for the step, both exact (`StepPossibleIsEnabled` checks the first in five configurations); the state graph is unchanged at 2,168,240 generated and 400,234 distinct, and the control passes in 79.8 s.
+
+Witness trace, read by hand (5 states): two sends fill the send capacity of
+2, the third offered send takes `Refuse` and, with `SendKick`, sets
+`connected = FALSE`, `reason = "MESSAGE_MEMORY_EXHAUSTED"`. The code before
+revision 1.1: a failed send allocation exhausted the region and the endpoint
+ended the connection with that reason. The code now returns no pointer from
+the start and counts the refusal in `send_refused`
+(`rn_endpoint_start`); a start while the receive side has exhausted
+the region still ends the connection.

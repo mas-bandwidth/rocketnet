@@ -35,8 +35,12 @@
 (* descriptor's in the code).  Sends are the region's: Alloc is            *)
 (* rn_region_send_alloc (a chunk and a descriptor), AllocSpan the          *)
 (* descriptor take of rn_region_send_alloc_span (the span itself is        *)
-(* RNSendSpans.tla's), Refuse a refused allocation (sticky exhaustion),    *)
-(* Free rn_region_send_free, Carve rn_region_carve.                        *)
+(* RNSendSpans.tla's), Refuse a refused allocation (a counted refusal     *)
+(* that leaves the store, the pool and the region as they were,            *)
+(* standard/MESSAGES.md m1.7), Free rn_region_send_free, Carve             *)
+(* rn_region_carve.  exhausted is the region's sticky flag, which only the *)
+(* receive side sets (RNConnectionMemory.tla Exhaust); here it only guards *)
+(* the takes and is cleared by Carve.                                      *)
 (*                                                                         *)
 (* Reversed witnesses (each flag FALSE is a real bug class):               *)
 (*   FreshGuard    the free test reads meta without the i >= fresh guard   *)
@@ -44,6 +48,8 @@
 (*   ChunkSkipZero a chunk generation that wraps to 0                      *)
 (*   DescSkipZero  a descriptor generation that wraps to 0      *)
 (*   KeepFreeSlot  the take clears a free_slot the stack still uses        *)
+(* and one flag TRUE is the v1.0 behaviour this model no longer has:       *)
+(*   RefuseExhausts  a refused fit exhausts the region (the send kick)     *)
 (***************************************************************************)
 EXTENDS Integers, FiniteSets
 
@@ -55,10 +61,11 @@ CONSTANTS
     LowerCursor,    \* rn_send_store_free_checked lowers free_head to the freed chunk
     ChunkSkipZero,  \* a chunk's generation skips 0 when it wraps
     DescSkipZero,   \* a descriptor's generation skips 0 when it wraps
-    KeepFreeSlot    \* rn_region_descriptor_take keeps a free_slot below the new top
+    KeepFreeSlot,   \* rn_region_descriptor_take keeps a free_slot below the new top
+    RefuseExhausts  \* a refused fit exhausts the region (broken: v1.0's send kick)
 
 ASSUME N \in Nat \ {0} /\ Q \in Nat \ {0} /\ GenMod \in Nat /\ GenMod >= 3
-ASSUME \A f \in {FreshGuard, LowerCursor, ChunkSkipZero, DescSkipZero, KeepFreeSlot} : f \in BOOLEAN
+ASSUME \A f \in {FreshGuard, LowerCursor, ChunkSkipZero, DescSkipZero, KeepFreeSlot, RefuseExhausts} : f \in BOOLEAN
 
 Chunks == 0..(N - 1)
 Descs == 0..(Q - 1)
@@ -172,11 +179,14 @@ AllocSpan ==
     /\ UNCHANGED <<meta, freeHead, freeCount, fresh, exhausted, badRefusal>>
 
 \* rn_region_send_fit_store refuses (no descriptor, or the store's find
-\* fails) and rn_region_send_refuse exhausts the region
+\* fails) and rn_region_send_refuse counts it: the cursors, the counts, the
+\* free stack and the exhausted flag are as before the fit, so a later
+\* Alloc succeeds once a Free gives room back (standard/MESSAGES.md m1.7).
+\* RefuseExhausts is v1.0's rn_region_send_refuse, which exhausted the region.
 Refuse ==
     /\ ~exhausted
     /\ dFree = 0 \/ ~FindOK
-    /\ exhausted' = TRUE
+    /\ exhausted' = RefuseExhausts
     /\ badRefusal' = (badRefusal \/ (dFree > 0 /\ FreeChunks # {}))
     /\ touchedPast' = (touchedPast \/ (dFree > 0 /\ ScanTouchesPast))
     /\ UNCHANGED <<meta, freeHead, freeCount, fresh, desc, dTop, dFree, dFresh, takenTwice>>
@@ -281,6 +291,17 @@ StackExact ==
 
 \* descriptors_free is the stack plus the never-taken descriptors
 DescCountExact == dFree = dTop + (Q - dFresh) /\ dFree = Q - Cardinality(LiveDescs)
+
+\* a refused fit changes nothing of the store, the descriptor pool or the
+\* region: the store's cursor, free count and watermark, every meta word,
+\* every descriptor, the free stack's top and count, and exhausted are as
+\* before it (standard/MESSAGES.md m1.7, rule 2). Reversed by RefuseExhausts.
+RefuseLeavesLayout ==
+    [][Refuse => UNCHANGED <<meta, freeHead, freeCount, fresh, desc, dTop, dFree, dFresh, exhausted>>]_vars
+
+\* the store never exhausts its region: only the receive side does
+\* (standard/MESSAGES.md m1.7). Reversed by RefuseExhausts.
+StoreNeverExhausts == ~exhausted
 
 \* a live chunk's or descriptor's generation is never 0
 HeldGenerationPositive ==

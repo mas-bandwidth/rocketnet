@@ -25,6 +25,11 @@
 (*                             MismatchErrorsBothEnds fails                *)
 (*   MCRNEndpointBrokenOrderIgnored.cfg      the Partial case with         *)
 (*                             OrderChecked = FALSE: OrderedInOrder fails  *)
+(*   MCRNEndpointTimeoutOff.cfg  the safety case with the reliable timeout *)
+(*                             off (the default): NoEndBeforeT holds       *)
+(*   MCRNEndpointBrokenConfigWaitOnTimeout.cfg  the same with the CONFIG   *)
+(*                             wait keeping its clock: NoEndBeforeT fails  *)
+(* Every other case runs TimeoutConfigured = TRUE.                         *)
 (* README-RNEndpoint.md has the traces and the action-to-section map.      *)
 (***************************************************************************)
 EXTENDS RNEndpoint

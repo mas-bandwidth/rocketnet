@@ -832,7 +832,8 @@ int rn_region_send_fit_store( const rn_region_t * region, int bytes, uint32_t * 
     }
 
     // sticky exhaustion: once exhausted, every send is refused until reset
-    // (proofs/tla/RNConnectionMemory.tla, Exhaust sets the sticky flag; Use requires ~exhausted)
+    // (proofs/tla/RNConnectionMemory.tla, Exhaust, the receive side's, sets the sticky
+    // flag; Use requires ~exhausted)
 
     if ( region->exhausted )
     {
@@ -862,7 +863,8 @@ int rn_region_send_fit_store( const rn_region_t * region, int bytes, uint32_t * 
 // refusal, never growth (R1, 4), and nothing is taken from either pool when
 // one of them refuses. It leaves the region as it was: the connection goes on
 // and a later start succeeds once room returns (standard/MESSAGES.md m1.7,
-// proofs/tla/RNSendStoreLayout.tla Refuse). A send refused while the region
+// proofs/tla/RNSendStoreLayout.tla Refuse, proofs/tla/RNConnectionMemory.tla
+// Refuse, proofs/tla/RNSendSpans.tla Refuse). A send refused while the region
 // is exhausted (by the receive side) is counted under MESSAGE_MEMORY_EXHAUSTED.
 
 static void rn_region_send_refuse( rn_region_t * region, int fit )
@@ -886,8 +888,9 @@ static void rn_region_send_refuse( rn_region_t * region, int fit )
 uint32_t rn_region_send_alloc( rn_region_t * region, int bytes )
 {
     // proofs/tla/RNSendStoreLayout.tla Alloc (room found) or Refuse (none)
-    // proofs/tla/RNConnectionMemory.tla, Use (room found) or Exhaust (none)
-    // ExhaustionOnlyLeadsToDisconnect: once exhausted, no further Use; the
+    // proofs/tla/RNConnectionMemory.tla, Use (room found) or Refuse (none: the
+    // region is unchanged). ExhaustionOnlyLeadsToDisconnect: once the receive
+    // side has exhausted the region (Exhaust), no further Use; the
     // steps left are Release (an ack returning room, which nothing takes
     // again), Kick (disconnect) and Reuse (reset).
 
@@ -1121,15 +1124,13 @@ uint32_t rn_region_send_take( rn_region_t * region, int bytes )
 uint32_t rn_region_send_alloc_span( rn_region_t * region, int bytes )
 {
     // proofs/tla/RNSendStoreLayout.tla AllocSpan: the descriptor take.
-    // proofs/tla/RNConnectionMemory.tla, UseSpan (room found) or Exhaust (none); the span
+    // proofs/tla/RNConnectionMemory.tla, UseSpan (room found) or Refuse (none); the span
     // is proofs/tla/RNRing.tla's PlaceSingle on the sender's side, and its PlaceBlock
     // for a send of more than one fragment: one contiguous span, both bounds
     // checked once, fragment i at start + i * F (rn_region_send_data).
     // No descriptor or no place for the span is a refusal counted by
-    // rn_region_send_refuse; the region is unchanged (standard/MESSAGES.md m1.7).
-    // proofs/tla/RNSendSpans.tla Exhaust and RNConnectionMemory.tla Exhaust still
-    // model this case as exhaustion: the code leads those models here, and the
-    // models owe a send-side Refuse that leaves the region as it was.
+    // rn_region_send_refuse; the region is unchanged (standard/MESSAGES.md m1.7,
+    // proofs/tla/RNSendSpans.tla Refuse, proofs/tla/RNConnectionMemory.tla Refuse).
 
     rocketnet_assert( region );
 

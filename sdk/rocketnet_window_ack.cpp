@@ -841,7 +841,8 @@ int rn_window_ack_on_ack( rn_window_ack_t * ack, uint64_t packet_id, double now 
 
     // 1. One unambiguous RTT sample per acked packet_id, except from a packet
     //    sent before the latest ack silence ended less one srtt: its ack
-    //    waited out the silence, so it measures the outage, not the path (m9.2)
+    //    waited out the silence, so it measures the outage, not the path (m9.2;
+    //    proofs/tla/RNResendTiming.tla Sample, NoSampleAcrossSilence)
 
     const double rtt = now >= entry->send_time ? ( now - entry->send_time ) : 0.0;
     if ( !ack->has_rtt )
@@ -915,7 +916,7 @@ int rn_window_ack_on_ack( rn_window_ack_t * ack, uint64_t packet_id, double now 
         }
 
         rn_window_send_mark_acked( send, slot->number );
-        ack->last_progress = now;
+        ack->last_progress = now;                                   // proofs/tla/RNResendTiming.tla Ack: sinceProgress = 0
     }
 
     // 3. Remove the entry from sent_index and reclaim the head of sent_packets
@@ -1030,6 +1031,7 @@ uint32_t rn_window_ack_on_acks( rn_window_ack_t * ack, const uint64_t * packet_i
 
     // an ack after RN_PROBE_SECONDS with none ends an ack silence (the RTT filter in rn_window_ack_on_ack);
     // like probe pacing it is off when the game opted in, so an opted-in connection samples as v1.0 does
+    // (proofs/tla/RNResendTiming.tla Ack, EndsSilence)
     if ( ack->reliable_timeout <= 0.0 && ack->has_last_ack && now - ack->last_ack >= RN_PROBE_SECONDS )
     {
         ack->silence_end = now;
@@ -1103,7 +1105,9 @@ void rn_window_ack_packet_failed( rn_window_ack_t * ack, const uint64_t * number
 // reliable number for RN_PROBE_SECONDS gets only U, at the resend delay,
 // until a reliable number is newly acknowledged again. An opted-in
 // reliable timeout keeps today's behaviour whole: no probe pacing
-// (the probe would change what the timeout measures)
+// (the probe would change what the timeout measures).
+// proofs/tla/RNResendTiming.tla Probing and Held: the hold Walk honours
+// (ProbeOnlyU), released by the first Ack of a reliable number.
 bool rn_window_ack_probing( const rn_window_ack_t * ack, double now )
 {
     if ( ack->reliable_timeout > 0.0 || !ack->has_oldest || ack->send->U >= ack->send->next )

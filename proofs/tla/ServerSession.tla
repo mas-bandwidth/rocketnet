@@ -30,8 +30,11 @@
 \* The message layer also ends a CONNECTED slot on its own while the server
 \* is RUNNING (MessageEnd): an update that finds a delivery the application
 \* never took (MESSAGE_NOT_RECEIVED) or an endpoint error (CONFIG_MISMATCH,
-\* PROTOCOL_VIOLATION, RELIABLE_TIMED_OUT), or a send whose connection
-\* exhausted its message memory (MESSAGE_MEMORY_EXHAUSTED). The kick records
+\* PROTOCOL_VIOLATION, RELIABLE_TIMED_OUT when the reliable timeout is
+\* configured), or a receive side that exhausted its message memory
+\* (MESSAGE_MEMORY_EXHAUSTED, ended at the update or at the next start on that
+\* region). A start with no room is refused and ends nothing (ServerSend's
+\* refusal changes no slot field, so it is not a step here). The kick records
 \* its reason and calls link.disconnect, which sends a connected slot its
 \* disconnect burst. The ghost messageIn holds the slot state of every
 \* message-layer end; {} in a run that never ends a slot there.
@@ -478,8 +481,9 @@ ServerSend(i) ==
                    crossDelivered, collateral, silentEnd, startFrom, messageIn, priorTokens, readmitted>>
 
 \* The message layer ends a CONNECTED slot on its own, from an update (a
-\* delivery the application never took, or an endpoint error) or from a send
-\* whose connection exhausted its message memory. rn_message_object_kick
+\* delivery the application never took, or an endpoint error) or from a start
+\* on a region the receive side already exhausted; a start with no room is
+\* only refused (standard/MESSAGES.md m1.7). rn_message_object_kick
 \* records the reason and calls link.disconnect
 \* (sdk/rocketnet_message_server.cpp:749), which on the server is
 \* rocketnet_server_transport_disconnect_client

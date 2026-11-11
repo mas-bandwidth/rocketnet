@@ -175,9 +175,9 @@ uint32_t rn_channels_send_sequenced( struct rn_channels_t * channels, uint32_t c
 // NULL (and no
 // message) for a type that is not enabled (counted MESSAGE_SEND_TYPE_NOT_ENABLED),
 // a bad channel or size, a start already pending, a region already exhausted,
-// or no room: no room is region exhaustion (R5, proofs/tla/RNConnectionMemory.tla
-// Exhaust), counted beside MESSAGE_SEND_STORE_FULL or MESSAGE_SEND_QUEUE_FULL,
-// and the owner's next rn_connection_memory_decide kicks the connection.
+// or no room: no room is a refusal, never exhaustion (standard/MESSAGES.md m1.7,
+// proofs/tla/RNConnectionMemory.tla Refuse), counted MESSAGE_SEND_STORE_FULL or
+// MESSAGE_SEND_QUEUE_FULL, and the connection goes on.
 
 uint8_t * rn_channels_start( struct rn_channels_t * channels, uint32_t channel, int type, uint32_t bytes );
 

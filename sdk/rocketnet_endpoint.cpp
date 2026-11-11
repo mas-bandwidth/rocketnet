@@ -486,9 +486,7 @@ uint8_t * rn_endpoint_start( struct rn_endpoint_t * endpoint, int channel, int r
         if ( d == RN_DESCRIPTOR_NONE )
         {
             // No room is a refusal, counted by the region; the connection goes on
-            // (standard/MESSAGES.md m1.7). proofs/tla/RNChannelTypes.tla MemoryExhausted
-            // still ends the connection here: the code leads that model, which owes
-            // a send-side Refuse that keeps the connection.
+            // (standard/MESSAGES.md m1.7). proofs/tla/RNChannelTypes.tla Refuse.
 
             endpoint->send_refused++;
             return NULL;

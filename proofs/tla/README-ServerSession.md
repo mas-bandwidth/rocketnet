@@ -233,3 +233,23 @@ case, one for witnesses, 110-second cap per case):
   is a mapping opening and one response; its packets, cookies, keys, the encryption map and the
   client-id check are `proofs/tla/ServerConnection.tla`'s. Server packets to clients are not modelled
   here (the client's receive side is `proofs/tla/ClientSession.tla`). Tokens do not expire inside a run.
+
+## Revision 1.1: MESSAGE_MEMORY_EXHAUSTED is a receive-side end
+
+Standard rule: MESSAGES.md m1.7. The model's comments change and its
+behaviour does not: `MessageEnd` and its kick stand for an end the update
+found (a delivery the application never took, an endpoint error, a receive
+side that exhausted its message memory) or a start on a region the receive
+side already exhausted. A start with no room is refused and changes no slot
+field, so it is not a step of this model. RELIABLE_TIMED_OUT is an end only
+when the reliable timeout is configured (m9.3). The state space is unchanged:
+`MCServerSession.cfg` passes at 57,434 distinct states, as before. The
+send-side end is checked where its state lives, in RNConnectionMemory,
+RNChannelTypes and ClientSession (`SendNeverEnds` in each); no reversed
+witness is added here because no step of this model changes.
+
+`MCServerSessionTwoClients.cfg` ran past the 110-second budget on the
+2026-11-11 bench (exit 124, recorded as such in `RUNS.tsv`). Run there with no
+budget, as evidence and not a record, it completes with no error at 205,243
+distinct states, the earlier count, in 4 min 44 s. Its record is owed a
+re-measure on a quieter bench.
