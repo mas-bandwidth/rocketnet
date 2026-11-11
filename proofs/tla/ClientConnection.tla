@@ -139,6 +139,19 @@ CommitBeforeAnswer == FALSE
 (***************************************************************************)
 Forgery == FALSE
 
+(***************************************************************************)
+(* The connect clock (TRANSPORT.md t11 rule 6, revision 1.1).  The total   *)
+(* deadline (the token lifetime) bounds requesting cookie (1) and sending  *)
+(* connection request (2) only: once the client sends its connection       *)
+(* response the server may already report it connected, so in state 3     *)
+(* only the idle timeout ends the wait.  DeadlineInResponse is the         *)
+(* reversed witness, the rule before revision 1.1 (states 1..3).  A        *)
+(* definition, replaced with <- in its cfg.                                *)
+(***************************************************************************)
+DeadlineInResponse == FALSE
+DeadlineInResponseOn == TRUE
+DeadlineStates == IF DeadlineInResponse THEN 1..3 ELSE 1..2
+
 CookieVal == {"none", "good", "forged"}
 
 NoKeys == [att |-> 0, nonce |-> 0]
@@ -676,7 +689,8 @@ OtherLeaves ==
 
 (***************************************************************************)
 (* Time passes on both ends and on both wires.                             *)
-(* rocketnet_client_check_deadlines: in 1..3 the total deadline first, then *)
+(* rocketnet_client_check_deadlines: in 1..2 (DeadlineStates) the total    *)
+(* deadline first, then                                                    *)
 (* in 1..4 the idle timeout to -(state+1). A deadline or a timeout is      *)
 (* rocketnet_client_set_state to a state below 0, which zeroes the keys and *)
 (* the ephemeral (KeysErasedWhenDown); Erase FALSE is the pre-fix rule that *)
@@ -688,7 +702,7 @@ TickRule(Erase) ==
     /\ C2S!Age /\ S2C!Age
     /\ LET age1  == Sat(cAge, Deadline)
            recv1 == Sat(cSinceRecv, Timeout)
-           dead  == cstate \in 1..3 /\ Deadline > 0 /\ age1 = Deadline
+           dead  == cstate \in DeadlineStates /\ Deadline > 0 /\ age1 = Deadline
            timed == cstate \in 1..4 /\ Timeout > 0 /\ recv1 = Timeout
        IN /\ cEph' = IF dead \/ timed THEN FALSE ELSE cEph
           /\ cKeys' = IF Erase /\ (dead \/ timed) THEN NoKeys ELSE cKeys
@@ -942,7 +956,12 @@ HandshakeNeverRewinds ==
 
 \* the idle timeout and the total deadline fire when they are due
 TimeoutHonoured  == (Timeout > 0 /\ cstate \in 1..4) => cSinceRecv < Timeout
-DeadlineHonoured == (Deadline > 0 /\ cstate \in 1..3) => cAge < Deadline
+DeadlineHonoured == (Deadline > 0 /\ cstate \in DeadlineStates) => cAge < Deadline
+
+\* no connect clock after the response (t11 rule 6): a client sending its
+\* connection response (3) never ends with the token expiry (-7); only the
+\* idle timeout (-4), a denied, or a disconnect ends that wait
+NoConnectClockAfterResponse == [][cstate = 3 => cstate' # -7]_vars
 
 \* at most one live session: the client accepts session packets under at
 \* most one key pair, which is this attempt's; and a slot the server holds

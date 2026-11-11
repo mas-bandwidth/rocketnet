@@ -294,3 +294,70 @@ stamps the due-now sentinel, the record is refused to tick 7 and then sent at
 (`test_unit_channel_ordered.cpp`) replays it against the code: a refused first
 send leaves `last_send` never sent and no clock, no timeout past
 `reliable_timeout`, and the real send starts the clock at its own time.
+
+## Revision 1.1: the timeout off, probe pacing and the silence filter
+
+Standard rules: MESSAGES.md m9.2 (no sample across an acknowledgement
+silence) and m9.3 (`reliable_message_timeout_ms` 0 disables the timeout, the
+default; probe pacing). The ticks are 500 ms, so `Probe = 2` is the one
+second of probe pacing and `SilenceTs = {3, 4, 5}` are the silences T of 1.5,
+2 and 2.5 s the timeout claim is quantified over. The switches are
+definitions replaced with `<-` in each configuration: `TimeoutOn`
+(`TimeoutOff` is the default rule), `TimeoutWhenOff`, `ProbeMode`
+(`"rule"`, `"off"`, `"norelease"`, `"holdsu"`), `Third` (a third small record
+`s2`, so a number other than the oldest unacked `U` is on the wire), `Filter`
+and `FilterRule`, `TrackQuiet`. The ghosts `sinceProgress`, `quiet`,
+`sinceAck`, `sinceEnd` and `badSample` are the code's `last_progress`,
+the acknowledgement silence, `last_ack`, `silence_end` and a sample the rule
+forbids.
+
+| Property | Kind | Claim |
+|---|---|---|
+| `OffMeansNoStallEnd` | invariant | with the timeout off no record ends the connection |
+| `NoEndBeforeT` | invariant | for every T in `SilenceTs`, a timeout fires only after T of acknowledgement silence |
+| `ProbeOnlyU` | action | while probing, no on-wire number other than `U` is resent |
+| `NoDueRecordHeld` | invariant | now also allows a number held by probe pacing (`Held`) |
+| `RetryPlanned` | invariant | now excludes a held number |
+| `NoSampleAcrossSilence` | invariant | no sample is taken from a packet sent before `silence_end - srtt` |
+| `EveryReliableAcked` | temporal | under `LiveSpec` (strong fairness on acks of sends after `GoodFrom`) every record is acked |
+
+`AttemptsBeforeTimeout` and `ResendGapBounded` are claims about the timeout
+and hold only when it is configured (`TimeoutOn`).
+
+| Case | Spec | Exit | Distinct |
+|---|---|---:|---:|
+| `MCRNResendTimingOff.cfg` (three records, chunk in flight, `ProbeOnlyU`) | Spec | 0 | 313438 |
+| `MCRNResendTimingPacedOff.cfg` | Spec | 0 | 31218 |
+| `MCRNResendTimingOffLive.cfg` (`EveryReliableAcked`) | LiveSpec | 0 | 1777 |
+| `MCRNResendTimingOffQuiet.cfg` (`NoEndBeforeT`) | Spec | 0 | 2062 |
+| `MCRNResendTimingFilter.cfg` (`NoSampleAcrossSilence`) | Spec | 0 | 3938 |
+| `MCRNResendTimingBrokenResendAllWhileStalled.cfg` | `ProbeOnlyU` | 13 | 330 |
+| `MCRNResendTimingBrokenProbeNoRelease.cfg` | `NoDueRecordHeld` | 12 | 492 |
+| `MCRNResendTimingBrokenProbeHoldsU.cfg` | `EveryReliableAcked` | 13 | 1822 |
+| `MCRNResendTimingBrokenTimeoutInsideT.cfg` | `NoEndBeforeT` | 12 | 1800 |
+| `MCRNResendTimingBrokenTimeoutWhenOff.cfg` | `OffMeansNoStallEnd` | 12 | 753 |
+| `MCRNResendTimingBrokenSampleAcrossSilence.cfg` | `NoSampleAcrossSilence` | 12 | 77 |
+
+The existing cases' counts are unchanged. Each witness trace was read by
+hand against `sdk/rocketnet_window_ack.cpp` and `sdk/rocketnet_channel.cpp`:
+
+- **ResendAllWhileStalled** (`ProbeMode = "off"`): `s`, `c` and `s2` are
+  sent at 0 and nothing is acked; at tick 2 the stall has lasted one second
+  and the walk resends `c` and `s2` beside `U = s`. The code's
+  `rn_window_ack_probing` is true there and `rn_ordered_walk` skips every
+  on-wire number but `U`.
+- **ProbeNoRelease** (`"norelease"`): probing holds `s2`; `Ack(s)` acks a
+  number, which in the code sets `last_progress = now` and ends probing, but
+  the witness keeps `s2` held after it falls due.
+- **ProbeHoldsU** (`"holdsu"`): `U` is held with the rest, so no send after
+  `GoodFrom` is ever acked and `U` stays unacked. The code always resends
+  `U` when due.
+- **TimeoutWhenOff** and **TimeoutInsideT** (`TimeoutWhenOff`): with the
+  timeout off the record still times out 6 s (12 ticks) after its first send,
+  with an ack sample at tick 11, so the acknowledgement silence is one tick.
+  This is the code before revision 1.1: `rn_window_ack_check_timeout` and the
+  chunk cap ran with no `reliable_timeout > 0` guard.
+- **SampleAcrossSilence** (`FilterRule` off): an ack after two ticks of
+  silence samples a packet sent before `silence_end - srtt`. The code's
+  `on_ack` keeps the first sample, then takes one only when
+  `send_time >= silence_end - srtt`.

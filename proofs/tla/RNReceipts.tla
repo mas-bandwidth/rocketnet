@@ -25,8 +25,14 @@ EXTENDS Naturals, Sequences, FiniteSets
 \* RTO is the adaptive resend delay estimate; ReceiptDeadline is the fixed
 \* receipt deadline, the endpoint's maximum resend delay
 \* (message_resend_delay_max_ms), which the estimate never exceeds.
+\* TimeoutConfigured: reliable_message_timeout_ms is nonzero (MESSAGES.md m9.3).
+\* With it off (zero, the default) no reliable number ends the connection;
+\* ReliableTimeout then only bounds the age counter. BrokenTimeoutWhenOff is
+\* the rule before revision 1.1: the timeout ends the connection whatever the
+\* configuration.
 CONSTANTS MaxPid, MapCapacity, ReceiptCapacity, RTO, ReceiptDeadline, ReliableTimeout,
-          BrokenLastIndexAck, BrokenTwoOutcomes, BrokenReliableLoss, BrokenEarlyLoss
+          BrokenLastIndexAck, BrokenTwoOutcomes, BrokenReliableLoss, BrokenEarlyLoss,
+          TimeoutConfigured, BrokenTimeoutWhenOff
 
 ASSUME RTO \in Nat /\ ReceiptDeadline \in Nat /\ RTO <= ReceiptDeadline
 
@@ -190,9 +196,11 @@ TakeReceipt ==
       age, evicted, outcomes, ringDropped, writes>>
 
 \* CHANNELS 6.4: a reliable number reaching first-send + reliable_timeout
-\* ends the connection even if other packets/traffic still make progress.
+\* ends the connection even if other packets/traffic still make progress,
+\* when the timeout is configured (MESSAGES.md m9.3); off, it waits.
 Disconnect ==
  /\ live
+ /\ TimeoutConfigured \/ BrokenTimeoutWhenOff
  /\ \E s \in Issued \cap ReceiptSerials :
       EffectiveKind(s) \in {6,7} /\
       (\E n \in Parts(s) \cap (sentNums \ acked) : age[n] = ReliableTimeout)
@@ -246,6 +254,11 @@ UnreliableNeverResent == \A s \in ReceiptSerials : EffectiveKind(s)=5 => writes[
 LossOnlyAfterDeadline == \A s \in ReceiptSerials :
     Has(s,"LOSS") => (age[<<s,0>>] >= ReceiptDeadline \/ s \in evicted)
 ReceiptProgress == \A s \in ReceiptSerials : (s \in Issued) ~> (outcomes[s] # <<>> \/ ~live)
+\* With the timeout off nothing here ends the connection: a reliable receipt
+\* whose packets keep being lost waits for its ACKED outcome until the
+\* transport's silence timeout, outside this module, ends the connection.
+\* ReceiptProgress is checked only with the timeout configured.
+NoTimeoutEndWhenOff == ~TimeoutConfigured => live
 
 \* The transport eventually resolves each occupied slot by packet ACK or
 \* loss/retirement. No fairness condition forces a lost packet to open, or

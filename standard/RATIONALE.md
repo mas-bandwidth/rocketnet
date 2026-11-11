@@ -620,8 +620,16 @@ attempt once the token's lifetime — `expire - create`, measured from the start
 attempt — has elapsed, transitioning to _connect token expired_ (-7). The deadline is
 measured as a duration from the attempt's start rather than against the absolute expire
 timestamp, so that a client whose clock disagrees with the backend's still gives up
-after the intended interval. The check stops at _connected_: an established connection
-is governed by its idle timeout, not by the token that admitted it.
+after the intended interval. The check stops once the client has sent its connection
+response, at _sending connection response_ (3): from that moment the server can already
+have accepted the response and report the client connected, while the keep-alive that
+would tell the client so is lost. A clock shorter than the timeout there would end, on
+the client alone, a connection the server holds. The walk-between-states argument above
+does not need the deadline in that state: the states only move forward, and in state 3
+no packet but the keep-alive that connects the client refreshes its silence clock (a
+payload is refused before it is opened), so the per-state timeout bounds it. The cost is
+that for a timeout longer than the token's lifetime an attempt whose response is lost
+reports at the timeout rather than at the lifetime.
 
 [RN-1 t11 Handshake: client](TRANSPORT.md#t11)
 **The client trusts only the server, so a cookie refreshes nothing.** The cookie's
@@ -1808,6 +1816,31 @@ the connection is established carries the current state anyway. One rule for bot
 endpoints matches the server, which never had a connection to send on before its slot
 was assigned. The drop is counted so that it stays visible.
 
+[RN-2 m1 Scope, terminology and relation to RN-1](MESSAGES.md#m1)
+**A send never ends its own connection.** The library refuses and reports; the
+application owns the policy. A connection whose remote endpoint stops receiving fills
+its sender's send memory after a while, and that is the application's own sending, not
+the remote endpoint's behaviour: a remote endpoint that floods this one is bounded by
+the receive window and the receive checks. So a full send side is a refusal the
+application sees and counts, and it decides whether the condition is worth a
+disconnect. Each refusal, clock and end on a server belongs to one client, so a client
+that is dark, slow or backed up costs no other client anything.
+
+[RN-2 m1 Scope, terminology and relation to RN-1](MESSAGES.md#m1)
+**A connection survives an outage shorter than its timeout.** The only clock that ends
+an established connection by default is the silence timeout, so a game whose path goes
+dark for less than that keeps its players and resumes. The margin `m` is what the
+keep-alive interval, the update interval and a change in delay add to a dark interval
+before the far endpoint notices; between the server's acceptance of the response and
+the client's connected state the client last heard the challenge, half a round trip
+before the outage, and the server's first keep-alive after it needs another half, so
+one round trip of margin is lost there. The 900 ms bound is the largest round trip at
+which that window was measured to survive an outage of one second less than the
+timeout; at 1000 ms it did not. The recovery bound counts the keep-alive that reopens
+the path, one round trip, an update, one resend delay and the backlog at the usable
+budget rate, which the 100 ms bucket depth caps for an endpoint that updates less often
+than ten times a second.
+
 <a id="m2"></a>
 ## m2. Payload forms and sender size rules
 
@@ -1899,7 +1932,32 @@ is taken as that sample: the connection layer has a round trip from the first
 keep-alive it sees acknowledged, and a record lost on its first send would otherwise
 wait the whole initial delay, which on a lossy path leaves a reliable record only a
 few sends before the reliable timeout. The initial delay remains for the interval
-before any round trip is known. The send budget is a rate in elapsed time, not a rate
+before any round trip is known.
+
+[RN-2 m9 Acknowledgement mapping, resend and send budget](MESSAGES.md#m9)
+**The reliable timeout is off by default, and a configured one means exactly what it
+says.** Counted from a number's first send, the timeout fires during any outage longer
+than itself, so as a default it would end connections the silence timeout keeps. A game
+that wants a stuck-stream limit sets it, and then it is the plain lifetime limit; it is
+not adjusted for outages, so it is chosen well above the connection timeout. Probe
+pacing and the acknowledgement-silence filter are off when it is configured, so the
+limit measures what it names.
+
+[RN-2 m9 Acknowledgement mapping, resend and send budget](MESSAGES.md#m9)
+**While the remote endpoint is not receiving, the sender stops pushing at it.** After a
+second with no reliable progress only the oldest unacknowledged number is resent, once
+per resend delay; the window already caps what is in flight, and refusals cap what is
+queued. Only progress releases the hold, because an acknowledgement of a keep-alive or of
+a later number does not show that the path delivers the oldest one. The second is a
+fixed constant, not derived: a remote endpoint that acknowledges reliable numbers less
+than once a second is probed, which by default only means fewer resends. An
+acknowledgement that arrives after a second of silence carries the silence in its
+elapsed time; sampling it would inflate the smoothed round trip and the resend delay for
+the drain that follows, so a packet sent before the silence ended, less one round trip,
+gives no sample.
+
+[RN-2 m9 Acknowledgement mapping, resend and send budget](MESSAGES.md#m9)
+The send budget is a rate in elapsed time, not a rate
 per update. Update frequency still affects when eligible work is sent, and the finite bucket depth caps
 what accumulates between updates.
 
@@ -1923,6 +1981,14 @@ announces the channel count and the limits the other side of the connection must
 before it sends. It rides the reliable path because a receiver that missed it would use
 the wrong geometry, and a wrong geometry is not recoverable by resending an application
 message.
+
+[RN-2 m11 CONFIG control record](MESSAGES.md#m11)
+The CONFIG wait has no clock of its own unless the reliable timeout is configured. Both
+endpoints already report the connection established when the wait begins, so a clock
+shorter than the connection timeout there would end a connection an outage just after
+connect leaves alive. A remote endpoint that acknowledges but never sends its CONFIG
+holds its slot as an idle connected client does, until silence or the application ends
+it.
 
 <a id="m12"></a>
 ## m12. Receipts
@@ -1957,6 +2023,34 @@ rather than an interpretation.
 ## rh. Revision history
 
 Revision 1.0 ships with v1.0.0-preview-1.
+
+Revision 1.1 ships with v1.1.0 and changes no byte on the wire. It differs from revision
+1.0 in these places:
+
+- [RN-2 m9 Acknowledgement mapping, resend and send budget](MESSAGES.md#m9): the reliable
+  timeout is off by default (`reliable_message_timeout_ms` 0) and a nonzero value is used
+  exactly as configured; the chunk resend cap applies only when it is configured; probe
+  pacing holds every sent number but the oldest after a second with no reliable progress;
+  no round-trip sample is taken across an acknowledgement silence. The `m9.resend-trace`
+  vector names the 10 s timeout it was always computed with.
+- [RN-2 m1.7 Send refusal](MESSAGES.md#m1.7), new: a start that finds no room in the send
+  memory is refused and counted and never ends the connection, unreliable starts included.
+- [RN-2 m1.8 Per-client scope](MESSAGES.md#m1.8), new: every refusal, clock and end on a
+  server belongs to one client.
+- [RN-2 m1.9 Outage tolerance](MESSAGES.md#m1.9), new: the ends that remain, the window
+  bound on data in flight, the outage tolerance and its bounds.
+- [RN-2 m1.6 Receiving every delivered message](MESSAGES.md#m1.6), rule 5: a client
+  delivers nothing before it is connected. [RN-2 m1.4 What RN-2 requires of RN-1](MESSAGES.md#m1.4),
+  rule 2: the reliable timeout applies to deferred records when it is configured.
+- [RN-2 m11 CONFIG control record](MESSAGES.md#m11), rule 4: the CONFIG wait is bounded by
+  the reliable timeout only when it is configured.
+- [RN-1 t11 Handshake: client](TRANSPORT.md#t11), rule 6, its state table, and
+  [RN-1 t17 Timing and defaults](TRANSPORT.md#t17), item 5: the token's lifetime bounds
+  requesting cookie (1) and sending connection request (2) only.
+- [RN-1 t18 Error handling and counters](TRANSPORT.md#t18): `MESSAGE_MEMORY_EXHAUSTED`
+  names the receive side's exhaustion only; no counter moves.
+- An endpoint that keeps revision 1.0 does not provide the outage tolerance of
+  [RN-2 m1.9 Outage tolerance](MESSAGES.md#m1.9).
 
 Revision 1.0 as shipped with v1.0.1 keeps the version and changes no byte on the wire.
 It differs from the text shipped with v1.0.0 in these places:

@@ -23,6 +23,11 @@ EXTENDS Naturals, Sequences, FiniteSets, TLC
 \* supersedes an incomplete in-turn block; nothing in turn is held as future
 \* state. Broken = "BlockInTurnHeld" is the earlier code, which collected an
 \* in-turn block in the one future-state slot and compared it there.
+\* A send the send capacity cannot take is refused (Refuse) and changes
+\* nothing: the connection goes on (standard/MESSAGES.md m1.7). Broken =
+\* "SendKick" is v1.0's MESSAGE_MEMORY_EXHAUSTED end from the send path; the
+\* ghost sendEnded records an end a send caused. The receive side's overflow
+\* in OpenPacket keeps its end (a broken invariant of the receiver).
 CONSTANTS Scenario, Broken, SendCapacity, OrderedCapacity, HoldCapacity
 Channels == 1..2
 Codes == {0,1,2,3,4,5}
@@ -63,10 +68,10 @@ Max(s) == CHOOSE n \in s : \A k \in s : n >= k
 
 VARIABLES plan, queue, ordered_write, sequenced_write, written, numbers,
           opened, lost, acked, resend, receiver, orderedInputs,
-          referenceTrace, connected, reason, missed
+          referenceTrace, connected, reason, missed, sendEnded
 vars == <<plan, queue, ordered_write, sequenced_write, written, numbers,
           opened, lost, acked, resend, receiver, orderedInputs,
-          referenceTrace, connected, reason, missed>>
+          referenceTrace, connected, reason, missed, sendEnded>>
 
 \* The first three sends of the promote plan are too big for one record, so
 \* each unreliable one is promoted to its reliable twin (the promotion rule). The
@@ -256,9 +261,10 @@ Init ==
     /\ written={} /\ numbers= <<>> /\ opened={} /\ lost={}
     /\ acked={} /\ resend={} /\ receiver=EmptyReceiver /\ orderedInputs={}
     /\ referenceTrace=[c \in Channels |-> <<>>]
-    /\ connected=TRUE /\ reason="NONE" /\ missed={}
+    /\ connected=TRUE /\ reason="NONE" /\ missed={} /\ sendEnded=FALSE
 
 Enqueue ==
+    /\ UNCHANGED sendEnded
     /\ connected /\ Len(queue)<MaxMessages /\ Len(queue)<SendCapacity
     /\ LET m == Len(queue)+1 c == plan[m].channel k == plan[m].code
        IN /\ queue'=Append(queue,[code |-> k, channel |-> c,
@@ -271,12 +277,16 @@ Enqueue ==
     /\ UNCHANGED <<plan,written,numbers,opened,lost,acked,resend,
                     receiver,orderedInputs,referenceTrace>>
 
-WritePacket(m,attempt) ==
-    /\ connected /\ m \in DOMAIN queue /\ attempt \in 1..2
+CanWrite(m,attempt) ==
+    /\ m \in DOMAIN queue /\ attempt \in 1..2
     /\ Packet(m,attempt) \notin written
     /\ ~Block(m)
     /\ IF attempt=1 THEN \A n \in 1..(m-1) : Block(n) \/ Packet(n,1) \in written
        ELSE Reliable(Code(m)) /\ Packet(m,1) \in written /\ m \notin acked
+
+WritePacket(m,attempt) ==
+    /\ UNCHANGED sendEnded
+    /\ connected /\ CanWrite(m,attempt)
     /\ written'=written \cup {Packet(m,attempt)}
     /\ numbers'=IF Reliable(Code(m)) /\ m \notin Values(numbers) THEN Append(numbers,m) ELSE numbers
     /\ resend'=IF Reliable(Code(m)) THEN resend \cup {m} ELSE resend
@@ -284,6 +294,7 @@ WritePacket(m,attempt) ==
                     acked,receiver,orderedInputs,referenceTrace,connected,reason,missed>>
 
 OpenPacket(pid) ==
+    /\ UNCHANGED sendEnded
     /\ connected /\ pid \in written \ (opened \cup lost)
     /\ opened'=opened \cup {pid}
     /\ LET m == PacketMessage(pid)
@@ -303,6 +314,7 @@ OpenPacket(pid) ==
                     lost,acked>>
 
 ReceiveAck(q) ==
+    /\ UNCHANGED sendEnded
     /\ connected /\ q # {} /\ q \subseteq opened
     /\ \E pid \in q : Reliable(Code(PacketMessage(pid))) /\ PacketMessage(pid) \notin acked
     /\ LET delivered == {PacketMessage(pid) : pid \in q}
@@ -311,15 +323,22 @@ ReceiveAck(q) ==
     /\ UNCHANGED <<plan,queue,ordered_write,sequenced_write,written,numbers,
                     opened,lost,receiver,orderedInputs,referenceTrace,connected,reason,missed>>
 LosePacket(pid) ==
+    /\ UNCHANGED sendEnded
     /\ connected /\ pid \in written \ (opened \cup lost) /\ pid % 2 = 1
     /\ lost'=lost \cup {pid}
     /\ UNCHANGED <<plan,queue,ordered_write,sequenced_write,written,numbers,
                     opened,acked,resend,receiver,orderedInputs,referenceTrace,connected,reason,missed>>
 
-MemoryExhausted ==
+\* The application offers the next send while the send capacity is full: the
+\* start is refused and counted, and nothing of the connection changes
+\* (standard/MESSAGES.md m1.7). Broken = "SendKick": v1.0's end of the
+\* connection with MESSAGE_MEMORY_EXHAUSTED from the send path.
+Refuse ==
     /\ connected /\ Len(queue)=SendCapacity /\ Len(queue)<MaxMessages
-    /\ connected'=FALSE /\ reason'="MESSAGE_MEMORY_EXHAUSTED"
-    /\ resend'={} /\ receiver'=[receiver EXCEPT !.heldOrdered={}, !.heldSequenced={}, !.inTurn={}]
+    /\ IF Broken = "SendKick"
+       THEN /\ connected'=FALSE /\ reason'="MESSAGE_MEMORY_EXHAUSTED" /\ sendEnded'=TRUE
+            /\ resend'={} /\ receiver'=[receiver EXCEPT !.heldOrdered={}, !.heldSequenced={}, !.inTurn={}]
+       ELSE UNCHANGED <<connected,reason,sendEnded,resend,receiver>>
     /\ UNCHANGED <<plan,queue,ordered_write,sequenced_write,written,numbers,
                     opened,lost,acked,orderedInputs,referenceTrace,missed>>
 
@@ -329,6 +348,7 @@ MemoryExhausted ==
 \* whose fragments all arrived in its turn, that was Deliverable when the last
 \* one came, and that was not delivered.
 ArriveFragment(m,f) ==
+    /\ UNCHANGED sendEnded
     /\ connected /\ m \in DOMAIN queue /\ Block(m)
     /\ <<m,f>> \notin receiver.arrived
     /\ LET a == [receiver EXCEPT !.arrived = @ \cup {<<m,f>>},
@@ -347,11 +367,38 @@ OpenAny == \E pid \in Pids : OpenPacket(pid)
 AckAny == \E pid \in Pids : ReceiveAck({pid})
 LoseAny == \E pid \in Pids : LosePacket(pid)
 ArriveAny == \E m \in Messages, f \in Fragments : ArriveFragment(m,f)
-Next == MemoryExhausted \/ Enqueue \/ WriteAny \/ OpenAny \/ AckAny \/ LoseAny \/ ArriveAny
+Next == Refuse \/ Enqueue \/ WriteAny \/ OpenAny \/ AckAny \/ LoseAny \/ ArriveAny
 SafetySpec == Init /\ [][Next]_vars
+
+\* ENABLED <<Next>>_vars written out as a state predicate: a step of Next
+\* that changes vars exists. Each disjunct is one action's guard, and each of
+\* those actions changes a variable whenever its guard holds (Enqueue grows
+\* queue, WritePacket grows written, OpenPacket grows opened, ReceiveAck grows
+\* acked, ArriveFragment grows receiver.arrived, Refuse under "SendKick"
+\* clears connected); Refuse otherwise and LosePacket's extra steps add no
+\* enabledness. StepPossibleIsEnabled checks the equality in the cheaper
+\* configurations (TLC evaluates ENABLED by computing every successor again).
+StepPossible ==
+    /\ connected
+    /\ \/ Len(queue)<MaxMessages /\ Len(queue)<SendCapacity
+       \/ Broken = "SendKick" /\ Len(queue)=SendCapacity /\ Len(queue)<MaxMessages
+       \/ \E m \in Messages, attempt \in 1..2 : CanWrite(m,attempt)
+       \/ written \ (opened \cup lost) # {}
+       \/ \E pid \in opened : Reliable(Code(PacketMessage(pid))) /\ PacketMessage(pid) \notin acked
+       \/ \E m \in DOMAIN queue, f \in Fragments : Block(m) /\ <<m,f>> \notin receiver.arrived
+
+StepPossibleIsEnabled == StepPossible = ENABLED <<Next>>_vars
+
 \* All enabled actions consume a finite id/cursor. Weak fairness of this
 \* disjunction therefore drains every reliable send/arrival/packet ACK.
-Spec == SafetySpec /\ WF_vars(Next)
+\* Spec is Init /\ [][Next]_vars /\ WF_vars(Next), with WF expanded by its
+\* definition (WF_v(A) == []<>~ENABLED <<A>>_v \/ []<><<A>>_v) and two exact
+\* rewrites TLC checks far faster: ENABLED <<Next>>_vars is StepPossible, and
+\* in a behaviour of SafetySpec every step that changes vars is a Next step,
+\* so <<Next>>_vars is <<TRUE>>_vars. Evaluating ENABLED on every state and
+\* Next on every edge of the liveness graph cost the control about two
+\* thirds of its time.
+Spec == SafetySpec /\ ([]<>~StepPossible \/ []<><<TRUE>>_vars)
 
 TypeOK ==
     /\ plan \in Plans /\ Len(queue)<=MaxMessages
@@ -378,6 +425,7 @@ TypeOK ==
     /\ receiver.seen \subseteq Values(numbers)
     /\ Values(receiver.trace) \subseteq DOMAIN queue
     /\ connected \in BOOLEAN /\ reason \in {"NONE","MESSAGE_MEMORY_EXHAUSTED"}
+    /\ sendEnded \in BOOLEAN
 BuffersBounded ==
     /\ Cardinality(receiver.heldOrdered)<=OrderedCapacity
     /\ Cardinality(receiver.heldSequenced)<=HoldCapacity
@@ -418,6 +466,9 @@ InTurnNeverHeldAsFuture == \A m \in receiver.heldSequenced :
     Order(m) > receiver.ordered_read[Channel(m)]
 InTurnDeliveredWhenComplete == missed = {}
 InTurnOneRule == InTurnNeverHeldAsFuture /\ InTurnDeliveredWhenComplete
+\* (N) No send ends the connection: a full send capacity refuses
+\* (standard/MESSAGES.md m1.7). Reversed by Broken = "SendKick".
+SendNeverEnds == ~sendEnded
 \* m7.4 (nothing is silent): every sequenced record that arrived is delivered,
 \* still held, superseded, or released and counted. Broken = "DrainStaleSilent"
 \* releases a drained record without delivering or counting it.

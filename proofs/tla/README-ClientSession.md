@@ -214,3 +214,39 @@ the base had no message-layer end to break. The twelve cases were measured on
 a Linux bench with the pinned runner and JAR and are in `proofs/tla/RUNS.tsv`;
 the main control passes at 100,651 generated and 11,053 distinct states, and
 TLC's action coverage shows every `Connect` branch and `MessageEnd` taken.
+
+## Revision 1.1: a start ends a connection only on a region the receive side exhausted
+
+Standard rule: MESSAGES.md m1.7. A start that finds no room is refused and
+counted; the connection goes on. `rocketnet_client_start_message` reports
+`MESSAGE_MEMORY_EXHAUSTED` only when the receive side has already exhausted
+the region (`rn_message_object_start` on an exhausted region, then
+`rn_message_object_kick`). The new action `ReceiveExhaust` is that receive
+side event (a delivery that did not fit, `rn_region_exhaust` from the receive
+path); its ghost `rxEx` holds the session tag whose region it exhausted.
+`MessageEnd("send", ...)` is now enabled only when `rxEx = cur` (or under a
+defect in `SendKicks`), and the ghost `sendEnded` records a send-side end of a
+connection whose receive side had not exhausted it. `MessageEnds` keeps
+`<<"send", "MESSAGE_MEMORY_EXHAUSTED">>` for that one case.
+
+| Property | Kind | Claim |
+|---|---|---|
+| `SendNeverEnds` | invariant | no start ends a connection whose receive side had not exhausted its region |
+
+| Case | Expected | Exit | Distinct |
+|---|---|---:|---:|
+| `MCClientSession.cfg` | pass | 0 | 33765 |
+| `MCClientSessionSendKick.cfg` (`Defect = "sendkick"`) | `SendNeverEnds` | 12 | 109 |
+
+The control grows from 11,053 to 33,765 distinct states: `rxEx` doubles the
+CONNECTED states of each session. `MCClientSessionSilentExhaust.cfg` keeps its
+failure: `"silentexhaust"` is in `SendKicks`, so its start may still end the
+connection as the revision 1.0 witness did.
+
+Witness trace, read by hand: create, connect, the handshake to CONNECTED,
+then `MessageEnd("send", "MESSAGE_MEMORY_EXHAUSTED")` with `rxEx = 0` (no
+receive-side exhaustion): `sendEnded = TRUE`. The code before revision 1.1
+did this: a start whose send allocation failed exhausted the region and the
+client ended the connection. The code now refuses the start and the
+connection goes on; only a start on a region the receive side exhausted
+ends it.
