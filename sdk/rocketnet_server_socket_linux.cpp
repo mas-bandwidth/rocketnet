@@ -213,6 +213,12 @@ struct rocketnet_server_xdp_socket_t
     struct rocketnet_xdp_receive_drops_t receive_drops;
     std::atomic<uint64_t> receive_dropped{ 0 };
 
+    // frames the kernel dropped on this queue's socket before the worker saw
+    // them (rocketnet_xdp_socket_dropped): its total since bind, which only
+    // this queue's xdp thread reads and stores, every
+    // ROCKETNET_XDP_STATISTICS_PASSES passes and on its final pass
+    std::atomic<uint64_t> kernel_dropped{ 0 };
+
     // frames the flush did not send because the codec refused to build them
     // (a destination of the family this server does not serve); written by
     // this queue's xdp thread outside the handoff lock
@@ -349,6 +355,7 @@ struct rocketnet_server_socket_t
     // the per-cpu stats map read buffer (rocketnet_xdp_stats_cpus_fit), inside
     // the create-time allocation; written only by rocketnet_server_socket_xdp_counters
     struct rocketnet_server_xdp_stats_t stats_values[ROCKETNET_XDP_STATS_MAX_CPUS];
+    int stats_num_cpus;                                         // libbpf_num_possible_cpus, read once at create
     uint64_t stats_last[ROCKETNET_SERVER_XDP_NUM_COUNTERS];   // the last good read (rocketnet_xdp_stats_publish)
     bool stats_failing;                                         // the last read failed; logged once per run
 
@@ -583,6 +590,14 @@ static void rocketnet_server_socket_refresh_gateway( struct rocketnet_server_soc
 static void rocketnet_server_socket_publish_receive_dropped( rocketnet_server_xdp_socket_t * socket )
 {
     socket->receive_dropped.store( rocketnet_xdp_receive_drops_total( &socket->receive_drops ), std::memory_order_relaxed );
+}
+
+// the queue's xdp thread publishes the frames the kernel dropped on its
+// socket, from an XDP_STATISTICS answer of bytes bytes: the socket's total, so
+// a later answer replaces this one and nothing is counted twice
+static void rocketnet_server_socket_publish_kernel_dropped( rocketnet_server_xdp_socket_t * socket, const struct xdp_statistics * statistics, socklen_t bytes )
+{
+    socket->kernel_dropped.store( rocketnet_xdp_socket_dropped( statistics->rx_dropped, statistics->rx_ring_full, (size_t) bytes ), std::memory_order_relaxed );
 }
 
 static uint64_t alloc_send_frame( rocketnet_server_xdp_socket_t * socket )
@@ -2010,6 +2025,10 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         rocketnet_server_socket_abort_create( server_socket );
         return NULL;
     }
+
+    // libbpf reads and allocates for this on its first call: here, not on
+    // the frame path of the first counters read
+    server_socket->stats_num_cpus = libbpf_num_possible_cpus();
 
     server_socket->replay_map_fd = bpf_obj_get( server_socket->pinned_paths[3] );
     if ( server_socket->replay_map_fd < 0 )
@@ -3579,8 +3598,9 @@ uint64_t rocketnet_server_socket_send_failures( struct rocketnet_server_socket_t
 }
 
 // The transport's XDP_RECEIVE_FRAME_DROPPED: the frames every queue's receive
-// dropped before reading a UDP datagram from them, as each worker last
-// published them. Main thread; never waits on a worker.
+// dropped before reading a UDP datagram from them, and the frames the kernel
+// dropped on every queue's socket before its worker saw them, as each worker
+// last published them. Main thread; never waits on a worker, makes no call.
 
 uint64_t rocketnet_server_socket_receive_dropped( struct rocketnet_server_socket_t * server_socket )
 {
@@ -3588,7 +3608,8 @@ uint64_t rocketnet_server_socket_receive_dropped( struct rocketnet_server_socket
 
     uint64_t dropped = 0;
     for ( int queue = 0; queue < server_socket->num_queues; queue++ )
-        dropped += server_socket->socket[queue].receive_dropped.load( std::memory_order_relaxed );
+        dropped += server_socket->socket[queue].receive_dropped.load( std::memory_order_relaxed ) +
+                   server_socket->socket[queue].kernel_dropped.load( std::memory_order_relaxed );
 
     return dropped;
 }
@@ -3631,6 +3652,36 @@ bool rocketnet_server_socket_test_receive_dropped( rocketnet_server_socket_test_
     rocketnet_server_socket_publish_receive_dropped( &queues[0] );
     rocketnet_server_socket_publish_receive_dropped( &queues[1] );
     valid = valid && dispatch( xdp, server, &dropped ) && dropped == 31;
+
+    // the kernel's drops on queue 0's socket: rx_dropped and rx_ring_full,
+    // not the fill ring's empty reads. Each answer is the socket's total, so
+    // reading the counter again, or the worker publishing the same answer
+    // again, adds nothing; a later answer adds only what it grew by. Queue 1
+    // answers with no drops, and a three-field answer (an older kernel) has
+    // no rx_ring_full to read.
+
+    struct xdp_statistics statistics;
+    memset( &statistics, 0, sizeof( statistics ) );
+    statistics.rx_dropped = 32;
+    statistics.rx_ring_full = 64;
+    statistics.rx_fill_ring_empty_descs = 1000;
+    rocketnet_server_socket_publish_kernel_dropped( &queues[0], &statistics, sizeof( statistics ) );
+    valid = valid && dispatch( xdp, server, &dropped ) && dropped == 127;
+    valid = valid && dispatch( xdp, server, &dropped ) && dropped == 127;
+    rocketnet_server_socket_publish_kernel_dropped( &queues[0], &statistics, sizeof( statistics ) );
+    valid = valid && dispatch( xdp, server, &dropped ) && dropped == 127;
+
+    statistics.rx_ring_full = 65;
+    rocketnet_server_socket_publish_kernel_dropped( &queues[0], &statistics, sizeof( statistics ) );
+    valid = valid && dispatch( xdp, server, &dropped ) && dropped == 128;
+
+    struct xdp_statistics none;
+    memset( &none, 0, sizeof( none ) );
+    rocketnet_server_socket_publish_kernel_dropped( &queues[1], &none, sizeof( none ) );
+    valid = valid && dispatch( xdp, server, &dropped ) && dropped == 128;
+
+    rocketnet_server_socket_publish_kernel_dropped( &queues[0], &statistics, 3 * sizeof( uint64_t ) );
+    valid = valid && dispatch( xdp, server, &dropped ) && dropped == 63;
 
     queues[1].~rocketnet_server_xdp_socket_t();
     queues[0].~rocketnet_server_xdp_socket_t();
@@ -3734,7 +3785,7 @@ void rocketnet_server_socket_xdp_counters( struct rocketnet_server_socket_t * se
     // the stats map is per-CPU: one value struct per possible CPU, summed by
     // rocketnet_xdp_stats_publish; a failed read publishes the last good one
 
-    const int num_cpus = libbpf_num_possible_cpus();
+    const int num_cpus = server_socket->stats_num_cpus;
     const bool fit = rocketnet_xdp_stats_cpus_fit( num_cpus );
 
     bool read = false;
@@ -3901,6 +3952,12 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
     // per contiguous run rather than every pass
 
     int send_error = 0;
+
+    // passes since the socket's XDP_STATISTICS were last read, and whether a
+    // failed read was logged
+
+    int statistics_passes = 0;
+    bool reported_statistics_error = false;
 
     for ( ;; )
     {
@@ -4257,6 +4314,31 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
         // This pass deliberately does not sleep. rocketnet_platform_sleep
         // returns at once for a non-positive request, so a zero-duration call
         // would never yield the CPU.
+
+        // the frames the kernel dropped on this socket before this thread saw
+        // them (a full RX ring, an empty fill ring): read every
+        // ROCKETNET_XDP_STATISTICS_PASSES passes, and on the final pass so
+        // the count is complete once the queue has stopped
+
+        if ( ++statistics_passes >= ROCKETNET_XDP_STATISTICS_PASSES || stopping )
+        {
+            statistics_passes = 0;
+            if ( fds[0].fd >= 0 )
+            {
+                struct xdp_statistics statistics;
+                memset( &statistics, 0, sizeof( statistics ) );
+                socklen_t statistics_bytes = sizeof( statistics );
+                if ( getsockopt( fds[0].fd, SOL_XDP, XDP_STATISTICS, &statistics, &statistics_bytes ) == 0 )
+                {
+                    rocketnet_server_socket_publish_kernel_dropped( socket, &statistics, statistics_bytes );
+                }
+                else if ( !reported_statistics_error )
+                {
+                    rocketnet_error( "xdp queue %d could not read its socket statistics (errno %d); its kernel drops stay at the last read", socket->queue, errno );
+                    reported_statistics_error = true;
+                }
+            }
+        }
 
         if ( stopping )
             break;

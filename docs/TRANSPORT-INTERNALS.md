@@ -692,8 +692,17 @@ family the server does not serve (`other_family`), or a frame the parse
 refuses or too short for any server packet (`malformed`); a receive
 descriptor outside the receive region or its own frame (`descriptor`, a
 kernel or driver defect) is dropped before a byte of it is read. Each queue's
-worker publishes the sum after every receive pass, and the transport's
-counters read it, all queues summed, as `XDP_RECEIVE_FRAME_DROPPED`. The flush builds
+worker publishes the sum after every receive pass. A frame the program
+redirected can also be dropped by the kernel before the worker sees it: the
+socket's RX ring is full (the worker stops taking descriptors while its
+staging buffer is full and no spare is free) or its fill ring has no frame to
+take it. The kernel counts those only in the socket's `XDP_STATISTICS`; each
+worker reads them every 4096 passes of its loop and on its final pass, and
+publishes `rx_dropped` plus `rx_ring_full`, the socket's total
+(`rx_fill_ring_empty_descs` counts failed fill ring reads, not frames, and in
+copy mode the same frame also counts in `rx_dropped`). The transport's
+counters read both, all queues summed, as `XDP_RECEIVE_FRAME_DROPPED`; the
+main thread makes no call for it. The flush builds
 each reply with the server address of the destination's family as the source,
 and an IPv6 reply carries the UDP checksum computed in software. Create and
 the pre-flight find the interface carrying each address over `AF_INET` or

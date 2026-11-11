@@ -2600,8 +2600,9 @@ bool rocketnet_server_transport_io_receive_frames_dropped( const rocketnet_serve
                                                            uint64_t * dropped )
 {
     // builtin-only, matched on the operations table as receive_drops is: the
-    // xdp transport's frames its userspace receive dropped before reading a
-    // UDP datagram from them (XDP_RECEIVE_FRAME_DROPPED)
+    // xdp transport's frames its userspace receive, or the kernel on its
+    // sockets, dropped before a UDP datagram was read from them
+    // (XDP_RECEIVE_FRAME_DROPPED)
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
     if ( operations == &xdp_operations )

@@ -74,7 +74,10 @@
 // expire_floor, the bindings' lower bound on a live expiry, adding 16 bytes
 // (sdk/rocketnet_token_tables.cpp, struct rocketnet_token_table_t); the probe's
 // actual= line is 3111387939.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110339363ULL )
+// Each xdp queue publishes the frames the kernel dropped on its socket
+// (kernel_dropped, sdk/rocketnet_server_socket_linux.cpp), adding 8 bytes;
+// the probe's actual= line is 3111387947.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110339371ULL )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14146994 )
 #endif // #if defined( _WIN32 )
 

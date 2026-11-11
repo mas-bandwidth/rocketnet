@@ -98,6 +98,27 @@ inline bool rocketnet_xdp_send_wakeup_report( int error, int & last_error )
     last_error = error;
     return report;
 }
+
+// The frames the kernel dropped on one AF_XDP socket's receive path after the
+// XDP program redirected them, from its XDP_STATISTICS answer of bytes bytes
+// (struct xdp_statistics in linux/if_xdp.h). rx_dropped counts a frame with no
+// fill ring frame to take it, or larger than a umem frame; rx_ring_full, the
+// fourth field (bytes 24 to 31), a frame with no room on the RX ring. A kernel
+// that answers with only the first three fields (24 bytes, before Linux 5.9)
+// counts both in rx_dropped. rx_fill_ring_empty_descs is not a frame count:
+// it counts failed fill ring reads, and in copy mode the frame such a read
+// failed for counts in rx_dropped too. The answer is the socket's total
+// since bind, so each read replaces the last.
+inline uint64_t rocketnet_xdp_socket_dropped( uint64_t rx_dropped, uint64_t rx_ring_full, size_t bytes )
+{
+    return rx_dropped + ( bytes >= 32 ? rx_ring_full : 0 );
+}
+
+// The worker reads its socket's XDP_STATISTICS once per this many passes of
+// its loop, and on its final pass: a count of passes, so the read adds no
+// clock to the loop. A pass is at least one poll call, so this is about a
+// read every few milliseconds at most; chosen, not measured.
+#define ROCKETNET_XDP_STATISTICS_PASSES 4096
 #endif // #if defined( __cplusplus )
 
 #define ROCKETNET_SERVER_SOCKET_STOPPED    0
