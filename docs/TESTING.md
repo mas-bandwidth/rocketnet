@@ -44,6 +44,8 @@ besides the build dependencies each job checks by name:
   `qemu-s390x-static`;
 - for `distro-container`: rootless podman.
 
+The nightly soak's real-socket outage cell, `scripts/outage-pair-real --vm` (its header says what it proves), runs in that VM tier: T - 1 outages each way and both ways must end no connection and lose no reliable message, a T + 2 outage must end both sides by timeout.
+
 ### Static-analysis evidence limit
 
 The GCC wrapper (`tools/run_static.py`) analyzes its selected translation

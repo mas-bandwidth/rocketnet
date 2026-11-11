@@ -201,6 +201,18 @@ jobs:
         shell: bash
         run: bash tools/run_xdp_filter_guest.sh --artifact-dir build/xdp-filter-guest
 
+      # Path outages on real UDP sockets (scripts/outage-pair-real): two
+      # namespaces joined by a veth pair with netem on each end, as root
+      # inside a virtme-ng guest of the runner's own kernel like the xdp
+      # cells above. Three outages of T - 1 (client->server, server->client,
+      # both) must end neither side and deliver every accepted reliable
+      # message once in order; one of T + 2 must end the server TIMED_OUT and
+      # the client CONNECTION_TIMED_OUT before the path comes back.
+      - name: Outages at T - 1 survive and at T + 2 time out (two namespaces, netem, virtme-ng guest)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: bash scripts/outage-pair-real --vm --log-dir "$PWD/build/outage-pair-real"
+
       - name: Artifact name for the ref
         id: refslug
         if: always() && runner.os == 'Linux'
