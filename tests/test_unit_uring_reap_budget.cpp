@@ -16,6 +16,7 @@
 
 #include "test_unit_registry.h"
 
+#include "../sdk/rocketnet_internal.h"
 #include "../sdk/rocketnet_server_uring.h"
 
 #if defined( __linux__ )
@@ -475,6 +476,64 @@ static void test_io_uring_transport_receive_without_a_buffer_is_counted()
     free( fake );
 }
 
+// a kernel that refuses multishot receive ends every arm at once with an
+// error. each ending re-arms and counts RECEIVE_REARMS as before; the first
+// error other than -ENOBUFS or -ECANCELED is logged, once per transport
+
+static int uring_receive_refused_errors = 0;
+
+static void uring_receive_refused_log( void * context, enum rocketnet_log_level_t level, const char * message, size_t length )
+{
+    (void) context;
+    (void) length;
+    if ( level == ROCKETNET_LOG_LEVEL_ERROR && strstr( message, "refused the multishot receive" ) != NULL )
+        uring_receive_refused_errors++;
+}
+
+static void test_io_uring_transport_refused_multishot_logs_once()
+{
+    struct rocketnet_server_uring_test_source_t source;
+    struct uring_fake_t * fake = uring_fake_create( 1000, &source );
+    fake->flood_on_arm = false;
+
+    struct rocketnet_server_uring_t * uring = rocketnet_server_uring_test_create( NULL, 1, &source );
+    rocketnet_unit_check( uring );
+
+    const enum rocketnet_log_level_t saved = rocketnet_log_level_current();
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_SPAM );
+    rocketnet_log_function( uring_receive_refused_log, NULL );
+
+    const uint64_t recv_tag = rocketnet_uring_tag( ROCKETNET_URING_TAG_RECV, 0, 0 );
+    const uint64_t rearms = uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_RECEIVE_REARMS );
+
+    // running out of buffers ends a multishot too, and is not a refusal
+    uring_fake_push( fake, recv_tag, -ENOBUFS, 0 );
+    rocketnet_server_uring_receive_packets( uring );
+    check( uring_receive_refused_errors == 0 );
+    check( uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_RECEIVE_REARMS ) == rearms + 1 );
+
+    const int refusals = 8;
+    for ( int i = 0; i < refusals; i++ )
+    {
+        uring_fake_push( fake, recv_tag, -EINVAL, 0 );
+        rocketnet_server_uring_receive_packets( uring );
+        check( !fake->guard_tripped );
+        check( rocketnet_server_uring_process_packets( uring )->num_packets == 0 );
+    }
+
+    check( uring_receive_refused_errors == 1 );
+    check( uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_RECEIVE_REARMS ) == rearms + 1 + (uint64_t) refusals );
+
+    uring_fake_stop_and_destroy( uring, fake );
+    check( !fake->guard_tripped );
+    check( uring_receive_refused_errors == 1 );
+
+    rocketnet_log_function( NULL, NULL );
+    rocketnet_log_level( saved );
+
+    free( fake );
+}
+
 // Withhold the kernel's cancellation replies. Every request/check returns,
 // storage stays owned, and releasing both reply kinds allows final cleanup.
 static void test_io_uring_stop_waits_for_kernel_ownership_without_waiting()
@@ -797,5 +856,6 @@ REGISTER_UNIT_TEST( test_io_uring_transport_reap_send_retires_under_receive_pres
 REGISTER_UNIT_TEST( test_io_uring_transport_send_phases_stage_every_update_under_late_reap );
 REGISTER_UNIT_TEST( test_io_uring_transport_reap_destroy_after_saturation );
 REGISTER_UNIT_TEST( test_io_uring_transport_receive_without_a_buffer_is_counted );
+REGISTER_UNIT_TEST( test_io_uring_transport_refused_multishot_logs_once );
 
 #endif // #if defined( __linux__ ) && defined( IORING_RECV_MULTISHOT ) && ROCKETNET_DEV && defined( ROCKETNET_IO_URING )

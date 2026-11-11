@@ -225,6 +225,10 @@ struct rocketnet_server_uring_t
     // in its buffer; the rest is below the smallest packet a server reads
     uint64_t receive_dropped_too_large;
 
+    // main thread only: a multishot receive the kernel ended with an error
+    // other than -ENOBUFS or -ECANCELED is logged once per transport
+    bool logged_receive_refused = false;
+
     struct rocketnet_server_uring_send_buffer_t send;
 
     struct rocketnet_server_uring_bank_t banks[2];
@@ -1120,6 +1124,14 @@ static void rocketnet_server_uring_reap_cqe( struct rocketnet_server_uring_t * u
 
             if ( cqe->res == -ENOBUFS )
                 uring->counters[ROCKETNET_SERVER_URING_COUNTER_RECEIVE_NO_BUFFERS]++;
+
+            // a kernel that refuses multishot receive ends every arm this
+            // way and the transport hears nothing: say so, once
+            if ( cqe->res < 0 && cqe->res != -ENOBUFS && cqe->res != -ECANCELED && !uring->logged_receive_refused )
+            {
+                uring->logged_receive_refused = true;
+                rocketnet_error( "io_uring transport: the kernel refused the multishot receive on queue %d: %s (errno %d)", queue_index, strerror( -cqe->res ), -cqe->res );
+            }
 
             rocketnet_server_uring_multishot_ended( uring, queue_index );
         }
