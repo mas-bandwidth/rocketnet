@@ -41,7 +41,7 @@
 // the disconnect reasons (enum rocketnet_disconnect_reason_t)
 #include "rocketnet.h"
 
-// probe pacing and the RTT filter: a path with no reliable progress (or no ack)
+// probe pacing and the RTT filter: a path with no reliable progress (or no ack while a reliable number is owed one)
 // for this long is treated as not delivering (standard/MESSAGES.md m9.2, m9.3)
 #define RN_PROBE_SECONDS 1.0
 
@@ -94,7 +94,7 @@ struct rn_window_ack_t
     double reliable_timeout;        // seconds; 0.0 is off (the default)
     double last_progress;           // the last update that newly acknowledged a reliable number (m9.3 probe)
     double last_ack;                // the last update that acknowledged any message packet
-    double silence_end;             // the last ack after RN_PROBE_SECONDS with none (m9.2 RTT filter)
+    double silence_end;             // the last ack after RN_PROBE_SECONDS owed none came (m9.2 RTT filter)
     uint8_t has_last_ack;
 
     double srtt;                    // 5% smoothed RTT
@@ -284,6 +284,17 @@ int rn_window_ack_check_timeout( rn_window_ack_t * ack, double now );
 // Whether only U may be resent: no reliable number newly acknowledged for
 // RN_PROBE_SECONDS since the later of the last progress and U's first send (m9.3)
 bool rn_window_ack_probing( const rn_window_ack_t * ack, double now );
+
+// Whether probe pacing holds this number on the wire: every number but U
+// while probing. The one rule for both rn_ordered_walk, which skips a held
+// number, and rn_endpoint_ordered_due, which never reports one due, so no
+// frame is started for a held number (proofs/tla/RNResendTiming.tla Held,
+// DueMeansWritten).
+bool rn_window_ack_held( const rn_window_ack_t * ack, uint64_t number, double now );
+
+// U's send_numbers slot when U is in the class's resend FIFO, or NULL: while
+// probing, the only number of that class the walk may resend.
+const rn_send_number_t * rn_window_ack_probe_slot( const rn_window_ack_t * ack, bool chunk );
 
 // The resend gap record's clock (development builds only; a no-op otherwise):
 // called once per update before the update's packets are written, with the

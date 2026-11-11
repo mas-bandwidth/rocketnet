@@ -249,8 +249,14 @@ refusals is the game's decision:
      that is later), or `-1` when no reliable message is waiting;
      `seconds_since_heard` is the time since the last packet accepted from the
      other side, and `reliable_in_flight` the reliable message pieces from the
-     oldest unacknowledged to the newest sent. Both getters return `false`
+     oldest unacknowledged to the newest numbered. A message's pieces are all
+     numbered when its first piece is planned for sending, so a large message
+     counts every piece at once, sent or not. Both getters return `false`
      and write zeroes when that connection is not connected.
+   - A slot can lose its client and take the next one inside one server
+     update, so the getter never returns `false` between them. Keep the
+     saved count per connection, keyed by
+     `rocketnet_server_client_connection_id`, not per slot.
    - This server drops a client it has been unable to send to for 5 s: its
      starts to that client are being refused and nothing it sent has been
      acknowledged for 5 s.
@@ -258,11 +264,18 @@ refusals is the game's decision:
 ```c
 #include "rocketnet.h"
 
-/* refused_seen[i]: send_refused at the previous frame, reset to 0 when slot i gets a new connection */
-void drop_unreachable_clients( struct rocketnet_server_t * server, uint64_t * refused_seen, int max_clients )
+/* refused_seen[i]: send_refused at the previous frame for the connection connection_seen[i] in slot i */
+void drop_unreachable_clients( struct rocketnet_server_t * server, uint64_t * connection_seen, uint64_t * refused_seen, int max_clients )
 {
     for ( int i = 0; i < max_clients; i++ )
     {
+        /* a slot reused inside one update keeps answering true: start over when its connection changes */
+        const uint64_t connection = rocketnet_server_client_connection_id( server, i );
+        if ( connection != connection_seen[i] )
+        {
+            connection_seen[i] = connection;
+            refused_seen[i] = 0;
+        }
         struct rocketnet_conditions_t conditions;
         if ( !rocketnet_server_client_conditions( server, i, &conditions, (int) sizeof( conditions ) ) )
         {

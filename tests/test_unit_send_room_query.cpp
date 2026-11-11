@@ -389,7 +389,8 @@ REGISTER_UNIT_TEST( test_send_room_query_public_api_client_and_server );
 // rocketnet_client_conditions and rocketnet_server_client_conditions: false and
 // zeroed until connected (the client in states 1-3 included), true once
 // connected; send_refused counts each refused start on its own connection
-// only; a short conditions_bytes writes only the fields that fit. Loopback,
+// only; a short conditions_bytes writes only the fields that fit, a larger one
+// zeroes every byte past the fields the library knows. Loopback,
 // step driven, time starts at 1000.0.
 static void test_conditions_public_api_client_and_server()
 {
@@ -576,6 +577,36 @@ static void test_conditions_public_api_client_and_server()
     memset( untouched, 0xA5, sizeof( untouched ) );
     check( memcmp( (const uint8_t *) &c + sizeof( double ), untouched, sizeof( untouched ) ) == 0 );
     check( !rocketnet_client_conditions( clients[1], &c, 0 ) );
+
+    // a larger conditions_bytes (a caller built against a later header with
+    // appended fields): the fields this library knows are filled and every byte
+    // past them reads zero, on both getters, true or false
+
+    union
+    {
+        struct rocketnet_conditions_t conditions;
+        uint8_t bytes[sizeof( struct rocketnet_conditions_t ) + 24];
+    } larger;
+    const int larger_bytes = (int) sizeof( larger.bytes );
+    const int tail_bytes = larger_bytes - (int) sizeof( struct rocketnet_conditions_t );
+    uint8_t zeroes[24];
+    memset( zeroes, 0, sizeof( zeroes ) );
+
+    memset( larger.bytes, 0xA5, sizeof( larger.bytes ) );
+    check( rocketnet_client_conditions( clients[0], &larger.conditions, larger_bytes ) );
+    check( larger.conditions.send_refused == 2 );
+    check( memcmp( larger.bytes + sizeof( struct rocketnet_conditions_t ), zeroes, (size_t) tail_bytes ) == 0 );
+
+    memset( larger.bytes, 0xA5, sizeof( larger.bytes ) );
+    check( rocketnet_server_client_conditions( server, slot1, &larger.conditions, larger_bytes ) );
+    check( larger.conditions.send_refused == 1 );
+    check( memcmp( larger.bytes + sizeof( struct rocketnet_conditions_t ), zeroes, (size_t) tail_bytes ) == 0 );
+
+    memset( larger.bytes, 0xA5, sizeof( larger.bytes ) );
+    check( !rocketnet_server_client_conditions( server, empty_slot, &larger.conditions, larger_bytes ) );
+    check( larger.conditions.send_refused == 0 );
+    check( memcmp( larger.bytes + sizeof( struct rocketnet_conditions_t ), zeroes, (size_t) tail_bytes ) == 0 );
+
     check( g_send_room_asserts == 0 );
 
     // a NULL struct is API misuse: one assert in an asserts build

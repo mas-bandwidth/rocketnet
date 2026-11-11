@@ -124,3 +124,28 @@ counterexample was checked against the C by hand.
    `rn_message_object_send_packets` the `goto flush` at the capacity test
    leaves the cursor on the connection just served, and the next
    `send_packets` starts there again.
+
+## Revision 1.1: a dark client takes no more than its turn (RNServerSendFair)
+
+Standard rule: MESSAGES.md m1.8 (per-client scope). `RNServerSendFair.tla`
+gains the constant `Dark`, the clients whose path is dark or that never
+acknowledge, so they always have resends due, and the invariant
+`OtherClientUnaffected`: every client outside `Dark` is still served within
+`ceil(N / K)` updates. The rule is the one-frame-per-connection-per-round
+loop of `rn_message_object_send_packets` with the cursor at `i + 1`: a busy
+or dark connection cannot take K turns. `Mode = "darkhogs"` is the reversed
+witness, a per-client allowance that lets a dark client with resends due take
+the whole cap each update. The four existing configurations set `Dark = {}`
+and their records are unchanged.
+
+| Case | Expected | Exit | Distinct |
+|---|---|---:|---:|
+| `MCRNServerSendFairDark.cfg` (N 2, K 1, `Dark = {2}`) | pass | 0 | 9 |
+| `MCRNServerSendFairBrokenDarkHogs.cfg` | `OtherClientUnaffected` | 12 | 3 |
+
+Witness trace, read by hand (3 states): N = 2, K = 1, client 2 dark. Each
+`Tick` serves only client 2; at update 2 client 1 has waited `Window = 2`
+updates and the invariant fails. Against the C: the inner loop of
+`rn_message_object_send_packets` writes one frame for a connection, moves
+`send_next_connection` past it and goes on to the next connection before
+any connection gets a second frame, so client 1 is served at the next update.

@@ -841,7 +841,8 @@ int rn_window_ack_on_ack( rn_window_ack_t * ack, uint64_t packet_id, double now 
 
     // 1. One unambiguous RTT sample per acked packet_id, except from a packet
     //    sent before the latest ack silence ended less one srtt: its ack
-    //    waited out the silence, so it measures the outage, not the path (m9.2)
+    //    waited out the silence, so it measures the outage, not the path (m9.2;
+    //    proofs/tla/RNResendTiming.tla Sample, NoSampleAcrossSilence)
 
     const double rtt = now >= entry->send_time ? ( now - entry->send_time ) : 0.0;
     if ( !ack->has_rtt )
@@ -915,7 +916,7 @@ int rn_window_ack_on_ack( rn_window_ack_t * ack, uint64_t packet_id, double now 
         }
 
         rn_window_send_mark_acked( send, slot->number );
-        ack->last_progress = now;
+        ack->last_progress = now;                                   // proofs/tla/RNResendTiming.tla Ack: sinceProgress = 0
     }
 
     // 3. Remove the entry from sent_index and reclaim the head of sent_packets
@@ -1028,11 +1029,18 @@ uint32_t rn_window_ack_on_acks( rn_window_ack_t * ack, const uint64_t * packet_i
         return 0;
     }
 
-    // an ack after RN_PROBE_SECONDS with none ends an ack silence (the RTT filter in rn_window_ack_on_ack);
-    // like probe pacing it is off when the game opted in, so an opted-in connection samples as v1.0 does
-    if ( ack->reliable_timeout <= 0.0 && ack->has_last_ack && now - ack->last_ack >= RN_PROBE_SECONDS )
+    // an ack ends an ack silence (the RTT filter in rn_window_ack_on_ack) when, for RN_PROBE_SECONDS
+    // before it, a reliable number was on the wire unacknowledged and no ack arrived: from the later of
+    // the last ack and U's first send. A sender with nothing on the wire owed no ack, so a gap with
+    // nothing sent is not a silence. Like probe pacing it is off when the game opted in, so an opted-in
+    // connection samples as v1.0 does (proofs/tla/RNResendTiming.tla Ack, EndsSilence)
+    if ( ack->reliable_timeout <= 0.0 && ack->has_last_ack && ack->has_oldest && ack->send->U < ack->send->next )
     {
-        ack->silence_end = now;
+        const double owed = ack->last_ack > ack->oldest_first_send ? ack->last_ack : ack->oldest_first_send;
+        if ( now - owed >= RN_PROBE_SECONDS )
+        {
+            ack->silence_end = now;
+        }
     }
     ack->last_ack = now;
     ack->has_last_ack = 1;
@@ -1103,7 +1111,9 @@ void rn_window_ack_packet_failed( rn_window_ack_t * ack, const uint64_t * number
 // reliable number for RN_PROBE_SECONDS gets only U, at the resend delay,
 // until a reliable number is newly acknowledged again. An opted-in
 // reliable timeout keeps today's behaviour whole: no probe pacing
-// (the probe would change what the timeout measures)
+// (the probe would change what the timeout measures).
+// proofs/tla/RNResendTiming.tla Probing and Held: the hold Walk honours
+// (ProbeOnlyU), released by the first Ack of a reliable number.
 bool rn_window_ack_probing( const rn_window_ack_t * ack, double now )
 {
     if ( ack->reliable_timeout > 0.0 || !ack->has_oldest || ack->send->U >= ack->send->next )
@@ -1112,6 +1122,25 @@ bool rn_window_ack_probing( const rn_window_ack_t * ack, double now )
     }
     const double from = ack->last_progress > ack->oldest_first_send ? ack->last_progress : ack->oldest_first_send;
     return now - from >= RN_PROBE_SECONDS;
+}
+
+// proofs/tla/RNResendTiming.tla Held: the hold Walk and the due test share
+bool rn_window_ack_held( const rn_window_ack_t * ack, uint64_t number, double now )
+{
+    return number != ack->send->U && rn_window_ack_probing( ack, now );
+}
+
+const rn_send_number_t * rn_window_ack_probe_slot( const rn_window_ack_t * ack, bool chunk )
+{
+    const rn_region_t * region = ack->region;
+    const uint32_t slot_index = (uint32_t) ( ack->send->U & ( region->window - 1 ) );
+    const rn_resend_link_t * entry = &region->resend_fifo[slot_index];
+    const rn_send_number_t * slot = &region->send_numbers[slot_index];
+    if ( !rn_resend_entry_linked( entry ) || rn_resend_entry_is_chunk( entry ) != chunk || slot->acked || slot->number != ack->send->U )
+    {
+        return NULL;
+    }
+    return slot;
 }
 
 // Checks the per-connection reliable timeout (standard/MESSAGES.md m9.3).

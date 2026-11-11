@@ -212,3 +212,28 @@ The mid instance checks two live packet IDs and one map/ring entry, so it does
 not cover a split map with several simultaneously live receipt blocks; that
 size-dependent case remains the exploratory bound recorded above. The
 `uint32` serial wrap and `uint64` packet-ID wrap are still not proved.
+
+## Revision 1.1: the reliable timeout off by default
+
+Standard rule: MESSAGES.md m9.3, `reliable_message_timeout_ms` 0 disables the
+reliable timeout, and it is the default. `TimeoutConfigured` gates
+`Disconnect`; `BrokenTimeoutWhenOff` is the reversed witness, the rule before
+revision 1.1. The new invariant `NoTimeoutEndWhenOff` (`~TimeoutConfigured =>
+live`) says no receipt's reliable number ends the connection while the timeout
+is off; a receipt whose packets keep being lost then waits for ACKED until the
+transport's silence timeout, outside this module. `ReceiptProgress` (the
+liveness that a reliable receipt resolves) is checked only with the timeout
+configured, since with it off and persistent loss nothing in this module
+resolves the receipt.
+
+| Case | Expected | Exit | Distinct |
+|---|---|---:|---:|
+| `MCRNReceipts.cfg` | pass | 0 | 23800 |
+| `MCRNReceiptsTimeoutOff.cfg` (timeout off, every safety invariant and `NoTimeoutEndWhenOff`) | pass | 0 | 18500 |
+| `MCRNReceiptsBrokenTimeoutWhenOff.cfg` | `NoTimeoutEndWhenOff` | 12 | 218 |
+
+Witness trace, read by hand: a reliable receipt (kind 6) is sent and never
+acked; its number reaches age 2 (`ReliableTimeout`) and `Disconnect` ends the
+connection with the timeout off. The code before revision 1.1 did the same:
+`rn_window_ack_check_timeout` ran whatever `reliable_timeout` was; the code
+now returns early when it is 0.

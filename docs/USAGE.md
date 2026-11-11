@@ -664,7 +664,9 @@ message, once per resend delay, until an acknowledgement arrives
 ([MESSAGES.md m9.3](../standard/MESSAGES.md#m9.3)), and a packet whose
 acknowledgement waited out the silence gives no round-trip sample, so the
 outage does not inflate the resend delay
-([MESSAGES.md m9.2](../standard/MESSAGES.md#m9.2)).
+([MESSAGES.md m9.2](../standard/MESSAGES.md#m9.2)). Only a second in which a
+reliable message was waiting for its acknowledgement counts as silence: a
+connection that sends less than once a second is not silent between sends.
 
 If you set `reliable_message_timeout_ms`, choose a value well above T: it ends
 the connection with `RELIABLE_TIMED_OUT` when the oldest reliable message has
@@ -679,6 +681,14 @@ silence for T ends the attempt (`ROCKETNET_CLIENT_STATE_CONNECTION_RESPONSE_TIME
 with T above 30 s a failed attempt can take up to T to report. The wait for the
 other side's CONFIG record has no clock of its own unless
 `reliable_message_timeout_ms` is set.
+
+The outage guarantee above is for a connected client; the handshake is not
+covered. The server forgets a half-open handshake after
+`handshake_deadline_seconds` (5 s by default), and a client that has moved on
+to its connection response sends no more connection requests, so a client-to-server outage of
+several seconds during the handshake fails that connect attempt: the client
+reports `ROCKETNET_CLIENT_STATE_CONNECTION_RESPONSE_TIMED_OUT` at T, and the
+application connects again.
 
 `rocketnet_client_conditions` and `rocketnet_server_client_conditions` (per
 client) fill a `struct rocketnet_conditions_t` with what a game's own policy

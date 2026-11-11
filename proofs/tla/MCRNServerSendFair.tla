@@ -2,7 +2,8 @@
 (***************************************************************************)
 (* The small instance of RNServerSendFair: three clients, one frame per   *)
 (* update. MCRNServerSendFair.cfg is the committed run; the Walk config    *)
-(* widens the same fair rule to five clients and two frames. The two       *)
+(* widens the same fair rule to five clients and two frames. The Dark      *)
+(* config has a second client that never acknowledges (m1.8). The three    *)
 (* Broken configs restore the reversed witnesses and must fail.            *)
 (***************************************************************************)
 EXTENDS RNServerSendFair

@@ -4594,6 +4594,7 @@ static void test_previous_connection_ack_dropped_after_reconnect()
 
 #define RECONNECT_PROTOCOL 0x7A11C1C1E5EED0A1ULL
 #define RECONNECT_CLIENT_ID 0x5107ULL
+#define RECONNECT_CONFIG_WAIT_MS 10000
 
 static double reconnect_now = 1000.0;
 static double reconnect_clock( void * ) { return reconnect_now; }
@@ -4731,6 +4732,7 @@ static void test_same_client_id_reconnect_in_one_update_resets_the_slot()
     rocketnet_server_default_config( &server_config );
     server_config.protocol_id = RECONNECT_PROTOCOL;
     server_config.max_clients = 1;                                              // the new connection can only take slot 0
+    server_config.reliable_message_timeout_ms = RECONNECT_CONFIG_WAIT_MS;      // opted in: the CONFIG wait has a clock (m11)
     memcpy( server_config.backend_public_key, world.backend_public, sizeof( server_config.backend_public_key ) );
     server_config.transport = "loopback";
     server_config.loopback_hub = rocketnet_test_loopback_hub();
@@ -4747,6 +4749,7 @@ static void test_same_client_id_reconnect_in_one_update_resets_the_slot()
         client_config.loopback_hub = rocketnet_test_loopback_hub();
         client_config.step_driven = true;
         client_config.time_callback = reconnect_clock;
+        client_config.reliable_message_timeout_ms = RECONNECT_CONFIG_WAIT_MS;
         world.clients[i] = rocketnet_client_create( NULL, &client_config, NULL );
         check( world.clients[i] != NULL );
     }
@@ -4788,11 +4791,14 @@ static void test_same_client_id_reconnect_in_one_update_resets_the_slot()
     check( rocketnet_client_index( world.clients[1] ) == 0 );
 
     // the slot started clean and B received the server's CONFIG: the exchange
-    // runs from 0 in order, and B is still connected after the CONFIG wait
+    // runs from 0 in order, and B is still connected after the CONFIG wait:
+    // with the timeout opted in on both ends, a B that had not taken the
+    // server's CONFIG would end at the wait's 10 s, inside these 11 s
 
     check( reconnect_exchange( &world, 1, 0xB2, 3 ) );
 
-    const double until = world.time + (double) server_config.reliable_message_timeout_ms / 1000.0 + 1.0;
+    check( server_config.reliable_message_timeout_ms == RECONNECT_CONFIG_WAIT_MS );
+    const double until = world.time + (double) RECONNECT_CONFIG_WAIT_MS / 1000.0 + 1.0;
     while ( world.time < until && rocketnet_client_state( world.clients[1] ) == ROCKETNET_CLIENT_STATE_CONNECTED )
     {
         reconnect_pump( &world, 0.05 );

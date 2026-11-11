@@ -3856,12 +3856,18 @@ const struct rocketnet_counters_t * rocketnet_client_message_counter_block( stru
 #endif // #if ROCKETNET_DEV
 
 // rocketnet_conditions_t is size-revisioned: fill a full copy, then hand the
-// caller the bytes its build knows
+// caller the bytes its build knows; a caller built against a later, larger
+// struct reads zeros in the fields this library does not know
 static bool rn_conditions_out( const struct rocketnet_conditions_t * full, bool ok, struct rocketnet_conditions_t * conditions, int conditions_bytes )
 {
     const size_t bytes = conditions_bytes < (int) sizeof( *full ) ? (size_t) conditions_bytes : sizeof( *full );
     static const struct rocketnet_conditions_t none = {};
     memcpy( conditions, ok ? full : &none, bytes );
+    if ( (size_t) conditions_bytes > bytes )
+    {
+        // bytes is the library's whole struct here, so the tail starts just past it
+        memset( conditions + 1, 0, (size_t) conditions_bytes - bytes );
+    }
     return ok;
 }
 

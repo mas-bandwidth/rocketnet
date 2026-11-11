@@ -479,8 +479,9 @@ toolchain), in three legs, each in its own job and its own build directory:
   first runs plainly with `MallocStackLogging=1` (its exit status is the suite
   verdict), then every case it named runs alone, in process, under
   `leaks --atExit --`, and each exec binary of the functional suite runs under
-  it too. The nightly opt-in disables the per-case elapsed watchdog. A
-  leak or incomplete inspection cannot qualify as a pass.
+  it too. Each case's inspection is bounded at 300 s, nightly too (the
+  slowest case takes 28 s under `leaks`), and the leg's job at 240 minutes
+  (it takes about 95). A leak, or an inspection killed at its bound, is red.
 
 Each leg runs `./bin/test` and `./bin/functional` with
 `ROCKETNET_SERVER_TRANSPORT` and `ROCKETNET_CLIENT_TRANSPORT` both `msgx`, then
@@ -506,14 +507,14 @@ MallocStackLogging=1 leaks --atExit -- ./bin/test test_endian
 MallocStackLogging=1 ROCKETNET_TEST_SUITE_CAPTURE=1 leaks --atExit -- ./bin/functional --run test_loopback_transport_udp
 ```
 
-The extracted leak runner retains a 180 s watchdog for callers that do not
-set `ROCKETNET_NIGHTLY_NO_TIMEOUT=1`. Nightly sets that exact opt-in and does
-not terminate an inspection because of elapsed time. The allocator-trap and
-sodium-misuse witnesses fork children that deliberately exit or abort. Their
-interaction with Apple's exit inspection has produced hangs; removing an
-elapsed cap does not resolve that compatibility issue or establish leak
-coverage. Those cases still require completed inspections, with their original
-exit/abort assertions intact, before this leg can pass.
+Under `leaks --atExit` a forked child inherits libLeaksAtExit, which stops it
+with SIGSTOP as it ends (by `exit`, `_exit` or `abort` alike) for an
+inspection that only watches the parent. A case that forks a child therefore
+waits with `WUNTRACED` and continues a stopped child before it reads the
+child's output or status: the allocator-trap witness
+(`tests/test_channels.cpp`) and the sodium-misuse witness
+(`tests/functional/rocketnet_functional_tests.cpp`) do, with their exit and
+abort assertions unchanged. A new forking case must do the same.
 
 ## Fuzzing
 

@@ -41,6 +41,7 @@
 #include <new>
 
 #if !defined( _WIN32 )
+#include <signal.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #endif // #if !defined( _WIN32 )
@@ -1954,8 +1955,17 @@ static void test_channels_allocator_trap_witness()
             _Exit( 0 );
         }
 
+        // under `leaks --atExit` the child inherits libLeaksAtExit, which stops it (SIGSTOP)
+        // as it ends, for a leaks attach that only watches this process: continue it, so the
+        // wait sees how it really ended instead of waiting for ever
+
         int status = 0;
-        check( waitpid( pid, &status, 0 ) == pid );
+        pid_t waited;
+        while ( ( waited = waitpid( pid, &status, WUNTRACED ) ) == pid && WIFSTOPPED( status ) )
+        {
+            kill( pid, SIGCONT );
+        }
+        check( waited == pid );
         check( WIFEXITED( status ) && WEXITSTATUS( status ) == 1 );
     }
 }

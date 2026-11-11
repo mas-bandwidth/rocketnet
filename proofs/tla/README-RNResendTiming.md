@@ -294,3 +294,146 @@ stamps the due-now sentinel, the record is refused to tick 7 and then sent at
 (`test_unit_channel_ordered.cpp`) replays it against the code: a refused first
 send leaves `last_send` never sent and no clock, no timeout past
 `reliable_timeout`, and the real send starts the clock at its own time.
+
+## Revision 1.1: the timeout off, probe pacing and the silence filter
+
+Standard rules: MESSAGES.md m9.2 (no sample across an acknowledgement
+silence) and m9.3 (`reliable_message_timeout_ms` 0 disables the timeout, the
+default; probe pacing). The ticks are 500 ms, so `Probe = 2` is the one
+second of probe pacing and `SilenceTs = {3, 4, 5}` are the silences T of 1.5,
+2 and 2.5 s the timeout claim is quantified over. The switches are
+definitions replaced with `<-` in each configuration: `TimeoutOn`
+(`TimeoutOff` is the default rule), `TimeoutWhenOff`, `ProbeMode`
+(`"rule"`, `"off"`, `"norelease"`, `"holdsu"`), `Third` (a third small record
+`s2`, so a number other than the oldest unacked `U` is on the wire), `Filter`
+and `FilterRule`, `TrackQuiet`. The ghosts `sinceProgress`, `quiet`,
+`sinceAck`, `sinceEnd` and `badSample` are the code's `last_progress`,
+the acknowledgement silence, `last_ack`, `silence_end` and a sample the rule
+forbids.
+
+| Property | Kind | Claim |
+|---|---|---|
+| `OffMeansNoStallEnd` | invariant | with the timeout off no record ends the connection |
+| `NoEndBeforeT` | invariant | for every T in `SilenceTs`, a timeout fires only after T of acknowledgement silence |
+| `ProbeOnlyU` | action | while probing, no on-wire number other than `U` is resent |
+| `NoDueRecordHeld` | invariant | now also allows a number held by probe pacing (`Held`) |
+| `RetryPlanned` | invariant | now excludes a held number |
+| `NoSampleAcrossSilence` | invariant | no sample is taken from a packet sent before `silence_end - srtt` |
+| `EveryReliableAcked` | temporal | under `LiveSpec` (strong fairness on acks of sends after `GoodFrom`) every record is acked |
+
+`AttemptsBeforeTimeout` and `ResendGapBounded` are claims about the timeout
+and hold only when it is configured (`TimeoutOn`).
+
+| Case | Spec | Exit | Distinct |
+|---|---|---:|---:|
+| `MCRNResendTimingOff.cfg` (three records, chunk in flight, `ProbeOnlyU`) | Spec | 0 | 313438 |
+| `MCRNResendTimingPacedOff.cfg` | Spec | 0 | 31218 |
+| `MCRNResendTimingOffLive.cfg` (`EveryReliableAcked`) | LiveSpec | 0 | 1777 |
+| `MCRNResendTimingOffQuiet.cfg` (`NoEndBeforeT`) | Spec | 0 | 2062 |
+| `MCRNResendTimingFilter.cfg` (`NoSampleAcrossSilence`) | Spec | 0 | 3938 |
+| `MCRNResendTimingBrokenResendAllWhileStalled.cfg` | `ProbeOnlyU` | 13 | 330 |
+| `MCRNResendTimingBrokenProbeNoRelease.cfg` | `NoDueRecordHeld` | 12 | 492 |
+| `MCRNResendTimingBrokenProbeHoldsU.cfg` | `EveryReliableAcked` | 13 | 1822 |
+| `MCRNResendTimingBrokenTimeoutInsideT.cfg` | `NoEndBeforeT` | 12 | 1800 |
+| `MCRNResendTimingBrokenTimeoutWhenOff.cfg` | `OffMeansNoStallEnd` | 12 | 753 |
+| `MCRNResendTimingBrokenSampleAcrossSilence.cfg` | `NoSampleAcrossSilence` | 12 | 77 |
+
+The existing cases' counts are unchanged. Each witness trace was read by
+hand against `sdk/rocketnet_window_ack.cpp` and `sdk/rocketnet_channel.cpp`:
+
+- **ResendAllWhileStalled** (`ProbeMode = "off"`): `s`, `c` and `s2` are
+  sent at 0 and nothing is acked; at tick 2 the stall has lasted one second
+  and the walk resends `c` and `s2` beside `U = s`. The code's
+  `rn_window_ack_probing` is true there and `rn_ordered_walk` skips every
+  on-wire number but `U`.
+- **ProbeNoRelease** (`"norelease"`): probing holds `s2`; `Ack(s)` acks a
+  number, which in the code sets `last_progress = now` and ends probing, but
+  the witness keeps `s2` held after it falls due.
+- **ProbeHoldsU** (`"holdsu"`): `U` is held with the rest, so no send after
+  `GoodFrom` is ever acked and `U` stays unacked. The code always resends
+  `U` when due.
+- **TimeoutWhenOff** and **TimeoutInsideT** (`TimeoutWhenOff`): with the
+  timeout off the record still times out 6 s (12 ticks) after its first send,
+  with an ack sample at tick 11, so the acknowledgement silence is one tick.
+  This is the code before revision 1.1: `rn_window_ack_check_timeout` and the
+  chunk cap ran with no `reliable_timeout > 0` guard.
+- **SampleAcrossSilence** (`FilterRule` off): an ack after two ticks of
+  silence samples a packet sent before `silence_end - srtt`. The code's
+  `on_ack` keeps the first sample, then takes one only when
+  `send_time >= silence_end - srtt`.
+
+## Revision 1.2: a silence needs an acknowledgement owed
+
+Standard rule: MESSAGES.md m9.2. Revision 1.1 ended a silence on any ack
+that came two ticks (1 s) after the previous one. A sender with one message
+every two seconds has nothing in flight between messages, so each ack ended a
+silence and its own sample, above srtt, was refused: the estimate could only
+fall. Now `EndsSilence` (`OwedSilence`) also needs `U` on the wire and its
+first send two ticks or more ago, the code's
+`now - max(last_ack, oldest_first_send) >= RN_PROBE_SECONDS` with
+`has_oldest` in `rn_window_ack_on_acks`. `SilenceOnGap` is the revision 1.1
+rule. `PriorAck` starts the instance with the previous message acknowledged
+0 to 2 ticks before the record's first send and its sample taken, a sparse
+sender; `SrttUnderTick` makes srtt shorter than one tick, so an ack one tick
+after its send is above it. The ghosts `sinceOwedEnd` and `badRefusal` follow
+the owed rule beside the configured one and record a refusal it would not
+make.
+
+| Property | Kind | Claim |
+|---|---|---|
+| `RefuseOnlyAfterOwedSilence` | invariant | a sample is refused only after a silence in which an ack was owed |
+
+| Case | Spec | Exit | Distinct |
+|---|---|---:|---:|
+| `MCRNResendTimingFilter.cfg` (now also `RefuseOnlyAfterOwedSilence`) | Spec | 0 | 3938 |
+| `MCRNResendTimingFilterSparse.cfg` (`PriorAck`, `SrttUnderTick`) | Spec | 0 | 3911 |
+| `MCRNResendTimingBrokenSilenceOnGap.cfg` | `RefuseOnlyAfterOwedSilence` | 12 | 15 |
+
+Every other case of the module was re-run with it and kept its distinct
+count. The witness, read by hand against `sdk/rocketnet_window_ack.cpp`:
+the previous ack was two ticks ago (`sinceAck = 2`), the small record is
+first sent at tick 0 and nothing else is in flight; at tick 0 an ack of a
+packet one tick old arrives. Under `SilenceOnGap`, the v1.1.0 code,
+`now - last_ack >= 1 s` sets `silence_end = now`, and the packet, sent before
+`silence_end - srtt`, gives no sample. Under the rule `U`'s first send is now,
+no ack was owed for a second, no silence ends, and the packet is sampled.
+The unit tests `test_rtt_filter_follows_a_sparse_sender` and
+`test_rtt_filter_idle_connection_is_not_a_silence`
+(`test_unit_resend_timing.cpp`) replay it against the code, and
+`test_rtt_filter_skips_the_samples_an_outage_delays` keeps the outage case.
+
+## Revision 1.2: the due test agrees with the walk
+
+Standard rules: MESSAGES.md m9.3 (while probing only `U` is resent) and m1.8
+item 2 (no connection changes another connection's send budget). The code
+asks the endpoint whether a frame is due (`rn_endpoint_fifo_due`) before it
+starts one; a frame started and then left empty is aborted, and on every
+server transport an aborted frame keeps its slot of the update's shared send
+capacity. So the due test must report work exactly when the walk writes some.
+
+`ReportedDue` is the due test: for each class, the head of its FIFO
+(never-sent first, then oldest last send), and when that head is on the wire
+and held by probe pacing, `U` in its place (`rn_window_ack_held`,
+`rn_window_ack_probe_slot`). `DueMeansWritten` states that, in a walk with no
+room left by earlier calls (`Room = 0`), the due test is true exactly when the
+walk sends a record. `DueRule` switches the held head's replacement; `DueRuleOff`
+is the code before the fix, which read the head's own time.
+
+| Case | Property | Exit | Distinct |
+|---|---|---:|---:|
+| `MCRNResendTiming.cfg`, `MCRNResendTimingOff.cfg`, `MCRNResendTimingOffLive.cfg`, `MCRNResendTimingFilter.cfg` | `DueMeansWritten` added | 0 | unchanged |
+| `MCRNResendTimingBrokenDueIgnoresHold.cfg` (`MCRNResendTimingOff.cfg` with `DueRule <- DueRuleOff`) | `DueMeansWritten` | 12 | 498 |
+
+The witness trace, read by hand against `sdk/rocketnet_endpoint.cpp` and
+`sdk/rocketnet_channel.cpp`: `s`, `c` and `s2` are sent at 0 and nothing is
+acked; a sample at tick 2 sets `rto` to 2 and only `U = s` is resent at tick 2;
+at tick 3 the stall has lasted past one second, `s2` and `c` are held and past
+their delay, and `U` is not due. The old due test reads the held head and
+reports work; the walk skips every held number and writes nothing. The unit
+tests `test_endpoint_probe_hold_requests_frame_only_for_u`
+(`test_unit_endpoint.cpp`) and
+`test_server_send_cap_dark_neighbours_take_only_their_probes`
+(`test_unit_server_send_cap_fair.cpp`) replay it against the code: the first
+counts frames asked for during the hold (one exactly when `U` is due, none
+aborted); the second shows three held clients taking only their probe slots of
+a shared send capacity of four.

@@ -1,6 +1,6 @@
 # RN-2: RocketNet message layer
 
-Version: 1.0<br>
+Version: 1.1<br>
 Status: normative<br>
 Companion documents: RN-1 (`TRANSPORT.md`), the connection layer; RN-R
 (`RATIONALE.md`), informative rationale.
@@ -86,7 +86,8 @@ implementation, stated here because RN-2 is the party that relies on it.
    the carrying packet's ACK, and keep the connection alive for retry. Records
    already accepted from the packet remain retained or delivered; a retry MUST
    deduplicate that prefix. Once capacity returns, a fresh-sequence retransmission
-   MUST be accepted normally. The reliable timeout of [m9.3 Resend classes and the reliable timeout](#m9.3) applies when it is configured.
+   MUST be accepted normally. The reliable timeout of
+   [m9.3 Resend classes and the reliable timeout](#m9.3) applies when it is configured.
    Admission MUST reserve space for every held delivery an ordered record can
    release, not only the record itself. Malformed records remain protocol errors.
 3. **No payload exceeds one packet.** A message layer sender MUST NOT hand
@@ -147,27 +148,100 @@ and it cannot ask for the message again.
    end of rule 2, and MUST NOT deliver it at a later update.
 4. A message the receiver did not offer to the application because its
    connection already ended is not misuse and is not counted.
-
-A client delivers no message, and counts none under rule 2, before it reports
-connected; its transport accepts no payload before then
-([RN-1 t11 Handshake: client](TRANSPORT.md#t11)).
+5. A client MUST NOT deliver a message, and MUST NOT count one under rule 2,
+   before it is in connected (4) of [RN-1 t11 Handshake: client](TRANSPORT.md#t11);
+   its connection layer accepts no payload before then
+   ([RN-1 t11.3 Session processing before connected](TRANSPORT.md#t11.3)). A
+   payload the client refuses in that state is not acknowledged, so a reliable
+   message the server sent in it stays unacknowledged in the server's send state
+   and is resent ([m9.3 Resend classes and the reliable timeout](#m9.3)): the
+   sender holds it until the client can receive it. An unreliable message sent in
+   that state is lost, as on any lossy path.
 
 <a id="m1.7"></a>
 ### m1.7. Send refusal
 
-When the application starts a message and the connection's send memory cannot
-take it, the endpoint MUST refuse the start, MUST count it for that
-connection, and MUST NOT end the connection or change any state that a later
-start depends on. No send-side call may end a connection. Only the receive
-side's broken invariant (a delivery table with no room) ends a connection with
-`MESSAGE_MEMORY_EXHAUSTED`.
+1. When the application starts a message and the connection's send memory
+   cannot take it, the endpoint MUST refuse the start and MUST count the
+   refusal for that connection. The rule holds for every reliability of
+   [m1.3 Reliability types](#m1.3), the unreliable ones included, and in every
+   state of the connection.
+2. A refused start MUST NOT end the connection and MUST NOT change any state
+   that a later start depends on: once the send memory has room again, a start
+   that fits MUST succeed.
+3. An endpoint MUST NOT end a connection because of any call the local
+   application makes on the send side, in any amount, order or state. A send
+   that cannot be honoured is a refusal the application sees.
+
+A refusal for want of room in the send queue or the send store is counted in
+`MESSAGE_SEND_QUEUE_FULL` or `MESSAGE_SEND_STORE_FULL` of
+[RN-1 t18 Error handling and counters](TRANSPORT.md#t18), and the refused start
+returns no reservation. Only the receive side can leave a connection's message
+memory exhausted, and only by a broken invariant of the receiver
+([m1.9 Outage tolerance](#m1.9), rule 1).
 
 <a id="m1.8"></a>
 ### m1.8. Per-client scope
 
-On a server, every refusal, clock and end applies to one client only. Nothing
-one client's packets, sends or clocks cause changes another client's
-connection state, memory, budget, or the outcome of a send to it.
+1. Every refusal, backlog, clock, send budget and end decision of RN-2 on a
+   server belongs to one connection.
+2. A server MUST NOT refuse a start on, end, or change the state, send memory,
+   send budget or clocks of one connection because of another connection's
+   packets, sends, refusals or clocks.
+
+<a id="m1.9"></a>
+### m1.9. Outage tolerance
+
+Let `T` be the connection timeout of [RN-1 t13.2 Timeout](TRANSPORT.md#t13.2),
+`κ` the interval between keep-alives, the inverse of the row `send rate` of
+[RN-1 t17 Timing and defaults](TRANSPORT.md#t17), `u` an endpoint's update
+interval, and `Δδ` the change in one-way delay across an outage. A receive
+silence at an endpoint is an interval in which it accepts no packet from the
+remote endpoint.
+
+1. With the reliable timeout disabled
+   ([m9.3 Resend classes and the reliable timeout](#m9.3)), an endpoint MUST
+   NOT end an established connection for any reason of timing or memory but the
+   timeout of [RN-1 t13.2 Timeout](TRANSPORT.md#t13.2). The ends that remain
+   are: silence for `T`; a violation by the remote endpoint
+   ([m13 Security considerations](#m13)), a CONFIG mismatch
+   ([m11 CONFIG control record](#m11)) or the integrity limit of
+   [RN-1 t9 Packet protection](TRANSPORT.md#t9); an exhaustion of the
+   connection's message memory by its receive side, which only a broken
+   invariant of the receiver reaches; the end of rule 2 of
+   [m1.6 Receiving every delivered message](#m1.6); and an explicit disconnect
+   or a server stop by the application. When the reliable timeout is
+   configured, its end is added to these.
+2. The data a sender has in flight to the remote endpoint is bounded by the
+   remote endpoint's window: at most `W` numbers and `B` ring bytes ahead of
+   it ([m5.1 Sender numbering](#m5.1)). Every message beyond that waits,
+   unnumbered, in the sender's own send memory, so a sender runs out of send
+   memory before its receiver runs out of receive memory, and the sender's
+   shortage is a refusal ([m1.7 Send refusal](#m1.7)), never an end.
+3. With the reliable timeout disabled, an endpoint MUST keep an established
+   connection while every receive silence at each endpoint is shorter than
+   `T - m`, where `m = 2κ + u + Δδ`. Once both endpoints are connected, a
+   direction that delivers nothing for `D` seconds makes a receive silence of at
+   most `D + m`. Between the server's acceptance of the client's connection
+   response and the client's entry to connected (4) of
+   [RN-1 t11 Handshake: client](TRANSPORT.md#t11), the client's silence is at
+   most `D + RTT + m`, where `RTT` is the round trip. This revision states the
+   guarantee for round trips of at most 900 ms, and for `D = T - 1` it needs
+   `2κ + u + Δδ < 1` second.
+4. After the last interval in which a direction delivers nothing, every
+   message the application started and finished on a reliable channel MUST be
+   delivered exactly once, in its channel's order. When both endpoints update at
+   least every 0.1 seconds this completes within
+   `κ + 2r + u + rd + backlog_bytes / rate_usable` plus one probe round of
+   [m9.3 Resend classes and the reliable timeout](#m9.3), where `r` is the
+   one-way delay, `backlog_bytes` the reliable bytes waiting, `rd` is at most
+   `message_resend_delay_max_ms` and `rate_usable` is the send budget of
+   [m9.4 Send budget](#m9.4) in bytes per second times `min(1, 0.1 / u)`.
+5. The guarantee of rules 3 and 4 holds only when both endpoints keep this
+   revision of RN-2. An endpoint that keeps revision 1.0 ends a connection by
+   the reliable timeout, which that revision enables by default, bounds its
+   CONFIG wait by it, and ends a connection whose send memory is full; a
+   connection to such an endpoint does not have the guarantee.
 
 <a id="m2"></a>
 ## m2. Payload forms and sender size rules
@@ -2781,7 +2855,9 @@ trip, the dropped entry is one whose acknowledgement can no longer arrive.
 On an acknowledgement, for each number the packet carried that is still
 unacknowledged, the sender MUST mark the number acknowledged, remove it from
 its resend queue, advance the lowest unacknowledged number, and take one
-round-trip sample equal to the time between the send and the acknowledgement.
+round-trip sample equal to the time between the send and the acknowledgement,
+except a sample the acknowledgement-silence rule of
+[m9.2 Round-trip estimate and resend delay](#m9.2) forbids.
 A number that was already acknowledged MUST NOT be acknowledged or sampled a
 second time.
 
@@ -2815,16 +2891,24 @@ a caller may configure a nonzero minimum. The maximum
 defaults to 2 seconds. The resend delay MUST NOT back off after a resend:
 every pass uses the same function of the
 estimates, so a record that is never acknowledged is resent at that delay,
-subject to probe pacing ([m9.3 Resend classes and the reliable timeout](#m9.3)), until it is acknowledged or the
-connection ends.
+subject to probe pacing ([m9.3 Resend classes and the reliable timeout](#m9.3)),
+until it is acknowledged or the connection ends.
 
 When the reliable timeout is disabled, an update that acknowledges a message
-packet after an interval of at least 1 second in which none was acknowledged
-ends an acknowledgement silence at that update. A sender MUST NOT take a
-round-trip sample from an acknowledged packet sent before the end of the latest
-acknowledgement silence minus its smoothed round-trip time. Every other
-acknowledged packet is sampled as above. When the reliable timeout is nonzero
-there is no acknowledgement silence.
+packet ends an acknowledgement silence at that update when, for at least
+1 second before it, the lowest unacknowledged number had been sent and no
+message packet was acknowledged: that is, at least 1 second has passed since
+the later of the previous update that acknowledged a message packet and the
+first send of the lowest unacknowledged number. An interval in which every sent
+number was acknowledged owes no acknowledgement and is not a silence, however
+long. A sender MUST NOT
+take a round-trip sample of [m9.1 Acknowledgement mapping](#m9.1) from an
+acknowledged packet sent before the end of the latest acknowledgement silence
+less its smoothed round-trip time; every other acknowledged packet is sampled as
+above, and the first sample is always taken. An acknowledgement that waited out a
+silence measures the silence, not the path. When the reliable timeout is
+configured, no acknowledgement silence ends and every acknowledged packet is
+sampled.
 
 | Name | Value | Unit | Meaning |
 |---|---|---|---|
@@ -2832,7 +2916,7 @@ there is no acknowledgement silence.
 | message_resend_delay_min_ms | `0` | ms | optional floor for the sampled resend delay; zero disables it |
 | message_resend_delay_max_ms | `2000` | ms | the configured largest resend delay |
 | reliable_message_timeout_ms | `0` | ms | how long the oldest unacknowledged number may stand; zero (the default) turns the reliable timeout off and the token timeout alone ends a silent connection |
-| min_resend_attempts | `4` | count | the sends that fit before the reliable timeout |
+| min_resend_attempts | `4` | count | the sends that fit before a configured reliable timeout |
 
 <a id="m9.3"></a>
 ### m9.3. Resend classes and the reliable timeout
@@ -2842,32 +2926,33 @@ small-record queue; a fragment of a block is in the chunk queue. A number MUST
 be in at most one queue.
 
 The resend delay of a single-packet record MUST be `resend_delay_seconds`.
-The resend delay of a chunk MUST be
+When the reliable timeout is configured, the resend delay of a chunk MUST be
 `min(resend_delay_seconds, (reliable_message_timeout_ms / 1000) / min_resend_attempts)`
-seconds, with real-valued division, when `reliable_message_timeout_ms` is
-nonzero, and `resend_delay_seconds` when it is 0. A sender MUST resend a due
-number at the first update whose time is at least the number's last send plus
-its resend delay, except a number held by probe pacing below, and MUST NOT
-resend it before then. A resend MUST use a fresh
+seconds, with real-valued division; when it is disabled, the resend delay of a
+chunk MUST be `resend_delay_seconds`. A sender MUST resend a due number
+at the first update whose time is at least the number's last send plus its
+resend delay, except a number held by probe pacing below, and MUST NOT resend it
+before then. A resend MUST use a fresh
 connection layer sequence and MUST move the number to the tail of its queue.
 
-When `reliable_message_timeout_ms` is nonzero, the sender MUST end the
-connection with ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT
+A `reliable_message_timeout_ms` of 0 disables the reliable timeout, and the
+sender then MUST NOT end a connection for an unacknowledged reliable number. When
+`reliable_message_timeout_ms` is nonzero, the sender MUST use it exactly as
+configured, and MUST end the connection with ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT
 when the oldest unacknowledged reliable number has stood unacknowledged for
 `reliable_message_timeout_ms / 1000` seconds or more, measured from its first
-send. This lifetime limit is distinct from the delay between resends. A connection that
+send, whatever the state of the path. This lifetime limit is distinct from the delay between resends. A connection that
 ends with ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT MUST stop resending.
-A `reliable_message_timeout_ms` of 0 disables the reliable timeout, and the
-sender then MUST NOT end a connection for an unacknowledged reliable number.
 
-Probe pacing. When the reliable timeout is disabled, and no reliable number
-has been newly acknowledged for 1 second, counted from the later of the last
-update that newly acknowledged one and the first send of the oldest
-unacknowledged number U, a sender MUST NOT resend any number other than U that
-it has already sent; it MUST resend U when U is due. It MAY send numbers it has
-never sent, within the window. The first update that newly acknowledges a
-reliable number ends the hold. When the reliable timeout is nonzero there is no
-probe pacing.
+Probe pacing. When the reliable timeout is disabled, and no reliable number has
+been newly acknowledged for 1 second, counted from the later of the last update
+that newly acknowledged one and the first send of the oldest unacknowledged
+number `U`, a sender MUST NOT resend any number other than `U` that it has already
+sent; it MUST resend `U` when `U` is due. It MAY send numbers it has never sent,
+within the window ([m5.1 Sender numbering](#m5.1)). The first update that newly
+acknowledges a reliable number ends the hold, and every held number that is due
+is then resent within the send budget ([m9.4 Send budget](#m9.4)). When the
+reliable timeout is configured, a sender MUST NOT hold a number by probe pacing.
 
 <a id="m9.4"></a>
 ### m9.4. Send budget
@@ -2930,7 +3015,8 @@ depth. The budget change is visible when the setter returns success.
 
 ```vector m9.resend-trace
 clock: 1000.0
-trace: reliable_message_timeout_ms 10000; short path: a 20 ms sample, resend passes at 0.040, 0.109, 0.111 and 0.221 seconds, reliable timeout checks at 9.999 and 10.000 seconds; long path: a 400 ms sample, resend passes at 0.400, 1.629, 1.631 and 2.001 seconds
+timeout: reliable_message_timeout_ms 10000, configured
+trace: short path: a 20 ms sample, resend passes at 0.040, 0.109, 0.111 and 0.221 seconds, reliable timeout checks at 9.999 and 10.000 seconds; long path: a 400 ms sample, resend passes at 0.400, 1.629, 1.631 and 2.001 seconds
 00 00 00 01 00 01 04 00 00 00 01
 ```
 
@@ -3042,12 +3128,14 @@ configuration: build-specific maximum at least 301; num_channels 301
    it ([m7 Delivery: reliable codes 2, 3 and 4](#m7)).
 3. An endpoint MUST start its CONFIG wait at the first update at which its
    connection layer reports the connection established.
-4. When the reliable timeout is configured (nonzero), an endpoint MUST end
-   the connection with `RELIABLE_TIMEOUT` when an update
-   is at or after the start of the CONFIG wait plus the reliable timeout
-   ([m9 Acknowledgement mapping, resend and send budget](#m9)) and it has not
-   accepted the remote endpoint's CONFIG. When it is 0, the CONFIG wait has no
-   clock of its own and only the connection timeout bounds it.
+4. When the reliable timeout is configured
+   ([m9.3 Resend classes and the reliable timeout](#m9.3)), an endpoint MUST end
+   the connection with `RELIABLE_TIMEOUT` when an update is at or after the
+   start of the CONFIG wait plus the reliable timeout and it has not accepted
+   the remote endpoint's CONFIG. When the reliable timeout is disabled, the
+   CONFIG wait has no clock of its own: an endpoint MUST NOT end the connection
+   for the wait, and only the timeout of
+   [RN-1 t13.2 Timeout](TRANSPORT.md#t13.2) bounds it.
 5. An endpoint MUST accept a CONFIG record only when its body length is the
    body size row of [m11.2 Constants and defaults](#m11.2), its kind is its kind row, and, when its
    version is its version row, both reserved fields are zero.
@@ -3146,7 +3234,7 @@ An endpoint has one CONFIG state per connection.
 | Waiting | CONFIG body accepted | every compared field is equal | the CONFIG wait ends | Verified |
 | Waiting | CONFIG body accepted | a compared field differs | end the connection with `CONFIG_MISMATCH` | none |
 | Waiting | CONFIG record refused | the body is malformed | refuse it as `MESSAGE_BAD_CONTROL` and end the connection with `PROTOCOL_VIOLATION` | none |
-| Waiting | update | the reliable timeout is nonzero, and the update is at or after the start of the CONFIG wait plus the reliable timeout | end the connection with `RELIABLE_TIMEOUT` | none |
+| Waiting | update | the reliable timeout is configured, and the update is at or after the start of the CONFIG wait plus the reliable timeout | end the connection with `RELIABLE_TIMEOUT` | none |
 | Verified | CONFIG body accepted | every compared field is equal | no change | Verified |
 | Verified | CONFIG body accepted | a compared field differs | end the connection with `CONFIG_MISMATCH` | none |
 | Verified | CONFIG record refused | the body is malformed | refuse it as `MESSAGE_BAD_CONTROL` and end the connection with `PROTOCOL_VIOLATION` | none |

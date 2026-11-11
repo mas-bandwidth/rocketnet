@@ -486,9 +486,7 @@ uint8_t * rn_endpoint_start( struct rn_endpoint_t * endpoint, int channel, int r
         if ( d == RN_DESCRIPTOR_NONE )
         {
             // No room is a refusal, counted by the region; the connection goes on
-            // (standard/MESSAGES.md m1.7). proofs/tla/RNChannelTypes.tla MemoryExhausted
-            // still ends the connection here: the code leads that model, which owes
-            // a send-side Refuse that keeps the connection.
+            // (standard/MESSAGES.md m1.7). proofs/tla/RNChannelTypes.tla Refuse.
 
             endpoint->send_refused++;
             return NULL;
@@ -1092,8 +1090,10 @@ static int rn_endpoint_fifo_due( const rn_region_t * region, const rn_window_ack
     // whether the ordered path has a packet to write now: a message queued for
     // its first write, or a number at the head of either resend FIFO that is
     // unsent or past its class's adaptive resend delay (chunks also respect the
-    // reliable-timeout attempts cap). This keeps a frame from being started
-    // for nothing.
+    // reliable-timeout attempts cap). A head that probe pacing holds is never
+    // written: the walk skips it to U, the one number it may resend, so U's
+    // delay decides (rn_window_ack_held, the walk's own rule). This keeps a
+    // frame from being started for nothing.
 
     uint32_t cursor = rn_window_ack_resend_first( ack, chunk );
     for ( int steps = 0; cursor != RN_RESEND_NONE; steps++ )
@@ -1106,6 +1106,14 @@ static int rn_endpoint_fifo_due( const rn_region_t * region, const rn_window_ack
         const rn_send_number_t * slot = &region->send_numbers[cursor];
         if ( !slot->acked )
         {
+            if ( !rn_send_number_never_sent( slot->last_send ) && rn_window_ack_held( ack, slot->number, now ) )
+            {
+                slot = rn_window_ack_probe_slot( ack, chunk );
+                if ( !slot )
+                {
+                    return 0;
+                }
+            }
             return ( rn_send_number_unsent_due( slot->last_send ) || now >= slot->last_send + delay ) ? 1 : 0;
         }
 

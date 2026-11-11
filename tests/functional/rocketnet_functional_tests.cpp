@@ -12190,6 +12190,19 @@ void rocketnet_test_sodium_misuse_logs_before_abort()
 
     close( pipe_fds[1] );
 
+    // under `leaks --atExit` the child inherits libLeaksAtExit, which stops it (SIGSTOP)
+    // as it dies, for a leaks attach that only watches this process, with the pipe still
+    // open: continue it, and reap it before reading, so the read reaches the end of the
+    // pipe. Its output is one line, far under the pipe's capacity.
+
+    int child_status = 0;
+    pid_t waited;
+    while ( ( waited = waitpid( pid, &child_status, WUNTRACED ) ) == pid && WIFSTOPPED( child_status ) )
+    {
+        kill( pid, SIGCONT );
+    }
+    rocketnet_check( waited == pid );
+
     char output[4096];
     size_t length = 0;
     for ( ;; )
@@ -12207,9 +12220,6 @@ void rocketnet_test_sodium_misuse_logs_before_abort()
     }
     output[length] = '\0';
     close( pipe_fds[0] );
-
-    int child_status = 0;
-    rocketnet_check( waitpid( pid, &child_status, 0 ) == pid );
 
     const char * line = "sodium refused an operation it cannot complete";
     const char * first = strstr( output, line );

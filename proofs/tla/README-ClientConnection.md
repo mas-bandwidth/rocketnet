@@ -585,3 +585,44 @@ On 2026-11-01 the reconciled model was checked with the pinned native runner
 and TLC jar on Linux: all 34 required cases reached their declared outcomes.
 The six declared bench cases were remeasured at the unchanged 110-second
 budget and timed out (exit 124); their current records remain debt, not passes.
+
+### Revision 1.1: the connect clock stops at the connection response
+
+Standard rule: TRANSPORT.md t11 rule 6. The total deadline (the connect
+token's lifetime) bounds requesting cookie (1) and sending connection request
+(2) only. Once the client sends its connection response (3) the server may
+already report it connected, so in state 3 only the idle timeout ends the
+wait. `DeadlineStates` is `1..2`; the definition `DeadlineInResponse`
+(replaced with `<-` in a configuration) restores `1..3`, the rule before
+revision 1.1. `DeadlineHonoured` and the `dead` predicate of `TickRule` read
+`DeadlineStates`.
+
+New action property `NoConnectClockAfterResponse == [][cstate = 3 => cstate'
+# -7]_vars`: state 3 never ends with connect token expired.
+
+| Case | Expected | Exit | Distinct |
+|---|---|---:|---:|
+| `MCClientConnectionConnectClock.cfg` (`Timeout = Deadline = 3`, `SafetyInvariants`, `KeysErasedWhenDown`, the property) | pass | 0 | 114188 |
+| `MCClientConnectionBrokenDeadlineInResponse.cfg` (the same with `DeadlineInResponse`) | `NoConnectClockAfterResponse` | 13 | 174 |
+
+The pass case sets the idle timeout equal to the total deadline so the client
+can reach state 3 with one tick of the deadline left and stay there through
+it; with `Timeout = 2` and `Deadline = 4` (`MCClientConnectionKeysErased.cfg`)
+the idle timeout always fires first and the witness cannot fail. The witness
+differs only in the deadline predicate, so the state it fails from is
+reachable in the pass case too. The `clientconnection` group now has 41
+cases.
+
+The code: `rocketnet_client_check_deadlines` (`sdk/rocketnet_client_protocol.cpp`)
+tests the total deadline only while `state <
+ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE`; before
+revision 1.1 it tested it in every state below connected (4), state 3 included.
+
+Witness trace, read by hand (11 states): connect (state 1), the request
+and the cookie (state 2), one tick (age 1), the request with the cookie and
+the challenge (state 3, `cSinceRecv = 0`), two ticks: at age 3 = `Deadline`
+the client has heard nothing for 2 ticks, under `Timeout = 3`, and the old
+predicate takes it to −7. Against the C: before revision 1.1 state 3 is
+below CONNECTED, so `current_time - attempt_start_time >=
+total_deadline_seconds` ended it with connect token expired; the code now
+skips the test in state 3 and only the silence timeout can end it there.
