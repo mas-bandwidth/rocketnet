@@ -39,14 +39,19 @@
 \* step reports none. Create and Destroy report nothing: the callback belongs
 \* to the object. The transportstate defect reports the transport's own state,
 \* which reads DISCONNECTED where the public state reads SERVER_DISCONNECTED.
-\* The silentexhaust defect is rocketnet_client_start_message without its
-\* report (sdk/rocketnet_api.cpp:1911-1912 deleted): a start whose memory
-\* exhaustion ends the connection reports nothing.
+\* A start never ends the connection for want of room (standard/MESSAGES.md
+\* m1.7): a start the message memory cannot hold is refused. A start ends it
+\* only on a region the receive side has already exhausted (ReceiveExhaust,
+\* rxEx), the end the next update would take anyway. The sendkick defect is
+\* v1.0's start that ended the connection with MESSAGE_MEMORY_EXHAUSTED; the
+\* silentexhaust defect is that start without its report (v1.0's
+\* rocketnet_client_start_message with the report deleted), so it restores
+\* the start's end too: with no start that ends, there is no report to drop.
 EXTENDS Naturals, FiniteSets
 
 CONSTANTS MaxSessions, MaxCreates, Defect, UnresetField, StuckWorker
 
-ASSUME Defect \in {"none", "unreset", "connectanywhere", "queuebeforeconnected", "destroysilent", "reusepending", "skipstop", "reusekeys", "completionrefused", "transportstate", "silentexhaust"}
+ASSUME Defect \in {"none", "unreset", "connectanywhere", "queuebeforeconnected", "destroysilent", "reusepending", "skipstop", "reusekeys", "completionrefused", "transportstate", "silentexhaust", "sendkick"}
 ASSUME MaxSessions \in Nat \ {0} /\ MaxCreates \in Nat \ {0}
 ASSUME StuckWorker \in BOOLEAN
 
@@ -87,8 +92,12 @@ States == {"NONE", "DISCONNECTED"} \cup Live \cup Errors
 \* transport accepts, one it refuses as invalid or as expired, and a token
 \* whose connection cannot be created (socket, thread, memory).
 Tokens == {"malformed", "valid", "invalid", "expired", "createfails"}
-\* The calls a message-layer end reaches the public state through: a start
-\* the message memory cannot hold, and the update.
+\* The calls a message-layer end reaches the public state through: the update
+\* (MESSAGE_MEMORY_EXHAUSTED there is the receive side's, a broken invariant;
+\* RELIABLE_TIMED_OUT only when the application configured it), and a start
+\* (MESSAGE_MEMORY_EXHAUSTED, on a region the receive side already
+\* exhausted; under the sendkick and silentexhaust defects, v1.0, any start).
+SendKicks == Defect \in {"sendkick", "silentexhaust"}
 MessageEnds == {<<"send", "MESSAGE_MEMORY_EXHAUSTED">>} \cup ({"update"} \X MessageErrors)
 Sessions == 1..MaxSessions
 Tags == 0..MaxSessions
@@ -110,7 +119,7 @@ StaleIn(c, fs, s) == {f \in fs : c[f] \notin {0, s}}
 VARIABLES st, cur, conn, kept, link, nextSess, creates,
           observed, crossDelivered, connectFrom, queuedIn, droppedIn,
           silentEnd, owner, ownerGen, pending, refusedPending, badReuse,
-          reported, lastReport
+          reported, lastReport, sendEnded, rxEx
 \* st, cur, conn, kept: the client object (cur is the session tag of
 \*   the connection in progress, 0 outside one)
 \* link: the session tags of server packets in flight to this client (lossy)
@@ -120,11 +129,16 @@ VARIABLES st, cur, conn, kept, link, nextSess, creates,
 \*   a terminal source is not recorded, so the thirteen error states do not
 \*   multiply the ghost's subsets)
 \* reported, lastReport: the state change callback (StateReported)
+\* sendEnded: ghost, a start ended a connection whose receive side had not
+\*   exhausted its region (SendNeverEnds)
+\* rxEx: the session tag whose receive side exhausted the region, a broken
+\*   invariant the update ends (0, or a tag that is not cur: none); it rides
+\*   in ghosts because only ReceiveExhaust changes it
 vars == <<st, cur, conn, kept, link, nextSess, creates,
           observed, crossDelivered, connectFrom, queuedIn, droppedIn,
           silentEnd, owner, ownerGen, pending, refusedPending, badReuse,
-          reported, lastReport>>
-ghosts == <<observed, crossDelivered, connectFrom, queuedIn, silentEnd>>
+          reported, lastReport, sendEnded, rxEx>>
+ghosts == <<observed, crossDelivered, connectFrom, queuedIn, silentEnd, sendEnded, rxEx>>
 
 Init ==
     /\ st = "NONE" /\ cur = 0 /\ conn = InitConn
@@ -134,7 +148,7 @@ Init ==
     /\ droppedIn = {} /\ silentEnd = FALSE
     /\ owner = "none" /\ ownerGen = 0 /\ pending = FALSE
     /\ refusedPending = FALSE /\ badReuse = FALSE
-    /\ reported = "NONE" /\ lastReport = <<>>
+    /\ reported = "NONE" /\ lastReport = <<>> /\ sendEnded = FALSE /\ rxEx = 0
 
 \* rocketnet_client_create: no token, DISCONNECTED, a fresh object.
 Create ==
@@ -155,7 +169,7 @@ Destroy ==
     /\ badReuse' = (badReuse \/ (owner \in {"running", "stopping"}))
     /\ owner' = "none" /\ ownerGen' = 0 /\ pending' = FALSE
     /\ refusedPending' = FALSE
-    /\ UNCHANGED <<link, nextSess, creates, observed, crossDelivered, connectFrom, queuedIn>>
+    /\ UNCHANGED <<link, nextSess, creates, observed, crossDelivered, connectFrom, queuedIn, sendEnded, rxEx>>
 
 \* Every path out of a connection: Reset, and the state the path names.
 End(c, to, stop) ==
@@ -210,14 +224,14 @@ Connect(tok) ==
                /\ conn' = Write(conn, TokenFields, nextSess)
                /\ owner' = "running" /\ ownerGen' = nextSess
                /\ UNCHANGED <<kept, link, creates,
-                              observed, crossDelivered, queuedIn, silentEnd>>
+                              observed, crossDelivered, queuedIn, silentEnd, sendEnded, rxEx>>
           ELSE /\ st' = CASE tok = "invalid" -> "INVALID_CONNECT_TOKEN"
                           [] tok = "expired" -> "CONNECT_TOKEN_EXPIRED"
                           [] OTHER           -> "DISCONNECTED"
                /\ cur' = 0 /\ conn' = Reset(conn)
                /\ owner' = "none" /\ ownerGen' = 0
                /\ UNCHANGED <<kept, link, nextSess, creates,
-                              observed, crossDelivered, queuedIn, silentEnd>>
+                              observed, crossDelivered, queuedIn, silentEnd, sendEnded, rxEx>>
 
 \* The handshake abstracted to its stages: the server's reply to the stage
 \* arrives. The challenge derives the session keys; the establishing
@@ -230,7 +244,7 @@ HandshakeStep ==
     /\ conn' = IF NextStage(st) = "SENDING_CONNECTION_RESPONSE"
                 THEN Write(conn, KeyFields, IF Defect = "reusekeys" /\ cur > 1 THEN cur - 1 ELSE cur) ELSE conn
     /\ UNCHANGED <<cur, kept, link, nextSess, creates,
-                   crossDelivered, connectFrom, queuedIn, silentEnd,
+                   crossDelivered, connectFrom, queuedIn, silentEnd, sendEnded, rxEx,
                    owner, ownerGen, pending, refusedPending, badReuse>>
 
 Deny == st \in HandshakeStates /\ End(conn, "CONNECTION_DENIED", FALSE)
@@ -267,7 +281,7 @@ Send ==
     /\ conn' = Write(conn, SendFields, cur)
     /\ queuedIn' = queuedIn \cup {st}
     /\ UNCHANGED <<st, cur, kept, link, nextSess, creates,
-                   crossDelivered, connectFrom, silentEnd,
+                   crossDelivered, connectFrom, silentEnd, sendEnded, rxEx,
                    owner, ownerGen, pending, refusedPending, badReuse>>
 
 \* Message start outside CONNECTED (rocketnet_client_start_message returns
@@ -277,7 +291,7 @@ DropSend ==
     /\ st \notin {"NONE", "CONNECTED"}
     /\ droppedIn' = {st}
     /\ UNCHANGED <<st, cur, conn, kept, link, nextSess, creates,
-                   observed, crossDelivered, connectFrom, queuedIn, silentEnd,
+                   observed, crossDelivered, connectFrom, queuedIn, silentEnd, sendEnded, rxEx,
                    owner, ownerGen, pending, refusedPending, badReuse>>
 
 \* The server side of any session ever started may still have packets in
@@ -301,7 +315,7 @@ Deliver(s) ==
             /\ conn' = Write(conn, RecvFields, cur)
        ELSE UNCHANGED <<conn, observed, crossDelivered>>
     /\ UNCHANGED <<st, cur, kept, nextSess, creates,
-                   connectFrom, queuedIn, silentEnd, owner,
+                   connectFrom, queuedIn, silentEnd, sendEnded, rxEx, owner,
                    ownerGen, pending, refusedPending, badReuse>>
 
 Lose(s) ==
@@ -328,17 +342,34 @@ StateReported ==
 \* transport reads DISCONNECTED, and rocketnet_client_state reads the reason's
 \* own error state (sdk/rocketnet_api.cpp:1772-1783). The worker keeps
 \* running, as after ServerDisconnect. The call that reaches it reports it:
-\* a start the message memory cannot hold (rocketnet_client_start_message,
-\* 1711-1716) with MESSAGE_MEMORY_EXHAUSTED, or the update (rocketnet_client_update,
-\* 1488-1509) with any of the five. With the silentexhaust defect the start
-\* reports nothing.
+\* the update (rocketnet_client_update) with any of the five. Under the
+\* sendkick and silentexhaust defects a start (v1.0's
+\* rocketnet_client_start_message) also ends it with MESSAGE_MEMORY_EXHAUSTED,
+\* and with silentexhaust that start reports nothing.
 MessageEnd(call, to) ==
     /\ st = "CONNECTED"
-    /\ End(conn, to, FALSE)
+    /\ call = "send" => (rxEx = cur \/ SendKicks)
+    /\ st' = to /\ cur' = 0 /\ conn' = Reset(conn)
+    /\ pending' = FALSE
+    /\ sendEnded' = (sendEnded \/ (call = "send" /\ rxEx # cur))
+    /\ UNCHANGED <<kept, link, nextSess, creates, observed, crossDelivered,
+                   connectFrom, queuedIn, silentEnd, owner, ownerGen,
+                   refusedPending, badReuse, rxEx>>
     /\ droppedIn' = {}
     /\ IF call = "send" /\ Defect = "silentexhaust"
        THEN UNCHANGED reported /\ lastReport' = <<>>
        ELSE StateReported
+
+\* The receive side exhausts the connection's region: a delivery that did not
+\* fit (rn_region_exhaust from the receive path), an internal invariant break
+\* the update ends with MESSAGE_MEMORY_EXHAUSTED (m1.7 rule 3). Nothing the
+\* application calls changes here; a start on this region now ends it.
+ReceiveExhaust ==
+    /\ st = "CONNECTED" /\ rxEx # cur
+    /\ rxEx' = cur
+    /\ UNCHANGED <<st, cur, conn, kept, link, nextSess, creates, observed,
+                   crossDelivered, connectFrom, queuedIn, silentEnd, owner, ownerGen,
+                   pending, refusedPending, badReuse, sendEnded>>
 
 \* Every step but a drop clears droppedIn (the two fair actions also say so
 \* themselves, so that their fairness conditions name a whole step). Every
@@ -348,7 +379,7 @@ Next ==
                 \/ \E tok \in Tokens : Connect(tok)
                 \/ RetryPending \/ WorkerComplete
                 \/ HandshakeStep \/ Deny \/ TokenExpires \/ Timer \/ ServerDisconnect
-                \/ ClientDisconnect \/ DisconnectFromError \/ Send
+                \/ ClientDisconnect \/ DisconnectFromError \/ Send \/ ReceiveExhaust
                 \/ \E s \in Sessions : ServerSend(s) \/ Deliver(s) \/ Lose(s)
              /\ droppedIn' = {}
           \/ DropSend
@@ -375,6 +406,7 @@ TypeOK ==
     /\ refusedPending \in BOOLEAN /\ badReuse \in BOOLEAN
     /\ reported \in States
     /\ lastReport \in {<<>>} \cup (States \X States)
+    /\ sendEnded \in BOOLEAN /\ rxEx \in Tags
 
 \* A session is in progress exactly in the live states.
 CurrentOnlyWhileLive == (st \in Live) <=> (cur # 0)
@@ -417,6 +449,11 @@ RecordIsCurrent == \A f \in Fields : conn[f] \in {0, cur}
 ReconnectObservesNothing == observed = {} /\ crossDelivered = {}
 
 DestroyDisconnectsLive == ~silentEnd
+
+\* (N) No start ends the connection: a start the message memory cannot hold
+\* is refused and counted (standard/MESSAGES.md m1.7). Reversed by the
+\* sendkick defect.
+SendNeverEnds == ~sendEnded
 
 \* The callback reports exactly the public state's changes: the value it
 \* last reported is the state a poll reads, and a report is a change.
