@@ -36,7 +36,7 @@ listed=$("$@" "$binary" --list)
 
 missing=0
 for name in $vectors $filter; do
-    if ! printf '%s\n' "$listed" | grep -qx "$name"; then
+    if ! grep -qxF "$name" <<< "$listed"; then
         echo "check failed: $name is named in the source but not registered in $binary"
         missing=1
     fi

@@ -578,6 +578,11 @@ if(ROCKETNET_BUILD_EXAMPLES)
     target_link_libraries(happy_server PRIVATE rocketnet_dev)
     add_executable(happy_client tools/happy_path/happy_client.c)
     target_link_libraries(happy_client PRIVATE rocketnet_dev)
+    # the cross-endian interoperability check (tools/bigendian/interop.c):
+    # one end of a real connection, run against the other byte order by
+    # .github/workflows/nightly-bigendian-system.yml
+    add_executable(bigendian_interop tools/bigendian/interop.c)
+    target_link_libraries(bigendian_interop PRIVATE rocketnet_dev)
     add_subdirectory(examples)
 endif()
 if(ROCKETNET_BUILD_TESTS)
