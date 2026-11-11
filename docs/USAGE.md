@@ -664,7 +664,9 @@ message, once per resend delay, until an acknowledgement arrives
 ([MESSAGES.md m9.3](../standard/MESSAGES.md#m9.3)), and a packet whose
 acknowledgement waited out the silence gives no round-trip sample, so the
 outage does not inflate the resend delay
-([MESSAGES.md m9.2](../standard/MESSAGES.md#m9.2)).
+([MESSAGES.md m9.2](../standard/MESSAGES.md#m9.2)). Only a second in which a
+reliable message was waiting for its acknowledgement counts as silence: a
+connection that sends less than once a second is not silent between sends.
 
 If you set `reliable_message_timeout_ms`, choose a value well above T: it ends
 the connection with `RELIABLE_TIMED_OUT` when the oldest reliable message has

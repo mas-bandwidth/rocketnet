@@ -146,9 +146,12 @@ EXTENDS Integers
 \*     are still sent; only progress releases it (ProbeOnlyU,
 \*     NoDueRecordHeld with the hold as its exception, EveryReliableAcked);
 \*   the RTT filter (rn_window_ack_on_acks, rn_window_ack_on_ack): an ack
-\*     after Probe ticks with none ends a silence, and an ack of a packet
-\*     sent before silence_end - srtt gives no RTT sample
-\*     (NoSampleAcrossSilence).
+\*     ends a silence when, for Probe ticks before it, U was on the wire
+\*     unacknowledged and no ack came (from the later of the last ack and
+\*     U's first send), and an ack of a packet sent before
+\*     silence_end - srtt gives no RTT sample (NoSampleAcrossSilence).  A
+\*     gap between acks with nothing owed is not a silence, so a sample is
+\*     refused only after an owed silence (RefuseOnlyAfterOwedSilence).
 \* Neither acts with the timeout configured.  The new state is gated so
 \* the cases above carry none of it: sinceProgress moves only with the
 \* timeout off, and quiet, sinceAck and sinceEnd only in the cases that
@@ -283,20 +286,35 @@ ProbeNoRelease == "norelease"
 ProbeHoldsU == "holdsu"
 ThirdOn == TRUE
 
-\*   Filter:  track the RTT filter (m9.2): an ack after Probe ticks with
-\*            none sets silence_end, and no RTT sample comes from a packet
-\*            sent before silence_end - srtt.  Off (FALSE) by default so
-\*            the instances that do not check it carry no extra state.
+\*   Filter:  track the RTT filter (m9.2): an ack after Probe ticks in
+\*            which an ack was owed and none came sets silence_end, and no
+\*            RTT sample comes from a packet sent before silence_end - srtt.
+\*            Off (FALSE) by default so the instances that do not check it
+\*            carry no extra state.
 \*   FilterRule: TRUE is the rule; FALSE samples every ack (the reversed
 \*            witness SampleAcrossSilence).
+\*   SilenceOnGap: FALSE ends a silence only after an ack was owed for
+\*            Probe ticks (the rule); TRUE ends one after any Probe ticks
+\*            with no ack, the code of v1.1.0 (the reversed witness
+\*            SilenceOnGap: a sparse sender's sample above srtt is refused).
+\*   PriorAck: the connection's previous message was acknowledged some
+\*            ticks (0..Probe) before the small record's first send, with
+\*            nothing in flight since, and gave the estimator its sample: a
+\*            sparse sender.  FALSE (no ack yet) by default.
 \*   Srtt, AgeMax: srtt in ticks, and the oldest packet an ack names.
-\* (Filter <- FilterOn, FilterRule <- FilterRuleOff)
+\* (Filter <- FilterOn, FilterRule <- FilterRuleOff, SilenceOnGap <- SilenceOnGapOn,
+\*  PriorAck <- PriorAckOn, Srtt <- SrttUnderTick)
 Filter == FALSE
 FilterRule == TRUE
+SilenceOnGap == FALSE
+PriorAck == FALSE
 Srtt == 1
 AgeMax == 3
 FilterOn == TRUE
 FilterRuleOff == FALSE
+SilenceOnGapOn == TRUE
+PriorAckOn == TRUE
+SrttUnderTick == 0
 
 \*   TrackQuiet: track the ticks since anything was last heard from the
 \*            other side of the connection (any ack), saturating at the
@@ -360,12 +378,16 @@ VARIABLES
                 \* at Probe; -1 before the first (has_last_ack = 0)
     sinceEnd,   \* Filter: ticks since silence_end, saturating at AgeMax
                 \* (AgeMax at the start: silence_end is 0, long ago)
-    badSample   \* ghost: an RTT sample came from a packet sent before
+    badSample,  \* ghost: an RTT sample came from a packet sent before
                 \* silence_end - srtt
+    sinceOwedEnd, \* ghost: ticks since the last ack that ended an owed
+                \* silence (OwedSilence), saturating at AgeMax; equal to
+                \* sinceEnd under the rule
+    badRefusal  \* ghost: a sample was refused that no owed silence refuses
 
 vars == <<t, lastSend, rto, backoff, attempts, acked, head, phase, sampled, seeded, firstSend, refused, pending, calls,
-          sinceProgress, quiet, sinceAck, sinceEnd, badSample>>
-probeVars == <<sinceProgress, quiet, sinceAck, sinceEnd, badSample>>
+          sinceProgress, quiet, sinceAck, sinceEnd, badSample, sinceOwedEnd, badRefusal>>
+probeVars == <<sinceProgress, quiet, sinceAck, sinceEnd, badSample, sinceOwedEnd, badRefusal>>
 
 \* A small record waits the resend delay alone; a chunk waits it capped,
 \* when the timeout is configured (m9.3; rn_window_ack_chunk_resend_delay).
@@ -431,6 +453,8 @@ TypeOK ==
     /\ sinceAck \in -1..Probe
     /\ sinceEnd \in 0..AgeMax
     /\ badSample \in BOOLEAN
+    /\ sinceOwedEnd \in 0..AgeMax
+    /\ badRefusal \in BOOLEAN
 
 Init ==
     /\ t = 0
@@ -443,11 +467,13 @@ Init ==
     /\ head \in (IF Chunk THEN {"s", "c"} ELSE {"s"})
     /\ sinceProgress = Probe
     /\ quiet = 0
-    /\ sinceAck = -1
+    /\ sinceAck \in (IF PriorAck THEN 0..Probe ELSE {-1})
     /\ sinceEnd = AgeMax
     /\ badSample = FALSE
+    /\ sinceOwedEnd = AgeMax
+    /\ badRefusal = FALSE
     /\ phase = "walk"
-    /\ sampled = FALSE
+    /\ sampled = PriorAck
     /\ seeded = FALSE
     /\ refused = [r \in Records |-> FALSE]
     /\ pending = Pending
@@ -608,15 +634,21 @@ EndWrites ==
     /\ UNCHANGED <<t, lastSend, rto, backoff, attempts, acked, head, sampled, seeded, firstSend, refused, pending, probeVars>>
 
 \* Anything acknowledged is the other side heard (quiet), and with the filter
-\* tracked it is an ack: rn_window_ack_on_acks sets silence_end when the
-\* last ack is Probe ticks or more ago (the timeout off; has_last_ack).
+\* tracked it is an ack: rn_window_ack_on_acks sets silence_end when an ack
+\* was owed for Probe ticks and none came: the last ack is Probe ticks or
+\* more ago (has_last_ack) and so is the first send of U, on the wire
+\* (has_oldest), all before this update's acks (the timeout off).
+\* SilenceOnGap drops the owed test: any Probe ticks without an ack.
 FilterTracked == Filter /\ ~TimeoutOn
-EndsSilence == FilterTracked /\ sinceAck >= Probe
+OwedSilence == FilterTracked /\ sinceAck >= Probe /\ Live /\ OnWire(U) /\ t - firstSend[U] >= Probe
+EndsSilence == IF SilenceOnGap THEN FilterTracked /\ sinceAck >= Probe ELSE OwedSilence
 SinceEndNow == IF EndsSilence THEN 0 ELSE sinceEnd
+SinceOwedEndNow == IF OwedSilence THEN 0 ELSE sinceOwedEnd
 Heard ==
     /\ quiet' = 0
     /\ sinceAck' = IF FilterTracked THEN 0 ELSE sinceAck
     /\ sinceEnd' = SinceEndNow
+    /\ sinceOwedEnd' = SinceOwedEndNow
 
 \* rn_window_ack_on_ack of another packet, sent age ticks ago: one RTT
 \* sample, unless the filter refuses it.  The estimator's first sample is
@@ -626,17 +658,20 @@ Heard ==
 \* the model offers passes.  FilterRule = FALSE is the reversed witness.
 Ages == IF Filter THEN 0..AgeMax ELSE {0}
 Stale(age) == (sampled \/ seeded) /\ age > SinceEndNow + Srtt
+OwedStale(age) == (sampled \/ seeded) /\ age > SinceOwedEndNow + Srtt
 Sample(x, age) ==
     /\ phase = "walk"
     /\ calls = 0
     /\ Live
     /\ Heard
     /\ IF Stale(age) /\ FilterRule
-       THEN UNCHANGED <<rto, backoff, sampled, badSample>>
+       THEN /\ badRefusal' = (badRefusal \/ ~OwedStale(age))
+            /\ UNCHANGED <<rto, backoff, sampled, badSample>>
        ELSE /\ rto' = x
             /\ backoff' = [r \in Records |-> 1]
             /\ sampled' = TRUE
             /\ badSample' = (badSample \/ Stale(age))
+            /\ UNCHANGED badRefusal
     /\ UNCHANGED <<t, lastSend, attempts, acked, head, phase, seeded, firstSend, refused, pending, calls,
                    sinceProgress>>
 
@@ -666,7 +701,7 @@ Ack(r) ==
     /\ sinceProgress' = IF TimeoutOn THEN sinceProgress ELSE 0
     /\ Heard
     /\ UNCHANGED <<t, lastSend, rto, backoff, attempts, head, phase, sampled, seeded, firstSend, refused, pending, calls,
-                   badSample>>
+                   badSample, badRefusal>>
 
 \* The update ends and time moves on one tick; its refusals are over.  Past
 \* the horizon (only reached with the timeout off) time stands still.
@@ -681,9 +716,10 @@ Tick ==
             /\ quiet' = IF TrackQuiet THEN Min(quiet + 1, QuietMax) ELSE quiet
             /\ sinceAck' = IF FilterTracked /\ sinceAck >= 0 THEN Min(sinceAck + 1, Probe) ELSE sinceAck
             /\ sinceEnd' = IF FilterTracked THEN Min(sinceEnd + 1, AgeMax) ELSE sinceEnd
-       ELSE UNCHANGED <<t, sinceProgress, quiet, sinceAck, sinceEnd>>
+            /\ sinceOwedEnd' = IF FilterTracked THEN Min(sinceOwedEnd + 1, AgeMax) ELSE sinceOwedEnd
+       ELSE UNCHANGED <<t, sinceProgress, quiet, sinceAck, sinceEnd, sinceOwedEnd>>
     /\ UNCHANGED <<lastSend, rto, backoff, attempts, acked, head, sampled, seeded, firstSend, pending, calls,
-                   badSample>>
+                   badSample, badRefusal>>
 
 \* Every record acked, or the timeout fired: nothing more happens.
 Done ==
@@ -749,6 +785,14 @@ ProbeOnlyU ==
 \* The RTT filter (m9.2): no sample from a packet sent before
 \* silence_end - srtt, once the estimator has one.
 NoSampleAcrossSilence == ~badSample
+
+\* The RTT filter's silence (m9.2): a sample is refused only when a silence
+\* in which an ack was owed (U on the wire unacknowledged, no ack, for
+\* Probe ticks) ended after the packet was sent, less srtt.  A gap between
+\* acks with nothing in flight is no silence: a sparse sender's sample above
+\* srtt is taken, so its estimate can rise (the reversed witness
+\* SilenceOnGap refuses it).
+RefuseOnlyAfterOwedSilence == ~badRefusal
 
 \* After the last bad interval every reliable number is acknowledged:
 \* probe pacing never keeps a delivering path from progress.

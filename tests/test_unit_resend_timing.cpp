@@ -992,6 +992,265 @@ static void test_rtt_filter_skips_packets_sent_before_an_ack_silence()
 }
 
 REGISTER_UNIT_TEST( test_rtt_filter_skips_packets_sent_before_an_ack_silence );
+
+// A sender with one reliable message every `interval` seconds and an update
+// every 10 ms. Every packet that carries a message (its first send and each
+// resend) is acknowledged one round trip after it is sent: `rtt_before` for
+// the first `step` messages, `rtt_after` from then on. Writes each message's
+// resends to resends[] (all spurious: no packet is lost).
+static void resend_timing_sparse( resend_timing_fixture_t * f, int messages, double interval, int step, double rtt_before, double rtt_after,
+                                  uint32_t * resends )
+{
+    const double update = 0.010;
+    const double t0 = resend_timing_start;
+    for ( int m = 0; m < messages; m++ )
+    {
+        const double sent = t0 + m * interval;
+        const double rtt = m < step ? rtt_before : rtt_after;
+
+        uint64_t ids[64];
+        double due[64];
+        int count = 0;
+        ids[count] = resend_timing_send( f, sent, NULL );
+        due[count++] = sent + rtt;
+
+        resends[m] = 0;
+        for ( int u = 1; u * update < interval - 1e-9; u++ )
+        {
+            const double now = sent + u * update;
+            for ( int i = 0; i < count; i++ )
+            {
+                if ( ids[i] != 0 && now >= due[i] - 1e-9 )
+                {
+                    rn_ordered_acks( &f->ordered, &ids[i], 1, now );
+                    ids[i] = 0;
+                }
+            }
+
+            const uint64_t first_id = f->next_packet_id;
+            resends[m] += resend_timing_pass( f, now );
+            for ( uint64_t id = first_id; id < f->next_packet_id; id++ )
+            {
+                check( count < 64 );
+                ids[count] = id;
+                due[count++] = now + rtt;
+            }
+        }
+        check( f->send.U == f->send.next );                                 // every message acknowledged before the next
+    }
+}
+
+// A message every 2 s, more than the 1 s after which an acknowledgement could
+// end a silence. Nothing is outstanding between messages, so no acknowledgement
+// is owed and none ends a silence: the estimate follows the path both ways
+// exactly as with the filter off (opted in, v1.0's estimator).
+static void test_rtt_filter_follows_a_sparse_sender()
+{
+    const int messages = 40;
+    const int step = 10;
+
+    // the round trip rises from 50 ms to 400 ms at message 10
+
+    {
+        resend_timing_fixture_t f;
+        rocketnet_message_default_config( &f.config );
+        resend_timing_open( &f );
+        check( rn_window_ack_seed_rtt( &f.ack, 0.050 ) == 1 );
+        uint32_t resends[messages];
+        resend_timing_sparse( &f, messages, 2.0, step, 0.050, 0.400, resends );
+
+        resend_timing_fixture_t v10;
+        rocketnet_message_default_config( &v10.config );
+        v10.config.reliable_message_timeout_ms = 10000;
+        resend_timing_open( &v10 );
+        check( rn_window_ack_seed_rtt( &v10.ack, 0.050 ) == 1 );
+        uint32_t v10_resends[messages];
+        resend_timing_sparse( &v10, messages, 2.0, step, 0.050, 0.400, v10_resends );
+
+        // the bound: spurious resends only for the first two messages after the
+        // rise (the time the estimate takes to cover 400 ms), none after; the
+        // same counts and estimate as v1.0's estimator
+
+        check( f.ack.silence_end == 0.0 );
+        uint32_t total = 0;
+        for ( int m = 0; m < messages; m++ )
+        {
+            check( resends[m] == v10_resends[m] );
+            check( m < step || m >= step + 2 || resends[m] <= 2 );
+            check( m < step + 2 || resends[m] == 0 );
+            total += resends[m];
+        }
+        check( total <= 4 );
+        check( f.ack.srtt == v10.ack.srtt && f.ack.resend_delay == v10.ack.resend_delay );
+        check( f.ack.srtt > 0.200 && f.ack.resend_delay > 0.400 );
+
+        resend_timing_close( &v10 );
+        resend_timing_close( &f );
+    }
+
+    // the round trip falls from 400 ms to 50 ms at message 10
+
+    {
+        resend_timing_fixture_t f;
+        rocketnet_message_default_config( &f.config );
+        resend_timing_open( &f );
+        check( rn_window_ack_seed_rtt( &f.ack, 0.400 ) == 1 );
+        uint32_t resends[messages];
+        resend_timing_sparse( &f, messages, 2.0, step, 0.400, 0.050, resends );
+
+        resend_timing_fixture_t v10;
+        rocketnet_message_default_config( &v10.config );
+        v10.config.reliable_message_timeout_ms = 10000;
+        resend_timing_open( &v10 );
+        check( rn_window_ack_seed_rtt( &v10.ack, 0.400 ) == 1 );
+        uint32_t v10_resends[messages];
+        resend_timing_sparse( &v10, messages, 2.0, step, 0.400, 0.050, v10_resends );
+
+        check( f.ack.silence_end == 0.0 );
+        for ( int m = 0; m < messages; m++ )
+        {
+            check( resends[m] == 0 && v10_resends[m] == 0 );
+        }
+        check( f.ack.srtt == v10.ack.srtt && f.ack.resend_delay == v10.ack.resend_delay );
+        check( f.ack.srtt < 0.200 );
+
+        resend_timing_close( &v10 );
+        resend_timing_close( &f );
+    }
+}
+
+REGISTER_UNIT_TEST( test_rtt_filter_follows_a_sparse_sender );
+
+// The case the filter exists for: steady traffic, a 9 s outage in both
+// directions, then recovery. The packets sent in the last round trip before the
+// outage reached the other side, but their acknowledgements were lost; the
+// other side's first packet after the outage acknowledges them, 9 s late. They
+// give no sample, so the resend delay after recovery stays at its value before
+// the outage. With the filter off (opted in) the same acknowledgements inflate it.
+static void test_rtt_filter_skips_the_samples_an_outage_delays()
+{
+    for ( int opted_in = 0; opted_in <= 1; opted_in++ )
+    {
+        resend_timing_fixture_t f;
+        rocketnet_message_default_config( &f.config );
+        f.config.reliable_message_timeout_ms = opted_in ? 30000 : 0;
+        resend_timing_open( &f );
+        check( rn_window_ack_seed_rtt( &f.ack, 0.100 ) == 1 );
+
+        const double t0 = resend_timing_start;
+        const double update = 0.050;
+        const double rtt = 0.100;
+        const double outage_start = t0 + 5.0;
+        const double outage_end = outage_start + 9.0;
+        const double end = outage_end + 5.0;
+
+        uint64_t ids[4096];
+        double due[4096];
+        int count = 0;
+        double delay_before = 0.0;
+        double late_srtt = 0.0;
+        double delay_after_max = 0.0;
+        bool late_acked = false;
+
+        for ( double now = t0; now < end - 1e-9; now += update )
+        {
+            // the first packet from the other side after the outage acknowledges
+            // the ones it received just before it, then every packet sent since
+
+            const bool late = !late_acked && now >= outage_end + rtt / 2 - 1e-9;
+            for ( int i = 0; i < count; i++ )
+            {
+                const bool late_one = late && due[i] >= outage_start && due[i] - rtt < outage_start;
+                if ( ids[i] != 0 && ( late_one || ( now >= due[i] - 1e-9 && ( due[i] < outage_start || due[i] - rtt >= outage_end ) ) ) )
+                {
+                    rn_ordered_acks( &f.ordered, &ids[i], 1, now );
+                    ids[i] = 0;
+                }
+            }
+            if ( late )
+            {
+                late_acked = true;
+                late_srtt = f.ack.srtt;
+            }
+
+            // a sent packet is lost in the outage; one sent in the last round
+            // trip before it is received, and only its ack is lost
+
+            if ( now < outage_start - 1e-9 && now + update >= outage_start - 1e-9 )
+            {
+                delay_before = f.ack.resend_delay;
+            }
+            if ( now >= outage_end + 1.0 && f.ack.resend_delay > delay_after_max )
+            {
+                delay_after_max = f.ack.resend_delay;
+            }
+
+            static uint64_t written[4096];
+            const uint64_t first_id = f.next_packet_id;
+            resend_timing_write( &f, now, written, 4096 );
+            check( count < 4096 );
+            ids[count] = resend_timing_send( &f, now, NULL );
+            due[count++] = now + rtt;
+            for ( uint64_t id = first_id; id < f.next_packet_id - 1; id++ )
+            {
+                check( count < 4096 );
+                ids[count] = id;
+                due[count++] = now + rtt;
+            }
+        }
+
+        check( late_acked );
+        check( f.ack.error == ROCKETNET_DISCONNECT_REASON_NONE );
+        check( delay_before > 0.0 && delay_before < 0.500 );
+        if ( opted_in )
+        {
+            // the control: the late acknowledgements measure the outage
+            check( f.ack.silence_end == 0.0 );
+            check( late_srtt > 0.300 );
+        }
+        else
+        {
+            check( f.ack.silence_end > outage_end );
+            check( late_srtt <= rtt + 1e-9 );
+            check( delay_after_max <= delay_before + 0.050 );
+        }
+
+        resend_timing_close( &f );
+    }
+}
+
+REGISTER_UNIT_TEST( test_rtt_filter_skips_the_samples_an_outage_delays );
+
+// A connection that sent nothing for 30 s owed no acknowledgement, so the
+// acknowledgement of its next message ends no silence and samples, above the
+// estimate as below it.
+static void test_rtt_filter_idle_connection_is_not_a_silence()
+{
+    resend_timing_fixture_t f;
+    rocketnet_message_default_config( &f.config );
+    resend_timing_open( &f );
+
+    const double t0 = resend_timing_start;
+    const uint64_t pa = resend_timing_send( &f, t0, NULL );
+    check( rn_ordered_acks( &f.ordered, &pa, 1, t0 + 0.050 ) == 1 );
+    check( f.ack.has_rtt == 1 && fabs( f.ack.srtt - 0.050 ) < 1e-9 );
+    check( f.send.U == f.send.next );
+
+    // 30 s with nothing sent, then a message on a 400 ms path
+
+    const double srtt = f.ack.srtt;
+    const double rttvar = f.ack.rttvar;
+    const double resume = t0 + 30.050;
+    const uint64_t pb = resend_timing_send( &f, resume, NULL );
+    check( rn_ordered_acks( &f.ordered, &pb, 1, resume + 0.400 ) == 1 );
+    check( f.ack.silence_end == 0.0 );
+    check( fabs( f.ack.rttvar - ( 0.95 * rttvar + 0.05 * fabs( srtt - 0.400 ) ) ) < 1e-12 );
+    check( fabs( f.ack.srtt - ( 0.95 * srtt + 0.05 * 0.400 ) ) < 1e-12 );
+
+    resend_timing_close( &f );
+}
+
+REGISTER_UNIT_TEST( test_rtt_filter_idle_connection_is_not_a_silence );
 #endif // #if ROCKETNET_DEV
 
 // A sent_index with every cell used cannot happen (2P cells hold at most P

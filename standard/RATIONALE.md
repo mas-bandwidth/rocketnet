@@ -1954,7 +1954,11 @@ than once a second is probed, which by default only means fewer resends. An
 acknowledgement that arrives after a second of silence carries the silence in its
 elapsed time; sampling it would inflate the smoothed round trip and the resend delay for
 the drain that follows, so a packet sent before the silence ended, less one round trip,
-gives no sample.
+gives no sample. A silence is a second in which an acknowledgement was owed, the oldest
+unacknowledged number on the wire, and none came; a sender that sends a message less
+than once a second has nothing in flight between them, owes nothing, and is not silent.
+Counting every second without an acknowledgement as a silence refused every sample above
+the estimate on such a connection, so its estimate could only fall.
 
 [RN-2 m9 Acknowledgement mapping, resend and send budget](MESSAGES.md#m9)
 The send budget is a rate in elapsed time, not a rate
