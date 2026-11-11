@@ -13173,6 +13173,16 @@ void rocketnet_functional_restore_log_function()
     rocketnet_log_function( rocketnet_test_suite_log_function, NULL );
 }
 
+// The suite captures the SDK's log lines and prints them only for a failed
+// check. A case with a check of its own calls this before it exits, so the
+// error lines behind the failure (an errno, a refused rung) are in its output.
+
+void rocketnet_functional_log_ring_dump()
+{
+    rocketnet_test_log_ring_dump();
+    fflush( stdout );
+}
+
 // A failed library assert in a case: the library's default logs through the
 // installed log function, which a case may replace with one that keeps only
 // what it counts, and the suite's own capture holds error lines for a failed
