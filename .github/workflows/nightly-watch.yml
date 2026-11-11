@@ -30,4 +30,5 @@ jobs:
       - name: Every red nightly job has a commit range, a bisect line and an owner
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
         run: python3 tools/check_nightly_dispositions.py | tee -a "$GITHUB_STEP_SUMMARY"

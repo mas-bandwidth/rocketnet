@@ -944,6 +944,7 @@ jobs:
       # TRANSPORT_NOT_BUILT; the default build keeps all of it.
       - name: Build without XDP; XDP is compiled out, a pin of it refuses, and functional links
         if: inputs.full && runner.os == 'Linux' && matrix.build_type == 'Release' && (matrix.leg == 'builds' || (matrix.with_builds && !inputs.full))
+        shell: bash
         run: |
           python3 tools/test_check_xdp_compiled_out.py
           python3 tools/check_xdp_compiled_out.py --present bin/librocketnet.so build/librocketnet.a
