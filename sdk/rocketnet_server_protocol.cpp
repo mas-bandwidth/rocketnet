@@ -650,8 +650,10 @@ static int rocketnet_server_protocol_process_connection_request_known( struct ro
     }
 
     // the authenticity check: the signature, and only the signature. the
-    // per-source failed-verify budget gates it, so one valid cookie cannot
-    // buy unlimited Ed25519 verifies from one address.
+    // per-source failed-verify budget gates it: a signature that fails is
+    // charged to its source, which is then refused here. a request whose
+    // signature verifies and is refused later charges nothing to its source;
+    // the per-update handshake work budget below is what bounds those.
 
     if ( !rocketnet_signature_verify_budget_allow( &server->signature_verify_budget, from, current_timestamp ) )
     {
@@ -1587,18 +1589,18 @@ int rocketnet_server_protocol_process_received( struct rocketnet_server_protocol
 // on the stack and an accepted payload is copied into out_payload, refused
 // whole when it does not fit out_payload_capacity.
 
-int rocketnet_server_protocol_process_packet_capacity( struct rocketnet_server_protocol_t * server,
-                                                       const struct rocketnet_address_t * from,
-                                                       const uint8_t * packet_data,
-                                                       int packet_bytes,
-                                                       uint64_t current_timestamp,
-                                                       double current_time,
-                                                       uint8_t * response_packet,
-                                                       int * response_bytes,
-                                                       uint8_t * out_payload,
-                                                       int out_payload_capacity,
-                                                       int * out_payload_bytes,
-                                                       int * out_payload_client_index )
+static int rocketnet_server_protocol_process_packet_capacity( struct rocketnet_server_protocol_t * server,
+                                                              const struct rocketnet_address_t * from,
+                                                              const uint8_t * packet_data,
+                                                              int packet_bytes,
+                                                              uint64_t current_timestamp,
+                                                              double current_time,
+                                                              uint8_t * response_packet,
+                                                              int * response_bytes,
+                                                              uint8_t * out_payload,
+                                                              int out_payload_capacity,
+                                                              int * out_payload_bytes,
+                                                              int * out_payload_client_index )
 {
     rocketnet_assert( out_payload );
 
