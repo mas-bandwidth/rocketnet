@@ -99,7 +99,9 @@ See [Errors](ERRORS-AND-LOGGING.md).
 int main( void )
 {
     if ( rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK )
+    {
         return 1;
+    }
 
     /* create clients and servers here */
 
@@ -187,8 +189,12 @@ void client_frame( struct rocketnet_client_t * client, double time )
     /* 2. drain the one receive queue */
     const struct rocketnet_message_batch_t * batch = NULL;
     while ( ( batch = rocketnet_client_receive_messages( client ) ) != NULL )
+    {
         for ( int i = 0; i < batch->num_messages; i++ )
+        {
             process_message( batch->channel[i], batch->reliability[i], batch->data[i], batch->bytes[i] );
+        }
+    }
 
     /* 3. run the game simulation for this frame */
 
@@ -197,7 +203,9 @@ void client_frame( struct rocketnet_client_t * client, double time )
     if ( out )
     {
         for ( int i = 0; i < 64; i++ )
+        {
             out[i] = 0; /* replace with this frame's serialized message */
+        }
         rocketnet_client_finish_message( client, 64 );
     }
 
@@ -318,13 +326,17 @@ A server index outside `0 .. max_clients - 1` is misuse and answers `false`.
 bool queue_state_if_room( struct rocketnet_client_t * client, const uint8_t * state, int bytes )
 {
     if ( !rocketnet_client_can_send_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, bytes ) )
+    {
         return false;                       /* application policy: hold/defer rather than exhaust message memory */
+    }
 
     uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, bytes );
     if ( out )
     {
         for ( int i = 0; i < bytes; i++ )
+        {
             out[i] = state[i];
+        }
         return rocketnet_client_finish_message( client, bytes ) != 0;
     }
     return false;
@@ -347,7 +359,9 @@ uint32_t queue_state( struct rocketnet_client_t * client, const uint8_t * state,
     if ( out )
     {
         for ( int i = 0; i < bytes; i++ )
+        {
             out[i] = state[i];
+        }
 
         return rocketnet_client_finish_message( client, bytes );
     }
@@ -402,8 +416,10 @@ void server_frame( struct rocketnet_server_t * server, int client_index, int cha
     while ( ( batch = rocketnet_server_receive_messages( server ) ) != NULL )
     {
         for ( int i = 0; i < batch->num_messages; i++ )
+        {
             process_message( batch->client_index[i], batch->channel[i],
                              batch->reliability[i], batch->data[i], batch->bytes[i] );
+        }
     }
 
     /* 3. run the game simulation for this frame */
@@ -587,7 +603,9 @@ bool finish_client( struct rocketnet_client_t * client, double time )
 {
     rocketnet_client_update( client, time ); /* also advances step-driven shutdown */
     if ( !rocketnet_client_disconnected( client ) )
+    {
         return false;
+    }
     rocketnet_client_destroy( client );
     return true; /* The client pointer is now invalid. */
 }
