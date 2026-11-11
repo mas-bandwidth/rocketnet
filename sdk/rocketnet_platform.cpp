@@ -3536,6 +3536,11 @@ void rocketnet_platform_mutex_destroy( rocketnet_platform_mutex_t * mutex )
 #include <mswsock.h>
 #include <stdlib.h>
 
+// Windows builds are x64 or ARM64 only, in every configuration: RIO packs a
+// request context's kind and phase in the top bits of a pointer, and the
+// 64-bit atomics read with one plain load
+static_assert( sizeof( void * ) == 8, "rocketnet on Windows needs a 64-bit build (x64 or ARM64)" );
+
 #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 static_assert( sizeof( uintptr_t ) == 8 && ATOMIC_LLONG_LOCK_FREE == 2 && ATOMIC_POINTER_LOCK_FREE == 2 &&
                    ATOMIC_INT_LOCK_FREE == 2,
@@ -4371,11 +4376,7 @@ void rocketnet_platform_count_receive_reset()
 
 uint64_t rocketnet_platform_receive_resets()
 {
-#if defined( _M_X64 ) || defined( _M_ARM64 )
     return (uint64_t) __iso_volatile_load64( &rocketnet_platform_receive_reset_count );
-#else
-    return (uint64_t) InterlockedCompareExchange64( &rocketnet_platform_receive_reset_count, 0, 0 );
-#endif // #if defined( _M_X64 ) || defined( _M_ARM64 )
 }
 
 int rocketnet_platform_socket_receive_buffer_bytes( rocketnet_platform_socket_t * socket )
