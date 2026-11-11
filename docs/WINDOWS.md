@@ -101,8 +101,9 @@ set ROCKETNET_SERVER_TRANSPORT=rio
 and in PowerShell, `$env:ROCKETNET_SERVER_TRANSPORT = "rio"`. Clear it with
 `set ROCKETNET_SERVER_TRANSPORT=` or `Remove-Item Env:ROCKETNET_SERVER_TRANSPORT`.
 
-One name is a pin: that transport or a failed start, never a quiet fall to
-another. A comma list such as `rio,iocp` is tried in that order. A name
+One name the endpoint has is a pin: that transport or a failed start, never
+a quiet fall to another. One name it does not have is not a pin: it falls to
+`auto` with a warning. A comma list such as `rio,iocp` is tried in that order. A name
 Windows does not have (`gso`, `io_uring`, `xdp`, `msgx`), or `rio`
 named for a client, is skipped with an info line; a list left empty by
 skipping uses `auto` with a warning. The table of what each kind of unmet pin

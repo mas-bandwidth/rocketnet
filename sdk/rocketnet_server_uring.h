@@ -178,8 +178,10 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_SEND_BUDGET > ROCKETNET_URING_MAX_SEGME
 #define ROCKETNET_SERVER_URING_DISABLE_GRO                              (1<<1)
 
 // true when the library was built with liburing and this kernel accepts the
-// ring, the opcodes and the provided buffer ring the transport needs. the probe
-// runs once and its answer is kept.
+// ring, the opcodes and the provided buffer ring. it does not cover multishot
+// receive (Linux 6.0), which the transport also needs and create cannot
+// detect: an older kernel refuses each arm, logged once. the probe runs once
+// and its answer is kept.
 
 bool rocketnet_server_uring_available();
 

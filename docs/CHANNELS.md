@@ -127,8 +127,7 @@ and units are defined in [rocketnet.h](../sdk/rocketnet.h).
 Message stores, queues, delivery batches, receipt rings and replay windows
 have bounded capacity derived from the public config. Their
 storage lifecycle uses the caller allocator and a refused allocation is
-reported. Message frame calls do not wait on the network. Client update can
-briefly wait for a lock shared with the I/O thread. Exhausting connection message memory ends
+reported. Message frame calls do not wait on the network. Exhausting connection message memory ends
 that connection: the server's slot reads
 `ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED` and the client's state
 reads `ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED`. Unreliable work may be

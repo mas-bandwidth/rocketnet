@@ -2647,8 +2647,9 @@ void rocketnet_server_socket_finish_packet( struct rocketnet_server_socket_t * s
 
     // a packet started before its client's MAC was learned took the gateway
     // (or the answered frame's MAC). The reply to a client's first
-    // authenticated packet is that case: the transport reserves it before
-    // the packet opens, and the open learns the MAC before this commit.
+    // authenticated packet is that case: the transport reserves it after
+    // the packet is processed and before client_accepted learns the MAC,
+    // which is before this commit.
     // Taking the learned MAC here sends it the way the same update's
     // payloads go; through the gateway it takes the router's hairpin and
     // arrives after them, and the client is handed payloads before the
