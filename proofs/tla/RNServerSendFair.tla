@@ -15,6 +15,15 @@
 (* the second reversed witness: the first client keeps the cursor and      *)
 (* consumes the whole cap, so every later client starves.                  *)
 (*                                                                         *)
+(* Per-client scope (MESSAGES.md m1.8, revision 1.1): Dark is a set of     *)
+(* clients whose path is dark or that never acknowledge, so they always    *)
+(* have resends due.  The rule gives each connection one frame per round   *)
+(* (rn_message_object_send_packets), so a dark client takes no more of the *)
+(* cap than any other (OtherClientUnaffected).  Mode = "darkhogs" is the   *)
+(* reversed witness: a dark client with resends due takes the whole cap   *)
+(* each update, a per-client allowance the one-frame-per-round rule rules *)
+(* out.                                                                    *)
+(*                                                                         *)
 (* The model covers only the service order; it does not model queueing,    *)
 (* retransmission or the payload content. A client is served when a frame  *)
 (* is started for it, and a full ring defers that client's sends to the    *)
@@ -24,13 +33,16 @@ EXTENDS Naturals
 
 CONSTANTS N,          \* connected clients, 1..N
           K,          \* payload frames the transport starts per update
-          Mode,       \* "fair", "fromzero" or "inplace"
-          MaxTicks    \* the bounded exploration's last update
+          Mode,       \* "fair", "fromzero", "inplace" or "darkhogs"
+          MaxTicks,   \* the bounded exploration's last update
+          Dark        \* the clients that never acknowledge: resends always due
 
 ASSUME N \in Nat \ {0}
 ASSUME K \in 1..N
-ASSUME Mode \in {"fair", "fromzero", "inplace"}
+ASSUME Mode \in {"fair", "fromzero", "inplace", "darkhogs"}
 ASSUME MaxTicks \in Nat \ {0}
+ASSUME Dark \subseteq 1..N
+ASSUME Mode = "darkhogs" => Dark # {}
 
 Clients == 1..N
 
@@ -48,7 +60,9 @@ First == IF Mode = "fromzero" THEN 1 ELSE cursor
 
 Count == IF Mode = "inplace" THEN 1 ELSE K
 
-Served == { ((First + j - 1) % N) + 1 : j \in 0..Count-1 }
+Served == IF Mode = "darkhogs"
+          THEN { CHOOSE d \in Dark : TRUE }
+          ELSE { ((First + j - 1) % N) + 1 : j \in 0..Count-1 }
 
 NextCursor ==
     IF Mode = "fair"
@@ -82,5 +96,10 @@ TypeOK ==
 \* within ceil(N / K) updates
 FairService ==
     \A c \in Clients : now - last[c] < Window
+
+\* a client that is dark or never acknowledges leaves every other client's
+\* service as it was: each is still served within ceil(N / K) updates
+OtherClientUnaffected ==
+    \A c \in Clients \ Dark : now - last[c] < Window
 
 =============================================================================

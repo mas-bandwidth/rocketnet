@@ -348,6 +348,8 @@ MCRNServerSendFair.cfg	MCRNServerSendFair.tla	pass	-	check	rnserversendfair	requ
 MCRNServerSendFairWalk.cfg	MCRNServerSendFair.tla	pass	-	check	rnserversendfair	required	-
 MCRNServerSendFairBrokenFromZero.cfg	MCRNServerSendFair.tla	invariant	FairService	check	rnserversendfair	required	-
 MCRNServerSendFairBrokenInPlace.cfg	MCRNServerSendFair.tla	invariant	FairService	check	rnserversendfair	required	-
+MCRNServerSendFairDark.cfg	MCRNServerSendFair.tla	pass	-	check	rnserversendfair	required	-
+MCRNServerSendFairBrokenDarkHogs.cfg	MCRNServerSendFair.tla	invariant	OtherClientUnaffected	check	rnserversendfair	required	-
 MCServerConnectionResponseReplay.cfg	MCServerConnection.tla	pass	-	ignore-terminal	serverconnection	required	-
 MCServerConnectionResponseReplayBroken.cfg	MCServerConnection.tla	action	ResponseNeverRefreshesConnected	ignore-terminal	serverconnection	required	-
 MCServerConnectionLive.cfg	MCServerConnection.tla	pass	-	ignore-terminal	serverconnection	required	-
