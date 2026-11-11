@@ -1166,6 +1166,8 @@ static void rocketnet_iocp_worker( rocketnet_platform_thread_t * thread, void * 
                 const rocketnet_iocp_ref_t completed = op->completion_ref;
                 if ( !rocketnet_iocp_send_from_ref( iocp, completed, ROCKETNET_IOCP_OPERATION_SEND_POSTED ) )
                 {
+                    // cannot happen: pending stays raised, so stop never ends; say why
+                    rocketnet_error( "IOCP send completion matched no posted send (index %d)", op->index );
                     continue;
                 }
                 const int counter = success && bytes == (DWORD) op->run_bytes ? ROCKETNET_IOCP_SEND_COMPLETED : ROCKETNET_IOCP_SEND_FAILED;
@@ -1184,6 +1186,8 @@ static void rocketnet_iocp_worker( rocketnet_platform_thread_t * thread, void * 
             const rocketnet_iocp_ref_t completed = op->completion_ref;
             if ( !rocketnet_iocp_receive_from_ref( iocp, completed, ROCKETNET_IOCP_OPERATION_RECEIVE_POSTED ) )
             {
+                // cannot happen: pending stays raised, so stop never ends; say why
+                rocketnet_error( "IOCP receive completion matched no posted receive (index %d)", op->index );
                 continue;
             }
 
