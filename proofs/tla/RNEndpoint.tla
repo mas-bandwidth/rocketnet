@@ -46,8 +46,10 @@
 (* records that arrive before CONFIG are processed against the receiver's  *)
 (* own bounds: a channel outside them is a VIOLATION, never an overrun.  A *)
 (* remote endpoint whose CONFIG or acks never come is RELIABLE_TIMEOUT     *)
-(* (Tick) when the reliable timeout is configured, and waits otherwise.  An *)
-(* endpoint in error does nothing more: the object disconnects it.         *)
+(* (Tick) when the reliable timeout is configured, and waits otherwise.  A *)
+(* remote endpoint heard from by nothing for T updates is TIMED_OUT, the  *)
+(* transport's silence end (Elapse).  An endpoint in error does nothing   *)
+(* more: the object disconnects it.                                        *)
 (*                                                                         *)
 (* The reversed witnesses are constants, each the rule it names:           *)
 (*   ConfigReliable = FALSE  CONFIG is sent once, unreliable: a lost first *)
@@ -59,6 +61,20 @@
 (*   OrderChecked = FALSE    an ordered message is released with no check  *)
 (*                           of its channel predecessors                   *)
 (*                           (OrderedInOrder fails).                       *)
+(*                                                                         *)
+(* Time (revision 1.1).  With Clocked = TRUE time passes in whole updates  *)
+(* (Elapse), and three clocks run on it: each end's silence clock (quiet:  *)
+(* updates since that end last heard any packet from the other side; the   *)
+(* transport ends a connection silent for SilenceT updates, TIMED_OUT on   *)
+(* the server and CONNECTION_TIMED_OUT on the client), and, only when the  *)
+(* reliable timeout is configured, the CONFIG wait from its start (cwait)  *)
+(* and each reliable record's age since its first send (fs), the oldest    *)
+(* unacked record's age being the reliable clock (ReliableT updates).      *)
+(* With Clocked = FALSE the model is untimed as before revision 1.1: no    *)
+(* Elapse, the clocks stay at their initial values, and Tick fires         *)
+(* whenever its guard holds (a model-size knob for the cases that check    *)
+(* no timing property; an end in error is inert, so the silence end adds  *)
+(* no state those cases' invariants read).                                *)
 (***************************************************************************)
 EXTENDS Naturals, Sequences, FiniteSets
 
@@ -76,6 +92,11 @@ CONSTANTS
                     \* default, gives neither half of Tick a clock
     ConfigWaitOnTimeout, \* BOOLEAN, a reversed witness: the CONFIG wait keeps its clock
                     \* with the timeout off, where a zero timeout fires at once
+    Clocked,        \* BOOLEAN: time passes (Elapse) and the clocks run
+    SilenceT,       \* the connection timeout T, in updates (>= 1)
+    ReliableT,      \* the reliable timeout, in updates, when it is configured (>= 1)
+    SilenceEndEarly, \* BOOLEAN, a reversed witness: the silence end fires one update
+                    \* before T (the comparison one short)
     Silence,        \* BOOLEAN: ack history overflow may drop pending acks (P5)
     Failures,       \* BOOLEAN: a written packet may fail to send (PacketFailed, P5)
     WriteAll,       \* BOOLEAN: a packet carries every due record (a model-size knob;
@@ -91,7 +112,8 @@ Msgs   == 1..N
 CONFIG == 0
 Recs   == 0..N          \* record ids: CONFIG and the messages
 NoCfg  == 0             \* remoteCfg before a CONFIG is taken
-Errors == {"NONE", "CONFIG_MISMATCH", "VIOLATION", "RELIABLE_TIMEOUT"}
+Errors == {"NONE", "CONFIG_MISMATCH", "VIOLATION", "RELIABLE_TIMEOUT", "TIMED_OUT"}
+NotSent == -1           \* fs before a record's first send
 
 ASSUME /\ N \in Nat \ {0}
        /\ MsgRel \in [Msgs -> {"ordered", "reliable", "unreliable"}]
@@ -103,6 +125,8 @@ ASSUME /\ N \in Nat \ {0}
        /\ TimeoutAnyTime \in BOOLEAN /\ Silence \in BOOLEAN /\ Failures \in BOOLEAN
        /\ TimeoutConfigured \in BOOLEAN /\ ConfigWaitOnTimeout \in BOOLEAN
        /\ WriteAll \in BOOLEAN /\ RtoAboveRtt \in BOOLEAN
+       /\ Clocked \in BOOLEAN /\ SilenceEndEarly \in BOOLEAN
+       /\ SilenceT \in Nat \ {0} /\ ReliableT \in Nat \ {0}
 
 \* a packet: reliable records, unreliable records, and the transport acks
 \* it carries back (the records of the remote endpoint's packets this end opened)
@@ -126,6 +150,10 @@ VARIABLES
     err,          \* the error state (rn_endpoint_error)
     \* ghost
     opened,       \* every reliable record in every packet this end opened
+    \* the clocks (Clocked)
+    quiet,        \* e -> updates since e last heard a packet from the other side
+    cwait,        \* e -> updates of the CONFIG wait (reliable timeout configured)
+    fs,           \* e -> record -> updates since its first send, NotSent before it
     \* the links
     abWire, abSent, abPulse,
     baWire, baSent, baPulse
@@ -134,7 +162,11 @@ abVars == <<abWire, abSent, abPulse>>
 baVars == <<baWire, baSent, baPulse>>
 epVars == <<cfg, nextMsg, relQ, acked, unrelQ, firstWritten, pendAck,
             remoteCfg, rcvd, held, deliv, err, opened>>
-vars   == <<epVars, abVars, baVars>>
+clockVars == <<quiet, cwait, fs>>
+vars   == <<epVars, clockVars, abVars, baVars>>
+
+\* the reliable clocks run: time passes and the timeout is configured
+RClock == Clocked /\ TimeoutConfigured
 
 AB == INSTANCE Link WITH wire <- abWire, sent <- abSent, pulse <- abPulse,
                          Packets <- Pkts, Pattern <- ABPattern
@@ -209,6 +241,9 @@ Reset ==
     /\ deliv = [e \in E |-> <<>>]
     /\ err = [e \in E |-> "NONE"]
     /\ opened = [e \in E |-> {}]
+    /\ quiet = [e \in E |-> 0]
+    /\ cwait = [e \in E |-> 0]
+    /\ fs = [e \in E |-> [r \in Recs |-> NotSent]]
     /\ AB!Init /\ BA!Init
 
 Init == Reset
@@ -231,7 +266,7 @@ Send(e) ==
                         /\ UNCHANGED relQ
                    ELSE /\ relQ' = [relQ EXCEPT ![e] = Append(@, k)]
                         /\ UNCHANGED unrelQ
-    /\ UNCHANGED <<cfg, acked, firstWritten, pendAck, remoteCfg, rcvd, held, deliv,
+    /\ UNCHANGED <<cfg, acked, firstWritten, pendAck, remoteCfg, rcvd, held, deliv, clockVars,
                    err, opened, abVars, baVars>>
 
 (***************************************************************************)
@@ -254,17 +289,26 @@ WritePacket(e, S, Us) ==
     /\ unrelQ' = [unrelQ EXCEPT ![e] = @ \ Us]
     /\ firstWritten' = [firstWritten EXCEPT ![e] = TRUE]
     /\ pendAck' = [pendAck EXCEPT ![e] = {}]
-    /\ UNCHANGED <<cfg, nextMsg, relQ, acked, remoteCfg, rcvd, held, deliv, err, opened>>
+    \* a record's reliable clock starts at its first send (rn_window_ack_commit
+    \* records first_send only for a number never sent before)
+    /\ fs' = IF RClock
+               THEN [fs EXCEPT ![e] = [r \in Recs |->
+                        IF r \in S /\ @[r] = NotSent THEN 0 ELSE @[r]]]
+               ELSE fs
+    /\ UNCHANGED <<cfg, nextMsg, relQ, acked, remoteCfg, rcvd, held, deliv, err, opened,
+                   quiet, cwait>>
 
 \* PacketFailed (rn_endpoint_packet_failed): the packet was written and the
 \* transport never sent it (a burned id).  Its reliable records stay unacked
 \* and due; its unreliable records are gone.  The transport keeps its acks.
+\* A record never on the wire stays never sent: no reliable clock starts
+\* (rn_window_ack_packet_failed).
 PacketFailed(e, S, Us) ==
     /\ Failures
     /\ WriteOk(e, S, Us)
     /\ unrelQ' = [unrelQ EXCEPT ![e] = @ \ Us]
     /\ firstWritten' = [firstWritten EXCEPT ![e] = TRUE]
-    /\ UNCHANGED <<cfg, nextMsg, relQ, acked, pendAck, remoteCfg, rcvd, held, deliv,
+    /\ UNCHANGED <<cfg, nextMsg, relQ, acked, pendAck, remoteCfg, rcvd, held, deliv, clockVars,
                    err, opened, abVars, baVars>>
 
 \* The transport sends its acks with no message records (a keepalive).
@@ -273,7 +317,7 @@ WriteAck(e) ==
     /\ pendAck[e] # {}
     /\ LinkSend(e, [rel |-> {}, unrel |-> {}, acks |-> pendAck[e]])
     /\ pendAck' = [pendAck EXCEPT ![e] = {}]
-    /\ UNCHANGED <<cfg, nextMsg, relQ, acked, unrelQ, firstWritten, remoteCfg, rcvd,
+    /\ UNCHANGED <<cfg, nextMsg, relQ, acked, unrelQ, firstWritten, remoteCfg, rcvd, clockVars,
                    held, deliv, err, opened>>
 
 \* Ack history overflow: pending acks are lost unsent (P5, silence).
@@ -281,7 +325,7 @@ AckSilence(e) ==
     /\ Silence
     /\ pendAck[e] # {}
     /\ pendAck' = [pendAck EXCEPT ![e] = {}]
-    /\ UNCHANGED <<cfg, nextMsg, relQ, acked, unrelQ, firstWritten, remoteCfg, rcvd,
+    /\ UNCHANGED <<cfg, nextMsg, relQ, acked, unrelQ, firstWritten, remoteCfg, rcvd, clockVars,
                    held, deliv, err, opened, abVars, baVars>>
 
 (***************************************************************************)
@@ -307,11 +351,17 @@ ConfigCompare(e) == ConfigCompared /\ cfg[Remote(e)] # cfg[e]
 (* ordered one is held until its predecessors are received and then       *)
 (* delivered with every hold it releases, and an unreliable one is         *)
 (* delivered now.  An endpoint in error opens and discards.                *)
+(*                                                                         *)
+(* Any packet the transport accepts restarts e's silence clock: the        *)
+(* client's and the server's last_receive_time = current_time on every     *)
+(* accepted packet (sdk/rocketnet_client_protocol.cpp,                     *)
+(* sdk/rocketnet_server_protocol.cpp).  An end in error keeps its clocks   *)
+(* as they were at its end, so an end's quiet is the silence it ended at.  *)
 (***************************************************************************)
 OnPayload(e, p) ==
     /\ LinkDeliver(e, p)
     /\ IF ~Live(e)
-         THEN UNCHANGED epVars
+         THEN UNCHANGED <<epVars, clockVars>>
          ELSE
          LET hasCfg  == CONFIG \in (p.rel \cup p.unrel)
              cfgNew  == hasCfg /\ remoteCfg[e] = NoCfg
@@ -328,6 +378,14 @@ OnPayload(e, p) ==
          /\ pendAck' = [pendAck EXCEPT ![e] = @ \cup p.rel]
          /\ opened' = [opened EXCEPT ![e] = @ \cup p.rel]
          /\ acked' = [acked EXCEPT ![e] = OnAcked(e, p.acks)]
+         /\ quiet' = IF Clocked THEN [quiet EXCEPT ![e] = 0] ELSE quiet
+         \* an acked record's clock is read no more (it is not the oldest
+         \* unacked): back to NotSent, so it adds no state
+         /\ fs' = IF RClock
+                    THEN [fs EXCEPT ![e] = [r \in Recs |->
+                             IF r \in OnAcked(e, p.acks) THEN NotSent ELSE @[r]]]
+                    ELSE fs
+         /\ UNCHANGED cwait
          /\ IF cfgNew /\ ConfigCompare(e)
               THEN /\ err' = [err EXCEPT ![e] = "CONFIG_MISMATCH"]
                    /\ UNCHANGED <<remoteCfg, rcvd, held, deliv>>
@@ -360,21 +418,67 @@ OnPayload(e, p) ==
 (* ends a silent connection.  ConfigWaitOnTimeout is the code before       *)
 (* v1.1.0: the CONFIG half compared the wait with a timeout of zero and    *)
 (* fired at the first update.                                              *)
+(*                                                                         *)
+(* Clocked, the two halves are the code's two comparisons with            *)
+(* reliable_timeout: now - config_wait_start (cwait, from Reset) for the   *)
+(* CONFIG half (rn_endpoint_config_tick), and now - oldest_first_send for  *)
+(* the record at U, the oldest unacked number, once it has been sent       *)
+(* (rn_window_ack_check_timeout, rn_window_ack_refresh_oldest: no clock    *)
+(* before the first send).  The broken CONFIG half compares with zero, and *)
+(* every wait is at least zero, so it needs no clock value.                *)
 (***************************************************************************)
+ReliableDue(e) ==
+    \/ remoteCfg[e] = NoCfg /\ (~Clocked \/ cwait[e] >= ReliableT)
+    \/ Unacked(e) # {} /\ (~Clocked \/ fs[e][Oldest(e)] >= ReliableT)
+
 Tick(e) ==
     /\ Live(e)
-    /\ \/ TimeoutConfigured /\ (remoteCfg[e] = NoCfg \/ Unacked(e) # {})
+    /\ \/ TimeoutConfigured /\ ReliableDue(e)
        \/ ConfigWaitOnTimeout /\ ~TimeoutConfigured /\ remoteCfg[e] = NoCfg
     /\ TimeoutAnyTime \/ ~Live(Remote(e))
     /\ err' = [err EXCEPT ![e] = "RELIABLE_TIMEOUT"]
+    /\ UNCHANGED <<cfg, nextMsg, relQ, acked, unrelQ, firstWritten, pendAck, remoteCfg, clockVars,
+                   rcvd, held, deliv, opened, abVars, baVars>>
+
+(***************************************************************************)
+(* Elapse: one update passes (Clocked only).  Every live end's silence     *)
+(* clock counts it, and the transport ends each live end that has now     *)
+(* heard nothing for SilenceT updates, at this update: the server's        *)
+(* current_time >= last_receive_time + timeout_seconds                     *)
+(* (rocketnet_server_protocol_update, TIMED_OUT) and the client's          *)
+(* current_time - last_receive_time >= timeout_seconds                     *)
+(* (CONNECTION_TIMED_OUT), both checked every update.  With the reliable   *)
+(* timeout configured the CONFIG wait and every sent, unacked record's     *)
+(* age count it too, up to ReliableT (past which only >= ReliableT is      *)
+(* read).  SilenceEndEarly is the reversed witness: the comparison one     *)
+(* update short.  An end in error keeps its clocks.  The links run with   *)
+(* MaxDelay = 0 here, so no copy's due counts down.                        *)
+(***************************************************************************)
+SilenceEnd == IF SilenceEndEarly THEN SilenceT - 1 ELSE SilenceT
+
+Elapse ==
+    /\ Clocked
+    /\ \E e \in E : Live(e)
+    /\ quiet' = [e \in E |-> IF Live(e) THEN quiet[e] + 1 ELSE quiet[e]]
+    /\ err' = [e \in E |-> IF Live(e) /\ quiet[e] + 1 >= SilenceEnd
+                             THEN "TIMED_OUT" ELSE err[e]]
+    /\ cwait' = IF RClock
+                  THEN [e \in E |-> IF Live(e) /\ remoteCfg[e] = NoCfg /\ cwait[e] < ReliableT
+                                      THEN cwait[e] + 1 ELSE cwait[e]]
+                  ELSE cwait
+    /\ fs' = IF RClock
+               THEN [e \in E |-> [r \in Recs |->
+                       IF Live(e) /\ fs[e][r] # NotSent /\ fs[e][r] < ReliableT
+                         THEN fs[e][r] + 1 ELSE fs[e][r]]]
+               ELSE fs
     /\ UNCHANGED <<cfg, nextMsg, relQ, acked, unrelQ, firstWritten, pendAck, remoteCfg,
                    rcvd, held, deliv, opened, abVars, baVars>>
 
 (***************************************************************************)
 (* The outside events: the two paths.                                      *)
 (***************************************************************************)
-ABEnvironment == AB!Environment /\ UNCHANGED <<epVars, baVars>>
-BAEnvironment == BA!Environment /\ UNCHANGED <<epVars, abVars>>
+ABEnvironment == AB!Environment /\ UNCHANGED <<epVars, clockVars, baVars>>
+BAEnvironment == BA!Environment /\ UNCHANGED <<epVars, clockVars, abVars>>
 
 WriteAny(e)  == \E S \in SUBSET Due(e), Us \in SUBSET unrelQ[e] :
                     WritePacket(e, S, Us) \/ PacketFailed(e, S, Us)
@@ -390,6 +494,7 @@ Next ==
          \/ AckSilence(e)
          \/ OpenAny(e)
          \/ Tick(e)
+    \/ Elapse
     \/ ABEnvironment
     \/ BAEnvironment
 
@@ -439,6 +544,9 @@ TypeOK ==
     /\ \A e \in E : Range(deliv[e]) \subseteq Msgs
     /\ err \in [E -> Errors]
     /\ opened \in [E -> SUBSET Recs]
+    /\ quiet \in [E -> 0..SilenceT]
+    /\ cwait \in [E -> 0..ReliableT]
+    /\ fs \in [E -> [Recs -> {NotSent} \cup 0..ReliableT]]
     /\ AB!InFlightBounded /\ BA!InFlightBounded
 
 \* CONFIG takes the first reliable number (10.3)
@@ -487,13 +595,27 @@ MismatchErrorsBothEnds ==
 NoViolationWhenEqual ==
     cfg["a"] = cfg["b"] => \A e \in E : err[e] # "VIOLATION"
 
-\* With the reliable timeout off the message layer ends a connection only for
-\* what the remote endpoint did (CONFIG_MISMATCH, VIOLATION), never for a wait:
-\* the model has no clock, so no wait of any length ends it, and the only end a
-\* silent remote endpoint meets is the transport's at T, outside this module
-\* (MESSAGES.md m1.9 rule 1). The name is the property's: no end before T.
-NoEndBeforeT ==
-    ~TimeoutConfigured => \A e \in E : err[e] # "RELIABLE_TIMEOUT"
+\* The timing ends: the reliable timeout and the transport's silence end.
+\* The other two ends are the other side breaking the protocol (CONFIG_MISMATCH,
+\* VIOLATION; with equal configurations neither is reachable, as
+\* MismatchErrorsBothEnds and NoViolationWhenEqual say).
+TimingEnd(e) == err[e] \in {"RELIABLE_TIMEOUT", "TIMED_OUT"}
+
+\* (S) No end shorter than T.  With the reliable timeout off (zero, the
+\* default; MESSAGES.md m9.3, m11 rule 4, m1.9 rule 1) every timing end, of
+\* either reason, comes only after the ending end has heard nothing from the
+\* other side for T updates: an outage shorter than T ends nothing.  Checked
+\* Clocked, where the silence end is reachable (replace quiet[e] >= SilenceT
+\* by FALSE and MCRNEndpointTimeoutOff.cfg fails).  Reversed witnesses: the
+\* CONFIG wait on a zero timeout (the code before v1.1.0) ends at quiet 0,
+\* and a silence end one update early ends at T - 1.
+EndsNeedSilenceT == \A e \in E : TimingEnd(e) => quiet[e] >= SilenceT
+NoEndBeforeSilenceT == ~TimeoutConfigured => EndsNeedSilenceT
+
+\* (K) The end at T: no live end has heard nothing for T updates; the update
+\* that brings an end's silence to T ends it.  Checked Clocked; a silence end
+\* one update late, or none, fails it.
+SilenceEndsAtT == \A e \in E : Live(e) => quiet[e] < SilenceT
 
 (***************************************************************************)
 (* Liveness.                                                               *)

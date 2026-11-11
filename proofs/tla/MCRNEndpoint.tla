@@ -59,4 +59,20 @@ MCOneTimeout == Cardinality({e \in E : err[e] = "RELIABLE_TIMEOUT"}) <= 1
 \* so MCRNEndpointTwoWay.cfg checks both ends sending, at N = 2.
 MCOneWay == nextMsg["b"] = 1
 
+\* The safety cases' view: every variable but the links' send counters
+\* (abSent, baSent) and delivery pulses (abPulse, baPulse).  Exact for
+\* invariant checking when both links run "arbitrary" loss: Link reads sent
+\* only in NextCount (to compute sent') and LostAtSend(NextCount), which is
+\* FALSE under "arbitrary" whatever the count; pulse is read only by Deliver
+\* to compute pulse', and exists for fairness (a Deliver step is never a
+\* Drop step), which Spec does not have.  No RNEndpoint action and no
+\* invariant reads either, so two states equal in the view have the same
+\* enabled steps, the same successors in the view, and the same verdict on
+\* every invariant: the quotient is a bisimulation.  Under any other
+\* pattern the counter decides losses, so the view is then every variable.
+MCSafetyView ==
+    IF ABPattern = "arbitrary" /\ BAPattern = "arbitrary"
+      THEN <<epVars, clockVars, abWire, baWire>>
+      ELSE vars
+
 =============================================================================
