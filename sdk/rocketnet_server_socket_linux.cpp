@@ -4243,10 +4243,10 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
 
     int send_error = 0;
 
-    // the TX ring's consumer index and the passes it has not moved with
-    // frames pending (rocketnet_xdp_send_stall_pass)
+    // the TX ring's consumer index and, during a stop, since when it has not
+    // moved with frames pending (rocketnet_xdp_send_stall_pass)
 
-    rocketnet_xdp_send_stall_t send_stall = { 0, 0 };
+    rocketnet_xdp_send_stall_t send_stall = { 0, false, 0.0 };
 
     // passes since the socket's XDP_STATISTICS were last read, and whether a
     // failed read was logged
@@ -4626,9 +4626,10 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
 
         // the stop drain's view of this queue's TX side: pending while this
         // thread holds frames the ring's consumer has not taken; stalled
-        // once that consumer has not moved for ROCKETNET_XDP_SEND_STALL_PASSES
-        // passes during a stop, when what is abandoned is counted and logged
-        // once (proofs/tla/RNXdpSendDrain.tla Pass)
+        // once that consumer has not moved for ROCKETNET_XDP_SEND_STALL_SECONDS
+        // during a stop, when what is abandoned is counted and logged once.
+        // The clock is read only during a stop with frames pending
+        // (proofs/tla/RNXdpSendDrain.tla Pass)
 
         {
             const uint32_t consumer = __atomic_load_n( socket->send_queue.consumer, __ATOMIC_ACQUIRE );
@@ -4638,13 +4639,14 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
             {
                 socket->send_pending.store( pending, std::memory_order_relaxed );
             }
-            if ( rocketnet_xdp_send_stall_pass( send_stall, consumer, pending, socket->send_draining.load( std::memory_order_relaxed ),
-                                                ROCKETNET_XDP_SEND_STALL_PASSES, socket->send_stalled ) )
+            const bool draining = socket->send_draining.load( std::memory_order_relaxed );
+            const double now = draining && pending ? rocketnet_platform_time() : 0.0;
+            if ( rocketnet_xdp_send_stall_pass( send_stall, consumer, pending, draining, now, ROCKETNET_XDP_SEND_STALL_SECONDS, socket->send_stalled ) )
             {
                 const uint32_t abandoned = on_ring + (uint32_t) num_batch_packets;
                 socket->send_wakeup_failures.fetch_add( abandoned, std::memory_order_relaxed );
-                rocketnet_error( "xdp queue %d tx ring has not drained for %u passes; stop gives up on its %u queued frames", socket->queue,
-                                 ROCKETNET_XDP_SEND_STALL_PASSES, abandoned );
+                rocketnet_error( "xdp queue %d tx ring has not drained for %.1f s during the stop; stop gives up on its %u queued frames",
+                                 socket->queue, ROCKETNET_XDP_SEND_STALL_SECONDS, abandoned );
             }
         }
 
