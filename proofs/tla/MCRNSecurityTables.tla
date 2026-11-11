@@ -3,7 +3,7 @@
 (* The small instance of RNSecurityTables: two addresses, two tokens,      *)
 (* one of them expiring at tick 3, tables at the production ratios         *)
 (* reduced (history 2, admitted 2, two client slots), a verify budget      *)
-(* of two per update.  MCRNSecurityTables.cfg is the fixed-code run;       *)
+(* of two per update.  MCRNSecurityTables.cfg is the code's run;           *)
 (* README-RNSecurityTables.md lists each reversed witness as edits to      *)
 (* that file.                                                              *)
 (***************************************************************************)
