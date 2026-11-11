@@ -250,7 +250,7 @@ named a step the code no longer took.
 | `MCRNChannelTypesRefuse.cfg` (send capacity 2, every safety invariant and `SendNeverEnds`) | pass | 0 | 61 |
 | `MCRNChannelBrokenSendKick.cfg` | `SendNeverEnds` | 12 | 5 |
 
-`MCRNChannelTypes.cfg` keeps its invariants. On the 2026-11-11 bench it ran past the 110-second budget (exit 124, recorded as such in `RUNS.tsv`); run there with no budget, as evidence and not a record, it completes with no error at 400,234 distinct states, the revision 1.0 count, in 3 min 46 s. Its record is owed a re-measure on a quieter bench.
+`MCRNChannelTypes.cfg` keeps its invariants and liveness property. Its cost was the liveness check of `WF_vars(Next)`: TLC evaluated `ENABLED <<Next>>_vars` on every state and `<<Next>>_vars` on every edge (on vision with the record JVM flags: 2 min 56 s with the property, 50 s without). `Spec` now writes the fairness out by its definition with `StepPossible` for the enabledness and `<<TRUE>>_vars` for the step, both exact (`StepPossibleIsEnabled` checks the first in five configurations); the state graph is unchanged at 2,168,240 generated and 400,234 distinct, and the control passes in 79.8 s.
 
 Witness trace, read by hand (5 states): two sends fill the send capacity of
 2, the third offered send takes `Refuse` and, with `SendKick`, sets
